@@ -1,0 +1,83 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 26,
+        "patch": 4
+    },
+    "configurePresets": [
+        {
+            "name": "build",
+            "hidden": true,
+            "binaryDir": "${sourceDir}/build/${presetName}"
+        },
+        {
+            "name": "ninja",
+            "hidden": true,
+            "generator": "Ninja"
+        },
+        {
+            "name": "release",
+            "inherits": [
+                "ninja",
+                "build"
+            ],
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "debug",
+            "inherits": [
+                "ninja",
+                "build"
+            ],
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "vs2022",
+            "generator": "Visual Studio 17 2022",
+            "inherits": "build"
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "release",
+            "configurePreset": "release"
+        },
+        {
+            "name": "debug",
+            "configurePreset": "debug"
+        }
+    ],
+    "workflowPresets": [
+        {
+            "name": "release",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "release"
+                },
+                {
+                    "type": "build",
+                    "name": "release"
+                }
+            ]
+        },
+        {
+            "name": "debug",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "debug"
+                },
+                {
+                    "type": "build",
+                    "name": "debug"
+                }
+            ]
+        }
+    ]
+}
