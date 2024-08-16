@@ -72,7 +72,7 @@ if(MSVC)
     /GS
     /Gy
     /EHa
-    /guard:cf
+    #/guard:cf
   )
 
   momo_add_compile_options(CXX
