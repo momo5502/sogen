@@ -12,7 +12,7 @@ momo_assign_source_group(${SRC_FILES})
 
 target_precompile_headers(client PRIVATE std_include.hpp)
 
-target_link_libraries(client PRIVATE unicorn)
+target_link_libraries(client PRIVATE unicorn phnt::phnt)
 
 set_target_properties(client PROPERTIES OUTPUT_NAME "bird")
 

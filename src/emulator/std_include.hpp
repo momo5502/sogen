@@ -2,6 +2,7 @@
 
 #ifdef _WIN32
 #pragma warning(push)
+#pragma warning(disable: 4005)
 #pragma warning(disable: 4127)
 #pragma warning(disable: 4244)
 #pragma warning(disable: 4245)
@@ -26,12 +27,6 @@
 #pragma warning(disable: 28020)
 
 #define WIN32_LEAN_AND_MEAN
-
-#include <Windows.h>
-#include <ShlObj.h>
-#include <d3d11.h>
-#include <shellscalingapi.h>
-#include <winternl.h>
 
 // min and max is required by gdi, therefore NOMINMAX won't work
 #ifdef max
@@ -68,6 +63,11 @@
 #include <cassert>
 
 #include <unicorn/unicorn.h>
+
+#define NTDDI_WIN11_GE 0
+#define PHNT_VERSION PHNT_WIN11
+#include <phnt_windows.h>
+#include <phnt.h>
 
 #ifdef _WIN32
 #pragma warning(pop)

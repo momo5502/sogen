@@ -19,10 +19,7 @@ inline void ThrowIfUnicornError(const uc_err error_code)
 	}
 }
 
-inline void e(const uc_err error_code)
-{
-	ThrowIfUnicornError(error_code);
-}
+#define e ThrowIfUnicornError
 
 class unicorn
 {
