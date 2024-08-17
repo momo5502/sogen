@@ -17,7 +17,7 @@ set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")
 
 ##########################################
 
-project(bird LANGUAGES C CXX)
+project(emulator LANGUAGES C CXX)
 
 ##########################################
 

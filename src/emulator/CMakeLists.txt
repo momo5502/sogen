@@ -6,16 +6,14 @@ file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
 
 list(SORT SRC_FILES)
 
-add_executable(client ${SRC_FILES})
+add_executable(emulator ${SRC_FILES})
 
 momo_assign_source_group(${SRC_FILES})
 
-target_precompile_headers(client PRIVATE std_include.hpp)
+target_precompile_headers(emulator PRIVATE std_include.hpp)
 
-target_link_libraries(client PRIVATE unicorn phnt::phnt)
+target_link_libraries(emulator PRIVATE unicorn phnt::phnt)
 
-set_target_properties(client PROPERTIES OUTPUT_NAME "bird")
+set_property(GLOBAL PROPERTY VS_STARTUP_PROJECT emulator)
 
-set_property(GLOBAL PROPERTY VS_STARTUP_PROJECT client)
-
-momo_strip_target(client)
+momo_strip_target(emulator)
