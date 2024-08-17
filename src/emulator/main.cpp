@@ -8,6 +8,7 @@
 
 #define IA32_GS_BASE_MSR 0xC0000101
 
+#define STACK_ADDRESS 0x7ffffffde000
 #define STACK_SIZE 0x40000
 
 #include "unicorn.hpp"
@@ -19,9 +20,17 @@ namespace
 		return value & ~(alignment - 1);
 	}
 
-	uint64_t align_up(const uint64_t value, const  uint64_t alignment)
+	uint64_t align_up(const uint64_t value, const uint64_t alignment)
 	{
 		return align_down(value + (alignment - 1), alignment);
+	}
+
+	void setup_stack(const unicorn& uc, uint64_t stack_base, size_t stack_size)
+	{
+		e(uc_mem_map(uc, stack_base, stack_size, UC_PROT_READ | UC_PROT_WRITE));
+
+		const uint64_t stack_end = stack_base + stack_size;
+		e(uc_reg_write(uc, UC_X86_REG_RSP, &stack_end));
 	}
 
 	void setup_gs_segment(const unicorn& uc, const uint64_t segment_base, const size_t size)
@@ -37,20 +46,36 @@ namespace
 
 	void setup_teb_and_peb(const unicorn& uc)
 	{
+		setup_stack(uc, STACK_ADDRESS, STACK_SIZE);
 		setup_gs_segment(uc, GS_SEGMENT_ADDR, GS_SEGMENT_SIZE);
 
 		constexpr auto teb_address = GS_SEGMENT_ADDR;
 		const auto peb_address = align_up(teb_address + sizeof(TEB), 0x10);
+		const auto ldr_address = align_up(peb_address + sizeof(PEB_LDR_DATA), 0x10);
 
 		TEB teb{};
+		teb.NtTib.StackLimit = reinterpret_cast<void*>(STACK_ADDRESS);
+		teb.NtTib.StackBase = reinterpret_cast<void*>((STACK_ADDRESS + STACK_SIZE));
 		teb.NtTib.Self = reinterpret_cast<NT_TIB*>(teb_address);
 		teb.ProcessEnvironmentBlock = reinterpret_cast<PEB*>(peb_address);
 
-
 		PEB peb{};
+		peb.ImageBaseAddress = nullptr;
+		peb.Ldr = reinterpret_cast<PEB_LDR_DATA*>(ldr_address);
+
+		PEB_LDR_DATA ldr{};
+		ldr.InLoadOrderModuleList.Flink = reinterpret_cast<LIST_ENTRY*>(ldr_address + offsetof(PEB_LDR_DATA, InLoadOrderModuleList));
+		ldr.InLoadOrderModuleList.Blink = ldr.InLoadOrderModuleList.Flink;
+
+		ldr.InMemoryOrderModuleList.Flink = reinterpret_cast<LIST_ENTRY*>(ldr_address + offsetof(PEB_LDR_DATA, InMemoryOrderModuleList));
+		ldr.InMemoryOrderModuleList.Blink = ldr.InMemoryOrderModuleList.Flink;
+
+		ldr.InInitializationOrderModuleList.Flink = reinterpret_cast<LIST_ENTRY*>(ldr_address + offsetof(PEB_LDR_DATA, InInitializationOrderModuleList));
+		ldr.InInitializationOrderModuleList.Blink = ldr.InInitializationOrderModuleList.Flink;
 
 		e(uc_mem_write(uc, teb_address, &teb, sizeof(teb)));
 		e(uc_mem_write(uc, peb_address, &peb, sizeof(peb)));
+		e(uc_mem_write(uc, ldr_address, &ldr, sizeof(ldr)));
 	}
 
 	void run()
