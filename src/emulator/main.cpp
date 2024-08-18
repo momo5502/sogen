@@ -288,6 +288,9 @@ namespace
 		const auto entry1 = ntdll_exports.at("LdrInitializeThunk");
 		const auto entry2 = ntdll_exports.at("RtlUserThreadStart");
 
+		(void)entry1;
+		(void)entry2;
+
 		//e(uc_emu_start(uc, ADDRESS, ADDRESS + sizeof(X86_CODE32) - 1, 0, 0));
 
 		printf("Emulation done. Below is the CPU context\n");
