@@ -12,7 +12,11 @@ momo_assign_source_group(${SRC_FILES})
 
 target_precompile_headers(emulator PRIVATE std_include.hpp)
 
-target_link_libraries(emulator PRIVATE unicorn phnt::phnt)
+target_link_libraries(emulator PRIVATE
+  common
+  unicorn
+  phnt::phnt
+)
 
 set_property(GLOBAL PROPERTY VS_STARTUP_PROJECT emulator)
 

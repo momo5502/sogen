@@ -42,6 +42,34 @@ public:
 		return this->uc_;
 	}
 
+	template <typename T = uint64_t>
+	T reg(const int regid) const
+	{
+		T value{};
+		e(uc_reg_read(this->uc_, regid, &value));
+		return value;
+	}
+
+	template <typename T = uint64_t>
+	void reg(const int regid, const T& value) const
+	{
+		e(uc_reg_write(this->uc_, regid, &value));
+	}
+
+	void stop() const
+	{
+		e(uc_emu_stop(this->uc_));
+	}
+
+	uint64_t read_stack(const size_t index) const
+	{
+		uint64_t result{};
+		const auto rsp = this->reg(UC_X86_REG_RSP);
+
+		e(uc_mem_read(this->uc_, rsp + (index * sizeof(result)), &result, sizeof(result)));
+		return result;
+	}
+
 private:
 	uc_engine* uc_{};
 };
