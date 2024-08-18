@@ -144,11 +144,6 @@ namespace
 
 		while (true)
 		{
-			if (prefered_base < optional_header.ImageBase)
-			{
-				throw std::runtime_error("Failed to map range");
-			}
-
 			const auto res = uc_mem_map(uc, prefered_base, optional_header.SizeOfImage, UC_PROT_READ);
 			if (res == UC_ERR_OK)
 			{
@@ -156,6 +151,12 @@ namespace
 			}
 
 			prefered_base += 0x10000;
+
+			if (prefered_base < optional_header.ImageBase || (optional_header.DllCharacteristics &
+				IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) == 0)
+			{
+				throw std::runtime_error("Failed to map range");
+			}
 		}
 
 		e(uc_mem_write(uc, prefered_base, ptr, optional_header.SizeOfHeaders));
@@ -261,6 +262,18 @@ namespace
 		});
 	}
 
+	std::vector<uint8_t> load_file(const std::filesystem::path& file)
+	{
+		std::ifstream stream(file, std::ios::in | std::ios::binary);
+		return {(std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>()};
+	}
+
+	std::unordered_map<std::string, uint64_t> map_file(const unicorn& uc, const std::filesystem::path& file)
+	{
+		const auto data = load_file(file);
+		return map_module(uc, data);
+	}
+
 	void run()
 	{
 		const unicorn uc{UC_ARCH_X86, UC_MODE_64};
@@ -268,19 +281,12 @@ namespace
 		setup_kusd(uc);
 		setup_teb_and_peb(uc);
 
-		std::ifstream stream(R"(C:\Windows\System32\ntdll.dll)", std::ios::in | std::ios::binary);
-		const std::vector<uint8_t> ntdll((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+		const auto executable_exports = map_file(uc, R"(C:\Users\mauri\Desktop\ConsoleApplication6.exe)");
 
+		const auto ntdll_exports = map_file(uc, R"(C:\Windows\System32\ntdll.dll)");
 
-		const auto exports = map_module(uc, ntdll);
-
-		for(const auto& exp : exports)
-		{
-			printf("%llX: %s\n", exp.second, exp.first.c_str());
-		}
-
-		const auto entry1 = exports.at("LdrInitializeThunk");
-		const auto entry2 = exports.at("RtlUserThreadStart");
+		const auto entry1 = ntdll_exports.at("LdrInitializeThunk");
+		const auto entry2 = ntdll_exports.at("RtlUserThreadStart");
 
 		//e(uc_emu_start(uc, ADDRESS, ADDRESS + sizeof(X86_CODE32) - 1, 0, 0));
 
