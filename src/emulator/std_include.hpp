@@ -29,16 +29,7 @@
 #pragma warning(disable: 28020)
 
 #define WIN32_LEAN_AND_MEAN
-
-// min and max is required by gdi, therefore NOMINMAX won't work
-#ifdef max
-#undef max
-#endif
-
-#ifdef min
-#undef min
-#endif
-#endif
+#define NOMINMAX
 
 #include <map>
 #include <set>
@@ -54,6 +45,7 @@
 #include <string>
 #include <chrono>
 #include <memory>
+#include <fstream>
 #include <functional>
 #include <filesystem>
 #include <optional>
@@ -73,6 +65,15 @@
 
 #ifdef _WIN32
 #pragma warning(pop)
+#endif
+
+#ifdef max
+#undef max
+#endif
+
+#ifdef min
+#undef min
+#endif
 #endif
 
 using namespace std::literals;

@@ -1,8 +1,5 @@
 #include "std_include.hpp"
 
-#define X86_CODE32 "\x65\x48\x8B\x04\x25\x60\x00\x00\x00" // INC ecx; DEC edx
-#define ADDRESS 0x1000000
-
 #define GS_SEGMENT_ADDR 0x6000000ULL
 #define GS_SEGMENT_SIZE (20 << 20)  // 20 MB
 
@@ -135,6 +132,99 @@ namespace
 		               reinterpret_cast<void*>(KUSD_ADDRESS));
 	}
 
+	std::unordered_map<std::string, uint64_t> map_module(const unicorn& uc, const std::vector<uint8_t>& module_data)
+	{
+		// TODO: Range checks
+		auto* ptr = module_data.data();
+		auto* dos_header = reinterpret_cast<const IMAGE_DOS_HEADER*>(ptr);
+		auto* nt_headers = reinterpret_cast<const IMAGE_NT_HEADERS*>(ptr + dos_header->e_lfanew);
+		auto& optional_header = nt_headers->OptionalHeader;
+
+		auto prefered_base = optional_header.ImageBase;
+
+		while (true)
+		{
+			if (prefered_base < optional_header.ImageBase)
+			{
+				throw std::runtime_error("Failed to map range");
+			}
+
+			const auto res = uc_mem_map(uc, prefered_base, optional_header.SizeOfImage, UC_PROT_READ);
+			if (res == UC_ERR_OK)
+			{
+				break;
+			}
+
+			prefered_base += 0x10000;
+		}
+
+		e(uc_mem_write(uc, prefered_base, ptr, optional_header.SizeOfHeaders));
+
+		const std::span sections(IMAGE_FIRST_SECTION(nt_headers), nt_headers->FileHeader.NumberOfSections);
+
+		for (const auto& section : sections)
+		{
+			const auto target_ptr = prefered_base + section.VirtualAddress;
+
+			if (section.SizeOfRawData > 0)
+			{
+				const void* source_ptr = ptr + section.PointerToRawData;
+
+				const auto size_of_data = std::min(section.SizeOfRawData, section.Misc.VirtualSize);
+				e(uc_mem_write(uc, target_ptr, source_ptr, size_of_data));
+			}
+			uint32_t permissions = UC_PROT_NONE;
+
+			if (section.Characteristics & IMAGE_SCN_MEM_EXECUTE)
+			{
+				permissions |= UC_PROT_EXEC;
+			}
+
+			if (section.Characteristics & IMAGE_SCN_MEM_READ)
+			{
+				permissions |= UC_PROT_READ;
+			}
+
+			if (section.Characteristics & IMAGE_SCN_MEM_WRITE)
+			{
+				permissions |= UC_PROT_WRITE;
+			}
+
+			const auto size_of_section = align_up(std::max(section.SizeOfRawData, section.Misc.VirtualSize), 0x1000);
+
+			e(uc_mem_protect(uc, target_ptr, size_of_section, permissions));
+		}
+
+		auto& export_directory_entry = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+		if (export_directory_entry.VirtualAddress == 0 || export_directory_entry.Size == 0)
+		{
+			return {};
+		}
+
+		const auto* export_directory = reinterpret_cast<const IMAGE_EXPORT_DIRECTORY*>(ptr + export_directory_entry.
+			VirtualAddress);
+
+		//const auto function_count = export_directory->NumberOfFunctions;
+		const auto names_count = export_directory->NumberOfNames;
+
+		const auto* names = reinterpret_cast<const DWORD*>(ptr + export_directory->AddressOfNames);
+		const auto* ordinals = reinterpret_cast<const WORD*>(ptr + export_directory->AddressOfNameOrdinals);
+		const auto* functions = reinterpret_cast<const DWORD*>(ptr + export_directory->AddressOfFunctions);
+
+		std::unordered_map<std::string, uint64_t> exports{};
+
+		for (DWORD i = 0; i < names_count; i++)
+		{
+			const auto* function_name = reinterpret_cast<const char*>(ptr + names[i]);
+			const auto function_rva = functions[ordinals[i]];
+			const auto function_address = prefered_base + function_rva;
+
+			exports[function_name] = function_address;
+		}
+
+		return exports;
+	}
+
 	void setup_teb_and_peb(const unicorn& uc)
 	{
 		setup_stack(uc, STACK_ADDRESS, STACK_SIZE);
@@ -175,13 +265,24 @@ namespace
 	{
 		const unicorn uc{UC_ARCH_X86, UC_MODE_64};
 
-		e(uc_mem_map(uc, ADDRESS, 0x1000, UC_PROT_ALL));
-		e(uc_mem_write(uc, ADDRESS, X86_CODE32, sizeof(X86_CODE32) - 1));
-
 		setup_kusd(uc);
 		setup_teb_and_peb(uc);
 
-		e(uc_emu_start(uc, ADDRESS, ADDRESS + sizeof(X86_CODE32) - 1, 0, 0));
+		std::ifstream stream(R"(C:\Windows\System32\ntdll.dll)", std::ios::in | std::ios::binary);
+		const std::vector<uint8_t> ntdll((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+
+
+		const auto exports = map_module(uc, ntdll);
+
+		for(const auto& exp : exports)
+		{
+			printf("%llX: %s\n", exp.second, exp.first.c_str());
+		}
+
+		const auto entry1 = exports.at("LdrInitializeThunk");
+		const auto entry2 = exports.at("RtlUserThreadStart");
+
+		//e(uc_emu_start(uc, ADDRESS, ADDRESS + sizeof(X86_CODE32) - 1, 0, 0));
 
 		printf("Emulation done. Below is the CPU context\n");
 
