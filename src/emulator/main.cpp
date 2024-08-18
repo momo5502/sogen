@@ -24,6 +24,11 @@ namespace
 		return align_down(value + (alignment - 1), alignment);
 	}
 
+	uint64_t page_align_up(const uint64_t value)
+	{
+		return align_up(value, 0x1000);
+	}
+
 	template <typename T>
 	class unicorn_object
 	{
@@ -99,6 +104,70 @@ namespace
 		uint64_t active_address_{0};
 	};
 
+	class unicorn_hook
+	{
+	public:
+		using function = std::function<void(uint64_t address, uint32_t size)>;
+
+		unicorn_hook(const unicorn& uc, const int type, const uint64_t begin, const uint64_t end, function callback)
+			: uc_(&uc)
+			  , function_(std::make_unique<function>(std::move(callback)))
+		{
+			auto* handler = +[](uc_engine*, const uint64_t address, const uint32_t size,
+			                    void* user_data)
+			{
+				(*static_cast<function*>(user_data))(address, size);
+			};
+
+			e(uc_hook_add(*this->uc_, &this->hook_, type, handler, this->function_.get(), begin, end));
+		}
+
+		unicorn_hook(const unicorn_hook&) = delete;
+		unicorn_hook& operator=(const unicorn_hook&) = delete;
+
+		unicorn_hook(unicorn_hook&& obj) noexcept
+		{
+			this->operator=(std::move(obj));
+		}
+
+		unicorn_hook& operator=(unicorn_hook&& obj) noexcept
+		{
+			if (this != &obj)
+			{
+				this->remove();
+
+				this->uc_ = obj.uc_;
+				this->hook_ = obj.hook_;
+				this->function_ = std::move(obj.function_);
+
+				obj.hook_ = {};
+			}
+
+			return *this;
+		}
+
+		~unicorn_hook()
+		{
+			this->remove();
+		}
+
+		void remove()
+		{
+			if (this->hook_)
+			{
+				uc_hook_del(*this->uc_, this->hook_);
+				this->hook_ = {};
+			}
+
+			this->function_ = {};
+		}
+
+	private:
+		const unicorn* uc_{};
+		uc_hook hook_{};
+		std::unique_ptr<function> function_{};
+	};
+
 	void setup_stack(const unicorn& uc, uint64_t stack_base, size_t stack_size)
 	{
 		e(uc_mem_map(uc, stack_base, stack_size, UC_PROT_READ | UC_PROT_WRITE));
@@ -122,17 +191,26 @@ namespace
 
 	void setup_kusd(const unicorn& uc)
 	{
-		/* TODO: Fix
-		uc_mem_map(uc, KUSD_ADDRESS, sizeof(KUSER_SHARED_DATA), UC_PROT_READ);
+		e(uc_mem_map(uc, KUSD_ADDRESS, page_align_up(sizeof(KUSER_SHARED_DATA)), UC_PROT_READ));
 
-		unicorn_object<KUSER_SHARED_DATA> kusd_object{uc, KUSD_ADDRESS};
-		*/
+		const unicorn_object<KUSER_SHARED_DATA> kusd_object{uc, KUSD_ADDRESS};
+		kusd_object.access([](KUSER_SHARED_DATA& kusd)
+		{
+			const auto& real_kusd = *reinterpret_cast<KUSER_SHARED_DATA*>(KUSD_ADDRESS);
 
-		uc_mem_map_ptr(uc, KUSD_ADDRESS, sizeof(KUSER_SHARED_DATA), UC_PROT_READ,
-		               reinterpret_cast<void*>(KUSD_ADDRESS));
+			memcpy(&kusd, &real_kusd, sizeof(kusd));
+
+			kusd.ImageNumberLow = IMAGE_FILE_MACHINE_I386;
+			kusd.ImageNumberHigh = IMAGE_FILE_MACHINE_AMD64;
+
+			memset(&kusd.ProcessorFeatures, 0, sizeof(kusd.ProcessorFeatures));
+
+			// ...
+		});
 	}
 
-	std::unordered_map<std::string, uint64_t> map_module(const unicorn& uc, const std::vector<uint8_t>& module_data)
+	std::unordered_map<std::string, uint64_t> map_module(const unicorn& uc, const std::vector<uint8_t>& module_data,
+	                                                     const std::string& name)
 	{
 		// TODO: Range checks
 		auto* ptr = module_data.data();
@@ -158,6 +236,8 @@ namespace
 				throw std::runtime_error("Failed to map range");
 			}
 		}
+
+		printf("Mapping %s at %llX\n", name.c_str(), prefered_base);
 
 		e(uc_mem_write(uc, prefered_base, ptr, optional_header.SizeOfHeaders));
 
@@ -191,7 +271,7 @@ namespace
 				permissions |= UC_PROT_WRITE;
 			}
 
-			const auto size_of_section = align_up(std::max(section.SizeOfRawData, section.Misc.VirtualSize), 0x1000);
+			const auto size_of_section = page_align_up(std::max(section.SizeOfRawData, section.Misc.VirtualSize));
 
 			e(uc_mem_protect(uc, target_ptr, size_of_section, permissions));
 		}
@@ -271,7 +351,7 @@ namespace
 	std::unordered_map<std::string, uint64_t> map_file(const unicorn& uc, const std::filesystem::path& file)
 	{
 		const auto data = load_file(file);
-		return map_module(uc, data);
+		return map_module(uc, data, file.generic_string());
 	}
 
 	void run()
@@ -291,7 +371,19 @@ namespace
 		(void)entry1;
 		(void)entry2;
 
-		//e(uc_emu_start(uc, ADDRESS, ADDRESS + sizeof(X86_CODE32) - 1, 0, 0));
+		unicorn_hook hook(uc, UC_HOOK_INTR, 0, 0, [](const uint64_t address, const uint32_t /*size*/)
+		{
+			printf("Syscall: %llX\n", address);
+		});
+
+		const auto err = uc_emu_start(uc, entry1, 0, 0, 0);
+		if (err != UC_ERR_OK)
+		{
+			uint64_t rip{};
+			uc_reg_read(uc, UC_X86_REG_RIP, &rip);
+			printf("Emulation failed at: %llX\n", rip);
+			e(err);
+		}
 
 		printf("Emulation done. Below is the CPU context\n");
 
