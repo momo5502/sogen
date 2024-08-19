@@ -115,6 +115,8 @@ namespace
 	class unicorn_allocator
 	{
 	public:
+		unicorn_allocator() = default;
+
 		unicorn_allocator(const unicorn& uc, const uint64_t address, const uint64_t size)
 			: uc_(&uc)
 			  , address_(address)
@@ -175,8 +177,8 @@ namespace
 
 	private:
 		const unicorn* uc_{};
-		const uint64_t address_{};
-		const uint64_t size_{};
+		uint64_t address_{};
+		uint64_t size_{};
 		uint64_t active_address_{0};
 	};
 
@@ -445,14 +447,17 @@ namespace
 		mapped_binary ntdll{};
 
 		std::vector<event> events{};
+		unicorn_allocator gs_segment{};
 	};
 
 	process_context setup_teb_and_peb(const unicorn& uc)
 	{
 		setup_stack(uc, STACK_ADDRESS, STACK_SIZE);
-		auto gs = setup_gs_segment(uc, GS_SEGMENT_ADDR, GS_SEGMENT_SIZE);
-
 		process_context context{};
+
+		context.gs_segment = setup_gs_segment(uc, GS_SEGMENT_ADDR, GS_SEGMENT_SIZE);
+
+		auto& gs = context.gs_segment;
 
 		context.teb = gs.reserve<TEB>();
 		context.peb = gs.reserve<PEB>();
@@ -936,11 +941,16 @@ namespace
 
 			                   //if (hit)
 			                   {
-				                   printf("Inst: %16llX - RAX: %16llX - RBX: %16llX - RCX: %16llX - RDX: %16llX\n", address,
+				                   printf("Inst: %16llX - RAX: %16llX - RBX: %16llX - RCX: %16llX - RDX: %16llX - R8: %16llX - R9: %16llX - RDI: %16llX - RSI: %16llX\n", address,
 				                          uc.reg(UC_X86_REG_RAX), uc.reg(UC_X86_REG_RBX), uc.reg(UC_X86_REG_RCX),
-				                          uc.reg(UC_X86_REG_RDX));
+				                          uc.reg(UC_X86_REG_RDX), uc.reg(UC_X86_REG_R8), uc.reg(UC_X86_REG_R9), uc.reg(UC_X86_REG_RDI), uc.reg(UC_X86_REG_RSI));
 			                   }
 		                   });
+
+		const auto execution_context = context.gs_segment.reserve<CONTEXT>();
+
+		uc.reg(UC_X86_REG_RCX, execution_context.value());
+		uc.reg(UC_X86_REG_RDX, context.ntdll.image_base);
 
 		const auto err = uc_emu_start(uc, entry1, 0, 0, 0);
 		if (err != UC_ERR_OK)
