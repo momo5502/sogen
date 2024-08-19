@@ -32,26 +32,51 @@ inline uint64_t page_align_up(const uint64_t value)
 	return align_up(value, 0x1000);
 }
 
-inline uint32_t get_memory_protection(const unicorn& uc, uint64_t address)
+template <typename T = void, typename F>
+T access_memory_regions(const unicorn& uc, const F& accessor)
 {
 	uint32_t count{};
 	uc_mem_region* regions{};
 
 	e(uc_mem_regions(uc, &regions, &count));
 	const auto _ = utils::finally([&]
-		{
-			uc_free(regions);
-		});
-
-	for (const auto& region : std::span(regions, count))
 	{
-		if (is_within_start_and_end(address, region.begin, region.end))
-		{
-			return region.perms;
-		}
-	}
+		uc_free(regions);
+	});
 
-	return UC_PROT_NONE;
+	return accessor(std::span(regions, count));
+}
+
+inline uint32_t get_memory_protection(const unicorn& uc, const uint64_t address)
+{
+	return access_memory_regions<uint32_t>(uc, [&](const std::span<uc_mem_region> regions) -> uint32_t
+	{
+		for (const auto& region : regions)
+		{
+			if (is_within_start_and_end(address, region.begin, region.end))
+			{
+				return region.perms;
+			}
+		}
+
+		return UC_PROT_NONE;
+	});
+}
+
+inline bool is_memory_allocated(const unicorn& uc, const uint64_t address)
+{
+	return access_memory_regions<uint32_t>(uc, [&](const std::span<uc_mem_region> regions)
+	{
+		for (const auto& region : regions)
+		{
+			if (is_within_start_and_end(address, region.begin, region.end))
+			{
+				return true;
+			}
+		}
+
+		return false;
+	});
 }
 
 inline uint32_t map_nt_to_unicorn_protection(const uint32_t nt_protection)

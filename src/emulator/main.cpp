@@ -132,7 +132,7 @@ namespace
 		auto& export_directory_entry = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
 		if (export_directory_entry.VirtualAddress == 0 || export_directory_entry.Size == 0)
 		{
-			return {};
+			return binary;
 		}
 
 		const auto* export_directory = reinterpret_cast<const IMAGE_EXPORT_DIRECTORY*>(ptr + export_directory_entry.

@@ -243,6 +243,61 @@ namespace
 		uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_SUCCESS);
 	}
 
+	void handle_NtAllocateVirtualMemory(const unicorn& uc)
+	{
+		const auto process_handle = uc.reg(UC_X86_REG_R10);
+		const unicorn_object<uint64_t> base_address{uc, uc.reg(UC_X86_REG_RDX)};
+		const unicorn_object<uint64_t> bytes_to_allocate{uc, uc.reg(UC_X86_REG_R9)};
+		//const auto allocation_type = uc.reg<uint32_t>(UC_X86_REG_R9D);
+		const auto page_protection = static_cast<uint32_t>(uc.read_stack(6));
+
+		if (process_handle != ~0ULL)
+		{
+			uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_NOT_IMPLEMENTED);
+			return;
+		}
+
+		constexpr auto allocation_granularity = 0x10000;
+		const auto allocation_bytes = bytes_to_allocate.read();
+		//allocation_bytes = align_up(allocation_bytes, allocation_granularity);
+		//bytes_to_allocate.write(allocation_bytes);
+
+		const auto protection = map_nt_to_unicorn_protection(page_protection);
+
+		auto allocate_anywhere = false;
+		auto allocation_base = base_address.read();
+		if (!allocation_base)
+		{
+			allocate_anywhere = true;
+			allocation_base = allocation_granularity;
+		}
+		else if (is_memory_allocated(uc, allocation_base))
+		{
+			uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_SUCCESS);
+			return;
+		}
+
+		bool succeeded = false;
+
+		while (true)
+		{
+			succeeded = uc_mem_map(uc, allocation_base, allocation_bytes, protection) == UC_ERR_OK;
+			if (succeeded || !allocate_anywhere)
+			{
+				break;
+			}
+
+			allocation_base += allocation_granularity;
+		}
+
+		base_address.write(allocation_base);
+
+		uc.reg<uint64_t>(UC_X86_REG_RAX, succeeded
+			                                 ? STATUS_SUCCESS
+			                                 : STATUS_NOT_SUPPORTED // No idea what the correct code is
+		);
+	}
+
 	void handle_NtAllocateVirtualMemoryEx(const unicorn& uc)
 	{
 		const auto process_handle = uc.reg(UC_X86_REG_R10);
@@ -258,9 +313,9 @@ namespace
 		}
 
 		constexpr auto allocation_granularity = 0x10000;
-		auto allocation_bytes = bytes_to_allocate.read();
-		allocation_bytes = align_up(allocation_bytes, allocation_granularity);
-		bytes_to_allocate.write(allocation_bytes);
+		const auto allocation_bytes = bytes_to_allocate.read();
+		//allocation_bytes = align_up(allocation_bytes, allocation_granularity);
+		//bytes_to_allocate.write(allocation_bytes);
 
 		const auto protection = map_nt_to_unicorn_protection(page_protection);
 
@@ -270,6 +325,11 @@ namespace
 		{
 			allocate_anywhere = true;
 			allocation_base = allocation_granularity;
+		}
+		else if (is_memory_allocated(uc, allocation_base))
+		{
+			uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_SUCCESS);
+			return;
 		}
 
 		bool succeeded = false;
@@ -284,6 +344,31 @@ namespace
 
 			allocation_base += allocation_granularity;
 		}
+
+		base_address.write(allocation_base);
+
+		uc.reg<uint64_t>(UC_X86_REG_RAX, succeeded
+			                                 ? STATUS_SUCCESS
+			                                 : STATUS_NOT_SUPPORTED // No idea what the correct code is
+		);
+	}
+
+	void handle_NtFreeVirtualMemory(const unicorn& uc)
+	{
+		const auto process_handle = uc.reg(UC_X86_REG_R10);
+		const unicorn_object<uint64_t> base_address{uc, uc.reg(UC_X86_REG_RDX)};
+		const unicorn_object<uint64_t> bytes_to_allocate{uc, uc.reg(UC_X86_REG_R8)};
+
+		if (process_handle != ~0ULL)
+		{
+			uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_NOT_IMPLEMENTED);
+			return;
+		}
+
+		const auto allocation_base = base_address.read();
+		const auto allocation_size = bytes_to_allocate.read();
+
+		const auto succeeded = uc_mem_unmap(uc, allocation_base, allocation_size) == UC_ERR_OK;
 
 		uc.reg<uint64_t>(UC_X86_REG_RAX, succeeded
 			                                 ? STATUS_SUCCESS
@@ -305,6 +390,12 @@ void handle_syscall(const unicorn& uc, process_context& context)
 		{
 		case 0x12:
 			handle_NtOpenKey(uc);
+			break;
+		case 0x18:
+			handle_NtAllocateVirtualMemory(uc);
+			break;
+		case 0x1E:
+			handle_NtFreeVirtualMemory(uc);
 			break;
 		case 0x19:
 			handle_NtQueryProcessInformation(uc, context);
