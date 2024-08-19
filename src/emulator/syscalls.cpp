@@ -125,7 +125,7 @@ namespace
 		uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_SUCCESS);
 	}
 
-	void handle_NtQuerySystemInformation(const unicorn& uc, const process_context& context)
+	void handle_NtQuerySystemInformation(const unicorn& uc)
 	{
 		const auto info_class = uc.reg<uint32_t>(UC_X86_REG_R10D);
 		const auto system_information = uc.reg(UC_X86_REG_RDX);
@@ -175,7 +175,7 @@ namespace
 		uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_SUCCESS);
 	}
 
-	void handle_NtQueryProcessInformation(const unicorn& uc, const process_context& context)
+	void handle_NtQueryProcessInformation(const unicorn& uc)
 	{
 		const auto process_handle = uc.reg<uint64_t>(UC_X86_REG_R10);
 		const auto info_class = uc.reg<uint32_t>(UC_X86_REG_EDX);
@@ -398,7 +398,7 @@ void handle_syscall(const unicorn& uc, process_context& context)
 			handle_NtFreeVirtualMemory(uc);
 			break;
 		case 0x19:
-			handle_NtQueryProcessInformation(uc, context);
+			handle_NtQueryProcessInformation(uc);
 			break;
 		case 0x23:
 			handle_NtQueryVirtualMemory(uc, context);
@@ -407,7 +407,7 @@ void handle_syscall(const unicorn& uc, process_context& context)
 			handle_NtQueryPerformanceCounter(uc);
 			break;
 		case 0x36:
-			handle_NtQuerySystemInformation(uc, context);
+			handle_NtQuerySystemInformation(uc);
 			break;
 		case 0x48:
 			handle_NtCreateEvent(uc, context);

@@ -50,9 +50,10 @@ public:
 		return value;
 	}
 
-	template <typename T = uint64_t>
-	void reg(const int regid, const T& value) const
+	template <typename T = uint64_t, typename S>
+	void reg(const int regid, const S& maybe_value) const
 	{
+		T value = static_cast<T>(maybe_value);
 		e(uc_reg_write(this->uc_, regid, &value));
 	}
 
