@@ -62,6 +62,16 @@ namespace
 			return this->address_;
 		}
 
+		uint64_t size() const
+		{
+			return sizeof(T);
+		}
+
+		uint64_t end() const
+		{
+			return this->value() + this->size();
+		}
+
 		T* ptr() const
 		{
 			return reinterpret_cast<T*>(this->address_);
@@ -113,12 +123,10 @@ namespace
 		{
 		}
 
-		template <typename T>
-		unicorn_object<T> reserve()
+		uint64_t reserve(const uint64_t count, const uint64_t alignment = 1)
 		{
-			const auto alignment = alignof(T);
 			const auto potential_start = align_up(this->active_address_, alignment);
-			const auto potential_end = potential_start + sizeof(T);
+			const auto potential_end = potential_start + count;
 			const auto total_end = this->address_ + this->size_;
 
 			if (potential_end > total_end)
@@ -128,7 +136,41 @@ namespace
 
 			this->active_address_ = potential_end;
 
+			return potential_start;
+		}
+
+		template <typename T>
+		unicorn_object<T> reserve()
+		{
+			const auto potential_start = this->reserve(sizeof(T), alignof(T));
 			return unicorn_object<T>(*this->uc_, potential_start);
+		}
+
+		void make_unicode_string(UNICODE_STRING& result, const std::wstring_view str)
+		{
+			constexpr auto element_size = sizeof(str[0]);
+			constexpr auto required_alignment = alignof(decltype(str[0]));
+			const auto total_length = str.size() * element_size;
+
+			const auto string_buffer = this->reserve(total_length, required_alignment);
+
+			e(uc_mem_write(*this->uc_, string_buffer, str.data(), total_length));
+
+			result.Buffer = reinterpret_cast<PWCH>(string_buffer);
+			result.Length = static_cast<USHORT>(total_length);
+			result.MaximumLength = result.Length;
+		}
+
+		unicorn_object<UNICODE_STRING> make_unicode_string(const std::wstring_view str)
+		{
+			const auto unicode_string = this->reserve<UNICODE_STRING>();
+
+			unicode_string.access([&](UNICODE_STRING& unicode_str)
+			{
+				this->make_unicode_string(unicode_str, str);
+			});
+
+			return unicode_string;
 		}
 
 	private:
@@ -170,6 +212,14 @@ namespace
 				};
 			}
 
+			if (type == UC_HOOK_MEM_READ)
+			{
+				handler = +[](uc_engine*, const uc_mem_type /*type*/, const uint64_t address, const int size,
+				              const int64_t /*value*/, void* user_data)
+				{
+					(*static_cast<internal_function*>(user_data))(address, size);
+				};
+			}
 			e(uc_hook_add(*this->uc_, &this->hook_, type, handler, this->function_.get(), begin, end, args...));
 		}
 
@@ -421,7 +471,16 @@ namespace
 		{
 			peb.ImageBaseAddress = nullptr;
 			//peb.Ldr = context.ldr.ptr();
+			peb.ProcessHeap = nullptr;
+			peb.ProcessHeaps = nullptr;
 			peb.ProcessParameters = context.process_params.ptr();
+		});
+
+		context.process_params.access([&](RTL_USER_PROCESS_PARAMETERS& proc_params)
+		{
+			proc_params.Flags = 0x6001;
+			gs.make_unicode_string(proc_params.ImagePathName, L"C:\\Users\\mauri\\Desktop\\ConsoleApplication6.exe");
+			gs.make_unicode_string(proc_params.CommandLine, L"C:\\Users\\mauri\\Desktop\\ConsoleApplication6.exe");
 		});
 
 		/*context.ldr.access([&](PEB_LDR_DATA& ldr)
@@ -559,6 +618,11 @@ namespace
 		uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_NOT_SUPPORTED);
 	}
 
+	void handle_NtOpenKey(const unicorn& uc)
+	{
+		uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_NOT_SUPPORTED);
+	}
+
 	void handle_NtCreateEvent(const unicorn& uc, process_context& context)
 	{
 		const unicorn_object<uint64_t> event_handle{uc, uc.reg(UC_X86_REG_R10)};
@@ -641,6 +705,12 @@ namespace
 		const auto system_information_length = uc.reg<uint32_t>(UC_X86_REG_R8D);
 		const unicorn_object<uint32_t> return_length{uc, uc.reg(UC_X86_REG_R9)};
 
+		if (info_class == SystemFlushInformation)
+		{
+			uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_NOT_SUPPORTED);
+			return;
+		}
+
 		if (info_class != SystemBasicInformation)
 		{
 			printf("Unsupported system info class: %X\n", info_class);
@@ -674,6 +744,44 @@ namespace
 			basic_info.ActiveProcessorsAffinityMask = 0x0000000000000fff;
 			basic_info.NumberOfProcessors = 1;
 		});
+
+		uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_SUCCESS);
+	}
+
+	void handle_NtQueryProcessInformation(const unicorn& uc, const process_context& context)
+	{
+		const auto process_handle = uc.reg<uint64_t>(UC_X86_REG_R10);
+		const auto info_class = uc.reg<uint32_t>(UC_X86_REG_EDX);
+		const auto process_information = uc.reg(UC_X86_REG_R8);
+		const auto process_information_length = uc.reg<uint32_t>(UC_X86_REG_R9D);
+		const unicorn_object<uint32_t> return_length{uc, uc.read_stack(5)};
+
+		if (process_handle != ~0ULL)
+		{
+			uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_NOT_IMPLEMENTED);
+			return;
+		}
+
+		if (info_class != ProcessCookie)
+		{
+			printf("Unsupported process info class: %X\n", info_class);
+			uc.stop();
+			return;
+		}
+
+		if (return_length)
+		{
+			return_length.write(sizeof(uint32_t));
+		}
+
+		if (process_information_length != sizeof(uint32_t))
+		{
+			uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_BUFFER_OVERFLOW);
+			return;
+		}
+
+		const unicorn_object<uint32_t> info{uc, process_information};
+		info.write(0x01234567);
 
 		uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_SUCCESS);
 	}
@@ -730,6 +838,32 @@ namespace
 		(void)entry1;
 		(void)entry2;
 
+		std::vector<unicorn_hook> export_hooks{};
+
+
+		std::unordered_map<uint64_t, std::string> export_remap{};
+		for (const auto& exp : context.ntdll.exports)
+		{
+			export_remap.try_emplace(exp.second, exp.first);
+		}
+
+		for (const auto& exp : export_remap)
+		{
+			auto name = exp.second;
+			unicorn_hook hook(uc, UC_HOOK_CODE, exp.first, exp.first,
+			                  [n = std::move(name)](const unicorn& uc, const uint64_t address, const uint32_t)
+			                  {
+				                  printf("Executing function: %s (%llX)\n", n.c_str(), address);
+
+				                  if (n == "RtlImageNtHeaderEx")
+				                  {
+					                  printf("Base: %llX\n", uc.reg(UC_X86_REG_RDX));
+				                  }
+			                  });
+
+			export_hooks.emplace_back(std::move(hook));
+		}
+
 		unicorn_hook hook(uc, UC_HOOK_INSN, 0, std::numeric_limits<uint64_t>::max(),
 		                  [&](const unicorn&, const uint64_t address, const uint32_t /*size*/)
 		                  {
@@ -741,6 +875,12 @@ namespace
 			                  {
 				                  switch (syscall_id)
 				                  {
+				                  case 0x12:
+					                  handle_NtOpenKey(uc);
+					                  break;
+				                  case 0x19:
+					                  handle_NtQueryProcessInformation(uc, context);
+					                  break;
 				                  case 0x23:
 					                  handle_NtQueryVirtualMemory(uc, context);
 					                  break;
@@ -772,10 +912,34 @@ namespace
 			                  }
 		                  }, UC_X86_INS_SYSCALL);
 
-		unicorn_hook hook2(uc, UC_HOOK_CODE, 0, std::numeric_limits<uint64_t>::max(),
-		                   [](const unicorn&, const uint64_t address, const uint32_t /*size*/)
+		unicorn_hook hook3(uc, UC_HOOK_MEM_READ, context.peb.value(), context.peb.end(),
+		                   [&](const unicorn&, const uint64_t address, const uint32_t /*size*/)
 		                   {
-			                   printf("Inst: %llX\n", address);
+			                   printf("Read: %llX - %llX\n", address, address - context.peb.value());
+		                   });
+
+		unicorn_hook hook4(uc, UC_HOOK_MEM_READ, context.process_params.value(), context.process_params.end(),
+		                   [&](const unicorn&, const uint64_t address, const uint32_t /*size*/)
+		                   {
+			                   printf("Read2: %llX - %llX\n", address, address - context.process_params.value());
+		                   });
+
+
+		unicorn_hook hook2(uc, UC_HOOK_CODE, 0, std::numeric_limits<uint64_t>::max(),
+		                   [](const unicorn& uc, const uint64_t address, const uint32_t /*size*/)
+		                   {
+			                   /*static bool hit = false;
+			                   if (address == 0x01800D46DD)
+			                   {
+				                   hit = true;
+			                   }*/
+
+			                   //if (hit)
+			                   {
+				                   printf("Inst: %16llX - RAX: %16llX - RBX: %16llX - RCX: %16llX - RDX: %16llX\n", address,
+				                          uc.reg(UC_X86_REG_RAX), uc.reg(UC_X86_REG_RBX), uc.reg(UC_X86_REG_RCX),
+				                          uc.reg(UC_X86_REG_RDX));
+			                   }
 		                   });
 
 		const auto err = uc_emu_start(uc, entry1, 0, 0, 0);
