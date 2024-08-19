@@ -667,6 +667,12 @@ namespace
 			return;
 		}
 
+		if (info_class == MemoryWorkingSetExInformation)
+		{
+			uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_NOT_IMPLEMENTED);
+			return;
+		}
+
 		if (info_class != MemoryImageInformation)
 		{
 			printf("Unsupported memory info class: %X\n", info_class);
@@ -716,7 +722,7 @@ namespace
 			return;
 		}
 
-		if (info_class != SystemBasicInformation)
+		if (info_class != SystemBasicInformation && info_class != SystemEmulationBasicInformation)
 		{
 			printf("Unsupported system info class: %X\n", info_class);
 			uc.stop();
@@ -941,9 +947,12 @@ namespace
 
 			                   //if (hit)
 			                   {
-				                   printf("Inst: %16llX - RAX: %16llX - RBX: %16llX - RCX: %16llX - RDX: %16llX - R8: %16llX - R9: %16llX - RDI: %16llX - RSI: %16llX\n", address,
-				                          uc.reg(UC_X86_REG_RAX), uc.reg(UC_X86_REG_RBX), uc.reg(UC_X86_REG_RCX),
-				                          uc.reg(UC_X86_REG_RDX), uc.reg(UC_X86_REG_R8), uc.reg(UC_X86_REG_R9), uc.reg(UC_X86_REG_RDI), uc.reg(UC_X86_REG_RSI));
+				                   printf(
+					                   "Inst: %16llX - RAX: %16llX - RBX: %16llX - RCX: %16llX - RDX: %16llX - R8: %16llX - R9: %16llX - RDI: %16llX - RSI: %16llX\n",
+					                   address,
+					                   uc.reg(UC_X86_REG_RAX), uc.reg(UC_X86_REG_RBX), uc.reg(UC_X86_REG_RCX),
+					                   uc.reg(UC_X86_REG_RDX), uc.reg(UC_X86_REG_R8), uc.reg(UC_X86_REG_R9),
+					                   uc.reg(UC_X86_REG_RDI), uc.reg(UC_X86_REG_RSI));
 			                   }
 		                   });
 
