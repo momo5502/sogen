@@ -31,6 +31,7 @@ struct process_context
 	unicorn_object<TEB> teb{};
 	unicorn_object<PEB> peb{};
 	unicorn_object<RTL_USER_PROCESS_PARAMETERS> process_params{};
+	unicorn_object<KUSER_SHARED_DATA> kusd{};
 
 	mapped_binary executable{};
 	mapped_binary ntdll{};

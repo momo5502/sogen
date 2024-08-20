@@ -6,6 +6,9 @@
 #include "process_context.hpp"
 #include "syscalls.hpp"
 
+#include "reflect_extension.hpp"
+#include <reflect>
+
 #define GS_SEGMENT_ADDR 0x6000000ULL
 #define GS_SEGMENT_SIZE (20 << 20)  // 20 MB
 
@@ -39,7 +42,7 @@ namespace
 		return {uc, segment_base, size};
 	}
 
-	void setup_kusd(const unicorn& uc)
+	unicorn_object<KUSER_SHARED_DATA> setup_kusd(const unicorn& uc)
 	{
 		uce(uc_mem_map(uc, KUSD_ADDRESS, page_align_up(sizeof(KUSER_SHARED_DATA)), UC_PROT_READ));
 
@@ -57,6 +60,8 @@ namespace
 
 			// ...
 		});
+
+		return kusd_object;
 	}
 
 	mapped_binary map_module(const unicorn& uc, const std::vector<uint8_t>& module_data,
@@ -157,10 +162,12 @@ namespace
 		return binary;
 	}
 
-	process_context setup_teb_and_peb(const unicorn& uc)
+	process_context setup_context(const unicorn& uc)
 	{
 		setup_stack(uc, STACK_ADDRESS, STACK_SIZE);
 		process_context context{};
+
+		context.kusd = setup_kusd(uc);
 
 		context.gs_segment = setup_gs_segment(uc, GS_SEGMENT_ADDR, GS_SEGMENT_SIZE);
 
@@ -182,7 +189,6 @@ namespace
 		context.peb.access([&](PEB& peb)
 		{
 			peb.ImageBaseAddress = nullptr;
-			//peb.Ldr = context.ldr.ptr();
 			peb.ProcessHeap = nullptr;
 			peb.ProcessHeaps = nullptr;
 			peb.ProcessParameters = context.process_params.ptr();
@@ -194,18 +200,6 @@ namespace
 			gs.make_unicode_string(proc_params.ImagePathName, L"C:\\Users\\mauri\\Desktop\\ConsoleApplication6.exe");
 			gs.make_unicode_string(proc_params.CommandLine, L"C:\\Users\\mauri\\Desktop\\ConsoleApplication6.exe");
 		});
-
-		/*context.ldr.access([&](PEB_LDR_DATA& ldr)
-		{
-			ldr.InLoadOrderModuleList.Flink = &context.ldr.ptr()->InLoadOrderModuleList;
-			ldr.InLoadOrderModuleList.Blink = ldr.InLoadOrderModuleList.Flink;
-
-			ldr.InMemoryOrderModuleList.Flink = &context.ldr.ptr()->InMemoryOrderModuleList;
-			ldr.InMemoryOrderModuleList.Blink = ldr.InMemoryOrderModuleList.Flink;
-
-			ldr.InInitializationOrderModuleList.Flink = &context.ldr.ptr()->InInitializationOrderModuleList;
-			ldr.InInitializationOrderModuleList.Blink = ldr.InInitializationOrderModuleList.Flink;
-		});*/
 
 		return context;
 	}
@@ -222,12 +216,80 @@ namespace
 		return map_module(uc, data, file.generic_string());
 	}
 
+	template <typename T>
+	class type_info
+	{
+	public:
+		type_info()
+		{
+			this->type_name_ = reflect::type_name<T>();
+
+			reflect::for_each<T>([this](auto I)
+			{
+				const auto member_name = reflect::member_name<I, T>();
+				const auto member_offset = reflect::offset_of<I, T>();
+
+				this->members_[member_offset] = member_name;
+			});
+		}
+
+		std::string get_member_name(const size_t offset) const
+		{
+			size_t last_offset{};
+			std::string_view last_member{};
+
+			for (const auto& member : this->members_)
+			{
+				if (offset == member.first)
+				{
+					return member.second;
+				}
+
+				if (offset < member.first)
+				{
+					const auto diff = offset - last_offset;
+					return std::string(last_member) + "+" + std::to_string(diff);
+				}
+
+				last_offset = member.first;
+				last_member = member.second;
+			}
+
+			return "<N/A>";
+		}
+
+		const std::string& get_type_name() const
+		{
+			return this->type_name_;
+		}
+
+	private:
+		std::string type_name_{};
+		std::map<size_t, std::string> members_{};
+	};
+
+	template <typename T>
+	unicorn_hook watch_object(const unicorn& uc, unicorn_object<T> object)
+	{
+		type_info<T> info{};
+
+		return {
+			uc, UC_HOOK_MEM_READ, object.value(), object.end(),
+			[i = std::move(info), o = std::move(object)](const unicorn&, const uint64_t address,
+			                                             const uint32_t /*size*/)
+			{
+				const auto offset = address - o.value();
+				printf("%s: %llX (%s)\n", i.get_type_name().c_str(), offset,
+				       i.get_member_name(offset).c_str());
+			}
+		};
+	}
+
 	void run()
 	{
 		const unicorn uc{UC_ARCH_X86, UC_MODE_64};
 
-		setup_kusd(uc);
-		auto context = setup_teb_and_peb(uc);
+		auto context = setup_context(uc);
 
 		context.executable = map_file(uc, R"(C:\Users\mauri\Desktop\ConsoleApplication6.exe)");
 
@@ -276,24 +338,16 @@ namespace
 			                  handle_syscall(uc, context);
 		                  }, UC_X86_INS_SYSCALL);
 
-		unicorn_hook hook3(uc, UC_HOOK_MEM_READ, context.peb.value(), context.peb.end(),
-		                   [&](const unicorn&, const uint64_t address, const uint32_t /*size*/)
-		                   {
-			                   printf("Read: %llX - %llX\n", address, address - context.peb.value());
-		                   });
-
-		unicorn_hook hook4(uc, UC_HOOK_MEM_READ, context.process_params.value(), context.process_params.end(),
-		                   [&](const unicorn&, const uint64_t address, const uint32_t /*size*/)
-		                   {
-			                   printf("Read2: %llX - %llX\n", address, address - context.process_params.value());
-		                   });
-
+		export_hooks.emplace_back(watch_object(uc, context.teb));
+		export_hooks.emplace_back(watch_object(uc, context.peb));
+		export_hooks.emplace_back(watch_object(uc, context.process_params));
+		export_hooks.emplace_back(watch_object(uc, context.kusd));
 
 		unicorn_hook hook2(uc, UC_HOOK_CODE, 0, std::numeric_limits<uint64_t>::max(),
 		                   [](const unicorn& uc, const uint64_t address, const uint32_t /*size*/)
 		                   {
-			                   /*static bool hit = false;
-			                   if (address == 0x01800D46DD)
+			                   //static bool hit = false;
+			                   /*if (address == 0x01800D46DD)
 			                   {
 				                   hit = true;
 			                   }*/
