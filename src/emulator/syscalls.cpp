@@ -138,10 +138,36 @@ namespace
 		const unicorn_object<uint32_t> return_length{uc, uc.reg(UC_X86_REG_R9)};
 
 		if (info_class == SystemFlushInformation
-			|| info_class == SystemNumaProcessorMap
 			|| info_class == SystemHypervisorSharedPageInformation)
 		{
 			uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_NOT_SUPPORTED);
+			return;
+		}
+
+		if (info_class == SystemNumaProcessorMap)
+		{
+			if (return_length)
+			{
+				return_length.write(sizeof(SYSTEM_NUMA_INFORMATION));
+			}
+
+			if (system_information_length != sizeof(SYSTEM_NUMA_INFORMATION))
+			{
+				uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_BUFFER_TOO_SMALL);
+				return;
+			}
+
+			const unicorn_object<SYSTEM_NUMA_INFORMATION> info_obj{uc, system_information};
+
+			info_obj.access([&](SYSTEM_NUMA_INFORMATION& info)
+			{
+				memset(&info, 0, sizeof(info));
+				info.ActiveProcessorsGroupAffinity->Mask = 0xFFF;
+				info.AvailableMemory[0] = 0xFFF;
+				info.Pad[0] = 0xFFF;
+			});
+
+			uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_SUCCESS);
 			return;
 		}
 
@@ -159,7 +185,7 @@ namespace
 
 		if (system_information_length != sizeof(SYSTEM_BASIC_INFORMATION))
 		{
-			uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_BUFFER_OVERFLOW);
+			uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_BUFFER_TOO_SMALL);
 			return;
 		}
 
@@ -211,7 +237,7 @@ namespace
 
 		if (system_information_length != sizeof(SYSTEM_BASIC_INFORMATION))
 		{
-			uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_BUFFER_OVERFLOW);
+			uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_BUFFER_TOO_SMALL);
 			return;
 		}
 
