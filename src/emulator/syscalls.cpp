@@ -44,6 +44,11 @@ namespace
 		uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_NOT_SUPPORTED);
 	}
 
+	void handle_NtTraceEvent(const unicorn& uc)
+	{
+		uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_NOT_SUPPORTED);
+	}
+
 	void handle_NtCreateEvent(const unicorn& uc, process_context& context)
 	{
 		const unicorn_object<uint64_t> event_handle{uc, uc.reg(UC_X86_REG_R10)};
@@ -132,7 +137,9 @@ namespace
 		const auto system_information_length = uc.reg<uint32_t>(UC_X86_REG_R8D);
 		const unicorn_object<uint32_t> return_length{uc, uc.reg(UC_X86_REG_R9)};
 
-		if (info_class == SystemFlushInformation)
+		if (info_class == SystemFlushInformation
+			|| info_class == SystemNumaProcessorMap
+			|| info_class == SystemHypervisorSharedPageInformation)
 		{
 			uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_NOT_SUPPORTED);
 			return;
@@ -141,6 +148,58 @@ namespace
 		if (info_class != SystemBasicInformation && info_class != SystemEmulationBasicInformation)
 		{
 			printf("Unsupported system info class: %X\n", info_class);
+			uc.stop();
+			return;
+		}
+
+		if (return_length)
+		{
+			return_length.write(sizeof(SYSTEM_BASIC_INFORMATION));
+		}
+
+		if (system_information_length != sizeof(SYSTEM_BASIC_INFORMATION))
+		{
+			uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_BUFFER_OVERFLOW);
+			return;
+		}
+
+		const unicorn_object<SYSTEM_BASIC_INFORMATION> info{uc, system_information};
+
+		info.access([&](SYSTEM_BASIC_INFORMATION& basic_info)
+		{
+			basic_info.Reserved = 0;
+			basic_info.TimerResolution = 0x0002625a;
+			basic_info.PageSize = 0x1000;
+			basic_info.LowestPhysicalPageNumber = 0x00000001;
+			basic_info.HighestPhysicalPageNumber = 0x00c9c7ff;
+			basic_info.AllocationGranularity = 0x10000;
+			basic_info.MinimumUserModeAddress = 0x0000000000010000;
+			basic_info.MaximumUserModeAddress = 0x00007ffffffeffff;
+			basic_info.ActiveProcessorsAffinityMask = 0x0000000000000fff;
+			basic_info.NumberOfProcessors = 1;
+		});
+
+		uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_SUCCESS);
+	}
+
+	void handle_NtQuerySystemInformationEx(const unicorn& uc)
+	{
+		const auto info_class = uc.reg<uint32_t>(UC_X86_REG_R10D);
+		const auto system_information = uc.reg(UC_X86_REG_R8);
+		const auto system_information_length = uc.reg<uint32_t>(UC_X86_REG_R9D);
+		const unicorn_object<uint32_t> return_length{uc, uc.read_stack(5)};
+
+		if (info_class == SystemFlushInformation
+			|| info_class == SystemFeatureConfigurationInformation
+			|| info_class == SystemFeatureConfigurationSectionInformation)
+		{
+			uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_NOT_SUPPORTED);
+			return;
+		}
+
+		if (info_class != SystemBasicInformation && info_class != SystemEmulationBasicInformation)
+		{
+			printf("Unsupported system info ex class: %X\n", info_class);
 			uc.stop();
 			return;
 		}
@@ -415,11 +474,17 @@ void handle_syscall(const unicorn& uc, process_context& context)
 		case 0x50:
 			handle_NtProtectVirtualMemory(uc);
 			break;
+		case 0x5E:
+			handle_NtTraceEvent(uc);
+			break;
 		case 0x78:
 			handle_NtAllocateVirtualMemoryEx(uc);
 			break;
 		case 0x11A:
 			handle_NtManageHotPatch(uc);
+			break;
+		case 0x16E:
+			handle_NtQuerySystemInformationEx(uc);
 			break;
 		default:
 			printf("Unhandled syscall: %X\n", syscall_id);
