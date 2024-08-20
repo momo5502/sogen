@@ -43,21 +43,21 @@ public:
 	{
 		T obj{};
 
-		e(uc_mem_read(*this->uc_, this->address_, &obj, sizeof(obj)));
+		uce(uc_mem_read(*this->uc_, this->address_, &obj, sizeof(obj)));
 
 		return obj;
 	}
 
 	void write(const T& value) const
 	{
-		e(uc_mem_write(*this->uc_, this->address_, &value, sizeof(value)));
+		uce(uc_mem_write(*this->uc_, this->address_, &value, sizeof(value)));
 	}
 
 	template <typename F>
 	void access(const F& accessor) const
 	{
 		T obj{};
-		e(uc_mem_read(*this->uc_, this->address_, &obj, sizeof(obj)));
+		uce(uc_mem_read(*this->uc_, this->address_, &obj, sizeof(obj)));
 
 		accessor(obj);
 
@@ -113,7 +113,7 @@ public:
 
 		const auto string_buffer = this->reserve(total_length, required_alignment);
 
-		e(uc_mem_write(*this->uc_, string_buffer, str.data(), total_length));
+		uce(uc_mem_write(*this->uc_, string_buffer, str.data(), total_length));
 
 		result.Buffer = reinterpret_cast<PWCH>(string_buffer);
 		result.Length = static_cast<USHORT>(total_length);
@@ -179,7 +179,7 @@ public:
 					(*static_cast<internal_function*>(user_data))(address, size);
 				};
 		}
-		e(uc_hook_add(*this->uc_, &this->hook_, type, handler, this->function_.get(), begin, end, args...));
+		uce(uc_hook_add(*this->uc_, &this->hook_, type, handler, this->function_.get(), begin, end, args...));
 	}
 
 	unicorn_hook(const unicorn_hook&) = delete;

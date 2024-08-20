@@ -20,10 +20,10 @@ namespace
 {
 	void setup_stack(const unicorn& uc, uint64_t stack_base, size_t stack_size)
 	{
-		e(uc_mem_map(uc, stack_base, stack_size, UC_PROT_READ | UC_PROT_WRITE));
+		uce(uc_mem_map(uc, stack_base, stack_size, UC_PROT_READ | UC_PROT_WRITE));
 
 		const uint64_t stack_end = stack_base + stack_size;
-		e(uc_reg_write(uc, UC_X86_REG_RSP, &stack_end));
+		uce(uc_reg_write(uc, UC_X86_REG_RSP, &stack_end));
 	}
 
 	unicorn_allocator setup_gs_segment(const unicorn& uc, const uint64_t segment_base, const uint64_t size)
@@ -33,15 +33,15 @@ namespace
 			segment_base
 		};
 
-		e(uc_reg_write(uc, UC_X86_REG_MSR, value.data()));
-		e(uc_mem_map(uc, segment_base, size, UC_PROT_READ | UC_PROT_WRITE));
+		uce(uc_reg_write(uc, UC_X86_REG_MSR, value.data()));
+		uce(uc_mem_map(uc, segment_base, size, UC_PROT_READ | UC_PROT_WRITE));
 
 		return {uc, segment_base, size};
 	}
 
 	void setup_kusd(const unicorn& uc)
 	{
-		e(uc_mem_map(uc, KUSD_ADDRESS, page_align_up(sizeof(KUSER_SHARED_DATA)), UC_PROT_READ));
+		uce(uc_mem_map(uc, KUSD_ADDRESS, page_align_up(sizeof(KUSER_SHARED_DATA)), UC_PROT_READ));
 
 		const unicorn_object<KUSER_SHARED_DATA> kusd_object{uc, KUSD_ADDRESS};
 		kusd_object.access([](KUSER_SHARED_DATA& kusd)
@@ -92,7 +92,7 @@ namespace
 
 		printf("Mapping %s at %llX\n", name.c_str(), binary.image_base);
 
-		e(uc_mem_write(uc, binary.image_base, ptr, optional_header.SizeOfHeaders));
+		uce(uc_mem_write(uc, binary.image_base, ptr, optional_header.SizeOfHeaders));
 
 		const std::span sections(IMAGE_FIRST_SECTION(nt_headers), nt_headers->FileHeader.NumberOfSections);
 
@@ -105,7 +105,7 @@ namespace
 				const void* source_ptr = ptr + section.PointerToRawData;
 
 				const auto size_of_data = std::min(section.SizeOfRawData, section.Misc.VirtualSize);
-				e(uc_mem_write(uc, target_ptr, source_ptr, size_of_data));
+				uce(uc_mem_write(uc, target_ptr, source_ptr, size_of_data));
 			}
 			uint32_t permissions = UC_PROT_NONE;
 
@@ -126,7 +126,7 @@ namespace
 
 			const auto size_of_section = page_align_up(std::max(section.SizeOfRawData, section.Misc.VirtualSize));
 
-			e(uc_mem_protect(uc, target_ptr, size_of_section, permissions));
+			uce(uc_mem_protect(uc, target_ptr, size_of_section, permissions));
 		}
 
 		auto& export_directory_entry = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
@@ -320,13 +320,13 @@ namespace
 			uint64_t rip{};
 			uc_reg_read(uc, UC_X86_REG_RIP, &rip);
 			printf("Emulation failed at: %llX\n", rip);
-			e(err);
+			uce(err);
 		}
 
 		printf("Emulation done. Below is the CPU context\n");
 
 		uint64_t rax{};
-		e(uc_reg_read(uc, UC_X86_REG_RAX, &rax));
+		uce(uc_reg_read(uc, UC_X86_REG_RAX, &rax));
 
 		printf(">>> RAX = 0x%llX\n", rax);
 	}
@@ -339,9 +339,9 @@ int main(int /*argc*/, char** /*argv*/)
 		run();
 		return 0;
 	}
-	catch (std::exception& e)
+	catch (std::exception& uce)
 	{
-		puts(e.what());
+		puts(uce.what());
 
 #ifdef _WIN32
 		//MessageBoxA(nullptr, e.what(), "ERROR", MB_ICONERROR);

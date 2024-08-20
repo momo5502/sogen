@@ -19,7 +19,7 @@ inline void ThrowIfUnicornError(const uc_err error_code)
 	}
 }
 
-#define e ThrowIfUnicornError
+#define uce ThrowIfUnicornError
 
 class unicorn
 {
@@ -46,7 +46,7 @@ public:
 	T reg(const int regid) const
 	{
 		T value{};
-		e(uc_reg_read(this->uc_, regid, &value));
+		uce(uc_reg_read(this->uc_, regid, &value));
 		return value;
 	}
 
@@ -54,12 +54,12 @@ public:
 	void reg(const int regid, const S& maybe_value) const
 	{
 		T value = static_cast<T>(maybe_value);
-		e(uc_reg_write(this->uc_, regid, &value));
+		uce(uc_reg_write(this->uc_, regid, &value));
 	}
 
 	void stop() const
 	{
-		e(uc_emu_stop(this->uc_));
+		uce(uc_emu_stop(this->uc_));
 	}
 
 	uint64_t read_stack(const size_t index) const
@@ -67,7 +67,7 @@ public:
 		uint64_t result{};
 		const auto rsp = this->reg(UC_X86_REG_RSP);
 
-		e(uc_mem_read(this->uc_, rsp + (index * sizeof(result)), &result, sizeof(result)));
+		uce(uc_mem_read(this->uc_, rsp + (index * sizeof(result)), &result, sizeof(result)));
 		return result;
 	}
 

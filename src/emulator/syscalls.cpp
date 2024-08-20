@@ -297,7 +297,7 @@ namespace
 		old_protection.write(current_protection);
 
 		const auto requested_protection = map_nt_to_unicorn_protection(protection);
-		e(uc_mem_protect(uc, address, size, requested_protection));
+		uce(uc_mem_protect(uc, address, size, requested_protection));
 
 		uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_SUCCESS);
 	}

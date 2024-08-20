@@ -38,7 +38,7 @@ T access_memory_regions(const unicorn& uc, const F& accessor)
 	uint32_t count{};
 	uc_mem_region* regions{};
 
-	e(uc_mem_regions(uc, &regions, &count));
+	uce(uc_mem_regions(uc, &regions, &count));
 	const auto _ = utils::finally([&]
 	{
 		uc_free(regions);
