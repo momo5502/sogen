@@ -44,6 +44,11 @@ namespace
 		uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_NOT_SUPPORTED);
 	}
 
+	void handle_NtCreateIoCompletion(const unicorn& uc)
+	{
+		uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_NOT_SUPPORTED);
+	}
+
 	void handle_NtTraceEvent(const unicorn& uc)
 	{
 		uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_NOT_SUPPORTED);
@@ -211,15 +216,44 @@ namespace
 	void handle_NtQuerySystemInformationEx(const unicorn& uc)
 	{
 		const auto info_class = uc.reg<uint32_t>(UC_X86_REG_R10D);
-		const auto system_information = uc.reg(UC_X86_REG_R8);
-		const auto system_information_length = uc.reg<uint32_t>(UC_X86_REG_R9D);
-		const unicorn_object<uint32_t> return_length{uc, uc.read_stack(5)};
+		const auto input_buffer = uc.reg(UC_X86_REG_RDX);
+		const auto input_buffer_length = uc.reg<uint32_t>(UC_X86_REG_R8D);
+		const auto system_information = uc.reg(UC_X86_REG_R9);
+		const auto system_information_length = static_cast<uint32_t>(uc.read_stack(5));
+		const unicorn_object<uint32_t> return_length{uc, uc.read_stack(6)};
 
 		if (info_class == SystemFlushInformation
 			|| info_class == SystemFeatureConfigurationInformation
 			|| info_class == SystemFeatureConfigurationSectionInformation)
 		{
 			uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_NOT_SUPPORTED);
+			return;
+		}
+
+		if (info_class == SystemLogicalProcessorAndGroupInformation)
+		{
+			void* buffer = calloc(1, input_buffer_length);
+			void* res_buff = calloc(1, system_information_length);
+			uc_mem_read(uc, input_buffer, buffer, input_buffer_length);
+
+			uint64_t code = 0;
+
+			return_length.access([&](uint32_t& len)
+			{
+				code = NtQuerySystemInformationEx((SYSTEM_INFORMATION_CLASS)info_class, buffer, input_buffer_length,
+				                                  res_buff,
+				                                  system_information_length, (ULONG*)&len);
+			});
+
+			if (code == 0)
+			{
+				uc_mem_write(uc, system_information, res_buff, return_length.read());
+			}
+
+			free(buffer);
+			free(res_buff);
+
+			uc.reg<uint64_t>(UC_X86_REG_RAX, code);
 			return;
 		}
 
@@ -505,6 +539,9 @@ void handle_syscall(const unicorn& uc, process_context& context)
 			break;
 		case 0x78:
 			handle_NtAllocateVirtualMemoryEx(uc);
+			break;
+		case 0xB2:
+			handle_NtCreateIoCompletion(uc);
 			break;
 		case 0x11A:
 			handle_NtManageHotPatch(uc);
