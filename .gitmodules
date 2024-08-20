@@ -6,3 +6,6 @@
 [submodule "deps/phnt"]
 	path = deps/phnt
 	url = https://github.com/winsiderss/phnt.git
+[submodule "deps/reflect"]
+	path = deps/reflect
+	url = https://github.com/qlibs/reflect.git

@@ -16,6 +16,7 @@ target_link_libraries(emulator PRIVATE
   common
   unicorn
   phnt::phnt
+  reflect
 )
 
 set_property(GLOBAL PROPERTY VS_STARTUP_PROJECT emulator)
