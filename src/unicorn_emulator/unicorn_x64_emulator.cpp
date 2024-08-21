@@ -148,6 +148,7 @@ namespace unicorn
 
 			~unicorn_x64_emulator() override
 			{
+				this->hooks_.clear();
 				uc_close(this->uc_);
 			}
 
@@ -194,6 +195,11 @@ namespace unicorn
 			void map_memory(const uint64_t address, const size_t size, memory_permission permissions) override
 			{
 				uce(uc_mem_map(*this, address, size, static_cast<uint32_t>(permissions)));
+			}
+
+			bool try_map_memory(const uint64_t address, const size_t size, memory_permission permissions) override
+			{
+				return uc_mem_map(*this, address, size, static_cast<uint32_t>(permissions)) == UC_ERR_OK;
 			}
 
 			void unmap_memory(const uint64_t address, const size_t size) override

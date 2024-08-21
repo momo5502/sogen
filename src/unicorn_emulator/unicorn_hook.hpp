@@ -53,9 +53,10 @@ namespace unicorn
 
 				this->uc_ = obj.uc_;
 				this->hook_ = obj.hook_;
+
+				obj.hook_ = {};
 				obj.uc_ = {};
 			}
-
 
 			return *this;
 		}

@@ -34,6 +34,7 @@ public:
 	virtual void read_raw_register(int reg, void* value, size_t size) = 0;
 	virtual void write_raw_register(int reg, const void* value, size_t size) = 0;
 
+	virtual bool try_map_memory(uint64_t address, size_t size, memory_permission permissions) = 0;
 	virtual void map_memory(uint64_t address, size_t size, memory_permission permissions) = 0;
 	virtual void unmap_memory(uint64_t address, size_t size) = 0;
 

@@ -400,21 +400,13 @@ namespace
 
 		while (true)
 		{
-			try
+			succeeded = emu.try_map_memory(allocation_base, allocation_bytes, protection);
+			if (succeeded || !allocate_anywhere)
 			{
-				emu.map_memory(allocation_base, allocation_bytes, protection);
-				succeeded = true;
 				break;
 			}
-			catch (...)
-			{
-				if (!allocate_anywhere)
-				{
-					break;
-				}
 
-				allocation_base += allocation_granularity;
-			}
+			allocation_base += allocation_granularity;
 		}
 
 		base_address.write(allocation_base);
@@ -463,22 +455,13 @@ namespace
 
 		while (true)
 		{
-			try
+			succeeded = emu.try_map_memory(allocation_base, allocation_bytes, protection);
+			if (succeeded || !allocate_anywhere)
 			{
-				emu.map_memory(allocation_base, allocation_bytes, protection);
-				succeeded = true;
 				break;
 			}
-			catch (...)
-			{
-				succeeded = false;
-				if (!allocate_anywhere)
-				{
-					break;
-				}
 
-				allocation_base += allocation_granularity;
-			}
+			allocation_base += allocation_granularity;
 		}
 
 		base_address.write(allocation_base);
