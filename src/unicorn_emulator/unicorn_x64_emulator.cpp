@@ -1,13 +1,10 @@
 #define UNICORN_EMULATOR_IMPL
 #include "unicorn_x64_emulator.hpp"
 
-#define NOMINMAX
-#include <span>
+#include "unicorn_memory_regions.hpp"
+#include "unicorn_hook.hpp"
 
-#pragma warning(push)
-#pragma warning(disable: 4505)
-#include <unicorn/unicorn.h>
-#pragma warning(pop)
+#include "function_wrapper.hpp"
 
 namespace unicorn
 {
@@ -19,30 +16,6 @@ namespace unicorn
 		static_assert(static_cast<uint32_t>(memory_permission::all) == UC_PROT_ALL);
 
 		static_assert(static_cast<uint32_t>(x64_register::end) == UC_X86_REG_ENDING);
-
-		struct unicorn_error : std::runtime_error
-		{
-			unicorn_error(const uc_err error_code)
-				: std::runtime_error(uc_strerror(error_code))
-				  , code(error_code)
-			{
-			}
-
-			uc_err code{};
-		};
-
-		void throw_if_unicorn_error(const uc_err error_code)
-		{
-			if (error_code != UC_ERR_OK)
-			{
-				throw unicorn_error(error_code);
-			}
-		}
-
-		void uce(const uc_err error_code)
-		{
-			throw_if_unicorn_error(error_code);
-		}
 
 		uc_x86_insn map_hookable_instruction(const x64_hookable_instructions instruction)
 		{
@@ -70,154 +43,12 @@ namespace unicorn
 			}
 		}
 
-		class unicorn_memory_regions
-		{
-		public:
-			unicorn_memory_regions(uc_engine* uc)
-			{
-				uce(uc_mem_regions(uc, &this->regions_, &this->count_));
-			}
-
-			unicorn_memory_regions(unicorn_memory_regions&&) = delete;
-			unicorn_memory_regions(const unicorn_memory_regions&) = delete;
-			unicorn_memory_regions& operator=(unicorn_memory_regions&&) = delete;
-			unicorn_memory_regions& operator=(const unicorn_memory_regions&) = delete;
-
-			~unicorn_memory_regions()
-			{
-				if (regions_)
-				{
-					uc_free(regions_);
-				}
-			}
-
-			std::span<uc_mem_region> get_span() const
-			{
-				return {this->regions_, this->count_};
-			}
-
-		private:
-			uint32_t count_{};
-			uc_mem_region* regions_{};
-		};
-
-		struct object
-		{
-			object() = default;
-			virtual ~object() = default;
-
-			object(object&&) = default;
-			object(const object&) = default;
-			object& operator=(object&&) = default;
-			object& operator=(const object&) = default;
-		};
-
 		struct hook_object : object
 		{
 			emulator_hook* as_opaque_hook()
 			{
 				return reinterpret_cast<emulator_hook*>(this);
 			}
-		};
-
-		class unicorn_hook
-		{
-		public:
-			unicorn_hook() = default;
-
-			unicorn_hook(uc_engine* uc)
-				: unicorn_hook(uc, {})
-			{
-			}
-
-			unicorn_hook(uc_engine* uc, const uc_hook hook)
-				: uc_(uc)
-				  , hook_(hook)
-			{
-			}
-
-			~unicorn_hook()
-			{
-				release();
-			}
-
-			unicorn_hook(const unicorn_hook&) = delete;
-			unicorn_hook& operator=(const unicorn_hook&) = delete;
-
-
-			unicorn_hook(unicorn_hook&& obj) noexcept
-			{
-				this->operator=(std::move(obj));
-			}
-
-			uc_hook* make_reference()
-			{
-				if (!this->uc_)
-				{
-					throw std::runtime_error("Cannot make reference on default constructed hook");
-				}
-
-				this->release();
-				return &this->hook_;
-			}
-
-			unicorn_hook& operator=(unicorn_hook&& obj) noexcept
-			{
-				if (this != &obj)
-				{
-					this->release();
-
-					this->uc_ = obj.uc_;
-					this->hook_ = obj.hook_;
-					obj.uc_ = {};
-				}
-
-
-				return *this;
-			}
-
-			void release()
-			{
-				if (this->hook_ && this->uc_)
-				{
-					uc_hook_del(this->uc_, this->hook_);
-					this->hook_ = {};
-				}
-			}
-
-		private:
-			uc_engine* uc_{};
-			uc_hook hook_{};
-		};
-
-		template <typename ReturnType, typename... Args>
-		class function_wrapper : public object
-		{
-		public:
-			using user_data_pointer = void*;
-			using c_function_type = ReturnType(Args..., user_data_pointer);
-			using functor_type = std::function<ReturnType(Args...)>;
-
-			function_wrapper(functor_type functor)
-				: functor_(std::make_unique<functor_type>(std::move(functor)))
-			{
-			}
-
-			c_function_type* get_function()
-			{
-				return +[](Args... args, user_data_pointer user_data) -> ReturnType
-				{
-					return (*static_cast<functor_type*>(user_data))(std::forward<Args>(args)...);
-				};
-			}
-
-			user_data_pointer get_user_data() const
-			{
-				return this->functor_.get();
-			}
-
-		private:
-			std::unique_ptr<functor_type> functor_{};
 		};
 
 		class hook_container : public hook_object
@@ -245,6 +76,67 @@ namespace unicorn
 
 			std::vector<hook_entry> hooks_;
 		};
+
+		void add_read_hook(uc_engine* uc, const uint64_t address, const size_t size, hook_container& container,
+		                   const std::shared_ptr<complex_memory_hook_callback>& callback)
+		{
+			function_wrapper<void, uc_engine*, uc_mem_type, uint64_t, int, int64_t> wrapper(
+				[callback](uc_engine*, const uc_mem_type type, const uint64_t address, const int size,
+				           const int64_t)
+				{
+					const auto operation = map_memory_operation(type);
+					if (operation != memory_permission::none)
+					{
+						(*callback)(address, static_cast<uint64_t>(size), operation);
+					}
+				});
+
+			unicorn_hook hook{uc};
+
+			uce(uc_hook_add(uc, hook.make_reference(), UC_HOOK_MEM_READ, wrapper.get_function(),
+			                wrapper.get_user_data(), address, address + size));
+
+			container.add(std::move(wrapper), std::move(hook));
+		}
+
+		void add_write_hook(uc_engine* uc, const uint64_t address, const size_t size, hook_container& container,
+		                    const std::shared_ptr<complex_memory_hook_callback>& callback)
+		{
+			function_wrapper<void, uc_engine*, uc_mem_type, uint64_t, int, int64_t> wrapper(
+				[callback](uc_engine*, const uc_mem_type type, const uint64_t address, const int size,
+				           const int64_t)
+				{
+					const auto operation = map_memory_operation(type);
+					if (operation != memory_permission::none)
+					{
+						(*callback)(address, static_cast<uint64_t>(size), operation);
+					}
+				});
+
+			unicorn_hook hook{uc};
+
+			uce(uc_hook_add(uc, hook.make_reference(), UC_HOOK_MEM_WRITE, wrapper.get_function(),
+			                wrapper.get_user_data(), address, address + size));
+
+			container.add(std::move(wrapper), std::move(hook));
+		}
+
+		void add_exec_hook(uc_engine* uc, const uint64_t address, const size_t size, hook_container& container,
+		                   const std::shared_ptr<complex_memory_hook_callback>& callback)
+		{
+			function_wrapper<void, uc_engine*, uint64_t, uint32_t> wrapper(
+				[callback](uc_engine*, const uint64_t address, const uint32_t size)
+				{
+					(*callback)(address, size, memory_permission::exec);
+				});
+
+			unicorn_hook hook{uc};
+
+			uce(uc_hook_add(uc, hook.make_reference(), UC_HOOK_CODE, wrapper.get_function(),
+			                wrapper.get_user_data(), address, address + size));
+
+			container.add(std::move(wrapper), std::move(hook));
+		}
 
 		class unicorn_x64_emulator : public x64_emulator
 		{
@@ -384,60 +276,17 @@ namespace unicorn
 
 				if ((filter & memory_operation::read) != memory_operation::none)
 				{
-					function_wrapper<void, uc_engine*, uc_mem_type, uint64_t, int, int64_t> wrapper(
-						[shared_callback](uc_engine*, const uc_mem_type type, const uint64_t address, const int size,
-						                  const int64_t)
-						{
-							const auto operation = map_memory_operation(type);
-							if (operation != memory_permission::none)
-							{
-								(*shared_callback)(address, static_cast<uint64_t>(size), operation);
-							}
-						});
-
-					unicorn_hook hook{*this};
-
-					uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_MEM_READ, wrapper.get_function(),
-					                wrapper.get_user_data(), address, address + size));
-
-					container->add(std::move(wrapper), std::move(hook));
+					add_read_hook(*this, address, size, *container, shared_callback);
 				}
 
 				if ((filter & memory_operation::write) != memory_operation::none)
 				{
-					function_wrapper<void, uc_engine*, uc_mem_type, uint64_t, int, int64_t> wrapper(
-						[shared_callback](uc_engine*, const uc_mem_type type, const uint64_t address, const int size,
-						                  const int64_t)
-						{
-							const auto operation = map_memory_operation(type);
-							if (operation != memory_permission::none)
-							{
-								(*shared_callback)(address, static_cast<uint64_t>(size), operation);
-							}
-						});
-
-					unicorn_hook hook{*this};
-
-					uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_MEM_WRITE, wrapper.get_function(),
-					                wrapper.get_user_data(), address, address + size));
-
-					container->add(std::move(wrapper), std::move(hook));
+					add_write_hook(*this, address, size, *container, shared_callback);
 				}
 
 				if ((filter & memory_operation::exec) != memory_operation::none)
 				{
-					function_wrapper<void, uc_engine*, uint64_t, uint32_t> wrapper(
-						[shared_callback](uc_engine*, const uint64_t address, const uint32_t size)
-						{
-							(*shared_callback)(address, static_cast<uint64_t>(size), memory_permission::exec);
-						});
-
-					unicorn_hook hook{*this};
-
-					uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_CODE, wrapper.get_function(),
-					                wrapper.get_user_data(), address, address + size));
-
-					container->add(std::move(wrapper), std::move(hook));
+					add_exec_hook(*this, address, size, *container, shared_callback);
 				}
 
 				auto* result = container->as_opaque_hook();
