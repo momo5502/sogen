@@ -3,7 +3,11 @@
 
 #define NOMINMAX
 #include <span>
+
+#pragma warning(push)
+#pragma warning(disable: 4505)
 #include <unicorn/unicorn.h>
+#pragma warning(pop)
 
 namespace unicorn
 {
@@ -366,7 +370,7 @@ namespace unicorn
 				return result;
 			}
 
-			emulator_hook* hook_memory_access(uint64_t address, size_t size, memory_operation filter,
+			emulator_hook* hook_memory_access(const uint64_t address, const size_t size, const memory_operation filter,
 			                                  complex_memory_hook_callback callback) override
 			{
 				if (filter == memory_permission::none)
