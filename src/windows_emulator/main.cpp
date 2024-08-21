@@ -31,12 +31,18 @@ namespace
 
 	emulator_allocator setup_gs_segment(x64_emulator& emu, const uint64_t segment_base, const uint64_t size)
 	{
-		const std::array<uint64_t, 2> value = {
+		struct msr_value
+		{
+			uint32_t id;
+			uint64_t value;
+		};
+
+		const msr_value value{
 			IA32_GS_BASE_MSR,
 			segment_base
 		};
 
-		emu.write_register(x64_register::msr, value.data(), value.size());
+		emu.write_register(x64_register::msr, &value, sizeof(value));
 		emu.map_memory(segment_base, size, memory_permission::read_write);
 
 		return {emu, segment_base, size};
@@ -315,7 +321,7 @@ namespace
 		for (const auto& exp : export_remap)
 		{
 			auto name = exp.second;
-			emu->hook_memory_execution(exp.first, exp.first,
+			emu->hook_memory_execution(exp.first, 0,
 			                           [&emu, n = std::move(name)](const uint64_t address, const size_t)
 			                           {
 				                           printf("Executing function: %s (%llX)\n", n.c_str(), address);
@@ -347,7 +353,7 @@ namespace
 				//uc.stop();
 			}
 
-			if (hit)
+			//if (hit)
 			{
 				printf(
 					"Inst: %16llX - RAX: %16llX - RBX: %16llX - RCX: %16llX - RDX: %16llX - R8: %16llX - R9: %16llX - RDI: %16llX - RSI: %16llX\n",
