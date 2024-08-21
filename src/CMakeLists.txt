@@ -1,2 +1,4 @@
 add_subdirectory(common)
 add_subdirectory(emulator)
+add_subdirectory(unicorn_emulator)
+add_subdirectory(windows_emulator)

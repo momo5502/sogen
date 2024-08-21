@@ -1,16 +1,17 @@
 #pragma once
-#include "unicorn.hpp"
 #include "memory_utils.hpp"
 
+#include <emulator.hpp>
+
 template <typename T>
-class unicorn_object
+class emulator_object
 {
 public:
-	unicorn_object() = default;
+	emulator_object() = default;
 
-	unicorn_object(const unicorn& uc, uint64_t address)
-		: uc_(&uc)
-		, address_(address)
+	emulator_object(emulator& emu, const uint64_t address)
+		: emu_(&emu)
+		  , address_(address)
 	{
 	}
 
@@ -42,22 +43,20 @@ public:
 	T read() const
 	{
 		T obj{};
-
-		uce(uc_mem_read(*this->uc_, this->address_, &obj, sizeof(obj)));
-
+		this->emu_->read_memory(this->address_, &obj, sizeof(obj));
 		return obj;
 	}
 
 	void write(const T& value) const
 	{
-		uce(uc_mem_write(*this->uc_, this->address_, &value, sizeof(value)));
+		this->emu_->write_memory(this->address_, &value, sizeof(value));
 	}
 
 	template <typename F>
 	void access(const F& accessor) const
 	{
 		T obj{};
-		uce(uc_mem_read(*this->uc_, this->address_, &obj, sizeof(obj)));
+		this->emu_->read_memory(this->address_, &obj, sizeof(obj));
 
 		accessor(obj);
 
@@ -65,20 +64,20 @@ public:
 	}
 
 private:
-	const unicorn* uc_{};
+	emulator* emu_{};
 	uint64_t address_{};
 };
 
-class unicorn_allocator
+class emulator_allocator
 {
 public:
-	unicorn_allocator() = default;
+	emulator_allocator() = default;
 
-	unicorn_allocator(const unicorn& uc, const uint64_t address, const uint64_t size)
-		: uc_(&uc)
-		, address_(address)
-		, size_(size)
-		, active_address_(address)
+	emulator_allocator(emulator& emu, const uint64_t address, const uint64_t size)
+		: emu_(&emu)
+		  , address_(address)
+		  , size_(size)
+		  , active_address_(address)
 	{
 	}
 
@@ -99,10 +98,10 @@ public:
 	}
 
 	template <typename T>
-	unicorn_object<T> reserve()
+	emulator_object<T> reserve()
 	{
 		const auto potential_start = this->reserve(sizeof(T), alignof(T));
-		return unicorn_object<T>(*this->uc_, potential_start);
+		return emulator_object<T>(*this->emu_, potential_start);
 	}
 
 	void make_unicode_string(UNICODE_STRING& result, const std::wstring_view str)
@@ -113,32 +112,33 @@ public:
 
 		const auto string_buffer = this->reserve(total_length, required_alignment);
 
-		uce(uc_mem_write(*this->uc_, string_buffer, str.data(), total_length));
+		this->emu_->write_memory(string_buffer, str.data(), total_length);
 
 		result.Buffer = reinterpret_cast<PWCH>(string_buffer);
 		result.Length = static_cast<USHORT>(total_length);
 		result.MaximumLength = result.Length;
 	}
 
-	unicorn_object<UNICODE_STRING> make_unicode_string(const std::wstring_view str)
+	emulator_object<UNICODE_STRING> make_unicode_string(const std::wstring_view str)
 	{
 		const auto unicode_string = this->reserve<UNICODE_STRING>();
 
 		unicode_string.access([&](UNICODE_STRING& unicode_str)
-			{
-				this->make_unicode_string(unicode_str, str);
-			});
+		{
+			this->make_unicode_string(unicode_str, str);
+		});
 
 		return unicode_string;
 	}
 
 private:
-	const unicorn* uc_{};
+	emulator* emu_{};
 	uint64_t address_{};
 	uint64_t size_{};
-	uint64_t active_address_{ 0 };
+	uint64_t active_address_{0};
 };
 
+/*
 class unicorn_hook
 {
 public:
@@ -146,7 +146,7 @@ public:
 
 	template <typename... Args>
 	unicorn_hook(const unicorn& uc, const int type, const uint64_t begin, const uint64_t end, function callback,
-		Args... args)
+	             Args... args)
 		: uc_(&uc)
 	{
 		this->function_ = std::make_unique<internal_function>(
@@ -156,28 +156,28 @@ public:
 			});
 
 		void* handler = +[](uc_engine*, const uint64_t address, const uint32_t size,
-			void* user_data)
-			{
-				(*static_cast<internal_function*>(user_data))(address, size);
-			};
+		                    void* user_data)
+		{
+			(*static_cast<internal_function*>(user_data))(address, size);
+		};
 
 		if (type == UC_HOOK_INSN)
 		{
 			handler = +[](uc_engine* uc, void* user_data)
-				{
-					uint64_t rip{};
-					uc_reg_read(uc, UC_X86_REG_RIP, &rip);
-					(*static_cast<internal_function*>(user_data))(rip, 0);
-				};
+			{
+				uint64_t rip{};
+				uc_reg_read(uc, UC_X86_REG_RIP, &rip);
+				(*static_cast<internal_function*>(user_data))(rip, 0);
+			};
 		}
 
 		if (type == UC_HOOK_MEM_READ)
 		{
-			handler = +[](uc_engine*, const uc_mem_type /*type*/, const uint64_t address, const int size,
-				const int64_t /*value*/, void* user_data)
-				{
-					(*static_cast<internal_function*>(user_data))(address, size);
-				};
+			handler = +[](uc_engine*, const uc_mem_type, const uint64_t address, const int size,
+			              const int64_t, void* user_data)
+			{
+				(*static_cast<internal_function*>(user_data))(address, size);
+			};
 		}
 		uce(uc_hook_add(*this->uc_, &this->hook_, type, handler, this->function_.get(), begin, end, args...));
 	}
@@ -229,3 +229,4 @@ private:
 	uc_hook hook_{};
 	std::unique_ptr<internal_function> function_{};
 };
+*/

@@ -28,14 +28,14 @@ struct event
 
 struct process_context
 {
-	unicorn_object<TEB> teb{};
-	unicorn_object<PEB> peb{};
-	unicorn_object<RTL_USER_PROCESS_PARAMETERS> process_params{};
-	unicorn_object<KUSER_SHARED_DATA> kusd{};
+	emulator_object<TEB> teb{};
+	emulator_object<PEB> peb{};
+	emulator_object<RTL_USER_PROCESS_PARAMETERS> process_params{};
+	emulator_object<KUSER_SHARED_DATA> kusd{};
 
 	mapped_binary executable{};
 	mapped_binary ntdll{};
 
 	std::vector<event> events{};
-	unicorn_allocator gs_segment{};
+	emulator_allocator gs_segment{};
 };

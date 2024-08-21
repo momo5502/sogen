@@ -5,8 +5,8 @@ namespace
 {
 	void handle_NtQueryPerformanceCounter(const unicorn& uc)
 	{
-		const unicorn_object<LARGE_INTEGER> performance_counter{uc, uc.reg(UC_X86_REG_R10)};
-		const unicorn_object<LARGE_INTEGER> performance_frequency{uc, uc.reg(UC_X86_REG_RDX)};
+		const emulator_object<LARGE_INTEGER> performance_counter{uc, uc.reg(UC_X86_REG_R10)};
+		const emulator_object<LARGE_INTEGER> performance_frequency{uc, uc.reg(UC_X86_REG_RDX)};
 
 		try
 		{
@@ -56,7 +56,7 @@ namespace
 
 	void handle_NtCreateEvent(const unicorn& uc, process_context& context)
 	{
-		const unicorn_object<uint64_t> event_handle{uc, uc.reg(UC_X86_REG_R10)};
+		const emulator_object<uint64_t> event_handle{uc, uc.reg(UC_X86_REG_R10)};
 		const auto object_attributes = uc.reg(UC_X86_REG_R8);
 		const auto event_type = uc.reg<EVENT_TYPE>(UC_X86_REG_R9D);
 		const auto initial_state = static_cast<BOOLEAN>(uc.read_stack(5));
@@ -85,7 +85,7 @@ namespace
 		const auto info_class = uc.reg<uint32_t>(UC_X86_REG_R8D);
 		const auto memory_information = uc.reg(UC_X86_REG_R9);
 		const auto memory_information_length = static_cast<uint32_t>(uc.read_stack(5));
-		const unicorn_object<uint32_t> return_length{uc, uc.read_stack(6)};
+		const emulator_object<uint32_t> return_length{uc, uc.read_stack(6)};
 
 		if (process_handle != ~0ULL)
 		{
@@ -124,7 +124,7 @@ namespace
 			return;
 		}
 
-		const unicorn_object<MEMORY_IMAGE_INFORMATION> info{uc, memory_information};
+		const emulator_object<MEMORY_IMAGE_INFORMATION> info{uc, memory_information};
 
 		info.access([&](MEMORY_IMAGE_INFORMATION& image_info)
 		{
@@ -140,7 +140,7 @@ namespace
 		const auto info_class = uc.reg<uint32_t>(UC_X86_REG_R10D);
 		const auto system_information = uc.reg(UC_X86_REG_RDX);
 		const auto system_information_length = uc.reg<uint32_t>(UC_X86_REG_R8D);
-		const unicorn_object<uint32_t> return_length{uc, uc.reg(UC_X86_REG_R9)};
+		const emulator_object<uint32_t> return_length{uc, uc.reg(UC_X86_REG_R9)};
 
 		if (info_class == SystemFlushInformation
 			|| info_class == SystemHypervisorSharedPageInformation)
@@ -162,7 +162,7 @@ namespace
 				return;
 			}
 
-			const unicorn_object<SYSTEM_NUMA_INFORMATION> info_obj{uc, system_information};
+			const emulator_object<SYSTEM_NUMA_INFORMATION> info_obj{uc, system_information};
 
 			info_obj.access([&](SYSTEM_NUMA_INFORMATION& info)
 			{
@@ -194,7 +194,7 @@ namespace
 			return;
 		}
 
-		const unicorn_object<SYSTEM_BASIC_INFORMATION> info{uc, system_information};
+		const emulator_object<SYSTEM_BASIC_INFORMATION> info{uc, system_information};
 
 		info.access([&](SYSTEM_BASIC_INFORMATION& basic_info)
 		{
@@ -220,7 +220,7 @@ namespace
 		const auto input_buffer_length = uc.reg<uint32_t>(UC_X86_REG_R8D);
 		const auto system_information = uc.reg(UC_X86_REG_R9);
 		const auto system_information_length = static_cast<uint32_t>(uc.read_stack(5));
-		const unicorn_object<uint32_t> return_length{uc, uc.read_stack(6)};
+		const emulator_object<uint32_t> return_length{uc, uc.read_stack(6)};
 
 		if (info_class == SystemFlushInformation
 			|| info_class == SystemFeatureConfigurationInformation
@@ -275,7 +275,7 @@ namespace
 			return;
 		}
 
-		const unicorn_object<SYSTEM_BASIC_INFORMATION> info{uc, system_information};
+		const emulator_object<SYSTEM_BASIC_INFORMATION> info{uc, system_information};
 
 		info.access([&](SYSTEM_BASIC_INFORMATION& basic_info)
 		{
@@ -300,7 +300,7 @@ namespace
 		const auto info_class = uc.reg<uint32_t>(UC_X86_REG_EDX);
 		const auto process_information = uc.reg(UC_X86_REG_R8);
 		const auto process_information_length = uc.reg<uint32_t>(UC_X86_REG_R9D);
-		const unicorn_object<uint32_t> return_length{uc, uc.read_stack(5)};
+		const emulator_object<uint32_t> return_length{uc, uc.read_stack(5)};
 
 		if (process_handle != ~0ULL)
 		{
@@ -326,7 +326,7 @@ namespace
 			return;
 		}
 
-		const unicorn_object<uint32_t> info{uc, process_information};
+		const emulator_object<uint32_t> info{uc, process_information};
 		info.write(0x01234567);
 
 		uc.reg<uint64_t>(UC_X86_REG_RAX, STATUS_SUCCESS);
@@ -335,10 +335,10 @@ namespace
 	void handle_NtProtectVirtualMemory(const unicorn& uc)
 	{
 		const auto process_handle = uc.reg(UC_X86_REG_R10);
-		const unicorn_object<uint64_t> base_address{uc, uc.reg(UC_X86_REG_RDX)};
-		const unicorn_object<uint32_t> bytes_to_protect{uc, uc.reg(UC_X86_REG_R8)};
+		const emulator_object<uint64_t> base_address{uc, uc.reg(UC_X86_REG_RDX)};
+		const emulator_object<uint32_t> bytes_to_protect{uc, uc.reg(UC_X86_REG_R8)};
 		const auto protection = uc.reg<uint32_t>(UC_X86_REG_R9D);
-		const unicorn_object<uint32_t> old_protection{uc, uc.read_stack(5)};
+		const emulator_object<uint32_t> old_protection{uc, uc.read_stack(5)};
 
 		if (process_handle != ~0ULL)
 		{
@@ -365,8 +365,8 @@ namespace
 	void handle_NtAllocateVirtualMemory(const unicorn& uc)
 	{
 		const auto process_handle = uc.reg(UC_X86_REG_R10);
-		const unicorn_object<uint64_t> base_address{uc, uc.reg(UC_X86_REG_RDX)};
-		const unicorn_object<uint64_t> bytes_to_allocate{uc, uc.reg(UC_X86_REG_R9)};
+		const emulator_object<uint64_t> base_address{uc, uc.reg(UC_X86_REG_RDX)};
+		const emulator_object<uint64_t> bytes_to_allocate{uc, uc.reg(UC_X86_REG_R9)};
 		//const auto allocation_type = uc.reg<uint32_t>(UC_X86_REG_R9D);
 		const auto page_protection = static_cast<uint32_t>(uc.read_stack(6));
 
@@ -420,8 +420,8 @@ namespace
 	void handle_NtAllocateVirtualMemoryEx(const unicorn& uc)
 	{
 		const auto process_handle = uc.reg(UC_X86_REG_R10);
-		const unicorn_object<uint64_t> base_address{uc, uc.reg(UC_X86_REG_RDX)};
-		const unicorn_object<uint64_t> bytes_to_allocate{uc, uc.reg(UC_X86_REG_R8)};
+		const emulator_object<uint64_t> base_address{uc, uc.reg(UC_X86_REG_RDX)};
+		const emulator_object<uint64_t> bytes_to_allocate{uc, uc.reg(UC_X86_REG_R8)};
 		//const auto allocation_type = uc.reg<uint32_t>(UC_X86_REG_R9D);
 		const auto page_protection = static_cast<uint32_t>(uc.read_stack(5));
 
@@ -475,8 +475,8 @@ namespace
 	void handle_NtFreeVirtualMemory(const unicorn& uc)
 	{
 		const auto process_handle = uc.reg(UC_X86_REG_R10);
-		const unicorn_object<uint64_t> base_address{uc, uc.reg(UC_X86_REG_RDX)};
-		const unicorn_object<uint64_t> bytes_to_allocate{uc, uc.reg(UC_X86_REG_R8)};
+		const emulator_object<uint64_t> base_address{uc, uc.reg(UC_X86_REG_RDX)};
+		const emulator_object<uint64_t> bytes_to_allocate{uc, uc.reg(UC_X86_REG_R8)};
 
 		if (process_handle != ~0ULL)
 		{
@@ -496,7 +496,7 @@ namespace
 	}
 }
 
-void handle_syscall(const unicorn& uc, process_context& context)
+void handle_syscall(x64_emulator& emu, process_context& context)
 {
 	const auto address = uc.reg(UC_X86_REG_RIP);
 	const auto syscall_id = uc.reg<uint32_t>(UC_X86_REG_EAX);

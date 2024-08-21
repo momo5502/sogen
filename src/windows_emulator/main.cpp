@@ -1,13 +1,13 @@
 #include "std_include.hpp"
 
-#include "unicorn.hpp"
-#include "memory_utils.hpp"
-#include "unicorn_utils.hpp"
+#include "emulator_utils.hpp"
 #include "process_context.hpp"
 #include "syscalls.hpp"
 
 #include "reflect_extension.hpp"
 #include <reflect>
+
+#include <unicorn_x64_emulator.hpp>
 
 #define GS_SEGMENT_ADDR 0x6000000ULL
 #define GS_SEGMENT_SIZE (20 << 20)  // 20 MB
@@ -21,32 +21,32 @@
 
 namespace
 {
-	void setup_stack(const unicorn& uc, uint64_t stack_base, size_t stack_size)
+	void setup_stack(x64_emulator& emu, const uint64_t stack_base, const size_t stack_size)
 	{
-		uce(uc_mem_map(uc, stack_base, stack_size, UC_PROT_READ | UC_PROT_WRITE));
+		emu.map_memory(stack_base, stack_size, memory_permission::read_write);
 
 		const uint64_t stack_end = stack_base + stack_size;
-		uce(uc_reg_write(uc, UC_X86_REG_RSP, &stack_end));
+		emu.reg(x64_register::rsp, stack_end);
 	}
 
-	unicorn_allocator setup_gs_segment(const unicorn& uc, const uint64_t segment_base, const uint64_t size)
+	emulator_allocator setup_gs_segment(x64_emulator& emu, const uint64_t segment_base, const uint64_t size)
 	{
 		const std::array<uint64_t, 2> value = {
 			IA32_GS_BASE_MSR,
 			segment_base
 		};
 
-		uce(uc_reg_write(uc, UC_X86_REG_MSR, value.data()));
-		uce(uc_mem_map(uc, segment_base, size, UC_PROT_READ | UC_PROT_WRITE));
+		emu.write_register(x64_register::msr, value.data(), value.size());
+		emu.map_memory(segment_base, size, memory_permission::read_write);
 
-		return {uc, segment_base, size};
+		return {emu, segment_base, size};
 	}
 
-	unicorn_object<KUSER_SHARED_DATA> setup_kusd(const unicorn& uc)
+	emulator_object<KUSER_SHARED_DATA> setup_kusd(x64_emulator& emu)
 	{
-		uce(uc_mem_map(uc, KUSD_ADDRESS, page_align_up(sizeof(KUSER_SHARED_DATA)), UC_PROT_READ));
+		emu.map_memory(KUSD_ADDRESS, page_align_up(sizeof(KUSER_SHARED_DATA)), memory_permission::read);
 
-		const unicorn_object<KUSER_SHARED_DATA> kusd_object{uc, KUSD_ADDRESS};
+		const emulator_object<KUSER_SHARED_DATA> kusd_object{emu, KUSD_ADDRESS};
 		kusd_object.access([](KUSER_SHARED_DATA& kusd)
 		{
 			const auto& real_kusd = *reinterpret_cast<KUSER_SHARED_DATA*>(KUSD_ADDRESS);
@@ -64,7 +64,7 @@ namespace
 		return kusd_object;
 	}
 
-	mapped_binary map_module(const unicorn& uc, const std::vector<uint8_t>& module_data,
+	mapped_binary map_module(x64_emulator& emu, const std::vector<uint8_t>& module_data,
 	                         const std::string& name)
 	{
 		mapped_binary binary{};
@@ -80,24 +80,26 @@ namespace
 
 		while (true)
 		{
-			const auto res = uc_mem_map(uc, binary.image_base, binary.size_of_image, UC_PROT_READ);
-			if (res == UC_ERR_OK)
+			try
 			{
+				emu.map_memory(binary.image_base, binary.size_of_image, memory_permission::read);
 				break;
 			}
-
-			binary.image_base += 0x10000;
-
-			if (binary.image_base < optional_header.ImageBase || (optional_header.DllCharacteristics &
-				IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) == 0)
+			catch (...)
 			{
-				throw std::runtime_error("Failed to map range");
+				binary.image_base += 0x10000;
+
+				if (binary.image_base < optional_header.ImageBase || (optional_header.DllCharacteristics &
+					IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) == 0)
+				{
+					throw std::runtime_error("Failed to map range");
+				}
 			}
 		}
 
 		printf("Mapping %s at %llX\n", name.c_str(), binary.image_base);
 
-		uce(uc_mem_write(uc, binary.image_base, ptr, optional_header.SizeOfHeaders));
+		emu.write_memory(binary.image_base, ptr, optional_header.SizeOfHeaders);
 
 		const std::span sections(IMAGE_FIRST_SECTION(nt_headers), nt_headers->FileHeader.NumberOfSections);
 
@@ -110,28 +112,28 @@ namespace
 				const void* source_ptr = ptr + section.PointerToRawData;
 
 				const auto size_of_data = std::min(section.SizeOfRawData, section.Misc.VirtualSize);
-				uce(uc_mem_write(uc, target_ptr, source_ptr, size_of_data));
+				emu.write_memory(target_ptr, source_ptr, size_of_data);
 			}
-			uint32_t permissions = UC_PROT_NONE;
+			auto permissions = memory_permission::none;
 
 			if (section.Characteristics & IMAGE_SCN_MEM_EXECUTE)
 			{
-				permissions |= UC_PROT_EXEC;
+				permissions |= memory_permission::exec;
 			}
 
 			if (section.Characteristics & IMAGE_SCN_MEM_READ)
 			{
-				permissions |= UC_PROT_READ;
+				permissions |= memory_permission::read;
 			}
 
 			if (section.Characteristics & IMAGE_SCN_MEM_WRITE)
 			{
-				permissions |= UC_PROT_WRITE;
+				permissions |= memory_permission::write;
 			}
 
 			const auto size_of_section = page_align_up(std::max(section.SizeOfRawData, section.Misc.VirtualSize));
 
-			uce(uc_mem_protect(uc, target_ptr, size_of_section, permissions));
+			emu.protect_memory(target_ptr, size_of_section, permissions);
 		}
 
 		auto& export_directory_entry = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
@@ -162,14 +164,14 @@ namespace
 		return binary;
 	}
 
-	process_context setup_context(const unicorn& uc)
+	process_context setup_context(x64_emulator& emu)
 	{
-		setup_stack(uc, STACK_ADDRESS, STACK_SIZE);
+		setup_stack(emu, STACK_ADDRESS, STACK_SIZE);
 		process_context context{};
 
-		context.kusd = setup_kusd(uc);
+		context.kusd = setup_kusd(emu);
 
-		context.gs_segment = setup_gs_segment(uc, GS_SEGMENT_ADDR, GS_SEGMENT_SIZE);
+		context.gs_segment = setup_gs_segment(emu, GS_SEGMENT_ADDR, GS_SEGMENT_SIZE);
 
 		auto& gs = context.gs_segment;
 
@@ -210,10 +212,10 @@ namespace
 		return {(std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>()};
 	}
 
-	mapped_binary map_file(const unicorn& uc, const std::filesystem::path& file)
+	mapped_binary map_file(x64_emulator& emu, const std::filesystem::path& file)
 	{
 		const auto data = load_file(file);
-		return map_module(uc, data, file.generic_string());
+		return map_module(emu, data, file.generic_string());
 	}
 
 	template <typename T>
@@ -268,15 +270,16 @@ namespace
 		std::map<size_t, std::string> members_{};
 	};
 
+	/*
 	template <typename T>
-	unicorn_hook watch_object(const unicorn& uc, unicorn_object<T> object)
+	unicorn_hook watch_object(const unicorn& uc, emulator_object<T> object)
 	{
 		type_info<T> info{};
 
 		return {
 			uc, UC_HOOK_MEM_READ, object.value(), object.end(),
 			[i = std::move(info), o = std::move(object)](const unicorn&, const uint64_t address,
-			                                             const uint32_t /*size*/)
+			                                             const uint32_t )
 			{
 				const auto offset = address - o.value();
 				printf("%s: %llX (%s)\n", i.get_type_name().c_str(), offset,
@@ -284,21 +287,21 @@ namespace
 			}
 		};
 	}
-
+	*/
 	void run()
 	{
-		const unicorn uc{UC_ARCH_X86, UC_MODE_64};
+		const auto emu = unicorn::create_x64_emulator();
 
-		auto context = setup_context(uc);
+		auto context = setup_context(*emu);
 
-		context.executable = map_file(uc, R"(C:\Users\mauri\Desktop\ConsoleApplication6.exe)");
+		context.executable = map_file(*emu, R"(C:\Users\mauri\Desktop\ConsoleApplication6.exe)");
 
 		context.peb.access([&](PEB& peb)
 		{
 			peb.ImageBaseAddress = reinterpret_cast<void*>(context.executable.image_base);
 		});
 
-		context.ntdll = map_file(uc, R"(C:\Windows\System32\ntdll.dll)");
+		context.ntdll = map_file(*emu, R"(C:\Windows\System32\ntdll.dll)");
 
 		const auto entry1 = context.ntdll.exports.at("LdrInitializeThunk");
 		const auto entry2 = context.ntdll.exports.at("RtlUserThreadStart");
@@ -306,6 +309,7 @@ namespace
 		(void)entry1;
 		(void)entry2;
 
+		/*
 		std::vector<unicorn_hook> export_hooks{};
 
 
@@ -338,21 +342,23 @@ namespace
 			                  handle_syscall(uc, context);
 		                  }, UC_X86_INS_SYSCALL);
 
-		export_hooks.emplace_back(watch_object(uc, context.teb));
-		export_hooks.emplace_back(watch_object(uc, context.peb));
-		export_hooks.emplace_back(watch_object(uc, context.process_params));
-		export_hooks.emplace_back(watch_object(uc, context.kusd));
+		//export_hooks.emplace_back(watch_object(uc, context.teb));
+		//export_hooks.emplace_back(watch_object(uc, context.peb));
+		//export_hooks.emplace_back(watch_object(uc, context.process_params));
+		//export_hooks.emplace_back(watch_object(uc, context.kusd));
 
 		unicorn_hook hook2(uc, UC_HOOK_CODE, 0, std::numeric_limits<uint64_t>::max(),
-		                   [](const unicorn& uc, const uint64_t address, const uint32_t /*size*/)
+		                   [](const unicorn& uc, const uint64_t address, const uint32_t )
 		                   {
-			                   //static bool hit = false;
-			                   /*if (address == 0x01800D46DD)
+			                   static bool hit = false;
+			                   // if (address == 0x1800D3C80)
+			                   if (address == 0x1800D4420)
 			                   {
-				                   hit = true;
-			                   }*/
+				                   //hit = true;
+				                   //uc.stop();
+			                   }
 
-			                   //if (hit)
+			                   if (hit)
 			                   {
 				                   printf(
 					                   "Inst: %16llX - RAX: %16llX - RBX: %16llX - RCX: %16llX - RDX: %16llX - R8: %16llX - R9: %16llX - RDI: %16llX - RSI: %16llX\n",
@@ -362,27 +368,23 @@ namespace
 					                   uc.reg(UC_X86_REG_RDI), uc.reg(UC_X86_REG_RSI));
 			                   }
 		                   });
-
+*/
 		const auto execution_context = context.gs_segment.reserve<CONTEXT>();
 
-		uc.reg(UC_X86_REG_RCX, execution_context.value());
-		uc.reg(UC_X86_REG_RDX, context.ntdll.image_base);
+		emu->reg(x64_register::rcx, execution_context.value());
+		emu->reg(x64_register::rdx, context.ntdll.image_base);
 
-		const auto err = uc_emu_start(uc, entry1, 0, 0, 0);
-		if (err != UC_ERR_OK)
+		try
 		{
-			uint64_t rip{};
-			uc_reg_read(uc, UC_X86_REG_RIP, &rip);
-			printf("Emulation failed at: %llX\n", rip);
-			uce(err);
+			emu->start(entry1);
+		}
+		catch (...)
+		{
+			printf("Emulation failed at: %llX\n", emu->reg(x64_register::rip));
+			throw;
 		}
 
-		printf("Emulation done. Below is the CPU context\n");
-
-		uint64_t rax{};
-		uce(uc_reg_read(uc, UC_X86_REG_RAX, &rax));
-
-		printf(">>> RAX = 0x%llX\n", rax);
+		printf("Emulation done.\n");
 	}
 }
 
