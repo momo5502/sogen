@@ -42,10 +42,20 @@ public:
 		this->write_register(regid, &value, sizeof(value));
 	}
 
+	pointer_type read_instruction_pointer()
+	{
+		return this->reg(instruction_pointer);
+	}
+
+	pointer_type read_stack_pointer()
+	{
+		return this->reg(stack_pointer);
+	}
+
 	pointer_type read_stack(const size_t index)
 	{
 		pointer_type result{};
-		const auto sp = this->reg(stack_pointer);
+		const auto sp = this->read_stack_pointer();
 
 		this->read_memory(sp + (index * pointer_size), &result, sizeof(result));
 
@@ -56,7 +66,7 @@ public:
 	{
 		return this->hook_instruction(instruction_type, [this, c = std::move(callback)]
 		{
-			const auto ip = static_cast<uint64_t>(this->reg(instruction_pointer));
+			const auto ip = static_cast<uint64_t>(this->read_instruction_pointer());
 			c(ip);
 		});
 	}
