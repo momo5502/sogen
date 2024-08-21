@@ -56,8 +56,6 @@
 
 #include <cassert>
 
-#include <unicorn/unicorn.h>
-
 #define NTDDI_WIN11_GE 0
 #define PHNT_VERSION PHNT_WIN11
 #include <phnt_windows.h>

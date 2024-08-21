@@ -1,8 +1,6 @@
 #pragma once
 #include "memory_utils.hpp"
 
-#include <emulator.hpp>
-
 template <typename T>
 class emulator_object
 {
@@ -137,96 +135,3 @@ private:
 	uint64_t size_{};
 	uint64_t active_address_{0};
 };
-
-/*
-class unicorn_hook
-{
-public:
-	using function = std::function<void(const unicorn& uc, uint64_t address, uint32_t size)>;
-
-	template <typename... Args>
-	unicorn_hook(const unicorn& uc, const int type, const uint64_t begin, const uint64_t end, function callback,
-	             Args... args)
-		: uc_(&uc)
-	{
-		this->function_ = std::make_unique<internal_function>(
-			[c = std::move(callback), &uc](const uint64_t address, const uint32_t size)
-			{
-				c(uc, address, size);
-			});
-
-		void* handler = +[](uc_engine*, const uint64_t address, const uint32_t size,
-		                    void* user_data)
-		{
-			(*static_cast<internal_function*>(user_data))(address, size);
-		};
-
-		if (type == UC_HOOK_INSN)
-		{
-			handler = +[](uc_engine* uc, void* user_data)
-			{
-				uint64_t rip{};
-				uc_reg_read(uc, UC_X86_REG_RIP, &rip);
-				(*static_cast<internal_function*>(user_data))(rip, 0);
-			};
-		}
-
-		if (type == UC_HOOK_MEM_READ)
-		{
-			handler = +[](uc_engine*, const uc_mem_type, const uint64_t address, const int size,
-			              const int64_t, void* user_data)
-			{
-				(*static_cast<internal_function*>(user_data))(address, size);
-			};
-		}
-		uce(uc_hook_add(*this->uc_, &this->hook_, type, handler, this->function_.get(), begin, end, args...));
-	}
-
-	unicorn_hook(const unicorn_hook&) = delete;
-	unicorn_hook& operator=(const unicorn_hook&) = delete;
-
-	unicorn_hook(unicorn_hook&& obj) noexcept
-	{
-		this->operator=(std::move(obj));
-	}
-
-	unicorn_hook& operator=(unicorn_hook&& obj) noexcept
-	{
-		if (this != &obj)
-		{
-			this->remove();
-
-			this->uc_ = obj.uc_;
-			this->hook_ = obj.hook_;
-			this->function_ = std::move(obj.function_);
-
-			obj.hook_ = {};
-		}
-
-		return *this;
-	}
-
-	~unicorn_hook()
-	{
-		this->remove();
-	}
-
-	void remove()
-	{
-		if (this->hook_)
-		{
-			uc_hook_del(*this->uc_, this->hook_);
-			this->hook_ = {};
-		}
-
-		this->function_ = {};
-	}
-
-private:
-	using internal_function = std::function<void(uint64_t address, uint32_t size)>;
-
-	const unicorn* uc_{};
-	uc_hook hook_{};
-	std::unique_ptr<internal_function> function_{};
-};
-*/

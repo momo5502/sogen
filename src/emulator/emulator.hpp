@@ -1,15 +1,19 @@
 #pragma once
 #include <chrono>
 #include <vector>
+#include <functional>
+#include <cassert>
 
-#include "memory_permission.hpp"
+#include "memory_region.hpp"
 
-struct memory_region
-{
-	uint64_t start;
-	size_t length;
-	memory_permission pemissions;
-};
+struct emulator_hook;
+
+using memory_operation = memory_permission;
+
+using instruction_hook_callback = std::function<void(uint64_t address)>;
+
+using simple_memory_hook_callback = std::function<void(uint64_t address, size_t size)>;
+using complex_memory_hook_callback = std::function<void(uint64_t address, size_t size, memory_operation operation)>;
 
 class emulator
 {
@@ -39,54 +43,39 @@ public:
 	virtual void protect_memory(uint64_t address, size_t size, memory_permission permissions) = 0;
 
 	virtual std::vector<memory_region> get_memory_regions() = 0;
-};
 
-template <typename PointerType, typename Register, Register StackPointer>
-class typed_emulator : public emulator
-{
-public:
-	using registers = Register;
-	using pointer_type = PointerType;
+	virtual emulator_hook* hook_memory_access(uint64_t address, size_t size, memory_operation filter,
+	                                          complex_memory_hook_callback callback) = 0;
+	virtual emulator_hook* hook_instruction(int instruction_type, instruction_hook_callback callback) = 0;
 
-	static constexpr size_t pointer_size = sizeof(pointer_type);
-	static constexpr registers stack_pointer = StackPointer;
+	virtual void delete_hook(emulator_hook* hook) = 0;
 
-	void write_register(registers reg, const void* value, const size_t size)
+	emulator_hook* hook_memory_read(const uint64_t address, const size_t size, simple_memory_hook_callback callback)
 	{
-		this->write_raw_register(static_cast<int>(reg), value, size);
+		return this->hook_simple_memory_access(address, size, std::move(callback), memory_operation::read);
 	}
 
-	void read_register(registers reg, void* value, const size_t size)
+	emulator_hook* hook_memory_write(const uint64_t address, const size_t size, simple_memory_hook_callback callback)
 	{
-		this->read_raw_register(static_cast<int>(reg), value, size);
+		return this->hook_simple_memory_access(address, size, std::move(callback), memory_operation::write);
 	}
 
-	template <typename T = uint64_t>
-	T reg(const registers regid) const
+	emulator_hook* hook_memory_execution(const uint64_t address, const size_t size,
+	                                     simple_memory_hook_callback callback)
 	{
-		T value{};
-		this->read_register(regid, &value, sizeof(value));
-		return value;
-	}
-
-	template <typename T = uint64_t, typename S>
-	void reg(const registers regid, const S& maybe_value) const
-	{
-		T value = static_cast<T>(maybe_value);
-		this->write_register(regid, &value, sizeof(value));
-	}
-
-	pointer_type read_stack(const size_t index) const
-	{
-		uint64_t result{};
-		const auto sp = this->reg(stack_pointer);
-
-		this->read_memory(sp + (index * pointer_size), &result, sizeof(result));
-
-		return result;
+		return this->hook_simple_memory_access(address, size, std::move(callback), memory_operation::exec);
 	}
 
 private:
-	void read_raw_register(int reg, void* value, size_t size) override = 0;
-	void write_raw_register(int reg, const void* value, size_t size) override = 0;
+	emulator_hook* hook_simple_memory_access(const uint64_t address, const size_t size,
+	                                         simple_memory_hook_callback callback, const memory_operation operation)
+	{
+		assert((static_cast<uint8_t>(operation) & (static_cast<uint8_t>(operation) - 1)) == 0);
+		return this->hook_memory_access(address, size, operation,
+		                                [c = std::move(callback)](const uint64_t a, const size_t s,
+		                                                          memory_operation)
+		                                {
+			                                c(a, s);
+		                                });
+	}
 };

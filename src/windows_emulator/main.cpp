@@ -270,24 +270,21 @@ namespace
 		std::map<size_t, std::string> members_{};
 	};
 
-	/*
+
 	template <typename T>
-	unicorn_hook watch_object(const unicorn& uc, emulator_object<T> object)
+	void watch_object(x64_emulator& emu, emulator_object<T> object)
 	{
 		type_info<T> info{};
 
-		return {
-			uc, UC_HOOK_MEM_READ, object.value(), object.end(),
-			[i = std::move(info), o = std::move(object)](const unicorn&, const uint64_t address,
-			                                             const uint32_t )
-			{
-				const auto offset = address - o.value();
-				printf("%s: %llX (%s)\n", i.get_type_name().c_str(), offset,
-				       i.get_member_name(offset).c_str());
-			}
-		};
+		emu.hook_memory_read(object.value(), object.size(),
+		                     [i = std::move(info), object](const uint64_t address, size_t)
+		                     {
+			                     const auto offset = address - object.value();
+			                     printf("%s: %llX (%s)\n", i.get_type_name().c_str(), offset,
+			                            i.get_member_name(offset).c_str());
+		                     });
 	}
-	*/
+
 	void run()
 	{
 		const auto emu = unicorn::create_x64_emulator();
@@ -309,10 +306,6 @@ namespace
 		(void)entry1;
 		(void)entry2;
 
-		/*
-		std::vector<unicorn_hook> export_hooks{};
-
-
 		std::unordered_map<uint64_t, std::string> export_remap{};
 		for (const auto& exp : context.ntdll.exports)
 		{
@@ -322,53 +315,49 @@ namespace
 		for (const auto& exp : export_remap)
 		{
 			auto name = exp.second;
-			unicorn_hook hook(uc, UC_HOOK_CODE, exp.first, exp.first,
-			                  [n = std::move(name)](const unicorn& uc, const uint64_t address, const uint32_t)
-			                  {
-				                  printf("Executing function: %s (%llX)\n", n.c_str(), address);
+			emu->hook_memory_execution(exp.first, exp.first,
+			                           [&emu, n = std::move(name)](const uint64_t address, const size_t)
+			                           {
+				                           printf("Executing function: %s (%llX)\n", n.c_str(), address);
 
-				                  if (n == "RtlImageNtHeaderEx")
-				                  {
-					                  printf("Base: %llX\n", uc.reg(UC_X86_REG_RDX));
-				                  }
-			                  });
-
-			export_hooks.emplace_back(std::move(hook));
+				                           if (n == "RtlImageNtHeaderEx")
+				                           {
+					                           printf("Base: %llX\n", emu->reg(x64_register::rdx));
+				                           }
+			                           });
 		}
 
-		unicorn_hook hook(uc, UC_HOOK_INSN, 0, std::numeric_limits<uint64_t>::max(),
-		                  [&](const unicorn&, const uint64_t, const uint32_t)
-		                  {
-			                  handle_syscall(uc, context);
-		                  }, UC_X86_INS_SYSCALL);
+		emu->hook_instruction(x64_hookable_instructions::syscall, [&]
+		{
+			handle_syscall(*emu, context);
+		});
 
-		//export_hooks.emplace_back(watch_object(uc, context.teb));
-		//export_hooks.emplace_back(watch_object(uc, context.peb));
-		//export_hooks.emplace_back(watch_object(uc, context.process_params));
-		//export_hooks.emplace_back(watch_object(uc, context.kusd));
+		watch_object(*emu, context.teb);
+		watch_object(*emu, context.peb);
+		watch_object(*emu, context.process_params);
+		watch_object(*emu, context.kusd);
 
-		unicorn_hook hook2(uc, UC_HOOK_CODE, 0, std::numeric_limits<uint64_t>::max(),
-		                   [](const unicorn& uc, const uint64_t address, const uint32_t )
-		                   {
-			                   static bool hit = false;
-			                   // if (address == 0x1800D3C80)
-			                   if (address == 0x1800D4420)
-			                   {
-				                   //hit = true;
-				                   //uc.stop();
-			                   }
+		emu->hook_memory_execution(0, std::numeric_limits<size_t>::max(), [&](const uint64_t address, const size_t)
+		{
+			static bool hit = false;
+			// if (address == 0x1800D3C80)
+			if (address == 0x1800D4420)
+			{
+				//hit = true;
+				//uc.stop();
+			}
 
-			                   if (hit)
-			                   {
-				                   printf(
-					                   "Inst: %16llX - RAX: %16llX - RBX: %16llX - RCX: %16llX - RDX: %16llX - R8: %16llX - R9: %16llX - RDI: %16llX - RSI: %16llX\n",
-					                   address,
-					                   uc.reg(UC_X86_REG_RAX), uc.reg(UC_X86_REG_RBX), uc.reg(UC_X86_REG_RCX),
-					                   uc.reg(UC_X86_REG_RDX), uc.reg(UC_X86_REG_R8), uc.reg(UC_X86_REG_R9),
-					                   uc.reg(UC_X86_REG_RDI), uc.reg(UC_X86_REG_RSI));
-			                   }
-		                   });
-*/
+			if (hit)
+			{
+				printf(
+					"Inst: %16llX - RAX: %16llX - RBX: %16llX - RCX: %16llX - RDX: %16llX - R8: %16llX - R9: %16llX - RDI: %16llX - RSI: %16llX\n",
+					address,
+					emu->reg(x64_register::rax), emu->reg(x64_register::rbx), emu->reg(x64_register::rcx),
+					emu->reg(x64_register::rdx), emu->reg(x64_register::r8), emu->reg(x64_register::r9),
+					emu->reg(x64_register::rdi), emu->reg(x64_register::rsi));
+			}
+		});
+
 		const auto execution_context = context.gs_segment.reserve<CONTEXT>();
 
 		emu->reg(x64_register::rcx, execution_context.value());

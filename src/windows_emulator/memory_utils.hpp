@@ -59,7 +59,7 @@ inline bool is_memory_allocated(emulator& emu, const uint64_t address)
 	return false;
 }
 
-inline memory_permission map_nt_to_unicorn_protection(const uint32_t nt_protection)
+inline memory_permission map_nt_to_emulator_protection(const uint32_t nt_protection)
 {
 	switch (nt_protection)
 	{
@@ -80,7 +80,7 @@ inline memory_permission map_nt_to_unicorn_protection(const uint32_t nt_protecti
 	}
 }
 
-inline uint32_t map_unicorn_to_nt_protection(const memory_permission permission)
+inline uint32_t map_emulator_to_nt_protection(const memory_permission permission)
 {
 	const bool has_exec = (permission & memory_permission::exec) != memory_permission::none;
 	const bool has_read = (permission & memory_permission::read) != memory_permission::none;

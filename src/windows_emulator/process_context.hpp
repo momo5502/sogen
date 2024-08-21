@@ -1,5 +1,5 @@
 #pragma once
-#include "unicorn_utils.hpp"
+#include "emulator_utils.hpp"
 
 struct mapped_binary
 {
