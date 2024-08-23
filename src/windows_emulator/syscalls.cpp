@@ -3,6 +3,70 @@
 
 namespace
 {
+	struct syscall_context
+	{
+		x64_emulator& emu;
+		process_context& proc;
+	};
+
+	uint64_t get_syscall_argument(x64_emulator& emu, const size_t index)
+	{
+		switch (index)
+		{
+		case 0:
+			return emu.reg(x64_register::r10);
+		case 1:
+			return emu.reg(x64_register::rdx);
+		case 2:
+			return emu.reg(x64_register::r8);
+		case 3:
+			return emu.reg(x64_register::r9);
+		default:
+			return emu.read_stack(index + 1);
+		}
+	}
+
+	template <typename T>
+		requires(std::is_integral_v<T>)
+	T resolve_argument(x64_emulator& emu, const size_t index)
+	{
+		const auto arg = get_syscall_argument(emu, index);
+		return static_cast<T>(arg);
+	}
+
+	template <typename T>
+	T resolve_argument(x64_emulator& emu, const size_t index)
+	{
+		const auto arg = get_syscall_argument(emu, index);
+		return T(emu, arg);
+	}
+
+	template <typename T>
+	T resolve_indexed_argument(x64_emulator& emu, size_t& index)
+	{
+		return resolve_argument<T>(emu, index++);
+	}
+
+	void forward(const syscall_context& c, NTSTATUS (*handler)())
+	{
+		const auto ret = handler();
+		c.emu.reg<uint64_t>(x64_register::rax, static_cast<uint64_t>(ret));
+	}
+
+	template <typename... Args>
+	void forward(const syscall_context& c, NTSTATUS (*handler)(const syscall_context&, Args...))
+	{
+		size_t index = 0;
+		std::tuple<const syscall_context&, Args...> func_args
+		{
+			c,
+			resolve_indexed_argument<std::remove_cv_t<std::remove_reference_t<Args>>>(c.emu, index)...
+		};
+
+		const auto ret = std::apply(handler, std::move(func_args));
+		c.emu.reg<uint64_t>(x64_register::rax, static_cast<uint64_t>(ret));
+	}
+
 	void handle_NtQueryPerformanceCounter(x64_emulator& emu)
 	{
 		const emulator_object<LARGE_INTEGER> performance_counter{emu, emu.reg(x64_register::r10)};
@@ -34,24 +98,24 @@ namespace
 		}
 	}
 
-	void handle_NtManageHotPatch(x64_emulator& emu)
+	NTSTATUS handle_NtManageHotPatch()
 	{
-		emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_SUPPORTED);
+		return STATUS_NOT_SUPPORTED;
 	}
 
-	void handle_NtOpenKey(x64_emulator& emu)
+	NTSTATUS handle_NtOpenKey()
 	{
-		emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_SUPPORTED);
+		return STATUS_NOT_SUPPORTED;
 	}
 
-	void handle_NtCreateIoCompletion(x64_emulator& emu)
+	NTSTATUS handle_NtCreateIoCompletion()
 	{
-		emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_SUPPORTED);
+		return STATUS_NOT_SUPPORTED;
 	}
 
-	void handle_NtTraceEvent(x64_emulator& emu)
+	NTSTATUS handle_NtTraceEvent()
 	{
-		emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_SUPPORTED);
+		return STATUS_NOT_SUPPORTED;
 	}
 
 	void handle_NtCreateEvent(x64_emulator& emu, process_context& context)
@@ -362,18 +426,14 @@ namespace
 		emu.reg<uint64_t>(x64_register::rax, STATUS_SUCCESS);
 	}
 
-	void handle_NtAllocateVirtualMemory(x64_emulator& emu)
+	NTSTATUS handle_NtAllocateVirtualMemory(const syscall_context& c, const uint64_t process_handle,
+	                                        const emulator_object<uint64_t> base_address,
+	                                        const emulator_object<uint64_t> bytes_to_allocate,
+	                                        const uint32_t /*allocation_type*/, const uint32_t page_protection)
 	{
-		const auto process_handle = emu.reg(x64_register::r10);
-		const emulator_object<uint64_t> base_address{emu, emu.reg(x64_register::rdx)};
-		const emulator_object<uint64_t> bytes_to_allocate{emu, emu.reg(x64_register::r9)};
-		//const auto allocation_type =emu.reg<uint32_t>(x64_register::r9d);
-		const auto page_protection = static_cast<uint32_t>(emu.read_stack(6));
-
 		if (process_handle != ~0ULL)
 		{
-			emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_IMPLEMENTED);
-			return;
+			return STATUS_NOT_IMPLEMENTED;
 		}
 
 		constexpr auto allocation_granularity = 0x10000;
@@ -390,17 +450,16 @@ namespace
 			allocate_anywhere = true;
 			allocation_base = allocation_granularity;
 		}
-		else if (is_memory_allocated(emu, allocation_base))
+		else if (is_memory_allocated(c.emu, allocation_base))
 		{
-			emu.reg<uint64_t>(x64_register::rax, STATUS_SUCCESS);
-			return;
+			return STATUS_SUCCESS;
 		}
 
 		bool succeeded = false;
 
 		while (true)
 		{
-			succeeded = emu.try_map_memory(allocation_base, allocation_bytes, protection);
+			succeeded = c.emu.try_map_memory(allocation_base, allocation_bytes, protection);
 			if (succeeded || !allocate_anywhere)
 			{
 				break;
@@ -411,10 +470,9 @@ namespace
 
 		base_address.write(allocation_base);
 
-		emu.reg<uint64_t>(x64_register::rax, succeeded
-			                                     ? STATUS_SUCCESS
-			                                     : STATUS_NOT_SUPPORTED // No idea what the correct code is
-		);
+		return succeeded
+			       ? STATUS_SUCCESS
+			       : STATUS_NOT_SUPPORTED; // No idea what the correct code is
 	}
 
 	void handle_NtAllocateVirtualMemoryEx(x64_emulator& emu)
@@ -512,15 +570,17 @@ void handle_syscall(x64_emulator& emu, process_context& context)
 
 	printf("Handling syscall: %X (%llX)\n", syscall_id, address);
 
+	syscall_context c{emu, context};
+
 	try
 	{
 		switch (syscall_id)
 		{
 		case 0x12:
-			handle_NtOpenKey(emu);
+			forward(c, handle_NtOpenKey);
 			break;
 		case 0x18:
-			handle_NtAllocateVirtualMemory(emu);
+			forward(c, handle_NtAllocateVirtualMemory);
 			break;
 		case 0x1E:
 			handle_NtFreeVirtualMemory(emu);
@@ -544,16 +604,16 @@ void handle_syscall(x64_emulator& emu, process_context& context)
 			handle_NtProtectVirtualMemory(emu);
 			break;
 		case 0x5E:
-			handle_NtTraceEvent(emu);
+			forward(c, handle_NtTraceEvent);
 			break;
 		case 0x78:
 			handle_NtAllocateVirtualMemoryEx(emu);
 			break;
 		case 0xB2:
-			handle_NtCreateIoCompletion(emu);
+			forward(c, handle_NtCreateIoCompletion);
 			break;
 		case 0x11A:
-			handle_NtManageHotPatch(emu);
+			forward(c, handle_NtManageHotPatch);
 			break;
 		case 0x16E:
 			handle_NtQuerySystemInformationEx(emu);
