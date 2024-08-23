@@ -429,6 +429,7 @@ namespace
 
 	NTSTATUS handle_NtAllocateVirtualMemory(const syscall_context& c, const uint64_t process_handle,
 	                                        const emulator_object<uint64_t> base_address,
+	                                        uint64_t /*zero_bits*/,
 	                                        const emulator_object<uint64_t> bytes_to_allocate,
 	                                        const uint32_t /*allocation_type*/, const uint32_t page_protection)
 	{
