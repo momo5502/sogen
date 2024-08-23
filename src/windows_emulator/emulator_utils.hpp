@@ -5,6 +5,8 @@ template <typename T>
 class emulator_object
 {
 public:
+	using value_type = T;
+
 	emulator_object() = default;
 
 	emulator_object(emulator& emu, const uint64_t address)

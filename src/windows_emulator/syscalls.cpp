@@ -35,6 +35,7 @@ namespace
 	}
 
 	template <typename T>
+		requires(std::is_same_v<T, emulator_object<typename T::value_type>>)
 	T resolve_argument(x64_emulator& emu, const size_t index)
 	{
 		const auto arg = get_syscall_argument(emu, index);
