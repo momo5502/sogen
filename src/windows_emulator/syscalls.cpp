@@ -507,7 +507,7 @@ namespace
 
 void handle_syscall(x64_emulator& emu, process_context& context)
 {
-	const auto address = emu.reg(x64_register::rip);
+	const auto address = emu.read_instruction_pointer();
 	const auto syscall_id = emu.reg<uint32_t>(x64_register::eax);
 
 	printf("Handling syscall: %X (%llX)\n", syscall_id, address);

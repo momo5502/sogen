@@ -2,8 +2,6 @@
 
 #include "emulator.hpp"
 
-using simple_instruction_hook_callback = std::function<void()>;
-
 template <typename PointerType, typename Register, Register InstructionPointer, Register
           StackPointer, typename HookableInstructions>
 class typed_emulator : public emulator
@@ -62,23 +60,13 @@ public:
 		return result;
 	}
 
-	emulator_hook* hook_instruction(hookable_instructions instruction_type, instruction_hook_callback callback)
+	emulator_hook* hook_instruction(hookable_instructions instruction_type, hook_callback callback)
 	{
-		return this->hook_instruction(instruction_type, [this, c = std::move(callback)]
-		{
-			const auto ip = static_cast<uint64_t>(this->read_instruction_pointer());
-			c(ip);
-		});
+		return this->hook_instruction(static_cast<int>(instruction_type), std::move(callback));
 	}
-
-	virtual emulator_hook* hook_instruction(hookable_instructions instruction_type,
-	                                        simple_instruction_hook_callback callback) = 0;
 
 private:
-	emulator_hook* hook_instruction(int instruction_type, instruction_hook_callback callback) override
-	{
-		return this->hook_instruction(static_cast<hookable_instructions>(instruction_type), std::move(callback));
-	}
+	emulator_hook* hook_instruction(int instruction_type, hook_callback callback) override = 0;
 
 	void read_raw_register(int reg, void* value, size_t size) override = 0;
 	void write_raw_register(int reg, const void* value, size_t size) override = 0;

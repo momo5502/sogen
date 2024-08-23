@@ -243,10 +243,11 @@ namespace unicorn
 				return result;
 			}
 
-			emulator_hook* hook_instruction(x64_hookable_instructions instruction_type,
-			                                simple_instruction_hook_callback callback)
+			emulator_hook* hook_instruction(int instruction_type,
+			                                hook_callback callback)
 			{
-				const auto uc_instruction = map_hookable_instruction(instruction_type);
+				const auto uc_instruction = map_hookable_instruction(
+					static_cast<x64_hookable_instructions>(instruction_type));
 
 				function_wrapper<void, uc_engine*> wrapper([c = std::move(callback)](uc_engine*)
 				{

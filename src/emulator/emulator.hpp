@@ -10,7 +10,7 @@ struct emulator_hook;
 
 using memory_operation = memory_permission;
 
-using instruction_hook_callback = std::function<void(uint64_t address)>;
+using hook_callback = std::function<void()>;
 
 using simple_memory_hook_callback = std::function<void(uint64_t address, size_t size)>;
 using complex_memory_hook_callback = std::function<void(uint64_t address, size_t size, memory_operation operation)>;
@@ -47,7 +47,7 @@ public:
 
 	virtual emulator_hook* hook_memory_access(uint64_t address, size_t size, memory_operation filter,
 	                                          complex_memory_hook_callback callback) = 0;
-	virtual emulator_hook* hook_instruction(int instruction_type, instruction_hook_callback callback) = 0;
+	virtual emulator_hook* hook_instruction(int instruction_type, hook_callback callback) = 0;
 
 	virtual void delete_hook(emulator_hook* hook) = 0;
 
