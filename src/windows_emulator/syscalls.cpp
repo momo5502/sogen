@@ -27,7 +27,7 @@ namespace
 	}
 
 	template <typename T>
-		requires(std::is_integral_v<T>)
+		requires(std::is_integral_v<T> || std::is_enum_v<T>)
 	T resolve_argument(x64_emulator& emu, const size_t index)
 	{
 		const auto arg = get_syscall_argument(emu, index);
@@ -68,11 +68,10 @@ namespace
 		c.emu.reg<uint64_t>(x64_register::rax, static_cast<uint64_t>(ret));
 	}
 
-	void handle_NtQueryPerformanceCounter(x64_emulator& emu)
+	NTSTATUS handle_NtQueryPerformanceCounter(const syscall_context&,
+	                                          const emulator_object<LARGE_INTEGER> performance_counter,
+	                                          const emulator_object<LARGE_INTEGER> performance_frequency)
 	{
-		const emulator_object<LARGE_INTEGER> performance_counter{emu, emu.reg(x64_register::r10)};
-		const emulator_object<LARGE_INTEGER> performance_frequency{emu, emu.reg(x64_register::rdx)};
-
 		try
 		{
 			if (performance_counter)
@@ -91,11 +90,11 @@ namespace
 				});
 			}
 
-			emu.reg<uint64_t>(x64_register::rax, STATUS_SUCCESS);
+			return STATUS_SUCCESS;
 		}
 		catch (...)
 		{
-			emu.reg<uint64_t>(x64_register::rax, STATUS_ACCESS_VIOLATION);
+			return STATUS_ACCESS_VIOLATION;
 		}
 	}
 
@@ -119,56 +118,48 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	void handle_NtCreateEvent(x64_emulator& emu, process_context& context)
+	NTSTATUS handle_NtCreateEvent(const syscall_context& c, const emulator_object<uint64_t> event_handle,
+	                              const ACCESS_MASK /*desired_access*/, const uint64_t object_attributes,
+	                              const EVENT_TYPE event_type, const BOOLEAN initial_state)
 	{
-		const emulator_object<uint64_t> event_handle{emu, emu.reg(x64_register::r10)};
-		const auto object_attributes = emu.reg(x64_register::r8);
-		const auto event_type = emu.reg<EVENT_TYPE>(x64_register::r9d);
-		const auto initial_state = static_cast<BOOLEAN>(emu.read_stack(5));
-
 		if (object_attributes)
 		{
 			puts("Unsupported object attributes");
-			emu.stop();
-			return;
+			c.emu.stop();
+			return STATUS_NOT_SUPPORTED;
 		}
 
-		const uint64_t index = context.events.size();
+		const uint64_t index = c.proc.events.size();
 		event_handle.write(index);
 
-		context.events.emplace_back(initial_state != FALSE, event_type);
+		c.proc.events.emplace_back(initial_state != FALSE, event_type);
 
 		static_assert(sizeof(EVENT_TYPE) == sizeof(uint32_t));
+		static_assert(sizeof(ACCESS_MASK) == sizeof(uint32_t));
 
-		emu.reg<uint64_t>(x64_register::rax, STATUS_SUCCESS);
+		return STATUS_SUCCESS;
 	}
 
-	void handle_NtQueryVirtualMemory(x64_emulator& emu, const process_context& context)
+	NTSTATUS handle_NtQueryVirtualMemory(const syscall_context& c, const uint64_t process_handle,
+	                                     const uint64_t base_address, const uint32_t info_class,
+	                                     const uint64_t memory_information, const uint32_t memory_information_length,
+	                                     const emulator_object<uint32_t> return_length)
 	{
-		const auto process_handle = emu.reg(x64_register::r10);
-		const auto base_address = emu.reg(x64_register::rdx);
-		const auto info_class = emu.reg<uint32_t>(x64_register::r8d);
-		const auto memory_information = emu.reg(x64_register::r9);
-		const auto memory_information_length = static_cast<uint32_t>(emu.read_stack(5));
-		const emulator_object<uint32_t> return_length{emu, emu.read_stack(6)};
-
 		if (process_handle != ~0ULL)
 		{
-			emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_IMPLEMENTED);
-			return;
+			return STATUS_NOT_IMPLEMENTED;
 		}
 
 		if (info_class == MemoryWorkingSetExInformation)
 		{
-			emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_IMPLEMENTED);
-			return;
+			return STATUS_NOT_IMPLEMENTED;
 		}
 
 		if (info_class != MemoryImageInformation)
 		{
 			printf("Unsupported memory info class: %X\n", info_class);
-			emu.stop();
-			return;
+			c.emu.stop();
+			return STATUS_NOT_IMPLEMENTED;
 		}
 
 		if (return_length)
@@ -178,40 +169,36 @@ namespace
 
 		if (memory_information_length != sizeof(MEMORY_IMAGE_INFORMATION))
 		{
-			emu.reg<uint64_t>(x64_register::rax, STATUS_BUFFER_OVERFLOW);
-			return;
+			return STATUS_BUFFER_OVERFLOW;
 		}
 
-		if (!is_within_start_and_length(base_address, context.ntdll.image_base, context.ntdll.size_of_image))
+		if (!is_within_start_and_length(base_address, c.proc.ntdll.image_base, c.proc.ntdll.size_of_image))
 		{
 			puts("Bad image request");
-			emu.stop();
-			return;
+			c.emu.stop();
+			return STATUS_NOT_IMPLEMENTED;
 		}
 
-		const emulator_object<MEMORY_IMAGE_INFORMATION> info{emu, memory_information};
+		const emulator_object<MEMORY_IMAGE_INFORMATION> info{c.emu, memory_information};
 
 		info.access([&](MEMORY_IMAGE_INFORMATION& image_info)
 		{
-			image_info.ImageBase = reinterpret_cast<void*>(context.ntdll.image_base);
-			image_info.SizeOfImage = context.ntdll.size_of_image;
+			image_info.ImageBase = reinterpret_cast<void*>(c.proc.ntdll.image_base);
+			image_info.SizeOfImage = c.proc.ntdll.size_of_image;
 		});
 
-		emu.reg<uint64_t>(x64_register::rax, STATUS_SUCCESS);
+		return STATUS_SUCCESS;
 	}
 
-	void handle_NtQuerySystemInformation(x64_emulator& emu)
+	NTSTATUS handle_NtQuerySystemInformation(const syscall_context& c, const uint32_t info_class,
+	                                         const uint64_t system_information,
+	                                         const uint32_t system_information_length,
+	                                         const emulator_object<uint32_t> return_length)
 	{
-		const auto info_class = emu.reg<uint32_t>(x64_register::r10d);
-		const auto system_information = emu.reg(x64_register::rdx);
-		const auto system_information_length = emu.reg<uint32_t>(x64_register::r8d);
-		const emulator_object<uint32_t> return_length{emu, emu.reg(x64_register::r9)};
-
 		if (info_class == SystemFlushInformation
 			|| info_class == SystemHypervisorSharedPageInformation)
 		{
-			emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_SUPPORTED);
-			return;
+			return STATUS_NOT_SUPPORTED;
 		}
 
 		if (info_class == SystemNumaProcessorMap)
@@ -223,11 +210,10 @@ namespace
 
 			if (system_information_length != sizeof(SYSTEM_NUMA_INFORMATION))
 			{
-				emu.reg<uint64_t>(x64_register::rax, STATUS_BUFFER_TOO_SMALL);
-				return;
+				return STATUS_BUFFER_TOO_SMALL;
 			}
 
-			const emulator_object<SYSTEM_NUMA_INFORMATION> info_obj{emu, system_information};
+			const emulator_object<SYSTEM_NUMA_INFORMATION> info_obj{c.emu, system_information};
 
 			info_obj.access([&](SYSTEM_NUMA_INFORMATION& info)
 			{
@@ -237,15 +223,14 @@ namespace
 				info.Pad[0] = 0xFFF;
 			});
 
-			emu.reg<uint64_t>(x64_register::rax, STATUS_SUCCESS);
-			return;
+			return STATUS_SUCCESS;
 		}
 
 		if (info_class != SystemBasicInformation && info_class != SystemEmulationBasicInformation)
 		{
 			printf("Unsupported system info class: %X\n", info_class);
-			emu.stop();
-			return;
+			c.emu.stop();
+			return STATUS_NOT_SUPPORTED;
 		}
 
 		if (return_length)
@@ -255,11 +240,10 @@ namespace
 
 		if (system_information_length != sizeof(SYSTEM_BASIC_INFORMATION))
 		{
-			emu.reg<uint64_t>(x64_register::rax, STATUS_BUFFER_TOO_SMALL);
-			return;
+			return STATUS_BUFFER_TOO_SMALL;
 		}
 
-		const emulator_object<SYSTEM_BASIC_INFORMATION> info{emu, system_information};
+		const emulator_object<SYSTEM_BASIC_INFORMATION> info{c.emu, system_information};
 
 		info.access([&](SYSTEM_BASIC_INFORMATION& basic_info)
 		{
@@ -275,58 +259,56 @@ namespace
 			basic_info.NumberOfProcessors = 1;
 		});
 
-		emu.reg<uint64_t>(x64_register::rax, STATUS_SUCCESS);
+		return STATUS_SUCCESS;
 	}
 
-	void handle_NtQuerySystemInformationEx(x64_emulator& emu)
+	NTSTATUS handle_NtQuerySystemInformationEx(const syscall_context& c, const uint32_t info_class,
+	                                           const uint64_t input_buffer,
+	                                           const uint32_t input_buffer_length,
+	                                           const uint64_t system_information,
+	                                           const uint32_t system_information_length,
+	                                           const emulator_object<uint32_t> return_length)
 	{
-		const auto info_class = emu.reg<uint32_t>(x64_register::r10d);
-		const auto input_buffer = emu.reg(x64_register::rdx);
-		const auto input_buffer_length = emu.reg<uint32_t>(x64_register::r8d);
-		const auto system_information = emu.reg(x64_register::r9);
-		const auto system_information_length = static_cast<uint32_t>(emu.read_stack(5));
-		const emulator_object<uint32_t> return_length{emu, emu.read_stack(6)};
-
 		if (info_class == SystemFlushInformation
 			|| info_class == SystemFeatureConfigurationInformation
 			|| info_class == SystemFeatureConfigurationSectionInformation)
 		{
-			emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_SUPPORTED);
-			return;
+			printf("Unsupported, but allowed system info class: %X\n", info_class);
+			return STATUS_NOT_SUPPORTED;
 		}
 
 		if (info_class == SystemLogicalProcessorAndGroupInformation)
 		{
 			void* buffer = calloc(1, input_buffer_length);
 			void* res_buff = calloc(1, system_information_length);
-			emu.read_memory(input_buffer, buffer, input_buffer_length);
+			c.emu.read_memory(input_buffer, buffer, input_buffer_length);
 
-			uint64_t code = 0;
+			NTSTATUS code = STATUS_SUCCESS;
 
 			return_length.access([&](uint32_t& len)
 			{
-				code = NtQuerySystemInformationEx((SYSTEM_INFORMATION_CLASS)info_class, buffer, input_buffer_length,
+				code = NtQuerySystemInformationEx(static_cast<SYSTEM_INFORMATION_CLASS>(info_class), buffer,
+				                                  input_buffer_length,
 				                                  res_buff,
-				                                  system_information_length, (ULONG*)&len);
+				                                  system_information_length, reinterpret_cast<ULONG*>(&len));
 			});
 
 			if (code == 0)
 			{
-				emu.write_memory(system_information, res_buff, return_length.read());
+				c.emu.write_memory(system_information, res_buff, return_length.read());
 			}
 
 			free(buffer);
 			free(res_buff);
 
-			emu.reg<uint64_t>(x64_register::rax, code);
-			return;
+			return code;
 		}
 
 		if (info_class != SystemBasicInformation && info_class != SystemEmulationBasicInformation)
 		{
 			printf("Unsupported system info ex class: %X\n", info_class);
-			emu.stop();
-			return;
+			c.emu.stop();
+			return STATUS_NOT_SUPPORTED;
 		}
 
 		if (return_length)
@@ -336,11 +318,10 @@ namespace
 
 		if (system_information_length != sizeof(SYSTEM_BASIC_INFORMATION))
 		{
-			emu.reg<uint64_t>(x64_register::rax, STATUS_BUFFER_TOO_SMALL);
-			return;
+			return STATUS_BUFFER_TOO_SMALL;
 		}
 
-		const emulator_object<SYSTEM_BASIC_INFORMATION> info{emu, system_information};
+		const emulator_object<SYSTEM_BASIC_INFORMATION> info{c.emu, system_information};
 
 		info.access([&](SYSTEM_BASIC_INFORMATION& basic_info)
 		{
@@ -356,28 +337,25 @@ namespace
 			basic_info.NumberOfProcessors = 1;
 		});
 
-		emu.reg<uint64_t>(x64_register::rax, STATUS_SUCCESS);
+		return STATUS_SUCCESS;
 	}
 
-	void handle_NtQueryProcessInformation(x64_emulator& emu)
+	NTSTATUS handle_NtQueryProcessInformation(const syscall_context& c, const uint64_t process_handle,
+	                                          const uint32_t info_class, const uint64_t process_information,
+	                                          const uint32_t process_information_length,
+	                                          const emulator_object<uint32_t> return_length)
 	{
-		const auto process_handle = emu.reg<uint64_t>(x64_register::r10);
-		const auto info_class = emu.reg<uint32_t>(x64_register::edx);
-		const auto process_information = emu.reg(x64_register::r8);
-		const auto process_information_length = emu.reg<uint32_t>(x64_register::r9d);
-		const emulator_object<uint32_t> return_length{emu, emu.read_stack(5)};
-
 		if (process_handle != ~0ULL)
 		{
-			emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_IMPLEMENTED);
-			return;
+			return STATUS_NOT_IMPLEMENTED;
 		}
 
 		if (info_class != ProcessCookie)
 		{
 			printf("Unsupported process info class: %X\n", info_class);
-			emu.stop();
-			return;
+			c.emu.stop();
+
+			return STATUS_NOT_IMPLEMENTED;
 		}
 
 		if (return_length)
@@ -387,28 +365,24 @@ namespace
 
 		if (process_information_length != sizeof(uint32_t))
 		{
-			emu.reg<uint64_t>(x64_register::rax, STATUS_BUFFER_OVERFLOW);
-			return;
+			return STATUS_BUFFER_OVERFLOW;
 		}
 
-		const emulator_object<uint32_t> info{emu, process_information};
+		const emulator_object<uint32_t> info{c.emu, process_information};
 		info.write(0x01234567);
 
-		emu.reg<uint64_t>(x64_register::rax, STATUS_SUCCESS);
+		return STATUS_SUCCESS;
 	}
 
-	void handle_NtProtectVirtualMemory(x64_emulator& emu)
+	NTSTATUS handle_NtProtectVirtualMemory(const syscall_context& c, const uint64_t process_handle,
+	                                       const emulator_object<uint64_t> base_address,
+	                                       const emulator_object<uint32_t> bytes_to_protect,
+	                                       const uint32_t protection,
+	                                       const emulator_object<uint32_t> old_protection)
 	{
-		const auto process_handle = emu.reg(x64_register::r10);
-		const emulator_object<uint64_t> base_address{emu, emu.reg(x64_register::rdx)};
-		const emulator_object<uint32_t> bytes_to_protect{emu, emu.reg(x64_register::r8)};
-		const auto protection = emu.reg<uint32_t>(x64_register::r9d);
-		const emulator_object<uint32_t> old_protection{emu, emu.read_stack(5)};
-
 		if (process_handle != ~0ULL)
 		{
-			emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_IMPLEMENTED);
-			return;
+			return STATUS_NOT_IMPLEMENTED;
 		}
 
 		const auto address = page_align_down(base_address.read());
@@ -417,14 +391,14 @@ namespace
 		const auto size = page_align_up(bytes_to_protect.read());
 		bytes_to_protect.write(static_cast<uint32_t>(size));
 
-		const auto current_uc_protection = get_memory_protection(emu, address);
+		const auto current_uc_protection = get_memory_protection(c.emu, address);
 		const auto current_protection = map_emulator_to_nt_protection(current_uc_protection);
 		old_protection.write(current_protection);
 
 		const auto requested_protection = map_nt_to_emulator_protection(protection);
-		emu.protect_memory(address, size, requested_protection);
+		c.emu.protect_memory(address, size, requested_protection);
 
-		emu.reg<uint64_t>(x64_register::rax, STATUS_SUCCESS);
+		return STATUS_SUCCESS;
 	}
 
 	NTSTATUS handle_NtAllocateVirtualMemory(const syscall_context& c, const uint64_t process_handle,
@@ -477,18 +451,15 @@ namespace
 			       : STATUS_NOT_SUPPORTED; // No idea what the correct code is
 	}
 
-	void handle_NtAllocateVirtualMemoryEx(x64_emulator& emu)
+	NTSTATUS handle_NtAllocateVirtualMemoryEx(const syscall_context& c, const uint64_t process_handle,
+	                                          const emulator_object<uint64_t> base_address,
+	                                          const emulator_object<uint64_t> bytes_to_allocate,
+	                                          const uint32_t /*allocation_type*/,
+	                                          const uint32_t page_protection)
 	{
-		const auto process_handle = emu.reg(x64_register::r10);
-		const emulator_object<uint64_t> base_address{emu, emu.reg(x64_register::rdx)};
-		const emulator_object<uint64_t> bytes_to_allocate{emu, emu.reg(x64_register::r8)};
-		//const auto allocation_type =emu.reg<uint32_t>(x64_register::r9d);
-		const auto page_protection = static_cast<uint32_t>(emu.read_stack(5));
-
 		if (process_handle != ~0ULL)
 		{
-			emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_IMPLEMENTED);
-			return;
+			return STATUS_NOT_IMPLEMENTED;
 		}
 
 		constexpr auto allocation_granularity = 0x10000;
@@ -505,17 +476,16 @@ namespace
 			allocate_anywhere = true;
 			allocation_base = allocation_granularity;
 		}
-		else if (is_memory_allocated(emu, allocation_base))
+		else if (is_memory_allocated(c.emu, allocation_base))
 		{
-			emu.reg<uint64_t>(x64_register::rax, STATUS_SUCCESS);
-			return;
+			return STATUS_SUCCESS;
 		}
 
 		bool succeeded = false;
 
 		while (true)
 		{
-			succeeded = emu.try_map_memory(allocation_base, allocation_bytes, protection);
+			succeeded = c.emu.try_map_memory(allocation_base, allocation_bytes, protection);
 			if (succeeded || !allocate_anywhere)
 			{
 				break;
@@ -526,22 +496,18 @@ namespace
 
 		base_address.write(allocation_base);
 
-		emu.reg<uint64_t>(x64_register::rax, succeeded
-			                                     ? STATUS_SUCCESS
-			                                     : STATUS_NOT_SUPPORTED // No idea what the correct code is
-		);
+		return succeeded
+			       ? STATUS_SUCCESS
+			       : STATUS_NOT_SUPPORTED; // No idea what the correct code is
 	}
 
-	void handle_NtFreeVirtualMemory(x64_emulator& emu)
+	NTSTATUS handle_NtFreeVirtualMemory(const syscall_context& c, const uint64_t process_handle,
+	                                    const emulator_object<uint64_t> base_address,
+	                                    const emulator_object<uint64_t> bytes_to_allocate)
 	{
-		const auto process_handle = emu.reg(x64_register::r10);
-		const emulator_object<uint64_t> base_address{emu, emu.reg(x64_register::rdx)};
-		const emulator_object<uint64_t> bytes_to_allocate{emu, emu.reg(x64_register::r8)};
-
 		if (process_handle != ~0ULL)
 		{
-			emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_IMPLEMENTED);
-			return;
+			return STATUS_NOT_IMPLEMENTED;
 		}
 
 		const auto allocation_base = base_address.read();
@@ -550,7 +516,7 @@ namespace
 		bool succeeded = false;
 		try
 		{
-			emu.unmap_memory(allocation_base, allocation_size);
+			c.emu.unmap_memory(allocation_base, allocation_size);
 			succeeded = true;
 		}
 		catch (...)
@@ -558,12 +524,16 @@ namespace
 			succeeded = false;
 		}
 
-		emu.reg<uint64_t>(x64_register::rax, succeeded
-			                                     ? STATUS_SUCCESS
-			                                     : STATUS_NOT_SUPPORTED // No idea what the correct code is
-		);
+		return succeeded
+			       ? STATUS_SUCCESS
+			       : STATUS_NOT_SUPPORTED; // No idea what the correct code is
 	}
 }
+
+#define handle(id, handler) \
+	case id: \
+		forward(c, handler);\
+		break
 
 void handle_syscall(x64_emulator& emu, process_context& context)
 {
@@ -572,54 +542,27 @@ void handle_syscall(x64_emulator& emu, process_context& context)
 
 	printf("Handling syscall: %X (%llX)\n", syscall_id, address);
 
-	syscall_context c{emu, context};
+	const syscall_context c{emu, context};
 
 	try
 	{
 		switch (syscall_id)
 		{
-		case 0x12:
-			forward(c, handle_NtOpenKey);
-			break;
-		case 0x18:
-			forward(c, handle_NtAllocateVirtualMemory);
-			break;
-		case 0x1E:
-			handle_NtFreeVirtualMemory(emu);
-			break;
-		case 0x19:
-			handle_NtQueryProcessInformation(emu);
-			break;
-		case 0x23:
-			handle_NtQueryVirtualMemory(emu, context);
-			break;
-		case 0x31:
-			handle_NtQueryPerformanceCounter(emu);
-			break;
-		case 0x36:
-			handle_NtQuerySystemInformation(emu);
-			break;
-		case 0x48:
-			handle_NtCreateEvent(emu, context);
-			break;
-		case 0x50:
-			handle_NtProtectVirtualMemory(emu);
-			break;
-		case 0x5E:
-			forward(c, handle_NtTraceEvent);
-			break;
-		case 0x78:
-			handle_NtAllocateVirtualMemoryEx(emu);
-			break;
-		case 0xB2:
-			forward(c, handle_NtCreateIoCompletion);
-			break;
-		case 0x11A:
-			forward(c, handle_NtManageHotPatch);
-			break;
-		case 0x16E:
-			handle_NtQuerySystemInformationEx(emu);
-			break;
+		handle(0x012, handle_NtOpenKey);
+		handle(0x018, handle_NtAllocateVirtualMemory);
+		handle(0x019, handle_NtQueryProcessInformation);
+		handle(0x01E, handle_NtFreeVirtualMemory);
+		handle(0x023, handle_NtQueryVirtualMemory);
+		handle(0x031, handle_NtQueryPerformanceCounter);
+		handle(0x036, handle_NtQuerySystemInformation);
+		handle(0x048, handle_NtCreateEvent);
+		handle(0x050, handle_NtProtectVirtualMemory);
+		handle(0x05E, handle_NtTraceEvent);
+		handle(0x078, handle_NtAllocateVirtualMemoryEx);
+		handle(0x0B2, handle_NtCreateIoCompletion);
+		handle(0x11A, handle_NtManageHotPatch);
+		handle(0x16E, handle_NtQuerySystemInformationEx);
+
 		default:
 			printf("Unhandled syscall: %X\n", syscall_id);
 			emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_IMPLEMENTED);
