@@ -9,6 +9,8 @@ namespace
 		process_context& proc;
 	};
 
+	constexpr uint64_t EVENT_BIT = 1ULL << 63ULL;
+
 	uint64_t get_syscall_argument(x64_emulator& emu, const size_t index)
 	{
 		switch (index)
@@ -103,14 +105,51 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	NTSTATUS handle_NtCreateWorkerFactory()
+	{
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtOpenKey()
 	{
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtCreateIoCompletion()
+	NTSTATUS handle_NtSetEvent(const syscall_context& c, const uint64_t handle, const emulator_object<LONG> previous_state)
 	{
-		return STATUS_NOT_SUPPORTED;
+		if (handle & EVENT_BIT)
+		{
+			const auto event_index = static_cast<uint32_t>(handle & ~EVENT_BIT);
+			const auto entry = c.proc.events.find(event_index);
+			if (entry != c.proc.events.end())
+			{
+				if (previous_state.value())
+				{
+					previous_state.write(entry->second.signaled ? 1ULL : 0ULL);
+				}
+
+				entry->second.signaled = true;
+				return STATUS_SUCCESS;
+			}
+		}
+
+		return STATUS_INVALID_HANDLE;
+	}
+
+	NTSTATUS handle_NtClose(const syscall_context& c, const uint64_t handle)
+	{
+		if (handle & EVENT_BIT)
+		{
+			const auto event_index = static_cast<uint32_t>(handle & ~EVENT_BIT);
+			const auto entry = c.proc.events.find(event_index);
+			if (entry != c.proc.events.end())
+			{
+				c.proc.events.erase(entry);
+				return STATUS_SUCCESS;
+			}
+		}
+
+		return STATUS_INVALID_HANDLE;
 	}
 
 	NTSTATUS handle_NtTraceEvent()
@@ -129,15 +168,37 @@ namespace
 			return STATUS_NOT_SUPPORTED;
 		}
 
-		const uint64_t index = c.proc.events.size();
-		event_handle.write(index);
+		uint32_t index = 1;
+		for (;; ++index)
+		{
+			if (!c.proc.events.contains(index))
+			{
+				break;
+			}
+		}
 
-		c.proc.events.emplace_back(initial_state != FALSE, event_type);
+		event_handle.write(index | EVENT_BIT);
+
+		c.proc.events.try_emplace(index, initial_state != FALSE, event_type);
 
 		static_assert(sizeof(EVENT_TYPE) == sizeof(uint32_t));
 		static_assert(sizeof(ACCESS_MASK) == sizeof(uint32_t));
 
 		return STATUS_SUCCESS;
+	}
+
+
+	NTSTATUS handle_NtCreateIoCompletion(const syscall_context& c, const emulator_object<uint64_t> event_handle,
+	                                     const ACCESS_MASK desired_access, const uint64_t object_attributes,
+	                                     uint32_t /*number_of_concurrent_threads*/)
+	{
+		return handle_NtCreateEvent(c, event_handle, desired_access, object_attributes, NotificationEvent, FALSE);
+	}
+
+	NTSTATUS handle_NtCreateWaitCompletionPacket(const syscall_context& c, const emulator_object<uint64_t> event_handle,
+	                                             const ACCESS_MASK desired_access, const uint64_t object_attributes)
+	{
+		return handle_NtCreateEvent(c, event_handle, desired_access, object_attributes, NotificationEvent, FALSE);
 	}
 
 	NTSTATUS handle_NtQueryVirtualMemory(const syscall_context& c, const uint64_t process_handle,
@@ -528,26 +589,18 @@ namespace
 			       ? STATUS_SUCCESS
 			       : STATUS_NOT_SUPPORTED; // No idea what the correct code is
 	}
-}
 
 #define handle(id, handler) \
 	case id: \
 		forward(c, handler);\
 		break
 
-void handle_syscall(x64_emulator& emu, process_context& context)
-{
-	const auto address = emu.read_instruction_pointer();
-	const auto syscall_id = emu.reg<uint32_t>(x64_register::eax);
-
-	printf("Handling syscall: %X (%llX)\n", syscall_id, address);
-
-	const syscall_context c{emu, context};
-
-	try
+	void dispatch_syscall(const syscall_context& c, const uint32_t syscall_id)
 	{
 		switch (syscall_id)
 		{
+		handle(0x00E, handle_NtSetEvent);
+		handle(0x00F, handle_NtClose);
 		handle(0x012, handle_NtOpenKey);
 		handle(0x018, handle_NtAllocateVirtualMemory);
 		handle(0x019, handle_NtQueryProcessInformation);
@@ -560,18 +613,45 @@ void handle_syscall(x64_emulator& emu, process_context& context)
 		handle(0x05E, handle_NtTraceEvent);
 		handle(0x078, handle_NtAllocateVirtualMemoryEx);
 		handle(0x0B2, handle_NtCreateIoCompletion);
+		handle(0x0D2, handle_NtCreateWaitCompletionPacket);
+		handle(0x0D5, handle_NtCreateWorkerFactory);
 		handle(0x11A, handle_NtManageHotPatch);
 		handle(0x16E, handle_NtQuerySystemInformationEx);
 
 		default:
 			printf("Unhandled syscall: %X\n", syscall_id);
-			emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_IMPLEMENTED);
-			emu.stop();
+			c.emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_IMPLEMENTED);
+			c.emu.stop();
 			break;
 		}
 	}
+
+
+#undef handle
+}
+
+
+void handle_syscall(x64_emulator& emu, process_context& context)
+{
+	const auto address = emu.read_instruction_pointer();
+	const auto syscall_id = emu.reg<uint32_t>(x64_register::eax);
+
+	printf("Handling syscall: %X (%llX)\n", syscall_id, address);
+
+	const syscall_context c{emu, context};
+
+	try
+	{
+		dispatch_syscall(c, syscall_id);
+	}
+	catch (std::exception& e)
+	{
+		printf("Syscall threw an exception: %X (%llX) - %s\n", syscall_id, address, e.what());
+		emu.reg<uint64_t>(x64_register::rax, STATUS_UNSUCCESSFUL);
+	}
 	catch (...)
 	{
+		printf("Syscall threw an unknown exception: %X (%llX)\n", syscall_id, address);
 		emu.reg<uint64_t>(x64_register::rax, STATUS_UNSUCCESSFUL);
 	}
 }
