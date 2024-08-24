@@ -1,10 +1,9 @@
 #pragma once
 #include <chrono>
-#include <vector>
 #include <functional>
 #include <cassert>
 
-#include "memory_region.hpp"
+#include "memory_manager.hpp"
 
 struct emulator_hook;
 
@@ -15,7 +14,7 @@ using hook_callback = std::function<void()>;
 using simple_memory_hook_callback = std::function<void(uint64_t address, size_t size)>;
 using complex_memory_hook_callback = std::function<void(uint64_t address, size_t size, memory_operation operation)>;
 
-class emulator
+class emulator : public memory_manager
 {
 public:
 	emulator() = default;
@@ -26,24 +25,11 @@ public:
 	emulator(emulator&&) = delete;
 	emulator& operator=(emulator&&) = delete;
 
-	virtual ~emulator() = default;
-
 	virtual void start(uint64_t start, uint64_t end = 0, std::chrono::microseconds timeout = {}, size_t count = 0) = 0;
 	virtual void stop() = 0;
 
 	virtual void read_raw_register(int reg, void* value, size_t size) = 0;
 	virtual void write_raw_register(int reg, const void* value, size_t size) = 0;
-
-	virtual bool try_map_memory(uint64_t address, size_t size, memory_permission permissions) = 0;
-	virtual void map_memory(uint64_t address, size_t size, memory_permission permissions) = 0;
-	virtual void unmap_memory(uint64_t address, size_t size) = 0;
-
-	virtual void read_memory(uint64_t address, void* data, size_t size) = 0;
-	virtual void write_memory(uint64_t address, const void* data, size_t size) = 0;
-
-	virtual void protect_memory(uint64_t address, size_t size, memory_permission permissions) = 0;
-
-	virtual std::vector<memory_region> get_memory_regions() = 0;
 
 	virtual emulator_hook* hook_memory_access(uint64_t address, size_t size, memory_operation filter,
 	                                          complex_memory_hook_callback callback) = 0;

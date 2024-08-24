@@ -2,37 +2,7 @@
 #include <cstdint>
 #include <emulator.hpp>
 
-inline bool is_within_start_and_end(const uint64_t value, const uint64_t start, const uint64_t end)
-{
-	return value >= start && value < end;
-}
-
-inline bool is_within_start_and_length(const uint64_t value, const uint64_t start, const uint64_t length)
-{
-	return is_within_start_and_end(value, start, start + length);
-}
-
-inline uint64_t align_down(const uint64_t value, const uint64_t alignment)
-{
-	return value & ~(alignment - 1);
-}
-
-inline uint64_t align_up(const uint64_t value, const uint64_t alignment)
-{
-	return align_down(value + (alignment - 1), alignment);
-}
-
-inline uint64_t page_align_down(const uint64_t value)
-{
-	return align_down(value, 0x1000);
-}
-
-inline uint64_t page_align_up(const uint64_t value)
-{
-	return align_up(value, 0x1000);
-}
-
-
+/*
 inline memory_permission get_memory_protection(emulator& emu, const uint64_t address)
 {
 	for (const auto& region : emu.get_memory_regions())
@@ -58,6 +28,7 @@ inline bool is_memory_allocated(emulator& emu, const uint64_t address)
 
 	return false;
 }
+*/
 
 inline memory_permission map_nt_to_emulator_protection(const uint32_t nt_protection)
 {

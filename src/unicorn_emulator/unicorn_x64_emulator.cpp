@@ -197,11 +197,6 @@ namespace unicorn
 				uce(uc_mem_map(*this, address, size, static_cast<uint32_t>(permissions)));
 			}
 
-			bool try_map_memory(const uint64_t address, const size_t size, memory_permission permissions) override
-			{
-				return uc_mem_map(*this, address, size, static_cast<uint32_t>(permissions)) == UC_ERR_OK;
-			}
-
 			void unmap_memory(const uint64_t address, const size_t size) override
 			{
 				uce(uc_mem_unmap(*this, address, size));
@@ -217,12 +212,12 @@ namespace unicorn
 				uce(uc_mem_write(*this, address, data, size));
 			}
 
-			void protect_memory(const uint64_t address, const size_t size, memory_permission permissions) override
+			void apply_memory_protection(const uint64_t address, const size_t size, memory_permission permissions) override
 			{
 				uce(uc_mem_protect(*this, address, size, static_cast<uint32_t>(permissions)));
 			}
 
-			std::vector<memory_region> get_memory_regions() override
+			/*std::vector<memory_region> get_memory_regions() override
 			{
 				const unicorn_memory_regions regions{*this};
 				const auto region_span = regions.get_span();
@@ -235,13 +230,14 @@ namespace unicorn
 					memory_region reg{};
 					reg.start = region.begin;
 					reg.length = region.end - region.begin;
+					reg.committed = true;
 					reg.pemissions = static_cast<memory_permission>(region.perms) & memory_permission::all;
 
 					result.push_back(reg);
 				}
 
 				return result;
-			}
+			}*/
 
 			emulator_hook* hook_instruction(int instruction_type,
 			                                hook_callback callback)

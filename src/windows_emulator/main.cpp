@@ -23,7 +23,7 @@ namespace
 {
 	void setup_stack(x64_emulator& emu, const uint64_t stack_base, const size_t stack_size)
 	{
-		emu.map_memory(stack_base, stack_size, memory_permission::read_write);
+		emu.allocate_memory(stack_base, stack_size, memory_permission::read_write);
 
 		const uint64_t stack_end = stack_base + stack_size;
 		emu.reg(x64_register::rsp, stack_end);
@@ -43,14 +43,14 @@ namespace
 		};
 
 		emu.write_register(x64_register::msr, &value, sizeof(value));
-		emu.map_memory(segment_base, size, memory_permission::read_write);
+		emu.allocate_memory(segment_base, size, memory_permission::read_write);
 
 		return {emu, segment_base, size};
 	}
 
 	emulator_object<KUSER_SHARED_DATA> setup_kusd(x64_emulator& emu)
 	{
-		emu.map_memory(KUSD_ADDRESS, page_align_up(sizeof(KUSER_SHARED_DATA)), memory_permission::read);
+		emu.allocate_memory(KUSD_ADDRESS, page_align_up(sizeof(KUSER_SHARED_DATA)), memory_permission::read);
 
 		const emulator_object<KUSER_SHARED_DATA> kusd_object{emu, KUSD_ADDRESS};
 		kusd_object.access([](KUSER_SHARED_DATA& kusd)
@@ -84,22 +84,15 @@ namespace
 		binary.image_base = optional_header.ImageBase;
 		binary.size_of_image = optional_header.SizeOfImage;
 
-		while (true)
+		if (!emu.allocate_memory(binary.image_base, binary.size_of_image, memory_permission::read))
 		{
-			try
+			binary.image_base = emu.find_free_allocation_base(binary.size_of_image);
+			if ((optional_header.DllCharacteristics &
+					IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) == 0 || //
+				!emu.allocate_memory(
+					binary.image_base, binary.size_of_image, memory_permission::read))
 			{
-				emu.map_memory(binary.image_base, binary.size_of_image, memory_permission::read);
-				break;
-			}
-			catch (...)
-			{
-				binary.image_base += 0x10000;
-
-				if (binary.image_base < optional_header.ImageBase || (optional_header.DllCharacteristics &
-					IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) == 0)
-				{
-					throw std::runtime_error("Failed to map range");
-				}
+				throw std::runtime_error("Failed to map binary");
 			}
 		}
 
@@ -139,7 +132,7 @@ namespace
 
 			const auto size_of_section = page_align_up(std::max(section.SizeOfRawData, section.Misc.VirtualSize));
 
-			emu.protect_memory(target_ptr, size_of_section, permissions);
+			emu.protect_memory(target_ptr, size_of_section, permissions, nullptr);
 		}
 
 		auto& export_directory_entry = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
