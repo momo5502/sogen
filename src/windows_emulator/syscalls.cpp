@@ -282,20 +282,20 @@ namespace
 	{
 		if (process_handle != ~0ULL)
 		{
-			return STATUS_NOT_IMPLEMENTED;
+			return STATUS_NOT_SUPPORTED;
 		}
 
 		if (info_class == MemoryWorkingSetExInformation
 			|| info_class == MemoryImageExtensionInformation)
 		{
-			return STATUS_NOT_IMPLEMENTED;
+			return STATUS_NOT_SUPPORTED;
 		}
 
 		if (info_class != MemoryImageInformation)
 		{
 			printf("Unsupported memory info class: %X\n", info_class);
 			c.emu.stop();
-			return STATUS_NOT_IMPLEMENTED;
+			return STATUS_NOT_SUPPORTED;
 		}
 
 		if (return_length)
@@ -312,7 +312,7 @@ namespace
 		{
 			puts("Bad image request");
 			c.emu.stop();
-			return STATUS_NOT_IMPLEMENTED;
+			return STATUS_NOT_SUPPORTED;
 		}
 
 		const emulator_object<MEMORY_IMAGE_INFORMATION> info{c.emu, memory_information};
@@ -483,7 +483,7 @@ namespace
 	{
 		if (process_handle != ~0ULL)
 		{
-			return STATUS_NOT_IMPLEMENTED;
+			return STATUS_NOT_SUPPORTED;
 		}
 
 		if (info_class != ProcessCookie)
@@ -491,7 +491,7 @@ namespace
 			printf("Unsupported process info class: %X\n", info_class);
 			c.emu.stop();
 
-			return STATUS_NOT_IMPLEMENTED;
+			return STATUS_NOT_SUPPORTED;
 		}
 
 		if (return_length)
@@ -518,7 +518,7 @@ namespace
 	{
 		if (process_handle != ~0ULL)
 		{
-			return STATUS_NOT_IMPLEMENTED;
+			return STATUS_NOT_SUPPORTED;
 		}
 
 		const auto address = page_align_down(base_address.read());
@@ -612,7 +612,7 @@ namespace
 	{
 		if (process_handle != ~0ULL)
 		{
-			return STATUS_NOT_IMPLEMENTED;
+			return STATUS_NOT_SUPPORTED;
 		}
 
 		const auto allocation_bytes = bytes_to_allocate.read();
@@ -668,7 +668,7 @@ namespace
 	{
 		if (process_handle != ~0ULL)
 		{
-			return STATUS_NOT_IMPLEMENTED;
+			return STATUS_NOT_SUPPORTED;
 		}
 
 		const auto allocation_base = base_address.read();
@@ -724,7 +724,7 @@ namespace
 
 		default:
 			printf("Unhandled syscall: %X\n", syscall_id);
-			c.emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_IMPLEMENTED);
+			c.emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_SUPPORTED);
 			c.emu.stop();
 			break;
 		}
