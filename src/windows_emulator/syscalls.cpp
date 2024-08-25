@@ -183,6 +183,20 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	NTSTATUS handle_NtSetInformationThread(const syscall_context& c, const uint64_t thread_handle,
+		const THREADINFOCLASS info_class,
+		const uint64_t thread_information, const uint32_t thread_information_length)
+	{
+		if (info_class == ThreadSchedulerSharedDataSlot)
+		{
+			return STATUS_SUCCESS;
+		}
+
+		printf("Unsupported thread info class: %X\n", info_class);
+		c.emu.stop();
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtSetEvent(const syscall_context& c, const uint64_t handle,
 	                           const emulator_object<LONG> previous_state)
 	{
@@ -510,6 +524,26 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
+	NTSTATUS handle_NtSetInformationProcess(const syscall_context& c, const uint64_t process_handle,
+	                                        const uint32_t info_class, const uint64_t process_information,
+	                                        const uint32_t process_information_length)
+	{
+		if (process_handle != ~0ULL)
+		{
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		if (info_class == ProcessSchedulerSharedData)
+		{
+			return STATUS_SUCCESS;
+		}
+
+		printf("Unsupported process info class: %X\n", info_class);
+		c.emu.stop();
+
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtProtectVirtualMemory(const syscall_context& c, const uint64_t process_handle,
 	                                       const emulator_object<uint64_t> base_address,
 	                                       const emulator_object<uint32_t> bytes_to_protect,
@@ -700,11 +734,13 @@ namespace
 	{
 		switch (syscall_id)
 		{
+		handle(0x00D, handle_NtSetInformationThread);
 		handle(0x00E, handle_NtSetEvent);
 		handle(0x00F, handle_NtClose);
 		handle(0x012, handle_NtOpenKey);
 		handle(0x018, handle_NtAllocateVirtualMemory);
 		handle(0x019, handle_NtQueryProcessInformation);
+		handle(0x01C, handle_NtSetInformationProcess);
 		handle(0x01E, handle_NtFreeVirtualMemory);
 		handle(0x023, handle_NtQueryVirtualMemory);
 		handle(0x031, handle_NtQueryPerformanceCounter);
