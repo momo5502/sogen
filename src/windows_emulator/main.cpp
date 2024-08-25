@@ -9,6 +9,10 @@
 
 #include <unicorn_x64_emulator.hpp>
 
+extern "C" {
+#include <gdbstub.h>
+}
+
 #define GS_SEGMENT_ADDR 0x6000000ULL
 #define GS_SEGMENT_SIZE (20 << 20)  // 20 MB
 
@@ -286,8 +290,182 @@ namespace
 		                     });
 	}
 
+	enum class gdb_registers
+	{
+		rax = 0,
+		rbx,
+		rcx,
+		rdx,
+		rsi,
+		rdi,
+		rbp,
+		rsp,
+		r8,
+		r9,
+		r10,
+		r11,
+		r12,
+		r13,
+		r14,
+		r15,
+
+		rip,
+		eflags,
+
+		end,
+	};
+
+	std::unordered_map<gdb_registers, x64_register> register_map{
+		{gdb_registers::rax, x64_register::rax},
+		{gdb_registers::rbx, x64_register::rbx},
+		{gdb_registers::rcx, x64_register::rcx},
+		{gdb_registers::rdx, x64_register::rdx},
+		{gdb_registers::rsi, x64_register::rsi},
+		{gdb_registers::rdi, x64_register::rdi},
+		{gdb_registers::rbp, x64_register::rbp},
+		{gdb_registers::rsp, x64_register::rsp},
+		{gdb_registers::r8, x64_register::r8},
+		{gdb_registers::r9, x64_register::r9},
+		{gdb_registers::r10, x64_register::r10},
+		{gdb_registers::r11, x64_register::r11},
+		{gdb_registers::r12, x64_register::r12},
+		{gdb_registers::r13, x64_register::r13},
+		{gdb_registers::r14, x64_register::r14},
+		{gdb_registers::r15, x64_register::r15},
+		{gdb_registers::rip, x64_register::rip},
+		{gdb_registers::eflags, x64_register::rflags},
+	};
+
 	void run()
 	{
+		gdbstub_t stub{};
+
+		target_ops ops{};
+		ops.cont = +[](void* args)
+		{
+			static_cast<x64_emulator*>(static_cast<emulator*>(args))->start_from_ip();
+			return ACT_RESUME;
+		};
+
+		ops.stepi = +[](void* args)
+		{
+			static_cast<x64_emulator*>(static_cast<emulator*>(args))->start_from_ip({}, 1);
+			return ACT_RESUME;
+		};
+
+		ops.read_reg = +[](void* args, int regno, size_t* value)
+		{
+			try
+			{
+				const auto mapped_register = register_map.at(static_cast<gdb_registers>(regno));
+				static_cast<emulator*>(args)->read_raw_register(static_cast<int>(mapped_register), value, sizeof(*value));
+				return 0;
+			}
+			catch (...)
+			{
+				*value = 0;
+				return 0;
+			}
+		};
+
+		ops.write_reg = +[](void* args, const int regno, const size_t value)
+		{
+			try
+			{
+				const auto mapped_register = register_map.at(static_cast<gdb_registers>(regno));
+				static_cast<emulator*>(args)->write_raw_register(static_cast<int>(mapped_register), &value, sizeof(value));
+				return 0;
+			}
+			catch (...)
+			{
+				return 1;
+			}
+		};
+
+		ops.read_mem = +[](void* args, const size_t addr, const size_t len, void* val)
+		{
+			try
+			{
+				static_cast<emulator*>(args)->read_memory(addr, val, len);
+				return 0;
+			}
+			catch (...)
+			{
+				return 1;
+			}
+		};
+
+		ops.write_mem = +[](void* args, const size_t addr, const size_t len, void* val)
+		{
+			try
+			{
+				static_cast<emulator*>(args)->write_memory(addr, val, len);
+				return 0;
+			}
+			catch (...)
+			{
+				return 1;
+			}
+		};
+
+		static std::unordered_map<size_t, emulator_hook*> hooks{};
+
+		ops.set_bp = +[](void* args, const size_t addr, bp_type_t)
+		{
+			try
+			{
+				const auto entry = hooks.find(addr);
+				if (entry != hooks.end())
+				{
+					static_cast<emulator*>(args)->delete_hook(entry->second);
+					hooks.erase(entry);
+				}
+
+				hooks[addr] = static_cast<emulator*>(args)->hook_memory_execution(addr, 1, [args](uint64_t, size_t)
+				{
+					static_cast<emulator*>(args)->stop();
+				});
+
+				return true;
+			}
+			catch (...)
+			{
+				return false;
+			}
+		};
+
+		ops.del_bp = +[](void* args, const size_t addr, bp_type_t)
+		{
+			try
+			{
+				const auto entry = hooks.find(addr);
+				if (entry == hooks.end())
+				{
+					return false;
+				}
+
+				static_cast<emulator*>(args)->delete_hook(entry->second);
+				hooks.erase(entry);
+
+				return true;
+			}
+			catch (...)
+			{
+				return false;
+			}
+		};
+
+		ops.on_interrupt = +[](void* args)
+		{
+			static_cast<emulator*>(args)->stop();
+		};
+
+		constexpr arch_info_t info{
+			const_cast<char*>("i386:x86-64"), static_cast<int>(gdb_registers::end), sizeof(uint64_t)
+		};
+
+		gdbstub_init(&stub, &ops, info, const_cast<char*>("0.0.0.0:28960"));
+
 		const auto emu = unicorn::create_x64_emulator();
 
 		auto context = setup_context(*emu);
@@ -353,9 +531,13 @@ namespace
 		emu->reg(x64_register::rcx, execution_context.value());
 		emu->reg(x64_register::rdx, context.ntdll.image_base);
 
+		emu->reg(x64_register::rip, entry1);
+
+
 		try
 		{
-			emu->start(entry1);
+			gdbstub_run(&stub, static_cast<emulator*>(emu.get()));
+			//emu->start_from_ip();
 		}
 		catch (...)
 		{
@@ -364,6 +546,7 @@ namespace
 		}
 
 		printf("Emulation done.\n");
+		gdbstub_close(&stub);
 	}
 }
 

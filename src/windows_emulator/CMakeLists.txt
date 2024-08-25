@@ -17,6 +17,7 @@ target_link_libraries(windows_emulator PRIVATE
   phnt::phnt
   reflect
   unicorn_emulator
+  mini-gdbstub
 )
 
 set_property(GLOBAL PROPERTY VS_STARTUP_PROJECT windows_emulator)
