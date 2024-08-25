@@ -336,6 +336,57 @@ namespace
 		{gdb_registers::eflags, x64_register::rflags},
 	};
 
+	class scoped_emulator_hook
+	{
+	public:
+		scoped_emulator_hook() = default;
+
+		scoped_emulator_hook(emulator& emu, emulator_hook* hook)
+			: emu_(&emu)
+			  , hook_(hook)
+		{
+		}
+
+		~scoped_emulator_hook()
+		{
+			this->remove();
+		}
+
+		scoped_emulator_hook(const scoped_emulator_hook&) = delete;
+		scoped_emulator_hook& operator=(const scoped_emulator_hook&) = delete;
+
+		scoped_emulator_hook(scoped_emulator_hook&& obj) noexcept
+		{
+			this->operator=(std::move(obj));
+		}
+
+		scoped_emulator_hook& operator=(scoped_emulator_hook&& obj) noexcept
+		{
+			if (this != &obj)
+			{
+				this->remove();
+				this->emu_ = obj.emu_;
+				this->hook_ = obj.hook_;
+
+				obj.hook_ = {};
+			}
+			return *this;
+		}
+
+		void remove()
+		{
+			if (this->hook_)
+			{
+				this->emu_->delete_hook(this->hook_);
+				this->hook_ = {};
+			}
+		}
+
+	private:
+		emulator* emu_{};
+		emulator_hook* hook_{};
+	};
+
 	class x64_gdb_stub_handler : public gdb_stub_handler
 	{
 	public:
@@ -344,15 +395,7 @@ namespace
 		{
 		}
 
-		~x64_gdb_stub_handler() override
-		{
-			for (const auto& hook : this->hooks_)
-			{
-				this->emu_->delete_hook(hook.second);
-			}
-
-			this->hooks_.clear();
-		}
+		~x64_gdb_stub_handler() override = default;
 
 		gdb_action cont() override
 		{
@@ -425,12 +468,11 @@ namespace
 		{
 			try
 			{
-				this->del_bp(addr);
-
-				this->hooks_[addr] = this->emu_->hook_memory_execution(addr, 1, [this](uint64_t, size_t)
-				{
-					this->on_interrupt();
-				});
+				this->hooks_[addr] = scoped_emulator_hook(*this->emu_, this->emu_->hook_memory_execution(
+					                                          addr, 1, [this](uint64_t, size_t)
+					                                          {
+						                                          this->on_interrupt();
+					                                          }));
 
 				return true;
 			}
@@ -450,7 +492,6 @@ namespace
 					return false;
 				}
 
-				this->emu_->delete_hook(entry->second);
 				this->hooks_.erase(entry);
 
 				return true;
@@ -468,7 +509,7 @@ namespace
 
 	private:
 		x64_emulator* emu_{};
-		std::unordered_map<size_t, emulator_hook*> hooks_{};
+		std::unordered_map<size_t, scoped_emulator_hook> hooks_{};
 	};
 
 	void run()
@@ -546,6 +587,8 @@ namespace
 		{
 			if (use_gdb)
 			{
+				puts("Launching gdb stub...");
+
 				x64_gdb_stub_handler handler{*emu};
 				run_gdb_stub(handler, "i386:x86-64", static_cast<size_t>(gdb_registers::end), "0.0.0.0:28960");
 			}
