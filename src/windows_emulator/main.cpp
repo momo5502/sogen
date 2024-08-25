@@ -1,3 +1,5 @@
+#include <gdbstub.h>
+
 #include "std_include.hpp"
 
 #include "emulator_utils.hpp"
@@ -9,9 +11,7 @@
 
 #include <unicorn_x64_emulator.hpp>
 
-extern "C" {
-#include <gdbstub.h>
-}
+#include "gdb_stub.hpp"
 
 #define GS_SEGMENT_ADDR 0x6000000ULL
 #define GS_SEGMENT_SIZE (20 << 20)  // 20 MB
@@ -336,94 +336,100 @@ namespace
 		{gdb_registers::eflags, x64_register::rflags},
 	};
 
-	void run()
+	class x64_gdb_stub_handler : public gdb_stub_handler
 	{
-		gdbstub_t stub{};
-
-		target_ops ops{};
-		ops.cont = +[](void* args)
+	public:
+		x64_gdb_stub_handler(x64_emulator& emu)
+			: emu_(&emu)
 		{
-			static_cast<x64_emulator*>(static_cast<emulator*>(args))->start_from_ip();
-			return ACT_RESUME;
-		};
+		}
 
-		ops.stepi = +[](void* args)
+		~x64_gdb_stub_handler() override
 		{
-			static_cast<x64_emulator*>(static_cast<emulator*>(args))->start_from_ip({}, 1);
-			return ACT_RESUME;
-		};
+			for (const auto& hook : this->hooks_)
+			{
+				this->emu_->delete_hook(hook.second);
+			}
 
-		ops.read_reg = +[](void* args, int regno, size_t* value)
+			this->hooks_.clear();
+		}
+
+		gdb_action cont() override
+		{
+			this->emu_->start_from_ip();
+			return gdb_action::resume;
+		}
+
+		gdb_action stepi() override
+		{
+			this->emu_->start_from_ip({}, 1);
+			return gdb_action::resume;
+		}
+
+		bool read_reg(const int regno, size_t* value) override
 		{
 			try
 			{
 				const auto mapped_register = register_map.at(static_cast<gdb_registers>(regno));
-				static_cast<emulator*>(args)->read_raw_register(static_cast<int>(mapped_register), value, sizeof(*value));
-				return 0;
+				this->emu_->read_register(mapped_register, value, sizeof(*value));
+				return true;
 			}
 			catch (...)
 			{
 				*value = 0;
-				return 0;
+				return true;
 			}
-		};
+		}
 
-		ops.write_reg = +[](void* args, const int regno, const size_t value)
+		bool write_reg(const int regno, const size_t value) override
 		{
 			try
 			{
 				const auto mapped_register = register_map.at(static_cast<gdb_registers>(regno));
-				static_cast<emulator*>(args)->write_raw_register(static_cast<int>(mapped_register), &value, sizeof(value));
-				return 0;
+				this->emu_->write_register(mapped_register, &value, sizeof(value));
+				return true;
 			}
 			catch (...)
 			{
-				return 1;
+				return false;
 			}
-		};
+		}
 
-		ops.read_mem = +[](void* args, const size_t addr, const size_t len, void* val)
+		bool read_mem(const size_t addr, const size_t len, void* val) override
 		{
 			try
 			{
-				static_cast<emulator*>(args)->read_memory(addr, val, len);
-				return 0;
+				this->emu_->read_memory(addr, val, len);
+				return true;
 			}
 			catch (...)
 			{
-				return 1;
+				return false;
 			}
-		};
+		}
 
-		ops.write_mem = +[](void* args, const size_t addr, const size_t len, void* val)
+		bool write_mem(const size_t addr, const size_t len, void* val) override
 		{
 			try
 			{
-				static_cast<emulator*>(args)->write_memory(addr, val, len);
-				return 0;
+				this->emu_->write_memory(addr, val, len);
+				return true;
 			}
 			catch (...)
 			{
-				return 1;
+				return false;
 			}
-		};
+		}
 
-		static std::unordered_map<size_t, emulator_hook*> hooks{};
-
-		ops.set_bp = +[](void* args, const size_t addr, bp_type_t)
+		bool set_bp(const size_t addr) override
 		{
 			try
 			{
-				const auto entry = hooks.find(addr);
-				if (entry != hooks.end())
+				this->del_bp(addr);
+
+				this->hooks_[addr] = this->emu_->hook_memory_execution(addr, 1, [this](uint64_t, size_t)
 				{
-					static_cast<emulator*>(args)->delete_hook(entry->second);
-					hooks.erase(entry);
-				}
-
-				hooks[addr] = static_cast<emulator*>(args)->hook_memory_execution(addr, 1, [args](uint64_t, size_t)
-				{
-					static_cast<emulator*>(args)->stop();
+					this->on_interrupt();
 				});
 
 				return true;
@@ -432,20 +438,20 @@ namespace
 			{
 				return false;
 			}
-		};
+		}
 
-		ops.del_bp = +[](void* args, const size_t addr, bp_type_t)
+		bool del_bp(const size_t addr) override
 		{
 			try
 			{
-				const auto entry = hooks.find(addr);
-				if (entry == hooks.end())
+				const auto entry = this->hooks_.find(addr);
+				if (entry == this->hooks_.end())
 				{
 					return false;
 				}
 
-				static_cast<emulator*>(args)->delete_hook(entry->second);
-				hooks.erase(entry);
+				this->emu_->delete_hook(entry->second);
+				this->hooks_.erase(entry);
 
 				return true;
 			}
@@ -453,19 +459,21 @@ namespace
 			{
 				return false;
 			}
-		};
+		}
 
-		ops.on_interrupt = +[](void* args)
+		void on_interrupt() override
 		{
-			static_cast<emulator*>(args)->stop();
-		};
+			this->emu_->stop();
+		}
 
-		constexpr arch_info_t info{
-			const_cast<char*>("i386:x86-64"), static_cast<int>(gdb_registers::end), sizeof(uint64_t)
-		};
+	private:
+		x64_emulator* emu_{};
+		std::unordered_map<size_t, emulator_hook*> hooks_{};
+	};
 
-		gdbstub_init(&stub, &ops, info, const_cast<char*>("0.0.0.0:28960"));
-
+	void run()
+	{
+		constexpr bool use_gdb = true;
 		const auto emu = unicorn::create_x64_emulator();
 
 		auto context = setup_context(*emu);
@@ -511,7 +519,7 @@ namespace
 		watch_object(*emu, context.process_params);
 		watch_object(*emu, context.kusd);
 
-		emu->hook_memory_execution(0, std::numeric_limits<size_t>::max(), [&](const uint64_t address, const size_t)
+		/*emu->hook_memory_execution(0, std::numeric_limits<size_t>::max(), [&](const uint64_t address, const size_t)
 		{
 			if (address == 0x1800D52F4)
 			{
@@ -524,7 +532,7 @@ namespace
 				emu->reg(x64_register::rax), emu->reg(x64_register::rbx), emu->reg(x64_register::rcx),
 				emu->reg(x64_register::rdx), emu->reg(x64_register::r8), emu->reg(x64_register::r9),
 				emu->reg(x64_register::rdi), emu->reg(x64_register::rsi));
-		});
+		});*/
 
 		const auto execution_context = context.gs_segment.reserve<CONTEXT>();
 
@@ -536,8 +544,15 @@ namespace
 
 		try
 		{
-			gdbstub_run(&stub, static_cast<emulator*>(emu.get()));
-			//emu->start_from_ip();
+			if (use_gdb)
+			{
+				x64_gdb_stub_handler handler{*emu};
+				run_gdb_stub(handler, "i386:x86-64", static_cast<size_t>(gdb_registers::end), "0.0.0.0:28960");
+			}
+			else
+			{
+				emu->start_from_ip();
+			}
 		}
 		catch (...)
 		{
@@ -546,7 +561,6 @@ namespace
 		}
 
 		printf("Emulation done.\n");
-		gdbstub_close(&stub);
 	}
 }
 
