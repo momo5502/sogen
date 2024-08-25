@@ -37,5 +37,6 @@ struct process_context
 	mapped_binary ntdll{};
 
 	std::map<uint32_t, event> events{};
+	std::map<uint32_t, HANDLE> os_handles{};
 	emulator_allocator gs_segment{};
 };

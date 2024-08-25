@@ -197,7 +197,9 @@ namespace
 
 		context.process_params.access([&](RTL_USER_PROCESS_PARAMETERS& proc_params)
 		{
+			proc_params.Length = sizeof(proc_params);
 			proc_params.Flags = 0x6001;
+			gs.make_unicode_string(proc_params.CurrentDirectory.DosPath, L"C:\\Users\\mauri\\Desktop");
 			gs.make_unicode_string(proc_params.ImagePathName, L"C:\\Users\\mauri\\Desktop\\ConsoleApplication6.exe");
 			gs.make_unicode_string(proc_params.CommandLine, L"C:\\Users\\mauri\\Desktop\\ConsoleApplication6.exe");
 		});
@@ -273,7 +275,7 @@ namespace
 	template <typename T>
 	void watch_object(x64_emulator& emu, emulator_object<T> object)
 	{
-		type_info<T> info{};
+		const type_info<T> info{};
 
 		emu.hook_memory_read(object.value(), object.size(),
 		                     [i = std::move(info), object](const uint64_t address, size_t)
@@ -315,14 +317,9 @@ namespace
 		{
 			auto name = exp.second;
 			emu->hook_memory_execution(exp.first, 0,
-			                           [&emu, n = std::move(name)](const uint64_t address, const size_t)
+			                           [n = std::move(name)](const uint64_t address, const size_t)
 			                           {
 				                           printf("Executing function: %s (%llX)\n", n.c_str(), address);
-
-				                           if (n == "RtlImageNtHeaderEx")
-				                           {
-					                           printf("Base: %llX\n", emu->reg(x64_register::rdx));
-				                           }
 			                           });
 		}
 
@@ -338,23 +335,17 @@ namespace
 
 		emu->hook_memory_execution(0, std::numeric_limits<size_t>::max(), [&](const uint64_t address, const size_t)
 		{
-			static bool hit = false;
-			// if (address == 0x1800D3C80)
-			if (address == 0x1800D4420)
+			if (address == 0x1800D52F4)
 			{
-				//hit = true;
-				//uc.stop();
+				//emu->stop();
 			}
 
-			//if (hit)
-			{
-				printf(
-					"Inst: %16llX - RAX: %16llX - RBX: %16llX - RCX: %16llX - RDX: %16llX - R8: %16llX - R9: %16llX - RDI: %16llX - RSI: %16llX\n",
-					address,
-					emu->reg(x64_register::rax), emu->reg(x64_register::rbx), emu->reg(x64_register::rcx),
-					emu->reg(x64_register::rdx), emu->reg(x64_register::r8), emu->reg(x64_register::r9),
-					emu->reg(x64_register::rdi), emu->reg(x64_register::rsi));
-			}
+			printf(
+				"Inst: %16llX - RAX: %16llX - RBX: %16llX - RCX: %16llX - RDX: %16llX - R8: %16llX - R9: %16llX - RDI: %16llX - RSI: %16llX\n",
+				address,
+				emu->reg(x64_register::rax), emu->reg(x64_register::rbx), emu->reg(x64_register::rcx),
+				emu->reg(x64_register::rdx), emu->reg(x64_register::r8), emu->reg(x64_register::r9),
+				emu->reg(x64_register::rdi), emu->reg(x64_register::rsi));
 		});
 
 		const auto execution_context = context.gs_segment.reserve<CONTEXT>();

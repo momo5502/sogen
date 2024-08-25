@@ -9,7 +9,13 @@ namespace
 		process_context& proc;
 	};
 
-	constexpr uint64_t EVENT_BIT = 1ULL << 63ULL;
+	constexpr uint64_t PSEUDO_BIT = 1ULL << 63ULL;
+	constexpr uint64_t EVENT_BIT = 1ULL << 62ULL;
+	constexpr uint64_t DIRECTORY_BIT = 1ULL << 61ULL;
+	constexpr uint64_t SYMLINK_BIT = 1ULL << 60ULL;
+
+	constexpr uint64_t KNOWN_DLLS_DIRECTORY = DIRECTORY_BIT | PSEUDO_BIT | 0x1337;
+	constexpr uint64_t KNOWN_DLLS_SYMLINK = SYMLINK_BIT | PSEUDO_BIT | 0x1337;
 
 	uint64_t get_syscall_argument(x64_emulator& emu, const size_t index)
 	{
@@ -26,6 +32,68 @@ namespace
 		default:
 			return emu.read_stack(index + 1);
 		}
+	}
+
+	uint32_t store_os_handle(process_context& proc, const HANDLE handle)
+	{
+		uint32_t index = 1;
+		for (;; ++index)
+		{
+			if (!proc.os_handles.contains(index))
+			{
+				break;
+			}
+		}
+
+		proc.os_handles[index] = handle;
+		return index;
+	}
+
+	std::optional<HANDLE> get_os_handle(process_context& proc, const uint32_t handle)
+	{
+		const auto entry = proc.os_handles.find(handle);
+		if (entry == proc.os_handles.end())
+		{
+			return {};
+		}
+
+		return entry->second;
+	}
+
+	std::optional<HANDLE> remove_os_handle(process_context& proc, const uint32_t handle)
+	{
+		const auto entry = proc.os_handles.find(handle);
+		if (entry == proc.os_handles.end())
+		{
+			return {};
+		}
+
+		const auto res = entry->second;
+		proc.os_handles.erase(entry);
+
+		return res;
+	}
+
+	std::wstring read_unicode_string(emulator& emu, const emulator_object<UNICODE_STRING> uc_string)
+	{
+		static_assert(offsetof(UNICODE_STRING, Length) == 0);
+		static_assert(offsetof(UNICODE_STRING, MaximumLength) == 2);
+		static_assert(offsetof(UNICODE_STRING, Buffer) == 8);
+		static_assert(sizeof(UNICODE_STRING) == 16);
+
+		const auto ucs = uc_string.read();
+
+		std::wstring result{};
+		result.resize(ucs.Length / 2);
+
+		emu.read_memory(reinterpret_cast<uint64_t>(ucs.Buffer), result.data(), ucs.Length);
+
+		return result;
+	}
+
+	std::wstring read_unicode_string(emulator& emu, const PUNICODE_STRING uc_string)
+	{
+		return read_unicode_string(emu, emulator_object<UNICODE_STRING>{emu, uc_string});
 	}
 
 	template <typename T>
@@ -139,6 +207,11 @@ namespace
 
 	NTSTATUS handle_NtClose(const syscall_context& c, const uint64_t handle)
 	{
+		if (handle & PSEUDO_BIT)
+		{
+			return STATUS_SUCCESS;
+		}
+
 		if (handle & EVENT_BIT)
 		{
 			const auto event_index = static_cast<uint32_t>(handle & ~EVENT_BIT);
@@ -212,7 +285,8 @@ namespace
 			return STATUS_NOT_IMPLEMENTED;
 		}
 
-		if (info_class == MemoryWorkingSetExInformation)
+		if (info_class == MemoryWorkingSetExInformation
+			|| info_class == MemoryImageExtensionInformation)
 		{
 			return STATUS_NOT_IMPLEMENTED;
 		}
@@ -464,6 +538,72 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
+	NTSTATUS handle_NtOpenDirectoryObject(const syscall_context& c,
+	                                      const emulator_object<uint64_t> directory_handle,
+	                                      const ACCESS_MASK /*desired_access*/,
+	                                      const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
+	{
+		const auto attributes = object_attributes.read();
+		const auto object_name = read_unicode_string(c.emu, attributes.ObjectName);
+
+		if (object_name == L"\\KnownDlls")
+		{
+			directory_handle.write(KNOWN_DLLS_DIRECTORY);
+			return STATUS_SUCCESS;
+		}
+
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtOpenSymbolicLinkObject(const syscall_context& c, const emulator_object<uint64_t> link_handle,
+	                                         ACCESS_MASK /*desired_access*/,
+	                                         const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
+	{
+		const auto attributes = object_attributes.read();
+		const auto object_name = read_unicode_string(c.emu, attributes.ObjectName);
+
+		if (object_name == L"KnownDllPath")
+		{
+			link_handle.write(KNOWN_DLLS_SYMLINK);
+			return STATUS_SUCCESS;
+		}
+
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS WINAPI handle_NtQuerySymbolicLinkObject(const syscall_context& c, const uint64_t link_handle,
+	                                                 const emulator_object<UNICODE_STRING> link_target,
+	                                                 const emulator_object<ULONG> returned_length)
+	{
+		if (link_handle == KNOWN_DLLS_SYMLINK)
+		{
+			constexpr std::wstring_view system32 = L"C:\\WINDOWS\\System32";
+			constexpr auto str_length = system32.size() * 2;
+			constexpr auto max_length = str_length + 2;
+
+			returned_length.write(max_length);
+
+			bool too_small = false;
+			link_target.access([&](UNICODE_STRING& str)
+			{
+				if (str.MaximumLength < max_length)
+				{
+					too_small = true;
+					return;
+				}
+
+				str.Length = str_length;
+				c.emu.write_memory(reinterpret_cast<uint64_t>(str.Buffer), system32.data(), max_length);
+			});
+
+			return too_small
+				       ? STATUS_BUFFER_TOO_SMALL
+				       : STATUS_SUCCESS;
+		}
+
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtAllocateVirtualMemoryEx(const syscall_context& c, const uint64_t process_handle,
 	                                          const emulator_object<uint64_t> base_address,
 	                                          const emulator_object<uint64_t> bytes_to_allocate,
@@ -571,12 +711,15 @@ namespace
 		handle(0x036, handle_NtQuerySystemInformation);
 		handle(0x048, handle_NtCreateEvent);
 		handle(0x050, handle_NtProtectVirtualMemory);
+		handle(0x058, handle_NtOpenDirectoryObject);
 		handle(0x05E, handle_NtTraceEvent);
 		handle(0x078, handle_NtAllocateVirtualMemoryEx);
 		handle(0x0B2, handle_NtCreateIoCompletion);
 		handle(0x0D2, handle_NtCreateWaitCompletionPacket);
 		handle(0x0D5, handle_NtCreateWorkerFactory);
 		handle(0x11A, handle_NtManageHotPatch);
+		handle(0x138, handle_NtOpenSymbolicLinkObject);
+		handle(0x16B, handle_NtQuerySymbolicLinkObject);
 		handle(0x16E, handle_NtQuerySystemInformationEx);
 
 		default:

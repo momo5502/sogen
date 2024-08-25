@@ -9,6 +9,11 @@ public:
 
 	emulator_object() = default;
 
+	emulator_object(emulator& emu, const void* address)
+		: emulator_object(emu, reinterpret_cast<uint64_t>(address))
+	{
+	}
+
 	emulator_object(emulator& emu, const uint64_t address)
 		: emu_(&emu)
 		  , address_(address)
