@@ -245,6 +245,11 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	NTSTATUS handle_NtOpenThreadToken()
+	{
+		return STATUS_NO_TOKEN;
+	}
+
 	NTSTATUS handle_NtCreateEvent(const syscall_context& c, const emulator_object<uint64_t> event_handle,
 	                              const ACCESS_MASK /*desired_access*/, const uint64_t object_attributes,
 	                              const EVENT_TYPE event_type, const BOOLEAN initial_state)
@@ -743,6 +748,7 @@ namespace
 		handle(0x01C, handle_NtSetInformationProcess);
 		handle(0x01E, handle_NtFreeVirtualMemory);
 		handle(0x023, handle_NtQueryVirtualMemory);
+		handle(0x024, handle_NtOpenThreadToken);
 		handle(0x031, handle_NtQueryPerformanceCounter);
 		handle(0x036, handle_NtQuerySystemInformation);
 		handle(0x048, handle_NtCreateEvent);
