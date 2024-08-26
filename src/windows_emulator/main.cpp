@@ -159,11 +159,13 @@ namespace
 
 		for (DWORD i = 0; i < names_count; i++)
 		{
-			const auto* function_name = reinterpret_cast<const char*>(ptr + names[i]);
-			const auto function_rva = functions[ordinals[i]];
-			const auto function_address = binary.image_base + function_rva;
+			exported_symbol symbol{};
+			symbol.ordinal = ordinals[i];
+			symbol.name = reinterpret_cast<const char*>(ptr + names[i]);
+			symbol.rva = functions[symbol.ordinal];
+			symbol.address = binary.image_base + symbol.rva;
 
-			binary.exports[function_name] = function_address;
+			binary.exports.push_back(std::move(symbol));
 		}
 
 		return binary;
@@ -514,6 +516,19 @@ namespace
 		std::unordered_map<size_t, scoped_emulator_hook> hooks_{};
 	};
 
+	uint64_t find_exported_function(const std::vector<exported_symbol>& exports, const std::string_view name)
+	{
+		for (auto& symbol : exports)
+		{
+			if (symbol.name == name)
+			{
+				return symbol.address;
+			}
+		}
+
+		return 0;
+	}
+
 	void run()
 	{
 		const auto emu = unicorn::create_x64_emulator();
@@ -529,16 +544,16 @@ namespace
 
 		context.ntdll = map_file(*emu, R"(C:\Windows\System32\ntdll.dll)");
 
-		const auto entry1 = context.ntdll.exports.at("LdrInitializeThunk");
-		const auto entry2 = context.ntdll.exports.at("RtlUserThreadStart");
+		const auto entry1 = find_exported_function(context.ntdll.exports, "LdrInitializeThunk");
+		const auto entry2 = find_exported_function(context.ntdll.exports, "RtlUserThreadStart");
 
 		(void)entry1;
 		(void)entry2;
 
 		std::unordered_map<uint64_t, std::string> export_remap{};
-		for (const auto& exp : context.ntdll.exports)
+		for (const auto& symbol : context.ntdll.exports)
 		{
-			export_remap.try_emplace(exp.second, exp.first);
+			export_remap.try_emplace(symbol.address, symbol.name);
 		}
 
 		for (const auto& exp : export_remap)
@@ -551,9 +566,11 @@ namespace
 			                           });
 		}
 
+		syscall_dispatcher dispatcher{context.ntdll.exports};
+
 		emu->hook_instruction(x64_hookable_instructions::syscall, [&]
 		{
-			handle_syscall(*emu, context);
+			dispatcher.dispatch(*emu, context);
 		});
 
 		watch_object(*emu, context.teb);

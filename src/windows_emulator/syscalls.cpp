@@ -1,14 +1,14 @@
 #include "std_include.hpp"
 #include "syscalls.hpp"
 
+struct syscall_context
+{
+	x64_emulator& emu;
+	process_context& proc;
+};
+
 namespace
 {
-	struct syscall_context
-	{
-		x64_emulator& emu;
-		process_context& proc;
-	};
-
 	constexpr uint64_t PSEUDO_BIT = 1ULL << 63ULL;
 	constexpr uint64_t EVENT_BIT = 1ULL << 62ULL;
 	constexpr uint64_t DIRECTORY_BIT = 1ULL << 61ULL;
@@ -32,6 +32,53 @@ namespace
 		default:
 			return emu.read_stack(index + 1);
 		}
+	}
+
+
+	bool is_uppercase(const char character)
+	{
+		return toupper(character) == character;
+	}
+
+	bool is_syscall(const std::string_view name)
+	{
+		return name.starts_with("Nt") && name.size() > 3 && is_uppercase(name[2]);
+	}
+
+	std::vector<std::string> find_syscalls(const exported_symbols& exports)
+	{
+		std::map<uint64_t, std::string> ordered_syscalls{};
+
+		for (const auto& symbol : exports)
+		{
+			if (is_syscall(symbol.name))
+			{
+				ordered_syscalls[symbol.address] = symbol.name;
+			}
+		}
+
+		std::vector<std::string> syscalls{};
+		syscalls.reserve(ordered_syscalls.size());
+
+		for (auto& syscall : ordered_syscalls)
+		{
+			syscalls.push_back(std::move(syscall.second));
+		}
+
+		return syscalls;
+	}
+
+	uint64_t get_syscall_id(const std::vector<std::string>& syscalls, const std::string_view name)
+	{
+		for (size_t i = 0; i < syscalls.size(); ++i)
+		{
+			if (syscalls[i] == name)
+			{
+				return i;
+			}
+		}
+
+		throw std::runtime_error("Unable to determine syscall id: " + std::string(name));
 	}
 
 	uint32_t store_os_handle(process_context& proc, const HANDLE handle)
@@ -184,8 +231,9 @@ namespace
 	}
 
 	NTSTATUS handle_NtSetInformationThread(const syscall_context& c, const uint64_t /*thread_handle*/,
-		const THREADINFOCLASS info_class,
-		const uint64_t /*thread_information*/, const uint32_t /*thread_information_length*/)
+	                                       const THREADINFOCLASS info_class,
+	                                       const uint64_t /*thread_information*/,
+	                                       const uint32_t /*thread_information_length*/)
 	{
 		if (info_class == ThreadSchedulerSharedDataSlot)
 		{
@@ -495,7 +543,7 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtQueryProcessInformation(const syscall_context& c, const uint64_t process_handle,
+	NTSTATUS handle_NtQueryInformationProcess(const syscall_context& c, const uint64_t process_handle,
 	                                          const uint32_t info_class, const uint64_t process_information,
 	                                          const uint32_t process_information_length,
 	                                          const emulator_object<uint32_t> return_length)
@@ -729,55 +777,51 @@ namespace
 
 		throw std::runtime_error("Bad free type");
 	}
-
-#define handle(id, handler) \
-	case id: \
-		forward(c, handler);\
-		break
-
-	void dispatch_syscall(const syscall_context& c, const uint32_t syscall_id)
-	{
-		switch (syscall_id)
-		{
-		handle(0x00D, handle_NtSetInformationThread);
-		handle(0x00E, handle_NtSetEvent);
-		handle(0x00F, handle_NtClose);
-		handle(0x012, handle_NtOpenKey);
-		handle(0x018, handle_NtAllocateVirtualMemory);
-		handle(0x019, handle_NtQueryProcessInformation);
-		handle(0x01C, handle_NtSetInformationProcess);
-		handle(0x01E, handle_NtFreeVirtualMemory);
-		handle(0x023, handle_NtQueryVirtualMemory);
-		handle(0x024, handle_NtOpenThreadToken);
-		handle(0x031, handle_NtQueryPerformanceCounter);
-		handle(0x036, handle_NtQuerySystemInformation);
-		handle(0x048, handle_NtCreateEvent);
-		handle(0x050, handle_NtProtectVirtualMemory);
-		handle(0x058, handle_NtOpenDirectoryObject);
-		handle(0x05E, handle_NtTraceEvent);
-		handle(0x078, handle_NtAllocateVirtualMemoryEx);
-		handle(0x0B2, handle_NtCreateIoCompletion);
-		handle(0x0D2, handle_NtCreateWaitCompletionPacket);
-		handle(0x0D5, handle_NtCreateWorkerFactory);
-		handle(0x11A, handle_NtManageHotPatch);
-		handle(0x138, handle_NtOpenSymbolicLinkObject);
-		handle(0x16B, handle_NtQuerySymbolicLinkObject);
-		handle(0x16E, handle_NtQuerySystemInformationEx);
-
-		default:
-			printf("Unhandled syscall: %X\n", syscall_id);
-			c.emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_SUPPORTED);
-			c.emu.stop();
-			break;
-		}
-	}
-
-
-#undef handle
 }
 
+syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports)
+{
+#define add_handler(syscall) do                             \
+	{                                                       \
+		const auto id = get_syscall_id(syscalls, #syscall); \
+		auto handler = +[](const syscall_context& c)        \
+		{                                                   \
+			forward(c, handle_ ## syscall);                 \
+		};                                                  \
+		this->handlers_[id] = handler;                      \
+	} while(0)
 
-void handle_syscall(x64_emulator& emu, process_context& context)
+	const auto syscalls = find_syscalls(ntdll_exports);
+
+	add_handler(NtSetInformationThread);
+	add_handler(NtSetEvent);
+	add_handler(NtClose);
+	add_handler(NtOpenKey);
+	add_handler(NtAllocateVirtualMemory);
+	add_handler(NtQueryInformationProcess);
+	add_handler(NtSetInformationProcess);
+	add_handler(NtFreeVirtualMemory);
+	add_handler(NtQueryVirtualMemory);
+	add_handler(NtOpenThreadToken);
+	add_handler(NtQueryPerformanceCounter);
+	add_handler(NtQuerySystemInformation);
+	add_handler(NtCreateEvent);
+	add_handler(NtProtectVirtualMemory);
+	add_handler(NtOpenDirectoryObject);
+	add_handler(NtTraceEvent);
+	add_handler(NtAllocateVirtualMemoryEx);
+	add_handler(NtCreateIoCompletion);
+	add_handler(NtCreateWaitCompletionPacket);
+	add_handler(NtCreateWorkerFactory);
+	add_handler(NtManageHotPatch);
+	add_handler(NtOpenSymbolicLinkObject);
+	add_handler(NtQuerySymbolicLinkObject);
+	add_handler(NtQuerySystemInformationEx);
+
+#undef add_handler
+}
+
+void syscall_dispatcher::dispatch(x64_emulator& emu, process_context& context)
 {
 	const auto address = emu.read_instruction_pointer();
 	const auto syscall_id = emu.reg<uint32_t>(x64_register::eax);
@@ -788,7 +832,17 @@ void handle_syscall(x64_emulator& emu, process_context& context)
 
 	try
 	{
-		dispatch_syscall(c, syscall_id);
+		const auto entry = this->handlers_.find(syscall_id);
+		if (entry == this->handlers_.end())
+		{
+			printf("Unhandled syscall: %X\n", syscall_id);
+			c.emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_SUPPORTED);
+			c.emu.stop();
+		}
+		else
+		{
+			entry->second(c);
+		}
 	}
 	catch (std::exception& e)
 	{

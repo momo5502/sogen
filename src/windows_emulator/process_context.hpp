@@ -1,11 +1,21 @@
 #pragma once
 #include "emulator_utils.hpp"
 
+struct exported_symbol
+{
+	std::string name{};
+	uint64_t ordinal{};
+	uint64_t rva{};
+	uint64_t address{};
+};
+
+using exported_symbols = std::vector<exported_symbol>;
+
 struct mapped_binary
 {
 	uint64_t image_base{};
 	uint64_t size_of_image{};
-	std::unordered_map<std::string, uint64_t> exports{};
+	exported_symbols exports{};
 };
 
 struct event
