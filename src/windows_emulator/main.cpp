@@ -23,6 +23,8 @@
 
 #define KUSD_ADDRESS 0x7ffe0000
 
+bool use_gdb = true;
+
 namespace
 {
 	void setup_stack(x64_emulator& emu, const uint64_t stack_base, const size_t stack_size)
@@ -514,7 +516,6 @@ namespace
 
 	void run()
 	{
-		constexpr bool use_gdb = true;
 		const auto emu = unicorn::create_x64_emulator();
 
 		auto context = setup_context(*emu);
@@ -611,7 +612,12 @@ int main(int /*argc*/, char** /*argv*/)
 {
 	try
 	{
-		run();
+		do
+		{
+			run();
+		}
+		while (use_gdb);
+
 		return 0;
 	}
 	catch (std::exception& uce)
