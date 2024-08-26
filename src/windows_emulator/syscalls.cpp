@@ -183,9 +183,9 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtSetInformationThread(const syscall_context& c, const uint64_t thread_handle,
+	NTSTATUS handle_NtSetInformationThread(const syscall_context& c, const uint64_t /*thread_handle*/,
 		const THREADINFOCLASS info_class,
-		const uint64_t thread_information, const uint32_t thread_information_length)
+		const uint64_t /*thread_information*/, const uint32_t /*thread_information_length*/)
 	{
 		if (info_class == ThreadSchedulerSharedDataSlot)
 		{
@@ -530,8 +530,8 @@ namespace
 	}
 
 	NTSTATUS handle_NtSetInformationProcess(const syscall_context& c, const uint64_t process_handle,
-	                                        const uint32_t info_class, const uint64_t process_information,
-	                                        const uint32_t process_information_length)
+	                                        const uint32_t info_class, const uint64_t /*process_information*/,
+	                                        const uint32_t /*process_information_length*/)
 	{
 		if (process_handle != ~0ULL)
 		{
