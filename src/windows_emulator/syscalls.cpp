@@ -1,5 +1,6 @@
 #include "std_include.hpp"
 #include "syscalls.hpp"
+#include "module_mapper.hpp"
 
 struct syscall_context
 {
@@ -286,6 +287,17 @@ namespace
 			}
 		}
 
+		if (handle & SECTION_BIT)
+		{
+			const auto event_index = static_cast<uint32_t>(handle & ~SECTION_BIT);
+			const auto entry = c.proc.sections.find(event_index);
+			if (entry != c.proc.sections.end())
+			{
+				c.proc.sections.erase(entry);
+				return STATUS_SUCCESS;
+			}
+		}
+
 		return STATUS_INVALID_HANDLE;
 	}
 
@@ -344,13 +356,19 @@ namespace
 
 		section_handle.write(index | SECTION_BIT);
 
+		auto status = STATUS_SUCCESS;
 		object_attributes.access([&](const OBJECT_ATTRIBUTES& attributes)
 		{
-			auto section = read_unicode_string(c.emu, attributes.ObjectName);
+			if (reinterpret_cast<uint64_t>(attributes.RootDirectory) != KNOWN_DLLS_DIRECTORY)
+			{
+				status = STATUS_NOT_SUPPORTED;
+				return;
+			}
+			auto section = L"C:\\WINDOWS\\System32\\" + read_unicode_string(c.emu, attributes.ObjectName);
 			c.proc.sections.try_emplace(index, std::move(section));
 		});
 
-		return STATUS_SUCCESS;
+		return status;
 	}
 
 	NTSTATUS handle_NtMapViewOfSection(const syscall_context& c, uint64_t section_handle, uint64_t process_handle,
@@ -359,9 +377,36 @@ namespace
 	                                   const emulator_object<SIZE_T> view_size, SECTION_INHERIT inherit_disposition,
 	                                   ULONG allocation_type, ULONG win32_protect)
 	{
-		const auto desired_base = base_address.read();
+		if (process_handle != ~0ULL)
+		{
+			return STATUS_INVALID_HANDLE;
+		}
+
+		if (!(section_handle & SECTION_BIT))
+		{
+			return STATUS_INVALID_HANDLE;
+		}
+
+		const auto section_index = static_cast<uint32_t>(section_handle & ~SECTION_BIT);
+		const auto section_entry = c.proc.sections.find(section_index);
+		if (section_entry == c.proc.sections.end())
+		{
+			return STATUS_INVALID_HANDLE;
+		}
+
+		const auto& section_name = section_entry->second;
+		const auto binary = map_file(c.emu, section_name);
+
+		if (view_size.value())
+		{
+			view_size.write(binary.size_of_image);
+		}
+
+		base_address.write(binary.image_base);
+
 		return STATUS_SUCCESS;
 	}
+
 
 	NTSTATUS handle_NtCreateIoCompletion(const syscall_context& c, const emulator_object<uint64_t> event_handle,
 	                                     const ACCESS_MASK desired_access, const uint64_t object_attributes,

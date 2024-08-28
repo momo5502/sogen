@@ -247,7 +247,7 @@ public:
 				return start_address;
 			}
 
-			start_address = region.first + region.second.length;
+			start_address = page_align_up(region.first + region.second.length);
 		}
 
 		if (start_address + size <= 0x00007ffffffeffff)
