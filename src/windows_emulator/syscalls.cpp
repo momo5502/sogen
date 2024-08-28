@@ -13,6 +13,7 @@ namespace
 	constexpr uint64_t EVENT_BIT = 1ULL << 62ULL;
 	constexpr uint64_t DIRECTORY_BIT = 1ULL << 61ULL;
 	constexpr uint64_t SYMLINK_BIT = 1ULL << 60ULL;
+	constexpr uint64_t SECTION_BIT = 1ULL << 59ULL;
 
 	constexpr uint64_t KNOWN_DLLS_DIRECTORY = DIRECTORY_BIT | PSEUDO_BIT | 0x1337;
 	constexpr uint64_t KNOWN_DLLS_SYMLINK = SYMLINK_BIT | PSEUDO_BIT | 0x1337;
@@ -328,6 +329,39 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
+	NTSTATUS handle_NtOpenSection(const syscall_context& c, const emulator_object<uint64_t> section_handle,
+	                              const ACCESS_MASK /*desired_access*/,
+	                              const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
+	{
+		uint32_t index = 1;
+		for (;; ++index)
+		{
+			if (!c.proc.sections.contains(index))
+			{
+				break;
+			}
+		}
+
+		section_handle.write(index | SECTION_BIT);
+
+		object_attributes.access([&](const OBJECT_ATTRIBUTES& attributes)
+		{
+			auto section = read_unicode_string(c.emu, attributes.ObjectName);
+			c.proc.sections.try_emplace(index, std::move(section));
+		});
+
+		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS handle_NtMapViewOfSection(const syscall_context& c, uint64_t section_handle, uint64_t process_handle,
+	                                   emulator_object<uint64_t> base_address, ULONG_PTR zero_bits, SIZE_T commit_size,
+	                                   const emulator_object<LARGE_INTEGER> section_offset,
+	                                   const emulator_object<SIZE_T> view_size, SECTION_INHERIT inherit_disposition,
+	                                   ULONG allocation_type, ULONG win32_protect)
+	{
+		const auto desired_base = base_address.read();
+		return STATUS_SUCCESS;
+	}
 
 	NTSTATUS handle_NtCreateIoCompletion(const syscall_context& c, const emulator_object<uint64_t> event_handle,
 	                                     const ACCESS_MASK desired_access, const uint64_t object_attributes,
@@ -814,6 +848,8 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports)
 	add_handler(NtCreateWaitCompletionPacket);
 	add_handler(NtCreateWorkerFactory);
 	add_handler(NtManageHotPatch);
+	add_handler(NtOpenSection);
+	add_handler(NtMapViewOfSection);
 	add_handler(NtOpenSymbolicLinkObject);
 	add_handler(NtQuerySymbolicLinkObject);
 	add_handler(NtQuerySystemInformationEx);
