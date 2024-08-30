@@ -14,7 +14,7 @@ namespace
 	constexpr uint64_t EVENT_BIT = 1ULL << 62ULL;
 	constexpr uint64_t DIRECTORY_BIT = 1ULL << 61ULL;
 	constexpr uint64_t SYMLINK_BIT = 1ULL << 60ULL;
-	constexpr uint64_t SECTION_BIT = 1ULL << 59ULL;
+	constexpr uint64_t FILE_BIT = 1ULL << 59ULL;
 
 	constexpr uint64_t KNOWN_DLLS_DIRECTORY = DIRECTORY_BIT | PSEUDO_BIT | 0x1337;
 	constexpr uint64_t KNOWN_DLLS_SYMLINK = SYMLINK_BIT | PSEUDO_BIT | 0x1337;
@@ -287,13 +287,13 @@ namespace
 			}
 		}
 
-		if (handle & SECTION_BIT)
+		if (handle & FILE_BIT)
 		{
-			const auto event_index = static_cast<uint32_t>(handle & ~SECTION_BIT);
-			const auto entry = c.proc.sections.find(event_index);
-			if (entry != c.proc.sections.end())
+			const auto event_index = static_cast<uint32_t>(handle & ~FILE_BIT);
+			const auto entry = c.proc.files.find(event_index);
+			if (entry != c.proc.files.end())
 			{
-				c.proc.sections.erase(entry);
+				c.proc.files.erase(entry);
 				return STATUS_SUCCESS;
 			}
 		}
@@ -341,6 +341,63 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
+	NTSTATUS handle_NtQueryVolumeInformationFile(const syscall_context& c, uint64_t file_handle,
+	                                             uint64_t io_status_block, uint64_t fs_information, ULONG length,
+	                                             FS_INFORMATION_CLASS fs_information_class)
+	{
+		if (fs_information_class != FileFsDeviceInformation)
+		{
+			printf("Unsupported process info class: %X\n", fs_information_class);
+			c.emu.stop();
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		const emulator_object<FILE_FS_DEVICE_INFORMATION> info_obj{c.emu, fs_information};
+		info_obj.access([&](FILE_FS_DEVICE_INFORMATION& info)
+		{
+			info.DeviceType = FILE_DEVICE_DISK;
+			info.Characteristics = 0x20020;
+		});
+
+		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS handle_NtOpenFile(const syscall_context& c,
+	                           const emulator_object<uint64_t> file_handle,
+	                           const ACCESS_MASK /*desired_access*/,
+	                           const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
+	                           const emulator_object<IO_STATUS_BLOCK> /*io_status_block*/,
+	                           const ULONG /*share_access*/,
+	                           const ULONG /*open_options*/)
+	{
+		uint32_t index = 1;
+		for (;; ++index)
+		{
+			if (!c.proc.files.contains(index))
+			{
+				break;
+			}
+		}
+
+		file_handle.write(index | FILE_BIT);
+
+		auto status = STATUS_SUCCESS;
+		object_attributes.access([&](const OBJECT_ATTRIBUTES& attributes)
+		{
+			auto section = read_unicode_string(c.emu, attributes.ObjectName);
+			if (!std::filesystem::exists(section))
+			{
+				status = STATUS_FILE_INVALID;
+			}
+			else
+			{
+				c.proc.files.try_emplace(index, std::move(section));
+			}
+		});
+
+		return status;
+	}
+
 	NTSTATUS handle_NtOpenSection(const syscall_context& c, const emulator_object<uint64_t> section_handle,
 	                              const ACCESS_MASK /*desired_access*/,
 	                              const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
@@ -348,13 +405,13 @@ namespace
 		uint32_t index = 1;
 		for (;; ++index)
 		{
-			if (!c.proc.sections.contains(index))
+			if (!c.proc.files.contains(index))
 			{
 				break;
 			}
 		}
 
-		section_handle.write(index | SECTION_BIT);
+		section_handle.write(index | FILE_BIT);
 
 		auto status = STATUS_SUCCESS;
 		object_attributes.access([&](const OBJECT_ATTRIBUTES& attributes)
@@ -365,14 +422,15 @@ namespace
 				return;
 			}
 			auto section = L"C:\\WINDOWS\\System32\\" + read_unicode_string(c.emu, attributes.ObjectName);
-			c.proc.sections.try_emplace(index, std::move(section));
+			c.proc.files.try_emplace(index, std::move(section));
 		});
 
 		return status;
 	}
 
 	NTSTATUS handle_NtMapViewOfSection(const syscall_context& c, uint64_t section_handle, uint64_t process_handle,
-	                                   emulator_object<uint64_t> base_address, ULONG_PTR /*zero_bits*/, SIZE_T /*commit_size*/,
+	                                   emulator_object<uint64_t> base_address, ULONG_PTR /*zero_bits*/,
+	                                   SIZE_T /*commit_size*/,
 	                                   const emulator_object<LARGE_INTEGER> /*section_offset*/,
 	                                   const emulator_object<SIZE_T> view_size, SECTION_INHERIT /*inherit_disposition*/,
 	                                   ULONG /*allocation_type*/, ULONG /*win32_protect*/)
@@ -382,14 +440,14 @@ namespace
 			return STATUS_INVALID_HANDLE;
 		}
 
-		if (!(section_handle & SECTION_BIT))
+		if (!(section_handle & FILE_BIT))
 		{
 			return STATUS_INVALID_HANDLE;
 		}
 
-		const auto section_index = static_cast<uint32_t>(section_handle & ~SECTION_BIT);
-		const auto section_entry = c.proc.sections.find(section_index);
-		if (section_entry == c.proc.sections.end())
+		const auto section_index = static_cast<uint32_t>(section_handle & ~FILE_BIT);
+		const auto section_entry = c.proc.files.find(section_index);
+		if (section_entry == c.proc.files.end())
 		{
 			return STATUS_INVALID_HANDLE;
 		}
@@ -898,6 +956,8 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports)
 	add_handler(NtOpenSymbolicLinkObject);
 	add_handler(NtQuerySymbolicLinkObject);
 	add_handler(NtQuerySystemInformationEx);
+	add_handler(NtOpenFile);
+	add_handler(NtQueryVolumeInformationFile);
 
 #undef add_handler
 }

@@ -90,7 +90,6 @@ namespace
 
 		context.teb = gs.reserve<TEB>();
 		context.peb = gs.reserve<PEB>();
-		//context.ldr = gs.reserve<PEB_LDR_DATA>();
 		context.process_params = gs.reserve<RTL_USER_PROCESS_PARAMETERS>();
 
 		context.teb.access([&](TEB& teb)
@@ -109,6 +108,7 @@ namespace
 			peb.ProcessHeap = nullptr;
 			peb.ProcessHeaps = nullptr;
 			peb.ProcessParameters = context.process_params.ptr();
+			peb.ApiSetMap = gs.reserve<API_SET_NAMESPACE>().ptr();
 		});
 
 		context.process_params.access([&](RTL_USER_PROCESS_PARAMETERS& proc_params)
@@ -299,13 +299,29 @@ namespace
 
 		gdb_action cont() override
 		{
-			this->emu_->start_from_ip();
+			try
+			{
+				this->emu_->start_from_ip();
+			}
+			catch (...)
+			{
+				return gdb_action::resume;
+			}
+
 			return gdb_action::resume;
 		}
 
 		gdb_action stepi() override
 		{
-			this->emu_->start_from_ip({}, 1);
+			try
+			{
+				this->emu_->start_from_ip({}, 1);
+			}
+			catch (...)
+			{
+				return gdb_action::resume;
+			}
+
 			return gdb_action::resume;
 		}
 
