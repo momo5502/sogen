@@ -15,7 +15,7 @@ public:
 	virtual void write_memory(uint64_t address, const void* data, size_t size) = 0;
 
 	bool protect_memory(const uint64_t address, const size_t size, const memory_permission permissions,
-	                    memory_permission* old_permissions)
+	                    memory_permission* old_permissions = nullptr)
 	{
 		const auto entry = this->find_reserved_region(address);
 		if (entry == this->reserved_regions_.end())

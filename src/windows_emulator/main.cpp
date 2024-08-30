@@ -95,6 +95,8 @@ namespace
 
 		context.teb.access([&](TEB& teb)
 		{
+			teb.ClientId.UniqueProcess = reinterpret_cast<HANDLE>(1);
+			teb.ClientId.UniqueThread = reinterpret_cast<HANDLE>(2);
 			teb.NtTib.StackLimit = reinterpret_cast<void*>(STACK_ADDRESS);
 			teb.NtTib.StackBase = reinterpret_cast<void*>((STACK_ADDRESS + STACK_SIZE));
 			teb.NtTib.Self = &context.teb.ptr()->NtTib;
