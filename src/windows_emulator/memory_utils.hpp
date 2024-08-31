@@ -2,34 +2,6 @@
 #include <cstdint>
 #include <emulator.hpp>
 
-/*
-inline memory_permission get_memory_protection(emulator& emu, const uint64_t address)
-{
-	for (const auto& region : emu.get_memory_regions())
-	{
-		if (is_within_start_and_length(address, region.start, region.length))
-		{
-			return region.pemissions;
-		}
-	}
-
-	return memory_permission::none;
-}
-
-inline bool is_memory_allocated(emulator& emu, const uint64_t address)
-{
-	for (const auto& region : emu.get_memory_regions())
-	{
-		if (is_within_start_and_length(address, region.start, region.length))
-		{
-			return true;
-		}
-	}
-
-	return false;
-}
-*/
-
 inline memory_permission map_nt_to_emulator_protection(const uint32_t nt_protection)
 {
 	switch (nt_protection)

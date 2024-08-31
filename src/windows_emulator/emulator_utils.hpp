@@ -45,27 +45,27 @@ public:
 		return this->address_ != 0;
 	}
 
-	T read() const
+	T read(const size_t index = 0) const
 	{
 		T obj{};
-		this->emu_->read_memory(this->address_, &obj, sizeof(obj));
+		this->emu_->read_memory(this->address_ + index * this->size(), &obj, sizeof(obj));
 		return obj;
 	}
 
-	void write(const T& value) const
+	void write(const T& value, const size_t index = 0) const
 	{
-		this->emu_->write_memory(this->address_, &value, sizeof(value));
+		this->emu_->write_memory(this->address_ + index * this->size(), &value, sizeof(value));
 	}
 
 	template <typename F>
-	void access(const F& accessor) const
+	void access(const F& accessor, const size_t index = 0) const
 	{
 		T obj{};
-		this->emu_->read_memory(this->address_, &obj, sizeof(obj));
+		this->emu_->read_memory(this->address_ + index * this->size(), &obj, sizeof(obj));
 
 		accessor(obj);
 
-		this->write(obj);
+		this->write(obj, index);
 	}
 
 private:
@@ -103,9 +103,9 @@ public:
 	}
 
 	template <typename T>
-	emulator_object<T> reserve()
+	emulator_object<T> reserve(const size_t count = 1)
 	{
-		const auto potential_start = this->reserve(sizeof(T), alignof(T));
+		const auto potential_start = this->reserve(sizeof(T) * count, alignof(T));
 		return emulator_object<T>(*this->emu_, potential_start);
 	}
 

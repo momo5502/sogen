@@ -1,6 +1,18 @@
 #pragma once
 #include <cstdint>
 
+template <typename T>
+T* offset_pointer(void* data, const size_t offset)
+{
+	return reinterpret_cast<T*>(static_cast<uint8_t*>(data) + offset);
+}
+
+template <typename T>
+const T* offset_pointer(const void* data, const size_t offset)
+{
+	return reinterpret_cast<const T*>(static_cast<const uint8_t*>(data) + offset);
+}
+
 inline bool is_within_start_and_end(const uint64_t value, const uint64_t start, const uint64_t end)
 {
 	return value >= start && value < end;

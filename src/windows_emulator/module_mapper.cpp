@@ -1,14 +1,9 @@
 #include "std_include.hpp"
 #include "module_mapper.hpp"
+#include <address_utils.hpp>
 
 namespace
 {
-	template <typename T>
-	T offset_pointer(const void* data, const size_t offset)
-	{
-		return reinterpret_cast<T>(static_cast<const uint8_t*>(data) + offset);
-	}
-
 	void collect_exports(mapped_binary& binary, const unsigned char* ptr, const IMAGE_OPTIONAL_HEADER& optional_header)
 	{
 		auto& export_directory_entry = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
