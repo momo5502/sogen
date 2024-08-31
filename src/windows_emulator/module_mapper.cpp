@@ -70,9 +70,6 @@ namespace
 			const auto data_size = relocation->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION);
 			const auto entry_count = data_size / sizeof(uint16_t);
 
-			printf("Applying relocations %lX - %lX - %lld\n", relocation->VirtualAddress, relocation->SizeOfBlock,
-			       entry_count);
-
 			const auto entry_start = offset_pointer<uint16_t>(relocation, sizeof(IMAGE_BASE_RELOCATION));
 			const auto entries = std::span(entry_start, entry_count);
 
