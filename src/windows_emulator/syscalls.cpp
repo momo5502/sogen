@@ -759,6 +759,11 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	NTSTATUS handle_NtApphelpCacheControl()
+	{
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtProtectVirtualMemory(const syscall_context& c, const uint64_t process_handle,
 	                                       const emulator_object<uint64_t> base_address,
 	                                       const emulator_object<uint32_t> bytes_to_protect,
@@ -989,6 +994,7 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports)
 	add_handler(NtQuerySystemInformationEx);
 	add_handler(NtOpenFile);
 	add_handler(NtQueryVolumeInformationFile);
+	add_handler(NtApphelpCacheControl);
 
 #undef add_handler
 }
