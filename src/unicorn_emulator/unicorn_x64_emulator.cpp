@@ -202,6 +202,11 @@ namespace unicorn
 				uce(uc_mem_unmap(*this, address, size));
 			}
 
+			bool try_read_memory(const uint64_t address, void* data, const size_t size) override
+			{
+				return uc_mem_read(*this, address, data, size) == UC_ERR_OK;
+			}
+
 			void read_memory(const uint64_t address, void* data, const size_t size) override
 			{
 				uce(uc_mem_read(*this, address, data, size));
@@ -212,7 +217,8 @@ namespace unicorn
 				uce(uc_mem_write(*this, address, data, size));
 			}
 
-			void apply_memory_protection(const uint64_t address, const size_t size, memory_permission permissions) override
+			void apply_memory_protection(const uint64_t address, const size_t size,
+			                             memory_permission permissions) override
 			{
 				uce(uc_mem_protect(*this, address, size, static_cast<uint32_t>(permissions)));
 			}

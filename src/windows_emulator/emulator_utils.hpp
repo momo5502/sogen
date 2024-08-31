@@ -136,6 +136,16 @@ public:
 		return unicode_string;
 	}
 
+	uint64_t get_base() const
+	{
+		return this->address_;
+	}
+
+	uint64_t get_size() const
+	{
+		return this->size_;
+	}
+
 private:
 	emulator* emu_{};
 	uint64_t address_{};
