@@ -53,10 +53,12 @@ namespace
 		emulator_object<IMAGE_BASE_RELOCATION> relocation_object{emu, binary.image_base + directory->VirtualAddress};
 		const auto end_address = relocation_object.value() + directory->Size;
 
+		std::vector<uint16_t> relocations{};
+
 		while (relocation_object.value() < end_address)
 		{
 			const auto relocation = relocation_object.read();
-			if (relocation.VirtualAddress <= 0)
+			if (relocation.VirtualAddress <= 0 || relocation.SizeOfBlock <= 0)
 			{
 				break;
 			}
@@ -66,12 +68,14 @@ namespace
 			const auto data_size = relocation.SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION);
 			const auto entry_count = data_size / sizeof(uint16_t);
 
-			std::vector<uint16_t> relocations{};
-			relocations.resize(entry_count);
+			if (relocations.size() < entry_count)
+			{
+				relocations.resize(entry_count);
+			}
 
 			emu.read_memory(relocation_object.value() + relocation_object.size(), relocations.data(), data_size);
 
-			for (const auto entry : relocations)
+			for (const auto entry : std::span(relocations.data(), entry_count))
 			{
 				const int type = entry >> 12;
 				const int offset = entry & 0xfff;
