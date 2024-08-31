@@ -282,7 +282,7 @@ namespace
 		context.process_params.access([&](RTL_USER_PROCESS_PARAMETERS& proc_params)
 		{
 			proc_params.Length = sizeof(proc_params);
-			proc_params.Flags = 0x6001;
+			proc_params.Flags = 0x6001 | 0x80000000;
 			gs.make_unicode_string(proc_params.CurrentDirectory.DosPath, L"C:\\Users\\mauri\\Desktop");
 			gs.make_unicode_string(proc_params.ImagePathName, L"C:\\Users\\mauri\\Desktop\\ConsoleApplication6.exe");
 			gs.make_unicode_string(proc_params.CommandLine, L"C:\\Users\\mauri\\Desktop\\ConsoleApplication6.exe");
@@ -574,6 +574,7 @@ namespace
 
 		(void)entry1;
 		(void)entry2;
+
 
 		syscall_dispatcher dispatcher{context.ntdll.exports};
 

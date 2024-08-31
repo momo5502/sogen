@@ -571,6 +571,29 @@ namespace
 			return STATUS_NOT_SUPPORTED;
 		}
 
+		if (info_class == SystemTimeOfDayInformation)
+		{
+			if (return_length)
+			{
+				return_length.write(sizeof(SYSTEM_TIMEOFDAY_INFORMATION));
+			}
+
+			if (system_information_length != sizeof(SYSTEM_TIMEOFDAY_INFORMATION))
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			const emulator_object<SYSTEM_TIMEOFDAY_INFORMATION> info_obj{c.emu, system_information};
+
+			info_obj.access([&](SYSTEM_TIMEOFDAY_INFORMATION& info)
+			{
+				info.BootTime.QuadPart = 0;
+				// TODO: Fill
+			});
+
+			return STATUS_SUCCESS;
+		}
+
 		if (info_class == SystemRangeStartInformation)
 		{
 			if (return_length)
@@ -592,6 +615,7 @@ namespace
 
 			return STATUS_SUCCESS;
 		}
+
 		if (info_class == SystemNumaProcessorMap)
 		{
 			if (return_length)
@@ -977,6 +1001,28 @@ namespace
 
 		throw std::runtime_error("Bad free type");
 	}
+
+	NTSTATUS handle_NtCreateSection(const syscall_context& /*c*/, const emulator_object<uint64_t> section_handle,
+	                                const ACCESS_MASK /*desired_access*/,
+	                                const emulator_object<OBJECT_ATTRIBUTES> /*object_attributes*/,
+	                                const emulator_object<LARGE_INTEGER> maximum_size,
+	                                const ULONG /*section_page_protection*/, const ULONG /*allocation_attributes*/,
+	                                const uint64_t /*file_handle*/)
+	{
+		section_handle.write(SHARED_SECTION);
+
+		maximum_size.access([](LARGE_INTEGER& large_int)
+		{
+			large_int.QuadPart = page_align_up(large_int.QuadPart);
+		});
+
+		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS handle_NtConnectPort()
+	{
+		return STATUS_SUCCESS;
+	}
 }
 
 syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports)
@@ -1022,6 +1068,8 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports)
 	add_handler(NtOpenFile);
 	add_handler(NtQueryVolumeInformationFile);
 	add_handler(NtApphelpCacheControl);
+	add_handler(NtCreateSection);
+	add_handler(NtConnectPort);
 
 #undef add_handler
 }
