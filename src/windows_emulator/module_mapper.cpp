@@ -142,6 +142,27 @@ namespace
 		}
 	}
 
+	void hook_exports(emulator& emu, const mapped_binary& binary, const std::filesystem::path& file)
+	{
+		const auto filename = file.filename().string();
+
+		std::unordered_map<uint64_t, std::string> export_remap{};
+		for (const auto& symbol : binary.exports)
+		{
+			export_remap.try_emplace(symbol.address, symbol.name);
+		}
+
+		for (const auto& exp : export_remap)
+		{
+			auto name = exp.second;
+			emu.hook_memory_execution(exp.first, 0,
+			                          [n = std::move(name), filename](const uint64_t address, const size_t)
+			                          {
+				                          printf("Executing function: %s - %s (%llX)\n",filename.c_str(), n.c_str(), address);
+			                          });
+		}
+	}
+
 	mapped_binary map_module(x64_emulator& emu, const std::vector<uint8_t>& module_data,
 	                         const std::string& name)
 	{
@@ -194,5 +215,9 @@ std::optional<mapped_binary> map_file(x64_emulator& emu, const std::filesystem::
 		return {};
 	}
 
-	return map_module(emu, data, file.generic_string());
+	auto binary = map_module(emu, data, file.generic_string());
+
+	hook_exports(emu, binary, file);
+
+	return binary;
 }

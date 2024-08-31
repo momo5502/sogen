@@ -575,22 +575,6 @@ namespace
 		(void)entry1;
 		(void)entry2;
 
-		std::unordered_map<uint64_t, std::string> export_remap{};
-		for (const auto& symbol : context.ntdll.exports)
-		{
-			export_remap.try_emplace(symbol.address, symbol.name);
-		}
-
-		for (const auto& exp : export_remap)
-		{
-			auto name = exp.second;
-			emu->hook_memory_execution(exp.first, 0,
-			                           [n = std::move(name)](const uint64_t address, const size_t)
-			                           {
-				                           printf("Executing function: %s (%llX)\n", n.c_str(), address);
-			                           });
-		}
-
 		syscall_dispatcher dispatcher{context.ntdll.exports};
 
 		emu->hook_instruction(x64_hookable_instructions::syscall, [&]

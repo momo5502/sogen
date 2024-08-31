@@ -18,6 +18,7 @@ namespace
 
 	constexpr uint64_t KNOWN_DLLS_DIRECTORY = DIRECTORY_BIT | PSEUDO_BIT | 0x1337;
 	constexpr uint64_t KNOWN_DLLS_SYMLINK = SYMLINK_BIT | PSEUDO_BIT | 0x1337;
+	constexpr uint64_t SHARED_SECTION = FILE_BIT | PSEUDO_BIT | 0x1337;
 
 	uint64_t get_syscall_argument(x64_emulator& emu, const size_t index)
 	{
@@ -403,6 +404,39 @@ namespace
 	                              const ACCESS_MASK /*desired_access*/,
 	                              const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
 	{
+		const auto attributes = object_attributes.read();
+
+		auto filename = read_unicode_string(c.emu, attributes.ObjectName);
+		printf("Open section: %S\n", filename.c_str());
+
+		if (filename == L"\\Windows\\SharedSection")
+		{
+			section_handle.write(SHARED_SECTION);
+			return STATUS_SUCCESS;
+		}
+
+		if (reinterpret_cast<uint64_t>(attributes.RootDirectory) != KNOWN_DLLS_DIRECTORY)
+		{
+			puts("Unsupported section");
+			c.emu.stop();
+			return STATUS_NOT_SUPPORTED;
+		}
+
+
+		if (filename.starts_with(L"api-ms-"))
+		{
+			filename = L"C:\\WINDOWS\\System32\\downlevel\\" + filename;
+		}
+		else
+		{
+			filename = L"C:\\WINDOWS\\System32\\" + filename;
+		}
+
+		if (!std::filesystem::exists(filename))
+		{
+			return STATUS_FILE_INVALID;
+		}
+
 		uint32_t index = 1;
 		for (;; ++index)
 		{
@@ -414,40 +448,9 @@ namespace
 
 		section_handle.write(index | FILE_BIT);
 
-		auto status = STATUS_SUCCESS;
-		std::wstring filename{};
-		object_attributes.access([&](const OBJECT_ATTRIBUTES& attributes)
-		{
-			if (reinterpret_cast<uint64_t>(attributes.RootDirectory) != KNOWN_DLLS_DIRECTORY)
-			{
-				status = STATUS_NOT_SUPPORTED;
-				return;
-			}
-
-			filename = read_unicode_string(c.emu, attributes.ObjectName);
-			if (filename.starts_with(L"api-ms-"))
-			{
-				filename = L"C:\\WINDOWS\\System32\\downlevel\\" + filename;
-			}
-			else
-			{
-				filename = L"C:\\WINDOWS\\System32\\" + filename;
-			}
-		});
-
-		if (status != STATUS_SUCCESS)
-		{
-			return status;
-		}
-
-		if (!std::filesystem::exists(filename))
-		{
-			return STATUS_FILE_INVALID;
-		}
-
 		c.proc.files.try_emplace(index, std::move(filename));
 
-		return status;
+		return STATUS_SUCCESS;
 	}
 
 	NTSTATUS handle_NtMapViewOfSection(const syscall_context& c, uint64_t section_handle, uint64_t process_handle,
@@ -562,11 +565,33 @@ namespace
 	                                         const emulator_object<uint32_t> return_length)
 	{
 		if (info_class == SystemFlushInformation
-			|| info_class == SystemHypervisorSharedPageInformation)
+			|| info_class == SystemHypervisorSharedPageInformation
+		)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
 
+		if (info_class == SystemRangeStartInformation)
+		{
+			if (return_length)
+			{
+				return_length.write(sizeof(SYSTEM_RANGE_START_INFORMATION));
+			}
+
+			if (system_information_length != sizeof(SYSTEM_RANGE_START_INFORMATION))
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			const emulator_object<SYSTEM_RANGE_START_INFORMATION> info_obj{c.emu, system_information};
+
+			info_obj.access([&](SYSTEM_RANGE_START_INFORMATION& info)
+			{
+				info.SystemRangeStart = 0xFFFF800000000000;
+			});
+
+			return STATUS_SUCCESS;
+		}
 		if (info_class == SystemNumaProcessorMap)
 		{
 			if (return_length)
