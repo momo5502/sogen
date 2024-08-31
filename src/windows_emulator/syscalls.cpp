@@ -27,7 +27,6 @@ namespace
 		}
 	}
 
-
 	bool is_uppercase(const char character)
 	{
 		return toupper(character) == character;
@@ -176,6 +175,28 @@ namespace
 
 		const auto ret = std::apply(handler, std::move(func_args));
 		c.emu.reg<int64_t>(x64_register::rax, ret);
+	}
+
+	void apply_context(x64_emulator& emu, const CONTEXT& context)
+	{
+		emu.reg(x64_register::rax, context.Rax);
+		emu.reg(x64_register::rbx, context.Rbx);
+		emu.reg(x64_register::rcx, context.Rcx);
+		emu.reg(x64_register::rdx, context.Rdx);
+		emu.reg(x64_register::rsp, context.Rsp);
+		emu.reg(x64_register::rbp, context.Rbp);
+		emu.reg(x64_register::rsi, context.Rsi);
+		emu.reg(x64_register::rdi, context.Rdi);
+		emu.reg(x64_register::r8, context.R8);
+		emu.reg(x64_register::r9, context.R9);
+		emu.reg(x64_register::r10, context.R10);
+		emu.reg(x64_register::r11, context.R11);
+		emu.reg(x64_register::r12, context.R12);
+		emu.reg(x64_register::r13, context.R13);
+		emu.reg(x64_register::r14, context.R14);
+		emu.reg(x64_register::r15, context.R15);
+
+		emu.reg(x64_register::rip, context.Rip);
 	}
 
 	NTSTATUS handle_NtQueryPerformanceCounter(const syscall_context&,
@@ -1021,9 +1042,48 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtDeviceIoControlFile(const syscall_context& c)
+	NTSTATUS handle_NtDeviceIoControlFile()
 	{
 		puts("NtDeviceIoControlFile not supported");
+		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS handle_NtQueryWnfStateData()
+	{
+		puts("NtQueryWnfStateData not supported");
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtOpenProcessToken()
+	{
+		puts("NtOpenProcessToken not supported");
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtQuerySecurityAttributesToken()
+	{
+		puts("NtQuerySecurityAttributesToken not supported");
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtQueryLicenseValue()
+	{
+		puts("NtQueryLicenseValue not supported");
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtTestAlert()
+	{
+		puts("NtTestAlert not supported");
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtContinue(const syscall_context& c, const emulator_object<CONTEXT> thread_context,
+	                           const BOOLEAN raise_alert)
+	{
+		const auto context = thread_context.read();
+		apply_context(c.emu, context);
+
 		return STATUS_SUCCESS;
 	}
 
@@ -1098,6 +1158,12 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports)
 	add_handler(NtConnectPort);
 	add_handler(NtCreateFile);
 	add_handler(NtDeviceIoControlFile);
+	add_handler(NtQueryWnfStateData);
+	add_handler(NtOpenProcessToken);
+	add_handler(NtQuerySecurityAttributesToken);
+	add_handler(NtQueryLicenseValue);
+	add_handler(NtTestAlert);
+	add_handler(NtContinue);
 
 #undef add_handler
 }

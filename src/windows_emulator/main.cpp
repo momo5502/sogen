@@ -282,7 +282,7 @@ namespace
 		context.process_params.access([&](RTL_USER_PROCESS_PARAMETERS& proc_params)
 		{
 			proc_params.Length = sizeof(proc_params);
-			proc_params.Flags = 0x6001 | 0x80000000;  // Prevent CsrClientConnectToServer
+			proc_params.Flags = 0x6001 | 0x80000000; // Prevent CsrClientConnectToServer
 
 			proc_params.ConsoleHandle = reinterpret_cast<HANDLE>(CONSOLE_HANDLE);
 			proc_params.StandardOutput = reinterpret_cast<HANDLE>(STDOUT_HANDLE);
@@ -578,10 +578,6 @@ namespace
 		const auto entry1 = find_exported_function(context.ntdll.exports, "LdrInitializeThunk");
 		const auto entry2 = find_exported_function(context.ntdll.exports, "RtlUserThreadStart");
 
-		(void)entry1;
-		(void)entry2;
-
-
 		syscall_dispatcher dispatcher{context.ntdll.exports};
 
 		emu->hook_instruction(x64_hookable_instructions::syscall, [&]
@@ -610,6 +606,11 @@ namespace
 		});*/
 
 		const auto execution_context = context.gs_segment.reserve<CONTEXT>();
+		execution_context.access([&](CONTEXT& c)
+		{
+			c.Rip = entry2;
+			c.Rsp = emu->reg(x64_register::rsp);
+		});
 
 		emu->reg(x64_register::rcx, execution_context.value());
 		emu->reg(x64_register::rdx, context.ntdll.image_base);
