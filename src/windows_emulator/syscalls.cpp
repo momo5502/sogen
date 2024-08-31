@@ -439,7 +439,7 @@ namespace
 			return status;
 		}
 
-		if (std::filesystem::exists(filename))
+		if (!std::filesystem::exists(filename))
 		{
 			return STATUS_FILE_INVALID;
 		}
