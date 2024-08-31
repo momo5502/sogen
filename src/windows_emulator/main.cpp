@@ -447,14 +447,14 @@ namespace
 
 		auto context = setup_context(*emu);
 
-		context.executable = map_file(*emu, R"(C:\Users\mauri\Desktop\ConsoleApplication6.exe)");
+		context.executable = *map_file(*emu, R"(C:\Users\mauri\Desktop\ConsoleApplication6.exe)");
 
 		context.peb.access([&](PEB& peb)
 		{
 			peb.ImageBaseAddress = reinterpret_cast<void*>(context.executable.image_base);
 		});
 
-		context.ntdll = map_file(*emu, R"(C:\Windows\System32\ntdll.dll)");
+		context.ntdll = *map_file(*emu, R"(C:\Windows\System32\ntdll.dll)");
 
 		const auto entry1 = find_exported_function(context.ntdll.exports, "LdrInitializeThunk");
 		const auto entry2 = find_exported_function(context.ntdll.exports, "RtlUserThreadStart");

@@ -414,6 +414,7 @@ namespace
 		section_handle.write(index | FILE_BIT);
 
 		auto status = STATUS_SUCCESS;
+		std::wstring filename{};
 		object_attributes.access([&](const OBJECT_ATTRIBUTES& attributes)
 		{
 			if (reinterpret_cast<uint64_t>(attributes.RootDirectory) != KNOWN_DLLS_DIRECTORY)
@@ -421,9 +422,29 @@ namespace
 				status = STATUS_NOT_SUPPORTED;
 				return;
 			}
-			auto section = L"C:\\WINDOWS\\System32\\" + read_unicode_string(c.emu, attributes.ObjectName);
-			c.proc.files.try_emplace(index, std::move(section));
+
+			filename = read_unicode_string(c.emu, attributes.ObjectName);
+			if (filename.starts_with(L"api-ms-"))
+			{
+				filename = L"C:\\WINDOWS\\System32\\downlevel\\" + filename;
+			}
+			else
+			{
+				filename = L"C:\\WINDOWS\\System32\\" + filename;
+			}
 		});
+
+		if (status != STATUS_SUCCESS)
+		{
+			return status;
+		}
+
+		if (std::filesystem::exists(filename))
+		{
+			return STATUS_FILE_INVALID;
+		}
+
+		c.proc.files.try_emplace(index, std::move(filename));
 
 		return status;
 	}
@@ -454,13 +475,17 @@ namespace
 
 		const auto& section_name = section_entry->second;
 		const auto binary = map_file(c.emu, section_name);
+		if (!binary.has_value())
+		{
+			return STATUS_FILE_INVALID;
+		}
 
 		if (view_size.value())
 		{
-			view_size.write(binary.size_of_image);
+			view_size.write(binary->size_of_image);
 		}
 
-		base_address.write(binary.image_base);
+		base_address.write(binary->image_base);
 
 		return STATUS_SUCCESS;
 	}

@@ -202,8 +202,13 @@ namespace
 	}
 }
 
-mapped_binary map_file(x64_emulator& emu, const std::filesystem::path& file)
+std::optional<mapped_binary> map_file(x64_emulator& emu, const std::filesystem::path& file)
 {
 	const auto data = load_file(file);
+	if (data.empty())
+	{
+		return {};
+	}
+
 	return map_module(emu, data, file.generic_string());
 }
