@@ -29,178 +29,6 @@ bool use_gdb = true;
 
 namespace
 {
-	void setup_stack(x64_emulator& emu, const uint64_t stack_base, const size_t stack_size)
-	{
-		emu.allocate_memory(stack_base, stack_size, memory_permission::read_write);
-
-		const uint64_t stack_end = stack_base + stack_size;
-		emu.reg(x64_register::rsp, stack_end);
-	}
-
-	emulator_allocator setup_gs_segment(x64_emulator& emu, const uint64_t segment_base, const uint64_t size)
-	{
-		struct msr_value
-		{
-			uint32_t id;
-			uint64_t value;
-		};
-
-		const msr_value value{
-			IA32_GS_BASE_MSR,
-			segment_base
-		};
-
-		emu.write_register(x64_register::msr, &value, sizeof(value));
-		emu.allocate_memory(segment_base, size, memory_permission::read_write);
-
-		return {emu, segment_base, size};
-	}
-
-	emulator_object<KUSER_SHARED_DATA> setup_kusd(x64_emulator& emu)
-	{
-		emu.allocate_memory(KUSD_ADDRESS, page_align_up(sizeof(KUSER_SHARED_DATA)), memory_permission::read);
-
-		const emulator_object<KUSER_SHARED_DATA> kusd_object{emu, KUSD_ADDRESS};
-		kusd_object.access([](KUSER_SHARED_DATA& kusd)
-		{
-			const auto& real_kusd = *reinterpret_cast<KUSER_SHARED_DATA*>(KUSD_ADDRESS);
-
-			memcpy(&kusd, &real_kusd, sizeof(kusd));
-
-			kusd.ImageNumberLow = IMAGE_FILE_MACHINE_I386;
-			kusd.ImageNumberHigh = IMAGE_FILE_MACHINE_AMD64;
-
-			memset(&kusd.ProcessorFeatures, 0, sizeof(kusd.ProcessorFeatures));
-
-			// ...
-		});
-
-		return kusd_object;
-	}
-
-	uint64_t copy_string(x64_emulator& emu, emulator_allocator& allocator, const void* base_ptr, const uint64_t offset,
-	                     const size_t length)
-	{
-		const auto length_to_allocate = length + 2;
-		const auto str_obj = allocator.reserve(length_to_allocate);
-		emu.write_memory(str_obj, static_cast<const uint8_t*>(base_ptr) + offset, length);
-
-		return str_obj;
-	}
-
-	ULONG copy_string_as_relative(x64_emulator& emu, emulator_allocator& allocator, const uint64_t result_base,
-	                              const void* base_ptr, const uint64_t offset,
-	                              const size_t length)
-	{
-		return static_cast<ULONG>(copy_string(emu, allocator, base_ptr, offset, length) - result_base);
-	}
-
-	emulator_object<API_SET_NAMESPACE> clone_api_set_map(x64_emulator& emu, emulator_allocator& allocator,const API_SET_NAMESPACE& orig_api_set_map)
-	{
-		const auto api_set_map_obj = allocator.reserve<API_SET_NAMESPACE>();
-		const auto ns_entries_obj = allocator.reserve<API_SET_NAMESPACE_ENTRY>(orig_api_set_map.Count);
-		const auto hash_entries_obj = allocator.reserve<API_SET_HASH_ENTRY>(orig_api_set_map.Count);
-
-		auto api_set_map = orig_api_set_map;
-		api_set_map.EntryOffset = static_cast<ULONG>(ns_entries_obj.value() - api_set_map_obj.value());
-		api_set_map.HashOffset = static_cast<ULONG>(hash_entries_obj.value() - api_set_map_obj.value());
-
-
-		const auto orig_ns_entries = offset_pointer<API_SET_NAMESPACE_ENTRY>(
-			&orig_api_set_map, orig_api_set_map.EntryOffset);
-		const auto orig_hash_entries = offset_pointer<API_SET_HASH_ENTRY>(
-			&orig_api_set_map, orig_api_set_map.HashOffset);
-
-		for (ULONG i = 0; i < orig_api_set_map.Count; ++i)
-		{
-			auto ns_entry = orig_ns_entries[i];
-			const auto hash_entry = orig_hash_entries[i];
-
-			ns_entry.NameOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(), &orig_api_set_map,
-				ns_entry.NameOffset, ns_entry.NameLength);
-
-			const auto values_obj = allocator.reserve<API_SET_VALUE_ENTRY>(ns_entry.ValueCount);
-			const auto orig_values = offset_pointer<API_SET_VALUE_ENTRY>(
-				&orig_api_set_map, ns_entry.ValueOffset);
-
-			for (ULONG j = 0; j < ns_entry.ValueCount; ++j)
-			{
-				auto value = orig_values[j];
-
-				value.ValueOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(), &orig_api_set_map,
-					value.ValueOffset, value.ValueLength);
-
-				if (value.NameLength)
-				{
-					value.NameOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(),
-						&orig_api_set_map,
-						value.NameOffset, value.NameLength);
-				}
-
-				values_obj.write(value, j);
-			}
-
-			ns_entries_obj.write(ns_entry, i);
-			hash_entries_obj.write(hash_entry, i);
-		}
-
-		api_set_map_obj.write(api_set_map);
-
-		return api_set_map_obj;
-	}
-
-	emulator_object<API_SET_NAMESPACE> build_api_set_map(x64_emulator& emu, emulator_allocator& allocator)
-	{
-		const auto& orig_api_set_map = *NtCurrentTeb()->ProcessEnvironmentBlock->ApiSetMap;
-		return clone_api_set_map(emu, allocator, orig_api_set_map);
-	}
-
-	process_context setup_context(x64_emulator& emu)
-	{
-		setup_stack(emu, STACK_ADDRESS, STACK_SIZE);
-		process_context context{};
-
-		context.kusd = setup_kusd(emu);
-
-		context.gs_segment = setup_gs_segment(emu, GS_SEGMENT_ADDR, GS_SEGMENT_SIZE);
-
-		auto& gs = context.gs_segment;
-
-		context.teb = gs.reserve<TEB>();
-		context.peb = gs.reserve<PEB>();
-		context.process_params = gs.reserve<RTL_USER_PROCESS_PARAMETERS>();
-
-		context.teb.access([&](TEB& teb)
-		{
-			teb.ClientId.UniqueProcess = reinterpret_cast<HANDLE>(1);
-			teb.ClientId.UniqueThread = reinterpret_cast<HANDLE>(2);
-			teb.NtTib.StackLimit = reinterpret_cast<void*>(STACK_ADDRESS);
-			teb.NtTib.StackBase = reinterpret_cast<void*>((STACK_ADDRESS + STACK_SIZE));
-			teb.NtTib.Self = &context.teb.ptr()->NtTib;
-			teb.ProcessEnvironmentBlock = context.peb.ptr();
-		});
-
-		context.process_params.access([&](RTL_USER_PROCESS_PARAMETERS& proc_params)
-			{
-				proc_params.Length = sizeof(proc_params);
-				proc_params.Flags = 0x6001;
-				gs.make_unicode_string(proc_params.CurrentDirectory.DosPath, L"C:\\Users\\mauri\\Desktop");
-				gs.make_unicode_string(proc_params.ImagePathName, L"C:\\Users\\mauri\\Desktop\\ConsoleApplication6.exe");
-				gs.make_unicode_string(proc_params.CommandLine, L"C:\\Users\\mauri\\Desktop\\ConsoleApplication6.exe");
-			});
-
-		context.peb.access([&](PEB& peb)
-		{
-			peb.ImageBaseAddress = nullptr;
-			peb.ProcessHeap = nullptr;
-			peb.ProcessHeaps = nullptr;
-			peb.ProcessParameters = context.process_params.ptr();
-			peb.ApiSetMap = build_api_set_map(emu, gs).ptr();
-		});
-
-		return context;
-	}
-
 	template <typename T>
 	class type_info
 	{
@@ -253,7 +81,6 @@ namespace
 		std::map<size_t, std::string> members_{};
 	};
 
-
 	template <typename T>
 	void watch_object(x64_emulator& emu, emulator_object<T> object)
 	{
@@ -266,6 +93,211 @@ namespace
 			                     printf("%s: %llX (%s)\n", i.get_type_name().c_str(), offset,
 			                            i.get_member_name(offset).c_str());
 		                     });
+	}
+
+	void setup_stack(x64_emulator& emu, const uint64_t stack_base, const size_t stack_size)
+	{
+		emu.allocate_memory(stack_base, stack_size, memory_permission::read_write);
+
+		const uint64_t stack_end = stack_base + stack_size;
+		emu.reg(x64_register::rsp, stack_end);
+	}
+
+	emulator_allocator setup_gs_segment(x64_emulator& emu, const uint64_t segment_base, const uint64_t size)
+	{
+		struct msr_value
+		{
+			uint32_t id;
+			uint64_t value;
+		};
+
+		const msr_value value{
+			IA32_GS_BASE_MSR,
+			segment_base
+		};
+
+		emu.write_register(x64_register::msr, &value, sizeof(value));
+		emu.allocate_memory(segment_base, size, memory_permission::read_write);
+
+		return {emu, segment_base, size};
+	}
+
+	emulator_object<KUSER_SHARED_DATA> setup_kusd(x64_emulator& emu)
+	{
+		emu.allocate_memory(KUSD_ADDRESS, page_align_up(sizeof(KUSER_SHARED_DATA)), memory_permission::read);
+
+		const emulator_object<KUSER_SHARED_DATA> kusd_object{emu, KUSD_ADDRESS};
+		kusd_object.access([](KUSER_SHARED_DATA& kusd)
+		{
+			const auto& real_kusd = *reinterpret_cast<KUSER_SHARED_DATA*>(KUSD_ADDRESS);
+
+			memcpy(&kusd, &real_kusd, sizeof(kusd));
+
+			kusd.ImageNumberLow = IMAGE_FILE_MACHINE_I386;
+			kusd.ImageNumberHigh = IMAGE_FILE_MACHINE_AMD64;
+
+			memset(&kusd.ProcessorFeatures, 0, sizeof(kusd.ProcessorFeatures));
+
+			// ...
+		});
+
+		return kusd_object;
+	}
+
+	uint64_t copy_string(x64_emulator& emu, emulator_allocator& allocator, const void* base_ptr, const uint64_t offset,
+	                     const size_t length)
+	{
+		if (!length)
+		{
+			return 0;
+		}
+
+		const auto length_to_allocate = length + 2;
+		const auto str_obj = allocator.reserve(length_to_allocate);
+		emu.write_memory(str_obj, static_cast<const uint8_t*>(base_ptr) + offset, length);
+
+		return str_obj;
+	}
+
+	ULONG copy_string_as_relative(x64_emulator& emu, emulator_allocator& allocator, const uint64_t result_base,
+	                              const void* base_ptr, const uint64_t offset,
+	                              const size_t length)
+	{
+		const auto address = copy_string(emu, allocator, base_ptr, offset, length);
+		if (!address)
+		{
+			return 0;
+		}
+
+		assert(address > result_base);
+		return static_cast<ULONG>(address - result_base);
+	}
+
+	emulator_object<API_SET_NAMESPACE> clone_api_set_map(x64_emulator& emu, emulator_allocator& allocator,
+	                                                     const API_SET_NAMESPACE& orig_api_set_map)
+	{
+		const auto api_set_map_obj = allocator.reserve<API_SET_NAMESPACE>();
+		const auto ns_entries_obj = allocator.reserve<API_SET_NAMESPACE_ENTRY>(orig_api_set_map.Count);
+		const auto hash_entries_obj = allocator.reserve<API_SET_HASH_ENTRY>(orig_api_set_map.Count);
+
+		api_set_map_obj.access([&](API_SET_NAMESPACE& api_set)
+		{
+			api_set = orig_api_set_map;
+			api_set.EntryOffset = static_cast<ULONG>(ns_entries_obj.value() - api_set_map_obj.value());
+			api_set.HashOffset = static_cast<ULONG>(hash_entries_obj.value() - api_set_map_obj.value());
+		});
+
+		const auto orig_ns_entries = offset_pointer<API_SET_NAMESPACE_ENTRY>(&orig_api_set_map,
+		                                                                     orig_api_set_map.EntryOffset);
+		const auto orig_hash_entries = offset_pointer<API_SET_HASH_ENTRY>(&orig_api_set_map,
+		                                                                  orig_api_set_map.HashOffset);
+
+		for (ULONG i = 0; i < orig_api_set_map.Count; ++i)
+		{
+			auto ns_entry = orig_ns_entries[i];
+			const auto hash_entry = orig_hash_entries[i];
+
+			ns_entry.NameOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(), &orig_api_set_map,
+			                                              ns_entry.NameOffset, ns_entry.NameLength);
+
+			if (!ns_entry.ValueCount)
+			{
+				continue;
+			}
+
+			const auto values_obj = allocator.reserve<API_SET_VALUE_ENTRY>(ns_entry.ValueCount);
+			const auto orig_values = offset_pointer<API_SET_VALUE_ENTRY>(&orig_api_set_map,
+			                                                             ns_entry.ValueOffset);
+
+			ns_entry.ValueOffset = static_cast<ULONG>(values_obj.value() - api_set_map_obj.value());
+
+			for (ULONG j = 0; j < ns_entry.ValueCount; ++j)
+			{
+				auto value = orig_values[j];
+
+				value.ValueOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(), &orig_api_set_map,
+				                                            value.ValueOffset, value.ValueLength);
+
+				if (value.NameLength)
+				{
+					value.NameOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(),
+					                                           &orig_api_set_map,
+					                                           value.NameOffset, value.NameLength);
+				}
+
+				values_obj.write(value, j);
+			}
+
+			ns_entries_obj.write(ns_entry, i);
+			hash_entries_obj.write(hash_entry, i);
+		}
+
+		//watch_object(emu, api_set_map_obj);
+
+		return api_set_map_obj;
+	}
+
+	emulator_object<API_SET_NAMESPACE> build_api_set_map(x64_emulator& emu, emulator_allocator& allocator)
+	{
+		const auto& orig_api_set_map = *NtCurrentTeb()->ProcessEnvironmentBlock->ApiSetMap;
+		return clone_api_set_map(emu, allocator, orig_api_set_map);
+	}
+
+	emulator_allocator create_allocator(emulator& emu, const size_t size)
+	{
+		const auto base = emu.find_free_allocation_base(size);
+		emu.allocate_memory(base, size, memory_permission::read_write);
+
+		return emulator_allocator{emu, base, size};
+	}
+
+	process_context setup_context(x64_emulator& emu)
+	{
+		setup_stack(emu, STACK_ADDRESS, STACK_SIZE);
+		process_context context{};
+
+		context.kusd = setup_kusd(emu);
+
+		context.gs_segment = setup_gs_segment(emu, GS_SEGMENT_ADDR, GS_SEGMENT_SIZE);
+
+		auto allocator = create_allocator(emu, 1 << 20);
+
+
+		auto& gs = context.gs_segment;
+
+		context.teb = gs.reserve<TEB>();
+		context.peb = gs.reserve<PEB>();
+		context.process_params = gs.reserve<RTL_USER_PROCESS_PARAMETERS>();
+
+		context.teb.access([&](TEB& teb)
+		{
+			teb.ClientId.UniqueProcess = reinterpret_cast<HANDLE>(1);
+			teb.ClientId.UniqueThread = reinterpret_cast<HANDLE>(2);
+			teb.NtTib.StackLimit = reinterpret_cast<void*>(STACK_ADDRESS);
+			teb.NtTib.StackBase = reinterpret_cast<void*>((STACK_ADDRESS + STACK_SIZE));
+			teb.NtTib.Self = &context.teb.ptr()->NtTib;
+			teb.ProcessEnvironmentBlock = context.peb.ptr();
+		});
+
+		context.process_params.access([&](RTL_USER_PROCESS_PARAMETERS& proc_params)
+		{
+			proc_params.Length = sizeof(proc_params);
+			proc_params.Flags = 0x6001;
+			gs.make_unicode_string(proc_params.CurrentDirectory.DosPath, L"C:\\Users\\mauri\\Desktop");
+			gs.make_unicode_string(proc_params.ImagePathName, L"C:\\Users\\mauri\\Desktop\\ConsoleApplication6.exe");
+			gs.make_unicode_string(proc_params.CommandLine, L"C:\\Users\\mauri\\Desktop\\ConsoleApplication6.exe");
+		});
+
+		context.peb.access([&](PEB& peb)
+		{
+			peb.ImageBaseAddress = nullptr;
+			peb.ProcessHeap = nullptr;
+			peb.ProcessHeaps = nullptr;
+			peb.ProcessParameters = context.process_params.ptr();
+			peb.ApiSetMap = build_api_set_map(emu, allocator).ptr();
+		});
+
+		return context;
 	}
 
 	enum class gdb_registers
@@ -405,15 +437,21 @@ namespace
 
 		bool read_reg(const int regno, size_t* value) override
 		{
+			*value = 0;
+
 			try
 			{
-				const auto mapped_register = register_map.at(static_cast<gdb_registers>(regno));
-				this->emu_->read_register(mapped_register, value, sizeof(*value));
+				const auto entry = register_map.find(static_cast<gdb_registers>(regno));
+				if (entry == register_map.end())
+				{
+					return true;
+				}
+
+				this->emu_->read_register(entry->second, value, sizeof(*value));
 				return true;
 			}
 			catch (...)
 			{
-				*value = 0;
 				return true;
 			}
 		}
@@ -422,8 +460,13 @@ namespace
 		{
 			try
 			{
-				const auto mapped_register = register_map.at(static_cast<gdb_registers>(regno));
-				this->emu_->write_register(mapped_register, &value, sizeof(value));
+				const auto entry = register_map.find(static_cast<gdb_registers>(regno));
+				if (entry == register_map.end())
+				{
+					return false;
+				}
+
+				this->emu_->write_register(entry->second, &value, sizeof(value));
 				return true;
 			}
 			catch (...)
@@ -434,15 +477,7 @@ namespace
 
 		bool read_mem(const size_t addr, const size_t len, void* val) override
 		{
-			try
-			{
-				this->emu_->read_memory(addr, val, len);
-				return true;
-			}
-			catch (...)
-			{
-				return false;
-			}
+			return this->emu_->try_read_memory(addr, val, len);
 		}
 
 		bool write_mem(const size_t addr, const size_t len, void* val) override
