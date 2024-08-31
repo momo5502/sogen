@@ -15,6 +15,7 @@ struct mapped_binary
 {
 	uint64_t image_base{};
 	uint64_t size_of_image{};
+	uint64_t entry_point{};
 	exported_symbols exports{};
 };
 

@@ -1017,7 +1017,7 @@ namespace
 	NTSTATUS handle_NtCreateSection(const syscall_context& c, const emulator_object<uint64_t> section_handle,
 	                                const ACCESS_MASK /*desired_access*/,
 	                                const emulator_object<OBJECT_ATTRIBUTES> /*object_attributes*/,
-	                                const emulator_object<LARGE_INTEGER> maximum_size,
+	                                const emulator_object<LARGE_INTEGER> /*maximum_size*/,
 	                                const ULONG /*section_page_protection*/, const ULONG /*allocation_attributes*/,
 	                                const uint64_t /*file_handle*/)
 	{
@@ -1079,7 +1079,7 @@ namespace
 	}
 
 	NTSTATUS handle_NtContinue(const syscall_context& c, const emulator_object<CONTEXT> thread_context,
-	                           const BOOLEAN raise_alert)
+	                           const BOOLEAN /*raise_alert*/)
 	{
 		const auto context = thread_context.read();
 		apply_context(c.emu, context);

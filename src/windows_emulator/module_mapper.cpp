@@ -158,7 +158,8 @@ namespace
 			emu.hook_memory_execution(exp.first, 0,
 			                          [n = std::move(name), filename](const uint64_t address, const size_t)
 			                          {
-				                          printf("Executing function: %s - %s (%llX)\n",filename.c_str(), n.c_str(), address);
+				                          printf("Executing function: %s - %s (%llX)\n", filename.c_str(), n.c_str(),
+				                                 address);
 			                          });
 		}
 	}
@@ -188,6 +189,9 @@ namespace
 				throw std::runtime_error("Failed to map binary");
 			}
 		}
+
+
+		binary.entry_point = binary.image_base + optional_header.AddressOfEntryPoint;
 
 		printf("Mapping %s at %llX\n", name.c_str(), binary.image_base);
 

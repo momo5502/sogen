@@ -609,6 +609,7 @@ namespace
 		execution_context.access([&](CONTEXT& c)
 		{
 			c.Rip = entry2;
+			c.Rcx = context.executable.entry_point;
 			c.Rsp = emu->reg(x64_register::rsp);
 		});
 
