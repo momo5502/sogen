@@ -49,33 +49,34 @@ namespace
 			return;
 		}
 
+		std::vector<uint8_t> memory{};
+		memory.resize(binary.size_of_image);
+		emu.read_memory(binary.image_base, memory.data(), memory.size());
 
-		emulator_object<IMAGE_BASE_RELOCATION> relocation_object{emu, binary.image_base + directory->VirtualAddress};
-		const auto end_address = relocation_object.value() + directory->Size;
+		const auto start = memory.data() + directory->VirtualAddress;
+		const auto end = start + directory->Size;
 
-		std::vector<uint16_t> relocations{};
+		const auto* relocation = reinterpret_cast<const IMAGE_BASE_RELOCATION*>(start);
 
-		while (relocation_object.value() < end_address)
+		while (reinterpret_cast<const uint8_t*>(relocation) < end)
 		{
-			const auto relocation = relocation_object.read();
-			if (relocation.VirtualAddress <= 0 || relocation.SizeOfBlock <= 0)
+			if (relocation->VirtualAddress <= 0 || relocation->SizeOfBlock <= 0)
 			{
 				break;
 			}
 
-			const auto dest = binary.image_base + relocation.VirtualAddress;
+			const auto dest = memory.data() + relocation->VirtualAddress;
 
-			const auto data_size = relocation.SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION);
+			const auto data_size = relocation->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION);
 			const auto entry_count = data_size / sizeof(uint16_t);
 
-			if (relocations.size() < entry_count)
-			{
-				relocations.resize(entry_count);
-			}
+			printf("Applying relocations %lX - %lX - %lld\n", relocation->VirtualAddress, relocation->SizeOfBlock,
+			       entry_count);
 
-			emu.read_memory(relocation_object.value() + relocation_object.size(), relocations.data(), data_size);
+			const auto entry_start = offset_pointer<uint16_t>(relocation, sizeof(IMAGE_BASE_RELOCATION));
+			const auto entries = std::span(entry_start, entry_count);
 
-			for (const auto entry : std::span(relocations.data(), entry_count))
+			for (const auto entry : entries)
 			{
 				const int type = entry >> 12;
 				const int offset = entry & 0xfff;
@@ -86,35 +87,22 @@ namespace
 					break;
 
 				case IMAGE_REL_BASED_HIGHLOW:
-					{
-						emulator_object<DWORD> relocatable_object{emu, dest + offset};
-						relocatable_object.access([&](DWORD& obj)
-						{
-							obj += static_cast<DWORD>(delta);
-						});
-						break;
-					}
+					*reinterpret_cast<DWORD*>(dest + offset) += static_cast<DWORD>(delta);
+					break;
 
 				case IMAGE_REL_BASED_DIR64:
-					{
-						emulator_object<ULONGLONG> relocatable_object{emu, dest + offset};
-						relocatable_object.access([&](ULONGLONG& obj)
-						{
-							obj += delta;
-						});
-
-						break;
-					}
+					*reinterpret_cast<ULONGLONG*>(dest + offset) += delta;
+					break;
 
 				default:
 					throw std::runtime_error("Unknown relocation type: " + std::to_string(type));
 				}
 			}
 
-			relocation_object = emulator_object<IMAGE_BASE_RELOCATION>{
-				emu, relocation_object.value() + relocation.SizeOfBlock
-			};
+			relocation = offset_pointer<IMAGE_BASE_RELOCATION>(relocation, relocation->SizeOfBlock);
 		}
+
+		emu.write_memory(binary.image_base, memory.data(), memory.size());
 	}
 
 	void map_sections(x64_emulator& emu, const mapped_binary& binary, const unsigned char* ptr,
