@@ -303,9 +303,9 @@ namespace
 			{
 				this->emu_->start_from_ip();
 			}
-			catch (...)
+			catch (const std::exception& e)
 			{
-				return gdb_action::resume;
+				puts(e.what());
 			}
 
 			return gdb_action::resume;
@@ -317,9 +317,9 @@ namespace
 			{
 				this->emu_->start_from_ip({}, 1);
 			}
-			catch (...)
+			catch (const std::exception& e)
 			{
-				return gdb_action::resume;
+				puts(e.what());
 			}
 
 			return gdb_action::resume;
