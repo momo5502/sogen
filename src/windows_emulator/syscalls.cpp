@@ -753,7 +753,7 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		printf("Unsupported process info class: %X\n", info_class);
+		printf("Unsupported info process class: %X\n", info_class);
 		c.emu.stop();
 
 		return STATUS_NOT_SUPPORTED;
