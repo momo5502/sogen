@@ -770,16 +770,22 @@ namespace
 			return STATUS_NOT_SUPPORTED;
 		}
 
-		const auto address = page_align_down(base_address.read());
-		base_address.write(address);
+		const auto orig_start = base_address.read();
+		const auto orig_length = bytes_to_protect.read();
 
-		const auto size = page_align_up(bytes_to_protect.read());
-		bytes_to_protect.write(static_cast<uint32_t>(size));
+		const auto aligned_start = page_align_down(orig_start);
+		const auto aligned_length = page_align_up(orig_start + orig_length) - aligned_start;
+
+		base_address.write(aligned_start);
+		bytes_to_protect.write(static_cast<uint32_t>(aligned_length));
 
 		const auto requested_protection = map_nt_to_emulator_protection(protection);
 
+		printf("Changing protection at %llX-%llX to %s\n", aligned_start, aligned_start + aligned_length,
+		       get_permission_string(requested_protection).c_str());
+
 		memory_permission old_protection_value{};
-		c.emu.protect_memory(address, size, requested_protection, &old_protection_value);
+		c.emu.protect_memory(aligned_start, aligned_length, requested_protection, &old_protection_value);
 
 		const auto current_protection = map_emulator_to_nt_protection(old_protection_value);
 		old_protection.write(current_protection);
