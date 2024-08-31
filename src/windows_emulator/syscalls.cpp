@@ -10,16 +10,6 @@ struct syscall_context
 
 namespace
 {
-	constexpr uint64_t PSEUDO_BIT = 1ULL << 63ULL;
-	constexpr uint64_t EVENT_BIT = 1ULL << 62ULL;
-	constexpr uint64_t DIRECTORY_BIT = 1ULL << 61ULL;
-	constexpr uint64_t SYMLINK_BIT = 1ULL << 60ULL;
-	constexpr uint64_t FILE_BIT = 1ULL << 59ULL;
-
-	constexpr uint64_t KNOWN_DLLS_DIRECTORY = DIRECTORY_BIT | PSEUDO_BIT | 0x1337;
-	constexpr uint64_t KNOWN_DLLS_SYMLINK = SYMLINK_BIT | PSEUDO_BIT | 0x1337;
-	constexpr uint64_t SHARED_SECTION = FILE_BIT | PSEUDO_BIT | 0x1337;
-
 	uint64_t get_syscall_argument(x64_emulator& emu, const size_t index)
 	{
 		switch (index)
@@ -799,7 +789,8 @@ namespace
 		}
 
 		if (info_class == ProcessSchedulerSharedData
-			|| info_class == ProcessTlsInformation)
+			|| info_class == ProcessTlsInformation
+			|| info_class == ProcessConsoleHostProcess)
 		{
 			return STATUS_SUCCESS;
 		}
@@ -1002,26 +993,61 @@ namespace
 		throw std::runtime_error("Bad free type");
 	}
 
-	NTSTATUS handle_NtCreateSection(const syscall_context& /*c*/, const emulator_object<uint64_t> section_handle,
+	NTSTATUS handle_NtCreateSection(const syscall_context& c, const emulator_object<uint64_t> section_handle,
 	                                const ACCESS_MASK /*desired_access*/,
 	                                const emulator_object<OBJECT_ATTRIBUTES> /*object_attributes*/,
 	                                const emulator_object<LARGE_INTEGER> maximum_size,
 	                                const ULONG /*section_page_protection*/, const ULONG /*allocation_attributes*/,
 	                                const uint64_t /*file_handle*/)
 	{
-		section_handle.write(SHARED_SECTION);
+		puts("NtCreateSection not supported");
+		c.emu.stop();
 
+		section_handle.write(SHARED_SECTION);
+		/*
 		maximum_size.access([](LARGE_INTEGER& large_int)
 		{
 			large_int.QuadPart = page_align_up(large_int.QuadPart);
 		});
+		*/
+		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS handle_NtConnectPort(const syscall_context& c)
+	{
+		puts("NtConnectPort not supported");
+		c.emu.stop();
 
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtConnectPort()
+	NTSTATUS handle_NtDeviceIoControlFile(const syscall_context& c)
 	{
+		puts("NtDeviceIoControlFile not supported");
 		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS handle_NtCreateFile(const syscall_context& c, const emulator_object<uint64_t> file_handle,
+	                             ACCESS_MASK /*desired_access*/,
+	                             const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
+	{
+		const auto attributes = object_attributes.read();
+		const auto filename = read_unicode_string(c.emu, attributes.ObjectName);
+
+		if (filename == L"\\Device\\ConDrv\\Server")
+		{
+			file_handle.write(CONSOLE_SERVER);
+			return STATUS_SUCCESS;
+		}
+
+		const auto root_handle = reinterpret_cast<uint64_t>(attributes.RootDirectory);
+		if ((root_handle & PSEUDO_BIT) && (filename == L"\\Reference" || filename == L"\\Connect"))
+		{
+			file_handle.write(root_handle);
+			return STATUS_SUCCESS;
+		}
+
+		throw std::runtime_error("Unsupported file");
 	}
 }
 
@@ -1070,6 +1096,8 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports)
 	add_handler(NtApphelpCacheControl);
 	add_handler(NtCreateSection);
 	add_handler(NtConnectPort);
+	add_handler(NtCreateFile);
+	add_handler(NtDeviceIoControlFile);
 
 #undef add_handler
 }

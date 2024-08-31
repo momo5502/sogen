@@ -282,7 +282,13 @@ namespace
 		context.process_params.access([&](RTL_USER_PROCESS_PARAMETERS& proc_params)
 		{
 			proc_params.Length = sizeof(proc_params);
-			proc_params.Flags = 0x6001 | 0x80000000;
+			proc_params.Flags = 0x6001 | 0x80000000;  // Prevent CsrClientConnectToServer
+
+			proc_params.ConsoleHandle = reinterpret_cast<HANDLE>(CONSOLE_HANDLE);
+			proc_params.StandardOutput = reinterpret_cast<HANDLE>(STDOUT_HANDLE);
+			proc_params.StandardInput = reinterpret_cast<HANDLE>(STDIN_HANDLE);
+			proc_params.StandardError = proc_params.StandardOutput;
+
 			gs.make_unicode_string(proc_params.CurrentDirectory.DosPath, L"C:\\Users\\mauri\\Desktop");
 			gs.make_unicode_string(proc_params.ImagePathName, L"C:\\Users\\mauri\\Desktop\\ConsoleApplication6.exe");
 			gs.make_unicode_string(proc_params.CommandLine, L"C:\\Users\\mauri\\Desktop\\ConsoleApplication6.exe");
