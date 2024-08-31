@@ -342,7 +342,8 @@ namespace
 	}
 
 	NTSTATUS handle_NtQueryVolumeInformationFile(const syscall_context& c, uint64_t /*file_handle*/,
-	                                             uint64_t /*io_status_block*/, uint64_t fs_information, ULONG /*length*/,
+	                                             uint64_t /*io_status_block*/, uint64_t fs_information,
+	                                             ULONG /*length*/,
 	                                             FS_INFORMATION_CLASS fs_information_class)
 	{
 		if (fs_information_class != FileFsDeviceInformation)
