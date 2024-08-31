@@ -1,6 +1,23 @@
 #pragma once
 #include <cstdint>
+#include <string>
 #include <emulator.hpp>
+
+inline std::string get_permission_string(const memory_permission permission)
+{
+	const bool has_exec = (permission & memory_permission::exec) != memory_permission::none;
+	const bool has_read = (permission & memory_permission::read) != memory_permission::none;
+	const bool has_write = (permission & memory_permission::write) != memory_permission::none;
+
+	std::string res = {};
+	res.reserve(3);
+
+	res.push_back(has_read ? 'r' : '-');
+	res.push_back(has_write ? 'w' : '-');
+	res.push_back(has_exec ? 'x' : '-');
+
+	return res;
+}
 
 inline memory_permission map_nt_to_emulator_protection(const uint32_t nt_protection)
 {
@@ -19,7 +36,8 @@ inline memory_permission map_nt_to_emulator_protection(const uint32_t nt_protect
 	case PAGE_EXECUTE_READWRITE:
 	case PAGE_EXECUTE_WRITECOPY:
 	default:
-		return memory_permission::all;
+		throw std::runtime_error("Failed to map protection");
+	//return memory_permission::all;
 	}
 }
 
