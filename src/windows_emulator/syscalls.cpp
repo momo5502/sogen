@@ -748,7 +748,8 @@ namespace
 			return STATUS_NOT_SUPPORTED;
 		}
 
-		if (info_class == ProcessSchedulerSharedData)
+		if (info_class == ProcessSchedulerSharedData
+			|| info_class == ProcessTlsInformation)
 		{
 			return STATUS_SUCCESS;
 		}
