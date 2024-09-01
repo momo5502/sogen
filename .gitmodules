@@ -1,6 +1,6 @@
 [submodule "deps/unicorn"]
 	path = deps/unicorn
-	url = https://github.com/unicorn-engine/unicorn.git
+	url = ../unicorn.git
 	shallow = true
 	branch = dev
 [submodule "deps/phnt"]
