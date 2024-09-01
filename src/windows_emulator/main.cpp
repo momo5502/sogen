@@ -25,7 +25,7 @@
 
 #define KUSD_ADDRESS 0x7ffe0000
 
-bool use_gdb = true;
+bool use_gdb = false;
 
 namespace
 {

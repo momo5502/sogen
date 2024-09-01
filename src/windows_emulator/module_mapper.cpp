@@ -199,7 +199,12 @@ namespace
 
 		map_sections(emu, binary, ptr, *nt_headers);
 		apply_relocations(emu, binary, optional_header);
-		collect_exports(binary, ptr, optional_header);
+
+		static int i = 0;
+		if (++i < 3)
+		{
+			collect_exports(binary, ptr, optional_header);
+		}
 
 		return binary;
 	}

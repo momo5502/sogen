@@ -10,6 +10,9 @@
 
 namespace
 {
+	constexpr auto MIN_ALLOCATION_ADDRESS = 0x0000000000010000;
+	constexpr auto MAX_ALLOCATION_ADDRESS = 0x00007ffffffeffff;
+
 	void split_regions(memory_manager::committed_region_map& regions, const std::vector<uint64_t>& split_points)
 	{
 		for (auto i = regions.begin(); i != regions.end(); ++i)
@@ -284,7 +287,7 @@ bool memory_manager::release_memory(const uint64_t address, size_t size)
 
 uint64_t memory_manager::find_free_allocation_base(const size_t size) const
 {
-	uint64_t start_address = 0x0000000000010000;
+	uint64_t start_address = MIN_ALLOCATION_ADDRESS;
 
 	for (const auto& region : this->reserved_regions_)
 	{
@@ -296,12 +299,81 @@ uint64_t memory_manager::find_free_allocation_base(const size_t size) const
 		start_address = page_align_up(region.first + region.second.length);
 	}
 
-	if (start_address + size <= 0x00007ffffffeffff)
+	if (start_address + size <= MAX_ALLOCATION_ADDRESS)
 	{
 		return start_address;
 	}
 
 	return 0;
+}
+
+region_info memory_manager::get_region_info(const uint64_t address)
+{
+	region_info result{};
+	result.start = MIN_ALLOCATION_ADDRESS;
+	result.length = MAX_ALLOCATION_ADDRESS - result.start;
+	result.pemissions = memory_permission::none;
+	result.allocation_base = {};
+	result.is_committed = false;
+	result.is_reserved = false;
+
+	if (this->reserved_regions_.empty())
+	{
+		return result;
+	}
+
+	auto upper_bound = this->reserved_regions_.upper_bound(address);
+	if (upper_bound == this->reserved_regions_.begin())
+	{
+		result.length = upper_bound->first - result.start;
+		return result;
+	}
+
+	const auto entry = --upper_bound;
+	const auto lower_end = entry->first + entry->second.length;
+	if (lower_end <= address)
+	{
+		result.start = lower_end;
+		result.length = MAX_ALLOCATION_ADDRESS - result.start;
+		return result;
+	}
+
+	// We have a reserved region
+	const auto& reserved_region = entry->second;
+	const auto& committed_regions = reserved_region.committed_regions;
+
+	result.is_reserved = true;
+	result.allocation_base = entry->first;
+	result.start = result.allocation_base;
+	result.length = reserved_region.length;
+
+	if (committed_regions.empty())
+	{
+		return result;
+	}
+
+	auto committed_bound = committed_regions.upper_bound(address);
+	if (committed_bound == committed_regions.begin())
+	{
+		result.length = committed_bound->first - result.start;
+		return result;
+	}
+
+	const auto committed_entry = --committed_bound;
+	const auto committed_lower_end = committed_entry->first + committed_entry->second.length;
+	if (committed_lower_end <= address)
+	{
+		result.start = committed_lower_end;
+		result.length = lower_end - result.start;
+		return result;
+	}
+
+	result.is_committed = true;
+	result.start = committed_entry->first;
+	result.length = committed_entry->second.length;
+	result.pemissions = committed_entry->second.pemissions;
+
+	return result;
 }
 
 memory_manager::reserved_region_map::iterator memory_manager::find_reserved_region(const uint64_t address)

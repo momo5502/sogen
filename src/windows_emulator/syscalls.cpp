@@ -535,39 +535,76 @@ namespace
 			return STATUS_NOT_SUPPORTED;
 		}
 
-		if (info_class != MemoryImageInformation)
+		if (info_class == MemoryBasicInformation)
 		{
-			printf("Unsupported memory info class: %X\n", info_class);
-			c.emu.stop();
-			return STATUS_NOT_SUPPORTED;
+			if (return_length)
+			{
+				return_length.write(sizeof(MEMORY_BASIC_INFORMATION));
+			}
+
+			if (memory_information_length != sizeof(MEMORY_BASIC_INFORMATION))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<MEMORY_BASIC_INFORMATION> info{c.emu, memory_information};
+
+			info.access([&](MEMORY_BASIC_INFORMATION& image_info)
+			{
+				const auto region_info = c.emu.get_region_info(base_address);
+
+				assert(!region_info.is_committed || region_info.is_reserved);
+
+				image_info.BaseAddress = reinterpret_cast<void*>(region_info.start);
+				image_info.AllocationBase = reinterpret_cast<void*>(region_info.allocation_base);
+				image_info.AllocationProtect = 0;
+				image_info.PartitionId = 0;
+				image_info.RegionSize = region_info.length;
+				image_info.State = region_info.is_committed
+					                   ? MEM_COMMIT
+					                   : (region_info.is_reserved
+						                      ? MEM_RESERVE
+						                      : MEM_FREE);
+				image_info.Protect = map_emulator_to_nt_protection(region_info.pemissions);
+				image_info.Type = MEM_PRIVATE;
+			});
+
+			return STATUS_SUCCESS;
 		}
 
-		if (return_length)
+		if (info_class == MemoryImageInformation)
 		{
-			return_length.write(sizeof(MEMORY_IMAGE_INFORMATION));
+			if (return_length)
+			{
+				return_length.write(sizeof(MEMORY_IMAGE_INFORMATION));
+			}
+
+			if (memory_information_length != sizeof(MEMORY_IMAGE_INFORMATION))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			if (!is_within_start_and_length(base_address, c.proc.ntdll.image_base, c.proc.ntdll.size_of_image))
+			{
+				puts("Bad image request");
+				c.emu.stop();
+				return STATUS_NOT_SUPPORTED;
+			}
+
+			const emulator_object<MEMORY_IMAGE_INFORMATION> info{c.emu, memory_information};
+
+			info.access([&](MEMORY_IMAGE_INFORMATION& image_info)
+			{
+				image_info.ImageBase = reinterpret_cast<void*>(c.proc.ntdll.image_base);
+				image_info.SizeOfImage = c.proc.ntdll.size_of_image;
+			});
+
+			return STATUS_SUCCESS;
 		}
 
-		if (memory_information_length != sizeof(MEMORY_IMAGE_INFORMATION))
-		{
-			return STATUS_BUFFER_OVERFLOW;
-		}
-
-		if (!is_within_start_and_length(base_address, c.proc.ntdll.image_base, c.proc.ntdll.size_of_image))
-		{
-			puts("Bad image request");
-			c.emu.stop();
-			return STATUS_NOT_SUPPORTED;
-		}
-
-		const emulator_object<MEMORY_IMAGE_INFORMATION> info{c.emu, memory_information};
-
-		info.access([&](MEMORY_IMAGE_INFORMATION& image_info)
-		{
-			image_info.ImageBase = reinterpret_cast<void*>(c.proc.ntdll.image_base);
-			image_info.SizeOfImage = c.proc.ntdll.size_of_image;
-		});
-
-		return STATUS_SUCCESS;
+		printf("Unsupported memory info class: %X\n", info_class);
+		c.emu.stop();
+		return STATUS_NOT_SUPPORTED;
 	}
 
 	NTSTATUS handle_NtQuerySystemInformation(const syscall_context& c, const uint32_t info_class,
@@ -1084,6 +1121,7 @@ namespace
 		const auto context = thread_context.read();
 		apply_context(c.emu, context);
 
+		// TODO
 		return STATUS_SUCCESS;
 	}
 
