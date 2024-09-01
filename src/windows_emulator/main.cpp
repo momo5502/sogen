@@ -21,11 +21,34 @@
 #define IA32_GS_BASE_MSR 0xC0000101
 
 #define STACK_SIZE 0x40000
-#define STACK_ADDRESS (0x800000000000 - STACK_SIZE)
-
+#define STACK_ADDRESS (0x80000000000 - STACK_SIZE)
 #define KUSD_ADDRESS 0x7ffe0000
 
-bool use_gdb = false;
+bool use_gdb = true;
+
+struct breakpoint_key
+{
+	size_t addr{};
+	size_t size{};
+	breakpoint_type type{};
+
+	bool operator==(const breakpoint_key& other) const
+	{
+		return this->addr == other.addr && this->size == other.size && this->type == other.type;
+	}
+};
+
+template <>
+struct std::hash<breakpoint_key>
+{
+	std::size_t operator()(const breakpoint_key& k) const noexcept
+	{
+		return ((std::hash<size_t>()(k.addr)
+				^ (std::hash<size_t>()(k.size) << 1)) >> 1)
+			^ (std::hash<size_t>()(static_cast<size_t>(k.type)) << 1);
+	}
+};
+
 
 namespace
 {
@@ -352,6 +375,24 @@ namespace
 		{gdb_registers::eflags, x64_register::rflags},
 	};
 
+	memory_operation map_breakpoint_type(const breakpoint_type type)
+	{
+		switch (type)
+		{
+		case breakpoint_type::software:
+		case breakpoint_type::hardware_exec:
+			return memory_operation::exec;
+		case breakpoint_type::hardware_read:
+			return memory_permission::read;
+		case breakpoint_type::hardware_write:
+			return memory_permission::write;
+		case breakpoint_type::hardware_read_write:
+			return memory_permission::read_write;
+		default:
+			throw std::runtime_error("Bad bp type");
+		}
+	}
+
 	class scoped_emulator_hook
 	{
 	public:
@@ -499,15 +540,16 @@ namespace
 			}
 		}
 
-		bool set_bp(const size_t addr) override
+		bool set_bp(const breakpoint_type type, const size_t addr, const size_t size) override
 		{
 			try
 			{
-				this->hooks_[addr] = scoped_emulator_hook(*this->emu_, this->emu_->hook_memory_execution(
-					                                          addr, 1, [this](uint64_t, size_t)
-					                                          {
-						                                          this->on_interrupt();
-					                                          }));
+				this->hooks_[{addr, size, type}] = scoped_emulator_hook(*this->emu_, this->emu_->hook_memory_access(
+					                                                        addr, size, map_breakpoint_type(type),
+					                                                        [this](uint64_t, size_t, memory_operation)
+					                                                        {
+						                                                        this->on_interrupt();
+					                                                        }));
 
 				return true;
 			}
@@ -517,11 +559,11 @@ namespace
 			}
 		}
 
-		bool del_bp(const size_t addr) override
+		bool del_bp(const breakpoint_type type, const size_t addr, const size_t size) override
 		{
 			try
 			{
-				const auto entry = this->hooks_.find(addr);
+				const auto entry = this->hooks_.find({addr, size, type});
 				if (entry == this->hooks_.end())
 				{
 					return false;
@@ -544,7 +586,7 @@ namespace
 
 	private:
 		x64_emulator* emu_{};
-		std::unordered_map<size_t, scoped_emulator_hook> hooks_{};
+		std::unordered_map<breakpoint_key, scoped_emulator_hook> hooks_{};
 	};
 
 	uint64_t find_exported_function(const std::vector<exported_symbol>& exports, const std::string_view name)

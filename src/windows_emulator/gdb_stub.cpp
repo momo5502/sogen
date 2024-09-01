@@ -24,6 +24,25 @@ namespace
 		throw std::runtime_error("Bad action");
 	}
 
+	breakpoint_type map_breakpoint_type(const bp_type_t type)
+	{
+		switch (type)
+		{
+		case BP_SOFTWARE:
+			return breakpoint_type::software;
+		case BP_HARDWARE_EXEC:
+			return breakpoint_type::hardware_exec;
+		case BP_HARDWARE_WRITE:
+			return breakpoint_type::hardware_write;
+		case BP_HARDWARE_READ:
+			return breakpoint_type::hardware_read;
+		case BP_HARDWARE_READ_WRITE:
+			return breakpoint_type::hardware_read_write;
+		}
+
+		throw std::runtime_error("Bad breakpoint type");
+	}
+
 	gdb_stub_handler& get_handler(void* args)
 	{
 		return *static_cast<gdb_stub_handler*>(args);
@@ -59,20 +78,14 @@ namespace
 		return get_handler(args).write_mem(addr, len, val) ? 0 : 1;
 	}
 
-	bool set_bp(void* args, const size_t addr, const bp_type_t type)
+	bool set_bp(void* args, const size_t addr, const bp_type_t type, const size_t size)
 	{
-		(void)type;
-		assert(type == BP_SOFTWARE);
-
-		return get_handler(args).set_bp(addr);
+		return get_handler(args).set_bp(map_breakpoint_type(type), addr, size);
 	}
 
-	bool del_bp(void* args, const size_t addr, const bp_type_t type)
+	bool del_bp(void* args, const size_t addr, const bp_type_t type, const size_t size)
 	{
-		(void)type;
-		assert(type == BP_SOFTWARE);
-
-		return get_handler(args).del_bp(addr);
+		return get_handler(args).del_bp(map_breakpoint_type(type), addr, size);
 	}
 
 	void on_interrupt(void* args)

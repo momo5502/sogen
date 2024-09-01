@@ -7,6 +7,15 @@ enum class gdb_action : uint8_t
 	shutdown,
 };
 
+enum class breakpoint_type : uint8_t
+{
+	software,
+	hardware_exec,
+	hardware_write,
+	hardware_read,
+	hardware_read_write,
+};
+
 struct gdb_stub_handler
 {
 	virtual ~gdb_stub_handler() = default;
@@ -20,8 +29,8 @@ struct gdb_stub_handler
 	virtual bool read_mem(size_t addr, size_t len, void* val) = 0;
 	virtual bool write_mem(size_t addr, size_t len, void* val) = 0;
 
-	virtual bool set_bp(size_t addr) = 0;
-	virtual bool del_bp(size_t addr) = 0;
+	virtual bool set_bp(breakpoint_type type, size_t addr, size_t size) = 0;
+	virtual bool del_bp(breakpoint_type type, size_t addr, size_t size) = 0;
 
 	virtual void on_interrupt() = 0;
 };
