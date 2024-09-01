@@ -4,13 +4,19 @@
 
 namespace
 {
-	void collect_exports(mapped_binary& binary, const unsigned char* ptr, const IMAGE_OPTIONAL_HEADER& optional_header)
+	void collect_exports(emulator& emu, mapped_binary& binary, const IMAGE_OPTIONAL_HEADER& optional_header)
 	{
 		auto& export_directory_entry = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
 		if (export_directory_entry.VirtualAddress == 0 || export_directory_entry.Size == 0)
 		{
 			return;
 		}
+
+		std::vector<uint8_t> memory{};
+		memory.resize(binary.size_of_image);
+		emu.read_memory(binary.image_base, memory.data(), memory.size());
+
+		const uint8_t* ptr = memory.data();
 
 		const auto* export_directory = reinterpret_cast<const IMAGE_EXPORT_DIRECTORY*>(ptr + export_directory_entry.
 			VirtualAddress);
@@ -199,12 +205,7 @@ namespace
 
 		map_sections(emu, binary, ptr, *nt_headers);
 		apply_relocations(emu, binary, optional_header);
-
-		static int i = 0;
-		if (++i < 3)
-		{
-			collect_exports(binary, ptr, optional_header);
-		}
+		collect_exports(emu, binary, optional_header);
 
 		return binary;
 	}
