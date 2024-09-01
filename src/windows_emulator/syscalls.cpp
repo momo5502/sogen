@@ -39,6 +39,10 @@ namespace
 
 	std::vector<std::string> find_syscalls(const exported_symbols& exports)
 	{
+		// Makes use of the fact that order of Nt* function addresses
+		// is equal to the order of syscall IDs.
+		// So first Nt* function is the first syscall with ID 0
+
 		std::map<uint64_t, std::string> ordered_syscalls{};
 
 		for (const auto& symbol : exports)
@@ -1125,6 +1129,11 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
+	NTSTATUS handle_NtTerminateProcess(const syscall_context&, uint64_t /*process_handle*/, NTSTATUS /*exit_status*/)
+	{
+		return STATUS_SUCCESS;
+	}
+
 	NTSTATUS handle_NtCreateFile(const syscall_context& c, const emulator_object<uint64_t> file_handle,
 	                             ACCESS_MASK /*desired_access*/,
 	                             const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
@@ -1151,6 +1160,8 @@ namespace
 
 syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports)
 {
+	const auto syscalls = find_syscalls(ntdll_exports);
+
 #define add_handler(syscall) do                             \
 	{                                                       \
 		const auto id = get_syscall_id(syscalls, #syscall); \
@@ -1160,8 +1171,6 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports)
 		};                                                  \
 		this->handlers_[id] = handler;                      \
 	} while(0)
-
-	const auto syscalls = find_syscalls(ntdll_exports);
 
 	add_handler(NtSetInformationThread);
 	add_handler(NtSetEvent);
@@ -1202,6 +1211,7 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports)
 	add_handler(NtQueryLicenseValue);
 	add_handler(NtTestAlert);
 	add_handler(NtContinue);
+	add_handler(NtTerminateProcess);
 
 #undef add_handler
 }
