@@ -24,7 +24,7 @@
 #define STACK_ADDRESS (0x80000000000 - STACK_SIZE)
 #define KUSD_ADDRESS 0x7ffe0000
 
-bool use_gdb = true;
+bool use_gdb = false;
 
 struct breakpoint_key
 {

@@ -1129,9 +1129,46 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtTerminateProcess(const syscall_context&, uint64_t /*process_handle*/, NTSTATUS /*exit_status*/)
+	NTSTATUS handle_NtTerminateProcess(const syscall_context& c, const uint64_t process_handle,
+	                                   NTSTATUS /*exit_status*/)
 	{
-		return STATUS_SUCCESS;
+		if (process_handle == 0)
+		{
+			return STATUS_SUCCESS;
+		}
+
+		if (process_handle == ~0ULL)
+		{
+			c.emu.stop();
+			return STATUS_SUCCESS;
+		}
+
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtWriteFile(const syscall_context& c, const uint64_t file_handle, const uint64_t /*event*/,
+	                            const uint64_t /*apc_routine*/,
+	                            const uint64_t /*apc_context*/,
+	                            const emulator_object<IO_STATUS_BLOCK> /*io_status_block*/,
+	                            uint64_t buffer, const ULONG length,
+	                            const emulator_object<LARGE_INTEGER> /*byte_offset*/,
+	                            const emulator_object<ULONG> /*key*/)
+	{
+		if (file_handle == STDOUT_HANDLE)
+		{
+			std::vector<uint8_t> temp_buffer{};
+			temp_buffer.resize(length);
+			c.emu.read_memory(buffer, temp_buffer.data(), temp_buffer.size());
+
+			(void)fwrite(temp_buffer.data(), 1, temp_buffer.size(), stdout);
+			(void)fflush(stdout);
+
+			return STATUS_SUCCESS;
+		}
+
+		puts("NtCreateSection not supported");
+		c.emu.stop();
+		return STATUS_NOT_SUPPORTED;
 	}
 
 	NTSTATUS handle_NtCreateFile(const syscall_context& c, const emulator_object<uint64_t> file_handle,
@@ -1212,6 +1249,7 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports)
 	add_handler(NtTestAlert);
 	add_handler(NtContinue);
 	add_handler(NtTerminateProcess);
+	add_handler(NtWriteFile);
 
 #undef add_handler
 }
