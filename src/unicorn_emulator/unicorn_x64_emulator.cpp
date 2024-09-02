@@ -25,6 +25,10 @@ namespace unicorn
 				return UC_X86_INS_SYSCALL;
 			case x64_hookable_instructions::cpuid:
 				return UC_X86_INS_CPUID;
+			case x64_hookable_instructions::rdtsc:
+				return UC_X86_INS_RDTSC;
+			case x64_hookable_instructions::rdtscp:
+				return UC_X86_INS_RDTSCP;
 			}
 
 			throw std::runtime_error("Bad instruction for mapping");
@@ -251,9 +255,9 @@ namespace unicorn
 				const auto uc_instruction = map_hookable_instruction(
 					static_cast<x64_hookable_instructions>(instruction_type));
 
-				function_wrapper<void, uc_engine*> wrapper([c = std::move(callback)](uc_engine*)
+				function_wrapper<int, uc_engine*> wrapper([c = std::move(callback)](uc_engine*)
 				{
-					c();
+					return c() ? 1 : 0;
 				});
 
 				unicorn_hook hook{*this};

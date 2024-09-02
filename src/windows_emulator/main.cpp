@@ -625,6 +625,13 @@ namespace
 		emu->hook_instruction(x64_hookable_instructions::syscall, [&]
 		{
 			dispatcher.dispatch(*emu, context);
+			return true;
+		});
+
+		emu->hook_instruction(x64_hookable_instructions::rdtsc, [&]
+		{
+			puts("RDTSC Hook");
+			return true;
 		});
 
 		watch_object(*emu, context.teb);
@@ -657,9 +664,7 @@ namespace
 
 		emu->reg(x64_register::rcx, execution_context.value());
 		emu->reg(x64_register::rdx, context.ntdll.image_base);
-
 		emu->reg(x64_register::rip, entry1);
-
 
 		try
 		{
