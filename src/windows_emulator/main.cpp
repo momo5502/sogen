@@ -24,7 +24,7 @@
 #define STACK_ADDRESS (0x80000000000 - STACK_SIZE)
 #define KUSD_ADDRESS 0x7ffe0000
 
-bool use_gdb = false;
+bool use_gdb = true;
 
 struct breakpoint_key
 {
@@ -625,13 +625,13 @@ namespace
 		emu->hook_instruction(x64_hookable_instructions::syscall, [&]
 		{
 			dispatcher.dispatch(*emu, context);
-			return true;
+			return hook_continuation::skip_instruction;
 		});
 
 		emu->hook_instruction(x64_hookable_instructions::rdtsc, [&]
 		{
-			puts("RDTSC Hook");
-			return true;
+			emu->reg(x64_register::rax, 0x0011223344556677);
+			return hook_continuation::skip_instruction;
 		});
 
 		watch_object(*emu, context.teb);

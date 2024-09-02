@@ -9,7 +9,13 @@ struct emulator_hook;
 
 using memory_operation = memory_permission;
 
-using hook_callback = std::function<bool()>;
+enum class hook_continuation : bool
+{
+	run_instruction = false,
+	skip_instruction = true,
+};
+
+using hook_callback = std::function<hook_continuation()>;
 
 using simple_memory_hook_callback = std::function<void(uint64_t address, size_t size)>;
 using complex_memory_hook_callback = std::function<void(uint64_t address, size_t size, memory_operation operation)>;

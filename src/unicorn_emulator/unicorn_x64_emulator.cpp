@@ -257,7 +257,9 @@ namespace unicorn
 
 				function_wrapper<int, uc_engine*> wrapper([c = std::move(callback)](uc_engine*)
 				{
-					return c() ? 1 : 0;
+					return (c() == hook_continuation::skip_instruction)
+						       ? 1
+						       : 0;
 				});
 
 				unicorn_hook hook{*this};
