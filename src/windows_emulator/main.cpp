@@ -30,7 +30,7 @@
 #define GDT_LIMIT 0x1000
 #define GDT_ENTRY_SIZE 0x8
 
-bool use_gdb = false;
+bool use_gdb = true;
 
 struct breakpoint_key
 {
@@ -756,8 +756,6 @@ namespace
 			printf("Interrupt: %i\n", interrupt);
 		});
 
-		bool continue_execution = true;
-
 		emu->hook_memory_violation([&](const uint64_t address, const size_t size, const memory_operation operation,
 		                               const memory_violation_type type)
 		{
@@ -774,8 +772,7 @@ namespace
 			}
 
 			dispatch_access_violation(*emu, ki_user_exception_dispatcher, address, operation);
-			continue_execution = true;
-			return memory_violation_continuation::stop;
+			return memory_violation_continuation::resume;
 		});
 
 		/*
@@ -825,21 +822,7 @@ namespace
 			}
 			else
 			{
-				while (continue_execution)
-				{
-					continue_execution = false;
-					try
-					{
-						emu->start_from_ip();
-					}
-					catch (...)
-					{
-						if (!continue_execution)
-						{
-							throw;
-						}
-					}
-				}
+				emu->start_from_ip();
 			}
 		}
 		catch (...)

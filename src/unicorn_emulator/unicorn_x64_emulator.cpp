@@ -181,15 +181,38 @@ namespace unicorn
 				uc_close(this->uc_);
 			}
 
-			void start(const uint64_t start, const uint64_t end, std::chrono::microseconds timeout,
+			void start(uint64_t start, const uint64_t end, std::chrono::microseconds timeout,
 			           const size_t count) override
 			{
-				if (timeout.count() < 0)
+				while (true)
 				{
-					timeout = {};
-				}
+					if (timeout.count() < 0)
+					{
+						timeout = {};
+					}
 
-				uce(uc_emu_start(*this, start, end, static_cast<uint64_t>(timeout.count()), count));
+					this->retry_after_violation_ = false;
+					const auto res = uc_emu_start(*this, start, end, static_cast<uint64_t>(timeout.count()), count);
+					if (res == UC_ERR_OK)
+					{
+						return;
+					}
+
+					const auto is_violation = res == UC_ERR_READ_UNMAPPED || //
+						res == UC_ERR_WRITE_UNMAPPED || //
+						res == UC_ERR_FETCH_UNMAPPED || //
+						res == UC_ERR_READ_PROT || //
+						res == UC_ERR_WRITE_PROT || //
+						res == UC_ERR_FETCH_PROT;
+
+					if (is_violation && this->retry_after_violation_)
+					{
+						start = this->read_instruction_pointer();
+						continue;
+					}
+
+					uce(res);
+				}
 			}
 
 			void stop() override
@@ -324,7 +347,8 @@ namespace unicorn
 				auto container = std::make_unique<hook_container>();
 
 				uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_INTR, wrapper.get_function(),
-				                wrapper.get_user_data(), 0, std::numeric_limits<pointer_type>::max()));
+				                wrapper.get_user_data(), 0, std::numeric_limits<pointer_type>::max())
+				);
 
 				container->add(std::move(wrapper), std::move(hook));
 
@@ -337,14 +361,33 @@ namespace unicorn
 			                                     memory_violation_hook_callback callback) override
 			{
 				function_wrapper<bool, uc_engine*, uc_mem_type, uint64_t, int, int64_t> wrapper(
-					[c = std::move(callback)](uc_engine*, const uc_mem_type type,
-					                          const uint64_t address, const int size, const int64_t)
+					[c = std::move(callback), this](uc_engine*, const uc_mem_type type,
+					                                const uint64_t address, const int size, const int64_t)
 					{
+						const auto ip = this->read_instruction_pointer();
+
 						assert(size >= 0);
 						const auto operation = map_memory_operation(type);
 						const auto violation = map_memory_violation_type(type);
 
-						return c(address, static_cast<uint64_t>(size), operation, violation) == memory_violation_continuation::resume;
+						const auto resume = c(address, static_cast<uint64_t>(size), operation, violation) ==
+							memory_violation_continuation::resume;
+
+						const auto has_ip_changed = ip != this->read_instruction_pointer();
+
+						if (!resume)
+						{
+							return false;
+						}
+
+						this->retry_after_violation_ = resume && has_ip_changed;
+
+						if (has_ip_changed)
+						{
+							return false;
+						}
+
+						return true;
 					});
 
 				unicorn_hook hook{*this};
@@ -414,6 +457,7 @@ namespace unicorn
 
 		private:
 			uc_engine* uc_{};
+			bool retry_after_violation_{false};
 			std::vector<std::unique_ptr<hook_object>> hooks_{};
 		};
 	}
