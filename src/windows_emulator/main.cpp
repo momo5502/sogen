@@ -9,11 +9,13 @@
 #include "reflect_extension.hpp"
 #include <reflect>
 
+#include <address_utils.hpp>
 #include <unicorn_x64_emulator.hpp>
 
 #include "gdb_stub.hpp"
 #include "module_mapper.hpp"
-#include <address_utils.hpp>
+#include "context_frame.hpp"
+
 
 #define GS_SEGMENT_ADDR 0x6000000ULL
 #define GS_SEGMENT_SIZE (20 << 20)  // 20 MB
@@ -120,6 +122,17 @@ namespace
 			                     printf("%s: %llX (%s)\n", i.get_type_name().c_str(), offset,
 			                            i.get_member_name(offset).c_str());
 		                     });
+	}
+
+	template <typename T>
+	emulator_object<T> allocate_object_on_stack(x64_emulator& emu)
+	{
+		const auto old_sp = emu.reg(x64_register::rsp);
+		const auto new_sp = align_down(old_sp - sizeof(CONTEXT),
+		                               std::max(alignof(CONTEXT), alignof(x64_emulator::pointer_type)));
+		emu.reg(x64_register::rsp, new_sp);
+
+		return {emu, new_sp};
 	}
 
 	void setup_stack(x64_emulator& emu, const uint64_t stack_base, const size_t stack_size)
@@ -598,6 +611,105 @@ namespace
 		return 0;
 	}
 
+	emulator_object<CONTEXT> save_context_on_stack(x64_emulator& emu)
+	{
+		CONTEXT ctx{};
+		ctx.ContextFlags = CONTEXT_ALL;
+		context_frame::save(emu, ctx);
+
+		const auto ctx_obj = allocate_object_on_stack<CONTEXT>(emu);
+		ctx_obj.write(ctx);
+
+		return ctx_obj;
+	}
+
+	using exception_record_map = std::unordered_map<const EXCEPTION_RECORD*, emulator_object<EXCEPTION_RECORD>>;
+
+	emulator_object<EXCEPTION_RECORD> save_exception_record_on_stack(x64_emulator& emu, const EXCEPTION_RECORD& record,
+	                                                                 exception_record_map& record_mapping)
+	{
+		const auto record_obj = allocate_object_on_stack<EXCEPTION_RECORD>(emu);
+		record_obj.write(record);
+
+		if (record.ExceptionRecord)
+		{
+			record_mapping[&record] = record_obj;
+
+			emulator_object<EXCEPTION_RECORD> nested_record_obj{};
+			const auto nested_record = record_mapping.find(record.ExceptionRecord);
+
+			if (nested_record != record_mapping.end())
+			{
+				nested_record_obj = nested_record->second;
+			}
+			else
+			{
+				nested_record_obj = save_exception_record_on_stack(emu, *record.ExceptionRecord, record_mapping);
+			}
+
+			record_obj.access([&](EXCEPTION_RECORD& r)
+			{
+				r.ExceptionRecord = nested_record_obj.ptr();
+			});
+		}
+
+		return record_obj;
+	}
+
+	emulator_object<EXCEPTION_RECORD> save_exception_record_on_stack(x64_emulator& emu, const EXCEPTION_RECORD& record)
+	{
+		exception_record_map record_mapping{};
+		return save_exception_record_on_stack(emu, record, record_mapping);
+	}
+
+	uint32_t map_violation_operation_to_parameter(const memory_operation operation)
+	{
+		switch (operation)
+		{
+		default:
+		case memory_operation::read:
+			return 0;
+		case memory_operation::write:
+			return 1;
+		case memory_operation::exec:
+			return 1;
+		}
+	}
+
+	EXCEPTION_POINTERS create_access_violation_exception_pointers(x64_emulator& emu, const uint64_t address,
+	                                                              const memory_operation operation)
+	{
+		EXCEPTION_RECORD record{};
+		memset(&record, 0, sizeof(record));
+		record.ExceptionCode = STATUS_ACCESS_VIOLATION;
+		record.ExceptionFlags = 0;
+		record.ExceptionRecord = nullptr;
+		record.ExceptionAddress = reinterpret_cast<void*>(address);
+		record.NumberParameters = 2;
+		record.ExceptionInformation[0] = map_violation_operation_to_parameter(operation);
+		record.ExceptionInformation[1] = address;
+
+		EXCEPTION_POINTERS pointers{};
+		pointers.ContextRecord = save_context_on_stack(emu).ptr();
+		pointers.ExceptionRecord = save_exception_record_on_stack(emu, record).ptr();
+
+		return pointers;
+	}
+
+	void dispatch_exception_pointers(x64_emulator& emu, uint64_t dispatcher, const EXCEPTION_POINTERS pointers)
+	{
+		emu.reg(x64_register::rcx, reinterpret_cast<uint64_t>(pointers.ExceptionRecord));
+		emu.reg(x64_register::rdx, reinterpret_cast<uint64_t>(pointers.ContextRecord));
+		emu.reg(x64_register::rip, dispatcher);
+	}
+
+	void dispatch_access_violation(x64_emulator& emu, uint64_t dispatcher, const uint64_t address,
+	                               const memory_operation operation)
+	{
+		const auto pointers = create_access_violation_exception_pointers(emu, address, operation);
+		dispatch_exception_pointers(emu, dispatcher, pointers);
+	}
+
 	void run()
 	{
 		const auto emu = unicorn::create_x64_emulator();
@@ -613,8 +725,10 @@ namespace
 
 		context.ntdll = *map_file(*emu, R"(C:\Windows\System32\ntdll.dll)");
 
-		const auto entry1 = find_exported_function(context.ntdll.exports, "LdrInitializeThunk");
-		const auto entry2 = find_exported_function(context.ntdll.exports, "RtlUserThreadStart");
+		const auto ldr_initialize_thunk = find_exported_function(context.ntdll.exports, "LdrInitializeThunk");
+		const auto rtl_user_thread_start = find_exported_function(context.ntdll.exports, "RtlUserThreadStart");
+		const auto ki_user_exception_dispatcher = find_exported_function(
+			context.ntdll.exports, "KiUserExceptionDispatcher");
 
 		syscall_dispatcher dispatcher{context.ntdll.exports};
 
@@ -642,6 +756,8 @@ namespace
 			printf("Interrupt: %i\n", interrupt);
 		});
 
+		bool continue_execution = true;
+
 		emu->hook_memory_violation([&](const uint64_t address, const size_t size, const memory_operation operation,
 		                               const memory_violation_type type)
 		{
@@ -657,6 +773,8 @@ namespace
 				printf("Mapping violation: %llX (%zX) - %s at %llX\n", address, size, permission.c_str(), ip);
 			}
 
+			dispatch_access_violation(*emu, ki_user_exception_dispatcher, address, operation);
+			continue_execution = true;
 			return memory_violation_continuation::stop;
 		});
 
@@ -681,17 +799,20 @@ namespace
 				emu->reg(x64_register::rdi), emu->reg(x64_register::rsi));
 		});*/
 
-		const auto execution_context = context.gs_segment.reserve<CONTEXT>();
-		execution_context.access([&](CONTEXT& c)
-		{
-			c.Rip = entry2;
-			c.Rcx = context.executable.entry_point;
-			c.Rsp = emu->reg(x64_register::rsp);
-		});
+		CONTEXT ctx{};
+		ctx.ContextFlags = CONTEXT_ALL;
 
-		emu->reg(x64_register::rcx, execution_context.value());
+		context_frame::save(*emu, ctx);
+
+		ctx.Rip = rtl_user_thread_start;
+		ctx.Rcx = context.executable.entry_point;
+
+		const auto ctx_obj = allocate_object_on_stack<CONTEXT>(*emu);
+		ctx_obj.write(ctx);
+
+		emu->reg(x64_register::rcx, ctx_obj.value());
 		emu->reg(x64_register::rdx, context.ntdll.image_base);
-		emu->reg(x64_register::rip, entry1);
+		emu->reg(x64_register::rip, ldr_initialize_thunk);
 
 		try
 		{
@@ -704,7 +825,21 @@ namespace
 			}
 			else
 			{
-				emu->start_from_ip();
+				while (continue_execution)
+				{
+					continue_execution = false;
+					try
+					{
+						emu->start_from_ip();
+					}
+					catch (...)
+					{
+						if (!continue_execution)
+						{
+							throw;
+						}
+					}
+				}
 			}
 		}
 		catch (...)

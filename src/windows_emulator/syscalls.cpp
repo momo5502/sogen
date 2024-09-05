@@ -1,11 +1,13 @@
 #include "std_include.hpp"
 #include "syscalls.hpp"
 #include "module_mapper.hpp"
+#include "context_frame.hpp"
 
 struct syscall_context
 {
 	x64_emulator& emu;
 	process_context& proc;
+	mutable bool write_status;
 };
 
 namespace
@@ -77,46 +79,6 @@ namespace
 		throw std::runtime_error("Unable to determine syscall id: " + std::string(name));
 	}
 
-	uint32_t store_os_handle(process_context& proc, const HANDLE handle)
-	{
-		uint32_t index = 1;
-		for (;; ++index)
-		{
-			if (!proc.os_handles.contains(index))
-			{
-				break;
-			}
-		}
-
-		proc.os_handles[index] = handle;
-		return index;
-	}
-
-	std::optional<HANDLE> get_os_handle(process_context& proc, const uint32_t handle)
-	{
-		const auto entry = proc.os_handles.find(handle);
-		if (entry == proc.os_handles.end())
-		{
-			return {};
-		}
-
-		return entry->second;
-	}
-
-	std::optional<HANDLE> remove_os_handle(process_context& proc, const uint32_t handle)
-	{
-		const auto entry = proc.os_handles.find(handle);
-		if (entry == proc.os_handles.end())
-		{
-			return {};
-		}
-
-		const auto res = entry->second;
-		proc.os_handles.erase(entry);
-
-		return res;
-	}
-
 	std::wstring read_unicode_string(emulator& emu, const emulator_object<UNICODE_STRING> uc_string)
 	{
 		static_assert(offsetof(UNICODE_STRING, Length) == 0);
@@ -161,10 +123,18 @@ namespace
 		return resolve_argument<T>(emu, index++);
 	}
 
+	void write_status(const syscall_context& c, const NTSTATUS status)
+	{
+		if (c.write_status)
+		{
+			c.emu.reg<uint64_t>(x64_register::rax, static_cast<uint64_t>(status));
+		}
+	}
+
 	void forward(const syscall_context& c, NTSTATUS (*handler)())
 	{
 		const auto ret = handler();
-		c.emu.reg<uint64_t>(x64_register::rax, static_cast<uint64_t>(ret));
+		write_status(c, ret);
 	}
 
 	template <typename... Args>
@@ -178,29 +148,7 @@ namespace
 		};
 
 		const auto ret = std::apply(handler, std::move(func_args));
-		c.emu.reg<int64_t>(x64_register::rax, ret);
-	}
-
-	void apply_context(x64_emulator& emu, const CONTEXT& context)
-	{
-		emu.reg(x64_register::rax, context.Rax);
-		emu.reg(x64_register::rbx, context.Rbx);
-		emu.reg(x64_register::rcx, context.Rcx);
-		emu.reg(x64_register::rdx, context.Rdx);
-		emu.reg(x64_register::rsp, context.Rsp);
-		emu.reg(x64_register::rbp, context.Rbp);
-		emu.reg(x64_register::rsi, context.Rsi);
-		emu.reg(x64_register::rdi, context.Rdi);
-		emu.reg(x64_register::r8, context.R8);
-		emu.reg(x64_register::r9, context.R9);
-		emu.reg(x64_register::r10, context.R10);
-		emu.reg(x64_register::r11, context.R11);
-		emu.reg(x64_register::r12, context.R12);
-		emu.reg(x64_register::r13, context.R13);
-		emu.reg(x64_register::r14, context.R14);
-		emu.reg(x64_register::r15, context.R15);
-
-		emu.reg(x64_register::rip, context.Rip);
+		write_status(c, ret);
 	}
 
 	NTSTATUS handle_NtQueryPerformanceCounter(const syscall_context&,
@@ -1122,10 +1070,11 @@ namespace
 	NTSTATUS handle_NtContinue(const syscall_context& c, const emulator_object<CONTEXT> thread_context,
 	                           const BOOLEAN /*raise_alert*/)
 	{
-		const auto context = thread_context.read();
-		apply_context(c.emu, context);
+		c.write_status = false;
 
-		// TODO
+		const auto context = thread_context.read();
+		context_frame::restore(c.emu, context);
+
 		return STATUS_SUCCESS;
 	}
 
@@ -1261,7 +1210,7 @@ void syscall_dispatcher::dispatch(x64_emulator& emu, process_context& context)
 
 	printf("Handling syscall: %X (%llX)\n", syscall_id, address);
 
-	const syscall_context c{emu, context};
+	const syscall_context c{emu, context, true};
 
 	try
 	{
