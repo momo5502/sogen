@@ -4,6 +4,7 @@
 
 enum class x64_hookable_instructions
 {
+	invalid,
 	syscall,
 	cpuid,
 	rdtsc,

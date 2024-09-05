@@ -30,6 +30,20 @@ public:
 
 	virtual ~memory_manager() = default;
 
+	template <typename T>
+	T read_memory(const uint64_t address)
+	{
+		T value{};
+		this->read_memory(address, &value, sizeof(value));
+		return value;
+	}
+
+	template <typename T>
+	void write_memory(const uint64_t address, const T& value)
+	{
+		this->write_memory(address, &value, sizeof(value));
+	}
+
 	virtual void read_memory(uint64_t address, void* data, size_t size) = 0;
 	virtual bool try_read_memory(uint64_t address, void* data, size_t size) = 0;
 	virtual void write_memory(uint64_t address, const void* data, size_t size) = 0;

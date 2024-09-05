@@ -252,9 +252,6 @@ namespace unicorn
 			emulator_hook* hook_instruction(int instruction_type,
 			                                hook_callback callback)
 			{
-				const auto uc_instruction = map_hookable_instruction(
-					static_cast<x64_hookable_instructions>(instruction_type));
-
 				function_wrapper<int, uc_engine*> wrapper([c = std::move(callback)](uc_engine*)
 				{
 					return (c() == hook_continuation::skip_instruction)
@@ -263,17 +260,49 @@ namespace unicorn
 				});
 
 				unicorn_hook hook{*this};
-
-				uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_INSN, wrapper.get_function(),
-				                wrapper.get_user_data(), 0, std::numeric_limits<pointer_type>::max(), uc_instruction));
-
 				auto container = std::make_unique<hook_container>();
+
+				const auto inst_type = static_cast<x64_hookable_instructions>(instruction_type);
+
+				if (inst_type == x64_hookable_instructions::invalid)
+				{
+					uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_INSN_INVALID, wrapper.get_function(),
+					                wrapper.get_user_data(), 0, std::numeric_limits<pointer_type>::max()));
+				}
+				else
+				{
+					const auto uc_instruction = map_hookable_instruction(inst_type);
+					uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_INSN, wrapper.get_function(),
+					                wrapper.get_user_data(), 0, std::numeric_limits<pointer_type>::max(),
+					                uc_instruction));
+				}
+
 				container->add(std::move(wrapper), std::move(hook));
 
 				auto* result = container->as_opaque_hook();
 
 				this->hooks_.push_back(std::move(container));
 
+				return result;
+			}
+
+			emulator_hook* hook_interrupt(interrupt_hook_callback callback) override
+			{
+				function_wrapper<void, uc_engine*, int> wrapper([c = std::move(callback)](uc_engine*, const int interrupt_type)
+				{
+					c(interrupt_type);
+				});
+
+				unicorn_hook hook{*this};
+				auto container = std::make_unique<hook_container>();
+
+				uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_INTR, wrapper.get_function(),
+				                wrapper.get_user_data(), 0, std::numeric_limits<pointer_type>::max()));
+
+				container->add(std::move(wrapper), std::move(hook));
+
+				auto* result = container->as_opaque_hook();
+				this->hooks_.push_back(std::move(container));
 				return result;
 			}
 

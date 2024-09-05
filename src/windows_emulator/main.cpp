@@ -329,50 +329,25 @@ namespace
 		return context;
 	}
 
-	enum class gdb_registers
-	{
-		rax = 0,
-		rbx,
-		rcx,
-		rdx,
-		rsi,
-		rdi,
-		rbp,
-		rsp,
-		r8,
-		r9,
-		r10,
-		r11,
-		r12,
-		r13,
-		r14,
-		r15,
-
-		rip,
-		eflags,
-
-		end,
-	};
-
-	std::unordered_map<gdb_registers, x64_register> register_map{
-		{gdb_registers::rax, x64_register::rax},
-		{gdb_registers::rbx, x64_register::rbx},
-		{gdb_registers::rcx, x64_register::rcx},
-		{gdb_registers::rdx, x64_register::rdx},
-		{gdb_registers::rsi, x64_register::rsi},
-		{gdb_registers::rdi, x64_register::rdi},
-		{gdb_registers::rbp, x64_register::rbp},
-		{gdb_registers::rsp, x64_register::rsp},
-		{gdb_registers::r8, x64_register::r8},
-		{gdb_registers::r9, x64_register::r9},
-		{gdb_registers::r10, x64_register::r10},
-		{gdb_registers::r11, x64_register::r11},
-		{gdb_registers::r12, x64_register::r12},
-		{gdb_registers::r13, x64_register::r13},
-		{gdb_registers::r14, x64_register::r14},
-		{gdb_registers::r15, x64_register::r15},
-		{gdb_registers::rip, x64_register::rip},
-		{gdb_registers::eflags, x64_register::rflags},
+	std::vector gdb_registers{
+		x64_register::rax,
+		x64_register::rbx,
+		x64_register::rcx,
+		x64_register::rdx,
+		x64_register::rsi,
+		x64_register::rdi,
+		x64_register::rbp,
+		x64_register::rsp,
+		x64_register::r8,
+		x64_register::r9,
+		x64_register::r10,
+		x64_register::r11,
+		x64_register::r12,
+		x64_register::r13,
+		x64_register::r14,
+		x64_register::r15,
+		x64_register::rip,
+		x64_register::rflags,
 	};
 
 	memory_operation map_breakpoint_type(const breakpoint_type type)
@@ -488,13 +463,12 @@ namespace
 
 			try
 			{
-				const auto entry = register_map.find(static_cast<gdb_registers>(regno));
-				if (entry == register_map.end())
+				if (regno < 0 || regno >= gdb_registers.size())
 				{
 					return true;
 				}
 
-				this->emu_->read_register(entry->second, value, sizeof(*value));
+				this->emu_->read_register(gdb_registers[regno], value, sizeof(*value));
 				return true;
 			}
 			catch (...)
@@ -507,13 +481,12 @@ namespace
 		{
 			try
 			{
-				const auto entry = register_map.find(static_cast<gdb_registers>(regno));
-				if (entry == register_map.end())
+				if (regno < 0 || regno >= gdb_registers.size())
 				{
-					return false;
+					return true;
 				}
 
-				this->emu_->write_register(entry->second, &value, sizeof(value));
+				this->emu_->write_register(gdb_registers[regno], &value, sizeof(value));
 				return true;
 			}
 			catch (...)
@@ -634,6 +607,26 @@ namespace
 			return hook_continuation::skip_instruction;
 		});
 
+		emu->hook_instruction(x64_hookable_instructions::invalid, [&]
+		{
+			const auto ip = emu->read_instruction_pointer();
+			printf("Invalid instruction at: %llX\n", ip);
+			return hook_continuation::skip_instruction;
+		});
+
+		emu->hook_interrupt([&](int interrupt)
+		{
+			printf("Interrupt: %i\n", interrupt);
+			if (interrupt == 13)
+			{
+				const auto sp = emu->reg(x64_register::rsp);
+				const auto new_ip = emu->read_memory<uint64_t>(sp);
+
+				emu->reg(x64_register::rsp, sp + 8);
+				emu->reg(x64_register::rip, new_ip);
+			}
+		});
+
 		watch_object(*emu, context.teb);
 		watch_object(*emu, context.peb);
 		watch_object(*emu, context.process_params);
@@ -673,7 +666,7 @@ namespace
 				puts("Launching gdb stub...");
 
 				x64_gdb_stub_handler handler{*emu};
-				run_gdb_stub(handler, "i386:x86-64", static_cast<size_t>(gdb_registers::end), "0.0.0.0:28960");
+				run_gdb_stub(handler, "i386:x86-64", gdb_registers.size(), "0.0.0.0:28960");
 			}
 			else
 			{
