@@ -1156,7 +1156,7 @@ namespace
 	{
 		if (file_handle == STDOUT_HANDLE)
 		{
-			std::vector<uint8_t> temp_buffer{};
+			std::string temp_buffer{};
 			temp_buffer.resize(length);
 			c.emu.read_memory(buffer, temp_buffer.data(), temp_buffer.size());
 

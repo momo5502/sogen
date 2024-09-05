@@ -29,9 +29,26 @@ namespace unicorn
 				return UC_X86_INS_RDTSC;
 			case x64_hookable_instructions::rdtscp:
 				return UC_X86_INS_RDTSCP;
+			default:
+				throw std::runtime_error("Bad instruction for mapping");
 			}
+		}
 
-			throw std::runtime_error("Bad instruction for mapping");
+		memory_violation_type map_memory_violation_type(const uc_mem_type mem_type)
+		{
+			switch (mem_type)
+			{
+			case UC_MEM_READ_PROT:
+			case UC_MEM_WRITE_PROT:
+			case UC_MEM_FETCH_PROT:
+				return memory_violation_type::protection;
+			case UC_MEM_READ_UNMAPPED:
+			case UC_MEM_WRITE_UNMAPPED:
+			case UC_MEM_FETCH_UNMAPPED:
+				return memory_violation_type::unmapped;
+			default:
+				throw std::runtime_error("Memory type does not constitute a violation");
+			}
 		}
 
 		memory_operation map_memory_operation(const uc_mem_type mem_type)
@@ -39,11 +56,19 @@ namespace unicorn
 			switch (mem_type)
 			{
 			case UC_MEM_READ:
-				return memory_permission::read;
+			case UC_MEM_READ_PROT:
+			case UC_MEM_READ_UNMAPPED:
+				return memory_operation::read;
 			case UC_MEM_WRITE:
-				return memory_permission::write;
+			case UC_MEM_WRITE_PROT:
+			case UC_MEM_WRITE_UNMAPPED:
+				return memory_operation::write;
+			case UC_MEM_FETCH:
+			case UC_MEM_FETCH_PROT:
+			case UC_MEM_FETCH_UNMAPPED:
+				return memory_operation::exec;
 			default:
-				return memory_permission::none;
+				return memory_operation::none;
 			}
 		}
 
@@ -177,7 +202,7 @@ namespace unicorn
 				size_t result_size = size;
 				uce(uc_reg_write2(*this, reg, value, &result_size));
 
-				if (size != result_size)
+				if (size < result_size)
 				{
 					throw std::runtime_error(
 						"Register size mismatch: " + std::to_string(size) + " != " + std::to_string(result_size));
@@ -187,9 +212,10 @@ namespace unicorn
 			void read_raw_register(const int reg, void* value, const size_t size) override
 			{
 				size_t result_size = size;
+				memset(value, 0, size);
 				uce(uc_reg_read2(*this, reg, value, &result_size));
 
-				if (size != result_size)
+				if (size < result_size)
 				{
 					throw std::runtime_error(
 						"Register size mismatch: " + std::to_string(size) + " != " + std::to_string(result_size));
@@ -250,11 +276,11 @@ namespace unicorn
 			}*/
 
 			emulator_hook* hook_instruction(int instruction_type,
-			                                hook_callback callback)
+			                                instruction_hook_callback callback)
 			{
 				function_wrapper<int, uc_engine*> wrapper([c = std::move(callback)](uc_engine*)
 				{
-					return (c() == hook_continuation::skip_instruction)
+					return (c() == instruction_hook_continuation::skip_instruction)
 						       ? 1
 						       : 0;
 				});
@@ -288,16 +314,44 @@ namespace unicorn
 
 			emulator_hook* hook_interrupt(interrupt_hook_callback callback) override
 			{
-				function_wrapper<void, uc_engine*, int> wrapper([c = std::move(callback)](uc_engine*, const int interrupt_type)
-				{
-					c(interrupt_type);
-				});
+				function_wrapper<void, uc_engine*, int> wrapper(
+					[c = std::move(callback)](uc_engine*, const int interrupt_type)
+					{
+						c(interrupt_type);
+					});
 
 				unicorn_hook hook{*this};
 				auto container = std::make_unique<hook_container>();
 
 				uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_INTR, wrapper.get_function(),
 				                wrapper.get_user_data(), 0, std::numeric_limits<pointer_type>::max()));
+
+				container->add(std::move(wrapper), std::move(hook));
+
+				auto* result = container->as_opaque_hook();
+				this->hooks_.push_back(std::move(container));
+				return result;
+			}
+
+			emulator_hook* hook_memory_violation(uint64_t address, size_t size,
+			                                     memory_violation_hook_callback callback) override
+			{
+				function_wrapper<bool, uc_engine*, uc_mem_type, uint64_t, int, int64_t> wrapper(
+					[c = std::move(callback)](uc_engine*, const uc_mem_type type,
+					                          const uint64_t address, const int size, const int64_t)
+					{
+						assert(size >= 0);
+						const auto operation = map_memory_operation(type);
+						const auto violation = map_memory_violation_type(type);
+
+						return c(address, static_cast<uint64_t>(size), operation, violation) == memory_violation_continuation::resume;
+					});
+
+				unicorn_hook hook{*this};
+				auto container = std::make_unique<hook_container>();
+
+				uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_MEM_INVALID, wrapper.get_function(),
+				                wrapper.get_user_data(), address, size));
 
 				container->add(std::move(wrapper), std::move(hook));
 

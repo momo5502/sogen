@@ -24,7 +24,11 @@
 #define STACK_ADDRESS (0x80000000000 - STACK_SIZE)
 #define KUSD_ADDRESS 0x7ffe0000
 
-bool use_gdb = true;
+#define GDT_ADDR 0x30000
+#define GDT_LIMIT 0x1000
+#define GDT_ENTRY_SIZE 0x8
+
+bool use_gdb = false;
 
 struct breakpoint_key
 {
@@ -274,17 +278,30 @@ namespace
 		return emulator_allocator{emu, base, size};
 	}
 
+	void setup_gdt(x64_emulator& emu)
+	{
+		constexpr uint64_t gdtr[4] = {0, GDT_ADDR, GDT_LIMIT, 0};
+		emu.write_register(x64_register::gdtr, &gdtr, sizeof(gdtr));
+		emu.allocate_memory(GDT_ADDR, GDT_LIMIT, memory_permission::read);
+
+		emu.write_memory<uint64_t>(GDT_ADDR + 6 * (sizeof(uint64_t)), 0xEFFE000000FFFF);
+		emu.reg<uint16_t>(x64_register::cs, 0x33);
+
+		emu.write_memory<uint64_t>(GDT_ADDR + 5 * (sizeof(uint64_t)), 0xEFF6000000FFFF);
+		emu.reg<uint16_t>(x64_register::ss, 0x2B);
+	}
+
 	process_context setup_context(x64_emulator& emu)
 	{
-		setup_stack(emu, STACK_ADDRESS, STACK_SIZE);
 		process_context context{};
 
-		context.kusd = setup_kusd(emu);
+		setup_stack(emu, STACK_ADDRESS, STACK_SIZE);
+		setup_gdt(emu);
 
+		context.kusd = setup_kusd(emu);
 		context.gs_segment = setup_gs_segment(emu, GS_SEGMENT_ADDR, GS_SEGMENT_SIZE);
 
 		auto allocator = create_allocator(emu, 1 << 20);
-
 
 		auto& gs = context.gs_segment;
 
@@ -348,6 +365,12 @@ namespace
 		x64_register::r15,
 		x64_register::rip,
 		x64_register::rflags,
+		/*x64_register::cs,
+		x64_register::ss,
+		x64_register::ds,
+		x64_register::es,
+		x64_register::fs,
+		x64_register::gs,*/
 	};
 
 	memory_operation map_breakpoint_type(const breakpoint_type type)
@@ -463,7 +486,7 @@ namespace
 
 			try
 			{
-				if (regno < 0 || regno >= gdb_registers.size())
+				if (static_cast<size_t>(regno) >= gdb_registers.size())
 				{
 					return true;
 				}
@@ -481,7 +504,7 @@ namespace
 		{
 			try
 			{
-				if (regno < 0 || regno >= gdb_registers.size())
+				if (static_cast<size_t>(regno) >= gdb_registers.size())
 				{
 					return true;
 				}
@@ -598,40 +621,51 @@ namespace
 		emu->hook_instruction(x64_hookable_instructions::syscall, [&]
 		{
 			dispatcher.dispatch(*emu, context);
-			return hook_continuation::skip_instruction;
+			return instruction_hook_continuation::skip_instruction;
 		});
 
 		emu->hook_instruction(x64_hookable_instructions::rdtsc, [&]
 		{
 			emu->reg(x64_register::rax, 0x0011223344556677);
-			return hook_continuation::skip_instruction;
+			return instruction_hook_continuation::skip_instruction;
 		});
 
 		emu->hook_instruction(x64_hookable_instructions::invalid, [&]
 		{
 			const auto ip = emu->read_instruction_pointer();
 			printf("Invalid instruction at: %llX\n", ip);
-			return hook_continuation::skip_instruction;
+			return instruction_hook_continuation::skip_instruction;
 		});
 
 		emu->hook_interrupt([&](int interrupt)
 		{
 			printf("Interrupt: %i\n", interrupt);
-			if (interrupt == 13)
-			{
-				const auto sp = emu->reg(x64_register::rsp);
-				const auto new_ip = emu->read_memory<uint64_t>(sp);
-
-				emu->reg(x64_register::rsp, sp + 8);
-				emu->reg(x64_register::rip, new_ip);
-			}
 		});
 
-		watch_object(*emu, context.teb);
-		watch_object(*emu, context.peb);
-		watch_object(*emu, context.process_params);
-		watch_object(*emu, context.kusd);
+		emu->hook_memory_violation([&](const uint64_t address, const size_t size, const memory_operation operation,
+		                               const memory_violation_type type)
+		{
+			const auto permission = get_permission_string(operation);
+			const auto ip = emu->read_instruction_pointer();
 
+			if (type == memory_violation_type::protection)
+			{
+				printf("Protection violation: %llX (%zX) - %s at %llX\n", address, size, permission.c_str(), ip);
+			}
+			else if (type == memory_violation_type::unmapped)
+			{
+				printf("Mapping violation: %llX (%zX) - %s at %llX\n", address, size, permission.c_str(), ip);
+			}
+
+			return memory_violation_continuation::stop;
+		});
+
+		/*
+				watch_object(*emu, context.teb);
+				watch_object(*emu, context.peb);
+				watch_object(*emu, context.process_params);
+				watch_object(*emu, context.kusd);
+				*/
 		/*emu->hook_memory_execution(0, std::numeric_limits<size_t>::max(), [&](const uint64_t address, const size_t)
 		{
 			if (address == 0x1800D52F4)

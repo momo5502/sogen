@@ -65,13 +65,30 @@ public:
 		return result;
 	}
 
-	emulator_hook* hook_instruction(hookable_instructions instruction_type, hook_callback callback)
+	void push_stack(const pointer_type& value)
+	{
+		const auto sp = this->read_stack_pointer() - pointer_size;
+		this->reg(stack_pointer, sp);
+		this->write_memory(sp, &value, sizeof(value));
+	}
+
+	pointer_type pop_stack()
+	{
+		pointer_type result{};
+		const auto sp = this->read_stack_pointer();
+		this->read_memory(sp, &result, sizeof(result));
+		this->reg(stack_pointer, sp + pointer_size);
+
+		return result;
+	}
+
+	emulator_hook* hook_instruction(hookable_instructions instruction_type, instruction_hook_callback callback)
 	{
 		return this->hook_instruction(static_cast<int>(instruction_type), std::move(callback));
 	}
 
 private:
-	emulator_hook* hook_instruction(int instruction_type, hook_callback callback) override = 0;
+	emulator_hook* hook_instruction(int instruction_type, instruction_hook_callback callback) override = 0;
 
 	void read_raw_register(int reg, void* value, size_t size) override = 0;
 	void write_raw_register(int reg, const void* value, size_t size) override = 0;

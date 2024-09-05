@@ -9,17 +9,31 @@ struct emulator_hook;
 
 using memory_operation = memory_permission;
 
-enum class hook_continuation : bool
+enum class instruction_hook_continuation : bool
 {
 	run_instruction = false,
 	skip_instruction = true,
 };
 
-using hook_callback = std::function<hook_continuation()>;
+enum class memory_violation_continuation : bool
+{
+	stop = false,
+	resume = true,
+};
+
+enum class memory_violation_type : uint8_t
+{
+	unmapped,
+	protection,
+};
+
+using instruction_hook_callback = std::function<instruction_hook_continuation()>;
 
 using interrupt_hook_callback = std::function<void(int interrupt)>;
 using simple_memory_hook_callback = std::function<void(uint64_t address, size_t size)>;
 using complex_memory_hook_callback = std::function<void(uint64_t address, size_t size, memory_operation operation)>;
+using memory_violation_hook_callback = std::function<memory_violation_continuation(uint64_t address, size_t size, memory_operation operation,
+                                                          memory_violation_type type)>;
 
 class emulator : public memory_manager
 {
@@ -38,13 +52,21 @@ public:
 	virtual void read_raw_register(int reg, void* value, size_t size) = 0;
 	virtual void write_raw_register(int reg, const void* value, size_t size) = 0;
 
+	virtual emulator_hook* hook_memory_violation(uint64_t address, size_t size,
+	                                             memory_violation_hook_callback callback) = 0;
+
 	virtual emulator_hook* hook_memory_access(uint64_t address, size_t size, memory_operation filter,
 	                                          complex_memory_hook_callback callback) = 0;
-	virtual emulator_hook* hook_instruction(int instruction_type, hook_callback callback) = 0;
+	virtual emulator_hook* hook_instruction(int instruction_type, instruction_hook_callback callback) = 0;
 
 	virtual emulator_hook* hook_interrupt(interrupt_hook_callback callback) = 0;
 
 	virtual void delete_hook(emulator_hook* hook) = 0;
+
+	emulator_hook* hook_memory_violation(memory_violation_hook_callback callback)
+	{
+		return this->hook_memory_violation(0, std::numeric_limits<size_t>::max(), std::move(callback));
+	}
 
 	emulator_hook* hook_memory_read(const uint64_t address, const size_t size, simple_memory_hook_callback callback)
 	{
