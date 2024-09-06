@@ -681,7 +681,7 @@ namespace
 	{
 		EXCEPTION_RECORD record{};
 		memset(&record, 0, sizeof(record));
-		record.ExceptionCode = STATUS_ACCESS_VIOLATION;
+		record.ExceptionCode = static_cast<DWORD>(STATUS_ACCESS_VIOLATION);
 		record.ExceptionFlags = 0;
 		record.ExceptionRecord = nullptr;
 		record.ExceptionAddress = reinterpret_cast<void*>(address);
