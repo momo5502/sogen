@@ -51,4 +51,6 @@ struct process_context
 	std::map<uint32_t, HANDLE> os_handles{};
 	std::map<uint32_t, std::wstring> files{};
 	emulator_allocator gs_segment{};
+
+	bool verbose{false};
 };

@@ -135,6 +135,13 @@ namespace
 		return {emu, new_sp};
 	}
 
+	void unalign_stack(x64_emulator& emu)
+	{
+		auto sp = emu.reg(x64_register::rsp);
+		sp = align_down(sp - 0x10, 0x10) + 8;
+		emu.reg(x64_register::rsp, sp);
+	}
+
 	void setup_stack(x64_emulator& emu, const uint64_t stack_base, const size_t stack_size)
 	{
 		emu.allocate_memory(stack_base, stack_size, memory_permission::read_write);
@@ -701,6 +708,7 @@ namespace
 		emu.reg(x64_register::rcx, reinterpret_cast<uint64_t>(pointers.ExceptionRecord));
 		emu.reg(x64_register::rdx, reinterpret_cast<uint64_t>(pointers.ContextRecord));
 		emu.reg(x64_register::rip, dispatcher);
+		unalign_stack(emu);
 	}
 
 	void dispatch_access_violation(x64_emulator& emu, uint64_t dispatcher, const uint64_t address,
@@ -716,7 +724,7 @@ namespace
 
 		auto context = setup_context(*emu);
 
-		context.executable = *map_file(*emu, R"(C:\Users\mauri\Desktop\ConsoleApplication6.exe)");
+		context.executable = *map_file(*emu, R"(C:\Users\Maurice\Desktop\ConsoleApplication6.exe)");
 
 		context.peb.access([&](PEB& peb)
 		{
@@ -753,7 +761,7 @@ namespace
 
 		emu->hook_interrupt([&](int interrupt)
 		{
-			printf("Interrupt: %i\n", interrupt);
+			printf("Interrupt: %i %llX\n", interrupt, emu->read_instruction_pointer());
 		});
 
 		emu->hook_memory_violation([&](const uint64_t address, const size_t size, const memory_operation operation,
@@ -781,11 +789,11 @@ namespace
 				watch_object(*emu, context.process_params);
 				watch_object(*emu, context.kusd);
 				*/
-		/*emu->hook_memory_execution(0, std::numeric_limits<size_t>::max(), [&](const uint64_t address, const size_t)
+		emu->hook_memory_execution(0, std::numeric_limits<size_t>::max(), [&](const uint64_t address, const size_t)
 		{
-			if (address == 0x1800D52F4)
+			if (!context.verbose)
 			{
-				//emu->stop();
+				return;
 			}
 
 			printf(
@@ -794,10 +802,12 @@ namespace
 				emu->reg(x64_register::rax), emu->reg(x64_register::rbx), emu->reg(x64_register::rcx),
 				emu->reg(x64_register::rdx), emu->reg(x64_register::r8), emu->reg(x64_register::r9),
 				emu->reg(x64_register::rdi), emu->reg(x64_register::rsi));
-		});*/
+		});
 
 		CONTEXT ctx{};
 		ctx.ContextFlags = CONTEXT_ALL;
+
+		unalign_stack(*emu);
 
 		context_frame::save(*emu, ctx);
 
@@ -806,6 +816,8 @@ namespace
 
 		const auto ctx_obj = allocate_object_on_stack<CONTEXT>(*emu);
 		ctx_obj.write(ctx);
+
+		unalign_stack(*emu);
 
 		emu->reg(x64_register::rcx, ctx_obj.value());
 		emu->reg(x64_register::rdx, context.ntdll.image_base);

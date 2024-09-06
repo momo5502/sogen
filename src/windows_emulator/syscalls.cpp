@@ -123,23 +123,33 @@ namespace
 		return resolve_argument<T>(emu, index++);
 	}
 
-	void write_status(const syscall_context& c, const NTSTATUS status)
+	void write_status(const syscall_context& c, const NTSTATUS status, const uint64_t initial_ip)
 	{
 		if (c.write_status)
 		{
 			c.emu.reg<uint64_t>(x64_register::rax, static_cast<uint64_t>(status));
 		}
+
+		const auto new_ip = c.emu.read_instruction_pointer();
+		if (initial_ip != new_ip)
+		{
+			c.emu.reg(x64_register::rip, new_ip - 2);
+		}
 	}
 
 	void forward(const syscall_context& c, NTSTATUS (*handler)())
 	{
+		const auto ip = c.emu.read_instruction_pointer();
+
 		const auto ret = handler();
-		write_status(c, ret);
+		write_status(c, ret, ip);
 	}
 
 	template <typename... Args>
 	void forward(const syscall_context& c, NTSTATUS (*handler)(const syscall_context&, Args...))
 	{
+		const auto ip = c.emu.read_instruction_pointer();
+
 		size_t index = 0;
 		std::tuple<const syscall_context&, Args...> func_args
 		{
@@ -148,7 +158,7 @@ namespace
 		};
 
 		const auto ret = std::apply(handler, std::move(func_args));
-		write_status(c, ret);
+		write_status(c, ret, ip);
 	}
 
 	NTSTATUS handle_NtQueryPerformanceCounter(const syscall_context&,
