@@ -618,24 +618,13 @@ namespace
 		return 0;
 	}
 
-	emulator_object<CONTEXT> save_context_on_stack(x64_emulator& emu)
-	{
-		CONTEXT ctx{};
-		ctx.ContextFlags = CONTEXT_ALL;
-		context_frame::save(emu, ctx);
-
-		const auto ctx_obj = allocate_object_on_stack<CONTEXT>(emu);
-		ctx_obj.write(ctx);
-
-		return ctx_obj;
-	}
-
 	using exception_record_map = std::unordered_map<const EXCEPTION_RECORD*, emulator_object<EXCEPTION_RECORD>>;
 
-	emulator_object<EXCEPTION_RECORD> save_exception_record_on_stack(x64_emulator& emu, const EXCEPTION_RECORD& record,
-	                                                                 exception_record_map& record_mapping)
+	emulator_object<EXCEPTION_RECORD> save_exception_record(emulator_allocator& allocator,
+	                                                        const EXCEPTION_RECORD& record,
+	                                                        exception_record_map& record_mapping)
 	{
-		const auto record_obj = allocate_object_on_stack<EXCEPTION_RECORD>(emu);
+		const auto record_obj = allocator.reserve<EXCEPTION_RECORD>();
 		record_obj.write(record);
 
 		if (record.ExceptionRecord)
@@ -651,7 +640,8 @@ namespace
 			}
 			else
 			{
-				nested_record_obj = save_exception_record_on_stack(emu, *record.ExceptionRecord, record_mapping);
+				nested_record_obj = save_exception_record(allocator, *record.ExceptionRecord,
+				                                          record_mapping);
 			}
 
 			record_obj.access([&](EXCEPTION_RECORD& r)
@@ -663,10 +653,11 @@ namespace
 		return record_obj;
 	}
 
-	emulator_object<EXCEPTION_RECORD> save_exception_record_on_stack(x64_emulator& emu, const EXCEPTION_RECORD& record)
+	emulator_object<EXCEPTION_RECORD> save_exception_record(emulator_allocator& allocator,
+	                                                        const EXCEPTION_RECORD& record)
 	{
 		exception_record_map record_mapping{};
-		return save_exception_record_on_stack(emu, record, record_mapping);
+		return save_exception_record(allocator, record, record_mapping);
 	}
 
 	uint32_t map_violation_operation_to_parameter(const memory_operation operation)
@@ -683,38 +674,107 @@ namespace
 		}
 	}
 
-	EXCEPTION_POINTERS create_access_violation_exception_pointers(x64_emulator& emu, const uint64_t address,
-	                                                              const memory_operation operation)
+	size_t calculate_exception_record_size(const EXCEPTION_RECORD& record)
 	{
+		std::unordered_set<const EXCEPTION_RECORD*> records{};
+		size_t total_size = 0;
+
+		const EXCEPTION_RECORD* current_record = &record;
+		while (current_record)
+		{
+			if (!records.insert(current_record).second)
+			{
+				break;
+			}
+
+			total_size += sizeof(*current_record);
+			current_record = record.ExceptionRecord;
+		}
+
+		return total_size;
+	}
+
+	struct machine_frame
+	{
+		uint64_t rip;
+		uint64_t cs;
+		uint64_t eflags;
+		uint64_t rsp;
+		uint64_t ss;
+	};
+
+	void dispatch_exception_pointers(x64_emulator& emu, const uint64_t dispatcher, const EXCEPTION_POINTERS pointers)
+	{
+		constexpr auto mach_frame_size = 0x40;
+		constexpr auto context_record_size = 0x4F0;
+		const auto exception_record_size = calculate_exception_record_size(*pointers.ExceptionRecord);
+		const auto combined_size = align_up(exception_record_size + context_record_size, 0x10);
+
+		assert(combined_size == 0x590);
+
+		const auto allocation_size = combined_size + mach_frame_size;
+
+
+		const auto initial_sp = emu.reg(x64_register::rsp);
+		const auto new_sp = align_down(initial_sp - allocation_size, 0x100);
+
+		const auto total_size = initial_sp - new_sp;
+		assert(total_size >= allocation_size);
+
+		std::vector<uint8_t> zero_memory{};
+		zero_memory.resize(total_size, 0);
+
+		emu.write_memory(new_sp, zero_memory.data(), zero_memory.size());
+
+		emu.reg(x64_register::rsp, new_sp);
+		emu.reg(x64_register::rip, dispatcher);
+
+		const emulator_object<CONTEXT> context_record_obj{emu, new_sp};
+		context_record_obj.write(*pointers.ContextRecord);
+
+		emulator_allocator allocator{emu, new_sp + context_record_size, exception_record_size};
+		const auto exception_record_obj = save_exception_record(allocator, *pointers.ExceptionRecord);
+
+		if (exception_record_obj.value() != allocator.get_base())
+		{
+			throw std::runtime_error("Bad exception record position on stack");
+		}
+
+		const emulator_object<machine_frame> machine_frame_obj{emu, new_sp + combined_size};
+		machine_frame_obj.access([&](machine_frame& frame)
+		{
+				frame.rip = pointers.ContextRecord->Rip;
+				frame.rsp = pointers.ContextRecord->Rsp;
+				frame.eflags = pointers.ContextRecord->EFlags;
+				frame.ss = pointers.ContextRecord->SegSs;
+				frame.cs = pointers.ContextRecord->SegCs;
+		});
+
+		printf("ContextRecord: %llX\n", context_record_obj.value());
+		printf("ExceptionRecord: %llX\n", exception_record_obj.value());
+	}
+
+	void dispatch_access_violation(x64_emulator& emu, const uint64_t dispatcher, const uint64_t address,
+	                               const memory_operation operation)
+	{
+		CONTEXT ctx{};
+		ctx.ContextFlags = CONTEXT_ALL;
+		context_frame::save(emu, ctx);
+
 		EXCEPTION_RECORD record{};
 		memset(&record, 0, sizeof(record));
 		record.ExceptionCode = static_cast<DWORD>(STATUS_ACCESS_VIOLATION);
 		record.ExceptionFlags = 0;
 		record.ExceptionRecord = nullptr;
-		record.ExceptionAddress = reinterpret_cast<void*>(address);
+		record.ExceptionAddress = reinterpret_cast<void*>(emu.read_instruction_pointer());
 		record.NumberParameters = 2;
 		record.ExceptionInformation[0] = map_violation_operation_to_parameter(operation);
 		record.ExceptionInformation[1] = address;
 
 		EXCEPTION_POINTERS pointers{};
-		pointers.ContextRecord = save_context_on_stack(emu).ptr();
-		pointers.ExceptionRecord = save_exception_record_on_stack(emu, record).ptr();
+		pointers.ContextRecord = &ctx;
+		pointers.ExceptionRecord = &record;
 
-		return pointers;
-	}
-
-	void dispatch_exception_pointers(x64_emulator& emu, uint64_t dispatcher, const EXCEPTION_POINTERS pointers)
-	{
-		emu.reg(x64_register::rcx, reinterpret_cast<uint64_t>(pointers.ExceptionRecord));
-		emu.reg(x64_register::rdx, reinterpret_cast<uint64_t>(pointers.ContextRecord));
-		emu.reg(x64_register::rip, dispatcher);
-		unalign_stack(emu);
-	}
-
-	void dispatch_access_violation(x64_emulator& emu, uint64_t dispatcher, const uint64_t address,
-	                               const memory_operation operation)
-	{
-		const auto pointers = create_access_violation_exception_pointers(emu, address, operation);
 		dispatch_exception_pointers(emu, dispatcher, pointers);
 	}
 
@@ -724,7 +784,7 @@ namespace
 
 		auto context = setup_context(*emu);
 
-		context.executable = *map_file(*emu, R"(C:\Users\Maurice\Desktop\ConsoleApplication6.exe)");
+		context.executable = *map_file(*emu, R"(C:\Users\mauri\Desktop\ConsoleApplication6.exe)");
 
 		context.peb.access([&](PEB& peb)
 		{
