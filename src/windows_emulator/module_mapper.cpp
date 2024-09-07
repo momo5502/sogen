@@ -227,7 +227,7 @@ std::optional<mapped_binary> map_file(x64_emulator& emu, const std::filesystem::
 
 	auto binary = map_module(emu, data, file.generic_string());
 
-	//hook_exports(emu, binary, file);
+	hook_exports(emu, binary, file);
 
 	return binary;
 }

@@ -30,7 +30,7 @@
 #define GDT_LIMIT 0x1000
 #define GDT_ENTRY_SIZE 0x8
 
-bool use_gdb = true;
+bool use_gdb = false;
 
 struct breakpoint_key
 {
@@ -745,9 +745,9 @@ namespace
 		{
 				frame.rip = pointers.ContextRecord->Rip;
 				frame.rsp = pointers.ContextRecord->Rsp;
-				frame.eflags = pointers.ContextRecord->EFlags;
 				frame.ss = pointers.ContextRecord->SegSs;
 				frame.cs = pointers.ContextRecord->SegCs;
+				frame.eflags = pointers.ContextRecord->EFlags;
 		});
 
 		printf("ContextRecord: %llX\n", context_record_obj.value());
