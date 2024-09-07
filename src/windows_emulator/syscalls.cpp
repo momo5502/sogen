@@ -224,36 +224,38 @@ namespace
 	NTSTATUS handle_NtSetEvent(const syscall_context& c, const uint64_t handle,
 	                           const emulator_object<LONG> previous_state)
 	{
-		if (handle & EVENT_BIT)
+		const auto value = get_handle_value(handle);
+		if (value.type != handle_types::event)
 		{
-			const auto event_index = static_cast<uint32_t>(handle & ~EVENT_BIT);
-			const auto entry = c.proc.events.find(event_index);
-			if (entry != c.proc.events.end())
-			{
-				if (previous_state.value())
-				{
-					previous_state.write(entry->second.signaled ? 1ULL : 0ULL);
-				}
-
-				entry->second.signaled = true;
-				return STATUS_SUCCESS;
-			}
+			return STATUS_INVALID_HANDLE;
 		}
 
-		return STATUS_INVALID_HANDLE;
+		const auto entry = c.proc.events.find(value.id);
+		if (entry == c.proc.events.end())
+		{
+			return STATUS_INVALID_HANDLE;
+		}
+
+		if (previous_state.value())
+		{
+			previous_state.write(entry->second.signaled ? 1ULL : 0ULL);
+		}
+
+		entry->second.signaled = true;
+		return STATUS_SUCCESS;
 	}
 
 	NTSTATUS handle_NtClose(const syscall_context& c, const uint64_t handle)
 	{
-		if (handle & PSEUDO_BIT)
+		const auto value = get_handle_value(handle);
+		if (value.is_pseudo)
 		{
 			return STATUS_SUCCESS;
 		}
 
-		if (handle & EVENT_BIT)
+		if (value.type == handle_types::event)
 		{
-			const auto event_index = static_cast<uint32_t>(handle & ~EVENT_BIT);
-			const auto entry = c.proc.events.find(event_index);
+			const auto entry = c.proc.events.find(value.id);
 			if (entry != c.proc.events.end())
 			{
 				c.proc.events.erase(entry);
@@ -261,10 +263,9 @@ namespace
 			}
 		}
 
-		if (handle & FILE_BIT)
+		if (value.type == handle_types::file)
 		{
-			const auto event_index = static_cast<uint32_t>(handle & ~FILE_BIT);
-			const auto entry = c.proc.files.find(event_index);
+			const auto entry = c.proc.files.find(value.id);
 			if (entry != c.proc.files.end())
 			{
 				c.proc.files.erase(entry);
@@ -305,7 +306,8 @@ namespace
 			}
 		}
 
-		event_handle.write(index | EVENT_BIT);
+		const auto h = make_handle(index, handle_types::event, false);
+		event_handle.write(h.bits);
 
 		c.proc.events.try_emplace(index, initial_state != FALSE, event_type);
 
@@ -354,7 +356,8 @@ namespace
 			}
 		}
 
-		file_handle.write(index | FILE_BIT);
+		const auto h = make_handle(index, handle_types::file, false);
+		file_handle.write(h.bits);
 
 		auto status = STATUS_SUCCESS;
 		object_attributes.access([&](const OBJECT_ATTRIBUTES& attributes)
@@ -384,7 +387,7 @@ namespace
 
 		if (filename == L"\\Windows\\SharedSection")
 		{
-			section_handle.write(SHARED_SECTION);
+			section_handle.write(SHARED_SECTION.bits);
 			return STATUS_SUCCESS;
 		}
 
@@ -394,7 +397,6 @@ namespace
 			c.emu.stop();
 			return STATUS_NOT_SUPPORTED;
 		}
-
 
 		if (filename.starts_with(L"api-ms-"))
 		{
@@ -419,7 +421,8 @@ namespace
 			}
 		}
 
-		section_handle.write(index | FILE_BIT);
+		const auto h = make_handle(index, handle_types::file, false);
+		section_handle.write(h.bits);
 
 		c.proc.files.try_emplace(index, std::move(filename));
 
@@ -438,13 +441,13 @@ namespace
 			return STATUS_INVALID_HANDLE;
 		}
 
-		if (!(section_handle & FILE_BIT))
+		const auto value = get_handle_value(section_handle);
+		if (value.type != handle_types::file)
 		{
 			return STATUS_INVALID_HANDLE;
 		}
 
-		const auto section_index = static_cast<uint32_t>(section_handle & ~FILE_BIT);
-		const auto section_entry = c.proc.files.find(section_index);
+		const auto section_entry = c.proc.files.find(value.id);
 		if (section_entry == c.proc.files.end())
 		{
 			return STATUS_INVALID_HANDLE;
@@ -870,7 +873,7 @@ namespace
 
 		if (object_name == L"\\KnownDlls")
 		{
-			directory_handle.write(KNOWN_DLLS_DIRECTORY);
+			directory_handle.write(KNOWN_DLLS_DIRECTORY.bits);
 			return STATUS_SUCCESS;
 		}
 
@@ -886,7 +889,7 @@ namespace
 
 		if (object_name == L"KnownDllPath")
 		{
-			link_handle.write(KNOWN_DLLS_SYMLINK);
+			link_handle.write(KNOWN_DLLS_SYMLINK.bits);
 			return STATUS_SUCCESS;
 		}
 
@@ -1023,7 +1026,7 @@ namespace
 		puts("NtCreateSection not supported");
 		c.emu.stop();
 
-		section_handle.write(SHARED_SECTION);
+		section_handle.write(SHARED_SECTION.bits);
 		/*
 		maximum_size.access([](LARGE_INTEGER& large_int)
 		{
@@ -1139,14 +1142,15 @@ namespace
 
 		if (filename == L"\\Device\\ConDrv\\Server")
 		{
-			file_handle.write(CONSOLE_SERVER);
+			file_handle.write(CONSOLE_SERVER.bits);
 			return STATUS_SUCCESS;
 		}
 
-		const auto root_handle = reinterpret_cast<uint64_t>(attributes.RootDirectory);
-		if ((root_handle & PSEUDO_BIT) && (filename == L"\\Reference" || filename == L"\\Connect"))
+		handle root_handle{};
+		root_handle.bits = reinterpret_cast<uint64_t>(attributes.RootDirectory);
+		if (root_handle.value.is_pseudo && (filename == L"\\Reference" || filename == L"\\Connect"))
 		{
-			file_handle.write(root_handle);
+			file_handle.write(root_handle.bits);
 			return STATUS_SUCCESS;
 		}
 

@@ -344,9 +344,9 @@ namespace
 			proc_params.Length = sizeof(proc_params);
 			proc_params.Flags = 0x6001 | 0x80000000; // Prevent CsrClientConnectToServer
 
-			proc_params.ConsoleHandle = reinterpret_cast<HANDLE>(CONSOLE_HANDLE);
-			proc_params.StandardOutput = reinterpret_cast<HANDLE>(STDOUT_HANDLE);
-			proc_params.StandardInput = reinterpret_cast<HANDLE>(STDIN_HANDLE);
+			proc_params.ConsoleHandle = CONSOLE_HANDLE.h;
+			proc_params.StandardOutput = STDOUT_HANDLE.h;
+			proc_params.StandardInput = STDIN_HANDLE.h;
 			proc_params.StandardError = proc_params.StandardOutput;
 
 			gs.make_unicode_string(proc_params.CurrentDirectory.DosPath, L"C:\\Users\\mauri\\Desktop");
@@ -713,7 +713,6 @@ namespace
 		assert(combined_size == 0x590);
 
 		const auto allocation_size = combined_size + mach_frame_size;
-
 
 		const auto initial_sp = emu.reg(x64_register::rsp);
 		const auto new_sp = align_down(initial_sp - allocation_size, 0x100);
