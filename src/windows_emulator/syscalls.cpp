@@ -224,24 +224,18 @@ namespace
 	NTSTATUS handle_NtSetEvent(const syscall_context& c, const uint64_t handle,
 	                           const emulator_object<LONG> previous_state)
 	{
-		const auto value = get_handle_value(handle);
-		if (value.type != handle_types::event)
-		{
-			return STATUS_INVALID_HANDLE;
-		}
-
-		const auto entry = c.proc.events.find(value.id);
-		if (entry == c.proc.events.end())
+		const auto entry = c.proc.events.get(handle);
+		if (!entry)
 		{
 			return STATUS_INVALID_HANDLE;
 		}
 
 		if (previous_state.value())
 		{
-			previous_state.write(entry->second.signaled ? 1ULL : 0ULL);
+			previous_state.write(entry->signaled ? 1ULL : 0ULL);
 		}
 
-		entry->second.signaled = true;
+		entry->signaled = true;
 		return STATUS_SUCCESS;
 	}
 
@@ -253,24 +247,14 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		if (value.type == handle_types::event)
+		if (value.type == handle_types::event && c.proc.events.erase(handle))
 		{
-			const auto entry = c.proc.events.find(value.id);
-			if (entry != c.proc.events.end())
-			{
-				c.proc.events.erase(entry);
-				return STATUS_SUCCESS;
-			}
+			return STATUS_SUCCESS;
 		}
 
-		if (value.type == handle_types::file)
+		if (value.type == handle_types::file && c.proc.files.erase(handle))
 		{
-			const auto entry = c.proc.files.find(value.id);
-			if (entry != c.proc.files.end())
-			{
-				c.proc.files.erase(entry);
-				return STATUS_SUCCESS;
-			}
+			return STATUS_SUCCESS;
 		}
 
 		return STATUS_INVALID_HANDLE;
@@ -297,19 +281,9 @@ namespace
 			return STATUS_NOT_SUPPORTED;
 		}
 
-		uint32_t index = 1;
-		for (;; ++index)
-		{
-			if (!c.proc.events.contains(index))
-			{
-				break;
-			}
-		}
-
-		const auto h = make_handle(index, handle_types::event, false);
-		event_handle.write(h.bits);
-
-		c.proc.events.try_emplace(index, initial_state != FALSE, event_type);
+		event e{initial_state != FALSE, event_type};
+		const auto handle = c.proc.events.store(std::move(e));
+		event_handle.write(handle.bits);
 
 		static_assert(sizeof(EVENT_TYPE) == sizeof(uint32_t));
 		static_assert(sizeof(ACCESS_MASK) == sizeof(uint32_t));
@@ -347,33 +321,19 @@ namespace
 	                           const ULONG /*share_access*/,
 	                           const ULONG /*open_options*/)
 	{
-		uint32_t index = 1;
-		for (;; ++index)
+		file f{};
+		const auto attributes = object_attributes.read();
+		f.name = read_unicode_string(c.emu, attributes.ObjectName);
+
+		if (!std::filesystem::exists(f.name))
 		{
-			if (!c.proc.files.contains(index))
-			{
-				break;
-			}
+			return STATUS_FILE_INVALID;
 		}
 
-		const auto h = make_handle(index, handle_types::file, false);
-		file_handle.write(h.bits);
+		const auto handle = c.proc.files.store(std::move(f));
+		file_handle.write(handle.bits);
 
-		auto status = STATUS_SUCCESS;
-		object_attributes.access([&](const OBJECT_ATTRIBUTES& attributes)
-		{
-			auto section = read_unicode_string(c.emu, attributes.ObjectName);
-			if (!std::filesystem::exists(section))
-			{
-				status = STATUS_FILE_INVALID;
-			}
-			else
-			{
-				c.proc.files.try_emplace(index, std::move(section));
-			}
-		});
-
-		return status;
+		return STATUS_SUCCESS;
 	}
 
 	NTSTATUS handle_NtOpenSection(const syscall_context& c, const emulator_object<uint64_t> section_handle,
@@ -412,19 +372,8 @@ namespace
 			return STATUS_FILE_INVALID;
 		}
 
-		uint32_t index = 1;
-		for (;; ++index)
-		{
-			if (!c.proc.files.contains(index))
-			{
-				break;
-			}
-		}
-
-		const auto h = make_handle(index, handle_types::file, false);
-		section_handle.write(h.bits);
-
-		c.proc.files.try_emplace(index, std::move(filename));
+		const auto handle = c.proc.files.store({std::move(filename)});
+		section_handle.write(handle.bits);
 
 		return STATUS_SUCCESS;
 	}
@@ -441,20 +390,13 @@ namespace
 			return STATUS_INVALID_HANDLE;
 		}
 
-		const auto value = get_handle_value(section_handle);
-		if (value.type != handle_types::file)
+		const auto section_entry = c.proc.files.get(section_handle);
+		if (!section_entry)
 		{
 			return STATUS_INVALID_HANDLE;
 		}
 
-		const auto section_entry = c.proc.files.find(value.id);
-		if (section_entry == c.proc.files.end())
-		{
-			return STATUS_INVALID_HANDLE;
-		}
-
-		const auto& section_name = section_entry->second;
-		const auto binary = map_file(c.emu, section_name);
+		const auto binary = map_file(c.emu, section_entry->name);
 		if (!binary.has_value())
 		{
 			return STATUS_FILE_INVALID;

@@ -1,5 +1,6 @@
 #pragma once
 #include "emulator_utils.hpp"
+#include "handles.hpp"
 
 struct exported_symbol
 {
@@ -37,6 +38,11 @@ struct event
 	}
 };
 
+struct file
+{
+	std::wstring name{};
+};
+
 struct process_context
 {
 	emulator_object<TEB> teb{};
@@ -47,9 +53,8 @@ struct process_context
 	mapped_binary executable{};
 	mapped_binary ntdll{};
 
-	std::map<uint32_t, event> events{};
-	std::map<uint32_t, HANDLE> os_handles{};
-	std::map<uint32_t, std::wstring> files{};
+	handle_store<handle_types::event, event> events{};
+	handle_store<handle_types::file, file> files{};
 	emulator_allocator gs_segment{};
 
 	bool verbose{false};
