@@ -45,6 +45,7 @@ struct file
 
 struct process_context
 {
+	uint64_t executed_instructions{0};
 	emulator_object<TEB> teb{};
 	emulator_object<PEB> peb{};
 	emulator_object<RTL_USER_PROCESS_PARAMETERS> process_params{};

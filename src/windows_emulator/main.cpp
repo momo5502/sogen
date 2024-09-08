@@ -742,11 +742,11 @@ namespace
 		const emulator_object<machine_frame> machine_frame_obj{emu, new_sp + combined_size};
 		machine_frame_obj.access([&](machine_frame& frame)
 		{
-				frame.rip = pointers.ContextRecord->Rip;
-				frame.rsp = pointers.ContextRecord->Rsp;
-				frame.ss = pointers.ContextRecord->SegSs;
-				frame.cs = pointers.ContextRecord->SegCs;
-				frame.eflags = pointers.ContextRecord->EFlags;
+			frame.rip = pointers.ContextRecord->Rip;
+			frame.rsp = pointers.ContextRecord->Rsp;
+			frame.ss = pointers.ContextRecord->SegSs;
+			frame.cs = pointers.ContextRecord->SegCs;
+			frame.eflags = pointers.ContextRecord->EFlags;
 		});
 
 		printf("ContextRecord: %llX\n", context_record_obj.value());
@@ -850,6 +850,7 @@ namespace
 				*/
 		emu->hook_memory_execution(0, std::numeric_limits<size_t>::max(), [&](const uint64_t address, const size_t)
 		{
+			++context.executed_instructions;
 			if (!context.verbose)
 			{
 				return;
