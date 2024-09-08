@@ -783,21 +783,21 @@ namespace
 
 		auto context = setup_context(*emu);
 
-		context.executable = *map_file(*emu, R"(C:\Users\mauri\Desktop\ConsoleApplication6.exe)");
+		context.executable = map_file(context, *emu, R"(C:\Users\mauri\Desktop\boiii.exe)");
 
 		context.peb.access([&](PEB& peb)
 		{
-			peb.ImageBaseAddress = reinterpret_cast<void*>(context.executable.image_base);
+			peb.ImageBaseAddress = reinterpret_cast<void*>(context.executable->image_base);
 		});
 
-		context.ntdll = *map_file(*emu, R"(C:\Windows\System32\ntdll.dll)");
+		context.ntdll = map_file(context, *emu, R"(C:\Windows\System32\ntdll.dll)");
 
-		const auto ldr_initialize_thunk = find_exported_function(context.ntdll.exports, "LdrInitializeThunk");
-		const auto rtl_user_thread_start = find_exported_function(context.ntdll.exports, "RtlUserThreadStart");
+		const auto ldr_initialize_thunk = find_exported_function(context.ntdll->exports, "LdrInitializeThunk");
+		const auto rtl_user_thread_start = find_exported_function(context.ntdll->exports, "RtlUserThreadStart");
 		const auto ki_user_exception_dispatcher = find_exported_function(
-			context.ntdll.exports, "KiUserExceptionDispatcher");
+			context.ntdll->exports, "KiUserExceptionDispatcher");
 
-		syscall_dispatcher dispatcher{context.ntdll.exports};
+		syscall_dispatcher dispatcher{context.ntdll->exports};
 
 		emu->hook_instruction(x64_hookable_instructions::syscall, [&]
 		{
@@ -843,14 +843,42 @@ namespace
 		});
 
 		/*
-				watch_object(*emu, context.teb);
-				watch_object(*emu, context.peb);
-				watch_object(*emu, context.process_params);
-				watch_object(*emu, context.kusd);
-				*/
+		watch_object(*emu, context.teb);
+		watch_object(*emu, context.peb);
+		watch_object(*emu, context.process_params);
+		watch_object(*emu, context.kusd);
+		*/
+
 		emu->hook_memory_execution(0, std::numeric_limits<size_t>::max(), [&](const uint64_t address, const size_t)
 		{
 			++context.executed_instructions;
+
+			const mapped_binary* binary{nullptr};
+			for (const auto& entry : context.mapped_binaries)
+			{
+				const auto& mod = entry.second;
+				if (is_within_start_and_length(address, mod->image_base, mod->size_of_image))
+				{
+					binary = mod.get();
+					break;
+				}
+
+				if (address < mod->image_base)
+				{
+					break;
+				}
+			}
+
+			if (binary)
+			{
+				const auto export_entry = binary->export_remap.find(address);
+				if (export_entry != binary->export_remap.end())
+				{
+					printf("Executing function: %s - %s (%llX)\n", binary->name.c_str(), export_entry->second.c_str(),
+					       address);
+				}
+			}
+
 			if (!context.verbose)
 			{
 				return;
@@ -872,7 +900,7 @@ namespace
 		context_frame::save(*emu, ctx);
 
 		ctx.Rip = rtl_user_thread_start;
-		ctx.Rcx = context.executable.entry_point;
+		ctx.Rcx = context.executable->entry_point;
 
 		const auto ctx_obj = allocate_object_on_stack<CONTEXT>(*emu);
 		ctx_obj.write(ctx);
@@ -880,7 +908,7 @@ namespace
 		unalign_stack(*emu);
 
 		emu->reg(x64_register::rcx, ctx_obj.value());
-		emu->reg(x64_register::rdx, context.ntdll.image_base);
+		emu->reg(x64_register::rdx, context.ntdll->image_base);
 		emu->reg(x64_register::rip, ldr_initialize_thunk);
 
 		try

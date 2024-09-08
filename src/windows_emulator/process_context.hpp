@@ -14,10 +14,13 @@ using exported_symbols = std::vector<exported_symbol>;
 
 struct mapped_binary
 {
+	std::filesystem::path path{};
+	std::string name{};
 	uint64_t image_base{};
 	uint64_t size_of_image{};
 	uint64_t entry_point{};
 	exported_symbols exports{};
+	std::unordered_map<uint64_t, std::string> export_remap{};
 };
 
 struct event
@@ -51,8 +54,10 @@ struct process_context
 	emulator_object<RTL_USER_PROCESS_PARAMETERS> process_params{};
 	emulator_object<KUSER_SHARED_DATA> kusd{};
 
-	mapped_binary executable{};
-	mapped_binary ntdll{};
+	std::map<uint64_t, std::unique_ptr<mapped_binary>> mapped_binaries{};
+
+	mapped_binary* executable{};
+	mapped_binary* ntdll{};
 
 	handle_store<handle_types::event, event> events{};
 	handle_store<handle_types::file, file> files{};

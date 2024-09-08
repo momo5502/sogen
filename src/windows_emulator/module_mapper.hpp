@@ -3,4 +3,4 @@
 #include "process_context.hpp"
 #include <x64_emulator.hpp>
 
-std::optional<mapped_binary> map_file(x64_emulator& emu, const std::filesystem::path& file);
+mapped_binary* map_file(process_context& context, x64_emulator& emu, std::filesystem::path file);

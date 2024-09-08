@@ -298,7 +298,7 @@ namespace
 	{
 		if (fs_information_class != FileFsDeviceInformation)
 		{
-			printf("Unsupported process info class: %X\n", fs_information_class);
+			printf("Unsupported fs info class: %X\n", fs_information_class);
 			c.emu.stop();
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -396,8 +396,8 @@ namespace
 			return STATUS_INVALID_HANDLE;
 		}
 
-		const auto binary = map_file(c.emu, section_entry->name);
-		if (!binary.has_value())
+		const auto binary = map_file(c.proc, c.emu, section_entry->name);
+		if (!binary)
 		{
 			return STATUS_FILE_INVALID;
 		}
@@ -491,7 +491,7 @@ namespace
 				return STATUS_BUFFER_OVERFLOW;
 			}
 
-			if (!is_within_start_and_length(base_address, c.proc.ntdll.image_base, c.proc.ntdll.size_of_image))
+			if (!is_within_start_and_length(base_address, c.proc.ntdll->image_base, c.proc.ntdll->size_of_image))
 			{
 				puts("Bad image request");
 				c.emu.stop();
@@ -502,8 +502,8 @@ namespace
 
 			info.access([&](MEMORY_IMAGE_INFORMATION& image_info)
 			{
-				image_info.ImageBase = reinterpret_cast<void*>(c.proc.ntdll.image_base);
-				image_info.SizeOfImage = c.proc.ntdll.size_of_image;
+				image_info.ImageBase = reinterpret_cast<void*>(c.proc.ntdll->image_base);
+				image_info.SizeOfImage = c.proc.ntdll->size_of_image;
 			});
 
 			return STATUS_SUCCESS;

@@ -38,6 +38,11 @@ namespace
 
 			binary.exports.push_back(std::move(symbol));
 		}
+
+		for (const auto& symbol : binary.exports)
+		{
+			binary.export_remap.try_emplace(symbol.address, symbol.name);
+		}
 	}
 
 	void apply_relocations(x64_emulator& emu, const mapped_binary& binary,
@@ -148,32 +153,12 @@ namespace
 		}
 	}
 
-	void hook_exports(emulator& emu, const mapped_binary& binary, const std::filesystem::path& file)
-	{
-		const auto filename = file.filename().string();
-
-		std::unordered_map<uint64_t, std::string> export_remap{};
-		for (const auto& symbol : binary.exports)
-		{
-			export_remap.try_emplace(symbol.address, symbol.name);
-		}
-
-		for (const auto& exp : export_remap)
-		{
-			auto name = exp.second;
-			emu.hook_memory_execution(exp.first, 0,
-			                          [n = std::move(name), filename](const uint64_t address, const size_t)
-			                          {
-				                          printf("Executing function: %s - %s (%llX)\n", filename.c_str(), n.c_str(),
-				                                 address);
-			                          });
-		}
-	}
-
 	mapped_binary map_module(x64_emulator& emu, const std::vector<uint8_t>& module_data,
-	                         const std::string& name)
+	                         std::filesystem::path file)
 	{
 		mapped_binary binary{};
+		binary.path = std::move(file);
+		binary.name = binary.path.filename().string();
 
 		// TODO: Range checks
 		auto* ptr = module_data.data();
@@ -196,10 +181,9 @@ namespace
 			}
 		}
 
-
 		binary.entry_point = binary.image_base + optional_header.AddressOfEntryPoint;
 
-		printf("Mapping %s at %llX\n", name.c_str(), binary.image_base);
+		printf("Mapping %s at %llX\n", binary.path.generic_string().c_str(), binary.image_base);
 
 		emu.write_memory(binary.image_base, ptr, optional_header.SizeOfHeaders);
 
@@ -217,17 +201,20 @@ namespace
 	}
 }
 
-std::optional<mapped_binary> map_file(x64_emulator& emu, const std::filesystem::path& file)
+mapped_binary* map_file(process_context& context, x64_emulator& emu, std::filesystem::path file)
 {
 	const auto data = load_file(file);
 	if (data.empty())
 	{
-		return {};
+		return nullptr;
 	}
 
-	auto binary = map_module(emu, data, file.generic_string());
+	auto binary = map_module(emu, data, std::move(file));
+	auto binary_ptr = std::make_unique<mapped_binary>(std::move(binary));
+	auto* res = binary_ptr.get();
 
-	hook_exports(emu, binary, file);
+	const auto image_base = binary_ptr->image_base;
+	context.mapped_binaries[image_base] = std::move(binary_ptr);
 
-	return binary;
+	return res;
 }
