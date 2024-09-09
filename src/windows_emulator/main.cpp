@@ -12,9 +12,9 @@
 #include <address_utils.hpp>
 #include <unicorn_x64_emulator.hpp>
 
-#include "gdb_stub.hpp"
-#include "module_mapper.hpp"
 #include "context_frame.hpp"
+
+#include "debugging/x64_gdb_stub_handler.hpp"
 
 
 #define GS_SEGMENT_ADDR 0x6000000ULL
@@ -31,30 +31,6 @@
 #define GDT_ENTRY_SIZE 0x8
 
 bool use_gdb = false;
-
-struct breakpoint_key
-{
-	size_t addr{};
-	size_t size{};
-	breakpoint_type type{};
-
-	bool operator==(const breakpoint_key& other) const
-	{
-		return this->addr == other.addr && this->size == other.size && this->type == other.type;
-	}
-};
-
-template <>
-struct std::hash<breakpoint_key>
-{
-	std::size_t operator()(const breakpoint_key& k) const noexcept
-	{
-		return ((std::hash<size_t>()(k.addr)
-				^ (std::hash<size_t>()(k.size) << 1)) >> 1)
-			^ (std::hash<size_t>()(static_cast<size_t>(k.type)) << 1);
-	}
-};
-
 
 namespace
 {
@@ -366,245 +342,6 @@ namespace
 		return context;
 	}
 
-	std::vector gdb_registers{
-		x64_register::rax,
-		x64_register::rbx,
-		x64_register::rcx,
-		x64_register::rdx,
-		x64_register::rsi,
-		x64_register::rdi,
-		x64_register::rbp,
-		x64_register::rsp,
-		x64_register::r8,
-		x64_register::r9,
-		x64_register::r10,
-		x64_register::r11,
-		x64_register::r12,
-		x64_register::r13,
-		x64_register::r14,
-		x64_register::r15,
-		x64_register::rip,
-		x64_register::rflags,
-		/*x64_register::cs,
-		x64_register::ss,
-		x64_register::ds,
-		x64_register::es,
-		x64_register::fs,
-		x64_register::gs,*/
-	};
-
-	memory_operation map_breakpoint_type(const breakpoint_type type)
-	{
-		switch (type)
-		{
-		case breakpoint_type::software:
-		case breakpoint_type::hardware_exec:
-			return memory_operation::exec;
-		case breakpoint_type::hardware_read:
-			return memory_permission::read;
-		case breakpoint_type::hardware_write:
-			return memory_permission::write;
-		case breakpoint_type::hardware_read_write:
-			return memory_permission::read_write;
-		default:
-			throw std::runtime_error("Bad bp type");
-		}
-	}
-
-	class scoped_emulator_hook
-	{
-	public:
-		scoped_emulator_hook() = default;
-
-		scoped_emulator_hook(emulator& emu, emulator_hook* hook)
-			: emu_(&emu)
-			  , hook_(hook)
-		{
-		}
-
-		~scoped_emulator_hook()
-		{
-			this->remove();
-		}
-
-		scoped_emulator_hook(const scoped_emulator_hook&) = delete;
-		scoped_emulator_hook& operator=(const scoped_emulator_hook&) = delete;
-
-		scoped_emulator_hook(scoped_emulator_hook&& obj) noexcept
-		{
-			this->operator=(std::move(obj));
-		}
-
-		scoped_emulator_hook& operator=(scoped_emulator_hook&& obj) noexcept
-		{
-			if (this != &obj)
-			{
-				this->remove();
-				this->emu_ = obj.emu_;
-				this->hook_ = obj.hook_;
-
-				obj.hook_ = {};
-			}
-			return *this;
-		}
-
-		void remove()
-		{
-			if (this->hook_)
-			{
-				this->emu_->delete_hook(this->hook_);
-				this->hook_ = {};
-			}
-		}
-
-	private:
-		emulator* emu_{};
-		emulator_hook* hook_{};
-	};
-
-	class x64_gdb_stub_handler : public gdb_stub_handler
-	{
-	public:
-		x64_gdb_stub_handler(x64_emulator& emu)
-			: emu_(&emu)
-		{
-		}
-
-		~x64_gdb_stub_handler() override = default;
-
-		gdb_action cont() override
-		{
-			try
-			{
-				this->emu_->start_from_ip();
-			}
-			catch (const std::exception& e)
-			{
-				puts(e.what());
-			}
-
-			return gdb_action::resume;
-		}
-
-		gdb_action stepi() override
-		{
-			try
-			{
-				this->emu_->start_from_ip({}, 1);
-			}
-			catch (const std::exception& e)
-			{
-				puts(e.what());
-			}
-
-			return gdb_action::resume;
-		}
-
-		bool read_reg(const int regno, size_t* value) override
-		{
-			*value = 0;
-
-			try
-			{
-				if (static_cast<size_t>(regno) >= gdb_registers.size())
-				{
-					return true;
-				}
-
-				this->emu_->read_register(gdb_registers[regno], value, sizeof(*value));
-				return true;
-			}
-			catch (...)
-			{
-				return true;
-			}
-		}
-
-		bool write_reg(const int regno, const size_t value) override
-		{
-			try
-			{
-				if (static_cast<size_t>(regno) >= gdb_registers.size())
-				{
-					return true;
-				}
-
-				this->emu_->write_register(gdb_registers[regno], &value, sizeof(value));
-				return true;
-			}
-			catch (...)
-			{
-				return false;
-			}
-		}
-
-		bool read_mem(const size_t addr, const size_t len, void* val) override
-		{
-			return this->emu_->try_read_memory(addr, val, len);
-		}
-
-		bool write_mem(const size_t addr, const size_t len, void* val) override
-		{
-			try
-			{
-				this->emu_->write_memory(addr, val, len);
-				return true;
-			}
-			catch (...)
-			{
-				return false;
-			}
-		}
-
-		bool set_bp(const breakpoint_type type, const size_t addr, const size_t size) override
-		{
-			try
-			{
-				this->hooks_[{addr, size, type}] = scoped_emulator_hook(*this->emu_, this->emu_->hook_memory_access(
-					                                                        addr, size, map_breakpoint_type(type),
-					                                                        [this](uint64_t, size_t, memory_operation)
-					                                                        {
-						                                                        this->on_interrupt();
-					                                                        }));
-
-				return true;
-			}
-			catch (...)
-			{
-				return false;
-			}
-		}
-
-		bool del_bp(const breakpoint_type type, const size_t addr, const size_t size) override
-		{
-			try
-			{
-				const auto entry = this->hooks_.find({addr, size, type});
-				if (entry == this->hooks_.end())
-				{
-					return false;
-				}
-
-				this->hooks_.erase(entry);
-
-				return true;
-			}
-			catch (...)
-			{
-				return false;
-			}
-		}
-
-		void on_interrupt() override
-		{
-			this->emu_->stop();
-		}
-
-	private:
-		x64_emulator* emu_{};
-		std::unordered_map<breakpoint_key, scoped_emulator_hook> hooks_{};
-	};
-
 	uint64_t find_exported_function(const std::vector<exported_symbol>& exports, const std::string_view name)
 	{
 		for (auto& symbol : exports)
@@ -782,15 +519,16 @@ namespace
 		const auto emu = unicorn::create_x64_emulator();
 
 		auto context = setup_context(*emu);
+		context.module_manager = module_manager(*emu);
 
-		context.executable = map_file(context, *emu, R"(C:\Users\mauri\Desktop\boiii.exe)");
+		context.executable = context.module_manager.map_module(R"(C:\Users\mauri\Desktop\ConsoleApplication6.exe)");
 
 		context.peb.access([&](PEB& peb)
 		{
 			peb.ImageBaseAddress = reinterpret_cast<void*>(context.executable->image_base);
 		});
 
-		context.ntdll = map_file(context, *emu, R"(C:\Windows\System32\ntdll.dll)");
+		context.ntdll = context.module_manager.map_module(R"(C:\Windows\System32\ntdll.dll)");
 
 		const auto ldr_initialize_thunk = find_exported_function(context.ntdll->exports, "LdrInitializeThunk");
 		const auto rtl_user_thread_start = find_exported_function(context.ntdll->exports, "RtlUserThreadStart");
@@ -802,12 +540,6 @@ namespace
 		emu->hook_instruction(x64_hookable_instructions::syscall, [&]
 		{
 			dispatcher.dispatch(*emu, context);
-			return instruction_hook_continuation::skip_instruction;
-		});
-
-		emu->hook_instruction(x64_hookable_instructions::rdtsc, [&]
-		{
-			emu->reg(x64_register::rax, 0x0011223344556677);
 			return instruction_hook_continuation::skip_instruction;
 		});
 
@@ -842,37 +574,23 @@ namespace
 			return memory_violation_continuation::resume;
 		});
 
-		/*
 		watch_object(*emu, context.teb);
 		watch_object(*emu, context.peb);
 		watch_object(*emu, context.process_params);
 		watch_object(*emu, context.kusd);
-		*/
+
+		context.verbose = false;
 
 		emu->hook_memory_execution(0, std::numeric_limits<size_t>::max(), [&](const uint64_t address, const size_t)
 		{
 			++context.executed_instructions;
 
-			const mapped_binary* binary{nullptr};
-			for (const auto& entry : context.mapped_binaries)
-			{
-				const auto& mod = entry.second;
-				if (is_within_start_and_length(address, mod->image_base, mod->size_of_image))
-				{
-					binary = mod.get();
-					break;
-				}
-
-				if (address < mod->image_base)
-				{
-					break;
-				}
-			}
+			const auto* binary = context.module_manager.find_by_address(address);
 
 			if (binary)
 			{
-				const auto export_entry = binary->export_remap.find(address);
-				if (export_entry != binary->export_remap.end())
+				const auto export_entry = binary->address_names.find(address);
+				if (export_entry != binary->address_names.end())
 				{
 					printf("Executing function: %s - %s (%llX)\n", binary->name.c_str(), export_entry->second.c_str(),
 					       address);
@@ -937,6 +655,8 @@ namespace
 
 int main(int /*argc*/, char** /*argv*/)
 {
+	//setvbuf(stdout, nullptr, _IOFBF, 0x10000);
+
 	try
 	{
 		do

@@ -1,10 +1,10 @@
-#include "std_include.hpp"
-#include "module_mapper.hpp"
+#include "../std_include.hpp"
+#include "module_mapping.hpp"
 #include <address_utils.hpp>
 
 namespace
 {
-	void collect_exports(emulator& emu, mapped_binary& binary, const IMAGE_OPTIONAL_HEADER& optional_header)
+	void collect_exports(emulator& emu, mapped_module& binary, const IMAGE_OPTIONAL_HEADER& optional_header)
 	{
 		auto& export_directory_entry = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
 		if (export_directory_entry.VirtualAddress == 0 || export_directory_entry.Size == 0)
@@ -41,11 +41,11 @@ namespace
 
 		for (const auto& symbol : binary.exports)
 		{
-			binary.export_remap.try_emplace(symbol.address, symbol.name);
+			binary.address_names.try_emplace(symbol.address, symbol.name);
 		}
 	}
 
-	void apply_relocations(x64_emulator& emu, const mapped_binary& binary,
+	void apply_relocations(emulator& emu, const mapped_module& binary,
 	                       const IMAGE_OPTIONAL_HEADER& optional_header)
 	{
 		const auto delta = binary.image_base - optional_header.ImageBase;
@@ -113,7 +113,7 @@ namespace
 		emu.write_memory(binary.image_base, memory.data(), memory.size());
 	}
 
-	void map_sections(x64_emulator& emu, const mapped_binary& binary, const unsigned char* ptr,
+	void map_sections(emulator& emu, const mapped_module& binary, const unsigned char* ptr,
 	                  const IMAGE_NT_HEADERS& nt_headers)
 	{
 		const std::span sections(IMAGE_FIRST_SECTION(&nt_headers), nt_headers.FileHeader.NumberOfSections);
@@ -153,47 +153,6 @@ namespace
 		}
 	}
 
-	mapped_binary map_module(x64_emulator& emu, const std::vector<uint8_t>& module_data,
-	                         std::filesystem::path file)
-	{
-		mapped_binary binary{};
-		binary.path = std::move(file);
-		binary.name = binary.path.filename().string();
-
-		// TODO: Range checks
-		auto* ptr = module_data.data();
-		auto* dos_header = reinterpret_cast<const IMAGE_DOS_HEADER*>(ptr);
-		auto* nt_headers = reinterpret_cast<const IMAGE_NT_HEADERS*>(ptr + dos_header->e_lfanew);
-		auto& optional_header = nt_headers->OptionalHeader;
-
-		binary.image_base = optional_header.ImageBase;
-		binary.size_of_image = optional_header.SizeOfImage;
-
-		if (!emu.allocate_memory(binary.image_base, binary.size_of_image, memory_permission::read))
-		{
-			binary.image_base = emu.find_free_allocation_base(binary.size_of_image);
-			if ((optional_header.DllCharacteristics &
-					IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) == 0 || //
-				!emu.allocate_memory(
-					binary.image_base, binary.size_of_image, memory_permission::read))
-			{
-				throw std::runtime_error("Failed to map binary");
-			}
-		}
-
-		binary.entry_point = binary.image_base + optional_header.AddressOfEntryPoint;
-
-		printf("Mapping %s at %llX\n", binary.path.generic_string().c_str(), binary.image_base);
-
-		emu.write_memory(binary.image_base, ptr, optional_header.SizeOfHeaders);
-
-		map_sections(emu, binary, ptr, *nt_headers);
-		apply_relocations(emu, binary, optional_header);
-		collect_exports(emu, binary, optional_header);
-
-		return binary;
-	}
-
 	std::vector<uint8_t> load_file(const std::filesystem::path& file)
 	{
 		std::ifstream stream(file, std::ios::in | std::ios::binary);
@@ -201,20 +160,59 @@ namespace
 	}
 }
 
-mapped_binary* map_file(process_context& context, x64_emulator& emu, std::filesystem::path file)
+std::optional<mapped_module> map_module_from_data(emulator& emu, const std::vector<uint8_t>& data,
+                                                  std::filesystem::path file)
+{
+	mapped_module binary{};
+	binary.path = std::move(file);
+	binary.name = binary.path.filename().string();
+
+	// TODO: Range checks
+	auto* ptr = data.data();
+	auto* dos_header = reinterpret_cast<const IMAGE_DOS_HEADER*>(ptr);
+	auto* nt_headers = reinterpret_cast<const IMAGE_NT_HEADERS*>(ptr + dos_header->e_lfanew);
+	auto& optional_header = nt_headers->OptionalHeader;
+
+	binary.image_base = optional_header.ImageBase;
+	binary.size_of_image = optional_header.SizeOfImage;
+
+	if (!emu.allocate_memory(binary.image_base, binary.size_of_image, memory_permission::read))
+	{
+		binary.image_base = emu.find_free_allocation_base(binary.size_of_image);
+		if ((optional_header.DllCharacteristics &
+				IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) == 0 || //
+			!emu.allocate_memory(
+				binary.image_base, binary.size_of_image, memory_permission::read))
+		{
+			return {};
+		}
+	}
+
+	binary.entry_point = binary.image_base + optional_header.AddressOfEntryPoint;
+
+	printf("Mapping %s at %llX\n", binary.path.generic_string().c_str(), binary.image_base);
+
+	emu.write_memory(binary.image_base, ptr, optional_header.SizeOfHeaders);
+
+	map_sections(emu, binary, ptr, *nt_headers);
+	apply_relocations(emu, binary, optional_header);
+	collect_exports(emu, binary, optional_header);
+
+	return binary;
+}
+
+std::optional<mapped_module> map_module_from_file(emulator& emu, std::filesystem::path file)
 {
 	const auto data = load_file(file);
 	if (data.empty())
 	{
-		return nullptr;
+		return {};
 	}
 
-	auto binary = map_module(emu, data, std::move(file));
-	auto binary_ptr = std::make_unique<mapped_binary>(std::move(binary));
-	auto* res = binary_ptr.get();
+	return map_module_from_data(emu, data, std::move(file));
+}
 
-	const auto image_base = binary_ptr->image_base;
-	context.mapped_binaries[image_base] = std::move(binary_ptr);
-
-	return res;
+bool unmap_module(emulator& emu, const mapped_module& mod)
+{
+	return emu.release_memory(mod.image_base, mod.size_of_image);
 }

@@ -1,6 +1,5 @@
 #include "std_include.hpp"
 #include "syscalls.hpp"
-#include "module_mapper.hpp"
 #include "context_frame.hpp"
 
 struct syscall_context
@@ -396,7 +395,7 @@ namespace
 			return STATUS_INVALID_HANDLE;
 		}
 
-		const auto binary = map_file(c.proc, c.emu, section_entry->name);
+		const auto binary = c.proc.module_manager.map_module(section_entry->name);
 		if (!binary)
 		{
 			return STATUS_FILE_INVALID;
