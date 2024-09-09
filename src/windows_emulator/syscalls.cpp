@@ -256,6 +256,11 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (value.type == handle_types::semaphore && c.proc.semaphores.erase(handle))
+		{
+			return STATUS_SUCCESS;
+		}
+
 		return STATUS_INVALID_HANDLE;
 	}
 
@@ -491,7 +496,7 @@ namespace
 			}
 
 			const auto mod = c.proc.module_manager.find_by_address(base_address);
-			if(!mod)
+			if (!mod)
 			{
 				printf("Bad address for memory image request: %llX\n", base_address);
 				return STATUS_INVALID_ADDRESS;
@@ -755,6 +760,33 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (info_class == ProcessEnclaveInformation)
+		{
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		if (info_class == ProcessBasicInformation)
+		{
+			if (return_length)
+			{
+				return_length.write(sizeof(PROCESS_BASIC_INFORMATION));
+			}
+
+			if (process_information_length != sizeof(PROCESS_BASIC_INFORMATION))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<PROCESS_BASIC_INFORMATION> info{c.emu, process_information};
+			info.access([&](PROCESS_BASIC_INFORMATION& basic_info)
+			{
+				basic_info.PebBaseAddress = c.proc.peb.ptr();
+				basic_info.UniqueProcessId = reinterpret_cast<HANDLE>(1);
+			});
+
+			return STATUS_SUCCESS;
+		}
+
 		printf("Unsupported process info class: %X\n", info_class);
 		c.emu.stop();
 
@@ -772,7 +804,8 @@ namespace
 
 		if (info_class == ProcessSchedulerSharedData
 			|| info_class == ProcessTlsInformation
-			|| info_class == ProcessConsoleHostProcess)
+			|| info_class == ProcessConsoleHostProcess
+			|| info_class == ProcessRaiseUMExceptionOnInvalidHandleClose)
 		{
 			return STATUS_SUCCESS;
 		}
@@ -1128,8 +1161,32 @@ namespace
 			response.write(ResponseAbort);
 		}
 
-		printf("Hard error: %X\n", error_status);
+		printf("Hard error: %X\n", static_cast<uint32_t>(error_status));
 		c.emu.stop();
+		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS handle_NtCreateSemaphore(const syscall_context& c, const emulator_object<uint64_t> semaphore_handle,
+	                                  const ACCESS_MASK /*desired_access*/,
+	                                  const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
+	                                  const ULONG initial_count, const ULONG maximum_count)
+	{
+		semaphore s{};
+		s.current_count = initial_count;
+		s.max_count = maximum_count;
+
+		if (object_attributes)
+		{
+			const auto attributes = object_attributes.read();
+			if (attributes.ObjectName)
+			{
+				s.name = read_unicode_string(c.emu, attributes.ObjectName);
+			}
+		}
+
+		const auto handle = c.proc.semaphores.store(std::move(s));
+		semaphore_handle.write(handle.bits);
+
 		return STATUS_SUCCESS;
 	}
 }
@@ -1190,6 +1247,7 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports)
 	add_handler(NtTerminateProcess);
 	add_handler(NtWriteFile);
 	add_handler(NtRaiseHardError);
+	add_handler(NtCreateSemaphore);
 
 #undef add_handler
 }

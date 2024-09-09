@@ -27,6 +27,13 @@ struct file
 	std::wstring name{};
 };
 
+struct semaphore
+{
+	std::wstring name{};
+	volatile uint32_t current_count{};
+	uint32_t max_count{};
+};
+
 struct process_context
 {
 	uint64_t executed_instructions{0};
@@ -42,6 +49,7 @@ struct process_context
 
 	handle_store<handle_types::event, event> events{};
 	handle_store<handle_types::file, file> files{};
+	handle_store<handle_types::semaphore, semaphore> semaphores{};
 	emulator_allocator gs_segment{};
 
 	bool verbose{false};

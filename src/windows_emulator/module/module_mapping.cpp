@@ -200,10 +200,13 @@ namespace
 		if (!emu.allocate_memory(binary.image_base, binary.size_of_image, memory_permission::read))
 		{
 			binary.image_base = emu.find_free_allocation_base(binary.size_of_image);
-			if (/*(optional_header.DllCharacteristics &
-					IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) == 0 ||*/ //
-				!emu.allocate_memory(
-					binary.image_base, binary.size_of_image, memory_permission::read))
+			const auto is_dll = nt_headers.FileHeader.Characteristics & IMAGE_FILE_DLL;
+			const auto has_dynamic_base =
+				optional_header.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
+			const auto is_relocatable = is_dll || has_dynamic_base;
+
+			if (!is_relocatable || !emu.allocate_memory(binary.image_base, binary.size_of_image,
+			                                            memory_permission::read))
 			{
 				return {};
 			}

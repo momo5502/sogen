@@ -9,6 +9,7 @@ struct handle_types
 		section,
 		symlink,
 		directory,
+		semaphore,
 	};
 };
 
