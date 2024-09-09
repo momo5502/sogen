@@ -59,7 +59,7 @@ public:
 
 	bool release_memory(uint64_t address, size_t size);
 
-	uint64_t find_free_allocation_base(size_t size) const;
+	uint64_t find_free_allocation_base(size_t size, uint64_t start = 0) const;
 
 	region_info get_region_info(uint64_t address);
 

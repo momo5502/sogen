@@ -200,8 +200,8 @@ namespace
 		if (!emu.allocate_memory(binary.image_base, binary.size_of_image, memory_permission::read))
 		{
 			binary.image_base = emu.find_free_allocation_base(binary.size_of_image);
-			if ((optional_header.DllCharacteristics &
-					IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) == 0 || //
+			if (/*(optional_header.DllCharacteristics &
+					IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) == 0 ||*/ //
 				!emu.allocate_memory(
 					binary.image_base, binary.size_of_image, memory_permission::read))
 			{

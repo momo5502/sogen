@@ -285,18 +285,25 @@ bool memory_manager::release_memory(const uint64_t address, size_t size)
 	return true;
 }
 
-uint64_t memory_manager::find_free_allocation_base(const size_t size) const
+uint64_t memory_manager::find_free_allocation_base(const size_t size, const uint64_t start) const
 {
-	uint64_t start_address = std::max(MIN_ALLOCATION_ADDRESS, 0x1000000000ULL);
+	uint64_t start_address =
+		std::max(MIN_ALLOCATION_ADDRESS, start ? start : 0x100000000ULL);
 
 	for (const auto& region : this->reserved_regions_)
 	{
+		const auto region_end = region.first + region.second.length;
+		if(region_end < start_address)
+		{
+			continue;
+		}
+
 		if (!regions_with_length_intersect(start_address, size, region.first, region.second.length))
 		{
 			return start_address;
 		}
 
-		start_address = page_align_up(region.first + region.second.length);
+		start_address = page_align_up(region_end);
 	}
 
 	if (start_address + size <= MAX_ALLOCATION_ADDRESS)
