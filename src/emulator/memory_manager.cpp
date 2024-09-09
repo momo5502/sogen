@@ -10,8 +10,8 @@
 
 namespace
 {
-	constexpr auto MIN_ALLOCATION_ADDRESS = 0x0000000000010000;
-	constexpr auto MAX_ALLOCATION_ADDRESS = 0x00007ffffffeffff;
+	constexpr auto MIN_ALLOCATION_ADDRESS = 0x0000000000010000ULL;
+	constexpr auto MAX_ALLOCATION_ADDRESS = 0x00007ffffffeffffULL;
 
 	void split_regions(memory_manager::committed_region_map& regions, const std::vector<uint64_t>& split_points)
 	{
@@ -287,7 +287,7 @@ bool memory_manager::release_memory(const uint64_t address, size_t size)
 
 uint64_t memory_manager::find_free_allocation_base(const size_t size) const
 {
-	uint64_t start_address = MIN_ALLOCATION_ADDRESS;
+	uint64_t start_address = std::max(MIN_ALLOCATION_ADDRESS, 0x1000000000ULL);
 
 	for (const auto& region : this->reserved_regions_)
 	{

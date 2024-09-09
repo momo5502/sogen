@@ -287,7 +287,7 @@ namespace
 		emu.reg<uint16_t>(x64_register::ss, 0x2B);
 	}
 
-	process_context setup_context(x64_emulator& emu)
+	process_context setup_context(x64_emulator& emu, const std::filesystem::path& file)
 	{
 		process_context context{};
 
@@ -325,9 +325,9 @@ namespace
 			proc_params.StandardInput = STDIN_HANDLE.h;
 			proc_params.StandardError = proc_params.StandardOutput;
 
-			gs.make_unicode_string(proc_params.CurrentDirectory.DosPath, L"C:\\Users\\mauri\\Desktop");
-			gs.make_unicode_string(proc_params.ImagePathName, L"C:\\Users\\mauri\\Desktop\\ConsoleApplication6.exe");
-			gs.make_unicode_string(proc_params.CommandLine, L"C:\\Users\\mauri\\Desktop\\ConsoleApplication6.exe");
+			gs.make_unicode_string(proc_params.CurrentDirectory.DosPath, file.parent_path().wstring());
+			gs.make_unicode_string(proc_params.ImagePathName, file.wstring());
+			gs.make_unicode_string(proc_params.CommandLine, file.wstring());
 		});
 
 		context.peb.access([&](PEB& peb)
@@ -518,10 +518,13 @@ namespace
 	{
 		const auto emu = unicorn::create_x64_emulator();
 
-		auto context = setup_context(*emu);
+		const std::filesystem::path application =
+			R"(C:\Program Files (x86)\Steam\steamapps\common\Hogwarts Legacy\Phoenix\Binaries\Win64\HogwartsLegacy.exe)";
+
+		auto context = setup_context(*emu, application);
 		context.module_manager = module_manager(*emu);
 
-		context.executable = context.module_manager.map_module(R"(C:\Users\mauri\Desktop\ConsoleApplication6.exe)");
+		context.executable = context.module_manager.map_module(application);
 
 		context.peb.access([&](PEB& peb)
 		{
@@ -574,18 +577,19 @@ namespace
 			return memory_violation_continuation::resume;
 		});
 
+		/*
 		watch_object(*emu, context.teb);
 		watch_object(*emu, context.peb);
 		watch_object(*emu, context.process_params);
 		watch_object(*emu, context.kusd);
-
+		*/
 		context.verbose = false;
 
 		emu->hook_memory_execution(0, std::numeric_limits<size_t>::max(), [&](const uint64_t address, const size_t)
 		{
 			++context.executed_instructions;
 
-			const auto* binary = context.module_manager.find_by_address(address);
+			/*const auto* binary = context.module_manager.find_by_address(address);
 
 			if (binary)
 			{
@@ -595,7 +599,7 @@ namespace
 					printf("Executing function: %s - %s (%llX)\n", binary->name.c_str(), export_entry->second.c_str(),
 					       address);
 				}
-			}
+			}*/
 
 			if (!context.verbose)
 			{

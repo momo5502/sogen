@@ -719,28 +719,46 @@ namespace
 			return STATUS_NOT_SUPPORTED;
 		}
 
-		if (info_class != ProcessCookie)
+		if (info_class == ProcessCookie)
 		{
-			printf("Unsupported process info class: %X\n", info_class);
-			c.emu.stop();
+			if (return_length)
+			{
+				return_length.write(sizeof(uint32_t));
+			}
 
-			return STATUS_NOT_SUPPORTED;
+			if (process_information_length != sizeof(uint32_t))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<uint32_t> info{c.emu, process_information};
+			info.write(0x01234567);
+
+			return STATUS_SUCCESS;
 		}
 
-		if (return_length)
+		if (info_class == ProcessDebugPort)
 		{
-			return_length.write(sizeof(uint32_t));
+			if (return_length)
+			{
+				return_length.write(sizeof(DWORD_PTR));
+			}
+
+			if (process_information_length != sizeof(DWORD_PTR))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<DWORD_PTR> info{c.emu, process_information};
+			info.write(0);
+
+			return STATUS_SUCCESS;
 		}
 
-		if (process_information_length != sizeof(uint32_t))
-		{
-			return STATUS_BUFFER_OVERFLOW;
-		}
+		printf("Unsupported process info class: %X\n", info_class);
+		c.emu.stop();
 
-		const emulator_object<uint32_t> info{c.emu, process_information};
-		info.write(0x01234567);
-
-		return STATUS_SUCCESS;
+		return STATUS_NOT_SUPPORTED;
 	}
 
 	NTSTATUS handle_NtSetInformationProcess(const syscall_context& c, const uint64_t process_handle,
@@ -1097,6 +1115,23 @@ namespace
 
 		throw std::runtime_error("Unsupported file");
 	}
+
+	NTSTATUS handle_NtRaiseHardError(const syscall_context& c, const NTSTATUS error_status,
+	                                 const ULONG /*number_of_parameters*/,
+	                                 const emulator_object<UNICODE_STRING> /*unicode_string_parameter_mask*/,
+	                                 const emulator_object<DWORD> /*parameters*/,
+	                                 const HARDERROR_RESPONSE_OPTION /*valid_response_option*/,
+	                                 const emulator_object<HARDERROR_RESPONSE> response)
+	{
+		if (response)
+		{
+			response.write(ResponseAbort);
+		}
+
+		printf("Hard error: %X\n", error_status);
+		c.emu.stop();
+		return STATUS_SUCCESS;
+	}
 }
 
 syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports)
@@ -1154,6 +1189,7 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports)
 	add_handler(NtContinue);
 	add_handler(NtTerminateProcess);
 	add_handler(NtWriteFile);
+	add_handler(NtRaiseHardError);
 
 #undef add_handler
 }

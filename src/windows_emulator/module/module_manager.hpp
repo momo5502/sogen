@@ -8,7 +8,7 @@ public:
 	module_manager() = default; // TODO: Get rid of that
 	module_manager(emulator& emu);
 
-	mapped_module* map_module(std::filesystem::path file);
+	mapped_module* map_module(const std::filesystem::path& file);
 
 	mapped_module* find_by_address(const uint64_t address)
 	{
