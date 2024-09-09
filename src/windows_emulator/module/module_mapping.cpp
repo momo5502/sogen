@@ -85,12 +85,13 @@ namespace
 		}
 
 		auto relocation_offset = directory->VirtualAddress;
+		const auto relocation_end = relocation_offset + directory->Size;
 
-		while (relocation_offset < directory->Size)
+		while (relocation_offset < relocation_end)
 		{
 			const auto relocation = buffer.as<IMAGE_BASE_RELOCATION>(relocation_offset).get();
 
-			if (relocation.VirtualAddress <= 0 || relocation.SizeOfBlock <= 0)
+			if (relocation.VirtualAddress <= 0 || relocation.SizeOfBlock <= sizeof(IMAGE_BASE_RELOCATION))
 			{
 				break;
 			}
