@@ -490,19 +490,19 @@ namespace
 				return STATUS_BUFFER_OVERFLOW;
 			}
 
-			if (!is_within_start_and_length(base_address, c.proc.ntdll->image_base, c.proc.ntdll->size_of_image))
+			const auto mod = c.proc.module_manager.find_by_address(base_address);
+			if(!mod)
 			{
-				puts("Bad image request");
-				c.emu.stop();
-				return STATUS_NOT_SUPPORTED;
+				printf("Bad address for memory image request: %llX\n", base_address);
+				return STATUS_INVALID_ADDRESS;
 			}
 
 			const emulator_object<MEMORY_IMAGE_INFORMATION> info{c.emu, memory_information};
 
 			info.access([&](MEMORY_IMAGE_INFORMATION& image_info)
 			{
-				image_info.ImageBase = reinterpret_cast<void*>(c.proc.ntdll->image_base);
-				image_info.SizeOfImage = c.proc.ntdll->size_of_image;
+				image_info.ImageBase = reinterpret_cast<void*>(mod->image_base);
+				image_info.SizeOfImage = mod->size_of_image;
 			});
 
 			return STATUS_SUCCESS;
