@@ -319,20 +319,35 @@ namespace
 
 	NTSTATUS handle_NtOpenFile(const syscall_context& c,
 	                           const emulator_object<uint64_t> file_handle,
-	                           const ACCESS_MASK /*desired_access*/,
+	                           const ACCESS_MASK desired_access,
 	                           const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
 	                           const emulator_object<IO_STATUS_BLOCK> /*io_status_block*/,
-	                           const ULONG /*share_access*/,
-	                           const ULONG /*open_options*/)
+	                           const ULONG share_access,
+	                           const ULONG open_options)
 	{
 		file f{};
 		const auto attributes = object_attributes.read();
 		f.name = read_unicode_string(c.emu, attributes.ObjectName);
 
-		if (!std::filesystem::exists(f.name))
+		UNICODE_STRING string{};
+		string.Buffer = f.name.data();
+		string.Length = static_cast<uint16_t>(f.name.size() * 2);
+		string.MaximumLength = string.Length;
+
+		OBJECT_ATTRIBUTES new_attributes{};
+		new_attributes.ObjectName = &string;
+		new_attributes.Length = sizeof(new_attributes);
+
+		HANDLE h{};
+		IO_STATUS_BLOCK status_block{};
+
+		const auto res = NtOpenFile(&h, desired_access, &new_attributes, &status_block, share_access, open_options);
+		if (res != STATUS_SUCCESS)
 		{
-			return STATUS_FILE_INVALID;
+			return res;
 		}
+
+		f.handle = h;
 
 		const auto handle = c.proc.files.store(std::move(f));
 		file_handle.write(handle.bits);
@@ -376,7 +391,7 @@ namespace
 			return STATUS_FILE_INVALID;
 		}
 
-		const auto handle = c.proc.files.store({std::move(filename)});
+		const auto handle = c.proc.files.store(file{{}, std::move(filename)});
 		section_handle.write(handle.bits);
 
 		return STATUS_SUCCESS;
@@ -1120,7 +1135,7 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		puts("NtCreateSection not supported");
+		puts("NtWriteFile not supported");
 		c.emu.stop();
 		return STATUS_NOT_SUPPORTED;
 	}
@@ -1195,14 +1210,19 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports)
 {
 	const auto syscalls = find_syscalls(ntdll_exports);
 
-#define add_handler(syscall) do                             \
-	{                                                       \
-		const auto id = get_syscall_id(syscalls, #syscall); \
-		auto handler = +[](const syscall_context& c)        \
-		{                                                   \
-			forward(c, handle_ ## syscall);                 \
-		};                                                  \
-		this->handlers_[id] = handler;                      \
+#define add_handler(syscall) do                         \
+	{                                                   \
+		std::string name = #syscall;                    \
+		const auto id = get_syscall_id(syscalls, name); \
+		auto handler = +[](const syscall_context& c)    \
+		{                                               \
+			forward(c, handle_ ## syscall);             \
+		};                                              \
+		                                                \
+		syscall_handler_entry entry{};                  \
+		entry.handler = handler;                        \
+		entry.name = std::move(name);                   \
+		this->handlers_[id] = std::move(entry);         \
 	} while(0)
 
 	add_handler(NtSetInformationThread);
@@ -1257,7 +1277,6 @@ void syscall_dispatcher::dispatch(x64_emulator& emu, process_context& context)
 	const auto address = emu.read_instruction_pointer();
 	const auto syscall_id = emu.reg<uint32_t>(x64_register::eax);
 
-	printf("Handling syscall: %X (%llX)\n", syscall_id, address);
 
 	const syscall_context c{emu, context, true};
 
@@ -1272,7 +1291,8 @@ void syscall_dispatcher::dispatch(x64_emulator& emu, process_context& context)
 		}
 		else
 		{
-			entry->second(c);
+			printf("Handling syscall: %s with id %X at %llX \n", entry->second.name.c_str(), syscall_id, address);
+			entry->second.handler(c);
 		}
 	}
 	catch (std::exception& e)

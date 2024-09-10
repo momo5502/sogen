@@ -7,6 +7,12 @@
 struct syscall_context;
 using syscall_handler = void(*)(const syscall_context& c);
 
+struct syscall_handler_entry
+{
+	syscall_handler handler{};
+	std::string name{};
+};
+
 class syscall_dispatcher
 {
 public:
@@ -15,5 +21,5 @@ public:
 	void dispatch(x64_emulator& emu, process_context& context);
 
 private:
-	std::unordered_map<uint64_t, syscall_handler> handlers_{};
+	std::unordered_map<uint64_t, syscall_handler_entry> handlers_{};
 };

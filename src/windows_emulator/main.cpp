@@ -30,7 +30,7 @@
 #define GDT_LIMIT 0x1000
 #define GDT_ENTRY_SIZE 0x8
 
-bool use_gdb = false;
+bool use_gdb = true;
 
 namespace
 {
@@ -589,9 +589,9 @@ namespace
 		{
 			++context.executed_instructions;
 
-			/*const auto* binary = context.module_manager.find_by_address(address);
+			const auto* binary = context.module_manager.find_by_address(address);
 
-			if (binary)
+			if (binary && binary->name != "ntdll.dll")
 			{
 				const auto export_entry = binary->address_names.find(address);
 				if (export_entry != binary->address_names.end())
@@ -599,7 +599,11 @@ namespace
 					printf("Executing function: %s - %s (%llX)\n", binary->name.c_str(), export_entry->second.c_str(),
 					       address);
 				}
-			}*/
+				else if (address == binary->entry_point)
+				{
+					printf("Executing entry point: %s (%llX)\n", binary->name.c_str(), address);
+				}
+			}
 
 			if (!context.verbose)
 			{

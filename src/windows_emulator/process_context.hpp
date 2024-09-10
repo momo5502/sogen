@@ -3,6 +3,7 @@
 #include "handles.hpp"
 
 #include "module/module_manager.hpp"
+#include <utils/nt_handle.hpp>
 
 struct event
 {
@@ -24,6 +25,7 @@ struct event
 
 struct file
 {
+	utils::nt::handle<INVALID_HANDLE_VALUE> handle{};
 	std::wstring name{};
 };
 
