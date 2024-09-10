@@ -30,7 +30,7 @@
 #define GDT_LIMIT 0x1000
 #define GDT_ENTRY_SIZE 0x8
 
-bool use_gdb = true;
+bool use_gdb = false;
 
 namespace
 {
@@ -591,7 +591,7 @@ namespace
 
 			const auto* binary = context.module_manager.find_by_address(address);
 
-			if (binary && binary->name != "ntdll.dll")
+			if (binary)
 			{
 				const auto export_entry = binary->address_names.find(address);
 				if (export_entry != binary->address_names.end())

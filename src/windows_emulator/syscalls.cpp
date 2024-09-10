@@ -1023,30 +1023,48 @@ namespace
 		throw std::runtime_error("Bad free type");
 	}
 
-	NTSTATUS handle_NtCreateSection(const syscall_context& c, const emulator_object<uint64_t> section_handle,
+	NTSTATUS handle_NtCreateSection(const syscall_context& /*c*/, const emulator_object<uint64_t> /*section_handle*/,
 	                                const ACCESS_MASK /*desired_access*/,
 	                                const emulator_object<OBJECT_ATTRIBUTES> /*object_attributes*/,
-	                                const emulator_object<LARGE_INTEGER> /*maximum_size*/,
+	                                const emulator_object<ULARGE_INTEGER> /*maximum_size*/,
 	                                const ULONG /*section_page_protection*/, const ULONG /*allocation_attributes*/,
 	                                const uint64_t /*file_handle*/)
 	{
 		puts("NtCreateSection not supported");
-		c.emu.stop();
+		//c.emu.stop();
+		//const auto attributes = object_attributes.read();
+		//const auto object_name = read_unicode_string(c.emu, attributes.ObjectName);
 
-		section_handle.write(SHARED_SECTION.bits);
-		/*
-		maximum_size.access([](LARGE_INTEGER& large_int)
+		/*section_handle.write(SHARED_SECTION.bits);
+
+		maximum_size.access([](ULARGE_INTEGER& large_int)
 		{
 			large_int.QuadPart = page_align_up(large_int.QuadPart);
-		});
-		*/
+		});*/
+
+		//return STATUS_SUCCESS;
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtConnectPort(const syscall_context& /*c*/)
+	{
+		puts("NtConnectPort not supported");
+		//c.emu.stop();
+
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtConnectPort(const syscall_context& c)
+	NTSTATUS handle_NtReadVirtualMemory(const syscall_context& c, uint64_t process_handle, uint64_t base_address,
+	                                    uint64_t buffer, ULONG number_of_bytes_to_read,
+	                                    const emulator_object<ULONG> number_of_bytes_readed)
 	{
-		puts("NtConnectPort not supported");
-		c.emu.stop();
+		puts("NtReadVirtualMemory not supported");
+		//c.emu.stop();
+
+		if (process_handle != ~0ULL)
+		{
+			return STATUS_NOT_SUPPORTED;
+		}
 
 		return STATUS_SUCCESS;
 	}
@@ -1268,6 +1286,7 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports)
 	add_handler(NtWriteFile);
 	add_handler(NtRaiseHardError);
 	add_handler(NtCreateSemaphore);
+	add_handler(NtReadVirtualMemory);
 
 #undef add_handler
 }
