@@ -944,6 +944,44 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	NTSTATUS handle_NtQueryInformationThread(const syscall_context& c, const uint64_t thread_handle,
+	                                         const uint32_t info_class, const uint64_t thread_information,
+	                                         const uint32_t thread_information_length,
+	                                         const emulator_object<uint32_t> return_length)
+	{
+		if (thread_handle != ~1ULL)
+		{
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		if (info_class == ThreadBasicInformation)
+		{
+			if (return_length)
+			{
+				return_length.write(sizeof(THREAD_BASIC_INFORMATION));
+			}
+
+			if (thread_information_length != sizeof(THREAD_BASIC_INFORMATION))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<THREAD_BASIC_INFORMATION> info{c.emu, thread_information};
+			info.access([&](THREAD_BASIC_INFORMATION& i)
+			{
+				i.TebBaseAddress = c.proc.teb.ptr();
+				i.ClientId = c.proc.teb.read().ClientId;
+			});
+
+			return STATUS_SUCCESS;
+		}
+
+		printf("Unsupported thread info class: %X\n", info_class);
+		c.emu.stop();
+
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtSetInformationProcess(const syscall_context& c, const uint64_t process_handle,
 	                                        const uint32_t info_class, const uint64_t /*process_information*/,
 	                                        const uint32_t /*process_information_length*/)
@@ -1236,6 +1274,12 @@ namespace
 	NTSTATUS handle_NtQueryWnfStateData()
 	{
 		puts("NtQueryWnfStateData not supported");
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtQueryWnfStateNameInformation()
+	{
+		puts("NtQueryWnfStateNameInformation not supported");
 		return STATUS_NOT_SUPPORTED;
 	}
 
@@ -1548,6 +1592,8 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports, co
 	add_handler(NtInitializeNlsFiles);
 	add_handler(NtUnmapViewOfSection);
 	add_handler(NtDuplicateObject);
+	add_handler(NtQueryInformationThread);
+	add_handler(NtQueryWnfStateNameInformation);
 
 #undef add_handler
 }
