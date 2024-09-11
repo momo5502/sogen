@@ -74,7 +74,8 @@ namespace
 		return syscalls;
 	}
 
-	uint64_t get_syscall_id(const std::vector<std::string>& ntdll_syscalls, const std::vector<std::string>& win32u_syscalls, const std::string_view name)
+	uint64_t get_syscall_id(const std::vector<std::string>& ntdll_syscalls,
+	                        const std::vector<std::string>& win32u_syscalls, const std::string_view name)
 	{
 		for (size_t i = 0; i < ntdll_syscalls.size(); ++i)
 		{
@@ -602,6 +603,30 @@ namespace
 			info_obj.access([&](SYSTEM_RANGE_START_INFORMATION& info)
 			{
 				info.SystemRangeStart = 0xFFFF800000000000;
+			});
+
+			return STATUS_SUCCESS;
+		}
+
+		if (info_class == SystemProcessorInformation)
+		{
+			if (return_length)
+			{
+				return_length.write(sizeof(SYSTEM_PROCESSOR_INFORMATION));
+			}
+
+			if (system_information_length != sizeof(SYSTEM_PROCESSOR_INFORMATION))
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			const emulator_object<SYSTEM_PROCESSOR_INFORMATION> info_obj{c.emu, system_information};
+
+			info_obj.access([&](SYSTEM_PROCESSOR_INFORMATION& info)
+			{
+				memset(&info, 0, sizeof(info));
+				info.MaximumProcessors = 2;
+				info.ProcessorArchitecture = PROCESSOR_ARCHITECTURE_AMD64;
 			});
 
 			return STATUS_SUCCESS;
@@ -1261,6 +1286,58 @@ namespace
 
 		return STATUS_SUCCESS;
 	}
+
+	NTSTATUS handle_NtAddAtomEx(const syscall_context& c, const uint64_t atom_name, const ULONG length,
+	                            const emulator_object<RTL_ATOM> atom, const ULONG /*flags*/)
+	{
+		std::wstring name{};
+		name.resize(length / 2);
+
+		c.emu.read_memory(atom_name, name.data(), length);
+
+		uint16_t index = 0;
+		if (!c.proc.atoms.empty())
+		{
+			auto i = c.proc.atoms.end();
+			--i;
+			index = i->first + 1;
+		}
+
+		std::optional<uint16_t> last_entry{};
+		for (auto& entry : c.proc.atoms)
+		{
+			if (entry.second == name)
+			{
+				if (atom)
+				{
+					atom.write(entry.first);
+					return STATUS_SUCCESS;
+				}
+			}
+
+			if (entry.first > 0)
+			{
+				if (!last_entry)
+				{
+					index = 0;
+				}
+				else
+				{
+					const auto diff = entry.first - *last_entry;
+					if (diff > 1)
+					{
+						index = *last_entry + 1;
+					}
+				}
+			}
+
+			last_entry = entry.first;
+		}
+
+		c.proc.atoms[index] = std::move(name);
+		atom.write(index);
+		return STATUS_SUCCESS;
+	}
 }
 
 syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports, const exported_symbols& win32u_exports)
@@ -1329,6 +1406,7 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports, co
 	add_handler(NtReadVirtualMemory);
 	add_handler(NtQueryInformationToken);
 	add_handler(NtDxgkIsFeatureEnabled);
+	add_handler(NtAddAtomEx);
 
 #undef add_handler
 }

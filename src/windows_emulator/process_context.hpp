@@ -53,6 +53,7 @@ struct process_context
 	handle_store<handle_types::event, event> events{};
 	handle_store<handle_types::file, file> files{};
 	handle_store<handle_types::semaphore, semaphore> semaphores{};
+	std::map<uint16_t, std::wstring> atoms{};
 	emulator_allocator gs_segment{};
 
 	bool verbose{false};
