@@ -9,6 +9,14 @@ module_manager::module_manager(emulator& emu)
 
 mapped_module* module_manager::map_module(const std::filesystem::path& file)
 {
+	for (auto& mod : this->modules_)
+	{
+		if (mod.second.path == file)
+		{
+			return &mod.second;
+		}
+	}
+
 	auto mod = map_module_from_file(*this->emu_, file);
 	if (!mod)
 	{

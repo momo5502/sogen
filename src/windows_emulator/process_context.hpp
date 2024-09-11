@@ -48,6 +48,7 @@ struct process_context
 
 	mapped_module* executable{};
 	mapped_module* ntdll{};
+	mapped_module* win32u{};
 
 	handle_store<handle_types::event, event> events{};
 	handle_store<handle_types::file, file> files{};

@@ -44,12 +44,14 @@ namespace
 		// is equal to the order of syscall IDs.
 		// So first Nt* function is the first syscall with ID 0
 
+		std::map<uint64_t, size_t> reference_count{};
 		std::map<uint64_t, std::string> ordered_syscalls{};
 
 		for (const auto& symbol : exports)
 		{
 			if (is_syscall(symbol.name))
 			{
+				++reference_count[symbol.address];
 				ordered_syscalls[symbol.address] = symbol.name;
 			}
 		}
@@ -59,19 +61,34 @@ namespace
 
 		for (auto& syscall : ordered_syscalls)
 		{
-			syscalls.push_back(std::move(syscall.second));
+			if (reference_count[syscall.first] == 1)
+			{
+				syscalls.push_back(std::move(syscall.second));
+			}
+			else
+			{
+				printf("Skipping %s\n", syscall.second.c_str());
+			}
 		}
 
 		return syscalls;
 	}
 
-	uint64_t get_syscall_id(const std::vector<std::string>& syscalls, const std::string_view name)
+	uint64_t get_syscall_id(const std::vector<std::string>& ntdll_syscalls, const std::vector<std::string>& win32u_syscalls, const std::string_view name)
 	{
-		for (size_t i = 0; i < syscalls.size(); ++i)
+		for (size_t i = 0; i < ntdll_syscalls.size(); ++i)
 		{
-			if (syscalls[i] == name)
+			if (ntdll_syscalls[i] == name)
 			{
 				return i;
+			}
+		}
+
+		for (size_t i = 0; i < win32u_syscalls.size(); ++i)
+		{
+			if (win32u_syscalls[i] == name)
+			{
+				return i + 0x1000;
 			}
 		}
 
@@ -1056,16 +1073,25 @@ namespace
 
 	NTSTATUS handle_NtReadVirtualMemory(const syscall_context& c, uint64_t process_handle, uint64_t base_address,
 	                                    uint64_t buffer, ULONG number_of_bytes_to_read,
-	                                    const emulator_object<ULONG> number_of_bytes_readed)
+	                                    const emulator_object<ULONG> number_of_bytes_read)
 	{
-		puts("NtReadVirtualMemory not supported");
-		//c.emu.stop();
+		number_of_bytes_read.write(0);
 
 		if (process_handle != ~0ULL)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
 
+		std::vector<uint8_t> memory{};
+		memory.resize(number_of_bytes_read);
+
+		if (!c.emu.try_read_memory(base_address, memory.data(), memory.size()))
+		{
+			return STATUS_INVALID_ADDRESS;
+		}
+
+		c.emu.write_memory(buffer, memory.data(), memory.size());
+		number_of_bytes_read.write(number_of_bytes_to_read);
 		return STATUS_SUCCESS;
 	}
 
@@ -1102,6 +1128,18 @@ namespace
 	NTSTATUS handle_NtTestAlert()
 	{
 		puts("NtTestAlert not supported");
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtQueryInformationToken()
+	{
+		puts("NtQueryInformationToken not supported");
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtDxgkIsFeatureEnabled()
+	{
+		puts("NtDxgkIsFeatureEnabled not supported");
 		return STATUS_NOT_SUPPORTED;
 	}
 
@@ -1179,7 +1217,8 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		throw std::runtime_error("Unsupported file");
+		printf("Unsupported file: %S\n", filename.c_str());
+		return STATUS_NOT_SUPPORTED;
 	}
 
 	NTSTATUS handle_NtRaiseHardError(const syscall_context& c, const NTSTATUS error_status,
@@ -1224,23 +1263,24 @@ namespace
 	}
 }
 
-syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports)
+syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports, const exported_symbols& win32u_exports)
 {
-	const auto syscalls = find_syscalls(ntdll_exports);
+	const auto ntdll_syscalls = find_syscalls(ntdll_exports);
+	const auto win32u_syscalls = find_syscalls(win32u_exports);
 
-#define add_handler(syscall) do                         \
-	{                                                   \
-		std::string name = #syscall;                    \
-		const auto id = get_syscall_id(syscalls, name); \
-		auto handler = +[](const syscall_context& c)    \
-		{                                               \
-			forward(c, handle_ ## syscall);             \
-		};                                              \
-		                                                \
-		syscall_handler_entry entry{};                  \
-		entry.handler = handler;                        \
-		entry.name = std::move(name);                   \
-		this->handlers_[id] = std::move(entry);         \
+#define add_handler(syscall) do                                                \
+	{                                                                          \
+		std::string name = #syscall;                                           \
+		const auto id = get_syscall_id(ntdll_syscalls, win32u_syscalls, name); \
+		auto handler = +[](const syscall_context& c)                           \
+		{                                                                      \
+			forward(c, handle_ ## syscall);                                    \
+		};                                                                     \
+		                                                                       \
+		syscall_handler_entry entry{};                                         \
+		entry.handler = handler;                                               \
+		entry.name = std::move(name);                                          \
+		this->handlers_[id] = std::move(entry);                                \
 	} while(0)
 
 	add_handler(NtSetInformationThread);
@@ -1287,6 +1327,8 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports)
 	add_handler(NtRaiseHardError);
 	add_handler(NtCreateSemaphore);
 	add_handler(NtReadVirtualMemory);
+	add_handler(NtQueryInformationToken);
+	add_handler(NtDxgkIsFeatureEnabled);
 
 #undef add_handler
 }

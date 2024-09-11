@@ -532,13 +532,14 @@ namespace
 		});
 
 		context.ntdll = context.module_manager.map_module(R"(C:\Windows\System32\ntdll.dll)");
+		context.win32u = context.module_manager.map_module(R"(C:\Windows\System32\win32u.dll)");
 
 		const auto ldr_initialize_thunk = find_exported_function(context.ntdll->exports, "LdrInitializeThunk");
 		const auto rtl_user_thread_start = find_exported_function(context.ntdll->exports, "RtlUserThreadStart");
 		const auto ki_user_exception_dispatcher = find_exported_function(
 			context.ntdll->exports, "KiUserExceptionDispatcher");
 
-		syscall_dispatcher dispatcher{context.ntdll->exports};
+		syscall_dispatcher dispatcher{context.ntdll->exports, context.win32u->exports};
 
 		emu->hook_instruction(x64_hookable_instructions::syscall, [&]
 		{
