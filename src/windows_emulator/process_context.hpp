@@ -50,6 +50,8 @@ struct process_context
 	mapped_module* ntdll{};
 	mapped_module* win32u{};
 
+	uint64_t shared_section_size{};
+
 	handle_store<handle_types::event, event> events{};
 	handle_store<handle_types::file, file> files{};
 	handle_store<handle_types::semaphore, semaphore> semaphores{};

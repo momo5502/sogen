@@ -417,14 +417,30 @@ namespace
 
 	NTSTATUS handle_NtMapViewOfSection(const syscall_context& c, uint64_t section_handle, uint64_t process_handle,
 	                                   emulator_object<uint64_t> base_address, ULONG_PTR /*zero_bits*/,
-	                                   SIZE_T /*commit_size*/,
-	                                   const emulator_object<LARGE_INTEGER> /*section_offset*/,
+	                                   SIZE_T commit_size,
+	                                   const emulator_object<LARGE_INTEGER> section_offset,
 	                                   const emulator_object<SIZE_T> view_size, SECTION_INHERIT /*inherit_disposition*/,
 	                                   ULONG /*allocation_type*/, ULONG /*win32_protect*/)
 	{
 		if (process_handle != ~0ULL)
 		{
 			return STATUS_INVALID_HANDLE;
+		}
+
+		if (section_handle == SHARED_SECTION)
+		{
+			const auto address = c.emu.find_free_allocation_base(c.proc.shared_section_size);
+			c.emu.allocate_memory(address,
+			                      c.proc.shared_section_size, memory_permission::read_write);
+
+			if (view_size.value())
+			{
+				view_size.write(c.proc.shared_section_size);
+			}
+
+			base_address.write(address);
+
+			return STATUS_SUCCESS;
 		}
 
 		const auto section_entry = c.proc.files.get(section_handle);
@@ -610,6 +626,8 @@ namespace
 
 		if (info_class == SystemProcessorInformation)
 		{
+			puts("PROC INFO");
+			c.proc.verbose = true;
 			if (return_length)
 			{
 				return_length.write(sizeof(SYSTEM_PROCESSOR_INFORMATION));
@@ -1065,33 +1083,45 @@ namespace
 		throw std::runtime_error("Bad free type");
 	}
 
-	NTSTATUS handle_NtCreateSection(const syscall_context& /*c*/, const emulator_object<uint64_t> /*section_handle*/,
+	NTSTATUS handle_NtCreateSection(const syscall_context& c, const emulator_object<uint64_t> section_handle,
 	                                const ACCESS_MASK /*desired_access*/,
 	                                const emulator_object<OBJECT_ATTRIBUTES> /*object_attributes*/,
-	                                const emulator_object<ULARGE_INTEGER> /*maximum_size*/,
+	                                const emulator_object<ULARGE_INTEGER> maximum_size,
 	                                const ULONG /*section_page_protection*/, const ULONG /*allocation_attributes*/,
 	                                const uint64_t /*file_handle*/)
 	{
 		puts("NtCreateSection not supported");
-		//c.emu.stop();
-		//const auto attributes = object_attributes.read();
-		//const auto object_name = read_unicode_string(c.emu, attributes.ObjectName);
+		section_handle.write(SHARED_SECTION.bits);
 
-		/*section_handle.write(SHARED_SECTION.bits);
-
-		maximum_size.access([](ULARGE_INTEGER& large_int)
+		maximum_size.access([&c](ULARGE_INTEGER& large_int)
 		{
 			large_int.QuadPart = page_align_up(large_int.QuadPart);
-		});*/
+			c.proc.shared_section_size = large_int.QuadPart;
+		});
 
-		//return STATUS_SUCCESS;
-		return STATUS_NOT_SUPPORTED;
+		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtConnectPort(const syscall_context& /*c*/)
+	NTSTATUS handle_NtConnectPort(const syscall_context& c, const emulator_object<uint64_t> client_port_handle,
+	                              const emulator_object<UNICODE_STRING> server_port_name,
+	                              const emulator_object<SECURITY_QUALITY_OF_SERVICE> security_qos,
+	                              const emulator_object<PORT_VIEW> client_shared_memory,
+	                              const emulator_object<REMOTE_PORT_VIEW> server_shared_memory,
+	                              const emulator_object<ULONG> maximum_message_length,
+	                              uint64_t connection_info,
+	                              const emulator_object<ULONG> connection_info_length)
 	{
-		puts("NtConnectPort not supported");
-		//c.emu.stop();
+		const auto port_name = read_unicode_string(c.emu, server_port_name);
+		printf("NtConnectPort: %S\n", port_name.c_str());
+
+		client_shared_memory.access([&](PORT_VIEW& view)
+		{
+			const auto address = c.emu.find_free_allocation_base(view.ViewSize);
+			c.emu.allocate_memory(address,
+				view.ViewSize, memory_permission::read_write);
+
+			view.ViewBase = reinterpret_cast<void*>(address);
+		});
 
 		return STATUS_SUCCESS;
 	}

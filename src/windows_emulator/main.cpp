@@ -318,7 +318,7 @@ namespace
 		context.process_params.access([&](RTL_USER_PROCESS_PARAMETERS& proc_params)
 		{
 			proc_params.Length = sizeof(proc_params);
-			proc_params.Flags = 0x6001 | 0x80000000; // Prevent CsrClientConnectToServer
+			proc_params.Flags = 0x6001; //| 0x80000000; // Prevent CsrClientConnectToServer
 
 			proc_params.ConsoleHandle = CONSOLE_HANDLE.h;
 			proc_params.StandardOutput = STDOUT_HANDLE.h;
@@ -333,10 +333,17 @@ namespace
 		context.peb.access([&](PEB& peb)
 		{
 			peb.ImageBaseAddress = nullptr;
-			peb.ProcessHeap = nullptr;
-			peb.ProcessHeaps = nullptr;
 			peb.ProcessParameters = context.process_params.ptr();
 			peb.ApiSetMap = build_api_set_map(emu, allocator).ptr();
+
+			peb.ProcessHeap = nullptr;
+			peb.ProcessHeaps = nullptr;
+			peb.HeapSegmentReserve = 0x0000000000100000;
+			peb.HeapSegmentCommit = 0x0000000000002000;
+			peb.HeapDeCommitTotalFreeThreshold = 0x0000000000010000;
+			peb.HeapDeCommitFreeBlockThreshold = 0x0000000000001000;
+			peb.NumberOfHeaps = 0x00000000;
+			peb.MaximumNumberOfHeaps = 0x00000010;
 		});
 
 		return context;
@@ -612,11 +619,11 @@ namespace
 			}
 
 			printf(
-				"Inst: %16llX - RAX: %16llX - RBX: %16llX - RCX: %16llX - RDX: %16llX - R8: %16llX - R9: %16llX - RDI: %16llX - RSI: %16llX\n",
+				"Inst: %16llX - RAX: %16llX - RBX: %16llX - RCX: %16llX - RDX: %16llX - R8: %16llX - R9: %16llX - RDI: %16llX - RSI: %16llX - %s\n",
 				address,
 				emu->reg(x64_register::rax), emu->reg(x64_register::rbx), emu->reg(x64_register::rcx),
 				emu->reg(x64_register::rdx), emu->reg(x64_register::r8), emu->reg(x64_register::r9),
-				emu->reg(x64_register::rdi), emu->reg(x64_register::rsi));
+				emu->reg(x64_register::rdi), emu->reg(x64_register::rsi), binary ? binary->name.c_str() : "<N/A>");
 		});
 
 		CONTEXT ctx{};
