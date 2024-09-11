@@ -293,14 +293,17 @@ namespace
 	}
 
 	NTSTATUS handle_NtCreateEvent(const syscall_context& c, const emulator_object<uint64_t> event_handle,
-	                              const ACCESS_MASK /*desired_access*/, const uint64_t object_attributes,
+	                              const ACCESS_MASK /*desired_access*/,
+	                              const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
 	                              const EVENT_TYPE event_type, const BOOLEAN initial_state)
 	{
 		if (object_attributes)
 		{
+			//const auto attributes = object_attributes.read();
+
 			puts("Unsupported object attributes");
-			c.emu.stop();
-			return STATUS_NOT_SUPPORTED;
+			//c.emu.stop();
+			//return STATUS_NOT_SUPPORTED;
 		}
 
 		event e{initial_state != FALSE, event_type};
@@ -415,12 +418,12 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtMapViewOfSection(const syscall_context& c, uint64_t section_handle, uint64_t process_handle,
-	                                   emulator_object<uint64_t> base_address, ULONG_PTR /*zero_bits*/,
-	                                   SIZE_T commit_size,
-	                                   const emulator_object<LARGE_INTEGER> section_offset,
-	                                   const emulator_object<SIZE_T> view_size, SECTION_INHERIT /*inherit_disposition*/,
-	                                   ULONG /*allocation_type*/, ULONG /*win32_protect*/)
+	auto handle_NtMapViewOfSection(const syscall_context& c, uint64_t section_handle, uint64_t process_handle,
+	                               emulator_object<uint64_t> base_address, ULONG_PTR /*zero_bits*/,
+	                               SIZE_T /*commit_size*/,
+	                               const emulator_object<LARGE_INTEGER> /*section_offset*/,
+	                               const emulator_object<SIZE_T> view_size, SECTION_INHERIT /*inherit_disposition*/,
+	                               ULONG /*allocation_type*/, ULONG /*win32_protect*/) -> NTSTATUS
 	{
 		if (process_handle != ~0ULL)
 		{
@@ -467,14 +470,16 @@ namespace
 
 
 	NTSTATUS handle_NtCreateIoCompletion(const syscall_context& c, const emulator_object<uint64_t> event_handle,
-	                                     const ACCESS_MASK desired_access, const uint64_t object_attributes,
+	                                     const ACCESS_MASK desired_access,
+	                                     const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
 	                                     uint32_t /*number_of_concurrent_threads*/)
 	{
 		return handle_NtCreateEvent(c, event_handle, desired_access, object_attributes, NotificationEvent, FALSE);
 	}
 
 	NTSTATUS handle_NtCreateWaitCompletionPacket(const syscall_context& c, const emulator_object<uint64_t> event_handle,
-	                                             const ACCESS_MASK desired_access, const uint64_t object_attributes)
+	                                             const ACCESS_MASK desired_access,
+	                                             const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
 	{
 		return handle_NtCreateEvent(c, event_handle, desired_access, object_attributes, NotificationEvent, FALSE);
 	}
@@ -711,6 +716,30 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
+	NTSTATUS handle_NtDuplicateObject(const syscall_context& /*c*/, uint64_t source_process_handle,
+	                                  uint64_t source_handle, uint64_t target_process_handle,
+	                                  const emulator_object<handle> target_handle,
+	                                  const ACCESS_MASK /*desired_access*/, const ULONG /*handle_attributes*/,
+	                                  const ULONG /*options*/)
+	{
+		if (source_process_handle != ~0ULL || target_process_handle != ~0ULL)
+		{
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		handle source{};
+
+		source.bits = source_handle;
+		if (source.value.is_pseudo)
+		{
+			target_handle.write(source);
+			return STATUS_SUCCESS;
+		}
+
+		puts("Duplicating non-pseudo object not supported yet!");
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtQuerySystemInformationEx(const syscall_context& c, const uint32_t info_class,
 	                                           const uint64_t input_buffer,
 	                                           const uint32_t input_buffer_length,
@@ -799,6 +828,53 @@ namespace
 			return STATUS_NOT_SUPPORTED;
 		}
 
+		if (info_class == ProcessImageInformation)
+		{
+			if (return_length)
+			{
+				return_length.write(sizeof(SECTION_IMAGE_INFORMATION));
+			}
+
+			if (process_information_length != sizeof(SECTION_IMAGE_INFORMATION))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<SECTION_IMAGE_INFORMATION> info{c.emu, process_information};
+			info.access([&](SECTION_IMAGE_INFORMATION& i)
+			{
+				const auto& mod = *c.proc.executable;
+
+				const emulator_object<IMAGE_DOS_HEADER> dos_header_obj{c.emu, mod.image_base};
+				const auto dos_header = dos_header_obj.read();
+
+				const emulator_object<IMAGE_NT_HEADERS> nt_headers_obj{c.emu, mod.image_base + dos_header.e_lfanew};
+				const auto nt_headers = nt_headers_obj.read();
+
+				const auto& file_header = nt_headers.FileHeader;
+				const auto& optional_header = nt_headers.OptionalHeader;
+
+				i.TransferAddress = nullptr;
+				i.MaximumStackSize = optional_header.SizeOfStackReserve;
+				i.CommittedStackSize = optional_header.SizeOfStackCommit;
+				i.SubSystemType = optional_header.Subsystem;
+				i.SubSystemMajorVersion = optional_header.MajorSubsystemVersion;
+				i.SubSystemMinorVersion = optional_header.MinorSubsystemVersion;
+				i.MajorOperatingSystemVersion = optional_header.MajorOperatingSystemVersion;
+				i.MinorOperatingSystemVersion = optional_header.MinorOperatingSystemVersion;
+				i.ImageCharacteristics = file_header.Characteristics;
+				i.DllCharacteristics = optional_header.DllCharacteristics;
+				i.Machine = file_header.Machine;
+				i.ImageContainsCode = TRUE;
+				i.ImageFlags = 0; // TODO
+				i.ImageFileSize = optional_header.SizeOfImage;
+				i.LoaderFlags = optional_header.LoaderFlags;
+				i.CheckSum = optional_header.CheckSum;
+			});
+
+			return STATUS_SUCCESS;
+		}
+
 		if (info_class == ProcessCookie)
 		{
 			if (return_length)
@@ -880,6 +956,7 @@ namespace
 		if (info_class == ProcessSchedulerSharedData
 			|| info_class == ProcessTlsInformation
 			|| info_class == ProcessConsoleHostProcess
+			|| info_class == ProcessFaultInformation
 			|| info_class == ProcessRaiseUMExceptionOnInvalidHandleClose)
 		{
 			return STATUS_SUCCESS;
@@ -1102,14 +1179,14 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtConnectPort(const syscall_context& c, const emulator_object<uint64_t> client_port_handle,
+	NTSTATUS handle_NtConnectPort(const syscall_context& c, const emulator_object<uint64_t> /*client_port_handle*/,
 	                              const emulator_object<UNICODE_STRING> server_port_name,
-	                              const emulator_object<SECURITY_QUALITY_OF_SERVICE> security_qos,
+	                              const emulator_object<SECURITY_QUALITY_OF_SERVICE> /*security_qos*/,
 	                              const emulator_object<PORT_VIEW> client_shared_memory,
-	                              const emulator_object<REMOTE_PORT_VIEW> server_shared_memory,
-	                              const emulator_object<ULONG> maximum_message_length,
-	                              uint64_t connection_info,
-	                              const emulator_object<ULONG> connection_info_length)
+	                              const emulator_object<REMOTE_PORT_VIEW> /*server_shared_memory*/,
+	                              const emulator_object<ULONG> /*maximum_message_length*/,
+	                              uint64_t /*connection_info*/,
+	                              const emulator_object<ULONG> /*connection_info_length*/)
 	{
 		const auto port_name = read_unicode_string(c.emu, server_port_name);
 		printf("NtConnectPort: %S\n", port_name.c_str());
@@ -1118,7 +1195,7 @@ namespace
 		{
 			const auto address = c.emu.find_free_allocation_base(view.ViewSize);
 			c.emu.allocate_memory(address,
-				view.ViewSize, memory_permission::read_write);
+			                      view.ViewSize, memory_permission::read_write);
 
 			view.ViewBase = reinterpret_cast<void*>(address);
 		});
@@ -1196,6 +1273,15 @@ namespace
 	{
 		puts("NtDxgkIsFeatureEnabled not supported");
 		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtInitializeNlsFiles(const syscall_context& /*c*/, const emulator_object<uint64_t> base_address,
+	                                     const emulator_object<LCID> default_locale_id,
+	                                     const emulator_object<LARGE_INTEGER> /*default_casing_table_size*/)
+	{
+		default_locale_id.write(0x407);
+		base_address.write(0x1337);
+		return STATUS_SUCCESS;
 	}
 
 	NTSTATUS handle_NtContinue(const syscall_context& c, const emulator_object<CONTEXT> thread_context,
@@ -1368,6 +1454,28 @@ namespace
 		atom.write(index);
 		return STATUS_SUCCESS;
 	}
+
+	NTSTATUS handle_NtUnmapViewOfSection(const syscall_context& c, uint64_t process_handle, uint64_t base_address
+	)
+	{
+		if (process_handle != ~0ULL)
+		{
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		const auto* mod = c.proc.module_manager.find_by_address(base_address);
+		if (!mod)
+		{
+			puts("Unmapping non-module section not supported!");
+		}
+		else
+		{
+			printf("Unmapping section %s not supported!\n", mod->name.c_str());
+		}
+
+		c.emu.stop();
+		return STATUS_NOT_SUPPORTED;
+	}
 }
 
 syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports, const exported_symbols& win32u_exports)
@@ -1437,6 +1545,9 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports, co
 	add_handler(NtQueryInformationToken);
 	add_handler(NtDxgkIsFeatureEnabled);
 	add_handler(NtAddAtomEx);
+	add_handler(NtInitializeNlsFiles);
+	add_handler(NtUnmapViewOfSection);
+	add_handler(NtDuplicateObject);
 
 #undef add_handler
 }

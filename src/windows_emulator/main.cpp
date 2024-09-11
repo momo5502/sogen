@@ -338,7 +338,7 @@ namespace
 
 			peb.ProcessHeap = nullptr;
 			peb.ProcessHeaps = nullptr;
-			peb.HeapSegmentReserve = 0x0000000000100000;
+			peb.HeapSegmentReserve = 0x0000000000100000; // TODO: Read from executable
 			peb.HeapSegmentCommit = 0x0000000000002000;
 			peb.HeapDeCommitTotalFreeThreshold = 0x0000000000010000;
 			peb.HeapDeCommitFreeBlockThreshold = 0x0000000000001000;
