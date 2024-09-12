@@ -318,7 +318,7 @@ namespace
 		context.process_params.access([&](RTL_USER_PROCESS_PARAMETERS& proc_params)
 		{
 			proc_params.Length = sizeof(proc_params);
-			proc_params.Flags = 0x6001 | 0x80000000; // Prevent CsrClientConnectToServer
+			proc_params.Flags = 0x6001; //| 0x80000000; // Prevent CsrClientConnectToServer
 
 			proc_params.ConsoleHandle = CONSOLE_HANDLE.h;
 			proc_params.StandardOutput = STDOUT_HANDLE.h;

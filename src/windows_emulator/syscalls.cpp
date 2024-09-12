@@ -2,6 +2,8 @@
 #include "syscalls.hpp"
 #include "context_frame.hpp"
 
+#include <utils/io.hpp>
+
 struct syscall_context
 {
 	x64_emulator& emu;
@@ -631,8 +633,6 @@ namespace
 
 		if (info_class == SystemProcessorInformation)
 		{
-			puts("PROC INFO");
-			c.proc.verbose = true;
 			if (return_length)
 			{
 				return_length.write(sizeof(SYSTEM_PROCESSOR_INFORMATION));
@@ -1231,10 +1231,7 @@ namespace
 
 		client_shared_memory.access([&](PORT_VIEW& view)
 		{
-			const auto address = c.emu.find_free_allocation_base(view.ViewSize);
-			c.emu.allocate_memory(address,
-			                      view.ViewSize, memory_permission::read_write);
-
+			const auto address = c.emu.allocate_memory(view.ViewSize, memory_permission::read_write);
 			view.ViewBase = reinterpret_cast<void*>(address);
 		});
 
@@ -1319,12 +1316,23 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtInitializeNlsFiles(const syscall_context& /*c*/, const emulator_object<uint64_t> base_address,
+	NTSTATUS handle_NtInitializeNlsFiles(const syscall_context& c, const emulator_object<uint64_t> base_address,
 	                                     const emulator_object<LCID> default_locale_id,
 	                                     const emulator_object<LARGE_INTEGER> /*default_casing_table_size*/)
 	{
+		const auto locale_file = utils::io::read_file(R"(C:\Windows\System32\locale.nls)");
+		if (locale_file.empty())
+		{
+			return STATUS_FILE_INVALID;
+		}
+
+		const auto size = page_align_up(locale_file.size());
+		const auto base = c.emu.allocate_memory(size, memory_permission::read);
+		c.emu.write_memory(base, locale_file.data(), locale_file.size());
+
+		base_address.write(base);
 		default_locale_id.write(0x407);
-		base_address.write(0x1337);
+
 		return STATUS_SUCCESS;
 	}
 

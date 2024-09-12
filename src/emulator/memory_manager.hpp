@@ -63,6 +63,17 @@ public:
 
 	region_info get_region_info(uint64_t address);
 
+	uint64_t allocate_memory(const size_t size, const memory_permission permissions, const bool reserve_only = false)
+	{
+		const auto allocation_base = this->find_free_allocation_base(size);
+		if (!allocate_memory(allocation_base, size, permissions, reserve_only))
+		{
+			return 0;
+		}
+
+		return allocation_base;
+	}
+
 private:
 	using reserved_region_map = std::map<uint64_t, reserved_region>;
 	reserved_region_map reserved_regions_{};

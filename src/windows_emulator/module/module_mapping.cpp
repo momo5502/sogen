@@ -2,6 +2,7 @@
 #include "module_mapping.hpp"
 #include <address_utils.hpp>
 
+#include <utils/io.hpp>
 #include <utils/buffer_accessor.hpp>
 
 namespace
@@ -173,12 +174,6 @@ namespace
 		}
 	}
 
-	std::vector<uint8_t> load_file(const std::filesystem::path& file)
-	{
-		std::ifstream stream(file, std::ios::in | std::ios::binary);
-		return {(std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>()};
-	}
-
 	std::optional<mapped_module> map_module(emulator& emu, const std::span<const uint8_t> data,
 	                                        std::filesystem::path file)
 	{
@@ -247,7 +242,7 @@ std::optional<mapped_module> map_module_from_data(emulator& emu, const std::span
 
 std::optional<mapped_module> map_module_from_file(emulator& emu, std::filesystem::path file)
 {
-	const auto data = load_file(file);
+	const auto data = utils::io::read_file(file);
 	if (data.empty())
 	{
 		return {};
