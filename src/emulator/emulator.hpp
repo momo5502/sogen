@@ -32,10 +32,11 @@ using instruction_hook_callback = std::function<instruction_hook_continuation()>
 using interrupt_hook_callback = std::function<void(int interrupt)>;
 using simple_memory_hook_callback = std::function<void(uint64_t address, size_t size)>;
 using complex_memory_hook_callback = std::function<void(uint64_t address, size_t size, memory_operation operation)>;
-using memory_violation_hook_callback = std::function<memory_violation_continuation(uint64_t address, size_t size, memory_operation operation,
-                                                          memory_violation_type type)>;
+using memory_violation_hook_callback = std::function<memory_violation_continuation(
+	uint64_t address, size_t size, memory_operation operation,
+	memory_violation_type type)>;
 
-class emulator : public memory_manager
+class emulator : public memory_manager, public utils::serializable
 {
 public:
 	emulator() = default;
@@ -84,6 +85,18 @@ public:
 		return this->hook_simple_memory_access(address, size, std::move(callback), memory_operation::exec);
 	}
 
+	void serialize(utils::buffer_serializer& buffer) const final
+	{
+		this->serialize_memory_state(buffer);
+		this->serialize_state(buffer);
+	}
+
+	void deserialize(utils::buffer_deserializer& buffer) final
+	{
+		this->deserialize_memory_state(buffer);
+		this->deserialize_state(buffer);
+	}
+
 private:
 	emulator_hook* hook_simple_memory_access(const uint64_t address, const size_t size,
 	                                         simple_memory_hook_callback callback, const memory_operation operation)
@@ -96,4 +109,7 @@ private:
 			                                c(a, s);
 		                                });
 	}
+
+	virtual void serialize_state(utils::buffer_serializer& buffer) const = 0;
+	virtual void deserialize_state(utils::buffer_deserializer& buffer) = 0;
 };

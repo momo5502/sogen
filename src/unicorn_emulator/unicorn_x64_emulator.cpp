@@ -106,6 +106,47 @@ namespace unicorn
 			std::vector<hook_entry> hooks_;
 		};
 
+		class uc_context_serializer
+		{
+		public:
+			uc_context_serializer(uc_engine* uc)
+				: uc_(uc)
+				  , size_(uc_context_size(uc))
+			{
+				uce(uc_context_alloc(uc, &this->context_));
+			}
+
+			~uc_context_serializer()
+			{
+				if (this->context_)
+				{
+					(void)uc_context_free(this->context_);
+				}
+			}
+
+			void serialize(utils::buffer_serializer& buffer) const
+			{
+				uce(uc_context_save(this->uc_, this->context_));
+				buffer.write(this->context_, this->size_);
+			}
+
+			void deserialize(utils::buffer_deserializer& buffer) const
+			{
+				buffer.read(this->context_, this->size_);
+				uce(uc_context_restore(this->uc_, this->context_));
+			}
+
+			uc_context_serializer(uc_context_serializer&&) = delete;
+			uc_context_serializer(const uc_context_serializer&) = delete;
+			uc_context_serializer& operator=(uc_context_serializer&&) = delete;
+			uc_context_serializer& operator=(const uc_context_serializer&) = delete;
+
+		private:
+			uc_engine* uc_{};
+			uc_context* context_{};
+			size_t size_{};
+		};
+
 		void add_read_hook(uc_engine* uc, const uint64_t address, const size_t size, hook_container& container,
 		                   const std::shared_ptr<complex_memory_hook_callback>& callback)
 		{
@@ -453,6 +494,18 @@ namespace unicorn
 			operator uc_engine*() const
 			{
 				return this->uc_;
+			}
+
+			void serialize_state(utils::buffer_serializer& buffer) const override
+			{
+				const uc_context_serializer serializer(this->uc_);
+				serializer.serialize(buffer);
+			}
+
+			void deserialize_state(utils::buffer_deserializer& buffer) override
+			{
+				const uc_context_serializer serializer(this->uc_);
+				serializer.deserialize(buffer);
 			}
 
 		private:
