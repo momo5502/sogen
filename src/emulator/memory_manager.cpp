@@ -84,17 +84,52 @@ static void serialize(utils::buffer_serializer& buffer, const memory_manager::re
 static void deserialize(utils::buffer_deserializer& buffer, memory_manager::reserved_region& region)
 {
 	region.length = static_cast<size_t>(buffer.read<uint64_t>());
-	region.committed_regions = buffer.read_map<uint64_t, memory_manager::committed_region>();
+	buffer.read_map(region.committed_regions);
 }
 
 void memory_manager::serialize_memory_state(utils::buffer_serializer& buffer) const
 {
 	buffer.write_map(this->reserved_regions_);
+
+	if (!this->use_in_place_serialization())
+	{
+		std::vector<uint8_t> data{};
+
+		for (const auto& reserved_region : this->reserved_regions_)
+		{
+			for (const auto& region : reserved_region.second.committed_regions)
+			{
+				data.resize(region.second.length);
+
+				this->read_memory(region.first, data.data(), region.second.length);
+
+				buffer.write(data.data(), region.second.length);
+			}
+		}
+	}
 }
 
 void memory_manager::deserialize_memory_state(utils::buffer_deserializer& buffer)
 {
-	this->reserved_regions_ = buffer.read_map<uint64_t, reserved_region>();
+	buffer.read_map(this->reserved_regions_);
+
+	if (!this->use_in_place_serialization())
+	{
+		std::vector<uint8_t> data{};
+
+		for (const auto& reserved_region : this->reserved_regions_)
+		{
+			for (const auto& region : reserved_region.second.committed_regions)
+			{
+				data.resize(region.second.length);
+
+				buffer.read(data.data(), region.second.length);
+
+				this->map_memory(region.first, region.second.length, region.second.pemissions);
+				this->write_memory(region.first, data.data(), region.second.length);
+			}
+		}
+	}
 }
 
 bool memory_manager::protect_memory(const uint64_t address, const size_t size, const memory_permission permissions,

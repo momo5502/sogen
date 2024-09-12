@@ -45,8 +45,8 @@ public:
 		this->write_memory(address, &value, sizeof(value));
 	}
 
-	virtual void read_memory(uint64_t address, void* data, size_t size) = 0;
-	virtual bool try_read_memory(uint64_t address, void* data, size_t size) = 0;
+	virtual void read_memory(uint64_t address, void* data, size_t size) const = 0;
+	virtual bool try_read_memory(uint64_t address, void* data, size_t size) const = 0;
 	virtual void write_memory(uint64_t address, const void* data, size_t size) = 0;
 
 	bool protect_memory(uint64_t address, size_t size, memory_permission permissions,
@@ -75,9 +75,21 @@ public:
 		return allocation_base;
 	}
 
+	bool use_in_place_serialization() const
+	{
+		return this->in_place_serialization_;
+	}
+
+	void set_in_place_serialization(const bool value)
+	{
+		this->in_place_serialization_ = value;
+	}
+
 private:
 	using reserved_region_map = std::map<uint64_t, reserved_region>;
 	reserved_region_map reserved_regions_{};
+
+	bool in_place_serialization_{false};
 
 	reserved_region_map::iterator find_reserved_region(uint64_t address);
 	bool overlaps_reserved_region(uint64_t address, size_t size) const;

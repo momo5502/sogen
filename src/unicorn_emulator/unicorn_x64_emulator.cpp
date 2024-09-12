@@ -109,10 +109,12 @@ namespace unicorn
 		class uc_context_serializer
 		{
 		public:
-			uc_context_serializer(uc_engine* uc)
+			uc_context_serializer(uc_engine* uc, const bool in_place)
 				: uc_(uc)
-				  , size_(uc_context_size(uc))
 			{
+				uc_ctl_context_mode(uc, UC_CTL_CONTEXT_CPU | (in_place ? UC_CTL_CONTEXT_MEMORY : 0));
+
+				this->size_ = uc_context_size(uc);
 				uce(uc_context_alloc(uc, &this->context_));
 			}
 
@@ -296,12 +298,12 @@ namespace unicorn
 				uce(uc_mem_unmap(*this, address, size));
 			}
 
-			bool try_read_memory(const uint64_t address, void* data, const size_t size) override
+			bool try_read_memory(const uint64_t address, void* data, const size_t size) const override
 			{
 				return uc_mem_read(*this, address, data, size) == UC_ERR_OK;
 			}
 
-			void read_memory(const uint64_t address, void* data, const size_t size) override
+			void read_memory(const uint64_t address, void* data, const size_t size) const override
 			{
 				uce(uc_mem_read(*this, address, data, size));
 			}
@@ -498,13 +500,13 @@ namespace unicorn
 
 			void serialize_state(utils::buffer_serializer& buffer) const override
 			{
-				const uc_context_serializer serializer(this->uc_);
+				const uc_context_serializer serializer(this->uc_, this->use_in_place_serialization());
 				serializer.serialize(buffer);
 			}
 
 			void deserialize_state(utils::buffer_deserializer& buffer) override
 			{
-				const uc_context_serializer serializer(this->uc_);
+				const uc_context_serializer serializer(this->uc_, this->use_in_place_serialization());
 				serializer.deserialize(buffer);
 			}
 

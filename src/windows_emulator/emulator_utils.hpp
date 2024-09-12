@@ -2,21 +2,21 @@
 #include "memory_utils.hpp"
 
 template <typename T>
-class emulator_object
+class emulator_object : utils::serializable
 {
 public:
 	using value_type = T;
 
 	emulator_object() = default;
 
-	emulator_object(emulator& emu, const void* address)
-		: emulator_object(emu, reinterpret_cast<uint64_t>(address))
+	emulator_object(emulator& emu, const uint64_t address = 0)
+		: emu_(&emu)
+		  , address_(address)
 	{
 	}
 
-	emulator_object(emulator& emu, const uint64_t address)
-		: emu_(&emu)
-		  , address_(address)
+	emulator_object(emulator& emu, const void* address)
+		: emulator_object(emu, reinterpret_cast<uint64_t>(address))
 	{
 	}
 
@@ -68,15 +68,28 @@ public:
 		this->write(obj, index);
 	}
 
+	void serialize(utils::buffer_serializer& buffer) const override
+	{
+		buffer.write(this->address_);
+	}
+
+	void deserialize(utils::buffer_deserializer& buffer) override
+	{
+		buffer.read(this->address_);
+	}
+
 private:
 	emulator* emu_{};
 	uint64_t address_{};
 };
 
-class emulator_allocator
+class emulator_allocator : utils::serializable
 {
 public:
-	emulator_allocator() = default;
+	emulator_allocator(emulator& emu)
+		: emu_(&emu)
+	{
+	}
 
 	emulator_allocator(emulator& emu, const uint64_t address, const uint64_t size)
 		: emu_(&emu)
@@ -144,6 +157,20 @@ public:
 	uint64_t get_size() const
 	{
 		return this->size_;
+	}
+
+	void serialize(utils::buffer_serializer& buffer) const override
+	{
+		buffer.write(this->address_);
+		buffer.write(this->size_);
+		buffer.write(this->active_address_);
+	}
+
+	void deserialize(utils::buffer_deserializer& buffer) override
+	{
+		buffer.read(this->address_);
+		buffer.read(this->size_);
+		buffer.read(this->active_address_);
 	}
 
 private:

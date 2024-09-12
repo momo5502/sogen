@@ -68,7 +68,8 @@ constexpr handle make_pseudo_handle(const uint32_t id, const handle_types::type 
 }
 
 template <handle_types::type Type, typename T>
-class handle_store
+	requires(std::is_base_of_v<utils::serializable, T>)
+class handle_store : utils::serializable
 {
 public:
 	handle store(T value)
@@ -132,6 +133,16 @@ public:
 		hh.bits = h;
 
 		return this->erase(hh);
+	}
+
+	void serialize(utils::buffer_serializer& buffer) const override
+	{
+		buffer.write_map(this->store_);
+	}
+
+	void deserialize(utils::buffer_deserializer& buffer) override
+	{
+		buffer.read_map(this->store_);
 	}
 
 private:

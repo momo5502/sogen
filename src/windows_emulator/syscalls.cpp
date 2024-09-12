@@ -308,7 +308,10 @@ namespace
 			//return STATUS_NOT_SUPPORTED;
 		}
 
-		event e{initial_state != FALSE, event_type};
+		event e{};
+		e.type = event_type;
+		e.signaled = initial_state != FALSE;
+
 		const auto handle = c.proc.events.store(std::move(e));
 		event_handle.write(handle.bits);
 
@@ -414,7 +417,10 @@ namespace
 			return STATUS_FILE_INVALID;
 		}
 
-		const auto handle = c.proc.files.store(file{{}, std::move(filename)});
+		file f{};
+		f.name = std::move(filename);
+
+		const auto handle = c.proc.files.store(std::move(f));
 		section_handle.write(handle.bits);
 
 		return STATUS_SUCCESS;
@@ -1316,12 +1322,15 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtAlpcSendWaitReceivePort(const syscall_context& /*c*/, const uint64_t /*port_handle*/, const ULONG /*flags*/,
+	NTSTATUS handle_NtAlpcSendWaitReceivePort(const syscall_context& /*c*/, const uint64_t /*port_handle*/,
+	                                          const ULONG /*flags*/,
 	                                          const emulator_object<PORT_MESSAGE> /*send_message*/,
-	                                          const emulator_object<ALPC_MESSAGE_ATTRIBUTES> /*send_message_attributes*/,
+	                                          const emulator_object<ALPC_MESSAGE_ATTRIBUTES> /*send_message_attributes*/
+	                                          ,
 	                                          const emulator_object<PORT_MESSAGE> receive_message,
 	                                          const emulator_object<SIZE_T> /*buffer_length*/,
-	                                          const emulator_object<ALPC_MESSAGE_ATTRIBUTES> /*receive_message_attributes*/,
+	                                          const emulator_object<ALPC_MESSAGE_ATTRIBUTES>
+	                                          /*receive_message_attributes*/,
 	                                          const emulator_object<LARGE_INTEGER> /*timeout*/)
 	{
 		receive_message.access([](PORT_MESSAGE& msg)

@@ -2,10 +2,9 @@
 #include "mapped_module.hpp"
 #include <emulator.hpp>
 
-class module_manager
+class module_manager : public utils::serializable
 {
 public:
-	module_manager() = default; // TODO: Get rid of that
 	module_manager(emulator& emu);
 
 	mapped_module* map_module(const std::filesystem::path& file);
@@ -20,6 +19,9 @@ public:
 
 		return nullptr;
 	}
+
+	void serialize(utils::buffer_serializer& buffer) const override;
+	void deserialize(utils::buffer_deserializer& buffer) override;
 
 private:
 	emulator* emu_{};

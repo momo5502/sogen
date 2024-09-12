@@ -289,7 +289,7 @@ namespace
 
 	process_context setup_context(x64_emulator& emu, const std::filesystem::path& file)
 	{
-		process_context context{};
+		process_context context{emu};
 
 		setup_stack(emu, STACK_ADDRESS, STACK_SIZE);
 		setup_gdt(emu);
