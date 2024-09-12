@@ -3,6 +3,7 @@
 
 #include "memory_region.hpp"
 #include "address_utils.hpp"
+#include "serialization.hpp"
 
 struct region_info : basic_memory_region
 {
@@ -85,4 +86,8 @@ private:
 	virtual void unmap_memory(uint64_t address, size_t size) = 0;
 
 	virtual void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) = 0;
+
+protected:
+	void serialize_memory_state(utils::buffer_serializer& buffer) const;
+	void deserialize_memory_state(utils::buffer_deserializer& buffer);
 };

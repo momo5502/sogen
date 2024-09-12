@@ -1316,6 +1316,22 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	NTSTATUS handle_NtAlpcSendWaitReceivePort(const syscall_context& /*c*/, const uint64_t /*port_handle*/, const ULONG /*flags*/,
+	                                          const emulator_object<PORT_MESSAGE> /*send_message*/,
+	                                          const emulator_object<ALPC_MESSAGE_ATTRIBUTES> /*send_message_attributes*/,
+	                                          const emulator_object<PORT_MESSAGE> receive_message,
+	                                          const emulator_object<SIZE_T> /*buffer_length*/,
+	                                          const emulator_object<ALPC_MESSAGE_ATTRIBUTES> /*receive_message_attributes*/,
+	                                          const emulator_object<LARGE_INTEGER> /*timeout*/)
+	{
+		receive_message.access([](PORT_MESSAGE& msg)
+		{
+			msg.u1.Length = 0;
+		});
+
+		return STATUS_SUCCESS;
+	}
+
 	NTSTATUS handle_NtInitializeNlsFiles(const syscall_context& c, const emulator_object<uint64_t> base_address,
 	                                     const emulator_object<LCID> default_locale_id,
 	                                     const emulator_object<LARGE_INTEGER> /*default_casing_table_size*/)
@@ -1602,6 +1618,7 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports, co
 	add_handler(NtDuplicateObject);
 	add_handler(NtQueryInformationThread);
 	add_handler(NtQueryWnfStateNameInformation);
+	add_handler(NtAlpcSendWaitReceivePort);
 
 #undef add_handler
 }

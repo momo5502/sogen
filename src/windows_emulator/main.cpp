@@ -318,7 +318,7 @@ namespace
 		context.process_params.access([&](RTL_USER_PROCESS_PARAMETERS& proc_params)
 		{
 			proc_params.Length = sizeof(proc_params);
-			proc_params.Flags = 0x6001; //| 0x80000000; // Prevent CsrClientConnectToServer
+			proc_params.Flags = 0x6001 | 0x80000000; // Prevent CsrClientConnectToServer
 
 			proc_params.ConsoleHandle = CONSOLE_HANDLE.h;
 			proc_params.StandardOutput = STDOUT_HANDLE.h;
@@ -572,6 +572,7 @@ namespace
 			const auto permission = get_permission_string(operation);
 			const auto ip = emu->read_instruction_pointer();
 
+
 			if (type == memory_violation_type::protection)
 			{
 				printf("Protection violation: %llX (%zX) - %s at %llX\n", address, size, permission.c_str(), ip);
@@ -585,17 +586,22 @@ namespace
 			return memory_violation_continuation::resume;
 		});
 
-		/*
 		watch_object(*emu, context.teb);
 		watch_object(*emu, context.peb);
 		watch_object(*emu, context.process_params);
 		watch_object(*emu, context.kusd);
-		*/
+
 		context.verbose = false;
 
 		emu->hook_memory_execution(0, std::numeric_limits<size_t>::max(), [&](const uint64_t address, const size_t)
 		{
 			++context.executed_instructions;
+
+			if(address == 0x1800629BA)
+			{
+				puts("Bad dll");
+				emu->stop();
+			}
 
 			const auto* binary = context.module_manager.find_by_address(address);
 

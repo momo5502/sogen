@@ -63,6 +63,40 @@ namespace
 	}
 }
 
+static void serialize(utils::buffer_serializer& buffer, const memory_manager::committed_region& region)
+{
+	buffer.write<uint64_t>(region.length);
+	buffer.write(region.pemissions);
+}
+
+static void deserialize(utils::buffer_deserializer& buffer, memory_manager::committed_region& region)
+{
+	region.length = static_cast<size_t>(buffer.read<uint64_t>());
+	region.pemissions = buffer.read<memory_permission>();
+}
+
+static void serialize(utils::buffer_serializer& buffer, const memory_manager::reserved_region& region)
+{
+	buffer.write<uint64_t>(region.length);
+	buffer.write_map(region.committed_regions);
+}
+
+static void deserialize(utils::buffer_deserializer& buffer, memory_manager::reserved_region& region)
+{
+	region.length = static_cast<size_t>(buffer.read<uint64_t>());
+	region.committed_regions = buffer.read_map<uint64_t, memory_manager::committed_region>();
+}
+
+void memory_manager::serialize_memory_state(utils::buffer_serializer& buffer) const
+{
+	buffer.write_map(this->reserved_regions_);
+}
+
+void memory_manager::deserialize_memory_state(utils::buffer_deserializer& buffer)
+{
+	this->reserved_regions_ = buffer.read_map<uint64_t, reserved_region>();
+}
+
 bool memory_manager::protect_memory(const uint64_t address, const size_t size, const memory_permission permissions,
                                     memory_permission* old_permissions)
 {
@@ -293,7 +327,7 @@ uint64_t memory_manager::find_free_allocation_base(const size_t size, const uint
 	for (const auto& region : this->reserved_regions_)
 	{
 		const auto region_end = region.first + region.second.length;
-		if(region_end < start_address)
+		if (region_end < start_address)
 		{
 			continue;
 		}
