@@ -271,7 +271,7 @@ namespace
 
 			const auto total_length = gs.get_next_address() - context.process_params.value();
 
-			proc_params.Length = std::max(sizeof(proc_params), total_length);
+			proc_params.Length = static_cast<uint32_t>(std::max(sizeof(proc_params), total_length));
 			proc_params.MaximumLength = proc_params.Length;
 		});
 
