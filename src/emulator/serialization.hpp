@@ -11,12 +11,21 @@ namespace utils
 	class buffer_serializer;
 	class buffer_deserializer;
 
+	template <typename T>
+	concept Serializable = requires(T a, const T ac, buffer_serializer & serializer, buffer_deserializer & deserializer)
+	{
+		{ ac.serialize(serializer) } -> std::same_as<void>;
+		{ a.deserialize(deserializer) } -> std::same_as<void>;
+	};
+
+	/* Use concept instead, to prevent overhead of virtual function calls
 	struct serializable
 	{
 		virtual ~serializable() = default;
 		virtual void serialize(buffer_serializer& buffer) const = 0;
 		virtual void deserialize(buffer_deserializer& buffer) = 0;
 	};
+	*/
 
 	namespace detail
 	{
@@ -104,7 +113,7 @@ namespace utils
 		template <typename T>
 		void read(T& object)
 		{
-			if constexpr (std::is_base_of_v<serializable, T>)
+			if constexpr (Serializable<T>)
 			{
 				object.deserialize(*this);
 			}
@@ -258,7 +267,7 @@ namespace utils
 		template <typename T>
 		void write(const T& object)
 		{
-			if constexpr (std::is_base_of_v<serializable, T>)
+			if constexpr (Serializable<T>)
 			{
 				object.serialize(*this);
 			}

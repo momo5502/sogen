@@ -7,7 +7,7 @@
 
 #include <x64_emulator.hpp>
 
-struct event : utils::serializable
+struct event
 {
 	bool signaled{};
 	EVENT_TYPE type{};
@@ -24,51 +24,51 @@ struct event : utils::serializable
 		return res;
 	}
 
-	void serialize(utils::buffer_serializer& buffer) const override
+	void serialize(utils::buffer_serializer& buffer) const
 	{
 		buffer.write(this->signaled);
 		buffer.write(this->type);
 	}
 
-	void deserialize(utils::buffer_deserializer& buffer) override
+	void deserialize(utils::buffer_deserializer& buffer)
 	{
 		buffer.read(this->signaled);
 		buffer.read(this->type);
 	}
 };
 
-struct file : utils::serializable
+struct file
 {
 	utils::nt::handle<INVALID_HANDLE_VALUE> handle{};
 	std::wstring name{};
 
-	void serialize(utils::buffer_serializer& buffer) const override
+	void serialize(utils::buffer_serializer& buffer) const
 	{
 		buffer.write(this->name);
 		// TODO: Serialize handle
 	}
 
-	void deserialize(utils::buffer_deserializer& buffer) override
+	void deserialize(utils::buffer_deserializer& buffer)
 	{
 		buffer.read(this->name);
 		this->handle = INVALID_HANDLE_VALUE;
 	}
 };
 
-struct semaphore : utils::serializable
+struct semaphore
 {
 	std::wstring name{};
 	volatile uint32_t current_count{};
 	uint32_t max_count{};
 
-	void serialize(utils::buffer_serializer& buffer) const override
+	void serialize(utils::buffer_serializer& buffer) const
 	{
 		buffer.write(this->name);
 		buffer.write(this->current_count);
 		buffer.write(this->max_count);
 	}
 
-	void deserialize(utils::buffer_deserializer& buffer) override
+	void deserialize(utils::buffer_deserializer& buffer)
 	{
 		buffer.read(this->name);
 		buffer.read(this->current_count);
@@ -76,7 +76,7 @@ struct semaphore : utils::serializable
 	}
 };
 
-struct process_context : utils::serializable
+struct process_context
 {
 	process_context(x64_emulator& emu)
 		: emu(&emu)
@@ -112,7 +112,7 @@ struct process_context : utils::serializable
 
 	bool verbose{false};
 
-	void serialize(utils::buffer_serializer& buffer) const override
+	void serialize(utils::buffer_serializer& buffer) const
 	{
 		buffer.write(this->executed_instructions);
 		buffer.write(this->teb);
@@ -133,7 +133,7 @@ struct process_context : utils::serializable
 		buffer.write(this->gs_segment);
 	}
 
-	void deserialize(utils::buffer_deserializer& buffer) override
+	void deserialize(utils::buffer_deserializer& buffer)
 	{
 		buffer.read(this->executed_instructions);
 		buffer.read(this->teb);

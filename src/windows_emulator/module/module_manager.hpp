@@ -2,7 +2,7 @@
 #include "mapped_module.hpp"
 #include <emulator.hpp>
 
-class module_manager : public utils::serializable
+class module_manager
 {
 public:
 	module_manager(emulator& emu);
@@ -20,8 +20,8 @@ public:
 		return nullptr;
 	}
 
-	void serialize(utils::buffer_serializer& buffer) const override;
-	void deserialize(utils::buffer_deserializer& buffer) override;
+	void serialize(utils::buffer_serializer& buffer) const;
+	void deserialize(utils::buffer_deserializer& buffer);
 
 private:
 	emulator* emu_{};

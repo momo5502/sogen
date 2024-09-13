@@ -46,7 +46,7 @@ using memory_violation_hook_callback = std::function<memory_violation_continuati
 	uint64_t address, size_t size, memory_operation operation,
 	memory_violation_type type)>;
 
-class emulator : public memory_manager, public utils::serializable
+class emulator : public memory_manager
 {
 public:
 	emulator() = default;
@@ -97,12 +97,12 @@ public:
 		return this->hook_simple_memory_access(address, size, std::move(callback), memory_operation::exec);
 	}
 
-	void serialize(utils::buffer_serializer& buffer) const final
+	void serialize(utils::buffer_serializer& buffer) const
 	{
 		this->perform_serialization(buffer, false);
 	}
 
-	void deserialize(utils::buffer_deserializer& buffer) final
+	void deserialize(utils::buffer_deserializer& buffer)
 	{
 		this->perform_deserialization(buffer, false);
 	}

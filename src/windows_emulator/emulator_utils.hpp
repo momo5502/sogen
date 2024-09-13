@@ -2,7 +2,7 @@
 #include "memory_utils.hpp"
 
 template <typename T>
-class emulator_object : utils::serializable
+class emulator_object
 {
 public:
 	using value_type = T;
@@ -68,12 +68,12 @@ public:
 		this->write(obj, index);
 	}
 
-	void serialize(utils::buffer_serializer& buffer) const override
+	void serialize(utils::buffer_serializer& buffer) const
 	{
 		buffer.write(this->address_);
 	}
 
-	void deserialize(utils::buffer_deserializer& buffer) override
+	void deserialize(utils::buffer_deserializer& buffer)
 	{
 		buffer.read(this->address_);
 	}
@@ -83,7 +83,7 @@ private:
 	uint64_t address_{};
 };
 
-class emulator_allocator : utils::serializable
+class emulator_allocator
 {
 public:
 	emulator_allocator(emulator& emu)
@@ -159,14 +159,14 @@ public:
 		return this->size_;
 	}
 
-	void serialize(utils::buffer_serializer& buffer) const override
+	void serialize(utils::buffer_serializer& buffer) const
 	{
 		buffer.write(this->address_);
 		buffer.write(this->size_);
 		buffer.write(this->active_address_);
 	}
 
-	void deserialize(utils::buffer_deserializer& buffer) override
+	void deserialize(utils::buffer_deserializer& buffer)
 	{
 		buffer.read(this->address_);
 		buffer.read(this->size_);
