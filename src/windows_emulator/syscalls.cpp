@@ -1428,6 +1428,12 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (filename == L"\\Device\\DeviceApi\\CMApi")
+		{
+			file_handle.write(CM_API.bits);
+			return STATUS_SUCCESS;
+		}
+
 		handle root_handle{};
 		root_handle.bits = reinterpret_cast<uint64_t>(attributes.RootDirectory);
 		if (root_handle.value.is_pseudo && (filename == L"\\Reference" || filename == L"\\Connect"))
