@@ -171,7 +171,7 @@ public:
 		{
 			this->hooks_[{addr, size, type}] = scoped_hook(*this->emu_, this->emu_->hook_memory_access(
 				                                               addr, size, map_breakpoint_type(type),
-				                                               [this](uint64_t, size_t, memory_operation)
+				                                               [this](uint64_t, size_t, uint64_t, memory_operation)
 				                                               {
 					                                               this->on_interrupt();
 				                                               }));

@@ -204,7 +204,8 @@ namespace
 		emu.reg<uint16_t>(x64_register::ss, 0x2B);
 	}
 
-	void setup_context(process_context& context, x64_emulator& emu, const std::filesystem::path& file)
+	void setup_context(process_context& context, x64_emulator& emu, const std::filesystem::path& file,
+	                   const std::vector<std::wstring>& arguments)
 	{
 		setup_stack(emu, STACK_ADDRESS, STACK_SIZE);
 		setup_gdt(emu);
@@ -218,7 +219,6 @@ namespace
 
 		context.teb = gs.reserve<TEB>();
 		context.peb = gs.reserve<PEB>();
-		context.process_params = gs.reserve<RTL_USER_PROCESS_PARAMETERS>();
 
 		context.teb.access([&](TEB& teb)
 		{
@@ -230,9 +230,25 @@ namespace
 			teb.ProcessEnvironmentBlock = context.peb.ptr();
 		});
 
+		/* Values of the following fields must be
+		 * allocated relative to the process_params themselves.
+		 * and included in the length:
+		 *
+		 * CurrentDirectory
+		 * DllPath
+		 * ImagePathName
+		 * CommandLine
+		 * WindowTitle
+		 * DesktopInfo
+		 * ShellInfo
+		 * RuntimeData
+		 * RedirectionDllName
+		 */
+
+		context.process_params = gs.reserve<RTL_USER_PROCESS_PARAMETERS>();
+
 		context.process_params.access([&](RTL_USER_PROCESS_PARAMETERS& proc_params)
 		{
-			proc_params.Length = sizeof(proc_params);
 			proc_params.Flags = 0x6001 | 0x80000000; // Prevent CsrClientConnectToServer
 
 			proc_params.ConsoleHandle = CONSOLE_HANDLE.h;
@@ -240,9 +256,23 @@ namespace
 			proc_params.StandardInput = STDIN_HANDLE.h;
 			proc_params.StandardError = proc_params.StandardOutput;
 
+
+			std::wstring command_line = L"\"" + file.wstring() + L"\"";
+
+			for (const auto& arg : arguments)
+			{
+				command_line.push_back(L' ');
+				command_line.append(arg);
+			}
+
+			gs.make_unicode_string(proc_params.CommandLine, command_line);
 			gs.make_unicode_string(proc_params.CurrentDirectory.DosPath, file.parent_path().wstring());
 			gs.make_unicode_string(proc_params.ImagePathName, file.wstring());
-			gs.make_unicode_string(proc_params.CommandLine, file.wstring());
+
+			const auto total_length = gs.get_next_address() - context.process_params.value();
+
+			proc_params.Length = std::max(sizeof(proc_params), total_length);
+			proc_params.MaximumLength = proc_params.Length;
 		});
 
 		context.peb.access([&](PEB& peb)
@@ -435,10 +465,11 @@ namespace
 	}
 }
 
-windows_emulator::windows_emulator(const std::filesystem::path& application, std::unique_ptr<x64_emulator> emu)
+windows_emulator::windows_emulator(const std::filesystem::path& application, const std::vector<std::wstring>& arguments,
+                                   std::unique_ptr<x64_emulator> emu)
 	: windows_emulator(std::move(emu))
 {
-	this->setup_process(application);
+	this->setup_process(application, arguments);
 }
 
 windows_emulator::windows_emulator(std::unique_ptr<x64_emulator> emu)
@@ -448,14 +479,15 @@ windows_emulator::windows_emulator(std::unique_ptr<x64_emulator> emu)
 	this->setup_hooks();
 }
 
-void windows_emulator::setup_process(const std::filesystem::path& application)
+void windows_emulator::setup_process(const std::filesystem::path& application,
+                                     const std::vector<std::wstring>& arguments)
 {
 	auto& emu = this->emu();
 
 	auto& context = this->process();
 	context.module_manager = module_manager(emu); // TODO: Cleanup module manager
 
-	setup_context(context, emu, application);
+	setup_context(context, emu, application, arguments);
 
 	context.executable = context.module_manager.map_module(application);
 
@@ -532,40 +564,46 @@ void windows_emulator::setup_hooks()
 		return memory_violation_continuation::resume;
 	});
 
-	this->emu().hook_memory_execution(0, std::numeric_limits<size_t>::max(), [&](const uint64_t address, const size_t)
-	{
-		++this->process().executed_instructions;
+	this->emu().hook_memory_execution(0, std::numeric_limits<size_t>::max(),
+	                                  [&](const uint64_t address, const size_t, const uint64_t)
+	                                  {
+		                                  ++this->process().executed_instructions;
 
-		const auto* binary = this->process().module_manager.find_by_address(address);
+		                                  const auto* binary = this->process().module_manager.find_by_address(address);
 
-		if (binary)
-		{
-			const auto export_entry = binary->address_names.find(address);
-			if (export_entry != binary->address_names.end())
-			{
-				printf("Executing function: %s - %s (%llX)\n", binary->name.c_str(), export_entry->second.c_str(),
-				       address);
-			}
-			else if (address == binary->entry_point)
-			{
-				printf("Executing entry point: %s (%llX)\n", binary->name.c_str(), address);
-			}
-		}
+		                                  if (binary)
+		                                  {
+			                                  const auto export_entry = binary->address_names.find(address);
+			                                  if (export_entry != binary->address_names.end())
+			                                  {
+				                                  printf("Executing function: %s - %s (%llX)\n", binary->name.c_str(),
+				                                         export_entry->second.c_str(),
+				                                         address);
+			                                  }
+			                                  else if (address == binary->entry_point)
+			                                  {
+				                                  printf("Executing entry point: %s (%llX)\n", binary->name.c_str(),
+				                                         address);
+			                                  }
+		                                  }
 
-		if (!this->verbose_)
-		{
-			return;
-		}
+		                                  if (!this->verbose_)
+		                                  {
+			                                  return;
+		                                  }
 
-		auto& emu = this->emu();
+		                                  auto& emu = this->emu();
 
-		printf(
-			"Inst: %16llX - RAX: %16llX - RBX: %16llX - RCX: %16llX - RDX: %16llX - R8: %16llX - R9: %16llX - RDI: %16llX - RSI: %16llX - %s\n",
-			address,
-			emu.reg(x64_register::rax), emu.reg(x64_register::rbx), emu.reg(x64_register::rcx),
-			emu.reg(x64_register::rdx), emu.reg(x64_register::r8), emu.reg(x64_register::r9),
-			emu.reg(x64_register::rdi), emu.reg(x64_register::rsi), binary ? binary->name.c_str() : "<N/A>");
-	});
+		                                  printf(
+			                                  "Inst: %16llX - RAX: %16llX - RBX: %16llX - RCX: %16llX - RDX: %16llX - R8: %16llX - R9: %16llX - RDI: %16llX - RSI: %16llX - %s\n",
+			                                  address,
+			                                  emu.reg(x64_register::rax), emu.reg(x64_register::rbx),
+			                                  emu.reg(x64_register::rcx),
+			                                  emu.reg(x64_register::rdx), emu.reg(x64_register::r8),
+			                                  emu.reg(x64_register::r9),
+			                                  emu.reg(x64_register::rdi), emu.reg(x64_register::rsi),
+			                                  binary ? binary->name.c_str() : "<N/A>");
+	                                  });
 }
 
 void windows_emulator::serialize(utils::buffer_serializer& buffer) const

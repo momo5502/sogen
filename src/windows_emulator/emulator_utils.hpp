@@ -128,9 +128,12 @@ public:
 		constexpr auto required_alignment = alignof(decltype(str[0]));
 		const auto total_length = str.size() * element_size;
 
-		const auto string_buffer = this->reserve(total_length, required_alignment);
+		const auto string_buffer = this->reserve(total_length + element_size, required_alignment);
 
 		this->emu_->write_memory(string_buffer, str.data(), total_length);
+
+		constexpr std::array<char, element_size> nullbyte{};
+		this->emu_->write_memory(string_buffer + total_length, nullbyte.data(), nullbyte.size());
 
 		result.Buffer = reinterpret_cast<PWCH>(string_buffer);
 		result.Length = static_cast<USHORT>(total_length);
@@ -159,6 +162,11 @@ public:
 		return this->size_;
 	}
 
+	uint64_t get_next_address() const
+	{
+		return this->active_address_;
+	}
+
 	void serialize(utils::buffer_serializer& buffer) const
 	{
 		buffer.write(this->address_);
@@ -179,3 +187,30 @@ private:
 	uint64_t size_{};
 	uint64_t active_address_{0};
 };
+
+inline std::wstring read_unicode_string(const emulator& emu, const UNICODE_STRING ucs)
+{
+	static_assert(offsetof(UNICODE_STRING, Length) == 0);
+	static_assert(offsetof(UNICODE_STRING, MaximumLength) == 2);
+	static_assert(offsetof(UNICODE_STRING, Buffer) == 8);
+	static_assert(sizeof(UNICODE_STRING) == 16);
+
+	std::wstring result{};
+	result.resize(ucs.Length / 2);
+
+	emu.read_memory(reinterpret_cast<uint64_t>(ucs.Buffer), result.data(), ucs.Length);
+
+	return result;
+}
+
+
+inline std::wstring read_unicode_string(const emulator& emu, const emulator_object<UNICODE_STRING> uc_string)
+{
+	const auto ucs = uc_string.read();
+	return read_unicode_string(emu, ucs);
+}
+
+inline std::wstring read_unicode_string(emulator& emu, const UNICODE_STRING* uc_string)
+{
+	return read_unicode_string(emu, emulator_object<UNICODE_STRING>{emu, uc_string});
+}

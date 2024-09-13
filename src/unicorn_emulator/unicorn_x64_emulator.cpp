@@ -159,7 +159,7 @@ namespace unicorn
 					const auto operation = map_memory_operation(type);
 					if (operation != memory_permission::none)
 					{
-						(*callback)(address, static_cast<uint64_t>(size), operation);
+						(*callback)(address, static_cast<uint64_t>(size), 0, operation);
 					}
 				});
 
@@ -176,12 +176,12 @@ namespace unicorn
 		{
 			function_wrapper<void, uc_engine*, uc_mem_type, uint64_t, int, int64_t> wrapper(
 				[callback](uc_engine*, const uc_mem_type type, const uint64_t address, const int size,
-				           const int64_t)
+				           const uint64_t value)
 				{
 					const auto operation = map_memory_operation(type);
 					if (operation != memory_permission::none)
 					{
-						(*callback)(address, static_cast<uint64_t>(size), operation);
+						(*callback)(address, static_cast<uint64_t>(size), value, operation);
 					}
 				});
 
@@ -199,7 +199,7 @@ namespace unicorn
 			function_wrapper<void, uc_engine*, uint64_t, uint32_t> wrapper(
 				[callback](uc_engine*, const uint64_t address, const uint32_t size)
 				{
-					(*callback)(address, size, memory_permission::exec);
+					(*callback)(address, size, 0, memory_permission::exec);
 				});
 
 			unicorn_hook hook{uc};

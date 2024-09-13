@@ -9,7 +9,7 @@ class windows_emulator
 {
 public:
 	windows_emulator(std::unique_ptr<x64_emulator> emu = unicorn::create_x64_emulator());
-	windows_emulator(const std::filesystem::path& application,
+	windows_emulator(const std::filesystem::path& application, const std::vector<std::wstring>& arguments = {},
 	                 std::unique_ptr<x64_emulator> emu = unicorn::create_x64_emulator());
 
 	windows_emulator(windows_emulator&&) = delete;
@@ -59,5 +59,5 @@ private:
 	//std::optional<process_context> process_snapshot_{};
 
 	void setup_hooks();
-	void setup_process(const std::filesystem::path& application);
+	void setup_process(const std::filesystem::path& application, const std::vector<std::wstring>& arguments);
 };

@@ -71,30 +71,52 @@ namespace
 	};
 
 	template <typename T>
-	void watch_object(x64_emulator& emu, emulator_object<T> object)
+	emulator_hook* watch_object(windows_emulator& emu, emulator_object<T> object)
 	{
 		const type_info<T> info{};
 
-		emu.hook_memory_read(object.value(), object.size(),
-		                     [i = std::move(info), object](const uint64_t address, size_t)
-		                     {
-			                     const auto offset = address - object.value();
-			                     printf("%s: %llX (%s)\n", i.get_type_name().c_str(), offset,
-			                            i.get_member_name(offset).c_str());
-		                     });
+		return emu.emu().hook_memory_read(object.value(), object.size(),
+		                                  [i = std::move(info), object, &emu](const uint64_t address, size_t, uint64_t)
+		                                  {
+			                                  const auto rip = emu.emu().read_instruction_pointer();
+			                                  const auto* binary = emu.process().module_manager.find_by_address(rip);
+
+			                                  const auto offset = address - object.value();
+			                                  printf("%s: %llX (%s) at %llX (%s)\n", i.get_type_name().c_str(), offset,
+			                                         i.get_member_name(offset).c_str(), rip,
+			                                         binary ? binary->name.c_str() : "<N/A>");
+		                                  });
 	}
 
 	void run()
 	{
 		const std::filesystem::path application =
-			R"(C:\Program Files (x86)\Steam\steamapps\common\Hogwarts Legacy\Phoenix\Binaries\Win64\HogwartsLegacy.exe)";
+			R"(C:\Users\mauri\source\repos\ConsoleApplication6\x64\Release\ConsoleApplication6.exe)";
+		//R"(C:\Program Files (x86)\Steam\steamapps\common\Hogwarts Legacy\Phoenix\Binaries\Win64\HogwartsLegacy.exe)";
 
-		windows_emulator win_emu{application};
+		windows_emulator win_emu{application, {L"Hello", L"World"}};
 
-		watch_object(win_emu.emu(), win_emu.process().teb);
-		watch_object(win_emu.emu(), win_emu.process().peb);
-		watch_object(win_emu.emu(), win_emu.process().process_params);
-		watch_object(win_emu.emu(), win_emu.process().kusd);
+		watch_object(win_emu, win_emu.process().teb);
+		watch_object(win_emu, win_emu.process().peb);
+		watch_object(win_emu, win_emu.process().kusd);
+		auto* params_hook = watch_object(win_emu, win_emu.process().process_params);
+
+		win_emu.emu().hook_memory_write(win_emu.process().peb.value() + offsetof(PEB, ProcessParameters), 0x8,
+		                                [&](const uint64_t address, size_t, const uint64_t value)
+		                                {
+			                                const auto target_address = win_emu.process().peb.value() + offsetof(
+				                                PEB, ProcessParameters);
+
+			                                if (address == target_address)
+			                                {
+				                                const emulator_object<RTL_USER_PROCESS_PARAMETERS> obj{
+					                                win_emu.emu(), value
+				                                };
+
+				                                win_emu.emu().delete_hook(params_hook);
+				                                params_hook = watch_object(win_emu, obj);
+			                                }
+		                                });
 
 		win_emu.set_verbose(false);
 

@@ -1,6 +1,7 @@
 #include "std_include.hpp"
 #include "syscalls.hpp"
 #include "context_frame.hpp"
+#include "emulator_utils.hpp"
 
 #include <utils/io.hpp>
 
@@ -109,28 +110,6 @@ namespace
 		}
 
 		throw std::runtime_error("Unable to determine syscall id: " + std::string(name));
-	}
-
-	std::wstring read_unicode_string(emulator& emu, const emulator_object<UNICODE_STRING> uc_string)
-	{
-		static_assert(offsetof(UNICODE_STRING, Length) == 0);
-		static_assert(offsetof(UNICODE_STRING, MaximumLength) == 2);
-		static_assert(offsetof(UNICODE_STRING, Buffer) == 8);
-		static_assert(sizeof(UNICODE_STRING) == 16);
-
-		const auto ucs = uc_string.read();
-
-		std::wstring result{};
-		result.resize(ucs.Length / 2);
-
-		emu.read_memory(reinterpret_cast<uint64_t>(ucs.Buffer), result.data(), ucs.Length);
-
-		return result;
-	}
-
-	std::wstring read_unicode_string(emulator& emu, const PUNICODE_STRING uc_string)
-	{
-		return read_unicode_string(emu, emulator_object<UNICODE_STRING>{emu, uc_string});
 	}
 
 	template <typename T>
