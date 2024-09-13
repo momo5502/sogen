@@ -20,6 +20,11 @@ public:
 
 	void dispatch(x64_emulator& emu, process_context& context);
 
+	void serialize(utils::buffer_serializer& buffer) const;
+	void deserialize(utils::buffer_deserializer& buffer);
+
 private:
 	std::unordered_map<uint64_t, syscall_handler_entry> handlers_{};
+
+	void add_handlers();
 };

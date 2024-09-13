@@ -76,6 +76,19 @@ namespace
 		return syscalls;
 	}
 
+	void map_syscalls(std::unordered_map<uint64_t, syscall_handler_entry>& handlers,
+	                  const std::vector<std::string>& syscalls, const uint64_t base_index)
+	{
+		for (size_t i = 0; i < syscalls.size(); ++i)
+		{
+			const auto& syscall = syscalls[i];
+
+			auto& entry = handlers[base_index + i];
+			entry.name = syscall;
+			entry.handler = nullptr;
+		}
+	}
+
 	uint64_t get_syscall_id(const std::vector<std::string>& ntdll_syscalls,
 	                        const std::vector<std::string>& win32u_syscalls, const std::string_view name)
 	{
@@ -156,7 +169,7 @@ namespace
 		}
 	}
 
-	void forward(const syscall_context& c, NTSTATUS (*handler)())
+	void forward_syscall(const syscall_context& c, NTSTATUS (*handler)())
 	{
 		const auto ip = c.emu.read_instruction_pointer();
 
@@ -165,7 +178,7 @@ namespace
 	}
 
 	template <typename... Args>
-	void forward(const syscall_context& c, NTSTATUS (*handler)(const syscall_context&, Args...))
+	void forward_syscall(const syscall_context& c, NTSTATUS (*handler)(const syscall_context&, Args...))
 	{
 		const auto ip = c.emu.read_instruction_pointer();
 
@@ -178,6 +191,15 @@ namespace
 
 		const auto ret = std::apply(handler, std::move(func_args));
 		write_status(c, ret, ip);
+	}
+
+	template <auto Handler>
+	syscall_handler make_syscall_handler()
+	{
+		return +[](const syscall_context& c)
+		{
+			forward_syscall(c, Handler);
+		};
 	}
 
 	NTSTATUS handle_NtQueryPerformanceCounter(const syscall_context&,
@@ -1560,22 +1582,26 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports, co
 	const auto ntdll_syscalls = find_syscalls(ntdll_exports);
 	const auto win32u_syscalls = find_syscalls(win32u_exports);
 
-#define add_handler(syscall) do                                                \
-	{                                                                          \
-		std::string name = #syscall;                                           \
-		const auto id = get_syscall_id(ntdll_syscalls, win32u_syscalls, name); \
-		auto handler = +[](const syscall_context& c)                           \
-		{                                                                      \
-			forward(c, handle_ ## syscall);                                    \
-		};                                                                     \
-		                                                                       \
-		syscall_handler_entry entry{};                                         \
-		entry.handler = handler;                                               \
-		entry.name = std::move(name);                                          \
-		this->handlers_[id] = std::move(entry);                                \
+	map_syscalls(this->handlers_, ntdll_syscalls, 0);
+	map_syscalls(this->handlers_, win32u_syscalls, 0x1000);
+
+	this->add_handlers();
+}
+
+void syscall_dispatcher::add_handlers()
+{
+	std::unordered_map<std::string, syscall_handler> handler_mapping{};
+	handler_mapping.reserve(this->handlers_.size());
+
+	make_syscall_handler<handle_NtCreateEvent>();
+
+#define add_handler(syscall)                                                  \
+	do                                                                        \
+	{                                                                         \
+		handler_mapping[#syscall] = make_syscall_handler<handle_##syscall>(); \
 	} while(0)
 
-	add_handler(NtSetInformationThread);
+	add_handler(NtSetInformationThread) ;
 	add_handler(NtSetEvent);
 	add_handler(NtClose);
 	add_handler(NtOpenKey);
@@ -1630,6 +1656,50 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports, co
 	add_handler(NtAlpcSendWaitReceivePort);
 
 #undef add_handler
+
+	for (auto& entry : this->handlers_)
+	{
+		const auto handler = handler_mapping.find(entry.second.name);
+		if (handler == handler_mapping.end())
+		{
+			continue;
+		}
+
+		entry.second.handler = handler->second;
+
+#ifndef NDEBUG
+		handler_mapping.erase(handler);
+#endif
+	}
+
+#ifndef NDEBUG
+	if(!handler_mapping.empty())
+	{
+		throw std::runtime_error("Unmapped handlers!");
+	}
+#endif
+}
+
+static void serialize(utils::buffer_serializer& buffer, const syscall_handler_entry& obj)
+{
+	buffer.write(obj.name);
+}
+
+static void deserialize(utils::buffer_deserializer& buffer, syscall_handler_entry& obj)
+{
+	buffer.read(obj.name);
+	obj.handler = nullptr;
+}
+
+void syscall_dispatcher::serialize(utils::buffer_serializer& buffer) const
+{
+	buffer.write_map(this->handlers_);
+}
+
+void syscall_dispatcher::deserialize(utils::buffer_deserializer& buffer)
+{
+	buffer.read_map(this->handlers_);
+	this->add_handlers();
 }
 
 void syscall_dispatcher::dispatch(x64_emulator& emu, process_context& context)
@@ -1645,15 +1715,22 @@ void syscall_dispatcher::dispatch(x64_emulator& emu, process_context& context)
 		const auto entry = this->handlers_.find(syscall_id);
 		if (entry == this->handlers_.end())
 		{
-			printf("Unhandled syscall: %X\n", syscall_id);
+			printf("Unknown syscall: %X\n", syscall_id);
 			c.emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_SUPPORTED);
 			c.emu.stop();
+			return;
 		}
-		else
+
+		if (!entry->second.handler)
 		{
-			printf("Handling syscall: %s with id %X at %llX \n", entry->second.name.c_str(), syscall_id, address);
-			entry->second.handler(c);
+			printf("Unimplemented syscall: %s - %X\n", entry->second.name.c_str(), syscall_id);
+			c.emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_SUPPORTED);
+			c.emu.stop();
+			return;
 		}
+
+		printf("Handling syscall: %s with id %X at %llX \n", entry->second.name.c_str(), syscall_id, address);
+		entry->second.handler(c);
 	}
 	catch (std::exception& e)
 	{
