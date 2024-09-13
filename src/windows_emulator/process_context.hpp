@@ -79,8 +79,7 @@ struct semaphore
 struct process_context
 {
 	process_context(x64_emulator& emu)
-		: emu(&emu)
-		  , teb(emu)
+		: teb(emu)
 		  , peb(emu)
 		  , process_params(emu)
 		  , kusd(emu)
@@ -89,7 +88,6 @@ struct process_context
 	{
 	}
 
-	x64_emulator* emu{};
 	uint64_t executed_instructions{0};
 	emulator_object<TEB> teb;
 	emulator_object<PEB> peb;
