@@ -1577,8 +1577,10 @@ namespace
 	}
 }
 
-syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports, const exported_symbols& win32u_exports)
+void syscall_dispatcher::setup(const exported_symbols& ntdll_exports, const exported_symbols& win32u_exports)
 {
+	this->handlers_ = {};
+
 	const auto ntdll_syscalls = find_syscalls(ntdll_exports);
 	const auto win32u_syscalls = find_syscalls(win32u_exports);
 
@@ -1586,6 +1588,11 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports, co
 	map_syscalls(this->handlers_, win32u_syscalls, 0x1000);
 
 	this->add_handlers();
+}
+
+syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports, const exported_symbols& win32u_exports)
+{
+	this->setup(ntdll_exports, win32u_exports);
 }
 
 void syscall_dispatcher::add_handlers()

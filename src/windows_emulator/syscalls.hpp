@@ -16,12 +16,15 @@ struct syscall_handler_entry
 class syscall_dispatcher
 {
 public:
+	syscall_dispatcher() = default;
 	syscall_dispatcher(const exported_symbols& ntdll_exports, const exported_symbols& win32u_exports);
 
 	void dispatch(x64_emulator& emu, process_context& context);
 
 	void serialize(utils::buffer_serializer& buffer) const;
 	void deserialize(utils::buffer_deserializer& buffer);
+
+	void setup(const exported_symbols& ntdll_exports, const exported_symbols& win32u_exports);
 
 private:
 	std::unordered_map<uint64_t, syscall_handler_entry> handlers_{};

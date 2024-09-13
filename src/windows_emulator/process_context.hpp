@@ -100,6 +100,8 @@ struct process_context
 	mapped_module* ntdll{};
 	mapped_module* win32u{};
 
+	uint64_t ki_user_exception_dispatcher{};
+
 	uint64_t shared_section_size{};
 
 	handle_store<handle_types::event, event> events{};
@@ -107,8 +109,6 @@ struct process_context
 	handle_store<handle_types::semaphore, semaphore> semaphores{};
 	std::map<uint16_t, std::wstring> atoms{};
 	emulator_allocator gs_segment;
-
-	bool verbose{false};
 
 	void serialize(utils::buffer_serializer& buffer) const
 	{
@@ -122,6 +122,8 @@ struct process_context
 		buffer.write(this->executable->image_base);
 		buffer.write(this->ntdll->image_base);
 		buffer.write(this->win32u->image_base);
+
+		buffer.write(this->ki_user_exception_dispatcher);
 
 		buffer.write(this->shared_section_size);
 		buffer.write(this->events);
@@ -147,6 +149,8 @@ struct process_context
 		this->executable = this->module_manager.find_by_address(executable_base);
 		this->ntdll = this->module_manager.find_by_address(ntdll_base);
 		this->win32u = this->module_manager.find_by_address(win32u_base);
+
+		buffer.read(this->ki_user_exception_dispatcher);
 
 		buffer.read(this->shared_section_size);
 		buffer.read(this->events);
