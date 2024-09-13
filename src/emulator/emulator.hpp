@@ -27,6 +27,16 @@ enum class memory_violation_type : uint8_t
 	protection,
 };
 
+struct basic_block
+{
+	uint64_t address;
+	size_t instruction_count;
+	size_t size;
+};
+
+using edge_generation_hook_callback = std::function<void(const basic_block& current_block,
+                                                         const basic_block& previous_block)>;
+
 using instruction_hook_callback = std::function<instruction_hook_continuation()>;
 
 using interrupt_hook_callback = std::function<void(int interrupt)>;
@@ -62,6 +72,8 @@ public:
 
 	virtual emulator_hook* hook_interrupt(interrupt_hook_callback callback) = 0;
 
+	virtual emulator_hook* hook_edge_generation(edge_generation_hook_callback callback) = 0;
+
 	virtual void delete_hook(emulator_hook* hook) = 0;
 
 	emulator_hook* hook_memory_violation(memory_violation_hook_callback callback)
@@ -87,17 +99,35 @@ public:
 
 	void serialize(utils::buffer_serializer& buffer) const final
 	{
-		this->serialize_memory_state(buffer);
-		this->serialize_state(buffer);
+		this->perform_serialization(buffer, false);
 	}
 
 	void deserialize(utils::buffer_deserializer& buffer) final
 	{
-		this->deserialize_memory_state(buffer);
-		this->deserialize_state(buffer);
+		this->perform_deserialization(buffer, false);
+	}
+
+	void save_snapshot()
+	{
+		utils::buffer_serializer serializer{};
+		this->perform_serialization(serializer, true);
+		this->last_snapshot_data_ = serializer.move_buffer();
+	}
+
+	void restore_snapshot()
+	{
+		if (this->last_snapshot_data_.empty())
+		{
+			return;
+		}
+
+		utils::buffer_deserializer deserializer{this->last_snapshot_data_};
+		this->perform_deserialization(deserializer, true);
 	}
 
 private:
+	std::vector<std::byte> last_snapshot_data_{};
+
 	emulator_hook* hook_simple_memory_access(const uint64_t address, const size_t size,
 	                                         simple_memory_hook_callback callback, const memory_operation operation)
 	{
@@ -110,6 +140,18 @@ private:
 		                                });
 	}
 
-	virtual void serialize_state(utils::buffer_serializer& buffer) const = 0;
-	virtual void deserialize_state(utils::buffer_deserializer& buffer) = 0;
+	void perform_serialization(utils::buffer_serializer& buffer, const bool is_snapshot) const
+	{
+		this->serialize_memory_state(buffer, is_snapshot);
+		this->serialize_state(buffer, is_snapshot);
+	}
+
+	void perform_deserialization(utils::buffer_deserializer& buffer, const bool is_snapshot)
+	{
+		this->deserialize_memory_state(buffer, is_snapshot);
+		this->deserialize_state(buffer, is_snapshot);
+	}
+
+	virtual void serialize_state(utils::buffer_serializer& buffer, bool is_snapshot) const = 0;
+	virtual void deserialize_state(utils::buffer_deserializer& buffer, bool is_snapshot) = 0;
 };

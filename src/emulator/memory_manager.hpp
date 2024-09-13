@@ -75,21 +75,9 @@ public:
 		return allocation_base;
 	}
 
-	bool use_in_place_serialization() const
-	{
-		return this->in_place_serialization_;
-	}
-
-	void set_in_place_serialization(const bool value)
-	{
-		this->in_place_serialization_ = value;
-	}
-
 private:
 	using reserved_region_map = std::map<uint64_t, reserved_region>;
 	reserved_region_map reserved_regions_{};
-
-	bool in_place_serialization_{false};
 
 	reserved_region_map::iterator find_reserved_region(uint64_t address);
 	bool overlaps_reserved_region(uint64_t address, size_t size) const;
@@ -100,6 +88,6 @@ private:
 	virtual void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) = 0;
 
 protected:
-	void serialize_memory_state(utils::buffer_serializer& buffer) const;
-	void deserialize_memory_state(utils::buffer_deserializer& buffer);
+	void serialize_memory_state(utils::buffer_serializer& buffer, bool is_snapshot) const;
+	void deserialize_memory_state(utils::buffer_deserializer& buffer, bool is_snapshot);
 };

@@ -210,6 +210,17 @@ namespace unicorn
 			container.add(std::move(wrapper), std::move(hook));
 		}
 
+		basic_block map_block(const uc_tb& translation_block)
+		{
+			basic_block block{};
+
+			block.address = translation_block.pc;
+			block.instruction_count = translation_block.icount;
+			block.size = translation_block.size;
+
+			return block;
+		}
+
 		class unicorn_x64_emulator : public x64_emulator
 		{
 		public:
@@ -378,6 +389,31 @@ namespace unicorn
 				return result;
 			}
 
+			emulator_hook* hook_edge_generation(edge_generation_hook_callback callback) override
+			{
+				function_wrapper<void, uc_engine*, uc_tb*, uc_tb*> wrapper(
+					[c = std::move(callback)](uc_engine*, const uc_tb* cur_tb, const uc_tb* prev_tb)
+					{
+						const auto current_block = map_block(*cur_tb);
+						const auto previous_block = map_block(*prev_tb);
+
+						c(current_block, previous_block);
+					});
+
+				unicorn_hook hook{*this};
+				auto container = std::make_unique<hook_container>();
+
+				uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_EDGE_GENERATED, wrapper.get_function(),
+				                wrapper.get_user_data(), 0, std::numeric_limits<pointer_type>::max())
+				);
+
+				container->add(std::move(wrapper), std::move(hook));
+
+				auto* result = container->as_opaque_hook();
+				this->hooks_.push_back(std::move(container));
+				return result;
+			}
+
 			emulator_hook* hook_interrupt(interrupt_hook_callback callback) override
 			{
 				function_wrapper<void, uc_engine*, int> wrapper(
@@ -498,19 +534,34 @@ namespace unicorn
 				return this->uc_;
 			}
 
-			void serialize_state(utils::buffer_serializer& buffer) const override
+			void serialize_state(utils::buffer_serializer& buffer, const bool is_snapshot) const override
 			{
-				const uc_context_serializer serializer(this->uc_, this->use_in_place_serialization());
+				if (this->has_snapshots_ && !is_snapshot)
+				{
+					// TODO: Investigate if this is really necessary
+					throw std::runtime_error("Unable to serialize after snapshot was taken!");
+				}
+
+				this->has_snapshots_ |= is_snapshot;
+
+				const uc_context_serializer serializer(this->uc_, is_snapshot);
 				serializer.serialize(buffer);
 			}
 
-			void deserialize_state(utils::buffer_deserializer& buffer) override
+			void deserialize_state(utils::buffer_deserializer& buffer, const bool is_snapshot) override
 			{
-				const uc_context_serializer serializer(this->uc_, this->use_in_place_serialization());
+				if (this->has_snapshots_ && !is_snapshot)
+				{
+					// TODO: Investigate if this is really necessary
+					throw std::runtime_error("Unable to deserialize after snapshot was taken!");
+				}
+
+				const uc_context_serializer serializer(this->uc_, is_snapshot);
 				serializer.deserialize(buffer);
 			}
 
 		private:
+			mutable bool has_snapshots_{false};
 			uc_engine* uc_{};
 			bool retry_after_violation_{false};
 			std::vector<std::unique_ptr<hook_object>> hooks_{};

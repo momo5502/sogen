@@ -87,47 +87,51 @@ static void deserialize(utils::buffer_deserializer& buffer, memory_manager::rese
 	buffer.read_map(region.committed_regions);
 }
 
-void memory_manager::serialize_memory_state(utils::buffer_serializer& buffer) const
+void memory_manager::serialize_memory_state(utils::buffer_serializer& buffer, const bool is_snapshot) const
 {
 	buffer.write_map(this->reserved_regions_);
 
-	if (!this->use_in_place_serialization())
+	if (is_snapshot)
 	{
-		std::vector<uint8_t> data{};
+		return;
+	}
 
-		for (const auto& reserved_region : this->reserved_regions_)
+	std::vector<uint8_t> data{};
+
+	for (const auto& reserved_region : this->reserved_regions_)
+	{
+		for (const auto& region : reserved_region.second.committed_regions)
 		{
-			for (const auto& region : reserved_region.second.committed_regions)
-			{
-				data.resize(region.second.length);
+			data.resize(region.second.length);
 
-				this->read_memory(region.first, data.data(), region.second.length);
+			this->read_memory(region.first, data.data(), region.second.length);
 
-				buffer.write(data.data(), region.second.length);
-			}
+			buffer.write(data.data(), region.second.length);
 		}
 	}
 }
 
-void memory_manager::deserialize_memory_state(utils::buffer_deserializer& buffer)
+void memory_manager::deserialize_memory_state(utils::buffer_deserializer& buffer, const bool is_snapshot)
 {
 	buffer.read_map(this->reserved_regions_);
 
-	if (!this->use_in_place_serialization())
+	if (is_snapshot)
 	{
-		std::vector<uint8_t> data{};
+		return;
+	}
 
-		for (const auto& reserved_region : this->reserved_regions_)
+	std::vector<uint8_t> data{};
+
+	for (const auto& reserved_region : this->reserved_regions_)
+	{
+		for (const auto& region : reserved_region.second.committed_regions)
 		{
-			for (const auto& region : reserved_region.second.committed_regions)
-			{
-				data.resize(region.second.length);
+			data.resize(region.second.length);
 
-				buffer.read(data.data(), region.second.length);
+			buffer.read(data.data(), region.second.length);
 
-				this->map_memory(region.first, region.second.length, region.second.pemissions);
-				this->write_memory(region.first, data.data(), region.second.length);
-			}
+			this->map_memory(region.first, region.second.length, region.second.pemissions);
+			this->write_memory(region.first, data.data(), region.second.length);
 		}
 	}
 }
