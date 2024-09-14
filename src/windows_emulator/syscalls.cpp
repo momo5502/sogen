@@ -1347,7 +1347,7 @@ namespace
 			}
 		});
 
-		return STATUS_SUCCESS;
+		return STATUS_NOT_SUPPORTED;
 	}
 
 	NTSTATUS handle_NtUserGetThreadState()
