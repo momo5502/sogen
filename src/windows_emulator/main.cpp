@@ -79,12 +79,11 @@ namespace
 		                                  [i = std::move(info), object, &emu](const uint64_t address, size_t, uint64_t)
 		                                  {
 			                                  const auto rip = emu.emu().read_instruction_pointer();
-			                                  const auto* binary = emu.process().module_manager.find_by_address(rip);
 
 			                                  const auto offset = address - object.value();
 			                                  printf("%s: %llX (%s) at %llX (%s)\n", i.get_type_name().c_str(), offset,
 			                                         i.get_member_name(offset).c_str(), rip,
-			                                         binary ? binary->name.c_str() : "<N/A>");
+												  emu.process().module_manager.find_name(rip));
 		                                  });
 	}
 

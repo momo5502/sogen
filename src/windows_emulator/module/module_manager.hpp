@@ -12,12 +12,23 @@ public:
 	mapped_module* find_by_address(const uint64_t address)
 	{
 		const auto entry = this->get_module(address);
-		if(entry != this->modules_.end())
+		if (entry != this->modules_.end())
 		{
 			return &entry->second;
 		}
 
 		return nullptr;
+	}
+
+	const char* find_name(const uint64_t address)
+	{
+		const auto* mod = this->find_by_address(address);
+		if (!mod)
+		{
+			return "<N/A>";
+		}
+
+		return mod->name.c_str();
 	}
 
 	void serialize(utils::buffer_serializer& buffer) const;

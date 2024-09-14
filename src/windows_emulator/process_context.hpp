@@ -76,6 +76,25 @@ struct semaphore
 	}
 };
 
+struct port
+{
+	std::wstring name{};
+	uint64_t view_base{};
+
+	void serialize(utils::buffer_serializer& buffer) const
+	{
+		buffer.write(this->name);
+		buffer.write(this->view_base);
+	}
+
+	void deserialize(utils::buffer_deserializer& buffer)
+	{
+		buffer.read(this->name);
+		buffer.read(this->view_base);
+	}
+};
+
+
 struct process_context
 {
 	process_context(x64_emulator& emu)
@@ -107,6 +126,7 @@ struct process_context
 	handle_store<handle_types::event, event> events{};
 	handle_store<handle_types::file, file> files{};
 	handle_store<handle_types::semaphore, semaphore> semaphores{};
+	handle_store<handle_types::port, port> ports{};
 	std::map<uint16_t, std::wstring> atoms{};
 	emulator_allocator gs_segment;
 
@@ -129,6 +149,7 @@ struct process_context
 		buffer.write(this->events);
 		buffer.write(this->files);
 		buffer.write(this->semaphores);
+		buffer.write(this->ports);
 		buffer.write_map(this->atoms);
 		buffer.write(this->gs_segment);
 	}
@@ -156,6 +177,7 @@ struct process_context
 		buffer.read(this->events);
 		buffer.read(this->files);
 		buffer.read(this->semaphores);
+		buffer.read(this->ports);
 		buffer.read_map(this->atoms);
 		buffer.read(this->gs_segment);
 	}

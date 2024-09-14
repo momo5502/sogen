@@ -1,5 +1,8 @@
 #include "std_include.hpp"
 #include "syscalls.hpp"
+
+#include <numeric>
+
 #include "context_frame.hpp"
 #include "emulator_utils.hpp"
 
@@ -287,7 +290,7 @@ namespace
 
 	NTSTATUS handle_NtTraceEvent()
 	{
-		return STATUS_NOT_SUPPORTED;
+		return STATUS_SUCCESS;
 	}
 
 	NTSTATUS handle_NtOpenThreadToken()
@@ -1224,23 +1227,32 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtConnectPort(const syscall_context& c, const emulator_object<uint64_t> /*client_port_handle*/,
+	NTSTATUS handle_NtConnectPort(const syscall_context& c, const emulator_object<uint64_t> client_port_handle,
 	                              const emulator_object<UNICODE_STRING> server_port_name,
 	                              const emulator_object<SECURITY_QUALITY_OF_SERVICE> /*security_qos*/,
 	                              const emulator_object<PORT_VIEW> client_shared_memory,
-	                              const emulator_object<REMOTE_PORT_VIEW> /*server_shared_memory*/,
+	                              const emulator_object<REMOTE_PORT_VIEW> server_shared_memory,
 	                              const emulator_object<ULONG> /*maximum_message_length*/,
 	                              uint64_t /*connection_info*/,
 	                              const emulator_object<ULONG> /*connection_info_length*/)
 	{
-		const auto port_name = read_unicode_string(c.emu, server_port_name);
+		auto port_name = read_unicode_string(c.emu, server_port_name);
 		printf("NtConnectPort: %S\n", port_name.c_str());
+
+		port p{};
+		p.name = std::move(port_name);
+
+		const auto xx = server_shared_memory.read();
 
 		client_shared_memory.access([&](PORT_VIEW& view)
 		{
-			const auto address = c.emu.allocate_memory(view.ViewSize, memory_permission::read_write);
-			view.ViewBase = reinterpret_cast<void*>(address);
+			p.view_base = c.emu.allocate_memory(view.ViewSize, memory_permission::read_write);
+			view.ViewBase = reinterpret_cast<void*>(p.view_base);
+			view.ViewRemoteBase = view.ViewBase;
 		});
+
+		const auto handle = c.proc.ports.store(std::move(p));
+		client_port_handle.write(handle.bits);
 
 		return STATUS_SUCCESS;
 	}
@@ -1284,7 +1296,8 @@ namespace
 	NTSTATUS handle_NtQueryWnfStateNameInformation()
 	{
 		puts("NtQueryWnfStateNameInformation not supported");
-		return STATUS_NOT_SUPPORTED;
+		//return STATUS_NOT_SUPPORTED;
+		return STATUS_SUCCESS;
 	}
 
 	NTSTATUS handle_NtOpenProcessToken()
@@ -1323,9 +1336,9 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtAlpcSendWaitReceivePort(const syscall_context& /*c*/, const uint64_t /*port_handle*/,
-	                                          const ULONG /*flags*/,
-	                                          const emulator_object<PORT_MESSAGE> /*send_message*/,
+	NTSTATUS handle_NtAlpcSendWaitReceivePort(const syscall_context& c, const uint64_t port_handle,
+	                                          const ULONG flags,
+	                                          const emulator_object<PORT_MESSAGE> send_message,
 	                                          const emulator_object<ALPC_MESSAGE_ATTRIBUTES> /*send_message_attributes*/
 	                                          ,
 	                                          const emulator_object<PORT_MESSAGE> receive_message,
@@ -1334,10 +1347,18 @@ namespace
 	                                          /*receive_message_attributes*/,
 	                                          const emulator_object<LARGE_INTEGER> /*timeout*/)
 	{
-		receive_message.access([](PORT_MESSAGE& msg)
+		const auto* port = c.proc.ports.get(port_handle);
+		if (!port)
 		{
-			msg.u1.Length = 0;
-		});
+			return STATUS_INVALID_HANDLE;
+		}
+
+		const emulator_object<PORT_DATA_ENTRY> data{c.emu, receive_message.value() + 0x48};
+		const auto dest = data.read();
+		const auto base = reinterpret_cast<uint64_t>(dest.Base);
+
+		const auto value = base + 0x10;
+		c.emu.write_memory(base + 8, &value, sizeof(value));
 
 		return STATUS_SUCCESS;
 	}
@@ -1665,7 +1686,7 @@ void syscall_dispatcher::add_handlers()
 	}
 
 #ifndef NDEBUG
-	if(!handler_mapping.empty())
+	if (!handler_mapping.empty())
 	{
 		throw std::runtime_error("Unmapped handlers!");
 	}

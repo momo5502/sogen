@@ -249,7 +249,7 @@ namespace
 
 		context.process_params.access([&](RTL_USER_PROCESS_PARAMETERS& proc_params)
 		{
-			proc_params.Flags = 0x6001 | 0x80000000; // Prevent CsrClientConnectToServer
+			proc_params.Flags = 0x6001; //| 0x80000000; // Prevent CsrClientConnectToServer
 
 			proc_params.ConsoleHandle = CONSOLE_HANDLE.h;
 			proc_params.StandardOutput = STDOUT_HANDLE.h;
@@ -266,7 +266,7 @@ namespace
 			}
 
 			gs.make_unicode_string(proc_params.CommandLine, command_line);
-			gs.make_unicode_string(proc_params.CurrentDirectory.DosPath, file.parent_path().wstring());
+			//gs.make_unicode_string(proc_params.CurrentDirectory.DosPath, file.parent_path().wstring());
 			gs.make_unicode_string(proc_params.ImagePathName, file.wstring());
 
 			const auto total_length = gs.get_next_address() - context.process_params.value();
@@ -549,15 +549,16 @@ void windows_emulator::setup_hooks()
 	{
 		const auto permission = get_permission_string(operation);
 		const auto ip = this->emu().read_instruction_pointer();
+		const char* name = this->process().module_manager.find_name(ip);
 
 
 		if (type == memory_violation_type::protection)
 		{
-			printf("Protection violation: %llX (%zX) - %s at %llX\n", address, size, permission.c_str(), ip);
+			printf("Protection violation: %llX (%zX) - %s at %llX (%s)\n", address, size, permission.c_str(), ip, name);
 		}
 		else if (type == memory_violation_type::unmapped)
 		{
-			printf("Mapping violation: %llX (%zX) - %s at %llX\n", address, size, permission.c_str(), ip);
+			printf("Mapping violation: %llX (%zX) - %s at %llX (%s)\n", address, size, permission.c_str(), ip, name);
 		}
 
 		dispatch_access_violation(this->emu(), this->process().ki_user_exception_dispatcher, address, operation);
@@ -577,8 +578,7 @@ void windows_emulator::setup_hooks()
 			                                  if (export_entry != binary->address_names.end())
 			                                  {
 				                                  printf("Executing function: %s - %s (%llX)\n", binary->name.c_str(),
-				                                         export_entry->second.c_str(),
-				                                         address);
+				                                         export_entry->second.c_str(), address);
 			                                  }
 			                                  else if (address == binary->entry_point)
 			                                  {

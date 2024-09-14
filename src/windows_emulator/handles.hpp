@@ -10,6 +10,7 @@ struct handle_types
 		symlink,
 		directory,
 		semaphore,
+		port,
 	};
 };
 
