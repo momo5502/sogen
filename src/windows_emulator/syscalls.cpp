@@ -921,7 +921,8 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		if (info_class == ProcessEnclaveInformation)
+		if (info_class == ProcessEnclaveInformation
+			|| info_class == ProcessMitigationPolicy)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -1336,9 +1337,15 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	NTSTATUS handle_NtGdiInit2()
+	{
+		puts("NtGdiInit2 not supported");
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtAlpcSendWaitReceivePort(const syscall_context& c, const uint64_t port_handle,
-	                                          const ULONG flags,
-	                                          const emulator_object<PORT_MESSAGE> send_message,
+	                                          const ULONG /*flags*/,
+	                                          const emulator_object<PORT_MESSAGE> /*send_message*/,
 	                                          const emulator_object<ALPC_MESSAGE_ATTRIBUTES> /*send_message_attributes*/
 	                                          ,
 	                                          const emulator_object<PORT_MESSAGE> receive_message,
@@ -1351,6 +1358,12 @@ namespace
 		if (!port)
 		{
 			return STATUS_INVALID_HANDLE;
+		}
+
+		if (port->name != L"\\Windows\\ApiPort")
+		{
+			puts("!!! BAD PORT");
+			return STATUS_NOT_SUPPORTED;
 		}
 
 		const emulator_object<PORT_DATA_ENTRY> data{c.emu, receive_message.value() + 0x48};
@@ -1667,6 +1680,7 @@ void syscall_dispatcher::add_handlers()
 	add_handler(NtQueryInformationThread);
 	add_handler(NtQueryWnfStateNameInformation);
 	add_handler(NtAlpcSendWaitReceivePort);
+	add_handler(NtGdiInit2);
 
 #undef add_handler
 
