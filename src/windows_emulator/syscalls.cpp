@@ -460,15 +460,22 @@ namespace
 
 			const auto obj_address = address + windows_dir_offset;
 
-			const emulator_object<UNICODE_STRING> obj{c.emu, obj_address };
-			obj.access([&](UNICODE_STRING& ucs)
+			const emulator_object<UNICODE_STRING> windir_obj{c.emu, obj_address};
+			windir_obj.access([&](UNICODE_STRING& ucs)
 			{
 				const auto dir_address = c.proc.kusd.value() + offsetof(KUSER_SHARED_DATA, NtSystemRoot);
 
 				ucs.Buffer = reinterpret_cast<wchar_t*>(dir_address - obj_address);
 				ucs.Length = static_cast<uint16_t>(windows_dir_size);
 				ucs.MaximumLength = ucs.Length;
+			});
 
+
+			const emulator_object<UNICODE_STRING> sysdir_obj{c.emu, obj_address + windir_obj.size()};
+			sysdir_obj.access([&](UNICODE_STRING& ucs)
+			{
+				c.proc.gs_segment.make_unicode_string(ucs, L"C:\\WINDOWS\\System32");
+				ucs.Buffer = reinterpret_cast<wchar_t*>(reinterpret_cast<uint64_t>(ucs.Buffer) - obj_address);
 			});
 
 			if (view_size.value())
