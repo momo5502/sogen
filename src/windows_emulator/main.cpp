@@ -83,7 +83,7 @@ namespace
 			                                  const auto offset = address - object.value();
 			                                  printf("%s: %llX (%s) at %llX (%s)\n", i.get_type_name().c_str(), offset,
 			                                         i.get_member_name(offset).c_str(), rip,
-												  emu.process().module_manager.find_name(rip));
+			                                         emu.process().module_manager.find_name(rip));
 		                                  });
 	}
 

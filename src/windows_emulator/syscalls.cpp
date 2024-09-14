@@ -448,6 +448,29 @@ namespace
 			c.emu.allocate_memory(address,
 			                      c.proc.shared_section_size, memory_permission::read_write);
 
+			size_t windows_dir_size{};
+			c.proc.kusd.access([&](const KUSER_SHARED_DATA& kusd)
+			{
+				const std::wstring_view windows_dir = kusd.NtSystemRoot.arr;
+				windows_dir_size = windows_dir.size() * 2;
+			});
+
+			constexpr auto windows_dir_offset = 0x10;
+			c.emu.write_memory(address + 8, windows_dir_offset);
+
+			const auto obj_address = address + windows_dir_offset;
+
+			const emulator_object<UNICODE_STRING> obj{c.emu, obj_address };
+			obj.access([&](UNICODE_STRING& ucs)
+			{
+				const auto dir_address = c.proc.kusd.value() + offsetof(KUSER_SHARED_DATA, NtSystemRoot);
+
+				ucs.Buffer = reinterpret_cast<wchar_t*>(dir_address - obj_address);
+				ucs.Length = static_cast<uint16_t>(windows_dir_size);
+				ucs.MaximumLength = ucs.Length;
+
+			});
+
 			if (view_size.value())
 			{
 				view_size.write(c.proc.shared_section_size);
