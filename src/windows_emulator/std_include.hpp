@@ -61,6 +61,7 @@
 #define PHNT_VERSION PHNT_WIN11
 #include <phnt_windows.h>
 #include <phnt.h>
+#include <ntgdi.h>
 
 #ifdef _WIN32
 #pragma warning(pop)

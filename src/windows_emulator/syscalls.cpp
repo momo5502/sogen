@@ -1337,9 +1337,22 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtGdiInit2()
+	NTSTATUS handle_NtGdiInit2(const syscall_context& c)
 	{
-		puts("NtGdiInit2 not supported");
+		c.proc.peb.access([&](PEB& peb)
+		{
+			if (!peb.GdiSharedHandleTable)
+			{
+				peb.GdiSharedHandleTable = c.proc.gs_segment.reserve<GDI_SHARED_MEMORY>().ptr();
+			}
+		});
+
+		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS handle_NtUserGetThreadState()
+	{
+		puts("NtUserGetThreadState not supported");
 		return STATUS_NOT_SUPPORTED;
 	}
 
@@ -1681,6 +1694,7 @@ void syscall_dispatcher::add_handlers()
 	add_handler(NtQueryWnfStateNameInformation);
 	add_handler(NtAlpcSendWaitReceivePort);
 	add_handler(NtGdiInit2);
+	add_handler(NtUserGetThreadState);
 
 #undef add_handler
 
