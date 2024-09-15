@@ -229,6 +229,11 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	NTSTATUS handle_NtOpenKeyEx()
+	{
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtSetInformationThread(const syscall_context& c, const uint64_t /*thread_handle*/,
 	                                       const THREADINFOCLASS info_class,
 	                                       const uint64_t /*thread_information*/,
@@ -1367,6 +1372,12 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	NTSTATUS handle_NtUserDisplayConfigGetDeviceInfo()
+	{
+		puts("NtUserDisplayConfigGetDeviceInfo not supported");
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtGdiInit2(const syscall_context& c)
 	{
 		c.proc.peb.access([&](PEB& peb)
@@ -1725,6 +1736,8 @@ void syscall_dispatcher::add_handlers()
 	add_handler(NtAlpcSendWaitReceivePort);
 	add_handler(NtGdiInit2);
 	add_handler(NtUserGetThreadState);
+	add_handler(NtOpenKeyEx);
+	add_handler(NtUserDisplayConfigGetDeviceInfo);
 
 #undef add_handler
 

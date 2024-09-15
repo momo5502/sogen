@@ -551,7 +551,6 @@ void windows_emulator::setup_hooks()
 		const auto ip = this->emu().read_instruction_pointer();
 		const char* name = this->process().module_manager.find_name(ip);
 
-
 		if (type == memory_violation_type::protection)
 		{
 			printf("Protection violation: %llX (%zX) - %s at %llX (%s)\n", address, size, permission.c_str(), ip, name);
