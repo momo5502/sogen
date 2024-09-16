@@ -11,6 +11,8 @@ struct event
 {
 	bool signaled{};
 	EVENT_TYPE type{};
+	std::wstring name{};
+	uint32_t ref_count{0};
 
 	bool is_signaled()
 	{
@@ -28,12 +30,21 @@ struct event
 	{
 		buffer.write(this->signaled);
 		buffer.write(this->type);
+		buffer.write(this->name);
+		buffer.write(this->ref_count);
 	}
 
 	void deserialize(utils::buffer_deserializer& buffer)
 	{
 		buffer.read(this->signaled);
 		buffer.read(this->type);
+		buffer.read(this->name);
+		buffer.read(this->ref_count);
+	}
+
+	static bool deleter(event& e)
+	{
+		return --e.ref_count == 0;
 	}
 };
 

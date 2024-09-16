@@ -308,18 +308,21 @@ namespace
 	                              const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
 	                              const EVENT_TYPE event_type, const BOOLEAN initial_state)
 	{
+		std::wstring name{};
 		if (object_attributes)
 		{
-			//const auto attributes = object_attributes.read();
-
-			puts("Unsupported object attributes");
-			//c.emu.stop();
-			//return STATUS_NOT_SUPPORTED;
+			const auto attributes = object_attributes.read();
+			if (attributes.ObjectName)
+			{
+				name = read_unicode_string(c.emu, attributes.ObjectName);
+			}
 		}
 
 		event e{};
 		e.type = event_type;
 		e.signaled = initial_state != FALSE;
+		e.ref_count = 1;
+		e.name = std::move(name);
 
 		const auto handle = c.proc.events.store(std::move(e));
 		event_handle.write(handle.bits);
@@ -328,6 +331,26 @@ namespace
 		static_assert(sizeof(ACCESS_MASK) == sizeof(uint32_t));
 
 		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS handle_NtOpenEvent(const syscall_context& c, const emulator_object<uint64_t> event_handle,
+		const ACCESS_MASK /*desired_access*/,
+		const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
+	{
+		const auto attributes = object_attributes.read();
+		const auto name = read_unicode_string(c.emu, attributes.ObjectName);
+
+		for (auto& entry : c.proc.events)
+		{
+			if (entry.second.name == name)
+			{
+				++entry.second.ref_count;
+				event_handle.write(c.proc.events.make_handle(entry.first).bits);
+				return STATUS_SUCCESS;
+			}
+		}
+
+		return STATUS_NOT_FOUND;
 	}
 
 	NTSTATUS handle_NtQueryVolumeInformationFile(const syscall_context& c, uint64_t /*file_handle*/,
@@ -1696,8 +1719,6 @@ void syscall_dispatcher::add_handlers()
 	std::unordered_map<std::string, syscall_handler> handler_mapping{};
 	handler_mapping.reserve(this->handlers_.size());
 
-	make_syscall_handler<handle_NtCreateEvent>();
-
 #define add_handler(syscall)                                                  \
 	do                                                                        \
 	{                                                                         \
@@ -1761,6 +1782,7 @@ void syscall_dispatcher::add_handlers()
 	add_handler(NtUserGetThreadState);
 	add_handler(NtOpenKeyEx);
 	add_handler(NtUserDisplayConfigGetDeviceInfo);
+	add_handler(NtOpenEvent);
 
 #undef add_handler
 

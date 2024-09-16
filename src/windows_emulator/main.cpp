@@ -90,8 +90,8 @@ namespace
 	void run()
 	{
 		const std::filesystem::path application =
-			R"(C:\Users\mauri\source\repos\ConsoleApplication6\x64\Release\ConsoleApplication6.exe)";
-		//R"(C:\Program Files (x86)\Steam\steamapps\common\Hogwarts Legacy\Phoenix\Binaries\Win64\HogwartsLegacy.exe)";
+			//R"(C:\Users\mauri\source\repos\ConsoleApplication6\x64\Release\ConsoleApplication6.exe)";
+		R"(C:\Program Files (x86)\Steam\steamapps\common\Hogwarts Legacy\Phoenix\Binaries\Win64\HogwartsLegacy.exe)";
 
 		windows_emulator win_emu{application, {L"Hello", L"World"}};
 

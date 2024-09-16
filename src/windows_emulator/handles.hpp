@@ -68,16 +68,35 @@ constexpr handle make_pseudo_handle(const uint32_t id, const handle_types::type 
 	return make_handle(id, type, true);
 }
 
+namespace handle_detail
+{
+	template <typename, typename = void>
+	struct has_deleter_function : std::false_type
+	{
+	};
+
+	template <typename T>
+	struct has_deleter_function<T, std::void_t<decltype(T::deleter(std::declval<T&>()))>>
+		: std::is_same<decltype(T::deleter(std::declval<T&>())), bool> {};
+}
+
 template <handle_types::type Type, typename T>
 	requires(utils::Serializable<T>)
 class handle_store
 {
 public:
+	using value_map = std::map<uint32_t, T>;
+
 	handle store(T value)
 	{
 		auto index = this->find_free_index();
 		this->store_[index] = std::move(value);
 
+		return make_handle(index);
+	}
+
+	handle make_handle(const uint32_t index)
+	{
 		handle h{};
 		h.bits = 0;
 		h.value.is_pseudo = false;
@@ -119,6 +138,14 @@ public:
 			return false;
 		}
 
+		if constexpr (handle_detail::has_deleter_function<T>())
+		{
+			if (!T::deleter(entry->second))
+			{
+				return false;
+			}
+		}
+		
 		this->store_.erase(entry);
 		return true;
 	}
@@ -146,8 +173,26 @@ public:
 		buffer.read_map(this->store_);
 	}
 
+	value_map::iterator begin() {
+		return this->store_.begin();
+	}
+
+	value_map::const_iterator begin() const
+	{
+		return this->store_.begin();
+	}
+
+	value_map::iterator end()
+	{
+		return this->store_.end();
+	}
+
+	value_map::const_iterator end() const
+	{
+		return this->store_.end();
+	}
+
 private:
-	using value_map = std::map<uint32_t, T>;
 
 	typename value_map::iterator get_iterator(const handle_value h)
 	{
