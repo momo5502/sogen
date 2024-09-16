@@ -725,6 +725,29 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (info_class == SystemErrorPortTimeouts)
+		{
+			if (return_length)
+			{
+				return_length.write(sizeof(SYSTEM_ERROR_PORT_TIMEOUTS));
+			}
+
+			if (system_information_length != sizeof(SYSTEM_ERROR_PORT_TIMEOUTS))
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			const emulator_object<SYSTEM_ERROR_PORT_TIMEOUTS> info_obj{c.emu, system_information};
+
+			info_obj.access([&](SYSTEM_ERROR_PORT_TIMEOUTS& info)
+			{
+				info.StartTimeout = 0;
+				info.CommTimeout = 0;
+			});
+
+			return STATUS_SUCCESS;
+		}
+
 		if (info_class != SystemBasicInformation && info_class != SystemEmulationBasicInformation)
 		{
 			printf("Unsupported system info class: %X\n", info_class);
