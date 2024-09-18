@@ -1,16 +1,17 @@
 #pragma once
 #include <x64_emulator.hpp>
-#include <unicorn_x64_emulator.hpp>
 
 #include "syscalls.hpp"
 #include "process_context.hpp"
 
+std::unique_ptr<x64_emulator> create_default_x64_emulator();
+
 class windows_emulator
 {
 public:
-	windows_emulator(std::unique_ptr<x64_emulator> emu = unicorn::create_x64_emulator());
+	windows_emulator(std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
 	windows_emulator(const std::filesystem::path& application, const std::vector<std::wstring>& arguments = {},
-	                 std::unique_ptr<x64_emulator> emu = unicorn::create_x64_emulator());
+	                 std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
 
 	windows_emulator(windows_emulator&&) = delete;
 	windows_emulator(const windows_emulator&) = delete;

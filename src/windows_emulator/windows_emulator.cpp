@@ -2,6 +2,8 @@
 #include "windows_emulator.hpp"
 #include "context_frame.hpp"
 
+#include <unicorn_x64_emulator.hpp>
+
 #define GS_SEGMENT_ADDR 0x6000000ULL
 #define GS_SEGMENT_SIZE (20 << 20)  // 20 MB
 
@@ -465,6 +467,11 @@ namespace
 	}
 }
 
+std::unique_ptr<x64_emulator> create_default_x64_emulator()
+{
+	return unicorn::create_x64_emulator();
+}
+
 windows_emulator::windows_emulator(const std::filesystem::path& application, const std::vector<std::wstring>& arguments,
                                    std::unique_ptr<x64_emulator> emu)
 	: windows_emulator(std::move(emu))
@@ -569,6 +576,16 @@ void windows_emulator::setup_hooks()
 	                                  {
 		                                  ++this->process().executed_instructions;
 
+		                                  if (address == 0x180038B65)
+		                                  {
+			                                  puts("!!! DLL init failed");
+		                                  }
+		                                  if (address == 0x180038A20)
+		                                  {
+			                                  const auto* name = this->process().module_manager.find_name(
+				                                  this->emu().reg(x64_register::rcx));
+			                                  printf("!!! DLL init: %s\n", name);
+		                                  }
 		                                  const auto* binary = this->process().module_manager.find_by_address(address);
 
 		                                  if (binary)
