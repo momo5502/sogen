@@ -26,6 +26,11 @@ public:
 
 	void setup(const exported_symbols& ntdll_exports, const exported_symbols& win32u_exports);
 
+	std::string get_syscall_name(const uint64_t id)
+	{
+		return this->handlers_.at(id).name;
+	}
+
 private:
 	std::unordered_map<uint64_t, syscall_handler_entry> handlers_{};
 

@@ -535,6 +535,14 @@ void windows_emulator::setup_hooks()
 {
 	this->emu().hook_instruction(x64_hookable_instructions::syscall, [&]
 	{
+		for (const auto& hook : this->syscall_hooks_)
+		{
+			if (hook() == instruction_hook_continuation::skip_instruction)
+			{
+				return instruction_hook_continuation::skip_instruction;
+			}
+		}
+
 		this->dispatcher_.dispatch(this->emu(), this->process());
 		return instruction_hook_continuation::skip_instruction;
 	});

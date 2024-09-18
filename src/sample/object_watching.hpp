@@ -13,8 +13,9 @@ emulator_hook* watch_object(windows_emulator& emu, emulator_object<T> object)
 		                                  const auto rip = emu.emu().read_instruction_pointer();
 
 		                                  const auto offset = address - object.value();
-		                                  printf("%s: %llX (%s) at %llX (%s)\n", i.get_type_name().c_str(), offset,
-		                                         i.get_member_name(offset).c_str(), rip,
-		                                         emu.process().module_manager.find_name(rip));
+		                                  emu.logger.log("Object access: %s - %llX (%s) at %llX (%s)\n", i.get_type_name().c_str(),
+		                                                 offset,
+		                                                 i.get_member_name(offset).c_str(), rip,
+		                                                 emu.process().module_manager.find_name(rip));
 	                                  });
 }

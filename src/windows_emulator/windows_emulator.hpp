@@ -3,6 +3,7 @@
 
 #include "syscalls.hpp"
 #include "process_context.hpp"
+#include "logger.hpp"
 
 std::unique_ptr<x64_emulator> create_default_x64_emulator();
 
@@ -38,6 +39,16 @@ public:
 		return this->process_;
 	}
 
+	syscall_dispatcher& dispatcher()
+	{
+		return this->dispatcher_;
+	}
+
+	const syscall_dispatcher& dispatcher() const
+	{
+		return this->dispatcher_;
+	}
+
 	void serialize(utils::buffer_serializer& buffer) const;
 	void deserialize(utils::buffer_deserializer& buffer);
 
@@ -49,9 +60,18 @@ public:
 		this->verbose_ = verbose;
 	}
 
+	void add_syscall_hook(instruction_hook_callback callback)
+	{
+		this->syscall_hooks_.push_back(std::move(callback));
+	}
+
+	logger logger{};
+
 private:
 	bool verbose_{false};
 	std::unique_ptr<x64_emulator> emu_{};
+
+	std::vector<instruction_hook_callback> syscall_hooks_{};
 
 	process_context process_;
 	syscall_dispatcher dispatcher_;

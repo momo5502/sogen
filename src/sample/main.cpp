@@ -34,19 +34,8 @@ namespace
 		                                });
 	}
 
-
-	void run()
+	void run_emulation(windows_emulator& win_emu)
 	{
-		windows_emulator win_emu {
-			R"(C:\Users\mauri\source\repos\ConsoleApplication6\x64\Release\ConsoleApplication6.exe)",
-			{
-				L"Hello",
-				L"World",
-			}
-		};
-
-		watch_system_objects(win_emu);
-
 		try
 		{
 			if (use_gdb)
@@ -68,6 +57,52 @@ namespace
 		}
 
 		printf("Emulation done.\n");
+	}
+
+	void run()
+	{
+		windows_emulator win_emu{
+			R"(C:\Users\mauri\Desktop\Desktop\qiling-sample\lul.exe)",
+			{
+				L"Hello",
+				L"World",
+			}
+		};
+
+		watch_system_objects(win_emu);
+
+
+		const auto& exe = *win_emu.process().executable;
+
+		const auto text_start = exe.image_base + 0x1000;
+		const auto text_end = exe.image_base + 0x52000;
+		const auto scan_size = 0x1000;
+
+		win_emu.emu().hook_memory_read(text_start, scan_size, [&](uint64_t address, size_t, uint64_t)
+		{
+			const auto rip = win_emu.emu().read_instruction_pointer();
+			if (rip >= text_start && rip < text_end)
+			{
+				win_emu.logger.print(color::green, "Reading from executable .text: 0x%llX at 0x%llX\n", address, rip);
+			}
+		});
+
+		win_emu.add_syscall_hook([&]
+		{
+			const auto rip = win_emu.emu().read_instruction_pointer();
+			if (rip >= text_start && rip < text_end)
+			{
+				const auto syscall_id = win_emu.emu().reg(x64_register::eax);
+				const auto syscall_name = win_emu.dispatcher().get_syscall_name(syscall_id);
+
+				win_emu.logger.print(color::blue, "Executing inline syscall: %s (0x%X) at 0x%llX\n", syscall_name.c_str(),
+				                     syscall_id, rip);
+			}
+
+			return instruction_hook_continuation::run_instruction;
+		});
+
+		run_emulation(win_emu);
 	}
 }
 
