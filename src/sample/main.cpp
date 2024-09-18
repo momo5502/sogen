@@ -59,14 +59,10 @@ namespace
 		printf("Emulation done.\n");
 	}
 
-	void run()
+	void run(std::string_view application)
 	{
 		windows_emulator win_emu{
-			R"(C:\Users\mauri\Desktop\Desktop\qiling-sample\lul.exe)",
-			{
-				L"Hello",
-				L"World",
-			}
+			application, {}
 		};
 
 		watch_system_objects(win_emu);
@@ -95,7 +91,8 @@ namespace
 				const auto syscall_id = win_emu.emu().reg(x64_register::eax);
 				const auto syscall_name = win_emu.dispatcher().get_syscall_name(syscall_id);
 
-				win_emu.logger.print(color::blue, "Executing inline syscall: %s (0x%X) at 0x%llX\n", syscall_name.c_str(),
+				win_emu.logger.print(color::blue, "Executing inline syscall: %s (0x%X) at 0x%llX\n",
+				                     syscall_name.c_str(),
 				                     syscall_id, rip);
 			}
 
@@ -106,15 +103,25 @@ namespace
 	}
 }
 
-int main(int /*argc*/, char** /*argv*/)
+int main(int argc, char** argv)
 {
+	if (argc <= 1)
+	{
+		puts("Application not specified!");
+		return 1;
+	}
+
 	//setvbuf(stdout, nullptr, _IOFBF, 0x10000);
+	if (argc > 2 && argv[1] == "-d"s)
+	{
+		use_gdb = true;
+	}
 
 	try
 	{
 		do
 		{
-			run();
+			run(argv[use_gdb ? 2 : 1]);
 		}
 		while (use_gdb);
 
