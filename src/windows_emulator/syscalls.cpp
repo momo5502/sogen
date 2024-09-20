@@ -1346,10 +1346,10 @@ namespace
 	                              const emulator_object<UNICODE_STRING> server_port_name,
 	                              const emulator_object<SECURITY_QUALITY_OF_SERVICE> /*security_qos*/,
 	                              const emulator_object<PORT_VIEW> client_shared_memory,
-	                              const emulator_object<REMOTE_PORT_VIEW> server_shared_memory,
+	                              const emulator_object<REMOTE_PORT_VIEW> /*server_shared_memory*/,
 	                              const emulator_object<ULONG> /*maximum_message_length*/,
-	                              uint64_t /*connection_info*/,
-	                              const emulator_object<ULONG> /*connection_info_length*/)
+	                              uint64_t connection_info,
+	                              const emulator_object<ULONG> connection_info_length)
 	{
 		auto port_name = read_unicode_string(c.emu, server_port_name);
 		printf("NtConnectPort: %S\n", port_name.c_str());
@@ -1357,7 +1357,12 @@ namespace
 		port p{};
 		p.name = std::move(port_name);
 
-		const auto xx = server_shared_memory.read();
+		if (connection_info)
+		{
+			std::vector<uint8_t> zero_mem{};
+			zero_mem.resize(connection_info_length.read(), 0);
+			c.emu.write_memory(connection_info, zero_mem.data(), zero_mem.size());
+		}
 
 		client_shared_memory.access([&](PORT_VIEW& view)
 		{
