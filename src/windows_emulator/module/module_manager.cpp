@@ -66,7 +66,7 @@ mapped_module* module_manager::map_module(const std::filesystem::path& file)
 		return nullptr;
 	}
 
-	printf("Mapped %s at %llX\n", mod->path.generic_string().c_str(), mod->image_base);
+	printf("Mapped %s at 0x%llX\n", mod->path.generic_string().c_str(), mod->image_base);
 
 	const auto image_base = mod->image_base;
 	const auto entry = this->modules_.try_emplace(image_base, std::move(*mod));

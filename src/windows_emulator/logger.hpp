@@ -11,6 +11,7 @@ enum class color
 	pink,
 	white,
 	gray,
+	dark_gray,
 };
 
 class logger

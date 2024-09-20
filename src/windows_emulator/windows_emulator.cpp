@@ -437,9 +437,6 @@ namespace
 			frame.cs = pointers.ContextRecord->SegCs;
 			frame.eflags = pointers.ContextRecord->EFlags;
 		});
-
-		printf("ContextRecord: %llX\n", context_record_obj.value());
-		printf("ExceptionRecord: %llX\n", exception_record_obj.value());
 	}
 
 	void dispatch_access_violation(x64_emulator& emu, const uint64_t dispatcher, const uint64_t address,
@@ -543,20 +540,20 @@ void windows_emulator::setup_hooks()
 			}
 		}
 
-		this->dispatcher_.dispatch(this->emu(), this->process());
+		this->dispatcher_.dispatch(*this);
 		return instruction_hook_continuation::skip_instruction;
 	});
 
 	this->emu().hook_instruction(x64_hookable_instructions::invalid, [&]
 	{
 		const auto ip = this->emu().read_instruction_pointer();
-		printf("Invalid instruction at: %llX\n", ip);
+		printf("Invalid instruction at: 0x%llX\n", ip);
 		return instruction_hook_continuation::skip_instruction;
 	});
 
 	this->emu().hook_interrupt([&](const int interrupt)
 	{
-		printf("Interrupt: %i %llX\n", interrupt, this->emu().read_instruction_pointer());
+		printf("Interrupt: %i 0x%llX\n", interrupt, this->emu().read_instruction_pointer());
 	});
 
 	this->emu().hook_memory_violation([&](const uint64_t address, const size_t size, const memory_operation operation,
@@ -568,11 +565,11 @@ void windows_emulator::setup_hooks()
 
 		if (type == memory_violation_type::protection)
 		{
-			printf("Protection violation: %llX (%zX) - %s at %llX (%s)\n", address, size, permission.c_str(), ip, name);
+			printf("Protection violation: 0x%llX (%zX) - %s at 0x%llX (%s)\n", address, size, permission.c_str(), ip, name);
 		}
 		else if (type == memory_violation_type::unmapped)
 		{
-			printf("Mapping violation: %llX (%zX) - %s at %llX (%s)\n", address, size, permission.c_str(), ip, name);
+			printf("Mapping violation: 0x%llX (%zX) - %s at 0x%llX (%s)\n", address, size, permission.c_str(), ip, name);
 		}
 
 		dispatch_access_violation(this->emu(), this->process().ki_user_exception_dispatcher, address, operation);
@@ -582,9 +579,17 @@ void windows_emulator::setup_hooks()
 	this->emu().hook_memory_execution(0, std::numeric_limits<size_t>::max(),
 	                                  [&](const uint64_t address, const size_t, const uint64_t)
 	                                  {
-		                                  ++this->process().executed_instructions;
+		                                  auto& process = this->process();
 
-		                                  if (address == 0x180038B65)
+		                                  ++process.executed_instructions;
+
+		                                  process.previous_ip = process.current_ip;
+		                                  process.current_ip = this->emu().read_instruction_pointer();
+
+		                                  const auto is_interesting_call = process.executable->is_within(
+			                                  process.previous_ip) || process.executable->is_within(address);
+
+		                                  /*if (address == 0x180038B65)
 		                                  {
 			                                  puts("!!! DLL init failed");
 		                                  }
@@ -593,7 +598,13 @@ void windows_emulator::setup_hooks()
 			                                  const auto* name = this->process().module_manager.find_name(
 				                                  this->emu().reg(x64_register::rcx));
 			                                  printf("!!! DLL init: %s\n", name);
+		                                  }*/
+
+		                                  if (!this->verbose_ && !this->verbose_calls_ && !is_interesting_call)
+		                                  {
+			                                  return;
 		                                  }
+
 		                                  const auto* binary = this->process().module_manager.find_by_address(address);
 
 		                                  if (binary)
@@ -601,13 +612,13 @@ void windows_emulator::setup_hooks()
 			                                  const auto export_entry = binary->address_names.find(address);
 			                                  if (export_entry != binary->address_names.end())
 			                                  {
-				                                  printf("Executing function: %s - %s (%llX)\n", binary->name.c_str(),
-				                                         export_entry->second.c_str(), address);
+												  logger.print(is_interesting_call ? color::yellow : color::gray, "Executing function: %s - %s (0x%llX)\n", binary->name.c_str(),
+													  export_entry->second.c_str(), address);
 			                                  }
 			                                  else if (address == binary->entry_point)
 			                                  {
-				                                  printf("Executing entry point: %s (%llX)\n", binary->name.c_str(),
-				                                         address);
+												  logger.print(is_interesting_call ? color::yellow : color::gray, "Executing entry point: %s (0x%llX)\n", binary->name.c_str(),
+													  address);
 			                                  }
 		                                  }
 

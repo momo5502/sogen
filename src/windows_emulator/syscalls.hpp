@@ -13,13 +13,15 @@ struct syscall_handler_entry
 	std::string name{};
 };
 
+class windows_emulator;
+
 class syscall_dispatcher
 {
 public:
 	syscall_dispatcher() = default;
 	syscall_dispatcher(const exported_symbols& ntdll_exports, const exported_symbols& win32u_exports);
 
-	void dispatch(x64_emulator& emu, process_context& context);
+	void dispatch(windows_emulator& win_emu);
 
 	void serialize(utils::buffer_serializer& buffer) const;
 	void deserialize(utils::buffer_deserializer& buffer);

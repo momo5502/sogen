@@ -22,4 +22,9 @@ struct mapped_module
 
 	exported_symbols exports{};
 	address_name_mapping address_names{};
+
+	bool is_within(const uint64_t address) const
+	{
+		return address >= this->image_base && address < (this->image_base + this->size_of_image);
+	}
 };

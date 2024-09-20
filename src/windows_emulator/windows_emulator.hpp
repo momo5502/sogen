@@ -60,6 +60,11 @@ public:
 		this->verbose_ = verbose;
 	}
 
+	void set_verbose_calls(const bool verbose)
+	{
+		this->verbose_calls_ = verbose;
+	}
+
 	void add_syscall_hook(instruction_hook_callback callback)
 	{
 		this->syscall_hooks_.push_back(std::move(callback));
@@ -69,6 +74,7 @@ public:
 
 private:
 	bool verbose_{false};
+	bool verbose_calls_{false};
 	std::unique_ptr<x64_emulator> emu_{};
 
 	std::vector<instruction_hook_callback> syscall_hooks_{};

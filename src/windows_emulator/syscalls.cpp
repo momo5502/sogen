@@ -5,11 +5,14 @@
 
 #include "context_frame.hpp"
 #include "emulator_utils.hpp"
+#include "windows_emulator.hpp"
 
 #include <utils/io.hpp>
 
+
 struct syscall_context
 {
+	windows_emulator& win_emu;
 	x64_emulator& emu;
 	process_context& proc;
 	mutable bool write_status;
@@ -70,10 +73,6 @@ namespace
 			if (reference_count[syscall.first] == 1)
 			{
 				syscalls.push_back(std::move(syscall.second));
-			}
-			else
-			{
-				printf("Skipping %s\n", syscall.second.c_str());
 			}
 		}
 
@@ -334,8 +333,8 @@ namespace
 	}
 
 	NTSTATUS handle_NtOpenEvent(const syscall_context& c, const emulator_object<uint64_t> event_handle,
-		const ACCESS_MASK /*desired_access*/,
-		const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
+	                            const ACCESS_MASK /*desired_access*/,
+	                            const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
 	{
 		const auto attributes = object_attributes.read();
 		const auto name = read_unicode_string(c.emu, attributes.ObjectName);
@@ -420,7 +419,7 @@ namespace
 		const auto attributes = object_attributes.read();
 
 		auto filename = read_unicode_string(c.emu, attributes.ObjectName);
-		printf("Open section: %S\n", filename.c_str());
+		printf("Opening section: %S\n", filename.c_str());
 
 		if (filename == L"\\Windows\\SharedSection")
 		{
@@ -622,7 +621,7 @@ namespace
 			const auto mod = c.proc.module_manager.find_by_address(base_address);
 			if (!mod)
 			{
-				printf("Bad address for memory image request: %llX\n", base_address);
+				printf("Bad address for memory image request: 0x%llX\n", base_address);
 				return STATUS_INVALID_ADDRESS;
 			}
 
@@ -842,7 +841,7 @@ namespace
 			|| info_class == SystemFeatureConfigurationInformation
 			|| info_class == SystemFeatureConfigurationSectionInformation)
 		{
-			printf("Unsupported, but allowed system info class: %X\n", info_class);
+			//printf("Unsupported, but allowed system info class: %X\n", info_class);
 			return STATUS_NOT_SUPPORTED;
 		}
 
@@ -1030,6 +1029,40 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (info_class == ProcessImageFileNameWin32)
+		{
+			const auto peb = c.proc.peb.read();
+			emulator_object<RTL_USER_PROCESS_PARAMETERS> proc_params{c.emu, peb.ProcessParameters};
+			const auto params = proc_params.read();
+
+			const auto length = params.ImagePathName.Length + sizeof(UNICODE_STRING) + 2;
+
+			if (return_length)
+			{
+				return_length.write(static_cast<uint32_t>(length));
+			}
+
+			if (process_information_length < length)
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<UNICODE_STRING> info{c.emu, process_information};
+			info.access([&](UNICODE_STRING& str)
+			{
+				const auto buffer_start = static_cast<uint64_t>(process_information) + sizeof(UNICODE_STRING);
+				const auto string = read_unicode_string(c.emu, params.ImagePathName);
+
+				c.emu.write_memory(buffer_start, string.c_str(), (string.size() + 1) * 2);
+
+				str.Length = params.ImagePathName.Length;
+				str.MaximumLength = str.Length;
+				str.Buffer = reinterpret_cast<wchar_t*>(buffer_start);
+			});
+
+			return STATUS_SUCCESS;
+		}
+
 		printf("Unsupported process info class: %X\n", info_class);
 		c.emu.stop();
 
@@ -1125,8 +1158,8 @@ namespace
 
 		const auto requested_protection = map_nt_to_emulator_protection(protection);
 
-		printf("Changing protection at %llX-%llX to %s\n", aligned_start, aligned_start + aligned_length,
-		       get_permission_string(requested_protection).c_str());
+		c.win_emu.logger.print(color::dark_gray, "--> Changing protection at 0x%llX-0x%llX to %s\n", aligned_start,
+		                       aligned_start + aligned_length, get_permission_string(requested_protection).c_str());
 
 		memory_permission old_protection_value{};
 		c.emu.protect_memory(aligned_start, aligned_length, requested_protection, &old_protection_value);
@@ -1297,7 +1330,7 @@ namespace
 	                                const ULONG /*section_page_protection*/, const ULONG /*allocation_attributes*/,
 	                                const uint64_t /*file_handle*/)
 	{
-		puts("NtCreateSection not supported");
+		//puts("NtCreateSection not supported");
 		section_handle.write(SHARED_SECTION.bits);
 
 		maximum_size.access([&c](ULARGE_INTEGER& large_int)
@@ -1365,62 +1398,62 @@ namespace
 
 	NTSTATUS handle_NtDeviceIoControlFile()
 	{
-		puts("NtDeviceIoControlFile not supported");
+		//puts("NtDeviceIoControlFile not supported");
 		return STATUS_SUCCESS;
 	}
 
 	NTSTATUS handle_NtQueryWnfStateData()
 	{
-		puts("NtQueryWnfStateData not supported");
+		//puts("NtQueryWnfStateData not supported");
 		return STATUS_NOT_SUPPORTED;
 	}
 
 	NTSTATUS handle_NtQueryWnfStateNameInformation()
 	{
-		puts("NtQueryWnfStateNameInformation not supported");
+		//puts("NtQueryWnfStateNameInformation not supported");
 		//return STATUS_NOT_SUPPORTED;
 		return STATUS_SUCCESS;
 	}
 
 	NTSTATUS handle_NtOpenProcessToken()
 	{
-		puts("NtOpenProcessToken not supported");
+		//puts("NtOpenProcessToken not supported");
 		return STATUS_NOT_SUPPORTED;
 	}
 
 	NTSTATUS handle_NtQuerySecurityAttributesToken()
 	{
-		puts("NtQuerySecurityAttributesToken not supported");
+		//puts("NtQuerySecurityAttributesToken not supported");
 		return STATUS_NOT_SUPPORTED;
 	}
 
 	NTSTATUS handle_NtQueryLicenseValue()
 	{
-		puts("NtQueryLicenseValue not supported");
+		//puts("NtQueryLicenseValue not supported");
 		return STATUS_NOT_SUPPORTED;
 	}
 
 	NTSTATUS handle_NtTestAlert()
 	{
-		puts("NtTestAlert not supported");
+		//puts("NtTestAlert not supported");
 		return STATUS_NOT_SUPPORTED;
 	}
 
 	NTSTATUS handle_NtQueryInformationToken()
 	{
-		puts("NtQueryInformationToken not supported");
+		//puts("NtQueryInformationToken not supported");
 		return STATUS_NOT_SUPPORTED;
 	}
 
 	NTSTATUS handle_NtDxgkIsFeatureEnabled()
 	{
-		puts("NtDxgkIsFeatureEnabled not supported");
+		//puts("NtDxgkIsFeatureEnabled not supported");
 		return STATUS_NOT_SUPPORTED;
 	}
 
 	NTSTATUS handle_NtUserDisplayConfigGetDeviceInfo()
 	{
-		puts("NtUserDisplayConfigGetDeviceInfo not supported");
+		//puts("NtUserDisplayConfigGetDeviceInfo not supported");
 		return STATUS_NOT_SUPPORTED;
 	}
 
@@ -1439,7 +1472,7 @@ namespace
 
 	NTSTATUS handle_NtUserGetThreadState()
 	{
-		puts("NtUserGetThreadState not supported");
+		//puts("NtUserGetThreadState not supported");
 		return STATUS_NOT_SUPPORTED;
 	}
 
@@ -1538,13 +1571,12 @@ namespace
 			temp_buffer.resize(length);
 			c.emu.read_memory(buffer, temp_buffer.data(), temp_buffer.size());
 
-			(void)fwrite(temp_buffer.data(), 1, temp_buffer.size(), stdout);
-			(void)fflush(stdout);
+			c.win_emu.logger.info("%.*s", static_cast<int>(temp_buffer.size()), temp_buffer.data());
 
 			return STATUS_SUCCESS;
 		}
 
-		puts("NtWriteFile not supported");
+		//puts("NtWriteFile not supported");
 		c.emu.stop();
 		return STATUS_NOT_SUPPORTED;
 	}
@@ -1831,20 +1863,23 @@ void syscall_dispatcher::deserialize(utils::buffer_deserializer& buffer)
 	this->add_handlers();
 }
 
-void syscall_dispatcher::dispatch(x64_emulator& emu, process_context& context)
+void syscall_dispatcher::dispatch(windows_emulator& win_emu)
 {
+	auto& emu = win_emu.emu();
+	auto& context = win_emu.process();
+
 	const auto address = emu.read_instruction_pointer();
 	const auto syscall_id = emu.reg<uint32_t>(x64_register::eax);
 
 
-	const syscall_context c{emu, context, true};
+	const syscall_context c{win_emu, emu, context, true};
 
 	try
 	{
 		const auto entry = this->handlers_.find(syscall_id);
 		if (entry == this->handlers_.end())
 		{
-			printf("Unknown syscall: %X\n", syscall_id);
+			printf("Unknown syscall: 0x%X\n", syscall_id);
 			c.emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_SUPPORTED);
 			c.emu.stop();
 			return;
@@ -1852,24 +1887,25 @@ void syscall_dispatcher::dispatch(x64_emulator& emu, process_context& context)
 
 		if (!entry->second.handler)
 		{
-			printf("Unimplemented syscall: %s - %X\n", entry->second.name.c_str(), syscall_id);
+			printf("Unimplemented syscall: %s - 0x%X\n", entry->second.name.c_str(), syscall_id);
 			c.emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_SUPPORTED);
 			c.emu.stop();
 			return;
 		}
 
-		printf("Handling syscall: %s with id %X at %llX \n", entry->second.name.c_str(), syscall_id, address);
+		win_emu.logger.print(color::dark_gray, "Syscall: %s (0x%X) at 0x%llX\n", entry->second.name.c_str(), syscall_id,
+		                     address);
 		entry->second.handler(c);
 	}
 	catch (std::exception& e)
 	{
-		printf("Syscall threw an exception: %X (%llX) - %s\n", syscall_id, address, e.what());
+		printf("Syscall threw an exception: %X (0x%llX) - %s\n", syscall_id, address, e.what());
 		emu.reg<uint64_t>(x64_register::rax, STATUS_UNSUCCESSFUL);
 		emu.stop();
 	}
 	catch (...)
 	{
-		printf("Syscall threw an unknown exception: %X (%llX)\n", syscall_id, address);
+		printf("Syscall threw an unknown exception: %X (0x%llX)\n", syscall_id, address);
 		emu.reg<uint64_t>(x64_register::rax, STATUS_UNSUCCESSFUL);
 		emu.stop();
 	}

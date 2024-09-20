@@ -40,10 +40,11 @@ namespace
 		{
 			if (use_gdb)
 			{
-				puts("Launching gdb stub...");
+				const auto* address = "0.0.0.0:28960";
+				win_emu.logger.print(color::pink, "Waiting for GDB connection on %s...\n", address);
 
 				x64_gdb_stub_handler handler{win_emu.emu()};
-				run_gdb_stub(handler, "i386:x86-64", gdb_registers.size(), "0.0.0.0:28960");
+				run_gdb_stub(handler, "i386:x86-64", gdb_registers.size(), address);
 			}
 			else
 			{
@@ -52,11 +53,9 @@ namespace
 		}
 		catch (...)
 		{
-			printf("Emulation failed at: %llX\n", win_emu.emu().read_instruction_pointer());
+			printf("Emulation failed at: 0x%llX\n", win_emu.emu().read_instruction_pointer());
 			throw;
 		}
-
-		printf("Emulation done.\n");
 	}
 
 	void run(std::string_view application)
@@ -65,14 +64,14 @@ namespace
 			application, {}
 		};
 
-		watch_system_objects(win_emu);
+		//watch_system_objects(win_emu);
 
 
 		const auto& exe = *win_emu.process().executable;
 
 		const auto text_start = exe.image_base + 0x1000;
 		const auto text_end = exe.image_base + 0x52000;
-		const auto scan_size = 0x1000;
+		const auto scan_size = 0x100;
 
 		win_emu.emu().hook_memory_read(text_start, scan_size, [&](uint64_t address, size_t, uint64_t)
 		{

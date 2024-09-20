@@ -32,6 +32,7 @@ namespace
 		case cyan: return COLOR(0xB, "\033[0;96m");
 		case pink: return COLOR(0xD, "\033[0;95m");
 		case white: return COLOR(0xF, "\033[0;97m");
+		case dark_gray: return COLOR(0x8, "\033[0;97m");
 		case gray:
 		default: return get_reset_color();
 		}

@@ -1,4 +1,5 @@
 #pragma once
+
 #include "emulator_utils.hpp"
 #include "handles.hpp"
 
@@ -119,6 +120,9 @@ struct process_context
 	}
 
 	uint64_t executed_instructions{0};
+	uint64_t current_ip{0};
+	uint64_t previous_ip{0};
+
 	emulator_object<TEB> teb;
 	emulator_object<PEB> peb;
 	emulator_object<RTL_USER_PROCESS_PARAMETERS> process_params;
@@ -144,6 +148,8 @@ struct process_context
 	void serialize(utils::buffer_serializer& buffer) const
 	{
 		buffer.write(this->executed_instructions);
+		buffer.write(this->current_ip);
+		buffer.write(this->previous_ip);
 		buffer.write(this->teb);
 		buffer.write(this->peb);
 		buffer.write(this->process_params);
@@ -168,6 +174,8 @@ struct process_context
 	void deserialize(utils::buffer_deserializer& buffer)
 	{
 		buffer.read(this->executed_instructions);
+		buffer.read(this->current_ip);
+		buffer.read(this->previous_ip);
 		buffer.read(this->teb);
 		buffer.read(this->peb);
 		buffer.read(this->process_params);
