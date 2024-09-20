@@ -61,12 +61,12 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName", "momo5502"
-            VALUE "FileDescription", "Bird"
+            VALUE "FileDescription", "Windows Emulator"
             VALUE "FileVersion", "1.0.0.0"
-            VALUE "InternalName", "Bird"
+            VALUE "InternalName", "emulator"
             VALUE "LegalCopyright", "All rights reserved."
-            VALUE "OriginalFilename", "bird.exe"
-            VALUE "ProductName", "bird"
+            VALUE "OriginalFilename", "emulator.exe"
+            VALUE "ProductName", "emulator"
             VALUE "ProductVersion", "1.0.0.0"
         END
     END

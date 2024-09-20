@@ -1836,7 +1836,11 @@ void syscall_dispatcher::add_handlers()
 #ifndef NDEBUG
 	if (!handler_mapping.empty())
 	{
-		throw std::runtime_error("Unmapped handlers!");
+		puts("Unmapped handlers:");
+		for (const auto& h : handler_mapping)
+		{
+			printf("  %s\n", h.first.c_str());
+		}
 	}
 #endif
 }
