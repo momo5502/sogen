@@ -53,9 +53,11 @@ namespace
 		}
 		catch (...)
 		{
-			printf("Emulation failed at: 0x%llX\n", win_emu.emu().read_instruction_pointer());
+			win_emu.logger.print(color::red, "Emulation failed at: 0x%llX\n", win_emu.emu().read_instruction_pointer());
 			throw;
 		}
+
+		win_emu.logger.print(color::red, "Emulation terminated!");
 	}
 
 	void run(std::string_view application)
