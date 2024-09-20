@@ -19,6 +19,8 @@ public:
 	windows_emulator& operator=(windows_emulator&&) = delete;
 	windows_emulator& operator=(const windows_emulator&) = delete;
 
+	~windows_emulator() = default;
+
 	x64_emulator& emu()
 	{
 		return *this->emu_;

@@ -57,10 +57,10 @@ namespace
 			throw;
 		}
 
-		win_emu.logger.print(color::red, "Emulation terminated!");
+		win_emu.logger.print(color::red, "Emulation terminated!\n");
 	}
 
-	void run(std::string_view application)
+	void run(const std::string_view application)
 	{
 		windows_emulator win_emu{
 			application, {}
@@ -73,9 +73,9 @@ namespace
 
 		const auto text_start = exe.image_base + 0x1000;
 		const auto text_end = exe.image_base + 0x52000;
-		const auto scan_size = 0x100;
+		constexpr auto scan_size = 0x100;
 
-		win_emu.emu().hook_memory_read(text_start, scan_size, [&](uint64_t address, size_t, uint64_t)
+		win_emu.emu().hook_memory_read(text_start, scan_size, [&](const uint64_t address, size_t, uint64_t)
 		{
 			const auto rip = win_emu.emu().read_instruction_pointer();
 			if (rip >= text_start && rip < text_end)
@@ -96,19 +96,20 @@ namespace
 				                     syscall_name.c_str(),
 				                     syscall_id, rip);
 
-				/*if (syscall_name == "NtQueryInformationProcess")
+				if (syscall_name == "NtQueryInformationProcess")
 				{
 					const auto info_class = win_emu.emu().reg(x64_register::rdx);
 					if (info_class == ProcessImageFileNameWin32)
 					{
 						const auto data = win_emu.emu().reg(x64_register::r8);
 
-						emulator_allocator data_allocator{ win_emu.emu(), data, 0x100 };
-						data_allocator.make_unicode_string(L"C:\\Users\\mauri\\source\\repos\\lul\\x64\\Release\\lul.exe");
+						emulator_allocator data_allocator{win_emu.emu(), data, 0x100};
+						data_allocator.make_unicode_string(
+							L"C:\\Users\\mauri\\source\\repos\\lul\\x64\\Release\\lul.exe");
 						win_emu.emu().reg(x64_register::rax, STATUS_SUCCESS);
 						return instruction_hook_continuation::skip_instruction;
 					}
-				}*/
+				}
 			}
 
 			return instruction_hook_continuation::run_instruction;
@@ -118,7 +119,7 @@ namespace
 	}
 }
 
-int main(int argc, char** argv)
+int main(const int argc, char** argv)
 {
 	if (argc <= 1)
 	{

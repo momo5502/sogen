@@ -565,11 +565,13 @@ void windows_emulator::setup_hooks()
 
 		if (type == memory_violation_type::protection)
 		{
-			printf("Protection violation: 0x%llX (%zX) - %s at 0x%llX (%s)\n", address, size, permission.c_str(), ip, name);
+			printf("Protection violation: 0x%llX (%zX) - %s at 0x%llX (%s)\n", address, size, permission.c_str(), ip,
+			       name);
 		}
 		else if (type == memory_violation_type::unmapped)
 		{
-			printf("Mapping violation: 0x%llX (%zX) - %s at 0x%llX (%s)\n", address, size, permission.c_str(), ip, name);
+			printf("Mapping violation: 0x%llX (%zX) - %s at 0x%llX (%s)\n", address, size, permission.c_str(), ip,
+			       name);
 		}
 
 		dispatch_access_violation(this->emu(), this->process().ki_user_exception_dispatcher, address, operation);
@@ -612,13 +614,17 @@ void windows_emulator::setup_hooks()
 			                                  const auto export_entry = binary->address_names.find(address);
 			                                  if (export_entry != binary->address_names.end())
 			                                  {
-												  logger.print(is_interesting_call ? color::yellow : color::gray, "Executing function: %s - %s (0x%llX)\n", binary->name.c_str(),
-													  export_entry->second.c_str(), address);
+				                                  logger.print(is_interesting_call ? color::yellow : color::gray,
+				                                               "Executing function: %s - %s (0x%llX)\n",
+				                                               binary->name.c_str(),
+				                                               export_entry->second.c_str(), address);
 			                                  }
 			                                  else if (address == binary->entry_point)
 			                                  {
-												  logger.print(is_interesting_call ? color::yellow : color::gray, "Executing entry point: %s (0x%llX)\n", binary->name.c_str(),
-													  address);
+				                                  logger.print(is_interesting_call ? color::yellow : color::gray,
+				                                               "Executing entry point: %s (0x%llX)\n",
+				                                               binary->name.c_str(),
+				                                               address);
 			                                  }
 		                                  }
 

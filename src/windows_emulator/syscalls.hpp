@@ -1,8 +1,6 @@
 #pragma once
 
-#include <x64_emulator.hpp>
 #include "process_context.hpp"
-#include "handles.hpp"
 
 struct syscall_context;
 using syscall_handler = void(*)(const syscall_context& c);
