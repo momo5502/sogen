@@ -93,6 +93,20 @@ namespace
 				win_emu.logger.print(color::blue, "Executing inline syscall: %s (0x%X) at 0x%llX\n",
 				                     syscall_name.c_str(),
 				                     syscall_id, rip);
+
+				/*if (syscall_name == "NtQueryInformationProcess")
+				{
+					const auto info_class = win_emu.emu().reg(x64_register::rdx);
+					if (info_class == ProcessImageFileNameWin32)
+					{
+						const auto data = win_emu.emu().reg(x64_register::r8);
+
+						emulator_allocator data_allocator{ win_emu.emu(), data, 0x100 };
+						data_allocator.make_unicode_string(L"C:\\Users\\mauri\\source\\repos\\lul\\x64\\Release\\lul.exe");
+						win_emu.emu().reg(x64_register::rax, STATUS_SUCCESS);
+						return instruction_hook_continuation::skip_instruction;
+					}
+				}*/
 			}
 
 			return instruction_hook_continuation::run_instruction;
