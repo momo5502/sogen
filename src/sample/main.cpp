@@ -96,7 +96,7 @@ namespace
 				                     syscall_name.c_str(),
 				                     syscall_id, rip);
 
-				if (syscall_name == "NtQueryInformationProcess")
+				/*if (syscall_name == "NtQueryInformationProcess")
 				{
 					const auto info_class = win_emu.emu().reg(x64_register::rdx);
 					if (info_class == ProcessImageFileNameWin32)
@@ -109,7 +109,7 @@ namespace
 						win_emu.emu().reg(x64_register::rax, STATUS_SUCCESS);
 						return instruction_hook_continuation::skip_instruction;
 					}
-				}
+				}*/
 			}
 
 			return instruction_hook_continuation::run_instruction;
