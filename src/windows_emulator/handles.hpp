@@ -77,7 +77,9 @@ namespace handle_detail
 
 	template <typename T>
 	struct has_deleter_function<T, std::void_t<decltype(T::deleter(std::declval<T&>()))>>
-		: std::is_same<decltype(T::deleter(std::declval<T&>())), bool> {};
+		: std::is_same<decltype(T::deleter(std::declval<T&>())), bool>
+	{
+	};
 }
 
 template <handle_types::type Type, typename T>
@@ -145,7 +147,7 @@ public:
 				return false;
 			}
 		}
-		
+
 		this->store_.erase(entry);
 		return true;
 	}
@@ -173,7 +175,8 @@ public:
 		buffer.read_map(this->store_);
 	}
 
-	value_map::iterator begin() {
+	value_map::iterator begin()
+	{
 		return this->store_.begin();
 	}
 
@@ -193,7 +196,6 @@ public:
 	}
 
 private:
-
 	typename value_map::iterator get_iterator(const handle_value h)
 	{
 		if (h.type != Type || h.is_pseudo)

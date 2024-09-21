@@ -19,31 +19,31 @@ class logger
 public:
 	void print(color c, const char* message, ...) const;
 
-	template<typename... Args>
+	template <typename... Args>
 	void info(const char* message, Args... args)
 	{
 		this->print(color::cyan, message, args...);
 	}
 
-	template<typename... Args>
+	template <typename... Args>
 	void warn(const char* message, Args... args)
 	{
 		this->print(color::yellow, message, args...);
 	}
 
-	template<typename... Args>
+	template <typename... Args>
 	void error(const char* message, Args... args)
 	{
 		this->print(color::red, message, args...);
 	}
 
-	template<typename... Args>
+	template <typename... Args>
 	void success(const char* message, Args... args)
 	{
 		this->print(color::green, message, args...);
 	}
 
-	template<typename... Args>
+	template <typename... Args>
 	void log(const char* message, Args... args)
 	{
 		this->print(color::gray, message, args...);

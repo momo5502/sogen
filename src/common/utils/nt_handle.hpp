@@ -8,7 +8,19 @@
 
 namespace utils::nt
 {
-	template <HANDLE InvalidHandle = nullptr>
+	using HandleFunction = HANDLE();
+
+	inline HANDLE null_handle()
+	{
+		return nullptr;
+	}
+
+	inline HANDLE invalid_handle()
+	{
+		return INVALID_HANDLE_VALUE;
+	}
+
+	template <HandleFunction InvalidHandleFunction = null_handle>
 	class handle
 	{
 	public:
@@ -24,7 +36,7 @@ namespace utils::nt
 			if (*this)
 			{
 				CloseHandle(this->handle_);
-				this->handle_ = InvalidHandle;
+				this->handle_ = InvalidHandleFunction();
 			}
 		}
 
@@ -43,7 +55,7 @@ namespace utils::nt
 			{
 				this->~handle();
 				this->handle_ = obj.handle_;
-				obj.handle_ = InvalidHandle;
+				obj.handle_ = InvalidHandleFunction();
 			}
 
 			return *this;
@@ -59,7 +71,7 @@ namespace utils::nt
 
 		[[nodiscard]] operator bool() const
 		{
-			return this->handle_ != InvalidHandle;
+			return this->handle_ != InvalidHandleFunction();
 		}
 
 		[[nodiscard]] operator HANDLE() const
@@ -68,6 +80,6 @@ namespace utils::nt
 		}
 
 	private:
-		HANDLE handle_{InvalidHandle};
+		HANDLE handle_{InvalidHandleFunction()};
 	};
 }

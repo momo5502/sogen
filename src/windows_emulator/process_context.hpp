@@ -51,7 +51,7 @@ struct event
 
 struct file
 {
-	utils::nt::handle<INVALID_HANDLE_VALUE> handle{};
+	utils::nt::handle<utils::nt::invalid_handle> handle{};
 	std::wstring name{};
 
 	void serialize(utils::buffer_serializer& buffer) const
