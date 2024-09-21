@@ -352,7 +352,7 @@ namespace
 		return STATUS_NOT_FOUND;
 	}
 
-	NTSTATUS handle_NtQueryVolumeInformationFile(const syscall_context& c, uint64_t /*file_handle*/,
+	NTSTATUS handle_NtQueryVolumeInformationFile(const syscall_context& c, uint64_t file_handle,
 	                                             uint64_t /*io_status_block*/, uint64_t fs_information,
 	                                             ULONG /*length*/,
 	                                             FS_INFORMATION_CLASS fs_information_class)
@@ -367,8 +367,16 @@ namespace
 		const emulator_object<FILE_FS_DEVICE_INFORMATION> info_obj{c.emu, fs_information};
 		info_obj.access([&](FILE_FS_DEVICE_INFORMATION& info)
 		{
-			info.DeviceType = FILE_DEVICE_DISK;
-			info.Characteristics = 0x20020;
+			if (file_handle == STDOUT_HANDLE.bits)
+			{
+				info.DeviceType = FILE_DEVICE_CONSOLE;
+				info.Characteristics = 0x20000;
+			}
+			else
+			{
+				info.DeviceType = FILE_DEVICE_DISK;
+				info.Characteristics = 0x20020;
+			}
 		});
 
 		return STATUS_SUCCESS;
