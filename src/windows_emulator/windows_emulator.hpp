@@ -57,26 +57,17 @@ public:
 	void save_snapshot();
 	void restore_snapshot();
 
-	void set_verbose(const bool verbose)
-	{
-		this->verbose_ = verbose;
-	}
-
-	void set_verbose_calls(const bool verbose)
-	{
-		this->verbose_calls_ = verbose;
-	}
-
 	void add_syscall_hook(instruction_hook_callback callback)
 	{
 		this->syscall_hooks_.push_back(std::move(callback));
 	}
 
 	logger logger{};
+	bool verbose{false};
+	bool verbose_calls{false};
+	bool buffer_stdout{false};
 
 private:
-	bool verbose_{false};
-	bool verbose_calls_{false};
 	std::unique_ptr<x64_emulator> emu_{};
 
 	std::vector<instruction_hook_callback> syscall_hooks_{};
