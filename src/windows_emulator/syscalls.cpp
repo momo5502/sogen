@@ -367,7 +367,7 @@ namespace
 		const emulator_object<FILE_FS_DEVICE_INFORMATION> info_obj{c.emu, fs_information};
 		info_obj.access([&](FILE_FS_DEVICE_INFORMATION& info)
 		{
-			if (file_handle == STDOUT_HANDLE.bits)
+			if (file_handle == STDOUT_HANDLE.bits && !c.win_emu.buffer_stdout)
 			{
 				info.DeviceType = FILE_DEVICE_CONSOLE;
 				info.Characteristics = 0x20000;

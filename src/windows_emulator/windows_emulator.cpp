@@ -602,7 +602,7 @@ void windows_emulator::setup_hooks()
 			                                  printf("!!! DLL init: %s\n", name);
 		                                  }*/
 
-		                                  if (!this->verbose_ && !this->verbose_calls_ && !is_interesting_call)
+		                                  if (!this->verbose && !this->verbose_calls && !is_interesting_call)
 		                                  {
 			                                  return;
 		                                  }
@@ -628,7 +628,7 @@ void windows_emulator::setup_hooks()
 			                                  }
 		                                  }
 
-		                                  if (!this->verbose_)
+		                                  if (!this->verbose)
 		                                  {
 			                                  return;
 		                                  }

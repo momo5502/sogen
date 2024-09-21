@@ -67,7 +67,7 @@ namespace
 		};
 
 		//watch_system_objects(win_emu);
-
+		win_emu.buffer_stdout = true;
 
 		const auto& exe = *win_emu.process().executable;
 
