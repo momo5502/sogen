@@ -1498,6 +1498,11 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	NTSTATUS handle_NtQueryInstallUILanguage()
+	{
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtUserDisplayConfigGetDeviceInfo()
 	{
 		//puts("NtUserDisplayConfigGetDeviceInfo not supported");
@@ -1517,9 +1522,18 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	NTSTATUS handle_NtGetMUIRegistryInfo()
+	{
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtUserGetThreadState()
 	{
-		//puts("NtUserGetThreadState not supported");
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtIsUILanguageComitted()
+	{
 		return STATUS_NOT_SUPPORTED;
 	}
 
@@ -1862,6 +1876,9 @@ void syscall_dispatcher::add_handlers()
 	add_handler(NtOpenKeyEx);
 	add_handler(NtUserDisplayConfigGetDeviceInfo);
 	add_handler(NtOpenEvent);
+	add_handler(NtGetMUIRegistryInfo);
+	add_handler(NtIsUILanguageComitted);
+	add_handler(NtQueryInstallUILanguage);
 
 #undef add_handler
 
