@@ -644,6 +644,40 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (info_class == MemoryRegionInformation)
+		{
+			if (return_length)
+			{
+				return_length.write(sizeof(MEMORY_REGION_INFORMATION));
+			}
+
+			if (memory_information_length != sizeof(MEMORY_REGION_INFORMATION))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const auto region_info = c.emu.get_region_info(base_address);
+			if(!region_info.is_reserved)
+			{
+				return STATUS_INVALID_ADDRESS;
+			}
+
+			const emulator_object<MEMORY_REGION_INFORMATION> info{c.emu, memory_information};
+
+			info.access([&](MEMORY_REGION_INFORMATION& image_info)
+			{
+				memset(&image_info, 0, sizeof(image_info));
+
+				image_info.AllocationBase = reinterpret_cast<void*>(region_info.allocation_base);
+				image_info.AllocationProtect = 0;
+				image_info.PartitionId = 0;
+				image_info.RegionSize = region_info.allocation_length;
+				image_info.Reserved = 0x10;
+			});
+
+			return STATUS_SUCCESS;
+		}
+
 		printf("Unsupported memory info class: %X\n", info_class);
 		c.emu.stop();
 		return STATUS_NOT_SUPPORTED;

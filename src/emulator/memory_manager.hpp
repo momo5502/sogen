@@ -8,6 +8,7 @@
 struct region_info : basic_memory_region
 {
 	uint64_t allocation_base{};
+	size_t allocation_length{};
 	bool is_reserved{};
 	bool is_committed{};
 };

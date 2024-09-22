@@ -394,6 +394,7 @@ region_info memory_manager::get_region_info(const uint64_t address)
 	result.length = MAX_ALLOCATION_ADDRESS - result.start;
 	result.pemissions = memory_permission::none;
 	result.allocation_base = {};
+	result.allocation_length = result.length;
 	result.is_committed = false;
 	result.is_reserved = false;
 
@@ -424,8 +425,9 @@ region_info memory_manager::get_region_info(const uint64_t address)
 
 	result.is_reserved = true;
 	result.allocation_base = entry->first;
+	result.allocation_length = reserved_region.length;
 	result.start = result.allocation_base;
-	result.length = reserved_region.length;
+	result.length = result.allocation_length;
 
 	if (committed_regions.empty())
 	{
