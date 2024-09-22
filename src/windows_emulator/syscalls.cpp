@@ -223,8 +223,15 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtOpenKey()
+	NTSTATUS handle_NtOpenKey(const syscall_context& c, const emulator_object<uint64_t> /*key_handle*/,
+	                          const ACCESS_MASK /*desired_access*/,
+	                          const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
 	{
+		const auto attributes = object_attributes.read();
+		const auto key = read_unicode_string(c.emu, attributes.ObjectName);
+
+		c.win_emu.logger.print(color::pink, "Registry key: %S\n", key.c_str());
+
 		return STATUS_NOT_SUPPORTED;
 	}
 
@@ -1537,6 +1544,11 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	NTSTATUS handle_NtUpdateWnfStateData()
+	{
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtAlpcSendWaitReceivePort(const syscall_context& c, const uint64_t port_handle,
 	                                          const ULONG /*flags*/,
 	                                          const emulator_object<PORT_MESSAGE> /*send_message*/,
@@ -1879,6 +1891,7 @@ void syscall_dispatcher::add_handlers()
 	add_handler(NtGetMUIRegistryInfo);
 	add_handler(NtIsUILanguageComitted);
 	add_handler(NtQueryInstallUILanguage);
+	add_handler(NtUpdateWnfStateData);
 
 #undef add_handler
 
