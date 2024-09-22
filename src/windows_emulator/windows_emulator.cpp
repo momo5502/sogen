@@ -614,7 +614,7 @@ void windows_emulator::setup_hooks()
 			                                  const auto export_entry = binary->address_names.find(address);
 			                                  if (export_entry != binary->address_names.end())
 			                                  {
-				                                  logger.print(is_interesting_call ? color::yellow : color::gray,
+				                                  logger.print(is_interesting_call ? color::yellow : color::dark_gray,
 				                                               "Executing function: %s - %s (0x%llX)\n",
 				                                               binary->name.c_str(),
 				                                               export_entry->second.c_str(), address);

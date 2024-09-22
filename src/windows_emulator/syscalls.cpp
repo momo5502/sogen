@@ -657,7 +657,7 @@ namespace
 			}
 
 			const auto region_info = c.emu.get_region_info(base_address);
-			if(!region_info.is_reserved)
+			if (!region_info.is_reserved)
 			{
 				return STATUS_INVALID_ADDRESS;
 			}
@@ -1961,8 +1961,22 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
 			return;
 		}
 
-		win_emu.logger.print(color::dark_gray, "Syscall: %s (0x%X) at 0x%llX\n", entry->second.name.c_str(), syscall_id,
-		                     address);
+		const auto* mod = context.module_manager.find_by_address(address);
+		if (mod != context.ntdll && mod != context.win32u)
+		{
+			win_emu.logger.print(color::blue, "Executing inline syscall: %s (0x%X) at 0x%llX (%s)\n",
+			                     entry->second.name.c_str(),
+			                     syscall_id,
+			                     address, mod ? mod->name.c_str() : "<N/A>");
+		}
+		else
+		{
+			win_emu.logger.print(color::dark_gray, "Executing syscall: %s (0x%X) at 0x%llX\n",
+			                     entry->second.name.c_str(),
+			                     syscall_id,
+			                     address);
+		}
+
 		entry->second.handler(c);
 	}
 	catch (std::exception& e)

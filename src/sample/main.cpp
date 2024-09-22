@@ -68,6 +68,7 @@ namespace
 
 		//watch_system_objects(win_emu);
 		win_emu.buffer_stdout = true;
+		//win_emu.verbose_calls = true;
 
 		const auto& exe = *win_emu.process().executable;
 
@@ -84,36 +85,32 @@ namespace
 			}
 		});
 
-		win_emu.add_syscall_hook([&]
+		/*win_emu.add_syscall_hook([&]
 		{
-			const auto rip = win_emu.emu().read_instruction_pointer();
-			if (rip >= text_start && rip < text_end)
+			const auto syscall_id = win_emu.emu().reg(x64_register::eax);
+			const auto syscall_name = win_emu.dispatcher().get_syscall_name(syscall_id);
+
+			if (syscall_name != "NtQueryInformationProcess")
 			{
-				const auto syscall_id = win_emu.emu().reg(x64_register::eax);
-				const auto syscall_name = win_emu.dispatcher().get_syscall_name(syscall_id);
-
-				win_emu.logger.print(color::blue, "Executing inline syscall: %s (0x%X) at 0x%llX\n",
-				                     syscall_name.c_str(),
-				                     syscall_id, rip);
-
-				/*if (syscall_name == "NtQueryInformationProcess")
-				{
-					const auto info_class = win_emu.emu().reg(x64_register::rdx);
-					if (info_class == ProcessImageFileNameWin32)
-					{
-						const auto data = win_emu.emu().reg(x64_register::r8);
-
-						emulator_allocator data_allocator{win_emu.emu(), data, 0x100};
-						data_allocator.make_unicode_string(
-							L"C:\\Users\\mauri\\source\\repos\\lul\\x64\\Release\\lul.exe");
-						win_emu.emu().reg(x64_register::rax, STATUS_SUCCESS);
-						return instruction_hook_continuation::skip_instruction;
-					}
-				}*/
+				return instruction_hook_continuation::run_instruction;
 			}
 
-			return instruction_hook_continuation::run_instruction;
-		});
+			const auto info_class = win_emu.emu().reg(x64_register::rdx);
+			if (info_class != ProcessImageFileNameWin32)
+			{
+				return instruction_hook_continuation::run_instruction;
+			}
+
+			win_emu.logger.print(color::pink, "Patching NtQueryInformationProcess...\n");
+
+			const auto data = win_emu.emu().reg(x64_register::r8);
+
+			emulator_allocator data_allocator{win_emu.emu(), data, 0x100};
+			data_allocator.make_unicode_string(
+				L"C:\\Users\\mauri\\source\\repos\\lul\\x64\\Release\\lul.exe");
+			win_emu.emu().reg(x64_register::rax, STATUS_SUCCESS);
+			return instruction_hook_continuation::skip_instruction;
+		});*/
 
 		run_emulation(win_emu);
 	}
