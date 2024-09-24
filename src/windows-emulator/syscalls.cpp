@@ -434,7 +434,7 @@ namespace
 		const auto attributes = object_attributes.read();
 
 		auto filename = read_unicode_string(c.emu, attributes.ObjectName);
-		printf("Opening section: %S\n", filename.c_str());
+		c.win_emu.logger.print(color::gray, "Opening section: %S\n", filename.c_str());
 
 		if (filename == L"\\Windows\\SharedSection")
 		{
@@ -536,7 +536,7 @@ namespace
 			return STATUS_INVALID_HANDLE;
 		}
 
-		const auto binary = c.proc.module_manager.map_module(section_entry->name);
+		const auto binary = c.proc.module_manager.map_module(section_entry->name, c.win_emu.logger);
 		if (!binary)
 		{
 			return STATUS_FILE_INVALID;

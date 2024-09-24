@@ -1,5 +1,6 @@
 #pragma once
 #include <span>
+#include <memory>
 #include <thread>
 #include <cstdint>
 #include <functional>
@@ -14,12 +15,19 @@ namespace fuzzer
 		error,
 	};
 
-	struct fuzzing_handler
+	struct executer
 	{
-		virtual ~fuzzing_handler() = default;
+		virtual ~executer() = default;
 
 		virtual execution_result execute(std::span<const uint8_t> data,
-		                                 const std::function<coverage_functor>& coverage_handler) = 0;
+			const std::function<coverage_functor>& coverage_handler) = 0;
+	};
+
+	struct handler
+	{
+		virtual ~handler() = default;
+
+		virtual std::unique_ptr<executer> make_executer() = 0;
 
 		virtual bool stop()
 		{
@@ -27,5 +35,5 @@ namespace fuzzer
 		}
 	};
 
-	void run(fuzzing_handler& handler, size_t concurrency = std::thread::hardware_concurrency());
+	void run(handler& handler, size_t concurrency = std::thread::hardware_concurrency());
 }

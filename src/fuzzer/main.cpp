@@ -24,7 +24,6 @@ namespace
 		}
 
 		win_emu.logger.disable_output(false);
-		win_emu.logger.print(color::red, "Emulation terminated!\n");
 	}
 
 	void forward_emulator(windows_emulator& win_emu)
@@ -37,40 +36,33 @@ namespace
 		run_emulation(win_emu);
 	}
 
-	std::vector<std::unique_ptr<windows_emulator>> prepare_emulators(const size_t count,
-	                                                                 const windows_emulator& base_emulator)
+	struct fuzzer_executer : fuzzer::executer
 	{
-		std::vector<std::unique_ptr<windows_emulator>> emulators{};
+		windows_emulator emu{};
+		const std::function<fuzzer::coverage_functor>* handler{nullptr};
 
-		utils::buffer_serializer serializer{};
-		base_emulator.serialize(serializer);
 
-		for (size_t i = 0; i < count; ++i)
+		fuzzer_executer(std::span<const std::byte> data)
 		{
-			auto emu = std::make_unique<windows_emulator>();
-			utils::buffer_deserializer deserializer{serializer.get_buffer()};
+			utils::buffer_deserializer deserializer{data};
+			emu.deserialize(deserializer);
+			//emu.save_snapshot();
 
-			emu->deserialize(deserializer);
-			//emu->save_snapshot();
-
-			emulators.push_back(std::move(emu));
+			emu.emu().hook_edge_generation([&](const basic_block& current_block,
+			                                             const basic_block&)
+			{
+				if (this->handler)
+				{
+					(*this->handler)(current_block.address);
+				}
+			});
 		}
-
-		return emulators;
-	}
-
-	struct my_fuzzer_handler : fuzzer::fuzzing_handler
-	{
-		const std::vector<std::unique_ptr<windows_emulator>>* emulators{};
-		std::atomic_size_t active_emu{0};
-		std::atomic_bool stop_fuzzing{false};
 
 		fuzzer::execution_result execute(std::span<const uint8_t> data,
 		                                 const std::function<fuzzer::coverage_functor>& coverage_handler) override
 		{
-			puts("Running...");
-			const auto emu_index = ++active_emu;
-			auto& emu = *emulators->at(emu_index % emulators->size());
+			printf("Input size: %zd\n", data.size());
+			this->handler = &coverage_handler;
 
 			utils::buffer_serializer serializer{};
 			emu.serialize(serializer);
@@ -82,17 +74,6 @@ namespace
 			});
 
 			//emu.restore_snapshot();
-
-			auto* h = emu.emu().hook_edge_generation([&](const basic_block& current_block,
-			                                             const basic_block&)
-			{
-				coverage_handler(current_block.address);
-			});
-
-			const auto __ = utils::finally([&]
-			{
-				emu.emu().delete_hook(h);
-			});
 
 			const auto memory = emu.emu().allocate_memory(page_align_up(std::max(data.size(), 1ULL)),
 			                                              memory_permission::read_write);
@@ -108,9 +89,24 @@ namespace
 			}
 			catch (...)
 			{
-				stop_fuzzing = true;
 				return fuzzer::execution_result::error;
 			}
+		}
+	};
+
+	struct my_fuzzer_handler : fuzzer::handler
+	{
+		std::vector<std::byte> emulator_state{};
+		std::atomic_bool stop_fuzzing{false};
+
+		my_fuzzer_handler(std::vector<std::byte> emulator_state)
+			: emulator_state(std::move(emulator_state))
+		{
+		}
+
+		std::unique_ptr<fuzzer::executer> make_executer() override
+		{
+			return std::make_unique<fuzzer_executer>(emulator_state);
 		}
 
 		bool stop() override
@@ -121,11 +117,12 @@ namespace
 
 	void run_fuzzer(const windows_emulator& base_emulator)
 	{
-		const auto concurrency = 1ULL; //std::thread::hardware_concurrency();
-		const auto emulators = prepare_emulators(concurrency, base_emulator);
+		const auto concurrency = std::thread::hardware_concurrency();
 
-		my_fuzzer_handler handler{};
-		handler.emulators = &emulators;
+		utils::buffer_serializer serializer{};
+		base_emulator.serialize(serializer);
+
+		my_fuzzer_handler handler{serializer.move_buffer()};
 
 		fuzzer::run(handler, concurrency);
 	}

@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include "module_manager.hpp"
 #include "module_mapping.hpp"
+#include "windows-emulator/logger.hpp"
 
 static void serialize(utils::buffer_serializer& buffer, const exported_symbol& sym)
 {
@@ -49,7 +50,7 @@ module_manager::module_manager(emulator& emu)
 {
 }
 
-mapped_module* module_manager::map_module(const std::filesystem::path& file)
+mapped_module* module_manager::map_module(const std::filesystem::path& file, logger& logger)
 {
 	for (auto& mod : this->modules_)
 	{
@@ -62,11 +63,11 @@ mapped_module* module_manager::map_module(const std::filesystem::path& file)
 	auto mod = map_module_from_file(*this->emu_, file);
 	if (!mod)
 	{
-		printf("Failed to map %s\n", file.generic_string().c_str());
+		logger.error("Failed to map %s\n", file.generic_string().c_str());
 		return nullptr;
 	}
 
-	printf("Mapped %s at 0x%llX\n", mod->path.generic_string().c_str(), mod->image_base);
+	logger.log("Mapped %s at 0x%llX\n", mod->path.generic_string().c_str(), mod->image_base);
 
 	const auto image_base = mod->image_base;
 	const auto entry = this->modules_.try_emplace(image_base, std::move(*mod));

@@ -493,15 +493,15 @@ void windows_emulator::setup_process(const std::filesystem::path& application,
 
 	setup_context(context, emu, application, arguments);
 
-	context.executable = context.module_manager.map_module(application);
+	context.executable = context.module_manager.map_module(application, this->logger);
 
 	context.peb.access([&](PEB& peb)
 	{
 		peb.ImageBaseAddress = reinterpret_cast<void*>(context.executable->image_base);
 	});
 
-	context.ntdll = context.module_manager.map_module(R"(C:\Windows\System32\ntdll.dll)");
-	context.win32u = context.module_manager.map_module(R"(C:\Windows\System32\win32u.dll)");
+	context.ntdll = context.module_manager.map_module(R"(C:\Windows\System32\ntdll.dll)", this->logger);
+	context.win32u = context.module_manager.map_module(R"(C:\Windows\System32\win32u.dll)", this->logger);
 
 	this->dispatcher_.setup(context.ntdll->exports, context.win32u->exports);
 

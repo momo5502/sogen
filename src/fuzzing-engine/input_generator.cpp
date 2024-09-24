@@ -8,7 +8,7 @@ namespace fuzzer
 
 		void mutate_input(random_generator& rng, std::vector<uint8_t>& input)
 		{
-			if (input.empty() || rng.get(10) == 0)
+			if (input.empty() || rng.get(3) == 0)
 			{
 				const auto new_bytes = rng.get_geometric<size_t>() + 1;
 				input.resize(input.size() + new_bytes);

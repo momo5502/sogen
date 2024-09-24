@@ -8,7 +8,7 @@ namespace fuzzer
 		class fuzzing_context
 		{
 		public:
-			fuzzing_context(input_generator& generator, fuzzing_handler& handler)
+			fuzzing_context(input_generator& generator, handler& handler)
 				: generator(generator)
 				  , handler(handler)
 			{
@@ -36,21 +36,26 @@ namespace fuzzer
 			}
 
 			input_generator& generator;
-			fuzzing_handler& handler;
+			handler& handler;
 
 		private:
 			std::atomic_bool stop_{false};
 		};
 
-		void perform_fuzzing_iteration(const fuzzing_context& context)
+		void perform_fuzzing_iteration(const fuzzing_context& context, executer& executer)
 		{
 			context.generator.access_input([&](const std::span<const uint8_t> input)
 			{
 				uint64_t score{0};
-				context.handler.execute(input, [&](uint64_t)
+				const auto result = executer.execute(input, [&](uint64_t)
 				{
 					++score;
 				});
+
+				if(result == execution_result::error)
+				{
+					printf("Found error!");
+				}
 
 				return score;
 			});
@@ -58,9 +63,11 @@ namespace fuzzer
 
 		void worker(fuzzing_context& context)
 		{
+			const auto executer = context.handler.make_executer();
+
 			while (!context.should_stop())
 			{
-				perform_fuzzing_iteration(context);
+				perform_fuzzing_iteration(context, *executer);
 			}
 		}
 
@@ -100,7 +107,7 @@ namespace fuzzer
 		};
 	}
 
-	void run(fuzzing_handler& handler, const size_t concurrency)
+	void run(handler& handler, const size_t concurrency)
 	{
 		input_generator generator{};
 		fuzzing_context context{generator, handler};

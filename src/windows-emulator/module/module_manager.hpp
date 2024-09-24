@@ -2,12 +2,14 @@
 #include "mapped_module.hpp"
 #include <emulator.hpp>
 
+class logger;
+
 class module_manager
 {
 public:
 	module_manager(emulator& emu);
 
-	mapped_module* map_module(const std::filesystem::path& file);
+	mapped_module* map_module(const std::filesystem::path& file, logger& logger);
 
 	mapped_module* find_by_address(const uint64_t address)
 	{
