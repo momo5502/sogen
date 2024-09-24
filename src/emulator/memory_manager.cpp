@@ -113,6 +113,17 @@ void memory_manager::serialize_memory_state(utils::buffer_serializer& buffer, co
 
 void memory_manager::deserialize_memory_state(utils::buffer_deserializer& buffer, const bool is_snapshot)
 {
+	if (!is_snapshot)
+	{
+		for (const auto& reserved_region : this->reserved_regions_)
+		{
+			for (const auto& region : reserved_region.second.committed_regions)
+			{
+				this->unmap_memory(region.first, region.second.length);
+			}
+		}
+	}
+
 	buffer.read_map(this->reserved_regions_);
 
 	if (is_snapshot)

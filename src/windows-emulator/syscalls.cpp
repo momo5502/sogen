@@ -1211,7 +1211,15 @@ namespace
 		                       aligned_start + aligned_length, get_permission_string(requested_protection).c_str());
 
 		memory_permission old_protection_value{};
-		c.emu.protect_memory(aligned_start, aligned_length, requested_protection, &old_protection_value);
+
+		try
+		{
+			c.emu.protect_memory(aligned_start, aligned_length, requested_protection, &old_protection_value);
+		}
+		catch (...)
+		{
+			return STATUS_INVALID_ADDRESS;
+		}
 
 		const auto current_protection = map_emulator_to_nt_protection(old_protection_value);
 		old_protection.write(current_protection);

@@ -15,7 +15,7 @@ target_precompile_headers(sample PRIVATE std_include.hpp)
 target_link_libraries(sample PRIVATE
   common
   reflect
-  windows_emulator
+  windows-emulator
 )
 
 set_property(GLOBAL PROPERTY VS_STARTUP_PROJECT sample)

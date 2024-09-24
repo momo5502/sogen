@@ -85,6 +85,11 @@ namespace
 
 void logger::print(const color c, const char* message, ...) const
 {
+	if (this->disable_output_)
+	{
+		return;
+	}
+
 	va_list ap;
 	va_start(ap, message);
 

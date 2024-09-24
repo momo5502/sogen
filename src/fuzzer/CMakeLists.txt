@@ -14,7 +14,8 @@ target_precompile_headers(fuzzer PRIVATE std_include.hpp)
 
 target_link_libraries(fuzzer PRIVATE
   common
-  windows_emulator
+  fuzzing-engine
+  windows-emulator
 )
 
 momo_strip_target(fuzzer)

@@ -1,7 +1,9 @@
 #include "std_include.hpp"
 
 #include <windows_emulator.hpp>
-#include <debugging/x64_gdb_stub_handler.hpp>
+#include <fuzzer.hpp>
+
+#include "utils/finally.hpp"
 
 bool use_gdb = false;
 
@@ -11,15 +13,121 @@ namespace
 	{
 		try
 		{
+			win_emu.logger.disable_output(true);
 			win_emu.emu().start_from_ip();
 		}
 		catch (...)
 		{
+			win_emu.logger.disable_output(false);
 			win_emu.logger.print(color::red, "Emulation failed at: 0x%llX\n", win_emu.emu().read_instruction_pointer());
 			throw;
 		}
 
+		win_emu.logger.disable_output(false);
 		win_emu.logger.print(color::red, "Emulation terminated!\n");
+	}
+
+	void forward_emulator(windows_emulator& win_emu)
+	{
+		win_emu.emu().hook_memory_execution(0x140001000, 1, [&](uint64_t, size_t, uint64_t)
+		{
+			win_emu.emu().stop();
+		});
+
+		run_emulation(win_emu);
+	}
+
+	std::vector<std::unique_ptr<windows_emulator>> prepare_emulators(const size_t count,
+	                                                                 const windows_emulator& base_emulator)
+	{
+		std::vector<std::unique_ptr<windows_emulator>> emulators{};
+
+		utils::buffer_serializer serializer{};
+		base_emulator.serialize(serializer);
+
+		for (size_t i = 0; i < count; ++i)
+		{
+			auto emu = std::make_unique<windows_emulator>();
+			utils::buffer_deserializer deserializer{serializer.get_buffer()};
+
+			emu->deserialize(deserializer);
+			//emu->save_snapshot();
+
+			emulators.push_back(std::move(emu));
+		}
+
+		return emulators;
+	}
+
+	struct my_fuzzer_handler : fuzzer::fuzzing_handler
+	{
+		const std::vector<std::unique_ptr<windows_emulator>>* emulators{};
+		std::atomic_size_t active_emu{0};
+		std::atomic_bool stop_fuzzing{false};
+
+		fuzzer::execution_result execute(std::span<const uint8_t> data,
+		                                 const std::function<fuzzer::coverage_functor>& coverage_handler) override
+		{
+			puts("Running...");
+			const auto emu_index = ++active_emu;
+			auto& emu = *emulators->at(emu_index % emulators->size());
+
+			utils::buffer_serializer serializer{};
+			emu.serialize(serializer);
+
+			const auto _ = utils::finally([&]
+			{
+				utils::buffer_deserializer deserializer{serializer.get_buffer()};
+				emu.deserialize(deserializer);
+			});
+
+			//emu.restore_snapshot();
+
+			auto* h = emu.emu().hook_edge_generation([&](const basic_block& current_block,
+			                                             const basic_block&)
+			{
+				coverage_handler(current_block.address);
+			});
+
+			const auto __ = utils::finally([&]
+			{
+				emu.emu().delete_hook(h);
+			});
+
+			const auto memory = emu.emu().allocate_memory(page_align_up(std::max(data.size(), 1ULL)),
+			                                              memory_permission::read_write);
+			emu.emu().write_memory(memory, data.data(), data.size());
+
+			emu.emu().reg(x64_register::rcx, memory);
+			emu.emu().reg<uint64_t>(x64_register::rdx, data.size());
+
+			try
+			{
+				run_emulation(emu);
+				return fuzzer::execution_result::success;
+			}
+			catch (...)
+			{
+				stop_fuzzing = true;
+				return fuzzer::execution_result::error;
+			}
+		}
+
+		bool stop() override
+		{
+			return stop_fuzzing;
+		}
+	};
+
+	void run_fuzzer(const windows_emulator& base_emulator)
+	{
+		const auto concurrency = 1ULL; //std::thread::hardware_concurrency();
+		const auto emulators = prepare_emulators(concurrency, base_emulator);
+
+		my_fuzzer_handler handler{};
+		handler.emulators = &emulators;
+
+		fuzzer::run(handler, concurrency);
 	}
 
 	void run(const std::string_view application)
@@ -28,53 +136,8 @@ namespace
 			application, {}
 		};
 
-		//watch_system_objects(win_emu);
-		win_emu.buffer_stdout = true;
-		//win_emu.verbose_calls = true;
-
-		const auto& exe = *win_emu.process().executable;
-
-		const auto text_start = exe.image_base + 0x1000;
-		const auto text_end = exe.image_base + 0x52000;
-		constexpr auto scan_size = 0x100;
-
-		win_emu.emu().hook_memory_read(text_start, scan_size, [&](const uint64_t address, size_t, uint64_t)
-		{
-			const auto rip = win_emu.emu().read_instruction_pointer();
-			if (rip >= text_start && rip < text_end)
-			{
-				win_emu.logger.print(color::green, "Reading from executable .text: 0x%llX at 0x%llX\n", address, rip);
-			}
-		});
-
-		/*win_emu.add_syscall_hook([&]
-		{
-			const auto syscall_id = win_emu.emu().reg(x64_register::eax);
-			const auto syscall_name = win_emu.dispatcher().get_syscall_name(syscall_id);
-
-			if (syscall_name != "NtQueryInformationProcess")
-			{
-				return instruction_hook_continuation::run_instruction;
-			}
-
-			const auto info_class = win_emu.emu().reg(x64_register::rdx);
-			if (info_class != ProcessImageFileNameWin32)
-			{
-				return instruction_hook_continuation::run_instruction;
-			}
-
-			win_emu.logger.print(color::pink, "Patching NtQueryInformationProcess...\n");
-
-			const auto data = win_emu.emu().reg(x64_register::r8);
-
-			emulator_allocator data_allocator{win_emu.emu(), data, 0x100};
-			data_allocator.make_unicode_string(
-				L"C:\\Users\\mauri\\source\\repos\\lul\\x64\\Release\\lul.exe");
-			win_emu.emu().reg(x64_register::rax, STATUS_SUCCESS);
-			return instruction_hook_continuation::skip_instruction;
-		});*/
-
-		run_emulation(win_emu);
+		forward_emulator(win_emu);
+		run_fuzzer(win_emu);
 	}
 }
 

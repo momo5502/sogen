@@ -48,4 +48,12 @@ public:
 	{
 		this->print(color::gray, message, args...);
 	}
+
+	void disable_output(const bool value)
+	{
+		this->disable_output_ = value;
+	}
+
+private:
+	bool disable_output_{false};
 };

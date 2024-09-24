@@ -142,14 +142,14 @@ private:
 
 	void perform_serialization(utils::buffer_serializer& buffer, const bool is_snapshot) const
 	{
-		this->serialize_memory_state(buffer, is_snapshot);
 		this->serialize_state(buffer, is_snapshot);
+		this->serialize_memory_state(buffer, is_snapshot);
 	}
 
 	void perform_deserialization(utils::buffer_deserializer& buffer, const bool is_snapshot)
 	{
-		this->deserialize_memory_state(buffer, is_snapshot);
 		this->deserialize_state(buffer, is_snapshot);
+		this->deserialize_memory_state(buffer, is_snapshot);
 	}
 
 	virtual void serialize_state(utils::buffer_serializer& buffer, bool is_snapshot) const = 0;
