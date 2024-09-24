@@ -5,6 +5,7 @@
 #include <string_view>
 #include <stdexcept>
 #include <cstring>
+#include <optional>
 
 namespace utils
 {
@@ -12,7 +13,7 @@ namespace utils
 	class buffer_deserializer;
 
 	template <typename T>
-	concept Serializable = requires(T a, const T ac, buffer_serializer & serializer, buffer_deserializer & deserializer)
+	concept Serializable = requires(T a, const T ac, buffer_serializer& serializer, buffer_deserializer& deserializer)
 	{
 		{ ac.serialize(serializer) } -> std::same_as<void>;
 		{ a.deserialize(deserializer) } -> std::same_as<void>;
@@ -100,7 +101,7 @@ namespace utils
 
 			this->offset_ += sizeof(old_size);
 #endif
-		
+
 			return result;
 		}
 
@@ -146,6 +147,19 @@ namespace utils
 			T object{};
 			this->read(object);
 			return object;
+		}
+
+		template <typename T>
+		void read_optional(std::optional<T>& val)
+		{
+			if (this->read<bool>())
+			{
+				val = this->read<T>();
+			}
+			else
+			{
+				val = {};
+			}
 		}
 
 		template <typename T>
@@ -291,6 +305,17 @@ namespace utils
 			{
 				static_assert(std::false_type::value, "Key must be trivially copyable or implement serializable!");
 				std::abort();
+			}
+		}
+
+		template <typename T>
+		void write_optional(const std::optional<T>& val)
+		{
+			this->write(val.has_value());
+
+			if (val.has_value())
+			{
+				this->write(*val);
 			}
 		}
 

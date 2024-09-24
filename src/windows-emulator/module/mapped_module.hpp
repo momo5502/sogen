@@ -27,4 +27,17 @@ struct mapped_module
 	{
 		return address >= this->image_base && address < (this->image_base + this->size_of_image);
 	}
+
+	uint64_t find_export(const std::string_view export_name) const
+	{
+		for (auto& symbol : this->exports)
+		{
+			if (symbol.name == export_name)
+			{
+				return symbol.address;
+			}
+		}
+
+		return 0;
+	}
 };

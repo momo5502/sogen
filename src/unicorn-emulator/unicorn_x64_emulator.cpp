@@ -389,6 +389,32 @@ namespace unicorn
 				return result;
 			}
 
+			emulator_hook* hook_basic_block(basic_block_hook_callback callback) override
+			{
+				function_wrapper<void, uc_engine*, uint64_t, size_t> wrapper(
+					[c = std::move(callback)](uc_engine*, const uint64_t address, const size_t size)
+					{
+						basic_block block{};
+						block.address = address;
+						block.size = size;
+
+						c(block);
+					});
+
+				unicorn_hook hook{*this};
+				auto container = std::make_unique<hook_container>();
+
+				uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_BLOCK, wrapper.get_function(),
+				                wrapper.get_user_data(), 0, std::numeric_limits<pointer_type>::max())
+				);
+
+				container->add(std::move(wrapper), std::move(hook));
+
+				auto* result = container->as_opaque_hook();
+				this->hooks_.push_back(std::move(container));
+				return result;
+			}
+
 			emulator_hook* hook_edge_generation(edge_generation_hook_callback callback) override
 			{
 				function_wrapper<void, uc_engine*, uc_tb*, uc_tb*> wrapper(

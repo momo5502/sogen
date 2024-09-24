@@ -36,6 +36,7 @@ struct basic_block
 
 using edge_generation_hook_callback = std::function<void(const basic_block& current_block,
                                                          const basic_block& previous_block)>;
+using basic_block_hook_callback = std::function<void(const basic_block& block)>;
 
 using instruction_hook_callback = std::function<instruction_hook_continuation()>;
 
@@ -73,6 +74,7 @@ public:
 	virtual emulator_hook* hook_interrupt(interrupt_hook_callback callback) = 0;
 
 	virtual emulator_hook* hook_edge_generation(edge_generation_hook_callback callback) = 0;
+	virtual emulator_hook* hook_basic_block(basic_block_hook_callback callback) = 0;
 
 	virtual void delete_hook(emulator_hook* hook) = 0;
 

@@ -66,6 +66,7 @@ public:
 	bool verbose{false};
 	bool verbose_calls{false};
 	bool buffer_stdout{false};
+	bool fuzzing{false};
 
 private:
 	std::unique_ptr<x64_emulator> emu_{};

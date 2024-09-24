@@ -106,7 +106,6 @@ struct port
 	}
 };
 
-
 struct process_context
 {
 	process_context(x64_emulator& emu)
@@ -122,6 +121,8 @@ struct process_context
 	uint64_t executed_instructions{0};
 	uint64_t current_ip{0};
 	uint64_t previous_ip{0};
+
+	std::optional<uint64_t> exception_rip{};
 
 	emulator_object<TEB> teb;
 	emulator_object<PEB> peb;
@@ -150,6 +151,7 @@ struct process_context
 		buffer.write(this->executed_instructions);
 		buffer.write(this->current_ip);
 		buffer.write(this->previous_ip);
+		buffer.write_optional(this->exception_rip);
 		buffer.write(this->teb);
 		buffer.write(this->peb);
 		buffer.write(this->process_params);
@@ -176,6 +178,7 @@ struct process_context
 		buffer.read(this->executed_instructions);
 		buffer.read(this->current_ip);
 		buffer.read(this->previous_ip);
+		buffer.read_optional(this->exception_rip);
 		buffer.read(this->teb);
 		buffer.read(this->peb);
 		buffer.read(this->process_params);

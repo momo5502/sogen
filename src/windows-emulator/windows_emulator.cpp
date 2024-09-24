@@ -294,19 +294,6 @@ namespace
 		});
 	}
 
-	uint64_t find_exported_function(const std::vector<exported_symbol>& exports, const std::string_view name)
-	{
-		for (auto& symbol : exports)
-		{
-			if (symbol.name == name)
-			{
-				return symbol.address;
-			}
-		}
-
-		return 0;
-	}
-
 	using exception_record_map = std::unordered_map<const EXCEPTION_RECORD*, emulator_object<EXCEPTION_RECORD>>;
 
 	emulator_object<EXCEPTION_RECORD> save_exception_record(emulator_allocator& allocator,
@@ -505,9 +492,9 @@ void windows_emulator::setup_process(const std::filesystem::path& application,
 
 	this->dispatcher_.setup(context.ntdll->exports, context.win32u->exports);
 
-	const auto ldr_initialize_thunk = find_exported_function(context.ntdll->exports, "LdrInitializeThunk");
-	const auto rtl_user_thread_start = find_exported_function(context.ntdll->exports, "RtlUserThreadStart");
-	context.ki_user_exception_dispatcher = find_exported_function(context.ntdll->exports, "KiUserExceptionDispatcher");
+	const auto ldr_initialize_thunk = context.ntdll->find_export("LdrInitializeThunk");
+	const auto rtl_user_thread_start = context.ntdll->find_export("RtlUserThreadStart");
+	context.ki_user_exception_dispatcher = context.ntdll->find_export("KiUserExceptionDispatcher");
 
 	CONTEXT ctx{};
 	ctx.ContextFlags = CONTEXT_ALL;
@@ -553,7 +540,14 @@ void windows_emulator::setup_hooks()
 
 	this->emu().hook_interrupt([&](const int interrupt)
 	{
-		printf("Interrupt: %i 0x%llX\n", interrupt, this->emu().read_instruction_pointer());
+		const auto rip = this->emu().read_instruction_pointer();
+		printf("Interrupt: %i 0x%llX\n", interrupt, rip);
+
+		if (this->fuzzing)
+		{
+			this->process().exception_rip = rip;
+			this->emu().stop();
+		}
 	});
 
 	this->emu().hook_memory_violation([&](const uint64_t address, const size_t size, const memory_operation operation,
@@ -572,6 +566,13 @@ void windows_emulator::setup_hooks()
 		{
 			printf("Mapping violation: 0x%llX (%zX) - %s at 0x%llX (%s)\n", address, size, permission.c_str(), ip,
 			       name);
+		}
+
+		if (this->fuzzing)
+		{
+			this->process().exception_rip = ip;
+			this->emu().stop();
+			return memory_violation_continuation::stop;
 		}
 
 		dispatch_access_violation(this->emu(), this->process().ki_user_exception_dispatcher, address, operation);

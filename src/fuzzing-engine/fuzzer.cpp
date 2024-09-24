@@ -37,13 +37,15 @@ namespace fuzzer
 
 			input_generator& generator;
 			handler& handler;
+			std::atomic_uint64_t executions{0};
 
 		private:
 			std::atomic_bool stop_{false};
 		};
 
-		void perform_fuzzing_iteration(const fuzzing_context& context, executer& executer)
+		void perform_fuzzing_iteration(fuzzing_context& context, executer& executer)
 		{
+			++context.executions;
 			context.generator.access_input([&](const std::span<const uint8_t> input)
 			{
 				uint64_t score{0};
@@ -52,9 +54,10 @@ namespace fuzzer
 					++score;
 				});
 
-				if(result == execution_result::error)
+				if (result == execution_result::error)
 				{
-					printf("Found error!");
+					printf("Found error!\n");
+					context.stop();
 				}
 
 				return score;
@@ -116,6 +119,11 @@ namespace fuzzer
 		while (!context.should_stop())
 		{
 			std::this_thread::sleep_for(std::chrono::seconds{1});
+
+			const auto executions = context.executions.exchange(0);
+			const auto highest_scorer = context.generator.get_highest_scorer();
+			const auto avg_score = context.generator.get_average_score();
+			printf("Executions/s: %lld - Score: %llX - Avg: %.3f\n", executions, highest_scorer.score, avg_score);
 		}
 	}
 }

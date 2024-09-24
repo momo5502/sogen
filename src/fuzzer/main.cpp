@@ -15,6 +15,11 @@ namespace
 		{
 			win_emu.logger.disable_output(true);
 			win_emu.emu().start_from_ip();
+
+			if (win_emu.process().exception_rip.has_value())
+			{
+				throw std::runtime_error("Exception!");
+			}
 		}
 		catch (...)
 		{
@@ -28,7 +33,8 @@ namespace
 
 	void forward_emulator(windows_emulator& win_emu)
 	{
-		win_emu.emu().hook_memory_execution(0x140001000, 1, [&](uint64_t, size_t, uint64_t)
+		const auto target = win_emu.process().executable->find_export("vulnerable");
+		win_emu.emu().hook_memory_execution(target, 1, [&](uint64_t, size_t, uint64_t)
 		{
 			win_emu.emu().stop();
 		});
@@ -39,41 +45,50 @@ namespace
 	struct fuzzer_executer : fuzzer::executer
 	{
 		windows_emulator emu{};
+		std::span<const std::byte> emulator_data{};
+		std::unordered_set<uint64_t> visited_blocks{};
 		const std::function<fuzzer::coverage_functor>* handler{nullptr};
 
 
 		fuzzer_executer(std::span<const std::byte> data)
+			: emulator_data(data)
 		{
-			utils::buffer_deserializer deserializer{data};
-			emu.deserialize(deserializer);
-			//emu.save_snapshot();
-
-			emu.emu().hook_edge_generation([&](const basic_block& current_block,
-			                                             const basic_block&)
+			emu.fuzzing = true;
+			emu.emu().hook_basic_block([&](const basic_block& block)
 			{
-				if (this->handler)
+				if (this->handler && visited_blocks.emplace(block.address).second)
 				{
-					(*this->handler)(current_block.address);
+					(*this->handler)(block.address);
 				}
 			});
+
+			utils::buffer_deserializer deserializer{emulator_data};
+			emu.deserialize(deserializer);
+			emu.save_snapshot();
+
+			const auto ret = emu.emu().read_stack(0);
+
+			emu.emu().hook_memory_execution(ret, 1, [&](uint64_t, size_t, uint64_t)
+			{
+				emu.emu().stop();
+			});
+		}
+
+		void restore_emulator()
+		{
+			/*utils::buffer_deserializer deserializer{ emulator_data };
+			emu.deserialize(deserializer);*/
+			emu.restore_snapshot();
 		}
 
 		fuzzer::execution_result execute(std::span<const uint8_t> data,
 		                                 const std::function<fuzzer::coverage_functor>& coverage_handler) override
 		{
-			printf("Input size: %zd\n", data.size());
+			//printf("Input size: %zd\n", data.size());
 			this->handler = &coverage_handler;
+			this->visited_blocks.clear();
 
-			utils::buffer_serializer serializer{};
-			emu.serialize(serializer);
-
-			const auto _ = utils::finally([&]
-			{
-				utils::buffer_deserializer deserializer{serializer.get_buffer()};
-				emu.deserialize(deserializer);
-			});
-
-			//emu.restore_snapshot();
+			restore_emulator();
 
 			const auto memory = emu.emu().allocate_memory(page_align_up(std::max(data.size(), 1ULL)),
 			                                              memory_permission::read_write);
@@ -117,7 +132,7 @@ namespace
 
 	void run_fuzzer(const windows_emulator& base_emulator)
 	{
-		const auto concurrency = std::thread::hardware_concurrency();
+		const auto concurrency = std::thread::hardware_concurrency() + 2;
 
 		utils::buffer_serializer serializer{};
 		base_emulator.serialize(serializer);

@@ -1050,6 +1050,24 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (info_class == ProcessDefaultHardErrorMode)
+		{
+			if (return_length)
+			{
+				return_length.write(sizeof(ULONG));
+			}
+
+			if (process_information_length != sizeof(ULONG))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<ULONG> info{c.emu, process_information};
+			info.write(0);
+
+			return STATUS_SUCCESS;
+		}
+
 		if (info_class == ProcessEnclaveInformation
 			|| info_class == ProcessMitigationPolicy)
 		{
@@ -1073,40 +1091,6 @@ namespace
 			{
 				basic_info.PebBaseAddress = c.proc.peb.ptr();
 				basic_info.UniqueProcessId = reinterpret_cast<HANDLE>(1);
-			});
-
-			return STATUS_SUCCESS;
-		}
-
-		if (info_class == ProcessImageFileNameWin32)
-		{
-			const auto peb = c.proc.peb.read();
-			emulator_object<RTL_USER_PROCESS_PARAMETERS> proc_params{c.emu, peb.ProcessParameters};
-			const auto params = proc_params.read();
-
-			const auto length = params.ImagePathName.Length + sizeof(UNICODE_STRING) + 2;
-
-			if (return_length)
-			{
-				return_length.write(static_cast<uint32_t>(length));
-			}
-
-			if (process_information_length < length)
-			{
-				return STATUS_BUFFER_OVERFLOW;
-			}
-
-			const emulator_object<UNICODE_STRING> info{c.emu, process_information};
-			info.access([&](UNICODE_STRING& str)
-			{
-				const auto buffer_start = static_cast<uint64_t>(process_information) + sizeof(UNICODE_STRING);
-				const auto string = read_unicode_string(c.emu, params.ImagePathName);
-
-				c.emu.write_memory(buffer_start, string.c_str(), (string.size() + 1) * 2);
-
-				str.Length = params.ImagePathName.Length;
-				str.MaximumLength = str.Length;
-				str.Buffer = reinterpret_cast<wchar_t*>(buffer_start);
 			});
 
 			return STATUS_SUCCESS;
@@ -1409,7 +1393,7 @@ namespace
 	                              const emulator_object<ULONG> connection_info_length)
 	{
 		auto port_name = read_unicode_string(c.emu, server_port_name);
-		printf("NtConnectPort: %S\n", port_name.c_str());
+		c.win_emu.logger.print(color::dark_gray, "NtConnectPort: %S\n", port_name.c_str());
 
 		port p{};
 		p.name = std::move(port_name);
@@ -1693,6 +1677,16 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	NTSTATUS handle_NtQueryInformationJobObject()
+	{
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtSetSystemInformation()
+	{
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtRaiseHardError(const syscall_context& c, const NTSTATUS error_status,
 	                                 const ULONG /*number_of_parameters*/,
 	                                 const emulator_object<UNICODE_STRING> /*unicode_string_parameter_mask*/,
@@ -1706,7 +1700,26 @@ namespace
 		}
 
 		printf("Hard error: %X\n", static_cast<uint32_t>(error_status));
+		c.proc.exception_rip = c.emu.read_instruction_pointer();
 		c.emu.stop();
+
+		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS handle_NtRaiseException(const syscall_context& c,
+	                                 const emulator_object<EXCEPTION_RECORD> /*exception_record*/,
+	                                 const emulator_object<CONTEXT> thread_context, BOOLEAN handle_exception)
+	{
+		if (handle_exception)
+		{
+			puts("Unhandled exceptions not supported yet!");
+			c.emu.stop();
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		c.proc.exception_rip = thread_context.read().Rip;
+		c.emu.stop();
+
 		return STATUS_SUCCESS;
 	}
 
@@ -1900,6 +1913,9 @@ void syscall_dispatcher::add_handlers()
 	add_handler(NtIsUILanguageComitted);
 	add_handler(NtQueryInstallUILanguage);
 	add_handler(NtUpdateWnfStateData);
+	add_handler(NtRaiseException);
+	add_handler(NtQueryInformationJobObject);
+	add_handler(NtSetSystemInformation);
 
 #undef add_handler
 

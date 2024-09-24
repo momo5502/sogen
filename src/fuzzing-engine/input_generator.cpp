@@ -1,5 +1,7 @@
 #include "input_generator.hpp"
 
+#include <cassert>
+
 namespace fuzzer
 {
 	namespace
@@ -52,7 +54,31 @@ namespace fuzzer
 	{
 		auto next_input = this->generate_next_input();
 		const auto score = handler(next_input);
-		this->store_input_entry({std::move(next_input), score});
+
+		input_entry e{};
+		e.data = std::move(next_input);
+		e.score = score;
+
+		this->store_input_entry(std::move(e));
+	}
+
+	input_entry input_generator::get_highest_scorer()
+	{
+		std::unique_lock lock{this->mutex_};
+		return this->highest_scorer_;
+	}
+
+	double input_generator::get_average_score()
+	{
+		std::unique_lock lock{this->mutex_};
+
+		double score{0.0};
+		for (const auto& e : this->top_scorer_)
+		{
+			score += static_cast<double>(e.score);
+		}
+
+		return score / static_cast<double>(this->top_scorer_.size());
 	}
 
 	void input_generator::store_input_entry(input_entry entry)
@@ -64,29 +90,33 @@ namespace fuzzer
 			return;
 		}
 
-		const auto score = entry.score;
+		if (entry.score > this->highest_scorer_.score)
+		{
+			this->highest_scorer_ = entry;
+		}
 
 		if (this->top_scorer_.size() < MAX_TOP_SCORER)
 		{
 			this->top_scorer_.emplace_back(std::move(entry));
-		}
-		else
-		{
-			const auto index = this->rng.get<size_t>() % this->top_scorer_.size();
-			this->top_scorer_[index] = std::move(entry);
-		}
-
-		this->lowest_score = score;
-		if (score < this->lowest_score)
-		{
 			return;
 		}
 
-		for (const auto& e : this->top_scorer_)
+		const auto insert_at_random = this->rng.get(10) == 0;
+		const auto index = insert_at_random
+			                   ? (this->rng.get<size_t>() % this->top_scorer_.size())
+			                   : this->lowest_scorer;
+
+		this->top_scorer_[index] = std::move(entry);
+
+		this->lowest_score = this->top_scorer_[0].score;
+		this->lowest_scorer = 0;
+
+		for (size_t i = 1; i < this->top_scorer_.size(); ++i)
 		{
-			if (e.score < this->lowest_score)
+			if (this->top_scorer_[i].score < this->lowest_score)
 			{
-				this->lowest_score = e.score;
+				this->lowest_score = this->top_scorer_[i].score;
+				this->lowest_scorer = i;
 			}
 		}
 	}
