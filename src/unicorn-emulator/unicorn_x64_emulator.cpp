@@ -353,7 +353,7 @@ namespace unicorn
 			}*/
 
 			emulator_hook* hook_instruction(int instruction_type,
-			                                instruction_hook_callback callback)
+			                                instruction_hook_callback callback) override
 			{
 				function_wrapper<int, uc_engine*> wrapper([c = std::move(callback)](uc_engine*)
 				{

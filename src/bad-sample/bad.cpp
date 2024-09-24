@@ -4,8 +4,7 @@
 
 #define THE_SIZE 30
 
-extern "C" __declspec(noinline)
-__declspec(dllexport)
+extern "C" __declspec(noinline) __declspec(dllexport)
 void vulnerable(const uint8_t* data, const size_t size)
 {
 	if (size < 10)
@@ -34,11 +33,6 @@ void vulnerable(const uint8_t* data, const size_t size)
 	}
 
 	if (data[4] != 'H')
-	{
-		return;
-	}
-
-	if (data[0] != 'H' || data[1] != 'u')
 	{
 		return;
 	}

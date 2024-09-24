@@ -2,8 +2,19 @@
 
 #pragma warning(push)
 #pragma warning(disable: 4505)
+
+#ifdef __clang__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
+
 #define NOMINMAX
 #include <unicorn/unicorn.h>
+
+#ifdef __clang__
+#pragma GCC diagnostic pop
+#endif
+
 #pragma warning(pop)
 
 #include <stdexcept>

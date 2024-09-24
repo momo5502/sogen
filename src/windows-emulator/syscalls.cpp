@@ -92,28 +92,6 @@ namespace
 		}
 	}
 
-	uint64_t get_syscall_id(const std::vector<std::string>& ntdll_syscalls,
-	                        const std::vector<std::string>& win32u_syscalls, const std::string_view name)
-	{
-		for (size_t i = 0; i < ntdll_syscalls.size(); ++i)
-		{
-			if (ntdll_syscalls[i] == name)
-			{
-				return i;
-			}
-		}
-
-		for (size_t i = 0; i < win32u_syscalls.size(); ++i)
-		{
-			if (win32u_syscalls[i] == name)
-			{
-				return i + 0x1000;
-			}
-		}
-
-		throw std::runtime_error("Unable to determine syscall id: " + std::string(name));
-	}
-
 	template <typename T>
 		requires(std::is_integral_v<T> || std::is_enum_v<T>)
 	T resolve_argument(x64_emulator& emu, const size_t index)

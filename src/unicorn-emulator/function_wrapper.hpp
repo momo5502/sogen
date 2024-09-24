@@ -18,12 +18,17 @@ public:
 	{
 	}
 
-	c_function_type* get_function() const
+	c_function_type* get_c_function() const
 	{
 		return +[](Args... args, user_data_pointer user_data) -> ReturnType
 		{
 			return (*static_cast<functor_type*>(user_data))(std::forward<Args>(args)...);
 		};
+	}
+
+	void* get_function() const
+	{
+		return reinterpret_cast<void*>(this->get_c_function());
 	}
 
 	user_data_pointer get_user_data() const

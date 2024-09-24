@@ -66,6 +66,7 @@ namespace
 			application, {}
 		};
 
+		(void)&watch_system_objects;
 		//watch_system_objects(win_emu);
 		win_emu.buffer_stdout = true;
 		//win_emu.verbose_calls = true;
