@@ -208,7 +208,7 @@ namespace
 		const auto attributes = object_attributes.read();
 		const auto key = read_unicode_string(c.emu, attributes.ObjectName);
 
-		c.win_emu.logger.print(color::pink, "Registry key: %S\n", key.c_str());
+		c.win_emu.logger.print(color::dark_gray, "--> Registry key: %S\n", key.c_str());
 
 		return STATUS_NOT_SUPPORTED;
 	}
@@ -1074,6 +1074,37 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (info_class == ProcessImageFileNameWin32)
+		{
+			const auto peb = c.proc.peb.read();
+			emulator_object<RTL_USER_PROCESS_PARAMETERS> proc_params{c.emu, peb.ProcessParameters};
+			const auto params = proc_params.read();
+			const auto length = params.ImagePathName.Length + sizeof(UNICODE_STRING) + 2;
+
+			if (return_length)
+			{
+				return_length.write(static_cast<uint32_t>(length));
+			}
+
+			if (process_information_length < length)
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<UNICODE_STRING> info{c.emu, process_information};
+			info.access([&](UNICODE_STRING& str)
+			{
+				const auto buffer_start = static_cast<uint64_t>(process_information) + sizeof(UNICODE_STRING);
+				const auto string = read_unicode_string(c.emu, params.ImagePathName);
+				c.emu.write_memory(buffer_start, string.c_str(), (string.size() + 1) * 2);
+				str.Length = params.ImagePathName.Length;
+				str.MaximumLength = str.Length;
+				str.Buffer = reinterpret_cast<wchar_t*>(buffer_start);
+			});
+
+			return STATUS_SUCCESS;
+		}
+
 		printf("Unsupported process info class: %X\n", info_class);
 		c.emu.stop();
 
@@ -1522,7 +1553,8 @@ namespace
 	NTSTATUS handle_NtAlpcSendWaitReceivePort(const syscall_context& c, const uint64_t port_handle,
 	                                          const ULONG /*flags*/,
 	                                          const emulator_object<PORT_MESSAGE> /*send_message*/,
-	                                          const emulator_object<ALPC_MESSAGE_ATTRIBUTES> /*send_message_attributes*/
+	                                          const emulator_object<ALPC_MESSAGE_ATTRIBUTES>
+	                                          /*send_message_attributes*/
 	                                          ,
 	                                          const emulator_object<PORT_MESSAGE> receive_message,
 	                                          const emulator_object<SIZE_T> /*buffer_length*/,
@@ -1813,7 +1845,8 @@ void syscall_dispatcher::setup(const exported_symbols& ntdll_exports, const expo
 	this->add_handlers();
 }
 
-syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports, const exported_symbols& win32u_exports)
+syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports,
+                                       const exported_symbols& win32u_exports)
 {
 	this->setup(ntdll_exports, win32u_exports);
 }
