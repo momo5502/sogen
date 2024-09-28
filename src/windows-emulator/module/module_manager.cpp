@@ -52,15 +52,17 @@ module_manager::module_manager(emulator& emu)
 
 mapped_module* module_manager::map_module(const std::filesystem::path& file, logger& logger)
 {
+	const auto canonical_file = canonical(absolute(file));
+
 	for (auto& mod : this->modules_)
 	{
-		if (mod.second.path == file)
+		if (mod.second.path == canonical_file)
 		{
 			return &mod.second;
 		}
 	}
 
-	auto mod = map_module_from_file(*this->emu_, file);
+	auto mod = map_module_from_file(*this->emu_, std::move(canonical_file));
 	if (!mod)
 	{
 		logger.error("Failed to map %s\n", file.generic_string().c_str());
