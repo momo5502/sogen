@@ -1657,11 +1657,15 @@ namespace
 	}
 
 	NTSTATUS handle_NtCreateFile(const syscall_context& c, const emulator_object<uint64_t> file_handle,
-	                             ACCESS_MASK /*desired_access*/,
-	                             const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
+	                             ACCESS_MASK desired_access,
+	                             const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
+	                             const emulator_object<IO_STATUS_BLOCK> io_status_block,
+	                             const emulator_object<LARGE_INTEGER> /*allocation_size*/, ULONG file_attributes,
+	                             ULONG share_access, ULONG create_disposition, ULONG create_options, uint64_t /*ea_buffer*/,
+	                             ULONG /*ea_length*/)
 	{
 		const auto attributes = object_attributes.read();
-		const auto filename = read_unicode_string(c.emu, attributes.ObjectName);
+		auto filename = read_unicode_string(c.emu, attributes.ObjectName);
 
 		if (filename == L"\\Device\\ConDrv\\Server")
 		{
@@ -1683,8 +1687,42 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		printf("Unsupported file: %S\n", filename.c_str());
-		return STATUS_NOT_SUPPORTED;
+		file f{};
+		f.name = std::move(filename);
+
+		UNICODE_STRING string{};
+		string.Buffer = f.name.data();
+		string.Length = static_cast<uint16_t>(f.name.size() * 2);
+		string.MaximumLength = string.Length;
+
+		OBJECT_ATTRIBUTES new_attributes{};
+		new_attributes.ObjectName = &string;
+		new_attributes.Length = sizeof(new_attributes);
+
+		HANDLE h{};
+
+		NTSTATUS res{STATUS_SUCCESS};
+		io_status_block.access([&](IO_STATUS_BLOCK& block)
+		{
+			res = NtCreateFile(&h, desired_access, &new_attributes, &block, nullptr, file_attributes, share_access,
+			                   create_disposition, create_options, nullptr, 0);
+		});
+
+		if (res != STATUS_SUCCESS)
+		{
+			return res;
+		}
+
+		f.handle = h;
+
+		const auto handle = c.proc.files.store(std::move(f));
+		file_handle.write(handle.bits);
+
+		return res;
+
+
+		//printf("Unsupported file: %S\n", filename.c_str());
+		//return STATUS_NOT_SUPPORTED;
 	}
 
 	NTSTATUS handle_NtQueryInformationJobObject()
