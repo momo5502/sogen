@@ -1149,6 +1149,39 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	NTSTATUS handle_NtQueryInformationFile(const syscall_context& c, uint64_t /*file_handle*/,
+	                                       const emulator_object<ULONG_PTR> io_status_block,
+	                                       const uint64_t file_information,
+	                                       const uint32_t length,
+	                                       const uint32_t info_class)
+	{
+		if (info_class == FileStandardInformation)
+		{
+			if (io_status_block)
+			{
+				io_status_block.write(sizeof(FILE_STANDARD_INFORMATION));
+			}
+
+			if (length != sizeof(FILE_STANDARD_INFORMATION))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<FILE_STANDARD_INFORMATION> info{c.emu, file_information};
+			info.access([&](FILE_STANDARD_INFORMATION& i)
+			{
+				memset(&i, 0, sizeof(i));
+			});
+
+			return STATUS_SUCCESS;
+		}
+
+		printf("Unsupported file info class: %X\n", info_class);
+		c.emu.stop();
+
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtSetInformationProcess(const syscall_context& c, const uint64_t process_handle,
 	                                        const uint32_t info_class, const uint64_t /*process_information*/,
 	                                        const uint32_t /*process_information_length*/)
@@ -1661,7 +1694,8 @@ namespace
 	                             const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
 	                             const emulator_object<IO_STATUS_BLOCK> io_status_block,
 	                             const emulator_object<LARGE_INTEGER> /*allocation_size*/, ULONG file_attributes,
-	                             ULONG share_access, ULONG create_disposition, ULONG create_options, uint64_t /*ea_buffer*/,
+	                             ULONG share_access, ULONG create_disposition, ULONG create_options,
+	                             uint64_t /*ea_buffer*/,
 	                             ULONG /*ea_length*/)
 	{
 		const auto attributes = object_attributes.read();
@@ -1965,6 +1999,7 @@ void syscall_dispatcher::add_handlers()
 	add_handler(NtRaiseException);
 	add_handler(NtQueryInformationJobObject);
 	add_handler(NtSetSystemInformation);
+	add_handler(NtQueryInformationFile);
 
 #undef add_handler
 
