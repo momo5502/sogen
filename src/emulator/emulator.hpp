@@ -64,6 +64,9 @@ public:
 	virtual void read_raw_register(int reg, void* value, size_t size) = 0;
 	virtual void write_raw_register(int reg, const void* value, size_t size) = 0;
 
+	virtual std::vector<std::byte> save_registers() = 0;
+	virtual void restore_registers(const std::vector<std::byte>& register_data) = 0;
+
 	virtual emulator_hook* hook_memory_violation(uint64_t address, size_t size,
 	                                             memory_violation_hook_callback callback) = 0;
 

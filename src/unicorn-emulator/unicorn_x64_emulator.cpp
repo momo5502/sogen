@@ -586,6 +586,21 @@ namespace unicorn
 				serializer.deserialize(buffer);
 			}
 
+			std::vector<std::byte> save_registers() override
+			{
+				utils::buffer_serializer buffer{};
+				const uc_context_serializer serializer(this->uc_, false);
+				serializer.serialize(buffer);
+				return buffer.move_buffer();
+			}
+
+			void restore_registers(const std::vector<std::byte>& register_data) override
+			{
+				utils::buffer_deserializer buffer{register_data};
+				const uc_context_serializer serializer(this->uc_, false);
+				serializer.deserialize(buffer);
+			}
+
 		private:
 			mutable bool has_snapshots_{false};
 			uc_engine* uc_{};
