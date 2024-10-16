@@ -4,13 +4,12 @@
 
 #include <unicorn_x64_emulator.hpp>
 
-#define GS_SEGMENT_ADDR 0x6000000ULL
-#define GS_SEGMENT_SIZE (20 << 20)  // 20 MB
+#define PEB_SEGMENT_SIZE (1 << 20) // 1 MB
+
+#define GS_SEGMENT_SIZE (1 << 20) // 1 MB
 
 #define IA32_GS_BASE_MSR 0xC0000101
 
-#define STACK_SIZE 0x40000
-#define STACK_ADDRESS (0x80000000000 - STACK_SIZE)
 #define KUSD_ADDRESS 0x7ffe0000
 
 #define GDT_ADDR 0x30000
@@ -37,15 +36,16 @@ namespace
 		emu.reg(x64_register::rsp, sp);
 	}
 
-	void setup_stack(x64_emulator& emu, const uint64_t stack_base, const size_t stack_size)
+	uint64_t setup_stack(x64_emulator& emu, const size_t stack_size)
 	{
-		emu.allocate_memory(stack_base, stack_size, memory_permission::read_write);
+		const auto stack_base = emu.allocate_memory(stack_size, memory_permission::read_write);
 
 		const uint64_t stack_end = stack_base + stack_size;
 		emu.reg(x64_register::rsp, stack_end);
+		return stack_base;
 	}
 
-	emulator_allocator setup_gs_segment(x64_emulator& emu, const uint64_t segment_base, const uint64_t size)
+	emulator_allocator setup_gs_segment(x64_emulator& emu, const uint64_t size)
 	{
 		struct msr_value
 		{
@@ -53,13 +53,14 @@ namespace
 			uint64_t value;
 		};
 
+		const auto segment_base = emu.allocate_memory(size, memory_permission::read_write);
+
 		const msr_value value{
 			IA32_GS_BASE_MSR,
 			segment_base
 		};
 
 		emu.write_register(x64_register::msr, &value, sizeof(value));
-		emu.allocate_memory(segment_base, size, memory_permission::read_write);
 
 		return {emu, segment_base, size};
 	}
@@ -174,8 +175,6 @@ namespace
 			hash_entries_obj.write(hash_entry, i);
 		}
 
-		//watch_object(emu, api_set_map_obj);
-
 		return api_set_map_obj;
 	}
 
@@ -209,28 +208,14 @@ namespace
 	void setup_context(process_context& context, x64_emulator& emu, const std::filesystem::path& file,
 	                   const std::vector<std::wstring>& arguments)
 	{
-		setup_stack(emu, STACK_ADDRESS, STACK_SIZE);
 		setup_gdt(emu);
 
 		context.kusd = setup_kusd(emu);
-		context.gs_segment = setup_gs_segment(emu, GS_SEGMENT_ADDR, GS_SEGMENT_SIZE);
 
-		auto allocator = create_allocator(emu, 1 << 20);
+		context.base_allocator = create_allocator(emu, PEB_SEGMENT_SIZE);
+		auto& allocator = context.base_allocator;
 
-		auto& gs = context.gs_segment;
-
-		context.teb = gs.reserve<TEB>();
-		context.peb = gs.reserve<PEB>();
-
-		context.teb.access([&](TEB& teb)
-		{
-			teb.ClientId.UniqueProcess = reinterpret_cast<HANDLE>(1);
-			teb.ClientId.UniqueThread = reinterpret_cast<HANDLE>(2);
-			teb.NtTib.StackLimit = reinterpret_cast<void*>(STACK_ADDRESS);
-			teb.NtTib.StackBase = reinterpret_cast<void*>((STACK_ADDRESS + STACK_SIZE));
-			teb.NtTib.Self = &context.teb.ptr()->NtTib;
-			teb.ProcessEnvironmentBlock = context.peb.ptr();
-		});
+		context.peb = allocator.reserve<PEB>();
 
 		/* Values of the following fields must be
 		 * allocated relative to the process_params themselves.
@@ -247,7 +232,7 @@ namespace
 		 * RedirectionDllName
 		 */
 
-		context.process_params = gs.reserve<RTL_USER_PROCESS_PARAMETERS>();
+		context.process_params = allocator.reserve<RTL_USER_PROCESS_PARAMETERS>();
 
 		context.process_params.access([&](RTL_USER_PROCESS_PARAMETERS& proc_params)
 		{
@@ -267,11 +252,11 @@ namespace
 				command_line.append(arg);
 			}
 
-			gs.make_unicode_string(proc_params.CommandLine, command_line);
+			allocator.make_unicode_string(proc_params.CommandLine, command_line);
 			//gs.make_unicode_string(proc_params.CurrentDirectory.DosPath, file.parent_path().wstring());
-			gs.make_unicode_string(proc_params.ImagePathName, file.wstring());
+			allocator.make_unicode_string(proc_params.ImagePathName, file.wstring());
 
-			const auto total_length = gs.get_next_address() - context.process_params.value();
+			const auto total_length = allocator.get_next_address() - context.process_params.value();
 
 			proc_params.Length = static_cast<uint32_t>(std::max(sizeof(proc_params), total_length));
 			proc_params.MaximumLength = proc_params.Length;
@@ -449,6 +434,66 @@ namespace
 
 		dispatch_exception_pointers(emu, dispatcher, pointers);
 	}
+
+	void switch_to_thread(x64_emulator& emu, process_context& context, emulator_thread& thread)
+	{
+		auto* active_thread = context.active_thread;
+		if (active_thread)
+		{
+			active_thread->save(emu);
+		}
+
+		context.active_thread = &thread;
+		thread.restore(emu);
+		thread.setup_if_necessary(emu, context);
+	}
+
+	void switch_to_thread(x64_emulator& emu, process_context& context, const handle thread_handle)
+	{
+		auto* thread = context.threads.get(thread_handle);
+		if (!thread)
+		{
+			throw std::runtime_error("Bad thread handle");
+		}
+
+		switch_to_thread(emu, context, *thread);
+	}
+}
+
+void emulator_thread::setup(x64_emulator& emu, const process_context& context)
+{
+	this->stack_base = setup_stack(emu, this->stack_size);
+	this->gs_segment = setup_gs_segment(emu, GS_SEGMENT_SIZE);
+
+	this->teb = this->gs_segment->reserve<TEB>();
+
+	this->teb->access([&](TEB& teb_obj)
+	{
+		teb_obj.ClientId.UniqueProcess = reinterpret_cast<HANDLE>(1);
+		teb_obj.ClientId.UniqueThread = reinterpret_cast<HANDLE>(static_cast<uint64_t>(this->id));
+		teb_obj.NtTib.StackLimit = reinterpret_cast<void*>(this->stack_base);
+		teb_obj.NtTib.StackBase = reinterpret_cast<void*>(this->stack_base + this->stack_size);
+		teb_obj.NtTib.Self = &this->teb->ptr()->NtTib;
+		teb_obj.ProcessEnvironmentBlock = context.peb.ptr();
+	});
+
+	CONTEXT ctx{};
+	ctx.ContextFlags = CONTEXT_ALL;
+
+	unalign_stack(emu);
+	context_frame::save(emu, ctx);
+
+	ctx.Rip = context.rtl_user_thread_start;
+	ctx.Rcx = this->start_address;
+
+	const auto ctx_obj = allocate_object_on_stack<CONTEXT>(emu);
+	ctx_obj.write(ctx);
+
+	unalign_stack(emu);
+
+	emu.reg(x64_register::rcx, ctx_obj.value());
+	emu.reg(x64_register::rdx, context.ntdll->image_base);
+	emu.reg(x64_register::rip, context.ldr_initialize_thunk);
 }
 
 std::unique_ptr<x64_emulator> create_default_x64_emulator()
@@ -492,27 +537,14 @@ void windows_emulator::setup_process(const std::filesystem::path& application,
 
 	this->dispatcher_.setup(context.ntdll->exports, context.win32u->exports);
 
-	const auto ldr_initialize_thunk = context.ntdll->find_export("LdrInitializeThunk");
-	const auto rtl_user_thread_start = context.ntdll->find_export("RtlUserThreadStart");
+	context.ldr_initialize_thunk = context.ntdll->find_export("LdrInitializeThunk");
+	context.rtl_user_thread_start = context.ntdll->find_export("RtlUserThreadStart");
 	context.ki_user_exception_dispatcher = context.ntdll->find_export("KiUserExceptionDispatcher");
 
-	CONTEXT ctx{};
-	ctx.ContextFlags = CONTEXT_ALL;
+	context.default_register_set = emu.save_registers();
 
-	unalign_stack(emu);
-	context_frame::save(emu, ctx);
-
-	ctx.Rip = rtl_user_thread_start;
-	ctx.Rcx = context.executable->entry_point;
-
-	const auto ctx_obj = allocate_object_on_stack<CONTEXT>(emu);
-	ctx_obj.write(ctx);
-
-	unalign_stack(emu);
-
-	emu.reg(x64_register::rcx, ctx_obj.value());
-	emu.reg(x64_register::rdx, context.ntdll->image_base);
-	emu.reg(x64_register::rip, ldr_initialize_thunk);
+	const auto main_thread_id = context.create_thread(emu, context.executable->entry_point, 0, 0x4000);
+	switch_to_thread(emu, context, main_thread_id);
 }
 
 void windows_emulator::setup_hooks()

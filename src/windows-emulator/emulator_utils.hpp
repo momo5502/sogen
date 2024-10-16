@@ -181,6 +181,16 @@ public:
 		buffer.read(this->active_address_);
 	}
 
+	void release()
+	{
+		if (this->emu_ && this->address_ && this->size_)
+		{
+			this->emu_->release_memory(this->address_, this->size_);
+			this->address_ = 0;
+			this->size_ = 0;
+		}
+	}
+
 private:
 	emulator* emu_{};
 	uint64_t address_{};

@@ -494,7 +494,7 @@ namespace
 			const emulator_object<UNICODE_STRING> sysdir_obj{c.emu, obj_address + windir_obj.size()};
 			sysdir_obj.access([&](UNICODE_STRING& ucs)
 			{
-				c.proc.gs_segment.make_unicode_string(ucs, L"C:\\WINDOWS\\System32");
+				c.proc.base_allocator.make_unicode_string(ucs, L"C:\\WINDOWS\\System32");
 				ucs.Buffer = reinterpret_cast<wchar_t*>(reinterpret_cast<uint64_t>(ucs.Buffer) - obj_address);
 			});
 
@@ -1136,8 +1136,8 @@ namespace
 			const emulator_object<THREAD_BASIC_INFORMATION> info{c.emu, thread_information};
 			info.access([&](THREAD_BASIC_INFORMATION& i)
 			{
-				i.TebBaseAddress = c.proc.teb.ptr();
-				i.ClientId = c.proc.teb.read().ClientId;
+				i.TebBaseAddress = c.win_emu.current_thread().teb->ptr();
+				i.ClientId = c.win_emu.current_thread().teb->read().ClientId;
 			});
 
 			return STATUS_SUCCESS;
@@ -1556,7 +1556,7 @@ namespace
 		{
 			if (!peb.GdiSharedHandleTable)
 			{
-				peb.GdiSharedHandleTable = c.proc.gs_segment.reserve<GDI_SHARED_MEMORY>().ptr();
+				peb.GdiSharedHandleTable = c.proc.base_allocator.reserve<GDI_SHARED_MEMORY>().ptr();
 			}
 		});
 
@@ -1881,8 +1881,8 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtUnmapViewOfSection(const syscall_context& c, uint64_t process_handle, uint64_t base_address
-	)
+	NTSTATUS handle_NtUnmapViewOfSection(const syscall_context& c, const uint64_t process_handle,
+	                                     const uint64_t base_address)
 	{
 		if (process_handle != ~0ULL)
 		{
@@ -1901,6 +1901,23 @@ namespace
 
 		c.emu.stop();
 		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtCreateThreadEx(const syscall_context& c, const emulator_object<uint64_t> thread_handle,
+	                                 const ACCESS_MASK /*desired_access*/,
+	                                 const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
+	                                 const uint64_t process_handle, const uint64_t start_routine,
+	                                 const uint64_t argument, const ULONG create_flags, const SIZE_T zero_bits,
+	                                 const SIZE_T stack_size, const SIZE_T maximum_stack_size)
+	{
+		if (process_handle != ~0ULL)
+		{
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		const auto h = c.proc.create_thread(c.emu, start_routine, argument, stack_size);
+		thread_handle.write(h.bits);
+		return STATUS_SUCCESS;
 	}
 }
 
@@ -2000,6 +2017,7 @@ void syscall_dispatcher::add_handlers()
 	add_handler(NtQueryInformationJobObject);
 	add_handler(NtSetSystemInformation);
 	add_handler(NtQueryInformationFile);
+	add_handler(NtCreateThreadEx);
 
 #undef add_handler
 

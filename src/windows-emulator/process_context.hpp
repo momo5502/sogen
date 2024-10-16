@@ -106,15 +106,141 @@ struct port
 	}
 };
 
+struct process_context;
+
+class moved_marker
+{
+public:
+	moved_marker() = default;
+
+	moved_marker(const moved_marker& copy) = default;
+	moved_marker& operator=(const moved_marker&) = default;
+
+	moved_marker(moved_marker&& obj) noexcept
+		: moved_marker()
+	{
+		this->operator=(std::move(obj));
+	}
+
+	moved_marker& operator=(moved_marker&& obj) noexcept
+	{
+		if (this != &obj)
+		{
+			this->was_moved_ = obj.was_moved_;
+			obj.was_moved_ = true;
+		}
+
+		return *this;
+	}
+
+	~moved_marker() = default;
+
+	bool was_moved() const
+	{
+		return this->was_moved_;
+	}
+
+private:
+	bool was_moved_{false};
+};
+
+class emulator_thread
+{
+public:
+	emulator_thread() = default;
+
+	emulator_thread(x64_emulator& emu, std::vector<std::byte> default_register_set, const uint64_t start_address,
+	                const uint64_t argument,
+	                const uint64_t stack_size)
+		: emu_ptr(&emu)
+		  , stack_size(page_align_up(stack_size))
+		  , start_address(start_address)
+		  , argument(argument)
+		  , last_registers(std::move(default_register_set))
+	{
+	}
+
+	emulator_thread(const emulator_thread&) = delete;
+	emulator_thread& operator=(const emulator_thread&) = delete;
+
+	emulator_thread(emulator_thread&& obj) noexcept = default;
+	emulator_thread& operator=(emulator_thread&& obj) noexcept = default;
+
+	~emulator_thread()
+	{
+		if (marker.was_moved())
+		{
+			return;
+		}
+
+		if (this->stack_base)
+		{
+			this->emu_ptr->release_memory(this->stack_base, this->stack_size);
+		}
+
+		if (this->gs_segment)
+		{
+			this->gs_segment->release();
+		}
+	}
+
+	moved_marker marker{};
+
+	x64_emulator* emu_ptr{};
+
+	uint32_t id{};
+
+	uint64_t stack_base{};
+	uint64_t stack_size{};
+	uint64_t start_address{};
+	uint64_t argument{};
+	uint64_t executed_instructions{0};
+
+	std::optional<emulator_allocator> gs_segment;
+	std::optional<emulator_object<TEB>> teb;
+
+	std::vector<std::byte> last_registers{};
+
+	void save(x64_emulator& emu)
+	{
+		this->last_registers = emu.save_registers();
+	}
+
+	void restore(x64_emulator& emu) const
+	{
+		emu.restore_registers(this->last_registers);
+	}
+
+	void setup_if_necessary(x64_emulator& emu, const process_context& context)
+	{
+		if (!this->teb.has_value())
+		{
+			this->setup(emu, context);
+		}
+	}
+
+	void serialize(utils::buffer_serializer&) const
+	{
+		// TODO
+	}
+
+	void deserialize(utils::buffer_deserializer&)
+	{
+		// TODO
+	}
+
+private:
+	void setup(x64_emulator& emu, const process_context& context);
+};
+
 struct process_context
 {
 	process_context(x64_emulator& emu)
-		: teb(emu)
+		: base_allocator(emu)
 		  , peb(emu)
 		  , process_params(emu)
 		  , kusd(emu)
 		  , module_manager(emu)
-		  , gs_segment(emu)
 	{
 	}
 
@@ -124,7 +250,8 @@ struct process_context
 
 	std::optional<uint64_t> exception_rip{};
 
-	emulator_object<TEB> teb;
+	emulator_allocator base_allocator;
+
 	emulator_object<PEB> peb;
 	emulator_object<RTL_USER_PROCESS_PARAMETERS> process_params;
 	emulator_object<KUSER_SHARED_DATA> kusd;
@@ -135,6 +262,8 @@ struct process_context
 	mapped_module* ntdll{};
 	mapped_module* win32u{};
 
+	uint64_t ldr_initialize_thunk{};
+	uint64_t rtl_user_thread_start{};
 	uint64_t ki_user_exception_dispatcher{};
 
 	uint64_t shared_section_size{};
@@ -144,7 +273,11 @@ struct process_context
 	handle_store<handle_types::semaphore, semaphore> semaphores{};
 	handle_store<handle_types::port, port> ports{};
 	std::map<uint16_t, std::wstring> atoms{};
-	emulator_allocator gs_segment;
+
+	std::vector<std::byte> default_register_set{};
+
+	handle_store<handle_types::thread, emulator_thread> threads{};
+	emulator_thread* active_thread{nullptr};
 
 	void serialize(utils::buffer_serializer& buffer) const
 	{
@@ -152,7 +285,6 @@ struct process_context
 		buffer.write(this->current_ip);
 		buffer.write(this->previous_ip);
 		buffer.write_optional(this->exception_rip);
-		buffer.write(this->teb);
 		buffer.write(this->peb);
 		buffer.write(this->process_params);
 		buffer.write(this->kusd);
@@ -170,7 +302,8 @@ struct process_context
 		buffer.write(this->semaphores);
 		buffer.write(this->ports);
 		buffer.write_map(this->atoms);
-		buffer.write(this->gs_segment);
+
+		// TODO: Serialize/deserialize threads
 	}
 
 	void deserialize(utils::buffer_deserializer& buffer)
@@ -179,7 +312,6 @@ struct process_context
 		buffer.read(this->current_ip);
 		buffer.read(this->previous_ip);
 		buffer.read_optional(this->exception_rip);
-		buffer.read(this->teb);
 		buffer.read(this->peb);
 		buffer.read(this->process_params);
 		buffer.read(this->kusd);
@@ -201,6 +333,16 @@ struct process_context
 		buffer.read(this->semaphores);
 		buffer.read(this->ports);
 		buffer.read_map(this->atoms);
-		buffer.read(this->gs_segment);
+	}
+
+	handle create_thread(x64_emulator& emu, const uint64_t start_address, const uint64_t argument,
+	                     const uint64_t stack_size)
+	{
+		emulator_thread t{emu, default_register_set, start_address, argument, stack_size};
+
+		const handle h = this->threads.store(std::move(t));
+		this->threads.get(h)->id = h.value.id;
+
+		return h;
 	}
 };

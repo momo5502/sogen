@@ -11,6 +11,7 @@ struct handle_types
 		directory,
 		semaphore,
 		port,
+		thread,
 	};
 };
 
