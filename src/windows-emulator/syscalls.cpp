@@ -1967,6 +1967,10 @@ namespace
 				{
 					write_attribute(c.emu, attribute, thread->teb->ptr());
 				}
+				else
+				{
+					printf("Unsupported thread attribute type: %llX\n", type);
+				}
 			}, i);
 		}
 
@@ -1976,6 +1980,38 @@ namespace
 	NTSTATUS handle_NtQueryDebugFilterState()
 	{
 		return FALSE;
+	}
+
+	NTSTATUS handle_NtWaitForSingleObject(const syscall_context& c, const uint64_t handle_value,
+	                                      const BOOLEAN alertable,
+	                                      const emulator_object<LARGE_INTEGER> timeout)
+	{
+		if (timeout.value())
+		{
+			puts("NtWaitForSingleObject timeout not supported yet!");
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		if (alertable)
+		{
+			puts("Alertable NtWaitForSingleObject not supported yet!");
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		handle h{};
+		h.bits = handle_value;
+
+		if (h.value.type != handle_types::thread)
+		{
+			puts("NtWaitForSingleObject only supported with thread handles yet!");
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		c.win_emu.current_thread().await_object = h;
+		c.win_emu.switch_thread = true;
+		c.emu.stop();
+
+		return STATUS_WAIT_0;
 	}
 }
 
@@ -2077,6 +2113,7 @@ void syscall_dispatcher::add_handlers()
 	add_handler(NtQueryInformationFile);
 	add_handler(NtCreateThreadEx);
 	add_handler(NtQueryDebugFilterState);
+	add_handler(NtWaitForSingleObject);
 
 #undef add_handler
 

@@ -48,7 +48,17 @@ namespace
 			}
 			else
 			{
-				win_emu.emu().start_from_ip();
+				while (true)
+				{
+					win_emu.emu().start_from_ip();
+					if (win_emu.switch_thread)
+					{
+						win_emu.perform_thread_switch();
+						continue;
+					}
+
+					break;
+				}
 			}
 		}
 		catch (...)

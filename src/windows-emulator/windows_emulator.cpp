@@ -4,6 +4,8 @@
 
 #include <unicorn_x64_emulator.hpp>
 
+constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 100;
+
 namespace
 {
 	template <typename T>
@@ -438,6 +440,28 @@ namespace
 
 		switch_to_thread(emu, context, *thread);
 	}
+
+	void switch_to_next_thread(x64_emulator& emu, process_context& context)
+	{
+		bool next_thread = false;
+
+
+		for (auto& thread : context.threads)
+		{
+			if (next_thread)
+			{
+				switch_to_thread(emu, context, thread.second);
+				return;
+			}
+
+			if (&thread.second == context.active_thread)
+			{
+				next_thread = true;
+			}
+		}
+
+		switch_to_thread(emu, context, context.threads.begin()->second);
+	}
 }
 
 emulator_thread::emulator_thread(x64_emulator& emu, const process_context& context,
@@ -448,8 +472,8 @@ emulator_thread::emulator_thread(x64_emulator& emu, const process_context& conte
 	  , stack_size(page_align_up(std::max(stack_size, STACK_SIZE)))
 	  , start_address(start_address)
 	  , argument(argument)
-	  , last_registers(context.default_register_set)
 	  , id(id)
+	  , last_registers(context.default_register_set)
 {
 	this->stack_base = emu.allocate_memory(this->stack_size, memory_permission::read_write);
 
@@ -548,6 +572,13 @@ void windows_emulator::setup_process(const std::filesystem::path& application,
 	switch_to_thread(emu, context, main_thread_id);
 }
 
+void windows_emulator::perform_thread_switch()
+{
+	this->logger.print(color::green, "Performing thread switch...\n");
+	switch_to_next_thread(this->emu(), this->process());
+	this->switch_thread = false;
+}
+
 void windows_emulator::setup_hooks()
 {
 	this->emu().hook_instruction(x64_hookable_instructions::syscall, [&]
@@ -618,6 +649,16 @@ void windows_emulator::setup_hooks()
 		                                  auto& process = this->process();
 
 		                                  ++process.executed_instructions;
+
+		                                  auto& thread = this->current_thread();
+		                                  if (thread.executed_instructions == MAX_INSTRUCTIONS_PER_TIME_SLICE)
+		                                  {
+			                                  this->switch_thread = true;
+			                                  this->emu().stop();
+		                                  }
+
+		                                  ++thread.executed_instructions;
+		                                  thread.executed_instructions %= MAX_INSTRUCTIONS_PER_TIME_SLICE;
 
 		                                  process.previous_ip = process.current_ip;
 		                                  process.current_ip = this->emu().read_instruction_pointer();

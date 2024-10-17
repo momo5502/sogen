@@ -201,6 +201,8 @@ public:
 
 	uint32_t id{};
 
+	std::optional<handle> await_object{};
+
 	std::optional<emulator_allocator> gs_segment;
 	std::optional<emulator_object<TEB>> teb;
 
