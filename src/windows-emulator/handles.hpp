@@ -133,6 +133,11 @@ public:
 		return this->get(hh);
 	}
 
+	size_t size() const
+	{
+		return this->store_.size();
+	}
+
 	bool erase(const handle_value h)
 	{
 		const auto entry = this->get_iterator(h);

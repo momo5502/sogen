@@ -1158,6 +1158,24 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (info_class == ThreadAmILastThread)
+		{
+			if (return_length)
+			{
+				return_length.write(sizeof(ULONG));
+			}
+
+			if (thread_information_length != sizeof(ULONG))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<ULONG> info{c.emu, thread_information};
+			info.write(c.proc.threads.size() <= 1);
+
+			return STATUS_SUCCESS;
+		}
+
 		printf("Unsupported thread info class: %X\n", info_class);
 		c.emu.stop();
 
@@ -2013,6 +2031,25 @@ namespace
 
 		return STATUS_WAIT_0;
 	}
+
+	NTSTATUS handle_NtTerminateThread(const syscall_context& c, const uint64_t thread_handle,
+	                                  const NTSTATUS exit_status)
+	{
+		auto* thread = c.proc.threads.get(thread_handle);
+		if (!thread)
+		{
+			return STATUS_INVALID_HANDLE;
+		}
+
+		thread->exit_status = exit_status;
+		if (thread == c.proc.active_thread)
+		{
+			c.win_emu.switch_thread = true;
+			c.emu.stop();
+		}
+
+		return STATUS_SUCCESS;
+	}
 }
 
 void syscall_dispatcher::setup(const exported_symbols& ntdll_exports, const exported_symbols& win32u_exports)
@@ -2114,6 +2151,7 @@ void syscall_dispatcher::add_handlers()
 	add_handler(NtCreateThreadEx);
 	add_handler(NtQueryDebugFilterState);
 	add_handler(NtWaitForSingleObject);
+	add_handler(NtTerminateThread);
 
 #undef add_handler
 

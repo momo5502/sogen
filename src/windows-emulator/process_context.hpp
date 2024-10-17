@@ -201,6 +201,7 @@ public:
 
 	uint32_t id{};
 
+	std::optional<uint32_t> exit_status{};
 	std::optional<handle> await_object{};
 
 	std::optional<emulator_allocator> gs_segment;
