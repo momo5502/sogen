@@ -4,18 +4,6 @@
 
 #include <unicorn_x64_emulator.hpp>
 
-#define PEB_SEGMENT_SIZE (1 << 20) // 1 MB
-
-#define GS_SEGMENT_SIZE (1 << 20) // 1 MB
-
-#define IA32_GS_BASE_MSR 0xC0000101
-
-#define KUSD_ADDRESS 0x7ffe0000
-
-#define GDT_ADDR 0x30000
-#define GDT_LIMIT 0x1000
-#define GDT_ENTRY_SIZE 0x8
-
 namespace
 {
 	template <typename T>
@@ -36,16 +24,13 @@ namespace
 		emu.reg(x64_register::rsp, sp);
 	}
 
-	uint64_t setup_stack(x64_emulator& emu, const size_t stack_size)
+	void setup_stack(x64_emulator& emu, const uint64_t stack_base, const size_t stack_size)
 	{
-		const auto stack_base = emu.allocate_memory(stack_size, memory_permission::read_write);
-
 		const uint64_t stack_end = stack_base + stack_size;
 		emu.reg(x64_register::rsp, stack_end);
-		return stack_base;
 	}
 
-	emulator_allocator setup_gs_segment(x64_emulator& emu, const uint64_t size)
+	void setup_gs_segment(x64_emulator& emu, const emulator_allocator& allocator)
 	{
 		struct msr_value
 		{
@@ -53,16 +38,12 @@ namespace
 			uint64_t value;
 		};
 
-		const auto segment_base = emu.allocate_memory(size, memory_permission::read_write);
-
 		const msr_value value{
 			IA32_GS_BASE_MSR,
-			segment_base
+			allocator.get_base()
 		};
 
 		emu.write_register(x64_register::msr, &value, sizeof(value));
-
-		return {emu, segment_base, size};
 	}
 
 	emulator_object<KUSER_SHARED_DATA> setup_kusd(x64_emulator& emu)
@@ -218,7 +199,7 @@ namespace
 		context.peb = allocator.reserve<PEB>();
 
 		/* Values of the following fields must be
-		 * allocated relative to the process_params themselves.
+		 * allocated relative to the process_params themselves
 		 * and included in the length:
 		 *
 		 * CurrentDirectory
@@ -329,7 +310,6 @@ namespace
 		case memory_operation::read:
 			return 0;
 		case memory_operation::write:
-			return 1;
 		case memory_operation::exec:
 			return 1;
 		}
@@ -460,10 +440,24 @@ namespace
 	}
 }
 
-void emulator_thread::setup(x64_emulator& emu, const process_context& context)
+emulator_thread::emulator_thread(x64_emulator& emu, const process_context& context,
+                                 const uint64_t start_address,
+                                 const uint64_t argument,
+                                 const uint64_t stack_size, const uint32_t id)
+	: emu_ptr(&emu)
+	  , stack_size(page_align_up(std::max(stack_size, STACK_SIZE)))
+	  , start_address(start_address)
+	  , argument(argument)
+	  , last_registers(context.default_register_set)
+	  , id(id)
 {
-	this->stack_base = setup_stack(emu, this->stack_size);
-	this->gs_segment = setup_gs_segment(emu, GS_SEGMENT_SIZE);
+	this->stack_base = emu.allocate_memory(this->stack_size, memory_permission::read_write);
+
+	this->gs_segment = emulator_allocator{
+		emu,
+		emu.allocate_memory(GS_SEGMENT_SIZE, memory_permission::read_write),
+		GS_SEGMENT_SIZE,
+	};
 
 	this->teb = this->gs_segment->reserve<TEB>();
 
@@ -476,6 +470,12 @@ void emulator_thread::setup(x64_emulator& emu, const process_context& context)
 		teb_obj.NtTib.Self = &this->teb->ptr()->NtTib;
 		teb_obj.ProcessEnvironmentBlock = context.peb.ptr();
 	});
+}
+
+void emulator_thread::setup_registers(x64_emulator& emu, const process_context& context) const
+{
+	setup_stack(emu, this->stack_base, this->stack_size);
+	setup_gs_segment(emu, *this->gs_segment);
 
 	CONTEXT ctx{};
 	ctx.ContextFlags = CONTEXT_ALL;
@@ -485,6 +485,7 @@ void emulator_thread::setup(x64_emulator& emu, const process_context& context)
 
 	ctx.Rip = context.rtl_user_thread_start;
 	ctx.Rcx = this->start_address;
+	ctx.Rdx = this->argument;
 
 	const auto ctx_obj = allocate_object_on_stack<CONTEXT>(emu);
 	ctx_obj.write(ctx);
@@ -543,7 +544,7 @@ void windows_emulator::setup_process(const std::filesystem::path& application,
 
 	context.default_register_set = emu.save_registers();
 
-	const auto main_thread_id = context.create_thread(emu, context.executable->entry_point, 0, 0x4000);
+	const auto main_thread_id = context.create_thread(emu, context.executable->entry_point, 0, 0);
 	switch_to_thread(emu, context, main_thread_id);
 }
 

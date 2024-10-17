@@ -8,6 +8,19 @@
 
 #include <x64_emulator.hpp>
 
+#define PEB_SEGMENT_SIZE (1 << 20) // 1 MB
+#define GS_SEGMENT_SIZE (1 << 20) // 1 MB
+
+#define IA32_GS_BASE_MSR 0xC0000101
+
+#define KUSD_ADDRESS 0x7ffe0000
+
+#define STACK_SIZE 0x40000ULL
+
+#define GDT_ADDR 0x30000
+#define GDT_LIMIT 0x1000
+#define GDT_ENTRY_SIZE 0x8
+
 struct event
 {
 	bool signaled{};
@@ -149,16 +162,8 @@ class emulator_thread
 public:
 	emulator_thread() = default;
 
-	emulator_thread(x64_emulator& emu, std::vector<std::byte> default_register_set, const uint64_t start_address,
-	                const uint64_t argument,
-	                const uint64_t stack_size)
-		: emu_ptr(&emu)
-		  , stack_size(page_align_up(stack_size))
-		  , start_address(start_address)
-		  , argument(argument)
-		  , last_registers(std::move(default_register_set))
-	{
-	}
+	emulator_thread(x64_emulator& emu, const process_context& context, uint64_t start_address, uint64_t argument,
+	                uint64_t stack_size, uint32_t id);
 
 	emulator_thread(const emulator_thread&) = delete;
 	emulator_thread& operator=(const emulator_thread&) = delete;
@@ -188,13 +193,13 @@ public:
 
 	x64_emulator* emu_ptr{};
 
-	uint32_t id{};
-
 	uint64_t stack_base{};
 	uint64_t stack_size{};
 	uint64_t start_address{};
 	uint64_t argument{};
 	uint64_t executed_instructions{0};
+
+	uint32_t id{};
 
 	std::optional<emulator_allocator> gs_segment;
 	std::optional<emulator_object<TEB>> teb;
@@ -211,11 +216,11 @@ public:
 		emu.restore_registers(this->last_registers);
 	}
 
-	void setup_if_necessary(x64_emulator& emu, const process_context& context)
+	void setup_if_necessary(x64_emulator& emu, const process_context& context) const
 	{
-		if (!this->teb.has_value())
+		if (!this->executed_instructions)
 		{
-			this->setup(emu, context);
+			this->setup_registers(emu, context);
 		}
 	}
 
@@ -230,7 +235,7 @@ public:
 	}
 
 private:
-	void setup(x64_emulator& emu, const process_context& context);
+	void setup_registers(x64_emulator& emu, const process_context& context) const;
 };
 
 struct process_context
@@ -276,6 +281,7 @@ struct process_context
 
 	std::vector<std::byte> default_register_set{};
 
+	uint32_t current_thread_id{0};
 	handle_store<handle_types::thread, emulator_thread> threads{};
 	emulator_thread* active_thread{nullptr};
 
@@ -338,11 +344,7 @@ struct process_context
 	handle create_thread(x64_emulator& emu, const uint64_t start_address, const uint64_t argument,
 	                     const uint64_t stack_size)
 	{
-		emulator_thread t{emu, default_register_set, start_address, argument, stack_size};
-
-		const handle h = this->threads.store(std::move(t));
-		this->threads.get(h)->id = h.value.id;
-
-		return h;
+		emulator_thread t{emu, *this, start_address, argument, stack_size, ++this->current_thread_id};
+		return this->threads.store(std::move(t));
 	}
 };

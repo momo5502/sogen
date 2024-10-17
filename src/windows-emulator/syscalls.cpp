@@ -161,6 +161,20 @@ namespace
 		};
 	}
 
+	template <typename T>
+	void write_attribute(emulator& emu, const PS_ATTRIBUTE& attribute, const T& value)
+	{
+		if (attribute.ReturnLength)
+		{
+			emulator_object<SIZE_T>{emu, attribute.ReturnLength}.write(sizeof(T));
+		}
+
+		if (attribute.Size >= sizeof(T))
+		{
+			emulator_object<T>{emu, attribute.Value}.write(value);
+		}
+	}
+
 	NTSTATUS handle_NtQueryPerformanceCounter(const syscall_context&,
 	                                          const emulator_object<LARGE_INTEGER> performance_counter,
 	                                          const emulator_object<LARGE_INTEGER> performance_frequency)
@@ -866,6 +880,7 @@ namespace
 	{
 		if (info_class == SystemFlushInformation
 			|| info_class == SystemFeatureConfigurationInformation
+			|| info_class == SystemSupportedProcessorArchitectures2
 			|| info_class == SystemFeatureConfigurationSectionInformation)
 		{
 			//printf("Unsupported, but allowed system info class: %X\n", info_class);
@@ -1195,6 +1210,7 @@ namespace
 			|| info_class == ProcessTlsInformation
 			|| info_class == ProcessConsoleHostProcess
 			|| info_class == ProcessFaultInformation
+			|| info_class == ProcessDefaultHardErrorMode
 			|| info_class == ProcessRaiseUMExceptionOnInvalidHandleClose)
 		{
 			return STATUS_SUCCESS;
@@ -1908,7 +1924,8 @@ namespace
 	                                 const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
 	                                 const uint64_t process_handle, const uint64_t start_routine,
 	                                 const uint64_t argument, const ULONG create_flags, const SIZE_T zero_bits,
-	                                 const SIZE_T stack_size, const SIZE_T maximum_stack_size)
+	                                 const SIZE_T stack_size, const SIZE_T maximum_stack_size,
+	                                 const emulator_object<PS_ATTRIBUTE_LIST> attribute_list)
 	{
 		if (process_handle != ~0ULL)
 		{
@@ -1917,7 +1934,48 @@ namespace
 
 		const auto h = c.proc.create_thread(c.emu, start_routine, argument, stack_size);
 		thread_handle.write(h.bits);
+
+		if (!attribute_list)
+		{
+			return STATUS_SUCCESS;
+		}
+
+		const auto* thread = c.proc.threads.get(h);
+
+		const emulator_object<PS_ATTRIBUTE> attributes{
+			c.emu, attribute_list.value() + offsetof(PS_ATTRIBUTE_LIST, Attributes)
+		};
+
+		const auto total_length = attribute_list.read().TotalLength;
+
+		constexpr auto entry_size = sizeof(PS_ATTRIBUTE);
+		constexpr auto header_size = sizeof(PS_ATTRIBUTE_LIST) - entry_size;
+		const auto attribute_count = (total_length - header_size) / entry_size;
+
+		for (size_t i = 0; i < attribute_count; ++i)
+		{
+			attributes.access([&](const PS_ATTRIBUTE& attribute)
+			{
+				const auto type = attribute.Attribute & ~PS_ATTRIBUTE_THREAD;
+
+				if (type == PsAttributeClientId)
+				{
+					const auto client_id = thread->teb->read().ClientId;
+					write_attribute(c.emu, attribute, client_id);
+				}
+				else if (type == PsAttributeTebAddress)
+				{
+					write_attribute(c.emu, attribute, thread->teb->ptr());
+				}
+			}, i);
+		}
+
 		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS handle_NtQueryDebugFilterState()
+	{
+		return FALSE;
 	}
 }
 
@@ -2018,6 +2076,7 @@ void syscall_dispatcher::add_handlers()
 	add_handler(NtSetSystemInformation);
 	add_handler(NtQueryInformationFile);
 	add_handler(NtCreateThreadEx);
+	add_handler(NtQueryDebugFilterState);
 
 #undef add_handler
 
