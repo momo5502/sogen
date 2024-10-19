@@ -1943,10 +1943,10 @@ namespace
 
 	NTSTATUS handle_NtCreateThreadEx(const syscall_context& c, const emulator_object<uint64_t> thread_handle,
 	                                 const ACCESS_MASK /*desired_access*/,
-	                                 const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
+	                                 const emulator_object<OBJECT_ATTRIBUTES> /*object_attributes*/,
 	                                 const uint64_t process_handle, const uint64_t start_routine,
-	                                 const uint64_t argument, const ULONG create_flags, const SIZE_T zero_bits,
-	                                 const SIZE_T stack_size, const SIZE_T maximum_stack_size,
+	                                 const uint64_t argument, const ULONG /*create_flags*/, const SIZE_T /*zero_bits*/,
+	                                 const SIZE_T stack_size, const SIZE_T /*maximum_stack_size*/,
 	                                 const emulator_object<PS_ATTRIBUTE_LIST> attribute_list)
 	{
 		if (process_handle != ~0ULL)
