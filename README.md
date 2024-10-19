@@ -27,8 +27,7 @@ Perfect for security research, malware analysis, and DRM research where fine-gra
 
 ## Code Disclaimer
 
-The project is still in a very early, prototypy state.
-However, constant progress is being made :)
+The project is still in a very early, prototypy state. The code still needs a lot of cleanup and many features and syscalls need to be implemented. However, constant progress is being made :)
 
 ## YouTube Overview
 
