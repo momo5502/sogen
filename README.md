@@ -1,15 +1,11 @@
 <h1 align="center">
 	Windows User-Space Emulator
-</h1>
-
-<p align="center">
+	<br>
 	<a href="https://github.com/momo5502/emulator#License-1-ov-file"><img src="https://img.shields.io/badge/license-CC%20BY--NC%203.0-00B0F8"/></a>
 	<a href="https://github.com/momo5502/emulator/actions"><img src="https://img.shields.io/github/actions/workflow/status/momo5502/emulator/build.yml?branch=main&label=build&logo=github"/></a>
 	<a href="https://github.com/momo5502/emulator/issues"><img src="https://img.shields.io/github/issues/momo5502/emulator?color=F8B000"/></a>
 	<img src="https://img.shields.io/github/commit-activity/m/momo5502/emulator?color=FF3131"/>
-</p>
-
-<hr>
+</h1>
 
 The project is still in a very early, prototypy state.
 However, constant progress is being made :)
