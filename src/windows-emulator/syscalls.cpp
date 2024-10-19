@@ -15,7 +15,8 @@ struct syscall_context
 	windows_emulator& win_emu;
 	x64_emulator& emu;
 	process_context& proc;
-	mutable bool write_status;
+	mutable bool write_status{true};
+	mutable bool retrigger_syscall{false};
 };
 
 namespace
@@ -122,7 +123,7 @@ namespace
 		}
 
 		const auto new_ip = c.emu.read_instruction_pointer();
-		if (initial_ip != new_ip)
+		if (initial_ip != new_ip || c.retrigger_syscall)
 		{
 			c.emu.reg(x64_register::rip, new_ip - 2);
 		}
@@ -173,6 +174,37 @@ namespace
 		{
 			emulator_object<T>{emu, attribute.Value}.write(value);
 		}
+	}
+
+	bool is_object_signaled(process_context& c, const handle h)
+	{
+		const auto type = h.value.type;
+
+		switch (type)
+		{
+		case handle_types::event:
+			{
+				const auto* e = c.events.get(h);
+				if (e)
+				{
+					return e->signaled;
+				}
+
+				break;
+			}
+
+		case handle_types::thread:
+			{
+				const auto* t = c.threads.get(h);
+				if (t)
+				{
+					return t->exit_status.has_value();
+				}
+
+				break;
+			}
+		}
+		throw std::runtime_error("Bad object");
 	}
 
 	NTSTATUS handle_NtQueryPerformanceCounter(const syscall_context&,
@@ -2029,11 +2061,19 @@ namespace
 			return STATUS_NOT_SUPPORTED;
 		}
 
+		if (is_object_signaled(c.proc, h))
+		{
+			return STATUS_WAIT_0;
+		}
+
+		c.write_status = false;
+		c.retrigger_syscall = true;
+
 		c.win_emu.current_thread().await_object = h;
 		c.win_emu.switch_thread = true;
 		c.emu.stop();
 
-		return STATUS_WAIT_0;
+		return STATUS_SUCCESS;
 	}
 
 	NTSTATUS handle_NtTerminateThread(const syscall_context& c, uint64_t thread_handle,
