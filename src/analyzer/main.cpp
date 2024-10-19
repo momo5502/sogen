@@ -78,7 +78,7 @@ namespace
 
 		(void)&watch_system_objects;
 		//watch_system_objects(win_emu);
-		win_emu.buffer_stdout = true;
+		win_emu.buffer_stdout = false;
 		//win_emu.verbose_calls = true;
 
 		const auto& exe = *win_emu.process().executable;
