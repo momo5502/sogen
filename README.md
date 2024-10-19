@@ -10,7 +10,8 @@
 
 <hr>
 
+![Preview](./docs/images/preview.jpg)
+
 ### YouTube Overview
 
-[![YouTube video](https://img.youtube.com/vi/Y6NXwI7x7Og/maxresdefault.jpg)](https://www.youtube.com/watch?v=Y6NXwI7x7Og)
-(click to play)
+[![YouTube video](./docs/images/yt.jpg)](https://www.youtube.com/watch?v=Y6NXwI7x7Og)
