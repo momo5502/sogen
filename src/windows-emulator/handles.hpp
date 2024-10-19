@@ -11,6 +11,7 @@ struct handle_types
 		directory,
 		semaphore,
 		port,
+		thread,
 	};
 };
 
@@ -132,9 +133,13 @@ public:
 		return this->get(hh);
 	}
 
-	bool erase(const handle_value h)
+	size_t size() const
 	{
-		const auto entry = this->get_iterator(h);
+		return this->store_.size();
+	}
+
+	bool erase(const typename value_map::iterator& entry)
+	{
 		if (entry == this->store_.end())
 		{
 			return false;
@@ -152,6 +157,12 @@ public:
 		return true;
 	}
 
+	bool erase(const handle_value h)
+	{
+		const auto entry = this->get_iterator(h);
+		return this->erase(entry);
+	}
+
 	bool erase(const handle h)
 	{
 		return this->erase(h.value);
@@ -165,6 +176,12 @@ public:
 		return this->erase(hh);
 	}
 
+	bool erase(const T& value)
+	{
+		const auto entry = this->find(value);
+		return this->erase(entry);
+	}
+
 	void serialize(utils::buffer_serializer& buffer) const
 	{
 		buffer.write_map(this->store_);
@@ -175,22 +192,50 @@ public:
 		buffer.read_map(this->store_);
 	}
 
-	value_map::iterator begin()
+	typename value_map::iterator find(const T& value)
+	{
+		auto i = this->store_.begin();
+		for (; i != this->store_.end(); ++i)
+		{
+			if (&i->second == &value)
+			{
+				break;
+			}
+		}
+
+		return i;
+	}
+
+	typename value_map::const_iterator find(const T& value) const
+	{
+		auto i = this->store_.begin();
+		for (; i != this->store_.end(); ++i)
+		{
+			if (&i->second == &value)
+			{
+				break;
+			}
+		}
+
+		return i;
+	}
+
+	typename value_map::iterator begin()
 	{
 		return this->store_.begin();
 	}
 
-	value_map::const_iterator begin() const
+	typename value_map::const_iterator begin() const
 	{
 		return this->store_.begin();
 	}
 
-	value_map::iterator end()
+	typename value_map::iterator end()
 	{
 		return this->store_.end();
 	}
 
-	value_map::const_iterator end() const
+	typename value_map::const_iterator end() const
 	{
 		return this->store_.end();
 	}

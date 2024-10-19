@@ -11,7 +11,7 @@ namespace
 {
 	void watch_system_objects(windows_emulator& win_emu)
 	{
-		watch_object(win_emu, win_emu.process().teb);
+		//watch_object(win_emu, *win_emu.current_thread().teb);
 		watch_object(win_emu, win_emu.process().peb);
 		watch_object(win_emu, win_emu.process().kusd);
 		auto* params_hook = watch_object(win_emu, win_emu.process().process_params);
@@ -48,7 +48,17 @@ namespace
 			}
 			else
 			{
-				win_emu.emu().start_from_ip();
+				while (true)
+				{
+					win_emu.emu().start_from_ip();
+					if (win_emu.switch_thread)
+					{
+						win_emu.perform_thread_switch();
+						continue;
+					}
+
+					break;
+				}
 			}
 		}
 		catch (...)
@@ -68,7 +78,7 @@ namespace
 
 		(void)&watch_system_objects;
 		//watch_system_objects(win_emu);
-		win_emu.buffer_stdout = true;
+		win_emu.buffer_stdout = false;
 		//win_emu.verbose_calls = true;
 
 		const auto& exe = *win_emu.process().executable;
@@ -84,43 +94,6 @@ namespace
 			{
 				win_emu.logger.print(color::green, "Reading from executable .text: 0x%llX at 0x%llX\n", address, rip);
 			}
-		});
-
-		win_emu.add_syscall_hook([&]
-		{
-			// Read syscall id and name
-
-			const auto syscall_id = win_emu.emu().reg(x64_register::eax);
-			const auto syscall_name = win_emu.dispatcher().get_syscall_name(syscall_id);
-
-
-			// Check if desired syscall
-
-			if (syscall_name != "NtQueryInformationProcess")
-			{
-				return instruction_hook_continuation::run_instruction;
-			}
-
-			// Check if image file name is read
-
-			const auto info_class = win_emu.emu().reg(x64_register::rdx);
-			if (info_class != ProcessImageFileNameWin32)
-			{
-				return instruction_hook_continuation::run_instruction;
-			}
-
-			// Patch result and feed expected filename
-
-			win_emu.logger.print(color::pink, "Patching NtQueryInformationProcess...\n");
-
-			const auto data = win_emu.emu().reg(x64_register::r8);
-
-			emulator_allocator data_allocator{win_emu.emu(), data, 0x100};
-			data_allocator.make_unicode_string(L"C:\\Users\\Maurice\\Desktop\\protected.exe");
-
-			win_emu.emu().reg(x64_register::rax, STATUS_SUCCESS);
-
-			return instruction_hook_continuation::skip_instruction;
 		});
 
 		run_emulation(win_emu);

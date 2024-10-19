@@ -51,6 +51,16 @@ public:
 		return this->dispatcher_;
 	}
 
+	emulator_thread& current_thread() const
+	{
+		if (!this->process_.active_thread)
+		{
+			throw std::runtime_error("No active thread!");
+		}
+
+		return *this->process_.active_thread;
+	}
+
 	void serialize(utils::buffer_serializer& buffer) const;
 	void deserialize(utils::buffer_deserializer& buffer);
 
@@ -67,6 +77,9 @@ public:
 	bool verbose_calls{false};
 	bool buffer_stdout{false};
 	bool fuzzing{false};
+	bool switch_thread{false};
+
+	void perform_thread_switch();
 
 private:
 	std::unique_ptr<x64_emulator> emu_{};

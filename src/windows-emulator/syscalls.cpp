@@ -161,6 +161,20 @@ namespace
 		};
 	}
 
+	template <typename T>
+	void write_attribute(emulator& emu, const PS_ATTRIBUTE& attribute, const T& value)
+	{
+		if (attribute.ReturnLength)
+		{
+			emulator_object<SIZE_T>{emu, attribute.ReturnLength}.write(sizeof(T));
+		}
+
+		if (attribute.Size >= sizeof(T))
+		{
+			emulator_object<T>{emu, attribute.Value}.write(value);
+		}
+	}
+
 	NTSTATUS handle_NtQueryPerformanceCounter(const syscall_context&,
 	                                          const emulator_object<LARGE_INTEGER> performance_counter,
 	                                          const emulator_object<LARGE_INTEGER> performance_frequency)
@@ -259,6 +273,11 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (value.type == handle_types::thread && c.proc.threads.erase(handle))
+		{
+			return STATUS_SUCCESS;
+		}
+
 		if (value.type == handle_types::event && c.proc.events.erase(handle))
 		{
 			return STATUS_SUCCESS;
@@ -305,7 +324,6 @@ namespace
 		event e{};
 		e.type = event_type;
 		e.signaled = initial_state != FALSE;
-		e.ref_count = 1;
 		e.name = std::move(name);
 
 		const auto handle = c.proc.events.store(std::move(e));
@@ -494,7 +512,7 @@ namespace
 			const emulator_object<UNICODE_STRING> sysdir_obj{c.emu, obj_address + windir_obj.size()};
 			sysdir_obj.access([&](UNICODE_STRING& ucs)
 			{
-				c.proc.gs_segment.make_unicode_string(ucs, L"C:\\WINDOWS\\System32");
+				c.proc.base_allocator.make_unicode_string(ucs, L"C:\\WINDOWS\\System32");
 				ucs.Buffer = reinterpret_cast<wchar_t*>(reinterpret_cast<uint64_t>(ucs.Buffer) - obj_address);
 			});
 
@@ -866,6 +884,7 @@ namespace
 	{
 		if (info_class == SystemFlushInformation
 			|| info_class == SystemFeatureConfigurationInformation
+			|| info_class == SystemSupportedProcessorArchitectures2
 			|| info_class == SystemFeatureConfigurationSectionInformation)
 		{
 			//printf("Unsupported, but allowed system info class: %X\n", info_class);
@@ -1136,9 +1155,27 @@ namespace
 			const emulator_object<THREAD_BASIC_INFORMATION> info{c.emu, thread_information};
 			info.access([&](THREAD_BASIC_INFORMATION& i)
 			{
-				i.TebBaseAddress = c.proc.teb.ptr();
-				i.ClientId = c.proc.teb.read().ClientId;
+				i.TebBaseAddress = c.win_emu.current_thread().teb->ptr();
+				i.ClientId = c.win_emu.current_thread().teb->read().ClientId;
 			});
+
+			return STATUS_SUCCESS;
+		}
+
+		if (info_class == ThreadAmILastThread)
+		{
+			if (return_length)
+			{
+				return_length.write(sizeof(ULONG));
+			}
+
+			if (thread_information_length != sizeof(ULONG))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<ULONG> info{c.emu, thread_information};
+			info.write(c.proc.threads.size() <= 1);
 
 			return STATUS_SUCCESS;
 		}
@@ -1195,6 +1232,7 @@ namespace
 			|| info_class == ProcessTlsInformation
 			|| info_class == ProcessConsoleHostProcess
 			|| info_class == ProcessFaultInformation
+			|| info_class == ProcessDefaultHardErrorMode
 			|| info_class == ProcessRaiseUMExceptionOnInvalidHandleClose)
 		{
 			return STATUS_SUCCESS;
@@ -1556,7 +1594,7 @@ namespace
 		{
 			if (!peb.GdiSharedHandleTable)
 			{
-				peb.GdiSharedHandleTable = c.proc.gs_segment.reserve<GDI_SHARED_MEMORY>().ptr();
+				peb.GdiSharedHandleTable = c.proc.base_allocator.reserve<GDI_SHARED_MEMORY>().ptr();
 			}
 		});
 
@@ -1881,8 +1919,8 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtUnmapViewOfSection(const syscall_context& c, uint64_t process_handle, uint64_t base_address
-	)
+	NTSTATUS handle_NtUnmapViewOfSection(const syscall_context& c, const uint64_t process_handle,
+	                                     const uint64_t base_address)
 	{
 		if (process_handle != ~0ULL)
 		{
@@ -1901,6 +1939,123 @@ namespace
 
 		c.emu.stop();
 		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtCreateThreadEx(const syscall_context& c, const emulator_object<uint64_t> thread_handle,
+	                                 const ACCESS_MASK /*desired_access*/,
+	                                 const emulator_object<OBJECT_ATTRIBUTES> /*object_attributes*/,
+	                                 const uint64_t process_handle, const uint64_t start_routine,
+	                                 const uint64_t argument, const ULONG /*create_flags*/, const SIZE_T /*zero_bits*/,
+	                                 const SIZE_T stack_size, const SIZE_T /*maximum_stack_size*/,
+	                                 const emulator_object<PS_ATTRIBUTE_LIST> attribute_list)
+	{
+		if (process_handle != ~0ULL)
+		{
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		const auto h = c.proc.create_thread(c.emu, start_routine, argument, stack_size);
+		thread_handle.write(h.bits);
+
+		if (!attribute_list)
+		{
+			return STATUS_SUCCESS;
+		}
+
+		const auto* thread = c.proc.threads.get(h);
+
+		const emulator_object<PS_ATTRIBUTE> attributes{
+			c.emu, attribute_list.value() + offsetof(PS_ATTRIBUTE_LIST, Attributes)
+		};
+
+		const auto total_length = attribute_list.read().TotalLength;
+
+		constexpr auto entry_size = sizeof(PS_ATTRIBUTE);
+		constexpr auto header_size = sizeof(PS_ATTRIBUTE_LIST) - entry_size;
+		const auto attribute_count = (total_length - header_size) / entry_size;
+
+		for (size_t i = 0; i < attribute_count; ++i)
+		{
+			attributes.access([&](const PS_ATTRIBUTE& attribute)
+			{
+				const auto type = attribute.Attribute & ~PS_ATTRIBUTE_THREAD;
+
+				if (type == PsAttributeClientId)
+				{
+					const auto client_id = thread->teb->read().ClientId;
+					write_attribute(c.emu, attribute, client_id);
+				}
+				else if (type == PsAttributeTebAddress)
+				{
+					write_attribute(c.emu, attribute, thread->teb->ptr());
+				}
+				else
+				{
+					printf("Unsupported thread attribute type: %llX\n", type);
+				}
+			}, i);
+		}
+
+		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS handle_NtQueryDebugFilterState()
+	{
+		return FALSE;
+	}
+
+	NTSTATUS handle_NtWaitForSingleObject(const syscall_context& c, const uint64_t handle_value,
+	                                      const BOOLEAN alertable,
+	                                      const emulator_object<LARGE_INTEGER> timeout)
+	{
+		if (timeout.value())
+		{
+			puts("NtWaitForSingleObject timeout not supported yet!");
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		if (alertable)
+		{
+			puts("Alertable NtWaitForSingleObject not supported yet!");
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		handle h{};
+		h.bits = handle_value;
+
+		if (h.value.type != handle_types::thread)
+		{
+			puts("NtWaitForSingleObject only supported with thread handles yet!");
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		c.win_emu.current_thread().await_object = h;
+		c.win_emu.switch_thread = true;
+		c.emu.stop();
+
+		return STATUS_WAIT_0;
+	}
+
+	NTSTATUS handle_NtTerminateThread(const syscall_context& c, uint64_t thread_handle,
+	                                  const NTSTATUS exit_status)
+	{
+		auto* thread = !thread_handle
+			               ? c.proc.active_thread
+			               : c.proc.threads.get(thread_handle);
+
+		if (!thread)
+		{
+			return STATUS_INVALID_HANDLE;
+		}
+
+		thread->exit_status = exit_status;
+		if (thread == c.proc.active_thread)
+		{
+			c.win_emu.switch_thread = true;
+			c.emu.stop();
+		}
+
+		return STATUS_SUCCESS;
 	}
 }
 
@@ -2000,6 +2155,10 @@ void syscall_dispatcher::add_handlers()
 	add_handler(NtQueryInformationJobObject);
 	add_handler(NtSetSystemInformation);
 	add_handler(NtQueryInformationFile);
+	add_handler(NtCreateThreadEx);
+	add_handler(NtQueryDebugFilterState);
+	add_handler(NtWaitForSingleObject);
+	add_handler(NtTerminateThread);
 
 #undef add_handler
 
