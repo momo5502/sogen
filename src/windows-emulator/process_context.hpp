@@ -21,12 +21,31 @@
 #define GDT_LIMIT 0x1000
 #define GDT_ENTRY_SIZE 0x8
 
-struct event
+struct ref_counted_object
+{
+	uint32_t ref_count{1};
+
+	void serialize(utils::buffer_serializer& buffer) const
+	{
+		buffer.write(this->ref_count);
+	}
+
+	void deserialize(utils::buffer_deserializer& buffer)
+	{
+		buffer.read(this->ref_count);
+	}
+
+	static bool deleter(ref_counted_object& e)
+	{
+		return --e.ref_count == 0;
+	}
+};
+
+struct event : ref_counted_object
 {
 	bool signaled{};
 	EVENT_TYPE type{};
 	std::wstring name{};
-	uint32_t ref_count{0};
 
 	bool is_signaled()
 	{
@@ -45,7 +64,8 @@ struct event
 		buffer.write(this->signaled);
 		buffer.write(this->type);
 		buffer.write(this->name);
-		buffer.write(this->ref_count);
+
+		ref_counted_object::serialize(buffer);
 	}
 
 	void deserialize(utils::buffer_deserializer& buffer)
@@ -53,12 +73,8 @@ struct event
 		buffer.read(this->signaled);
 		buffer.read(this->type);
 		buffer.read(this->name);
-		buffer.read(this->ref_count);
-	}
 
-	static bool deleter(event& e)
-	{
-		return --e.ref_count == 0;
+		ref_counted_object::deserialize(buffer);
 	}
 };
 
@@ -157,7 +173,7 @@ private:
 	bool was_moved_{false};
 };
 
-class emulator_thread
+class emulator_thread : ref_counted_object
 {
 public:
 	emulator_thread() = default;

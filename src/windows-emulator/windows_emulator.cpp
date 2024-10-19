@@ -430,6 +430,33 @@ namespace
 		thread.setup_if_necessary(emu, context);
 	}
 
+	void cleanup_threads(process_context& context)
+	{
+		while (true)
+		{
+			bool has_changed = false;
+			for (auto i = context.threads.begin(); i != context.threads.end(); ++i)
+			{
+				if (i->second.exit_status.has_value())
+				{
+					if (&i->second == context.active_thread)
+					{
+						context.active_thread = nullptr;
+					}
+
+					context.threads.erase(i);
+					has_changed = true;
+					break;
+				}
+			}
+
+			if (!has_changed)
+			{
+				break;
+			}
+		}
+	}
+
 	void switch_to_thread(x64_emulator& emu, process_context& context, const handle thread_handle)
 	{
 		auto* thread = context.threads.get(thread_handle);
@@ -443,13 +470,19 @@ namespace
 
 	void switch_to_next_thread(x64_emulator& emu, process_context& context)
 	{
-		bool next_thread = false;
+		//cleanup_threads(context);
 
+		bool next_thread = false;
 
 		for (auto& thread : context.threads)
 		{
 			if (next_thread)
 			{
+				if (thread.second.exit_status.has_value())
+				{
+					continue;
+				}
+
 				switch_to_thread(emu, context, thread.second);
 				return;
 			}

@@ -273,6 +273,11 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (value.type == handle_types::thread && c.proc.threads.erase(handle))
+		{
+			return STATUS_SUCCESS;
+		}
+
 		if (value.type == handle_types::event && c.proc.events.erase(handle))
 		{
 			return STATUS_SUCCESS;
@@ -319,7 +324,6 @@ namespace
 		event e{};
 		e.type = event_type;
 		e.signaled = initial_state != FALSE;
-		e.ref_count = 1;
 		e.name = std::move(name);
 
 		const auto handle = c.proc.events.store(std::move(e));
@@ -2032,10 +2036,13 @@ namespace
 		return STATUS_WAIT_0;
 	}
 
-	NTSTATUS handle_NtTerminateThread(const syscall_context& c, const uint64_t thread_handle,
+	NTSTATUS handle_NtTerminateThread(const syscall_context& c, uint64_t thread_handle,
 	                                  const NTSTATUS exit_status)
 	{
-		auto* thread = c.proc.threads.get(thread_handle);
+		auto* thread = !thread_handle
+			               ? c.proc.active_thread
+			               : c.proc.threads.get(thread_handle);
+
 		if (!thread)
 		{
 			return STATUS_INVALID_HANDLE;
