@@ -117,7 +117,7 @@ namespace
 
 	void write_status(const syscall_context& c, const NTSTATUS status, const uint64_t initial_ip)
 	{
-		if (c.write_status)
+		if (c.write_status && !c.retrigger_syscall)
 		{
 			c.emu.reg<uint64_t>(x64_register::rax, static_cast<uint64_t>(status));
 		}
@@ -204,7 +204,38 @@ namespace
 				break;
 			}
 		}
+
 		throw std::runtime_error("Bad object");
+	}
+
+	std::chrono::steady_clock::time_point convert_delay_interval_to_time_point(const LARGE_INTEGER delay_interval)
+	{
+		constexpr auto HUNDRED_NANOSECONDS_IN_ONE_SECOND = 10000000LL;
+		constexpr auto EPOCH_DIFFERENCE_1601_TO_1970_SECONDS = 11644473600LL;
+
+		if (delay_interval.QuadPart < 0)
+		{
+			const auto relative_ticks_in_ns = (-delay_interval.QuadPart) * 100;
+			const auto relative_duration = std::chrono::nanoseconds(relative_ticks_in_ns);
+
+			return std::chrono::steady_clock::now() + relative_duration;
+		}
+
+		const auto delay_seconds_since_1601 = delay_interval.QuadPart / HUNDRED_NANOSECONDS_IN_ONE_SECOND;
+		const auto delay_fraction_microseconds = (delay_interval.QuadPart % HUNDRED_NANOSECONDS_IN_ONE_SECOND) / 10;
+
+		const auto delay_seconds_since_1970 = delay_seconds_since_1601 - EPOCH_DIFFERENCE_1601_TO_1970_SECONDS;
+
+		const auto target_time =
+			std::chrono::system_clock::from_time_t(delay_seconds_since_1970) +
+			std::chrono::microseconds(delay_fraction_microseconds);
+
+		const auto now_system = std::chrono::system_clock::now();
+
+		const auto duration_until_target = std::chrono::duration_cast<
+			std::chrono::microseconds>(target_time - now_system);
+
+		return std::chrono::steady_clock::now() + duration_until_target;
 	}
 
 	NTSTATUS handle_NtQueryPerformanceCounter(const syscall_context&,
@@ -2066,7 +2097,6 @@ namespace
 			return STATUS_WAIT_0;
 		}
 
-		c.write_status = false;
 		c.retrigger_syscall = true;
 
 		c.win_emu.current_thread().await_object = h;
@@ -2076,7 +2106,7 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtTerminateThread(const syscall_context& c, uint64_t thread_handle,
+	NTSTATUS handle_NtTerminateThread(const syscall_context& c, const uint64_t thread_handle,
 	                                  const NTSTATUS exit_status)
 	{
 		auto* thread = !thread_handle
@@ -2094,6 +2124,34 @@ namespace
 			c.win_emu.switch_thread = true;
 			c.emu.stop();
 		}
+
+		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS handle_NtDelayExecution(const syscall_context& c, const BOOLEAN alertable,
+	                                 const emulator_object<LARGE_INTEGER> delay_interval)
+	{
+		if (alertable)
+		{
+			puts("Alertable NtDelayExecution not supported yet!");
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		auto& t = c.win_emu.current_thread();
+
+		if (!t.await_time.has_value())
+		{
+			t.await_time = convert_delay_interval_to_time_point(delay_interval.read());
+		}
+		else if (*t.await_time > std::chrono::steady_clock::now())
+		{
+			t.await_time = {};
+			return STATUS_SUCCESS;
+		}
+
+		c.retrigger_syscall = true;
+		c.win_emu.switch_thread = true;
+		c.emu.stop();
 
 		return STATUS_SUCCESS;
 	}
@@ -2199,6 +2257,7 @@ void syscall_dispatcher::add_handlers()
 	add_handler(NtQueryDebugFilterState);
 	add_handler(NtWaitForSingleObject);
 	add_handler(NtTerminateThread);
+	add_handler(NtDelayExecution);
 
 #undef add_handler
 
