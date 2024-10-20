@@ -1,5 +1,5 @@
 <h1 align="center">
-	Windows User-Space Emulator
+	Windows User Space Emulator
 	<br>
 	<a href="https://github.com/momo5502/emulator#License-1-ov-file"><img src="https://img.shields.io/badge/license-CC%20BY--NC%203.0-00B0F8"/></a>
 	<a href="https://github.com/momo5502/emulator/actions"><img src="https://img.shields.io/github/actions/workflow/status/momo5502/emulator/build.yml?branch=main&label=build&logo=github"/></a>
