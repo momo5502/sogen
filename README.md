@@ -11,8 +11,6 @@ A high-performance Windows process emulator that operates at the syscall level, 
 
 Built in C++ and powered by the Unicorn Engine.
 
-![Preview](./docs/images/preview.jpg)
-
 ## Key Features
 
 * __Syscall-Level Emulation__: Instead of reimplementing Windows APIs, the emulator operates at the syscall level, allowing it to leverage existing system DLLs
@@ -28,6 +26,10 @@ Perfect for security research, malware analysis, and DRM research where fine-gra
 ## Code Disclaimer
 
 The project is still in a very early, prototypy state. The code still needs a lot of cleanup and many features and syscalls need to be implemented. However, constant progress is being made :)
+
+## Preview
+
+![Preview](./docs/images/preview.jpg)
 
 ## YouTube Overview
 
