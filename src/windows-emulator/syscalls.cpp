@@ -215,20 +215,23 @@ namespace
 
 		if (delay_interval.QuadPart < 0)
 		{
-			const auto relative_ticks_in_ns = (-delay_interval.QuadPart) * 100;
-			const auto relative_duration = std::chrono::nanoseconds(relative_ticks_in_ns);
+			const auto relative_time = -delay_interval.QuadPart;
+			const auto relative_ticks_in_ms = relative_time / 10;
+			const auto relative_fraction_ns = (relative_time % 10) * 100;
+			const auto relative_duration = std::chrono::microseconds(relative_ticks_in_ms) +
+				std::chrono::nanoseconds(relative_fraction_ns);
 
 			return std::chrono::steady_clock::now() + relative_duration;
 		}
 
 		const auto delay_seconds_since_1601 = delay_interval.QuadPart / HUNDRED_NANOSECONDS_IN_ONE_SECOND;
-		const auto delay_fraction_microseconds = (delay_interval.QuadPart % HUNDRED_NANOSECONDS_IN_ONE_SECOND) / 10;
+		const auto delay_fraction_ns = (delay_interval.QuadPart % HUNDRED_NANOSECONDS_IN_ONE_SECOND) * 100;
 
 		const auto delay_seconds_since_1970 = delay_seconds_since_1601 - EPOCH_DIFFERENCE_1601_TO_1970_SECONDS;
 
 		const auto target_time =
 			std::chrono::system_clock::from_time_t(delay_seconds_since_1970) +
-			std::chrono::microseconds(delay_fraction_microseconds);
+			std::chrono::nanoseconds(delay_fraction_ns);
 
 		const auto now_system = std::chrono::system_clock::now();
 
@@ -2143,7 +2146,7 @@ namespace
 		{
 			t.await_time = convert_delay_interval_to_time_point(delay_interval.read());
 		}
-		else if (*t.await_time > std::chrono::steady_clock::now())
+		else if (*t.await_time < std::chrono::steady_clock::now())
 		{
 			t.await_time = {};
 			return STATUS_SUCCESS;
