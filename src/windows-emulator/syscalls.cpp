@@ -479,15 +479,7 @@ namespace
 			return STATUS_NOT_SUPPORTED;
 		}
 
-		if (filename.starts_with(L"api-ms-"))
-		{
-			filename = L"C:\\WINDOWS\\System32\\downlevel\\" + filename;
-		}
-		else
-		{
-			filename = L"C:\\WINDOWS\\System32\\" + filename;
-		}
-
+		filename = L"C:\\WINDOWS\\System32\\" + filename;
 		if (!std::filesystem::exists(filename))
 		{
 			return STATUS_FILE_INVALID;
