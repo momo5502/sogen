@@ -137,7 +137,7 @@ public:
 
 		result.Buffer = reinterpret_cast<PWCH>(string_buffer);
 		result.Length = static_cast<USHORT>(total_length);
-		result.MaximumLength = result.Length;
+		result.MaximumLength = static_cast<USHORT>(total_length + element_size);
 	}
 
 	emulator_object<UNICODE_STRING> make_unicode_string(const std::wstring_view str)

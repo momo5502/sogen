@@ -235,8 +235,10 @@ namespace
 				command_line.append(arg);
 			}
 
+			const auto current_folder = canonical(absolute(file).parent_path()).make_preferred().wstring() + L"\\";
+
 			allocator.make_unicode_string(proc_params.CommandLine, command_line);
-			//gs.make_unicode_string(proc_params.CurrentDirectory.DosPath, file.parent_path().wstring());
+			allocator.make_unicode_string(proc_params.CurrentDirectory.DosPath, current_folder);
 			allocator.make_unicode_string(proc_params.ImagePathName, file.wstring());
 
 			const auto total_length = allocator.get_next_address() - context.process_params.value();
