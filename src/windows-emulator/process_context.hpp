@@ -219,13 +219,25 @@ public:
 
 	std::optional<uint32_t> exit_status{};
 	std::optional<handle> await_object{};
-	std::optional<bool> alerted{};
+	bool waiting_for_alert{false};
+	bool alerted{false};
 	std::optional<std::chrono::steady_clock::time_point> await_time{};
+
+	std::optional<NTSTATUS> pending_status{};
 
 	std::optional<emulator_allocator> gs_segment;
 	std::optional<emulator_object<TEB>> teb;
 
 	std::vector<std::byte> last_registers{};
+
+	void mark_as_ready(NTSTATUS status);
+
+	bool is_await_time_over() const
+	{
+		return this->await_time.has_value() && this->await_time.value() < std::chrono::steady_clock::now();
+	}
+
+	bool is_thread_ready(process_context& context);
 
 	void save(x64_emulator& emu)
 	{
@@ -237,11 +249,19 @@ public:
 		emu.restore_registers(this->last_registers);
 	}
 
-	void setup_if_necessary(x64_emulator& emu, const process_context& context) const
+	void setup_if_necessary(x64_emulator& emu, const process_context& context)
 	{
 		if (!this->executed_instructions)
 		{
 			this->setup_registers(emu, context);
+		}
+
+		if (this->pending_status.has_value())
+		{
+			const auto status = *this->pending_status;
+			this->pending_status = {};
+
+			emu.reg<uint64_t>(x64_register::rax, static_cast<uint64_t>(status));
 		}
 	}
 

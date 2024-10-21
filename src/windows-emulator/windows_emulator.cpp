@@ -417,9 +417,23 @@ namespace
 		dispatch_exception_pointers(emu, dispatcher, pointers);
 	}
 
-	void switch_to_thread(x64_emulator& emu, process_context& context, emulator_thread& thread)
+	bool switch_to_thread(const logger& logger, x64_emulator& emu, process_context& context, emulator_thread& thread)
 	{
+		if (thread.exit_status.has_value() || !thread.is_thread_ready(context))
+		{
+			return false;
+		}
+
 		auto* active_thread = context.active_thread;
+
+		if (active_thread == &thread)
+		{
+			return true;
+		}
+
+		logger.print(color::green, "Performing thread switch...\n");
+
+
 		if (active_thread)
 		{
 			active_thread->save(emu);
@@ -430,9 +444,11 @@ namespace
 
 		thread.restore(emu);
 		thread.setup_if_necessary(emu, context);
+
+		return true;
 	}
 
-	void switch_to_thread(x64_emulator& emu, process_context& context, const handle thread_handle)
+	bool switch_to_thread(const logger& logger, x64_emulator& emu, process_context& context, const handle thread_handle)
 	{
 		auto* thread = context.threads.get(thread_handle);
 		if (!thread)
@@ -440,26 +456,23 @@ namespace
 			throw std::runtime_error("Bad thread handle");
 		}
 
-		switch_to_thread(emu, context, *thread);
+		return switch_to_thread(logger, emu, context, *thread);
 	}
 
-	void switch_to_next_thread(x64_emulator& emu, process_context& context)
+	bool switch_to_next_thread(const logger& logger, x64_emulator& emu, process_context& context)
 	{
-		//cleanup_threads(context);
-
 		bool next_thread = false;
 
 		for (auto& thread : context.threads)
 		{
 			if (next_thread)
 			{
-				if (thread.second.exit_status.has_value())
+				if (switch_to_thread(logger, emu, context, thread.second))
 				{
-					continue;
+					return true;
 				}
 
-				switch_to_thread(emu, context, thread.second);
-				return;
+				continue;
 			}
 
 			if (&thread.second == context.active_thread)
@@ -468,7 +481,50 @@ namespace
 			}
 		}
 
-		switch_to_thread(emu, context, context.threads.begin()->second);
+		for (auto& thread : context.threads)
+		{
+			if (switch_to_thread(logger, emu, context, thread.second))
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	bool is_object_signaled(process_context& c, const handle h)
+	{
+		const auto type = h.value.type;
+
+		switch (type)
+		{
+		default:
+			break;
+
+		case handle_types::event:
+			{
+				const auto* e = c.events.get(h);
+				if (e)
+				{
+					return e->signaled;
+				}
+
+				break;
+			}
+
+		case handle_types::thread:
+			{
+				const auto* t = c.threads.get(h);
+				if (t)
+				{
+					return t->exit_status.has_value();
+				}
+
+				break;
+			}
+		}
+
+		throw std::runtime_error("Bad object");
 	}
 }
 
@@ -502,6 +558,70 @@ emulator_thread::emulator_thread(x64_emulator& emu, const process_context& conte
 		teb_obj.NtTib.Self = &this->teb->ptr()->NtTib;
 		teb_obj.ProcessEnvironmentBlock = context.peb.ptr();
 	});
+}
+
+void emulator_thread::mark_as_ready(const NTSTATUS status)
+{
+	this->pending_status = status;
+	this->await_time = {};
+	this->await_object = {};
+
+	// TODO: Find out if this is correct
+	if (this->waiting_for_alert)
+	{
+		this->alerted = false;
+	}
+
+	this->waiting_for_alert = false;
+}
+
+bool emulator_thread::is_thread_ready(process_context& context)
+{
+	if (this->waiting_for_alert)
+	{
+		if (this->alerted)
+		{
+			this->mark_as_ready(STATUS_ALERTED);
+			return true;
+		}
+		if (this->is_await_time_over())
+		{
+			this->mark_as_ready(STATUS_TIMEOUT);
+			return true;
+		}
+
+		return false;
+	}
+
+	if (this->await_object.has_value())
+	{
+		if (is_object_signaled(context, *this->await_object))
+		{
+			this->mark_as_ready(STATUS_WAIT_0);
+			return true;
+		}
+
+		if (this->is_await_time_over())
+		{
+			this->mark_as_ready(STATUS_TIMEOUT);
+			return true;
+		}
+
+		return false;
+	}
+
+	if (this->await_time.has_value())
+	{
+		if (this->is_await_time_over())
+		{
+			this->mark_as_ready(STATUS_SUCCESS);
+			return true;
+		}
+
+		return false;
+	}
+
+	return true;
 }
 
 void emulator_thread::setup_registers(x64_emulator& emu, const process_context& context) const
@@ -577,14 +697,17 @@ void windows_emulator::setup_process(const std::filesystem::path& application,
 	context.default_register_set = emu.save_registers();
 
 	const auto main_thread_id = context.create_thread(emu, context.executable->entry_point, 0, 0);
-	switch_to_thread(emu, context, main_thread_id);
+	switch_to_thread(this->logger, emu, context, main_thread_id);
 }
 
 void windows_emulator::perform_thread_switch()
 {
-	this->logger.print(color::green, "Performing thread switch...\n");
-	switch_to_next_thread(this->emu(), this->process());
 	this->switch_thread = false;
+	while (!switch_to_next_thread(this->logger, this->emu(), this->process()))
+	{
+		// TODO: Optimize that
+		std::this_thread::sleep_for(1ms);
+	}
 }
 
 void windows_emulator::setup_hooks()

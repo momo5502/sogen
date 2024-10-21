@@ -176,38 +176,6 @@ namespace
 		}
 	}
 
-	bool is_object_signaled(process_context& c, const handle h)
-	{
-		const auto type = h.value.type;
-
-		switch (type)
-		{
-		case handle_types::event:
-			{
-				const auto* e = c.events.get(h);
-				if (e)
-				{
-					return e->signaled;
-				}
-
-				break;
-			}
-
-		case handle_types::thread:
-			{
-				const auto* t = c.threads.get(h);
-				if (t)
-				{
-					return t->exit_status.has_value();
-				}
-
-				break;
-			}
-		}
-
-		throw std::runtime_error("Bad object");
-	}
-
 	std::chrono::steady_clock::time_point convert_delay_interval_to_time_point(const LARGE_INTEGER delay_interval)
 	{
 		constexpr auto HUNDRED_NANOSECONDS_IN_ONE_SECOND = 10000000LL;
@@ -2084,8 +2052,6 @@ namespace
 		handle h{};
 		h.bits = handle_value;
 
-		auto& t = c.win_emu.current_thread();
-
 		if (h.value.type != handle_types::thread && h.value.type != handle_types::event)
 		{
 			puts("Unsupported handle type for NtWaitForSingleObject!");
@@ -2093,27 +2059,14 @@ namespace
 			return STATUS_NOT_SUPPORTED;
 		}
 
+		auto& t = c.win_emu.current_thread();
+		t.await_object = h;
+
 		if (timeout.value() && !t.await_time.has_value())
 		{
 			t.await_time = convert_delay_interval_to_time_point(timeout.read());
 		}
 
-		if (is_object_signaled(c.proc, h))
-		{
-			t.await_time = {};
-			t.await_object = {};
-			return STATUS_WAIT_0;
-		}
-
-		if (t.await_time.has_value() && *t.await_time < std::chrono::steady_clock::now())
-		{
-			t.await_time = {};
-			t.await_object = {};
-			return STATUS_TIMEOUT;
-		}
-
-		t.await_object = h;
-		c.retrigger_syscall = true;
 		c.win_emu.switch_thread = true;
 		c.emu.stop();
 
@@ -2153,18 +2106,8 @@ namespace
 		}
 
 		auto& t = c.win_emu.current_thread();
+		t.await_time = convert_delay_interval_to_time_point(delay_interval.read());
 
-		if (!t.await_time.has_value())
-		{
-			t.await_time = convert_delay_interval_to_time_point(delay_interval.read());
-		}
-		else if (*t.await_time < std::chrono::steady_clock::now())
-		{
-			t.await_time = {};
-			return STATUS_SUCCESS;
-		}
-
-		c.retrigger_syscall = true;
 		c.win_emu.switch_thread = true;
 		c.emu.stop();
 
@@ -2197,30 +2140,13 @@ namespace
 	                                         const emulator_object<LARGE_INTEGER> timeout)
 	{
 		auto& t = c.win_emu.current_thread();
+		t.waiting_for_alert = true;
 
 		if (timeout.value() && !t.await_time.has_value())
 		{
 			t.await_time = convert_delay_interval_to_time_point(timeout.read());
 		}
 
-		if (!t.alerted.has_value())
-		{
-			t.alerted = false;
-		}
-		else if (*t.alerted)
-		{
-			t.alerted = {};
-			t.await_time = {};
-			return STATUS_ALERTED;
-		}
-		else if (t.await_time.has_value() && *t.await_time < std::chrono::steady_clock::now())
-		{
-			t.alerted = {};
-			t.await_time = {};
-			return STATUS_TIMEOUT;
-		}
-
-		c.retrigger_syscall = true;
 		c.win_emu.switch_thread = true;
 		c.emu.stop();
 
