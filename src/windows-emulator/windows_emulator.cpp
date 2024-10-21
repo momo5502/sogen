@@ -4,7 +4,7 @@
 
 #include <unicorn_x64_emulator.hpp>
 
-constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 100;
+constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 10000;
 
 namespace
 {
@@ -426,35 +426,10 @@ namespace
 		}
 
 		context.active_thread = &thread;
+
+
 		thread.restore(emu);
 		thread.setup_if_necessary(emu, context);
-	}
-
-	void cleanup_threads(process_context& context)
-	{
-		while (true)
-		{
-			bool has_changed = false;
-			for (auto i = context.threads.begin(); i != context.threads.end(); ++i)
-			{
-				if (i->second.exit_status.has_value())
-				{
-					if (&i->second == context.active_thread)
-					{
-						context.active_thread = nullptr;
-					}
-
-					context.threads.erase(i);
-					has_changed = true;
-					break;
-				}
-			}
-
-			if (!has_changed)
-			{
-				break;
-			}
-		}
 	}
 
 	void switch_to_thread(x64_emulator& emu, process_context& context, const handle thread_handle)
@@ -680,18 +655,15 @@ void windows_emulator::setup_hooks()
 	                                  [&](const uint64_t address, const size_t, const uint64_t)
 	                                  {
 		                                  auto& process = this->process();
+		                                  auto& thread = this->current_thread();
 
 		                                  ++process.executed_instructions;
-
-		                                  auto& thread = this->current_thread();
-		                                  if (thread.executed_instructions == MAX_INSTRUCTIONS_PER_TIME_SLICE)
+		                                  const auto thread_insts = ++thread.executed_instructions;
+		                                  if (thread_insts % MAX_INSTRUCTIONS_PER_TIME_SLICE == 0)
 		                                  {
 			                                  this->switch_thread = true;
 			                                  this->emu().stop();
 		                                  }
-
-		                                  ++thread.executed_instructions;
-		                                  thread.executed_instructions %= MAX_INSTRUCTIONS_PER_TIME_SLICE;
 
 		                                  process.previous_ip = process.current_ip;
 		                                  process.current_ip = this->emu().read_instruction_pointer();
