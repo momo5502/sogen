@@ -34,5 +34,6 @@ public:
 private:
 	std::unordered_map<uint64_t, syscall_handler_entry> handlers_{};
 
+	void add_handlers(std::unordered_map<std::string, syscall_handler>& handler_mapping);
 	void add_handlers();
 };

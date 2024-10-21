@@ -1,7 +1,7 @@
 #pragma once
 #include <x64_emulator.hpp>
 
-#include "syscalls.hpp"
+#include "syscall_dispatcher.hpp"
 #include "process_context.hpp"
 #include "logger.hpp"
 
