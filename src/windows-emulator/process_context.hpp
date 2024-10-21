@@ -219,6 +219,7 @@ public:
 
 	std::optional<uint32_t> exit_status{};
 	std::optional<handle> await_object{};
+	std::optional<bool> alerted{};
 	std::optional<std::chrono::steady_clock::time_point> await_time{};
 
 	std::optional<emulator_allocator> gs_segment;

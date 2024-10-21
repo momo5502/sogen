@@ -2074,35 +2074,46 @@ namespace
 	                                      const BOOLEAN alertable,
 	                                      const emulator_object<LARGE_INTEGER> timeout)
 	{
-		if (timeout.value())
-		{
-			puts("NtWaitForSingleObject timeout not supported yet!");
-			return STATUS_NOT_SUPPORTED;
-		}
-
 		if (alertable)
 		{
 			puts("Alertable NtWaitForSingleObject not supported yet!");
+			c.emu.stop();
 			return STATUS_NOT_SUPPORTED;
 		}
 
 		handle h{};
 		h.bits = handle_value;
 
-		if (h.value.type != handle_types::thread)
+		auto& t = c.win_emu.current_thread();
+
+		if (h.value.type != handle_types::thread && h.value.type != handle_types::event)
 		{
-			puts("NtWaitForSingleObject only supported with thread handles yet!");
+			puts("Unsupported handle type for NtWaitForSingleObject!");
+			c.emu.stop();
 			return STATUS_NOT_SUPPORTED;
+		}
+
+		if (timeout.value() && !t.await_time.has_value())
+		{
+			t.await_time = convert_delay_interval_to_time_point(timeout.read());
 		}
 
 		if (is_object_signaled(c.proc, h))
 		{
+			t.await_time = {};
+			t.await_object = {};
 			return STATUS_WAIT_0;
 		}
 
-		c.retrigger_syscall = true;
+		if (t.await_time.has_value() && *t.await_time < std::chrono::steady_clock::now())
+		{
+			t.await_time = {};
+			t.await_object = {};
+			return STATUS_TIMEOUT;
+		}
 
-		c.win_emu.current_thread().await_object = h;
+		t.await_object = h;
+		c.retrigger_syscall = true;
 		c.win_emu.switch_thread = true;
 		c.emu.stop();
 
@@ -2137,6 +2148,7 @@ namespace
 		if (alertable)
 		{
 			puts("Alertable NtDelayExecution not supported yet!");
+			c.emu.stop();
 			return STATUS_NOT_SUPPORTED;
 		}
 
@@ -2150,6 +2162,62 @@ namespace
 		{
 			t.await_time = {};
 			return STATUS_SUCCESS;
+		}
+
+		c.retrigger_syscall = true;
+		c.win_emu.switch_thread = true;
+		c.emu.stop();
+
+		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS handle_NtAlertThreadByThreadIdEx(const syscall_context& c, const uint64_t thread_id,
+	                                          const emulator_object<RTL_SRWLOCK> lock)
+	{
+		if (lock.value())
+		{
+			puts("NtAlertThreadByThreadIdEx with lock not supported yet!");
+			//c.emu.stop();
+			//return STATUS_NOT_SUPPORTED;
+		}
+
+		for (auto& t : c.proc.threads)
+		{
+			if (t.second.id == thread_id)
+			{
+				t.second.alerted = true;
+				return STATUS_SUCCESS;
+			}
+		}
+
+		return STATUS_INVALID_HANDLE;
+	}
+
+	NTSTATUS handle_NtWaitForAlertByThreadId(const syscall_context& c, const uint64_t,
+	                                         const emulator_object<LARGE_INTEGER> timeout)
+	{
+		auto& t = c.win_emu.current_thread();
+
+		if (timeout.value() && !t.await_time.has_value())
+		{
+			t.await_time = convert_delay_interval_to_time_point(timeout.read());
+		}
+
+		if (!t.alerted.has_value())
+		{
+			t.alerted = false;
+		}
+		else if (*t.alerted)
+		{
+			t.alerted = {};
+			t.await_time = {};
+			return STATUS_ALERTED;
+		}
+		else if (t.await_time.has_value() && *t.await_time < std::chrono::steady_clock::now())
+		{
+			t.alerted = {};
+			t.await_time = {};
+			return STATUS_TIMEOUT;
 		}
 
 		c.retrigger_syscall = true;
@@ -2261,6 +2329,8 @@ void syscall_dispatcher::add_handlers()
 	add_handler(NtWaitForSingleObject);
 	add_handler(NtTerminateThread);
 	add_handler(NtDelayExecution);
+	add_handler(NtWaitForAlertByThreadId);
+	add_handler(NtAlertThreadByThreadIdEx);
 
 #undef add_handler
 
