@@ -428,6 +428,7 @@ namespace
 
 		if (active_thread == &thread)
 		{
+			thread.setup_if_necessary(emu, context);
 			return true;
 		}
 
