@@ -171,7 +171,7 @@ inline std::chrono::steady_clock::time_point convert_delay_interval_to_time_poin
 	constexpr auto HUNDRED_NANOSECONDS_IN_ONE_SECOND = 10000000LL;
 	constexpr auto EPOCH_DIFFERENCE_1601_TO_1970_SECONDS = 11644473600LL;
 
-	if (delay_interval.QuadPart < 0)
+	if (delay_interval.QuadPart <= 0)
 	{
 		const auto relative_time = -delay_interval.QuadPart;
 		const auto relative_ticks_in_ms = relative_time / 10;
