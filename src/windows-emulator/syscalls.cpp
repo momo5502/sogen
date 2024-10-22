@@ -1525,7 +1525,7 @@ namespace
 
 	const wchar_t* map_mode(const ACCESS_MASK desired_access, const ULONG create_disposition)
 	{
-		const wchar_t* mode = L"";
+		const auto* mode = L"";
 
 		switch (create_disposition)
 		{
@@ -1533,7 +1533,7 @@ namespace
 		case FILE_SUPERSEDE:
 			if (desired_access & GENERIC_WRITE)
 			{
-				mode = L"w";
+				mode = L"wb";
 			}
 			break;
 
@@ -1541,11 +1541,11 @@ namespace
 		case FILE_OPEN_IF:
 			if (desired_access & GENERIC_WRITE)
 			{
-				mode = L"r+";
+				mode = L"r+b";
 			}
 			else if (desired_access & GENERIC_READ)
 			{
-				mode = L"r";
+				mode = L"rb";
 			}
 			break;
 
@@ -1553,7 +1553,7 @@ namespace
 		case FILE_OVERWRITE_IF:
 			if (desired_access & GENERIC_WRITE)
 			{
-				mode = L"w+";
+				mode = L"w+b";
 			}
 			break;
 
@@ -1564,7 +1564,7 @@ namespace
 
 		if (desired_access & FILE_APPEND_DATA)
 		{
-			mode = L"a";
+			mode = L"a+b";
 		}
 
 		return mode;
