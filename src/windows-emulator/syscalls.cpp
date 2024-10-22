@@ -1493,10 +1493,41 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	NTSTATUS handle_NtReadFile(const syscall_context& c, const handle file_handle, const uint64_t /*event*/,
+	                           const uint64_t /*apc_routine*/,
+	                           const uint64_t /*apc_context*/,
+	                           const emulator_object<IO_STATUS_BLOCK> io_status_block,
+	                           uint64_t buffer, const ULONG length,
+	                           const emulator_object<LARGE_INTEGER> /*byte_offset*/,
+	                           const emulator_object<ULONG> /*key*/)
+	{
+		const auto* f = c.proc.files.get(file_handle);
+		if (!f)
+		{
+			return STATUS_INVALID_HANDLE;
+		}
+
+		std::string temp_buffer{};
+		temp_buffer.resize(length);
+
+		const auto bytes_read = fread(temp_buffer.data(), 1, temp_buffer.size(), f->handle);
+
+		if (io_status_block)
+		{
+			io_status_block.access([&](IO_STATUS_BLOCK& block)
+			{
+				block.Information = bytes_read;
+			});
+		}
+
+		c.emu.write_memory(buffer, temp_buffer.data(), temp_buffer.size());
+		return STATUS_SUCCESS;
+	}
+
 	NTSTATUS handle_NtWriteFile(const syscall_context& c, const handle file_handle, const uint64_t /*event*/,
 	                            const uint64_t /*apc_routine*/,
 	                            const uint64_t /*apc_context*/,
-	                            const emulator_object<IO_STATUS_BLOCK> /*io_status_block*/,
+	                            const emulator_object<IO_STATUS_BLOCK> io_status_block,
 	                            uint64_t buffer, const ULONG length,
 	                            const emulator_object<LARGE_INTEGER> /*byte_offset*/,
 	                            const emulator_object<ULONG> /*key*/)
@@ -1519,7 +1550,16 @@ namespace
 			return STATUS_INVALID_HANDLE;
 		}
 
-		(void)fwrite(temp_buffer.data(), 1, temp_buffer.size(), f->handle);
+		const auto bytes_written = fwrite(temp_buffer.data(), 1, temp_buffer.size(), f->handle);
+
+		if (io_status_block)
+		{
+			io_status_block.access([&](IO_STATUS_BLOCK& block)
+			{
+				block.Information = bytes_written;
+			});
+		}
+
 		return STATUS_SUCCESS;
 	}
 
@@ -1573,9 +1613,9 @@ namespace
 	NTSTATUS handle_NtCreateFile(const syscall_context& c, const emulator_object<uint64_t> file_handle,
 	                             ACCESS_MASK desired_access,
 	                             const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
-	                             const emulator_object<IO_STATUS_BLOCK> io_status_block,
-	                             const emulator_object<LARGE_INTEGER> /*allocation_size*/, ULONG file_attributes,
-	                             ULONG share_access, ULONG create_disposition, ULONG create_options,
+	                             const emulator_object<IO_STATUS_BLOCK> /*io_status_block*/,
+	                             const emulator_object<LARGE_INTEGER> /*allocation_size*/, ULONG /*file_attributes*/,
+	                             ULONG /*share_access*/, ULONG create_disposition, ULONG /*create_options*/,
 	                             uint64_t /*ea_buffer*/,
 	                             ULONG /*ea_length*/)
 	{
@@ -1618,11 +1658,15 @@ namespace
 
 		if (f.name.ends_with(L"\\"))
 		{
+			c.win_emu.logger.print(color::dark_gray, "--> Opening folder: %S\n", f.name.c_str());
+
 			const auto handle = c.proc.files.store(std::move(f));
 			file_handle.write(handle.bits);
 
 			return STATUS_SUCCESS;
 		}
+
+		c.win_emu.logger.print(color::dark_gray, "--> Opening file: %S\n", f.name.c_str());
 
 		const auto* mode = map_mode(desired_access, create_disposition);
 
@@ -2068,6 +2112,7 @@ void syscall_dispatcher::add_handlers(std::unordered_map<std::string, syscall_ha
 	add_handler(NtDelayExecution);
 	add_handler(NtWaitForAlertByThreadId);
 	add_handler(NtAlertThreadByThreadIdEx);
+	add_handler(NtReadFile);
 
 #undef add_handler
 }
