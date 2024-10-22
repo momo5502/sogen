@@ -221,44 +221,6 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtOpenFile(const syscall_context& c,
-	                           const emulator_object<uint64_t> file_handle,
-	                           const ACCESS_MASK desired_access,
-	                           const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
-	                           const emulator_object<IO_STATUS_BLOCK> /*io_status_block*/,
-	                           const ULONG share_access,
-	                           const ULONG open_options)
-	{
-		file f{};
-		const auto attributes = object_attributes.read();
-		f.name = read_unicode_string(c.emu, attributes.ObjectName);
-
-		UNICODE_STRING string{};
-		string.Buffer = f.name.data();
-		string.Length = static_cast<uint16_t>(f.name.size() * 2);
-		string.MaximumLength = string.Length;
-
-		OBJECT_ATTRIBUTES new_attributes{};
-		new_attributes.ObjectName = &string;
-		new_attributes.Length = sizeof(new_attributes);
-
-		HANDLE h{};
-		IO_STATUS_BLOCK status_block{};
-
-		const auto res = NtOpenFile(&h, desired_access, &new_attributes, &status_block, share_access, open_options);
-		if (res != STATUS_SUCCESS)
-		{
-			return res;
-		}
-
-		f.handle = h;
-
-		const auto handle = c.proc.files.store(std::move(f));
-		file_handle.write(handle.bits);
-
-		return STATUS_SUCCESS;
-	}
-
 	NTSTATUS handle_NtOpenSection(const syscall_context& c, const emulator_object<uint64_t> section_handle,
 	                              const ACCESS_MASK /*desired_access*/,
 	                              const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
@@ -1531,7 +1493,7 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtWriteFile(const syscall_context& c, const uint64_t file_handle, const uint64_t /*event*/,
+	NTSTATUS handle_NtWriteFile(const syscall_context& c, const handle file_handle, const uint64_t /*event*/,
 	                            const uint64_t /*apc_routine*/,
 	                            const uint64_t /*apc_context*/,
 	                            const emulator_object<IO_STATUS_BLOCK> /*io_status_block*/,
@@ -1539,20 +1501,73 @@ namespace
 	                            const emulator_object<LARGE_INTEGER> /*byte_offset*/,
 	                            const emulator_object<ULONG> /*key*/)
 	{
+		std::string temp_buffer{};
+		temp_buffer.resize(length);
+		c.emu.read_memory(buffer, temp_buffer.data(), temp_buffer.size());
+
+
 		if (file_handle == STDOUT_HANDLE)
 		{
-			std::string temp_buffer{};
-			temp_buffer.resize(length);
-			c.emu.read_memory(buffer, temp_buffer.data(), temp_buffer.size());
-
 			c.win_emu.logger.info("%.*s", static_cast<int>(temp_buffer.size()), temp_buffer.data());
 
 			return STATUS_SUCCESS;
 		}
 
-		//puts("NtWriteFile not supported");
-		c.emu.stop();
-		return STATUS_NOT_SUPPORTED;
+		const auto* f = c.proc.files.get(file_handle);
+		if (!f)
+		{
+			return STATUS_INVALID_HANDLE;
+		}
+
+		(void)fwrite(temp_buffer.data(), 1, temp_buffer.size(), f->handle);
+		return STATUS_SUCCESS;
+	}
+
+	const wchar_t* map_mode(const ACCESS_MASK desired_access, const ULONG create_disposition)
+	{
+		const wchar_t* mode = L"";
+
+		switch (create_disposition)
+		{
+		case FILE_CREATE:
+		case FILE_SUPERSEDE:
+			if (desired_access & GENERIC_WRITE)
+			{
+				mode = L"w";
+			}
+			break;
+
+		case FILE_OPEN:
+		case FILE_OPEN_IF:
+			if (desired_access & GENERIC_WRITE)
+			{
+				mode = L"r+";
+			}
+			else if (desired_access & GENERIC_READ)
+			{
+				mode = L"r";
+			}
+			break;
+
+		case FILE_OVERWRITE:
+		case FILE_OVERWRITE_IF:
+			if (desired_access & GENERIC_WRITE)
+			{
+				mode = L"w+";
+			}
+			break;
+
+		default:
+			mode = L"";
+			break;
+		}
+
+		if (desired_access & FILE_APPEND_DATA)
+		{
+			mode = L"a";
+		}
+
+		return mode;
 	}
 
 	NTSTATUS handle_NtCreateFile(const syscall_context& c, const emulator_object<uint64_t> file_handle,
@@ -1590,39 +1605,63 @@ namespace
 		file f{};
 		f.name = std::move(filename);
 
-		UNICODE_STRING string{};
-		string.Buffer = f.name.data();
-		string.Length = static_cast<uint16_t>(f.name.size() * 2);
-		string.MaximumLength = string.Length;
-
-		OBJECT_ATTRIBUTES new_attributes{};
-		new_attributes.ObjectName = &string;
-		new_attributes.Length = sizeof(new_attributes);
-
-		HANDLE h{};
-
-		NTSTATUS res{STATUS_SUCCESS};
-		io_status_block.access([&](IO_STATUS_BLOCK& block)
+		if (attributes.RootDirectory)
 		{
-			res = NtCreateFile(&h, desired_access, &new_attributes, &block, nullptr, file_attributes, share_access,
-			                   create_disposition, create_options, nullptr, 0);
-		});
+			const auto* root = c.proc.files.get(reinterpret_cast<uint64_t>(attributes.RootDirectory));
+			if (!root)
+			{
+				return STATUS_INVALID_HANDLE;
+			}
 
-		if (res != STATUS_SUCCESS)
-		{
-			return res;
+			f.name = root->name + f.name;
 		}
 
-		f.handle = h;
+		if (f.name.ends_with(L"\\"))
+		{
+			const auto handle = c.proc.files.store(std::move(f));
+			file_handle.write(handle.bits);
+
+			return STATUS_SUCCESS;
+		}
+
+		const auto* mode = map_mode(desired_access, create_disposition);
+
+		FILE* file{};
+		const auto error = _wfopen_s(&file, f.name.c_str(), mode);
+
+		if (!file)
+		{
+			switch (error)
+			{
+			case ENOENT:
+				return STATUS_OBJECT_NAME_NOT_FOUND;
+			case EACCES:
+				return STATUS_ACCESS_DENIED;
+			case EISDIR:
+				return STATUS_FILE_IS_A_DIRECTORY;
+			default:
+				return STATUS_NOT_SUPPORTED;
+			}
+		}
+
+		f.handle = file;
 
 		const auto handle = c.proc.files.store(std::move(f));
 		file_handle.write(handle.bits);
 
-		return res;
+		return STATUS_SUCCESS;
+	}
 
-
-		//printf("Unsupported file: %S\n", filename.c_str());
-		//return STATUS_NOT_SUPPORTED;
+	NTSTATUS handle_NtOpenFile(const syscall_context& c,
+	                           const emulator_object<uint64_t> file_handle,
+	                           const ACCESS_MASK desired_access,
+	                           const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
+	                           const emulator_object<IO_STATUS_BLOCK> io_status_block,
+	                           const ULONG share_access,
+	                           const ULONG open_options)
+	{
+		return handle_NtCreateFile(c, file_handle, desired_access, object_attributes, io_status_block, {}, 0,
+		                           share_access, FILE_OPEN, open_options, 0, 0);
 	}
 
 	NTSTATUS handle_NtQueryInformationJobObject()

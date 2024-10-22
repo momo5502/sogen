@@ -5,8 +5,10 @@
 
 #include "module/module_manager.hpp"
 #include <utils/nt_handle.hpp>
+#include <utils/file_handle.hpp>
 
 #include <x64_emulator.hpp>
+
 
 #define PEB_SEGMENT_SIZE (1 << 20) // 1 MB
 #define GS_SEGMENT_SIZE (1 << 20) // 1 MB
@@ -80,7 +82,7 @@ struct event : ref_counted_object
 
 struct file
 {
-	utils::nt::handle<utils::nt::invalid_handle> handle{};
+	utils::file_handle handle{};
 	std::wstring name{};
 
 	void serialize(utils::buffer_serializer& buffer) const
@@ -92,7 +94,7 @@ struct file
 	void deserialize(utils::buffer_deserializer& buffer)
 	{
 		buffer.read(this->name);
-		this->handle = INVALID_HANDLE_VALUE;
+		this->handle = {};
 	}
 };
 

@@ -92,6 +92,15 @@ T resolve_argument(x64_emulator& emu, const size_t index)
 }
 
 template <typename T>
+	requires(std::is_same_v<std::remove_cvref_t<T>, handle>)
+handle resolve_argument(x64_emulator& emu, const size_t index)
+{
+	handle h{};
+	h.bits = resolve_argument<uint64_t>(emu, index);
+	return h;
+}
+
+template <typename T>
 	requires(std::is_same_v<T, emulator_object<typename T::value_type>>)
 T resolve_argument(x64_emulator& emu, const size_t index)
 {
