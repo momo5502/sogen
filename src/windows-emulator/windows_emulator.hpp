@@ -61,6 +61,8 @@ public:
 		return *this->process_.active_thread;
 	}
 
+	void start(std::chrono::nanoseconds timeout = {}, size_t count = 0);
+
 	void serialize(utils::buffer_serializer& buffer) const;
 	void deserialize(utils::buffer_deserializer& buffer);
 

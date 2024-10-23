@@ -1,7 +1,7 @@
 #include "std_include.hpp"
 
 #include <windows_emulator.hpp>
-#include <debugging/x64_gdb_stub_handler.hpp>
+#include <debugging/win_x64_gdb_stub_handler.hpp>
 
 #include "object_watching.hpp"
 
@@ -43,22 +43,12 @@ namespace
 				const auto* address = "0.0.0.0:28960";
 				win_emu.logger.print(color::pink, "Waiting for GDB connection on %s...\n", address);
 
-				x64_gdb_stub_handler handler{win_emu.emu()};
+				win_x64_gdb_stub_handler handler{win_emu};
 				run_gdb_stub(handler, "i386:x86-64", gdb_registers.size(), address);
 			}
 			else
 			{
-				while (true)
-				{
-					win_emu.emu().start_from_ip();
-					if (win_emu.switch_thread)
-					{
-						win_emu.perform_thread_switch();
-						continue;
-					}
-
-					break;
-				}
+				win_emu.start();
 			}
 		}
 		catch (...)

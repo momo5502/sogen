@@ -235,18 +235,21 @@ namespace unicorn
 				uc_close(this->uc_);
 			}
 
-			void start(uint64_t start, const uint64_t end, std::chrono::microseconds timeout,
+			void start(uint64_t start, const uint64_t end, std::chrono::nanoseconds timeout,
 			           const size_t count) override
 			{
+				if (timeout.count() < 0)
+				{
+					timeout = {};
+				}
+
+				// TODO: Fix adjusting timeout and count
 				while (true)
 				{
-					if (timeout.count() < 0)
-					{
-						timeout = {};
-					}
-
 					this->retry_after_violation_ = false;
-					const auto res = uc_emu_start(*this, start, end, static_cast<uint64_t>(timeout.count()), count);
+					const auto timeoutYs = std::chrono::duration_cast<std::chrono::microseconds>(timeout);
+					const auto res = uc_emu_start(*this, start, end, static_cast<uint64_t>(timeoutYs.count()),
+					                              count);
 					if (res == UC_ERR_OK)
 					{
 						return;
@@ -259,13 +262,12 @@ namespace unicorn
 						res == UC_ERR_WRITE_PROT || //
 						res == UC_ERR_FETCH_PROT;
 
-					if (is_violation && this->retry_after_violation_)
+					if (!is_violation || !this->retry_after_violation_)
 					{
-						start = this->read_instruction_pointer();
-						continue;
+						uce(res);
 					}
 
-					uce(res);
+					start = this->read_instruction_pointer();
 				}
 			}
 

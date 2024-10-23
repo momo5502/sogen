@@ -853,6 +853,58 @@ void windows_emulator::setup_hooks()
 	                                  });
 }
 
+void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
+{
+	const auto use_count = count > 0;
+	const auto use_timeout = timeout != std::chrono::nanoseconds{};
+
+	auto start_time = std::chrono::high_resolution_clock::now();
+	auto start_instructions = this->process().executed_instructions;
+
+	while (true)
+	{
+		if (this->switch_thread)
+		{
+			this->perform_thread_switch();
+		}
+
+		this->emu().start_from_ip(timeout, count);
+
+		if (!this->switch_thread)
+		{
+			break;
+		}
+
+		if (use_timeout)
+		{
+			const auto now = std::chrono::high_resolution_clock::now();
+			const auto diff = now - start_time;
+
+			if (diff >= timeout)
+			{
+				break;
+			}
+
+			timeout = timeout - diff;
+			start_time = now;
+		}
+
+		if (use_count)
+		{
+			const auto current_instructions = this->process().executed_instructions;
+			const auto diff = current_instructions - start_instructions;
+
+			if(diff >= count)
+			{
+				break;
+			}
+
+			count = diff;
+			start_instructions = current_instructions;
+		}
+	}
+}
+
 void windows_emulator::serialize(utils::buffer_serializer& buffer) const
 {
 	this->emu().serialize(buffer);

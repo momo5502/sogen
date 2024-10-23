@@ -58,7 +58,7 @@ public:
 	emulator(emulator&&) = delete;
 	emulator& operator=(emulator&&) = delete;
 
-	virtual void start(uint64_t start, uint64_t end = 0, std::chrono::microseconds timeout = {}, size_t count = 0) = 0;
+	virtual void start(uint64_t start, uint64_t end = 0, std::chrono::nanoseconds timeout = {}, size_t count = 0) = 0;
 	virtual void stop() = 0;
 
 	virtual void read_raw_register(int reg, void* value, size_t size) = 0;
