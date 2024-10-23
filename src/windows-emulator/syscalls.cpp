@@ -1633,10 +1633,9 @@ namespace
 
 		if (io_status_block)
 		{
-			io_status_block.access([&](IO_STATUS_BLOCK& block)
-			{
-				block.Information = bytes_read;
-			});
+			IO_STATUS_BLOCK block{};
+			block.Information = bytes_read;
+			io_status_block.write(block);
 		}
 
 		c.emu.write_memory(buffer, temp_buffer.data(), temp_buffer.size());
@@ -1658,6 +1657,13 @@ namespace
 
 		if (file_handle == STDOUT_HANDLE)
 		{
+			if (io_status_block)
+			{
+				IO_STATUS_BLOCK block{};
+				block.Information = length;
+				io_status_block.write(block);
+			}
+
 			c.win_emu.logger.info("%.*s", static_cast<int>(temp_buffer.size()), temp_buffer.data());
 
 			return STATUS_SUCCESS;
@@ -1673,10 +1679,9 @@ namespace
 
 		if (io_status_block)
 		{
-			io_status_block.access([&](IO_STATUS_BLOCK& block)
-			{
-				block.Information = bytes_written;
-			});
+			IO_STATUS_BLOCK block{};
+			block.Information = bytes_written;
+			io_status_block.write(block);
 		}
 
 		return STATUS_SUCCESS;
