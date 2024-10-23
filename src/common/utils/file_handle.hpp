@@ -59,6 +59,27 @@ namespace utils
 			return this->file_;
 		}
 
+		[[nodiscard]] int64_t size() const
+		{
+			const auto current_position = this->tell();
+
+			this->seek_to(0, SEEK_END);
+			const auto size = this->tell();
+			this->seek_to(current_position);
+
+			return size;
+		}
+
+		bool seek_to(const int64_t position, const int origin = SEEK_SET) const
+		{
+			return _fseeki64(this->file_, position, origin) == 0;
+		}
+
+		[[nodiscard]] int64_t tell() const
+		{
+			return _ftelli64(this->file_);
+		}
+
 	private:
 		FILE* file_{};
 

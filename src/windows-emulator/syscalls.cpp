@@ -976,17 +976,72 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtQueryInformationFile(const syscall_context& c, uint64_t /*file_handle*/,
-	                                       const emulator_object<ULONG_PTR> io_status_block,
+	NTSTATUS handle_NtSetInformationFile(const syscall_context& c, const uint64_t file_handle,
+	                                     const emulator_object<IO_STATUS_BLOCK> io_status_block,
+	                                     const uint64_t file_information,
+	                                     const ULONG length, const FILE_INFORMATION_CLASS info_class)
+	{
+		const auto* f = c.proc.files.get(file_handle);
+		if (!f)
+		{
+			return STATUS_INVALID_HANDLE;
+		}
+
+		if (info_class == FilePositionInformation)
+		{
+			if (!f->handle)
+			{
+				return STATUS_NOT_SUPPORTED;
+			}
+
+			if (io_status_block)
+			{
+				IO_STATUS_BLOCK block{};
+				block.Information = sizeof(FILE_POSITION_INFORMATION);
+				io_status_block.write(block);
+			}
+
+			if (length != sizeof(FILE_POSITION_INFORMATION))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<FILE_POSITION_INFORMATION> info{c.emu, file_information};
+			const auto i = info.read();
+
+			if (!f->handle.seek_to(i.CurrentByteOffset.QuadPart))
+			{
+				return STATUS_INVALID_PARAMETER;
+			}
+
+			return STATUS_SUCCESS;
+		}
+
+		printf("Unsupported set file info class: %X\n", info_class);
+		c.emu.stop();
+
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtQueryInformationFile(const syscall_context& c, uint64_t file_handle,
+	                                       const emulator_object<IO_STATUS_BLOCK> io_status_block,
 	                                       const uint64_t file_information,
 	                                       const uint32_t length,
 	                                       const uint32_t info_class)
 	{
+		const auto* f = c.proc.files.get(file_handle);
+		if (!f)
+		{
+			return STATUS_INVALID_HANDLE;
+		}
+
 		if (info_class == FileStandardInformation)
 		{
 			if (io_status_block)
 			{
-				io_status_block.write(sizeof(FILE_STANDARD_INFORMATION));
+				IO_STATUS_BLOCK block{};
+				block.Information = sizeof(FILE_STANDARD_INFORMATION);
+				io_status_block.write(block);
 			}
 
 			if (length != sizeof(FILE_STANDARD_INFORMATION))
@@ -995,15 +1050,49 @@ namespace
 			}
 
 			const emulator_object<FILE_STANDARD_INFORMATION> info{c.emu, file_information};
-			info.access([&](FILE_STANDARD_INFORMATION& i)
+			FILE_STANDARD_INFORMATION i{};
+			i.Directory = f->handle ? FALSE : TRUE;
+
+			if (f->handle)
 			{
-				memset(&i, 0, sizeof(i));
-			});
+				i.EndOfFile.QuadPart = f->handle.size();
+			}
+
+			info.write(i);
 
 			return STATUS_SUCCESS;
 		}
 
-		printf("Unsupported file info class: %X\n", info_class);
+		if (info_class == FilePositionInformation)
+		{
+			if (!f->handle)
+			{
+				return STATUS_NOT_SUPPORTED;
+			}
+
+			if (io_status_block)
+			{
+				IO_STATUS_BLOCK block{};
+				block.Information = sizeof(FILE_POSITION_INFORMATION);
+				io_status_block.write(block);
+			}
+
+			if (length != sizeof(FILE_POSITION_INFORMATION))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<FILE_POSITION_INFORMATION> info{c.emu, file_information};
+			FILE_POSITION_INFORMATION i{};
+
+			i.CurrentByteOffset.QuadPart = f->handle.tell();
+
+			info.write(i);
+
+			return STATUS_SUCCESS;
+		}
+
+		printf("Unsupported query file info class: %X\n", info_class);
 		c.emu.stop();
 
 		return STATUS_NOT_SUPPORTED;
@@ -2113,6 +2202,7 @@ void syscall_dispatcher::add_handlers(std::unordered_map<std::string, syscall_ha
 	add_handler(NtWaitForAlertByThreadId);
 	add_handler(NtAlertThreadByThreadIdEx);
 	add_handler(NtReadFile);
+	add_handler(NtSetInformationFile);
 
 #undef add_handler
 }
