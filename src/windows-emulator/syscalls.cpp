@@ -1758,6 +1758,17 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (filename == L"\\Device\\KsecDD")
+		{
+			file_handle.write(KSEC_DD.bits);
+			return STATUS_SUCCESS;
+		}
+
+		if (filename.starts_with(L"\\Device\\"))
+		{
+			return STATUS_NOT_SUPPORTED;
+		}
+
 		handle root_handle{};
 		root_handle.bits = reinterpret_cast<uint64_t>(attributes.RootDirectory);
 		if (root_handle.value.is_pseudo && (filename == L"\\Reference" || filename == L"\\Connect"))
