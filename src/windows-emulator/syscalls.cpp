@@ -68,13 +68,38 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtSetInformationThread(const syscall_context& c, const uint64_t /*thread_handle*/,
+	NTSTATUS handle_NtSetInformationThread(const syscall_context& c, const uint64_t thread_handle,
 	                                       const THREADINFOCLASS info_class,
-	                                       const uint64_t /*thread_information*/,
-	                                       const uint32_t /*thread_information_length*/)
+	                                       const uint64_t thread_information,
+	                                       const uint32_t thread_information_length)
 	{
+		auto* thread = thread_handle == ~1ULL
+			               ? c.proc.active_thread
+			               : c.proc.threads.get(thread_handle);
+
+		if (!thread)
+		{
+			return STATUS_INVALID_HANDLE;
+		}
+
 		if (info_class == ThreadSchedulerSharedDataSlot)
 		{
+			return STATUS_SUCCESS;
+		}
+
+		if (info_class == ThreadNameInformation)
+		{
+			if (thread_information_length != sizeof(THREAD_NAME_INFORMATION))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<THREAD_NAME_INFORMATION> info{c.emu, thread_information};
+			const auto i = info.read();
+			thread->name = read_unicode_string(c.emu, i.ThreadName);
+
+			c.win_emu.logger.print(color::blue, "Setting thread (%d) name: %S\n", thread->id, thread->name.c_str());
+
 			return STATUS_SUCCESS;
 		}
 
@@ -1485,6 +1510,11 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	NTSTATUS handle_NtUserRegisterWindowMessage()
+	{
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtUserGetThreadState()
 	{
 		return STATUS_NOT_SUPPORTED;
@@ -2203,6 +2233,7 @@ void syscall_dispatcher::add_handlers(std::unordered_map<std::string, syscall_ha
 	add_handler(NtAlertThreadByThreadIdEx);
 	add_handler(NtReadFile);
 	add_handler(NtSetInformationFile);
+	add_handler(NtUserRegisterWindowMessage);
 
 #undef add_handler
 }

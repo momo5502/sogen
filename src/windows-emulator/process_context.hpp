@@ -219,6 +219,8 @@ public:
 
 	uint32_t id{};
 
+	std::wstring name{};
+
 	std::optional<uint32_t> exit_status{};
 	std::optional<handle> await_object{};
 	bool waiting_for_alert{false};
