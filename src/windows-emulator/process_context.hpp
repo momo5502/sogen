@@ -10,7 +10,7 @@
 #include <x64_emulator.hpp>
 
 
-#define PEB_SEGMENT_SIZE (1 << 20) // 1 MB
+#define PEB_SEGMENT_SIZE (20 << 20) // 20 MB
 #define GS_SEGMENT_SIZE (1 << 20) // 1 MB
 
 #define IA32_GS_BASE_MSR 0xC0000101
