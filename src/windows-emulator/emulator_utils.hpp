@@ -122,6 +122,13 @@ public:
 		return emulator_object<T>(*this->emu_, potential_start);
 	}
 
+	wchar_t* copy_string(const std::wstring_view str)
+	{
+		UNICODE_STRING uc_str{};
+		this->make_unicode_string(uc_str, str);
+		return uc_str.Buffer;
+	}
+
 	void make_unicode_string(UNICODE_STRING& result, const std::wstring_view str)
 	{
 		constexpr auto element_size = sizeof(str[0]);
