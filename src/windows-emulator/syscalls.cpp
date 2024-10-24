@@ -283,12 +283,12 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	auto handle_NtMapViewOfSection(const syscall_context& c, uint64_t section_handle, uint64_t process_handle,
-	                               emulator_object<uint64_t> base_address, ULONG_PTR /*zero_bits*/,
-	                               SIZE_T /*commit_size*/,
-	                               const emulator_object<LARGE_INTEGER> /*section_offset*/,
-	                               const emulator_object<SIZE_T> view_size, SECTION_INHERIT /*inherit_disposition*/,
-	                               ULONG /*allocation_type*/, ULONG /*win32_protect*/) -> NTSTATUS
+	NTSTATUS handle_NtMapViewOfSection(const syscall_context& c, uint64_t section_handle, uint64_t process_handle,
+	                                   emulator_object<uint64_t> base_address, ULONG_PTR /*zero_bits*/,
+	                                   SIZE_T /*commit_size*/,
+	                                   const emulator_object<LARGE_INTEGER> /*section_offset*/,
+	                                   const emulator_object<SIZE_T> view_size, SECTION_INHERIT /*inherit_disposition*/,
+	                                   ULONG /*allocation_type*/, ULONG /*win32_protect*/)
 	{
 		if (process_handle != ~0ULL)
 		{
