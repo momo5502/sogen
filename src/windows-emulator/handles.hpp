@@ -4,6 +4,7 @@ struct handle_types
 {
 	enum type : uint16_t
 	{
+		invalid = 0,
 		file,
 		event,
 		section,
@@ -34,6 +35,16 @@ union handle
 	uint64_t bits;
 	HANDLE h;
 };
+
+inline void serialize(utils::buffer_serializer& buffer, const handle& h)
+{
+	buffer.write(h.bits);
+}
+
+inline void deserialize(utils::buffer_deserializer& buffer, handle& h)
+{
+	buffer.read(h.bits);
+}
 
 inline bool operator==(const handle& h1, const handle& h2)
 {
@@ -88,7 +99,8 @@ template <handle_types::type Type, typename T>
 class handle_store
 {
 public:
-	using value_map = std::map<uint32_t, T>;
+	using index_type = uint32_t;
+	using value_map = std::map<index_type, T>;
 
 	handle store(T value)
 	{
@@ -98,7 +110,7 @@ public:
 		return make_handle(index);
 	}
 
-	handle make_handle(const uint32_t index)
+	handle make_handle(const index_type index) const
 	{
 		handle h{};
 		h.bits = 0;
@@ -107,6 +119,11 @@ public:
 		h.value.id = index;
 
 		return h;
+	}
+
+	T* get_by_index(const uint32_t index)
+	{
+		return this->get(this->make_handle(index));
 	}
 
 	T* get(const handle_value h)
@@ -218,6 +235,27 @@ public:
 		}
 
 		return i;
+	}
+
+	handle find_handle(const T& value) const
+	{
+		const auto entry = this->find(value);
+		if (entry == this->end())
+		{
+			return {};
+		}
+
+		return this->make_handle(entry->first);
+	}
+
+	handle find_handle(const T* value) const
+	{
+		if (!value)
+		{
+			return {};
+		}
+
+		return this->find_handle(*value);
 	}
 
 	typename value_map::iterator begin()

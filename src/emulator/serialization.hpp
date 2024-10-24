@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <cstring>
 #include <optional>
+#include <functional>
 
 namespace utils
 {
@@ -155,6 +156,21 @@ namespace utils
 			if (this->read<bool>())
 			{
 				val = this->read<T>();
+			}
+			else
+			{
+				val = {};
+			}
+		}
+
+		template <typename T, typename F>
+			requires(std::is_invocable_r_v<T, F>)
+		void read_optional(std::optional<T>& val, const F& constructor)
+		{
+			if (this->read<bool>())
+			{
+				val.emplace(constructor());
+				this->read<T>(*val);
 			}
 			else
 			{

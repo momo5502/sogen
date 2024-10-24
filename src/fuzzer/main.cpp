@@ -14,7 +14,7 @@ namespace
 		try
 		{
 			win_emu.logger.disable_output(true);
-			win_emu.emu().start_from_ip();
+			win_emu.start();
 
 			if (win_emu.process().exception_rip.has_value())
 			{

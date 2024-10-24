@@ -23,6 +23,20 @@
 #define GDT_LIMIT 0x1000
 #define GDT_ENTRY_SIZE 0x8
 
+inline void serialize(utils::buffer_serializer& buffer, const std::chrono::steady_clock::time_point& tp)
+{
+	buffer.write(tp.time_since_epoch().count());
+}
+
+inline void deserialize(utils::buffer_deserializer& buffer, std::chrono::steady_clock::time_point& tp)
+{
+	using time_point = std::chrono::steady_clock::time_point;
+	using duration = time_point::duration;
+
+	const auto count = buffer.read<duration::rep>();
+	tp = time_point{duration{count}};
+}
+
 struct ref_counted_object
 {
 	uint32_t ref_count{1};
@@ -269,14 +283,54 @@ public:
 		}
 	}
 
-	void serialize(utils::buffer_serializer&) const
+	void serialize(utils::buffer_serializer& buffer) const
 	{
-		// TODO
+		buffer.write(this->stack_base);
+		buffer.write(this->stack_size);
+		buffer.write(this->start_address);
+		buffer.write(this->argument);
+		buffer.write(this->executed_instructions);
+		buffer.write(this->id);
+
+		buffer.write_string(this->name);
+
+		buffer.write_optional(this->exit_status);
+		buffer.write_optional(this->await_object);
+
+		buffer.write(this->waiting_for_alert);
+		buffer.write(this->alerted);
+
+		buffer.write_optional(this->await_time);
+		buffer.write_optional(this->pending_status);
+		buffer.write_optional(this->gs_segment);
+		buffer.write_optional(this->teb);
+
+		buffer.write_vector(this->last_registers);
 	}
 
-	void deserialize(utils::buffer_deserializer&)
+	void deserialize(utils::buffer_deserializer& buffer)
 	{
-		// TODO
+		buffer.read(this->stack_base);
+		buffer.read(this->stack_size);
+		buffer.read(this->start_address);
+		buffer.read(this->argument);
+		buffer.read(this->executed_instructions);
+		buffer.read(this->id);
+
+		buffer.read_string(this->name);
+
+		buffer.read_optional(this->exit_status);
+		buffer.read_optional(this->await_object);
+
+		buffer.read(this->waiting_for_alert);
+		buffer.read(this->alerted);
+
+		buffer.read_optional(this->await_time);
+		buffer.read_optional(this->pending_status);
+		buffer.read_optional(this->gs_segment, [this] { return emulator_allocator(*this->emu_ptr); });
+		buffer.read_optional(this->teb, [this] { return emulator_object<TEB>(*this->emu_ptr); });
+
+		buffer.read_vector(this->last_registers);
 	}
 
 private:
@@ -336,6 +390,7 @@ struct process_context
 		buffer.write(this->current_ip);
 		buffer.write(this->previous_ip);
 		buffer.write_optional(this->exception_rip);
+		buffer.write(this->base_allocator);
 		buffer.write(this->peb);
 		buffer.write(this->process_params);
 		buffer.write(this->kusd);
@@ -345,6 +400,8 @@ struct process_context
 		buffer.write(this->ntdll->image_base);
 		buffer.write(this->win32u->image_base);
 
+		buffer.write(this->ldr_initialize_thunk);
+		buffer.write(this->rtl_user_thread_start);
 		buffer.write(this->ki_user_exception_dispatcher);
 
 		buffer.write(this->shared_section_size);
@@ -354,7 +411,11 @@ struct process_context
 		buffer.write(this->ports);
 		buffer.write_map(this->atoms);
 
-		// TODO: Serialize/deserialize threads
+		buffer.write_vector(this->default_register_set);
+		buffer.write(this->current_thread_id);
+		buffer.write(this->threads);
+
+		buffer.write(this->threads.find_handle(this->active_thread).bits);
 	}
 
 	void deserialize(utils::buffer_deserializer& buffer)
@@ -363,6 +424,7 @@ struct process_context
 		buffer.read(this->current_ip);
 		buffer.read(this->previous_ip);
 		buffer.read_optional(this->exception_rip);
+		buffer.read(this->base_allocator);
 		buffer.read(this->peb);
 		buffer.read(this->process_params);
 		buffer.read(this->kusd);
@@ -376,6 +438,8 @@ struct process_context
 		this->ntdll = this->module_manager.find_by_address(ntdll_base);
 		this->win32u = this->module_manager.find_by_address(win32u_base);
 
+		buffer.read(this->ldr_initialize_thunk);
+		buffer.read(this->rtl_user_thread_start);
 		buffer.read(this->ki_user_exception_dispatcher);
 
 		buffer.read(this->shared_section_size);
@@ -384,6 +448,12 @@ struct process_context
 		buffer.read(this->semaphores);
 		buffer.read(this->ports);
 		buffer.read_map(this->atoms);
+
+		buffer.read_vector(this->default_register_set);
+		buffer.read(this->current_thread_id);
+		buffer.read(this->threads);
+
+		this->active_thread = this->threads.get(buffer.read<uint64_t>());
 	}
 
 	handle create_thread(x64_emulator& emu, const uint64_t start_address, const uint64_t argument,
