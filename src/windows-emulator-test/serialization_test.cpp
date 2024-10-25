@@ -5,7 +5,7 @@ namespace test
 	TEST(SerializationTest, SerializedDataIsReproducible)
 	{
 		windows_emulator emu1{"./test-sample.exe"};
-		//emu1.logger.disable_output(true);
+		emu1.logger.disable_output(true);
 		emu1.start();
 
 		ASSER_TERMINATED_SUCCESSFULLY(emu1);
