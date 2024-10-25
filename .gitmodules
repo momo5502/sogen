@@ -15,3 +15,6 @@
 	path = deps/mini-gdbstub
 	url = ../mini-gdbstub.git
 	shallow = true
+[submodule "deps/googletest"]
+	path = deps/googletest
+	url = https://github.com/google/googletest.git

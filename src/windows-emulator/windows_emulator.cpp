@@ -425,7 +425,7 @@ namespace
 
 	bool switch_to_thread(const logger& logger, x64_emulator& emu, process_context& context, emulator_thread& thread)
 	{
-		if (thread.exit_status.has_value() || !thread.is_thread_ready(context))
+		if (!thread.is_thread_ready(context))
 		{
 			return false;
 		}
@@ -584,6 +584,11 @@ void emulator_thread::mark_as_ready(const NTSTATUS status)
 
 bool emulator_thread::is_thread_ready(process_context& context)
 {
+	if(this->exit_status.has_value())
+	{
+		return false;
+	}
+
 	if (this->waiting_for_alert)
 	{
 		if (this->alerted)

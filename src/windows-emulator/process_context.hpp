@@ -235,7 +235,7 @@ public:
 
 	std::wstring name{};
 
-	std::optional<uint32_t> exit_status{};
+	std::optional<NTSTATUS> exit_status{};
 	std::optional<handle> await_object{};
 	bool waiting_for_alert{false};
 	bool alerted{false};
@@ -353,6 +353,7 @@ struct process_context
 	uint64_t previous_ip{0};
 
 	std::optional<uint64_t> exception_rip{};
+	std::optional<NTSTATUS> exit_status{};
 
 	emulator_allocator base_allocator;
 
@@ -390,6 +391,7 @@ struct process_context
 		buffer.write(this->current_ip);
 		buffer.write(this->previous_ip);
 		buffer.write_optional(this->exception_rip);
+		buffer.write_optional(this->exit_status);
 		buffer.write(this->base_allocator);
 		buffer.write(this->peb);
 		buffer.write(this->process_params);
@@ -424,6 +426,7 @@ struct process_context
 		buffer.read(this->current_ip);
 		buffer.read(this->previous_ip);
 		buffer.read_optional(this->exception_rip);
+		buffer.read_optional(this->exit_status);
 		buffer.read(this->base_allocator);
 		buffer.read(this->peb);
 		buffer.read(this->process_params);

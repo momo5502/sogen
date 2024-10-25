@@ -1596,15 +1596,24 @@ namespace
 	}
 
 	NTSTATUS handle_NtTerminateProcess(const syscall_context& c, const uint64_t process_handle,
-	                                   NTSTATUS /*exit_status*/)
+	                                   NTSTATUS exit_status)
 	{
 		if (process_handle == 0)
 		{
+			for (auto& t : c.proc.threads)
+			{
+				if (&t.second != c.proc.active_thread)
+				{
+					t.second.exit_status = exit_status;
+				}
+			}
+
 			return STATUS_SUCCESS;
 		}
 
 		if (process_handle == ~0ULL)
 		{
+			c.proc.exit_status = exit_status;
 			c.emu.stop();
 			return STATUS_SUCCESS;
 		}
@@ -2126,16 +2135,8 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtAlertThreadByThreadIdEx(const syscall_context& c, const uint64_t thread_id,
-	                                          const emulator_object<RTL_SRWLOCK> lock)
+	NTSTATUS handle_NtAlertThreadByThreadId(const syscall_context& c, const uint64_t thread_id)
 	{
-		if (lock.value())
-		{
-			puts("NtAlertThreadByThreadIdEx with lock not supported yet!");
-			//c.emu.stop();
-			//return STATUS_NOT_SUPPORTED;
-		}
-
 		for (auto& t : c.proc.threads)
 		{
 			if (t.second.id == thread_id)
@@ -2146,6 +2147,19 @@ namespace
 		}
 
 		return STATUS_INVALID_HANDLE;
+	}
+
+	NTSTATUS handle_NtAlertThreadByThreadIdEx(const syscall_context& c, const uint64_t thread_id,
+	                                          const emulator_object<RTL_SRWLOCK> lock)
+	{
+		if (lock.value())
+		{
+			puts("NtAlertThreadByThreadIdEx with lock not supported yet!");
+			//c.emu.stop();
+			//return STATUS_NOT_SUPPORTED;
+		}
+
+		return handle_NtAlertThreadByThreadId(c, thread_id);
 	}
 
 	NTSTATUS handle_NtWaitForAlertByThreadId(const syscall_context& c, const uint64_t,
@@ -2247,6 +2261,7 @@ void syscall_dispatcher::add_handlers(std::unordered_map<std::string, syscall_ha
 	add_handler(NtDelayExecution);
 	add_handler(NtWaitForAlertByThreadId);
 	add_handler(NtAlertThreadByThreadIdEx);
+	add_handler(NtAlertThreadByThreadId);
 	add_handler(NtReadFile);
 	add_handler(NtSetInformationFile);
 	add_handler(NtUserRegisterWindowMessage);

@@ -1,4 +1,6 @@
 #pragma once
+#include "std_include.hpp"
+
 #include <x64_emulator.hpp>
 
 #include "syscall_dispatcher.hpp"

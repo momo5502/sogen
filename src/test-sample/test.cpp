@@ -87,12 +87,12 @@ bool test_io()
 	return text == buffer;
 }
 
-#define RUN_TEST(func, name)         \
-{                                    \
+#define RUN_TEST(func, name)             \
+{                                        \
 	printf("Running test '" name "': "); \
-	const auto res = func();         \
-	valid &= res;                    \
-	puts(res ? "Sucess" : "Fail");   \
+	const auto res = func();             \
+	valid &= res;                        \
+	puts(res ? "Sucess" : "Fail");       \
 }
 
 int main(int /*argc*/, const char* /*argv*/[])
