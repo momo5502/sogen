@@ -60,7 +60,7 @@ namespace
 
 		c.win_emu.logger.print(color::dark_gray, "--> Registry key: %S\n", key.c_str());
 
-		return STATUS_NOT_SUPPORTED;
+		return STATUS_OBJECT_NAME_NOT_FOUND;
 	}
 
 	NTSTATUS handle_NtOpenKeyEx()
