@@ -92,7 +92,7 @@ bool test_io()
 	printf("Running test '" name "': "); \
 	const auto res = func();             \
 	valid &= res;                        \
-	puts(res ? "Sucess" : "Fail");       \
+	puts(res ? "Success" : "Fail");       \
 }
 
 int main(int /*argc*/, const char* /*argv*/[])
