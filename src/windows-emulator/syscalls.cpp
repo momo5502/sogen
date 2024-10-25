@@ -2154,7 +2154,7 @@ namespace
 	{
 		if (lock.value())
 		{
-			puts("NtAlertThreadByThreadIdEx with lock not supported yet!");
+			c.win_emu.logger.print(color::gray, "NtAlertThreadByThreadIdEx with lock not supported yet!");
 			//c.emu.stop();
 			//return STATUS_NOT_SUPPORTED;
 		}
