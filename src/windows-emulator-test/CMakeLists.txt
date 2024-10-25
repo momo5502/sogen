@@ -17,3 +17,7 @@ target_link_libraries(windows-emulator-test PRIVATE
 )
 
 add_dependencies(windows-emulator-test test-sample)
+
+add_test(NAME windows-emulator-test
+         COMMAND windows-emulator-test
+         WORKING_DIRECTORY "$<TARGET_FILE_DIR:windows-emulator-test>")

@@ -18,6 +18,7 @@ set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")
 ##########################################
 
 project(emulator LANGUAGES C CXX)
+enable_testing()
 
 ##########################################
 

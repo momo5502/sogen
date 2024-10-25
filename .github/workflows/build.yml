@@ -40,6 +40,9 @@ jobs:
       - name: CMake Build
         run: cmake --workflow --preset=${{matrix.preset}}
 
+      - name: CMake Test
+        run: cd build/${{matrix.preset}} && ctest --verbose
+
       #- name: Upload Artifacts
       #  uses: actions/upload-artifact@v4
       #  with:
