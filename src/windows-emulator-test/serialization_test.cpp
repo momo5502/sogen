@@ -21,7 +21,19 @@ namespace test
 		utils::buffer_serializer serializer2{};
 		new_emu.serialize(serializer2);
 
-		ASSERT_EQ(serializer1.get_buffer(), serializer2.get_buffer());
+		auto buffer1 = serializer1.move_buffer();
+		auto buffer2 = serializer2.move_buffer();
+
+		// Unicorn context contains unpredictable data
+		constexpr auto unicorn_offset = 30;
+
+		ASSERT_GT(buffer1.size(), unicorn_offset);
+		ASSERT_EQ(buffer1.size(), buffer2.size());
+
+		buffer1.erase(buffer1.begin(), buffer1.begin() + unicorn_offset);
+		buffer2.erase(buffer2.begin(), buffer2.begin() + unicorn_offset);
+
+		ASSERT_EQ(buffer1, buffer2);
 	}
 
 	TEST(SerializationTest, DISABLED_EmulationIsReproducible)
