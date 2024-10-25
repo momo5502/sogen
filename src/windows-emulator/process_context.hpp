@@ -192,7 +192,10 @@ private:
 class emulator_thread : ref_counted_object
 {
 public:
-	emulator_thread() = default;
+	emulator_thread(x64_emulator& emu)
+		: emu_ptr(&emu)
+	{
+	}
 
 	emulator_thread(x64_emulator& emu, const process_context& context, uint64_t start_address, uint64_t argument,
 	                uint64_t stack_size, uint32_t id);
@@ -205,20 +208,7 @@ public:
 
 	~emulator_thread()
 	{
-		if (marker.was_moved())
-		{
-			return;
-		}
-
-		if (this->stack_base)
-		{
-			this->emu_ptr->release_memory(this->stack_base, this->stack_size);
-		}
-
-		if (this->gs_segment)
-		{
-			this->gs_segment->release();
-		}
+		this->release();
 	}
 
 	moved_marker marker{};
@@ -285,6 +275,11 @@ public:
 
 	void serialize(utils::buffer_serializer& buffer) const
 	{
+		if (this->marker.was_moved())
+		{
+			throw std::runtime_error("Object was moved!");
+		}
+
 		buffer.write(this->stack_base);
 		buffer.write(this->stack_size);
 		buffer.write(this->start_address);
@@ -310,6 +305,13 @@ public:
 
 	void deserialize(utils::buffer_deserializer& buffer)
 	{
+		if (this->marker.was_moved())
+		{
+			throw std::runtime_error("Object was moved!");
+		}
+
+		this->release();
+
 		buffer.read(this->stack_base);
 		buffer.read(this->stack_size);
 		buffer.read(this->start_address);
@@ -335,6 +337,31 @@ public:
 
 private:
 	void setup_registers(x64_emulator& emu, const process_context& context) const;
+
+	void release()
+	{
+		if (this->marker.was_moved())
+		{
+			return;
+		}
+
+		if (this->stack_base)
+		{
+			if (!this->emu_ptr)
+			{
+				throw std::runtime_error("Emulator was never assigned!");
+			}
+
+			this->emu_ptr->release_memory(this->stack_base, this->stack_size);
+			this->stack_base = 0;
+		}
+
+		if (this->gs_segment)
+		{
+			this->gs_segment->release();
+			this->gs_segment = {};
+		}
+	}
 };
 
 struct process_context
@@ -454,6 +481,7 @@ struct process_context
 
 		buffer.read_vector(this->default_register_set);
 		buffer.read(this->current_thread_id);
+
 		buffer.read(this->threads);
 
 		this->active_thread = this->threads.get(buffer.read<uint64_t>());

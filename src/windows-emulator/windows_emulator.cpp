@@ -279,9 +279,9 @@ namespace
 
 		if (record.ExceptionRecord)
 		{
-			record_mapping[&record] = record_obj;
+			record_mapping.emplace(&record, record_obj);
 
-			emulator_object<EXCEPTION_RECORD> nested_record_obj{};
+			emulator_object<EXCEPTION_RECORD> nested_record_obj{allocator.get_emulator()};
 			const auto nested_record = record_mapping.find(record.ExceptionRecord);
 
 			if (nested_record != record_mapping.end())
@@ -584,7 +584,7 @@ void emulator_thread::mark_as_ready(const NTSTATUS status)
 
 bool emulator_thread::is_thread_ready(process_context& context)
 {
-	if(this->exit_status.has_value())
+	if (this->exit_status.has_value())
 	{
 		return false;
 	}
@@ -903,7 +903,7 @@ void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
 			const auto current_instructions = this->process().executed_instructions;
 			const auto diff = current_instructions - start_instructions;
 
-			if(diff >= count)
+			if (diff >= count)
 			{
 				break;
 			}
@@ -923,6 +923,11 @@ void windows_emulator::serialize(utils::buffer_serializer& buffer) const
 
 void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
 {
+	buffer.register_factory<emulator_thread>([this]
+	{
+		return emulator_thread(this->emu());
+	});
+
 	this->emu().deserialize(buffer);
 	this->process_.deserialize(buffer);
 	this->dispatcher_.deserialize(buffer);

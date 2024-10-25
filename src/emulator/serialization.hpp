@@ -7,6 +7,7 @@
 #include <cstring>
 #include <optional>
 #include <functional>
+#include <typeindex>
 
 namespace utils
 {
@@ -145,7 +146,7 @@ namespace utils
 		template <typename T>
 		T read()
 		{
-			T object{};
+			auto object = this->construct_object<T>();
 			this->read(object);
 			return object;
 		}
@@ -165,11 +166,11 @@ namespace utils
 
 		template <typename T, typename F>
 			requires(std::is_invocable_r_v<T, F>)
-		void read_optional(std::optional<T>& val, const F& constructor)
+		void read_optional(std::optional<T>& val, const F& factory)
 		{
 			if (this->read<bool>())
 			{
-				val.emplace(constructor());
+				val.emplace(factory());
 				this->read<T>(*val);
 			}
 			else
@@ -214,7 +215,7 @@ namespace utils
 				auto key = this->read<key_type>();
 				auto value = this->read<value_type>();
 
-				map[std::move(key)] = std::move(value);
+				map.emplace(std::move(key), std::move(value));
 			}
 		}
 
@@ -263,9 +264,41 @@ namespace utils
 			return this->offset_;
 		}
 
+		template <typename T, typename F>
+			requires(std::is_invocable_r_v<T, F>)
+		void register_factory(F factory)
+		{
+			this->factories_[std::type_index(typeid(T))] = [f = std::move(factory)]() -> T* {
+				return new T(f());
+			};
+		}
+
 	private:
 		size_t offset_{0};
 		std::span<const std::byte> buffer_{};
+		std::unordered_map<std::type_index, std::function<void*()>> factories_{};
+
+		template <typename T>
+		T construct_object()
+		{
+			if constexpr (std::is_default_constructible_v<T>)
+			{
+				return {};
+			}
+
+			const auto factory = this->factories_.find(std::type_index(typeid(T)));
+			if (factory == this->factories_.end())
+			{
+				throw std::runtime_error(
+					"Object construction failed. Missing factory for type: " + std::string(typeid(T).name()));
+			}
+
+			auto* object = static_cast<T*>(factory->second());
+			auto obj = std::move(*object);
+			delete object;
+
+			return obj;
+		}
 	};
 
 	class buffer_serializer

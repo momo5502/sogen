@@ -8,7 +8,7 @@ namespace test
 		emu.logger.disable_output(true);
 		emu.start();
 
-		assert_terminated_successfully(emu);
+		ASSER_TERMINATED_SUCCESSFULLY(emu);
 	}
 
 	TEST(EmulationTest, CountedEmulationWorks)

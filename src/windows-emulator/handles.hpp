@@ -105,7 +105,7 @@ public:
 	handle store(T value)
 	{
 		auto index = this->find_free_index();
-		this->store_[index] = std::move(value);
+		this->store_.emplace(index, std::move(value));
 
 		return make_handle(index);
 	}

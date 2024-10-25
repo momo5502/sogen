@@ -1848,7 +1848,7 @@ namespace
 	                           const ULONG share_access,
 	                           const ULONG open_options)
 	{
-		return handle_NtCreateFile(c, file_handle, desired_access, object_attributes, io_status_block, {}, 0,
+		return handle_NtCreateFile(c, file_handle, desired_access, object_attributes, io_status_block, {c.emu}, 0,
 		                           share_access, FILE_OPEN, open_options, 0, 0);
 	}
 

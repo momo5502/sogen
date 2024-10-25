@@ -7,7 +7,7 @@ class emulator_object
 public:
 	using value_type = T;
 
-	emulator_object() = default;
+	//emulator_object() = default;
 
 	emulator_object(emulator& emu, const uint64_t address = 0)
 		: emu_(&emu)
@@ -25,7 +25,7 @@ public:
 		return this->address_;
 	}
 
-	uint64_t size() const
+	constexpr uint64_t size() const
 	{
 		return sizeof(T);
 	}
@@ -172,6 +172,11 @@ public:
 	uint64_t get_next_address() const
 	{
 		return this->active_address_;
+	}
+
+	emulator& get_emulator() const
+	{
+		return *this->emu_;
 	}
 
 	void serialize(utils::buffer_serializer& buffer) const
