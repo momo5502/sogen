@@ -2180,7 +2180,7 @@ namespace
 	}
 }
 
-void syscall_dispatcher::add_handlers(std::unordered_map<std::string, syscall_handler>& handler_mapping)
+void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& handler_mapping)
 {
 #define add_handler(syscall)                                                  \
 	do                                                                        \

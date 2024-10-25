@@ -70,7 +70,7 @@ inline std::vector<std::string> find_syscalls(const exported_symbols& exports)
 	return syscalls;
 }
 
-inline void map_syscalls(std::unordered_map<uint64_t, syscall_handler_entry>& handlers,
+inline void map_syscalls(std::map<uint64_t, syscall_handler_entry>& handlers,
                          const std::vector<std::string>& syscalls, const uint64_t base_index)
 {
 	for (size_t i = 0; i < syscalls.size(); ++i)

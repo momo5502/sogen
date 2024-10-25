@@ -39,8 +39,7 @@ void syscall_dispatcher::setup(const exported_symbols& ntdll_exports, const expo
 
 void syscall_dispatcher::add_handlers()
 {
-	std::unordered_map<std::string, syscall_handler> handler_mapping{};
-	handler_mapping.reserve(this->handlers_.size());
+	std::map<std::string, syscall_handler> handler_mapping{};
 
 	this->add_handlers(handler_mapping);
 

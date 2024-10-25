@@ -9,7 +9,7 @@ struct exported_symbol
 };
 
 using exported_symbols = std::vector<exported_symbol>;
-using address_name_mapping = std::unordered_map<uint64_t, std::string>;
+using address_name_mapping = std::map<uint64_t, std::string>;
 
 struct mapped_module
 {
