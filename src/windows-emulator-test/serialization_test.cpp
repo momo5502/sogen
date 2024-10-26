@@ -8,7 +8,7 @@ namespace test
 		emu1.logger.disable_output(true);
 		emu1.start();
 
-		ASSER_TERMINATED_SUCCESSFULLY(emu1);
+		ASSERT_TERMINATED_SUCCESSFULLY(emu1);
 
 		utils::buffer_serializer serializer1{};
 		emu1.serialize(serializer1);
@@ -33,7 +33,7 @@ namespace test
 		emu1.logger.disable_output(true);
 		emu1.start();
 
-		ASSER_TERMINATED_SUCCESSFULLY(emu1);
+		ASSERT_TERMINATED_SUCCESSFULLY(emu1);
 
 		utils::buffer_serializer serializer1{};
 		emu1.serialize(serializer1);
@@ -42,7 +42,7 @@ namespace test
 		emu2.logger.disable_output(true);
 		emu2.start();
 
-		ASSER_TERMINATED_SUCCESSFULLY(emu2);
+		ASSERT_TERMINATED_SUCCESSFULLY(emu2);
 
 		utils::buffer_serializer serializer2{};
 		emu2.serialize(serializer2);
@@ -66,10 +66,10 @@ namespace test
 		new_emu.deserialize(deserializer);
 
 		new_emu.start();
-		ASSER_TERMINATED_SUCCESSFULLY(new_emu);
+		ASSERT_TERMINATED_SUCCESSFULLY(new_emu);
 
 		emu.start();
-		ASSER_TERMINATED_SUCCESSFULLY(emu);
+		ASSERT_TERMINATED_SUCCESSFULLY(emu);
 
 		// TODO: Fix that :(
 		/*utils::buffer_serializer serializer1{};

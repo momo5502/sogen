@@ -35,7 +35,8 @@ bool test_threads()
 			++counter;
 			std::this_thread::yield();
 			++counter;
-			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			// Host scheduling/cpu performance can have impact on emulator scheduling
+			//std::this_thread::sleep_for(std::chrono::milliseconds(100));
 			++counter;
 		});
 	}

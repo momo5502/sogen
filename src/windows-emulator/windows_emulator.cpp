@@ -4,7 +4,7 @@
 
 #include <unicorn_x64_emulator.hpp>
 
-constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 10000;
+constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 100000;
 
 namespace
 {
@@ -867,8 +867,11 @@ void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
 	const auto use_count = count > 0;
 	const auto use_timeout = timeout != std::chrono::nanoseconds{};
 
-	auto start_time = std::chrono::high_resolution_clock::now();
-	auto start_instructions = this->process().executed_instructions;
+	const auto start_time = std::chrono::high_resolution_clock::now();
+	const auto start_instructions = this->process().executed_instructions;
+
+	const auto target_time = start_time + timeout;
+	const auto target_instructions = start_instructions + count;
 
 	while (true)
 	{
@@ -887,29 +890,25 @@ void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
 		if (use_timeout)
 		{
 			const auto now = std::chrono::high_resolution_clock::now();
-			const auto diff = now - start_time;
 
-			if (diff >= timeout)
+			if (now >= target_time)
 			{
 				break;
 			}
 
-			timeout = timeout - diff;
-			start_time = now;
+			timeout = target_time - now;
 		}
 
 		if (use_count)
 		{
 			const auto current_instructions = this->process().executed_instructions;
-			const auto diff = current_instructions - start_instructions;
 
-			if (diff >= count)
+			if (current_instructions >= target_instructions)
 			{
 				break;
 			}
 
-			count = diff;
-			start_instructions = current_instructions;
+			count = target_instructions - current_instructions;
 		}
 	}
 }
