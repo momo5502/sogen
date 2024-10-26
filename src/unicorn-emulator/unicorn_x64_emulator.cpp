@@ -112,6 +112,12 @@ namespace unicorn
 			uc_context_serializer(uc_engine* uc, const bool in_place)
 				: uc_(uc)
 			{
+				if (in_place)
+				{
+					// Unicorn stores pointers in the struct. The serialization here is broken
+					throw std::runtime_error("Memory saving not supported atm");
+				}
+
 				uc_ctl_context_mode(uc, UC_CTL_CONTEXT_CPU | (in_place ? UC_CTL_CONTEXT_MEMORY : 0));
 
 				this->size_ = uc_context_size(uc);
