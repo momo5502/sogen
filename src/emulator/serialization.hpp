@@ -285,19 +285,21 @@ namespace utils
 			{
 				return {};
 			}
-
-			const auto factory = this->factories_.find(std::type_index(typeid(T)));
-			if (factory == this->factories_.end())
+			else
 			{
-				throw std::runtime_error(
-					"Object construction failed. Missing factory for type: " + std::string(typeid(T).name()));
+				const auto factory = this->factories_.find(std::type_index(typeid(T)));
+				if (factory == this->factories_.end())
+				{
+					throw std::runtime_error(
+						"Object construction failed. Missing factory for type: " + std::string(typeid(T).name()));
+				}
+
+				auto* object = static_cast<T*>(factory->second());
+				auto obj = std::move(*object);
+				delete object;
+
+				return obj;
 			}
-
-			auto* object = static_cast<T*>(factory->second());
-			auto obj = std::move(*object);
-			delete object;
-
-			return obj;
 		}
 	};
 
