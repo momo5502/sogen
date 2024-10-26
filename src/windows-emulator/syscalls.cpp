@@ -11,7 +11,7 @@
 
 namespace
 {
-	NTSTATUS handle_NtQueryPerformanceCounter(const syscall_context&,
+	NTSTATUS handle_NtQueryPerformanceCounter(const syscall_context& c,
 	                                          const emulator_object<LARGE_INTEGER> performance_counter,
 	                                          const emulator_object<LARGE_INTEGER> performance_frequency)
 	{
@@ -19,9 +19,10 @@ namespace
 		{
 			if (performance_counter)
 			{
-				performance_counter.access([](LARGE_INTEGER& value)
+				performance_counter.access([&](LARGE_INTEGER& value)
 				{
-					QueryPerformanceCounter(&value);
+					value.QuadPart = static_cast<LONGLONG>(c.proc.executed_instructions);
+					//QueryPerformanceCounter(&value);
 				});
 			}
 
@@ -29,7 +30,8 @@ namespace
 			{
 				performance_frequency.access([](LARGE_INTEGER& value)
 				{
-					QueryPerformanceFrequency(&value);
+					value.QuadPart = 10000;
+					//QueryPerformanceFrequency(&value);
 				});
 			}
 
