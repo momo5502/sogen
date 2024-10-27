@@ -71,7 +71,6 @@ namespace test
 		emu.start();
 		ASSERT_TERMINATED_SUCCESSFULLY(emu);
 
-		// TODO: Fix that :(
 		utils::buffer_serializer serializer1{};
 		utils::buffer_serializer serializer2{};
 
