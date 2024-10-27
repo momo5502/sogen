@@ -796,6 +796,14 @@ void windows_emulator::setup_hooks()
 		return instruction_hook_continuation::skip_instruction;
 	});
 
+	this->emu().hook_instruction(x64_hookable_instructions::rdtsc, [&]
+	{
+		const auto instructions = this->process().executed_instructions;
+		this->emu().reg(x64_register::rax, instructions & 0xFFFFFFFF);
+		this->emu().reg(x64_register::rdx, (instructions >> 32) & 0xFFFFFFFF);
+		return instruction_hook_continuation::skip_instruction;
+	});
+
 	this->emu().hook_instruction(x64_hookable_instructions::invalid, [&]
 	{
 		const auto ip = this->emu().read_instruction_pointer();
