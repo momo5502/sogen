@@ -15,7 +15,7 @@ namespace test
 	{
 		constexpr auto count = 200000;
 
-		windows_emulator emu{ "./test-sample.exe" };
+		windows_emulator emu{"./test-sample.exe"};
 		emu.logger.disable_output(true);
 		emu.start({}, count);
 
@@ -24,7 +24,7 @@ namespace test
 
 	TEST(EmulationTest, CountedEmulationIsAccurate)
 	{
-		windows_emulator emu{ "./test-sample.exe" };
+		windows_emulator emu{"./test-sample.exe"};
 		emu.logger.disable_output(true);
 		emu.start();
 
@@ -32,7 +32,7 @@ namespace test
 
 		const auto executedInstructions = emu.process().executed_instructions;
 
-		windows_emulator new_emu{ "./test-sample.exe" };
+		windows_emulator new_emu{"./test-sample.exe"};
 		new_emu.logger.disable_output(true);
 
 		constexpr auto offset = 1;
