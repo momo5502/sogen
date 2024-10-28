@@ -57,17 +57,6 @@ void syscall_dispatcher::add_handlers()
 		handler_mapping.erase(handler);
 #endif
 	}
-
-#ifndef NDEBUG
-	if (!handler_mapping.empty())
-	{
-		puts("Unmapped handlers:");
-		for (const auto& h : handler_mapping)
-		{
-			printf("  %s\n", h.first.c_str());
-		}
-	}
-#endif
 }
 
 void syscall_dispatcher::dispatch(windows_emulator& win_emu)
