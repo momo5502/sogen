@@ -4,8 +4,7 @@ namespace test
 {
 	TEST(SerializationTest, SerializedDataIsReproducible)
 	{
-		windows_emulator emu1{"./test-sample.exe"};
-		emu1.logger.disable_output(true);
+		auto emu1 = create_sample_emulator();
 		emu1.start();
 
 		ASSERT_TERMINATED_SUCCESSFULLY(emu1);
@@ -29,8 +28,7 @@ namespace test
 
 	TEST(SerializationTest, EmulationIsReproducible)
 	{
-		windows_emulator emu1{"./test-sample.exe"};
-		emu1.logger.disable_output(true);
+		auto emu1 = create_sample_emulator();
 		emu1.start();
 
 		ASSERT_TERMINATED_SUCCESSFULLY(emu1);
@@ -38,8 +36,7 @@ namespace test
 		utils::buffer_serializer serializer1{};
 		emu1.serialize(serializer1);
 
-		windows_emulator emu2{"./test-sample.exe"};
-		emu2.logger.disable_output(true);
+		auto emu2 = create_sample_emulator();
 		emu2.start();
 
 		ASSERT_TERMINATED_SUCCESSFULLY(emu2);
@@ -52,8 +49,7 @@ namespace test
 
 	TEST(SerializationTest, DeserializedEmulatorBehavesLikeSource)
 	{
-		windows_emulator emu{"./test-sample.exe"};
-		emu.logger.disable_output(true);
+		auto emu = create_sample_emulator();
 		emu.start({}, 100);
 
 		utils::buffer_serializer serializer{};

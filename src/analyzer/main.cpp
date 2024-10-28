@@ -62,9 +62,11 @@ namespace
 
 	void run(const std::string_view application)
 	{
-		windows_emulator win_emu{
-			application, {}
+		const emulator_settings settings{
+			.application = application,
 		};
+
+		windows_emulator win_emu{settings};
 
 		(void)&watch_system_objects;
 		//watch_system_objects(win_emu);

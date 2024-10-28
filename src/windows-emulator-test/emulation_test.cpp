@@ -4,8 +4,7 @@ namespace test
 {
 	TEST(EmulationTest, BasicEmulationWorks)
 	{
-		windows_emulator emu{"./test-sample.exe"};
-		emu.logger.disable_output(true);
+		auto emu = create_sample_emulator();
 		emu.start();
 
 		ASSERT_TERMINATED_SUCCESSFULLY(emu);
@@ -15,8 +14,7 @@ namespace test
 	{
 		constexpr auto count = 200000;
 
-		windows_emulator emu{"./test-sample.exe"};
-		emu.logger.disable_output(true);
+		auto emu = create_sample_emulator();
 		emu.start({}, count);
 
 		ASSERT_EQ(emu.process().executed_instructions, count);
@@ -24,16 +22,14 @@ namespace test
 
 	TEST(EmulationTest, CountedEmulationIsAccurate)
 	{
-		windows_emulator emu{"./test-sample.exe"};
-		emu.logger.disable_output(true);
+		auto emu = create_sample_emulator();
 		emu.start();
 
 		ASSERT_TERMINATED_SUCCESSFULLY(emu);
 
 		const auto executedInstructions = emu.process().executed_instructions;
 
-		windows_emulator new_emu{"./test-sample.exe"};
-		new_emu.logger.disable_output(true);
+		auto new_emu = create_sample_emulator();
 
 		constexpr auto offset = 1;
 		const auto instructionsToExecute = executedInstructions - offset;

@@ -17,3 +17,17 @@
 
 #define ASSERT_TERMINATED_SUCCESSFULLY(win_emu) \
 			ASSERT_TERMINATED_WITH_STATUS(win_emu, STATUS_SUCCESS)
+
+namespace test
+{
+	inline windows_emulator create_sample_emulator()
+	{
+		const emulator_settings settings
+		{
+			.application = "./test-sample.exe",
+			.disable_logging = true,
+		};
+
+		return windows_emulator{settings};
+	}
+}

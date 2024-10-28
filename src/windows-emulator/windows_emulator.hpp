@@ -9,11 +9,19 @@
 
 std::unique_ptr<x64_emulator> create_default_x64_emulator();
 
+struct emulator_settings
+{
+	std::filesystem::path application;
+	std::filesystem::path working_directory;
+	std::vector<std::wstring> arguments;
+	bool disable_logging{false};
+};
+
 class windows_emulator
 {
 public:
 	windows_emulator(std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
-	windows_emulator(const std::filesystem::path& application, const std::vector<std::wstring>& arguments = {},
+	windows_emulator(const emulator_settings& settings,
 	                 std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
 
 	windows_emulator(windows_emulator&&) = delete;
@@ -97,5 +105,5 @@ private:
 	//std::optional<process_context> process_snapshot_{};
 
 	void setup_hooks();
-	void setup_process(const std::filesystem::path& application, const std::vector<std::wstring>& arguments);
+	void setup_process(const emulator_settings& settings);
 };

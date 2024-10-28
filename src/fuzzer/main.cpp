@@ -144,9 +144,11 @@ namespace
 
 	void run(const std::string_view application)
 	{
-		windows_emulator win_emu{
-			application, {}
+		const emulator_settings settings{
+			.application = application,
 		};
+
+		windows_emulator win_emu{settings};
 
 		forward_emulator(win_emu);
 		run_fuzzer(win_emu);

@@ -246,8 +246,12 @@ namespace
 		emu.reg<uint16_t>(x64_register::ss, 0x2B);
 	}
 
-	void setup_context(process_context& context, x64_emulator& emu, const std::filesystem::path& file,
-	                   const std::vector<std::wstring>& arguments)
+	std::filesystem::path canonicalize_path(const std::filesystem::path& path)
+	{
+		return canonical(absolute(path).parent_path()).make_preferred();
+	}
+
+	void setup_context(process_context& context, x64_emulator& emu, const emulator_settings& settings)
 	{
 		setup_gdt(emu);
 
@@ -289,19 +293,27 @@ namespace
 			allocator.copy_string(L"COMPUTERNAME=momo");
 			allocator.copy_string(L"");
 
-			std::wstring command_line = L"\"" + file.wstring() + L"\"";
+			std::wstring command_line = L"\"" + settings.application.wstring() + L"\"";
 
-			for (const auto& arg : arguments)
+			for (const auto& arg : settings.arguments)
 			{
 				command_line.push_back(L' ');
 				command_line.append(arg);
 			}
 
-			const auto current_folder = canonical(absolute(file).parent_path()).make_preferred().wstring() + L"\\";
+			std::wstring current_folder{};
+			if (!settings.working_directory.empty())
+			{
+				current_folder = canonicalize_path(settings.working_directory).wstring() + L"\\";
+			}
+			else
+			{
+				current_folder = canonicalize_path(settings.application).parent_path().wstring() + L"\\";
+			}
 
 			allocator.make_unicode_string(proc_params.CommandLine, command_line);
 			allocator.make_unicode_string(proc_params.CurrentDirectory.DosPath, current_folder);
-			allocator.make_unicode_string(proc_params.ImagePathName, file.wstring());
+			allocator.make_unicode_string(proc_params.ImagePathName, canonicalize_path(settings.application).wstring());
 
 			const auto total_length = allocator.get_next_address() - context.process_params.value();
 
@@ -724,11 +736,12 @@ std::unique_ptr<x64_emulator> create_default_x64_emulator()
 	return unicorn::create_x64_emulator();
 }
 
-windows_emulator::windows_emulator(const std::filesystem::path& application, const std::vector<std::wstring>& arguments,
+windows_emulator::windows_emulator(const emulator_settings& settings,
                                    std::unique_ptr<x64_emulator> emu)
 	: windows_emulator(std::move(emu))
 {
-	this->setup_process(application, arguments);
+	this->logger.disable_output(settings.disable_logging);
+	this->setup_process(settings);
 }
 
 windows_emulator::windows_emulator(std::unique_ptr<x64_emulator> emu)
@@ -738,17 +751,16 @@ windows_emulator::windows_emulator(std::unique_ptr<x64_emulator> emu)
 	this->setup_hooks();
 }
 
-void windows_emulator::setup_process(const std::filesystem::path& application,
-                                     const std::vector<std::wstring>& arguments)
+void windows_emulator::setup_process(const emulator_settings& settings)
 {
 	auto& emu = this->emu();
 
 	auto& context = this->process();
 	context.module_manager = module_manager(emu); // TODO: Cleanup module manager
 
-	setup_context(context, emu, application, arguments);
+	setup_context(context, emu, settings);
 
-	context.executable = context.module_manager.map_module(application, this->logger);
+	context.executable = context.module_manager.map_module(settings.application, this->logger);
 
 	context.peb.access([&](PEB& peb)
 	{
