@@ -33,6 +33,6 @@ The project is still in a very early, prototypy state. The code still needs a lo
 
 ## YouTube Overview
 
-[![YouTube video](./docs/images/yt.jpg)](https://www.youtube.com/watch?v=Y6NXwI7x7Og)
+[![YouTube video](./docs/images/yt.jpg)](https://www.youtube.com/watch?v=wY9Q0DhodOQ)
 
 Click <a href="https://docs.google.com/presentation/d/1pha4tFfDMpVzJ_ehJJ21SA_HAWkufQBVYQvh1IFhVls/edit">here</a> for the slides.
