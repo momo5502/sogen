@@ -844,13 +844,15 @@ void windows_emulator::setup_hooks()
 
 		if (type == memory_violation_type::protection)
 		{
-			printf("Protection violation: 0x%llX (%zX) - %s at 0x%llX (%s)\n", address, size, permission.c_str(), ip,
-			       name);
+			this->logger.print(color::gray, "Protection violation: 0x%llX (%zX) - %s at 0x%llX (%s)\n", address, size,
+			                   permission.c_str(), ip,
+			                   name);
 		}
 		else if (type == memory_violation_type::unmapped)
 		{
-			printf("Mapping violation: 0x%llX (%zX) - %s at 0x%llX (%s)\n", address, size, permission.c_str(), ip,
-			       name);
+			this->logger.print(color::gray, "Mapping violation: 0x%llX (%zX) - %s at 0x%llX (%s)\n", address, size,
+			                   permission.c_str(), ip,
+			                   name);
 		}
 
 		if (this->fuzzing)

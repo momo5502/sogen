@@ -7,6 +7,10 @@
 #include <vector>
 #include <Windows.h>
 
+// Externally visible and potentially modifiable state
+// to trick compiler optimizations
+__declspec(dllexport) bool do_the_task = true;
+
 // getenv is broken right now :(
 std::string read_env(const char* env)
 {
@@ -88,6 +92,47 @@ bool test_io()
 	return text == buffer;
 }
 
+void throw_exception()
+{
+	if (do_the_task)
+	{
+		throw std::runtime_error("OK");
+	}
+}
+
+bool test_exceptions()
+{
+	try
+	{
+		throw_exception();
+		return false;
+	}
+	catch (const std::exception& e)
+	{
+		return e.what() == std::string("OK");
+	}
+}
+
+void throw_native_exception()
+{
+	if (do_the_task)
+	{
+		*reinterpret_cast<int*>(1) = 1;
+	}
+}
+
+bool test_native_exceptions()
+{
+	__try
+	{
+		throw_native_exception();
+		return false;
+	}
+	__except(EXCEPTION_EXECUTE_HANDLER) {
+		return true;
+	}
+}
+
 #define RUN_TEST(func, name)             \
 {                                        \
 	printf("Running test '" name "': "); \
@@ -103,6 +148,8 @@ int main(int /*argc*/, const char* /*argv*/[])
 	RUN_TEST(test_io, "I/O")
 	RUN_TEST(test_threads, "Threads")
 	RUN_TEST(test_env, "Environment")
+	RUN_TEST(test_exceptions, "Exceptions")
+	RUN_TEST(test_native_exceptions, "Native Exceptions")
 
 	return valid ? 0 : 1;
 }
