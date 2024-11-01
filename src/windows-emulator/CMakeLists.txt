@@ -16,6 +16,7 @@ target_link_libraries(windows-emulator PRIVATE
   common
   unicorn-emulator
   mini-gdbstub
+  windows-hive-parser
 )
 
 target_link_libraries(windows-emulator PUBLIC
