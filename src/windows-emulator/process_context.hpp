@@ -2,6 +2,7 @@
 
 #include "emulator_utils.hpp"
 #include "handles.hpp"
+#include "registry_manager.hpp"
 
 #include "module/module_manager.hpp"
 #include <utils/nt_handle.hpp>
@@ -375,6 +376,8 @@ struct process_context
 	{
 	}
 
+	registry_manager registry{R"(C:\Users\mauri\Desktop\windows\win-x64\registry)"}; // TODO: Fix
+
 	uint64_t executed_instructions{0};
 	uint64_t current_ip{0};
 	uint64_t previous_ip{0};
@@ -404,6 +407,7 @@ struct process_context
 	handle_store<handle_types::file, file> files{};
 	handle_store<handle_types::semaphore, semaphore> semaphores{};
 	handle_store<handle_types::port, port> ports{};
+	handle_store<handle_types::registry, registry_key> registry_keys{};
 	std::map<uint16_t, std::wstring> atoms{};
 
 	std::vector<std::byte> default_register_set{};
@@ -414,6 +418,7 @@ struct process_context
 
 	void serialize(utils::buffer_serializer& buffer) const
 	{
+		buffer.write(this->registry);
 		buffer.write(this->executed_instructions);
 		buffer.write(this->current_ip);
 		buffer.write(this->previous_ip);
@@ -438,6 +443,7 @@ struct process_context
 		buffer.write(this->files);
 		buffer.write(this->semaphores);
 		buffer.write(this->ports);
+		buffer.write(this->registry_keys);
 		buffer.write_map(this->atoms);
 
 		buffer.write_vector(this->default_register_set);
@@ -449,6 +455,7 @@ struct process_context
 
 	void deserialize(utils::buffer_deserializer& buffer)
 	{
+		buffer.read(this->registry);
 		buffer.read(this->executed_instructions);
 		buffer.read(this->current_ip);
 		buffer.read(this->previous_ip);
@@ -477,6 +484,7 @@ struct process_context
 		buffer.read(this->files);
 		buffer.read(this->semaphores);
 		buffer.read(this->ports);
+		buffer.read(this->registry_keys);
 		buffer.read_map(this->atoms);
 
 		buffer.read_vector(this->default_register_set);

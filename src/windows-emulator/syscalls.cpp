@@ -53,7 +53,7 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtOpenKey(const syscall_context& c, const emulator_object<uint64_t> /*key_handle*/,
+	NTSTATUS handle_NtOpenKey(const syscall_context& c, const emulator_object<uint64_t> key_handle,
 	                          const ACCESS_MASK /*desired_access*/,
 	                          const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
 	{
@@ -62,7 +62,16 @@ namespace
 
 		c.win_emu.logger.print(color::dark_gray, "--> Registry key: %S\n", key.c_str());
 
-		return STATUS_OBJECT_NAME_NOT_FOUND;
+		auto entry = c.proc.registry.get_key(key);
+		if (!entry.has_value())
+		{
+			return STATUS_OBJECT_NAME_NOT_FOUND;
+		}
+
+		const auto handle = c.proc.registry_keys.store(std::move(entry.value()));
+		key_handle.write(handle.bits);
+
+		return STATUS_SUCCESS;
 	}
 
 	NTSTATUS handle_NtOpenKeyEx()
