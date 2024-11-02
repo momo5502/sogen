@@ -74,9 +74,62 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtOpenKeyEx()
+	NTSTATUS handle_NtOpenKeyEx(const syscall_context& c, const emulator_object<uint64_t> key_handle,
+	                            const ACCESS_MASK desired_access,
+	                            const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
+	                            ULONG /*open_options*/)
 	{
-		return STATUS_NOT_SUPPORTED;
+		return handle_NtOpenKey(c, key_handle, desired_access, object_attributes);
+	}
+
+	NTSTATUS handle_NtQueryValueKey(const syscall_context& c, handle key_handle,
+	                                const emulator_object<UNICODE_STRING> value_name,
+	                                KEY_VALUE_INFORMATION_CLASS key_value_information_class,
+	                                uint64_t key_value_information,
+	                                ULONG length, const emulator_object<ULONG> result_length)
+	{
+		if (key_value_information_class != KeyValuePartialInformation)
+		{
+			c.win_emu.logger.print(color::gray, "Unsupported registry class: %X\n", key_value_information_class);
+			c.emu.stop();
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		const auto* key = c.proc.registry_keys.get(key_handle);
+		if (!key)
+		{
+			return STATUS_INVALID_HANDLE;
+		}
+
+		const auto wide_name = read_unicode_string(c.emu, value_name);
+		const std::string name(wide_name.begin(), wide_name.end());
+
+		const auto value = c.proc.registry.get_value(*key, name);
+		if (!value)
+		{
+			return STATUS_OBJECT_NAME_NOT_FOUND;
+		}
+
+		const auto required_size = sizeof(KEY_VALUE_PARTIAL_INFORMATION) + value->data.size() - 1;
+		result_length.write(static_cast<ULONG>(required_size));
+
+		if (required_size > length)
+		{
+			return STATUS_BUFFER_TOO_SMALL;
+		}
+
+		KEY_VALUE_PARTIAL_INFORMATION partial_info{};
+		partial_info.TitleIndex = 0;
+		partial_info.Type = value->type;
+		partial_info.DataLength = static_cast<ULONG>(value->data.size());
+
+		const emulator_object<KEY_VALUE_PARTIAL_INFORMATION> partial_info_obj{c.emu, key_value_information};
+		partial_info_obj.write(partial_info);
+
+		c.emu.write_memory(key_value_information + offsetof(KEY_VALUE_PARTIAL_INFORMATION, Data), value->data.data(),
+		                   value->data.size());
+
+		return STATUS_SUCCESS;
 	}
 
 	NTSTATUS handle_NtSetInformationThread(const syscall_context& c, const uint64_t thread_handle,
@@ -161,6 +214,11 @@ namespace
 		}
 
 		if (value.type == handle_types::semaphore && c.proc.semaphores.erase(handle))
+		{
+			return STATUS_SUCCESS;
+		}
+
+		if (value.type == handle_types::registry && c.proc.registry_keys.erase(handle))
 		{
 			return STATUS_SUCCESS;
 		}
@@ -2276,6 +2334,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtReadFile);
 	add_handler(NtSetInformationFile);
 	add_handler(NtUserRegisterWindowMessage);
+	add_handler(NtQueryValueKey);
 
 #undef add_handler
 }

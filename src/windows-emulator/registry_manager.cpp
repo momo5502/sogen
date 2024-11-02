@@ -109,6 +109,33 @@ std::optional<registry_key> registry_manager::get_key(const std::filesystem::pat
 	return {std::move(reg_key)};
 }
 
+std::optional<registry_value> registry_manager::get_value(const registry_key& key, const std::string_view name)
+{
+	const auto iterator = this->hives_.find(key.hive);
+	if (iterator == this->hives_.end())
+	{
+		return {};
+	}
+
+	auto entry = iterator->second->get_subkey(key.path.begin()->string(), key.path.generic_string());
+	if (!entry)
+	{
+		return {};
+	}
+
+	const auto value = entry->get_key_value(name);
+	if (!value)
+	{
+		return {};
+	}
+
+	registry_value v{};
+	v.type = value->first;
+	v.data = value->second;
+
+	return v;
+}
+
 registry_manager::hive_map::iterator registry_manager::find_hive(const std::filesystem::path& key)
 {
 	for (auto i = this->hives_.begin(); i != this->hives_.end(); ++i)

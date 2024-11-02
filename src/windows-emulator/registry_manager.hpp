@@ -23,6 +23,12 @@ struct registry_key
 	}
 };
 
+struct registry_value
+{
+	uint32_t type;
+	std::string_view data;
+};
+
 class registry_manager
 {
 public:
@@ -36,6 +42,7 @@ public:
 	void deserialize(utils::buffer_deserializer& buffer);
 
 	std::optional<registry_key> get_key(const std::filesystem::path& key);
+	std::optional<registry_value> get_value(const registry_key& key, const std::string_view name);
 
 private:
 	hive_map hives_{};
