@@ -1599,6 +1599,11 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	NTSTATUS handle_NtGetNlsSectionPtr()
+	{
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtAlpcSendWaitReceivePort(const syscall_context& c, const uint64_t port_handle,
 	                                          const ULONG /*flags*/,
 	                                          const emulator_object<PORT_MESSAGE> /*send_message*/,
@@ -2335,6 +2340,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtSetInformationFile);
 	add_handler(NtUserRegisterWindowMessage);
 	add_handler(NtQueryValueKey);
+	add_handler(NtGetNlsSectionPtr);
 
 #undef add_handler
 }
