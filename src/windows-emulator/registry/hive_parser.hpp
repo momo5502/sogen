@@ -10,6 +10,8 @@
 #include <string_view>
 #include <unordered_map>
 
+// Based on this implementation: https://github.com/reahly/windows-hive-parser
+
 struct offsets_t
 {
 	long block_size;
