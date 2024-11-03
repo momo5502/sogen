@@ -1,7 +1,7 @@
 #pragma once
 
 #include "std_include.hpp"
-#include <serialization.hpp>
+#include <serialization_helper.hpp>
 
 class hive_parser;
 
@@ -12,14 +12,14 @@ struct registry_key
 
 	void serialize(utils::buffer_serializer& buffer) const
 	{
-		buffer.write_string<wchar_t>(this->hive.wstring());
-		buffer.write_string<wchar_t>(this->path.wstring());
+		buffer.write(this->hive);
+		buffer.write(this->path);
 	}
 
 	void deserialize(utils::buffer_deserializer& buffer)
 	{
-		this->hive = buffer.read_string<wchar_t>();
-		this->path = buffer.read_string<wchar_t>();
+		buffer.read(this->hive);
+		buffer.read(this->path);
 	}
 };
 

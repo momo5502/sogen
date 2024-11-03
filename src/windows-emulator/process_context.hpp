@@ -9,6 +9,7 @@
 #include <utils/file_handle.hpp>
 
 #include <x64_emulator.hpp>
+#include <serialization_helper.hpp>
 
 
 #define PEB_SEGMENT_SIZE (20 << 20) // 20 MB
@@ -23,20 +24,6 @@
 #define GDT_ADDR 0x30000
 #define GDT_LIMIT 0x1000
 #define GDT_ENTRY_SIZE 0x8
-
-inline void serialize(utils::buffer_serializer& buffer, const std::chrono::steady_clock::time_point& tp)
-{
-	buffer.write(tp.time_since_epoch().count());
-}
-
-inline void deserialize(utils::buffer_deserializer& buffer, std::chrono::steady_clock::time_point& tp)
-{
-	using time_point = std::chrono::steady_clock::time_point;
-	using duration = time_point::duration;
-
-	const auto count = buffer.read<duration::rep>();
-	tp = time_point{duration{count}};
-}
 
 struct ref_counted_object
 {
