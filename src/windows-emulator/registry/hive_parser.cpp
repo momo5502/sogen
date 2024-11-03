@@ -114,14 +114,21 @@ namespace
 
 	hive_key parse_root_block(std::ifstream& file, const std::filesystem::path& file_path)
 	{
-		if (read_file_data_string(file, 0, 4) != "regf")
+		try
 		{
-			throw std::runtime_error("Bad hive file: " + file_path.string());
+			if (read_file_data_string(file, 0, 4) != "regf")
+			{
+				throw std::runtime_error("Invalid signature");
+			}
+
+			const auto key_block = read_file_object<key_block_t>(file, MAIN_KEY_BLOCK_OFFSET);
+
+			return {key_block.subkeys, key_block.value_count, key_block.offsets};
 		}
-
-		const auto key_block = read_file_object<key_block_t>(file, MAIN_KEY_BLOCK_OFFSET);
-
-		return {key_block.subkeys, key_block.value_count, key_block.offsets};
+		catch (const std::exception& e)
+		{
+			throw std::runtime_error("Bad hive file '" + file_path.string() + "': " + e.what());
+		}
 	}
 
 	char char_to_lower(const char val)

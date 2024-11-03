@@ -36,9 +36,16 @@ public:
 	using hive_ptr = std::unique_ptr<hive_parser>;
 	using hive_map = std::unordered_map<std::filesystem::path, hive_ptr>;
 
-	registry_manager() = default;
-	registry_manager(std::filesystem::path hive_path);
+	registry_manager();
+	registry_manager(const std::filesystem::path& hive_path);
 	~registry_manager();
+
+	registry_manager(registry_manager&&) noexcept;
+	registry_manager& operator=(registry_manager&&) noexcept;
+
+	registry_manager(const registry_manager&) = delete;
+	registry_manager& operator=(const registry_manager&) = delete;
+
 
 	void serialize(utils::buffer_serializer& buffer) const;
 	void deserialize(utils::buffer_deserializer& buffer);

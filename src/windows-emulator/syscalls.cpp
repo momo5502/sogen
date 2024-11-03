@@ -1,12 +1,10 @@
 #include "std_include.hpp"
 #include "syscall_dispatcher.hpp"
-
-#include <numeric>
-
 #include "context_frame.hpp"
 #include "emulator_utils.hpp"
 #include "syscall_utils.hpp"
 
+#include <numeric>
 #include <utils/io.hpp>
 
 namespace
@@ -168,8 +166,9 @@ namespace
 
 		if (key_value_information_class == KeyValueFullInformation)
 		{
-			const auto required_size = sizeof(KEY_VALUE_FULL_INFORMATION) + (original_name.size() * 2) + value->data.
-				size() - 1;
+			const auto name_size = original_name.size() * 2;
+			const auto value_size = value->data.size();
+			const auto required_size = sizeof(KEY_VALUE_FULL_INFORMATION) + name_size + value_size + -1;
 			result_length.write(static_cast<ULONG>(required_size));
 
 			if (required_size > length)

@@ -363,7 +363,7 @@ struct process_context
 	{
 	}
 
-	registry_manager registry{R"(C:\Users\mauri\Desktop\windows\win-x64\registry)"}; // TODO: Fix
+	registry_manager registry{};
 
 	uint64_t executed_instructions{0};
 	uint64_t current_ip{0};
