@@ -1679,7 +1679,15 @@ namespace
 	                                        const uint64_t token_information, const ULONG token_information_length,
 	                                        const emulator_object<ULONG> return_length)
 	{
-		if (token_handle != ~3ULL)
+		if (token_handle != ~3ULL // NtCurrentProcessToken
+			&& token_handle != ~4ULL // NtCurrentThreadToken
+			&& token_handle != ~5ULL // NtCurrentThreadEffectiveToken
+		)
+		{
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		if (token_information_class == TokenUser)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -1698,7 +1706,8 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		printf("Unsupported token info class: %X\n", token_information_class);
+		printf("Unsupported token info class: %lX\n", token_information_class);
+		c.emu.stop();
 		return STATUS_NOT_SUPPORTED;
 	}
 
