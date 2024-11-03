@@ -2,7 +2,7 @@
 
 #include "emulator_utils.hpp"
 #include "handles.hpp"
-#include "registry_manager.hpp"
+#include "registry/registry_manager.hpp"
 
 #include "module/module_manager.hpp"
 #include <utils/nt_handle.hpp>
