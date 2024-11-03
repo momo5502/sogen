@@ -1674,9 +1674,31 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtQueryInformationToken()
+	NTSTATUS handle_NtQueryInformationToken(const syscall_context& c, const uint64_t token_handle,
+	                                        const TOKEN_INFORMATION_CLASS token_information_class,
+	                                        const uint64_t token_information, const ULONG token_information_length,
+	                                        const emulator_object<ULONG> return_length)
 	{
-		//puts("NtQueryInformationToken not supported");
+		if (token_handle != ~3ULL)
+		{
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		if (token_information_class == TokenIsAppContainer)
+		{
+			constexpr auto required_size = sizeof(ULONG);
+			return_length.write(required_size);
+
+			if (required_size > token_information_length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			emulator_object<ULONG>{c.emu, token_information}.write(0);
+			return STATUS_SUCCESS;
+		}
+
+		printf("Unsupported token info class: %X\n", token_information_class);
 		return STATUS_NOT_SUPPORTED;
 	}
 
@@ -2068,6 +2090,11 @@ namespace
 	}
 
 	NTSTATUS handle_NtSetSystemInformation()
+	{
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtAccessCheck()
 	{
 		return STATUS_NOT_SUPPORTED;
 	}
@@ -2478,6 +2505,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtQueryValueKey);
 	add_handler(NtQueryKey);
 	add_handler(NtGetNlsSectionPtr);
+	add_handler(NtAccessCheck);
 
 #undef add_handler
 }
