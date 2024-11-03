@@ -35,7 +35,8 @@ public:
 	using hive_ptr = std::unique_ptr<hive_parser>;
 	using hive_map = std::unordered_map<std::filesystem::path, hive_ptr>;
 
-	registry_manager(const std::filesystem::path& hive_path);
+	registry_manager() = default;
+	registry_manager(std::filesystem::path hive_path);
 	~registry_manager();
 
 	void serialize(utils::buffer_serializer& buffer) const;
@@ -45,6 +46,7 @@ public:
 	std::optional<registry_value> get_value(const registry_key& key, const std::string_view name);
 
 private:
+	std::filesystem::path hive_path_{};
 	hive_map hives_{};
 	std::unordered_map<std::filesystem::path, std::filesystem::path> path_mapping_{};
 
@@ -52,4 +54,6 @@ private:
 	void add_path_mapping(const std::filesystem::path& key, const std::filesystem::path& value);
 
 	hive_map::iterator find_hive(const std::filesystem::path& key);
+
+	void setup();
 };

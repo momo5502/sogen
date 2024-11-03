@@ -1,5 +1,7 @@
 #include "registry_manager.hpp"
+
 #include <hive_parser.hh>
+#include <serialization_helper.hpp>
 
 namespace
 {
@@ -39,31 +41,41 @@ namespace
 
 registry_manager::~registry_manager() = default;
 
-registry_manager::registry_manager(const std::filesystem::path& hive_path)
+registry_manager::registry_manager(std::filesystem::path hive_path)
+	: hive_path_(std::move(hive_path))
 {
+	this->setup();
+}
+
+void registry_manager::setup()
+{
+	this->path_mapping_.clear();
+	this->hives_.clear();
+
 	const std::filesystem::path root = R"(\registry)";
 	const std::filesystem::path machine = root / "machine";
 
-	register_hive(this->hives_, machine / "system", hive_path / "SYSTEM");
-	register_hive(this->hives_, machine / "security", hive_path / "SECURITY");
-	register_hive(this->hives_, machine / "sam", hive_path / "SAM");
-	register_hive(this->hives_, machine / "software", hive_path / "SOFTWARE");
-	register_hive(this->hives_, machine / "system", hive_path / "SYSTEM");
-	register_hive(this->hives_, machine / "hardware", hive_path / "HARDWARE");
+	register_hive(this->hives_, machine / "system", this->hive_path_ / "SYSTEM");
+	register_hive(this->hives_, machine / "security", this->hive_path_ / "SECURITY");
+	register_hive(this->hives_, machine / "sam", this->hive_path_ / "SAM");
+	register_hive(this->hives_, machine / "software", this->hive_path_ / "SOFTWARE");
+	register_hive(this->hives_, machine / "system", this->hive_path_ / "SYSTEM");
+	register_hive(this->hives_, machine / "hardware", this->hive_path_ / "HARDWARE");
 
-	register_hive(this->hives_, root / "user", hive_path / "NTUSER.dat");
+	register_hive(this->hives_, root / "user", this->hive_path_ / "NTUSER.dat");
 
 	this->add_path_mapping(machine / "system" / "CurrentControlSet", machine / "system" / "ControlSet001");
 }
 
 void registry_manager::serialize(utils::buffer_serializer& buffer) const
 {
-	(void)buffer;
+	buffer.write(this->hive_path_);
 }
 
 void registry_manager::deserialize(utils::buffer_deserializer& buffer)
 {
-	(void)buffer;
+	buffer.read(this->hive_path_);
+	this->setup();
 }
 
 std::filesystem::path registry_manager::normalize_path(const std::filesystem::path& path) const
