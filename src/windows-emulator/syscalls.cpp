@@ -140,7 +140,7 @@ namespace
 			KEY_HANDLE_TAGS_INFORMATION info{};
 			info.HandleTags = 0; // ?
 
-			const emulator_object<KEY_HANDLE_TAGS_INFORMATION> info_obj{ c.emu, key_information };
+			const emulator_object<KEY_HANDLE_TAGS_INFORMATION> info_obj{c.emu, key_information};
 			info_obj.write(info);
 
 			return STATUS_SUCCESS;
