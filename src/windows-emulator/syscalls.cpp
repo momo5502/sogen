@@ -5,6 +5,7 @@
 #include "syscall_utils.hpp"
 
 #include <numeric>
+#include <cwctype>
 #include <utils/io.hpp>
 
 namespace
@@ -104,7 +105,13 @@ namespace
 
 		if (key_information_class == KeyNameInformation)
 		{
-			const auto key_name = (key->hive / key->path).wstring();
+			auto key_name = (key->hive / key->path).wstring();
+			while (key_name.ends_with('/') || key_name.ends_with('\\'))
+			{
+				key_name.pop_back();
+			}
+
+			std::ranges::transform(key_name, key_name.begin(), std::towupper);
 
 			const auto required_size = sizeof(KEY_NAME_INFORMATION) + (key_name.size() * 2) - 1;
 			result_length.write(static_cast<ULONG>(required_size));
