@@ -51,7 +51,7 @@ namespace
 		char name[255];
 	};
 
-	bool read_file_data(std::ifstream& file, const uint64_t offset, void* buffer, const size_t size)
+	bool read_file_data_safe(std::ifstream& file, const uint64_t offset, void* buffer, const size_t size)
 	{
 		if (file.bad())
 		{
@@ -77,17 +77,21 @@ namespace
 		return file.good();
 	}
 
+	void read_file_data(std::ifstream& file, const uint64_t offset, void* buffer, const size_t size)
+	{
+		if (!read_file_data_safe(file, offset, buffer, size))
+		{
+			throw std::runtime_error("Failed to read file data");
+		}
+	}
+
 	std::vector<std::byte> read_file_data(std::ifstream& file, const uint64_t offset, const size_t size)
 	{
 		std::vector<std::byte> result{};
 		result.resize(size);
 
-		if (read_file_data(file, offset, result.data(), size))
-		{
-			return result;
-		}
-
-		return {};
+		read_file_data(file, offset, result.data(), size);
+		return result;
 	}
 
 	std::string read_file_data_string(std::ifstream& file, const uint64_t offset, const size_t size)
@@ -95,38 +99,17 @@ namespace
 		std::string result{};
 		result.resize(size);
 
-		if (read_file_data(file, offset, result.data(), size))
-		{
-			return result;
-		}
-
-		return {};
+		read_file_data(file, offset, result.data(), size);
+		return result;
 	}
 
 	template <typename T>
 		requires(std::is_trivially_copyable_v<T>)
-	std::optional<T> read_file_object(std::ifstream& file, const uint64_t offset, const size_t array_index = 0)
+	T read_file_object(std::ifstream& file, const uint64_t offset, const size_t array_index = 0)
 	{
 		T obj{};
-		if (read_file_data(file, offset + (array_index * sizeof(T)), &obj, sizeof(T)))
-		{
-			return {std::move(obj)};
-		}
-
-		return std::nullopt;
-	}
-
-	template <typename T>
-		requires(std::is_trivially_copyable_v<T>)
-	T read_file_object_or_throw(std::ifstream& file, const uint64_t offset, const size_t array_index = 0)
-	{
-		auto result = read_file_object<T>(file, offset, array_index);
-		if (!result)
-		{
-			throw std::runtime_error("Failed to read file object");
-		}
-
-		return std::move(*result);
+		read_file_data(file, offset + (array_index * sizeof(T)), &obj, sizeof(T));
+		return obj;
 	}
 
 	hive_key parse_root_block(std::ifstream& file, const std::filesystem::path& file_path)
@@ -136,7 +119,7 @@ namespace
 			throw std::runtime_error("Bad hive file: " + file_path.string());
 		}
 
-		const auto key_block = read_file_object_or_throw<key_block_t>(file, MAIN_KEY_BLOCK_OFFSET);
+		const auto key_block = read_file_object<key_block_t>(file, MAIN_KEY_BLOCK_OFFSET);
 
 		return {key_block.subkeys, key_block.value_count, key_block.offsets};
 	}
@@ -144,16 +127,6 @@ namespace
 	char char_to_lower(const char val)
 	{
 		return static_cast<char>(std::tolower(static_cast<unsigned char>(val)));
-	}
-
-	bool ichar_equals(const char a, const char b)
-	{
-		return char_to_lower(a) == char_to_lower(b);
-	}
-
-	bool iequals(std::string_view lhs, std::string_view rhs)
-	{
-		return std::ranges::equal(lhs, rhs, ichar_equals);
 	}
 }
 
@@ -191,8 +164,8 @@ void hive_key::parse(std::ifstream& file)
 
 	for (auto i = 0; i < this->value_count_; i++)
 	{
-		const auto offset = read_file_object_or_throw<int>(file, MAIN_ROOT_OFFSET + this->value_offsets_ + 4, i);
-		const auto value = read_file_object_or_throw<value_block_t>(file, MAIN_ROOT_OFFSET + offset);
+		const auto offset = read_file_object<int>(file, MAIN_ROOT_OFFSET + this->value_offsets_ + 4, i);
+		const auto value = read_file_object<value_block_t>(file, MAIN_ROOT_OFFSET + offset);
 
 		std::string value_name(value.name, std::min(value.name_len, static_cast<short>(sizeof(value.name))));
 
@@ -214,7 +187,7 @@ void hive_key::parse(std::ifstream& file)
 
 	// Subkeys
 
-	const auto item = read_file_object_or_throw<offsets_t>(file, MAIN_ROOT_OFFSET + this->subkey_block_offset_);
+	const auto item = read_file_object<offsets_t>(file, MAIN_ROOT_OFFSET + this->subkey_block_offset_);
 
 	if (item.block_type[1] != 'f' && item.block_type[1] != 'h')
 	{
@@ -225,10 +198,10 @@ void hive_key::parse(std::ifstream& file)
 
 	for (short i = 0; i < item.count; ++i)
 	{
-		const auto offset_entry = read_file_object_or_throw<offset_entry_t>(file, MAIN_ROOT_OFFSET + entry_offsets, i);
+		const auto offset_entry = read_file_object<offset_entry_t>(file, MAIN_ROOT_OFFSET + entry_offsets, i);
 
 		const auto subkey_block_offset = MAIN_ROOT_OFFSET + offset_entry.offset;
-		const auto subkey = read_file_object_or_throw<key_block_t>(file, subkey_block_offset);
+		const auto subkey = read_file_object<key_block_t>(file, subkey_block_offset);
 
 		std::string subkey_name(subkey.name, std::min(subkey.len, static_cast<short>(sizeof(subkey.name))));
 		std::ranges::transform(subkey_name, subkey_name.begin(), char_to_lower);

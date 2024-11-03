@@ -33,7 +33,14 @@ namespace
 	void register_hive(registry_manager::hive_map& hives,
 	                   const std::filesystem::path& key, const std::filesystem::path& file)
 	{
-		hives[canonicalize_path(key)] = std::make_unique<hive_parser>(file);
+		try
+		{
+			hives[canonicalize_path(key)] = std::make_unique<hive_parser>(file);
+		}
+		catch (const std::exception& e)
+		{
+
+		}
 	}
 }
 
