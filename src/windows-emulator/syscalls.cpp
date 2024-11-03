@@ -88,13 +88,6 @@ namespace
 	                                uint64_t key_value_information,
 	                                ULONG length, const emulator_object<ULONG> result_length)
 	{
-		if (key_value_information_class != KeyValuePartialInformation)
-		{
-			c.win_emu.logger.print(color::gray, "Unsupported registry class: %X\n", key_value_information_class);
-			c.emu.stop();
-			return STATUS_NOT_SUPPORTED;
-		}
-
 		const auto* key = c.proc.registry_keys.get(key_handle);
 		if (!key)
 		{
@@ -110,26 +103,89 @@ namespace
 			return STATUS_OBJECT_NAME_NOT_FOUND;
 		}
 
-		const auto required_size = sizeof(KEY_VALUE_PARTIAL_INFORMATION) + value->data.size() - 1;
-		result_length.write(static_cast<ULONG>(required_size));
-
-		if (required_size > length)
+		if (key_value_information_class == KeyValueBasicInformation)
 		{
-			return STATUS_BUFFER_TOO_SMALL;
+			const auto required_size = sizeof(KEY_VALUE_BASIC_INFORMATION) + (wide_name.size() * 2) - 1;
+			result_length.write(static_cast<ULONG>(required_size));
+
+			if (required_size > length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			KEY_VALUE_BASIC_INFORMATION info{};
+			info.TitleIndex = 0;
+			info.Type = value->type;
+			info.NameLength = static_cast<ULONG>(wide_name.size() * 2);
+
+			const emulator_object<KEY_VALUE_BASIC_INFORMATION> info_obj{ c.emu, key_value_information };
+			info_obj.write(info);
+
+			c.emu.write_memory(key_value_information + offsetof(KEY_VALUE_BASIC_INFORMATION, Name),
+				wide_name.data(),
+				info.NameLength);
+
+			return STATUS_SUCCESS;
 		}
 
-		KEY_VALUE_PARTIAL_INFORMATION partial_info{};
-		partial_info.TitleIndex = 0;
-		partial_info.Type = value->type;
-		partial_info.DataLength = static_cast<ULONG>(value->data.size());
+		if (key_value_information_class == KeyValuePartialInformation)
+		{
+			const auto required_size = sizeof(KEY_VALUE_PARTIAL_INFORMATION) + value->data.size() - 1;
+			result_length.write(static_cast<ULONG>(required_size));
 
-		const emulator_object<KEY_VALUE_PARTIAL_INFORMATION> partial_info_obj{c.emu, key_value_information};
-		partial_info_obj.write(partial_info);
+			if (required_size > length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
 
-		c.emu.write_memory(key_value_information + offsetof(KEY_VALUE_PARTIAL_INFORMATION, Data), value->data.data(),
-		                   value->data.size());
+			KEY_VALUE_PARTIAL_INFORMATION info{};
+			info.TitleIndex = 0;
+			info.Type = value->type;
+			info.DataLength = static_cast<ULONG>(value->data.size());
 
-		return STATUS_SUCCESS;
+			const emulator_object<KEY_VALUE_PARTIAL_INFORMATION> info_obj{c.emu, key_value_information};
+			info_obj.write(info);
+
+			c.emu.write_memory(key_value_information + offsetof(KEY_VALUE_PARTIAL_INFORMATION, Data),
+			                   value->data.data(),
+			                   value->data.size());
+
+			return STATUS_SUCCESS;
+		}
+
+		if (key_value_information_class == KeyValueFullInformation)
+		{
+			const auto required_size = sizeof(KEY_VALUE_FULL_INFORMATION) + (wide_name.size() * 2) + value->data.size() - 1;
+			result_length.write(static_cast<ULONG>(required_size));
+
+			if (required_size > length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			KEY_VALUE_FULL_INFORMATION info{};
+			info.TitleIndex = 0;
+			info.Type = value->type;
+			info.DataLength = static_cast<ULONG>(value->data.size());
+			info.NameLength = static_cast<ULONG>(wide_name.size() * 2);
+
+			const emulator_object<KEY_VALUE_FULL_INFORMATION> info_obj{ c.emu, key_value_information };
+			info_obj.write(info);
+
+			c.emu.write_memory(key_value_information + offsetof(KEY_VALUE_BASIC_INFORMATION, Name),
+				wide_name.data(),
+				info.NameLength);
+
+			c.emu.write_memory(key_value_information + offsetof(KEY_VALUE_FULL_INFORMATION, Name) + info.NameLength,
+				value->data.data(),
+				value->data.size());
+
+			return STATUS_SUCCESS;
+		}
+
+		c.win_emu.logger.print(color::gray, "Unsupported registry class: %X\n", key_value_information_class);
+		c.emu.stop();
+		return STATUS_NOT_SUPPORTED;
 	}
 
 	NTSTATUS handle_NtSetInformationThread(const syscall_context& c, const uint64_t thread_handle,
