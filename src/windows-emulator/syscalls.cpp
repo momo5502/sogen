@@ -58,7 +58,18 @@ namespace
 	                          const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
 	{
 		const auto attributes = object_attributes.read();
-		const auto key = read_unicode_string(c.emu, attributes.ObjectName);
+		auto key = read_unicode_string(c.emu, attributes.ObjectName);
+
+		if (attributes.RootDirectory)
+		{
+			const auto* parent_handle = c.proc.registry_keys.get(reinterpret_cast<uint64_t>(attributes.RootDirectory));
+			if (!parent_handle)
+			{
+				return STATUS_INVALID_HANDLE;
+			}
+
+			key = parent_handle->hive / parent_handle->path / key;
+		}
 
 		c.win_emu.logger.print(color::dark_gray, "--> Registry key: %S\n", key.c_str());
 
