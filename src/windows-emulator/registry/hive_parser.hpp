@@ -6,9 +6,7 @@
 #include <ranges>
 #include <cwctype>
 #include <optional>
-#include <filesystem>
-#include <string_view>
-#include <unordered_map>
+#include <utils/container.hpp>
 
 // Based on this implementation: https://github.com/reahly/windows-hive-parser
 
@@ -63,20 +61,6 @@ namespace detail
 
 		return {std::istreambuf_iterator(file), std::istreambuf_iterator<char>()};
 	}
-
-	struct string_hash
-	{
-		using is_transparent = void;
-
-		size_t operator()(const std::string_view str) const
-		{
-			constexpr std::hash<std::string_view> hasher{};
-			return hasher(str);
-		}
-	};
-
-	template <typename T>
-	using unordered_string_map = std::unordered_map<std::string, T, string_hash, std::equal_to<>>;
 }
 
 class hive_key_t
@@ -151,65 +135,6 @@ public:
 
 		return std::nullopt;
 	}
-
-	template <class T>
-	std::optional<T> get_key_value(const std::string_view& name)
-	{
-		const auto value = this->get_key_value(name);
-		if (!value)
-		{
-			return std::nullopt;
-		}
-
-		const auto [type, data] = *value;
-
-		if constexpr (std::is_same_v<T, std::string_view>)
-		{
-			if (type != REG_SZ && type != REG_EXPAND_SZ)
-				return std::nullopt;
-
-			return data;
-		}
-		else if constexpr (std::is_same_v<T, std::vector<std::string_view>>)
-		{
-			if (type != REG_MULTI_SZ)
-				return std::nullopt;
-
-			std::string_view text;
-			std::vector<std::string_view> out;
-			for (auto j = 0; j < data.size(); j++)
-			{
-				if (data[j] == '\0' && data[j + 1] == '\0' && data[j + 2] == '\0')
-				{
-					if (!text.empty())
-						out.emplace_back(text);
-					text = {};
-				}
-				else
-				{
-					text = std::string_view(data.data() + j - text.size(), text.size() + 1);
-				}
-			}
-
-			return out;
-		}
-		else if constexpr (std::is_same_v<T, int>)
-		{
-			if (type != REG_DWORD)
-				return std::nullopt;
-
-			return *reinterpret_cast<T*>(data);
-		}
-		else if constexpr (std::is_same_v<T, std::basic_string_view<uint8_t>>)
-		{
-			if (type != REG_BINARY)
-				return std::nullopt;
-
-			return {reinterpret_cast<const uint8_t*>(data.data()), data.size()};
-		}
-
-		return std::nullopt;
-	}
 };
 
 class hive_parser
@@ -229,7 +154,7 @@ class hive_parser
 	key_block_t* main_key_block_data;
 	uintptr_t main_root;
 	std::vector<char> file_data;
-	detail::unordered_string_map<hive_cache_t> subkey_cache;
+	utils::unordered_string_map<hive_cache_t> subkey_cache;
 
 	void reclusive_search(const key_block_t* key_block_data, const std::string& current_path,
 	                      const bool is_reclusive = false)
