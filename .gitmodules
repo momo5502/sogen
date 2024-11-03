@@ -18,6 +18,3 @@
 [submodule "deps/googletest"]
 	path = deps/googletest
 	url = https://github.com/google/googletest.git
-[submodule "deps/windows-hive-parser"]
-	path = deps/windows-hive-parser
-	url = ../windows-hive-parser.git

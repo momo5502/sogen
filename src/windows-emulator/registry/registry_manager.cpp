@@ -1,6 +1,6 @@
 #include "registry_manager.hpp"
 
-#include <hive_parser.hh>
+#include "hive_parser.hpp"
 #include <serialization_helper.hpp>
 
 namespace
