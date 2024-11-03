@@ -102,6 +102,14 @@ void registry_manager::add_path_mapping(const std::filesystem::path& key, const 
 std::optional<registry_key> registry_manager::get_key(const std::filesystem::path& key)
 {
 	const auto normal_key = this->normalize_path(key);
+
+	if (is_subpath(normal_key, "\\registry\\machine"))
+	{
+		registry_key reg_key{};
+		reg_key.hive = normal_key;
+		return { std::move(reg_key) };
+	}
+
 	const auto iterator = this->find_hive(normal_key);
 	if (iterator == this->hives_.end())
 	{

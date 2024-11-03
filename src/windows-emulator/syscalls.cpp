@@ -91,11 +91,71 @@ namespace
 		return handle_NtOpenKey(c, key_handle, desired_access, object_attributes);
 	}
 
-	NTSTATUS handle_NtQueryValueKey(const syscall_context& c, handle key_handle,
+	NTSTATUS handle_NtQueryKey(const syscall_context& c, const handle key_handle,
+	                           const KEY_INFORMATION_CLASS key_information_class,
+	                           const uint64_t key_information, const ULONG length,
+	                           const emulator_object<ULONG> result_length)
+	{
+		const auto* key = c.proc.registry_keys.get(key_handle);
+		if (!key)
+		{
+			return STATUS_INVALID_HANDLE;
+		}
+
+		if (key_information_class == KeyNameInformation)
+		{
+			const auto key_name = (key->hive / key->path).wstring();
+
+			const auto required_size = sizeof(KEY_NAME_INFORMATION) + (key_name.size() * 2) - 1;
+			result_length.write(static_cast<ULONG>(required_size));
+
+			if (required_size > length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			KEY_NAME_INFORMATION info{};
+			info.NameLength = static_cast<ULONG>(key_name.size() * 2);
+
+			const emulator_object<KEY_NAME_INFORMATION> info_obj{c.emu, key_information};
+			info_obj.write(info);
+
+			c.emu.write_memory(key_information + offsetof(KEY_NAME_INFORMATION, Name),
+			                   key_name.data(),
+			                   info.NameLength);
+
+			return STATUS_SUCCESS;
+		}
+
+		if (key_information_class == KeyHandleTagsInformation)
+		{
+			constexpr auto required_size = sizeof(KEY_HANDLE_TAGS_INFORMATION);
+			result_length.write(required_size);
+
+			if (required_size > length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			KEY_HANDLE_TAGS_INFORMATION info{};
+			info.HandleTags = 0; // ?
+
+			const emulator_object<KEY_HANDLE_TAGS_INFORMATION> info_obj{ c.emu, key_information };
+			info_obj.write(info);
+
+			return STATUS_SUCCESS;
+		}
+
+		c.win_emu.logger.print(color::gray, "Unsupported registry class: %X\n", key_information_class);
+		c.emu.stop();
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtQueryValueKey(const syscall_context& c, const handle key_handle,
 	                                const emulator_object<UNICODE_STRING> value_name,
-	                                KEY_VALUE_INFORMATION_CLASS key_value_information_class,
-	                                uint64_t key_value_information,
-	                                ULONG length, const emulator_object<ULONG> result_length)
+	                                const KEY_VALUE_INFORMATION_CLASS key_value_information_class,
+	                                const uint64_t key_value_information,
+	                                const ULONG length, const emulator_object<ULONG> result_length)
 	{
 		const auto* key = c.proc.registry_keys.get(key_handle);
 		if (!key)
@@ -196,7 +256,7 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		c.win_emu.logger.print(color::gray, "Unsupported registry class: %X\n", key_value_information_class);
+		c.win_emu.logger.print(color::gray, "Unsupported registry value class: %X\n", key_value_information_class);
 		c.emu.stop();
 		return STATUS_NOT_SUPPORTED;
 	}
@@ -2409,6 +2469,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtSetInformationFile);
 	add_handler(NtUserRegisterWindowMessage);
 	add_handler(NtQueryValueKey);
+	add_handler(NtQueryKey);
 	add_handler(NtGetNlsSectionPtr);
 
 #undef add_handler
