@@ -26,7 +26,8 @@ struct registry_key
 struct registry_value
 {
 	uint32_t type;
-	std::string_view data;
+	std::string_view name;
+	std::span<const std::byte> data;
 };
 
 class registry_manager

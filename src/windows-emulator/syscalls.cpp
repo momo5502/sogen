@@ -94,8 +94,8 @@ namespace
 			return STATUS_INVALID_HANDLE;
 		}
 
-		const auto wide_name = read_unicode_string(c.emu, value_name);
-		const std::string name(wide_name.begin(), wide_name.end());
+		const auto query_name = read_unicode_string(c.emu, value_name);
+		const std::string name(query_name.begin(), query_name.end());
 
 		const auto value = c.proc.registry.get_value(*key, name);
 		if (!value)
@@ -103,9 +103,11 @@ namespace
 			return STATUS_OBJECT_NAME_NOT_FOUND;
 		}
 
+		const std::wstring original_name(value->name.begin(), value->name.end());
+
 		if (key_value_information_class == KeyValueBasicInformation)
 		{
-			const auto required_size = sizeof(KEY_VALUE_BASIC_INFORMATION) + (wide_name.size() * 2) - 1;
+			const auto required_size = sizeof(KEY_VALUE_BASIC_INFORMATION) + (original_name.size() * 2) - 1;
 			result_length.write(static_cast<ULONG>(required_size));
 
 			if (required_size > length)
@@ -116,13 +118,13 @@ namespace
 			KEY_VALUE_BASIC_INFORMATION info{};
 			info.TitleIndex = 0;
 			info.Type = value->type;
-			info.NameLength = static_cast<ULONG>(wide_name.size() * 2);
+			info.NameLength = static_cast<ULONG>(original_name.size() * 2);
 
 			const emulator_object<KEY_VALUE_BASIC_INFORMATION> info_obj{ c.emu, key_value_information };
 			info_obj.write(info);
 
 			c.emu.write_memory(key_value_information + offsetof(KEY_VALUE_BASIC_INFORMATION, Name),
-				wide_name.data(),
+				original_name.data(),
 				info.NameLength);
 
 			return STATUS_SUCCESS;
@@ -155,7 +157,7 @@ namespace
 
 		if (key_value_information_class == KeyValueFullInformation)
 		{
-			const auto required_size = sizeof(KEY_VALUE_FULL_INFORMATION) + (wide_name.size() * 2) + value->data.size() - 1;
+			const auto required_size = sizeof(KEY_VALUE_FULL_INFORMATION) + (original_name.size() * 2) + value->data.size() - 1;
 			result_length.write(static_cast<ULONG>(required_size));
 
 			if (required_size > length)
@@ -167,13 +169,13 @@ namespace
 			info.TitleIndex = 0;
 			info.Type = value->type;
 			info.DataLength = static_cast<ULONG>(value->data.size());
-			info.NameLength = static_cast<ULONG>(wide_name.size() * 2);
+			info.NameLength = static_cast<ULONG>(original_name.size() * 2);
 
 			const emulator_object<KEY_VALUE_FULL_INFORMATION> info_obj{ c.emu, key_value_information };
 			info_obj.write(info);
 
 			c.emu.write_memory(key_value_information + offsetof(KEY_VALUE_BASIC_INFORMATION, Name),
-				wide_name.data(),
+				original_name.data(),
 				info.NameLength);
 
 			c.emu.write_memory(key_value_information + offsetof(KEY_VALUE_FULL_INFORMATION, Name) + info.NameLength,

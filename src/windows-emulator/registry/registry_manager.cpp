@@ -1,7 +1,9 @@
 #include "registry_manager.hpp"
 
-#include "hive_parser.hpp"
+#include <cwctype>
 #include <serialization_helper.hpp>
+
+#include "hive_parser.hpp"
 
 namespace
 {
@@ -31,11 +33,7 @@ namespace
 	void register_hive(registry_manager::hive_map& hives,
 	                   const std::filesystem::path& key, const std::filesystem::path& file)
 	{
-		auto hive = std::make_unique<hive_parser>(file);
-		if (hive && hive->success())
-		{
-			hives[canonicalize_path(key)] = std::move(hive);
-		}
+		hives[canonicalize_path(key)] = std::make_unique<hive_parser>(file);
 	}
 }
 
@@ -116,10 +114,10 @@ std::optional<registry_key> registry_manager::get_key(const std::filesystem::pat
 		return {std::move(reg_key)};
 	}
 
-	const auto entry = iterator->second->get_subkey(reg_key.path.begin()->string(), reg_key.path.generic_string());
+	const auto entry = iterator->second->get_sub_key(reg_key.path);
 	if (!entry)
 	{
-		return {};
+		return std::nullopt;
 	}
 
 	return {std::move(reg_key)};
@@ -130,24 +128,19 @@ std::optional<registry_value> registry_manager::get_value(const registry_key& ke
 	const auto iterator = this->hives_.find(key.hive);
 	if (iterator == this->hives_.end())
 	{
-		return {};
+		return std::nullopt;
 	}
 
-	auto entry = iterator->second->get_subkey(key.path.begin()->string(), key.path.generic_string());
+	auto* entry = iterator->second->get_value(key.path, name);
 	if (!entry)
 	{
-		return {};
-	}
-
-	const auto value = entry->get_key_value(name);
-	if (!value)
-	{
-		return {};
+		return std::nullopt;
 	}
 
 	registry_value v{};
-	v.type = value->first;
-	v.data = value->second;
+	v.type = entry->type;
+	v.name = entry->name;
+	v.data = entry->data;
 
 	return v;
 }
