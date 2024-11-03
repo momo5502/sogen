@@ -48,5 +48,8 @@ jobs:
           path: |
             build/${{matrix.preset}}/artifacts/*
 
+      - name: Dump Registry
+        run: cd build/${{matrix.preset}}/artifacts && ../../../src/grab-registry.bat
+
       - name: CMake Test
         run: cd build/${{matrix.preset}} && ctest --verbose

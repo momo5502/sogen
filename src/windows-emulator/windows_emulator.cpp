@@ -255,6 +255,8 @@ namespace
 	{
 		setup_gdt(emu);
 
+		context.registry = registry_manager(settings.registry_directory);
+
 		context.kusd = setup_kusd(emu);
 
 		context.base_allocator = create_allocator(emu, PEB_SEGMENT_SIZE);

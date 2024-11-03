@@ -13,6 +13,7 @@ struct handle_types
 		semaphore,
 		port,
 		thread,
+		registry,
 	};
 };
 

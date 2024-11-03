@@ -1,12 +1,10 @@
 #include "std_include.hpp"
 #include "syscall_dispatcher.hpp"
-
-#include <numeric>
-
 #include "context_frame.hpp"
 #include "emulator_utils.hpp"
 #include "syscall_utils.hpp"
 
+#include <numeric>
 #include <utils/io.hpp>
 
 namespace
@@ -53,20 +51,153 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtOpenKey(const syscall_context& c, const emulator_object<uint64_t> /*key_handle*/,
+	NTSTATUS handle_NtOpenKey(const syscall_context& c, const emulator_object<uint64_t> key_handle,
 	                          const ACCESS_MASK /*desired_access*/,
 	                          const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
 	{
 		const auto attributes = object_attributes.read();
-		const auto key = read_unicode_string(c.emu, attributes.ObjectName);
+		auto key = read_unicode_string(c.emu, attributes.ObjectName);
+
+		if (attributes.RootDirectory)
+		{
+			const auto* parent_handle = c.proc.registry_keys.get(reinterpret_cast<uint64_t>(attributes.RootDirectory));
+			if (!parent_handle)
+			{
+				return STATUS_INVALID_HANDLE;
+			}
+
+			key = parent_handle->hive / parent_handle->path / key;
+		}
 
 		c.win_emu.logger.print(color::dark_gray, "--> Registry key: %S\n", key.c_str());
 
-		return STATUS_OBJECT_NAME_NOT_FOUND;
+		auto entry = c.proc.registry.get_key(key);
+		if (!entry.has_value())
+		{
+			return STATUS_OBJECT_NAME_NOT_FOUND;
+		}
+
+		const auto handle = c.proc.registry_keys.store(std::move(entry.value()));
+		key_handle.write(handle.bits);
+
+		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtOpenKeyEx()
+	NTSTATUS handle_NtOpenKeyEx(const syscall_context& c, const emulator_object<uint64_t> key_handle,
+	                            const ACCESS_MASK desired_access,
+	                            const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
+	                            ULONG /*open_options*/)
 	{
+		return handle_NtOpenKey(c, key_handle, desired_access, object_attributes);
+	}
+
+	NTSTATUS handle_NtQueryValueKey(const syscall_context& c, handle key_handle,
+	                                const emulator_object<UNICODE_STRING> value_name,
+	                                KEY_VALUE_INFORMATION_CLASS key_value_information_class,
+	                                uint64_t key_value_information,
+	                                ULONG length, const emulator_object<ULONG> result_length)
+	{
+		const auto* key = c.proc.registry_keys.get(key_handle);
+		if (!key)
+		{
+			return STATUS_INVALID_HANDLE;
+		}
+
+		const auto query_name = read_unicode_string(c.emu, value_name);
+		const std::string name(query_name.begin(), query_name.end());
+
+		const auto value = c.proc.registry.get_value(*key, name);
+		if (!value)
+		{
+			return STATUS_OBJECT_NAME_NOT_FOUND;
+		}
+
+		const std::wstring original_name(value->name.begin(), value->name.end());
+
+		if (key_value_information_class == KeyValueBasicInformation)
+		{
+			const auto required_size = sizeof(KEY_VALUE_BASIC_INFORMATION) + (original_name.size() * 2) - 1;
+			result_length.write(static_cast<ULONG>(required_size));
+
+			if (required_size > length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			KEY_VALUE_BASIC_INFORMATION info{};
+			info.TitleIndex = 0;
+			info.Type = value->type;
+			info.NameLength = static_cast<ULONG>(original_name.size() * 2);
+
+			const emulator_object<KEY_VALUE_BASIC_INFORMATION> info_obj{c.emu, key_value_information};
+			info_obj.write(info);
+
+			c.emu.write_memory(key_value_information + offsetof(KEY_VALUE_BASIC_INFORMATION, Name),
+			                   original_name.data(),
+			                   info.NameLength);
+
+			return STATUS_SUCCESS;
+		}
+
+		if (key_value_information_class == KeyValuePartialInformation)
+		{
+			const auto required_size = sizeof(KEY_VALUE_PARTIAL_INFORMATION) + value->data.size() - 1;
+			result_length.write(static_cast<ULONG>(required_size));
+
+			if (required_size > length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			KEY_VALUE_PARTIAL_INFORMATION info{};
+			info.TitleIndex = 0;
+			info.Type = value->type;
+			info.DataLength = static_cast<ULONG>(value->data.size());
+
+			const emulator_object<KEY_VALUE_PARTIAL_INFORMATION> info_obj{c.emu, key_value_information};
+			info_obj.write(info);
+
+			c.emu.write_memory(key_value_information + offsetof(KEY_VALUE_PARTIAL_INFORMATION, Data),
+			                   value->data.data(),
+			                   value->data.size());
+
+			return STATUS_SUCCESS;
+		}
+
+		if (key_value_information_class == KeyValueFullInformation)
+		{
+			const auto name_size = original_name.size() * 2;
+			const auto value_size = value->data.size();
+			const auto required_size = sizeof(KEY_VALUE_FULL_INFORMATION) + name_size + value_size + -1;
+			result_length.write(static_cast<ULONG>(required_size));
+
+			if (required_size > length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			KEY_VALUE_FULL_INFORMATION info{};
+			info.TitleIndex = 0;
+			info.Type = value->type;
+			info.DataLength = static_cast<ULONG>(value->data.size());
+			info.NameLength = static_cast<ULONG>(original_name.size() * 2);
+
+			const emulator_object<KEY_VALUE_FULL_INFORMATION> info_obj{c.emu, key_value_information};
+			info_obj.write(info);
+
+			c.emu.write_memory(key_value_information + offsetof(KEY_VALUE_BASIC_INFORMATION, Name),
+			                   original_name.data(),
+			                   info.NameLength);
+
+			c.emu.write_memory(key_value_information + offsetof(KEY_VALUE_FULL_INFORMATION, Name) + info.NameLength,
+			                   value->data.data(),
+			                   value->data.size());
+
+			return STATUS_SUCCESS;
+		}
+
+		c.win_emu.logger.print(color::gray, "Unsupported registry class: %X\n", key_value_information_class);
+		c.emu.stop();
 		return STATUS_NOT_SUPPORTED;
 	}
 
@@ -152,6 +283,11 @@ namespace
 		}
 
 		if (value.type == handle_types::semaphore && c.proc.semaphores.erase(handle))
+		{
+			return STATUS_SUCCESS;
+		}
+
+		if (value.type == handle_types::registry && c.proc.registry_keys.erase(handle))
 		{
 			return STATUS_SUCCESS;
 		}
@@ -1532,6 +1668,11 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	NTSTATUS handle_NtGetNlsSectionPtr()
+	{
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtAlpcSendWaitReceivePort(const syscall_context& c, const uint64_t port_handle,
 	                                          const ULONG /*flags*/,
 	                                          const emulator_object<PORT_MESSAGE> /*send_message*/,
@@ -2267,6 +2408,8 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtReadFile);
 	add_handler(NtSetInformationFile);
 	add_handler(NtUserRegisterWindowMessage);
+	add_handler(NtQueryValueKey);
+	add_handler(NtGetNlsSectionPtr);
 
 #undef add_handler
 }
