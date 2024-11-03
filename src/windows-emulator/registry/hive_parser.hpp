@@ -10,13 +10,18 @@
 
 // Based on this implementation: https://github.com/reahly/windows-hive-parser
 
+struct offset_entry_t
+{
+	long offset;
+	long hash;
+};
+
 struct offsets_t
 {
 	long block_size;
 	char block_type[2];
 	short count;
-	long first;
-	long hash;
+	offset_entry_t entries[0];
 };
 
 struct key_block_t
@@ -86,7 +91,7 @@ public:
 		std::vector<std::string_view> out;
 		for (auto i = 0; i < key_block->subkey_count; i++)
 		{
-			const auto subkey = reinterpret_cast<key_block_t*>((&item->first)[i * 2] + this->main_root);
+			const auto subkey = reinterpret_cast<key_block_t*>(item->entries[i].offset + this->main_root);
 			if (!subkey)
 				continue;
 
@@ -168,7 +173,7 @@ class hive_parser
 
 		for (auto i = 0; i < item->count; i++)
 		{
-			const auto subkey = reinterpret_cast<key_block_t*>((&item->first)[i * 2] + main_root);
+			const auto subkey = reinterpret_cast<key_block_t*>(item->entries[i].offset + main_root);
 			if (!subkey)
 				continue;
 
