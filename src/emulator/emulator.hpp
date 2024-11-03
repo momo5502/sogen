@@ -130,6 +130,8 @@ public:
 		this->perform_deserialization(deserializer, true);
 	}
 
+	virtual bool has_violation() const = 0;
+
 private:
 	std::vector<std::byte> last_snapshot_data_{};
 

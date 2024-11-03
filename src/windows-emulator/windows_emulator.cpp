@@ -964,7 +964,7 @@ void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
 
 		this->emu().start_from_ip(timeout, count);
 
-		if (!this->switch_thread)
+		if (!this->switch_thread && !this->emu().has_violation())
 		{
 			break;
 		}

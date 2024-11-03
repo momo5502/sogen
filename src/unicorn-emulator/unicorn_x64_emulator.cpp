@@ -241,7 +241,7 @@ namespace unicorn
 				uc_close(this->uc_);
 			}
 
-			void start(uint64_t start, const uint64_t end, std::chrono::nanoseconds timeout,
+			void start(const uint64_t start, const uint64_t end, std::chrono::nanoseconds timeout,
 			           const size_t count) override
 			{
 				if (timeout.count() < 0)
@@ -249,31 +249,26 @@ namespace unicorn
 					timeout = {};
 				}
 
-				// TODO: Fix adjusting timeout and count
-				while (true)
+				this->has_violation_ = false;
+				const auto timeoutYs = std::chrono::duration_cast<std::chrono::microseconds>(timeout);
+				const auto res = uc_emu_start(*this, start, end, static_cast<uint64_t>(timeoutYs.count()),
+				                              count);
+				if (res == UC_ERR_OK)
 				{
-					this->retry_after_violation_ = false;
-					const auto timeoutYs = std::chrono::duration_cast<std::chrono::microseconds>(timeout);
-					const auto res = uc_emu_start(*this, start, end, static_cast<uint64_t>(timeoutYs.count()),
-					                              count);
-					if (res == UC_ERR_OK)
-					{
-						return;
-					}
+					return;
+				}
 
-					const auto is_violation = res == UC_ERR_READ_UNMAPPED || //
-						res == UC_ERR_WRITE_UNMAPPED || //
-						res == UC_ERR_FETCH_UNMAPPED || //
-						res == UC_ERR_READ_PROT || //
-						res == UC_ERR_WRITE_PROT || //
-						res == UC_ERR_FETCH_PROT;
+				const auto is_violation = //
+					res == UC_ERR_READ_UNMAPPED || //
+					res == UC_ERR_WRITE_UNMAPPED || //
+					res == UC_ERR_FETCH_UNMAPPED || //
+					res == UC_ERR_READ_PROT || //
+					res == UC_ERR_WRITE_PROT || //
+					res == UC_ERR_FETCH_PROT;
 
-					if (!is_violation || !this->retry_after_violation_)
-					{
-						uce(res);
-					}
-
-					start = this->read_instruction_pointer();
+				if (!is_violation || !this->has_violation_)
+				{
+					uce(res);
 				}
 			}
 
@@ -493,7 +488,7 @@ namespace unicorn
 							return false;
 						}
 
-						this->retry_after_violation_ = resume && has_ip_changed;
+						this->has_violation_ = resume && has_ip_changed;
 
 						if (has_ip_changed)
 						{
@@ -609,10 +604,15 @@ namespace unicorn
 				serializer.deserialize(buffer);
 			}
 
+			bool has_violation() const override
+			{
+				return this->has_violation_;
+			}
+
 		private:
 			mutable bool has_snapshots_{false};
 			uc_engine* uc_{};
-			bool retry_after_violation_{false};
+			bool has_violation_{false};
 			std::vector<std::unique_ptr<hook_object>> hooks_{};
 		};
 	}
