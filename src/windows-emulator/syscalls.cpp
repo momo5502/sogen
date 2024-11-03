@@ -120,12 +120,12 @@ namespace
 			info.Type = value->type;
 			info.NameLength = static_cast<ULONG>(original_name.size() * 2);
 
-			const emulator_object<KEY_VALUE_BASIC_INFORMATION> info_obj{ c.emu, key_value_information };
+			const emulator_object<KEY_VALUE_BASIC_INFORMATION> info_obj{c.emu, key_value_information};
 			info_obj.write(info);
 
 			c.emu.write_memory(key_value_information + offsetof(KEY_VALUE_BASIC_INFORMATION, Name),
-				original_name.data(),
-				info.NameLength);
+			                   original_name.data(),
+			                   info.NameLength);
 
 			return STATUS_SUCCESS;
 		}
@@ -157,7 +157,8 @@ namespace
 
 		if (key_value_information_class == KeyValueFullInformation)
 		{
-			const auto required_size = sizeof(KEY_VALUE_FULL_INFORMATION) + (original_name.size() * 2) + value->data.size() - 1;
+			const auto required_size = sizeof(KEY_VALUE_FULL_INFORMATION) + (original_name.size() * 2) + value->data.
+				size() - 1;
 			result_length.write(static_cast<ULONG>(required_size));
 
 			if (required_size > length)
@@ -171,16 +172,16 @@ namespace
 			info.DataLength = static_cast<ULONG>(value->data.size());
 			info.NameLength = static_cast<ULONG>(original_name.size() * 2);
 
-			const emulator_object<KEY_VALUE_FULL_INFORMATION> info_obj{ c.emu, key_value_information };
+			const emulator_object<KEY_VALUE_FULL_INFORMATION> info_obj{c.emu, key_value_information};
 			info_obj.write(info);
 
 			c.emu.write_memory(key_value_information + offsetof(KEY_VALUE_BASIC_INFORMATION, Name),
-				original_name.data(),
-				info.NameLength);
+			                   original_name.data(),
+			                   info.NameLength);
 
 			c.emu.write_memory(key_value_information + offsetof(KEY_VALUE_FULL_INFORMATION, Name) + info.NameLength,
-				value->data.data(),
-				value->data.size());
+			                   value->data.data(),
+			                   value->data.size());
 
 			return STATUS_SUCCESS;
 		}
