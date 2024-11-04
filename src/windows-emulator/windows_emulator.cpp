@@ -293,6 +293,7 @@ namespace
 			proc_params.Environment = allocator.copy_string(L"=::=::\\");
 			allocator.copy_string(L"EMULATOR=1");
 			allocator.copy_string(L"COMPUTERNAME=momo");
+			allocator.copy_string(L"SystemRoot=C:\\WINDOWS");
 			allocator.copy_string(L"");
 
 			std::wstring command_line = L"\"" + settings.application.wstring() + L"\"";
