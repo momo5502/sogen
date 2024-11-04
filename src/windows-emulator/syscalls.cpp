@@ -183,65 +183,63 @@ namespace
 
 		if (key_value_information_class == KeyValueBasicInformation)
 		{
-			const auto required_size = offsetof(KEY_VALUE_BASIC_INFORMATION, Name) + (original_name.size() * 2) - 1;
+			constexpr auto base_size = offsetof(KEY_VALUE_BASIC_INFORMATION, Name);
+			const auto required_size = base_size + (original_name.size() * 2) - 1;
 			result_length.write(static_cast<ULONG>(required_size));
-
-			if (required_size > length)
-			{
-				return STATUS_BUFFER_TOO_SMALL;
-			}
 
 			KEY_VALUE_BASIC_INFORMATION info{};
 			info.TitleIndex = 0;
 			info.Type = value->type;
 			info.NameLength = static_cast<ULONG>(original_name.size() * 2);
 
-			const emulator_object<KEY_VALUE_BASIC_INFORMATION> info_obj{c.emu, key_value_information};
-			info_obj.write(info);
+			if (base_size <= length)
+			{
+				c.emu.write_memory(key_value_information, &info, base_size);
+			}
 
-			c.emu.write_memory(key_value_information + offsetof(KEY_VALUE_BASIC_INFORMATION, Name),
-			                   original_name.data(),
-			                   info.NameLength);
+			if (required_size > length)
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			c.emu.write_memory(key_value_information + base_size, original_name.data(), info.NameLength);
 
 			return STATUS_SUCCESS;
 		}
 
 		if (key_value_information_class == KeyValuePartialInformation)
 		{
-			const auto required_size = offsetof(KEY_VALUE_PARTIAL_INFORMATION, Data) + value->data.size();
+			constexpr auto base_size = offsetof(KEY_VALUE_PARTIAL_INFORMATION, Data);
+			const auto required_size = base_size + value->data.size();
 			result_length.write(static_cast<ULONG>(required_size));
-
-			if (required_size > length)
-			{
-				return STATUS_BUFFER_TOO_SMALL;
-			}
 
 			KEY_VALUE_PARTIAL_INFORMATION info{};
 			info.TitleIndex = 0;
 			info.Type = value->type;
 			info.DataLength = static_cast<ULONG>(value->data.size());
 
-			const emulator_object<KEY_VALUE_PARTIAL_INFORMATION> info_obj{c.emu, key_value_information};
-			info_obj.write(info);
+			if (base_size <= length)
+			{
+				c.emu.write_memory(key_value_information, &info, base_size);
+			}
 
-			c.emu.write_memory(key_value_information + offsetof(KEY_VALUE_PARTIAL_INFORMATION, Data),
-			                   value->data.data(),
-			                   value->data.size());
+			if (required_size > length)
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			c.emu.write_memory(key_value_information + base_size, value->data.data(), value->data.size());
 
 			return STATUS_SUCCESS;
 		}
 
 		if (key_value_information_class == KeyValueFullInformation)
 		{
+			constexpr auto base_size = offsetof(KEY_VALUE_FULL_INFORMATION, Name);
 			const auto name_size = original_name.size() * 2;
 			const auto value_size = value->data.size();
-			const auto required_size = offsetof(KEY_VALUE_FULL_INFORMATION, Name) + name_size + value_size + -1;
+			const auto required_size = base_size + name_size + value_size + -1;
 			result_length.write(static_cast<ULONG>(required_size));
-
-			if (required_size > length)
-			{
-				return STATUS_BUFFER_TOO_SMALL;
-			}
 
 			KEY_VALUE_FULL_INFORMATION info{};
 			info.TitleIndex = 0;
@@ -249,14 +247,21 @@ namespace
 			info.DataLength = static_cast<ULONG>(value->data.size());
 			info.NameLength = static_cast<ULONG>(original_name.size() * 2);
 
-			const emulator_object<KEY_VALUE_FULL_INFORMATION> info_obj{c.emu, key_value_information};
-			info_obj.write(info);
+			if (base_size <= length)
+			{
+				c.emu.write_memory(key_value_information, &info, base_size);
+			}
 
-			c.emu.write_memory(key_value_information + offsetof(KEY_VALUE_BASIC_INFORMATION, Name),
+			if (required_size > length)
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			c.emu.write_memory(key_value_information + base_size,
 			                   original_name.data(),
 			                   info.NameLength);
 
-			c.emu.write_memory(key_value_information + offsetof(KEY_VALUE_FULL_INFORMATION, Name) + info.NameLength,
+			c.emu.write_memory(key_value_information + base_size + info.NameLength,
 			                   value->data.data(),
 			                   value->data.size());
 
@@ -269,6 +274,11 @@ namespace
 	}
 
 	NTSTATUS handle_NtCreateKey()
+	{
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtNotifyChangeKey()
 	{
 		return STATUS_NOT_SUPPORTED;
 	}
@@ -2543,6 +2553,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtGetNlsSectionPtr);
 	add_handler(NtAccessCheck);
 	add_handler(NtCreateKey);
+	add_handler(NtNotifyChangeKey);
 
 #undef add_handler
 }
