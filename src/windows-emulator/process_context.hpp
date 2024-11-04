@@ -394,7 +394,7 @@ struct process_context
 	handle_store<handle_types::file, file> files{};
 	handle_store<handle_types::semaphore, semaphore> semaphores{};
 	handle_store<handle_types::port, port> ports{};
-	handle_store<handle_types::registry, registry_key> registry_keys{};
+	handle_store<handle_types::registry, registry_key, 2> registry_keys{};
 	std::map<uint16_t, std::wstring> atoms{};
 
 	std::vector<std::byte> default_register_set{};

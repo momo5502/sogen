@@ -7,6 +7,14 @@
 
 namespace
 {
+	void string_to_lower(std::string& str)
+	{
+		std::ranges::transform(str, str.begin(), [](const char val)
+		{
+			return static_cast<char>(std::tolower(static_cast<unsigned char>(val)));
+		});
+	}
+
 	std::filesystem::path canonicalize_path(const std::filesystem::path& key)
 	{
 		auto path = key.lexically_normal().wstring();
@@ -107,7 +115,7 @@ std::optional<registry_key> registry_manager::get_key(const std::filesystem::pat
 	{
 		registry_key reg_key{};
 		reg_key.hive = normal_key;
-		return { std::move(reg_key) };
+		return {std::move(reg_key)};
 	}
 
 	const auto iterator = this->find_hive(normal_key);
@@ -134,8 +142,10 @@ std::optional<registry_key> registry_manager::get_key(const std::filesystem::pat
 	return {std::move(reg_key)};
 }
 
-std::optional<registry_value> registry_manager::get_value(const registry_key& key, const std::string_view name)
+std::optional<registry_value> registry_manager::get_value(const registry_key& key, std::string name)
 {
+	string_to_lower(name);
+
 	const auto iterator = this->hives_.find(key.hive);
 	if (iterator == this->hives_.end())
 	{

@@ -183,7 +183,7 @@ namespace
 
 		if (key_value_information_class == KeyValueBasicInformation)
 		{
-			const auto required_size = sizeof(KEY_VALUE_BASIC_INFORMATION) + (original_name.size() * 2) - 1;
+			const auto required_size = offsetof(KEY_VALUE_BASIC_INFORMATION, Name) + (original_name.size() * 2) - 1;
 			result_length.write(static_cast<ULONG>(required_size));
 
 			if (required_size > length)
@@ -208,7 +208,7 @@ namespace
 
 		if (key_value_information_class == KeyValuePartialInformation)
 		{
-			const auto required_size = sizeof(KEY_VALUE_PARTIAL_INFORMATION) + value->data.size() - 1;
+			const auto required_size = offsetof(KEY_VALUE_PARTIAL_INFORMATION, Data) + value->data.size();
 			result_length.write(static_cast<ULONG>(required_size));
 
 			if (required_size > length)
@@ -235,7 +235,7 @@ namespace
 		{
 			const auto name_size = original_name.size() * 2;
 			const auto value_size = value->data.size();
-			const auto required_size = sizeof(KEY_VALUE_FULL_INFORMATION) + name_size + value_size + -1;
+			const auto required_size = offsetof(KEY_VALUE_FULL_INFORMATION, Name) + name_size + value_size + -1;
 			result_length.write(static_cast<ULONG>(required_size));
 
 			if (required_size > length)
@@ -265,6 +265,11 @@ namespace
 
 		c.win_emu.logger.print(color::gray, "Unsupported registry value class: %X\n", key_value_information_class);
 		c.emu.stop();
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtCreateKey()
+	{
 		return STATUS_NOT_SUPPORTED;
 	}
 
@@ -2537,6 +2542,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtQueryKey);
 	add_handler(NtGetNlsSectionPtr);
 	add_handler(NtAccessCheck);
+	add_handler(NtCreateKey);
 
 #undef add_handler
 }

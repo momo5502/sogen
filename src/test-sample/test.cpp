@@ -4,6 +4,7 @@
 #include <fstream>
 #include <thread>
 #include <atomic>
+#include <optional>
 #include <vector>
 #include <Windows.h>
 
@@ -92,6 +93,49 @@ bool test_io()
 	return text == buffer;
 }
 
+std::optional<std::string> read_registry_string(const HKEY root, const char* path, const char* value)
+{
+	HKEY key{};
+	if (RegOpenKeyExA(root, path, 0, KEY_READ, &key) !=
+		ERROR_SUCCESS)
+	{
+		return std::nullopt;
+	}
+
+	char data[MAX_PATH]{};
+	DWORD length = sizeof(data);
+	const auto res = RegQueryValueExA(key, value, nullptr, nullptr, reinterpret_cast<uint8_t*>(data), &length);
+
+	if (RegCloseKey(key) != ERROR_SUCCESS)
+	{
+		return std::nullopt;
+	}
+
+	if (res != ERROR_SUCCESS)
+	{
+		return std::nullopt;
+	}
+
+	if (length == 0)
+	{
+		return "";
+	}
+
+	return {std::string(data, min(length - 1, sizeof(data)))};
+}
+
+bool test_registry()
+{
+	const auto val = read_registry_string(HKEY_LOCAL_MACHINE, R"(SOFTWARE\Microsoft\Windows\CurrentVersion)",
+	                                      "ProgramFilesDir");
+	if (!val)
+	{
+		return false;
+	}
+
+	return *val == "C:\\Program Files";
+}
+
 void throw_exception()
 {
 	if (do_the_task)
@@ -128,7 +172,8 @@ bool test_native_exceptions()
 		throw_native_exception();
 		return false;
 	}
-	__except(EXCEPTION_EXECUTE_HANDLER) {
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
 		return true;
 	}
 }
@@ -146,6 +191,7 @@ int main(int /*argc*/, const char* /*argv*/[])
 	bool valid = true;
 
 	RUN_TEST(test_io, "I/O")
+	RUN_TEST(test_registry, "Registry")
 	RUN_TEST(test_threads, "Threads")
 	RUN_TEST(test_env, "Environment")
 	RUN_TEST(test_exceptions, "Exceptions")

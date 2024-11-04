@@ -95,7 +95,7 @@ namespace handle_detail
 	};
 }
 
-template <handle_types::type Type, typename T>
+template <handle_types::type Type, typename T, uint32_t IndexShift = 0>
 	requires(utils::Serializable<T>)
 class handle_store
 {
@@ -117,7 +117,7 @@ public:
 		h.bits = 0;
 		h.value.is_pseudo = false;
 		h.value.type = Type;
-		h.value.id = index;
+		h.value.id = index << IndexShift;
 
 		return h;
 	}
@@ -287,7 +287,7 @@ private:
 			return this->store_.end();
 		}
 
-		return this->store_.find(h.id);
+		return this->store_.find(static_cast<uint32_t>(h.id) >> IndexShift);
 	}
 
 	uint32_t find_free_index()

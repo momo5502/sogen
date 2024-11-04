@@ -51,7 +51,7 @@ public:
 	void deserialize(utils::buffer_deserializer& buffer);
 
 	std::optional<registry_key> get_key(const std::filesystem::path& key);
-	std::optional<registry_value> get_value(const registry_key& key, const std::string_view name);
+	std::optional<registry_value> get_value(const registry_key& key, std::string name);
 
 private:
 	std::filesystem::path hive_path_{};

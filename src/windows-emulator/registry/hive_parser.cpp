@@ -149,7 +149,7 @@ const hive_value* hive_key::get_value(std::ifstream& file, const std::string_vie
 
 	auto& value = entry->second;
 
-	if (value.parsed)
+	if (!value.parsed)
 	{
 		value.data = read_file_data(file, MAIN_ROOT_OFFSET + value.data_offset, value.data_length);
 		value.parsed = true;
