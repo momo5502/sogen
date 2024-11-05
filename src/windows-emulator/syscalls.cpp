@@ -8,6 +8,8 @@
 #include <cwctype>
 #include <utils/io.hpp>
 
+#include "utils/finally.hpp"
+
 namespace
 {
 	NTSTATUS handle_NtQueryPerformanceCounter(const syscall_context& c,
@@ -2033,7 +2035,10 @@ namespace
 		const auto attributes = object_attributes.read();
 		auto filename = read_unicode_string(c.emu, attributes.ObjectName);
 
-		c.win_emu.logger.print(color::dark_gray, "--> Opening file: %S\n", filename.c_str());
+		auto printer = utils::finally([&]
+		{
+			c.win_emu.logger.print(color::dark_gray, "--> Opening file: %S\n", filename.c_str());
+		});
 
 		if (filename == L"\\Device\\ConDrv\\Server")
 		{
@@ -2050,6 +2055,12 @@ namespace
 		if (filename == L"\\Device\\KsecDD")
 		{
 			file_handle.write(KSEC_DD.bits);
+			return STATUS_SUCCESS;
+		}
+
+		if (filename.starts_with(L"\\Device\\Afd\\Endpoint"))
+		{
+			file_handle.write(AFD_ENDPOINT.bits);
 			return STATUS_SUCCESS;
 		}
 
@@ -2079,6 +2090,8 @@ namespace
 
 			f.name = root->name + f.name;
 		}
+
+		printer.cancel();
 
 		if (f.name.ends_with(L"\\"))
 		{
