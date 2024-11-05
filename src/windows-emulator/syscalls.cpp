@@ -280,7 +280,7 @@ namespace
 
 	NTSTATUS handle_NtNotifyChangeKey()
 	{
-		return STATUS_NOT_SUPPORTED;
+		return STATUS_SUCCESS;
 	}
 
 	NTSTATUS handle_NtSetInformationThread(const syscall_context& c, const uint64_t thread_handle,
@@ -2032,6 +2032,8 @@ namespace
 	{
 		const auto attributes = object_attributes.read();
 		auto filename = read_unicode_string(c.emu, attributes.ObjectName);
+
+		c.win_emu.logger.print(color::dark_gray, "--> Opening file: %S\n", filename.c_str());
 
 		if (filename == L"\\Device\\ConDrv\\Server")
 		{
