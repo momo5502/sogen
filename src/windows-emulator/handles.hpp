@@ -315,6 +315,7 @@ constexpr auto CONSOLE_SERVER = make_pseudo_handle(0x1338, handle_types::section
 constexpr auto CM_API = make_pseudo_handle(0x1338, handle_types::file);
 constexpr auto KSEC_DD = make_pseudo_handle(0x1339, handle_types::file);
 constexpr auto AFD_ENDPOINT = make_pseudo_handle(0x133A, handle_types::file);
+constexpr auto CNG = make_pseudo_handle(0x133B, handle_types::file);
 
 constexpr auto CONSOLE_HANDLE = make_pseudo_handle(0x1, handle_types::file);
 constexpr auto STDOUT_HANDLE = make_pseudo_handle(0x2, handle_types::file);

@@ -2028,7 +2028,7 @@ namespace
 	                             const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
 	                             const emulator_object<IO_STATUS_BLOCK> /*io_status_block*/,
 	                             const emulator_object<LARGE_INTEGER> /*allocation_size*/, ULONG /*file_attributes*/,
-	                             ULONG /*share_access*/, ULONG create_disposition, ULONG /*create_options*/,
+	                             ULONG /*share_access*/, ULONG create_disposition, ULONG create_options,
 	                             uint64_t /*ea_buffer*/,
 	                             ULONG /*ea_length*/)
 	{
@@ -2055,6 +2055,12 @@ namespace
 		if (filename == L"\\Device\\KsecDD")
 		{
 			file_handle.write(KSEC_DD.bits);
+			return STATUS_SUCCESS;
+		}
+
+		if (filename == L"\\Device\\CNG")
+		{
+			file_handle.write(CNG.bits);
 			return STATUS_SUCCESS;
 		}
 
@@ -2093,9 +2099,24 @@ namespace
 
 		printer.cancel();
 
-		if (f.name.ends_with(L"\\"))
+		if (f.name.ends_with(L"\\") || create_options & FILE_DIRECTORY_FILE)
 		{
 			c.win_emu.logger.print(color::dark_gray, "--> Opening folder: %S\n", f.name.c_str());
+
+			if (create_disposition & FILE_CREATE)
+			{
+				std::error_code ec{};
+				std::filesystem::create_directory(f.name, ec);
+
+				if (ec)
+				{
+					return STATUS_ACCESS_DENIED;
+				}
+			}
+			else if (!std::filesystem::is_directory(f.name))
+			{
+				return STATUS_OBJECT_NAME_NOT_FOUND;
+			}
 
 			const auto handle = c.proc.files.store(std::move(f));
 			file_handle.write(handle.bits);
@@ -2106,6 +2127,11 @@ namespace
 		c.win_emu.logger.print(color::dark_gray, "--> Opening file: %S\n", f.name.c_str());
 
 		const auto* mode = map_mode(desired_access, create_disposition);
+
+		if (!mode || wcslen(mode) == 0)
+		{
+			return STATUS_NOT_SUPPORTED;
+		}
 
 		FILE* file{};
 		const auto error = _wfopen_s(&file, f.name.c_str(), mode);
@@ -2476,6 +2502,14 @@ namespace
 
 		return STATUS_SUCCESS;
 	}
+
+	NTSTATUS handle_NtGetCurrentProcessorNumberEx(const syscall_context& c,
+	                                              const emulator_object<PROCESSOR_NUMBER> processor_number)
+	{
+		constexpr PROCESSOR_NUMBER number{};
+		processor_number.write(number);
+		return STATUS_SUCCESS;
+	}
 }
 
 void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& handler_mapping)
@@ -2569,6 +2603,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtAccessCheck);
 	add_handler(NtCreateKey);
 	add_handler(NtNotifyChangeKey);
+	add_handler(NtGetCurrentProcessorNumberEx);
 
 #undef add_handler
 }
