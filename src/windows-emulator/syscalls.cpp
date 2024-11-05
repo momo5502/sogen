@@ -2503,7 +2503,7 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtGetCurrentProcessorNumberEx(const syscall_context& c,
+	NTSTATUS handle_NtGetCurrentProcessorNumberEx(const syscall_context&,
 	                                              const emulator_object<PROCESSOR_NUMBER> processor_number)
 	{
 		constexpr PROCESSOR_NUMBER number{};
