@@ -11,6 +11,7 @@
 #include <x64_emulator.hpp>
 #include <serialization_helper.hpp>
 
+#include "io_device.hpp"
 
 #define PEB_SEGMENT_SIZE (20 << 20) // 20 MB
 #define GS_SEGMENT_SIZE (1 << 20) // 1 MB
@@ -392,6 +393,7 @@ struct process_context
 
 	handle_store<handle_types::event, event> events{};
 	handle_store<handle_types::file, file> files{};
+	handle_store<handle_types::device, io_device_container> devices{};
 	handle_store<handle_types::semaphore, semaphore> semaphores{};
 	handle_store<handle_types::port, port> ports{};
 	handle_store<handle_types::registry, registry_key, 2> registry_keys{};
@@ -428,6 +430,7 @@ struct process_context
 		buffer.write(this->shared_section_size);
 		buffer.write(this->events);
 		buffer.write(this->files);
+		buffer.write(this->devices);
 		buffer.write(this->semaphores);
 		buffer.write(this->ports);
 		buffer.write(this->registry_keys);
@@ -469,6 +472,7 @@ struct process_context
 		buffer.read(this->shared_section_size);
 		buffer.read(this->events);
 		buffer.read(this->files);
+		buffer.read(this->devices);
 		buffer.read(this->semaphores);
 		buffer.read(this->ports);
 		buffer.read(this->registry_keys);

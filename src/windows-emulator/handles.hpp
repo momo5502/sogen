@@ -6,6 +6,7 @@ struct handle_types
 	{
 		invalid = 0,
 		file,
+		device,
 		event,
 		section,
 		symlink,
