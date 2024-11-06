@@ -54,7 +54,7 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtOpenKey(const syscall_context& c, const emulator_object<uint64_t> key_handle,
+	NTSTATUS handle_NtOpenKey(const syscall_context& c, const emulator_object<handle> key_handle,
 	                          const ACCESS_MASK /*desired_access*/,
 	                          const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
 	{
@@ -81,12 +81,12 @@ namespace
 		}
 
 		const auto handle = c.proc.registry_keys.store(std::move(entry.value()));
-		key_handle.write(handle.bits);
+		key_handle.write(handle);
 
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtOpenKeyEx(const syscall_context& c, const emulator_object<uint64_t> key_handle,
+	NTSTATUS handle_NtOpenKeyEx(const syscall_context& c, const emulator_object<handle> key_handle,
 	                            const ACCESS_MASK desired_access,
 	                            const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
 	                            ULONG /*open_options*/)
@@ -285,7 +285,7 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtSetInformationThread(const syscall_context& c, const uint64_t thread_handle,
+	NTSTATUS handle_NtSetInformationThread(const syscall_context& c, const handle thread_handle,
 	                                       const THREADINFOCLASS info_class,
 	                                       const uint64_t thread_information,
 	                                       const uint32_t thread_information_length)
@@ -343,40 +343,40 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtClose(const syscall_context& c, const uint64_t handle)
+	NTSTATUS handle_NtClose(const syscall_context& c, const handle h)
 	{
-		const auto value = get_handle_value(handle);
+		const auto value = h.value;
 		if (value.is_pseudo)
 		{
 			return STATUS_SUCCESS;
 		}
 
-		if (value.type == handle_types::thread && c.proc.threads.erase(handle))
+		if (value.type == handle_types::thread && c.proc.threads.erase(h))
 		{
 			return STATUS_SUCCESS;
 		}
 
-		if (value.type == handle_types::event && c.proc.events.erase(handle))
+		if (value.type == handle_types::event && c.proc.events.erase(h))
 		{
 			return STATUS_SUCCESS;
 		}
 
-		if (value.type == handle_types::file && c.proc.files.erase(handle))
+		if (value.type == handle_types::file && c.proc.files.erase(h))
 		{
 			return STATUS_SUCCESS;
 		}
 
-		if (value.type == handle_types::device && c.proc.devices.erase(handle))
+		if (value.type == handle_types::device && c.proc.devices.erase(h))
 		{
 			return STATUS_SUCCESS;
 		}
 
-		if (value.type == handle_types::semaphore && c.proc.semaphores.erase(handle))
+		if (value.type == handle_types::semaphore && c.proc.semaphores.erase(h))
 		{
 			return STATUS_SUCCESS;
 		}
 
-		if (value.type == handle_types::registry && c.proc.registry_keys.erase(handle))
+		if (value.type == handle_types::registry && c.proc.registry_keys.erase(h))
 		{
 			return STATUS_SUCCESS;
 		}
@@ -394,7 +394,7 @@ namespace
 		return STATUS_NO_TOKEN;
 	}
 
-	NTSTATUS handle_NtCreateEvent(const syscall_context& c, const emulator_object<uint64_t> event_handle,
+	NTSTATUS handle_NtCreateEvent(const syscall_context& c, const emulator_object<handle> event_handle,
 	                              const ACCESS_MASK /*desired_access*/,
 	                              const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
 	                              const EVENT_TYPE event_type, const BOOLEAN initial_state)
@@ -415,7 +415,7 @@ namespace
 		e.name = std::move(name);
 
 		const auto handle = c.proc.events.store(std::move(e));
-		event_handle.write(handle.bits);
+		event_handle.write(handle);
 
 		static_assert(sizeof(EVENT_TYPE) == sizeof(uint32_t));
 		static_assert(sizeof(ACCESS_MASK) == sizeof(uint32_t));
@@ -443,10 +443,10 @@ namespace
 		return STATUS_NOT_FOUND;
 	}
 
-	NTSTATUS handle_NtQueryVolumeInformationFile(const syscall_context& c, uint64_t file_handle,
-	                                             uint64_t /*io_status_block*/, uint64_t fs_information,
-	                                             ULONG /*length*/,
-	                                             FS_INFORMATION_CLASS fs_information_class)
+	NTSTATUS handle_NtQueryVolumeInformationFile(const syscall_context& c, const handle file_handle,
+	                                             const uint64_t /*io_status_block*/, const uint64_t fs_information,
+	                                             const ULONG /*length*/,
+	                                             const FS_INFORMATION_CLASS fs_information_class)
 	{
 		if (fs_information_class != FileFsDeviceInformation)
 		{
@@ -473,7 +473,7 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtOpenSection(const syscall_context& c, const emulator_object<uint64_t> section_handle,
+	NTSTATUS handle_NtOpenSection(const syscall_context& c, const emulator_object<handle> section_handle,
 	                              const ACCESS_MASK /*desired_access*/,
 	                              const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
 	{
@@ -484,7 +484,7 @@ namespace
 
 		if (filename == L"\\Windows\\SharedSection")
 		{
-			section_handle.write(SHARED_SECTION.bits);
+			section_handle.write(SHARED_SECTION);
 			return STATUS_SUCCESS;
 		}
 
@@ -505,17 +505,18 @@ namespace
 		f.name = std::move(filename);
 
 		const auto handle = c.proc.files.store(std::move(f));
-		section_handle.write(handle.bits);
+		section_handle.write(handle);
 
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtMapViewOfSection(const syscall_context& c, uint64_t section_handle, uint64_t process_handle,
-	                                   emulator_object<uint64_t> base_address, ULONG_PTR /*zero_bits*/,
-	                                   SIZE_T /*commit_size*/,
+	NTSTATUS handle_NtMapViewOfSection(const syscall_context& c, const handle section_handle,
+	                                   const handle process_handle, const emulator_object<uint64_t> base_address,
+	                                   const ULONG_PTR /*zero_bits*/, const SIZE_T /*commit_size*/,
 	                                   const emulator_object<LARGE_INTEGER> /*section_offset*/,
-	                                   const emulator_object<SIZE_T> view_size, SECTION_INHERIT /*inherit_disposition*/,
-	                                   ULONG /*allocation_type*/, ULONG /*win32_protect*/)
+	                                   const emulator_object<SIZE_T> view_size,
+	                                   const SECTION_INHERIT /*inherit_disposition*/, const ULONG /*allocation_type*/,
+	                                   const ULONG /*win32_protect*/)
 	{
 		if (process_handle != ~0ULL)
 		{
@@ -591,22 +592,22 @@ namespace
 	}
 
 
-	NTSTATUS handle_NtCreateIoCompletion(const syscall_context& c, const emulator_object<uint64_t> event_handle,
+	NTSTATUS handle_NtCreateIoCompletion(const syscall_context& c, const emulator_object<handle> event_handle,
 	                                     const ACCESS_MASK desired_access,
 	                                     const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
-	                                     uint32_t /*number_of_concurrent_threads*/)
+	                                     const uint32_t /*number_of_concurrent_threads*/)
 	{
 		return handle_NtCreateEvent(c, event_handle, desired_access, object_attributes, NotificationEvent, FALSE);
 	}
 
-	NTSTATUS handle_NtCreateWaitCompletionPacket(const syscall_context& c, const emulator_object<uint64_t> event_handle,
+	NTSTATUS handle_NtCreateWaitCompletionPacket(const syscall_context& c, const emulator_object<handle> event_handle,
 	                                             const ACCESS_MASK desired_access,
 	                                             const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
 	{
 		return handle_NtCreateEvent(c, event_handle, desired_access, object_attributes, NotificationEvent, FALSE);
 	}
 
-	NTSTATUS handle_NtQueryVirtualMemory(const syscall_context& c, const uint64_t process_handle,
+	NTSTATUS handle_NtQueryVirtualMemory(const syscall_context& c, const handle process_handle,
 	                                     const uint64_t base_address, const uint32_t info_class,
 	                                     const uint64_t memory_information, const uint32_t memory_information_length,
 	                                     const emulator_object<uint32_t> return_length)
@@ -893,23 +894,19 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtDuplicateObject(const syscall_context& /*c*/, uint64_t source_process_handle,
-	                                  uint64_t source_handle, uint64_t target_process_handle,
-	                                  const emulator_object<handle> target_handle,
-	                                  const ACCESS_MASK /*desired_access*/, const ULONG /*handle_attributes*/,
-	                                  const ULONG /*options*/)
+	NTSTATUS handle_NtDuplicateObject(const syscall_context& /*c*/, const handle source_process_handle,
+	                                  const handle source_handle, const handle target_process_handle,
+	                                  const emulator_object<handle> target_handle, const ACCESS_MASK /*desired_access*/,
+	                                  const ULONG /*handle_attributes*/, const ULONG /*options*/)
 	{
 		if (source_process_handle != ~0ULL || target_process_handle != ~0ULL)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
 
-		handle source{};
-
-		source.bits = source_handle;
-		if (source.value.is_pseudo)
+		if (source_handle.value.is_pseudo)
 		{
-			target_handle.write(source);
+			target_handle.write(source_handle);
 			return STATUS_SUCCESS;
 		}
 
@@ -996,7 +993,7 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtQueryInformationProcess(const syscall_context& c, const uint64_t process_handle,
+	NTSTATUS handle_NtQueryInformationProcess(const syscall_context& c, const handle process_handle,
 	                                          const uint32_t info_class, const uint64_t process_information,
 	                                          const uint32_t process_information_length,
 	                                          const emulator_object<uint32_t> return_length)
@@ -1172,7 +1169,7 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtQueryInformationThread(const syscall_context& c, const uint64_t thread_handle,
+	NTSTATUS handle_NtQueryInformationThread(const syscall_context& c, const handle thread_handle,
 	                                         const uint32_t info_class, const uint64_t thread_information,
 	                                         const uint32_t thread_information_length,
 	                                         const emulator_object<uint32_t> return_length)
@@ -1228,7 +1225,7 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtSetInformationFile(const syscall_context& c, const uint64_t file_handle,
+	NTSTATUS handle_NtSetInformationFile(const syscall_context& c, const handle file_handle,
 	                                     const emulator_object<IO_STATUS_BLOCK> io_status_block,
 	                                     const uint64_t file_information,
 	                                     const ULONG length, const FILE_INFORMATION_CLASS info_class)
@@ -1275,10 +1272,9 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtQueryInformationFile(const syscall_context& c, uint64_t file_handle,
+	NTSTATUS handle_NtQueryInformationFile(const syscall_context& c, const handle file_handle,
 	                                       const emulator_object<IO_STATUS_BLOCK> io_status_block,
-	                                       const uint64_t file_information,
-	                                       const uint32_t length,
+	                                       const uint64_t file_information, const uint32_t length,
 	                                       const uint32_t info_class)
 	{
 		const auto* f = c.proc.files.get(file_handle);
@@ -1350,7 +1346,7 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtSetInformationProcess(const syscall_context& c, const uint64_t process_handle,
+	NTSTATUS handle_NtSetInformationProcess(const syscall_context& c, const handle process_handle,
 	                                        const uint32_t info_class, const uint64_t /*process_information*/,
 	                                        const uint32_t /*process_information_length*/)
 	{
@@ -1380,7 +1376,7 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtProtectVirtualMemory(const syscall_context& c, const uint64_t process_handle,
+	NTSTATUS handle_NtProtectVirtualMemory(const syscall_context& c, const handle process_handle,
 	                                       const emulator_object<uint64_t> base_address,
 	                                       const emulator_object<uint32_t> bytes_to_protect,
 	                                       const uint32_t protection,
@@ -1423,7 +1419,7 @@ namespace
 	}
 
 	NTSTATUS handle_NtOpenDirectoryObject(const syscall_context& c,
-	                                      const emulator_object<uint64_t> directory_handle,
+	                                      const emulator_object<handle> directory_handle,
 	                                      const ACCESS_MASK /*desired_access*/,
 	                                      const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
 	{
@@ -1432,14 +1428,14 @@ namespace
 
 		if (object_name == L"\\KnownDlls")
 		{
-			directory_handle.write(KNOWN_DLLS_DIRECTORY.bits);
+			directory_handle.write(KNOWN_DLLS_DIRECTORY);
 			return STATUS_SUCCESS;
 		}
 
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtOpenSymbolicLinkObject(const syscall_context& c, const emulator_object<uint64_t> link_handle,
+	NTSTATUS handle_NtOpenSymbolicLinkObject(const syscall_context& c, const emulator_object<handle> link_handle,
 	                                         ACCESS_MASK /*desired_access*/,
 	                                         const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
 	{
@@ -1448,14 +1444,14 @@ namespace
 
 		if (object_name == L"KnownDllPath")
 		{
-			link_handle.write(KNOWN_DLLS_SYMLINK.bits);
+			link_handle.write(KNOWN_DLLS_SYMLINK);
 			return STATUS_SUCCESS;
 		}
 
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS WINAPI handle_NtQuerySymbolicLinkObject(const syscall_context& c, const uint64_t link_handle,
+	NTSTATUS WINAPI handle_NtQuerySymbolicLinkObject(const syscall_context& c, const handle link_handle,
 	                                                 const emulator_object<UNICODE_STRING> link_target,
 	                                                 const emulator_object<ULONG> returned_length)
 	{
@@ -1488,7 +1484,7 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtAllocateVirtualMemoryEx(const syscall_context& c, const uint64_t process_handle,
+	NTSTATUS handle_NtAllocateVirtualMemoryEx(const syscall_context& c, const handle process_handle,
 	                                          const emulator_object<uint64_t> base_address,
 	                                          const emulator_object<uint64_t> bytes_to_allocate,
 	                                          const uint32_t allocation_type,
@@ -1536,9 +1532,8 @@ namespace
 			       : STATUS_MEMORY_NOT_ALLOCATED;
 	}
 
-	NTSTATUS handle_NtAllocateVirtualMemory(const syscall_context& c, const uint64_t process_handle,
-	                                        const emulator_object<uint64_t> base_address,
-	                                        uint64_t /*zero_bits*/,
+	NTSTATUS handle_NtAllocateVirtualMemory(const syscall_context& c, const handle process_handle,
+	                                        const emulator_object<uint64_t> base_address, const uint64_t /*zero_bits*/,
 	                                        const emulator_object<uint64_t> bytes_to_allocate,
 	                                        const uint32_t allocation_type, const uint32_t page_protection)
 	{
@@ -1546,9 +1541,9 @@ namespace
 		                                        page_protection);
 	}
 
-	NTSTATUS handle_NtFreeVirtualMemory(const syscall_context& c, const uint64_t process_handle,
+	NTSTATUS handle_NtFreeVirtualMemory(const syscall_context& c, const handle process_handle,
 	                                    const emulator_object<uint64_t> base_address,
-	                                    const emulator_object<uint64_t> bytes_to_allocate, uint32_t free_type)
+	                                    const emulator_object<uint64_t> bytes_to_allocate, const uint32_t free_type)
 	{
 		if (process_handle != ~0ULL)
 		{
@@ -1705,7 +1700,7 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtQueryInformationToken(const syscall_context& c, const uint64_t token_handle,
+	NTSTATUS handle_NtQueryInformationToken(const syscall_context& c, const handle token_handle,
 	                                        const TOKEN_INFORMATION_CLASS token_information_class,
 	                                        const uint64_t token_information, const ULONG token_information_length,
 	                                        const emulator_object<ULONG> return_length)
@@ -1824,7 +1819,7 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtAlpcSendWaitReceivePort(const syscall_context& c, const uint64_t port_handle,
+	NTSTATUS handle_NtAlpcSendWaitReceivePort(const syscall_context& c, const handle port_handle,
 	                                          const ULONG /*flags*/,
 	                                          const emulator_object<PORT_MESSAGE> /*send_message*/,
 	                                          const emulator_object<ALPC_MESSAGE_ATTRIBUTES>
@@ -1889,16 +1884,16 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtTerminateProcess(const syscall_context& c, const uint64_t process_handle,
+	NTSTATUS handle_NtTerminateProcess(const syscall_context& c, const handle process_handle,
 	                                   NTSTATUS exit_status)
 	{
 		if (process_handle == 0)
 		{
-			for (auto& t : c.proc.threads)
+			for (auto& thread : c.proc.threads | std::views::values)
 			{
-				if (&t.second != c.proc.active_thread)
+				if (&thread != c.proc.active_thread)
 				{
-					t.second.exit_status = exit_status;
+					thread.exit_status = exit_status;
 				}
 			}
 
@@ -2037,7 +2032,7 @@ namespace
 		return mode;
 	}
 
-	NTSTATUS handle_NtCreateFile(const syscall_context& c, const emulator_object<uint64_t> file_handle,
+	NTSTATUS handle_NtCreateFile(const syscall_context& c, const emulator_object<handle> file_handle,
 	                             ACCESS_MASK desired_access,
 	                             const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
 	                             const emulator_object<IO_STATUS_BLOCK> /*io_status_block*/,
@@ -2061,7 +2056,7 @@ namespace
 			io_device_container container{std::move(device_name)};
 
 			const auto handle = c.proc.devices.store(std::move(container));
-			file_handle.write(handle.bits);
+			file_handle.write(handle);
 
 			return STATUS_SUCCESS;
 		}
@@ -2070,7 +2065,7 @@ namespace
 		root_handle.bits = reinterpret_cast<uint64_t>(attributes.RootDirectory);
 		if (root_handle.value.is_pseudo && (filename == L"\\Reference" || filename == L"\\Connect"))
 		{
-			file_handle.write(root_handle.bits);
+			file_handle.write(root_handle);
 			return STATUS_SUCCESS;
 		}
 
@@ -2110,7 +2105,7 @@ namespace
 			}
 
 			const auto handle = c.proc.files.store(std::move(f));
-			file_handle.write(handle.bits);
+			file_handle.write(handle);
 
 			return STATUS_SUCCESS;
 		}
@@ -2145,13 +2140,13 @@ namespace
 		f.handle = file;
 
 		const auto handle = c.proc.files.store(std::move(f));
-		file_handle.write(handle.bits);
+		file_handle.write(handle);
 
 		return STATUS_SUCCESS;
 	}
 
 	NTSTATUS handle_NtOpenFile(const syscall_context& c,
-	                           const emulator_object<uint64_t> file_handle,
+	                           const emulator_object<handle> file_handle,
 	                           const ACCESS_MASK desired_access,
 	                           const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
 	                           const emulator_object<IO_STATUS_BLOCK> io_status_block,
@@ -2165,7 +2160,8 @@ namespace
 	NTSTATUS handle_NtQueryObject(const syscall_context&, const handle /*handle*/,
 	                              const OBJECT_INFORMATION_CLASS /*object_information_class*/,
 	                              const emulator_pointer /*object_information*/,
-	                              const ULONG /*object_information_length*/, const emulator_object<ULONG> /*return_length*/)
+	                              const ULONG /*object_information_length*/,
+	                              const emulator_object<ULONG> /*return_length*/)
 	{
 		return STATUS_NOT_SUPPORTED;
 	}
@@ -2221,7 +2217,7 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtCreateSemaphore(const syscall_context& c, const emulator_object<uint64_t> semaphore_handle,
+	NTSTATUS handle_NtCreateSemaphore(const syscall_context& c, const emulator_object<handle> semaphore_handle,
 	                                  const ACCESS_MASK /*desired_access*/,
 	                                  const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
 	                                  const ULONG initial_count, const ULONG maximum_count)
@@ -2240,7 +2236,7 @@ namespace
 		}
 
 		const auto handle = c.proc.semaphores.store(std::move(s));
-		semaphore_handle.write(handle.bits);
+		semaphore_handle.write(handle);
 
 		return STATUS_SUCCESS;
 	}
@@ -2297,7 +2293,7 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtUnmapViewOfSection(const syscall_context& c, const uint64_t process_handle,
+	NTSTATUS handle_NtUnmapViewOfSection(const syscall_context& c, const handle process_handle,
 	                                     const uint64_t base_address)
 	{
 		if (process_handle != ~0ULL)
@@ -2319,10 +2315,10 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtCreateThreadEx(const syscall_context& c, const emulator_object<uint64_t> thread_handle,
+	NTSTATUS handle_NtCreateThreadEx(const syscall_context& c, const emulator_object<handle> thread_handle,
 	                                 const ACCESS_MASK /*desired_access*/,
 	                                 const emulator_object<OBJECT_ATTRIBUTES> /*object_attributes*/,
-	                                 const uint64_t process_handle, const uint64_t start_routine,
+	                                 const handle process_handle, const uint64_t start_routine,
 	                                 const uint64_t argument, const ULONG /*create_flags*/, const SIZE_T /*zero_bits*/,
 	                                 const SIZE_T stack_size, const SIZE_T /*maximum_stack_size*/,
 	                                 const emulator_object<PS_ATTRIBUTE_LIST> attribute_list)
@@ -2333,7 +2329,7 @@ namespace
 		}
 
 		const auto h = c.proc.create_thread(c.emu, start_routine, argument, stack_size);
-		thread_handle.write(h.bits);
+		thread_handle.write(h);
 
 		if (!attribute_list)
 		{
@@ -2382,7 +2378,7 @@ namespace
 		return FALSE;
 	}
 
-	NTSTATUS handle_NtWaitForSingleObject(const syscall_context& c, const uint64_t handle_value,
+	NTSTATUS handle_NtWaitForSingleObject(const syscall_context& c, const handle h,
 	                                      const BOOLEAN alertable,
 	                                      const emulator_object<LARGE_INTEGER> timeout)
 	{
@@ -2392,9 +2388,6 @@ namespace
 			c.emu.stop();
 			return STATUS_NOT_SUPPORTED;
 		}
-
-		handle h{};
-		h.bits = handle_value;
 
 		if (h.value.type != handle_types::thread && h.value.type != handle_types::event)
 		{
@@ -2417,10 +2410,10 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtTerminateThread(const syscall_context& c, const uint64_t thread_handle,
+	NTSTATUS handle_NtTerminateThread(const syscall_context& c, const handle thread_handle,
 	                                  const NTSTATUS exit_status)
 	{
-		auto* thread = !thread_handle
+		auto* thread = !thread_handle.bits
 			               ? c.proc.active_thread
 			               : c.proc.threads.get(thread_handle);
 

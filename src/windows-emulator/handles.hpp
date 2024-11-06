@@ -4,7 +4,7 @@ struct handle_types
 {
 	enum type : uint16_t
 	{
-		invalid = 0,
+		reserved = 0,
 		file,
 		device,
 		event,

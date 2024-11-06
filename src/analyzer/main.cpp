@@ -57,7 +57,15 @@ namespace
 			throw;
 		}
 
-		win_emu.logger.print(color::red, "Emulation terminated!\n");
+		const auto exit_status = win_emu.process().exit_status;
+		if (exit_status.has_value())
+		{
+			win_emu.logger.print(color::red, "Emulation terminated with status: %X\n", *exit_status);
+		}
+		else
+		{
+			win_emu.logger.print(color::red, "Emulation terminated without status!\n");
+		}
 	}
 
 	void run(const std::string_view application)
