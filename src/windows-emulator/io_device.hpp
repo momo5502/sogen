@@ -1,7 +1,31 @@
 #pragma once
 
 #include <memory>
+#include <x64_emulator.hpp>
 #include <serialization.hpp>
+
+#include "emulator_utils.hpp"
+#include "handles.hpp"
+
+class windows_emulator;
+struct process_context;
+
+struct io_device_context
+{
+	windows_emulator& win_emu;
+	x64_emulator& emu;
+	process_context& proc;
+
+	handle event;
+	emulator_pointer /*PIO_APC_ROUTINE*/ apc_routine;
+	emulator_pointer apc_context;
+	emulator_object<IO_STATUS_BLOCK> io_status_block;
+	ULONG io_control_code;
+	emulator_pointer input_buffer;
+	ULONG input_buffer_length;
+	emulator_pointer output_buffer;
+	ULONG output_buffer_length;
+};
 
 struct io_device
 {
@@ -14,9 +38,7 @@ struct io_device
 	io_device(const io_device&) = delete;
 	io_device& operator=(const io_device&) = delete;
 
-	// TODO
-	virtual void read() = 0;
-	virtual void write() = 0;
+	virtual NTSTATUS io_control(const io_device_context& context) = 0;
 
 	virtual void serialize(utils::buffer_serializer& buffer) const = 0;
 	virtual void deserialize(utils::buffer_deserializer& buffer) = 0;
@@ -46,16 +68,10 @@ public:
 		this->setup();
 	}
 
-	void read() override
+	NTSTATUS io_control(const io_device_context& context) override
 	{
 		this->assert_validity();
-		this->device_->read();
-	}
-
-	void write() override
-	{
-		this->assert_validity();
-		this->device_->write();
+		return this->device_->io_control(context);
 	}
 
 	void serialize(utils::buffer_serializer& buffer) const override

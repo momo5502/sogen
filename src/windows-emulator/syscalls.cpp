@@ -1649,18 +1649,38 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtDeviceIoControlFile(const syscall_context&, const handle /*file_handle*/,
-	                                      const handle /*event*/,
-	                                      const emulator_pointer /*PIO_APC_ROUTINE*/ /*apc_routine*/,
-	                                      const emulator_pointer /*apc_context*/,
-	                                      const emulator_object<IO_STATUS_BLOCK> /*io_status_block*/,
-	                                      const ULONG /*io_control_code*/,
-	                                      const emulator_pointer /*input_buffer*/,
-	                                      const ULONG /*input_buffer_length*/, const emulator_pointer /*output_buffer*/,
-	                                      const ULONG /*output_buffer_length*/)
+	NTSTATUS handle_NtDeviceIoControlFile(const syscall_context& c, const handle file_handle,
+	                                      const handle event,
+	                                      const emulator_pointer /*PIO_APC_ROUTINE*/ apc_routine,
+	                                      const emulator_pointer apc_context,
+	                                      const emulator_object<IO_STATUS_BLOCK> io_status_block,
+	                                      const ULONG io_control_code,
+	                                      const emulator_pointer input_buffer,
+	                                      const ULONG input_buffer_length, const emulator_pointer output_buffer,
+	                                      const ULONG output_buffer_length)
 	{
-		//puts("NtDeviceIoControlFile not supported");
-		return STATUS_SUCCESS;
+		auto* device = c.proc.devices.get(file_handle);
+		if (!device)
+		{
+			return STATUS_INVALID_HANDLE;
+		}
+
+		const io_device_context context{
+			.win_emu = c.win_emu,
+			.emu = c.emu,
+			.proc = c.proc,
+			.event = event,
+			.apc_routine = apc_routine,
+			.apc_context = apc_context,
+			.io_status_block = io_status_block,
+			.io_control_code = io_control_code,
+			.input_buffer = input_buffer,
+			.input_buffer_length = input_buffer_length,
+			.output_buffer = output_buffer,
+			.output_buffer_length = output_buffer_length,
+		};
+
+		return device->io_control(context);
 	}
 
 	NTSTATUS handle_NtQueryWnfStateData()

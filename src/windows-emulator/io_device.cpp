@@ -4,12 +4,9 @@ namespace
 {
 	struct dummy_device : stateless_device
 	{
-		void read() override
+		NTSTATUS io_control(const io_device_context&) override
 		{
-		}
-
-		void write() override
-		{
+			return STATUS_SUCCESS;
 		}
 	};
 }
