@@ -366,6 +366,11 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (value.type == handle_types::device && c.proc.devices.erase(handle))
+		{
+			return STATUS_SUCCESS;
+		}
+
 		if (value.type == handle_types::semaphore && c.proc.semaphores.erase(handle))
 		{
 			return STATUS_SUCCESS;
@@ -2040,39 +2045,16 @@ namespace
 			c.win_emu.logger.print(color::dark_gray, "--> Opening file: %S\n", filename.c_str());
 		});
 
-		if (filename == L"\\Device\\ConDrv\\Server")
+		constexpr std::wstring_view device_prefix = L"\\Device\\";
+		if (filename.starts_with(device_prefix))
 		{
-			file_handle.write(CONSOLE_SERVER.bits);
-			return STATUS_SUCCESS;
-		}
+			auto device_name = filename.substr(device_prefix.size());
+			io_device_container container{std::move(device_name)};
 
-		if (filename == L"\\Device\\DeviceApi\\CMApi")
-		{
-			file_handle.write(CM_API.bits);
-			return STATUS_SUCCESS;
-		}
+			const auto handle = c.proc.devices.store(std::move(container));
+			file_handle.write(handle.bits);
 
-		if (filename == L"\\Device\\KsecDD")
-		{
-			file_handle.write(KSEC_DD.bits);
 			return STATUS_SUCCESS;
-		}
-
-		if (filename == L"\\Device\\CNG")
-		{
-			file_handle.write(CNG.bits);
-			return STATUS_SUCCESS;
-		}
-
-		if (filename.starts_with(L"\\Device\\Afd\\Endpoint"))
-		{
-			file_handle.write(AFD_ENDPOINT.bits);
-			return STATUS_SUCCESS;
-		}
-
-		if (filename.starts_with(L"\\Device\\"))
-		{
-			return STATUS_NOT_SUPPORTED;
 		}
 
 		handle root_handle{};

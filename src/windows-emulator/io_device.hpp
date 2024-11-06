@@ -8,6 +8,12 @@ struct io_device
 	io_device() = default;
 	virtual ~io_device() = default;
 
+	io_device(io_device&&) = default;
+	io_device& operator=(io_device&&) = default;
+
+	io_device(const io_device&) = delete;
+	io_device& operator=(const io_device&) = delete;
+
 	// TODO
 	virtual void read() = 0;
 	virtual void write() = 0;
@@ -16,12 +22,18 @@ struct io_device
 	virtual void deserialize(utils::buffer_deserializer& buffer) = 0;
 };
 
-// TODO
-inline std::unique_ptr<io_device> create_device(const std::wstring_view device)
+struct stateless_device : io_device
 {
-	(void)device;
-	return {};
-}
+	void serialize(utils::buffer_serializer&) const override
+	{
+	}
+
+	void deserialize(utils::buffer_deserializer&) override
+	{
+	}
+};
+
+std::unique_ptr<io_device> create_device(const std::wstring_view device);
 
 class io_device_container : public io_device
 {
