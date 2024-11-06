@@ -1575,15 +1575,15 @@ namespace
 		throw std::runtime_error("Bad free type");
 	}
 
-	NTSTATUS handle_NtCreateSection(const syscall_context& c, const emulator_object<uint64_t> section_handle,
+	NTSTATUS handle_NtCreateSection(const syscall_context& c, const emulator_object<handle> section_handle,
 	                                const ACCESS_MASK /*desired_access*/,
 	                                const emulator_object<OBJECT_ATTRIBUTES> /*object_attributes*/,
 	                                const emulator_object<ULARGE_INTEGER> maximum_size,
 	                                const ULONG /*section_page_protection*/, const ULONG /*allocation_attributes*/,
-	                                const uint64_t /*file_handle*/)
+	                                const handle /*file_handle*/)
 	{
 		//puts("NtCreateSection not supported");
-		section_handle.write(SHARED_SECTION.bits);
+		section_handle.write(SHARED_SECTION);
 
 		maximum_size.access([&c](ULARGE_INTEGER& large_int)
 		{
@@ -1594,13 +1594,13 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtConnectPort(const syscall_context& c, const emulator_object<uint64_t> client_port_handle,
+	NTSTATUS handle_NtConnectPort(const syscall_context& c, const emulator_object<handle> client_port_handle,
 	                              const emulator_object<UNICODE_STRING> server_port_name,
 	                              const emulator_object<SECURITY_QUALITY_OF_SERVICE> /*security_qos*/,
 	                              const emulator_object<PORT_VIEW> client_shared_memory,
 	                              const emulator_object<REMOTE_PORT_VIEW> /*server_shared_memory*/,
 	                              const emulator_object<ULONG> /*maximum_message_length*/,
-	                              uint64_t connection_info,
+	                              const emulator_pointer connection_info,
 	                              const emulator_object<ULONG> connection_info_length)
 	{
 		auto port_name = read_unicode_string(c.emu, server_port_name);
@@ -1624,13 +1624,14 @@ namespace
 		});
 
 		const auto handle = c.proc.ports.store(std::move(p));
-		client_port_handle.write(handle.bits);
+		client_port_handle.write(handle);
 
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtReadVirtualMemory(const syscall_context& c, uint64_t process_handle, uint64_t base_address,
-	                                    uint64_t buffer, ULONG number_of_bytes_to_read,
+	NTSTATUS handle_NtReadVirtualMemory(const syscall_context& c, const handle process_handle,
+	                                    const emulator_pointer base_address,
+	                                    const emulator_pointer buffer, const ULONG number_of_bytes_to_read,
 	                                    const emulator_object<ULONG> number_of_bytes_read)
 	{
 		number_of_bytes_read.write(0);
@@ -1653,7 +1654,15 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtDeviceIoControlFile()
+	NTSTATUS handle_NtDeviceIoControlFile(const syscall_context&, const handle /*file_handle*/,
+	                                      const handle /*event*/,
+	                                      const emulator_pointer /*PIO_APC_ROUTINE*/ /*apc_routine*/,
+	                                      const emulator_pointer /*apc_context*/,
+	                                      const emulator_object<IO_STATUS_BLOCK> /*io_status_block*/,
+	                                      const ULONG /*io_control_code*/,
+	                                      const emulator_pointer /*input_buffer*/,
+	                                      const ULONG /*input_buffer_length*/, const emulator_pointer /*output_buffer*/,
+	                                      const ULONG /*output_buffer_length*/)
 	{
 		//puts("NtDeviceIoControlFile not supported");
 		return STATUS_SUCCESS;
@@ -2153,6 +2162,14 @@ namespace
 		                           share_access, FILE_OPEN, open_options, 0, 0);
 	}
 
+	NTSTATUS handle_NtQueryObject(const syscall_context&, const handle /*handle*/,
+	                              const OBJECT_INFORMATION_CLASS /*object_information_class*/,
+	                              const emulator_pointer /*object_information*/,
+	                              const ULONG /*object_information_length*/, const emulator_object<ULONG> /*return_length*/)
+	{
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtQueryInformationJobObject()
 	{
 		return STATUS_NOT_SUPPORTED;
@@ -2586,6 +2603,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtCreateKey);
 	add_handler(NtNotifyChangeKey);
 	add_handler(NtGetCurrentProcessorNumberEx);
+	add_handler(NtQueryObject);
 
 #undef add_handler
 }

@@ -1,6 +1,9 @@
 #pragma once
 #include "memory_utils.hpp"
 
+// TODO: Replace with pointer handling structure for future 32 bit support
+using emulator_pointer = uint64_t;
+
 template <typename T>
 class emulator_object
 {
