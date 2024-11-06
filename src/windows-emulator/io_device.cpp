@@ -1,4 +1,5 @@
 #include "io_device.hpp"
+#include "devices/afd_endpoint.hpp"
 
 namespace
 {
@@ -16,10 +17,14 @@ std::unique_ptr<io_device> create_device(const std::wstring_view device)
 	if (device == L"CNG"
 		|| device == L"KsecDD"
 		|| device == L"DeviceApi\\CMApi"
-		|| device == L"ConDrv\\Server"
-		|| device == L"Afd\\Endpoint")
+		|| device == L"ConDrv\\Server")
 	{
 		return std::make_unique<dummy_device>();
+	}
+
+	if (device == L"Afd\\Endpoint")
+	{
+		return create_afd_endpoint();
 	}
 
 	throw std::runtime_error("Unsupported device: " + std::string(device.begin(), device.end()));
