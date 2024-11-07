@@ -116,6 +116,13 @@ namespace
 				return STATUS_CONNECTION_REFUSED;
 			}
 
+			if (c.io_status_block)
+			{
+				IO_STATUS_BLOCK block{};
+				block.Information = data.size();
+				c.io_status_block.write(block);
+			}
+
 			return STATUS_SUCCESS;
 		}
 	};
