@@ -63,15 +63,16 @@ namespace utils
 	{
 	public:
 		template <typename T>
-		buffer_deserializer(const std::span<T> buffer)
-			: buffer_(reinterpret_cast<const std::byte*>(buffer.data()), buffer.size() * sizeof(T))
+		buffer_deserializer(const std::span<T> buffer, bool no_debugging = false)
+			: no_debugging_(no_debugging)
+			  , buffer_(reinterpret_cast<const std::byte*>(buffer.data()), buffer.size() * sizeof(T))
 		{
 			static_assert(std::is_trivially_copyable_v<T>, "Type must be trivially copyable");
 		}
 
 		template <typename T>
-		buffer_deserializer(const std::vector<T>& buffer)
-			: buffer_deserializer(std::span(buffer))
+		buffer_deserializer(const std::vector<T>& buffer, bool no_debugging = false)
+			: buffer_deserializer(std::span(buffer), no_debugging)
 		{
 		}
 
@@ -79,6 +80,7 @@ namespace utils
 		{
 #ifndef NDEBUG
 			const uint64_t real_old_size = this->offset_;
+			(void)real_old_size;
 #endif
 
 			if (this->offset_ + length > this->buffer_.size())
@@ -91,19 +93,22 @@ namespace utils
 
 
 #ifndef NDEBUG
-			uint64_t old_size{};
-			if (this->offset_ + sizeof(old_size) > this->buffer_.size())
+			if (!this->no_debugging_)
 			{
-				throw std::runtime_error("Out of bounds read from byte buffer");
-			}
+				uint64_t old_size{};
+				if (this->offset_ + sizeof(old_size) > this->buffer_.size())
+				{
+					throw std::runtime_error("Out of bounds read from byte buffer");
+				}
 
-			memcpy(&old_size, this->buffer_.data() + this->offset_, sizeof(old_size));
-			if (old_size != real_old_size)
-			{
-				throw std::runtime_error("Reading from serialized buffer mismatches written data!");
-			}
+				memcpy(&old_size, this->buffer_.data() + this->offset_, sizeof(old_size));
+				if (old_size != real_old_size)
+				{
+					throw std::runtime_error("Reading from serialized buffer mismatches written data!");
+				}
 
-			this->offset_ += sizeof(old_size);
+				this->offset_ += sizeof(old_size);
+			}
 #endif
 
 			return result;
@@ -276,6 +281,7 @@ namespace utils
 		}
 
 	private:
+		bool no_debugging_{false};
 		size_t offset_{0};
 		std::span<const std::byte> buffer_{};
 		std::unordered_map<std::type_index, std::function<void*()>> factories_{};
