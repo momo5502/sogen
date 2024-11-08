@@ -29,14 +29,7 @@ namespace network
 
 	socket::~socket()
 	{
-		if (this->socket_ != INVALID_SOCKET)
-		{
-#ifdef _WIN32
-			closesocket(this->socket_);
-#else
-			close(this->socket_);
-#endif
-		}
+		this->release();
 	}
 
 	socket::socket(socket&& obj) noexcept
@@ -48,7 +41,7 @@ namespace network
 	{
 		if (this != &obj)
 		{
-			this->~socket();
+			this->release();
 			this->socket_ = obj.socket_;
 			this->port_ = obj.port_;
 			this->address_family_ = obj.address_family_;
@@ -58,6 +51,15 @@ namespace network
 		}
 
 		return *this;
+	}
+
+	void socket::release()
+	{
+		if (this->socket_ != INVALID_SOCKET)
+		{
+			closesocket(this->socket_);
+			this->socket_ = INVALID_SOCKET;
+		}
 	}
 
 	bool socket::bind_port(const address& target)
@@ -182,7 +184,7 @@ namespace network
 		}
 
 		const auto retval = poll(pfds.data(), static_cast<uint32_t>(pfds.size()),
-		                              static_cast<int>(timeout.count()));
+		                         static_cast<int>(timeout.count()));
 
 		if (retval == SOCKET_ERROR)
 		{

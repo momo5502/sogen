@@ -27,6 +27,16 @@ struct io_device_context
 	ULONG output_buffer_length;
 };
 
+struct io_device_creation_data
+{
+	windows_emulator& win_emu;
+	x64_emulator& emu;
+	process_context& proc;
+
+	uint64_t buffer;
+	uint32_t length;
+};
+
 struct io_device
 {
 	io_device() = default;
@@ -40,12 +50,21 @@ struct io_device
 
 	virtual NTSTATUS io_control(const io_device_context& context) = 0;
 
+	virtual void create(const io_device_creation_data& data)
+	{
+		(void)data;
+	}
+
 	virtual void serialize(utils::buffer_serializer& buffer) const = 0;
 	virtual void deserialize(utils::buffer_deserializer& buffer) = 0;
 };
 
 struct stateless_device : io_device
 {
+	void create(const io_device_creation_data&) final
+	{
+	}
+
 	void serialize(utils::buffer_serializer&) const override
 	{
 	}
@@ -62,10 +81,11 @@ class io_device_container : public io_device
 public:
 	io_device_container() = default;
 
-	io_device_container(std::wstring device)
+	io_device_container(std::wstring device, const io_device_creation_data& data)
 		: device_name_(std::move(device))
 	{
 		this->setup();
+		this->device_->create(data);
 	}
 
 	NTSTATUS io_control(const io_device_context& context) override

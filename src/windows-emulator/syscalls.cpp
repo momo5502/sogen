@@ -2058,8 +2058,8 @@ namespace
 	                             const emulator_object<IO_STATUS_BLOCK> /*io_status_block*/,
 	                             const emulator_object<LARGE_INTEGER> /*allocation_size*/, ULONG /*file_attributes*/,
 	                             ULONG /*share_access*/, ULONG create_disposition, ULONG create_options,
-	                             uint64_t /*ea_buffer*/,
-	                             ULONG /*ea_length*/)
+	                             uint64_t ea_buffer,
+	                             ULONG ea_length)
 	{
 		const auto attributes = object_attributes.read();
 		auto filename = read_unicode_string(c.emu, attributes.ObjectName);
@@ -2072,8 +2072,16 @@ namespace
 		constexpr std::wstring_view device_prefix = L"\\Device\\";
 		if (filename.starts_with(device_prefix))
 		{
+			const io_device_creation_data data{
+				.win_emu = c.win_emu,
+				.emu = c.emu,
+				.proc = c.proc,
+				.buffer = ea_buffer,
+				.length = ea_length,
+			};
+
 			auto device_name = filename.substr(device_prefix.size());
-			io_device_container container{std::move(device_name)};
+			io_device_container container{std::move(device_name), data};
 
 			const auto handle = c.proc.devices.store(std::move(container));
 			file_handle.write(handle);

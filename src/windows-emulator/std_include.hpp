@@ -62,6 +62,7 @@
 #include <phnt_windows.h>
 #include <phnt.h>
 #include <ntgdi.h>
+#include <ws2def.h>
 
 #ifdef _WIN32
 #pragma warning(pop)

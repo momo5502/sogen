@@ -13,6 +13,7 @@ using socklen_t = int;
 #define INVALID_SOCKET  (SOCKET)(~0)
 #define SOCKET_ERROR            (-1)
 #define GET_SOCKET_ERROR() (errno)
+#define closesocket close
 #endif
 
 namespace network
@@ -56,5 +57,7 @@ namespace network
 		int address_family_{AF_UNSPEC};
 		uint16_t port_ = 0;
 		SOCKET socket_ = INVALID_SOCKET;
+
+		void release();
 	};
 }
