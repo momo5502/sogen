@@ -41,6 +41,12 @@ public:
 	}
 
 	template <typename T>
+	T read_memory(const void* address)
+	{
+		return this->read_memory<T>(reinterpret_cast<uint64_t>(address));
+	}
+
+	template <typename T>
 	void write_memory(const uint64_t address, const T& value)
 	{
 		this->write_memory(address, &value, sizeof(value));

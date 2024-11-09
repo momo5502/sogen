@@ -35,6 +35,14 @@ typedef struct _TDI_REQUEST_SEND_DATAGRAM
 	PTDI_CONNECTION_INFORMATION SendDatagramInformation;
 } TDI_REQUEST_SEND_DATAGRAM, *PTDI_REQUEST_SEND_DATAGRAM;
 
+typedef struct _AFD_SEND_INFO
+{
+	LPWSABUF BufferArray;
+	ULONG BufferCount;
+	ULONG AfdFlags;
+	ULONG TdiFlags;
+} AFD_SEND_INFO, *PAFD_SEND_INFO;
+
 typedef struct _AFD_SEND_DATAGRAM_INFO
 {
 	LPWSABUF BufferArray;
@@ -43,6 +51,24 @@ typedef struct _AFD_SEND_DATAGRAM_INFO
 	TDI_REQUEST_SEND_DATAGRAM TdiRequest;
 	TDI_CONNECTION_INFORMATION TdiConnInfo;
 } AFD_SEND_DATAGRAM_INFO, *PAFD_SEND_DATAGRAM_INFO;
+
+typedef struct _AFD_RECV_INFO
+{
+	LPWSABUF BufferArray;
+	ULONG BufferCount;
+	ULONG AfdFlags;
+	ULONG TdiFlags;
+} AFD_RECV_INFO, *PAFD_RECV_INFO;
+
+typedef struct _AFD_RECV_DATAGRAM_INFO
+{
+	LPWSABUF BufferArray;
+	ULONG BufferCount;
+	ULONG AfdFlags;
+	ULONG TdiFlags;
+	PVOID Address;
+	PULONG AddressLength;
+} AFD_RECV_DATAGRAM_INFO, *PAFD_RECV_DATAGRAM_INFO;
 
 #define _AFD_REQUEST(ioctl) \
                 ((((ULONG)(ioctl)) >> 2) & 0x03FF)
