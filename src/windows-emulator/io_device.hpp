@@ -133,6 +133,15 @@ public:
 		this->device_->deserialize(buffer);
 	}
 
+	template <typename T = io_device>
+		requires(std::is_base_of_v<io_device, T> || std::is_same_v<io_device, T>)
+	T* get_internal_device()
+	{
+		this->assert_validity();
+		auto* value = this->device_.get();
+		return dynamic_cast<T*>(value);
+	}
+
 private:
 	std::wstring device_name_{};
 	std::unique_ptr<io_device> device_{};

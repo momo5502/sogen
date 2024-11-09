@@ -134,9 +134,7 @@ namespace
 
 		NTSTATUS ioctl_bind(windows_emulator& win_emu, const io_device_context& c) const
 		{
-			std::vector<std::byte> data{};
-			data.resize(c.input_buffer_length);
-			win_emu.emu().read_memory(c.input_buffer, data.data(), c.input_buffer_length);
+			const auto data = win_emu.emu().read_memory(c.input_buffer, c.input_buffer_length);
 
 			constexpr auto address_offset = 4;
 
@@ -206,13 +204,13 @@ namespace
 				return STATUS_UNSUCCESSFUL;
 			}
 
-			emu.write_memory(reinterpret_cast<uint64_t>(buffer.buf), data.data(),
-			                 std::min(data.size(), static_cast<size_t>(recevied_data)));
+			const auto data_size = std::min(data.size(), static_cast<size_t>(recevied_data));
+			emu.write_memory(buffer.buf, data.data(), data_size);
 
 			if (receive_info.Address && address_length)
 			{
-				emu.write_memory(reinterpret_cast<uint64_t>(receive_info.Address), address.data(),
-				                 std::min(address.size(), static_cast<size_t>(address_length)));
+				const auto address_size = std::min(address.size(), static_cast<size_t>(address_length));
+				emu.write_memory(receive_info.Address, address.data(), address_size);
 			}
 
 			if (c.io_status_block)
@@ -237,17 +235,13 @@ namespace
 			const auto send_info = emu.read_memory<AFD_SEND_DATAGRAM_INFO>(c.input_buffer);
 			const auto buffer = emu.read_memory<WSABUF>(send_info.BufferArray);
 
-			std::vector<std::byte> address{};
-			address.resize(send_info.TdiConnInfo.RemoteAddressLength);
-			emu.read_memory(reinterpret_cast<uint64_t>(send_info.TdiConnInfo.RemoteAddress), address.data(),
-			                address.size());
+			const auto address = emu.read_memory(send_info.TdiConnInfo.RemoteAddress,
+			                                     send_info.TdiConnInfo.RemoteAddressLength);
 
-			const network::address target(reinterpret_cast<sockaddr*>(address.data()),
+			const network::address target(reinterpret_cast<const sockaddr*>(address.data()),
 			                              static_cast<int>(address.size()));
 
-			std::vector<std::byte> data{};
-			data.resize(buffer.len);
-			emu.read_memory(reinterpret_cast<uint64_t>(buffer.buf), data.data(), data.size());
+			const auto data = emu.read_memory(buffer.buf, buffer.len);
 
 			const auto sent_data = sendto(*this->s, reinterpret_cast<const char*>(data.data()),
 			                              static_cast<int>(data.size()), 0 /* ? */, &target.get_addr(),

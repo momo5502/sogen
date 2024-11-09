@@ -33,7 +33,7 @@ public:
 	virtual ~memory_manager() = default;
 
 	template <typename T>
-	T read_memory(const uint64_t address)
+	T read_memory(const uint64_t address) const
 	{
 		T value{};
 		this->read_memory(address, &value, sizeof(value));
@@ -41,15 +41,35 @@ public:
 	}
 
 	template <typename T>
-	T read_memory(const void* address)
+	T read_memory(const void* address) const
 	{
 		return this->read_memory<T>(reinterpret_cast<uint64_t>(address));
+	}
+
+	std::vector<std::byte> read_memory(const uint64_t address, const size_t size) const
+	{
+		std::vector<std::byte> data{};
+		data.resize(size);
+
+		this->read_memory(address, data.data(), data.size());
+
+		return data;
+	}
+
+	std::vector<std::byte> read_memory(const void* address, const size_t size) const
+	{
+		return this->read_memory(reinterpret_cast<uint64_t>(address), size);
 	}
 
 	template <typename T>
 	void write_memory(const uint64_t address, const T& value)
 	{
 		this->write_memory(address, &value, sizeof(value));
+	}
+
+	void write_memory(void* address, const void* data, const size_t size)
+	{
+		this->write_memory(reinterpret_cast<uint64_t>(address), data, size);
 	}
 
 	virtual void read_memory(uint64_t address, void* data, size_t size) const = 0;
