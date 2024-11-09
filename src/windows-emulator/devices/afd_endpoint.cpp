@@ -93,17 +93,6 @@ namespace
 				pfd.events |= POLLWRNORM;
 			}
 
-			/*if ((pfd.events & POLLRDNORM) != 0)
-				handle.PollEvents |= (AFD_POLL_ACCEPT | AFD_POLL_RECEIVE);
-			if ((pfd.events & POLLRDBAND) != 0)
-				handle.PollEvents |= AFD_POLL_RECEIVE_EXPEDITED;
-
-			if ((pfd.events & POLLWRNORM) != 0)
-				handle.PollEvents |= (AFD_POLL_CONNECT_FAIL | AFD_POLL_SEND);
-			handle.PollEvents |= (AFD_POLL_DISCONNECT | AFD_POLL_ABORT);*/
-
-			// -----------------------------
-
 			pfd.fd = endpoints[i];
 			pfd.events = POLLIN;
 			pfd.revents = pfd.events;
@@ -155,19 +144,6 @@ namespace
 				{
 					events |= AFD_POLL_LOCAL_CLOSE;
 				}
-
-				/*if ((handle.PollEvents & (AFD_POLL_ACCEPT | AFD_POLL_RECEIVE)) != 0 && (pfd.events & POLLRDNORM) != 0)
-					pfd.revents |= POLLRDNORM;
-				if ((handle.PollEvents & AFD_POLL_RECEIVE_EXPEDITED) != 0 && (pfd.events & POLLRDBAND) != 0)
-					pfd.revents |= POLLRDBAND;
-				if ((handle.PollEvents & (AFD_POLL_CONNECT_FAIL | AFD_POLL_SEND)) != 0 && (pfd.events & POLLWRNORM) != 0)
-					pfd.revents |= POLLWRNORM;
-				if ((handle.PollEvents & AFD_POLL_DISCONNECT) != 0)
-					pfd.revents |= POLLHUP;
-				if ((handle.PollEvents & (AFD_POLL_CONNECT_FAIL | AFD_POLL_ABORT)) != 0)
-					pfd.revents |= POLLHUP | POLLERR;
-				if ((handle.PollEvents & AFD_POLL_LOCAL_CLOSE) != 0)
-					pfd.revents |= POLLNVAL;*/
 
 				auto entry = handle_info_obj.read(i);
 				entry.PollEvents = events;
