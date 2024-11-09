@@ -61,6 +61,135 @@ namespace
 		return {std::move(poll_info), std::move(handle_info)};
 	}
 
+	std::optional<NTSTATUS> perform_poll(windows_emulator& win_emu, const io_device_context& c,
+	                                     const std::span<const SOCKET> endpoints,
+	                                     const std::span<const AFD_POLL_HANDLE_INFO> handles)
+	{
+		std::vector<pollfd> poll_data{};
+		poll_data.resize(endpoints.size());
+
+		for (size_t i = 0; i < endpoints.size() && i < handles.size(); ++i)
+		{
+			auto& pfd = poll_data.at(i);
+			auto& handle = handles[i];
+
+			if (handle.PollEvents & (AFD_POLL_ACCEPT | AFD_POLL_RECEIVE))
+			{
+				pfd.events |= POLLRDNORM;
+			}
+
+			if (handle.PollEvents & AFD_POLL_RECEIVE_EXPEDITED)
+			{
+				pfd.events |= POLLRDNORM;
+			}
+
+			if (handle.PollEvents & AFD_POLL_RECEIVE_EXPEDITED)
+			{
+				pfd.events |= POLLRDBAND;
+			}
+
+			if (handle.PollEvents & (AFD_POLL_CONNECT_FAIL | AFD_POLL_SEND))
+			{
+				pfd.events |= POLLWRNORM;
+			}
+
+			/*if ((pfd.events & POLLRDNORM) != 0)
+				handle.PollEvents |= (AFD_POLL_ACCEPT | AFD_POLL_RECEIVE);
+			if ((pfd.events & POLLRDBAND) != 0)
+				handle.PollEvents |= AFD_POLL_RECEIVE_EXPEDITED;
+
+			if ((pfd.events & POLLWRNORM) != 0)
+				handle.PollEvents |= (AFD_POLL_CONNECT_FAIL | AFD_POLL_SEND);
+			handle.PollEvents |= (AFD_POLL_DISCONNECT | AFD_POLL_ABORT);*/
+
+			// -----------------------------
+
+			pfd.fd = endpoints[i];
+			pfd.events = POLLIN;
+			pfd.revents = pfd.events;
+		}
+
+		const auto count = poll(poll_data.data(), static_cast<uint32_t>(poll_data.size()), 0);
+		if (count > 0)
+		{
+			constexpr auto info_size = offsetof(AFD_POLL_INFO, Handles);
+			const emulator_object<AFD_POLL_HANDLE_INFO> handle_info_obj{win_emu.emu(), c.input_buffer + info_size};
+
+			size_t current_index = 0;
+
+			for (size_t i = 0; i < endpoints.size(); ++i)
+			{
+				const auto& pfd = poll_data.at(i);
+				if (pfd.revents == 0)
+				{
+					continue;
+				}
+
+				ULONG events = 0;
+
+				if (pfd.revents & POLLRDNORM)
+				{
+					events |= (AFD_POLL_ACCEPT | AFD_POLL_RECEIVE);
+				}
+
+				if (pfd.revents & POLLRDBAND)
+				{
+					events |= AFD_POLL_RECEIVE_EXPEDITED;
+				}
+
+				if (pfd.revents & POLLWRNORM)
+				{
+					events |= (AFD_POLL_CONNECT_FAIL | AFD_POLL_SEND);
+				}
+
+				if ((pfd.revents & (POLLHUP | POLLERR)) == (POLLHUP | POLLERR))
+				{
+					events |= (AFD_POLL_CONNECT_FAIL | AFD_POLL_ABORT);
+				}
+				else if (pfd.revents & POLLHUP)
+				{
+					events |= AFD_POLL_DISCONNECT;
+				}
+
+				if (pfd.revents & POLLNVAL)
+				{
+					events |= AFD_POLL_LOCAL_CLOSE;
+				}
+
+				/*if ((handle.PollEvents & (AFD_POLL_ACCEPT | AFD_POLL_RECEIVE)) != 0 && (pfd.events & POLLRDNORM) != 0)
+					pfd.revents |= POLLRDNORM;
+				if ((handle.PollEvents & AFD_POLL_RECEIVE_EXPEDITED) != 0 && (pfd.events & POLLRDBAND) != 0)
+					pfd.revents |= POLLRDBAND;
+				if ((handle.PollEvents & (AFD_POLL_CONNECT_FAIL | AFD_POLL_SEND)) != 0 && (pfd.events & POLLWRNORM) != 0)
+					pfd.revents |= POLLWRNORM;
+				if ((handle.PollEvents & AFD_POLL_DISCONNECT) != 0)
+					pfd.revents |= POLLHUP;
+				if ((handle.PollEvents & (AFD_POLL_CONNECT_FAIL | AFD_POLL_ABORT)) != 0)
+					pfd.revents |= POLLHUP | POLLERR;
+				if ((handle.PollEvents & AFD_POLL_LOCAL_CLOSE) != 0)
+					pfd.revents |= POLLNVAL;*/
+
+				auto entry = handle_info_obj.read(i);
+				entry.PollEvents = events;
+				entry.Status = STATUS_SUCCESS;
+
+				handle_info_obj.write(entry, current_index++);
+				break;
+			}
+
+			assert(current_index == static_cast<size_t>(count));
+
+			emulator_object<AFD_POLL_INFO>{win_emu.emu(), c.input_buffer}.access([&](AFD_POLL_INFO& info)
+			{
+				info.NumberOfHandles = count;
+			});
+
+			return STATUS_SUCCESS;
+		}
+
+		return {};
+	}
+
 	struct afd_endpoint : io_device
 	{
 		bool in_poll{};
@@ -187,12 +316,12 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		static std::vector<afd_endpoint*> resolve_endpoints(windows_emulator& win_emu,
-		                                                    const std::span<const AFD_POLL_HANDLE_INFO> handles)
+		static std::vector<SOCKET> resolve_endpoints(windows_emulator& win_emu,
+		                                             const std::span<const AFD_POLL_HANDLE_INFO> handles)
 		{
 			auto& proc = win_emu.process();
 
-			std::vector<afd_endpoint*> endpoints{};
+			std::vector<SOCKET> endpoints{};
 			endpoints.reserve(handles.size());
 
 			for (const auto& handle : handles)
@@ -203,13 +332,13 @@ namespace
 					throw std::runtime_error("Bad device!");
 				}
 
-				auto* endpoint = device->get_internal_device<afd_endpoint>();
+				const auto* endpoint = device->get_internal_device<afd_endpoint>();
 				if (!endpoint)
 				{
 					throw std::runtime_error("Device is not an AFD endpoint!");
 				}
 
-				endpoints.push_back(endpoint);
+				endpoints.push_back(*endpoint->s);
 			}
 
 			return endpoints;
@@ -221,28 +350,10 @@ namespace
 			const auto [info, handles] = get_poll_info(win_emu, c);
 			const auto endpoints = resolve_endpoints(win_emu, handles);
 
-			std::vector<pollfd> poll_data{};
-			poll_data.resize(endpoints.size());
-
-			for (size_t i = 0; i < endpoints.size(); ++i)
+			const auto status = perform_poll(win_emu, c, endpoints, handles);
+			if (status)
 			{
-				auto& pfd = poll_data.at(i);
-				//auto& handle = handles.at(i);
-
-				pfd.fd = *endpoints.at(i)->s;
-				pfd.events = POLLIN;
-				pfd.revents = pfd.events;
-			}
-
-			const auto count = poll(poll_data.data(), static_cast<uint32_t>(poll_data.size()), 0);
-			if (count > 0)
-			{
-				emulator_object<AFD_POLL_INFO>{win_emu.emu(), c.input_buffer}.access([&](AFD_POLL_INFO& info)
-				{
-					info.NumberOfHandles = count;
-				});
-
-				t.pending_status = STATUS_SUCCESS;
+				t.pending_status = *status;
 				return true;
 			}
 
