@@ -736,6 +736,7 @@ namespace
 	{
 		if (info_class == SystemFlushInformation
 			|| info_class == SystemHypervisorSharedPageInformation
+			|| info_class == 250 // Build 27744
 		)
 		{
 			return STATUS_NOT_SUPPORTED;
