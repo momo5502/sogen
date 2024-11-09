@@ -520,7 +520,7 @@ namespace
 		auto& emu = win_emu.emu();
 		auto& context = win_emu.process();
 
-		if (!thread.is_thread_ready(context))
+		if (!thread.is_thread_ready(win_emu))
 		{
 			return false;
 		}
@@ -679,10 +679,22 @@ void emulator_thread::mark_as_ready(const NTSTATUS status)
 	this->waiting_for_alert = false;
 }
 
-bool emulator_thread::is_thread_ready(process_context& context)
+bool emulator_thread::is_thread_ready(windows_emulator& win_emu)
 {
 	if (this->exit_status.has_value())
 	{
+		return false;
+	}
+
+	if (this->thread_blocker)
+	{
+		const auto res = this->thread_blocker(win_emu, *this);
+		if (res)
+		{
+			this->thread_blocker = {};
+			return true;
+		}
+
 		return false;
 	}
 
@@ -704,7 +716,7 @@ bool emulator_thread::is_thread_ready(process_context& context)
 
 	if (this->await_object.has_value())
 	{
-		if (is_object_signaled(context, *this->await_object))
+		if (is_object_signaled(win_emu.process(), *this->await_object))
 		{
 			this->mark_as_ready(STATUS_WAIT_0);
 			return true;

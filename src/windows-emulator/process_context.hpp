@@ -26,6 +26,8 @@
 #define GDT_LIMIT 0x1000
 #define GDT_ENTRY_SIZE 0x8
 
+class windows_emulator;
+
 struct ref_counted_object
 {
 	uint32_t ref_count{1};
@@ -220,6 +222,9 @@ public:
 	bool alerted{false};
 	std::optional<std::chrono::steady_clock::time_point> await_time{};
 
+	// TODO: Get rid of that!
+	std::function<bool(windows_emulator&, emulator_thread&)> thread_blocker{};
+
 	std::optional<NTSTATUS> pending_status{};
 
 	std::optional<emulator_allocator> gs_segment;
@@ -234,7 +239,7 @@ public:
 		return this->await_time.has_value() && this->await_time.value() < std::chrono::steady_clock::now();
 	}
 
-	bool is_thread_ready(process_context& context);
+	bool is_thread_ready(windows_emulator& win_emu);
 
 	void save(x64_emulator& emu)
 	{

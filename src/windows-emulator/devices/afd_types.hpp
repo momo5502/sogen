@@ -70,6 +70,21 @@ typedef struct _AFD_RECV_DATAGRAM_INFO
 	PULONG AddressLength;
 } AFD_RECV_DATAGRAM_INFO, *PAFD_RECV_DATAGRAM_INFO;
 
+typedef struct _AFD_POLL_HANDLE_INFO
+{
+	HANDLE Handle;
+	ULONG PollEvents;
+	NTSTATUS Status;
+} AFD_POLL_HANDLE_INFO, *PAFD_POLL_HANDLE_INFO;
+
+typedef struct _AFD_POLL_INFO
+{
+	LARGE_INTEGER Timeout;
+	ULONG NumberOfHandles;
+	BOOLEAN Unique;
+	AFD_POLL_HANDLE_INFO Handles[1];
+} AFD_POLL_INFO, *PAFD_POLL_INFO;
+
 #define _AFD_REQUEST(ioctl) \
                 ((((ULONG)(ioctl)) >> 2) & 0x03FF)
 #define _AFD_BASE(ioctl) \

@@ -2,6 +2,7 @@
 #include "afd_types.hpp"
 
 #include "../windows_emulator.hpp"
+#include "../syscall_utils.hpp"
 
 #include <network/address.hpp>
 #include <network/socket.hpp>
@@ -29,6 +30,35 @@ namespace
 		}
 
 		return win_emu.emu().read_memory<afd_creation_data>(data.buffer);
+	}
+
+	std::pair<AFD_POLL_INFO, std::vector<AFD_POLL_HANDLE_INFO>> get_poll_info(
+		windows_emulator& win_emu, const io_device_context& c)
+	{
+		constexpr auto info_size = offsetof(AFD_POLL_INFO, Handles);
+		if (!c.input_buffer || c.input_buffer_length < info_size)
+		{
+			throw std::runtime_error("Bad AFD poll data");
+		}
+
+		AFD_POLL_INFO poll_info{};
+		win_emu.emu().read_memory(c.input_buffer, &poll_info, info_size);
+
+		std::vector<AFD_POLL_HANDLE_INFO> handle_info{};
+
+		const emulator_object<AFD_POLL_HANDLE_INFO> handle_info_obj{win_emu.emu(), c.input_buffer + info_size};
+
+		if (c.input_buffer_length < (info_size + sizeof(AFD_POLL_HANDLE_INFO) * poll_info.NumberOfHandles))
+		{
+			throw std::runtime_error("Bad AFD poll handle data");
+		}
+
+		for (ULONG i = 0; i < poll_info.NumberOfHandles; ++i)
+		{
+			handle_info.emplace_back(handle_info_obj.read(i));
+		}
+
+		return {std::move(poll_info), std::move(handle_info)};
 	}
 
 	struct afd_endpoint : io_device
@@ -122,14 +152,15 @@ namespace
 				return this->ioctl_send_datagram(win_emu, c);
 			case AFD_RECEIVE_DATAGRAM:
 				return this->ioctl_receive_datagram(win_emu, c);
+			case AFD_POLL:
+				return ioctl_poll(win_emu, c);
 			case AFD_SET_CONTEXT:
-				return STATUS_SUCCESS;
 			case AFD_GET_INFORMATION:
 				return STATUS_SUCCESS;
+			default:
+				win_emu.logger.print(color::gray, "Unsupported AFD IOCTL: %X\n", c.io_control_code);
+				return STATUS_NOT_SUPPORTED;
 			}
-
-			win_emu.logger.print(color::gray, "Unsupported AFD IOCTL: %X\n", c.io_control_code);
-			return STATUS_NOT_SUPPORTED;
 		}
 
 		NTSTATUS ioctl_bind(windows_emulator& win_emu, const io_device_context& c) const
@@ -154,6 +185,94 @@ namespace
 			}
 
 			return STATUS_SUCCESS;
+		}
+
+		static std::vector<afd_endpoint*> resolve_endpoints(windows_emulator& win_emu,
+		                                                    const std::span<const AFD_POLL_HANDLE_INFO> handles)
+		{
+			auto& proc = win_emu.process();
+
+			std::vector<afd_endpoint*> endpoints{};
+			endpoints.reserve(handles.size());
+
+			for (const auto& handle : handles)
+			{
+				auto* device = proc.devices.get(reinterpret_cast<uint64_t>(handle.Handle));
+				if (!device)
+				{
+					throw std::runtime_error("Bad device!");
+				}
+
+				auto* endpoint = device->get_internal_device<afd_endpoint>();
+				if (!endpoint)
+				{
+					throw std::runtime_error("Device is not an AFD endpoint!");
+				}
+
+				endpoints.push_back(endpoint);
+			}
+
+			return endpoints;
+		}
+
+		static bool is_poll_done(windows_emulator& win_emu, const io_device_context& c, emulator_thread& t,
+		                         const std::optional<std::chrono::steady_clock::time_point> timeout)
+		{
+			const auto [info, handles] = get_poll_info(win_emu, c);
+			const auto endpoints = resolve_endpoints(win_emu, handles);
+
+			std::vector<pollfd> poll_data{};
+			poll_data.resize(endpoints.size());
+
+			for (size_t i = 0; i < endpoints.size(); ++i)
+			{
+				auto& pfd = poll_data.at(i);
+				//auto& handle = handles.at(i);
+
+				pfd.fd = *endpoints.at(i)->s;
+				pfd.events = POLLIN;
+				pfd.revents = pfd.events;
+			}
+
+			const auto count = poll(poll_data.data(), static_cast<uint32_t>(poll_data.size()), 0);
+			if (count > 0)
+			{
+				emulator_object<AFD_POLL_INFO>{win_emu.emu(), c.input_buffer}.access([&](AFD_POLL_INFO& info)
+				{
+					info.NumberOfHandles = count;
+				});
+
+				t.pending_status = STATUS_SUCCESS;
+				return true;
+			}
+
+			if (timeout && *timeout < std::chrono::steady_clock::now())
+			{
+				t.pending_status = STATUS_TIMEOUT;
+				return true;
+			}
+
+			return false;
+		}
+
+		static NTSTATUS ioctl_poll(windows_emulator& win_emu, const io_device_context& c)
+		{
+			const auto [info, handles] = get_poll_info(win_emu, c);
+			(void)resolve_endpoints(win_emu, handles);
+
+			std::optional<std::chrono::steady_clock::time_point> timeout{};
+			if (info.Timeout.QuadPart)
+			{
+				timeout = convert_delay_interval_to_time_point(info.Timeout);
+			}
+
+			win_emu.process().active_thread->thread_blocker = [timeout, c](windows_emulator& emu, emulator_thread& t)
+			{
+				return is_poll_done(emu, c, t, timeout);
+			};
+
+			win_emu.yield_thread();
+			return STATUS_PENDING;
 		}
 
 		NTSTATUS ioctl_receive_datagram(windows_emulator& win_emu, const io_device_context& c)
