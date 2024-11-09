@@ -809,6 +809,12 @@ void windows_emulator::setup_process(const emulator_settings& settings)
 	switch_to_thread(*this, main_thread_id);
 }
 
+void windows_emulator::yield_thread()
+{
+	this->switch_thread = true;
+	this->emu().stop();
+}
+
 void windows_emulator::perform_thread_switch()
 {
 	this->switch_thread = false;

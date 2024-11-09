@@ -92,6 +92,7 @@ public:
 	bool fuzzing{false};
 	bool switch_thread{false};
 
+	void yield_thread();
 	void perform_thread_switch();
 
 private:

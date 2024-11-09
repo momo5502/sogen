@@ -2423,9 +2423,7 @@ namespace
 			t.await_time = convert_delay_interval_to_time_point(timeout.read());
 		}
 
-		c.win_emu.switch_thread = true;
-		c.emu.stop();
-
+		c.win_emu.yield_thread();
 		return STATUS_SUCCESS;
 	}
 
@@ -2444,8 +2442,7 @@ namespace
 		thread->exit_status = exit_status;
 		if (thread == c.proc.active_thread)
 		{
-			c.win_emu.switch_thread = true;
-			c.emu.stop();
+			c.win_emu.yield_thread();
 		}
 
 		return STATUS_SUCCESS;
@@ -2464,8 +2461,7 @@ namespace
 		auto& t = c.win_emu.current_thread();
 		t.await_time = convert_delay_interval_to_time_point(delay_interval.read());
 
-		c.win_emu.switch_thread = true;
-		c.emu.stop();
+		c.win_emu.yield_thread();
 
 		return STATUS_SUCCESS;
 	}
@@ -2508,8 +2504,7 @@ namespace
 			t.await_time = convert_delay_interval_to_time_point(timeout.read());
 		}
 
-		c.win_emu.switch_thread = true;
-		c.emu.stop();
+		c.win_emu.yield_thread();
 
 		return STATUS_SUCCESS;
 	}
