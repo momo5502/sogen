@@ -1979,6 +1979,11 @@ namespace
 				io_status_block.write(block);
 			}
 
+			if (!temp_buffer.ends_with("\n"))
+			{
+				temp_buffer.push_back('\n');
+			}
+
 			c.win_emu.logger.info("%.*s", static_cast<int>(temp_buffer.size()), temp_buffer.data());
 
 			return STATUS_SUCCESS;
