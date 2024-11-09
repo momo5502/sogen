@@ -8,12 +8,15 @@
 #ifdef _WIN32
 using socklen_t = int;
 #define GET_SOCKET_ERROR() (WSAGetLastError())
+#define poll WSAPoll
+#define SOCK_WOULDBLOCK WSAEWOULDBLOCK
 #else
-		using SOCKET = int;
+using SOCKET = int;
 #define INVALID_SOCKET  (SOCKET)(~0)
 #define SOCKET_ERROR            (-1)
 #define GET_SOCKET_ERROR() (errno)
 #define closesocket close
+#define SOCK_WOULDBLOCK EWOULDBLOCK
 #endif
 
 namespace network
@@ -39,6 +42,7 @@ namespace network
 		bool receive(address& source, std::string& data) const;
 
 		bool set_blocking(bool blocking);
+		static bool set_blocking(SOCKET s, bool blocking);
 
 		static constexpr bool socket_is_ready = true;
 		bool sleep(std::chrono::milliseconds timeout) const;
@@ -52,6 +56,8 @@ namespace network
 		static bool sleep_sockets(const std::span<const socket*>& sockets, std::chrono::milliseconds timeout);
 		static bool sleep_sockets_until(const std::span<const socket*>& sockets,
 		                                std::chrono::high_resolution_clock::time_point time_point);
+
+		static bool is_socket_ready(SOCKET s, bool in_poll);
 
 	private:
 		int address_family_{AF_UNSPEC};

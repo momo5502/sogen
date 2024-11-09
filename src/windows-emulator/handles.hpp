@@ -104,8 +104,19 @@ public:
 	using index_type = uint32_t;
 	using value_map = std::map<index_type, T>;
 
+	bool block_mutation(bool blocked)
+	{
+		std::swap(this->block_mutation_, blocked);
+		return blocked;
+	}
+
 	handle store(T value)
 	{
+		if (this->block_mutation_)
+		{
+			throw std::runtime_error("Mutation of handle store is blocked!");
+		}
+
 		auto index = this->find_free_index();
 		this->store_.emplace(index, std::move(value));
 
@@ -159,6 +170,11 @@ public:
 
 	bool erase(const typename value_map::iterator& entry)
 	{
+		if (this->block_mutation_)
+		{
+			throw std::runtime_error("Mutation of handle store is blocked!");
+		}
+
 		if (entry == this->store_.end())
 		{
 			return false;
@@ -203,11 +219,13 @@ public:
 
 	void serialize(utils::buffer_serializer& buffer) const
 	{
+		buffer.write(this->block_mutation_);
 		buffer.write_map(this->store_);
 	}
 
 	void deserialize(utils::buffer_deserializer& buffer)
 	{
+		buffer.read(this->block_mutation_);
 		buffer.read_map(this->store_);
 	}
 
@@ -305,7 +323,7 @@ private:
 		return index;
 	}
 
-
+	bool block_mutation_{false};
 	value_map store_{};
 };
 

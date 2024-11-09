@@ -3,6 +3,7 @@
 #include "context_frame.hpp"
 
 #include <unicorn_x64_emulator.hpp>
+#include <utils/finally.hpp>
 
 constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 100000;
 
@@ -113,6 +114,7 @@ namespace
 			kusd.XState.EnabledFeatures = 0x000000000000001f;
 			kusd.XState.EnabledVolatileFeatures = 0x000000000000000f;
 			kusd.XState.Size = 0x000003c0;
+			kusd.QpcFrequency = 1000;
 
 			constexpr std::wstring_view root_dir{L"C:\\WINDOWS"};
 			memcpy(&kusd.NtSystemRoot.arr[0], root_dir.data(), root_dir.size() * 2);
@@ -496,8 +498,28 @@ namespace
 		dispatch_exception_pointers(emu, dispatcher, pointers);
 	}
 
-	bool switch_to_thread(const logger& logger, x64_emulator& emu, process_context& context, emulator_thread& thread)
+	void perform_context_switch_work(windows_emulator& win_emu)
 	{
+		auto& devices = win_emu.process().devices;
+
+		// Crappy mechanism to prevent mutation while iterating.
+		const auto was_blocked = devices.block_mutation(true);
+		const auto _ = utils::finally([&]
+		{
+			devices.block_mutation(was_blocked);
+		});
+
+		for (auto& device : devices)
+		{
+			device.second.work(win_emu);
+		}
+	}
+
+	bool switch_to_thread(windows_emulator& win_emu, emulator_thread& thread)
+	{
+		auto& emu = win_emu.emu();
+		auto& context = win_emu.process();
+
 		if (!thread.is_thread_ready(context))
 		{
 			return false;
@@ -511,11 +533,9 @@ namespace
 			return true;
 		}
 
-		logger.print(color::green, "Performing thread switch...\n");
-
-
 		if (active_thread)
 		{
+			win_emu.logger.print(color::green, "Performing thread switch...\n");
 			active_thread->save(emu);
 		}
 
@@ -528,26 +548,30 @@ namespace
 		return true;
 	}
 
-	bool switch_to_thread(const logger& logger, x64_emulator& emu, process_context& context, const handle thread_handle)
+	bool switch_to_thread(windows_emulator& win_emu, const handle thread_handle)
 	{
-		auto* thread = context.threads.get(thread_handle);
+		auto* thread = win_emu.process().threads.get(thread_handle);
 		if (!thread)
 		{
 			throw std::runtime_error("Bad thread handle");
 		}
 
-		return switch_to_thread(logger, emu, context, *thread);
+		return switch_to_thread(win_emu, *thread);
 	}
 
-	bool switch_to_next_thread(const logger& logger, x64_emulator& emu, process_context& context)
+	bool switch_to_next_thread(windows_emulator& win_emu)
 	{
+		perform_context_switch_work(win_emu);
+
+		auto& context = win_emu.process();
+
 		bool next_thread = false;
 
 		for (auto& thread : context.threads)
 		{
 			if (next_thread)
 			{
-				if (switch_to_thread(logger, emu, context, thread.second))
+				if (switch_to_thread(win_emu, thread.second))
 				{
 					return true;
 				}
@@ -563,7 +587,7 @@ namespace
 
 		for (auto& thread : context.threads)
 		{
-			if (switch_to_thread(logger, emu, context, thread.second))
+			if (switch_to_thread(win_emu, thread.second))
 			{
 				return true;
 			}
@@ -583,10 +607,10 @@ namespace
 
 		case handle_types::event:
 			{
-				const auto* e = c.events.get(h);
+				auto* e = c.events.get(h);
 				if (e)
 				{
-					return e->signaled;
+					return e->is_signaled();
 				}
 
 				break;
@@ -782,13 +806,13 @@ void windows_emulator::setup_process(const emulator_settings& settings)
 	context.default_register_set = emu.save_registers();
 
 	const auto main_thread_id = context.create_thread(emu, context.executable->entry_point, 0, 0);
-	switch_to_thread(this->logger, emu, context, main_thread_id);
+	switch_to_thread(*this, main_thread_id);
 }
 
 void windows_emulator::perform_thread_switch()
 {
 	this->switch_thread = false;
-	while (!switch_to_next_thread(this->logger, this->emu(), this->process()))
+	while (!switch_to_next_thread(*this))
 	{
 		// TODO: Optimize that
 		std::this_thread::sleep_for(1ms);

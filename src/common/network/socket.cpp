@@ -2,13 +2,6 @@
 
 #include <thread>
 
-#ifdef _WIN32
-#define poll WSAPoll
-#define SOCK_WOULDBLOCK WSAEWOULDBLOCK
-#else
-#define SOCK_WOULDBLOCK EWOULDBLOCK
-#endif
-
 using namespace std::literals;
 
 namespace network
@@ -104,14 +97,19 @@ namespace network
 
 	bool socket::set_blocking(const bool blocking)
 	{
+		return socket::set_blocking(this->socket_, blocking);
+	}
+
+	bool socket::set_blocking(SOCKET s, const bool blocking)
+	{
 #ifdef _WIN32
 		unsigned long mode = blocking ? 0 : 1;
-		return ioctlsocket(this->socket_, FIONBIO, &mode) == 0;
+		return ioctlsocket(s, FIONBIO, &mode) == 0;
 #else
-		int flags = fcntl(this->socket_, F_GETFL, 0);
+		int flags = fcntl(s, F_GETFL, 0);
 		if (flags == -1) return false;
 		flags = blocking ? (flags & ~O_NONBLOCK) : (flags | O_NONBLOCK);
-		return fcntl(this->socket_, F_SETFL, flags) == 0;
+		return fcntl(s, F_SETFL, flags) == 0;
 #endif
 	}
 
@@ -185,6 +183,30 @@ namespace network
 
 		const auto retval = poll(pfds.data(), static_cast<uint32_t>(pfds.size()),
 		                         static_cast<int>(timeout.count()));
+
+		if (retval == SOCKET_ERROR)
+		{
+			std::this_thread::sleep_for(1ms);
+			return socket_is_ready;
+		}
+
+		if (retval > 0)
+		{
+			return socket_is_ready;
+		}
+
+		return !socket_is_ready;
+	}
+
+	bool socket::is_socket_ready(const SOCKET s, const bool in_poll)
+	{
+		pollfd pfd{};
+
+		pfd.fd = s;
+		pfd.events = in_poll ? POLLIN : POLLOUT;
+		pfd.revents = 0;
+
+		const auto retval = poll(&pfd, 1, 0);
 
 		if (retval == SOCKET_ERROR)
 		{

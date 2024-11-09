@@ -1666,9 +1666,6 @@ namespace
 		}
 
 		const io_device_context context{
-			.win_emu = c.win_emu,
-			.emu = c.emu,
-			.proc = c.proc,
 			.event = event,
 			.apc_routine = apc_routine,
 			.apc_context = apc_context,
@@ -1680,7 +1677,7 @@ namespace
 			.output_buffer_length = output_buffer_length,
 		};
 
-		return device->io_control(context);
+		return device->execute_ioctl(c.win_emu, context);
 	}
 
 	NTSTATUS handle_NtQueryWnfStateData()
@@ -2073,15 +2070,12 @@ namespace
 		if (filename.starts_with(device_prefix))
 		{
 			const io_device_creation_data data{
-				.win_emu = c.win_emu,
-				.emu = c.emu,
-				.proc = c.proc,
 				.buffer = ea_buffer,
 				.length = ea_length,
 			};
 
 			auto device_name = filename.substr(device_prefix.size());
-			io_device_container container{std::move(device_name), data};
+			io_device_container container{std::move(device_name), c.win_emu, data};
 
 			const auto handle = c.proc.devices.store(std::move(container));
 			file_handle.write(handle);
@@ -2412,15 +2406,12 @@ namespace
 	{
 		if (alertable)
 		{
-			puts("Alertable NtWaitForSingleObject not supported yet!");
-			c.emu.stop();
-			return STATUS_NOT_SUPPORTED;
+			c.win_emu.logger.print(color::gray, "Alertable NtWaitForSingleObject not supported yet!\n");
 		}
 
 		if (h.value.type != handle_types::thread && h.value.type != handle_types::event)
 		{
-			puts("Unsupported handle type for NtWaitForSingleObject!");
-			c.emu.stop();
+			c.win_emu.logger.print(color::gray, "Unsupported handle type for NtWaitForSingleObject!\n");
 			return STATUS_NOT_SUPPORTED;
 		}
 

@@ -12,10 +12,6 @@ struct process_context;
 
 struct io_device_context
 {
-	windows_emulator& win_emu;
-	x64_emulator& emu;
-	process_context& proc;
-
 	handle event;
 	emulator_pointer /*PIO_APC_ROUTINE*/ apc_routine;
 	emulator_pointer apc_context;
@@ -29,10 +25,6 @@ struct io_device_context
 
 struct io_device_creation_data
 {
-	windows_emulator& win_emu;
-	x64_emulator& emu;
-	process_context& proc;
-
 	uint64_t buffer;
 	uint32_t length;
 };
@@ -48,20 +40,46 @@ struct io_device
 	io_device(const io_device&) = delete;
 	io_device& operator=(const io_device&) = delete;
 
-	virtual NTSTATUS io_control(const io_device_context& context) = 0;
+	virtual NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) = 0;
 
-	virtual void create(const io_device_creation_data& data)
+	virtual void create(windows_emulator& win_emu, const io_device_creation_data& data)
 	{
+		(void)win_emu;
 		(void)data;
+	}
+
+	virtual void work(windows_emulator& win_emu)
+	{
+		(void)win_emu;
 	}
 
 	virtual void serialize(utils::buffer_serializer& buffer) const = 0;
 	virtual void deserialize(utils::buffer_deserializer& buffer) = 0;
+
+	NTSTATUS execute_ioctl(windows_emulator& win_emu, const io_device_context& c)
+	{
+		if (c.io_status_block)
+		{
+			c.io_status_block.write({});
+		}
+
+		const auto result = this->io_control(win_emu, c);
+
+		if (c.io_status_block)
+		{
+			c.io_status_block.access([&](IO_STATUS_BLOCK& status)
+			{
+				status.Status = result;
+			});
+		}
+
+		return result;
+	}
 };
 
 struct stateless_device : io_device
 {
-	void create(const io_device_creation_data&) final
+	void create(windows_emulator&, const io_device_creation_data&) final
 	{
 	}
 
@@ -81,17 +99,23 @@ class io_device_container : public io_device
 public:
 	io_device_container() = default;
 
-	io_device_container(std::wstring device, const io_device_creation_data& data)
+	io_device_container(std::wstring device, windows_emulator& win_emu, const io_device_creation_data& data)
 		: device_name_(std::move(device))
 	{
 		this->setup();
-		this->device_->create(data);
+		this->device_->create(win_emu, data);
 	}
 
-	NTSTATUS io_control(const io_device_context& context) override
+	NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
 	{
 		this->assert_validity();
-		return this->device_->io_control(context);
+		return this->device_->io_control(win_emu, context);
+	}
+
+	void work(windows_emulator& win_emu) override
+	{
+		this->assert_validity();
+		return this->device_->work(win_emu);
 	}
 
 	void serialize(utils::buffer_serializer& buffer) const override

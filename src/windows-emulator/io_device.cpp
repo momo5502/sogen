@@ -5,7 +5,7 @@ namespace
 {
 	struct dummy_device : stateless_device
 	{
-		NTSTATUS io_control(const io_device_context&) override
+		NTSTATUS io_control(windows_emulator&, const io_device_context&) override
 		{
 			return STATUS_SUCCESS;
 		}

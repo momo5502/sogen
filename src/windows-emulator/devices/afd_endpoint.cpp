@@ -6,6 +6,8 @@
 #include <network/address.hpp>
 #include <network/socket.hpp>
 
+#include <utils/finally.hpp>
+
 namespace
 {
 	struct afd_creation_data
@@ -19,19 +21,21 @@ namespace
 		// ...
 	};
 
-	afd_creation_data get_creation_data(const io_device_creation_data& data)
+	afd_creation_data get_creation_data(windows_emulator& win_emu, const io_device_creation_data& data)
 	{
 		if (!data.buffer || data.length < sizeof(afd_creation_data))
 		{
 			throw std::runtime_error("Bad AFD creation data");
 		}
 
-		return emulator_object<afd_creation_data>{data.emu, data.buffer}.read();
+		return win_emu.emu().read_memory<afd_creation_data>(data.buffer);
 	}
 
 	struct afd_endpoint : io_device
 	{
+		bool in_poll{};
 		std::optional<SOCKET> s{};
+		std::optional<io_device_context> delayed_ioctl{};
 
 		afd_endpoint()
 		{
@@ -49,9 +53,9 @@ namespace
 			}
 		}
 
-		void create(const io_device_creation_data& data) override
+		void create(windows_emulator& win_emu, const io_device_creation_data& data) override
 		{
-			const auto creation_data = get_creation_data(data);
+			const auto creation_data = get_creation_data(win_emu, data);
 			// TODO: values map to windows values; might not be the case for other platforms
 			const auto sock = socket(creation_data.address_family, creation_data.type, creation_data.protocol);
 			if (sock == INVALID_SOCKET)
@@ -59,7 +63,33 @@ namespace
 				throw std::runtime_error("Failed to create socket!");
 			}
 
+			network::socket::set_blocking(sock, false);
+
 			s = sock;
+		}
+
+		void work(windows_emulator& win_emu) override
+		{
+			if (!this->delayed_ioctl || !this->s)
+			{
+				return;
+			}
+
+			const auto is_ready = network::socket::is_socket_ready(*this->s, this->in_poll);
+			if (!is_ready)
+			{
+				return;
+			}
+
+			this->execute_ioctl(win_emu, *this->delayed_ioctl);
+
+			auto* e = win_emu.process().events.get(this->delayed_ioctl->event);
+			if (e)
+			{
+				e->signaled = true;
+			}
+
+			this->delayed_ioctl = {};
 		}
 
 		void deserialize(utils::buffer_deserializer&) override
@@ -72,43 +102,41 @@ namespace
 			// TODO
 		}
 
-		NTSTATUS io_control(const io_device_context& c) override
+		NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
 		{
-			c.io_status_block.write({});
-
 			if (_AFD_BASE(c.io_control_code) != FSCTL_AFD_BASE)
 			{
-				c.win_emu.logger.print(color::cyan, "Bad AFD IOCTL: %X\n", c.io_control_code);
+				win_emu.logger.print(color::cyan, "Bad AFD IOCTL: %X\n", c.io_control_code);
 				return STATUS_NOT_SUPPORTED;
 			}
 
-			c.win_emu.logger.print(color::cyan, "AFD IOCTL: %X\n", c.io_control_code);
+			win_emu.logger.print(color::cyan, "AFD IOCTL: %X\n", c.io_control_code);
 
 			const auto request = _AFD_REQUEST(c.io_control_code);
 
 			switch (request)
 			{
 			case AFD_BIND:
-				return this->ioctl_bind(c);
+				return this->ioctl_bind(win_emu, c);
 			case AFD_SEND_DATAGRAM:
-				return this->ioctl_send_datagram(c);
+				return this->ioctl_send_datagram(win_emu, c);
 			case AFD_RECEIVE_DATAGRAM:
-				return this->ioctl_receive_datagram(c);
+				return this->ioctl_receive_datagram(win_emu, c);
 			case AFD_SET_CONTEXT:
 				return STATUS_SUCCESS;
 			case AFD_GET_INFORMATION:
 				return STATUS_SUCCESS;
 			}
 
-			c.win_emu.logger.print(color::gray, "Unsupported AFD IOCTL: %X\n", c.io_control_code);
+			win_emu.logger.print(color::gray, "Unsupported AFD IOCTL: %X\n", c.io_control_code);
 			return STATUS_NOT_SUPPORTED;
 		}
 
-		NTSTATUS ioctl_bind(const io_device_context& c) const
+		NTSTATUS ioctl_bind(windows_emulator& win_emu, const io_device_context& c) const
 		{
 			std::vector<std::byte> data{};
 			data.resize(c.input_buffer_length);
-			c.emu.read_memory(c.input_buffer, data.data(), c.input_buffer_length);
+			win_emu.emu().read_memory(c.input_buffer, data.data(), c.input_buffer_length);
 
 			constexpr auto address_offset = 4;
 
@@ -130,22 +158,24 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		NTSTATUS ioctl_receive_datagram(const io_device_context& c) const
+		NTSTATUS ioctl_receive_datagram(windows_emulator& win_emu, const io_device_context& c)
 		{
+			auto& emu = win_emu.emu();
+
 			if (c.input_buffer_length < sizeof(AFD_RECV_DATAGRAM_INFO))
 			{
 				return STATUS_BUFFER_TOO_SMALL;
 			}
 
-			const auto receive_info = emulator_object<AFD_RECV_DATAGRAM_INFO>{c.emu, c.input_buffer}.read();
-			const auto buffer = emulator_object<WSABUF>{c.emu, receive_info.BufferArray}.read(0);
+			const auto receive_info = emu.read_memory<AFD_RECV_DATAGRAM_INFO>(c.input_buffer);
+			const auto buffer = emu.read_memory<WSABUF>(receive_info.BufferArray);
 
 			std::vector<std::byte> address{};
 
 			ULONG address_length = 0x1000;
 			if (receive_info.AddressLength)
 			{
-				address_length = c.emu.read_memory<ULONG>(receive_info.AddressLength);
+				address_length = emu.read_memory<ULONG>(receive_info.AddressLength);
 			}
 
 			address.resize(std::clamp(address_length, 1UL, 0x1000UL));
@@ -165,16 +195,24 @@ namespace
 
 			if (recevied_data < 0)
 			{
+				const auto error = GET_SOCKET_ERROR();
+				if (error == SOCK_WOULDBLOCK)
+				{
+					this->in_poll = true;
+					this->delayed_ioctl = c;
+					return STATUS_PENDING;
+				}
+
 				return STATUS_UNSUCCESSFUL;
 			}
 
-			c.emu.write_memory(reinterpret_cast<uint64_t>(buffer.buf), data.data(),
-			                   std::min(data.size(), static_cast<size_t>(recevied_data)));
+			emu.write_memory(reinterpret_cast<uint64_t>(buffer.buf), data.data(),
+			                 std::min(data.size(), static_cast<size_t>(recevied_data)));
 
 			if (receive_info.Address && address_length)
 			{
-				c.emu.write_memory(reinterpret_cast<uint64_t>(receive_info.Address), address.data(),
-				                   std::min(address.size(), static_cast<size_t>(address_length)));
+				emu.write_memory(reinterpret_cast<uint64_t>(receive_info.Address), address.data(),
+				                 std::min(address.size(), static_cast<size_t>(address_length)));
 			}
 
 			if (c.io_status_block)
@@ -187,27 +225,29 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		NTSTATUS ioctl_send_datagram(const io_device_context& c) const
+		NTSTATUS ioctl_send_datagram(windows_emulator& win_emu, const io_device_context& c)
 		{
+			auto& emu = win_emu.emu();
+
 			if (c.input_buffer_length < sizeof(AFD_SEND_DATAGRAM_INFO))
 			{
 				return STATUS_BUFFER_TOO_SMALL;
 			}
 
-			const auto send_info = emulator_object<AFD_SEND_DATAGRAM_INFO>{c.emu, c.input_buffer}.read();
-			const auto buffer = emulator_object<WSABUF>{c.emu, send_info.BufferArray}.read(0);
+			const auto send_info = emu.read_memory<AFD_SEND_DATAGRAM_INFO>(c.input_buffer);
+			const auto buffer = emu.read_memory<WSABUF>(send_info.BufferArray);
 
 			std::vector<std::byte> address{};
 			address.resize(send_info.TdiConnInfo.RemoteAddressLength);
-			c.emu.read_memory(reinterpret_cast<uint64_t>(send_info.TdiConnInfo.RemoteAddress), address.data(),
-			                  address.size());
+			emu.read_memory(reinterpret_cast<uint64_t>(send_info.TdiConnInfo.RemoteAddress), address.data(),
+			                address.size());
 
 			const network::address target(reinterpret_cast<sockaddr*>(address.data()),
 			                              static_cast<int>(address.size()));
 
 			std::vector<std::byte> data{};
 			data.resize(buffer.len);
-			c.emu.read_memory(reinterpret_cast<uint64_t>(buffer.buf), data.data(), data.size());
+			emu.read_memory(reinterpret_cast<uint64_t>(buffer.buf), data.data(), data.size());
 
 			const auto sent_data = sendto(*this->s, reinterpret_cast<const char*>(data.data()),
 			                              static_cast<int>(data.size()), 0 /* ? */, &target.get_addr(),
@@ -215,7 +255,15 @@ namespace
 
 			if (sent_data < 0)
 			{
-				return STATUS_CONNECTION_REFUSED;
+				const auto error = GET_SOCKET_ERROR();
+				if (error == SOCK_WOULDBLOCK)
+				{
+					this->in_poll = false;
+					this->delayed_ioctl = c;
+					return STATUS_PENDING;
+				}
+
+				return STATUS_UNSUCCESSFUL;
 			}
 
 			if (c.io_status_block)
