@@ -37,53 +37,54 @@ Perfect for security research, malware analysis, and DRM research where fine-gra
 
 Click <a href="https://docs.google.com/presentation/d/1pha4tFfDMpVzJ_ehJJ21SA_HAWkufQBVYQvh1IFhVls/edit">here</a> for the slides.
 
-## Building
+## Build Instructions
 
-Make sure to clone the repo including all submodules.
+### Prerequisites
+* Windows 64-bit (see [Issue 17](https://github.com/momo5502/emulator/issues/17) for cross-platform status)
+* CMake
+* Git
 
+### Getting Started
+
+Clone the repository with submodules:
 ```bash
 git clone https://github.com/momo5502/emulator.git
 cd emulator
 git submodule update --init --recursive
 ```
 
-At the moment, the project is only compatible with 64 bit Windows, but that is being worked on: <a href="https://github.com/momo5502/emulator/issues/17">Issue 17</a>
-
-It requires CMake and uses CMake presets. Make sure to open an x64 Dev Cmd before running any of the commands.
+Run the following commands in an x64 Development Command Prompt
 
 ### Visual Studio 2022
-
-To generate a Visual Studio solution, execute the following command:
 
 ```bash
 cmake --preset=vs2022
 ```
-
-The solution will be at `build/vs2022/emulator.sln`.
+Solution will be generated at `build/vs2022/emulator.sln`
 
 ### Ninja
 
-To build the debug version using Ninja run:
+Debug build:
 
 ```bash
 cmake --workflow --preset=debug
 ```
 
-You can also build the release variant:
+Release build:
 
 ```bash
 cmake --workflow --preset=release
 ```
 
+## Running Tests
 
-### Running Tests
+The project uses CTest for testing. Choose your preferred method:
 
-CTest is used for testing.
+**Visual Studio:**
+- Build the `RUN_TESTS` target
 
-In Visual Studio, build the `RUN_TESTS` target.
-
-With Ninja, execute the CTest command in the ninja build folder (e.g. `build/release/`):
-
+**Ninja:**
 ```bash
+cd build/release  # or build/debug
 ctest
 ```
