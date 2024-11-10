@@ -29,6 +29,17 @@ struct io_device_creation_data
 	uint32_t length;
 };
 
+inline void write_io_status(const emulator_object<IO_STATUS_BLOCK> io_status_block, const NTSTATUS status)
+{
+	if (io_status_block)
+	{
+		io_status_block.access([&](IO_STATUS_BLOCK& status_block)
+		{
+			status_block.Status = status;
+		});
+	}
+}
+
 struct io_device
 {
 	io_device() = default;
@@ -64,15 +75,7 @@ struct io_device
 		}
 
 		const auto result = this->io_control(win_emu, c);
-
-		if (c.io_status_block)
-		{
-			c.io_status_block.access([&](IO_STATUS_BLOCK& status)
-			{
-				status.Status = result;
-			});
-		}
-
+		write_io_status(c.io_status_block, result);
 		return result;
 	}
 };
