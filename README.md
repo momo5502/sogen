@@ -11,6 +11,10 @@ A high-performance Windows process emulator that operates at the syscall level, 
 
 Built in C++ and powered by the Unicorn Engine.
 
+##
+> [!NOTE]  
+> The project is still in a very early, prototypy state. The code still needs a lot of cleanup and many features and syscalls need to be implemented. However, constant progress is being made :)
+
 ## Key Features
 
 * __Syscall-Level Emulation__: Instead of reimplementing Windows APIs, the emulator operates at the syscall level, allowing it to leverage existing system DLLs
@@ -23,9 +27,56 @@ Built in C++ and powered by the Unicorn Engine.
 
 Perfect for security research, malware analysis, and DRM research where fine-grained control over process execution is required.
 
-##
-> [!NOTE]  
-> The project is still in a very early, prototypy state. The code still needs a lot of cleanup and many features and syscalls need to be implemented. However, constant progress is being made :)
+## Building
+
+Make sure to clone the repo including all submodules.
+
+```bash
+git clone https://github.com/momo5502/emulator.git
+cd emulator
+git submodule update --init --recursive
+```
+
+At the moment, the project is only compatible with 64 bit Windows, but that is being worked on: <a href="https://github.com/momo5502/emulator/issues/17">Issue 17</a>
+
+It requires CMake and uses CMake presets. Make sure to open an x64 Dev Cmd before running any of the commands.
+
+### Visual Studio 2022
+
+To generate a Visual Studio solution, execute the following command:
+
+```bash
+cmake --preset=vs2022
+```
+
+The solution will be at `build/vs2022/emulator.sln`.
+
+### Ninja
+
+To build the debug version using Ninja run:
+
+```bash
+cmake --workflow --preset=debug
+```
+
+You can also build the release variant:
+
+```bash
+cmake --workflow --preset=release
+```
+
+
+### Running Tests
+
+CTest is used for testing.
+
+In Visual Studio, build the `RUN_TESTS` target.
+
+With Ninja, execute the CTest command in the ninja build folder (e.g. `build/release/`):
+
+```bash
+ctest
+```
 
 ## Preview
 
