@@ -68,10 +68,30 @@ namespace
 		}
 	}
 
-	void run(const std::string_view application)
+	std::vector<std::wstring> parse_arguments(char* argv[], const size_t argc)
 	{
+		std::vector<std::wstring> args{};
+		args.reserve(argc - 1);
+
+		for (size_t i = 1; i < argc; ++i)
+		{
+			std::string_view arg(argv[i]);
+			args.emplace_back(arg.begin(), arg.end());
+		}
+
+		return args;
+	}
+
+	void run(char* argv[], const size_t argc)
+	{
+		if (argc < 1)
+		{
+			return;
+		}
+
 		const emulator_settings settings{
-			.application = application,
+			.application = argv[0],
+			.arguments = parse_arguments(argv, argc),
 		};
 
 		windows_emulator win_emu{settings};
@@ -118,7 +138,8 @@ int main(const int argc, char** argv)
 	{
 		do
 		{
-			run(argv[use_gdb ? 2 : 1]);
+			const auto offset = use_gdb ? 2 : 1;
+			run(argv + offset, static_cast<size_t>(argc - offset));
 		}
 		while (use_gdb);
 
