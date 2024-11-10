@@ -11,10 +11,6 @@ A high-performance Windows process emulator that operates at the syscall level, 
 
 Built in C++ and powered by the Unicorn Engine.
 
-##
-> [!NOTE]  
-> The project is still in a very early, prototypy state. The code still needs a lot of cleanup and many features and syscalls need to be implemented. However, constant progress is being made :)
-
 ## Key Features
 
 * __Syscall-Level Emulation__: Instead of reimplementing Windows APIs, the emulator operates at the syscall level, allowing it to leverage existing system DLLs
@@ -26,6 +22,20 @@ Built in C++ and powered by the Unicorn Engine.
 * __Debugging Interface__: Implements GDB serial protocol for integration with common debugging tools (IDA Pro, GDB, LLDB, VS Code, ...)
 
 Perfect for security research, malware analysis, and DRM research where fine-grained control over process execution is required.
+
+##
+> [!NOTE]  
+> The project is still in a very early, prototypy state. The code still needs a lot of cleanup and many features and syscalls need to be implemented. However, constant progress is being made :)
+
+## Preview
+
+![Preview](./docs/images/preview.jpg)
+
+## YouTube Overview
+
+[![YouTube video](./docs/images/yt.jpg)](https://www.youtube.com/watch?v=wY9Q0DhodOQ)
+
+Click <a href="https://docs.google.com/presentation/d/1pha4tFfDMpVzJ_ehJJ21SA_HAWkufQBVYQvh1IFhVls/edit">here</a> for the slides.
 
 ## Building
 
@@ -77,13 +87,3 @@ With Ninja, execute the CTest command in the ninja build folder (e.g. `build/rel
 ```bash
 ctest
 ```
-
-## Preview
-
-![Preview](./docs/images/preview.jpg)
-
-## YouTube Overview
-
-[![YouTube video](./docs/images/yt.jpg)](https://www.youtube.com/watch?v=wY9Q0DhodOQ)
-
-Click <a href="https://docs.google.com/presentation/d/1pha4tFfDMpVzJ_ehJJ21SA_HAWkufQBVYQvh1IFhVls/edit">here</a> for the slides.
