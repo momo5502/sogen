@@ -26,6 +26,7 @@ namespace test
 		{
 			.application = "./test-sample.exe",
 			.disable_logging = true,
+			.use_relative_time = true,
 		};
 
 		return windows_emulator{settings};

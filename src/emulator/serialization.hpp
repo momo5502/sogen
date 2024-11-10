@@ -434,6 +434,12 @@ namespace utils
 	};
 
 	template <>
+	inline void buffer_deserializer::read<bool>(bool& object)
+	{
+		object = this->read<uint8_t>() != 0;
+	}
+
+	template <>
 	inline void buffer_deserializer::read<std::string>(std::string& object)
 	{
 		object = this->read_string<char>();
@@ -443,6 +449,12 @@ namespace utils
 	inline void buffer_deserializer::read<std::wstring>(std::wstring& object)
 	{
 		object = this->read_string<wchar_t>();
+	}
+
+	template <>
+	inline void buffer_serializer::write<bool>(const bool& object)
+	{
+		this->write<uint8_t>(object ? 1 : 0);
 	}
 
 	template <>

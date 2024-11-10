@@ -22,17 +22,28 @@ namespace
 			{
 				performance_counter.access([&](LARGE_INTEGER& value)
 				{
-					value.QuadPart = static_cast<LONGLONG>(c.proc.executed_instructions);
-					//QueryPerformanceCounter(&value);
+					if (c.win_emu.time_is_relative())
+					{
+						value.QuadPart = static_cast<LONGLONG>(c.proc.executed_instructions);
+					}
+					else
+					{
+						value.QuadPart = std::chrono::steady_clock::now().time_since_epoch().count();
+					}
 				});
 			}
 
 			if (performance_frequency)
 			{
-				performance_frequency.access([](LARGE_INTEGER& value)
+				int64_t frequency{};
+				c.proc.kusd.access([&](const KUSER_SHARED_DATA& kusd)
 				{
-					value.QuadPart = 10000;
-					//QueryPerformanceFrequency(&value);
+					frequency = kusd.QpcFrequency;
+				});
+
+				performance_frequency.access([&](LARGE_INTEGER& value)
+				{
+					value.QuadPart = frequency;
 				});
 			}
 

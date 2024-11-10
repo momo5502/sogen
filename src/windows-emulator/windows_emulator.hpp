@@ -16,6 +16,7 @@ struct emulator_settings
 	std::filesystem::path registry_directory{"./registry"};
 	std::vector<std::wstring> arguments{};
 	bool disable_logging{false};
+	bool use_relative_time{false};
 };
 
 class windows_emulator
@@ -95,10 +96,16 @@ public:
 	void yield_thread();
 	void perform_thread_switch();
 
-private:
-	std::unique_ptr<x64_emulator> emu_{};
+	bool time_is_relative() const
+	{
+		return this->use_relative_time_;
+	}
 
+private:
+	bool use_relative_time_{false};
+	std::unique_ptr<x64_emulator> emu_{};
 	std::vector<instruction_hook_callback> syscall_hooks_{};
+
 
 	process_context process_;
 	syscall_dispatcher dispatcher_;

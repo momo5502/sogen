@@ -1,5 +1,6 @@
 #include "std_include.hpp"
 #include "windows_emulator.hpp"
+
 #include "context_frame.hpp"
 
 #include <unicorn_x64_emulator.hpp>
@@ -49,14 +50,14 @@ namespace
 		emu.write_register(x64_register::msr, &value, sizeof(value));
 	}
 
-	emulator_object<KUSER_SHARED_DATA> setup_kusd(x64_emulator& emu)
+	emulator_object<KUSER_SHARED_DATA> setup_kusd(x64_emulator& emu, bool use_relative_time)
 	{
 		// TODO: Fix that. Use hooks to feed dynamic data, e.g. time values
 
 		emu.allocate_memory(KUSD_ADDRESS, page_align_up(sizeof(KUSER_SHARED_DATA)), memory_permission::read);
 
 		const emulator_object<KUSER_SHARED_DATA> kusd_object{emu, KUSD_ADDRESS};
-		kusd_object.access([](KUSER_SHARED_DATA& kusd)
+		kusd_object.access([&](KUSER_SHARED_DATA& kusd)
 		{
 			kusd.TickCountMultiplier = 0x0fa00000;
 			kusd.InterruptTime.LowPart = 0x17bd9547;
@@ -114,7 +115,15 @@ namespace
 			kusd.XState.EnabledFeatures = 0x000000000000001f;
 			kusd.XState.EnabledVolatileFeatures = 0x000000000000000f;
 			kusd.XState.Size = 0x000003c0;
-			kusd.QpcFrequency = 1000;
+
+			if (use_relative_time)
+			{
+				kusd.QpcFrequency = 1000;
+			}
+			else
+			{
+				kusd.QpcFrequency = std::chrono::steady_clock::period::den;
+			}
 
 			constexpr std::wstring_view root_dir{L"C:\\WINDOWS"};
 			memcpy(&kusd.NtSystemRoot.arr[0], root_dir.data(), root_dir.size() * 2);
@@ -259,7 +268,7 @@ namespace
 
 		context.registry = registry_manager(settings.registry_directory);
 
-		context.kusd = setup_kusd(emu);
+		context.kusd = setup_kusd(emu, settings.use_relative_time);
 
 		context.base_allocator = create_allocator(emu, PEB_SEGMENT_SIZE);
 		auto& allocator = context.base_allocator;
@@ -767,6 +776,7 @@ windows_emulator::windows_emulator(const emulator_settings& settings,
                                    std::unique_ptr<x64_emulator> emu)
 	: windows_emulator(std::move(emu))
 {
+	this->use_relative_time_ = settings.use_relative_time;
 	this->logger.disable_output(settings.disable_logging);
 	this->setup_process(settings);
 }
@@ -1028,6 +1038,7 @@ void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
 
 void windows_emulator::serialize(utils::buffer_serializer& buffer) const
 {
+	buffer.write(this->use_relative_time_);
 	this->emu().serialize(buffer);
 	this->process_.serialize(buffer);
 	this->dispatcher_.serialize(buffer);
@@ -1039,6 +1050,9 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
 	{
 		return emulator_thread(this->emu());
 	});
+
+
+	buffer.read(this->use_relative_time_);
 
 	this->emu().deserialize(buffer);
 	this->process_.deserialize(buffer);
