@@ -686,18 +686,6 @@ bool emulator_thread::is_thread_ready(windows_emulator& win_emu)
 		return false;
 	}
 
-	if (this->thread_blocker)
-	{
-		const auto res = this->thread_blocker(win_emu, *this);
-		if (res)
-		{
-			this->thread_blocker = {};
-			return true;
-		}
-
-		return false;
-	}
-
 	if (this->waiting_for_alert)
 	{
 		if (this->alerted)

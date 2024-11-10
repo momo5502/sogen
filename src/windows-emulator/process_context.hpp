@@ -222,9 +222,6 @@ public:
 	bool alerted{false};
 	std::optional<std::chrono::steady_clock::time_point> await_time{};
 
-	// TODO: Get rid of that!
-	std::function<bool(windows_emulator&, emulator_thread&)> thread_blocker{};
-
 	std::optional<NTSTATUS> pending_status{};
 
 	std::optional<emulator_allocator> gs_segment;
