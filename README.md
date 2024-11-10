@@ -13,13 +13,20 @@ Built in C++ and powered by the Unicorn Engine.
 
 ## Key Features
 
-* 🔄 __Syscall-Level Emulation__: Instead of reimplementing Windows APIs, the emulator operates at the syscall level, allowing it to leverage existing system DLLs
-* 📝 __Advanced Memory Management__: Supports Windows-specific memory types including reserved, committed, built on top of Unicorn's memory management
-* 📦 __Complete PE Loading__: Handles executable and DLL loading with proper memory mapping, relocations, and TLS
-* ⚡ __Exception Handling__: Implements Windows structured exception handling (SEH) with proper exception dispatcher and unwinding support
-* 🧵 __Threading Support__: Provides a scheduled (round-robin) threading model
-* 💾 __State Management__: Supports both full state serialization and fast in-memory snapshots
-* 💻 __Debugging Interface__: Implements GDB serial protocol for integration with common debugging tools (IDA Pro, GDB, LLDB, VS Code, ...)
+* 🔄 __Syscall-Level Emulation__
+	* Instead of reimplementing Windows APIs, the emulator operates at the syscall level, allowing it to leverage existing system DLLs
+* 📝 __Advanced Memory Management__
+	* Supports Windows-specific memory types including reserved, committed, built on top of Unicorn's memory management
+* 📦 __Complete PE Loading__
+	* Handles executable and DLL loading with proper memory mapping, relocations, and TLS
+* ⚡ __Exception Handling__
+	* Implements Windows structured exception handling (SEH) with proper exception dispatcher and unwinding support
+* 🧵 __Threading Support__
+	* Provides a scheduled (round-robin) threading model
+* 💾 __State Management__
+	* Supports both full state serialization and fast in-memory snapshots
+* 💻 __Debugging Interface__
+	* Implements GDB serial protocol for integration with common debugging tools (IDA Pro, GDB, LLDB, VS Code, ...)
 
 Perfect for security research, malware analysis, and DRM research where fine-grained control over process execution is required.
 
