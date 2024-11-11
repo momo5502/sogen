@@ -123,6 +123,8 @@ namespace utils
 		template <typename T>
 		void read(T& object)
 		{
+			constexpr auto is_trivially_copyable = std::is_trivially_copyable_v<T>;
+
 			if constexpr (Serializable<T>)
 			{
 				object.deserialize(*this);
@@ -145,7 +147,7 @@ namespace utils
 			}
 			else
 			{
-				static_assert(std::false_type::value, "Key must be trivially copyable or implement serializable!");
+				static_assert(!is_trivially_copyable, "Key must be trivially copyable or implement serializable!");
 				std::abort();
 			}
 		}
@@ -340,6 +342,8 @@ namespace utils
 		template <typename T>
 		void write(const T& object)
 		{
+			constexpr auto is_trivially_copyable = std::is_trivially_copyable_v<T>;
+
 			if constexpr (Serializable<T>)
 			{
 				object.serialize(*this);
@@ -348,7 +352,7 @@ namespace utils
 			{
 				::serialize(*this, object);
 			}
-			else if constexpr (std::is_trivially_copyable_v<T>)
+			else if constexpr (is_trivially_copyable)
 			{
 				union
 				{
@@ -362,7 +366,7 @@ namespace utils
 			}
 			else
 			{
-				static_assert(std::false_type::value, "Key must be trivially copyable or implement serializable!");
+				static_assert(!is_trivially_copyable, "Key must be trivially copyable or implement serializable!");
 				std::abort();
 			}
 		}
