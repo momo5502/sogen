@@ -133,7 +133,7 @@ namespace utils
 			{
 				::deserialize(*this, object);
 			}
-			else if constexpr (std::is_trivially_copyable_v<T>)
+			else if constexpr (is_trivially_copyable)
 			{
 				union
 				{
