@@ -129,7 +129,7 @@ int main(const int argc, char** argv)
 	}
 
 	//setvbuf(stdout, nullptr, _IOFBF, 0x10000);
-	if (argc > 2 && argv[1] == "-d"s)
+	if (argc > 2 && argv[1] == "-d"sv)
 	{
 		use_gdb = true;
 	}
