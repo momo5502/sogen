@@ -386,8 +386,13 @@ namespace
 
 			if (!this->executing_delayed_ioctl_)
 			{
+				if (!info.Timeout.QuadPart)
+				{
+					return status;
+				}
+
 				std::optional<std::chrono::steady_clock::time_point> timeout{};
-				if (info.Timeout.QuadPart)
+				if (info.Timeout.QuadPart != std::numeric_limits<int64_t>::max())
 				{
 					timeout = convert_delay_interval_to_time_point(info.Timeout);
 				}
