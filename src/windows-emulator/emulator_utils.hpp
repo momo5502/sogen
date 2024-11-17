@@ -1,19 +1,26 @@
 #pragma once
 #include "memory_utils.hpp"
+#include <x64_emulator.hpp>
 
 // TODO: Replace with pointer handling structure for future 32 bit support
 using emulator_pointer = uint64_t;
 
-struct emulator_wrapper
+class x64_emulator_wrapper
 {
-	emulator* emu;
+	x64_emulator* emu_;
 
-	emulator& get() const
+public:
+	x64_emulator_wrapper(x64_emulator& emu)
+		: emu_(&emu)
 	{
-		return *this->emu;
 	}
 
-	operator emulator&() const
+	x64_emulator& get() const
+	{
+		return *this->emu_;
+	}
+
+	operator x64_emulator&() const
 	{
 		return this->get();
 	}
@@ -33,8 +40,8 @@ class emulator_object
 public:
 	using value_type = T;
 
-	emulator_object(const emulator_wrapper& wrapper, const uint64_t address = 0)
-		: emulator_object(wrapper.emu, address)
+	emulator_object(const x64_emulator_wrapper& wrapper, const uint64_t address = 0)
+		: emulator_object(wrapper.get(), address)
 	{
 	}
 

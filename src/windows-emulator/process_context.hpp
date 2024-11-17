@@ -202,6 +202,12 @@ public:
 		this->release();
 	}
 
+	static emulator_thread construct(utils::buffer_deserializer& buffer)
+	{
+		const auto wrapper = buffer.read<x64_emulator_wrapper>();
+		return {wrapper.get()};
+	}
+
 	moved_marker marker{};
 
 	x64_emulator* emu_ptr{};

@@ -24,7 +24,7 @@ struct io_device_context
 
 	static io_device_context construct(utils::buffer_deserializer& buffer)
 	{
-		const auto wrapper = buffer.read<emulator_wrapper>();
+		const auto wrapper = buffer.read<x64_emulator_wrapper>();
 		return io_device_context{
 			.io_status_block = wrapper.get(),
 		};

@@ -9,9 +9,6 @@
 #include <functional>
 #include <typeindex>
 
-void serialize();
-void deserialize();
-
 namespace utils
 {
 	class buffer_serializer;
