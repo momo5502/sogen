@@ -9,6 +9,9 @@
 #include <functional>
 #include <typeindex>
 
+void serialize();
+void deserialize();
+
 namespace utils
 {
 	class buffer_serializer;
@@ -55,6 +58,18 @@ namespace utils
 			                                std::declval<buffer_deserializer&>(),
 			                                std::declval<std::remove_cvref_t<T>&>()))>>
 			: std::true_type
+		{
+		};
+
+		template <typename, typename = void>
+		struct has_construct_function : std::false_type
+		{
+		};
+
+		template <typename T>
+		struct has_construct_function<T, std::void_t<decltype(T::construct(
+			                              std::declval<buffer_deserializer&>()))>>
+			: std::bool_constant<std::is_same_v<decltype(T::construct(std::declval<buffer_deserializer&>())), T>>
 		{
 		};
 	}
@@ -291,7 +306,11 @@ namespace utils
 		template <typename T>
 		T construct_object()
 		{
-			if constexpr (std::is_default_constructible_v<T>)
+			if constexpr (detail::has_construct_function<T>::value)
+			{
+				return T::construct(*this);
+			}
+			else if constexpr (std::is_default_constructible_v<T>)
 			{
 				return {};
 			}

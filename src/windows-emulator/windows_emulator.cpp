@@ -1046,6 +1046,13 @@ void windows_emulator::serialize(utils::buffer_serializer& buffer) const
 
 void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
 {
+	buffer.register_factory<emulator_wrapper>([this]
+	{
+		return emulator_wrapper{
+			.emu = &this->emu(),
+		};
+	});
+
 	buffer.register_factory<emulator_thread>([this]
 	{
 		return emulator_thread(this->emu());

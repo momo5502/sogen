@@ -4,13 +4,39 @@
 // TODO: Replace with pointer handling structure for future 32 bit support
 using emulator_pointer = uint64_t;
 
+struct emulator_wrapper
+{
+	emulator* emu;
+
+	emulator& get() const
+	{
+		return *this->emu;
+	}
+
+	operator emulator&() const
+	{
+		return this->get();
+	}
+
+	void serialize(utils::buffer_serializer&) const
+	{
+	}
+
+	void deserialize(utils::buffer_deserializer&)
+	{
+	}
+};
+
 template <typename T>
 class emulator_object
 {
 public:
 	using value_type = T;
 
-	//emulator_object() = default;
+	emulator_object(const emulator_wrapper& wrapper, const uint64_t address = 0)
+		: emulator_object(wrapper.emu, address)
+	{
+	}
 
 	emulator_object(emulator& emu, const uint64_t address = 0)
 		: emu_(&emu)

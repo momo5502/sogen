@@ -12,15 +12,49 @@ struct process_context;
 
 struct io_device_context
 {
-	handle event;
-	emulator_pointer /*PIO_APC_ROUTINE*/ apc_routine;
-	emulator_pointer apc_context;
+	handle event{};
+	emulator_pointer /*PIO_APC_ROUTINE*/ apc_routine{};
+	emulator_pointer apc_context{};
 	emulator_object<IO_STATUS_BLOCK> io_status_block;
-	ULONG io_control_code;
-	emulator_pointer input_buffer;
-	ULONG input_buffer_length;
-	emulator_pointer output_buffer;
-	ULONG output_buffer_length;
+	ULONG io_control_code{};
+	emulator_pointer input_buffer{};
+	ULONG input_buffer_length{};
+	emulator_pointer output_buffer{};
+	ULONG output_buffer_length{};
+
+	static io_device_context construct(utils::buffer_deserializer& buffer)
+	{
+		const auto wrapper = buffer.read<emulator_wrapper>();
+		return io_device_context{
+			.io_status_block = wrapper.get(),
+		};
+	}
+
+	void serialize(utils::buffer_serializer& buffer) const
+	{
+		buffer.write(event);
+		buffer.write(apc_routine);
+		buffer.write(apc_context);
+		buffer.write(io_status_block);
+		buffer.write(io_control_code);
+		buffer.write(input_buffer);
+		buffer.write(input_buffer_length);
+		buffer.write(output_buffer);
+		buffer.write(output_buffer_length);
+	}
+
+	void deserialize(utils::buffer_deserializer& buffer)
+	{
+		buffer.read(event);
+		buffer.read(apc_routine);
+		buffer.read(apc_context);
+		buffer.read(io_status_block);
+		buffer.read(io_control_code);
+		buffer.read(input_buffer);
+		buffer.read(input_buffer_length);
+		buffer.read(output_buffer);
+		buffer.read(output_buffer_length);
+	}
 };
 
 struct io_device_creation_data

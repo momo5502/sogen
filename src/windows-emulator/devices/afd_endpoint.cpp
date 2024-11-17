@@ -181,6 +181,7 @@ namespace
 	struct afd_endpoint : io_device
 	{
 		bool executing_delayed_ioctl_{};
+		std::optional<afd_creation_data> creation_data{};
 		std::optional<SOCKET> s_{};
 		std::optional<bool> require_poll_{};
 		std::optional<io_device_context> delayed_ioctl_{};
@@ -204,9 +205,21 @@ namespace
 
 		void create(windows_emulator& win_emu, const io_device_creation_data& data) override
 		{
-			const auto creation_data = get_creation_data(win_emu, data);
+			this->creation_data = get_creation_data(win_emu, data);
+			this->setup();
+		}
+
+		void setup()
+		{
+			if (!this->creation_data)
+			{
+				return;
+			}
+
+			const auto& data = *this->creation_data;
+
 			// TODO: values map to windows values; might not be the case for other platforms
-			const auto sock = socket(creation_data.address_family, creation_data.type, creation_data.protocol);
+			const auto sock = socket(data.address_family, data.type, data.protocol);
 			if (sock == INVALID_SOCKET)
 			{
 				throw std::runtime_error("Failed to create socket!");
@@ -214,7 +227,7 @@ namespace
 
 			network::socket::set_blocking(sock, false);
 
-			s_ = sock;
+			this->s_ = sock;
 		}
 
 		void delay_ioctrl(const io_device_context& c,
@@ -280,14 +293,22 @@ namespace
 			this->clear_pending_state();
 		}
 
-		void deserialize(utils::buffer_deserializer&) override
+		void deserialize(utils::buffer_deserializer& buffer) override
 		{
-			// TODO
+			buffer.read(this->creation_data);
+			this->setup();
+
+			buffer.read(this->require_poll_);
+			buffer.read(this->delayed_ioctl_);
+			buffer.read(this->timeout_);
 		}
 
-		void serialize(utils::buffer_serializer&) const override
+		void serialize(utils::buffer_serializer& buffer) const override
 		{
-			// TODO
+			buffer.write(this->creation_data);
+			buffer.write(this->require_poll_);
+			buffer.write(this->delayed_ioctl_);
+			buffer.write(this->timeout_);
 		}
 
 		NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
