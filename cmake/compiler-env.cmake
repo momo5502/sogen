@@ -102,6 +102,8 @@ momo_add_c_and_cxx_compile_options(
 endif()
 
 ##########################################
+# Must be a dynamic runtime (/MD or /MDd) to enforce
+# shared allocators between emulator and implementation
 
 set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded$<$<CONFIG:Debug>:Debug>DLL)
 
