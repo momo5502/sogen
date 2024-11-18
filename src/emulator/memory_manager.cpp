@@ -198,6 +198,24 @@ bool memory_manager::protect_memory(const uint64_t address, const size_t size, c
 	return true;
 }
 
+bool memory_manager::allocate_mmio(uint64_t address, size_t size, mmio_read_callback read_cb,
+                                   mmio_write_callback write_cb)
+{
+	if (this->overlaps_reserved_region(address, size))
+	{
+		return false;
+	}
+
+	this->map_mmio(address, size, std::move(read_cb), std::move(write_cb));
+
+	const auto entry = this->reserved_regions_.try_emplace(address, size).first;
+	entry->second.committed_regions[address] = committed_region{
+		.length = size, .pemissions = memory_permission::read_write, .is_mmio = true,
+	};
+
+	return true;
+}
+
 bool memory_manager::allocate_memory(const uint64_t address, const size_t size, const memory_permission permissions,
                                      const bool reserve_only)
 {
@@ -211,7 +229,9 @@ bool memory_manager::allocate_memory(const uint64_t address, const size_t size, 
 	if (!reserve_only)
 	{
 		this->map_memory(address, size, permissions);
-		entry->second.committed_regions[address] = committed_region{size, permissions};
+		entry->second.committed_regions[address] = committed_region{
+			.length = size, .pemissions = memory_permission::read_write
+		};
 	}
 
 	return true;
@@ -301,6 +321,11 @@ bool memory_manager::decommit_memory(const uint64_t address, const size_t size)
 		if (i->first >= end)
 		{
 			break;
+		}
+
+		if (i->second.is_mmio)
+		{
+			throw std::runtime_error("Not allowed to decommit MMIO!");
 		}
 
 		const auto sub_region_end = i->first + i->second.length;

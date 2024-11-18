@@ -23,6 +23,7 @@ public:
 	{
 		size_t length{};
 		memory_permission pemissions{};
+		bool is_mmio{false};
 	};
 
 	using committed_region_map = std::map<uint64_t, committed_region>;
@@ -82,6 +83,7 @@ public:
 	bool protect_memory(uint64_t address, size_t size, memory_permission permissions,
 	                    memory_permission* old_permissions = nullptr);
 
+	bool allocate_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb);
 	bool allocate_memory(uint64_t address, size_t size, memory_permission permissions,
 	                     bool reserve_only = false);
 
@@ -117,7 +119,6 @@ private:
 	virtual void unmap_memory(uint64_t address, size_t size) = 0;
 
 	virtual void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) = 0;
-
 
 protected:
 	void serialize_memory_state(utils::buffer_serializer& buffer, bool is_snapshot) const;
