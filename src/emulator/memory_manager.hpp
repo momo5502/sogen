@@ -23,7 +23,6 @@ public:
 	{
 		size_t length{};
 		memory_permission pemissions{};
-		bool is_mmio{false};
 	};
 
 	using committed_region_map = std::map<uint64_t, committed_region>;
@@ -32,6 +31,7 @@ public:
 	{
 		size_t length{};
 		committed_region_map committed_regions{};
+		bool is_mmio{false};
 	};
 
 	virtual ~memory_manager() = default;

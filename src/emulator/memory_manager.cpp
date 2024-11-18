@@ -77,12 +77,14 @@ static void deserialize(utils::buffer_deserializer& buffer, memory_manager::comm
 
 static void serialize(utils::buffer_serializer& buffer, const memory_manager::reserved_region& region)
 {
+	buffer.write(region.is_mmio);
 	buffer.write<uint64_t>(region.length);
 	buffer.write_map(region.committed_regions);
 }
 
 static void deserialize(utils::buffer_deserializer& buffer, memory_manager::reserved_region& region)
 {
+	buffer.read(region.is_mmio);
 	region.length = static_cast<size_t>(buffer.read<uint64_t>());
 	buffer.read_map(region.committed_regions);
 }
@@ -100,6 +102,11 @@ void memory_manager::serialize_memory_state(utils::buffer_serializer& buffer, co
 
 	for (const auto& reserved_region : this->reserved_regions_)
 	{
+		if (reserved_region.second.is_mmio)
+		{
+			continue;
+		}
+
 		for (const auto& region : reserved_region.second.committed_regions)
 		{
 			data.resize(region.second.length);
@@ -133,9 +140,18 @@ void memory_manager::deserialize_memory_state(utils::buffer_deserializer& buffer
 
 	std::vector<uint8_t> data{};
 
-	for (const auto& reserved_region : this->reserved_regions_)
+	for (auto i = this->reserved_regions_.begin(); i != this->reserved_regions_.end();)
 	{
-		for (const auto& region : reserved_region.second.committed_regions)
+		auto& reserved_region = i->second;
+		if (reserved_region.is_mmio)
+		{
+			i = this->reserved_regions_.erase(i);
+			continue;
+		}
+
+		++i;
+
+		for (const auto& region : reserved_region.committed_regions)
 		{
 			data.resize(region.second.length);
 
@@ -198,7 +214,7 @@ bool memory_manager::protect_memory(const uint64_t address, const size_t size, c
 	return true;
 }
 
-bool memory_manager::allocate_mmio(uint64_t address, size_t size, mmio_read_callback read_cb,
+bool memory_manager::allocate_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb,
                                    mmio_write_callback write_cb)
 {
 	if (this->overlaps_reserved_region(address, size))
@@ -208,10 +224,13 @@ bool memory_manager::allocate_mmio(uint64_t address, size_t size, mmio_read_call
 
 	this->map_mmio(address, size, std::move(read_cb), std::move(write_cb));
 
-	const auto entry = this->reserved_regions_.try_emplace(address, size).first;
-	entry->second.committed_regions[address] = committed_region{
-		.length = size, .pemissions = memory_permission::read_write, .is_mmio = true,
-	};
+	const auto entry = this->reserved_regions_.try_emplace(address,
+	                                                       reserved_region{
+		                                                       .length = size,
+		                                                       .is_mmio = true,
+	                                                       }).first;
+
+	entry->second.committed_regions[address] = committed_region{size, memory_permission::read_write};
 
 	return true;
 }
@@ -229,9 +248,7 @@ bool memory_manager::allocate_memory(const uint64_t address, const size_t size, 
 	if (!reserve_only)
 	{
 		this->map_memory(address, size, permissions);
-		entry->second.committed_regions[address] = committed_region{
-			.length = size, .pemissions = memory_permission::read_write
-		};
+		entry->second.committed_regions[address] = committed_region{size, memory_permission::read_write};
 	}
 
 	return true;
@@ -304,6 +321,11 @@ bool memory_manager::decommit_memory(const uint64_t address, const size_t size)
 		return false;
 	}
 
+	if (entry->second.is_mmio)
+	{
+		throw std::runtime_error("Not allowed to decommit MMIO!");
+	}
+
 	const auto end = address + size;
 	const auto region_end = entry->first + entry->second.length;
 
@@ -321,11 +343,6 @@ bool memory_manager::decommit_memory(const uint64_t address, const size_t size)
 		if (i->first >= end)
 		{
 			break;
-		}
-
-		if (i->second.is_mmio)
-		{
-			throw std::runtime_error("Not allowed to decommit MMIO!");
 		}
 
 		const auto sub_region_end = i->first + i->second.length;
