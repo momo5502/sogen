@@ -106,6 +106,15 @@ namespace unicorn
 			std::vector<hook_entry> hooks_;
 		};
 
+		struct mmio_callbacks
+		{
+			using read_wrapper = function_wrapper<uint64_t, uc_engine*, uint64_t, unsigned>;
+			using write_wrapper = function_wrapper<void, uc_engine*, uint64_t, unsigned, uint64_t>;
+
+			read_wrapper read{};
+			write_wrapper write{};
+		};
+
 		class uc_context_serializer
 		{
 		public:
@@ -302,6 +311,27 @@ namespace unicorn
 				}
 			}
 
+			void map_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb,
+			              mmio_write_callback write_cb) override
+			{
+				mmio_callbacks cb{
+					.read = [c = std::move(read_cb)](uc_engine*, const uint64_t addr, const uint32_t s)
+					{
+						return c(addr, s);
+					},
+					.write = [c = std::move(write_cb)](uc_engine*, const uint64_t addr, const uint32_t s,
+					                                   const uint64_t value)
+					{
+						c(addr, s, value);
+					}
+				};
+
+				uce(uc_mmio_map(*this, address, size, cb.read.get_c_function(), cb.read.get_user_data(),
+				                cb.write.get_c_function(), cb.write.get_user_data()));
+
+				this->mmio_[address] = std::move(cb);
+			}
+
 			void map_memory(const uint64_t address, const size_t size, memory_permission permissions) override
 			{
 				uce(uc_mem_map(*this, address, size, static_cast<uint32_t>(permissions)));
@@ -310,6 +340,12 @@ namespace unicorn
 			void unmap_memory(const uint64_t address, const size_t size) override
 			{
 				uce(uc_mem_unmap(*this, address, size));
+
+				const auto mmio_entry = this->mmio_.find(address);
+				if (mmio_entry != this->mmio_.end())
+				{
+					this->mmio_.erase(mmio_entry);
+				}
 			}
 
 			bool try_read_memory(const uint64_t address, void* data, const size_t size) const override
@@ -332,28 +368,6 @@ namespace unicorn
 			{
 				uce(uc_mem_protect(*this, address, size, static_cast<uint32_t>(permissions)));
 			}
-
-			/*std::vector<memory_region> get_memory_regions() override
-			{
-				const unicorn_memory_regions regions{*this};
-				const auto region_span = regions.get_span();
-
-				std::vector<memory_region> result{};
-				result.reserve(region_span.size());
-
-				for (const auto region : region_span)
-				{
-					memory_region reg{};
-					reg.start = region.begin;
-					reg.length = region.end - region.begin;
-					reg.committed = true;
-					reg.pemissions = static_cast<memory_permission>(region.perms) & memory_permission::all;
-
-					result.push_back(reg);
-				}
-
-				return result;
-			}*/
 
 			emulator_hook* hook_instruction(int instruction_type,
 			                                instruction_hook_callback callback) override
@@ -614,6 +628,7 @@ namespace unicorn
 			uc_engine* uc_{};
 			bool has_violation_{false};
 			std::vector<std::unique_ptr<hook_object>> hooks_{};
+			std::unordered_map<uint64_t, mmio_callbacks> mmio_{};
 		};
 	}
 

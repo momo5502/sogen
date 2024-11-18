@@ -13,6 +13,9 @@ struct region_info : basic_memory_region
 	bool is_committed{};
 };
 
+using mmio_read_callback = std::function<uint64_t(uint64_t addr, size_t size)>;
+using mmio_write_callback = std::function<void(uint64_t addr, size_t size, uint64_t data)>;
+
 class memory_manager
 {
 public:
@@ -109,10 +112,12 @@ private:
 	reserved_region_map::iterator find_reserved_region(uint64_t address);
 	bool overlaps_reserved_region(uint64_t address, size_t size) const;
 
+	virtual void map_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) = 0;
 	virtual void map_memory(uint64_t address, size_t size, memory_permission permissions) = 0;
 	virtual void unmap_memory(uint64_t address, size_t size) = 0;
 
 	virtual void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) = 0;
+
 
 protected:
 	void serialize_memory_state(utils::buffer_serializer& buffer, bool is_snapshot) const;

@@ -13,6 +13,8 @@ public:
 	using c_function_type = ReturnType(Args..., user_data_pointer);
 	using functor_type = std::function<ReturnType(Args...)>;
 
+	function_wrapper() = default;
+
 	function_wrapper(functor_type functor)
 		: functor_(std::make_unique<functor_type>(std::move(functor)))
 	{
