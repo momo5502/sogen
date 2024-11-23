@@ -123,7 +123,7 @@ namespace fuzzer
 			const auto executions = context.executions.exchange(0);
 			const auto highest_scorer = context.generator.get_highest_scorer();
 			const auto avg_score = context.generator.get_average_score();
-			printf("Executions/s: %lld - Score: %llX - Avg: %.3f\n", executions, highest_scorer.score, avg_score);
+			printf("Executions/s: %zd - Score: %zX - Avg: %.3f\n", executions, highest_scorer.score, avg_score);
 		}
 	}
 }

@@ -315,15 +315,17 @@ namespace unicorn
 			              mmio_write_callback write_cb) override
 			{
 				mmio_callbacks cb{
-					.read = [c = std::move(read_cb)](uc_engine*, const uint64_t addr, const uint32_t s)
+					.read = mmio_callbacks::read_wrapper(
+					[c = std::move(read_cb)](uc_engine*, const uint64_t addr, const uint32_t s)
 					{
 						return c(addr, s);
-					},
-					.write = [c = std::move(write_cb)](uc_engine*, const uint64_t addr, const uint32_t s,
+					}),
+					.write = mmio_callbacks::write_wrapper(
+					[c = std::move(write_cb)](uc_engine*, const uint64_t addr, const uint32_t s,
 					                                   const uint64_t value)
 					{
 						c(addr, s, value);
-					}
+					})
 				};
 
 				uce(uc_mmio_map(*this, address, size, cb.read.get_c_function(), cb.read.get_user_data(),
