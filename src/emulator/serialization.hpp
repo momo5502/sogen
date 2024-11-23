@@ -177,11 +177,11 @@ namespace utils
 		{
 			if (this->read<bool>())
 			{
-				val = this->read<T>();
+				val.emplace(this->read<T>());
 			}
 			else
 			{
-				val = {};
+				val = std::nullopt;
 			}
 		}
 
