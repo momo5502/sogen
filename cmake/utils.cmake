@@ -315,6 +315,8 @@ function(momo_strip_target target)
   endif()
 
   if(NOT MSVC)
+    # TODO: detect LLVM IR bitcode and abort
+    return()
     if(NOT DEFINED STRIP_COMMAND)
       set(STRIP_COMMAND strip)
     endif()
