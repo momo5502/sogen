@@ -28,9 +28,8 @@
 #pragma warning(disable: 26498)
 #pragma warning(disable: 26812)
 #pragma warning(disable: 28020)
-
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
+#pragma warning(pop)
+#endif
 
 #include <map>
 #include <set>
@@ -56,25 +55,8 @@
 #include <condition_variable>
 
 #include <cassert>
+#include <cstdarg>
 
-#define NTDDI_WIN11_GE 0
-#define PHNT_VERSION PHNT_WIN11
-#include <phnt_windows.h>
-#include <phnt.h>
-#include <ntgdi.h>
-#include <ws2def.h>
-
-#ifdef _WIN32
-#pragma warning(pop)
-#endif
-
-#ifdef max
-#undef max
-#endif
-
-#ifdef min
-#undef min
-#endif
-#endif
+#include "platform/platform.hpp"
 
 using namespace std::literals;

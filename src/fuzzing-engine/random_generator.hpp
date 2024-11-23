@@ -2,6 +2,7 @@
 #include <span>
 #include <random>
 #include <cstdint>
+#include <cstring>
 
 namespace fuzzer
 {
