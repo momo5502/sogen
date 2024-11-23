@@ -3,10 +3,6 @@
 	url = ../unicorn.git
 	shallow = true
 	branch = dev
-[submodule "deps/phnt"]
-	path = deps/phnt
-	url = ../phnt.git
-	shallow = true
 [submodule "deps/reflect"]
 	path = deps/reflect
 	url = https://github.com/qlibs/reflect.git

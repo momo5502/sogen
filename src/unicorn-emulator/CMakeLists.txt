@@ -13,4 +13,4 @@ target_include_directories(unicorn-emulator INTERFACE
 )
 
 target_link_libraries(unicorn-emulator PUBLIC emulator)
-target_link_libraries(unicorn-emulator PRIVATE unicorn)
+target_link_libraries(unicorn-emulator PRIVATE unicorn common)
