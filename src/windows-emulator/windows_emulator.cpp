@@ -215,33 +215,33 @@ namespace
 			proc_params.StandardInput = STDIN_HANDLE.h;
 			proc_params.StandardError = proc_params.StandardOutput;
 
-			proc_params.Environment = allocator.copy_string(L"=::=::\\");
-			allocator.copy_string(L"EMULATOR=1");
-			allocator.copy_string(L"COMPUTERNAME=momo");
-			allocator.copy_string(L"SystemRoot=C:\\WINDOWS");
-			allocator.copy_string(L"");
+			proc_params.Environment = reinterpret_cast<std::uint64_t*>(allocator.copy_string(u"=::=::\\"));
+			allocator.copy_string(u"EMULATOR=1");
+			allocator.copy_string(u"COMPUTERNAME=momo");
+			allocator.copy_string(u"SystemRoot=C:\\WINDOWS");
+			allocator.copy_string(u"");
 
-			std::wstring command_line = L"\"" + settings.application.wstring() + L"\"";
+			std::u16string command_line = u"\"" + settings.application.u16string() + u"\"";
 
 			for (const auto& arg : settings.arguments)
 			{
-				command_line.push_back(L' ');
+				command_line.push_back(u' ');
 				command_line.append(arg);
 			}
 
-			std::wstring current_folder{};
+			std::u16string current_folder{};
 			if (!settings.working_directory.empty())
 			{
-				current_folder = canonicalize_path(settings.working_directory).wstring() + L"\\";
+				current_folder = canonicalize_path(settings.working_directory).u16string() + u"\\";
 			}
 			else
 			{
-				current_folder = canonicalize_path(settings.application).parent_path().wstring() + L"\\";
+				current_folder = canonicalize_path(settings.application).parent_path().u16string() + u"\\";
 			}
 
 			allocator.make_unicode_string(proc_params.CommandLine, command_line);
 			allocator.make_unicode_string(proc_params.CurrentDirectory.DosPath, current_folder);
-			allocator.make_unicode_string(proc_params.ImagePathName, canonicalize_path(settings.application).wstring());
+			allocator.make_unicode_string(proc_params.ImagePathName, canonicalize_path(settings.application).u16string());
 
 			const auto total_length = allocator.get_next_address() - context.process_params.value();
 

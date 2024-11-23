@@ -51,7 +51,7 @@ struct event : ref_counted_object
 {
 	bool signaled{};
 	EVENT_TYPE type{};
-	std::wstring name{};
+	std::u16string name{};
 
 	bool is_signaled()
 	{
@@ -87,7 +87,7 @@ struct event : ref_counted_object
 struct file
 {
 	utils::file_handle handle{};
-	std::wstring name{};
+	std::u16string name{};
 
 	void serialize(utils::buffer_serializer& buffer) const
 	{
@@ -104,7 +104,7 @@ struct file
 
 struct semaphore
 {
-	std::wstring name{};
+	std::u16string name{};
 	volatile uint32_t current_count{};
 	uint32_t max_count{};
 
@@ -125,7 +125,7 @@ struct semaphore
 
 struct port
 {
-	std::wstring name{};
+	std::u16string name{};
 	uint64_t view_base{};
 
 	void serialize(utils::buffer_serializer& buffer) const
@@ -218,7 +218,7 @@ public:
 
 	uint32_t id{};
 
-	std::wstring name{};
+	std::u16string name{};
 
 	std::optional<NTSTATUS> exit_status{};
 	std::optional<handle> await_object{};

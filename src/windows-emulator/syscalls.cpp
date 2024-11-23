@@ -64,7 +64,7 @@ namespace
 	                          const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
 	{
 		const auto attributes = object_attributes.read();
-		auto key = read_unicode_string(c.emu, attributes.ObjectName);
+		auto key = read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
 
 		if (attributes.RootDirectory)
 		{
@@ -74,7 +74,9 @@ namespace
 				return STATUS_INVALID_HANDLE;
 			}
 
-			key = parent_handle->hive / parent_handle->path / key;
+			std::filesystem::path key_path = key;
+			std::filesystem::path full_path = parent_handle->hive / parent_handle->path / key_path;
+			key = full_path.u16string();
 		}
 
 		c.win_emu.logger.print(color::dark_gray, "--> Registry key: %S\n", key.c_str());
@@ -166,7 +168,7 @@ namespace
 	}
 
 	NTSTATUS handle_NtQueryValueKey(const syscall_context& c, const handle key_handle,
-	                                const emulator_object<UNICODE_STRING> value_name,
+	                                const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> value_name,
 	                                const KEY_VALUE_INFORMATION_CLASS key_value_information_class,
 	                                const uint64_t key_value_information,
 	                                const ULONG length, const emulator_object<ULONG> result_length)
@@ -404,13 +406,13 @@ namespace
 	                              const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
 	                              const EVENT_TYPE event_type, const BOOLEAN initial_state)
 	{
-		std::wstring name{};
+		std::u16string name{};
 		if (object_attributes)
 		{
 			const auto attributes = object_attributes.read();
 			if (attributes.ObjectName)
 			{
-				name = read_unicode_string(c.emu, attributes.ObjectName);
+				name = read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
 			}
 		}
 
@@ -433,7 +435,7 @@ namespace
 	                            const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
 	{
 		const auto attributes = object_attributes.read();
-		const auto name = read_unicode_string(c.emu, attributes.ObjectName);
+		const auto name = read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
 
 		for (auto& entry : c.proc.events)
 		{
@@ -484,7 +486,7 @@ namespace
 	{
 		const auto attributes = object_attributes.read();
 
-		auto filename = read_unicode_string(c.emu, attributes.ObjectName);
+		auto filename = read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
 		c.win_emu.logger.print(color::gray, "Opening section: %S\n", filename.c_str());
 
 		if (filename == L"\\Windows\\SharedSection")
@@ -500,7 +502,7 @@ namespace
 			return STATUS_NOT_SUPPORTED;
 		}
 
-		filename = L"C:\\WINDOWS\\System32\\" + filename;
+		filename = u"C:\\WINDOWS\\System32\\" + filename;
 		if (!std::filesystem::exists(filename))
 		{
 			return STATUS_FILE_INVALID;
@@ -534,7 +536,7 @@ namespace
 			c.emu.allocate_memory(address,
 			                      c.proc.shared_section_size, memory_permission::read_write);
 
-			const std::wstring_view windows_dir = c.proc.kusd.get().NtSystemRoot.arr;
+			const std::u16string_view windows_dir = c.proc.kusd.get().NtSystemRoot.arr;
 			const auto windows_dir_size = windows_dir.size() * 2;
 
 			constexpr auto windows_dir_offset = 0x10;
@@ -542,22 +544,22 @@ namespace
 
 			const auto obj_address = address + windows_dir_offset;
 
-			const emulator_object<UNICODE_STRING> windir_obj{c.emu, obj_address};
-			windir_obj.access([&](UNICODE_STRING& ucs)
+			const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> windir_obj{c.emu, obj_address};
+			windir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs)
 			{
 				const auto dir_address = kusd_mmio::address() + offsetof(KUSER_SHARED_DATA, NtSystemRoot);
 
-				ucs.Buffer = reinterpret_cast<wchar_t*>(dir_address - obj_address);
+				ucs.Buffer = dir_address - obj_address;
 				ucs.Length = static_cast<uint16_t>(windows_dir_size);
 				ucs.MaximumLength = ucs.Length;
 			});
 
 
-			const emulator_object<UNICODE_STRING> sysdir_obj{c.emu, obj_address + windir_obj.size()};
-			sysdir_obj.access([&](UNICODE_STRING& ucs)
+			const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> sysdir_obj{c.emu, obj_address + windir_obj.size()};
+			sysdir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs)
 			{
-				c.proc.base_allocator.make_unicode_string(ucs, L"C:\\WINDOWS\\System32");
-				ucs.Buffer = reinterpret_cast<wchar_t*>(reinterpret_cast<uint64_t>(ucs.Buffer) - obj_address);
+				c.proc.base_allocator.make_unicode_string(ucs, u"C:\\WINDOWS\\System32");
+				ucs.Buffer = ucs.Buffer - obj_address;
 			});
 
 			if (view_size.value())
@@ -1139,7 +1141,7 @@ namespace
 			const auto peb = c.proc.peb.read();
 			emulator_object<RTL_USER_PROCESS_PARAMETERS> proc_params{c.emu, peb.ProcessParameters};
 			const auto params = proc_params.read();
-			const auto length = params.ImagePathName.Length + sizeof(UNICODE_STRING) + 2;
+			const auto length = params.ImagePathName.Length + sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>) + 2;
 
 			if (return_length)
 			{
@@ -1159,7 +1161,7 @@ namespace
 				c.emu.write_memory(buffer_start, string.c_str(), (string.size() + 1) * 2);
 				str.Length = params.ImagePathName.Length;
 				str.MaximumLength = str.Length;
-				str.Buffer = reinterpret_cast<wchar_t*>(buffer_start);
+				str.Buffer = buffer_start;
 			});
 
 			return STATUS_SUCCESS;
@@ -1426,7 +1428,7 @@ namespace
 	                                      const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
 	{
 		const auto attributes = object_attributes.read();
-		const auto object_name = read_unicode_string(c.emu, attributes.ObjectName);
+		const auto object_name = read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
 
 		if (object_name == L"\\KnownDlls")
 		{
@@ -1442,7 +1444,7 @@ namespace
 	                                         const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
 	{
 		const auto attributes = object_attributes.read();
-		const auto object_name = read_unicode_string(c.emu, attributes.ObjectName);
+		const auto object_name = read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
 
 		if (object_name == L"KnownDllPath")
 		{
@@ -1459,14 +1461,14 @@ namespace
 	{
 		if (link_handle == KNOWN_DLLS_SYMLINK)
 		{
-			constexpr std::wstring_view system32 = L"C:\\WINDOWS\\System32";
+			constexpr std::u16string_view system32 = u"C:\\WINDOWS\\System32";
 			constexpr auto str_length = system32.size() * 2;
 			constexpr auto max_length = str_length + 2;
 
 			returned_length.write(max_length);
 
 			bool too_small = false;
-			link_target.access([&](UNICODE_STRING& str)
+			link_target.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& str)
 			{
 				if (str.MaximumLength < max_length)
 				{
@@ -1592,7 +1594,7 @@ namespace
 	}
 
 	NTSTATUS handle_NtConnectPort(const syscall_context& c, const emulator_object<handle> client_port_handle,
-	                              const emulator_object<UNICODE_STRING> server_port_name,
+	                              const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> server_port_name,
 	                              const emulator_object<SECURITY_QUALITY_OF_SERVICE> /*security_qos*/,
 	                              const emulator_object<PORT_VIEW> client_shared_memory,
 	                              const emulator_object<REMOTE_PORT_VIEW> /*server_shared_memory*/,
@@ -1855,7 +1857,7 @@ namespace
 			return STATUS_INVALID_HANDLE;
 		}
 
-		if (port->name != L"\\Windows\\ApiPort")
+		if (port->name != u"\\Windows\\ApiPort")
 		{
 			puts("!!! BAD PORT");
 			return STATUS_NOT_SUPPORTED;
@@ -2009,9 +2011,9 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	const wchar_t* map_mode(const ACCESS_MASK desired_access, const ULONG create_disposition)
+	constexpr std::u16string map_mode(const ACCESS_MASK desired_access, const ULONG create_disposition)
 	{
-		const auto* mode = L"";
+		std::u16string mode = u"";
 
 		switch (create_disposition)
 		{
@@ -2019,7 +2021,7 @@ namespace
 		case FILE_SUPERSEDE:
 			if (desired_access & GENERIC_WRITE)
 			{
-				mode = L"wb";
+				mode = u"wb";
 			}
 			break;
 
@@ -2027,11 +2029,11 @@ namespace
 		case FILE_OPEN_IF:
 			if (desired_access & GENERIC_WRITE)
 			{
-				mode = L"r+b";
+				mode = u"r+b";
 			}
 			else if (desired_access & GENERIC_READ)
 			{
-				mode = L"rb";
+				mode = u"rb";
 			}
 			break;
 
@@ -2039,18 +2041,18 @@ namespace
 		case FILE_OVERWRITE_IF:
 			if (desired_access & GENERIC_WRITE)
 			{
-				mode = L"w+b";
+				mode = u"w+b";
 			}
 			break;
 
 		default:
-			mode = L"";
+			mode = u"";
 			break;
 		}
 
 		if (desired_access & FILE_APPEND_DATA)
 		{
-			mode = L"a+b";
+			mode = u"a+b";
 		}
 
 		return mode;
@@ -2066,14 +2068,14 @@ namespace
 	                             ULONG ea_length)
 	{
 		const auto attributes = object_attributes.read();
-		auto filename = read_unicode_string(c.emu, attributes.ObjectName);
+		auto filename = read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
 
 		auto printer = utils::finally([&]
 		{
 			c.win_emu.logger.print(color::dark_gray, "--> Opening file: %S\n", filename.c_str());
 		});
 
-		constexpr std::wstring_view device_prefix = L"\\Device\\";
+		constexpr std::u16string_view device_prefix = u"\\Device\\";
 		if (filename.starts_with(device_prefix))
 		{
 			const io_device_creation_data data{
@@ -2092,7 +2094,7 @@ namespace
 
 		handle root_handle{};
 		root_handle.bits = reinterpret_cast<uint64_t>(attributes.RootDirectory);
-		if (root_handle.value.is_pseudo && (filename == L"\\Reference" || filename == L"\\Connect"))
+		if (root_handle.value.is_pseudo && (filename == u"\\Reference" || filename == u"\\Connect"))
 		{
 			file_handle.write(root_handle);
 			return STATUS_SUCCESS;
@@ -2114,7 +2116,7 @@ namespace
 
 		printer.cancel();
 
-		if (f.name.ends_with(L"\\") || create_options & FILE_DIRECTORY_FILE)
+		if (f.name.ends_with(u"\\") || create_options & FILE_DIRECTORY_FILE)
 		{
 			c.win_emu.logger.print(color::dark_gray, "--> Opening folder: %S\n", f.name.c_str());
 
@@ -2141,15 +2143,17 @@ namespace
 
 		c.win_emu.logger.print(color::dark_gray, "--> Opening file: %S\n", f.name.c_str());
 
-		const auto* mode = map_mode(desired_access, create_disposition);
+		std::u16string mode = map_mode(desired_access, create_disposition);
 
-		if (!mode || wcslen(mode) == 0)
+		if (mode.length() == 0 || mode == u"")
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
 
 		FILE* file{};
-		const auto error = _wfopen_s(&file, f.name.c_str(), mode);
+		// TODO: fix unicode conversion
+		//const auto error = _wfopen_s(&file, f.name.c_str(), mode);
+		const auto error = EACCES;
 
 		if (!file)
 		{
@@ -2212,7 +2216,7 @@ namespace
 
 	NTSTATUS handle_NtRaiseHardError(const syscall_context& c, const NTSTATUS error_status,
 	                                 const ULONG /*number_of_parameters*/,
-	                                 const emulator_object<UNICODE_STRING> /*unicode_string_parameter_mask*/,
+	                                 const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*unicode_string_parameter_mask*/,
 	                                 const emulator_object<DWORD> /*parameters*/,
 	                                 const HARDERROR_RESPONSE_OPTION /*valid_response_option*/,
 	                                 const emulator_object<HARDERROR_RESPONSE> response)
@@ -2260,7 +2264,7 @@ namespace
 			const auto attributes = object_attributes.read();
 			if (attributes.ObjectName)
 			{
-				s.name = read_unicode_string(c.emu, attributes.ObjectName);
+				s.name = read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
 			}
 		}
 

@@ -466,6 +466,12 @@ namespace utils
 	}
 
 	template <>
+	inline void buffer_deserializer::read<std::u16string>(std::u16string& object)
+	{
+		object = this->read_string<char16_t>();
+	}
+
+	template <>
 	inline void buffer_serializer::write<bool>(const bool& object)
 	{
 		this->write<uint8_t>(object ? 1 : 0);
@@ -479,6 +485,12 @@ namespace utils
 
 	template <>
 	inline void buffer_serializer::write<std::wstring>(const std::wstring& object)
+	{
+		this->write_string(object);
+	}
+
+	template <>
+	inline void buffer_serializer::write<std::u16string>(const std::u16string& object)
 	{
 		this->write_string(object);
 	}

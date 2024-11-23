@@ -68,9 +68,9 @@ namespace
 		}
 	}
 
-	std::vector<std::wstring> parse_arguments(char* argv[], const size_t argc)
+	std::vector<std::u16string> parse_arguments(char* argv[], const size_t argc)
 	{
-		std::vector<std::wstring> args{};
+		std::vector<std::u16string> args{};
 		args.reserve(argc - 1);
 
 		for (size_t i = 1; i < argc; ++i)

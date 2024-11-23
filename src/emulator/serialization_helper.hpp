@@ -35,10 +35,10 @@ inline void deserialize(utils::buffer_deserializer& buffer, std::chrono::system_
 
 inline void serialize(utils::buffer_serializer& buffer, const std::filesystem::path& path)
 {
-	buffer.write_string<wchar_t>(path.wstring());
+	buffer.write_string<char16_t>(path.u16string());
 }
 
 inline void deserialize(utils::buffer_deserializer& buffer, std::filesystem::path& path)
 {
-	path = buffer.read_string<wchar_t>();
+	path = buffer.read_string<char16_t>();
 }

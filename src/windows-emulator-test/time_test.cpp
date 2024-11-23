@@ -7,7 +7,7 @@ namespace test
 		std::string output_buffer{};
 
 		emulator_settings settings{
-			.arguments = {L"-time"},
+			.arguments = {u"-time"},
 			.stdout_callback = [&output_buffer](const std::string_view data)
 			{
 				output_buffer.append(data);
