@@ -7,9 +7,14 @@
 
 namespace
 {
-	uint64_t get_first_section_offset(const IMAGE_NT_HEADERS& nt_headers, const uint64_t nt_headers_offset)
+	uint64_t get_first_section_offset(const PENTHeaders_t<std::uint64_t>& nt_headers, const uint64_t nt_headers_offset)
 	{
-		const auto first_section_absolute = reinterpret_cast<uint64_t>(IMAGE_FIRST_SECTION(&nt_headers));
+		const uint8_t* nt_headers_addr = reinterpret_cast<const uint8_t*>(&nt_headers);
+    	size_t optional_header_offset = reinterpret_cast<uintptr_t>(&(nt_headers.OptionalHeader)) - reinterpret_cast<uintptr_t>(&nt_headers);
+		size_t optional_header_size = nt_headers.FileHeader.SizeOfOptionalHeader;
+		const uint8_t* first_section_addr = nt_headers_addr + optional_header_offset + optional_header_size;
+
+		const auto first_section_absolute = reinterpret_cast<uint64_t>(first_section_addr);
 		const auto absolute_base = reinterpret_cast<uint64_t>(&nt_headers);
 		return nt_headers_offset + (first_section_absolute - absolute_base);
 	}
@@ -24,7 +29,7 @@ namespace
 	}
 
 	void collect_exports(mapped_module& binary, const utils::safe_buffer_accessor<const uint8_t> buffer,
-	                     const IMAGE_OPTIONAL_HEADER& optional_header)
+	                     const PEOptionalHeader_t<std::uint64_t>& optional_header)
 	{
 		auto& export_directory_entry = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
 		if (export_directory_entry.VirtualAddress == 0 || export_directory_entry.Size == 0)
@@ -71,7 +76,7 @@ namespace
 	}
 
 	void apply_relocations(const mapped_module& binary, const utils::safe_buffer_accessor<uint8_t> buffer,
-	                       const IMAGE_OPTIONAL_HEADER& optional_header)
+	                       const PEOptionalHeader_t<std::uint64_t>& optional_header)
 	{
 		const auto delta = binary.image_base - optional_header.ImageBase;
 		if (delta == 0)
@@ -134,7 +139,7 @@ namespace
 
 	void map_sections(emulator& emu, const mapped_module& binary,
 	                  const utils::safe_buffer_accessor<const uint8_t> buffer,
-	                  const IMAGE_NT_HEADERS& nt_headers, const uint64_t nt_headers_offset)
+	                  const PENTHeaders_t<std::uint64_t>& nt_headers, const uint64_t nt_headers_offset)
 	{
 		const auto first_section_offset = get_first_section_offset(nt_headers, nt_headers_offset);
 		const auto sections = buffer.as<IMAGE_SECTION_HEADER>(first_section_offset);
@@ -183,10 +188,10 @@ namespace
 
 		utils::safe_buffer_accessor buffer{data};
 
-		const auto dos_header = buffer.as<IMAGE_DOS_HEADER>(0).get();
+		const auto dos_header = buffer.as<PEDosHeader_t>(0).get();
 		const auto nt_headers_offset = dos_header.e_lfanew;
 
-		const auto nt_headers = buffer.as<IMAGE_NT_HEADERS>(nt_headers_offset).get();
+		const auto nt_headers = buffer.as<PENTHeaders_t<std::uint64_t>>(nt_headers_offset).get();
 		auto& optional_header = nt_headers.OptionalHeader;
 
 		binary.image_base = optional_header.ImageBase;

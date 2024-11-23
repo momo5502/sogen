@@ -12,7 +12,7 @@ namespace
 	};
 }
 
-std::unique_ptr<io_device<EmulatorTraits<Emu64>>> create_device64(const std::u16string_view device)
+std::unique_ptr<io_device> create_device(const std::u16string_view device)
 {
 	if (device == u"CNG"
 		|| device == u"KsecDD"
@@ -27,5 +27,5 @@ std::unique_ptr<io_device<EmulatorTraits<Emu64>>> create_device64(const std::u16
 		return create_afd_endpoint();
 	}
 
-	throw std::runtime_error("Unsupported device: " + std::string(device.begin(), device.end()));
+	throw std::runtime_error("Unsupported device: " + u16_to_u8(device));
 }

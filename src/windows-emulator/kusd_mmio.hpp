@@ -24,12 +24,12 @@ public:
 	void serialize(utils::buffer_serializer& buffer) const;
 	void deserialize(utils::buffer_deserializer& buffer);
 
-	KUSER_SHARED_DATA& get()
+	KUSER_SHARED_DATA64& get()
 	{
 		return this->kusd_;
 	}
 
-	const KUSER_SHARED_DATA& get() const
+	const KUSER_SHARED_DATA64& get() const
 	{
 		return this->kusd_;
 	}
@@ -45,7 +45,7 @@ private:
 	bool registered_{};
 	bool use_relative_time_{};
 
-	KUSER_SHARED_DATA kusd_{};
+	KUSER_SHARED_DATA64 kusd_{};
 	std::chrono::system_clock::time_point start_time_{};
 
 	uint64_t read(uint64_t addr, size_t size);

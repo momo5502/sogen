@@ -16,15 +16,15 @@ namespace
 		//watch_object(win_emu, win_emu.process().kusd);
 		auto* params_hook = watch_object(win_emu, win_emu.process().process_params);
 
-		win_emu.emu().hook_memory_write(win_emu.process().peb.value() + offsetof(PEB, ProcessParameters), 0x8,
+		win_emu.emu().hook_memory_write(win_emu.process().peb.value() + offsetof(PEB64, ProcessParameters), 0x8,
 		                                [&](const uint64_t address, size_t, const uint64_t value)
 		                                {
 			                                const auto target_address = win_emu.process().peb.value() + offsetof(
-				                                PEB, ProcessParameters);
+				                                PEB64, ProcessParameters);
 
 			                                if (address == target_address)
 			                                {
-				                                const emulator_object<RTL_USER_PROCESS_PARAMETERS> obj{
+				                                const emulator_object<RTL_USER_PROCESS_PARAMETERS64> obj{
 					                                win_emu.emu(), value
 				                                };
 

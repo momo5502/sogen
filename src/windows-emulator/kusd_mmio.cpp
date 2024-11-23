@@ -5,12 +5,12 @@
 #include <address_utils.hpp>
 
 constexpr auto KUSD_ADDRESS = 0x7ffe0000ULL;
-constexpr auto KUSD_SIZE = sizeof(KUSER_SHARED_DATA);
+constexpr auto KUSD_SIZE = sizeof(KUSER_SHARED_DATA64);
 constexpr auto KUSD_BUFFER_SIZE = page_align_up(KUSD_SIZE);
 
 namespace
 {
-	void setup_kusd(KUSER_SHARED_DATA& kusd, const bool use_relative_time)
+	void setup_kusd(KUSER_SHARED_DATA64& kusd, const bool use_relative_time)
 	{
 		memset(&kusd, 0, sizeof(kusd));
 
@@ -88,13 +88,13 @@ namespace
 	}
 }
 
-inline void serialize(utils::buffer_serializer& buffer, const KUSER_SHARED_DATA& kusd)
+inline void serialize(utils::buffer_serializer& buffer, const KUSER_SHARED_DATA64& kusd)
 {
 	static_assert(KUSD_SIZE == sizeof(kusd));
 	buffer.write(&kusd, KUSD_SIZE);
 }
 
-inline void deserialize(utils::buffer_deserializer& buffer, KUSER_SHARED_DATA& kusd)
+inline void deserialize(utils::buffer_deserializer& buffer, KUSER_SHARED_DATA64& kusd)
 {
 	buffer.read(&kusd, KUSD_SIZE);
 }

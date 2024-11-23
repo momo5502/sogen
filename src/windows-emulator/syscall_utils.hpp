@@ -161,12 +161,12 @@ syscall_handler make_syscall_handler()
 	};
 }
 
-template <typename T>
-void write_attribute(emulator& emu, const PS_ATTRIBUTE& attribute, const T& value)
+template <typename T, typename Traits>
+void write_attribute(emulator& emu, const PS_ATTRIBUTE<Traits>& attribute, const T& value)
 {
 	if (attribute.ReturnLength)
 	{
-		emulator_object<SIZE_T>{emu, attribute.ReturnLength}.write(sizeof(T));
+		emulator_object<typename Traits::SIZE_T>{emu, attribute.ReturnLength}.write(sizeof(T));
 	}
 
 	if (attribute.Size >= sizeof(T))

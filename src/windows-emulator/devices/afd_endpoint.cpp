@@ -32,23 +32,23 @@ namespace
 		return win_emu.emu().read_memory<afd_creation_data>(data.buffer);
 	}
 
-	std::pair<AFD_POLL_INFO, std::vector<AFD_POLL_HANDLE_INFO>> get_poll_info(
+	std::pair<AFD_POLL_INFO64, std::vector<AFD_POLL_HANDLE_INFO64>> get_poll_info(
 		windows_emulator& win_emu, const io_device_context& c)
 	{
-		constexpr auto info_size = offsetof(AFD_POLL_INFO, Handles);
+		constexpr auto info_size = offsetof(AFD_POLL_INFO64, Handles);
 		if (!c.input_buffer || c.input_buffer_length < info_size)
 		{
 			throw std::runtime_error("Bad AFD poll data");
 		}
 
-		AFD_POLL_INFO poll_info{};
+		AFD_POLL_INFO64 poll_info{};
 		win_emu.emu().read_memory(c.input_buffer, &poll_info, info_size);
 
-		std::vector<AFD_POLL_HANDLE_INFO> handle_info{};
+		std::vector<AFD_POLL_HANDLE_INFO64> handle_info{};
 
-		const emulator_object<AFD_POLL_HANDLE_INFO> handle_info_obj{win_emu.emu(), c.input_buffer + info_size};
+		const emulator_object<AFD_POLL_HANDLE_INFO64> handle_info_obj{win_emu.emu(), c.input_buffer + info_size};
 
-		if (c.input_buffer_length < (info_size + sizeof(AFD_POLL_HANDLE_INFO) * poll_info.NumberOfHandles))
+		if (c.input_buffer_length < (info_size + sizeof(AFD_POLL_HANDLE_INFO64) * poll_info.NumberOfHandles))
 		{
 			throw std::runtime_error("Bad AFD poll handle data");
 		}
@@ -126,7 +126,7 @@ namespace
 
 	NTSTATUS perform_poll(windows_emulator& win_emu, const io_device_context& c,
 	                      const std::span<const SOCKET> endpoints,
-	                      const std::span<const AFD_POLL_HANDLE_INFO> handles)
+	                      const std::span<const AFD_POLL_HANDLE_INFO64> handles)
 	{
 		std::vector<pollfd> poll_data{};
 		poll_data.resize(endpoints.size());
@@ -147,8 +147,8 @@ namespace
 			return STATUS_PENDING;
 		}
 
-		constexpr auto info_size = offsetof(AFD_POLL_INFO, Handles);
-		const emulator_object<AFD_POLL_HANDLE_INFO> handle_info_obj{win_emu.emu(), c.input_buffer + info_size};
+		constexpr auto info_size = offsetof(AFD_POLL_INFO64, Handles);
+		const emulator_object<AFD_POLL_HANDLE_INFO64> handle_info_obj{win_emu.emu(), c.input_buffer + info_size};
 
 		size_t current_index = 0;
 
@@ -170,7 +170,7 @@ namespace
 
 		assert(current_index == static_cast<size_t>(count));
 
-		emulator_object<AFD_POLL_INFO>{win_emu.emu(), c.input_buffer}.access([&](AFD_POLL_INFO& info)
+		emulator_object<AFD_POLL_INFO64>{win_emu.emu(), c.input_buffer}.access([&](AFD_POLL_INFO64& info)
 		{
 			info.NumberOfHandles = static_cast<ULONG>(current_index);
 		});
@@ -367,7 +367,7 @@ namespace
 		}
 
 		static std::vector<SOCKET> resolve_endpoints(windows_emulator& win_emu,
-		                                             const std::span<const AFD_POLL_HANDLE_INFO> handles)
+		                                             const std::span<const AFD_POLL_HANDLE_INFO64> handles)
 		{
 			auto& proc = win_emu.process();
 
@@ -376,7 +376,7 @@ namespace
 
 			for (const auto& handle : handles)
 			{
-				auto* device = proc.devices.get(reinterpret_cast<uint64_t>(handle.Handle));
+				auto* device = proc.devices.get(handle.Handle);
 				if (!device)
 				{
 					throw std::runtime_error("Bad device!");
@@ -428,17 +428,17 @@ namespace
 		{
 			auto& emu = win_emu.emu();
 
-			if (c.input_buffer_length < sizeof(AFD_RECV_DATAGRAM_INFO))
+			if (c.input_buffer_length < sizeof(AFD_RECV_DATAGRAM_INFO<EmulatorTraits<Emu64>>))
 			{
 				return STATUS_BUFFER_TOO_SMALL;
 			}
 
-			const auto receive_info = emu.read_memory<AFD_RECV_DATAGRAM_INFO>(c.input_buffer);
-			const auto buffer = emu.read_memory<WSABUF>(receive_info.BufferArray);
+			const auto receive_info = emu.read_memory<AFD_RECV_DATAGRAM_INFO<EmulatorTraits<Emu64>>>(c.input_buffer);
+			const auto buffer = emu.read_memory<EMU_WSABUF<EmulatorTraits<Emu64>>>(receive_info.BufferArray);
 
 			std::vector<std::byte> address{};
 
-			ULONG address_length = 0x1000;
+			unsigned long address_length = 0x1000;
 			if (receive_info.AddressLength)
 			{
 				address_length = emu.read_memory<ULONG>(receive_info.AddressLength);
@@ -456,8 +456,13 @@ namespace
 			std::vector<char> data{};
 			data.resize(buffer.len);
 
+#ifdef OS_WINDOWS
 			const auto recevied_data = recvfrom(*this->s_, data.data(), static_cast<int>(data.size()), 0,
 			                                    reinterpret_cast<sockaddr*>(address.data()), &fromlength);
+#else
+			const auto recevied_data = recvfrom(*this->s_, data.data(), static_cast<int>(data.size()), 0,
+			                                    reinterpret_cast<sockaddr*>(address.data()), (socklen_t*)&fromlength);
+#endif
 
 			if (recevied_data < 0)
 			{
@@ -482,7 +487,7 @@ namespace
 
 			if (c.io_status_block)
 			{
-				IO_STATUS_BLOCK block{};
+				IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
 				block.Information = static_cast<uint32_t>(recevied_data);
 				c.io_status_block.write(block);
 			}
@@ -494,13 +499,13 @@ namespace
 		{
 			const auto& emu = win_emu.emu();
 
-			if (c.input_buffer_length < sizeof(AFD_SEND_DATAGRAM_INFO))
+			if (c.input_buffer_length < sizeof(AFD_SEND_DATAGRAM_INFO<EmulatorTraits<Emu64>>))
 			{
 				return STATUS_BUFFER_TOO_SMALL;
 			}
 
-			const auto send_info = emu.read_memory<AFD_SEND_DATAGRAM_INFO>(c.input_buffer);
-			const auto buffer = emu.read_memory<WSABUF>(send_info.BufferArray);
+			const auto send_info = emu.read_memory<AFD_SEND_DATAGRAM_INFO<EmulatorTraits<Emu64>>>(c.input_buffer);
+			const auto buffer = emu.read_memory<EMU_WSABUF<EmulatorTraits<Emu64>>>(send_info.BufferArray);
 
 			const auto address = emu.read_memory(send_info.TdiConnInfo.RemoteAddress,
 			                                     send_info.TdiConnInfo.RemoteAddressLength);
@@ -528,7 +533,7 @@ namespace
 
 			if (c.io_status_block)
 			{
-				IO_STATUS_BLOCK block{};
+				IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
 				block.Information = static_cast<uint32_t>(sent_data);
 				c.io_status_block.write(block);
 			}

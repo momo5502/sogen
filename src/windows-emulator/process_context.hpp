@@ -229,7 +229,7 @@ public:
 	std::optional<NTSTATUS> pending_status{};
 
 	std::optional<emulator_allocator> gs_segment;
-	std::optional<emulator_object<TEB>> teb;
+	std::optional<emulator_object<TEB64>> teb;
 
 	std::vector<std::byte> last_registers{};
 
@@ -325,7 +325,7 @@ public:
 		buffer.read_optional(this->await_time);
 		buffer.read_optional(this->pending_status);
 		buffer.read_optional(this->gs_segment, [this] { return emulator_allocator(*this->emu_ptr); });
-		buffer.read_optional(this->teb, [this] { return emulator_object<TEB>(*this->emu_ptr); });
+		buffer.read_optional(this->teb, [this] { return emulator_object<TEB64>(*this->emu_ptr); });
 
 		buffer.read_vector(this->last_registers);
 	}
@@ -381,8 +381,8 @@ struct process_context
 
 	emulator_allocator base_allocator;
 
-	emulator_object<PEB> peb;
-	emulator_object<RTL_USER_PROCESS_PARAMETERS> process_params;
+	emulator_object<PEB64> peb;
+	emulator_object<RTL_USER_PROCESS_PARAMETERS64> process_params;
 	kusd_mmio kusd;
 
 	module_manager module_manager;

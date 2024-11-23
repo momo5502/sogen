@@ -31,11 +31,12 @@ struct handle_value
 
 static_assert(sizeof(handle_value) == 8);
 
+// TODO: this is a concrete 64bit handle
 union handle
 {
 	handle_value value;
 	uint64_t bits;
-	HANDLE h;
+	std::uint64_t h;
 };
 
 inline void serialize(utils::buffer_serializer& buffer, const handle& h)
