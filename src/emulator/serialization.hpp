@@ -58,15 +58,9 @@ namespace utils
 		{
 		};
 
-		template <typename, typename = void>
-		struct has_construct_function : std::false_type
-		{
-		};
-
 		template <typename T>
-		struct has_construct_function<T, std::void_t<decltype(T::construct(
-			                              std::declval<buffer_deserializer&>()))>>
-			: std::bool_constant<std::is_same_v<decltype(T::construct(std::declval<buffer_deserializer&>())), T>>
+		struct has_deserializer_constructor
+			: std::bool_constant<std::is_constructible_v<T, buffer_deserializer&>>
 		{
 		};
 	}
@@ -303,9 +297,9 @@ namespace utils
 		template <typename T>
 		T construct_object()
 		{
-			if constexpr (detail::has_construct_function<T>::value)
+			if constexpr (detail::has_deserializer_constructor<T>::value)
 			{
-				return T::construct(*this);
+				return T(*this);
 			}
 			else if constexpr (std::is_default_constructible_v<T>)
 			{

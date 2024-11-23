@@ -188,6 +188,11 @@ public:
 	{
 	}
 
+	emulator_thread(utils::buffer_deserializer& buffer)
+		: emulator_thread(buffer.read<x64_emulator_wrapper>().get())
+	{
+	}
+
 	emulator_thread(x64_emulator& emu, const process_context& context, uint64_t start_address, uint64_t argument,
 	                uint64_t stack_size, uint32_t id);
 
@@ -200,12 +205,6 @@ public:
 	~emulator_thread()
 	{
 		this->release();
-	}
-
-	static emulator_thread construct(utils::buffer_deserializer& buffer)
-	{
-		const auto wrapper = buffer.read<x64_emulator_wrapper>();
-		return {wrapper.get()};
 	}
 
 	moved_marker marker{};

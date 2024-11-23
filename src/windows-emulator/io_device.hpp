@@ -22,12 +22,14 @@ struct io_device_context
 	emulator_pointer output_buffer{};
 	ULONG output_buffer_length{};
 
-	static io_device_context construct(utils::buffer_deserializer& buffer)
+	io_device_context(x64_emulator& emu)
+		: io_status_block(emu)
 	{
-		const auto wrapper = buffer.read<x64_emulator_wrapper>();
-		return io_device_context{
-			.io_status_block = wrapper.get(),
-		};
+	}
+
+	io_device_context(utils::buffer_deserializer& buffer)
+		: io_device_context(buffer.read<x64_emulator_wrapper>().get())
+	{
 	}
 
 	void serialize(utils::buffer_serializer& buffer) const
@@ -129,7 +131,7 @@ struct stateless_device : io_device
 	}
 };
 
-std::unique_ptr<io_device> create_device(const std::wstring_view device);
+std::unique_ptr<io_device> create_device(std::wstring_view device);
 
 class io_device_container : public io_device
 {

@@ -1677,17 +1677,16 @@ namespace
 			return STATUS_INVALID_HANDLE;
 		}
 
-		const io_device_context context{
-			.event = event,
-			.apc_routine = apc_routine,
-			.apc_context = apc_context,
-			.io_status_block = io_status_block,
-			.io_control_code = io_control_code,
-			.input_buffer = input_buffer,
-			.input_buffer_length = input_buffer_length,
-			.output_buffer = output_buffer,
-			.output_buffer_length = output_buffer_length,
-		};
+		io_device_context context{c.emu};
+		context.event = event;
+		context.apc_routine = apc_routine;
+		context.apc_context = apc_context;
+		context.io_status_block = io_status_block;
+		context.io_control_code = io_control_code;
+		context.input_buffer = input_buffer;
+		context.input_buffer_length = input_buffer_length;
+		context.output_buffer = output_buffer;
+		context.output_buffer_length = output_buffer_length;
 
 		return device->execute_ioctl(c.win_emu, context);
 	}
