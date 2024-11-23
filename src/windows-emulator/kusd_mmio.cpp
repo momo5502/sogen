@@ -1,4 +1,5 @@
 #include "kusd_mmio.hpp"
+#include "syscall_utils.hpp"
 #include "windows_emulator.hpp"
 
 #include <address_utils.hpp>
@@ -103,6 +104,7 @@ kusd_mmio::kusd_mmio(windows_emulator& win_emu, const bool use_relative_time, co
 	  , win_emu_(&win_emu)
 {
 	setup_kusd(this->kusd_, use_relative_time);
+	this->start_time_ = convert_from_ksystem_time(this->kusd_.SystemTime);
 
 	if (perform_registration)
 	{
@@ -118,6 +120,7 @@ kusd_mmio::~kusd_mmio()
 kusd_mmio::kusd_mmio(kusd_mmio&& obj) // throws!
 	: use_relative_time_(obj.use_relative_time_)
 	  , win_emu_(obj.win_emu_)
+	  , start_time_(obj.start_time_)
 {
 	memcpy(&this->kusd_, &obj.kusd_, sizeof(this->kusd_));
 
@@ -137,12 +140,14 @@ void kusd_mmio::serialize(utils::buffer_serializer& buffer) const
 {
 	buffer.write(this->use_relative_time_);
 	buffer.write(this->kusd_);
+	buffer.write(this->start_time_);
 }
 
 void kusd_mmio::deserialize(utils::buffer_deserializer& buffer)
 {
 	buffer.read(this->use_relative_time_);
 	buffer.read(this->kusd_);
+	buffer.read(this->start_time_);
 
 	this->register_mmio();
 }
@@ -185,7 +190,22 @@ void kusd_mmio::write(const uint64_t /*addr*/, const size_t /*size*/, const uint
 
 void kusd_mmio::update()
 {
-	// TODO
+	auto time = this->start_time_;
+
+	if (this->use_relative_time_)
+	{
+		const auto passed_time = this->win_emu_->process().executed_instructions;
+		const auto clock_frequency = this->kusd_.QpcFrequency;
+
+		using duration = std::chrono::system_clock::duration;
+		time += duration(passed_time * duration::period::den / clock_frequency);
+	}
+	else
+	{
+		time = std::chrono::system_clock::now();
+	}
+
+	convert_to_ksystem_time(&this->kusd_.SystemTime, time);
 }
 
 void kusd_mmio::register_mmio()

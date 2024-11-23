@@ -39,6 +39,7 @@ private:
 	bool use_relative_time_{};
 	windows_emulator* win_emu_{};
 	KUSER_SHARED_DATA kusd_{};
+	std::chrono::system_clock::time_point start_time_{};
 
 	uint64_t read(uint64_t addr, size_t size);
 	void write(uint64_t addr, size_t size, uint64_t data);
