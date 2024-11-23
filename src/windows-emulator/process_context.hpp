@@ -12,13 +12,12 @@
 #include <serialization_helper.hpp>
 
 #include "io_device.hpp"
+#include "kusd_mmio.hpp"
 
 #define PEB_SEGMENT_SIZE (20 << 20) // 20 MB
 #define GS_SEGMENT_SIZE (1 << 20) // 1 MB
 
 #define IA32_GS_BASE_MSR 0xC0000101
-
-#define KUSD_ADDRESS 0x7ffe0000
 
 #define STACK_SIZE 0x40000ULL
 
@@ -366,7 +365,6 @@ struct process_context
 		: base_allocator(emu)
 		  , peb(emu)
 		  , process_params(emu)
-		  , kusd(emu)
 		  , module_manager(emu)
 	{
 	}
@@ -384,7 +382,7 @@ struct process_context
 
 	emulator_object<PEB> peb;
 	emulator_object<RTL_USER_PROCESS_PARAMETERS> process_params;
-	emulator_object<KUSER_SHARED_DATA> kusd;
+	std::optional<kusd_mmio> kusd{};
 
 	module_manager module_manager;
 
@@ -423,7 +421,7 @@ struct process_context
 		buffer.write(this->base_allocator);
 		buffer.write(this->peb);
 		buffer.write(this->process_params);
-		buffer.write(this->kusd);
+		buffer.write_optional(this->kusd);
 		buffer.write(this->module_manager);
 
 		buffer.write(this->executable->image_base);
@@ -461,7 +459,7 @@ struct process_context
 		buffer.read(this->base_allocator);
 		buffer.read(this->peb);
 		buffer.read(this->process_params);
-		buffer.read(this->kusd);
+		buffer.read_optional(this->kusd);
 		buffer.read(this->module_manager);
 
 		const auto executable_base = buffer.read<uint64_t>();
