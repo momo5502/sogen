@@ -5,22 +5,23 @@
 // TODO: Replace with pointer handling structure for future 32 bit support
 using emulator_pointer = uint64_t;
 
-class x64_emulator_wrapper
+template<typename T>
+class object_wrapper
 {
-	x64_emulator* emu_;
+	T* obj_;
 
 public:
-	x64_emulator_wrapper(x64_emulator& emu)
-		: emu_(&emu)
+	object_wrapper(T& obj)
+		: obj_(&obj)
 	{
 	}
 
-	x64_emulator& get() const
+	T& get() const
 	{
-		return *this->emu_;
+		return *this->obj_;
 	}
 
-	operator x64_emulator&() const
+	operator T&() const
 	{
 		return this->get();
 	}
@@ -33,6 +34,11 @@ public:
 	{
 	}
 };
+
+class windows_emulator;
+
+using x64_emulator_wrapper = object_wrapper<x64_emulator>;
+using windows_emulator_wrapper = object_wrapper<windows_emulator>;
 
 template <typename T>
 class emulator_object

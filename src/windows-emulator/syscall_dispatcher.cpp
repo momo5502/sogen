@@ -41,7 +41,7 @@ void syscall_dispatcher::add_handlers()
 {
 	std::map<std::string, syscall_handler> handler_mapping{};
 
-	this->add_handlers(handler_mapping);
+	syscall_dispatcher::add_handlers(handler_mapping);
 
 	for (auto& entry : this->handlers_)
 	{

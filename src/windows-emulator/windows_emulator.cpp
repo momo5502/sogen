@@ -1051,6 +1051,11 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
 		return x64_emulator_wrapper{this->emu()};
 	});
 
+	buffer.register_factory<windows_emulator_wrapper>([this]
+	{
+		return windows_emulator_wrapper{*this};
+	});
+
 	buffer.read(this->use_relative_time_);
 
 	this->emu().deserialize(buffer);
