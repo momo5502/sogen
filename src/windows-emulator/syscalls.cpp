@@ -1985,6 +1985,7 @@ namespace
 				temp_buffer.push_back('\n');
 			}
 
+			c.win_emu.on_stdout(temp_buffer);
 			c.win_emu.logger.info("%.*s", static_cast<int>(temp_buffer.size()), temp_buffer.data());
 
 			return STATUS_SUCCESS;

@@ -9,12 +9,14 @@
 
 std::unique_ptr<x64_emulator> create_default_x64_emulator();
 
+// TODO: Split up into application and emulator settings
 struct emulator_settings
 {
 	std::filesystem::path application{};
 	std::filesystem::path working_directory{};
 	std::filesystem::path registry_directory{"./registry"};
 	std::vector<std::wstring> arguments{};
+	std::function<void(std::string_view)> stdout_callback{};
 	bool disable_logging{false};
 	bool use_relative_time{false};
 };
@@ -86,6 +88,14 @@ public:
 		this->syscall_hooks_.push_back(std::move(callback));
 	}
 
+	void on_stdout(const std::string_view data) const
+	{
+		if (this->stdout_callback_)
+		{
+			this->stdout_callback_(data);
+		}
+	}
+
 	logger logger{};
 	bool verbose{false};
 	bool verbose_calls{false};
@@ -105,7 +115,7 @@ private:
 	bool use_relative_time_{false};
 	std::unique_ptr<x64_emulator> emu_{};
 	std::vector<instruction_hook_callback> syscall_hooks_{};
-
+	std::function<void(std::string_view)> stdout_callback_{};
 
 	process_context process_;
 	syscall_dispatcher dispatcher_;

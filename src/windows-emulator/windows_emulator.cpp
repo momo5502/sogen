@@ -690,6 +690,7 @@ windows_emulator::windows_emulator(const emulator_settings& settings,
                                    std::unique_ptr<x64_emulator> emu)
 	: windows_emulator(std::move(emu))
 {
+	this->stdout_callback_ = std::move(settings.stdout_callback);
 	this->use_relative_time_ = settings.use_relative_time;
 	this->logger.disable_output(settings.disable_logging);
 	this->setup_process(settings);
