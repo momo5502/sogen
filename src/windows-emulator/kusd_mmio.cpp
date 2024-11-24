@@ -99,17 +99,10 @@ inline void deserialize(utils::buffer_deserializer& buffer, KUSER_SHARED_DATA& k
 	buffer.read(&kusd, KUSD_SIZE);
 }
 
-kusd_mmio::kusd_mmio(windows_emulator& win_emu, const bool use_relative_time, const bool perform_registration)
-	: use_relative_time_(use_relative_time)
-	  , win_emu_(&win_emu)
+kusd_mmio::kusd_mmio(x64_emulator& emu, process_context& process)
+	: emu_(&emu)
+	  , process_(&process)
 {
-	setup_kusd(this->kusd_, use_relative_time);
-	this->start_time_ = convert_from_ksystem_time(this->kusd_.SystemTime);
-
-	if (perform_registration)
-	{
-		this->register_mmio();
-	}
 }
 
 kusd_mmio::~kusd_mmio()
@@ -117,23 +110,19 @@ kusd_mmio::~kusd_mmio()
 	this->deregister_mmio();
 }
 
-kusd_mmio::kusd_mmio(kusd_mmio&& obj) // throws!
-	: use_relative_time_(obj.use_relative_time_)
-	  , win_emu_(obj.win_emu_)
-	  , start_time_(obj.start_time_)
+kusd_mmio::kusd_mmio(utils::buffer_deserializer& buffer)
+	: kusd_mmio(buffer.read<x64_emulator_wrapper>(), buffer.read<process_context_wrapper>())
 {
-	memcpy(&this->kusd_, &obj.kusd_, sizeof(this->kusd_));
-
-	if (obj.registered_)
-	{
-		obj.deregister_mmio();
-		this->register_mmio();
-	}
 }
 
-kusd_mmio::kusd_mmio(utils::buffer_deserializer& buffer)
-	: kusd_mmio(buffer.read<windows_emulator_wrapper>().get(), true, false)
+void kusd_mmio::setup(const bool use_relative_time)
 {
+	this->use_relative_time_ = use_relative_time;
+
+	setup_kusd(this->kusd_, use_relative_time);
+	this->start_time_ = convert_from_ksystem_time(this->kusd_.SystemTime);
+
+	this->register_mmio();
 }
 
 void kusd_mmio::serialize(utils::buffer_serializer& buffer) const
@@ -149,6 +138,7 @@ void kusd_mmio::deserialize(utils::buffer_deserializer& buffer)
 	buffer.read(this->kusd_);
 	buffer.read(this->start_time_);
 
+	this->deregister_mmio();
 	this->register_mmio();
 }
 
@@ -183,18 +173,13 @@ uint64_t kusd_mmio::address()
 	return KUSD_ADDRESS;
 }
 
-void kusd_mmio::write(const uint64_t /*addr*/, const size_t /*size*/, const uint64_t /*data*/)
-{
-	// Unsupported!
-}
-
 void kusd_mmio::update()
 {
 	auto time = this->start_time_;
 
 	if (this->use_relative_time_)
 	{
-		const auto passed_time = this->win_emu_->process().executed_instructions;
+		const auto passed_time = this->process_->executed_instructions;
 		const auto clock_frequency = this->kusd_.QpcFrequency;
 
 		using duration = std::chrono::system_clock::duration;
@@ -217,15 +202,14 @@ void kusd_mmio::register_mmio()
 
 	this->registered_ = true;
 
-	this->win_emu_->emu().allocate_mmio( //
-		KUSD_ADDRESS, KUSD_BUFFER_SIZE,
-		[this](const uint64_t addr, const size_t size)
-		{
-			return this->read(addr, size);
-		}, [this](const uint64_t addr, const size_t size, const uint64_t data)
-		{
-			this->write(addr, size, data);
-		});
+	this->emu_->allocate_mmio(KUSD_ADDRESS, KUSD_BUFFER_SIZE,
+	                          [this](const uint64_t addr, const size_t size)
+	                          {
+		                          return this->read(addr, size);
+	                          }, [this](const uint64_t, const size_t, const uint64_t)
+	                          {
+		                          // Writing not supported!
+	                          });
 }
 
 void kusd_mmio::deregister_mmio()
@@ -233,6 +217,6 @@ void kusd_mmio::deregister_mmio()
 	if (this->registered_)
 	{
 		this->registered_ = false;
-		this->win_emu_->emu().release_memory(KUSD_ADDRESS, KUSD_BUFFER_SIZE);
+		this->emu_->release_memory(KUSD_ADDRESS, KUSD_BUFFER_SIZE);
 	}
 }

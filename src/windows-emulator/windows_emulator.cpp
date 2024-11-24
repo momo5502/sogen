@@ -182,7 +182,7 @@ namespace
 
 		context.registry = registry_manager(settings.registry_directory);
 
-		context.kusd.emplace(win_emu, settings.use_relative_time);
+		context.kusd.setup(settings.use_relative_time);
 
 		context.base_allocator = create_allocator(emu, PEB_SEGMENT_SIZE);
 		auto& allocator = context.base_allocator;

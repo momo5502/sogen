@@ -365,6 +365,7 @@ struct process_context
 		: base_allocator(emu)
 		  , peb(emu)
 		  , process_params(emu)
+		  , kusd(emu, *this)
 		  , module_manager(emu)
 	{
 	}
@@ -382,7 +383,7 @@ struct process_context
 
 	emulator_object<PEB> peb;
 	emulator_object<RTL_USER_PROCESS_PARAMETERS> process_params;
-	std::optional<kusd_mmio> kusd{};
+	kusd_mmio kusd;
 
 	module_manager module_manager;
 
@@ -421,7 +422,7 @@ struct process_context
 		buffer.write(this->base_allocator);
 		buffer.write(this->peb);
 		buffer.write(this->process_params);
-		buffer.write_optional(this->kusd);
+		buffer.write(this->kusd);
 		buffer.write(this->module_manager);
 
 		buffer.write(this->executable->image_base);
@@ -459,7 +460,7 @@ struct process_context
 		buffer.read(this->base_allocator);
 		buffer.read(this->peb);
 		buffer.read(this->process_params);
-		buffer.read_optional(this->kusd);
+		buffer.read(this->kusd);
 		buffer.read(this->module_manager);
 
 		const auto executable_base = buffer.read<uint64_t>();

@@ -36,8 +36,10 @@ public:
 };
 
 class windows_emulator;
+struct process_context;
 
 using x64_emulator_wrapper = object_wrapper<x64_emulator>;
+using process_context_wrapper = object_wrapper<process_context>;
 using windows_emulator_wrapper = object_wrapper<windows_emulator>;
 
 template <typename T>

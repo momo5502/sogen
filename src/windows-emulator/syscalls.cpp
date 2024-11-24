@@ -37,7 +37,7 @@ namespace
 			{
 				performance_frequency.access([&](LARGE_INTEGER& value)
 				{
-					value.QuadPart = c.proc.kusd->get().QpcFrequency;
+					value.QuadPart = c.proc.kusd.get().QpcFrequency;
 				});
 			}
 
@@ -534,7 +534,7 @@ namespace
 			c.emu.allocate_memory(address,
 			                      c.proc.shared_section_size, memory_permission::read_write);
 
-			const std::wstring_view windows_dir = c.proc.kusd->get().NtSystemRoot.arr;
+			const std::wstring_view windows_dir = c.proc.kusd.get().NtSystemRoot.arr;
 			const auto windows_dir_size = windows_dir.size() * 2;
 
 			constexpr auto windows_dir_offset = 0x10;
