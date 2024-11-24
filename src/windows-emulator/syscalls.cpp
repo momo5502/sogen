@@ -35,15 +35,9 @@ namespace
 
 			if (performance_frequency)
 			{
-				int64_t frequency{};
-				c.proc.kusd.access([&](const KUSER_SHARED_DATA& kusd)
-				{
-					frequency = kusd.QpcFrequency;
-				});
-
 				performance_frequency.access([&](LARGE_INTEGER& value)
 				{
-					value.QuadPart = frequency;
+					value.QuadPart = c.proc.kusd.get().QpcFrequency;
 				});
 			}
 
@@ -540,12 +534,8 @@ namespace
 			c.emu.allocate_memory(address,
 			                      c.proc.shared_section_size, memory_permission::read_write);
 
-			size_t windows_dir_size{};
-			c.proc.kusd.access([&](const KUSER_SHARED_DATA& kusd)
-			{
-				const std::wstring_view windows_dir = kusd.NtSystemRoot.arr;
-				windows_dir_size = windows_dir.size() * 2;
-			});
+			const std::wstring_view windows_dir = c.proc.kusd.get().NtSystemRoot.arr;
+			const auto windows_dir_size = windows_dir.size() * 2;
 
 			constexpr auto windows_dir_offset = 0x10;
 			c.emu.write_memory(address + 8, windows_dir_offset);
@@ -555,7 +545,7 @@ namespace
 			const emulator_object<UNICODE_STRING> windir_obj{c.emu, obj_address};
 			windir_obj.access([&](UNICODE_STRING& ucs)
 			{
-				const auto dir_address = c.proc.kusd.value() + offsetof(KUSER_SHARED_DATA, NtSystemRoot);
+				const auto dir_address = kusd_mmio::address() + offsetof(KUSER_SHARED_DATA, NtSystemRoot);
 
 				ucs.Buffer = reinterpret_cast<wchar_t*>(dir_address - obj_address);
 				ucs.Length = static_cast<uint16_t>(windows_dir_size);
@@ -1995,6 +1985,7 @@ namespace
 				temp_buffer.push_back('\n');
 			}
 
+			c.win_emu.on_stdout(temp_buffer);
 			c.win_emu.logger.info("%.*s", static_cast<int>(temp_buffer.size()), temp_buffer.data());
 
 			return STATUS_SUCCESS;

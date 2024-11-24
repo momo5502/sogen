@@ -4,9 +4,13 @@
 #include <fstream>
 #include <thread>
 #include <atomic>
-#include <optional>
 #include <vector>
+#include <optional>
+#include <string_view>
+
 #include <Windows.h>
+
+using namespace std::literals;
 
 // Externally visible and potentially modifiable state
 // to trick compiler optimizations
@@ -178,6 +182,12 @@ bool test_native_exceptions()
 	}
 }
 
+void print_time()
+{
+	const auto epoch_time = std::chrono::system_clock::now().time_since_epoch();
+	printf("Time: %lld\n", epoch_time.count());
+}
+
 #define RUN_TEST(func, name)             \
 {                                        \
 	printf("Running test '" name "': "); \
@@ -186,8 +196,14 @@ bool test_native_exceptions()
 	puts(res ? "Success" : "Fail");       \
 }
 
-int main(int /*argc*/, const char* /*argv*/[])
+int main(int argc, const char* argv[])
 {
+	if(argc == 2 && argv[1] == "-time"sv)
+	{
+		print_time();
+		return 0;
+	}
+
 	bool valid = true;
 
 	RUN_TEST(test_io, "I/O")
