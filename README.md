@@ -7,7 +7,7 @@
 	<img src="https://img.shields.io/github/commit-activity/m/momo5502/emulator?color=FF3131"/>
 </h1>
 
-A high-performance Windows process emulator that operates at the syscall level, providing full control over process execution through comprehensive hooking capabilities.
+A high-performance Windows process emulator that operates at syscall level, providing full control over process execution through comprehensive hooking capabilities.
 
 Built in C++ and powered by the Unicorn Engine.
 
