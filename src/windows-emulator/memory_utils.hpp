@@ -36,10 +36,10 @@ inline memory_permission map_nt_to_emulator_protection(uint32_t nt_protection)
 	case PAGE_EXECUTE_READ:
 		return memory_permission::read | memory_permission::exec;
 	case PAGE_EXECUTE_READWRITE:
+		return memory_permission::all;
 	case PAGE_EXECUTE_WRITECOPY:
 	default:
 		throw std::runtime_error("Failed to map protection");
-	//return memory_permission::all;
 	}
 }
 
