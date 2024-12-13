@@ -102,6 +102,33 @@ struct file
 	}
 };
 
+struct section
+{
+	std::wstring name{};
+	std::wstring file_name{};
+	uint64_t maximum_size{};
+	uint32_t section_page_protection{};
+	uint32_t allocation_attributes{};
+
+	void serialize(utils::buffer_serializer& buffer) const
+	{
+		buffer.write(this->name);
+		buffer.write(this->file_name);
+		buffer.write(this->maximum_size);
+		buffer.write(this->section_page_protection);
+		buffer.write(this->allocation_attributes);
+	}
+
+	void deserialize(utils::buffer_deserializer& buffer)
+	{
+		buffer.read(this->name);
+		buffer.read(this->file_name);
+		buffer.read(this->maximum_size);
+		buffer.read(this->section_page_protection);
+		buffer.read(this->allocation_attributes);
+	}
+};
+
 struct semaphore
 {
 	std::wstring name{};
@@ -395,10 +422,9 @@ struct process_context
 	uint64_t rtl_user_thread_start{};
 	uint64_t ki_user_exception_dispatcher{};
 
-	uint64_t shared_section_size{};
-
 	handle_store<handle_types::event, event> events{};
 	handle_store<handle_types::file, file> files{};
+	handle_store<handle_types::section, section> sections{};
 	handle_store<handle_types::device, io_device_container> devices{};
 	handle_store<handle_types::semaphore, semaphore> semaphores{};
 	handle_store<handle_types::port, port> ports{};
@@ -433,9 +459,9 @@ struct process_context
 		buffer.write(this->rtl_user_thread_start);
 		buffer.write(this->ki_user_exception_dispatcher);
 
-		buffer.write(this->shared_section_size);
 		buffer.write(this->events);
 		buffer.write(this->files);
+		buffer.write(this->sections);
 		buffer.write(this->devices);
 		buffer.write(this->semaphores);
 		buffer.write(this->ports);
@@ -475,9 +501,9 @@ struct process_context
 		buffer.read(this->rtl_user_thread_start);
 		buffer.read(this->ki_user_exception_dispatcher);
 
-		buffer.read(this->shared_section_size);
 		buffer.read(this->events);
 		buffer.read(this->files);
+		buffer.read(this->sections);
 		buffer.read(this->devices);
 		buffer.read(this->semaphores);
 		buffer.read(this->ports);

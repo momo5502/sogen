@@ -530,9 +530,10 @@ namespace
 
 		if (section_handle == SHARED_SECTION)
 		{
-			const auto address = c.emu.find_free_allocation_base(c.proc.shared_section_size);
-			c.emu.allocate_memory(address,
-			                      c.proc.shared_section_size, memory_permission::read_write);
+			constexpr auto shared_section_size = 0x10000;
+
+			const auto address = c.emu.find_free_allocation_base(shared_section_size);
+			c.emu.allocate_memory(address, shared_section_size, memory_permission::read_write);
 
 			const std::wstring_view windows_dir = c.proc.kusd.get().NtSystemRoot.arr;
 			const auto windows_dir_size = windows_dir.size() * 2;
@@ -560,9 +561,9 @@ namespace
 				ucs.Buffer = reinterpret_cast<wchar_t*>(reinterpret_cast<uint64_t>(ucs.Buffer) - obj_address);
 			});
 
-			if (view_size.value())
+			if (view_size)
 			{
-				view_size.write(c.proc.shared_section_size);
+				view_size.write(shared_section_size);
 			}
 
 			base_address.write(address);
@@ -570,13 +571,46 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		const auto section_entry = c.proc.files.get(section_handle);
-		if (!section_entry)
+		const auto section_entry = c.proc.sections.get(section_handle);
+		if (section_entry)
+		{
+			uint64_t size = section_entry->maximum_size;
+			std::vector<uint8_t> file_data{};
+
+			if (!section_entry->file_name.empty())
+			{
+				if (!utils::io::read_file(section_entry->file_name, &file_data))
+				{
+					return STATUS_INVALID_PARAMETER;
+				}
+
+				size = page_align_up(file_data.size());
+			}
+
+			const auto protection = map_nt_to_emulator_protection(section_entry->section_page_protection);
+			const auto address = c.emu.allocate_memory(size, protection);
+
+			if (!file_data.empty())
+			{
+				c.emu.write_memory(address, file_data.data(), file_data.size());
+			}
+
+			if (view_size)
+			{
+				view_size.write(size);
+			}
+
+			base_address.write(address);
+			return STATUS_SUCCESS;
+		}
+
+		const auto file_entry = c.proc.files.get(section_handle);
+		if (!file_entry)
 		{
 			return STATUS_INVALID_HANDLE;
 		}
 
-		const auto binary = c.proc.module_manager.map_module(section_entry->name, c.win_emu.logger);
+		const auto binary = c.proc.module_manager.map_module(file_entry->name, c.win_emu.logger);
 		if (!binary)
 		{
 			return STATUS_FILE_INVALID;
@@ -1574,19 +1608,48 @@ namespace
 
 	NTSTATUS handle_NtCreateSection(const syscall_context& c, const emulator_object<handle> section_handle,
 	                                const ACCESS_MASK /*desired_access*/,
-	                                const emulator_object<OBJECT_ATTRIBUTES> /*object_attributes*/,
+	                                const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
 	                                const emulator_object<ULARGE_INTEGER> maximum_size,
-	                                const ULONG /*section_page_protection*/, const ULONG /*allocation_attributes*/,
-	                                const handle /*file_handle*/)
+	                                const ULONG section_page_protection, const ULONG allocation_attributes,
+	                                const handle file_handle)
 	{
-		//puts("NtCreateSection not supported");
-		section_handle.write(SHARED_SECTION);
+		section s{};
+		s.section_page_protection = section_page_protection;
+		s.allocation_attributes = allocation_attributes;
 
-		maximum_size.access([&c](ULARGE_INTEGER& large_int)
+		const auto* file = c.proc.files.get(file_handle);
+		if (file)
 		{
-			large_int.QuadPart = page_align_up(large_int.QuadPart);
-			c.proc.shared_section_size = large_int.QuadPart;
-		});
+			c.win_emu.logger.print(color::dark_gray, "--> Section for file %S\n", file->name.c_str());
+			s.file_name = file->name;
+		}
+
+		if (object_attributes)
+		{
+			const auto attributes = object_attributes.read();
+			if (attributes.ObjectName)
+			{
+				const auto name = read_unicode_string(c.emu, attributes.ObjectName);
+				c.win_emu.logger.print(color::dark_gray, "--> Section with name %S\n", name.c_str());
+				s.name = std::move(name);
+			}
+		}
+
+		if (maximum_size)
+		{
+			maximum_size.access([&](ULARGE_INTEGER& large_int)
+			{
+				large_int.QuadPart = page_align_up(large_int.QuadPart);
+				s.maximum_size = large_int.QuadPart;
+			});
+		}
+		else if (!file)
+		{
+			return STATUS_INVALID_PARAMETER;
+		}
+
+		const auto h = c.proc.sections.store(std::move(s));
+		section_handle.write(h);
 
 		return STATUS_SUCCESS;
 	}
