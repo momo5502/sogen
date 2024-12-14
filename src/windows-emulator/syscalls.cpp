@@ -1821,6 +1821,36 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (token_information_class == TokenUIAccess)
+		{
+			constexpr auto required_size = sizeof(ULONG);
+			return_length.write(required_size);
+
+			if (required_size > token_information_length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			emulator_object<ULONG>{c.emu, token_information}.write(1);
+			return STATUS_SUCCESS;
+		}
+
+		if (token_information_class == TokenElevation)
+		{
+			constexpr auto required_size = sizeof(TOKEN_ELEVATION);
+			return_length.write(required_size);
+
+			if (required_size > token_information_length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			c.emu.write_memory(token_information, TOKEN_ELEVATION{
+				                   .TokenIsElevated = 0,
+			                   });
+			return STATUS_SUCCESS;
+		}
+
 		if (token_information_class == TokenIsAppContainer)
 		{
 			constexpr auto required_size = sizeof(ULONG);
@@ -1832,6 +1862,24 @@ namespace
 			}
 
 			emulator_object<ULONG>{c.emu, token_information}.write(0);
+			return STATUS_SUCCESS;
+		}
+
+		if (token_information_class == TokenSecurityAttributes)
+		{
+			constexpr auto required_size = sizeof(TOKEN_SECURITY_ATTRIBUTES_INFORMATION);
+			return_length.write(required_size);
+
+			if (required_size > token_information_length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			c.emu.write_memory(token_information, TOKEN_SECURITY_ATTRIBUTES_INFORMATION{
+				                   .Version = 0,
+				                   .AttributeCount = 0,
+			                   });
+
 			return STATUS_SUCCESS;
 		}
 
