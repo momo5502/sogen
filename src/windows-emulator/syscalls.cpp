@@ -2140,7 +2140,7 @@ namespace
 			{
 				mode = L"r+b";
 			}
-			else if (desired_access & GENERIC_READ)
+			else if (desired_access & GENERIC_READ || desired_access & SYNCHRONIZE)
 			{
 				mode = L"rb";
 			}
