@@ -3,6 +3,22 @@
 #include "module_mapping.hpp"
 #include "windows-emulator/logger.hpp"
 
+namespace
+{
+	std::filesystem::path canonicalize_module_path(const std::filesystem::path& file)
+	{
+		constexpr std::u16string_view nt_prefix = u"\\??\\";
+		const auto wide_file = file.u16string();
+
+		if (!wide_file.starts_with(nt_prefix))
+		{
+			return canonical(absolute(file));
+		}
+
+		return canonicalize_module_path(wide_file.substr(nt_prefix.size()));
+	}
+}
+
 static void serialize(utils::buffer_serializer& buffer, const exported_symbol& sym)
 {
 	buffer.write(sym.name);
@@ -52,7 +68,7 @@ module_manager::module_manager(emulator& emu)
 
 mapped_module* module_manager::map_module(const std::filesystem::path& file, logger& logger)
 {
-	const auto canonical_file = canonical(absolute(file));
+	const auto canonical_file = canonicalize_module_path(file);
 
 	for (auto& mod : this->modules_)
 	{

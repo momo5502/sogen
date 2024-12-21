@@ -1,4 +1,5 @@
 #include "hive_parser.hpp"
+#include <utils/string.hpp>
 
 // Based on this implementation: https://github.com/reahly/windows-hive-parser
 
@@ -130,11 +131,6 @@ namespace
 			throw std::runtime_error("Bad hive file '" + file_path.string() + "': " + e.what());
 		}
 	}
-
-	char char_to_lower(const char val)
-	{
-		return static_cast<char>(std::tolower(static_cast<unsigned char>(val)));
-	}
 }
 
 const hive_value* hive_key::get_value(std::ifstream& file, const std::string_view name)
@@ -188,7 +184,7 @@ void hive_key::parse(std::ifstream& file)
 			raw_value.data_offset = offset + static_cast<int>(offsetof(value_block_t, offset));
 		}
 
-		std::ranges::transform(value_name, value_name.begin(), char_to_lower);
+		utils::string::to_lower_inplace(value_name);
 		this->values_[std::move(value_name)] = std::move(raw_value);
 	}
 
@@ -211,7 +207,7 @@ void hive_key::parse(std::ifstream& file)
 		const auto subkey = read_file_object<key_block_t>(file, subkey_block_offset);
 
 		std::string subkey_name(subkey.name, std::min(subkey.len, static_cast<short>(sizeof(subkey.name))));
-		std::ranges::transform(subkey_name, subkey_name.begin(), char_to_lower);
+		utils::string::to_lower_inplace(subkey_name);
 
 		this->sub_keys_.emplace(std::move(subkey_name), hive_key{subkey.subkeys, subkey.value_count, subkey.offsets});
 	}
