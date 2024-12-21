@@ -71,6 +71,12 @@ public:
 		this->write_memory(address, &value, sizeof(value));
 	}
 
+	template <typename T>
+	void write_memory(void* address, const T& value)
+	{
+		this->write_memory(reinterpret_cast<uint64_t>(address), &value, sizeof(value));
+	}
+
 	void write_memory(void* address, const void* data, const size_t size)
 	{
 		this->write_memory(reinterpret_cast<uint64_t>(address), data, size);

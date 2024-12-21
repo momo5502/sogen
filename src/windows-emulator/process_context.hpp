@@ -253,7 +253,8 @@ public:
 	std::wstring name{};
 
 	std::optional<NTSTATUS> exit_status{};
-	std::optional<handle> await_object{};
+	std::vector<handle> await_objects{};
+	bool await_any{false};
 	bool waiting_for_alert{false};
 	bool alerted{false};
 	std::optional<std::chrono::steady_clock::time_point> await_time{};
@@ -317,7 +318,8 @@ public:
 		buffer.write_string(this->name);
 
 		buffer.write_optional(this->exit_status);
-		buffer.write_optional(this->await_object);
+		buffer.write_vector(this->await_objects);
+		buffer.write(this->await_any);
 
 		buffer.write(this->waiting_for_alert);
 		buffer.write(this->alerted);
@@ -349,7 +351,8 @@ public:
 		buffer.read_string(this->name);
 
 		buffer.read_optional(this->exit_status);
-		buffer.read_optional(this->await_object);
+		buffer.read_vector(this->await_objects);
+		buffer.read(this->await_any);
 
 		buffer.read(this->waiting_for_alert);
 		buffer.read(this->alerted);

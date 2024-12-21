@@ -399,6 +399,11 @@ namespace
 		return STATUS_NO_TOKEN;
 	}
 
+	NTSTATUS handle_NtOpenThreadTokenEx()
+	{
+		return STATUS_NO_TOKEN;
+	}
+
 	NTSTATUS handle_NtCreateEvent(const syscall_context& c, const emulator_object<handle> event_handle,
 	                              const ACCESS_MASK /*desired_access*/,
 	                              const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
@@ -1764,6 +1769,12 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	NTSTATUS handle_NtOpenProcessTokenEx()
+	{
+		//puts("NtOpenProcessToken not supported");
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtQuerySecurityAttributesToken()
 	{
 		//puts("NtQuerySecurityAttributesToken not supported");
@@ -2554,6 +2565,46 @@ namespace
 		return FALSE;
 	}
 
+	NTSTATUS handle_NtWaitForMultipleObjects(const syscall_context& c, const ULONG count,
+	                                         const emulator_object<handle> handles, const WAIT_TYPE wait_type,
+	                                         const BOOLEAN alertable, const emulator_object<LARGE_INTEGER> timeout)
+	{
+		if (alertable)
+		{
+			c.win_emu.logger.print(color::gray, "Alertable NtWaitForMultipleObjects not supported yet!\n");
+		}
+
+		if (wait_type != WaitAny && wait_type != WaitAll)
+		{
+			puts("Wait type not supported!");
+			c.emu.stop();
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		auto& t = c.win_emu.current_thread();
+		t.await_objects.clear();
+		t.await_any = wait_type == WaitAny;
+
+		for (ULONG i = 0; i < count; ++i)
+		{
+			const auto h = handles.read(i);
+
+			if (h.value.type != handle_types::thread && h.value.type != handle_types::event)
+			{
+				c.win_emu.logger.print(color::gray, "Unsupported handle type for NtWaitForMultipleObjects!\n");
+				return STATUS_NOT_SUPPORTED;
+			}
+		}
+
+		if (timeout.value() && !t.await_time.has_value())
+		{
+			t.await_time = convert_delay_interval_to_time_point(timeout.read());
+		}
+
+		c.win_emu.yield_thread();
+		return STATUS_SUCCESS;
+	}
+
 	NTSTATUS handle_NtWaitForSingleObject(const syscall_context& c, const handle h,
 	                                      const BOOLEAN alertable,
 	                                      const emulator_object<LARGE_INTEGER> timeout)
@@ -2570,7 +2621,8 @@ namespace
 		}
 
 		auto& t = c.win_emu.current_thread();
-		t.await_object = h;
+		t.await_objects = {h};
+		t.await_any = false;
 
 		if (timeout.value() && !t.await_time.has_value())
 		{
@@ -2690,6 +2742,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtFreeVirtualMemory);
 	add_handler(NtQueryVirtualMemory);
 	add_handler(NtOpenThreadToken);
+	add_handler(NtOpenThreadTokenEx);
 	add_handler(NtQueryPerformanceCounter);
 	add_handler(NtQuerySystemInformation);
 	add_handler(NtCreateEvent);
@@ -2715,6 +2768,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtDeviceIoControlFile);
 	add_handler(NtQueryWnfStateData);
 	add_handler(NtOpenProcessToken);
+	add_handler(NtOpenProcessTokenEx);
 	add_handler(NtQuerySecurityAttributesToken);
 	add_handler(NtQueryLicenseValue);
 	add_handler(NtTestAlert);
@@ -2766,6 +2820,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtGetCurrentProcessorNumberEx);
 	add_handler(NtQueryObject);
 	add_handler(NtQueryAttributesFile);
+	add_handler(NtWaitForMultipleObjects);
 
 #undef add_handler
 }

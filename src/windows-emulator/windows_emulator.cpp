@@ -591,7 +591,7 @@ void emulator_thread::mark_as_ready(const NTSTATUS status)
 {
 	this->pending_status = status;
 	this->await_time = {};
-	this->await_object = {};
+	this->await_objects = {};
 
 	// TODO: Find out if this is correct
 	if (this->waiting_for_alert)
@@ -625,11 +625,26 @@ bool emulator_thread::is_thread_ready(windows_emulator& win_emu)
 		return false;
 	}
 
-	if (this->await_object.has_value())
+	if (!this->await_objects.empty())
 	{
-		if (is_object_signaled(win_emu.process(), *this->await_object))
+		bool all_signaled = true;
+		for (uint32_t i = 0; i < this->await_objects.size(); ++i)
 		{
-			this->mark_as_ready(STATUS_WAIT_0);
+			const auto& obj = this->await_objects[i];
+
+			const auto signaled = is_object_signaled(win_emu.process(), obj);
+			all_signaled &= signaled;
+
+			if (signaled && this->await_any)
+			{
+				this->mark_as_ready(STATUS_WAIT_0 + i);
+				return true;
+			}
+		}
+
+		if (!this->await_any && all_signaled)
+		{
+			this->mark_as_ready(STATUS_SUCCESS);
 			return true;
 		}
 
