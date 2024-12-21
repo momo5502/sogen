@@ -7,6 +7,7 @@
 #include <numeric>
 #include <cwctype>
 #include <utils/io.hpp>
+#include <utils/string.hpp>
 #include <utils/finally.hpp>
 
 namespace
@@ -484,7 +485,7 @@ namespace
 		const auto attributes = object_attributes.read();
 
 		auto filename = read_unicode_string(c.emu, attributes.ObjectName);
-		c.win_emu.logger.print(color::gray, "Opening section: %S\n", filename.c_str());
+		c.win_emu.logger.print(color::dark_gray, "--> Opening section: %S\n", filename.c_str());
 
 		if (filename == L"\\Windows\\SharedSection")
 		{
@@ -499,19 +500,18 @@ namespace
 			return STATUS_NOT_SUPPORTED;
 		}
 
-		filename = L"C:\\WINDOWS\\System32\\" + filename;
-		if (!std::filesystem::exists(filename))
+		utils::string::to_lower_inplace(filename);
+
+		for (auto& section_entry : c.proc.sections)
 		{
-			return STATUS_FILE_INVALID;
+			if (section_entry.second.is_image() && section_entry.second.name == filename)
+			{
+				section_handle.write(c.proc.sections.make_handle(section_entry.first));
+				return STATUS_SUCCESS;
+			}
 		}
 
-		file f{};
-		f.name = std::move(filename);
-
-		const auto handle = c.proc.files.store(std::move(f));
-		section_handle.write(handle);
-
-		return STATUS_SUCCESS;
+		return STATUS_OBJECT_NAME_NOT_FOUND;
 	}
 
 	NTSTATUS handle_NtMapViewOfSection(const syscall_context& c, const handle section_handle,
@@ -571,57 +571,59 @@ namespace
 		}
 
 		const auto section_entry = c.proc.sections.get(section_handle);
-		if (section_entry)
-		{
-			uint64_t size = section_entry->maximum_size;
-			std::vector<uint8_t> file_data{};
-
-			if (!section_entry->file_name.empty())
-			{
-				if (!utils::io::read_file(section_entry->file_name, &file_data))
-				{
-					return STATUS_INVALID_PARAMETER;
-				}
-
-				size = page_align_up(file_data.size());
-			}
-
-			const auto protection = map_nt_to_emulator_protection(section_entry->section_page_protection);
-			const auto address = c.emu.allocate_memory(size, protection);
-
-			if (!file_data.empty())
-			{
-				c.emu.write_memory(address, file_data.data(), file_data.size());
-			}
-
-			if (view_size)
-			{
-				view_size.write(size);
-			}
-
-			base_address.write(address);
-			return STATUS_SUCCESS;
-		}
-
-		const auto file_entry = c.proc.files.get(section_handle);
-		if (!file_entry)
+		if (!section_entry)
 		{
 			return STATUS_INVALID_HANDLE;
 		}
 
-		const auto binary = c.proc.module_manager.map_module(file_entry->name, c.win_emu.logger);
-		if (!binary)
+		if (section_entry->is_image())
 		{
-			return STATUS_FILE_INVALID;
+			const auto binary = c.proc.module_manager.map_module(section_entry->file_name, c.win_emu.logger);
+			if (!binary)
+			{
+				return STATUS_FILE_INVALID;
+			}
+
+			std::wstring wide_name(binary->name.begin(), binary->name.end());
+			section_entry->name = utils::string::to_lower_consume(wide_name);
+
+			if (view_size.value())
+			{
+				view_size.write(binary->size_of_image);
+			}
+
+			base_address.write(binary->image_base);
+
+			return STATUS_SUCCESS;
 		}
 
-		if (view_size.value())
+		uint64_t size = section_entry->maximum_size;
+		std::vector<uint8_t> file_data{};
+
+		if (!section_entry->file_name.empty())
 		{
-			view_size.write(binary->size_of_image);
+			if (!utils::io::read_file(section_entry->file_name, &file_data))
+			{
+				return STATUS_INVALID_PARAMETER;
+			}
+
+			size = page_align_up(file_data.size());
 		}
 
-		base_address.write(binary->image_base);
+		const auto protection = map_nt_to_emulator_protection(section_entry->section_page_protection);
+		const auto address = c.emu.allocate_memory(size, protection);
 
+		if (!file_data.empty())
+		{
+			c.emu.write_memory(address, file_data.data(), file_data.size());
+		}
+
+		if (view_size)
+		{
+			view_size.write(size);
+		}
+
+		base_address.write(address);
 		return STATUS_SUCCESS;
 	}
 
