@@ -1388,9 +1388,41 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	struct THREAD_TLS_INFO
+	{
+		ULONG Flags;
+
+		union
+		{
+			PVOID* TlsVector;
+			PVOID TlsModulePointer;
+		};
+
+		ULONG_PTR ThreadId;
+	};
+
+	static_assert(sizeof(THREAD_TLS_INFO) == 0x18);
+
+	struct PROCESS_TLS_INFO
+	{
+		ULONG Unknown;
+		PROCESS_TLS_INFORMATION_TYPE TlsRequest;
+		ULONG ThreadDataCount;
+
+		union
+		{
+			ULONG TlsIndex;
+			ULONG TlsVectorLength;
+		};
+
+		THREAD_TLS_INFO ThreadData[1];
+	};
+
+	static_assert(sizeof(PROCESS_TLS_INFO) - sizeof(THREAD_TLS_INFO) == 0x10);
+
 	NTSTATUS handle_NtSetInformationProcess(const syscall_context& c, const handle process_handle,
-	                                        const uint32_t info_class, const uint64_t /*process_information*/,
-	                                        const uint32_t /*process_information_length*/)
+	                                        const uint32_t info_class, const uint64_t process_information,
+	                                        const uint32_t process_information_length)
 	{
 		if (process_handle != ~0ULL)
 		{
@@ -1398,12 +1430,77 @@ namespace
 		}
 
 		if (info_class == ProcessSchedulerSharedData
-			|| info_class == ProcessTlsInformation
 			|| info_class == ProcessConsoleHostProcess
 			|| info_class == ProcessFaultInformation
 			|| info_class == ProcessDefaultHardErrorMode
 			|| info_class == ProcessRaiseUMExceptionOnInvalidHandleClose)
 		{
+			return STATUS_SUCCESS;
+		}
+
+		if (info_class == ProcessTlsInformation)
+		{
+			constexpr auto thread_data_offset = offsetof(PROCESS_TLS_INFO, ThreadData);
+			if (process_information_length < thread_data_offset)
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<THREAD_TLS_INFO> data{c.emu, process_information + thread_data_offset};
+
+			PROCESS_TLS_INFO tls_info{};
+			c.emu.read_memory(process_information, &tls_info, thread_data_offset);
+
+			for (uint32_t i = 0; i < tls_info.ThreadDataCount; ++i)
+			{
+				auto entry = data.read(i);
+
+				const auto _ = utils::finally([&]
+				{
+					data.write(entry, i);
+				});
+
+				if (i >= c.proc.threads.size())
+				{
+					entry.Flags = 0;
+					continue;
+				}
+
+				auto thread_iterator = c.proc.threads.begin();
+				std::advance(thread_iterator, i);
+
+				entry.Flags = 2;
+
+				thread_iterator->second.teb->access([&](TEB& teb)
+				{
+					const auto tls_vector = static_cast<PVOID*>(teb.ThreadLocalStoragePointer);
+
+					if (tls_info.TlsRequest == ProcessTlsReplaceIndex)
+					{
+						const auto tls_entry_ptr = tls_vector + tls_info.TlsIndex;
+
+						const auto old_entry = c.emu.read_memory<void*>(tls_entry_ptr);
+						c.emu.write_memory<void*>(tls_entry_ptr, entry.TlsModulePointer);
+
+						entry.TlsModulePointer = old_entry;
+					}
+					else if (tls_info.TlsRequest == ProcessTlsReplaceVector)
+					{
+						const auto new_tls_vector = entry.TlsVector;
+
+						for (uint32_t j = 1; j < tls_info.TlsVectorLength; ++j)
+						{
+							const auto index = j - 1;
+							const auto old_entry = c.emu.read_memory<void*>(tls_vector + index);
+							c.emu.write_memory<void*>(new_tls_vector + index, old_entry);
+						}
+
+						teb.ThreadLocalStoragePointer = new_tls_vector;
+						entry.TlsVector = tls_vector;
+					}
+				});
+			}
+
 			return STATUS_SUCCESS;
 		}
 
