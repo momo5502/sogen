@@ -243,3 +243,10 @@ inline std::chrono::system_clock::time_point convert_from_ksystem_time(const vol
 {
 	return convert_from_ksystem_time(*const_cast<const KSYSTEM_TIME*>(&time));
 }
+
+inline LARGE_INTEGER convert_unix_to_windows_time(const __time64_t unix_time)
+{
+	LARGE_INTEGER windows_time{};
+	windows_time.QuadPart = (unix_time + EPOCH_DIFFERENCE_1601_TO_1970_SECONDS) * HUNDRED_NANOSECONDS_IN_ONE_SECOND;
+	return windows_time;
+}

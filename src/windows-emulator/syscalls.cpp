@@ -2285,6 +2285,41 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
+	NTSTATUS handle_NtQueryAttributesFile(const syscall_context& c,
+	                                      const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
+	                                      const emulator_object<FILE_BASIC_INFORMATION> file_information)
+	{
+		if (!object_attributes)
+		{
+			return STATUS_INVALID_PARAMETER;
+		}
+
+		const auto attributes = object_attributes.read();
+		if (!attributes.ObjectName)
+		{
+			return STATUS_INVALID_PARAMETER;
+		}
+
+		const auto filename = read_unicode_string(c.emu, attributes.ObjectName);
+
+		struct _stat64 file_stat{};
+		if (_wstat64(filename.c_str(), &file_stat) != 0)
+		{
+			return STATUS_OBJECT_NAME_NOT_FOUND;
+		}
+
+		file_information.access([&](FILE_BASIC_INFORMATION& info)
+		{
+			info.CreationTime = convert_unix_to_windows_time(file_stat.st_atime);
+			info.LastAccessTime = convert_unix_to_windows_time(file_stat.st_atime);
+			info.LastWriteTime = convert_unix_to_windows_time(file_stat.st_mtime);
+			info.ChangeTime = info.LastWriteTime;
+			info.FileAttributes = FILE_ATTRIBUTE_NORMAL;
+		});
+
+		return STATUS_SUCCESS;
+	}
+
 	NTSTATUS handle_NtOpenFile(const syscall_context& c,
 	                           const emulator_object<handle> file_handle,
 	                           const ACCESS_MASK desired_access,
@@ -2729,6 +2764,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtNotifyChangeKey);
 	add_handler(NtGetCurrentProcessorNumberEx);
 	add_handler(NtQueryObject);
+	add_handler(NtQueryAttributesFile);
 
 #undef add_handler
 }
