@@ -2591,7 +2591,8 @@ namespace
 
 			if (h.value.type != handle_types::thread && h.value.type != handle_types::event)
 			{
-				c.win_emu.logger.print(color::gray, "Unsupported handle type for NtWaitForMultipleObjects!\n");
+				c.win_emu.logger.print(color::gray, "Unsupported handle type for NtWaitForMultipleObjects: %d!\n",
+				                       h.value.type);
 				return STATUS_NOT_SUPPORTED;
 			}
 		}
@@ -2616,7 +2617,8 @@ namespace
 
 		if (h.value.type != handle_types::thread && h.value.type != handle_types::event)
 		{
-			c.win_emu.logger.print(color::gray, "Unsupported handle type for NtWaitForSingleObject!\n");
+			c.win_emu.logger.print(color::gray,
+			                       "Unsupported handle type for NtWaitForSingleObject: %d!\n", h.value.type);
 			return STATUS_NOT_SUPPORTED;
 		}
 
