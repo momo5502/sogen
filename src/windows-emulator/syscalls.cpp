@@ -7,8 +7,7 @@
 #include <numeric>
 #include <cwctype>
 #include <utils/io.hpp>
-
-#include "utils/finally.hpp"
+#include <utils/finally.hpp>
 
 namespace
 {
