@@ -110,6 +110,11 @@ struct section
 	uint32_t section_page_protection{};
 	uint32_t allocation_attributes{};
 
+	bool is_image() const
+	{
+		return this->allocation_attributes & SEC_IMAGE;
+	}
+
 	void serialize(utils::buffer_serializer& buffer) const
 	{
 		buffer.write(this->name);
