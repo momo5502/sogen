@@ -101,3 +101,17 @@ void module_manager::deserialize(utils::buffer_deserializer& buffer)
 {
 	buffer.read_map(this->modules_);
 }
+
+bool module_manager::unmap(const uint64_t address)
+{
+	const auto mod = this->modules_.find(address);
+	if (mod == this->modules_.end())
+	{
+		return false;
+	}
+
+	unmap_module(*this->emu_, mod->second);
+	this->modules_.erase(mod);
+
+	return true;
+}

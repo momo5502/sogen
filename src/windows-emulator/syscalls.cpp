@@ -325,6 +325,22 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (info_class == ThreadZeroTlsCell)
+		{
+			if (thread_information_length != sizeof(ULONG))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const auto tls_index = c.emu.read_memory<ULONG>(thread_information);
+			const auto teb = thread->teb->read();
+
+			auto* tls_vector = static_cast<PVOID*>(teb.ThreadLocalStoragePointer);
+			c.emu.write_memory<void*>(tls_vector + tls_index, nullptr);
+
+			return STATUS_SUCCESS;
+		}
+
 		printf("Unsupported thread info class: %X\n", info_class);
 		c.emu.stop();
 		return STATUS_NOT_SUPPORTED;
@@ -2792,14 +2808,16 @@ namespace
 		if (!mod)
 		{
 			puts("Unmapping non-module section not supported!");
-		}
-		else
-		{
-			printf("Unmapping section %s not supported!\n", mod->name.c_str());
+			c.emu.stop();
+			return STATUS_NOT_SUPPORTED;
 		}
 
-		c.emu.stop();
-		return STATUS_NOT_SUPPORTED;
+		if (c.proc.module_manager.unmap(base_address))
+		{
+			return STATUS_SUCCESS;
+		}
+
+		return STATUS_INVALID_PARAMETER;
 	}
 
 	NTSTATUS handle_NtCreateThreadEx(const syscall_context& c, const emulator_object<handle> thread_handle,
