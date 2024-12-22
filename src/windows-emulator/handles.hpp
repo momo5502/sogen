@@ -106,9 +106,15 @@ namespace handle_detail
 	};
 }
 
+struct generic_handle_store
+{
+	virtual ~generic_handle_store() = default;
+	virtual bool erase(const handle h) = 0;
+};
+
 template <handle_types::type Type, typename T, uint32_t IndexShift = 0>
 	requires(utils::Serializable<T>)
-class handle_store
+class handle_store : public generic_handle_store
 {
 public:
 	using index_type = uint32_t;
@@ -208,7 +214,7 @@ public:
 		return this->erase(entry);
 	}
 
-	bool erase(const handle h)
+	bool erase(const handle h) override
 	{
 		return this->erase(h.value);
 	}

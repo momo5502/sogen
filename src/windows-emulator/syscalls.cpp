@@ -348,6 +348,33 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
+	generic_handle_store* get_handle_store(process_context& proc, const handle h)
+	{
+		switch (h.value.type)
+		{
+		case handle_types::thread:
+			return &proc.threads;
+		case handle_types::event:
+			return &proc.events;
+		case handle_types::file:
+			return &proc.files;
+		case handle_types::device:
+			return &proc.devices;
+		case handle_types::semaphore:
+			return &proc.semaphores;
+		case handle_types::registry:
+			return &proc.registry_keys;
+		case handle_types::mutant:
+			return &proc.mutants;
+		case handle_types::port:
+			return &proc.ports;
+		case handle_types::section:
+			return &proc.sections;
+		default:
+			return nullptr;
+		}
+	}
+
 	NTSTATUS handle_NtClose(const syscall_context& c, const handle h)
 	{
 		const auto value = h.value;
@@ -356,37 +383,8 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		if (value.type == handle_types::thread && c.proc.threads.erase(h))
-		{
-			return STATUS_SUCCESS;
-		}
-
-		if (value.type == handle_types::event && c.proc.events.erase(h))
-		{
-			return STATUS_SUCCESS;
-		}
-
-		if (value.type == handle_types::file && c.proc.files.erase(h))
-		{
-			return STATUS_SUCCESS;
-		}
-
-		if (value.type == handle_types::device && c.proc.devices.erase(h))
-		{
-			return STATUS_SUCCESS;
-		}
-
-		if (value.type == handle_types::semaphore && c.proc.semaphores.erase(h))
-		{
-			return STATUS_SUCCESS;
-		}
-
-		if (value.type == handle_types::registry && c.proc.registry_keys.erase(h))
-		{
-			return STATUS_SUCCESS;
-		}
-
-		if (value.type == handle_types::mutant && c.proc.mutants.erase(h))
+		auto* handle_store = get_handle_store(c.proc, h);
+		if (handle_store && handle_store->erase(h))
 		{
 			return STATUS_SUCCESS;
 		}
@@ -419,7 +417,7 @@ namespace
 
 		if (previous_count)
 		{
-			previous_count.write(old_count);
+			previous_count.write(static_cast<LONG>(old_count));
 		}
 
 		return STATUS_SUCCESS;
