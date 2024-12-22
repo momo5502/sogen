@@ -295,7 +295,7 @@ namespace
 	                                       const uint64_t thread_information,
 	                                       const uint32_t thread_information_length)
 	{
-		auto* thread = thread_handle == ~1ULL
+		auto* thread = thread_handle == CURRENT_THREAD
 			               ? c.proc.active_thread
 			               : c.proc.threads.get(thread_handle);
 
@@ -392,16 +392,6 @@ namespace
 	NTSTATUS handle_NtTraceEvent()
 	{
 		return STATUS_SUCCESS;
-	}
-
-	NTSTATUS handle_NtOpenThreadToken()
-	{
-		return STATUS_NO_TOKEN;
-	}
-
-	NTSTATUS handle_NtOpenThreadTokenEx()
-	{
-		return STATUS_NO_TOKEN;
 	}
 
 	NTSTATUS handle_NtCreateEvent(const syscall_context& c, const emulator_object<handle> event_handle,
@@ -527,7 +517,7 @@ namespace
 	                                   const SECTION_INHERIT /*inherit_disposition*/, const ULONG /*allocation_type*/,
 	                                   const ULONG /*win32_protect*/)
 	{
-		if (process_handle != ~0ULL)
+		if (process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_INVALID_HANDLE;
 		}
@@ -653,7 +643,7 @@ namespace
 	                                     const uint64_t memory_information, const uint32_t memory_information_length,
 	                                     const emulator_object<uint32_t> return_length)
 	{
-		if (process_handle != ~0ULL)
+		if (process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -941,7 +931,7 @@ namespace
 	                                  const emulator_object<handle> target_handle, const ACCESS_MASK /*desired_access*/,
 	                                  const ULONG /*handle_attributes*/, const ULONG /*options*/)
 	{
-		if (source_process_handle != ~0ULL || target_process_handle != ~0ULL)
+		if (source_process_handle != CURRENT_PROCESS || target_process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -1040,7 +1030,7 @@ namespace
 	                                          const uint32_t process_information_length,
 	                                          const emulator_object<uint32_t> return_length)
 	{
-		if (process_handle != ~0ULL)
+		if (process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -1216,7 +1206,7 @@ namespace
 	                                         const uint32_t thread_information_length,
 	                                         const emulator_object<uint32_t> return_length)
 	{
-		if (thread_handle != ~1ULL)
+		if (thread_handle != CURRENT_THREAD)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -1424,7 +1414,7 @@ namespace
 	                                        const uint32_t info_class, const uint64_t process_information,
 	                                        const uint32_t process_information_length)
 	{
-		if (process_handle != ~0ULL)
+		if (process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -1521,7 +1511,7 @@ namespace
 	                                       const uint32_t protection,
 	                                       const emulator_object<uint32_t> old_protection)
 	{
-		if (process_handle != ~0ULL)
+		if (process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -1629,7 +1619,7 @@ namespace
 	                                          const uint32_t allocation_type,
 	                                          const uint32_t page_protection)
 	{
-		if (process_handle != ~0ULL)
+		if (process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -1684,7 +1674,7 @@ namespace
 	                                    const emulator_object<uint64_t> base_address,
 	                                    const emulator_object<uint64_t> bytes_to_allocate, const uint32_t free_type)
 	{
-		if (process_handle != ~0ULL)
+		if (process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -1799,7 +1789,7 @@ namespace
 	{
 		number_of_bytes_read.write(0);
 
-		if (process_handle != ~0ULL)
+		if (process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -1860,16 +1850,46 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtOpenProcessToken()
+	NTSTATUS handle_NtOpenThreadToken(const syscall_context&, const handle thread_handle,
+	                                  const ACCESS_MASK /*desired_access*/, const BOOLEAN /*open_as_self*/,
+	                                  const emulator_object<handle> token_handle)
 	{
-		//puts("NtOpenProcessToken not supported");
-		return STATUS_NOT_SUPPORTED;
+		if (thread_handle != CURRENT_THREAD)
+		{
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		token_handle.write(CURRENT_THREAD_TOKEN);
+
+		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtOpenProcessTokenEx()
+	NTSTATUS handle_NtOpenThreadTokenEx(const syscall_context& c, const handle thread_handle,
+	                                    const ACCESS_MASK desired_access, const BOOLEAN open_as_self,
+	                                    const ULONG /*handle_attributes*/,
+	                                    const emulator_object<handle> token_handle)
 	{
-		//puts("NtOpenProcessToken not supported");
-		return STATUS_NOT_SUPPORTED;
+		return handle_NtOpenThreadToken(c, thread_handle, desired_access, open_as_self, token_handle);
+	}
+
+	NTSTATUS handle_NtOpenProcessToken(const syscall_context&, const handle process_handle,
+	                                   const ACCESS_MASK /*desired_access*/, const emulator_object<handle> token_handle)
+	{
+		if (process_handle != CURRENT_PROCESS)
+		{
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		token_handle.write(CURRENT_PROCESS_TOKEN);
+
+		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS handle_NtOpenProcessTokenEx(const syscall_context& c, const handle process_handle,
+	                                     const ACCESS_MASK desired_access, const ULONG /*handle_attributes*/,
+	                                     const emulator_object<handle> token_handle)
+	{
+		return handle_NtOpenProcessToken(c, process_handle, desired_access, token_handle);
 	}
 
 	NTSTATUS handle_NtQuerySecurityAttributesToken()
@@ -1895,9 +1915,9 @@ namespace
 	                                        const uint64_t token_information, const ULONG token_information_length,
 	                                        const emulator_object<ULONG> return_length)
 	{
-		if (token_handle != ~3ULL // NtCurrentProcessToken
-			&& token_handle != ~4ULL // NtCurrentThreadToken
-			&& token_handle != ~5ULL // NtCurrentThreadEffectiveToken
+		if (token_handle != CURRENT_PROCESS_TOKEN
+			&& token_handle != CURRENT_THREAD_TOKEN
+			&& token_handle != CURRENT_THREAD_EFFECTIVE_TOKEN
 		)
 		{
 			return STATUS_NOT_SUPPORTED;
@@ -1927,6 +1947,34 @@ namespace
 
 			emulator_object<TOKEN_USER>{c.emu, token_information}.write(user);
 			c.emu.write_memory(token_information + 0x10, sid, sizeof(sid));
+			return STATUS_SUCCESS;
+		}
+
+		if (token_information_class == TokenSessionId)
+		{
+			constexpr auto required_size = sizeof(ULONG);
+			return_length.write(required_size);
+
+			if (required_size > token_information_length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			emulator_object<ULONG>{c.emu, token_information}.write(1);
+			return STATUS_SUCCESS;
+		}
+
+		if (token_information_class == TokenPrivateNameSpace)
+		{
+			constexpr auto required_size = sizeof(ULONG);
+			return_length.write(required_size);
+
+			if (required_size > token_information_length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			emulator_object<ULONG>{c.emu, token_information}.write(0);
 			return STATUS_SUCCESS;
 		}
 
@@ -2138,7 +2186,7 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		if (process_handle == ~0ULL)
+		if (process_handle == CURRENT_PROCESS)
 		{
 			c.proc.exit_status = exit_status;
 			c.emu.stop();
@@ -2580,7 +2628,7 @@ namespace
 	NTSTATUS handle_NtUnmapViewOfSection(const syscall_context& c, const handle process_handle,
 	                                     const uint64_t base_address)
 	{
-		if (process_handle != ~0ULL)
+		if (process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -2607,7 +2655,7 @@ namespace
 	                                 const SIZE_T stack_size, const SIZE_T /*maximum_stack_size*/,
 	                                 const emulator_object<PS_ATTRIBUTE_LIST> attribute_list)
 	{
-		if (process_handle != ~0ULL)
+		if (process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
