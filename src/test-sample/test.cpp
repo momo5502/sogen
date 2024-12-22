@@ -16,6 +16,18 @@ using namespace std::literals;
 // to trick compiler optimizations
 __declspec(dllexport) bool do_the_task = true;
 
+struct tls_struct
+{
+	DWORD num = 1337;
+
+	tls_struct()
+	{
+		num = GetCurrentThreadId();
+	}
+};
+
+thread_local tls_struct tls_var{};
+
 // getenv is broken right now :(
 std::string read_env(const char* env)
 {
@@ -56,6 +68,50 @@ bool test_threads()
 	}
 
 	return counter == (thread_count * 3ULL);
+}
+
+bool test_tls()
+{
+	std::atomic_bool kill{false};
+	std::atomic_uint32_t successes{0};
+	constexpr uint32_t thread_count = 2;
+
+	std::vector<std::thread> ts{};
+	kill = false;
+
+	for (size_t i = 0; i < thread_count; ++i)
+	{
+		ts.emplace_back([&]
+		{
+			while (!kill)
+			{
+				std::this_thread::yield();
+			}
+
+			if (tls_var.num == GetCurrentThreadId())
+			{
+				++successes;
+			}
+		});
+	}
+
+	LoadLibraryA("d3dcompiler_47.dll");
+	LoadLibraryA("dsound.dll");
+	/*LoadLibraryA("d3d9.dll");
+	LoadLibraryA("dxgi.dll");
+	LoadLibraryA("wlanapi.dll");*/
+
+	kill = true;
+
+	for (auto& t : ts)
+	{
+		if (t.joinable())
+		{
+			t.join();
+		}
+	}
+
+	return successes == thread_count;
 }
 
 bool test_env()
@@ -198,7 +254,7 @@ void print_time()
 
 int main(int argc, const char* argv[])
 {
-	if(argc == 2 && argv[1] == "-time"sv)
+	if (argc == 2 && argv[1] == "-time"sv)
 	{
 		print_time();
 		return 0;
@@ -212,6 +268,7 @@ int main(int argc, const char* argv[])
 	RUN_TEST(test_env, "Environment")
 	RUN_TEST(test_exceptions, "Exceptions")
 	RUN_TEST(test_native_exceptions, "Native Exceptions")
+	RUN_TEST(test_tls, "TLS")
 
 	return valid ? 0 : 1;
 }
