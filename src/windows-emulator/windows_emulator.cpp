@@ -519,7 +519,7 @@ namespace
 		return false;
 	}
 
-	bool is_object_signaled(process_context& c, const handle h)
+	bool is_object_signaled(process_context& c, const handle h, uint32_t current_thread_id)
 	{
 		const auto type = h.value.type;
 
@@ -544,13 +544,7 @@ namespace
 				auto* e = c.mutants.get(h);
 				if (e)
 				{
-					if (e->locked)
-					{
-						return false;
-					}
-
-					e->locked = true;
-					return true;
+					return e->try_lock(current_thread_id);
 				}
 
 				break;
@@ -649,7 +643,7 @@ bool emulator_thread::is_thread_ready(windows_emulator& win_emu)
 		{
 			const auto& obj = this->await_objects[i];
 
-			const auto signaled = is_object_signaled(win_emu.process(), obj);
+			const auto signaled = is_object_signaled(win_emu.process(), obj, this->id);
 			all_signaled &= signaled;
 
 			if (signaled && this->await_any)

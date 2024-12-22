@@ -86,12 +86,45 @@ struct event : ref_counted_object
 
 struct mutant : ref_counted_object
 {
-	bool locked{false};
+	uint32_t locked_count{0};
+	uint32_t owning_thread_id{};
 	std::wstring name{};
+
+	bool try_lock(const uint32_t thread_id)
+	{
+		if (this->locked_count == 0)
+		{
+			++this->locked_count;
+			this->owning_thread_id = thread_id;
+			return true;
+		}
+
+		if (this->owning_thread_id != thread_id)
+		{
+			return false;
+		}
+
+		++this->locked_count;
+		return true;
+	}
+
+	uint32_t release()
+	{
+		const auto old_count = this->locked_count;
+
+		if (this->locked_count <= 0)
+		{
+			return old_count;
+		}
+
+		--this->locked_count;
+		return old_count;
+	}
 
 	void serialize(utils::buffer_serializer& buffer) const
 	{
-		buffer.write(this->locked);
+		buffer.write(this->locked_count);
+		buffer.write(this->owning_thread_id);
 		buffer.write(this->name);
 
 		ref_counted_object::serialize(buffer);
@@ -99,7 +132,8 @@ struct mutant : ref_counted_object
 
 	void deserialize(utils::buffer_deserializer& buffer)
 	{
-		buffer.read(this->locked);
+		buffer.read(this->locked_count);
+		buffer.read(this->owning_thread_id);
 		buffer.read(this->name);
 
 		ref_counted_object::deserialize(buffer);
@@ -156,7 +190,7 @@ struct section
 	}
 };
 
-struct semaphore
+struct semaphore : ref_counted_object
 {
 	std::wstring name{};
 	volatile uint32_t current_count{};
@@ -167,6 +201,8 @@ struct semaphore
 		buffer.write(this->name);
 		buffer.write(this->current_count);
 		buffer.write(this->max_count);
+
+		ref_counted_object::serialize(buffer);
 	}
 
 	void deserialize(utils::buffer_deserializer& buffer)
@@ -174,6 +210,8 @@ struct semaphore
 		buffer.read(this->name);
 		buffer.read(this->current_count);
 		buffer.read(this->max_count);
+
+		ref_counted_object::deserialize(buffer);
 	}
 };
 

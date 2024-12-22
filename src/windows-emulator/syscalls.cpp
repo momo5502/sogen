@@ -399,6 +399,32 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
+	NTSTATUS handle_NtReleaseMutant(const syscall_context& c, const handle mutant_handle,
+	                                const emulator_object<LONG> previous_count)
+	{
+		if (mutant_handle.value.type != handle_types::mutant)
+		{
+			c.win_emu.logger.error("Bad handle type for NtReleaseMutant\n");
+			c.emu.stop();
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		auto* mutant = c.proc.mutants.get(mutant_handle);
+		if (!mutant)
+		{
+			return STATUS_INVALID_HANDLE;
+		}
+
+		const auto old_count = mutant->release();
+
+		if (previous_count)
+		{
+			previous_count.write(old_count);
+		}
+
+		return STATUS_SUCCESS;
+	}
+
 	NTSTATUS handle_NtCreateMutant(const syscall_context& c, const emulator_object<handle> mutant_handle,
 	                               const ACCESS_MASK /*desired_access*/,
 	                               const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
@@ -426,8 +452,12 @@ namespace
 		}
 
 		mutant e{};
-		e.locked = initial_owner != FALSE;
 		e.name = std::move(name);
+
+		if (initial_owner)
+		{
+			e.try_lock(c.win_emu.current_thread().id);
+		}
 
 		const auto handle = c.proc.mutants.store(std::move(e));
 		mutant_handle.write(handle);
@@ -2632,6 +2662,39 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
+	NTSTATUS handle_NtOpenSemaphore(const syscall_context& c, const emulator_object<handle> semaphore_handle,
+	                                const ACCESS_MASK /*desired_access*/,
+	                                const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
+	{
+		if (!object_attributes)
+		{
+			return STATUS_INVALID_PARAMETER;
+		}
+
+		const auto attributes = object_attributes.read();
+		if (!attributes.ObjectName)
+		{
+			return STATUS_INVALID_PARAMETER;
+		}
+
+		const auto name = read_unicode_string(c.emu, attributes.ObjectName);
+		if (name.empty())
+		{
+			return STATUS_INVALID_PARAMETER;
+		}
+
+		for (const auto& semaphore : c.proc.semaphores)
+		{
+			if (semaphore.second.name == name)
+			{
+				semaphore_handle.write(c.proc.semaphores.make_handle(semaphore.first));
+				return STATUS_SUCCESS;
+			}
+		}
+
+		return STATUS_OBJECT_NAME_NOT_FOUND;
+	}
+
 	NTSTATUS handle_NtCreateSemaphore(const syscall_context& c, const emulator_object<handle> semaphore_handle,
 	                                  const ACCESS_MASK /*desired_access*/,
 	                                  const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
@@ -2647,6 +2710,17 @@ namespace
 			if (attributes.ObjectName)
 			{
 				s.name = read_unicode_string(c.emu, attributes.ObjectName);
+			}
+		}
+
+		if (!s.name.empty())
+		{
+			for (const auto& semaphore : c.proc.semaphores)
+			{
+				if (semaphore.second.name == s.name)
+				{
+					return STATUS_OBJECT_NAME_EXISTS;
+				}
 			}
 		}
 
@@ -3014,6 +3088,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtWriteFile);
 	add_handler(NtRaiseHardError);
 	add_handler(NtCreateSemaphore);
+	add_handler(NtOpenSemaphore);
 	add_handler(NtReadVirtualMemory);
 	add_handler(NtQueryInformationToken);
 	add_handler(NtDxgkIsFeatureEnabled);
@@ -3059,6 +3134,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtQueryAttributesFile);
 	add_handler(NtWaitForMultipleObjects);
 	add_handler(NtCreateMutant);
+	add_handler(NtReleaseMutant);
 
 #undef add_handler
 }
