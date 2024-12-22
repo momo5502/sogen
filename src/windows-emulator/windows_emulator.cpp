@@ -263,6 +263,10 @@ namespace
 			peb.HeapDeCommitFreeBlockThreshold = 0x0000000000001000;
 			peb.NumberOfHeaps = 0x00000000;
 			peb.MaximumNumberOfHeaps = 0x00000010;
+
+			peb.OSPlatformId = 2;
+			peb.OSMajorVersion = 0x0000000a;
+			peb.OSBuildNumber = 0x00006c51;
 		});
 	}
 

@@ -325,6 +325,19 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (info_class == ThreadImpersonationToken)
+		{
+			if (thread_information_length != sizeof(handle))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<handle> info{c.emu, thread_information};
+			info.write(DUMMY_IMPERSONATION_TOKEN);
+
+			return STATUS_SUCCESS;
+		}
+
 		if (info_class == ThreadZeroTlsCell)
 		{
 			if (thread_information_length != sizeof(ULONG))
@@ -2029,21 +2042,22 @@ namespace
 		if (token_handle != CURRENT_PROCESS_TOKEN
 			&& token_handle != CURRENT_THREAD_TOKEN
 			&& token_handle != CURRENT_THREAD_EFFECTIVE_TOKEN
+			&& token_handle != DUMMY_IMPERSONATION_TOKEN
 		)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
 
+		const uint8_t sid[] =
+		{
+			0x01, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x05, 0x15, 0x00, 0x00, 0x00, 0x84, 0x94,
+			0xD4, 0x04, 0x4B, 0x68, 0x42, 0x34, 0x23,
+			0xBE, 0x69, 0x4E, 0xE9, 0x03, 0x00, 0x00,
+		};
+
 		if (token_information_class == TokenUser)
 		{
-			const uint8_t sid[] =
-			{
-				0x01, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00,
-				0x05, 0x15, 0x00, 0x00, 0x00, 0x84, 0x94,
-				0xD4, 0x04, 0x4B, 0x68, 0x42, 0x34, 0x23,
-				0xBE, 0x69, 0x4E, 0xE9, 0x03, 0x00, 0x00,
-			};
-
 			constexpr auto required_size = sizeof(sid) + 0x10;
 			return_length.write(required_size);
 
@@ -2058,6 +2072,21 @@ namespace
 
 			emulator_object<TOKEN_USER>{c.emu, token_information}.write(user);
 			c.emu.write_memory(token_information + 0x10, sid, sizeof(sid));
+			return STATUS_SUCCESS;
+		}
+
+		if (token_information_class == TokenType)
+		{
+			constexpr auto required_size = sizeof(TOKEN_TYPE);
+			return_length.write(required_size);
+
+			if (required_size > token_information_length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			emulator_object<TOKEN_TYPE>{c.emu, token_information}.write(
+				token_handle == DUMMY_IMPERSONATION_TOKEN ? TokenImpersonation : TokenPrimary);
 			return STATUS_SUCCESS;
 		}
 
@@ -2148,6 +2177,25 @@ namespace
 				                   .AttributeCount = 0,
 			                   });
 
+			return STATUS_SUCCESS;
+		}
+
+		if (token_information_class == TokenIntegrityLevel)
+		{
+			constexpr auto required_size = sizeof(sid) + sizeof(TOKEN_MANDATORY_LABEL);
+			return_length.write(required_size);
+
+			if (required_size > token_information_length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			TOKEN_MANDATORY_LABEL label{};
+			label.Label.Attributes = 0;
+			label.Label.Sid = reinterpret_cast<void*>(token_information + sizeof(TOKEN_MANDATORY_LABEL));
+
+			emulator_object<TOKEN_MANDATORY_LABEL>{c.emu, token_information}.write(label);
+			c.emu.write_memory(token_information + sizeof(TOKEN_MANDATORY_LABEL), sid, sizeof(sid));
 			return STATUS_SUCCESS;
 		}
 

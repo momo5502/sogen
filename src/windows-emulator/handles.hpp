@@ -16,6 +16,7 @@ struct handle_types
 		thread,
 		registry,
 		mutant,
+		token,
 	};
 };
 
@@ -352,6 +353,8 @@ constexpr auto SHARED_SECTION = make_pseudo_handle(0x1, handle_types::section);
 constexpr auto CONSOLE_HANDLE = make_pseudo_handle(0x1, handle_types::file);
 constexpr auto STDOUT_HANDLE = make_pseudo_handle(0x2, handle_types::file);
 constexpr auto STDIN_HANDLE = make_pseudo_handle(0x3, handle_types::file);
+
+constexpr auto DUMMY_IMPERSONATION_TOKEN = make_pseudo_handle(0x1, handle_types::token);
 
 constexpr auto CURRENT_PROCESS = make_handle(~0ULL);
 constexpr auto CURRENT_THREAD = make_handle(~1ULL);
