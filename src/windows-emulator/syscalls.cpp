@@ -1566,6 +1566,8 @@ namespace
 
 				thread_iterator->second.teb->access([&](TEB& teb)
 				{
+					entry.ThreadId = reinterpret_cast<ULONG_PTR>(teb.ClientId.UniqueThread);
+
 					const auto tls_vector = static_cast<PVOID*>(teb.ThreadLocalStoragePointer);
 
 					if (tls_info.TlsRequest == ProcessTlsReplaceIndex)
