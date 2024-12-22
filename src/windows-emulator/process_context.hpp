@@ -84,6 +84,28 @@ struct event : ref_counted_object
 	}
 };
 
+struct mutant : ref_counted_object
+{
+	bool locked{false};
+	std::wstring name{};
+
+	void serialize(utils::buffer_serializer& buffer) const
+	{
+		buffer.write(this->locked);
+		buffer.write(this->name);
+
+		ref_counted_object::serialize(buffer);
+	}
+
+	void deserialize(utils::buffer_deserializer& buffer)
+	{
+		buffer.read(this->locked);
+		buffer.read(this->name);
+
+		ref_counted_object::deserialize(buffer);
+	}
+};
+
 struct file
 {
 	utils::file_handle handle{};
@@ -436,6 +458,7 @@ struct process_context
 	handle_store<handle_types::device, io_device_container> devices{};
 	handle_store<handle_types::semaphore, semaphore> semaphores{};
 	handle_store<handle_types::port, port> ports{};
+	handle_store<handle_types::mutant, mutant> mutants{};
 	handle_store<handle_types::registry, registry_key, 2> registry_keys{};
 	std::map<uint16_t, std::wstring> atoms{};
 
@@ -473,6 +496,7 @@ struct process_context
 		buffer.write(this->devices);
 		buffer.write(this->semaphores);
 		buffer.write(this->ports);
+		buffer.write(this->mutants);
 		buffer.write(this->registry_keys);
 		buffer.write_map(this->atoms);
 
@@ -515,6 +539,7 @@ struct process_context
 		buffer.read(this->devices);
 		buffer.read(this->semaphores);
 		buffer.read(this->ports);
+		buffer.read(this->mutants);
 		buffer.read(this->registry_keys);
 		buffer.read_map(this->atoms);
 

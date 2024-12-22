@@ -539,6 +539,23 @@ namespace
 				break;
 			}
 
+		case handle_types::mutant:
+			{
+				auto* e = c.mutants.get(h);
+				if (e)
+				{
+					if (e->locked)
+					{
+						return false;
+					}
+
+					e->locked = true;
+					return true;
+				}
+
+				break;
+			}
+
 		case handle_types::thread:
 			{
 				const auto* t = c.threads.get(h);

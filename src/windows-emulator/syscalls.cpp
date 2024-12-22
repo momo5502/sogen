@@ -386,11 +386,52 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (value.type == handle_types::mutant && c.proc.mutants.erase(h))
+		{
+			return STATUS_SUCCESS;
+		}
+
 		return STATUS_INVALID_HANDLE;
 	}
 
 	NTSTATUS handle_NtTraceEvent()
 	{
+		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS handle_NtCreateMutant(const syscall_context& c, const emulator_object<handle> mutant_handle,
+	                               const ACCESS_MASK /*desired_access*/,
+	                               const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
+	                               const BOOLEAN initial_owner)
+	{
+		std::wstring name{};
+		if (object_attributes)
+		{
+			const auto attributes = object_attributes.read();
+			if (attributes.ObjectName)
+			{
+				name = read_unicode_string(c.emu, attributes.ObjectName);
+			}
+		}
+
+		if (!name.empty())
+		{
+			for (const auto& mutant : c.proc.mutants)
+			{
+				if (mutant.second.name == name)
+				{
+					return STATUS_OBJECT_NAME_EXISTS;
+				}
+			}
+		}
+
+		mutant e{};
+		e.locked = initial_owner != FALSE;
+		e.name = std::move(name);
+
+		const auto handle = c.proc.mutants.store(std::move(e));
+		mutant_handle.write(handle);
+
 		return STATUS_SUCCESS;
 	}
 
@@ -406,6 +447,17 @@ namespace
 			if (attributes.ObjectName)
 			{
 				name = read_unicode_string(c.emu, attributes.ObjectName);
+			}
+		}
+
+		if (!name.empty())
+		{
+			for (const auto& event : c.proc.events)
+			{
+				if (event.second.name == name)
+				{
+					return STATUS_OBJECT_NAME_EXISTS;
+				}
 			}
 		}
 
@@ -2741,6 +2793,13 @@ namespace
 		return FALSE;
 	}
 
+	bool is_awaitable_object_type(const handle h)
+	{
+		return h.value.type == handle_types::thread //
+			|| h.value.type == handle_types::mutant //
+			|| h.value.type == handle_types::event;
+	}
+
 	NTSTATUS handle_NtWaitForMultipleObjects(const syscall_context& c, const ULONG count,
 	                                         const emulator_object<handle> handles, const WAIT_TYPE wait_type,
 	                                         const BOOLEAN alertable, const emulator_object<LARGE_INTEGER> timeout)
@@ -2765,7 +2824,7 @@ namespace
 		{
 			const auto h = handles.read(i);
 
-			if (h.value.type != handle_types::thread && h.value.type != handle_types::event)
+			if (!is_awaitable_object_type(h))
 			{
 				c.win_emu.logger.print(color::gray, "Unsupported handle type for NtWaitForMultipleObjects: %d!\n",
 				                       h.value.type);
@@ -2791,7 +2850,7 @@ namespace
 			c.win_emu.logger.print(color::gray, "Alertable NtWaitForSingleObject not supported yet!\n");
 		}
 
-		if (h.value.type != handle_types::thread && h.value.type != handle_types::event)
+		if (!is_awaitable_object_type(h))
 		{
 			c.win_emu.logger.print(color::gray,
 			                       "Unsupported handle type for NtWaitForSingleObject: %d!\n", h.value.type);
@@ -2999,6 +3058,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtQueryObject);
 	add_handler(NtQueryAttributesFile);
 	add_handler(NtWaitForMultipleObjects);
+	add_handler(NtCreateMutant);
 
 #undef add_handler
 }

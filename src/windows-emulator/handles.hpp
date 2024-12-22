@@ -15,6 +15,7 @@ struct handle_types
 		port,
 		thread,
 		registry,
+		mutant,
 	};
 };
 
