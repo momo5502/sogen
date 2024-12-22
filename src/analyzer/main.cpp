@@ -11,9 +11,9 @@ namespace
 {
 	void watch_system_objects(windows_emulator& win_emu)
 	{
-		//watch_object(win_emu, *win_emu.current_thread().teb);
-		//watch_object(win_emu, win_emu.process().peb);
-		//watch_object(win_emu, win_emu.process().kusd);
+		watch_object(win_emu, *win_emu.current_thread().teb);
+		watch_object(win_emu, win_emu.process().peb);
+		watch_object(win_emu, emulator_object<KUSER_SHARED_DATA>{win_emu.emu(), kusd_mmio::address()});
 		auto* params_hook = watch_object(win_emu, win_emu.process().process_params);
 
 		win_emu.emu().hook_memory_write(win_emu.process().peb.value() + offsetof(PEB, ProcessParameters), 0x8,

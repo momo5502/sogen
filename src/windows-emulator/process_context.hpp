@@ -84,6 +84,62 @@ struct event : ref_counted_object
 	}
 };
 
+struct mutant : ref_counted_object
+{
+	uint32_t locked_count{0};
+	uint32_t owning_thread_id{};
+	std::wstring name{};
+
+	bool try_lock(const uint32_t thread_id)
+	{
+		if (this->locked_count == 0)
+		{
+			++this->locked_count;
+			this->owning_thread_id = thread_id;
+			return true;
+		}
+
+		if (this->owning_thread_id != thread_id)
+		{
+			return false;
+		}
+
+		++this->locked_count;
+		return true;
+	}
+
+	uint32_t release()
+	{
+		const auto old_count = this->locked_count;
+
+		if (this->locked_count <= 0)
+		{
+			return old_count;
+		}
+
+		--this->locked_count;
+		return old_count;
+	}
+
+	void serialize(utils::buffer_serializer& buffer) const
+	{
+		buffer.write(this->locked_count);
+		buffer.write(this->owning_thread_id);
+		buffer.write(this->name);
+
+		ref_counted_object::serialize(buffer);
+	}
+
+	void deserialize(utils::buffer_deserializer& buffer)
+	{
+		buffer.read(this->locked_count);
+		buffer.read(this->owning_thread_id);
+		buffer.read(this->name);
+
+		ref_counted_object::deserialize(buffer);
+	}
+};
+
 struct file
 {
 	utils::file_handle handle{};
@@ -134,7 +190,7 @@ struct section
 	}
 };
 
-struct semaphore
+struct semaphore : ref_counted_object
 {
 	std::wstring name{};
 	volatile uint32_t current_count{};
@@ -145,6 +201,8 @@ struct semaphore
 		buffer.write(this->name);
 		buffer.write(this->current_count);
 		buffer.write(this->max_count);
+
+		ref_counted_object::serialize(buffer);
 	}
 
 	void deserialize(utils::buffer_deserializer& buffer)
@@ -152,6 +210,8 @@ struct semaphore
 		buffer.read(this->name);
 		buffer.read(this->current_count);
 		buffer.read(this->max_count);
+
+		ref_counted_object::deserialize(buffer);
 	}
 };
 
@@ -436,6 +496,7 @@ struct process_context
 	handle_store<handle_types::device, io_device_container> devices{};
 	handle_store<handle_types::semaphore, semaphore> semaphores{};
 	handle_store<handle_types::port, port> ports{};
+	handle_store<handle_types::mutant, mutant> mutants{};
 	handle_store<handle_types::registry, registry_key, 2> registry_keys{};
 	std::map<uint16_t, std::wstring> atoms{};
 
@@ -473,6 +534,7 @@ struct process_context
 		buffer.write(this->devices);
 		buffer.write(this->semaphores);
 		buffer.write(this->ports);
+		buffer.write(this->mutants);
 		buffer.write(this->registry_keys);
 		buffer.write_map(this->atoms);
 
@@ -515,6 +577,7 @@ struct process_context
 		buffer.read(this->devices);
 		buffer.read(this->semaphores);
 		buffer.read(this->ports);
+		buffer.read(this->mutants);
 		buffer.read(this->registry_keys);
 		buffer.read_map(this->atoms);
 

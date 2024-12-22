@@ -295,7 +295,7 @@ namespace
 	                                       const uint64_t thread_information,
 	                                       const uint32_t thread_information_length)
 	{
-		auto* thread = thread_handle == ~1ULL
+		auto* thread = thread_handle == CURRENT_THREAD
 			               ? c.proc.active_thread
 			               : c.proc.threads.get(thread_handle);
 
@@ -325,6 +325,22 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (info_class == ThreadZeroTlsCell)
+		{
+			if (thread_information_length != sizeof(ULONG))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const auto tls_index = c.emu.read_memory<ULONG>(thread_information);
+			const auto teb = thread->teb->read();
+
+			auto* tls_vector = static_cast<PVOID*>(teb.ThreadLocalStoragePointer);
+			c.emu.write_memory<void*>(tls_vector + tls_index, nullptr);
+
+			return STATUS_SUCCESS;
+		}
+
 		printf("Unsupported thread info class: %X\n", info_class);
 		c.emu.stop();
 		return STATUS_NOT_SUPPORTED;
@@ -348,6 +364,33 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
+	generic_handle_store* get_handle_store(process_context& proc, const handle h)
+	{
+		switch (h.value.type)
+		{
+		case handle_types::thread:
+			return &proc.threads;
+		case handle_types::event:
+			return &proc.events;
+		case handle_types::file:
+			return &proc.files;
+		case handle_types::device:
+			return &proc.devices;
+		case handle_types::semaphore:
+			return &proc.semaphores;
+		case handle_types::registry:
+			return &proc.registry_keys;
+		case handle_types::mutant:
+			return &proc.mutants;
+		case handle_types::port:
+			return &proc.ports;
+		case handle_types::section:
+			return &proc.sections;
+		default:
+			return nullptr;
+		}
+	}
+
 	NTSTATUS handle_NtClose(const syscall_context& c, const handle h)
 	{
 		const auto value = h.value;
@@ -356,32 +399,8 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		if (value.type == handle_types::thread && c.proc.threads.erase(h))
-		{
-			return STATUS_SUCCESS;
-		}
-
-		if (value.type == handle_types::event && c.proc.events.erase(h))
-		{
-			return STATUS_SUCCESS;
-		}
-
-		if (value.type == handle_types::file && c.proc.files.erase(h))
-		{
-			return STATUS_SUCCESS;
-		}
-
-		if (value.type == handle_types::device && c.proc.devices.erase(h))
-		{
-			return STATUS_SUCCESS;
-		}
-
-		if (value.type == handle_types::semaphore && c.proc.semaphores.erase(h))
-		{
-			return STATUS_SUCCESS;
-		}
-
-		if (value.type == handle_types::registry && c.proc.registry_keys.erase(h))
+		auto* handle_store = get_handle_store(c.proc, h);
+		if (handle_store && handle_store->erase(h))
 		{
 			return STATUS_SUCCESS;
 		}
@@ -394,14 +413,70 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtOpenThreadToken()
+	NTSTATUS handle_NtReleaseMutant(const syscall_context& c, const handle mutant_handle,
+	                                const emulator_object<LONG> previous_count)
 	{
-		return STATUS_NO_TOKEN;
+		if (mutant_handle.value.type != handle_types::mutant)
+		{
+			c.win_emu.logger.error("Bad handle type for NtReleaseMutant\n");
+			c.emu.stop();
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		auto* mutant = c.proc.mutants.get(mutant_handle);
+		if (!mutant)
+		{
+			return STATUS_INVALID_HANDLE;
+		}
+
+		const auto old_count = mutant->release();
+
+		if (previous_count)
+		{
+			previous_count.write(static_cast<LONG>(old_count));
+		}
+
+		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtOpenThreadTokenEx()
+	NTSTATUS handle_NtCreateMutant(const syscall_context& c, const emulator_object<handle> mutant_handle,
+	                               const ACCESS_MASK /*desired_access*/,
+	                               const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
+	                               const BOOLEAN initial_owner)
 	{
-		return STATUS_NO_TOKEN;
+		std::wstring name{};
+		if (object_attributes)
+		{
+			const auto attributes = object_attributes.read();
+			if (attributes.ObjectName)
+			{
+				name = read_unicode_string(c.emu, attributes.ObjectName);
+			}
+		}
+
+		if (!name.empty())
+		{
+			for (const auto& mutant : c.proc.mutants)
+			{
+				if (mutant.second.name == name)
+				{
+					return STATUS_OBJECT_NAME_EXISTS;
+				}
+			}
+		}
+
+		mutant e{};
+		e.name = std::move(name);
+
+		if (initial_owner)
+		{
+			e.try_lock(c.win_emu.current_thread().id);
+		}
+
+		const auto handle = c.proc.mutants.store(std::move(e));
+		mutant_handle.write(handle);
+
+		return STATUS_SUCCESS;
 	}
 
 	NTSTATUS handle_NtCreateEvent(const syscall_context& c, const emulator_object<handle> event_handle,
@@ -416,6 +491,17 @@ namespace
 			if (attributes.ObjectName)
 			{
 				name = read_unicode_string(c.emu, attributes.ObjectName);
+			}
+		}
+
+		if (!name.empty())
+		{
+			for (const auto& event : c.proc.events)
+			{
+				if (event.second.name == name)
+				{
+					return STATUS_OBJECT_NAME_EXISTS;
+				}
 			}
 		}
 
@@ -527,7 +613,7 @@ namespace
 	                                   const SECTION_INHERIT /*inherit_disposition*/, const ULONG /*allocation_type*/,
 	                                   const ULONG /*win32_protect*/)
 	{
-		if (process_handle != ~0ULL)
+		if (process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_INVALID_HANDLE;
 		}
@@ -558,10 +644,17 @@ namespace
 			});
 
 
-			const emulator_object<UNICODE_STRING> sysdir_obj{c.emu, obj_address + windir_obj.size()};
+			const emulator_object<UNICODE_STRING> sysdir_obj{c.emu, windir_obj.value() + windir_obj.size()};
 			sysdir_obj.access([&](UNICODE_STRING& ucs)
 			{
 				c.proc.base_allocator.make_unicode_string(ucs, L"C:\\WINDOWS\\System32");
+				ucs.Buffer = reinterpret_cast<wchar_t*>(reinterpret_cast<uint64_t>(ucs.Buffer) - obj_address);
+			});
+
+			const emulator_object<UNICODE_STRING> base_dir_obj{c.emu, sysdir_obj.value() + sysdir_obj.size()};
+			base_dir_obj.access([&](UNICODE_STRING& ucs)
+			{
+				c.proc.base_allocator.make_unicode_string(ucs, L"\\Sessions\\1\\BaseNamedObjects");
 				ucs.Buffer = reinterpret_cast<wchar_t*>(reinterpret_cast<uint64_t>(ucs.Buffer) - obj_address);
 			});
 
@@ -653,7 +746,7 @@ namespace
 	                                     const uint64_t memory_information, const uint32_t memory_information_length,
 	                                     const emulator_object<uint32_t> return_length)
 	{
-		if (process_handle != ~0ULL)
+		if (process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -941,7 +1034,7 @@ namespace
 	                                  const emulator_object<handle> target_handle, const ACCESS_MASK /*desired_access*/,
 	                                  const ULONG /*handle_attributes*/, const ULONG /*options*/)
 	{
-		if (source_process_handle != ~0ULL || target_process_handle != ~0ULL)
+		if (source_process_handle != CURRENT_PROCESS || target_process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -1040,7 +1133,7 @@ namespace
 	                                          const uint32_t process_information_length,
 	                                          const emulator_object<uint32_t> return_length)
 	{
-		if (process_handle != ~0ULL)
+		if (process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -1216,7 +1309,7 @@ namespace
 	                                         const uint32_t thread_information_length,
 	                                         const emulator_object<uint32_t> return_length)
 	{
-		if (thread_handle != ~1ULL)
+		if (thread_handle != CURRENT_THREAD)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -1388,22 +1481,121 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtSetInformationProcess(const syscall_context& c, const handle process_handle,
-	                                        const uint32_t info_class, const uint64_t /*process_information*/,
-	                                        const uint32_t /*process_information_length*/)
+	struct THREAD_TLS_INFO
 	{
-		if (process_handle != ~0ULL)
+		ULONG Flags;
+
+		union
+		{
+			PVOID* TlsVector;
+			PVOID TlsModulePointer;
+		};
+
+		ULONG_PTR ThreadId;
+	};
+
+	static_assert(sizeof(THREAD_TLS_INFO) == 0x18);
+
+	struct PROCESS_TLS_INFO
+	{
+		ULONG Unknown;
+		PROCESS_TLS_INFORMATION_TYPE TlsRequest;
+		ULONG ThreadDataCount;
+
+		union
+		{
+			ULONG TlsIndex;
+			ULONG TlsVectorLength;
+		};
+
+		THREAD_TLS_INFO ThreadData[1];
+	};
+
+	static_assert(sizeof(PROCESS_TLS_INFO) - sizeof(THREAD_TLS_INFO) == 0x10);
+
+	NTSTATUS handle_NtSetInformationProcess(const syscall_context& c, const handle process_handle,
+	                                        const uint32_t info_class, const uint64_t process_information,
+	                                        const uint32_t process_information_length)
+	{
+		if (process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
 
 		if (info_class == ProcessSchedulerSharedData
-			|| info_class == ProcessTlsInformation
 			|| info_class == ProcessConsoleHostProcess
 			|| info_class == ProcessFaultInformation
 			|| info_class == ProcessDefaultHardErrorMode
 			|| info_class == ProcessRaiseUMExceptionOnInvalidHandleClose)
 		{
+			return STATUS_SUCCESS;
+		}
+
+		if (info_class == ProcessTlsInformation)
+		{
+			constexpr auto thread_data_offset = offsetof(PROCESS_TLS_INFO, ThreadData);
+			if (process_information_length < thread_data_offset)
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<THREAD_TLS_INFO> data{c.emu, process_information + thread_data_offset};
+
+			PROCESS_TLS_INFO tls_info{};
+			c.emu.read_memory(process_information, &tls_info, thread_data_offset);
+
+			for (uint32_t i = 0; i < tls_info.ThreadDataCount; ++i)
+			{
+				auto entry = data.read(i);
+
+				const auto _ = utils::finally([&]
+				{
+					data.write(entry, i);
+				});
+
+				if (i >= c.proc.threads.size())
+				{
+					entry.Flags = 0;
+					continue;
+				}
+
+				auto thread_iterator = c.proc.threads.begin();
+				std::advance(thread_iterator, i);
+
+				entry.Flags = 2;
+
+				thread_iterator->second.teb->access([&](TEB& teb)
+				{
+					entry.ThreadId = reinterpret_cast<ULONG_PTR>(teb.ClientId.UniqueThread);
+
+					const auto tls_vector = static_cast<PVOID*>(teb.ThreadLocalStoragePointer);
+
+					if (tls_info.TlsRequest == ProcessTlsReplaceIndex)
+					{
+						const auto tls_entry_ptr = tls_vector + tls_info.TlsIndex;
+
+						const auto old_entry = c.emu.read_memory<void*>(tls_entry_ptr);
+						c.emu.write_memory<void*>(tls_entry_ptr, entry.TlsModulePointer);
+
+						entry.TlsModulePointer = old_entry;
+					}
+					else if (tls_info.TlsRequest == ProcessTlsReplaceVector)
+					{
+						const auto new_tls_vector = entry.TlsVector;
+
+						for (uint32_t j = 1; j < tls_info.TlsVectorLength; ++j)
+						{
+							const auto index = j - 1;
+							const auto old_entry = c.emu.read_memory<void*>(tls_vector + index);
+							c.emu.write_memory<void*>(new_tls_vector + index, old_entry);
+						}
+
+						teb.ThreadLocalStoragePointer = new_tls_vector;
+						entry.TlsVector = tls_vector;
+					}
+				});
+			}
+
 			return STATUS_SUCCESS;
 		}
 
@@ -1424,7 +1616,7 @@ namespace
 	                                       const uint32_t protection,
 	                                       const emulator_object<uint32_t> old_protection)
 	{
-		if (process_handle != ~0ULL)
+		if (process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -1471,6 +1663,12 @@ namespace
 		if (object_name == L"\\KnownDlls")
 		{
 			directory_handle.write(KNOWN_DLLS_DIRECTORY);
+			return STATUS_SUCCESS;
+		}
+
+		if (object_name == L"\\Sessions\\1\\BaseNamedObjects")
+		{
+			directory_handle.write(BASE_NAMED_OBJECTS_DIRECTORY);
 			return STATUS_SUCCESS;
 		}
 
@@ -1532,7 +1730,7 @@ namespace
 	                                          const uint32_t allocation_type,
 	                                          const uint32_t page_protection)
 	{
-		if (process_handle != ~0ULL)
+		if (process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -1587,7 +1785,7 @@ namespace
 	                                    const emulator_object<uint64_t> base_address,
 	                                    const emulator_object<uint64_t> bytes_to_allocate, const uint32_t free_type)
 	{
-		if (process_handle != ~0ULL)
+		if (process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -1702,7 +1900,7 @@ namespace
 	{
 		number_of_bytes_read.write(0);
 
-		if (process_handle != ~0ULL)
+		if (process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -1763,16 +1961,46 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtOpenProcessToken()
+	NTSTATUS handle_NtOpenThreadToken(const syscall_context&, const handle thread_handle,
+	                                  const ACCESS_MASK /*desired_access*/, const BOOLEAN /*open_as_self*/,
+	                                  const emulator_object<handle> token_handle)
 	{
-		//puts("NtOpenProcessToken not supported");
-		return STATUS_NOT_SUPPORTED;
+		if (thread_handle != CURRENT_THREAD)
+		{
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		token_handle.write(CURRENT_THREAD_TOKEN);
+
+		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtOpenProcessTokenEx()
+	NTSTATUS handle_NtOpenThreadTokenEx(const syscall_context& c, const handle thread_handle,
+	                                    const ACCESS_MASK desired_access, const BOOLEAN open_as_self,
+	                                    const ULONG /*handle_attributes*/,
+	                                    const emulator_object<handle> token_handle)
 	{
-		//puts("NtOpenProcessToken not supported");
-		return STATUS_NOT_SUPPORTED;
+		return handle_NtOpenThreadToken(c, thread_handle, desired_access, open_as_self, token_handle);
+	}
+
+	NTSTATUS handle_NtOpenProcessToken(const syscall_context&, const handle process_handle,
+	                                   const ACCESS_MASK /*desired_access*/, const emulator_object<handle> token_handle)
+	{
+		if (process_handle != CURRENT_PROCESS)
+		{
+			return STATUS_NOT_SUPPORTED;
+		}
+
+		token_handle.write(CURRENT_PROCESS_TOKEN);
+
+		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS handle_NtOpenProcessTokenEx(const syscall_context& c, const handle process_handle,
+	                                     const ACCESS_MASK desired_access, const ULONG /*handle_attributes*/,
+	                                     const emulator_object<handle> token_handle)
+	{
+		return handle_NtOpenProcessToken(c, process_handle, desired_access, token_handle);
 	}
 
 	NTSTATUS handle_NtQuerySecurityAttributesToken()
@@ -1798,9 +2026,9 @@ namespace
 	                                        const uint64_t token_information, const ULONG token_information_length,
 	                                        const emulator_object<ULONG> return_length)
 	{
-		if (token_handle != ~3ULL // NtCurrentProcessToken
-			&& token_handle != ~4ULL // NtCurrentThreadToken
-			&& token_handle != ~5ULL // NtCurrentThreadEffectiveToken
+		if (token_handle != CURRENT_PROCESS_TOKEN
+			&& token_handle != CURRENT_THREAD_TOKEN
+			&& token_handle != CURRENT_THREAD_EFFECTIVE_TOKEN
 		)
 		{
 			return STATUS_NOT_SUPPORTED;
@@ -1830,6 +2058,34 @@ namespace
 
 			emulator_object<TOKEN_USER>{c.emu, token_information}.write(user);
 			c.emu.write_memory(token_information + 0x10, sid, sizeof(sid));
+			return STATUS_SUCCESS;
+		}
+
+		if (token_information_class == TokenSessionId)
+		{
+			constexpr auto required_size = sizeof(ULONG);
+			return_length.write(required_size);
+
+			if (required_size > token_information_length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			emulator_object<ULONG>{c.emu, token_information}.write(1);
+			return STATUS_SUCCESS;
+		}
+
+		if (token_information_class == TokenPrivateNameSpace)
+		{
+			constexpr auto required_size = sizeof(ULONG);
+			return_length.write(required_size);
+
+			if (required_size > token_information_length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			emulator_object<ULONG>{c.emu, token_information}.write(0);
 			return STATUS_SUCCESS;
 		}
 
@@ -1890,6 +2146,24 @@ namespace
 			c.emu.write_memory(token_information, TOKEN_SECURITY_ATTRIBUTES_INFORMATION{
 				                   .Version = 0,
 				                   .AttributeCount = 0,
+			                   });
+
+			return STATUS_SUCCESS;
+		}
+
+		if (token_information_class == TokenBnoIsolation)
+		{
+			constexpr auto required_size = sizeof(TOKEN_BNO_ISOLATION_INFORMATION);
+			return_length.write(required_size);
+
+			if (required_size > token_information_length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			c.emu.write_memory(token_information, TOKEN_BNO_ISOLATION_INFORMATION{
+				                   .IsolationPrefix = nullptr,
+				                   .IsolationEnabled = 0,
 			                   });
 
 			return STATUS_SUCCESS;
@@ -2041,7 +2315,7 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		if (process_handle == ~0ULL)
+		if (process_handle == CURRENT_PROCESS)
 		{
 			c.proc.exit_status = exit_status;
 			c.emu.stop();
@@ -2404,6 +2678,39 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
+	NTSTATUS handle_NtOpenSemaphore(const syscall_context& c, const emulator_object<handle> semaphore_handle,
+	                                const ACCESS_MASK /*desired_access*/,
+	                                const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
+	{
+		if (!object_attributes)
+		{
+			return STATUS_INVALID_PARAMETER;
+		}
+
+		const auto attributes = object_attributes.read();
+		if (!attributes.ObjectName)
+		{
+			return STATUS_INVALID_PARAMETER;
+		}
+
+		const auto name = read_unicode_string(c.emu, attributes.ObjectName);
+		if (name.empty())
+		{
+			return STATUS_INVALID_PARAMETER;
+		}
+
+		for (const auto& semaphore : c.proc.semaphores)
+		{
+			if (semaphore.second.name == name)
+			{
+				semaphore_handle.write(c.proc.semaphores.make_handle(semaphore.first));
+				return STATUS_SUCCESS;
+			}
+		}
+
+		return STATUS_OBJECT_NAME_NOT_FOUND;
+	}
+
 	NTSTATUS handle_NtCreateSemaphore(const syscall_context& c, const emulator_object<handle> semaphore_handle,
 	                                  const ACCESS_MASK /*desired_access*/,
 	                                  const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
@@ -2419,6 +2726,17 @@ namespace
 			if (attributes.ObjectName)
 			{
 				s.name = read_unicode_string(c.emu, attributes.ObjectName);
+			}
+		}
+
+		if (!s.name.empty())
+		{
+			for (const auto& semaphore : c.proc.semaphores)
+			{
+				if (semaphore.second.name == s.name)
+				{
+					return STATUS_OBJECT_NAME_EXISTS;
+				}
 			}
 		}
 
@@ -2483,7 +2801,7 @@ namespace
 	NTSTATUS handle_NtUnmapViewOfSection(const syscall_context& c, const handle process_handle,
 	                                     const uint64_t base_address)
 	{
-		if (process_handle != ~0ULL)
+		if (process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -2492,14 +2810,16 @@ namespace
 		if (!mod)
 		{
 			puts("Unmapping non-module section not supported!");
-		}
-		else
-		{
-			printf("Unmapping section %s not supported!\n", mod->name.c_str());
+			c.emu.stop();
+			return STATUS_NOT_SUPPORTED;
 		}
 
-		c.emu.stop();
-		return STATUS_NOT_SUPPORTED;
+		if (c.proc.module_manager.unmap(base_address))
+		{
+			return STATUS_SUCCESS;
+		}
+
+		return STATUS_INVALID_PARAMETER;
 	}
 
 	NTSTATUS handle_NtCreateThreadEx(const syscall_context& c, const emulator_object<handle> thread_handle,
@@ -2510,7 +2830,7 @@ namespace
 	                                 const SIZE_T stack_size, const SIZE_T /*maximum_stack_size*/,
 	                                 const emulator_object<PS_ATTRIBUTE_LIST> attribute_list)
 	{
-		if (process_handle != ~0ULL)
+		if (process_handle != CURRENT_PROCESS)
 		{
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -2565,6 +2885,13 @@ namespace
 		return FALSE;
 	}
 
+	bool is_awaitable_object_type(const handle h)
+	{
+		return h.value.type == handle_types::thread //
+			|| h.value.type == handle_types::mutant //
+			|| h.value.type == handle_types::event;
+	}
+
 	NTSTATUS handle_NtWaitForMultipleObjects(const syscall_context& c, const ULONG count,
 	                                         const emulator_object<handle> handles, const WAIT_TYPE wait_type,
 	                                         const BOOLEAN alertable, const emulator_object<LARGE_INTEGER> timeout)
@@ -2589,7 +2916,7 @@ namespace
 		{
 			const auto h = handles.read(i);
 
-			if (h.value.type != handle_types::thread && h.value.type != handle_types::event)
+			if (!is_awaitable_object_type(h))
 			{
 				c.win_emu.logger.print(color::gray, "Unsupported handle type for NtWaitForMultipleObjects: %d!\n",
 				                       h.value.type);
@@ -2615,7 +2942,7 @@ namespace
 			c.win_emu.logger.print(color::gray, "Alertable NtWaitForSingleObject not supported yet!\n");
 		}
 
-		if (h.value.type != handle_types::thread && h.value.type != handle_types::event)
+		if (!is_awaitable_object_type(h))
 		{
 			c.win_emu.logger.print(color::gray,
 			                       "Unsupported handle type for NtWaitForSingleObject: %d!\n", h.value.type);
@@ -2779,6 +3106,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtWriteFile);
 	add_handler(NtRaiseHardError);
 	add_handler(NtCreateSemaphore);
+	add_handler(NtOpenSemaphore);
 	add_handler(NtReadVirtualMemory);
 	add_handler(NtQueryInformationToken);
 	add_handler(NtDxgkIsFeatureEnabled);
@@ -2823,6 +3151,8 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtQueryObject);
 	add_handler(NtQueryAttributesFile);
 	add_handler(NtWaitForMultipleObjects);
+	add_handler(NtCreateMutant);
+	add_handler(NtReleaseMutant);
 
 #undef add_handler
 }

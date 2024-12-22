@@ -15,6 +15,7 @@ struct handle_types
 		port,
 		thread,
 		registry,
+		mutant,
 	};
 };
 
@@ -24,7 +25,8 @@ struct handle_value
 {
 	uint64_t id : 32;
 	uint64_t type : 16;
-	uint64_t padding : 15;
+	uint64_t padding : 14;
+	uint64_t is_system : 1;
 	uint64_t is_pseudo : 1;
 };
 #pragma pack(pop)
@@ -72,9 +74,17 @@ constexpr handle make_handle(const uint32_t id, const handle_types::type type, c
 	value.padding = 0;
 	value.id = id;
 	value.type = type;
+	value.is_system = false;
 	value.is_pseudo = is_pseudo;
 
 	return {value};
+}
+
+constexpr handle make_handle(const uint64_t value)
+{
+	handle h{};
+	h.bits = value;
+	return h;
 }
 
 constexpr handle make_pseudo_handle(const uint32_t id, const handle_types::type type)
@@ -96,9 +106,15 @@ namespace handle_detail
 	};
 }
 
+struct generic_handle_store
+{
+	virtual ~generic_handle_store() = default;
+	virtual bool erase(const handle h) = 0;
+};
+
 template <handle_types::type Type, typename T, uint32_t IndexShift = 0>
 	requires(utils::Serializable<T>)
-class handle_store
+class handle_store : public generic_handle_store
 {
 public:
 	using index_type = uint32_t;
@@ -198,7 +214,7 @@ public:
 		return this->erase(entry);
 	}
 
-	bool erase(const handle h)
+	bool erase(const handle h) override
 	{
 		return this->erase(h.value);
 	}
@@ -327,10 +343,19 @@ private:
 	value_map store_{};
 };
 
-constexpr auto KNOWN_DLLS_DIRECTORY = make_pseudo_handle(0x1337, handle_types::directory);
-constexpr auto KNOWN_DLLS_SYMLINK = make_pseudo_handle(0x1337, handle_types::symlink);
-constexpr auto SHARED_SECTION = make_pseudo_handle(0x1337, handle_types::section);
+constexpr auto KNOWN_DLLS_DIRECTORY = make_pseudo_handle(0x1, handle_types::directory);
+constexpr auto BASE_NAMED_OBJECTS_DIRECTORY = make_pseudo_handle(0x2, handle_types::directory);
+
+constexpr auto KNOWN_DLLS_SYMLINK = make_pseudo_handle(0x1, handle_types::symlink);
+constexpr auto SHARED_SECTION = make_pseudo_handle(0x1, handle_types::section);
 
 constexpr auto CONSOLE_HANDLE = make_pseudo_handle(0x1, handle_types::file);
 constexpr auto STDOUT_HANDLE = make_pseudo_handle(0x2, handle_types::file);
 constexpr auto STDIN_HANDLE = make_pseudo_handle(0x3, handle_types::file);
+
+constexpr auto CURRENT_PROCESS = make_handle(~0ULL);
+constexpr auto CURRENT_THREAD = make_handle(~1ULL);
+
+constexpr auto CURRENT_PROCESS_TOKEN = make_handle(~3ULL);
+constexpr auto CURRENT_THREAD_TOKEN = make_handle(~4ULL);
+constexpr auto CURRENT_THREAD_EFFECTIVE_TOKEN = make_handle(~5ULL);
