@@ -548,10 +548,17 @@ namespace
 			});
 
 
-			const emulator_object<UNICODE_STRING> sysdir_obj{c.emu, obj_address + windir_obj.size()};
+			const emulator_object<UNICODE_STRING> sysdir_obj{c.emu, windir_obj.value() + windir_obj.size()};
 			sysdir_obj.access([&](UNICODE_STRING& ucs)
 			{
 				c.proc.base_allocator.make_unicode_string(ucs, L"C:\\WINDOWS\\System32");
+				ucs.Buffer = reinterpret_cast<wchar_t*>(reinterpret_cast<uint64_t>(ucs.Buffer) - obj_address);
+			});
+
+			const emulator_object<UNICODE_STRING> base_dir_obj{c.emu, sysdir_obj.value() + sysdir_obj.size()};
+			base_dir_obj.access([&](UNICODE_STRING& ucs)
+			{
+				c.proc.base_allocator.make_unicode_string(ucs, L"\\Sessions\\1\\BaseNamedObjects");
 				ucs.Buffer = reinterpret_cast<wchar_t*>(reinterpret_cast<uint64_t>(ucs.Buffer) - obj_address);
 			});
 
@@ -1558,6 +1565,12 @@ namespace
 		if (object_name == L"\\KnownDlls")
 		{
 			directory_handle.write(KNOWN_DLLS_DIRECTORY);
+			return STATUS_SUCCESS;
+		}
+
+		if (object_name == L"\\Sessions\\1\\BaseNamedObjects")
+		{
+			directory_handle.write(BASE_NAMED_OBJECTS_DIRECTORY);
 			return STATUS_SUCCESS;
 		}
 

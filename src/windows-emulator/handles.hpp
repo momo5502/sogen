@@ -337,6 +337,8 @@ private:
 };
 
 constexpr auto KNOWN_DLLS_DIRECTORY = make_pseudo_handle(0x1, handle_types::directory);
+constexpr auto BASE_NAMED_OBJECTS_DIRECTORY = make_pseudo_handle(0x2, handle_types::directory);
+
 constexpr auto KNOWN_DLLS_SYMLINK = make_pseudo_handle(0x1, handle_types::symlink);
 constexpr auto SHARED_SECTION = make_pseudo_handle(0x1, handle_types::section);
 
