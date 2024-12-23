@@ -16,6 +16,7 @@ std::unique_ptr<io_device> create_device(const std::wstring_view device)
 {
 	if (device == L"CNG"
 		|| device == L"KsecDD"
+		|| device == L"PcwDrv"
 		|| device == L"DeviceApi\\CMApi"
 		|| device == L"ConDrv\\Server")
 	{
