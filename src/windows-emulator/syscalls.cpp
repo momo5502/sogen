@@ -1431,6 +1431,32 @@ namespace
 			return STATUS_INVALID_HANDLE;
 		}
 
+		if (info_class == FileNameInformation)
+		{
+			const auto required_length = sizeof(FILE_NAME_INFORMATION) + (f->name.size() * 2);
+
+			if (io_status_block)
+			{
+				IO_STATUS_BLOCK block{};
+				block.Information = sizeof(FILE_NAME_INFORMATION) + required_length;
+				io_status_block.write(block);
+			}
+
+			if (length != required_length)
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			c.emu.write_memory(file_information, FILE_NAME_INFORMATION{
+				                   .FileNameLength = static_cast<ULONG>(f->name.size() * 2),
+			                   });
+
+			c.emu.write_memory(file_information + offsetof(FILE_NAME_INFORMATION, FileName), f->name.c_str(),
+			                   (f->name.size() + 1) * 2);
+
+			return STATUS_SUCCESS;
+		}
+
 		if (info_class == FileStandardInformation)
 		{
 			if (io_status_block)
@@ -1615,6 +1641,11 @@ namespace
 		printf("Unsupported info process class: %X\n", info_class);
 		c.emu.stop();
 
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtSetInformationKey()
+	{
 		return STATUS_NOT_SUPPORTED;
 	}
 
@@ -3243,6 +3274,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtReleaseMutant);
 	add_handler(NtDuplicateToken);
 	add_handler(NtQueryTimerResolution);
+	add_handler(NtSetInformationKey);
 
 #undef add_handler
 }

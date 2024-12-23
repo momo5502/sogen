@@ -97,7 +97,7 @@ namespace
 		windows_emulator win_emu{settings};
 
 		(void)&watch_system_objects;
-		//watch_system_objects(win_emu);
+		watch_system_objects(win_emu);
 		win_emu.buffer_stdout = true;
 		//win_emu.verbose_calls = true;
 
