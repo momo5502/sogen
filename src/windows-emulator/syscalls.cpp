@@ -2034,6 +2034,45 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	TOKEN_TYPE get_token_type(const handle token_handle)
+	{
+		return token_handle == DUMMY_IMPERSONATION_TOKEN //
+			       ? TokenImpersonation
+			       : TokenPrimary;
+	}
+
+	NTSTATUS handle_NtDuplicateToken(const syscall_context&, const handle existing_token_handle,
+	                                 ACCESS_MASK /*desired_access*/,
+	                                 const emulator_object<OBJECT_ATTRIBUTES> /*object_attributes*/,
+	                                 const BOOLEAN /*effective_only*/, const TOKEN_TYPE type,
+	                                 const emulator_object<handle> new_token_handle)
+	{
+		if (get_token_type(existing_token_handle) == type)
+		{
+			new_token_handle.write(existing_token_handle);
+		}
+		else if (type == TokenPrimary)
+		{
+			new_token_handle.write(CURRENT_PROCESS_TOKEN);
+		}
+		else
+		{
+			new_token_handle.write(DUMMY_IMPERSONATION_TOKEN);
+		}
+
+		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS handle_NtQueryTimerResolution(const syscall_context&, const emulator_object<ULONG> maximum_time,
+	                                       const emulator_object<ULONG> minimum_time,
+	                                       const emulator_object<ULONG> current_time)
+	{
+		maximum_time.write_if_valid(0x0002625a);
+		minimum_time.write_if_valid(0x00001388);
+		current_time.write_if_valid(0x00002710);
+		return STATUS_SUCCESS;
+	}
+
 	NTSTATUS handle_NtQueryInformationToken(const syscall_context& c, const handle token_handle,
 	                                        const TOKEN_INFORMATION_CLASS token_information_class,
 	                                        const uint64_t token_information, const ULONG token_information_length,
@@ -2085,8 +2124,7 @@ namespace
 				return STATUS_BUFFER_TOO_SMALL;
 			}
 
-			emulator_object<TOKEN_TYPE>{c.emu, token_information}.write(
-				token_handle == DUMMY_IMPERSONATION_TOKEN ? TokenImpersonation : TokenPrimary);
+			emulator_object<TOKEN_TYPE>{c.emu, token_information}.write(get_token_type(token_handle));
 			return STATUS_SUCCESS;
 		}
 
@@ -3201,6 +3239,8 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtWaitForMultipleObjects);
 	add_handler(NtCreateMutant);
 	add_handler(NtReleaseMutant);
+	add_handler(NtDuplicateToken);
+	add_handler(NtQueryTimerResolution);
 
 #undef add_handler
 }

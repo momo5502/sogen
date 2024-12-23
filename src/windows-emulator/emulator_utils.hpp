@@ -5,7 +5,7 @@
 // TODO: Replace with pointer handling structure for future 32 bit support
 using emulator_pointer = uint64_t;
 
-template<typename T>
+template <typename T>
 class object_wrapper
 {
 	T* obj_;
@@ -99,6 +99,14 @@ public:
 	void write(const T& value, const size_t index = 0) const
 	{
 		this->emu_->write_memory(this->address_ + index * this->size(), &value, sizeof(value));
+	}
+
+	void write_if_valid(const T& value, const size_t index = 0) const
+	{
+		if (this->operator bool())
+		{
+			this->write(value, index);
+		}
 	}
 
 	template <typename F>
