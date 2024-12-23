@@ -1748,7 +1748,9 @@ namespace
 			return STATUS_NOT_SUPPORTED;
 		}
 
-		const auto allocation_bytes = bytes_to_allocate.read();
+		auto allocation_bytes = bytes_to_allocate.read();
+		allocation_bytes = page_align_up(allocation_bytes);
+		bytes_to_allocate.write(allocation_bytes);
 
 		const auto protection = map_nt_to_emulator_protection(page_protection);
 
