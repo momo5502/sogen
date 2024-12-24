@@ -1806,11 +1806,9 @@ namespace
 			throw std::runtime_error("Unsupported allocation type!");
 		}
 
-		if (commit && !reserve)
+		if (commit && !reserve && c.emu.commit_memory(potential_base, allocation_bytes, protection))
 		{
-			return c.emu.commit_memory(potential_base, allocation_bytes, protection)
-				       ? STATUS_SUCCESS
-				       : STATUS_MEMORY_NOT_ALLOCATED;
+			return STATUS_SUCCESS;
 		}
 
 		return c.emu.allocate_memory(potential_base, allocation_bytes, protection, !commit)
