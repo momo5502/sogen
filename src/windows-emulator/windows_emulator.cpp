@@ -144,10 +144,12 @@ namespace
 	emulator_object<API_SET_NAMESPACE> build_api_set_map(x64_emulator& emu, emulator_allocator& allocator)
 	{
 		// TODO: fix
-		// const auto& orig_api_set_map = *NtCurrentTeb()->ProcessEnvironmentBlock->ApiSetMap;
-		// return clone_api_set_map(emu, allocator, orig_api_set_map);
-
+#ifdef OS_WINDOWS
+		const auto& orig_api_set_map = *NtCurrentTeb64()->ProcessEnvironmentBlock->ApiSetMap;
+		return clone_api_set_map(emu, allocator, orig_api_set_map);
+#else
 		return clone_api_set_map(emu, allocator, {});
+#endif
 	}
 
 	emulator_allocator create_allocator(emulator& emu, const size_t size)

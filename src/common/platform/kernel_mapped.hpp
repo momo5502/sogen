@@ -550,6 +550,13 @@ typedef struct _TEB64
     ARRAY_CONTAINER<ULONG, 2> Rcu;
 } TEB64, *PTEB64;
 
+#ifdef OS_WINDOWS
+    inline TEB64* NtCurrentTeb64(VOID)
+    {
+        return (TEB64*)__readgsqword(FIELD_OFFSET(EMU_NT_TIB64, Self));
+    }
+#endif
+
 #pragma pack(push, 4)
 typedef struct _KSYSTEM_TIME
 {
