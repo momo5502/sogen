@@ -2,6 +2,8 @@
 
 #include "reflect_type_info.hpp"
 
+//#define CACHE_OBJECT_ADDRESSES
+
 template <typename T>
 emulator_hook* watch_object(windows_emulator& emu, emulator_object<T> object)
 {
@@ -19,6 +21,14 @@ emulator_hook* watch_object(windows_emulator& emu, emulator_object<T> object)
 		                                  {
 			                                  return;
 		                                  }
+
+#ifdef CACHE_OBJECT_ADDRESSES
+		                                  static std::unordered_set<uint64_t> logged_addresses{};
+		                                  if (is_main_access && !logged_addresses.insert(address).second)
+		                                  {
+			                                  return;
+		                                  }
+#endif
 
 		                                  const auto offset = address - object.value();
 		                                  emu.logger.print(is_main_access ? color::green : color::dark_gray,
