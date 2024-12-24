@@ -2759,6 +2759,11 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	NTSTATUS handle_NtUserGetKeyboardLayout()
+	{
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtRaiseHardError(const syscall_context& c, const NTSTATUS error_status,
 	                                 const ULONG /*number_of_parameters*/,
 	                                 const emulator_object<UNICODE_STRING> /*unicode_string_parameter_mask*/,
@@ -3273,6 +3278,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtDuplicateToken);
 	add_handler(NtQueryTimerResolution);
 	add_handler(NtSetInformationKey);
+	add_handler(NtUserGetKeyboardLayout);
 
 #undef add_handler
 }
