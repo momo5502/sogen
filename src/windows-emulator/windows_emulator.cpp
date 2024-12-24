@@ -874,17 +874,6 @@ void windows_emulator::setup_hooks()
 		                                  const auto is_interesting_call = process.executable->is_within(
 			                                  process.previous_ip) || process.executable->is_within(address);
 
-		                                  /*if (address == 0x180038B65)
-		                                  {
-			                                  puts("!!! DLL init failed");
-		                                  }
-		                                  if (address == 0x180038A20)
-		                                  {
-			                                  const auto* name = this->process().module_manager.find_name(
-				                                  this->emu().reg(x64_register::rcx));
-			                                  printf("!!! DLL init: %s\n", name);
-		                                  }*/
-
 		                                  if (!this->verbose && !this->verbose_calls && !is_interesting_call)
 		                                  {
 			                                  return;
