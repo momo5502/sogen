@@ -720,9 +720,10 @@ windows_emulator::windows_emulator(const emulator_settings& settings,
                                    std::unique_ptr<x64_emulator> emu)
 	: windows_emulator(std::move(emu))
 {
+	this->silent_until_main = settings.silent_until_main && !settings.disable_logging;
 	this->stdout_callback_ = std::move(settings.stdout_callback);
 	this->use_relative_time_ = settings.use_relative_time;
-	this->logger.disable_output(settings.disable_logging);
+	this->logger.disable_output(settings.disable_logging || this->silent_until_main);
 	this->setup_process(settings);
 }
 
@@ -893,6 +894,12 @@ void windows_emulator::setup_hooks()
 			                                  }
 			                                  else if (address == binary->entry_point)
 			                                  {
+				                                  if (this->silent_until_main && binary == this->process_.executable)
+				                                  {
+					                                  this->silent_until_main = false;
+					                                  this->logger.disable_output(true);
+				                                  }
+
 				                                  logger.print(is_interesting_call ? color::yellow : color::gray,
 				                                               "Executing entry point: %s (0x%llX)\n",
 				                                               binary->name.c_str(),

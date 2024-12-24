@@ -18,6 +18,7 @@ struct emulator_settings
 	std::vector<std::wstring> arguments{};
 	std::function<void(std::string_view)> stdout_callback{};
 	bool disable_logging{false};
+	bool silent_until_main{false};
 	bool use_relative_time{false};
 };
 
@@ -102,6 +103,7 @@ public:
 	bool buffer_stdout{false};
 	bool fuzzing{false};
 	bool switch_thread{false};
+	bool silent_until_main{false};
 
 	void yield_thread();
 	void perform_thread_switch();
