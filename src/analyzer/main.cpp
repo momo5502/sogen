@@ -51,6 +51,12 @@ namespace
 				win_emu.start();
 			}
 		}
+		catch (const std::exception& e)
+		{
+			win_emu.logger.print(color::red, "Emulation failed at: 0x%llX - %s\n",
+			                     win_emu.emu().read_instruction_pointer(), e.what());
+			throw;
+		}
 		catch (...)
 		{
 			win_emu.logger.print(color::red, "Emulation failed at: 0x%llX\n", win_emu.emu().read_instruction_pointer());
