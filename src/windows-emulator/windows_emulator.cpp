@@ -170,7 +170,7 @@ namespace
 
 	std::filesystem::path canonicalize_path(const std::filesystem::path& path)
 	{
-		return canonical(absolute(path).parent_path()).make_preferred();
+		return canonical(absolute(path)).make_preferred();
 	}
 
 	void setup_context(windows_emulator& win_emu, const emulator_settings& settings)
