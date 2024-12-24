@@ -26,7 +26,7 @@ class windows_emulator
 {
 public:
 	windows_emulator(std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
-	windows_emulator(const emulator_settings& settings,
+	windows_emulator(emulator_settings settings,
 	                 std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
 
 	windows_emulator(windows_emulator&&) = delete;

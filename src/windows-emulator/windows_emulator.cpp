@@ -716,7 +716,7 @@ std::unique_ptr<x64_emulator> create_default_x64_emulator()
 	return unicorn::create_x64_emulator();
 }
 
-windows_emulator::windows_emulator(const emulator_settings& settings,
+windows_emulator::windows_emulator(emulator_settings settings,
                                    std::unique_ptr<x64_emulator> emu)
 	: windows_emulator(std::move(emu))
 {

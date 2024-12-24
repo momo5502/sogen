@@ -95,12 +95,12 @@ namespace
 			return;
 		}
 
-		const emulator_settings settings{
+		emulator_settings settings{
 			.application = argv[0],
 			.arguments = parse_arguments(argv, argc),
 		};
 
-		windows_emulator win_emu{settings};
+		windows_emulator win_emu{std::move(settings)};
 
 		(void)&watch_system_objects;
 		watch_system_objects(win_emu);
