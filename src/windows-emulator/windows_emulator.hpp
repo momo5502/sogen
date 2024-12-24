@@ -103,7 +103,6 @@ public:
 	bool buffer_stdout{false};
 	bool fuzzing{false};
 	bool switch_thread{false};
-	bool silent_until_main{false};
 
 	void yield_thread();
 	void perform_thread_switch();
@@ -115,6 +114,7 @@ public:
 
 private:
 	bool use_relative_time_{false};
+	bool silent_until_main_{false};
 	std::unique_ptr<x64_emulator> emu_{};
 	std::vector<instruction_hook_callback> syscall_hooks_{};
 	std::function<void(std::string_view)> stdout_callback_{};

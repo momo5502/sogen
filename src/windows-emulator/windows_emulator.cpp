@@ -720,10 +720,10 @@ windows_emulator::windows_emulator(const emulator_settings& settings,
                                    std::unique_ptr<x64_emulator> emu)
 	: windows_emulator(std::move(emu))
 {
-	this->silent_until_main = settings.silent_until_main && !settings.disable_logging;
+	this->silent_until_main_ = settings.silent_until_main && !settings.disable_logging;
 	this->stdout_callback_ = std::move(settings.stdout_callback);
 	this->use_relative_time_ = settings.use_relative_time;
-	this->logger.disable_output(settings.disable_logging || this->silent_until_main);
+	this->logger.disable_output(settings.disable_logging || this->silent_until_main_);
 	this->setup_process(settings);
 }
 
@@ -884,6 +884,15 @@ void windows_emulator::setup_hooks()
 
 		                                  if (binary)
 		                                  {
+			                                  const auto is_entry_point = address == binary->entry_point;
+
+			                                  if (this->silent_until_main_ && is_entry_point && binary == this->process_
+				                                  .executable)
+			                                  {
+				                                  this->silent_until_main_ = false;
+				                                  this->logger.disable_output(false);
+			                                  }
+
 			                                  const auto export_entry = binary->address_names.find(address);
 			                                  if (export_entry != binary->address_names.end())
 			                                  {
@@ -892,14 +901,8 @@ void windows_emulator::setup_hooks()
 				                                               binary->name.c_str(),
 				                                               export_entry->second.c_str(), address);
 			                                  }
-			                                  else if (address == binary->entry_point)
+			                                  else if (is_entry_point)
 			                                  {
-				                                  if (this->silent_until_main && binary == this->process_.executable)
-				                                  {
-					                                  this->silent_until_main = false;
-					                                  this->logger.disable_output(true);
-				                                  }
-
 				                                  logger.print(is_interesting_call ? color::yellow : color::gray,
 				                                               "Executing entry point: %s (0x%llX)\n",
 				                                               binary->name.c_str(),
