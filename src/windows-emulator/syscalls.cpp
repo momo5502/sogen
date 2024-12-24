@@ -2158,9 +2158,8 @@ namespace
 		}
 
 		FILE* file{};
-		// TODO: fix unicode conversion
-		//const auto error = _wfopen_s(&file, f.name.c_str(), mode);
-		const auto error = EACCES;
+
+		const auto error = open_unicode(&file, f.name.c_str(), mode.c_str());
 
 		if (!file)
 		{
