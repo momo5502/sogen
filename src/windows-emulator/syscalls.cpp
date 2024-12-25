@@ -3056,6 +3056,12 @@ namespace
 		return STATUS_INVALID_PARAMETER;
 	}
 
+	NTSTATUS handle_NtUnmapViewOfSectionEx(const syscall_context& c, const handle process_handle,
+	                                       const uint64_t base_address, const ULONG /*flags*/)
+	{
+		return handle_NtUnmapViewOfSection(c, process_handle, base_address);
+	}
+
 	NTSTATUS handle_NtCreateThreadEx(const syscall_context& c, const emulator_object<handle> thread_handle,
 	                                 const ACCESS_MASK /*desired_access*/,
 	                                 const emulator_object<OBJECT_ATTRIBUTES> /*object_attributes*/,
@@ -3347,6 +3353,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtAddAtomEx);
 	add_handler(NtInitializeNlsFiles);
 	add_handler(NtUnmapViewOfSection);
+	add_handler(NtUnmapViewOfSectionEx);
 	add_handler(NtDuplicateObject);
 	add_handler(NtQueryInformationThread);
 	add_handler(NtQueryWnfStateNameInformation);
