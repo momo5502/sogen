@@ -2489,7 +2489,7 @@ namespace
 	                                          const emulator_object<ALPC_MESSAGE_ATTRIBUTES>
 	                                          /*send_message_attributes*/
 	                                          ,
-	                                          const emulator_object<PORT_MESSAGE> receive_message,
+	                                          const emulator_object<PORT_MESSAGE> /*receive_message*/,
 	                                          const emulator_object<SIZE_T> /*buffer_length*/,
 	                                          const emulator_object<ALPC_MESSAGE_ATTRIBUTES>
 	                                          /*receive_message_attributes*/,
