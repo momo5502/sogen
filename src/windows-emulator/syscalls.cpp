@@ -1494,9 +1494,11 @@ namespace
 
 				if (object)
 				{
+					const auto object_offset = object.value() - file_information;
+
 					object.access([&](FILE_FULL_DIR_INFORMATION& dir_info)
 					{
-						dir_info.NextEntryOffset = static_cast<ULONG>(new_offset);
+						dir_info.NextEntryOffset = static_cast<ULONG>(new_offset - object_offset);
 					});
 				}
 
