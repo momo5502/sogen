@@ -2343,6 +2343,21 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (token_information_class == TokenStatistics)
+		{
+			constexpr auto required_size = sizeof(TOKEN_STATISTICS);
+			return_length.write(required_size);
+
+			if (required_size > token_information_length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			c.emu.write_memory(token_information, TOKEN_STATISTICS{});
+
+			return STATUS_SUCCESS;
+		}
+
 		if (token_information_class == TokenSecurityAttributes)
 		{
 			constexpr auto required_size = sizeof(TOKEN_SECURITY_ATTRIBUTES_INFORMATION);
