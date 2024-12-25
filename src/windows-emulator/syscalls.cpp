@@ -1422,11 +1422,14 @@ namespace
 
 	std::vector<file_entry> scan_directory(const std::filesystem::path& dir)
 	{
-		std::vector<file_entry> files{};
+		std::vector<file_entry> files{
+			{"."},
+			{".."},
+		};
 
 		for (const auto& file : std::filesystem::directory_iterator(dir))
 		{
-			files.emplace_back(file.path());
+			files.emplace_back(file.path().filename());
 		}
 
 		return files;
