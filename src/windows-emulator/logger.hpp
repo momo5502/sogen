@@ -54,6 +54,11 @@ public:
 		this->disable_output_ = value;
 	}
 
+	bool is_output_disabled() const
+	{
+		return this->disable_output_;
+	}
+
 private:
 	bool disable_output_{false};
 };
