@@ -2487,12 +2487,12 @@ namespace
 			return STATUS_NOT_SUPPORTED;
 		}
 
-		const emulator_object<PORT_DATA_ENTRY> data{c.emu, receive_message.value() + 0x48};
+		/*const emulator_object<PORT_DATA_ENTRY> data{c.emu, receive_message.value() + 0x48};
 		const auto dest = data.read();
 		const auto base = reinterpret_cast<uint64_t>(dest.Base);
 
 		const auto value = base + 0x10;
-		c.emu.write_memory(base + 8, &value, sizeof(value));
+		c.emu.write_memory(base + 8, &value, sizeof(value));*/
 
 		return STATUS_SUCCESS;
 	}
