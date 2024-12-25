@@ -140,20 +140,66 @@ struct mutant : ref_counted_object
 	}
 };
 
+struct file_entry
+{
+	std::filesystem::path file_path{};
+
+	void serialize(utils::buffer_serializer& buffer) const
+	{
+		buffer.write(this->file_path);
+	}
+
+	void deserialize(utils::buffer_deserializer& buffer)
+	{
+		buffer.read(this->file_path);
+	}
+};
+
+struct file_enumeration_state
+{
+	size_t current_index{0};
+	std::vector<file_entry> files{};
+
+	void serialize(utils::buffer_serializer& buffer) const
+	{
+		buffer.write(this->current_index);
+		buffer.write_vector(this->files);
+	}
+
+	void deserialize(utils::buffer_deserializer& buffer)
+	{
+		buffer.read(this->current_index);
+		buffer.read_vector(this->files);
+	}
+};
+
 struct file
 {
 	utils::file_handle handle{};
 	std::wstring name{};
+	std::optional<file_enumeration_state> enumeration_state{};
+
+	bool is_file() const
+	{
+		return this->handle;
+	}
+
+	bool is_directory() const
+	{
+		return !this->is_file();
+	}
 
 	void serialize(utils::buffer_serializer& buffer) const
 	{
-		buffer.write(this->name);
 		// TODO: Serialize handle
+		buffer.write(this->name);
+		buffer.write_optional(this->enumeration_state);
 	}
 
 	void deserialize(utils::buffer_deserializer& buffer)
 	{
 		buffer.read(this->name);
+		buffer.read_optional(this->enumeration_state);
 		this->handle = {};
 	}
 };
