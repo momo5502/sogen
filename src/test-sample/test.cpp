@@ -6,6 +6,7 @@
 #include <atomic>
 #include <vector>
 #include <optional>
+#include <filesystem>
 #include <string_view>
 
 #include <Windows.h>
@@ -153,6 +154,22 @@ bool test_io()
 	return text == buffer;
 }
 
+bool test_dir_io()
+{
+	size_t count = 0;
+
+	for (auto i : std::filesystem::directory_iterator(R"(C:\Windows\System32\)"))
+	{
+		++count;
+		if (count > 30)
+		{
+			return true;
+		}
+	}
+
+	return count > 30;
+}
+
 std::optional<std::string> read_registry_string(const HKEY root, const char* path, const char* value)
 {
 	HKEY key{};
@@ -263,6 +280,7 @@ int main(int argc, const char* argv[])
 	bool valid = true;
 
 	RUN_TEST(test_io, "I/O")
+	RUN_TEST(test_dir_io, "Dir I/O")
 	RUN_TEST(test_registry, "Registry")
 	RUN_TEST(test_threads, "Threads")
 	RUN_TEST(test_env, "Environment")

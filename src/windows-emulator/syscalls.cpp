@@ -1420,6 +1420,123 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	std::vector<file_entry> scan_directory(const std::filesystem::path& dir)
+	{
+		std::vector<file_entry> files{
+			{"."},
+			{".."},
+		};
+
+		for (const auto& file : std::filesystem::directory_iterator(dir))
+		{
+			files.emplace_back(file.path().filename());
+		}
+
+		return files;
+	}
+
+	NTSTATUS handle_NtQueryDirectoryFileEx(const syscall_context& c, const handle file_handle,
+	                                       const handle /*event_handle*/,
+	                                       const emulator_pointer /*PIO_APC_ROUTINE*/ /*apc_routine*/,
+	                                       const emulator_pointer /*apc_context*/,
+	                                       const emulator_object<IO_STATUS_BLOCK> io_status_block,
+	                                       const uint64_t file_information, const uint32_t length,
+	                                       const uint32_t info_class, const ULONG query_flags,
+	                                       const emulator_object<UNICODE_STRING> /*file_name*/)
+	{
+		auto* f = c.proc.files.get(file_handle);
+		if (!f || !f->is_directory())
+		{
+			return STATUS_INVALID_HANDLE;
+		}
+
+		if (!f->enumeration_state || query_flags & SL_RESTART_SCAN)
+		{
+			f->enumeration_state.emplace(file_enumeration_state{});
+			f->enumeration_state->files = scan_directory(f->name);
+		}
+
+		auto& enum_state = *f->enumeration_state;
+
+		if (info_class == FileFullDirectoryInformation)
+		{
+			size_t current_offset{0};
+			emulator_object<FILE_FULL_DIR_INFORMATION> object{c.emu};
+
+			size_t current_index = enum_state.current_index;
+
+			do
+			{
+				if (current_index >= enum_state.files.size())
+				{
+					break;
+				}
+
+				const auto new_offset = align_up(current_offset, 8);
+				const auto& current_file = enum_state.files[current_index];
+				const auto file_name = current_file.file_path.u16string();
+				const auto required_size = sizeof(FILE_FULL_DIR_INFORMATION) + (file_name.size() * 2) - 2;
+				const auto end_offset = new_offset + required_size;
+
+				if (end_offset > length)
+				{
+					if (current_offset == 0)
+					{
+						IO_STATUS_BLOCK block{};
+						block.Information = end_offset;
+						io_status_block.write(block);
+
+						return STATUS_BUFFER_OVERFLOW;
+					}
+
+					break;
+				}
+
+				if (object)
+				{
+					const auto object_offset = object.value() - file_information;
+
+					object.access([&](FILE_FULL_DIR_INFORMATION& dir_info)
+					{
+						dir_info.NextEntryOffset = static_cast<ULONG>(new_offset - object_offset);
+					});
+				}
+
+				FILE_FULL_DIR_INFORMATION info{};
+				info.NextEntryOffset = 0;
+				info.FileIndex = static_cast<ULONG>(current_index);
+				info.FileAttributes = FILE_ATTRIBUTE_NORMAL;
+				info.FileNameLength = static_cast<ULONG>(file_name.size() * 2);
+
+				object.set_address(file_information + new_offset);
+				object.write(info);
+
+				c.emu.write_memory(object.value() + offsetof(FILE_FULL_DIR_INFORMATION, FileName), file_name.data(),
+				                   info.FileNameLength);
+
+				++current_index;
+				current_offset = end_offset;
+			}
+			while ((query_flags & SL_RETURN_SINGLE_ENTRY) == 0);
+
+			if ((query_flags & SL_NO_CURSOR_UPDATE) == 0)
+			{
+				f->enumeration_state->current_index = current_index;
+			}
+
+			IO_STATUS_BLOCK block{};
+			block.Information = current_offset;
+			io_status_block.write(block);
+
+			return current_index < enum_state.files.size() ? STATUS_SUCCESS : STATUS_NO_MORE_FILES;
+		}
+
+		printf("Unsupported query directory file info class: %X\n", info_class);
+		c.emu.stop();
+
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	NTSTATUS handle_NtQueryInformationFile(const syscall_context& c, const handle file_handle,
 	                                       const emulator_object<IO_STATUS_BLOCK> io_status_block,
 	                                       const uint64_t file_information, const uint32_t length,
@@ -1473,7 +1590,7 @@ namespace
 
 			const emulator_object<FILE_STANDARD_INFORMATION> info{c.emu, file_information};
 			FILE_STANDARD_INFORMATION i{};
-			i.Directory = f->handle ? FALSE : TRUE;
+			i.Directory = f->is_directory() ? TRUE : FALSE;
 
 			if (f->handle)
 			{
@@ -2231,6 +2348,21 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (token_information_class == TokenStatistics)
+		{
+			constexpr auto required_size = sizeof(TOKEN_STATISTICS);
+			return_length.write(required_size);
+
+			if (required_size > token_information_length)
+			{
+				return STATUS_BUFFER_TOO_SMALL;
+			}
+
+			c.emu.write_memory(token_information, TOKEN_STATISTICS{});
+
+			return STATUS_SUCCESS;
+		}
+
 		if (token_information_class == TokenSecurityAttributes)
 		{
 			constexpr auto required_size = sizeof(TOKEN_SECURITY_ATTRIBUTES_INFORMATION);
@@ -2374,6 +2506,8 @@ namespace
 			puts("!!! BAD PORT");
 			return STATUS_NOT_SUPPORTED;
 		}
+
+		// TODO: Fix this. This is broken and wrong.
 
 		const emulator_object<PORT_DATA_ENTRY> data{c.emu, receive_message.value() + 0x48};
 		const auto dest = data.read();
@@ -2944,6 +3078,12 @@ namespace
 		return STATUS_INVALID_PARAMETER;
 	}
 
+	NTSTATUS handle_NtUnmapViewOfSectionEx(const syscall_context& c, const handle process_handle,
+	                                       const uint64_t base_address, const ULONG /*flags*/)
+	{
+		return handle_NtUnmapViewOfSection(c, process_handle, base_address);
+	}
+
 	NTSTATUS handle_NtCreateThreadEx(const syscall_context& c, const emulator_object<handle> thread_handle,
 	                                 const ACCESS_MASK /*desired_access*/,
 	                                 const emulator_object<OBJECT_ATTRIBUTES> /*object_attributes*/,
@@ -3235,6 +3375,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtAddAtomEx);
 	add_handler(NtInitializeNlsFiles);
 	add_handler(NtUnmapViewOfSection);
+	add_handler(NtUnmapViewOfSectionEx);
 	add_handler(NtDuplicateObject);
 	add_handler(NtQueryInformationThread);
 	add_handler(NtQueryWnfStateNameInformation);
@@ -3279,6 +3420,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtQueryTimerResolution);
 	add_handler(NtSetInformationKey);
 	add_handler(NtUserGetKeyboardLayout);
+	add_handler(NtQueryDirectoryFileEx);
 
 #undef add_handler
 }

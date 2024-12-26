@@ -130,6 +130,11 @@ public:
 		buffer.read(this->address_);
 	}
 
+	void set_address(const uint64_t address)
+	{
+		this->address_ = address;
+	}
+
 private:
 	emulator* emu_{};
 	uint64_t address_{};
