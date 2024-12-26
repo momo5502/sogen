@@ -158,9 +158,13 @@ bool test_dir_io()
 {
 	size_t count = 0;
 
-	for(auto i : std::filesystem::directory_iterator(R"(C:\Windows\System32\)"))
+	for (auto i : std::filesystem::directory_iterator(R"(C:\Windows\System32\)"))
 	{
 		++count;
+		if (count > 30)
+		{
+			return true;
+		}
 	}
 
 	return count > 30;
