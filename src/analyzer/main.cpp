@@ -98,7 +98,6 @@ namespace
 		emulator_settings settings{
 			.application = argv[0],
 			.arguments = parse_arguments(argv, argc),
-			.silent_until_main = true,
 		};
 
 		windows_emulator win_emu{std::move(settings)};

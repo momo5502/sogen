@@ -2,7 +2,7 @@
 
 #include "reflect_type_info.hpp"
 
-#define CACHE_OBJECT_ADDRESSES
+//#define CACHE_OBJECT_ADDRESSES
 
 template <typename T>
 emulator_hook* watch_object(windows_emulator& emu, emulator_object<T> object)
