@@ -1435,6 +1435,90 @@ namespace
 		return files;
 	}
 
+	template <typename T>
+	NTSTATUS handle_file_enumeration(const syscall_context& c, const emulator_object<IO_STATUS_BLOCK> io_status_block,
+	                                 const uint64_t file_information, const uint32_t length, const ULONG query_flags,
+	                                 file* f)
+	{
+		if (!f->enumeration_state || query_flags & SL_RESTART_SCAN)
+		{
+			f->enumeration_state.emplace(file_enumeration_state{});
+			f->enumeration_state->files = scan_directory(f->name);
+		}
+
+		auto& enum_state = *f->enumeration_state;
+
+		size_t current_offset{0};
+		emulator_object<T> object{c.emu};
+
+		size_t current_index = enum_state.current_index;
+
+		do
+		{
+			if (current_index >= enum_state.files.size())
+			{
+				break;
+			}
+
+			const auto new_offset = align_up(current_offset, 8);
+			const auto& current_file = enum_state.files[current_index];
+			const auto file_name = current_file.file_path.u16string();
+			const auto required_size = sizeof(T) + (file_name.size() * 2) - 2;
+			const auto end_offset = new_offset + required_size;
+
+			if (end_offset > length)
+			{
+				if (current_offset == 0)
+				{
+					IO_STATUS_BLOCK block{};
+					block.Information = end_offset;
+					io_status_block.write(block);
+
+					return STATUS_BUFFER_OVERFLOW;
+				}
+
+				break;
+			}
+
+			if (object)
+			{
+				const auto object_offset = object.value() - file_information;
+
+				object.access([&](T& dir_info)
+				{
+					dir_info.NextEntryOffset = static_cast<ULONG>(new_offset - object_offset);
+				});
+			}
+
+			T info{};
+			info.NextEntryOffset = 0;
+			info.FileIndex = static_cast<ULONG>(current_index);
+			info.FileAttributes = FILE_ATTRIBUTE_NORMAL;
+			info.FileNameLength = static_cast<ULONG>(file_name.size() * 2);
+
+			object.set_address(file_information + new_offset);
+			object.write(info);
+
+			c.emu.write_memory(object.value() + offsetof(T, FileName), file_name.data(),
+			                   info.FileNameLength);
+
+			++current_index;
+			current_offset = end_offset;
+		}
+		while ((query_flags & SL_RETURN_SINGLE_ENTRY) == 0);
+
+		if ((query_flags & SL_NO_CURSOR_UPDATE) == 0)
+		{
+			enum_state.current_index = current_index;
+		}
+
+		IO_STATUS_BLOCK block{};
+		block.Information = current_offset;
+		io_status_block.write(block);
+
+		return current_index < enum_state.files.size() ? STATUS_SUCCESS : STATUS_NO_MORE_FILES;
+	}
+
 	NTSTATUS handle_NtQueryDirectoryFileEx(const syscall_context& c, const handle file_handle,
 	                                       const handle /*event_handle*/,
 	                                       const emulator_pointer /*PIO_APC_ROUTINE*/ /*apc_routine*/,
@@ -1450,85 +1534,22 @@ namespace
 			return STATUS_INVALID_HANDLE;
 		}
 
-		if (!f->enumeration_state || query_flags & SL_RESTART_SCAN)
+		if (info_class == FileDirectoryInformation)
 		{
-			f->enumeration_state.emplace(file_enumeration_state{});
-			f->enumeration_state->files = scan_directory(f->name);
+			return handle_file_enumeration<FILE_DIRECTORY_INFORMATION>(c, io_status_block, file_information, length,
+			                                                           query_flags, f);
 		}
-
-		auto& enum_state = *f->enumeration_state;
 
 		if (info_class == FileFullDirectoryInformation)
 		{
-			size_t current_offset{0};
-			emulator_object<FILE_FULL_DIR_INFORMATION> object{c.emu};
+			return handle_file_enumeration<FILE_FULL_DIR_INFORMATION>(c, io_status_block, file_information, length,
+			                                                          query_flags, f);
+		}
 
-			size_t current_index = enum_state.current_index;
-
-			do
-			{
-				if (current_index >= enum_state.files.size())
-				{
-					break;
-				}
-
-				const auto new_offset = align_up(current_offset, 8);
-				const auto& current_file = enum_state.files[current_index];
-				const auto file_name = current_file.file_path.u16string();
-				const auto required_size = sizeof(FILE_FULL_DIR_INFORMATION) + (file_name.size() * 2) - 2;
-				const auto end_offset = new_offset + required_size;
-
-				if (end_offset > length)
-				{
-					if (current_offset == 0)
-					{
-						IO_STATUS_BLOCK block{};
-						block.Information = end_offset;
-						io_status_block.write(block);
-
-						return STATUS_BUFFER_OVERFLOW;
-					}
-
-					break;
-				}
-
-				if (object)
-				{
-					const auto object_offset = object.value() - file_information;
-
-					object.access([&](FILE_FULL_DIR_INFORMATION& dir_info)
-					{
-						dir_info.NextEntryOffset = static_cast<ULONG>(new_offset - object_offset);
-					});
-				}
-
-				FILE_FULL_DIR_INFORMATION info{};
-				info.NextEntryOffset = 0;
-				info.FileIndex = static_cast<ULONG>(current_index);
-				info.FileAttributes = FILE_ATTRIBUTE_NORMAL;
-				info.FileNameLength = static_cast<ULONG>(file_name.size() * 2);
-
-				object.set_address(file_information + new_offset);
-				object.write(info);
-
-				c.emu.write_memory(object.value() + offsetof(FILE_FULL_DIR_INFORMATION, FileName), file_name.data(),
-				                   info.FileNameLength);
-
-				++current_index;
-				current_offset = end_offset;
-			}
-			while ((query_flags & SL_RETURN_SINGLE_ENTRY) == 0);
-
-			if ((query_flags & SL_NO_CURSOR_UPDATE) == 0)
-			{
-				f->enumeration_state->current_index = current_index;
-			}
-
-			IO_STATUS_BLOCK block{};
-			block.Information = current_offset;
-			io_status_block.write(block);
-
-			return current_index < enum_state.files.size() ? STATUS_SUCCESS : STATUS_NO_MORE_FILES;
+		if (info_class == FileBothDirectoryInformation)
+		{
+			return handle_file_enumeration<FILE_BOTH_DIR_INFORMATION>(c, io_status_block, file_information, length,
+			                                                          query_flags, f);
 		}
 
 		printf("Unsupported query directory file info class: %X\n", info_class);
