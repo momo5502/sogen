@@ -40,7 +40,7 @@ namespace
 		{
 			if (use_gdb)
 			{
-				const auto* address = "0.0.0.0:28960";
+				const auto* address = "127.0.0.1:28960";
 				win_emu.logger.print(color::pink, "Waiting for GDB connection on %s...\n", address);
 
 				win_x64_gdb_stub_handler handler{win_emu};
