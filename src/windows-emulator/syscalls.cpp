@@ -832,6 +832,7 @@ namespace
 			{
 				image_info.ImageBase = reinterpret_cast<void*>(mod->image_base);
 				image_info.SizeOfImage = mod->size_of_image;
+				image_info.ImageFlags = 0;
 			});
 
 			return STATUS_SUCCESS;
