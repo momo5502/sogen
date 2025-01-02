@@ -2472,12 +2472,13 @@ namespace
 			}
 		});
 
-		return STATUS_SUCCESS;
+		return STATUS_WAIT_1;
 	}
 
 	NTSTATUS handle_NtGdiInit2(const syscall_context& c)
 	{
-		return handle_NtGdiInit(c);
+		handle_NtGdiInit(c);
+		return STATUS_NOT_SUPPORTED;
 	}
 
 	NTSTATUS handle_NtGetMUIRegistryInfo()
