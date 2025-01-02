@@ -17,14 +17,16 @@ class syscall_dispatcher
 {
 public:
 	syscall_dispatcher() = default;
-	syscall_dispatcher(const exported_symbols& ntdll_exports, const exported_symbols& win32u_exports);
+	syscall_dispatcher(const exported_symbols& ntdll_exports, std::span<const std::byte> ntdll_data,
+	                   const exported_symbols& win32u_exports, std::span<const std::byte> win32u_data);
 
 	void dispatch(windows_emulator& win_emu);
 
 	void serialize(utils::buffer_serializer& buffer) const;
 	void deserialize(utils::buffer_deserializer& buffer);
 
-	void setup(const exported_symbols& ntdll_exports, const exported_symbols& win32u_exports);
+	void setup(const exported_symbols& ntdll_exports, std::span<const std::byte> ntdll_data,
+	           const exported_symbols& win32u_exports, std::span<const std::byte> win32u_data);
 
 	std::string get_syscall_name(const uint64_t id)
 	{

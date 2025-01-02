@@ -1761,9 +1761,8 @@ namespace
 					{
 						const auto new_tls_vector = entry.TlsVector;
 
-						for (uint32_t j = 1; j < tls_info.TlsVectorLength; ++j)
+						for (uint32_t index = 0; index < tls_info.TlsVectorLength; ++index)
 						{
-							const auto index = j - 1;
 							const auto old_entry = c.emu.read_memory<void*>(tls_vector + index);
 							c.emu.write_memory<void*>(new_tls_vector + index, old_entry);
 						}
@@ -2462,7 +2461,7 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtGdiInit2(const syscall_context& c)
+	NTSTATUS handle_NtGdiInit(const syscall_context& c)
 	{
 		c.proc.peb.access([&](PEB& peb)
 		{
@@ -2472,6 +2471,12 @@ namespace
 			}
 		});
 
+		return STATUS_WAIT_1;
+	}
+
+	NTSTATUS handle_NtGdiInit2(const syscall_context& c)
+	{
+		handle_NtGdiInit(c);
 		return STATUS_NOT_SUPPORTED;
 	}
 
@@ -2932,7 +2937,7 @@ namespace
 			response.write(ResponseAbort);
 		}
 
-		printf("Hard error: %X\n", static_cast<uint32_t>(error_status));
+		c.proc.exit_status = error_status;
 		c.proc.exception_rip = c.emu.read_instruction_pointer();
 		c.emu.stop();
 
@@ -3402,6 +3407,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtQueryInformationThread);
 	add_handler(NtQueryWnfStateNameInformation);
 	add_handler(NtAlpcSendWaitReceivePort);
+	add_handler(NtGdiInit);
 	add_handler(NtGdiInit2);
 	add_handler(NtUserGetThreadState);
 	add_handler(NtOpenKeyEx);
