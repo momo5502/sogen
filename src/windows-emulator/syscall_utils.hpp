@@ -38,32 +38,51 @@ inline bool is_syscall(const std::string_view name)
 	return name.starts_with("Nt") && name.size() > 3 && is_uppercase(name[2]);
 }
 
-inline std::vector<std::string> find_syscalls(const exported_symbols& exports)
+inline std::optional<uint32_t> extract_syscall_id(const exported_symbol& symbol, std::span<const std::byte> data)
 {
-	// Makes use of the fact that order of Nt* function addresses
-	// is equal to the order of syscall IDs.
-	// So first Nt* function is the first syscall with ID 0
+	if (!is_syscall(symbol.name))
+	{
+		return std::nullopt;
+	}
 
-	std::map<uint64_t, size_t> reference_count{};
-	std::map<uint64_t, std::string> ordered_syscalls{};
+	constexpr auto instruction_size = 5;
+	constexpr auto instruction_offset = 3;
+	constexpr auto instruction_operand_offset = 1;
+	constexpr auto instruction_opcode = static_cast<std::byte>(0xB8);
+
+	const auto instruction_rva = symbol.rva + instruction_offset;
+
+	if (data.size() < (instruction_rva + instruction_size) || data[instruction_rva] != instruction_opcode)
+	{
+		return std::nullopt;
+	}
+
+	uint32_t syscall_id{0};
+	static_assert(sizeof(syscall_id) <= (instruction_size - instruction_operand_offset));
+	memcpy(&syscall_id, data.data() + instruction_rva + instruction_operand_offset, sizeof(syscall_id));
+
+	return syscall_id;
+}
+
+inline std::map<uint64_t, std::string> find_syscalls(const exported_symbols& exports, std::span<const std::byte> data)
+{
+	std::map<uint64_t, std::string> syscalls{};
 
 	for (const auto& symbol : exports)
 	{
-		if (is_syscall(symbol.name))
+		const auto id = extract_syscall_id(symbol, data);
+		if (id)
 		{
-			++reference_count[symbol.address];
-			ordered_syscalls[symbol.address] = symbol.name;
-		}
-	}
+			auto& entry = syscalls[*id];
 
-	std::vector<std::string> syscalls{};
-	syscalls.reserve(ordered_syscalls.size());
+			if (!entry.empty())
+			{
+				throw std::runtime_error(
+					"Syscall with id " + std::to_string(*id) + ", which is mapping to " + symbol.name +
+					", was already mapped to " + entry);
+			}
 
-	for (auto& syscall : ordered_syscalls)
-	{
-		if (reference_count[syscall.first] == 1)
-		{
-			syscalls.push_back(std::move(syscall.second));
+			entry = symbol.name;
 		}
 	}
 
@@ -71,14 +90,20 @@ inline std::vector<std::string> find_syscalls(const exported_symbols& exports)
 }
 
 inline void map_syscalls(std::map<uint64_t, syscall_handler_entry>& handlers,
-                         const std::vector<std::string>& syscalls, const uint64_t base_index)
+                         std::map<uint64_t, std::string> syscalls)
 {
-	for (size_t i = 0; i < syscalls.size(); ++i)
+	for (auto& [id, name] : syscalls)
 	{
-		const auto& syscall = syscalls[i];
+		auto& entry = handlers[id];
 
-		auto& entry = handlers[base_index + i];
-		entry.name = syscall;
+		if (!entry.name.empty())
+		{
+			throw std::runtime_error(
+				"Syscall with id " + std::to_string(id) + ", which is mapping to " + name +
+				", was previously mapped to " + entry.name);
+		}
+
+		entry.name = std::move(name);
 		entry.handler = nullptr;
 	}
 }

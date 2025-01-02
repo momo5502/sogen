@@ -753,7 +753,10 @@ void windows_emulator::setup_process(const emulator_settings& settings)
 	context.ntdll = context.module_manager.map_module(R"(C:\Windows\System32\ntdll.dll)", this->logger);
 	context.win32u = context.module_manager.map_module(R"(C:\Windows\System32\win32u.dll)", this->logger);
 
-	this->dispatcher_.setup(context.ntdll->exports, context.win32u->exports);
+	const auto ntdll_data = emu.read_memory(context.ntdll->image_base, context.ntdll->size_of_image);
+	const auto win32u_data = emu.read_memory(context.win32u->image_base, context.win32u->size_of_image);
+
+	this->dispatcher_.setup(context.ntdll->exports, ntdll_data, context.win32u->exports, win32u_data);
 
 	context.ldr_initialize_thunk = context.ntdll->find_export("LdrInitializeThunk");
 	context.rtl_user_thread_start = context.ntdll->find_export("RtlUserThreadStart");

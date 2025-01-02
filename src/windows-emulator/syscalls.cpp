@@ -2462,7 +2462,7 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	NTSTATUS handle_NtGdiInit2(const syscall_context& c)
+	NTSTATUS handle_NtGdiInit(const syscall_context& c)
 	{
 		c.proc.peb.access([&](PEB& peb)
 		{
@@ -2472,7 +2472,12 @@ namespace
 			}
 		});
 
-		return STATUS_NOT_SUPPORTED;
+		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS handle_NtGdiInit2(const syscall_context& c)
+	{
+		return handle_NtGdiInit(c);
 	}
 
 	NTSTATUS handle_NtGetMUIRegistryInfo()
@@ -3402,6 +3407,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtQueryInformationThread);
 	add_handler(NtQueryWnfStateNameInformation);
 	add_handler(NtAlpcSendWaitReceivePort);
+	add_handler(NtGdiInit);
 	add_handler(NtGdiInit2);
 	add_handler(NtUserGetThreadState);
 	add_handler(NtOpenKeyEx);

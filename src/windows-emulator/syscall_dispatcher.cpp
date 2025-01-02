@@ -24,15 +24,16 @@ void syscall_dispatcher::deserialize(utils::buffer_deserializer& buffer)
 }
 
 
-void syscall_dispatcher::setup(const exported_symbols& ntdll_exports, const exported_symbols& win32u_exports)
+void syscall_dispatcher::setup(const exported_symbols& ntdll_exports, std::span<const std::byte> ntdll_data,
+                               const exported_symbols& win32u_exports, std::span<const std::byte> win32u_data)
 {
 	this->handlers_ = {};
 
-	const auto ntdll_syscalls = find_syscalls(ntdll_exports);
-	const auto win32u_syscalls = find_syscalls(win32u_exports);
+	const auto ntdll_syscalls = find_syscalls(ntdll_exports, ntdll_data);
+	const auto win32u_syscalls = find_syscalls(win32u_exports, win32u_data);
 
-	map_syscalls(this->handlers_, ntdll_syscalls, 0);
-	map_syscalls(this->handlers_, win32u_syscalls, 0x1000);
+	map_syscalls(this->handlers_, ntdll_syscalls);
+	map_syscalls(this->handlers_, win32u_syscalls);
 
 	this->add_handlers();
 }
@@ -121,8 +122,8 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
 	}
 }
 
-syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports,
-                                       const exported_symbols& win32u_exports)
+syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports, std::span<const std::byte> ntdll_data,
+                                       const exported_symbols& win32u_exports, std::span<const std::byte> win32u_data)
 {
-	this->setup(ntdll_exports, win32u_exports);
+	this->setup(ntdll_exports, ntdll_data, win32u_exports, win32u_data);
 }
