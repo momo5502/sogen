@@ -2937,7 +2937,7 @@ namespace
 			response.write(ResponseAbort);
 		}
 
-		printf("Hard error: %X\n", static_cast<uint32_t>(error_status));
+		c.proc.exit_status = error_status;
 		c.proc.exception_rip = c.emu.read_instruction_pointer();
 		c.emu.stop();
 
