@@ -1761,9 +1761,8 @@ namespace
 					{
 						const auto new_tls_vector = entry.TlsVector;
 
-						for (uint32_t j = 1; j < tls_info.TlsVectorLength; ++j)
+						for (uint32_t index = 0; index < tls_info.TlsVectorLength; ++index)
 						{
-							const auto index = j - 1;
 							const auto old_entry = c.emu.read_memory<void*>(tls_vector + index);
 							c.emu.write_memory<void*>(new_tls_vector + index, old_entry);
 						}
