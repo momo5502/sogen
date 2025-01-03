@@ -309,6 +309,12 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (info_class == ThreadHideFromDebugger)
+		{
+			c.win_emu.logger.print(color::pink, "--> Hiding thread %X from debugger!\n", thread->id);
+			return STATUS_SUCCESS;
+		}
+
 		if (info_class == ThreadNameInformation)
 		{
 			if (thread_information_length != sizeof(THREAD_NAME_INFORMATION))
@@ -354,7 +360,7 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		printf("Unsupported thread info class: %X\n", info_class);
+		printf("Unsupported thread set info class: %X\n", info_class);
 		c.emu.stop();
 		return STATUS_NOT_SUPPORTED;
 	}
@@ -1235,7 +1241,7 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		if (info_class == ProcessDefaultHardErrorMode)
+		if (info_class == ProcessDefaultHardErrorMode || info_class == ProcessWx86Information)
 		{
 			if (return_length)
 			{
@@ -1386,7 +1392,7 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		printf("Unsupported thread info class: %X\n", info_class);
+		printf("Unsupported thread query info class: %X\n", info_class);
 		c.emu.stop();
 
 		return STATUS_NOT_SUPPORTED;
@@ -2218,6 +2224,11 @@ namespace
 	NTSTATUS handle_NtTestAlert()
 	{
 		//puts("NtTestAlert not supported");
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtUserSystemParametersInfo()
+	{
 		return STATUS_NOT_SUPPORTED;
 	}
 
@@ -3358,6 +3369,39 @@ namespace
 		processor_number.write(number);
 		return STATUS_SUCCESS;
 	}
+
+	NTSTATUS handle_NtGetContextThread(const syscall_context& c, handle thread_handle,
+	                                   const emulator_object<CONTEXT> thread_context)
+	{
+		const auto* thread = thread_handle == CURRENT_THREAD
+			                     ? c.proc.active_thread
+			                     : c.proc.threads.get(thread_handle);
+
+		if (!thread)
+		{
+			return STATUS_INVALID_HANDLE;
+		}
+
+		c.proc.active_thread->save(c.emu);
+		const auto _ = utils::finally([&]
+		{
+			c.proc.active_thread->restore(c.emu);
+		});
+
+		thread->restore(c.emu);
+
+		thread_context.access([&](CONTEXT& context)
+		{
+			if (context.ContextFlags & CONTEXT_DEBUG_REGISTERS)
+			{
+				c.win_emu.logger.print(color::pink, "--> Reading debug registers!\n");
+			}
+
+			context_frame::save(c.emu, context);
+		});
+
+		return STATUS_SUCCESS;
+	}
 }
 
 void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& handler_mapping)
@@ -3467,6 +3511,8 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtSetInformationKey);
 	add_handler(NtUserGetKeyboardLayout);
 	add_handler(NtQueryDirectoryFileEx);
+	add_handler(NtUserSystemParametersInfo);
+	add_handler(NtGetContextThread);
 
 #undef add_handler
 }

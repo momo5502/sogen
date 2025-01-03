@@ -202,7 +202,7 @@ namespace
 		auto& optional_header = nt_headers.OptionalHeader;
 
 		binary.image_base = optional_header.ImageBase;
-		binary.size_of_image = optional_header.SizeOfImage; // TODO: Sanitize
+		binary.size_of_image = page_align_up(optional_header.SizeOfImage); // TODO: Sanitize
 
 		if (!emu.allocate_memory(binary.image_base, binary.size_of_image, memory_permission::read))
 		{
