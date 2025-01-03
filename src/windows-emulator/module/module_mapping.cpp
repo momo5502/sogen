@@ -14,7 +14,7 @@ namespace
 		return nt_headers_offset + (first_section_absolute - absolute_base);
 	}
 
-	std::vector<uint8_t> read_mapped_memory(emulator& emu, const mapped_module& binary)
+	std::vector<uint8_t> read_mapped_memory(const emulator& emu, const mapped_module& binary)
 	{
 		std::vector<uint8_t> memory{};
 		memory.resize(binary.size_of_image);
@@ -132,7 +132,7 @@ namespace
 		}
 	}
 
-	void map_sections(emulator& emu, const mapped_module& binary,
+	void map_sections(emulator& emu, mapped_module& binary,
 	                  const utils::safe_buffer_accessor<const uint8_t> buffer,
 	                  const IMAGE_NT_HEADERS& nt_headers, const uint64_t nt_headers_offset)
 	{
@@ -171,6 +171,18 @@ namespace
 			const auto size_of_section = page_align_up(std::max(section.SizeOfRawData, section.Misc.VirtualSize));
 
 			emu.protect_memory(target_ptr, size_of_section, permissions, nullptr);
+
+			mapped_section section_info{};
+			section_info.region.start = target_ptr;
+			section_info.region.length = size_of_section;
+			section_info.region.permissions = permissions;
+
+			for (size_t j = 0; j < sizeof(section.Name) && section.Name[j]; ++j)
+			{
+				section_info.name.push_back(static_cast<char>(section.Name[j]));
+			}
+
+			binary.sections.push_back(std::move(section_info));
 		}
 	}
 
@@ -190,7 +202,7 @@ namespace
 		auto& optional_header = nt_headers.OptionalHeader;
 
 		binary.image_base = optional_header.ImageBase;
-		binary.size_of_image = optional_header.SizeOfImage; // TODO: Sanitize
+		binary.size_of_image = page_align_up(optional_header.SizeOfImage); // TODO: Sanitize
 
 		if (!emu.allocate_memory(binary.image_base, binary.size_of_image, memory_permission::read))
 		{

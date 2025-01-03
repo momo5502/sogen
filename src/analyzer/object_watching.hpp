@@ -22,7 +22,7 @@ emulator_hook* watch_object(windows_emulator& emu, emulator_object<T> object)
 			                                  return;
 		                                  }
 
-#ifdef CACHE_OBJECT_ADDRESSES
+#if defined(CACHE_OBJECT_ADDRESSES) || defined(CONCISE_EMULATOR_OUTPUT)
 		                                  static std::unordered_set<uint64_t> logged_addresses{};
 		                                  if (is_main_access && !logged_addresses.insert(address).second)
 		                                  {

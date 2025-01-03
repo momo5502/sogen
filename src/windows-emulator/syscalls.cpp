@@ -309,6 +309,12 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
+		if (info_class == ThreadHideFromDebugger)
+		{
+			c.win_emu.logger.print(color::pink, "--> Hiding thread %X from debugger!\n", thread->id);
+			return STATUS_SUCCESS;
+		}
+
 		if (info_class == ThreadNameInformation)
 		{
 			if (thread_information_length != sizeof(THREAD_NAME_INFORMATION))
@@ -354,7 +360,7 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		printf("Unsupported thread info class: %X\n", info_class);
+		printf("Unsupported thread set info class: %X\n", info_class);
 		c.emu.stop();
 		return STATUS_NOT_SUPPORTED;
 	}
@@ -800,7 +806,7 @@ namespace
 					                   : (region_info.is_reserved
 						                      ? MEM_RESERVE
 						                      : MEM_FREE);
-				image_info.Protect = map_emulator_to_nt_protection(region_info.pemissions);
+				image_info.Protect = map_emulator_to_nt_protection(region_info.permissions);
 				image_info.Type = MEM_PRIVATE;
 			});
 
@@ -1235,7 +1241,7 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		if (info_class == ProcessDefaultHardErrorMode)
+		if (info_class == ProcessDefaultHardErrorMode || info_class == ProcessWx86Information)
 		{
 			if (return_length)
 			{
@@ -1257,6 +1263,24 @@ namespace
 			|| info_class == ProcessMitigationPolicy)
 		{
 			return STATUS_NOT_SUPPORTED;
+		}
+
+		if (info_class == ProcessTimes)
+		{
+			if (return_length)
+			{
+				return_length.write(sizeof(KERNEL_USER_TIMES));
+			}
+
+			if (process_information_length != sizeof(KERNEL_USER_TIMES))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<KERNEL_USER_TIMES> info{c.emu, process_information};
+			info.write(KERNEL_USER_TIMES{});
+
+			return STATUS_SUCCESS;
 		}
 
 		if (info_class == ProcessBasicInformation)
@@ -1323,9 +1347,13 @@ namespace
 	                                         const uint32_t thread_information_length,
 	                                         const emulator_object<uint32_t> return_length)
 	{
-		if (thread_handle != CURRENT_THREAD)
+		const auto* thread = thread_handle == CURRENT_THREAD
+			                     ? c.proc.active_thread
+			                     : c.proc.threads.get(thread_handle);
+
+		if (!thread)
 		{
-			return STATUS_NOT_SUPPORTED;
+			return STATUS_INVALID_HANDLE;
 		}
 
 		if (info_class == ThreadBasicInformation)
@@ -1343,8 +1371,8 @@ namespace
 			const emulator_object<THREAD_BASIC_INFORMATION> info{c.emu, thread_information};
 			info.access([&](THREAD_BASIC_INFORMATION& i)
 			{
-				i.TebBaseAddress = c.win_emu.current_thread().teb->ptr();
-				i.ClientId = c.win_emu.current_thread().teb->read().ClientId;
+				i.TebBaseAddress = thread->teb->ptr();
+				i.ClientId = thread->teb->read().ClientId;
 			});
 
 			return STATUS_SUCCESS;
@@ -1368,7 +1396,25 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		printf("Unsupported thread info class: %X\n", info_class);
+		if (info_class == ThreadQuerySetWin32StartAddress)
+		{
+			if (return_length)
+			{
+				return_length.write(sizeof(ULONG_PTR));
+			}
+
+			if (thread_information_length != sizeof(ULONG_PTR))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<ULONG_PTR> info{c.emu, thread_information};
+			info.write(thread->start_address);
+
+			return STATUS_SUCCESS;
+		}
+
+		printf("Unsupported thread query info class: %X\n", info_class);
 		c.emu.stop();
 
 		return STATUS_NOT_SUPPORTED;
@@ -2200,6 +2246,11 @@ namespace
 	NTSTATUS handle_NtTestAlert()
 	{
 		//puts("NtTestAlert not supported");
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	NTSTATUS handle_NtUserSystemParametersInfo()
+	{
 		return STATUS_NOT_SUPPORTED;
 	}
 
@@ -3340,6 +3391,39 @@ namespace
 		processor_number.write(number);
 		return STATUS_SUCCESS;
 	}
+
+	NTSTATUS handle_NtGetContextThread(const syscall_context& c, handle thread_handle,
+	                                   const emulator_object<CONTEXT> thread_context)
+	{
+		const auto* thread = thread_handle == CURRENT_THREAD
+			                     ? c.proc.active_thread
+			                     : c.proc.threads.get(thread_handle);
+
+		if (!thread)
+		{
+			return STATUS_INVALID_HANDLE;
+		}
+
+		c.proc.active_thread->save(c.emu);
+		const auto _ = utils::finally([&]
+		{
+			c.proc.active_thread->restore(c.emu);
+		});
+
+		thread->restore(c.emu);
+
+		thread_context.access([&](CONTEXT& context)
+		{
+			if (context.ContextFlags & CONTEXT_DEBUG_REGISTERS)
+			{
+				c.win_emu.logger.print(color::pink, "--> Reading debug registers!\n");
+			}
+
+			context_frame::save(c.emu, context);
+		});
+
+		return STATUS_SUCCESS;
+	}
 }
 
 void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& handler_mapping)
@@ -3449,6 +3533,8 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
 	add_handler(NtSetInformationKey);
 	add_handler(NtUserGetKeyboardLayout);
 	add_handler(NtQueryDirectoryFileEx);
+	add_handler(NtUserSystemParametersInfo);
+	add_handler(NtGetContextThread);
 
 #undef add_handler
 }

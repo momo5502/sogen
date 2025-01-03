@@ -104,7 +104,7 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
 			const auto return_address = c.emu.read_memory<uint64_t>(rsp);
 			const auto* mod_name = context.module_manager.find_name(return_address);
 
-			win_emu.logger.print(color::dark_gray, "Executing syscall: %s (0x%X) at 0x%llX via %llX (%s)\n",
+			win_emu.logger.print(color::dark_gray, "Executing syscall: %s (0x%X) at 0x%llX via 0x%llX (%s)\n",
 			                     entry->second.name.c_str(),
 			                     syscall_id, address, return_address, mod_name);
 		}
