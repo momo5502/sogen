@@ -129,7 +129,8 @@ namespace
 				{
 #ifdef CONCISE_EMULATOR_OUTPUT
 					static uint64_t count{0};
-					if (++count > 100) return;
+					++count;
+					if (count > 100 && count % 10000 != 0) return;
 #endif
 
 					win_emu.logger.print(
@@ -147,7 +148,8 @@ namespace
 				{
 #ifdef CONCISE_EMULATOR_OUTPUT
 					static uint64_t count{0};
-					if (++count > 100) return;
+					++count;
+					if (count > 100 && count % 10000 != 0) return;
 #endif
 
 					win_emu.logger.print(
