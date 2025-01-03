@@ -3,7 +3,7 @@
 #include <windows_emulator.hpp>
 #include <debugging/win_x64_gdb_stub_handler.hpp>
 
-//#define CONCISE_EMULATOR_OUTPUT
+#define CONCISE_EMULATOR_OUTPUT
 
 #include "object_watching.hpp"
 
@@ -124,39 +124,41 @@ namespace
 			auto read_handler = [&, section](const uint64_t address, size_t, uint64_t)
 			{
 				const auto rip = win_emu.emu().read_instruction_pointer();
-				if (rip >= section.region.start && rip < section.region.start + section.
-					region.length)
+				if (win_emu.process().module_manager.find_by_address(rip) != win_emu.process().executable)
 				{
+					return;
+				}
+
 #ifdef CONCISE_EMULATOR_OUTPUT
-					static uint64_t count{0};
-					++count;
-					if (count > 100 && count % 10000 != 0) return;
+				static uint64_t count{0};
+				++count;
+				if (count > 100 && count % 10000 != 0) return;
 #endif
 
-					win_emu.logger.print(
-						color::green,
-						"Reading from executable section %s: 0x%llX at 0x%llX\n",
-						section.name.c_str(), address, rip);
-				}
+				win_emu.logger.print(
+					color::green,
+					"Reading from executable section %s at 0x%llX via 0x%llX\n",
+					section.name.c_str(), address, rip);
 			};
 
 			const auto write_handler = [&, section](const uint64_t address, size_t, uint64_t)
 			{
 				const auto rip = win_emu.emu().read_instruction_pointer();
-				if (rip >= section.region.start && rip < section.region.start + section.
-					region.length)
+				if (win_emu.process().module_manager.find_by_address(rip) != win_emu.process().executable)
 				{
+					return;
+				}
+
 #ifdef CONCISE_EMULATOR_OUTPUT
-					static uint64_t count{0};
-					++count;
-					if (count > 100 && count % 10000 != 0) return;
+				static uint64_t count{0};
+				++count;
+				if (count > 100 && count % 10000 != 0) return;
 #endif
 
-					win_emu.logger.print(
-						color::cyan,
-						"Writing to executable section %s: 0x%llX at 0x%llX\n",
-						section.name.c_str(), address, rip);
-				}
+				win_emu.logger.print(
+					color::blue,
+					"Writing to executable section %s at 0x%llX via 0x%llX\n",
+					section.name.c_str(), address, rip);
 			};
 
 			win_emu.emu().hook_memory_read(section.region.start, section.region.length, std::move(read_handler));
