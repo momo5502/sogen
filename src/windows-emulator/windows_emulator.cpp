@@ -820,7 +820,7 @@ void windows_emulator::setup_hooks()
 		const auto rip = this->emu().read_instruction_pointer();
 		printf("Interrupt: %i 0x%llX\n", interrupt, rip);
 
-		if (this->fuzzing)
+		if (this->fuzzing || true) // TODO: Fix
 		{
 			this->process().exception_rip = rip;
 			this->emu().stop();

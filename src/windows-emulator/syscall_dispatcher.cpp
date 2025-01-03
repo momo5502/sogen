@@ -100,13 +100,26 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
 		}
 		else
 		{
-			const auto rsp = c.emu.read_stack_pointer();
-			const auto return_address = c.emu.read_memory<uint64_t>(rsp);
-			const auto* mod_name = context.module_manager.find_name(return_address);
+			const auto* previous_mod = context.module_manager.find_by_address(context.previous_ip);
+			if (previous_mod == mod)
+			{
+				const auto rsp = c.emu.read_stack_pointer();
+				const auto return_address = c.emu.read_memory<uint64_t>(rsp);
+				const auto* mod_name = context.module_manager.find_name(return_address);
 
-			win_emu.logger.print(color::dark_gray, "Executing syscall: %s (0x%X) at 0x%llX via 0x%llX (%s)\n",
-			                     entry->second.name.c_str(),
-			                     syscall_id, address, return_address, mod_name);
+				win_emu.logger.print(color::dark_gray, "Executing syscall: %s (0x%X) at 0x%llX via 0x%llX (%s) %lld\n",
+				                     entry->second.name.c_str(),
+				                     syscall_id, address, return_address, mod_name, c.proc.executed_instructions);
+			}
+			else
+			{
+				win_emu.logger.print(color::blue,
+				                     "Crafted out-of-line syscall: %s (0x%X) at 0x%llX (%s) via 0x%llX (%s)\n",
+				                     entry->second.name.c_str(),
+				                     syscall_id,
+				                     address, mod ? mod->name.c_str() : "<N/A>", context.previous_ip,
+				                     previous_mod ? previous_mod->name.c_str() : "<N/A>");
+			}
 		}
 
 		entry->second.handler(c);
