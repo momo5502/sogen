@@ -3,7 +3,7 @@
 #include <windows_emulator.hpp>
 #include <debugging/win_x64_gdb_stub_handler.hpp>
 
-#define CONCISE_EMULATOR_OUTPUT
+//#define CONCISE_EMULATOR_OUTPUT
 
 #include "object_watching.hpp"
 
