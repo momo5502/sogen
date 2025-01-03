@@ -1347,9 +1347,13 @@ namespace
 	                                         const uint32_t thread_information_length,
 	                                         const emulator_object<uint32_t> return_length)
 	{
-		if (thread_handle != CURRENT_THREAD)
+		const auto* thread = thread_handle == CURRENT_THREAD
+			                     ? c.proc.active_thread
+			                     : c.proc.threads.get(thread_handle);
+
+		if (!thread)
 		{
-			return STATUS_NOT_SUPPORTED;
+			return STATUS_INVALID_HANDLE;
 		}
 
 		if (info_class == ThreadBasicInformation)
@@ -1367,8 +1371,8 @@ namespace
 			const emulator_object<THREAD_BASIC_INFORMATION> info{c.emu, thread_information};
 			info.access([&](THREAD_BASIC_INFORMATION& i)
 			{
-				i.TebBaseAddress = c.win_emu.current_thread().teb->ptr();
-				i.ClientId = c.win_emu.current_thread().teb->read().ClientId;
+				i.TebBaseAddress = thread->teb->ptr();
+				i.ClientId = thread->teb->read().ClientId;
 			});
 
 			return STATUS_SUCCESS;
@@ -1388,6 +1392,24 @@ namespace
 
 			const emulator_object<ULONG> info{c.emu, thread_information};
 			info.write(c.proc.threads.size() <= 1);
+
+			return STATUS_SUCCESS;
+		}
+
+		if (info_class == ThreadQuerySetWin32StartAddress)
+		{
+			if (return_length)
+			{
+				return_length.write(sizeof(ULONG_PTR));
+			}
+
+			if (thread_information_length != sizeof(ULONG_PTR))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<ULONG_PTR> info{c.emu, thread_information};
+			info.write(thread->start_address);
 
 			return STATUS_SUCCESS;
 		}
