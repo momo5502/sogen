@@ -1,4 +1,5 @@
 #pragma once
+#include <memory_region.hpp>
 
 struct exported_symbol
 {
@@ -11,6 +12,12 @@ struct exported_symbol
 using exported_symbols = std::vector<exported_symbol>;
 using address_name_mapping = std::map<uint64_t, std::string>;
 
+struct mapped_section
+{
+	std::string name{};
+	basic_memory_region region{};
+};
+
 struct mapped_module
 {
 	std::string name{};
@@ -22,6 +29,8 @@ struct mapped_module
 
 	exported_symbols exports{};
 	address_name_mapping address_names{};
+
+	std::vector<mapped_section> sections{};
 
 	bool is_within(const uint64_t address) const
 	{

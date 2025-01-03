@@ -800,7 +800,7 @@ namespace
 					                   : (region_info.is_reserved
 						                      ? MEM_RESERVE
 						                      : MEM_FREE);
-				image_info.Protect = map_emulator_to_nt_protection(region_info.pemissions);
+				image_info.Protect = map_emulator_to_nt_protection(region_info.permissions);
 				image_info.Type = MEM_PRIVATE;
 			});
 
@@ -1257,6 +1257,24 @@ namespace
 			|| info_class == ProcessMitigationPolicy)
 		{
 			return STATUS_NOT_SUPPORTED;
+		}
+
+		if (info_class == ProcessTimes)
+		{
+			if (return_length)
+			{
+				return_length.write(sizeof(KERNEL_USER_TIMES));
+			}
+
+			if (process_information_length != sizeof(KERNEL_USER_TIMES))
+			{
+				return STATUS_BUFFER_OVERFLOW;
+			}
+
+			const emulator_object<KERNEL_USER_TIMES> info{c.emu, process_information};
+			info.write(KERNEL_USER_TIMES{});
+
+			return STATUS_SUCCESS;
 		}
 
 		if (info_class == ProcessBasicInformation)

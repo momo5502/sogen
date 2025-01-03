@@ -875,8 +875,15 @@ void windows_emulator::setup_hooks()
 		                                  process.previous_ip = process.current_ip;
 		                                  process.current_ip = this->emu().read_instruction_pointer();
 
+		                                  const auto is_main_exe = process.executable->is_within(address);
 		                                  const auto is_interesting_call = process.executable->is_within(
-			                                  process.previous_ip) || process.executable->is_within(address);
+			                                  process.previous_ip) || is_main_exe;
+
+		                                  if (this->silent_until_main_ && is_main_exe)
+		                                  {
+			                                  this->silent_until_main_ = false;
+			                                  this->logger.disable_output(false);
+		                                  }
 
 		                                  if (!this->verbose && !this->verbose_calls && !is_interesting_call)
 		                                  {
@@ -887,15 +894,6 @@ void windows_emulator::setup_hooks()
 
 		                                  if (binary)
 		                                  {
-			                                  const auto is_entry_point = address == binary->entry_point;
-
-			                                  if (this->silent_until_main_ && is_entry_point && binary == this->process_
-				                                  .executable)
-			                                  {
-				                                  this->silent_until_main_ = false;
-				                                  this->logger.disable_output(false);
-			                                  }
-
 			                                  const auto export_entry = binary->address_names.find(address);
 			                                  if (export_entry != binary->address_names.end())
 			                                  {
@@ -904,7 +902,7 @@ void windows_emulator::setup_hooks()
 				                                               binary->name.c_str(),
 				                                               export_entry->second.c_str(), address);
 			                                  }
-			                                  else if (is_entry_point)
+			                                  else if (address == binary->entry_point)
 			                                  {
 				                                  logger.print(is_interesting_call ? color::yellow : color::gray,
 				                                               "Executing entry point: %s (0x%llX)\n",

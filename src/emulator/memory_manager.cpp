@@ -445,7 +445,7 @@ region_info memory_manager::get_region_info(const uint64_t address)
 	region_info result{};
 	result.start = MIN_ALLOCATION_ADDRESS;
 	result.length = MAX_ALLOCATION_ADDRESS - result.start;
-	result.pemissions = memory_permission::none;
+	result.permissions = memory_permission::none;
 	result.allocation_base = {};
 	result.allocation_length = result.length;
 	result.is_committed = false;
@@ -506,7 +506,7 @@ region_info memory_manager::get_region_info(const uint64_t address)
 	result.is_committed = true;
 	result.start = committed_entry->first;
 	result.length = committed_entry->second.length;
-	result.pemissions = committed_entry->second.pemissions;
+	result.permissions = committed_entry->second.pemissions;
 
 	return result;
 }

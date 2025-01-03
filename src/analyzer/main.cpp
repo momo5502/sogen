@@ -3,6 +3,8 @@
 #include <windows_emulator.hpp>
 #include <debugging/win_x64_gdb_stub_handler.hpp>
 
+#define CONCISE_EMULATOR_OUTPUT
+
 #include "object_watching.hpp"
 
 bool use_gdb = false;
@@ -98,6 +100,9 @@ namespace
 		emulator_settings settings{
 			.application = argv[0],
 			.arguments = parse_arguments(argv, argc),
+#ifdef CONCISE_EMULATOR_OUTPUT
+			.silent_until_main = true,
+#endif
 		};
 
 		windows_emulator win_emu{std::move(settings)};
@@ -109,18 +114,52 @@ namespace
 
 		const auto& exe = *win_emu.process().executable;
 
-		const auto text_start = exe.image_base + 0x1000;
-		const auto text_end = exe.image_base + 0x52000;
-		constexpr auto scan_size = 0x100;
-
-		win_emu.emu().hook_memory_read(text_start, scan_size, [&](const uint64_t address, size_t, uint64_t)
+		for (const auto& section : exe.sections)
 		{
-			const auto rip = win_emu.emu().read_instruction_pointer();
-			if (rip >= text_start && rip < text_end)
+			if ((section.region.permissions & memory_permission::exec) != memory_permission::exec)
 			{
-				win_emu.logger.print(color::green, "Reading from executable .text: 0x%llX at 0x%llX\n", address, rip);
+				continue;
 			}
-		});
+
+			auto read_handler = [&, section](const uint64_t address, size_t, uint64_t)
+			{
+				const auto rip = win_emu.emu().read_instruction_pointer();
+				if (rip >= section.region.start && rip < section.region.start + section.
+					region.length)
+				{
+#ifdef CONCISE_EMULATOR_OUTPUT
+					static uint64_t count{0};
+					if (++count > 100) return;
+#endif
+
+					win_emu.logger.print(
+						color::green,
+						"Reading from executable section %s: 0x%llX at 0x%llX\n",
+						section.name.c_str(), address, rip);
+				}
+			};
+
+			const auto write_handler = [&, section](const uint64_t address, size_t, uint64_t)
+			{
+				const auto rip = win_emu.emu().read_instruction_pointer();
+				if (rip >= section.region.start && rip < section.region.start + section.
+					region.length)
+				{
+#ifdef CONCISE_EMULATOR_OUTPUT
+					static uint64_t count{0};
+					if (++count > 100) return;
+#endif
+
+					win_emu.logger.print(
+						color::cyan,
+						"Writing to executable section %s: 0x%llX at 0x%llX\n",
+						section.name.c_str(), address, rip);
+				}
+			};
+
+			win_emu.emu().hook_memory_read(section.region.start, section.region.length, std::move(read_handler));
+			win_emu.emu().hook_memory_write(section.region.start, section.region.length, std::move(write_handler));
+		}
 
 		run_emulation(win_emu);
 	}
