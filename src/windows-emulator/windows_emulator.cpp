@@ -425,6 +425,27 @@ namespace
 		dispatch_exception_pointers(emu, dispatcher, pointers);
 	}
 
+	void dispatch_illegal_instruction_violation(x64_emulator& emu, const uint64_t dispatcher)
+	{
+		CONTEXT ctx{};
+		ctx.ContextFlags = CONTEXT_ALL;
+		context_frame::save(emu, ctx);
+
+		EXCEPTION_RECORD record{};
+		memset(&record, 0, sizeof(record));
+		record.ExceptionCode = static_cast<DWORD>(STATUS_ILLEGAL_INSTRUCTION);
+		record.ExceptionFlags = 0;
+		record.ExceptionRecord = nullptr;
+		record.ExceptionAddress = reinterpret_cast<void*>(emu.read_instruction_pointer());
+		record.NumberParameters = 0;
+
+		EXCEPTION_POINTERS pointers{};
+		pointers.ContextRecord = &ctx;
+		pointers.ExceptionRecord = &record;
+
+		dispatch_exception_pointers(emu, dispatcher, pointers);
+	}
+
 	void perform_context_switch_work(windows_emulator& win_emu)
 	{
 		auto& devices = win_emu.process().devices;
@@ -812,11 +833,18 @@ void windows_emulator::setup_hooks()
 	{
 		const auto ip = this->emu().read_instruction_pointer();
 		printf("Invalid instruction at: 0x%llX\n", ip);
+
 		return instruction_hook_continuation::skip_instruction;
 	});
 
 	this->emu().hook_interrupt([&](const int interrupt)
 	{
+		if (interrupt == 6)
+		{
+			dispatch_illegal_instruction_violation(this->emu(), this->process().ki_user_exception_dispatcher);
+			return;
+		}
+
 		const auto rip = this->emu().read_instruction_pointer();
 		printf("Interrupt: %i 0x%llX\n", interrupt, rip);
 
