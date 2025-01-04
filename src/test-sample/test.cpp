@@ -234,7 +234,7 @@ bool test_exceptions()
 	}
 }
 
-void throw_native_exception()
+void throw_access_violation()
 {
 	if (do_the_task)
 	{
@@ -242,17 +242,53 @@ void throw_native_exception()
 	}
 }
 
-bool test_native_exceptions()
+bool test_access_violation_exception()
 {
 	__try
 	{
-		throw_native_exception();
+		throw_access_violation();
 		return false;
 	}
 	__except (EXCEPTION_EXECUTE_HANDLER)
 	{
-		return true;
+		return GetExceptionCode() == STATUS_ACCESS_VIOLATION;
 	}
+}
+
+bool test_ud2_exception(void* address)
+{
+	__try
+	{
+		static_cast<void(*)()>(address)();
+		return false;
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		return GetExceptionCode() == STATUS_ILLEGAL_INSTRUCTION;
+	}
+}
+
+bool test_illegal_instruction_exception()
+{
+	const auto address = VirtualAlloc(nullptr, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+	if (!address)
+	{
+		return false;
+	}
+
+	memcpy(address, "\x0F\x0B", 2); // ud2
+
+	const auto res = test_ud2_exception(address);
+
+	VirtualFree(address, 0x1000, MEM_RELEASE);
+
+	return res;
+}
+
+bool test_native_exceptions()
+{
+	return test_access_violation_exception()
+		&& test_illegal_instruction_exception();
 }
 
 void print_time()
