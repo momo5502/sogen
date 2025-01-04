@@ -483,7 +483,7 @@ namespace
 
 		if (active_thread)
 		{
-			win_emu.logger.print(color::green, "Performing thread switch...\n");
+			win_emu.logger.print(color::dark_gray, "Performing thread switch...\n");
 			active_thread->save(emu);
 		}
 
