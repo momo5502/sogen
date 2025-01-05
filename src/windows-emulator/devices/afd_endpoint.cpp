@@ -315,11 +315,11 @@ namespace
 		{
 			if (_AFD_BASE(c.io_control_code) != FSCTL_AFD_BASE)
 			{
-				win_emu.logger.print(color::cyan, "Bad AFD IOCTL: %X\n", c.io_control_code);
+				win_emu.log.print(color::cyan, "Bad AFD IOCTL: %X\n", c.io_control_code);
 				return STATUS_NOT_SUPPORTED;
 			}
 
-			win_emu.logger.print(color::cyan, "AFD IOCTL: %X\n", c.io_control_code);
+			win_emu.log.print(color::cyan, "AFD IOCTL: %X\n", c.io_control_code);
 
 			const auto request = _AFD_REQUEST(c.io_control_code);
 
@@ -337,7 +337,7 @@ namespace
 			case AFD_GET_INFORMATION:
 				return STATUS_SUCCESS;
 			default:
-				win_emu.logger.print(color::gray, "Unsupported AFD IOCTL: %X\n", c.io_control_code);
+				win_emu.log.print(color::gray, "Unsupported AFD IOCTL: %X\n", c.io_control_code);
 				return STATUS_NOT_SUPPORTED;
 			}
 		}

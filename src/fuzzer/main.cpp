@@ -13,7 +13,7 @@ namespace
 	{
 		try
 		{
-			win_emu.logger.disable_output(true);
+			win_emu.log.disable_output(true);
 			win_emu.start();
 
 			if (win_emu.process().exception_rip.has_value())
@@ -23,12 +23,12 @@ namespace
 		}
 		catch (...)
 		{
-			win_emu.logger.disable_output(false);
-			win_emu.logger.print(color::red, "Emulation failed at: 0x%llX\n", win_emu.emu().read_instruction_pointer());
+			win_emu.log.disable_output(false);
+			win_emu.log.print(color::red, "Emulation failed at: 0x%llX\n", win_emu.emu().read_instruction_pointer());
 			throw;
 		}
 
-		win_emu.logger.disable_output(false);
+		win_emu.log.disable_output(false);
 	}
 
 	void forward_emulator(windows_emulator& win_emu)

@@ -488,7 +488,7 @@ namespace
 
 		if (active_thread)
 		{
-			win_emu.logger.print(color::dark_gray, "Performing thread switch...\n");
+			win_emu.log.print(color::dark_gray, "Performing thread switch...\n");
 			active_thread->save(emu);
 		}
 
@@ -749,7 +749,7 @@ windows_emulator::windows_emulator(emulator_settings settings,
 	this->silent_until_main_ = settings.silent_until_main && !settings.disable_logging;
 	this->stdout_callback_ = std::move(settings.stdout_callback);
 	this->use_relative_time_ = settings.use_relative_time;
-	this->logger.disable_output(settings.disable_logging || this->silent_until_main_);
+	this->log.disable_output(settings.disable_logging || this->silent_until_main_);
 	this->setup_process(settings);
 }
 
@@ -765,19 +765,19 @@ void windows_emulator::setup_process(const emulator_settings& settings)
 	auto& emu = this->emu();
 
 	auto& context = this->process();
-	context.module_manager = module_manager(emu); // TODO: Cleanup module manager
+	context.mod_manager = module_manager(emu); // TODO: Cleanup module manager
 
 	setup_context(*this, settings);
 
-	context.executable = context.module_manager.map_module(settings.application, this->logger);
+	context.executable = context.mod_manager.map_module(settings.application, this->log);
 
 	context.peb.access([&](PEB64& peb)
 	{
 		peb.ImageBaseAddress = reinterpret_cast<std::uint64_t*>(context.executable->image_base);
 	});
 
-	context.ntdll = context.module_manager.map_module(R"(C:\Windows\System32\ntdll.dll)", this->logger);
-	context.win32u = context.module_manager.map_module(R"(C:\Windows\System32\win32u.dll)", this->logger);
+	context.ntdll = context.mod_manager.map_module(R"(C:\Windows\System32\ntdll.dll)", this->log);
+	context.win32u = context.mod_manager.map_module(R"(C:\Windows\System32\win32u.dll)", this->log);
 
 	const auto ntdll_data = emu.read_memory(context.ntdll->image_base, context.ntdll->size_of_image);
 	const auto win32u_data = emu.read_memory(context.win32u->image_base, context.win32u->size_of_image);
@@ -832,7 +832,7 @@ void windows_emulator::on_instruction_execution(uint64_t address)
 	if (this->silent_until_main_ && is_main_exe)
 	{
 		this->silent_until_main_ = false;
-		this->logger.disable_output(false);
+		this->log.disable_output(false);
 	}
 
 	if (!this->verbose && !this->verbose_calls && !is_interesting_call)
@@ -840,21 +840,21 @@ void windows_emulator::on_instruction_execution(uint64_t address)
 		return;
 	}
 
-	const auto* binary = this->process().module_manager.find_by_address(address);
+	const auto* binary = this->process().mod_manager.find_by_address(address);
 
 	if (binary)
 	{
 		const auto export_entry = binary->address_names.find(address);
 		if (export_entry != binary->address_names.end())
 		{
-			logger.print(is_interesting_call ? color::yellow : color::dark_gray,
+			log.print(is_interesting_call ? color::yellow : color::dark_gray,
 			             "Executing function: %s - %s (0x%llX)\n",
 			             binary->name.c_str(),
 			             export_entry->second.c_str(), address);
 		}
 		else if (address == binary->entry_point)
 		{
-			logger.print(is_interesting_call ? color::yellow : color::gray,
+			log.print(is_interesting_call ? color::yellow : color::gray,
 			             "Executing entry point: %s (0x%llX)\n",
 			             binary->name.c_str(),
 			             address);
@@ -935,17 +935,17 @@ void windows_emulator::setup_hooks()
 	{
 		const auto permission = get_permission_string(operation);
 		const auto ip = this->emu().read_instruction_pointer();
-		const char* name = this->process().module_manager.find_name(ip);
+		const char* name = this->process().mod_manager.find_name(ip);
 
 		if (type == memory_violation_type::protection)
 		{
-			this->logger.print(color::gray, "Protection violation: 0x%llX (%zX) - %s at 0x%llX (%s)\n", address, size,
+			this->log.print(color::gray, "Protection violation: 0x%llX (%zX) - %s at 0x%llX (%s)\n", address, size,
 			                   permission.c_str(), ip,
 			                   name);
 		}
 		else if (type == memory_violation_type::unmapped)
 		{
-			this->logger.print(color::gray, "Mapping violation: 0x%llX (%zX) - %s at 0x%llX (%s)\n", address, size,
+			this->log.print(color::gray, "Mapping violation: 0x%llX (%zX) - %s at 0x%llX (%s)\n", address, size,
 			                   permission.c_str(), ip,
 			                   name);
 		}
