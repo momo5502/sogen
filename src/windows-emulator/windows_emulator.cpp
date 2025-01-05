@@ -805,6 +805,75 @@ void windows_emulator::perform_thread_switch()
 	}
 }
 
+void windows_emulator::on_instruction_execution(uint64_t address)
+{
+	auto& process = this->process();
+	auto& thread = this->current_thread();
+
+	++process.executed_instructions;
+	const auto thread_insts = ++thread.executed_instructions;
+	if (thread_insts % MAX_INSTRUCTIONS_PER_TIME_SLICE == 0)
+	{
+		this->switch_thread = true;
+		this->emu().stop();
+	}
+
+	process.previous_ip = process.current_ip;
+	process.current_ip = this->emu().read_instruction_pointer();
+
+	const auto is_main_exe = process.executable->is_within(address);
+	const auto is_interesting_call = process.executable->is_within(process.previous_ip) || is_main_exe;
+
+	if (this->silent_until_main_ && is_main_exe)
+	{
+		this->silent_until_main_ = false;
+		this->logger.disable_output(false);
+	}
+
+	if (!this->verbose && !this->verbose_calls && !is_interesting_call)
+	{
+		return;
+	}
+
+	const auto* binary = this->process().module_manager.find_by_address(address);
+
+	if (binary)
+	{
+		const auto export_entry = binary->address_names.find(address);
+		if (export_entry != binary->address_names.end())
+		{
+			logger.print(is_interesting_call ? color::yellow : color::dark_gray,
+			             "Executing function: %s - %s (0x%llX)\n",
+			             binary->name.c_str(),
+			             export_entry->second.c_str(), address);
+		}
+		else if (address == binary->entry_point)
+		{
+			logger.print(is_interesting_call ? color::yellow : color::gray,
+			             "Executing entry point: %s (0x%llX)\n",
+			             binary->name.c_str(),
+			             address);
+		}
+	}
+
+	if (!this->verbose)
+	{
+		return;
+	}
+
+	auto& emu = this->emu();
+
+	printf(
+		"Inst: %16llX - RAX: %16llX - RBX: %16llX - RCX: %16llX - RDX: %16llX - R8: %16llX - R9: %16llX - RDI: %16llX - RSI: %16llX - %s\n",
+		address,
+		emu.reg(x64_register::rax), emu.reg(x64_register::rbx),
+		emu.reg(x64_register::rcx),
+		emu.reg(x64_register::rdx), emu.reg(x64_register::r8),
+		emu.reg(x64_register::r9),
+		emu.reg(x64_register::rdi), emu.reg(x64_register::rsi),
+		binary ? binary->name.c_str() : "<N/A>");
+}
+
 void windows_emulator::setup_hooks()
 {
 	this->emu().hook_instruction(x64_hookable_instructions::syscall, [&]
@@ -886,76 +955,12 @@ void windows_emulator::setup_hooks()
 		return memory_violation_continuation::resume;
 	});
 
-	this->emu().hook_memory_execution(0, std::numeric_limits<size_t>::max(),
-	                                  [&](const uint64_t address, const size_t, const uint64_t)
-	                                  {
-		                                  auto& process = this->process();
-		                                  auto& thread = this->current_thread();
-
-		                                  ++process.executed_instructions;
-		                                  const auto thread_insts = ++thread.executed_instructions;
-		                                  if (thread_insts % MAX_INSTRUCTIONS_PER_TIME_SLICE == 0)
-		                                  {
-			                                  this->switch_thread = true;
-			                                  this->emu().stop();
-		                                  }
-
-		                                  process.previous_ip = process.current_ip;
-		                                  process.current_ip = this->emu().read_instruction_pointer();
-
-		                                  const auto is_main_exe = process.executable->is_within(address);
-		                                  const auto is_interesting_call = process.executable->is_within(
-			                                  process.previous_ip) || is_main_exe;
-
-		                                  if (this->silent_until_main_ && is_main_exe)
-		                                  {
-			                                  this->silent_until_main_ = false;
-			                                  this->logger.disable_output(false);
-		                                  }
-
-		                                  if (!this->verbose && !this->verbose_calls && !is_interesting_call)
-		                                  {
-			                                  return;
-		                                  }
-
-		                                  const auto* binary = this->process().module_manager.find_by_address(address);
-
-		                                  if (binary)
-		                                  {
-			                                  const auto export_entry = binary->address_names.find(address);
-			                                  if (export_entry != binary->address_names.end())
-			                                  {
-				                                  logger.print(is_interesting_call ? color::yellow : color::dark_gray,
-				                                               "Executing function: %s - %s (0x%llX)\n",
-				                                               binary->name.c_str(),
-				                                               export_entry->second.c_str(), address);
-			                                  }
-			                                  else if (address == binary->entry_point)
-			                                  {
-				                                  logger.print(is_interesting_call ? color::yellow : color::gray,
-				                                               "Executing entry point: %s (0x%llX)\n",
-				                                               binary->name.c_str(),
-				                                               address);
-			                                  }
-		                                  }
-
-		                                  if (!this->verbose)
-		                                  {
-			                                  return;
-		                                  }
-
-		                                  auto& emu = this->emu();
-
-		                                  printf(
-			                                  "Inst: %16llX - RAX: %16llX - RBX: %16llX - RCX: %16llX - RDX: %16llX - R8: %16llX - R9: %16llX - RDI: %16llX - RSI: %16llX - %s\n",
-			                                  address,
-			                                  emu.reg(x64_register::rax), emu.reg(x64_register::rbx),
-			                                  emu.reg(x64_register::rcx),
-			                                  emu.reg(x64_register::rdx), emu.reg(x64_register::r8),
-			                                  emu.reg(x64_register::r9),
-			                                  emu.reg(x64_register::rdi), emu.reg(x64_register::rsi),
-			                                  binary ? binary->name.c_str() : "<N/A>");
-	                                  });
+	this->emu().hook_memory_execution(
+		0, std::numeric_limits<size_t>::max(),
+		[&](const uint64_t address, const size_t, const uint64_t)
+		{
+			this->on_instruction_execution(address);
+		});
 }
 
 void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)

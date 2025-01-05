@@ -100,8 +100,7 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
 		}
 		else
 		{
-			const auto* previous_mod = context.module_manager.find_by_address(context.previous_ip);
-			if (previous_mod == mod)
+			if (mod->is_within(context.previous_ip))
 			{
 				const auto rsp = c.emu.read_stack_pointer();
 				const auto return_address = c.emu.read_memory<uint64_t>(rsp);
@@ -113,6 +112,7 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
 			}
 			else
 			{
+				const auto* previous_mod = context.module_manager.find_by_address(context.previous_ip);
 				win_emu.logger.print(color::blue,
 				                     "Crafted out-of-line syscall: %s (0x%X) at 0x%llX (%s) via 0x%llX (%s)\n",
 				                     entry->second.name.c_str(),
