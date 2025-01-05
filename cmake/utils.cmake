@@ -209,7 +209,7 @@ function(momo_target_set_warnings_as_errors target)
     return()
   endif()
 
-  set(compile_options)
+  set(compile_options -Wall -Wextra -Wconversion -pedantic -Werror -Wno-comment)
 
   if(MSVC)
     set(compile_options /W4 /WX)
