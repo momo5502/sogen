@@ -869,7 +869,7 @@ void windows_emulator::on_instruction_execution(uint64_t address)
 	auto& emu = this->emu();
 
 	printf(
-		"Inst: %16llX - RAX: %16llX - RBX: %16llX - RCX: %16llX - RDX: %16llX - R8: %16llX - R9: %16llX - RDI: %16llX - RSI: %16llX - %s\n",
+		"Inst: %16" PRIu64 " - RAX: %16" PRIu64 " - RBX: %16" PRIu64 " - RCX: %16" PRIu64 " - RDX: %16" PRIu64 " - R8: %16" PRIu64 " - R9: %16" PRIu64 " - RDI: %16" PRIu64 " - RSI: %16" PRIu64 " - %s\n",
 		address,
 		emu.reg(x64_register::rax), emu.reg(x64_register::rbx),
 		emu.reg(x64_register::rcx),
@@ -907,7 +907,7 @@ void windows_emulator::setup_hooks()
 	{
 		const auto ip = this->emu().read_instruction_pointer();
 
-		printf("Invalid instruction at: 0x%llX\n", ip);
+		printf("Invalid instruction at: 0x%" PRIu64 "\n", ip);
 
 		return instruction_hook_continuation::skip_instruction;
 	});
@@ -921,7 +921,7 @@ void windows_emulator::setup_hooks()
 		}
 
 		const auto rip = this->emu().read_instruction_pointer();
-		printf("Interrupt: %i 0x%zX\n", interrupt, rip);
+		printf("Interrupt: %i 0x%" PRIu64 "\n", interrupt, rip);
 
 		if (this->fuzzing || true) // TODO: Fix
 		{
