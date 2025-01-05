@@ -2,15 +2,13 @@
 
 #include "reflect_type_info.hpp"
 
-//#define CACHE_OBJECT_ADDRESSES
-
 template <typename T>
-emulator_hook* watch_object(windows_emulator& emu, emulator_object<T> object)
+emulator_hook* watch_object(windows_emulator& emu, emulator_object<T> object, const bool cache_logging = false)
 {
 	const reflect_type_info<T> info{};
 
 	return emu.emu().hook_memory_read(object.value(), object.size(),
-	                                  [i = std::move(info), object, &emu](
+	                                  [i = std::move(info), object, &emu, cache_logging](
 	                                  const uint64_t address, size_t, uint64_t)
 	                                  {
 		                                  const auto rip = emu.emu().read_instruction_pointer();
@@ -22,13 +20,14 @@ emulator_hook* watch_object(windows_emulator& emu, emulator_object<T> object)
 			                                  return;
 		                                  }
 
-#if defined(CACHE_OBJECT_ADDRESSES) || defined(CONCISE_EMULATOR_OUTPUT)
-		                                  static std::unordered_set<uint64_t> logged_addresses{};
-		                                  if (is_main_access && !logged_addresses.insert(address).second)
+		                                  if (cache_logging)
 		                                  {
-			                                  return;
+			                                  static std::unordered_set<uint64_t> logged_addresses{};
+			                                  if (is_main_access && !logged_addresses.insert(address).second)
+			                                  {
+				                                  return;
+			                                  }
 		                                  }
-#endif
 
 		                                  const auto offset = address - object.value();
 		                                  emu.logger.print(is_main_access ? color::green : color::dark_gray,
