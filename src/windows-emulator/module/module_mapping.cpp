@@ -35,20 +35,24 @@ namespace
 		const auto export_directory = buffer.as<IMAGE_EXPORT_DIRECTORY>(export_directory_entry.
 			VirtualAddress).get();
 
-		//const auto function_count = export_directory->NumberOfFunctions;
 		const auto names_count = export_directory.NumberOfNames;
+		//const auto function_count = export_directory.NumberOfFunctions;
 
 		const auto names = buffer.as<DWORD>(export_directory.AddressOfNames);
 		const auto ordinals = buffer.as<WORD>(export_directory.AddressOfNameOrdinals);
 		const auto functions = buffer.as<DWORD>(export_directory.AddressOfFunctions);
 
+		binary.exports.reserve(names_count);
+
 		for (DWORD i = 0; i < names_count; i++)
 		{
+			const auto ordinal = ordinals.get(i);
+
 			exported_symbol symbol{};
-			symbol.ordinal = ordinals.get(i);
-			symbol.name = buffer.as_string(names.get(i));
-			symbol.rva = functions.get(symbol.ordinal);
+			symbol.ordinal = export_directory.Base + ordinal;
+			symbol.rva = functions.get(ordinal);
 			symbol.address = binary.image_base + symbol.rva;
+			symbol.name = buffer.as_string(names.get(i));
 
 			binary.exports.push_back(std::move(symbol));
 		}
