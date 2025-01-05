@@ -10,45 +10,45 @@ namespace
 
 	struct offset_entry_t
 	{
-		long offset;
-		long hash;
+		int32_t offset;
+		int32_t hash;
 	};
 
 	struct offsets_t
 	{
-		long block_size;
+		int32_t block_size;
 		char block_type[2];
-		short count;
+		int16_t count;
 		offset_entry_t entries[1];
 	};
 
 	struct key_block_t
 	{
-		long block_size;
+		int32_t block_size;
 		char block_type[2];
-		char dummya[18];
-		int subkey_count;
-		char dummyb[4];
-		int subkeys;
-		char dummyc[4];
-		int value_count;
-		int offsets;
-		char dummyd[28];
-		short len;
-		short du;
+		uint8_t dummya[18];
+		int32_t subkey_count;
+		uint8_t dummyb[4];
+		int32_t subkeys;
+		uint8_t dummyc[4];
+		int32_t value_count;
+		int32_t offsets;
+		uint8_t dummyd[28];
+		int16_t len;
+		int16_t du;
 		char name[255];
 	};
 
 	struct value_block_t
 	{
-		long block_size;
+		int32_t block_size;
 		char block_type[2];
-		short name_len;
-		long size;
-		long offset;
-		long value_type;
-		short flags;
-		short dummy;
+		int16_t name_len;
+		int32_t size;
+		int32_t offset;
+		int32_t value_type;
+		int16_t flags;
+		int16_t dummy;
 		char name[255];
 	};
 
@@ -206,7 +206,7 @@ void hive_key::parse(std::ifstream& file)
 		const auto subkey_block_offset = MAIN_ROOT_OFFSET + offset_entry.offset;
 		const auto subkey = read_file_object<key_block_t>(file, subkey_block_offset);
 
-		std::string subkey_name(subkey.name, std::min(subkey.len, static_cast<short>(sizeof(subkey.name))));
+		std::string subkey_name(subkey.name, std::min(subkey.len, static_cast<int16_t>(sizeof(subkey.name))));
 		utils::string::to_lower_inplace(subkey_name);
 
 		this->sub_keys_.emplace(std::move(subkey_name), hive_key{subkey.subkeys, subkey.value_count, subkey.offsets});

@@ -128,7 +128,16 @@ namespace unicorn
 					throw std::runtime_error("Memory saving not supported atm");
 				}
 
+#ifndef OS_WINDOWS
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+#endif
+
 				uc_ctl_context_mode(uc, UC_CTL_CONTEXT_CPU | (in_place ? UC_CTL_CONTEXT_MEMORY : 0));
+
+#ifndef OS_WINDOWS
+#pragma GCC diagnostic pop
+#endif
 
 				this->size_ = uc_context_size(uc);
 				uce(uc_context_alloc(uc, &this->context_));
@@ -243,7 +252,17 @@ namespace unicorn
 			unicorn_x64_emulator()
 			{
 				uce(uc_open(UC_ARCH_X86, UC_MODE_64, &this->uc_));
+
+#ifndef OS_WINDOWS
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+#endif
+
 				uce(uc_ctl_set_tcg_buffer_size(this->uc_, 2 << 30 /* 2 gb */));
+
+#ifndef OS_WINDOWS
+#pragma GCC diagnostic pop
+#endif
 			}
 
 			~unicorn_x64_emulator() override

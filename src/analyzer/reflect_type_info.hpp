@@ -1,7 +1,16 @@
 #pragma once
 
+#ifndef OS_WINDOWS
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+#endif
+
 #include "reflect_extension.hpp"
 #include <reflect>
+
+#ifndef OS_WINDOWS
+#pragma GCC diagnostic pop
+#endif
 
 template <typename T>
 class reflect_type_info

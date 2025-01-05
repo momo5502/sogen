@@ -12,7 +12,7 @@ namespace
 {
 	void setup_kusd(KUSER_SHARED_DATA64& kusd, const bool use_relative_time)
 	{
-		memset(&kusd, 0, sizeof(kusd));
+		memset(reinterpret_cast<void*>(&kusd), 0, sizeof(kusd));
 
 		kusd.TickCountMultiplier = 0x0fa00000;
 		kusd.InterruptTime.LowPart = 0x17bd9547;

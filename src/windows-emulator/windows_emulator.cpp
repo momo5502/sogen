@@ -848,14 +848,14 @@ void windows_emulator::on_instruction_execution(uint64_t address)
 		if (export_entry != binary->address_names.end())
 		{
 			log.print(is_interesting_call ? color::yellow : color::dark_gray,
-			             "Executing function: %s - %s (0x%llX)\n",
+			             "Executing function: %s - %s (0x%" PRIx64 ")\n",
 			             binary->name.c_str(),
 			             export_entry->second.c_str(), address);
 		}
 		else if (address == binary->entry_point)
 		{
 			log.print(is_interesting_call ? color::yellow : color::gray,
-			             "Executing entry point: %s (0x%llX)\n",
+			             "Executing entry point: %s (0x%" PRIx64 ")\n",
 			             binary->name.c_str(),
 			             address);
 		}
@@ -939,13 +939,13 @@ void windows_emulator::setup_hooks()
 
 		if (type == memory_violation_type::protection)
 		{
-			this->log.print(color::gray, "Protection violation: 0x%llX (%zX) - %s at 0x%llX (%s)\n", address, size,
+			this->log.print(color::gray, "Protection violation: 0x%" PRIx64 " (%zX) - %s at 0x%" PRIx64 " (%s)\n", address, size,
 			                   permission.c_str(), ip,
 			                   name);
 		}
 		else if (type == memory_violation_type::unmapped)
 		{
-			this->log.print(color::gray, "Mapping violation: 0x%llX (%zX) - %s at 0x%llX (%s)\n", address, size,
+			this->log.print(color::gray, "Mapping violation: 0x%" PRIx64 " (%zX) - %s at 0x%" PRIx64 " (%s)\n", address, size,
 			                   permission.c_str(), ip,
 			                   name);
 		}

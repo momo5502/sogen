@@ -63,13 +63,13 @@ namespace
 		}
 		catch (const std::exception& e)
 		{
-			win_emu.log.print(color::red, "Emulation failed at: 0x%llX - %s\n",
+			win_emu.log.print(color::red, "Emulation failed at: 0x%" PRIx64 " - %s\n",
 			                     win_emu.emu().read_instruction_pointer(), e.what());
 			throw;
 		}
 		catch (...)
 		{
-			win_emu.log.print(color::red, "Emulation failed at: 0x%llX\n", win_emu.emu().read_instruction_pointer());
+			win_emu.log.print(color::red, "Emulation failed at: 0x%" PRIx64 "\n", win_emu.emu().read_instruction_pointer());
 			throw;
 		}
 
@@ -146,7 +146,7 @@ namespace
 
 				win_emu.log.print(
 					color::green,
-					"Reading from executable section %s at 0x%llX via 0x%llX\n",
+					"Reading from executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
 					section.name.c_str(), address, rip);
 			};
 
@@ -167,7 +167,7 @@ namespace
 
 				win_emu.log.print(
 					color::blue,
-					"Writing to executable section %s at 0x%llX via 0x%llX\n",
+					"Writing to executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
 					section.name.c_str(), address, rip);
 			};
 
