@@ -127,4 +127,5 @@ private:
 
 	void setup_hooks();
 	void setup_process(const emulator_settings& settings);
+	void on_instruction_execution(uint64_t address);
 };
