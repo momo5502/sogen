@@ -28,12 +28,12 @@ namespace utils::io
 			io::create_directory(file.parent_path());
 		}
 
-		std::basic_ofstream<uint8_t> stream(
+		std::ofstream stream(
 			file, std::ios::binary | std::ofstream::out | (append ? std::ofstream::app : std::ofstream::out));
 
 		if (stream.is_open())
 		{
-			stream.write(data.data(), static_cast<std::streamsize>(data.size()));
+			stream.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
 			stream.close();
 			return true;
 		}

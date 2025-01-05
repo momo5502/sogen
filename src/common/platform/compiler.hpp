@@ -30,12 +30,20 @@
     #define NO_INLINE     __attribute__((noinline))
 
     #define DECLSPEC_ALIGN(n) alignas(n)
-    #define _fseeki64 fseeko64
-    #define _ftelli64 ftello64
     #define fopen_s   fopen
 
     #define RESTRICTED_POINTER __restrict
     // TODO: warning stdcall problem
     #define WINAPI
+
+#ifdef OS_MAC
+    #define _fseeki64 fseeko
+    #define _ftelli64 ftello
+    #define _stat64 stat
+#else
+    #define _fseeki64 fseeko64
+    #define _ftelli64 ftello64
+    #define _stat64 stat64
+#endif
 
 #endif

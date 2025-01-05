@@ -154,7 +154,7 @@ uint64_t kusd_mmio::read(const uint64_t addr, const size_t size)
 	}
 
 	const auto end = addr + size;
-	const auto valid_end = std::min(end, KUSD_SIZE);
+	const auto valid_end = std::min(end, static_cast<uint64_t>(KUSD_SIZE));
 	const auto real_size = valid_end - addr;
 
 	if (real_size > sizeof(result))

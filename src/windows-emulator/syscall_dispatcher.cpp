@@ -126,13 +126,13 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
 	}
 	catch (std::exception& e)
 	{
-		printf("Syscall threw an exception: %X (0x%zX) - %s\n", syscall_id, address, e.what());
+		printf("Syscall threw an exception: %X (0x%" PRIx64 ") - %s\n", syscall_id, address, e.what());
 		emu.reg<uint64_t>(x64_register::rax, STATUS_UNSUCCESSFUL);
 		emu.stop();
 	}
 	catch (...)
 	{
-		printf("Syscall threw an unknown exception: %X (0x%zX)\n", syscall_id, address);
+		printf("Syscall threw an unknown exception: %X (0x%" PRIx64 ")\n", syscall_id, address);
 		emu.reg<uint64_t>(x64_register::rax, STATUS_UNSUCCESSFUL);
 		emu.stop();
 	}

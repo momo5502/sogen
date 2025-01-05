@@ -243,7 +243,7 @@ bool memory_manager::allocate_memory(const uint64_t address, const size_t size, 
 		return false;
 	}
 
-	const auto entry = this->reserved_regions_.try_emplace(address, size).first;
+	const auto entry = this->reserved_regions_.try_emplace(address, reserved_region{.length = size,}).first;
 
 	if (!reserve_only)
 	{

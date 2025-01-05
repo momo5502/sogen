@@ -56,7 +56,7 @@
 
 #include <cassert>
 #include <cstdarg>
-#include <inttypes.h>
+#include <cinttypes>
 
 #include "platform/platform.hpp"
 

@@ -250,7 +250,7 @@ namespace
 
 			const auto total_length = allocator.get_next_address() - context.process_params.value();
 
-			proc_params.Length = static_cast<uint32_t>(std::max(sizeof(proc_params), total_length));
+			proc_params.Length = static_cast<uint32_t>(std::max(static_cast<uint64_t>(sizeof(proc_params)), total_length));
 			proc_params.MaximumLength = proc_params.Length;
 		});
 
@@ -869,7 +869,7 @@ void windows_emulator::on_instruction_execution(uint64_t address)
 	auto& emu = this->emu();
 
 	printf(
-		"Inst: %16" PRIu64 " - RAX: %16" PRIu64 " - RBX: %16" PRIu64 " - RCX: %16" PRIu64 " - RDX: %16" PRIu64 " - R8: %16" PRIu64 " - R9: %16" PRIu64 " - RDI: %16" PRIu64 " - RSI: %16" PRIu64 " - %s\n",
+		"Inst: %16" PRIx64 " - RAX: %16" PRIx64 " - RBX: %16" PRIx64 " - RCX: %16" PRIx64 " - RDX: %16" PRIx64 " - R8: %16" PRIx64 " - R9: %16" PRIx64 " - RDI: %16" PRIx64 " - RSI: %16" PRIx64 " - %s\n",
 		address,
 		emu.reg(x64_register::rax), emu.reg(x64_register::rbx),
 		emu.reg(x64_register::rcx),
@@ -907,7 +907,7 @@ void windows_emulator::setup_hooks()
 	{
 		const auto ip = this->emu().read_instruction_pointer();
 
-		this->log.print(color::gray, "Invalid instruction at: 0x%" PRIu64 "\n", ip);
+		this->log.print(color::gray, "Invalid instruction at: 0x%" PRIx64 "\n", ip);
 
 		return instruction_hook_continuation::skip_instruction;
 	});
@@ -921,7 +921,7 @@ void windows_emulator::setup_hooks()
 		}
 
 		const auto rip = this->emu().read_instruction_pointer();
-		this->log.print(color::gray, "Interrupt: %i 0x%" PRIu64 "\n", interrupt, rip);
+		this->log.print(color::gray, "Interrupt: %i 0x%" PRIx64 "\n", interrupt, rip);
 
 		if (this->fuzzing || true) // TODO: Fix
 		{
