@@ -1,5 +1,6 @@
 #pragma once
 #include "memory_permission.hpp"
+#include <cstddef>
 
 struct basic_memory_region
 {

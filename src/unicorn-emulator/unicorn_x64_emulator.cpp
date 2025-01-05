@@ -5,6 +5,7 @@
 #include "unicorn_hook.hpp"
 
 #include "function_wrapper.hpp"
+#include <ranges>
 
 namespace unicorn
 {

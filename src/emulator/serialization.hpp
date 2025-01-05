@@ -9,6 +9,11 @@
 #include <functional>
 #include <typeindex>
 
+#ifndef WIN32
+inline void serialize() {}
+inline void deserialize() {}
+#endif
+
 namespace utils
 {
 	class buffer_serializer;

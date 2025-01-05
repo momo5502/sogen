@@ -2,8 +2,7 @@
 
 #include "../std_include.hpp"
 #include <serialization_helper.hpp>
-
-class hive_parser;
+#include "hive_parser.hpp"
 
 struct registry_key
 {
