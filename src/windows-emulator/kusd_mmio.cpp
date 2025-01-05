@@ -183,7 +183,7 @@ void kusd_mmio::update()
 	if (this->use_relative_time_)
 	{
 		const auto passed_time = this->process_->executed_instructions;
-		const auto clock_frequency = this->kusd_.QpcFrequency;
+		const auto clock_frequency = static_cast<uint64_t>(this->kusd_.QpcFrequency);
 
 		using duration = std::chrono::system_clock::duration;
 		time += duration(passed_time * duration::period::den / clock_frequency);
@@ -209,7 +209,7 @@ void kusd_mmio::register_mmio()
 	                          [this](const uint64_t addr, const size_t size)
 	                          {
 		                          return this->read(addr, size);
-	                          }, [this](const uint64_t, const size_t, const uint64_t)
+	                          }, [](const uint64_t, const size_t, const uint64_t)
 	                          {
 		                          // Writing not supported!
 	                          });

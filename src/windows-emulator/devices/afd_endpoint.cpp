@@ -354,7 +354,7 @@ namespace
 			}
 
 			const auto* address = reinterpret_cast<const sockaddr*>(data.data() + address_offset);
-			const auto address_size = static_cast<int>(data.size() - address_offset);
+			const auto address_size = static_cast<socklen_t>(data.size() - address_offset);
 
 			const network::address addr(address, address_size);
 
@@ -451,18 +451,13 @@ namespace
 				return STATUS_INVALID_PARAMETER;
 			}
 
-			int fromlength = static_cast<int>(address.size());
+			auto fromlength = static_cast<socklen_t>(address.size());
 
 			std::vector<char> data{};
 			data.resize(buffer.len);
 
-#ifdef OS_WINDOWS
-			const auto recevied_data = recvfrom(*this->s_, data.data(), static_cast<int>(data.size()), 0,
+			const auto recevied_data = recvfrom(*this->s_, data.data(), static_cast<send_size>(data.size()), 0,
 			                                    reinterpret_cast<sockaddr*>(address.data()), &fromlength);
-#else
-			const auto recevied_data = recvfrom(*this->s_, data.data(), static_cast<int>(data.size()), 0,
-			                                    reinterpret_cast<sockaddr*>(address.data()), (socklen_t*)&fromlength);
-#endif
 
 			if (recevied_data < 0)
 			{
@@ -508,15 +503,15 @@ namespace
 			const auto buffer = emu.read_memory<EMU_WSABUF<EmulatorTraits<Emu64>>>(send_info.BufferArray);
 
 			const auto address = emu.read_memory(send_info.TdiConnInfo.RemoteAddress,
-			                                     send_info.TdiConnInfo.RemoteAddressLength);
+			                                     static_cast<size_t>(send_info.TdiConnInfo.RemoteAddressLength));
 
 			const network::address target(reinterpret_cast<const sockaddr*>(address.data()),
-			                              static_cast<int>(address.size()));
+			                              static_cast<socklen_t>(address.size()));
 
 			const auto data = emu.read_memory(buffer.buf, buffer.len);
 
 			const auto sent_data = sendto(*this->s_, reinterpret_cast<const char*>(data.data()),
-			                              static_cast<int>(data.size()), 0 /* ? */, &target.get_addr(),
+			                              static_cast<send_size>(data.size()), 0 /* ? */, &target.get_addr(),
 			                              target.get_size());
 
 			if (sent_data < 0)

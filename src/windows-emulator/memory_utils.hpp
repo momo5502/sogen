@@ -21,7 +21,7 @@ inline std::string get_permission_string(const memory_permission permission)
 
 inline memory_permission map_nt_to_emulator_protection(uint32_t nt_protection)
 {
-	nt_protection &= ~PAGE_GUARD; // TODO: Implement that
+	nt_protection &= ~static_cast<uint32_t>(PAGE_GUARD); // TODO: Implement that
 
 	switch (nt_protection)
 	{

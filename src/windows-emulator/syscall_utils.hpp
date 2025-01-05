@@ -273,7 +273,7 @@ inline std::chrono::system_clock::time_point convert_from_ksystem_time(const vol
 }
 
 #ifndef OS_WINDOWS
-using __time64_t = uint64_t;
+using __time64_t = int64_t;
 #endif
 
 inline LARGE_INTEGER convert_unix_to_windows_time(const __time64_t unix_time)

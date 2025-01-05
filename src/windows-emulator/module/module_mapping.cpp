@@ -118,7 +118,7 @@ namespace
 				const auto entry = entries.get(i);
 
 				const int type = entry >> 12;
-				const int offset = entry & 0xfff;
+				const auto offset = static_cast<uint16_t>(entry & 0xfff);
 				const auto total_offset = relocation.VirtualAddress + offset;
 
 				switch (type)
