@@ -53,3 +53,36 @@ jobs:
 
       - name: CMake Test
         run: cd build/${{matrix.preset}} && ctest --verbose
+
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration:
+          - Debug
+          - Release
+        include:
+          - configuration: Debug
+            preset: debug
+          - configuration: Release
+            preset: release
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: CMake Build
+        run: cmake --workflow --preset=${{matrix.preset}}
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Linux ${{matrix.configuration}} Artifacts
+          path: |
+            build/${{matrix.preset}}/artifacts/*
