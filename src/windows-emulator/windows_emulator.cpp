@@ -907,7 +907,7 @@ void windows_emulator::setup_hooks()
 	{
 		const auto ip = this->emu().read_instruction_pointer();
 
-		printf("Invalid instruction at: 0x%" PRIu64 "\n", ip);
+		this->log.print(color::gray, "Invalid instruction at: 0x%" PRIu64 "\n", ip);
 
 		return instruction_hook_continuation::skip_instruction;
 	});
@@ -921,7 +921,7 @@ void windows_emulator::setup_hooks()
 		}
 
 		const auto rip = this->emu().read_instruction_pointer();
-		printf("Interrupt: %i 0x%" PRIu64 "\n", interrupt, rip);
+		this->log.print(color::gray, "Interrupt: %i 0x%" PRIu64 "\n", interrupt, rip);
 
 		if (this->fuzzing || true) // TODO: Fix
 		{
