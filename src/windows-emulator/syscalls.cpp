@@ -1775,8 +1775,8 @@ namespace
 					{
 						const auto tls_entry_ptr = tls_vector + tls_info.TlsIndex;
 
-						const auto old_entry = c.emu.read_memory<void*>(tls_entry_ptr);
-						c.emu.write_memory<void*>(tls_entry_ptr, entry.TlsModulePointer);
+						const auto old_entry = c.emu.read_memory<EmulatorTraits<Emu64>::PVOID>(tls_entry_ptr);
+						c.emu.write_memory<EmulatorTraits<Emu64>::PVOID>(tls_entry_ptr, entry.TlsModulePointer);
 
 						entry.TlsModulePointer = old_entry;
 					}

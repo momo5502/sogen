@@ -841,7 +841,7 @@ struct THREAD_TLS_INFO
     union
     {
         EmulatorTraits<Emu64>::PVOID* TlsVector;
-        PVOID TlsModulePointer;
+        EmulatorTraits<Emu64>::PVOID TlsModulePointer;
     };
 
     EMULATOR_CAST(std::uint64_t, ULONG_PTR) ThreadId;

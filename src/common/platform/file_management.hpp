@@ -67,6 +67,8 @@
 #define SL_RETURN_SINGLE_ENTRY             0x02
 #define SL_NO_CURSOR_UPDATE                0x10
 
+#define SEC_IMAGE                   0x01000000
+
 typedef enum _FSINFOCLASS
 {
     FileFsVolumeInformation = 1, // q: FILE_FS_VOLUME_INFORMATION
@@ -330,8 +332,8 @@ typedef struct _FILE_BOTH_DIR_INFORMATION
     ULONG FileAttributes;
     ULONG FileNameLength;
     ULONG EaSize;
-    CCHAR ShortNameLength;
-    WCHAR ShortName[12];
+    char ShortNameLength;
+    char16_t ShortName[12];
     char16_t FileName[1];
 } FILE_BOTH_DIR_INFORMATION, * PFILE_BOTH_DIR_INFORMATION;
 
