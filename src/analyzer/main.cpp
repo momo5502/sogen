@@ -15,6 +15,10 @@ namespace
 
 	void watch_system_objects(windows_emulator& win_emu, const bool cache_logging)
 	{
+		(void)win_emu;
+		(void)cache_logging;
+
+#ifdef OS_WINDOWS
 		watch_object(win_emu, *win_emu.current_thread().teb, cache_logging);
 		watch_object(win_emu, win_emu.process().peb, cache_logging);
 		watch_object(win_emu, emulator_object<KUSER_SHARED_DATA64>{win_emu.emu(), kusd_mmio::address()}, cache_logging);
@@ -37,6 +41,7 @@ namespace
 				                                params_hook = watch_object(win_emu, obj, cache_logging);
 			                                }
 		                                });
+#endif
 	}
 
 	void run_emulation(windows_emulator& win_emu, const analysis_options& options)

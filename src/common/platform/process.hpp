@@ -679,6 +679,55 @@ struct TOKEN_USER64 {
     SID_AND_ATTRIBUTES64 User;
 };
 
+struct TOKEN_BNO_ISOLATION_INFORMATION64 {
+    EmulatorTraits<Emu64>::PVOID       IsolationPrefix;
+    BOOLEAN     IsolationEnabled;
+};
+
+struct TOKEN_MANDATORY_LABEL64 {
+    SID_AND_ATTRIBUTES64 Label;
+};
+
+#ifndef OS_WINDOWS
+
+typedef enum _TOKEN_TYPE {
+    TokenPrimary = 1,
+    TokenImpersonation
+} TOKEN_TYPE;
+typedef TOKEN_TYPE* PTOKEN_TYPE;
+
+typedef struct _TOKEN_ELEVATION {
+    DWORD TokenIsElevated;
+} TOKEN_ELEVATION, * PTOKEN_ELEVATION;
+
+typedef enum _SECURITY_IMPERSONATION_LEVEL {
+  SecurityAnonymous,
+  SecurityIdentification,
+  SecurityImpersonation,
+  SecurityDelegation
+} SECURITY_IMPERSONATION_LEVEL, *PSECURITY_IMPERSONATION_LEVEL;
+
+
+typedef struct _LUID {
+    DWORD LowPart;
+    LONG HighPart;
+} LUID, *PLUID;
+
+typedef struct _TOKEN_STATISTICS {
+    LUID TokenId;
+    LUID AuthenticationId;
+    LARGE_INTEGER ExpirationTime;
+    TOKEN_TYPE TokenType;
+    SECURITY_IMPERSONATION_LEVEL ImpersonationLevel;
+    DWORD DynamicCharged;
+    DWORD DynamicAvailable;
+    DWORD GroupCount;
+    DWORD PrivilegeCount;
+    LUID ModifiedId;
+} TOKEN_STATISTICS, *PTOKEN_STATISTICS;
+
+#endif
+
 typedef struct _TOKEN_SECURITY_ATTRIBUTES_INFORMATION
 {
     USHORT Version;

@@ -12,6 +12,8 @@
 #include <utils/string.hpp>
 #include <utils/finally.hpp>
 
+#include <sys/stat.h>
+
 namespace
 {
 	NTSTATUS handle_NtQueryPerformanceCounter(const syscall_context& c,
@@ -1409,15 +1411,15 @@ namespace
 		{
 			if (return_length)
 			{
-				return_length.write(sizeof(ULONG_PTR));
+				return_length.write(sizeof(EmulatorTraits<Emu64>::PVOID));
 			}
 
-			if (thread_information_length != sizeof(ULONG_PTR))
+			if (thread_information_length != sizeof(EmulatorTraits<Emu64>::PVOID))
 			{
 				return STATUS_BUFFER_OVERFLOW;
 			}
 
-			const emulator_object<ULONG_PTR> info{c.emu, thread_information};
+			const emulator_object<EmulatorTraits<Emu64>::PVOID> info{c.emu, thread_information};
 			info.write(thread->start_address);
 
 			return STATUS_SUCCESS;
@@ -2433,7 +2435,7 @@ namespace
 
 		if (token_information_class == TokenIntegrityLevel)
 		{
-			constexpr auto required_size = sizeof(sid) + sizeof(TOKEN_MANDATORY_LABEL);
+			constexpr auto required_size = sizeof(sid) + sizeof(TOKEN_MANDATORY_LABEL64);
 			return_length.write(required_size);
 
 			if (required_size > token_information_length)
@@ -2441,18 +2443,18 @@ namespace
 				return STATUS_BUFFER_TOO_SMALL;
 			}
 
-			TOKEN_MANDATORY_LABEL label{};
+			TOKEN_MANDATORY_LABEL64 label{};
 			label.Label.Attributes = 0;
-			label.Label.Sid = reinterpret_cast<void*>(token_information + sizeof(TOKEN_MANDATORY_LABEL));
+			label.Label.Sid = token_information + sizeof(TOKEN_MANDATORY_LABEL64);
 
-			emulator_object<TOKEN_MANDATORY_LABEL>{c.emu, token_information}.write(label);
-			c.emu.write_memory(token_information + sizeof(TOKEN_MANDATORY_LABEL), sid, sizeof(sid));
+			emulator_object<TOKEN_MANDATORY_LABEL64>{c.emu, token_information}.write(label);
+			c.emu.write_memory(token_information + sizeof(TOKEN_MANDATORY_LABEL64), sid, sizeof(sid));
 			return STATUS_SUCCESS;
 		}
 
 		if (token_information_class == TokenBnoIsolation)
 		{
-			constexpr auto required_size = sizeof(TOKEN_BNO_ISOLATION_INFORMATION);
+			constexpr auto required_size = sizeof(TOKEN_BNO_ISOLATION_INFORMATION64);
 			return_length.write(required_size);
 
 			if (required_size > token_information_length)
@@ -2460,8 +2462,8 @@ namespace
 				return STATUS_BUFFER_TOO_SMALL;
 			}
 
-			c.emu.write_memory(token_information, TOKEN_BNO_ISOLATION_INFORMATION{
-				                   .IsolationPrefix = nullptr,
+			c.emu.write_memory(token_information, TOKEN_BNO_ISOLATION_INFORMATION64{
+				                   .IsolationPrefix = 0,
 				                   .IsolationEnabled = 0,
 			                   });
 
@@ -2897,10 +2899,11 @@ namespace
 		const auto filename = read_unicode_string(c.emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, attributes.ObjectName});
 		const auto u8_filename = u16_to_u8(filename);
 
-		struct _stat64 file_stat{};
 #ifdef OS_WINDOWS
+		struct _stat64 file_stat{};
 		if (_stat64(u8_filename.c_str(), &file_stat) != 0)
 #else
+		struct stat64 file_stat{};
 		if (stat64(u8_filename.c_str(), &file_stat) != 0)
 #endif
 		{
@@ -3398,7 +3401,7 @@ namespace
 
 		thread_context.access([&](CONTEXT64& context)
 		{
-			if (context.ContextFlags & CONTEXT_DEBUG_REGISTERS)
+			if (context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64)
 			{
 				c.win_emu.log.print(color::pink, "--> Reading debug registers!\n");
 			}

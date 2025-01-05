@@ -58,6 +58,8 @@
 #define FILE_NON_DIRECTORY_FILE             0x00000040
 #define FILE_CREATE_TREE_CONNECTION         0x00000080
 
+#define FILE_ATTRIBUTE_NORMAL               0x00000080
+
 #define PS_ATTRIBUTE_NUMBER_MASK    0x0000ffff
 #define PS_ATTRIBUTE_THREAD         0x00010000 // may be used with thread creation
 #define PS_ATTRIBUTE_INPUT          0x00020000 // input only
@@ -177,17 +179,6 @@ typedef enum _FILE_INFORMATION_CLASS
     FileMupProviderInfo, // MUP_PROVIDER_INFORMATION
     FileMaximumInformation
 } FILE_INFORMATION_CLASS, *PFILE_INFORMATION_CLASS;
-
-#ifndef OS_WINDOWS
-typedef enum _SECURITY_IMPERSONATION_LEVEL {
-  SecurityAnonymous,
-  SecurityIdentification,
-  SecurityImpersonation,
-  SecurityDelegation
-} SECURITY_IMPERSONATION_LEVEL, *PSECURITY_IMPERSONATION_LEVEL;
-
-
-#endif
 
 typedef enum _OBJECT_INFORMATION_CLASS
 {

@@ -436,12 +436,12 @@ namespace
 		ctx.ContextFlags = CONTEXT64_ALL;
 		context_frame::save(emu, ctx);
 
-		EXCEPTION_RECORD record{};
+		EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>> record{};
 		memset(&record, 0, sizeof(record));
 		record.ExceptionCode = static_cast<DWORD>(STATUS_ILLEGAL_INSTRUCTION);
 		record.ExceptionFlags = 0;
-		record.ExceptionRecord = nullptr;
-		record.ExceptionAddress = reinterpret_cast<void*>(emu.read_instruction_pointer());
+		record.ExceptionRecord = 0;
+		record.ExceptionAddress = static_cast<EmulatorTraits<Emu64>::PVOID>(emu.read_instruction_pointer());
 		record.NumberParameters = 0;
 
 		EMU_EXCEPTION_POINTERS<EmulatorTraits<Emu64>> pointers{};
