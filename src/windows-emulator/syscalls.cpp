@@ -77,7 +77,7 @@ namespace
 			key = parent_handle->hive / parent_handle->path / key;
 		}
 
-		c.win_emu.logger.print(color::dark_gray, "--> Registry key: %S\n", key.c_str());
+		c.win_emu.log.print(color::dark_gray, "--> Registry key: %S\n", key.c_str());
 
 		auto entry = c.proc.registry.get_key(key);
 		if (!entry.has_value())
@@ -160,7 +160,7 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		c.win_emu.logger.print(color::gray, "Unsupported registry class: %X\n", key_information_class);
+		c.win_emu.log.print(color::gray, "Unsupported registry class: %X\n", key_information_class);
 		c.emu.stop();
 		return STATUS_NOT_SUPPORTED;
 	}
@@ -275,7 +275,7 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		c.win_emu.logger.print(color::gray, "Unsupported registry value class: %X\n", key_value_information_class);
+		c.win_emu.log.print(color::gray, "Unsupported registry value class: %X\n", key_value_information_class);
 		c.emu.stop();
 		return STATUS_NOT_SUPPORTED;
 	}
@@ -311,7 +311,7 @@ namespace
 
 		if (info_class == ThreadHideFromDebugger)
 		{
-			c.win_emu.logger.print(color::pink, "--> Hiding thread %X from debugger!\n", thread->id);
+			c.win_emu.log.print(color::pink, "--> Hiding thread %X from debugger!\n", thread->id);
 			return STATUS_SUCCESS;
 		}
 
@@ -326,7 +326,7 @@ namespace
 			const auto i = info.read();
 			thread->name = read_unicode_string(c.emu, i.ThreadName);
 
-			c.win_emu.logger.print(color::blue, "Setting thread (%d) name: %S\n", thread->id, thread->name.c_str());
+			c.win_emu.log.print(color::blue, "Setting thread (%d) name: %S\n", thread->id, thread->name.c_str());
 
 			return STATUS_SUCCESS;
 		}
@@ -437,7 +437,7 @@ namespace
 	{
 		if (mutant_handle.value.type != handle_types::mutant)
 		{
-			c.win_emu.logger.error("Bad handle type for NtReleaseMutant\n");
+			c.win_emu.log.error("Bad handle type for NtReleaseMutant\n");
 			c.emu.stop();
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -595,7 +595,7 @@ namespace
 		const auto attributes = object_attributes.read();
 
 		auto filename = read_unicode_string(c.emu, attributes.ObjectName);
-		c.win_emu.logger.print(color::dark_gray, "--> Opening section: %S\n", filename.c_str());
+		c.win_emu.log.print(color::dark_gray, "--> Opening section: %S\n", filename.c_str());
 
 		if (filename == L"\\Windows\\SharedSection")
 		{
@@ -695,7 +695,7 @@ namespace
 
 		if (section_entry->is_image())
 		{
-			const auto binary = c.proc.module_manager.map_module(section_entry->file_name, c.win_emu.logger);
+			const auto binary = c.proc.mod_manager.map_module(section_entry->file_name, c.win_emu.log);
 			if (!binary)
 			{
 				return STATUS_FILE_INVALID;
@@ -825,7 +825,7 @@ namespace
 				return STATUS_BUFFER_OVERFLOW;
 			}
 
-			const auto mod = c.proc.module_manager.find_by_address(base_address);
+			const auto mod = c.proc.mod_manager.find_by_address(base_address);
 			if (!mod)
 			{
 				printf("Bad address for memory image request: 0x%llX\n", base_address);
@@ -1860,7 +1860,7 @@ namespace
 
 		const auto requested_protection = map_nt_to_emulator_protection(protection);
 
-		c.win_emu.logger.print(color::dark_gray, "--> Changing protection at 0x%llX-0x%llX to %s\n", aligned_start,
+		c.win_emu.log.print(color::dark_gray, "--> Changing protection at 0x%llX-0x%llX to %s\n", aligned_start,
 		                       aligned_start + aligned_length, get_permission_string(requested_protection).c_str());
 
 		memory_permission old_protection_value{};
@@ -2052,7 +2052,7 @@ namespace
 		const auto* file = c.proc.files.get(file_handle);
 		if (file)
 		{
-			c.win_emu.logger.print(color::dark_gray, "--> Section for file %S\n", file->name.c_str());
+			c.win_emu.log.print(color::dark_gray, "--> Section for file %S\n", file->name.c_str());
 			s.file_name = file->name;
 		}
 
@@ -2062,7 +2062,7 @@ namespace
 			if (attributes.ObjectName)
 			{
 				const auto name = read_unicode_string(c.emu, attributes.ObjectName);
-				c.win_emu.logger.print(color::dark_gray, "--> Section with name %S\n", name.c_str());
+				c.win_emu.log.print(color::dark_gray, "--> Section with name %S\n", name.c_str());
 				s.name = std::move(name);
 			}
 		}
@@ -2096,7 +2096,7 @@ namespace
 	                              const emulator_object<ULONG> connection_info_length)
 	{
 		auto port_name = read_unicode_string(c.emu, server_port_name);
-		c.win_emu.logger.print(color::dark_gray, "NtConnectPort: %S\n", port_name.c_str());
+		c.win_emu.log.print(color::dark_gray, "NtConnectPort: %S\n", port_name.c_str());
 
 		port p{};
 		p.name = std::move(port_name);
@@ -2712,7 +2712,7 @@ namespace
 			}
 
 			c.win_emu.on_stdout(temp_buffer);
-			c.win_emu.logger.info("%.*s", static_cast<int>(temp_buffer.size()), temp_buffer.data());
+			c.win_emu.log.info("%.*s", static_cast<int>(temp_buffer.size()), temp_buffer.data());
 
 			return STATUS_SUCCESS;
 		}
@@ -2796,7 +2796,7 @@ namespace
 
 		auto printer = utils::finally([&]
 		{
-			c.win_emu.logger.print(color::dark_gray, "--> Opening file: %S\n", filename.c_str());
+			c.win_emu.log.print(color::dark_gray, "--> Opening file: %S\n", filename.c_str());
 		});
 
 		constexpr std::wstring_view device_prefix = L"\\Device\\";
@@ -2842,7 +2842,7 @@ namespace
 
 		if (f.name.ends_with(L"\\") || create_options & FILE_DIRECTORY_FILE)
 		{
-			c.win_emu.logger.print(color::dark_gray, "--> Opening folder: %S\n", f.name.c_str());
+			c.win_emu.log.print(color::dark_gray, "--> Opening folder: %S\n", f.name.c_str());
 
 			if (create_disposition & FILE_CREATE)
 			{
@@ -2865,7 +2865,7 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		c.win_emu.logger.print(color::dark_gray, "--> Opening file: %S\n", f.name.c_str());
+		c.win_emu.log.print(color::dark_gray, "--> Opening file: %S\n", f.name.c_str());
 
 		const auto* mode = map_mode(desired_access, create_disposition);
 
@@ -3140,7 +3140,7 @@ namespace
 			return STATUS_NOT_SUPPORTED;
 		}
 
-		const auto* mod = c.proc.module_manager.find_by_address(base_address);
+		const auto* mod = c.proc.mod_manager.find_by_address(base_address);
 		if (!mod)
 		{
 			puts("Unmapping non-module section not supported!");
@@ -3148,7 +3148,7 @@ namespace
 			return STATUS_NOT_SUPPORTED;
 		}
 
-		if (c.proc.module_manager.unmap(base_address))
+		if (c.proc.mod_manager.unmap(base_address))
 		{
 			return STATUS_SUCCESS;
 		}
@@ -3238,7 +3238,7 @@ namespace
 	{
 		if (alertable)
 		{
-			c.win_emu.logger.print(color::gray, "Alertable NtWaitForMultipleObjects not supported yet!\n");
+			c.win_emu.log.print(color::gray, "Alertable NtWaitForMultipleObjects not supported yet!\n");
 		}
 
 		if (wait_type != WaitAny && wait_type != WaitAll)
@@ -3258,7 +3258,7 @@ namespace
 
 			if (!is_awaitable_object_type(h))
 			{
-				c.win_emu.logger.print(color::gray, "Unsupported handle type for NtWaitForMultipleObjects: %d!\n",
+				c.win_emu.log.print(color::gray, "Unsupported handle type for NtWaitForMultipleObjects: %d!\n",
 				                       h.value.type);
 				return STATUS_NOT_SUPPORTED;
 			}
@@ -3279,12 +3279,12 @@ namespace
 	{
 		if (alertable)
 		{
-			c.win_emu.logger.print(color::gray, "Alertable NtWaitForSingleObject not supported yet!\n");
+			c.win_emu.log.print(color::gray, "Alertable NtWaitForSingleObject not supported yet!\n");
 		}
 
 		if (!is_awaitable_object_type(h))
 		{
-			c.win_emu.logger.print(color::gray,
+			c.win_emu.log.print(color::gray,
 			                       "Unsupported handle type for NtWaitForSingleObject: %d!\n", h.value.type);
 			return STATUS_NOT_SUPPORTED;
 		}
@@ -3360,7 +3360,7 @@ namespace
 	{
 		if (lock.value())
 		{
-			c.win_emu.logger.print(color::gray, "NtAlertThreadByThreadIdEx with lock not supported yet!");
+			c.win_emu.log.print(color::gray, "NtAlertThreadByThreadIdEx with lock not supported yet!");
 			//c.emu.stop();
 			//return STATUS_NOT_SUPPORTED;
 		}
@@ -3416,7 +3416,7 @@ namespace
 		{
 			if (context.ContextFlags & CONTEXT_DEBUG_REGISTERS)
 			{
-				c.win_emu.logger.print(color::pink, "--> Reading debug registers!\n");
+				c.win_emu.log.print(color::pink, "--> Reading debug registers!\n");
 			}
 
 			context_frame::save(c.emu, context);

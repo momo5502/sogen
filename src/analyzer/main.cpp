@@ -45,7 +45,7 @@ namespace
 			if (options.use_gdb)
 			{
 				const auto* address = "127.0.0.1:28960";
-				win_emu.logger.print(color::pink, "Waiting for GDB connection on %s...\n", address);
+				win_emu.log.print(color::pink, "Waiting for GDB connection on %s...\n", address);
 
 				win_x64_gdb_stub_handler handler{win_emu};
 				run_gdb_stub(handler, "i386:x86-64", gdb_registers.size(), address);
@@ -57,24 +57,24 @@ namespace
 		}
 		catch (const std::exception& e)
 		{
-			win_emu.logger.print(color::red, "Emulation failed at: 0x%llX - %s\n",
+			win_emu.log.print(color::red, "Emulation failed at: 0x%llX - %s\n",
 			                     win_emu.emu().read_instruction_pointer(), e.what());
 			throw;
 		}
 		catch (...)
 		{
-			win_emu.logger.print(color::red, "Emulation failed at: 0x%llX\n", win_emu.emu().read_instruction_pointer());
+			win_emu.log.print(color::red, "Emulation failed at: 0x%llX\n", win_emu.emu().read_instruction_pointer());
 			throw;
 		}
 
 		const auto exit_status = win_emu.process().exit_status;
 		if (exit_status.has_value())
 		{
-			win_emu.logger.print(color::red, "Emulation terminated with status: %X\n", *exit_status);
+			win_emu.log.print(color::red, "Emulation terminated with status: %X\n", *exit_status);
 		}
 		else
 		{
-			win_emu.logger.print(color::red, "Emulation terminated without status!\n");
+			win_emu.log.print(color::red, "Emulation terminated without status!\n");
 		}
 	}
 
@@ -126,7 +126,7 @@ namespace
 			auto read_handler = [&, section, concise_logging](const uint64_t address, size_t, uint64_t)
 			{
 				const auto rip = win_emu.emu().read_instruction_pointer();
-				if (win_emu.process().module_manager.find_by_address(rip) != win_emu.process().executable)
+				if (win_emu.process().mod_manager.find_by_address(rip) != win_emu.process().executable)
 				{
 					return;
 				}
@@ -138,7 +138,7 @@ namespace
 					if (count > 100 && count % 10000 != 0) return;
 				}
 
-				win_emu.logger.print(
+				win_emu.log.print(
 					color::green,
 					"Reading from executable section %s at 0x%llX via 0x%llX\n",
 					section.name.c_str(), address, rip);
@@ -147,7 +147,7 @@ namespace
 			const auto write_handler = [&, section, concise_logging](const uint64_t address, size_t, uint64_t)
 			{
 				const auto rip = win_emu.emu().read_instruction_pointer();
-				if (win_emu.process().module_manager.find_by_address(rip) != win_emu.process().executable)
+				if (win_emu.process().mod_manager.find_by_address(rip) != win_emu.process().executable)
 				{
 					return;
 				}
@@ -159,7 +159,7 @@ namespace
 					if (count > 100 && count % 10000 != 0) return;
 				}
 
-				win_emu.logger.print(
+				win_emu.log.print(
 					color::blue,
 					"Writing to executable section %s at 0x%llX via 0x%llX\n",
 					section.name.c_str(), address, rip);

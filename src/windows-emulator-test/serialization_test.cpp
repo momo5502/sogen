@@ -58,7 +58,7 @@ namespace test
 		utils::buffer_deserializer deserializer{serializer.get_buffer()};
 
 		windows_emulator new_emu{};
-		new_emu.logger.disable_output(true);
+		new_emu.log.disable_output(true);
 		new_emu.deserialize(deserializer);
 
 		new_emu.start();

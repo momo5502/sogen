@@ -507,7 +507,7 @@ struct process_context
 		  , peb(emu)
 		  , process_params(emu)
 		  , kusd(emu, *this)
-		  , module_manager(emu)
+		  , mod_manager(emu)
 	{
 	}
 
@@ -526,7 +526,7 @@ struct process_context
 	emulator_object<RTL_USER_PROCESS_PARAMETERS> process_params;
 	kusd_mmio kusd;
 
-	module_manager module_manager;
+	module_manager mod_manager;
 
 	mapped_module* executable{};
 	mapped_module* ntdll{};
@@ -564,7 +564,7 @@ struct process_context
 		buffer.write(this->peb);
 		buffer.write(this->process_params);
 		buffer.write(this->kusd);
-		buffer.write(this->module_manager);
+		buffer.write(this->mod_manager);
 
 		buffer.write(this->executable->image_base);
 		buffer.write(this->ntdll->image_base);
@@ -603,15 +603,15 @@ struct process_context
 		buffer.read(this->peb);
 		buffer.read(this->process_params);
 		buffer.read(this->kusd);
-		buffer.read(this->module_manager);
+		buffer.read(this->mod_manager);
 
 		const auto executable_base = buffer.read<uint64_t>();
 		const auto ntdll_base = buffer.read<uint64_t>();
 		const auto win32u_base = buffer.read<uint64_t>();
 
-		this->executable = this->module_manager.find_by_address(executable_base);
-		this->ntdll = this->module_manager.find_by_address(ntdll_base);
-		this->win32u = this->module_manager.find_by_address(win32u_base);
+		this->executable = this->mod_manager.find_by_address(executable_base);
+		this->ntdll = this->mod_manager.find_by_address(ntdll_base);
+		this->win32u = this->mod_manager.find_by_address(win32u_base);
 
 		buffer.read(this->ldr_initialize_thunk);
 		buffer.read(this->rtl_user_thread_start);

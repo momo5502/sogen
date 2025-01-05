@@ -97,7 +97,7 @@ public:
 		}
 	}
 
-	logger logger{};
+	logger log{};
 	bool verbose{false};
 	bool verbose_calls{false};
 	bool buffer_stdout{false};
