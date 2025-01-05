@@ -23,37 +23,13 @@ enum class color
 class logger
 {
 public:
+	void print(color c, std::string_view message) const;
 	void print(color c, const char* message, ...) const FORMAT_ATTRIBUTE(3, 4);
-
-	template <typename... Args>
-	void info(const char* message, Args... args) const
-	{
-		this->print(color::cyan, message, args...);
-	}
-
-	template <typename... Args>
-	void warn(const char* message, Args... args) const
-	{
-		this->print(color::yellow, message, args...);
-	}
-
-	template <typename... Args>
-	void error(const char* message, Args... args) const
-	{
-		this->print(color::red, message, args...);
-	}
-
-	template <typename... Args>
-	void success(const char* message, Args... args) const
-	{
-		this->print(color::green, message, args...);
-	}
-
-	template <typename... Args>
-	void log(const char* message, Args... args) const
-	{
-		this->print(color::gray, message, args...);
-	}
+	void info(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);
+	void warn(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);
+	void error(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);
+	void success(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);
+	void log(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);
 
 	void disable_output(const bool value)
 	{

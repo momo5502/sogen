@@ -75,6 +75,12 @@ namespace
 		return {buffer, static_cast<size_t>(count)};
 	}
 
+#define format_to_string(msg, str)\
+	va_list ap;\
+	va_start(ap, msg);\
+	const auto str = format(&ap, msg);\
+	va_end(ap);
+
 	void print_colored(const std::string_view& line, const color_type base_color)
 	{
 		const auto _ = utils::finally(&reset_color);
@@ -83,18 +89,48 @@ namespace
 	}
 }
 
-void logger::print(const color c, const char* message, ...) const
+void logger::print(const color c, const std::string_view message) const
 {
 	if (this->disable_output_)
 	{
 		return;
 	}
 
-	va_list ap;
-	va_start(ap, message);
+	print_colored(message, get_color_type(c));
+}
 
-	const auto data = format(&ap, message);
-	print_colored(data, get_color_type(c));
+void logger::print(const color c, const char* message, ...) const
+{
+	format_to_string(message, data);
+	this->print(c, data);
+}
 
-	va_end(ap);
+void logger::info(const char* message, ...) const
+{
+	format_to_string(message, data);
+	this->print(color::cyan, data);
+}
+
+void logger::warn(const char* message, ...) const
+{
+	format_to_string(message, data);
+	this->print(color::yellow, data);
+}
+
+void logger::error(const char* message, ...) const
+{
+	format_to_string(message, data);
+	this->print(color::red, data);
+}
+
+void logger::success(const char* message, ...) const
+{
+	format_to_string(message, data);
+	this->print(color::green, data);
+}
+
+void logger::log(const char* message, ...) const
+{
+	format_to_string(message, data);
+	this->print(color::gray, data);
 }
