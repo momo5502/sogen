@@ -68,10 +68,10 @@ namespace network
 
 	bool socket::send(const address& target, const void* data, const size_t size) const
 	{
-		const int res = sendto(this->socket_, static_cast<const char*>(data), static_cast<int>(size), 0,
+		const auto res = sendto(this->socket_, static_cast<const char*>(data), static_cast<send_size>(size), 0,
 		                       &target.get_addr(),
-		                       target.get_size());
-		return res == static_cast<int>(size);
+		                       static_cast<socklen_t>(target.get_size()));
+		return static_cast<size_t>(res) == size;
 	}
 
 	bool socket::send(const address& target, const std::string& data) const

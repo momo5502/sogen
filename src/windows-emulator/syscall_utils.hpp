@@ -174,6 +174,8 @@ void forward_syscall(const syscall_context& c, NTSTATUS (*handler)(const syscall
 		resolve_indexed_argument<std::remove_cv_t<std::remove_reference_t<Args>>>(c.emu, index)...
 	};
 
+	(void)index;
+
 	const auto ret = std::apply(handler, std::move(func_args));
 	write_status(c, ret, ip);
 }

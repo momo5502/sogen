@@ -1,8 +1,12 @@
 #pragma once
 
 #ifdef _WIN32
+    #pragma warning(push)
     #pragma warning(disable: 4201) // nameless struct/union
     #pragma warning(disable: 4702) // unreachable code
+#else
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wpedantic"
 #endif
 
 #include "compiler.hpp"
@@ -21,7 +25,7 @@
 #include "threading.hpp"
 
 #ifdef OS_WINDOWS
-    #pragma comment(lib, "ntdll")
+#pragma comment(lib, "ntdll")
     
 extern "C"
 {
@@ -37,4 +41,7 @@ extern "C"
         _Out_opt_ PULONG ReturnLength
         );
 }
+    #pragma warning(pop)
+#else
+    #pragma GCC diagnostic pop
 #endif

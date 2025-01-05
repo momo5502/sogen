@@ -7,11 +7,13 @@
 
 #ifdef _WIN32
 using socklen_t = int;
+using send_size = int;
 #define GET_SOCKET_ERROR() (WSAGetLastError())
 #define poll WSAPoll
 #define SOCK_WOULDBLOCK WSAEWOULDBLOCK
 #else
 using SOCKET = int;
+using send_size = ssize_t;
 #define INVALID_SOCKET  (SOCKET)(~0)
 #define SOCKET_ERROR            (-1)
 #define GET_SOCKET_ERROR() (errno)
