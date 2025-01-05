@@ -202,6 +202,11 @@ mapped_module map_module_from_data(emulator& emu, const std::span<const uint8_t>
 	const auto nt_headers = buffer.as<IMAGE_NT_HEADERS>(nt_headers_offset).get();
 	auto& optional_header = nt_headers.OptionalHeader;
 
+	if (nt_headers.FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64)
+	{
+		throw std::runtime_error("Unsupported architecture!");
+	}
+
 	binary.image_base = optional_header.ImageBase;
 	binary.size_of_image = page_align_up(optional_header.SizeOfImage); // TODO: Sanitize
 
