@@ -88,15 +88,18 @@ namespace
 	}
 }
 
-inline void serialize(utils::buffer_serializer& buffer, const KUSER_SHARED_DATA64& kusd)
+namespace utils
 {
-	static_assert(KUSD_SIZE == sizeof(kusd));
-	buffer.write(&kusd, KUSD_SIZE);
-}
+	inline void serialize(buffer_serializer& buffer, const KUSER_SHARED_DATA64& kusd)
+	{
+		static_assert(KUSD_SIZE == sizeof(kusd));
+		buffer.write(&kusd, KUSD_SIZE);
+	}
 
-inline void deserialize(utils::buffer_deserializer& buffer, KUSER_SHARED_DATA64& kusd)
-{
-	buffer.read(&kusd, KUSD_SIZE);
+	inline void deserialize(buffer_deserializer& buffer, KUSER_SHARED_DATA64& kusd)
+	{
+		buffer.read(&kusd, KUSD_SIZE);
+	}
 }
 
 kusd_mmio::kusd_mmio(x64_emulator& emu, process_context& process)

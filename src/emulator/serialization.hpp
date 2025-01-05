@@ -9,11 +9,6 @@
 #include <functional>
 #include <typeindex>
 
-#ifndef WIN32
-inline void serialize() {}
-inline void deserialize() {}
-#endif
-
 namespace utils
 {
 	class buffer_serializer;
@@ -43,7 +38,7 @@ namespace utils
 		};
 
 		template <typename T>
-		struct has_serialize_function<T, std::void_t<decltype(::serialize(std::declval<buffer_serializer&>(),
+		struct has_serialize_function<T, std::void_t<decltype(serialize(std::declval<buffer_serializer&>(),
 		                                                                  std::declval<const std::remove_cvref_t<T>&>())
 		                              )>>
 			: std::true_type
@@ -56,7 +51,7 @@ namespace utils
 		};
 
 		template <typename T>
-		struct has_deserialize_function<T, std::void_t<decltype(::deserialize(
+		struct has_deserialize_function<T, std::void_t<decltype(deserialize(
 			                                std::declval<buffer_deserializer&>(),
 			                                std::declval<std::remove_cvref_t<T>&>()))>>
 			: std::true_type
@@ -142,7 +137,7 @@ namespace utils
 			}
 			else if constexpr (detail::has_deserialize_function<T>::value)
 			{
-				::deserialize(*this, object);
+				deserialize(*this, object);
 			}
 			else if constexpr (is_trivially_copyable)
 			{
@@ -365,7 +360,7 @@ namespace utils
 			}
 			else if constexpr (detail::has_serialize_function<T>::value)
 			{
-				::serialize(*this, object);
+				serialize(*this, object);
 			}
 			else if constexpr (is_trivially_copyable)
 			{

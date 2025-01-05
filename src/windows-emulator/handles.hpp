@@ -42,14 +42,17 @@ union handle
 	std::uint64_t h;
 };
 
-inline void serialize(utils::buffer_serializer& buffer, const handle& h)
+namespace utils
 {
-	buffer.write(h.bits);
-}
+	inline void serialize(buffer_serializer& buffer, const handle& h)
+	{
+		buffer.write(h.bits);
+	}
 
-inline void deserialize(utils::buffer_deserializer& buffer, handle& h)
-{
-	buffer.read(h.bits);
+	inline void deserialize(buffer_deserializer& buffer, handle& h)
+	{
+		buffer.read(h.bits);
+	}
 }
 
 inline bool operator==(const handle& h1, const handle& h2)
