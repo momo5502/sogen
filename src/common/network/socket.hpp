@@ -13,7 +13,7 @@ using send_size = int;
 #define SOCK_WOULDBLOCK WSAEWOULDBLOCK
 #else
 using SOCKET = int;
-using send_size = ssize_t;
+using send_size = size_t;
 #define INVALID_SOCKET  (SOCKET)(~0)
 #define SOCKET_ERROR            (-1)
 #define GET_SOCKET_ERROR() (errno)

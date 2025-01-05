@@ -21,7 +21,7 @@
 
 #include <cstring>
 
-#define ZeroMemory(x, y) memset(x, 0, y)
+#define ZeroMemory(x, y) memset(x, 0, static_cast<size_t>(y))
 
 #endif
 

@@ -97,6 +97,7 @@ namespace utils
 			const std::span result(this->buffer_.data() + this->offset_, length);
 			this->offset_ += length;
 
+			(void)this->no_debugging_;
 
 #ifndef NDEBUG
 			if (!this->no_debugging_)

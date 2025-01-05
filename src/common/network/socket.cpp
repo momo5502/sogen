@@ -57,7 +57,7 @@ namespace network
 
 	bool socket::bind_port(const address& target)
 	{
-		const auto result = bind(this->socket_, &target.get_addr(), target.get_size()) == 0;
+		const auto result = bind(this->socket_, &target.get_addr(), static_cast<socklen_t>(target.get_size())) == 0;
 		if (result)
 		{
 			this->port_ = target.get_port();
@@ -82,7 +82,7 @@ namespace network
 	bool socket::receive(address& source, std::string& data) const
 	{
 		char buffer[0x2000];
-		socklen_t len = source.get_max_size();
+		auto len = static_cast<socklen_t>(source.get_max_size());
 
 		const auto result = recvfrom(this->socket_, buffer, static_cast<int>(sizeof(buffer)), 0, &source.get_addr(),
 		                             &len);
