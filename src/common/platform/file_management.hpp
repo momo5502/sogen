@@ -63,6 +63,10 @@
 #define PS_ATTRIBUTE_INPUT          0x00020000 // input only
 #define PS_ATTRIBUTE_ADDITIVE       0x00040000 // "accumulated" e.g. bitmasks, counters, etc.
 
+#define SL_RESTART_SCAN                    0x01
+#define SL_RETURN_SINGLE_ENTRY             0x02
+#define SL_NO_CURSOR_UPDATE                0x10
+
 typedef enum _FSINFOCLASS
 {
     FileFsVolumeInformation = 1, // q: FILE_FS_VOLUME_INFORMATION
@@ -266,6 +270,70 @@ typedef struct _FILE_STANDARD_INFORMATION
     BOOLEAN DeletePending;
     BOOLEAN Directory;
 } FILE_STANDARD_INFORMATION, *PFILE_STANDARD_INFORMATION;
+
+typedef struct _FILE_NAME_INFORMATION
+{
+    ULONG FileNameLength;
+    char16_t FileName[1];
+} FILE_NAME_INFORMATION, * PFILE_NAME_INFORMATION;
+
+typedef struct _FILE_BASIC_INFORMATION
+{
+    LARGE_INTEGER CreationTime;         // Specifies the time that the file was created.
+    LARGE_INTEGER LastAccessTime;       // Specifies the time that the file was last accessed.
+    LARGE_INTEGER LastWriteTime;        // Specifies the time that the file was last written to.
+    LARGE_INTEGER ChangeTime;           // Specifies the last time the file was changed.
+    ULONG FileAttributes;               // Specifies one or more FILE_ATTRIBUTE_XXX flags.
+} FILE_BASIC_INFORMATION, * PFILE_BASIC_INFORMATION;
+
+typedef struct _FILE_DIRECTORY_INFORMATION
+{
+    ULONG NextEntryOffset;
+    ULONG FileIndex;
+    LARGE_INTEGER CreationTime;
+    LARGE_INTEGER LastAccessTime;
+    LARGE_INTEGER LastWriteTime;
+    LARGE_INTEGER ChangeTime;
+    LARGE_INTEGER EndOfFile;
+    LARGE_INTEGER AllocationSize;
+    ULONG FileAttributes;
+    ULONG FileNameLength;
+    char16_t FileName[1];
+} FILE_DIRECTORY_INFORMATION, * PFILE_DIRECTORY_INFORMATION;
+
+typedef struct _FILE_FULL_DIR_INFORMATION
+{
+    ULONG NextEntryOffset;
+    ULONG FileIndex;
+    LARGE_INTEGER CreationTime;
+    LARGE_INTEGER LastAccessTime;
+    LARGE_INTEGER LastWriteTime;
+    LARGE_INTEGER ChangeTime;
+    LARGE_INTEGER EndOfFile;
+    LARGE_INTEGER AllocationSize;
+    ULONG FileAttributes;
+    ULONG FileNameLength;
+    ULONG EaSize;
+    char16_t FileName[1];
+} FILE_FULL_DIR_INFORMATION, * PFILE_FULL_DIR_INFORMATION;
+
+typedef struct _FILE_BOTH_DIR_INFORMATION
+{
+    ULONG NextEntryOffset;
+    ULONG FileIndex;
+    LARGE_INTEGER CreationTime;
+    LARGE_INTEGER LastAccessTime;
+    LARGE_INTEGER LastWriteTime;
+    LARGE_INTEGER ChangeTime;
+    LARGE_INTEGER EndOfFile;
+    LARGE_INTEGER AllocationSize;
+    ULONG FileAttributes;
+    ULONG FileNameLength;
+    ULONG EaSize;
+    CCHAR ShortNameLength;
+    WCHAR ShortName[12];
+    char16_t FileName[1];
+} FILE_BOTH_DIR_INFORMATION, * PFILE_BOTH_DIR_INFORMATION;
 
 #ifndef OS_WINDOWS
 typedef BOOLEAN SECURITY_CONTEXT_TRACKING_MODE,

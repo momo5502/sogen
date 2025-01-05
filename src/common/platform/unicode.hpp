@@ -9,7 +9,7 @@ struct UNICODE_STRING {
     EMULATOR_CAST(typename Traits::PVOID, char16_t*) Buffer;
 };
 
-inline std::string u16_to_u8(std::u16string_view u16_view) {
+inline std::string u16_to_u8(const std::u16string_view u16_view) {
     std::string utf8_str;
     utf8_str.reserve(u16_view.size() * 2);
     for (char16_t ch : u16_view) {
@@ -27,7 +27,7 @@ inline std::string u16_to_u8(std::u16string_view u16_view) {
     return utf8_str;
 }
 
-inline std::string w_to_u8(std::wstring_view w_view) {
+inline std::string w_to_u8(const std::wstring_view w_view) {
     std::string utf8_str;
     utf8_str.reserve(w_view.size() * 2);
     for (char16_t ch : w_view) {
@@ -56,7 +56,7 @@ inline std::string w_to_u8(std::wstring_view w_view) {
         return std::wstring(reinterpret_cast<const wchar_t*>(u16str.data()), u16str.size());
     }
 
-    inline auto open_unicode(FILE** handle, std::u16string fileName, std::u16string mode)
+    inline auto open_unicode(FILE** handle, const std::u16string& fileName, const std::u16string& mode)
     {
         return _wfopen_s(handle, u16_to_w(fileName).c_str(), u16_to_w(mode).c_str());
     }

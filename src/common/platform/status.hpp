@@ -16,9 +16,14 @@ using NTSTATUS = std::uint32_t;
 #endif
 
 #define STATUS_SUCCESS                      ((NTSTATUS)0x00000000L)
+#define STATUS_WAIT_1                       ((NTSTATUS)0x00000001L) 
 
 #define STATUS_UNSUCCESSFUL                 ((NTSTATUS)0x00000001L)
 #define STATUS_ALERTED                      ((NTSTATUS)0x00000101L)
+
+#define STATUS_OBJECT_NAME_EXISTS           ((NTSTATUS)0x40000000L)
+
+#define STATUS_NO_MORE_FILES                ((NTSTATUS)0x80000006L)
 
 #define STATUS_ACCESS_DENIED                ((NTSTATUS)0xC0000022L)
 #define STATUS_BUFFER_TOO_SMALL             ((NTSTATUS)0xC0000023L)

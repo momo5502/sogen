@@ -5,19 +5,24 @@
 
 #include "object_watching.hpp"
 
-bool use_gdb = false;
-
 namespace
 {
-	void watch_system_objects(windows_emulator& win_emu)
+	struct analysis_options
 	{
-		//watch_object(win_emu, *win_emu.current_thread().teb);
-		//watch_object(win_emu, win_emu.process().peb);
-		//watch_object(win_emu, win_emu.process().kusd);
-		auto* params_hook = watch_object(win_emu, win_emu.process().process_params);
+		bool use_gdb{false};
+		bool concise_logging{false};
+	};
+
+	void watch_system_objects(windows_emulator& win_emu, const bool cache_logging)
+	{
+		watch_object(win_emu, *win_emu.current_thread().teb, cache_logging);
+		watch_object(win_emu, win_emu.process().peb, cache_logging);
+		watch_object(win_emu, emulator_object<KUSER_SHARED_DATA64>{win_emu.emu(), kusd_mmio::address()}, cache_logging);
+
+		auto* params_hook = watch_object(win_emu, win_emu.process().process_params, cache_logging);
 
 		win_emu.emu().hook_memory_write(win_emu.process().peb.value() + offsetof(PEB64, ProcessParameters), 0x8,
-		                                [&](const uint64_t address, size_t, const uint64_t value)
+		                                [&, cache_logging](const uint64_t address, size_t, const uint64_t value)
 		                                {
 			                                const auto target_address = win_emu.process().peb.value() + offsetof(
 				                                PEB64, ProcessParameters);
@@ -29,18 +34,18 @@ namespace
 				                                };
 
 				                                win_emu.emu().delete_hook(params_hook);
-				                                params_hook = watch_object(win_emu, obj);
+				                                params_hook = watch_object(win_emu, obj, cache_logging);
 			                                }
 		                                });
 	}
 
-	void run_emulation(windows_emulator& win_emu)
+	void run_emulation(windows_emulator& win_emu, const analysis_options& options)
 	{
 		try
 		{
-			if (use_gdb)
+			if (options.use_gdb)
 			{
-				const auto* address = "0.0.0.0:28960";
+				const auto* address = "127.0.0.1:28960";
 				win_emu.logger.print(color::pink, "Waiting for GDB connection on %s...\n", address);
 
 				win_x64_gdb_stub_handler handler{win_emu};
@@ -50,6 +55,12 @@ namespace
 			{
 				win_emu.start();
 			}
+		}
+		catch (const std::exception& e)
+		{
+			win_emu.logger.print(color::red, "Emulation failed at: 0x%llX - %s\n",
+			                     win_emu.emu().read_instruction_pointer(), e.what());
+			throw;
 		}
 		catch (...)
 		{
@@ -68,80 +79,158 @@ namespace
 		}
 	}
 
-	std::vector<std::u16string> parse_arguments(char* argv[], const size_t argc)
+	std::vector<std::u16string> parse_arguments(const std::span<const std::string_view> args)
 	{
-		std::vector<std::u16string> args{};
-		args.reserve(argc - 1);
+		std::vector<std::u16string> wide_args{};
+		wide_args.reserve(args.size() - 1);
 
-		for (size_t i = 1; i < argc; ++i)
+		for (size_t i = 1; i < args.size(); ++i)
 		{
-			std::string_view arg(argv[i]);
-			args.emplace_back(arg.begin(), arg.end());
+			const auto& arg = args[i];
+			wide_args.emplace_back(arg.begin(), arg.end());
 		}
 
-		return args;
+		return wide_args;
 	}
 
-	void run(char* argv[], const size_t argc)
+	void run(const analysis_options& options, const std::span<const std::string_view> args)
 	{
-		if (argc < 1)
+		if (args.empty())
 		{
 			return;
 		}
 
-		const emulator_settings settings{
-			.application = argv[0],
-			.arguments = parse_arguments(argv, argc),
+		emulator_settings settings{
+			.application = args[0],
+			.arguments = parse_arguments(args),
+			.silent_until_main = options.concise_logging,
 		};
 
-		windows_emulator win_emu{settings};
+		windows_emulator win_emu{std::move(settings)};
 
 		(void)&watch_system_objects;
-		//watch_system_objects(win_emu);
+		watch_system_objects(win_emu, options.concise_logging);
 		win_emu.buffer_stdout = true;
 		//win_emu.verbose_calls = true;
 
 		const auto& exe = *win_emu.process().executable;
 
-		const auto text_start = exe.image_base + 0x1000;
-		const auto text_end = exe.image_base + 0x52000;
-		constexpr auto scan_size = 0x100;
+		const auto concise_logging = options.concise_logging;
 
-		win_emu.emu().hook_memory_read(text_start, scan_size, [&](const uint64_t address, size_t, uint64_t)
+		for (const auto& section : exe.sections)
 		{
-			const auto rip = win_emu.emu().read_instruction_pointer();
-			if (rip >= text_start && rip < text_end)
+			if ((section.region.permissions & memory_permission::exec) != memory_permission::exec)
 			{
-				win_emu.logger.print(color::green, "Reading from executable .text: 0x%llX at 0x%llX\n", address, rip);
+				continue;
 			}
-		});
 
-		run_emulation(win_emu);
+			auto read_handler = [&, section, concise_logging](const uint64_t address, size_t, uint64_t)
+			{
+				const auto rip = win_emu.emu().read_instruction_pointer();
+				if (win_emu.process().module_manager.find_by_address(rip) != win_emu.process().executable)
+				{
+					return;
+				}
+
+				if (concise_logging)
+				{
+					static uint64_t count{0};
+					++count;
+					if (count > 100 && count % 10000 != 0) return;
+				}
+
+				win_emu.logger.print(
+					color::green,
+					"Reading from executable section %s at 0x%llX via 0x%llX\n",
+					section.name.c_str(), address, rip);
+			};
+
+			const auto write_handler = [&, section, concise_logging](const uint64_t address, size_t, uint64_t)
+			{
+				const auto rip = win_emu.emu().read_instruction_pointer();
+				if (win_emu.process().module_manager.find_by_address(rip) != win_emu.process().executable)
+				{
+					return;
+				}
+
+				if (concise_logging)
+				{
+					static uint64_t count{0};
+					++count;
+					if (count > 100 && count % 10000 != 0) return;
+				}
+
+				win_emu.logger.print(
+					color::blue,
+					"Writing to executable section %s at 0x%llX via 0x%llX\n",
+					section.name.c_str(), address, rip);
+			};
+
+			win_emu.emu().hook_memory_read(section.region.start, section.region.length, std::move(read_handler));
+			win_emu.emu().hook_memory_write(section.region.start, section.region.length, std::move(write_handler));
+		}
+
+		run_emulation(win_emu, options);
+	}
+
+	std::vector<std::string_view> bundle_arguments(const int argc, char** argv)
+	{
+		std::vector<std::string_view> args{};
+
+		for (int i = 1; i < argc; ++i)
+		{
+			args.push_back(argv[i]);
+		}
+
+		return args;
+	}
+
+	analysis_options parse_options(std::vector<std::string_view>& args)
+	{
+		analysis_options options{};
+
+		while (!args.empty())
+		{
+			auto arg_it = args.begin();
+			const auto& arg = *arg_it;
+
+			if (arg == "-d")
+			{
+				options.use_gdb = true;
+			}
+			else if (arg == "-c")
+			{
+				options.concise_logging = true;
+			}
+			else
+			{
+				break;
+			}
+
+			args.erase(arg_it);
+		}
+
+		return options;
 	}
 }
 
 int main(const int argc, char** argv)
 {
-	if (argc <= 1)
-	{
-		puts("Application not specified!");
-		return 1;
-	}
-
-	//setvbuf(stdout, nullptr, _IOFBF, 0x10000);
-	if (argc > 2 && argv[1] == "-d"sv)
-	{
-		use_gdb = true;
-	}
-
 	try
 	{
+		auto args = bundle_arguments(argc, argv);
+		const auto options = parse_options(args);
+
+		if (args.empty())
+		{
+			throw std::runtime_error("Application not specified!");
+		}
+
 		do
 		{
-			const auto offset = use_gdb ? 2 : 1;
-			run(argv + offset, static_cast<size_t>(argc - offset));
+			run(options, args);
 		}
-		while (use_gdb);
+		while (options.use_gdb);
 
 		return 0;
 	}

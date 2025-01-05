@@ -6,6 +6,7 @@
 #include <atomic>
 #include <vector>
 #include <optional>
+#include <filesystem>
 #include <string_view>
 
 #include <Windows.h>
@@ -15,6 +16,18 @@ using namespace std::literals;
 // Externally visible and potentially modifiable state
 // to trick compiler optimizations
 __declspec(dllexport) bool do_the_task = true;
+
+struct tls_struct
+{
+	DWORD num = 1337;
+
+	tls_struct()
+	{
+		num = GetCurrentThreadId();
+	}
+};
+
+thread_local tls_struct tls_var{};
 
 // getenv is broken right now :(
 std::string read_env(const char* env)
@@ -58,6 +71,50 @@ bool test_threads()
 	return counter == (thread_count * 3ULL);
 }
 
+bool test_tls()
+{
+	std::atomic_bool kill{false};
+	std::atomic_uint32_t successes{0};
+	constexpr uint32_t thread_count = 2;
+
+	std::vector<std::thread> ts{};
+	kill = false;
+
+	for (size_t i = 0; i < thread_count; ++i)
+	{
+		ts.emplace_back([&]
+		{
+			while (!kill)
+			{
+				std::this_thread::yield();
+			}
+
+			if (tls_var.num == GetCurrentThreadId())
+			{
+				++successes;
+			}
+		});
+	}
+
+	LoadLibraryA("d3dcompiler_47.dll");
+	LoadLibraryA("dsound.dll");
+	/*LoadLibraryA("d3d9.dll");
+	LoadLibraryA("dxgi.dll");
+	LoadLibraryA("wlanapi.dll");*/
+
+	kill = true;
+
+	for (auto& t : ts)
+	{
+		if (t.joinable())
+		{
+			t.join();
+		}
+	}
+
+	return successes == thread_count;
+}
+
 bool test_env()
 {
 	const auto computername = read_env("COMPUTERNAME");
@@ -95,6 +152,22 @@ bool test_io()
 	t.read(buffer.data(), static_cast<std::streamsize>(size));
 
 	return text == buffer;
+}
+
+bool test_dir_io()
+{
+	size_t count = 0;
+
+	for (auto i : std::filesystem::directory_iterator(R"(C:\Windows\System32\)"))
+	{
+		++count;
+		if (count > 30)
+		{
+			return true;
+		}
+	}
+
+	return count > 30;
 }
 
 std::optional<std::string> read_registry_string(const HKEY root, const char* path, const char* value)
@@ -161,7 +234,7 @@ bool test_exceptions()
 	}
 }
 
-void throw_native_exception()
+void throw_access_violation()
 {
 	if (do_the_task)
 	{
@@ -169,17 +242,53 @@ void throw_native_exception()
 	}
 }
 
-bool test_native_exceptions()
+bool test_access_violation_exception()
 {
 	__try
 	{
-		throw_native_exception();
+		throw_access_violation();
 		return false;
 	}
 	__except (EXCEPTION_EXECUTE_HANDLER)
 	{
-		return true;
+		return GetExceptionCode() == STATUS_ACCESS_VIOLATION;
 	}
+}
+
+bool test_ud2_exception(void* address)
+{
+	__try
+	{
+		static_cast<void(*)()>(address)();
+		return false;
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		return GetExceptionCode() == STATUS_ILLEGAL_INSTRUCTION;
+	}
+}
+
+bool test_illegal_instruction_exception()
+{
+	const auto address = VirtualAlloc(nullptr, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+	if (!address)
+	{
+		return false;
+	}
+
+	memcpy(address, "\x0F\x0B", 2); // ud2
+
+	const auto res = test_ud2_exception(address);
+
+	VirtualFree(address, 0x1000, MEM_RELEASE);
+
+	return res;
+}
+
+bool test_native_exceptions()
+{
+	return test_access_violation_exception()
+		&& test_illegal_instruction_exception();
 }
 
 void print_time()
@@ -198,7 +307,7 @@ void print_time()
 
 int main(int argc, const char* argv[])
 {
-	if(argc == 2 && argv[1] == "-time"sv)
+	if (argc == 2 && argv[1] == "-time"sv)
 	{
 		print_time();
 		return 0;
@@ -207,11 +316,13 @@ int main(int argc, const char* argv[])
 	bool valid = true;
 
 	RUN_TEST(test_io, "I/O")
+	RUN_TEST(test_dir_io, "Dir I/O")
 	RUN_TEST(test_registry, "Registry")
 	RUN_TEST(test_threads, "Threads")
 	RUN_TEST(test_env, "Environment")
 	RUN_TEST(test_exceptions, "Exceptions")
 	RUN_TEST(test_native_exceptions, "Native Exceptions")
+	RUN_TEST(test_tls, "TLS")
 
 	return valid ? 0 : 1;
 }

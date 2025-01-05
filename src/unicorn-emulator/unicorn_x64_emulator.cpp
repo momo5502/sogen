@@ -243,6 +243,7 @@ namespace unicorn
 			unicorn_x64_emulator()
 			{
 				uce(uc_open(UC_ARCH_X86, UC_MODE_64, &this->uc_));
+				uce(uc_ctl_set_tcg_buffer_size(this->uc_, 2 << 30 /* 2 gb */));
 			}
 
 			~unicorn_x64_emulator() override

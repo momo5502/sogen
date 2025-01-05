@@ -20,10 +20,10 @@
 
 namespace test
 {
-	inline windows_emulator create_sample_emulator(emulator_settings& settings)
+	inline windows_emulator create_sample_emulator(emulator_settings settings)
 	{
 		settings.application = "./test-sample.exe";
-		return windows_emulator{settings};
+		return windows_emulator{std::move(settings)};
 	}
 
 	inline windows_emulator create_sample_emulator()
@@ -34,6 +34,6 @@ namespace test
 			.use_relative_time = true,
 		};
 
-		return create_sample_emulator(settings);
+		return create_sample_emulator(std::move(settings));
 	}
 }

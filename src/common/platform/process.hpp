@@ -679,6 +679,17 @@ struct TOKEN_USER64 {
     SID_AND_ATTRIBUTES64 User;
 };
 
+typedef struct _TOKEN_SECURITY_ATTRIBUTES_INFORMATION
+{
+    USHORT Version;
+    USHORT Reserved;
+    ULONG AttributeCount;
+    union
+    {
+        EmulatorTraits<Emu64>::PVOID pAttributeV1;
+    } Attribute;
+} TOKEN_SECURITY_ATTRIBUTES_INFORMATION, * PTOKEN_SECURITY_ATTRIBUTES_INFORMATION;
+
 struct GDI_HANDLE_ENTRY64
 {
     union

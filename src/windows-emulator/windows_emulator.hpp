@@ -18,6 +18,7 @@ struct emulator_settings
 	std::vector<std::u16string> arguments{};
 	std::function<void(std::string_view)> stdout_callback{};
 	bool disable_logging{false};
+	bool silent_until_main{false};
 	bool use_relative_time{false};
 };
 
@@ -25,7 +26,7 @@ class windows_emulator
 {
 public:
 	windows_emulator(std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
-	windows_emulator(const emulator_settings& settings,
+	windows_emulator(emulator_settings settings,
 	                 std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
 
 	windows_emulator(windows_emulator&&) = delete;
@@ -113,6 +114,7 @@ public:
 
 private:
 	bool use_relative_time_{false};
+	bool silent_until_main_{false};
 	std::unique_ptr<x64_emulator> emu_{};
 	std::vector<instruction_hook_callback> syscall_hooks_{};
 	std::function<void(std::string_view)> stdout_callback_{};
@@ -125,4 +127,5 @@ private:
 
 	void setup_hooks();
 	void setup_process(const emulator_settings& settings);
+	void on_instruction_execution(uint64_t address);
 };

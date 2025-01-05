@@ -825,3 +825,50 @@ typedef struct _PROCESS_BASIC_INFORMATION64
     EMULATOR_CAST(std::uint64_t, HANDLE) UniqueProcessId;
     EMULATOR_CAST(std::uint64_t, HANDLE) InheritedFromUniqueProcessId;
 } PROCESS_BASIC_INFORMATION64, *PPROCESS_BASIC_INFORMATION64;
+
+typedef struct _KERNEL_USER_TIMES
+{
+    LARGE_INTEGER CreateTime;
+    LARGE_INTEGER ExitTime;
+    LARGE_INTEGER KernelTime;
+    LARGE_INTEGER UserTime;
+} KERNEL_USER_TIMES, * PKERNEL_USER_TIMES;
+
+struct THREAD_TLS_INFO
+{
+    ULONG Flags;
+
+    union
+    {
+        EmulatorTraits<Emu64>::PVOID* TlsVector;
+        PVOID TlsModulePointer;
+    };
+
+    EMULATOR_CAST(std::uint64_t, ULONG_PTR) ThreadId;
+};
+
+static_assert(sizeof(THREAD_TLS_INFO) == 0x18);
+
+typedef enum _PROCESS_TLS_INFORMATION_TYPE
+{
+    ProcessTlsReplaceIndex,
+    ProcessTlsReplaceVector,
+    MaxProcessTlsOperation
+} PROCESS_TLS_INFORMATION_TYPE, * PPROCESS_TLS_INFORMATION_TYPE;
+
+struct PROCESS_TLS_INFO
+{
+    ULONG Unknown;
+    PROCESS_TLS_INFORMATION_TYPE TlsRequest;
+    ULONG ThreadDataCount;
+
+    union
+    {
+        ULONG TlsIndex;
+        ULONG TlsVectorLength;
+    };
+
+    THREAD_TLS_INFO ThreadData[1];
+};
+
+static_assert(sizeof(PROCESS_TLS_INFO) - sizeof(THREAD_TLS_INFO) == 0x10);

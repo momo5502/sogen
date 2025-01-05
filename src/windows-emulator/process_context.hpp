@@ -84,25 +84,159 @@ struct event : ref_counted_object
 	}
 };
 
+struct mutant : ref_counted_object
+{
+	uint32_t locked_count{0};
+	uint32_t owning_thread_id{};
+	std::u16string name{};
+
+	bool try_lock(const uint32_t thread_id)
+	{
+		if (this->locked_count == 0)
+		{
+			++this->locked_count;
+			this->owning_thread_id = thread_id;
+			return true;
+		}
+
+		if (this->owning_thread_id != thread_id)
+		{
+			return false;
+		}
+
+		++this->locked_count;
+		return true;
+	}
+
+	uint32_t release()
+	{
+		const auto old_count = this->locked_count;
+
+		if (this->locked_count <= 0)
+		{
+			return old_count;
+		}
+
+		--this->locked_count;
+		return old_count;
+	}
+
+	void serialize(utils::buffer_serializer& buffer) const
+	{
+		buffer.write(this->locked_count);
+		buffer.write(this->owning_thread_id);
+		buffer.write(this->name);
+
+		ref_counted_object::serialize(buffer);
+	}
+
+	void deserialize(utils::buffer_deserializer& buffer)
+	{
+		buffer.read(this->locked_count);
+		buffer.read(this->owning_thread_id);
+		buffer.read(this->name);
+
+		ref_counted_object::deserialize(buffer);
+	}
+};
+
+struct file_entry
+{
+	std::filesystem::path file_path{};
+
+	void serialize(utils::buffer_serializer& buffer) const
+	{
+		buffer.write(this->file_path);
+	}
+
+	void deserialize(utils::buffer_deserializer& buffer)
+	{
+		buffer.read(this->file_path);
+	}
+};
+
+struct file_enumeration_state
+{
+	size_t current_index{0};
+	std::vector<file_entry> files{};
+
+	void serialize(utils::buffer_serializer& buffer) const
+	{
+		buffer.write(this->current_index);
+		buffer.write_vector(this->files);
+	}
+
+	void deserialize(utils::buffer_deserializer& buffer)
+	{
+		buffer.read(this->current_index);
+		buffer.read_vector(this->files);
+	}
+};
+
 struct file
 {
 	utils::file_handle handle{};
 	std::u16string name{};
+	std::optional<file_enumeration_state> enumeration_state{};
+
+	bool is_file() const
+	{
+		return this->handle;
+	}
+
+	bool is_directory() const
+	{
+		return !this->is_file();
+	}
 
 	void serialize(utils::buffer_serializer& buffer) const
 	{
-		buffer.write(this->name);
 		// TODO: Serialize handle
+		buffer.write(this->name);
+		buffer.write_optional(this->enumeration_state);
 	}
 
 	void deserialize(utils::buffer_deserializer& buffer)
 	{
 		buffer.read(this->name);
+		buffer.read_optional(this->enumeration_state);
 		this->handle = {};
 	}
 };
 
-struct semaphore
+struct section
+{
+	std::u16string name{};
+	std::u16string file_name{};
+	uint64_t maximum_size{};
+	uint32_t section_page_protection{};
+	uint32_t allocation_attributes{};
+
+	bool is_image() const
+	{
+		return this->allocation_attributes & SEC_IMAGE;
+	}
+
+	void serialize(utils::buffer_serializer& buffer) const
+	{
+		buffer.write(this->name);
+		buffer.write(this->file_name);
+		buffer.write(this->maximum_size);
+		buffer.write(this->section_page_protection);
+		buffer.write(this->allocation_attributes);
+	}
+
+	void deserialize(utils::buffer_deserializer& buffer)
+	{
+		buffer.read(this->name);
+		buffer.read(this->file_name);
+		buffer.read(this->maximum_size);
+		buffer.read(this->section_page_protection);
+		buffer.read(this->allocation_attributes);
+	}
+};
+
+struct semaphore : ref_counted_object
 {
 	std::u16string name{};
 	volatile uint32_t current_count{};
@@ -113,6 +247,8 @@ struct semaphore
 		buffer.write(this->name);
 		buffer.write(this->current_count);
 		buffer.write(this->max_count);
+
+		ref_counted_object::serialize(buffer);
 	}
 
 	void deserialize(utils::buffer_deserializer& buffer)
@@ -120,6 +256,8 @@ struct semaphore
 		buffer.read(this->name);
 		buffer.read(this->current_count);
 		buffer.read(this->max_count);
+
+		ref_counted_object::deserialize(buffer);
 	}
 };
 
@@ -221,7 +359,8 @@ public:
 	std::u16string name{};
 
 	std::optional<NTSTATUS> exit_status{};
-	std::optional<handle> await_object{};
+	std::vector<handle> await_objects{};
+	bool await_any{false};
 	bool waiting_for_alert{false};
 	bool alerted{false};
 	std::optional<std::chrono::steady_clock::time_point> await_time{};
@@ -285,7 +424,8 @@ public:
 		buffer.write_string(this->name);
 
 		buffer.write_optional(this->exit_status);
-		buffer.write_optional(this->await_object);
+		buffer.write_vector(this->await_objects);
+		buffer.write(this->await_any);
 
 		buffer.write(this->waiting_for_alert);
 		buffer.write(this->alerted);
@@ -317,7 +457,8 @@ public:
 		buffer.read_string(this->name);
 
 		buffer.read_optional(this->exit_status);
-		buffer.read_optional(this->await_object);
+		buffer.read_vector(this->await_objects);
+		buffer.read(this->await_any);
 
 		buffer.read(this->waiting_for_alert);
 		buffer.read(this->alerted);
@@ -395,13 +536,13 @@ struct process_context
 	uint64_t rtl_user_thread_start{};
 	uint64_t ki_user_exception_dispatcher{};
 
-	uint64_t shared_section_size{};
-
 	handle_store<handle_types::event, event> events{};
 	handle_store<handle_types::file, file> files{};
+	handle_store<handle_types::section, section> sections{};
 	handle_store<handle_types::device, io_device_container> devices{};
 	handle_store<handle_types::semaphore, semaphore> semaphores{};
 	handle_store<handle_types::port, port> ports{};
+	handle_store<handle_types::mutant, mutant> mutants{};
 	handle_store<handle_types::registry, registry_key, 2> registry_keys{};
 	std::map<uint16_t, std::wstring> atoms{};
 
@@ -433,12 +574,13 @@ struct process_context
 		buffer.write(this->rtl_user_thread_start);
 		buffer.write(this->ki_user_exception_dispatcher);
 
-		buffer.write(this->shared_section_size);
 		buffer.write(this->events);
 		buffer.write(this->files);
+		buffer.write(this->sections);
 		buffer.write(this->devices);
 		buffer.write(this->semaphores);
 		buffer.write(this->ports);
+		buffer.write(this->mutants);
 		buffer.write(this->registry_keys);
 		buffer.write_map(this->atoms);
 
@@ -475,12 +617,13 @@ struct process_context
 		buffer.read(this->rtl_user_thread_start);
 		buffer.read(this->ki_user_exception_dispatcher);
 
-		buffer.read(this->shared_section_size);
 		buffer.read(this->events);
 		buffer.read(this->files);
+		buffer.read(this->sections);
 		buffer.read(this->devices);
 		buffer.read(this->semaphores);
 		buffer.read(this->ports);
+		buffer.read(this->mutants);
 		buffer.read(this->registry_keys);
 		buffer.read_map(this->atoms);
 

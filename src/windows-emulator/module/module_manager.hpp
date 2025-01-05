@@ -36,6 +36,8 @@ public:
 	void serialize(utils::buffer_serializer& buffer) const;
 	void deserialize(utils::buffer_deserializer& buffer);
 
+	bool unmap(const uint64_t address);
+
 private:
 	emulator* emu_{};
 

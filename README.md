@@ -9,6 +9,8 @@
 
 A high-performance Windows process emulator that operates at syscall level, providing full control over process execution through comprehensive hooking capabilities.
 
+Perfect for security research, malware analysis, and DRM research where fine-grained control over process execution is required.
+
 Built in C++ and powered by the Unicorn Engine.
 
 ## Key Features
@@ -27,8 +29,6 @@ Built in C++ and powered by the Unicorn Engine.
 	* Supports both full state serialization and fast in-memory snapshots
 * 💻 __Debugging Interface__
 	* Implements GDB serial protocol for integration with common debugging tools (IDA Pro, GDB, LLDB, VS Code, ...)
-
-Perfect for security research, malware analysis, and DRM research where fine-grained control over process execution is required.
 
 ##
 > [!NOTE]  
@@ -82,6 +82,12 @@ Release build:
 ```bash
 cmake --workflow --preset=release
 ```
+
+## Dumping the Registry
+
+The emulator needs a registry dump to run, otherwise it will print `Bad hive file` errors.  
+You can create one by running the <a href="./src/grab-registry.bat">src/grab-registry.bat</a> script as administrator.  
+This will create a `registry` folder that needs to be placed in the working directory of the emulator.
 
 ## Running Tests
 

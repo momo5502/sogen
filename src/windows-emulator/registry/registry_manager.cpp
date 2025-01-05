@@ -1,25 +1,16 @@
 #include "registry_manager.hpp"
 
-#include <cwctype>
 #include <serialization_helper.hpp>
 
 #include "hive_parser.hpp"
+#include <utils/string.hpp>
 
 namespace
 {
-	void string_to_lower(std::string& str)
-	{
-		std::ranges::transform(str, str.begin(), [](const char val)
-		{
-			return static_cast<char>(std::tolower(static_cast<unsigned char>(val)));
-		});
-	}
-
 	std::filesystem::path canonicalize_path(const std::filesystem::path& key)
 	{
 		auto path = key.lexically_normal().wstring();
-		std::ranges::transform(path, path.begin(), std::towlower);
-		return {std::move(path)};
+		return utils::string::to_lower_consume(path);
 	}
 
 	bool is_subpath(const std::filesystem::path& root, const std::filesystem::path& p)
@@ -144,7 +135,7 @@ std::optional<registry_key> registry_manager::get_key(const std::filesystem::pat
 
 std::optional<registry_value> registry_manager::get_value(const registry_key& key, std::string name)
 {
-	string_to_lower(name);
+	utils::string::to_lower_inplace(name);
 
 	const auto iterator = this->hives_.find(key.hive);
 	if (iterator == this->hives_.end())

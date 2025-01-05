@@ -5,7 +5,7 @@
 // TODO: Replace with pointer handling structure for future 32 bit support
 using emulator_pointer = uint64_t;
 
-template<typename T>
+template <typename T>
 class object_wrapper
 {
 	T* obj_;
@@ -101,6 +101,14 @@ public:
 		this->emu_->write_memory(this->address_ + index * this->size(), &value, sizeof(value));
 	}
 
+	void write_if_valid(const T& value, const size_t index = 0) const
+	{
+		if (this->operator bool())
+		{
+			this->write(value, index);
+		}
+	}
+
 	template <typename F>
 	void access(const F& accessor, const size_t index = 0) const
 	{
@@ -120,6 +128,11 @@ public:
 	void deserialize(utils::buffer_deserializer& buffer)
 	{
 		buffer.read(this->address_);
+	}
+
+	void set_address(const uint64_t address)
+	{
+		this->address_ = address;
 	}
 
 private:
