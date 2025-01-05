@@ -35,20 +35,24 @@ namespace
 		const auto export_directory = buffer.as<IMAGE_EXPORT_DIRECTORY>(export_directory_entry.
 			VirtualAddress).get();
 
-		//const auto function_count = export_directory->NumberOfFunctions;
 		const auto names_count = export_directory.NumberOfNames;
+		//const auto function_count = export_directory.NumberOfFunctions;
 
 		const auto names = buffer.as<DWORD>(export_directory.AddressOfNames);
 		const auto ordinals = buffer.as<WORD>(export_directory.AddressOfNameOrdinals);
 		const auto functions = buffer.as<DWORD>(export_directory.AddressOfFunctions);
 
+		binary.exports.reserve(names_count);
+
 		for (DWORD i = 0; i < names_count; i++)
 		{
+			const auto ordinal = ordinals.get(i);
+
 			exported_symbol symbol{};
-			symbol.ordinal = ordinals.get(i);
-			symbol.name = buffer.as_string(names.get(i));
-			symbol.rva = functions.get(symbol.ordinal);
+			symbol.ordinal = export_directory.Base + ordinal;
+			symbol.rva = functions.get(ordinal);
 			symbol.address = binary.image_base + symbol.rva;
+			symbol.name = buffer.as_string(names.get(i));
 
 			binary.exports.push_back(std::move(symbol));
 		}
@@ -185,79 +189,71 @@ namespace
 			binary.sections.push_back(std::move(section_info));
 		}
 	}
-
-	std::optional<mapped_module> map_module(emulator& emu, const std::span<const uint8_t> data,
-	                                        std::filesystem::path file)
-	{
-		mapped_module binary{};
-		binary.path = std::move(file);
-		binary.name = binary.path.filename().string();
-
-		utils::safe_buffer_accessor buffer{data};
-
-		const auto dos_header = buffer.as<IMAGE_DOS_HEADER>(0).get();
-		const auto nt_headers_offset = dos_header.e_lfanew;
-
-		const auto nt_headers = buffer.as<IMAGE_NT_HEADERS>(nt_headers_offset).get();
-		auto& optional_header = nt_headers.OptionalHeader;
-
-		binary.image_base = optional_header.ImageBase;
-		binary.size_of_image = page_align_up(optional_header.SizeOfImage); // TODO: Sanitize
-
-		if (!emu.allocate_memory(binary.image_base, binary.size_of_image, memory_permission::read))
-		{
-			binary.image_base = emu.find_free_allocation_base(binary.size_of_image);
-			const auto is_dll = nt_headers.FileHeader.Characteristics & IMAGE_FILE_DLL;
-			const auto has_dynamic_base =
-				optional_header.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
-			const auto is_relocatable = is_dll || has_dynamic_base;
-
-			if (!is_relocatable || !emu.allocate_memory(binary.image_base, binary.size_of_image,
-			                                            memory_permission::read))
-			{
-				return {};
-			}
-		}
-
-		binary.entry_point = binary.image_base + optional_header.AddressOfEntryPoint;
-
-		const auto* header_buffer = buffer.get_pointer_for_range(0, optional_header.SizeOfHeaders);
-		emu.write_memory(binary.image_base, header_buffer,
-		                 optional_header.SizeOfHeaders);
-
-		map_sections(emu, binary, buffer, nt_headers, nt_headers_offset);
-
-		auto mapped_memory = read_mapped_memory(emu, binary);
-		utils::safe_buffer_accessor<uint8_t> mapped_buffer{mapped_memory};
-
-		apply_relocations(binary, mapped_buffer, optional_header);
-		collect_exports(binary, mapped_buffer, optional_header);
-
-		emu.write_memory(binary.image_base, mapped_memory.data(), mapped_memory.size());
-
-		return binary;
-	}
 }
 
-std::optional<mapped_module> map_module_from_data(emulator& emu, const std::span<const uint8_t> data,
-                                                  std::filesystem::path file)
+mapped_module map_module_from_data(emulator& emu, const std::span<const uint8_t> data,
+                                   std::filesystem::path file)
 {
-	try
+	mapped_module binary{};
+	binary.path = std::move(file);
+	binary.name = binary.path.filename().string();
+
+	utils::safe_buffer_accessor buffer{data};
+
+	const auto dos_header = buffer.as<IMAGE_DOS_HEADER>(0).get();
+	const auto nt_headers_offset = dos_header.e_lfanew;
+
+	const auto nt_headers = buffer.as<IMAGE_NT_HEADERS>(nt_headers_offset).get();
+	auto& optional_header = nt_headers.OptionalHeader;
+
+	if (nt_headers.FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64)
 	{
-		return map_module(emu, data, std::move(file));
+		throw std::runtime_error("Unsupported architecture!");
 	}
-	catch (...)
+
+	binary.image_base = optional_header.ImageBase;
+	binary.size_of_image = page_align_up(optional_header.SizeOfImage); // TODO: Sanitize
+
+	if (!emu.allocate_memory(binary.image_base, binary.size_of_image, memory_permission::read))
 	{
-		return {};
+		binary.image_base = emu.find_free_allocation_base(binary.size_of_image);
+		const auto is_dll = nt_headers.FileHeader.Characteristics & IMAGE_FILE_DLL;
+		const auto has_dynamic_base =
+			optional_header.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
+		const auto is_relocatable = is_dll || has_dynamic_base;
+
+		if (!is_relocatable || !emu.allocate_memory(binary.image_base, binary.size_of_image,
+		                                            memory_permission::read))
+		{
+			throw std::runtime_error("Memory range not allocatable");
+		}
 	}
+
+	binary.entry_point = binary.image_base + optional_header.AddressOfEntryPoint;
+
+	const auto* header_buffer = buffer.get_pointer_for_range(0, optional_header.SizeOfHeaders);
+	emu.write_memory(binary.image_base, header_buffer,
+	                 optional_header.SizeOfHeaders);
+
+	map_sections(emu, binary, buffer, nt_headers, nt_headers_offset);
+
+	auto mapped_memory = read_mapped_memory(emu, binary);
+	utils::safe_buffer_accessor<uint8_t> mapped_buffer{mapped_memory};
+
+	apply_relocations(binary, mapped_buffer, optional_header);
+	collect_exports(binary, mapped_buffer, optional_header);
+
+	emu.write_memory(binary.image_base, mapped_memory.data(), mapped_memory.size());
+
+	return binary;
 }
 
-std::optional<mapped_module> map_module_from_file(emulator& emu, std::filesystem::path file)
+mapped_module map_module_from_file(emulator& emu, std::filesystem::path file)
 {
 	const auto data = utils::io::read_file(file);
 	if (data.empty())
 	{
-		return {};
+		throw std::runtime_error("Bad file data");
 	}
 
 	return map_module_from_data(emu, data, std::move(file));

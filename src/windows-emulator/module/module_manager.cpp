@@ -68,7 +68,7 @@ module_manager::module_manager(emulator& emu)
 
 mapped_module* module_manager::map_module(const std::filesystem::path& file, logger& logger)
 {
-	const auto canonical_file = canonicalize_module_path(file);
+	auto canonical_file = canonicalize_module_path(file);
 
 	for (auto& mod : this->modules_)
 	{
@@ -78,18 +78,26 @@ mapped_module* module_manager::map_module(const std::filesystem::path& file, log
 		}
 	}
 
-	auto mod = map_module_from_file(*this->emu_, std::move(canonical_file));
-	if (!mod)
+	try
 	{
-		logger.error("Failed to map %s\n", file.generic_string().c_str());
+		auto mod = map_module_from_file(*this->emu_, std::move(canonical_file));
+
+		logger.log("Mapped %s at 0x%llX\n", mod.path.generic_string().c_str(), mod.image_base);
+
+		const auto image_base = mod.image_base;
+		const auto entry = this->modules_.try_emplace(image_base, std::move(mod));
+		return &entry.first->second;
+	}
+	catch (const std::exception& e)
+	{
+		logger.error("Failed to map %s: %s\n", file.generic_string().c_str(), e.what());
 		return nullptr;
 	}
-
-	logger.log("Mapped %s at 0x%llX\n", mod->path.generic_string().c_str(), mod->image_base);
-
-	const auto image_base = mod->image_base;
-	const auto entry = this->modules_.try_emplace(image_base, std::move(*mod));
-	return &entry.first->second;
+	catch (...)
+	{
+		logger.error("Failed to map %s: Unknown error\n", file.generic_string().c_str());
+		return nullptr;
+	}
 }
 
 void module_manager::serialize(utils::buffer_serializer& buffer) const
