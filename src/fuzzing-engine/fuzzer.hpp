@@ -23,9 +23,9 @@ namespace fuzzer
 			const std::function<coverage_functor>& coverage_handler) = 0;
 	};
 
-	struct handler
+	struct fuzzing_handler
 	{
-		virtual ~handler() = default;
+		virtual ~fuzzing_handler() = default;
 
 		virtual std::unique_ptr<executer> make_executer() = 0;
 
@@ -35,5 +35,5 @@ namespace fuzzer
 		}
 	};
 
-	void run(handler& handler, size_t concurrency = std::thread::hardware_concurrency());
+	void run(fuzzing_handler& handler, size_t concurrency = std::thread::hardware_concurrency());
 }

@@ -1,4 +1,5 @@
 #include "random_generator.hpp"
+#include <cstring>
 
 namespace fuzzer
 {

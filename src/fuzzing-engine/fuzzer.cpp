@@ -8,7 +8,7 @@ namespace fuzzer
 		class fuzzing_context
 		{
 		public:
-			fuzzing_context(input_generator& generator, handler& handler)
+			fuzzing_context(input_generator& generator, fuzzing_handler& handler)
 				: generator(generator)
 				  , handler(handler)
 			{
@@ -36,7 +36,7 @@ namespace fuzzer
 			}
 
 			input_generator& generator;
-			handler& handler;
+			fuzzing_handler& handler;
 			std::atomic_uint64_t executions{0};
 
 		private:
@@ -110,7 +110,7 @@ namespace fuzzer
 		};
 	}
 
-	void run(handler& handler, const size_t concurrency)
+	void run(fuzzing_handler& handler, const size_t concurrency)
 	{
 		input_generator generator{};
 		fuzzing_context context{generator, handler};
