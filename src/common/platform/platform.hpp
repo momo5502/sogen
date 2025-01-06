@@ -25,15 +25,6 @@
 #include "threading.hpp"
 
 #ifdef OS_WINDOWS
-#pragma comment(lib, "ntdll")
-
-extern "C"
-{
-    NTSYSCALLAPI NTSTATUS NTAPI NtQuerySystemInformationEx(
-        _In_ SYSTEM_INFORMATION_CLASS SystemInformationClass, _In_reads_bytes_(InputBufferLength) PVOID InputBuffer,
-        _In_ ULONG InputBufferLength, _Out_writes_bytes_opt_(SystemInformationLength) PVOID SystemInformation,
-        _In_ ULONG SystemInformationLength, _Out_opt_ PULONG ReturnLength);
-}
 #pragma warning(pop)
 #else
 #pragma GCC diagnostic pop
