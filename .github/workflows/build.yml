@@ -10,9 +10,9 @@ on:
     types: [opened, synchronize, reopened]
   workflow_dispatch:
 
-concurrency:
-  group: ${{ github.ref }}
-  cancel-in-progress: true
+#concurrency:
+#  group: ${{ github.ref }}
+#  cancel-in-progress: true
 
 jobs:
   dump-registry:
