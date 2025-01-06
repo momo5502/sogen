@@ -12,6 +12,6 @@
 
 namespace unicorn
 {
-	UNICORN_EMULATOR_DLL_STORAGE
-	std::unique_ptr<x64_emulator> create_x64_emulator();
+    UNICORN_EMULATOR_DLL_STORAGE
+    std::unique_ptr<x64_emulator> create_x64_emulator();
 }

@@ -4,12 +4,12 @@
 
 enum class x64_hookable_instructions
 {
-	invalid,
-	syscall,
-	cpuid,
-	rdtsc,
-	rdtscp,
+    invalid,
+    syscall,
+    cpuid,
+    rdtsc,
+    rdtscp,
 };
 
-using x64_emulator = typed_emulator<uint64_t, x64_register, x64_register::rip,
-                                    x64_register::rsp, x64_hookable_instructions>;
+using x64_emulator =
+    typed_emulator<uint64_t, x64_register, x64_register::rip, x64_register::rsp, x64_hookable_instructions>;
