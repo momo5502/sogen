@@ -1,0 +1,26 @@
+# Format Style Options - Created with Clang Power Tools
+---
+BasedOnStyle: Microsoft
+AlwaysBreakTemplateDeclarations: Yes
+BreakConstructorInitializers: BeforeColon
+DerivePointerAlignment: false
+FixNamespaceComments: false
+KeepEmptyLinesAtTheStartOfBlocks: false
+Language: Cpp
+MaxEmptyLinesToKeep: 1
+NamespaceIndentation: All
+PointerAlignment: Left
+SortIncludes: false
+AlignEscapedNewlines: Left
+PackConstructorInitializers: Never
+IndentPPDirectives: None
+AlignConsecutiveMacros:
+  Enabled: true
+  AcrossEmptyLines: true
+  AcrossComments: true
+  AlignCompound: true
+  PadOperators: true
+BraceWrapping:
+  AfterStruct: true
+  AfterUnion: true
+...

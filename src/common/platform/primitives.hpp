@@ -20,30 +20,29 @@ using LONGLONG = std::int64_t;
 
 typedef union _ULARGE_INTEGER
 {
-	struct
-	{
-		DWORD LowPart;
-		DWORD HighPart;
-	};
+    struct
+    {
+        DWORD LowPart;
+        DWORD HighPart;
+    };
 
-	ULONGLONG QuadPart;
+    ULONGLONG QuadPart;
 } ULARGE_INTEGER;
 
 typedef union _LARGE_INTEGER
 {
-	struct
-	{
-		DWORD LowPart;
-		LONG HighPart;
-	};
+    struct
+    {
+        DWORD LowPart;
+        LONG HighPart;
+    };
 
-	LONGLONG QuadPart;
+    LONGLONG QuadPart;
 } LARGE_INTEGER;
 
 using BYTE = std::uint8_t;
-#define CHAR    BYTE
+#define CHAR  BYTE
 #endif
-
 
 using WORD = std::uint16_t;
 
@@ -52,7 +51,6 @@ using WORD = std::uint16_t;
 #define BOOLEAN bool
 using CSHORT = short;
 using USHORT = WORD;
-
 
 #define DUMMYSTRUCTNAME
 
