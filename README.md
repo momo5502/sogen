@@ -47,7 +47,7 @@ Click <a href="https://docs.google.com/presentation/d/1pha4tFfDMpVzJ_ehJJ21SA_HA
 ## Build Instructions
 
 ### Prerequisites
-* Windows 64-bit (see [Issue 17](https://github.com/momo5502/emulator/issues/17) for cross-platform status)
+* Windows 64-bit (click [here](https://github.com/momo5502/emulator/milestone/1) for cross-platform status)
 * CMake
 * Git
 
