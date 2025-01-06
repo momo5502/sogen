@@ -28,7 +28,7 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Registry Dump [Temp]
+          name: Temp Registry Dump
           path: |
             registry/*
 
@@ -100,15 +100,74 @@ jobs:
       - name: Upload Test Configuration
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform }} ${{matrix.configuration}} Test Config [Temp]
+          name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
           path: |
             build/${{matrix.preset}}/**/CTestTestfile.cmake
+
+
+  test:
+    name: Test
+    runs-on: ${{ matrix.runner }}
+    needs: [dump-registry, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - Windows
+          - Linux GCC
+          - Linux Clang
+          - macOS
+        configuration:
+          - Debug
+          - Release
+        include:
+          - configuration: Debug
+            preset: debug
+          - configuration: Release
+            preset: release
+          - platform: Windows
+            runner: windows-latest
+          - platform: Linux GCC
+            runner: ubuntu-24.04
+          - platform: Linux Clang
+            runner: ubuntu-24.04
+          - platform: macOS
+            runner: macos-latest
+    steps:
+      - name: Download Test Config
+        uses: actions/download-artifact@v4
+        with:
+          name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
+          path: build/${{matrix.preset}}
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.platform }} ${{matrix.configuration}} Artifacts
+          path: build/${{matrix.preset}}/artifacts
+
+      - name: Download Windows Artifacts
+        uses: actions/download-artifact@v4
+        if: "${{ matrix.platform != 'Windows' }}"
+        with:
+          name: Windows ${{matrix.configuration}} Artifacts
+          path: build/${{matrix.preset}}/artifacts
+  
+      - name: Download Registry Dump
+        uses: actions/download-artifact@v4
+        with:
+          name: Temp Registry Dump
+          path: build/${{matrix.preset}}/artifacts/registry
+
+      - name: CMake Test
+        run: cd build/${{matrix.preset}} && ctest --verbose
+
   cleanup:
     name: Cleanup Artifacts
-    runs-on: ubuntu-latest
-    needs: [dump-registry, build]
+    runs-on: ubuntu-24.04
+    needs: [dump-registry, build, test]
     if: always()
     steps:
       - uses: geekyeggo/delete-artifact@v5
         with:
-          name: '*[Temp]'
+          name: 'Temp *'
