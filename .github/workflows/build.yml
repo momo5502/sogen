@@ -15,6 +15,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  dump-registry:
+    name: Dump Registry
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Dump Registry
+        run: src/grab-registry.bat
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Registry Dump
+          path: |
+            registry/*
+
   build-windows:
     name: Build Windows
     runs-on: windows-latest
