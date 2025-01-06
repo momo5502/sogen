@@ -15,6 +15,19 @@ on:
 #  cancel-in-progress: true
 
 jobs:
+  verify-formatting:
+    name: Verify Formatting
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Verify Formatting
+        uses: jidicula/clang-format-action@v4.14.0
+        with:
+          clang-format-version: '19'
+          check-path: 'src'
+
   dump-registry:
     name: Dump Registry
     runs-on: windows-latest
