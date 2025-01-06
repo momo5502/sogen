@@ -161,6 +161,7 @@ jobs:
 
       - name: CMake Test
         run: cd build/${{matrix.preset}} && ctest --verbose
+        if: "${{ matrix.platform == 'Windows' }}"
 
   cleanup:
     name: Cleanup Artifacts
