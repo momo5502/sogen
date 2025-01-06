@@ -16,7 +16,9 @@ target_link_libraries(windows-emulator-test PRIVATE
   windows-emulator
 )
 
-add_dependencies(windows-emulator-test test-sample)
+if(WIN32)
+  add_dependencies(windows-emulator-test test-sample)
+endif()
 
 add_test(NAME windows-emulator-test
          COMMAND windows-emulator-test

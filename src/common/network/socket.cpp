@@ -68,10 +68,10 @@ namespace network
 
 	bool socket::send(const address& target, const void* data, const size_t size) const
 	{
-		const int res = sendto(this->socket_, static_cast<const char*>(data), static_cast<int>(size), 0,
-		                       &target.get_addr(),
-		                       target.get_size());
-		return res == static_cast<int>(size);
+		const auto res = sendto(this->socket_, static_cast<const char*>(data), static_cast<send_size>(size), 0,
+		                        &target.get_addr(),
+		                        target.get_size());
+		return static_cast<size_t>(res) == size;
 	}
 
 	bool socket::send(const address& target, const std::string& data) const
@@ -82,7 +82,7 @@ namespace network
 	bool socket::receive(address& source, std::string& data) const
 	{
 		char buffer[0x2000];
-		socklen_t len = source.get_max_size();
+		auto len = source.get_max_size();
 
 		const auto result = recvfrom(this->socket_, buffer, static_cast<int>(sizeof(buffer)), 0, &source.get_addr(),
 		                             &len);

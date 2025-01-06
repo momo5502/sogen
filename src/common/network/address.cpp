@@ -57,7 +57,7 @@ namespace network
 		this->address4_ = addr;
 	}
 
-	address::address(const sockaddr* addr, const int length)
+	address::address(const sockaddr* addr, const socklen_t length)
 		: address()
 	{
 		this->set_address(addr, length);
@@ -109,7 +109,7 @@ namespace network
 		this->address6_.sin6_addr = addr;
 	}
 
-	void address::set_address(const sockaddr* addr, const int length)
+	void address::set_address(const sockaddr* addr, const socklen_t length)
 	{
 		if (static_cast<size_t>(length) >= sizeof(sockaddr_in) && addr->sa_family == AF_INET)
 		{
@@ -250,29 +250,29 @@ namespace network
 		return this->address6_;
 	}
 
-	int address::get_size() const
+	socklen_t address::get_size() const
 	{
 		switch (this->address_.sa_family)
 		{
 		case AF_INET:
-			return static_cast<int>(sizeof(this->address4_));
+			return static_cast<socklen_t>(sizeof(this->address4_));
 		case AF_INET6:
-			return static_cast<int>(sizeof(this->address6_));
+			return static_cast<socklen_t>(sizeof(this->address6_));
 		default:
-			return static_cast<int>(sizeof(this->address_));
+			return static_cast<socklen_t>(sizeof(this->address_));
 		}
 	}
 
-	int address::get_max_size() const
+	socklen_t address::get_max_size() const
 	{
-		const auto s = sizeof(this->address_);
-		const auto s4 = sizeof(this->address4_);
-		const auto s6 = sizeof(this->address6_);
-		const auto sstore = sizeof(this->storage_);
-		const auto max_size = std::max(sstore, std::max(s, std::max(s4, s6)));
+		constexpr auto s = sizeof(this->address_);
+		constexpr auto s4 = sizeof(this->address4_);
+		constexpr auto s6 = sizeof(this->address6_);
+		constexpr auto sstore = sizeof(this->storage_);
+		constexpr auto max_size = std::max(sstore, std::max(s, std::max(s4, s6)));
 		static_assert(max_size == sstore);
 
-		return max_size;
+		return static_cast<socklen_t>(max_size);
 	}
 
 	bool address::is_ipv4() const
@@ -339,7 +339,7 @@ namespace network
 		addrinfo* result = nullptr;
 		if (!getaddrinfo(hostname.data(), nullptr, nullptr, &result))
 		{
-			const auto _2 = utils::finally([&result]()
+			const auto _2 = utils::finally([&result]
 			{
 				freeaddrinfo(result);
 			});
@@ -349,7 +349,7 @@ namespace network
 				if (i->ai_family == AF_INET || i->ai_family == AF_INET6)
 				{
 					address a{};
-					a.set_address(i->ai_addr, static_cast<int>(i->ai_addrlen));
+					a.set_address(i->ai_addr, static_cast<socklen_t>(i->ai_addrlen));
 					results.emplace_back(std::move(a));
 				}
 			}

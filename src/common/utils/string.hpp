@@ -11,6 +11,16 @@ namespace utils::string
 		return static_cast<char>(std::tolower(static_cast<unsigned char>(val)));
 	}
 
+	inline char16_t char_to_lower(const char16_t val)
+	{
+		if (val >= u'A' && val <= u'Z')
+		{
+			return val + 32;
+		}
+
+		return val;
+	}
+
 	inline wchar_t char_to_lower(const wchar_t val)
 	{
 		return std::towlower(val);

@@ -1,5 +1,7 @@
 #pragma once
 
+#ifdef WIN32
+
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
@@ -83,3 +85,5 @@ namespace utils::nt
 		HANDLE handle_{InvalidHandleFunction()};
 	};
 }
+
+#endif

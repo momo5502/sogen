@@ -1,10 +1,11 @@
 #include <cstdint>
 #include <cstdio>
-#include <Windows.h>
+#include <cstring>
+#include <platform/compiler.hpp>
 
 #define THE_SIZE 30
 
-extern "C" __declspec(noinline) __declspec(dllexport)
+extern "C" NO_INLINE EXPORT_SYMBOL
 void vulnerable(const uint8_t* data, const size_t size)
 {
 	if (size < 10)

@@ -1,5 +1,11 @@
 #pragma once
 
+#ifdef OS_WINDOWS
+#define FORMAT_ATTRIBUTE(fmt_pos, var_pos)
+#else
+#define FORMAT_ATTRIBUTE(fmt_pos, var_pos) __attribute__((format( printf, fmt_pos, var_pos)))
+#endif
+
 enum class color
 {
 	black,
@@ -17,37 +23,13 @@ enum class color
 class logger
 {
 public:
-	void print(color c, const char* message, ...) const;
-
-	template <typename... Args>
-	void info(const char* message, Args... args)
-	{
-		this->print(color::cyan, message, args...);
-	}
-
-	template <typename... Args>
-	void warn(const char* message, Args... args)
-	{
-		this->print(color::yellow, message, args...);
-	}
-
-	template <typename... Args>
-	void error(const char* message, Args... args)
-	{
-		this->print(color::red, message, args...);
-	}
-
-	template <typename... Args>
-	void success(const char* message, Args... args)
-	{
-		this->print(color::green, message, args...);
-	}
-
-	template <typename... Args>
-	void log(const char* message, Args... args)
-	{
-		this->print(color::gray, message, args...);
-	}
+	void print(color c, std::string_view message) const;
+	void print(color c, const char* message, ...) const FORMAT_ATTRIBUTE(3, 4);
+	void info(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);
+	void warn(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);
+	void error(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);
+	void success(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);
+	void log(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);
 
 	void disable_output(const bool value)
 	{

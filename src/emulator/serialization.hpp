@@ -38,8 +38,8 @@ namespace utils
 		};
 
 		template <typename T>
-		struct has_serialize_function<T, std::void_t<decltype(::serialize(std::declval<buffer_serializer&>(),
-		                                                                  std::declval<const std::remove_cvref_t<T>&>())
+		struct has_serialize_function<T, std::void_t<decltype(serialize(std::declval<buffer_serializer&>(),
+		                                                                std::declval<const std::remove_cvref_t<T>&>())
 		                              )>>
 			: std::true_type
 		{
@@ -51,7 +51,7 @@ namespace utils
 		};
 
 		template <typename T>
-		struct has_deserialize_function<T, std::void_t<decltype(::deserialize(
+		struct has_deserialize_function<T, std::void_t<decltype(deserialize(
 			                                std::declval<buffer_deserializer&>(),
 			                                std::declval<std::remove_cvref_t<T>&>()))>>
 			: std::true_type
@@ -97,6 +97,7 @@ namespace utils
 			const std::span result(this->buffer_.data() + this->offset_, length);
 			this->offset_ += length;
 
+			(void)this->no_debugging_;
 
 #ifndef NDEBUG
 			if (!this->no_debugging_)
@@ -137,7 +138,7 @@ namespace utils
 			}
 			else if constexpr (detail::has_deserialize_function<T>::value)
 			{
-				::deserialize(*this, object);
+				deserialize(*this, object);
 			}
 			else if constexpr (is_trivially_copyable)
 			{
@@ -360,7 +361,7 @@ namespace utils
 			}
 			else if constexpr (detail::has_serialize_function<T>::value)
 			{
-				::serialize(*this, object);
+				serialize(*this, object);
 			}
 			else if constexpr (is_trivially_copyable)
 			{
@@ -466,6 +467,12 @@ namespace utils
 	}
 
 	template <>
+	inline void buffer_deserializer::read<std::u16string>(std::u16string& object)
+	{
+		object = this->read_string<char16_t>();
+	}
+
+	template <>
 	inline void buffer_serializer::write<bool>(const bool& object)
 	{
 		this->write<uint8_t>(object ? 1 : 0);
@@ -479,6 +486,12 @@ namespace utils
 
 	template <>
 	inline void buffer_serializer::write<std::wstring>(const std::wstring& object)
+	{
+		this->write_string(object);
+	}
+
+	template <>
+	inline void buffer_serializer::write<std::u16string>(const std::u16string& object)
 	{
 		this->write_string(object);
 	}

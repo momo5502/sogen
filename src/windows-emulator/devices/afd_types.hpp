@@ -3,87 +3,93 @@
 #include "../std_include.hpp"
 
 typedef LONG TDI_STATUS;
-typedef PVOID CONNECTION_CONTEXT;
 
-typedef struct _TDI_CONNECTION_INFORMATION
+template <typename Traits>
+struct TDI_CONNECTION_INFORMATION
 {
 	LONG UserDataLength;
-	PVOID UserData;
+	typename Traits::PVOID UserData;
 	LONG OptionsLength;
-	PVOID Options;
+	typename Traits::PVOID Options;
 	LONG RemoteAddressLength;
-	PVOID RemoteAddress;
-} TDI_CONNECTION_INFORMATION, *PTDI_CONNECTION_INFORMATION;
+	typename Traits::PVOID RemoteAddress;
+};
 
-typedef struct _TDI_REQUEST
+template <typename Traits>
+struct TDI_REQUEST
 {
 	union
 	{
-		HANDLE AddressHandle;
-		CONNECTION_CONTEXT ConnectionContext;
-		HANDLE ControlChannel;
+		typename Traits::HANDLE AddressHandle;
+		EMULATOR_CAST(typename Traits::PVOID, CONNECTION_CONTEXT) ConnectionContext;
+		typename Traits::HANDLE ControlChannel;
 	} Handle;
 
-	PVOID RequestNotifyObject;
-	PVOID RequestContext;
+	typename Traits::PVOID RequestNotifyObject;
+	typename Traits::PVOID RequestContext;
 	TDI_STATUS TdiStatus;
-} TDI_REQUEST, *PTDI_REQUEST;
+};
 
-typedef struct _TDI_REQUEST_SEND_DATAGRAM
+template <typename Traits>
+struct TDI_REQUEST_SEND_DATAGRAM
 {
-	TDI_REQUEST Request;
-	PTDI_CONNECTION_INFORMATION SendDatagramInformation;
-} TDI_REQUEST_SEND_DATAGRAM, *PTDI_REQUEST_SEND_DATAGRAM;
+	TDI_REQUEST<Traits> Request;
+	EMULATOR_CAST(typename Traits::PVOID, PTDI_CONNECTION_INFORMATION) SendDatagramInformation;
+};
 
-typedef struct _AFD_SEND_INFO
+template <typename Traits>
+struct AFD_SEND_INFO
 {
-	LPWSABUF BufferArray;
+	EMULATOR_CAST(typename Traits::PVOID, LPWSABUF) BufferArray;
 	ULONG BufferCount;
 	ULONG AfdFlags;
 	ULONG TdiFlags;
-} AFD_SEND_INFO, *PAFD_SEND_INFO;
+};
 
-typedef struct _AFD_SEND_DATAGRAM_INFO
+template <typename Traits>
+struct AFD_SEND_DATAGRAM_INFO
 {
-	LPWSABUF BufferArray;
+	EMULATOR_CAST(typename Traits::PVOID, LPWSABUF) BufferArray;
 	ULONG BufferCount;
 	ULONG AfdFlags;
-	TDI_REQUEST_SEND_DATAGRAM TdiRequest;
-	TDI_CONNECTION_INFORMATION TdiConnInfo;
-} AFD_SEND_DATAGRAM_INFO, *PAFD_SEND_DATAGRAM_INFO;
+	TDI_REQUEST_SEND_DATAGRAM<Traits> TdiRequest;
+	TDI_CONNECTION_INFORMATION<Traits> TdiConnInfo;
+};
 
-typedef struct _AFD_RECV_INFO
+template <typename Traits>
+struct AFD_RECV_INFO
 {
-	LPWSABUF BufferArray;
-	ULONG BufferCount;
-	ULONG AfdFlags;
-	ULONG TdiFlags;
-} AFD_RECV_INFO, *PAFD_RECV_INFO;
-
-typedef struct _AFD_RECV_DATAGRAM_INFO
-{
-	LPWSABUF BufferArray;
+	EMULATOR_CAST(typename Traits::PVOID, LPWSABUF) BufferArray;
 	ULONG BufferCount;
 	ULONG AfdFlags;
 	ULONG TdiFlags;
-	PVOID Address;
-	PULONG AddressLength;
-} AFD_RECV_DATAGRAM_INFO, *PAFD_RECV_DATAGRAM_INFO;
+};
 
-typedef struct _AFD_POLL_HANDLE_INFO
+template <typename Traits>
+struct AFD_RECV_DATAGRAM_INFO
 {
-	HANDLE Handle;
+	EMULATOR_CAST(typename Traits::PVOID, LPWSABUF) BufferArray;
+	ULONG BufferCount;
+	ULONG AfdFlags;
+	ULONG TdiFlags;
+	typename Traits::PVOID Address;
+	EMULATOR_CAST(typename Traits::PVOID, PULONG) AddressLength;
+};
+
+struct AFD_POLL_HANDLE_INFO64
+{
+	EmulatorTraits<Emu64>::HANDLE Handle;
 	ULONG PollEvents;
 	NTSTATUS Status;
-} AFD_POLL_HANDLE_INFO, *PAFD_POLL_HANDLE_INFO;
+};
 
-typedef struct _AFD_POLL_INFO
+struct AFD_POLL_INFO64
 {
 	LARGE_INTEGER Timeout;
 	ULONG NumberOfHandles;
 	BOOLEAN Unique;
-	AFD_POLL_HANDLE_INFO Handles[1];
-} AFD_POLL_INFO, *PAFD_POLL_INFO;
+	AFD_POLL_HANDLE_INFO64 Handles[1];
+};
 
 #define AFD_POLL_RECEIVE_BIT            0
 #define AFD_POLL_RECEIVE                (1 << AFD_POLL_RECEIVE_BIT)

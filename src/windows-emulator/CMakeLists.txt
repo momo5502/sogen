@@ -20,7 +20,6 @@ target_link_libraries(windows-emulator PRIVATE
 
 target_link_libraries(windows-emulator PUBLIC
   emulator
-  phnt::phnt
 )
 
 target_include_directories(windows-emulator INTERFACE

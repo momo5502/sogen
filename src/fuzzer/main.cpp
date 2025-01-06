@@ -24,7 +24,8 @@ namespace
 		catch (...)
 		{
 			win_emu.log.disable_output(false);
-			win_emu.log.print(color::red, "Emulation failed at: 0x%llX\n", win_emu.emu().read_instruction_pointer());
+			win_emu.log.print(color::red, "Emulation failed at: 0x%" PRIx64 "\n",
+			                  win_emu.emu().read_instruction_pointer());
 			throw;
 		}
 
@@ -90,7 +91,7 @@ namespace
 
 			restore_emulator();
 
-			const auto memory = emu.emu().allocate_memory(page_align_up(std::max(data.size(), 1ULL)),
+			const auto memory = emu.emu().allocate_memory(page_align_up(std::max(data.size(), size_t(1))),
 			                                              memory_permission::read_write);
 			emu.emu().write_memory(memory, data.data(), data.size());
 
@@ -109,12 +110,12 @@ namespace
 		}
 	};
 
-	struct my_fuzzer_handler : fuzzer::handler
+	struct my_fuzzing_handler : fuzzer::fuzzing_handler
 	{
 		std::vector<std::byte> emulator_state{};
 		std::atomic_bool stop_fuzzing{false};
 
-		my_fuzzer_handler(std::vector<std::byte> emulator_state)
+		my_fuzzing_handler(std::vector<std::byte> emulator_state)
 			: emulator_state(std::move(emulator_state))
 		{
 		}
@@ -137,7 +138,7 @@ namespace
 		utils::buffer_serializer serializer{};
 		base_emulator.serialize(serializer);
 
-		my_fuzzer_handler handler{serializer.move_buffer()};
+		my_fuzzing_handler handler{serializer.move_buffer()};
 
 		fuzzer::run(handler, concurrency);
 	}

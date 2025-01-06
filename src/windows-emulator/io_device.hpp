@@ -15,7 +15,7 @@ struct io_device_context
 	handle event{};
 	emulator_pointer /*PIO_APC_ROUTINE*/ apc_routine{};
 	emulator_pointer apc_context{};
-	emulator_object<IO_STATUS_BLOCK> io_status_block;
+	emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block;
 	ULONG io_control_code{};
 	emulator_pointer input_buffer{};
 	ULONG input_buffer_length{};
@@ -65,11 +65,12 @@ struct io_device_creation_data
 	uint32_t length;
 };
 
-inline void write_io_status(const emulator_object<IO_STATUS_BLOCK> io_status_block, const NTSTATUS status)
+inline void write_io_status(const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                            const NTSTATUS status)
 {
 	if (io_status_block)
 	{
-		io_status_block.access([&](IO_STATUS_BLOCK& status_block)
+		io_status_block.access([&](IO_STATUS_BLOCK<EmulatorTraits<Emu64>>& status_block)
 		{
 			status_block.Status = status;
 		});
@@ -131,14 +132,14 @@ struct stateless_device : io_device
 	}
 };
 
-std::unique_ptr<io_device> create_device(std::wstring_view device);
+std::unique_ptr<io_device> create_device(std::u16string_view device);
 
 class io_device_container : public io_device
 {
 public:
 	io_device_container() = default;
 
-	io_device_container(std::wstring device, windows_emulator& win_emu, const io_device_creation_data& data)
+	io_device_container(std::u16string device, windows_emulator& win_emu, const io_device_creation_data& data)
 		: device_name_(std::move(device))
 	{
 		this->setup();
@@ -182,7 +183,7 @@ public:
 	}
 
 private:
-	std::wstring device_name_{};
+	std::u16string device_name_{};
 	std::unique_ptr<io_device> device_{};
 
 	void setup()

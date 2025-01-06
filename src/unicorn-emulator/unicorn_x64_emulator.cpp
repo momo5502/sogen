@@ -5,6 +5,7 @@
 #include "unicorn_hook.hpp"
 
 #include "function_wrapper.hpp"
+#include <ranges>
 
 namespace unicorn
 {
@@ -127,7 +128,16 @@ namespace unicorn
 					throw std::runtime_error("Memory saving not supported atm");
 				}
 
+#ifndef OS_WINDOWS
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+#endif
+
 				uc_ctl_context_mode(uc, UC_CTL_CONTEXT_CPU | (in_place ? UC_CTL_CONTEXT_MEMORY : 0));
+
+#ifndef OS_WINDOWS
+#pragma GCC diagnostic pop
+#endif
 
 				this->size_ = uc_context_size(uc);
 				uce(uc_context_alloc(uc, &this->context_));
@@ -242,7 +252,17 @@ namespace unicorn
 			unicorn_x64_emulator()
 			{
 				uce(uc_open(UC_ARCH_X86, UC_MODE_64, &this->uc_));
+
+#ifndef OS_WINDOWS
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+#endif
+
 				uce(uc_ctl_set_tcg_buffer_size(this->uc_, 2 << 30 /* 2 gb */));
+
+#ifndef OS_WINDOWS
+#pragma GCC diagnostic pop
+#endif
 			}
 
 			~unicorn_x64_emulator() override
@@ -316,15 +336,17 @@ namespace unicorn
 			              mmio_write_callback write_cb) override
 			{
 				mmio_callbacks cb{
-					.read = [c = std::move(read_cb)](uc_engine*, const uint64_t addr, const uint32_t s)
-					{
-						return c(addr, s);
-					},
-					.write = [c = std::move(write_cb)](uc_engine*, const uint64_t addr, const uint32_t s,
-					                                   const uint64_t value)
-					{
-						c(addr, s, value);
-					}
+					.read = mmio_callbacks::read_wrapper(
+						[c = std::move(read_cb)](uc_engine*, const uint64_t addr, const uint32_t s)
+						{
+							return c(addr, s);
+						}),
+					.write = mmio_callbacks::write_wrapper(
+						[c = std::move(write_cb)](uc_engine*, const uint64_t addr, const uint32_t s,
+						                          const uint64_t value)
+						{
+							c(addr, s, value);
+						})
 				};
 
 				uce(uc_mmio_map(*this, address, size, cb.read.get_c_function(), cb.read.get_user_data(),

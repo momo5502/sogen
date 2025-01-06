@@ -140,6 +140,8 @@ private:
 	uint64_t address_{};
 };
 
+
+// TODO: warning emulator_utils is hardcoded for 64bit unicode_string usage
 class emulator_allocator
 {
 public:
@@ -179,14 +181,15 @@ public:
 		return emulator_object<T>(*this->emu_, potential_start);
 	}
 
-	wchar_t* copy_string(const std::wstring_view str)
+
+	char16_t* copy_string(const std::u16string_view str)
 	{
-		UNICODE_STRING uc_str{};
+		UNICODE_STRING<EmulatorTraits<Emu64>> uc_str{};
 		this->make_unicode_string(uc_str, str);
-		return uc_str.Buffer;
+		return reinterpret_cast<char16_t*>(uc_str.Buffer);
 	}
 
-	void make_unicode_string(UNICODE_STRING& result, const std::wstring_view str)
+	void make_unicode_string(UNICODE_STRING<EmulatorTraits<Emu64>>& result, const std::u16string_view str)
 	{
 		constexpr auto element_size = sizeof(str[0]);
 		constexpr auto required_alignment = alignof(decltype(str[0]));
@@ -199,16 +202,16 @@ public:
 		constexpr std::array<char, element_size> nullbyte{};
 		this->emu_->write_memory(string_buffer + total_length, nullbyte.data(), nullbyte.size());
 
-		result.Buffer = reinterpret_cast<PWCH>(string_buffer);
+		result.Buffer = string_buffer;
 		result.Length = static_cast<USHORT>(total_length);
 		result.MaximumLength = static_cast<USHORT>(total_length + element_size);
 	}
 
-	emulator_object<UNICODE_STRING> make_unicode_string(const std::wstring_view str)
+	emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> make_unicode_string(const std::u16string_view str)
 	{
-		const auto unicode_string = this->reserve<UNICODE_STRING>();
+		const auto unicode_string = this->reserve<UNICODE_STRING<EmulatorTraits<Emu64>>>();
 
-		unicode_string.access([&](UNICODE_STRING& unicode_str)
+		unicode_string.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& unicode_str)
 		{
 			this->make_unicode_string(unicode_str, str);
 		});
@@ -267,29 +270,31 @@ private:
 	uint64_t active_address_{0};
 };
 
-inline std::wstring read_unicode_string(const emulator& emu, const UNICODE_STRING ucs)
-{
-	static_assert(offsetof(UNICODE_STRING, Length) == 0);
-	static_assert(offsetof(UNICODE_STRING, MaximumLength) == 2);
-	static_assert(offsetof(UNICODE_STRING, Buffer) == 8);
-	static_assert(sizeof(UNICODE_STRING) == 16);
 
-	std::wstring result{};
+inline std::u16string read_unicode_string(const emulator& emu, const UNICODE_STRING<EmulatorTraits<Emu64>> ucs)
+{
+	static_assert(offsetof(UNICODE_STRING<EmulatorTraits<Emu64>>, Length) == 0);
+	static_assert(offsetof(UNICODE_STRING<EmulatorTraits<Emu64>>, MaximumLength) == 2);
+	static_assert(offsetof(UNICODE_STRING<EmulatorTraits<Emu64>>, Buffer) == 8);
+	static_assert(sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>) == 16);
+
+	std::u16string result{};
 	result.resize(ucs.Length / 2);
 
-	emu.read_memory(reinterpret_cast<uint64_t>(ucs.Buffer), result.data(), ucs.Length);
+	emu.read_memory(ucs.Buffer, result.data(), ucs.Length);
 
 	return result;
 }
 
 
-inline std::wstring read_unicode_string(const emulator& emu, const emulator_object<UNICODE_STRING> uc_string)
+inline std::u16string read_unicode_string(const emulator& emu,
+                                          const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> uc_string)
 {
 	const auto ucs = uc_string.read();
 	return read_unicode_string(emu, ucs);
 }
 
-inline std::wstring read_unicode_string(emulator& emu, const UNICODE_STRING* uc_string)
+inline std::u16string read_unicode_string(emulator& emu, const UNICODE_STRING<EmulatorTraits<Emu64>>* uc_string)
 {
-	return read_unicode_string(emu, emulator_object<UNICODE_STRING>{emu, uc_string});
+	return read_unicode_string(emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{emu, uc_string});
 }

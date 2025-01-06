@@ -1,6 +1,9 @@
 #pragma once
 
+#include <ranges>
 #include <fstream>
+#include <algorithm>
+
 #include <utils/container.hpp>
 
 struct hive_value

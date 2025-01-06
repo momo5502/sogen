@@ -63,30 +63,33 @@ namespace
 	}
 }
 
-static void serialize(utils::buffer_serializer& buffer, const memory_manager::committed_region& region)
+namespace utils
 {
-	buffer.write<uint64_t>(region.length);
-	buffer.write(region.pemissions);
-}
+	static void serialize(buffer_serializer& buffer, const memory_manager::committed_region& region)
+	{
+		buffer.write<uint64_t>(region.length);
+		buffer.write(region.pemissions);
+	}
 
-static void deserialize(utils::buffer_deserializer& buffer, memory_manager::committed_region& region)
-{
-	region.length = static_cast<size_t>(buffer.read<uint64_t>());
-	region.pemissions = buffer.read<memory_permission>();
-}
+	static void deserialize(buffer_deserializer& buffer, memory_manager::committed_region& region)
+	{
+		region.length = static_cast<size_t>(buffer.read<uint64_t>());
+		region.pemissions = buffer.read<memory_permission>();
+	}
 
-static void serialize(utils::buffer_serializer& buffer, const memory_manager::reserved_region& region)
-{
-	buffer.write(region.is_mmio);
-	buffer.write<uint64_t>(region.length);
-	buffer.write_map(region.committed_regions);
-}
+	static void serialize(buffer_serializer& buffer, const memory_manager::reserved_region& region)
+	{
+		buffer.write(region.is_mmio);
+		buffer.write<uint64_t>(region.length);
+		buffer.write_map(region.committed_regions);
+	}
 
-static void deserialize(utils::buffer_deserializer& buffer, memory_manager::reserved_region& region)
-{
-	buffer.read(region.is_mmio);
-	region.length = static_cast<size_t>(buffer.read<uint64_t>());
-	buffer.read_map(region.committed_regions);
+	static void deserialize(buffer_deserializer& buffer, memory_manager::reserved_region& region)
+	{
+		buffer.read(region.is_mmio);
+		region.length = static_cast<size_t>(buffer.read<uint64_t>());
+		buffer.read_map(region.committed_regions);
+	}
 }
 
 void memory_manager::serialize_memory_state(utils::buffer_serializer& buffer, const bool is_snapshot) const
@@ -243,7 +246,7 @@ bool memory_manager::allocate_memory(const uint64_t address, const size_t size, 
 		return false;
 	}
 
-	const auto entry = this->reserved_regions_.try_emplace(address, size).first;
+	const auto entry = this->reserved_regions_.try_emplace(address, reserved_region{.length = size,}).first;
 
 	if (!reserve_only)
 	{

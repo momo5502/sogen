@@ -30,6 +30,7 @@
 #include <optional>
 
 #ifdef _WIN32
+using socklen_t = int;
 #pragma comment(lib, "ws2_32.lib")
 #endif
 
@@ -44,12 +45,12 @@ namespace network
 		address(const std::string& addr, const std::optional<int>& family = {});
 		address(const sockaddr_in& addr);
 		address(const sockaddr_in6& addr);
-		address(const sockaddr* addr, int length);
+		address(const sockaddr* addr, socklen_t length);
 
 		void set_ipv4(uint32_t ip);
 		void set_ipv4(const in_addr& addr);
 		void set_ipv6(const in6_addr& addr);
-		void set_address(const sockaddr* addr, int length);
+		void set_address(const sockaddr* addr, socklen_t length);
 
 		void set_port(unsigned short port);
 		[[nodiscard]] unsigned short get_port() const;
@@ -62,8 +63,8 @@ namespace network
 		const sockaddr_in& get_in_addr() const;
 		const sockaddr_in6& get_in6_addr() const;
 
-		int get_size() const;
-		int get_max_size() const;
+		socklen_t get_size() const;
+		socklen_t get_max_size() const;
 
 		bool is_ipv4() const;
 		bool is_ipv6() const;

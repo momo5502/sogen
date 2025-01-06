@@ -15,20 +15,25 @@ namespace
 
 	void watch_system_objects(windows_emulator& win_emu, const bool cache_logging)
 	{
+		(void)win_emu;
+		(void)cache_logging;
+
+#ifdef OS_WINDOWS
 		watch_object(win_emu, *win_emu.current_thread().teb, cache_logging);
 		watch_object(win_emu, win_emu.process().peb, cache_logging);
-		watch_object(win_emu, emulator_object<KUSER_SHARED_DATA>{win_emu.emu(), kusd_mmio::address()}, cache_logging);
+		watch_object(win_emu, emulator_object<KUSER_SHARED_DATA64>{win_emu.emu(), kusd_mmio::address()}, cache_logging);
+
 		auto* params_hook = watch_object(win_emu, win_emu.process().process_params, cache_logging);
 
-		win_emu.emu().hook_memory_write(win_emu.process().peb.value() + offsetof(PEB, ProcessParameters), 0x8,
+		win_emu.emu().hook_memory_write(win_emu.process().peb.value() + offsetof(PEB64, ProcessParameters), 0x8,
 		                                [&, cache_logging](const uint64_t address, size_t, const uint64_t value)
 		                                {
 			                                const auto target_address = win_emu.process().peb.value() + offsetof(
-				                                PEB, ProcessParameters);
+				                                PEB64, ProcessParameters);
 
 			                                if (address == target_address)
 			                                {
-				                                const emulator_object<RTL_USER_PROCESS_PARAMETERS> obj{
+				                                const emulator_object<RTL_USER_PROCESS_PARAMETERS64> obj{
 					                                win_emu.emu(), value
 				                                };
 
@@ -36,6 +41,7 @@ namespace
 				                                params_hook = watch_object(win_emu, obj, cache_logging);
 			                                }
 		                                });
+#endif
 	}
 
 	void run_emulation(windows_emulator& win_emu, const analysis_options& options)
@@ -57,13 +63,14 @@ namespace
 		}
 		catch (const std::exception& e)
 		{
-			win_emu.log.print(color::red, "Emulation failed at: 0x%llX - %s\n",
-			                     win_emu.emu().read_instruction_pointer(), e.what());
+			win_emu.log.print(color::red, "Emulation failed at: 0x%" PRIx64 " - %s\n",
+			                  win_emu.emu().read_instruction_pointer(), e.what());
 			throw;
 		}
 		catch (...)
 		{
-			win_emu.log.print(color::red, "Emulation failed at: 0x%llX\n", win_emu.emu().read_instruction_pointer());
+			win_emu.log.print(color::red, "Emulation failed at: 0x%" PRIx64 "\n",
+			                  win_emu.emu().read_instruction_pointer());
 			throw;
 		}
 
@@ -78,9 +85,9 @@ namespace
 		}
 	}
 
-	std::vector<std::wstring> parse_arguments(const std::span<const std::string_view> args)
+	std::vector<std::u16string> parse_arguments(const std::span<const std::string_view> args)
 	{
-		std::vector<std::wstring> wide_args{};
+		std::vector<std::u16string> wide_args{};
 		wide_args.reserve(args.size() - 1);
 
 		for (size_t i = 1; i < args.size(); ++i)
@@ -140,7 +147,7 @@ namespace
 
 				win_emu.log.print(
 					color::green,
-					"Reading from executable section %s at 0x%llX via 0x%llX\n",
+					"Reading from executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
 					section.name.c_str(), address, rip);
 			};
 
@@ -161,7 +168,7 @@ namespace
 
 				win_emu.log.print(
 					color::blue,
-					"Writing to executable section %s at 0x%llX via 0x%llX\n",
+					"Writing to executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
 					section.name.c_str(), address, rip);
 			};
 

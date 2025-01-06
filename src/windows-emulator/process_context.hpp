@@ -51,7 +51,7 @@ struct event : ref_counted_object
 {
 	bool signaled{};
 	EVENT_TYPE type{};
-	std::wstring name{};
+	std::u16string name{};
 
 	bool is_signaled()
 	{
@@ -88,7 +88,7 @@ struct mutant : ref_counted_object
 {
 	uint32_t locked_count{0};
 	uint32_t owning_thread_id{};
-	std::wstring name{};
+	std::u16string name{};
 
 	bool try_lock(const uint32_t thread_id)
 	{
@@ -176,7 +176,7 @@ struct file_enumeration_state
 struct file
 {
 	utils::file_handle handle{};
-	std::wstring name{};
+	std::u16string name{};
 	std::optional<file_enumeration_state> enumeration_state{};
 
 	bool is_file() const
@@ -206,8 +206,8 @@ struct file
 
 struct section
 {
-	std::wstring name{};
-	std::wstring file_name{};
+	std::u16string name{};
+	std::u16string file_name{};
 	uint64_t maximum_size{};
 	uint32_t section_page_protection{};
 	uint32_t allocation_attributes{};
@@ -238,7 +238,7 @@ struct section
 
 struct semaphore : ref_counted_object
 {
-	std::wstring name{};
+	std::u16string name{};
 	volatile uint32_t current_count{};
 	uint32_t max_count{};
 
@@ -263,7 +263,7 @@ struct semaphore : ref_counted_object
 
 struct port
 {
-	std::wstring name{};
+	std::u16string name{};
 	uint64_t view_base{};
 
 	void serialize(utils::buffer_serializer& buffer) const
@@ -356,7 +356,7 @@ public:
 
 	uint32_t id{};
 
-	std::wstring name{};
+	std::u16string name{};
 
 	std::optional<NTSTATUS> exit_status{};
 	std::vector<handle> await_objects{};
@@ -368,7 +368,7 @@ public:
 	std::optional<NTSTATUS> pending_status{};
 
 	std::optional<emulator_allocator> gs_segment;
-	std::optional<emulator_object<TEB>> teb;
+	std::optional<emulator_object<TEB64>> teb;
 
 	std::vector<std::byte> last_registers{};
 
@@ -466,7 +466,7 @@ public:
 		buffer.read_optional(this->await_time);
 		buffer.read_optional(this->pending_status);
 		buffer.read_optional(this->gs_segment, [this] { return emulator_allocator(*this->emu_ptr); });
-		buffer.read_optional(this->teb, [this] { return emulator_object<TEB>(*this->emu_ptr); });
+		buffer.read_optional(this->teb, [this] { return emulator_object<TEB64>(*this->emu_ptr); });
 
 		buffer.read_vector(this->last_registers);
 	}
@@ -522,8 +522,8 @@ struct process_context
 
 	emulator_allocator base_allocator;
 
-	emulator_object<PEB> peb;
-	emulator_object<RTL_USER_PROCESS_PARAMETERS> process_params;
+	emulator_object<PEB64> peb;
+	emulator_object<RTL_USER_PROCESS_PARAMETERS64> process_params;
 	kusd_mmio kusd;
 
 	module_manager mod_manager;

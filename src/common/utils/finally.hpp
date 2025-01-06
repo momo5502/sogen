@@ -13,8 +13,8 @@ namespace utils
 	{
 	public:
 		static_assert(!std::is_reference<F>::value && !std::is_const<F>::value &&
-			!std::is_volatile<F>::value,
-			"Final_action should store its callable by value");
+		              !std::is_volatile<F>::value,
+		              "Final_action should store its callable by value");
 
 		explicit final_action(F f) noexcept : f_(std::move(f))
 		{

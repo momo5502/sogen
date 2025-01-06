@@ -3,9 +3,9 @@
 
 namespace context_frame
 {
-	void restore(x64_emulator& emu, const CONTEXT& context)
+	void restore(x64_emulator& emu, const CONTEXT64& context)
 	{
-		if (context.ContextFlags & CONTEXT_DEBUG_REGISTERS)
+		if (context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64)
 		{
 			emu.reg(x64_register::dr0, context.Dr0);
 			emu.reg(x64_register::dr1, context.Dr1);
@@ -15,7 +15,7 @@ namespace context_frame
 			emu.reg(x64_register::dr7, context.Dr7);
 		}
 
-		if (context.ContextFlags & CONTEXT_CONTROL)
+		if (context.ContextFlags & CONTEXT_CONTROL_64)
 		{
 			emu.reg<uint16_t>(x64_register::ss, context.SegSs);
 			emu.reg<uint16_t>(x64_register::cs, context.SegCs);
@@ -26,7 +26,7 @@ namespace context_frame
 			emu.reg<uint32_t>(x64_register::eflags, context.EFlags);
 		}
 
-		if (context.ContextFlags & CONTEXT_INTEGER)
+		if (context.ContextFlags & CONTEXT_INTEGER_64)
 		{
 			emu.reg(x64_register::rax, context.Rax);
 			emu.reg(x64_register::rbx, context.Rbx);
@@ -53,7 +53,7 @@ namespace context_frame
 			emu.reg<uint16_t>(x64_register::gs, context.SegGs);
 		}*/
 
-		if (context.ContextFlags & CONTEXT_FLOATING_POINT)
+		if (context.ContextFlags & CONTEXT_FLOATING_POINT_64)
 		{
 			emu.reg<uint16_t>(x64_register::fpcw, context.FltSave.ControlWord);
 			emu.reg<uint16_t>(x64_register::fpsw, context.FltSave.StatusWord);
@@ -66,7 +66,7 @@ namespace context_frame
 			}
 		}
 
-		if (context.ContextFlags & CONTEXT_XSTATE)
+		if (context.ContextFlags & CONTEXT_XSTATE_64)
 		{
 			emu.reg<uint32_t>(x64_register::mxcsr, context.MxCsr);
 
@@ -78,9 +78,9 @@ namespace context_frame
 		}
 	}
 
-	void save(x64_emulator& emu, CONTEXT& context)
+	void save(x64_emulator& emu, CONTEXT64& context)
 	{
-		if (context.ContextFlags & CONTEXT_DEBUG_REGISTERS)
+		if (context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64)
 		{
 			context.Dr0 = emu.reg(x64_register::dr0);
 			context.Dr1 = emu.reg(x64_register::dr1);
@@ -90,7 +90,7 @@ namespace context_frame
 			context.Dr7 = emu.reg(x64_register::dr7);
 		}
 
-		if (context.ContextFlags & CONTEXT_CONTROL)
+		if (context.ContextFlags & CONTEXT_CONTROL_64)
 		{
 			context.SegSs = emu.reg<uint16_t>(x64_register::ss);
 			context.SegCs = emu.reg<uint16_t>(x64_register::cs);
@@ -99,7 +99,7 @@ namespace context_frame
 			context.EFlags = emu.reg<uint32_t>(x64_register::eflags);
 		}
 
-		if (context.ContextFlags & CONTEXT_INTEGER)
+		if (context.ContextFlags & CONTEXT_INTEGER_64)
 		{
 			context.Rax = emu.reg(x64_register::rax);
 			context.Rbx = emu.reg(x64_register::rbx);
@@ -118,7 +118,7 @@ namespace context_frame
 			context.R15 = emu.reg(x64_register::r15);
 		}
 
-		if (context.ContextFlags & CONTEXT_SEGMENTS)
+		if (context.ContextFlags & CONTEXT_SEGMENTS_64)
 		{
 			context.SegDs = emu.reg<uint16_t>(x64_register::ds);
 			context.SegEs = emu.reg<uint16_t>(x64_register::es);
@@ -126,7 +126,7 @@ namespace context_frame
 			context.SegGs = emu.reg<uint16_t>(x64_register::gs);
 		}
 
-		if (context.ContextFlags & CONTEXT_FLOATING_POINT)
+		if (context.ContextFlags & CONTEXT_FLOATING_POINT_64)
 		{
 			context.FltSave.ControlWord = emu.reg<uint16_t>(x64_register::fpcw);
 			context.FltSave.StatusWord = emu.reg<uint16_t>(x64_register::fpsw);
@@ -138,7 +138,7 @@ namespace context_frame
 			}
 		}
 
-		if (context.ContextFlags & CONTEXT_XSTATE)
+		if (context.ContextFlags & CONTEXT_XSTATE_64)
 		{
 			context.MxCsr = emu.reg<uint32_t>(x64_register::mxcsr);
 			for (int i = 0; i < 16; i++)

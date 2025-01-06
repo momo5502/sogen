@@ -93,10 +93,10 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
 		const auto* mod = context.mod_manager.find_by_address(address);
 		if (mod != context.ntdll && mod != context.win32u)
 		{
-			win_emu.log.print(color::blue, "Executing inline syscall: %s (0x%X) at 0x%llX (%s)\n",
-			                     entry->second.name.c_str(),
-			                     syscall_id,
-			                     address, mod ? mod->name.c_str() : "<N/A>");
+			win_emu.log.print(color::blue, "Executing inline syscall: %s (0x%X) at 0x%" PRIx64 " (%s)\n",
+			                  entry->second.name.c_str(),
+			                  syscall_id,
+			                  address, mod ? mod->name.c_str() : "<N/A>");
 		}
 		else
 		{
@@ -106,19 +106,21 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
 				const auto return_address = c.emu.read_memory<uint64_t>(rsp);
 				const auto* mod_name = context.mod_manager.find_name(return_address);
 
-				win_emu.log.print(color::dark_gray, "Executing syscall: %s (0x%X) at 0x%llX via 0x%llX (%s) %lld\n",
-				                     entry->second.name.c_str(),
-				                     syscall_id, address, return_address, mod_name, c.proc.executed_instructions);
+				win_emu.log.print(color::dark_gray,
+				                  "Executing syscall: %s (0x%X) at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n",
+				                  entry->second.name.c_str(),
+				                  syscall_id, address, return_address, mod_name);
 			}
 			else
 			{
 				const auto* previous_mod = context.mod_manager.find_by_address(context.previous_ip);
 				win_emu.log.print(color::blue,
-				                     "Crafted out-of-line syscall: %s (0x%X) at 0x%llX (%s) via 0x%llX (%s)\n",
-				                     entry->second.name.c_str(),
-				                     syscall_id,
-				                     address, mod ? mod->name.c_str() : "<N/A>", context.previous_ip,
-				                     previous_mod ? previous_mod->name.c_str() : "<N/A>");
+				                  "Crafted out-of-line syscall: %s (0x%X) at 0x%" PRIx64 " (%s) via 0x%" PRIx64
+				                  " (%s)\n",
+				                  entry->second.name.c_str(),
+				                  syscall_id,
+				                  address, mod ? mod->name.c_str() : "<N/A>", context.previous_ip,
+				                  previous_mod ? previous_mod->name.c_str() : "<N/A>");
 			}
 		}
 
@@ -126,13 +128,13 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
 	}
 	catch (std::exception& e)
 	{
-		printf("Syscall threw an exception: %X (0x%llX) - %s\n", syscall_id, address, e.what());
+		printf("Syscall threw an exception: %X (0x%" PRIx64 ") - %s\n", syscall_id, address, e.what());
 		emu.reg<uint64_t>(x64_register::rax, STATUS_UNSUCCESSFUL);
 		emu.stop();
 	}
 	catch (...)
 	{
-		printf("Syscall threw an unknown exception: %X (0x%llX)\n", syscall_id, address);
+		printf("Syscall threw an unknown exception: %X (0x%" PRIx64 ")\n", syscall_id, address);
 		emu.reg<uint64_t>(x64_register::rax, STATUS_UNSUCCESSFUL);
 		emu.stop();
 	}

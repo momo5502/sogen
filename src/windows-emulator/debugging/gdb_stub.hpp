@@ -35,4 +35,5 @@ struct gdb_stub_handler
 	virtual void on_interrupt() = 0;
 };
 
-bool run_gdb_stub(gdb_stub_handler& handler, std::string target_description, size_t register_count, std::string bind_address);
+bool run_gdb_stub(gdb_stub_handler& handler, std::string target_description, size_t register_count,
+                  std::string bind_address);

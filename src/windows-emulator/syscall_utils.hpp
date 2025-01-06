@@ -1,6 +1,7 @@
 #pragma once
 
 #include "windows_emulator.hpp"
+#include <ctime>
 
 struct syscall_context
 {
@@ -173,6 +174,8 @@ void forward_syscall(const syscall_context& c, NTSTATUS (*handler)(const syscall
 		resolve_indexed_argument<std::remove_cv_t<std::remove_reference_t<Args>>>(c.emu, index)...
 	};
 
+	(void)index;
+
 	const auto ret = std::apply(handler, std::move(func_args));
 	write_status(c, ret, ip);
 }
@@ -186,12 +189,12 @@ syscall_handler make_syscall_handler()
 	};
 }
 
-template <typename T>
-void write_attribute(emulator& emu, const PS_ATTRIBUTE& attribute, const T& value)
+template <typename T, typename Traits>
+void write_attribute(emulator& emu, const PS_ATTRIBUTE<Traits>& attribute, const T& value)
 {
 	if (attribute.ReturnLength)
 	{
-		emulator_object<SIZE_T>{emu, attribute.ReturnLength}.write(sizeof(T));
+		emulator_object<typename Traits::SIZE_T>{emu, attribute.ReturnLength}.write(sizeof(T));
 	}
 
 	if (attribute.Size >= sizeof(T))
@@ -268,6 +271,10 @@ inline std::chrono::system_clock::time_point convert_from_ksystem_time(const vol
 {
 	return convert_from_ksystem_time(*const_cast<const KSYSTEM_TIME*>(&time));
 }
+
+#ifndef OS_WINDOWS
+using __time64_t = int64_t;
+#endif
 
 inline LARGE_INTEGER convert_unix_to_windows_time(const __time64_t unix_time)
 {

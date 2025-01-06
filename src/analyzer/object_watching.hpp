@@ -31,10 +31,10 @@ emulator_hook* watch_object(windows_emulator& emu, emulator_object<T> object, co
 
 		                                  const auto offset = address - object.value();
 		                                  emu.log.print(is_main_access ? color::green : color::dark_gray,
-		                                                   "Object access: %s - 0x%llX (%s) at 0x%llX (%s)\n",
-		                                                   i.get_type_name().c_str(),
-		                                                   offset,
-		                                                   i.get_member_name(offset).c_str(), rip,
-		                                                   mod ? mod->name.c_str() : "<N/A>");
+		                                                "Object access: %s - 0x%llX (%s) at 0x%llX (%s)\n",
+		                                                i.get_type_name().c_str(),
+		                                                offset,
+		                                                i.get_member_name(offset).c_str(), rip,
+		                                                mod ? mod->name.c_str() : "<N/A>");
 	                                  });
 }

@@ -1,4 +1,6 @@
 #include "fuzzer.hpp"
+#include <cinttypes>
+
 #include "input_generator.hpp"
 
 namespace fuzzer
@@ -8,7 +10,7 @@ namespace fuzzer
 		class fuzzing_context
 		{
 		public:
-			fuzzing_context(input_generator& generator, handler& handler)
+			fuzzing_context(input_generator& generator, fuzzing_handler& handler)
 				: generator(generator)
 				  , handler(handler)
 			{
@@ -36,7 +38,7 @@ namespace fuzzer
 			}
 
 			input_generator& generator;
-			handler& handler;
+			fuzzing_handler& handler;
 			std::atomic_uint64_t executions{0};
 
 		private:
@@ -110,7 +112,7 @@ namespace fuzzer
 		};
 	}
 
-	void run(handler& handler, const size_t concurrency)
+	void run(fuzzing_handler& handler, const size_t concurrency)
 	{
 		input_generator generator{};
 		fuzzing_context context{generator, handler};
@@ -123,7 +125,8 @@ namespace fuzzer
 			const auto executions = context.executions.exchange(0);
 			const auto highest_scorer = context.generator.get_highest_scorer();
 			const auto avg_score = context.generator.get_average_score();
-			printf("Executions/s: %lld - Score: %llX - Avg: %.3f\n", executions, highest_scorer.score, avg_score);
+			printf("Executions/s: %" PRIu64 " - Score: %" PRIx64 " - Avg: %.3f\n", executions, highest_scorer.score,
+			       avg_score);
 		}
 	}
 }
