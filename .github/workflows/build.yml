@@ -67,11 +67,12 @@ jobs:
           path: |
             build/${{matrix.preset}}/artifacts/*
 
-      - name: Dump Registry
-        run: cd build/${{matrix.preset}}/artifacts && ../../../src/grab-registry.bat
-
-      - name: CMake Test
-        run: cd build/${{matrix.preset}} && ctest --verbose
+      - name: Upload Test Configuration
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows ${{matrix.configuration}} Test Config
+          path: |
+            build/${{matrix.preset}}/**/CTestTestfile.cmake
 
   build-linux-gcc:
     name: Build Linux GCC
