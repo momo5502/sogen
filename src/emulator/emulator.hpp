@@ -42,7 +42,8 @@ using instruction_hook_callback = std::function<instruction_hook_continuation()>
 
 using interrupt_hook_callback = std::function<void(int interrupt)>;
 using simple_memory_hook_callback = std::function<void(uint64_t address, size_t size, uint64_t value)>;
-using complex_memory_hook_callback = std::function<void(uint64_t address, size_t size, uint64_t value, memory_operation operation)>;
+using complex_memory_hook_callback = std::function<void(uint64_t address, size_t size, uint64_t value,
+                                                        memory_operation operation)>;
 using memory_violation_hook_callback = std::function<memory_violation_continuation(
 	uint64_t address, size_t size, memory_operation operation,
 	memory_violation_type type)>;
@@ -140,7 +141,8 @@ private:
 	{
 		assert((static_cast<uint8_t>(operation) & (static_cast<uint8_t>(operation) - 1)) == 0);
 		return this->hook_memory_access(address, size, operation,
-		                                [c = std::move(callback)](const uint64_t a, const size_t s, const uint64_t value,
+		                                [c = std::move(callback)](const uint64_t a, const size_t s,
+		                                                          const uint64_t value,
 		                                                          memory_operation)
 		                                {
 			                                c(a, s, value);

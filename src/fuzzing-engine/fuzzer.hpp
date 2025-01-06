@@ -20,7 +20,7 @@ namespace fuzzer
 		virtual ~executer() = default;
 
 		virtual execution_result execute(std::span<const uint8_t> data,
-			const std::function<coverage_functor>& coverage_handler) = 0;
+		                                 const std::function<coverage_functor>& coverage_handler) = 0;
 	};
 
 	struct fuzzing_handler

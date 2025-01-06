@@ -1,6 +1,6 @@
 #pragma once
 
-#ifdef OS_WINDOWS
+#ifdef WIN32
 
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN

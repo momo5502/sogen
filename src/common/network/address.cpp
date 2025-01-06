@@ -339,7 +339,7 @@ namespace network
 		addrinfo* result = nullptr;
 		if (!getaddrinfo(hostname.data(), nullptr, nullptr, &result))
 		{
-			const auto _2 = utils::finally([&result]()
+			const auto _2 = utils::finally([&result]
 			{
 				freeaddrinfo(result);
 			});

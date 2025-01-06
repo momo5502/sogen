@@ -39,7 +39,7 @@ namespace utils
 
 		template <typename T>
 		struct has_serialize_function<T, std::void_t<decltype(serialize(std::declval<buffer_serializer&>(),
-		                                                                  std::declval<const std::remove_cvref_t<T>&>())
+		                                                                std::declval<const std::remove_cvref_t<T>&>())
 		                              )>>
 			: std::true_type
 		{

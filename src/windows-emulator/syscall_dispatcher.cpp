@@ -94,9 +94,9 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
 		if (mod != context.ntdll && mod != context.win32u)
 		{
 			win_emu.log.print(color::blue, "Executing inline syscall: %s (0x%X) at 0x%" PRIx64 " (%s)\n",
-			                     entry->second.name.c_str(),
-			                     syscall_id,
-			                     address, mod ? mod->name.c_str() : "<N/A>");
+			                  entry->second.name.c_str(),
+			                  syscall_id,
+			                  address, mod ? mod->name.c_str() : "<N/A>");
 		}
 		else
 		{
@@ -106,19 +106,21 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
 				const auto return_address = c.emu.read_memory<uint64_t>(rsp);
 				const auto* mod_name = context.mod_manager.find_name(return_address);
 
-				win_emu.log.print(color::dark_gray, "Executing syscall: %s (0x%X) at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n",
-				                     entry->second.name.c_str(),
-				                     syscall_id, address, return_address, mod_name);
+				win_emu.log.print(color::dark_gray,
+				                  "Executing syscall: %s (0x%X) at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n",
+				                  entry->second.name.c_str(),
+				                  syscall_id, address, return_address, mod_name);
 			}
 			else
 			{
 				const auto* previous_mod = context.mod_manager.find_by_address(context.previous_ip);
 				win_emu.log.print(color::blue,
-				                     "Crafted out-of-line syscall: %s (0x%X) at 0x%" PRIx64 " (%s) via 0x%" PRIx64 " (%s)\n",
-				                     entry->second.name.c_str(),
-				                     syscall_id,
-				                     address, mod ? mod->name.c_str() : "<N/A>", context.previous_ip,
-				                     previous_mod ? previous_mod->name.c_str() : "<N/A>");
+				                  "Crafted out-of-line syscall: %s (0x%X) at 0x%" PRIx64 " (%s) via 0x%" PRIx64
+				                  " (%s)\n",
+				                  entry->second.name.c_str(),
+				                  syscall_id,
+				                  address, mod ? mod->name.c_str() : "<N/A>", context.previous_ip,
+				                  previous_mod ? previous_mod->name.c_str() : "<N/A>");
 			}
 		}
 

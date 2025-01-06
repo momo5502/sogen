@@ -24,7 +24,8 @@ namespace
 		catch (...)
 		{
 			win_emu.log.disable_output(false);
-			win_emu.log.print(color::red, "Emulation failed at: 0x%" PRIx64 "\n", win_emu.emu().read_instruction_pointer());
+			win_emu.log.print(color::red, "Emulation failed at: 0x%" PRIx64 "\n",
+			                  win_emu.emu().read_instruction_pointer());
 			throw;
 		}
 

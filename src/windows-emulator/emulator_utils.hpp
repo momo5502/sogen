@@ -181,7 +181,7 @@ public:
 		return emulator_object<T>(*this->emu_, potential_start);
 	}
 
-	
+
 	char16_t* copy_string(const std::u16string_view str)
 	{
 		UNICODE_STRING<EmulatorTraits<Emu64>> uc_str{};
@@ -287,7 +287,8 @@ inline std::u16string read_unicode_string(const emulator& emu, const UNICODE_STR
 }
 
 
-inline std::u16string read_unicode_string(const emulator& emu, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> uc_string)
+inline std::u16string read_unicode_string(const emulator& emu,
+                                          const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> uc_string)
 {
 	const auto ucs = uc_string.read();
 	return read_unicode_string(emu, ucs);

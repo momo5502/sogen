@@ -10,7 +10,8 @@ namespace
 	uint64_t get_first_section_offset(const PENTHeaders_t<std::uint64_t>& nt_headers, const uint64_t nt_headers_offset)
 	{
 		const uint8_t* nt_headers_addr = reinterpret_cast<const uint8_t*>(&nt_headers);
-    	size_t optional_header_offset = reinterpret_cast<uintptr_t>(&(nt_headers.OptionalHeader)) - reinterpret_cast<uintptr_t>(&nt_headers);
+		size_t optional_header_offset = reinterpret_cast<uintptr_t>(&(nt_headers.OptionalHeader)) - reinterpret_cast<
+			uintptr_t>(&nt_headers);
 		size_t optional_header_size = nt_headers.FileHeader.SizeOfOptionalHeader;
 		const uint8_t* first_section_addr = nt_headers_addr + optional_header_offset + optional_header_size;
 

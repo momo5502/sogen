@@ -246,11 +246,13 @@ namespace
 
 			allocator.make_unicode_string(proc_params.CommandLine, command_line);
 			allocator.make_unicode_string(proc_params.CurrentDirectory.DosPath, current_folder);
-			allocator.make_unicode_string(proc_params.ImagePathName, canonicalize_path(settings.application).u16string());
+			allocator.make_unicode_string(proc_params.ImagePathName,
+			                              canonicalize_path(settings.application).u16string());
 
 			const auto total_length = allocator.get_next_address() - context.process_params.value();
 
-			proc_params.Length = static_cast<uint32_t>(std::max(static_cast<uint64_t>(sizeof(proc_params)), total_length));
+			proc_params.Length = static_cast<uint32_t>(std::max(static_cast<uint64_t>(sizeof(proc_params)),
+			                                                    total_length));
 			proc_params.MaximumLength = proc_params.Length;
 		});
 
@@ -275,11 +277,13 @@ namespace
 		});
 	}
 
-	using exception_record_map = std::unordered_map<const EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>*, emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>>>;
+	using exception_record_map = std::unordered_map<
+		const EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>*, emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<
+			Emu64>>>>;
 
 	emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>> save_exception_record(emulator_allocator& allocator,
-	                                                        const EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>& record,
-	                                                        exception_record_map& record_mapping)
+		const EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>& record,
+		exception_record_map& record_mapping)
 	{
 		const auto record_obj = allocator.reserve<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>>();
 		record_obj.write(record);
@@ -289,7 +293,8 @@ namespace
 			record_mapping.emplace(&record, record_obj);
 
 			emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>> nested_record_obj{allocator.get_emulator()};
-			const auto nested_record = record_mapping.find(reinterpret_cast<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>*>(record.ExceptionRecord));
+			const auto nested_record = record_mapping.find(
+				reinterpret_cast<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>*>(record.ExceptionRecord));
 
 			if (nested_record != record_mapping.end())
 			{
@@ -297,8 +302,9 @@ namespace
 			}
 			else
 			{
-				nested_record_obj = save_exception_record(allocator, *reinterpret_cast<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>*>(record.ExceptionRecord),
-				                                          record_mapping);
+				nested_record_obj = save_exception_record(
+					allocator, *reinterpret_cast<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>*>(record.ExceptionRecord),
+					record_mapping);
 			}
 
 			record_obj.access([&](EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>& r)
@@ -311,7 +317,7 @@ namespace
 	}
 
 	emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>> save_exception_record(emulator_allocator& allocator,
-	                                                        const EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>& record)
+		const EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>& record)
 	{
 		exception_record_map record_mapping{};
 		return save_exception_record(allocator, record, record_mapping);
@@ -359,11 +365,13 @@ namespace
 		uint64_t ss;
 	};
 
-	void dispatch_exception_pointers(x64_emulator& emu, const uint64_t dispatcher, const EMU_EXCEPTION_POINTERS<EmulatorTraits<Emu64>> pointers)
+	void dispatch_exception_pointers(x64_emulator& emu, const uint64_t dispatcher,
+	                                 const EMU_EXCEPTION_POINTERS<EmulatorTraits<Emu64>> pointers)
 	{
 		constexpr auto mach_frame_size = 0x40;
 		constexpr auto context_record_size = 0x4F0;
-		const auto exception_record_size = calculate_exception_record_size(*reinterpret_cast<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>*>(pointers.ExceptionRecord));
+		const auto exception_record_size = calculate_exception_record_size(
+			*reinterpret_cast<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>*>(pointers.ExceptionRecord));
 		const auto combined_size = align_up(exception_record_size + context_record_size, 0x10);
 
 		assert(combined_size == 0x590);
@@ -388,7 +396,8 @@ namespace
 		context_record_obj.write(*reinterpret_cast<CONTEXT64*>(pointers.ContextRecord));
 
 		emulator_allocator allocator{emu, new_sp + context_record_size, exception_record_size};
-		const auto exception_record_obj = save_exception_record(allocator, *reinterpret_cast<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>*>(pointers.ExceptionRecord));
+		const auto exception_record_obj = save_exception_record(
+			allocator, *reinterpret_cast<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>*>(pointers.ExceptionRecord));
 
 		if (exception_record_obj.value() != allocator.get_base())
 		{
@@ -398,11 +407,12 @@ namespace
 		const emulator_object<machine_frame> machine_frame_obj{emu, new_sp + combined_size};
 		machine_frame_obj.access([&](machine_frame& frame)
 		{
-			frame.rip = reinterpret_cast<CONTEXT64*>(pointers.ContextRecord)->Rip;
-			frame.rsp = reinterpret_cast<CONTEXT64*>(pointers.ContextRecord)->Rsp;
-			frame.ss = reinterpret_cast<CONTEXT64*>(pointers.ContextRecord)->SegSs;
-			frame.cs = reinterpret_cast<CONTEXT64*>(pointers.ContextRecord)->SegCs;
-			frame.eflags = reinterpret_cast<CONTEXT64*>(pointers.ContextRecord)->EFlags;
+			const auto& record = *reinterpret_cast<CONTEXT64*>(pointers.ContextRecord);
+			frame.rip = record.Rip;
+			frame.rsp = record.Rsp;
+			frame.ss = record.SegSs;
+			frame.cs = record.SegCs;
+			frame.eflags = record.EFlags;
 		});
 	}
 
@@ -848,16 +858,16 @@ void windows_emulator::on_instruction_execution(uint64_t address)
 		if (export_entry != binary->address_names.end())
 		{
 			log.print(is_interesting_call ? color::yellow : color::dark_gray,
-			             "Executing function: %s - %s (0x%" PRIx64 ")\n",
-			             binary->name.c_str(),
-			             export_entry->second.c_str(), address);
+			          "Executing function: %s - %s (0x%" PRIx64 ")\n",
+			          binary->name.c_str(),
+			          export_entry->second.c_str(), address);
 		}
 		else if (address == binary->entry_point)
 		{
 			log.print(is_interesting_call ? color::yellow : color::gray,
-			             "Executing entry point: %s (0x%" PRIx64 ")\n",
-			             binary->name.c_str(),
-			             address);
+			          "Executing entry point: %s (0x%" PRIx64 ")\n",
+			          binary->name.c_str(),
+			          address);
 		}
 	}
 
@@ -869,7 +879,8 @@ void windows_emulator::on_instruction_execution(uint64_t address)
 	auto& emu = this->emu();
 
 	printf(
-		"Inst: %16" PRIx64 " - RAX: %16" PRIx64 " - RBX: %16" PRIx64 " - RCX: %16" PRIx64 " - RDX: %16" PRIx64 " - R8: %16" PRIx64 " - R9: %16" PRIx64 " - RDI: %16" PRIx64 " - RSI: %16" PRIx64 " - %s\n",
+		"Inst: %16" PRIx64 " - RAX: %16" PRIx64 " - RBX: %16" PRIx64 " - RCX: %16" PRIx64 " - RDX: %16" PRIx64
+		" - R8: %16" PRIx64 " - R9: %16" PRIx64 " - RDI: %16" PRIx64 " - RSI: %16" PRIx64 " - %s\n",
 		address,
 		emu.reg(x64_register::rax), emu.reg(x64_register::rbx),
 		emu.reg(x64_register::rcx),
@@ -939,15 +950,17 @@ void windows_emulator::setup_hooks()
 
 		if (type == memory_violation_type::protection)
 		{
-			this->log.print(color::gray, "Protection violation: 0x%" PRIx64 " (%zX) - %s at 0x%" PRIx64 " (%s)\n", address, size,
-			                   permission.c_str(), ip,
-			                   name);
+			this->log.print(color::gray, "Protection violation: 0x%" PRIx64 " (%zX) - %s at 0x%" PRIx64 " (%s)\n",
+			                address, size,
+			                permission.c_str(), ip,
+			                name);
 		}
 		else if (type == memory_violation_type::unmapped)
 		{
-			this->log.print(color::gray, "Mapping violation: 0x%" PRIx64 " (%zX) - %s at 0x%" PRIx64 " (%s)\n", address, size,
-			                   permission.c_str(), ip,
-			                   name);
+			this->log.print(color::gray, "Mapping violation: 0x%" PRIx64 " (%zX) - %s at 0x%" PRIx64 " (%s)\n", address,
+			                size,
+			                permission.c_str(), ip,
+			                name);
 		}
 
 		if (this->fuzzing)

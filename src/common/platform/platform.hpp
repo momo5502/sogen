@@ -1,12 +1,12 @@
 #pragma once
 
 #ifdef _WIN32
-    #pragma warning(push)
-    #pragma warning(disable: 4201) // nameless struct/union
-    #pragma warning(disable: 4702) // unreachable code
+#pragma warning(push)
+#pragma warning(disable: 4201) // nameless struct/union
+#pragma warning(disable: 4702) // unreachable code
 #else
-    #pragma GCC diagnostic push
-    #pragma GCC diagnostic ignored "-Wpedantic"
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
 #endif
 
 #include "compiler.hpp"
@@ -26,22 +26,21 @@
 
 #ifdef OS_WINDOWS
 #pragma comment(lib, "ntdll")
-    
-extern "C"
-{
-    NTSYSCALLAPI
-    NTSTATUS
-    NTAPI
-    NtQuerySystemInformationEx(
-        _In_ SYSTEM_INFORMATION_CLASS SystemInformationClass,
-        _In_reads_bytes_(InputBufferLength) PVOID InputBuffer,
-        _In_ ULONG InputBufferLength,
-        _Out_writes_bytes_opt_(SystemInformationLength) PVOID SystemInformation,
-        _In_ ULONG SystemInformationLength,
-        _Out_opt_ PULONG ReturnLength
-        );
+
+extern "C" {
+NTSYSCALLAPI
+NTSTATUS
+NTAPI
+NtQuerySystemInformationEx(
+	_In_ SYSTEM_INFORMATION_CLASS SystemInformationClass,
+	_In_reads_bytes_(InputBufferLength) PVOID InputBuffer,
+	_In_ ULONG InputBufferLength,
+	_Out_writes_bytes_opt_(SystemInformationLength) PVOID SystemInformation,
+	_In_ ULONG SystemInformationLength,
+	_Out_opt_ PULONG ReturnLength
+);
 }
-    #pragma warning(pop)
+#pragma warning(pop)
 #else
-    #pragma GCC diagnostic pop
+#pragma GCC diagnostic pop
 #endif

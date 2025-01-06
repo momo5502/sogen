@@ -1,6 +1,5 @@
 #pragma once
 
-
 typedef enum _THREADINFOCLASS
 {
     ThreadBasicInformation, // q: THREAD_BASIC_INFORMATION

@@ -16,7 +16,7 @@ using NTSTATUS = std::uint32_t;
 #endif
 
 #define STATUS_SUCCESS                      ((NTSTATUS)0x00000000L)
-#define STATUS_WAIT_1                       ((NTSTATUS)0x00000001L) 
+#define STATUS_WAIT_1                       ((NTSTATUS)0x00000001L)
 
 #define STATUS_UNSUCCESSFUL                 ((NTSTATUS)0x00000001L)
 #define STATUS_ALERTED                      ((NTSTATUS)0x00000101L)
@@ -40,8 +40,6 @@ using NTSTATUS = std::uint32_t;
 #define STATUS_ADDRESS_ALREADY_ASSOCIATED   ((NTSTATUS)0xC0000328L)
 
 #define STATUS_BUFFER_OVERFLOW              ((NTSTATUS)0x80000005L)
-
-
 
 
 #define FILE_DEVICE_NETWORK                 0x00000012

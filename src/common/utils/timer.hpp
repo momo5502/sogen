@@ -21,6 +21,6 @@ namespace utils
 		}
 
 	private:
-		typename Clock::time_point point_{ Clock::now() };
+		typename Clock::time_point point_{Clock::now()};
 	};
 }
