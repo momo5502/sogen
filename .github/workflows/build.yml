@@ -10,16 +10,14 @@ on:
     types: [opened, synchronize, reopened]
   workflow_dispatch:
 
-concurrency:
-  group: ${{ github.ref }}
-  cancel-in-progress: true
+#concurrency:
+#  group: ${{ github.ref }}
+#  cancel-in-progress: true
 
 jobs:
   dump-registry:
     name: Dump Registry
     runs-on: windows-latest
-    strategy:
-      fail-fast: false
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
@@ -30,16 +28,21 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Registry Dump
+          name: Temp Registry Dump
           path: |
             registry/*
 
-  build-windows:
-    name: Build Windows
-    runs-on: windows-latest
+  build:
+    name: Build
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
+        platform:
+          - Windows
+          - Linux GCC
+          - Linux Clang
+          - macOS
         configuration:
           - Debug
           - Release
@@ -48,78 +51,15 @@ jobs:
             preset: debug
           - configuration: Release
             preset: release
-    steps:
-      - name: Checkout Source
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Enable Developer Command Prompt
-        uses: ilammy/msvc-dev-cmd@v1.13.0
-
-      - name: CMake Build
-        run: cmake --workflow --preset=${{matrix.preset}}
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: Windows ${{matrix.configuration}} Artifacts
-          path: |
-            build/${{matrix.preset}}/artifacts/*
-
-      - name: Dump Registry
-        run: cd build/${{matrix.preset}}/artifacts && ../../../src/grab-registry.bat
-
-      - name: CMake Test
-        run: cd build/${{matrix.preset}} && ctest --verbose
-
-  build-linux-gcc:
-    name: Build Linux GCC
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        configuration:
-          - Debug
-          - Release
-        include:
-          - configuration: Debug
-            preset: debug
-          - configuration: Release
-            preset: release
-    steps:
-      - name: Checkout Source
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install Ninja
-        uses: seanmiddleditch/gha-setup-ninja@v5
-
-      - name: CMake Build
-        run: cmake --workflow --preset=${{matrix.preset}}
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: Linux GCC ${{matrix.configuration}} Artifacts
-          path: |
-            build/${{matrix.preset}}/artifacts/*
-
-  build-linux-clang:
-    name: Build Linux Clang
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        configuration:
-          - Debug
-          - Release
-        include:
-          - configuration: Debug
-            preset: debug
-          - configuration: Release
-            preset: release
+          - platform: Windows
+            runner: windows-latest
+          - platform: Linux GCC
+            runner: ubuntu-24.04
+          - platform: Linux Clang
+            runner: ubuntu-24.04
+            clang-version: 18
+          - platform: macOS
+            runner: macos-latest
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
@@ -130,17 +70,22 @@ jobs:
         uses: seanmiddleditch/gha-setup-ninja@v5
 
       - name: Install Clang
+        if: "${{ matrix.platform == 'Linux Clang' }}"
         run: |
           sudo apt update
           sudo apt install -y wget gnupg software-properties-common
           wget https://apt.llvm.org/llvm-snapshot.gpg.key -O- | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/$(lsb_release -sc)/ llvm-toolchain-$(lsb_release -sc)-18 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/$(lsb_release -sc)/ llvm-toolchain-$(lsb_release -sc)-${{ matrix.clang-version }} main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt update
-          sudo apt install -y clang-18 lld-18
-          sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang-18 100
-          sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-18 100
-          sudo update-alternatives --set cc /usr/bin/clang-18
-          sudo update-alternatives --set c++ /usr/bin/clang++-18
+          sudo apt install -y clang-${{ matrix.clang-version }} lld-${{ matrix.clang-version }}
+          sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang-${{ matrix.clang-version }} 100
+          sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${{ matrix.clang-version }} 100
+          sudo update-alternatives --set cc /usr/bin/clang-${{ matrix.clang-version }}
+          sudo update-alternatives --set c++ /usr/bin/clang++-${{ matrix.clang-version }}
+
+      - name: Enable Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        if: "${{ matrix.platform == 'Windows' }}"
 
       - name: CMake Build
         run: cmake --workflow --preset=${{matrix.preset}}
@@ -148,16 +93,30 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Linux Clang ${{matrix.configuration}} Artifacts
+          name: ${{ matrix.platform }} ${{matrix.configuration}} Artifacts
           path: |
             build/${{matrix.preset}}/artifacts/*
 
-  build-mac:
-    name: Build macOS
-    runs-on: macos-latest
+      - name: Upload Test Configuration
+        uses: actions/upload-artifact@v4
+        with:
+          name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
+          path: |
+            build/${{matrix.preset}}/**/CTestTestfile.cmake
+
+
+  test:
+    name: Test
+    runs-on: ${{ matrix.runner }}
+    needs: [dump-registry, build]
     strategy:
       fail-fast: false
       matrix:
+        platform:
+          - Windows
+          - Linux GCC
+          - Linux Clang
+          - macOS
         configuration:
           - Debug
           - Release
@@ -166,22 +125,50 @@ jobs:
             preset: debug
           - configuration: Release
             preset: release
+          - platform: Windows
+            runner: windows-latest
+          - platform: Linux GCC
+            runner: ubuntu-24.04
+          - platform: Linux Clang
+            runner: ubuntu-24.04
+          - platform: macOS
+            runner: macos-latest
     steps:
-      - name: Checkout Source
-        uses: actions/checkout@v4
+      - name: Download Test Config
+        uses: actions/download-artifact@v4
         with:
-          submodules: recursive
+          name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
+          path: build/${{matrix.preset}}
 
-      - name: Install Dependencies
-        run: |
-          brew install ninja
-
-      - name: CMake Build
-        run: cmake --workflow --preset=${{matrix.preset}}
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
         with:
-          name: macOS ${{matrix.configuration}} Artifacts
-          path: |
-            build/${{matrix.preset}}/artifacts/*
+          name: ${{ matrix.platform }} ${{matrix.configuration}} Artifacts
+          path: build/${{matrix.preset}}/artifacts
+
+      - name: Download Windows Artifacts
+        uses: actions/download-artifact@v4
+        if: "${{ matrix.platform != 'Windows' }}"
+        with:
+          name: Windows ${{matrix.configuration}} Artifacts
+          path: build/${{matrix.preset}}/artifacts
+  
+      - name: Download Registry Dump
+        uses: actions/download-artifact@v4
+        with:
+          name: Temp Registry Dump
+          path: build/${{matrix.preset}}/artifacts/registry
+
+      - name: CMake Test
+        run: cd build/${{matrix.preset}} && ctest --verbose
+        if: "${{ matrix.platform == 'Windows' }}"
+
+  cleanup:
+    name: Cleanup Artifacts
+    runs-on: ubuntu-24.04
+    needs: [dump-registry, build, test]
+    if: always()
+    steps:
+      - uses: geekyeggo/delete-artifact@v5
+        with:
+          name: 'Temp *'
