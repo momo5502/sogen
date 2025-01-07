@@ -2,6 +2,7 @@
 #include <x64_emulator.hpp>
 #include "gdb_stub.hpp"
 #include "scoped_hook.hpp"
+#include <utils/concurrency.hpp>
 
 inline std::vector gdb_registers{
     x64_register::rax, x64_register::rbx, x64_register::rcx, x64_register::rdx, x64_register::rsi, x64_register::rdi,
@@ -153,12 +154,15 @@ class x64_gdb_stub_handler : public gdb_stub_handler
     {
         try
         {
-            this->hooks_[{addr, size, type}] = scoped_hook(
-                *this->emu_, this->emu_->hook_memory_access(
-                                 addr, size, map_breakpoint_type(type),
-                                 [this](uint64_t, size_t, uint64_t, memory_operation) { this->on_interrupt(); }));
+            return this->hooks_.access<bool>([&](hook_map& hooks) {
+                hooks[{addr, size, type}] = scoped_hook(
+                    *this->emu_, this->emu_->hook_memory_access(addr, size, map_breakpoint_type(type),
+                                                                [this](uint64_t, size_t, uint64_t, memory_operation) {
+                                                                    this->on_interrupt(); //
+                                                                }));
 
-            return true;
+                return true;
+            });
         }
         catch (...)
         {
@@ -170,15 +174,17 @@ class x64_gdb_stub_handler : public gdb_stub_handler
     {
         try
         {
-            const auto entry = this->hooks_.find({addr, size, type});
-            if (entry == this->hooks_.end())
-            {
-                return false;
-            }
+            return this->hooks_.access<bool>([&](hook_map& hooks) {
+                const auto entry = hooks.find({addr, size, type});
+                if (entry == hooks.end())
+                {
+                    return false;
+                }
 
-            this->hooks_.erase(entry);
+                hooks.erase(entry);
 
-            return true;
+                return true;
+            });
         }
         catch (...)
         {
@@ -193,5 +199,7 @@ class x64_gdb_stub_handler : public gdb_stub_handler
 
   private:
     x64_emulator* emu_{};
-    std::unordered_map<breakpoint_key, scoped_hook> hooks_{};
+
+    using hook_map = std::unordered_map<breakpoint_key, scoped_hook>;
+    utils::concurrency::container<hook_map> hooks_{};
 };
