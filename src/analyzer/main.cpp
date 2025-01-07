@@ -27,7 +27,7 @@ namespace
 
         win_emu.emu().hook_memory_write(
             win_emu.process().peb.value() + offsetof(PEB64, ProcessParameters), 0x8,
-            [&, cache_logging](const uint64_t address, size_t, const uint64_t value) {
+            [&win_emu, cache_logging, params_hook](const uint64_t address, size_t, const uint64_t value) mutable {
                 const auto target_address = win_emu.process().peb.value() + offsetof(PEB64, ProcessParameters);
 
                 if (address == target_address)
