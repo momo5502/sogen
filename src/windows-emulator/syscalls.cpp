@@ -667,12 +667,10 @@ namespace
 
             const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> sysdir_obj{c.emu, windir_obj.value() +
                                                                                                windir_obj.size()};
-            sysdir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs)
-
-                              {
-                                  c.proc.base_allocator.make_unicode_string(ucs, u"C:\\WINDOWS\\System32");
-                                  ucs.Buffer = ucs.Buffer - obj_address;
-                              });
+            sysdir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs) {
+                c.proc.base_allocator.make_unicode_string(ucs, u"C:\\WINDOWS\\System32");
+                ucs.Buffer = ucs.Buffer - obj_address;
+            });
 
             const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> base_dir_obj{c.emu, sysdir_obj.value() +
                                                                                                  sysdir_obj.size()};
@@ -2708,7 +2706,7 @@ namespace
 
     constexpr std::u16string map_mode(const ACCESS_MASK desired_access, const ULONG create_disposition)
     {
-        std::u16string mode = u"";
+        std::u16string mode{};
 
         switch (create_disposition)
         {
