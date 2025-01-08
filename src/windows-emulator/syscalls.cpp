@@ -667,12 +667,10 @@ namespace
 
             const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> sysdir_obj{c.emu, windir_obj.value() +
                                                                                                windir_obj.size()};
-            sysdir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs)
-
-                              {
-                                  c.proc.base_allocator.make_unicode_string(ucs, u"C:\\WINDOWS\\System32");
-                                  ucs.Buffer = ucs.Buffer - obj_address;
-                              });
+            sysdir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs) {
+                c.proc.base_allocator.make_unicode_string(ucs, u"C:\\WINDOWS\\System32");
+                ucs.Buffer = ucs.Buffer - obj_address;
+            });
 
             const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> base_dir_obj{c.emu, sysdir_obj.value() +
                                                                                                  sysdir_obj.size()};
@@ -1067,39 +1065,83 @@ namespace
             info_class == SystemSupportedProcessorArchitectures2 ||
             info_class == SystemFeatureConfigurationSectionInformation)
         {
-            // printf("Unsupported, but allowed system info class: %X\n", info_class);
             return STATUS_NOT_SUPPORTED;
         }
 
         if (info_class == SystemLogicalProcessorAndGroupInformation)
         {
-            void* buffer = calloc(1, input_buffer_length);
-            void* res_buff = calloc(1, system_information_length);
-            c.emu.read_memory(input_buffer, buffer, input_buffer_length);
-
-            NTSTATUS code = STATUS_SUCCESS;
-
-            return_length.access([&](uint32_t& len) {
-                (void)len;
-#ifdef OS_WINDOWS
-                code = NtQuerySystemInformationEx(static_cast<SYSTEM_INFORMATION_CLASS>(info_class), buffer,
-                                                  input_buffer_length, res_buff, system_information_length,
-                                                  reinterpret_cast<ULONG*>(&len));
-#else
-                // TODO: unsupported
-                code = STATUS_SUCCESS;
-#endif
-            });
-
-            if (code == 0)
+            if (input_buffer_length != sizeof(LOGICAL_PROCESSOR_RELATIONSHIP))
             {
-                c.emu.write_memory(system_information, res_buff, return_length.read());
+                return STATUS_INVALID_PARAMETER;
             }
 
-            free(buffer);
-            free(res_buff);
+            const auto request = c.emu.read_memory<LOGICAL_PROCESSOR_RELATIONSHIP>(input_buffer);
 
-            return code;
+            if (request == RelationGroup)
+            {
+                constexpr auto root_size = offsetof(EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64, Group);
+                constexpr auto required_size = root_size + sizeof(EMU_GROUP_RELATIONSHIP64);
+
+                if (return_length)
+                {
+                    return_length.write(required_size);
+                }
+
+                if (system_information_length < required_size)
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64 proc_info{};
+                proc_info.Size = required_size;
+                proc_info.Relationship = RelationGroup;
+
+                c.emu.write_memory(system_information, &proc_info, root_size);
+
+                EMU_GROUP_RELATIONSHIP64 group{};
+                group.ActiveGroupCount = 1;
+                group.MaximumGroupCount = 1;
+
+                auto& group_info = group.GroupInfo[0];
+                group_info.ActiveProcessorCount = static_cast<uint8_t>(c.proc.kusd.get().ActiveProcessorCount);
+                group_info.ActiveProcessorMask = (1 << group_info.ActiveProcessorCount) - 1;
+                group_info.MaximumProcessorCount = group_info.ActiveProcessorCount;
+
+                c.emu.write_memory(system_information + root_size, group);
+                return STATUS_SUCCESS;
+            }
+
+            if (request == RelationNumaNode || request == RelationNumaNodeEx)
+            {
+                constexpr auto root_size = offsetof(EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64, NumaNode);
+                constexpr auto required_size = root_size + sizeof(EMU_NUMA_NODE_RELATIONSHIP64);
+
+                if (return_length)
+                {
+                    return_length.write(required_size);
+                }
+
+                if (system_information_length < required_size)
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64 proc_info{};
+                proc_info.Size = required_size;
+                proc_info.Relationship = RelationNumaNode;
+
+                c.emu.write_memory(system_information, &proc_info, root_size);
+
+                EMU_NUMA_NODE_RELATIONSHIP64 numa_node{};
+                memset(&numa_node, 0, sizeof(numa_node));
+
+                c.emu.write_memory(system_information + root_size, numa_node);
+                return STATUS_SUCCESS;
+            }
+
+            printf("Unsupported processor relationship: %X\n", request);
+            c.emu.stop();
+            return STATUS_NOT_SUPPORTED;
         }
 
         if (info_class != SystemBasicInformation && info_class != SystemEmulationBasicInformation)
@@ -1114,9 +1156,9 @@ namespace
             return_length.write(sizeof(SYSTEM_BASIC_INFORMATION64));
         }
 
-        if (system_information_length != sizeof(SYSTEM_BASIC_INFORMATION64))
+        if (system_information_length < sizeof(SYSTEM_BASIC_INFORMATION64))
         {
-            return STATUS_BUFFER_TOO_SMALL;
+            return STATUS_INFO_LENGTH_MISMATCH;
         }
 
         const emulator_object<SYSTEM_BASIC_INFORMATION64> info{c.emu, system_information};
@@ -2664,7 +2706,7 @@ namespace
 
     constexpr std::u16string map_mode(const ACCESS_MASK desired_access, const ULONG create_disposition)
     {
-        std::u16string mode = u"";
+        std::u16string mode{};
 
         switch (create_disposition)
         {

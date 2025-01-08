@@ -905,3 +905,92 @@ struct EMU_RTL_SRWLOCK
 {
     typename Traits::PVOID Ptr;
 };
+
+#ifndef OS_WINDOWS
+typedef enum _PROCESSOR_CACHE_TYPE
+{
+    CacheUnified,
+    CacheInstruction,
+    CacheData,
+    CacheTrace
+} PROCESSOR_CACHE_TYPE;
+
+typedef enum _LOGICAL_PROCESSOR_RELATIONSHIP
+{
+    RelationProcessorCore,
+    RelationNumaNode,
+    RelationCache,
+    RelationProcessorPackage,
+    RelationGroup,
+    RelationProcessorDie,
+    RelationNumaNodeEx,
+    RelationProcessorModule,
+    RelationAll = 0xffff
+} LOGICAL_PROCESSOR_RELATIONSHIP;
+#endif
+
+struct EMU_NUMA_NODE_RELATIONSHIP64
+{
+    DWORD NodeNumber;
+    BYTE Reserved[18];
+    WORD GroupCount;
+    union
+    {
+        EMU_GROUP_AFFINITY64 GroupMask;
+        _Field_size_(GroupCount) EMU_GROUP_AFFINITY64 GroupMasks[ANYSIZE_ARRAY];
+    };
+};
+
+struct EMU_CACHE_RELATIONSHIP64
+{
+    BYTE Level;
+    BYTE Associativity;
+    WORD LineSize;
+    DWORD CacheSize;
+    PROCESSOR_CACHE_TYPE Type;
+    BYTE Reserved[18];
+    WORD GroupCount;
+    union
+    {
+        EMU_GROUP_AFFINITY64 GroupMask;
+        _Field_size_(GroupCount) EMU_GROUP_AFFINITY64 GroupMasks[ANYSIZE_ARRAY];
+    };
+};
+
+struct EMU_PROCESSOR_GROUP_INFO64
+{
+    BYTE MaximumProcessorCount;
+    BYTE ActiveProcessorCount;
+    BYTE Reserved[38];
+    EMULATOR_CAST(std::uint64_t, KAFFINITY) ActiveProcessorMask;
+};
+
+struct EMU_GROUP_RELATIONSHIP64
+{
+    WORD MaximumGroupCount;
+    WORD ActiveGroupCount;
+    BYTE Reserved[20];
+    _Field_size_(ActiveGroupCount) EMU_PROCESSOR_GROUP_INFO64 GroupInfo[ANYSIZE_ARRAY];
+};
+
+struct EMU_PROCESSOR_RELATIONSHIP64
+{
+    BYTE Flags;
+    BYTE EfficiencyClass;
+    BYTE Reserved[20];
+    WORD GroupCount;
+    _Field_size_(GroupCount) EMU_GROUP_AFFINITY64 GroupMask[ANYSIZE_ARRAY];
+};
+
+_Struct_size_bytes_(Size) struct EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64
+{
+    LOGICAL_PROCESSOR_RELATIONSHIP Relationship;
+    DWORD Size;
+    union
+    {
+        EMU_PROCESSOR_RELATIONSHIP64 Processor;
+        EMU_NUMA_NODE_RELATIONSHIP64 NumaNode;
+        EMU_CACHE_RELATIONSHIP64 Cache;
+        EMU_GROUP_RELATIONSHIP64 Group;
+    };
+};

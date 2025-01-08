@@ -11,7 +11,12 @@
 
 #else
 
-#define DWORD std::uint32_t
+#define _Field_size_(...)
+#define _Struct_size_bytes_(...)
+
+#define ANYSIZE_ARRAY 1
+
+#define DWORD         std::uint32_t
 using LONG = std::int32_t;
 using ULONG = DWORD;
 using DWORD64 = std::uint64_t;
@@ -41,14 +46,14 @@ typedef union _LARGE_INTEGER
 } LARGE_INTEGER;
 
 using BYTE = std::uint8_t;
-#define CHAR  BYTE
+#define CHAR          BYTE
 #endif
 
 using WORD = std::uint16_t;
 
 #define UCHAR   unsigned char
-
 #define BOOLEAN bool
+
 using CSHORT = short;
 using USHORT = WORD;
 
