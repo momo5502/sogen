@@ -142,6 +142,11 @@ namespace
             return STATUS_SUCCESS;
         }
 
+        if (key_information_class == KeyFullInformation)
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
+
         if (key_information_class == KeyHandleTagsInformation)
         {
             constexpr auto required_size = sizeof(KEY_HANDLE_TAGS_INFORMATION);

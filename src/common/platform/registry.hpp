@@ -32,6 +32,21 @@ struct KEY_NAME_INFORMATION
     char16_t Name[1];
 };
 
+typedef struct _KEY_FULL_INFORMATION
+{
+    LARGE_INTEGER LastWriteTime;
+    ULONG TitleIndex;
+    ULONG ClassOffset;
+    ULONG ClassLength;
+    ULONG SubKeys;
+    ULONG MaxNameLength;
+    ULONG MaxClassLength;
+    ULONG Values;
+    ULONG MaxValueNameLength;
+    ULONG MaxValueDataLength;
+    char16_t Class[1];
+} KEY_FULL_INFORMATION, *PKEY_FULL_INFORMATION;
+
 struct KEY_HANDLE_TAGS_INFORMATION
 {
     ULONG HandleTags;
