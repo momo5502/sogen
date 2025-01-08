@@ -20,15 +20,6 @@ namespace utils
         { a.deserialize(deserializer) } -> std::same_as<void>;
     };
 
-    /* Use concept instead, to prevent overhead of virtual function calls
-    struct serializable
-    {
-        virtual ~serializable() = default;
-        virtual void serialize(buffer_serializer& buffer) const = 0;
-        virtual void deserialize(buffer_deserializer& buffer) = 0;
-    };
-    */
-
     namespace detail
     {
         template <typename, typename = void>
@@ -66,7 +57,7 @@ namespace utils
     {
       public:
         template <typename T>
-        buffer_deserializer(const std::span<T> buffer, bool no_debugging = false)
+        buffer_deserializer(const std::span<T> buffer, const bool no_debugging = false)
             : no_debugging_(no_debugging),
               buffer_(reinterpret_cast<const std::byte*>(buffer.data()), buffer.size() * sizeof(T))
         {
