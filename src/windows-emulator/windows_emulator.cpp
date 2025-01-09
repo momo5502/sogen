@@ -1,6 +1,7 @@
 #include "std_include.hpp"
 #include "windows_emulator.hpp"
 
+#include "address_utils.hpp"
 #include "context_frame.hpp"
 
 #include <unicorn_x64_emulator.hpp>
