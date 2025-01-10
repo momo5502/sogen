@@ -1,3 +1,4 @@
+<img src="./docs/images/cover.png" />
 <h1 align="center">
 	Windows User Space Emulator
 	<br>
