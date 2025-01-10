@@ -3360,6 +3360,11 @@ namespace
         return STATUS_SUCCESS;
     }
 
+    NTSTATUS handle_NtSetInformationVirtualMemory(const syscall_context&)
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
     NTSTATUS handle_NtGetContextThread(const syscall_context& c, handle thread_handle,
                                        const emulator_object<CONTEXT64> thread_context)
     {
@@ -3403,6 +3408,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtAllocateVirtualMemory);
     add_handler(NtQueryInformationProcess);
     add_handler(NtSetInformationProcess);
+    add_handler(NtSetInformationVirtualMemory);
     add_handler(NtFreeVirtualMemory);
     add_handler(NtQueryVirtualMemory);
     add_handler(NtOpenThreadToken);
