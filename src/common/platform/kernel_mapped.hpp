@@ -215,6 +215,32 @@ union PEB_LEAP_SECONDS_FLAG_UNION
     };
 };
 
+#define MAXIMUM_LEADBYTES 12
+
+typedef struct _CPTABLEINFO
+{
+    USHORT CodePage;
+    USHORT MaximumCharacterSize;
+    USHORT DefaultChar;
+    USHORT UniDefaultChar;
+    USHORT TransDefaultChar;
+    USHORT TransUniDefaultChar;
+    USHORT DBCSCodePage;
+    UCHAR LeadByte[MAXIMUM_LEADBYTES];
+    USHORT* MultiByteTable;
+    void* WideCharTable;
+    USHORT* DBCSRanges;
+    USHORT* DBCSOffsets;
+} CPTABLEINFO, *PCPTABLEINFO;
+
+typedef struct _NLSTABLEINFO
+{
+    CPTABLEINFO OemTableInfo;
+    CPTABLEINFO AnsiTableInfo;
+    USHORT* UpperCaseTable;
+    USHORT* LowerCaseTable;
+} NLSTABLEINFO, *PNLSTABLEINFO;
+
 typedef struct _PEB64
 {
     BOOLEAN InheritedAddressSpace;
@@ -246,9 +272,9 @@ typedef struct _PEB64
     EMULATOR_CAST(void*, PSILO_USER_SHARED_DATA) SharedData; // HotpatchInformation
     std::uint64_t** ReadOnlyStaticServerData;
 
-    std::uint64_t* AnsiCodePageData;     // PCPTABLEINFO
-    std::uint64_t* OemCodePageData;      // PCPTABLEINFO
-    std::uint64_t* UnicodeCaseTableData; // PNLSTABLEINFO
+    EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, PCPTABLEINFO) AnsiCodePageData;      // PCPTABLEINFO
+    EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, PCPTABLEINFO) OemCodePageData;       // PCPTABLEINFO
+    EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, PNLSTABLEINFO) UnicodeCaseTableData; // PNLSTABLEINFO
 
     ULONG NumberOfProcessors;
     ULONG NtGlobalFlag;
