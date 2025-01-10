@@ -126,7 +126,10 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - Windows
+          # TODO: Move different windows platforms into registry dump matrix
+          - Windows 2025
+          - Windows 2022
+          #- Windows 2019
           - Linux GCC
           - Linux Clang
           - macOS
@@ -138,30 +141,40 @@ jobs:
             preset: debug
           - configuration: Release
             preset: release
-          - platform: Windows
-            runner: windows-latest
+          - platform: Windows 2025
+            build-platform: Windows
+            runner: windows-2025
+          - platform: Windows 2022
+            build-platform: Windows
+            runner: windows-2022
+          #- platform: Windows 2019
+          #  build-platform: Windows
+          #  runner: windows-2019
           - platform: Linux GCC
+            build-platform: Linux GCC
             runner: ubuntu-24.04
           - platform: Linux Clang
+            build-platform: Linux Clang
             runner: ubuntu-24.04
           - platform: macOS
+            build-platform: macOS
             runner: macos-latest
     steps:
       - name: Download Test Config
         uses: actions/download-artifact@v4
         with:
-          name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
+          name: Temp ${{ matrix.build-platform }} ${{matrix.configuration}} Test Config
           path: build/${{matrix.preset}}
 
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
-          name: ${{ matrix.platform }} ${{matrix.configuration}} Artifacts
+          name: ${{ matrix.build-platform }} ${{matrix.configuration}} Artifacts
           path: build/${{matrix.preset}}/artifacts
 
       - name: Download Windows Artifacts
         uses: actions/download-artifact@v4
-        if: "${{ matrix.platform != 'Windows' }}"
+        if: "${{ matrix.build-platform != 'Windows' }}"
         with:
           name: Windows ${{matrix.configuration}} Artifacts
           path: build/${{matrix.preset}}/artifacts
@@ -174,14 +187,20 @@ jobs:
 
       - name: CMake Test
         run: cd build/${{matrix.preset}} && ctest --verbose
-        if: "${{ matrix.platform == 'Windows' }}"
+        if: "${{ matrix.build-platform == 'Windows' }}"
 
-  cleanup:
-    name: Cleanup Artifacts
+  summary:
+    name: Pipeline Summary
     runs-on: ubuntu-24.04
-    needs: [dump-registry, build, test]
+    needs: [dump-registry, build, test, verify-formatting]
     if: always()
     steps:
       - uses: geekyeggo/delete-artifact@v5
         with:
           name: 'Temp *'
+      - name: Pipeline suceeded
+        if: ${{ !(contains(needs.*.result, 'failure')) }}
+        run: exit 0
+      - name: Pipeline failed
+        if: ${{ contains(needs.*.result, 'failure') }}
+        run: exit 1
