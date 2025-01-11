@@ -129,7 +129,7 @@ jobs:
           # TODO: Move different windows platforms into registry dump matrix
           - Windows 2025
           - Windows 2022
-          #- Windows 2019
+          - Windows 2019
           - Linux GCC
           - Linux Clang
           - macOS
@@ -147,9 +147,9 @@ jobs:
           - platform: Windows 2022
             build-platform: Windows
             runner: windows-2022
-          #- platform: Windows 2019
-          #  build-platform: Windows
-          #  runner: windows-2019
+          - platform: Windows 2019
+            build-platform: Windows
+            runner: windows-2019
           - platform: Linux GCC
             build-platform: Linux GCC
             runner: ubuntu-24.04

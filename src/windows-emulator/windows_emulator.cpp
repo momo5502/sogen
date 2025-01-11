@@ -265,8 +265,8 @@ namespace
             peb.OSMajorVersion = 0x0000000a;
             peb.OSBuildNumber = 0x00006c51;
 
-            peb.AnsiCodePageData = allocator.reserve<CPTABLEINFO>().value();
-            peb.OemCodePageData = allocator.reserve<CPTABLEINFO>().value();
+            // peb.AnsiCodePageData = allocator.reserve<CPTABLEINFO>().value();
+            // peb.OemCodePageData = allocator.reserve<CPTABLEINFO>().value();
             peb.UnicodeCaseTableData = allocator.reserve<NLSTABLEINFO>().value();
         });
     }

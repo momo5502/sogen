@@ -3391,6 +3391,12 @@ namespace
 
         return STATUS_SUCCESS;
     }
+
+    NTSTATUS handle_NtYieldExecution(const syscall_context& c)
+    {
+        c.win_emu.yield_thread();
+        return STATUS_SUCCESS;
+    }
 }
 
 void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& handler_mapping)
@@ -3503,6 +3509,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtQueryDirectoryFileEx);
     add_handler(NtUserSystemParametersInfo);
     add_handler(NtGetContextThread);
+    add_handler(NtYieldExecution);
 
 #undef add_handler
 }
