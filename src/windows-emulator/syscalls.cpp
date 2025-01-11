@@ -3198,6 +3198,21 @@ namespace
         return FALSE;
     }
 
+    NTSTATUS handle_NtUserGetDpiForCurrentProcess()
+    {
+        return 96;
+    }
+
+    NTSTATUS handle_NtUserGetDCEx()
+    {
+        return 1;
+    }
+
+    NTSTATUS handle_NtUserModifyUserStartupInfoFlags()
+    {
+        return STATUS_SUCCESS;
+    }
+
     bool is_awaitable_object_type(const handle h)
     {
         return h.value.type == handle_types::thread    //
@@ -3510,6 +3525,9 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserSystemParametersInfo);
     add_handler(NtGetContextThread);
     add_handler(NtYieldExecution);
+    add_handler(NtUserModifyUserStartupInfoFlags);
+    add_handler(NtUserGetDCEx);
+    add_handler(NtUserGetDpiForCurrentProcess);
 
 #undef add_handler
 }
