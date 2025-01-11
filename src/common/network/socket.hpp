@@ -4,6 +4,7 @@
 
 #include <span>
 #include <chrono>
+#include <optional>
 
 #ifdef _WIN32
 using send_size = int;
@@ -27,7 +28,9 @@ namespace network
       public:
         socket() = default;
 
-        socket(int af);
+        socket(SOCKET s);
+
+        socket(int af, int type, int protocol);
         ~socket();
 
         socket(const socket& obj) = delete;
@@ -36,11 +39,9 @@ namespace network
         socket(socket&& obj) noexcept;
         socket& operator=(socket&& obj) noexcept;
 
-        bool bind_port(const address& target);
+        operator bool() const;
 
-        [[maybe_unused]] bool send(const address& target, const void* data, size_t size) const;
-        [[maybe_unused]] bool send(const address& target, const std::string& data) const;
-        bool receive(address& source, std::string& data) const;
+        bool bind_port(const address& target);
 
         bool set_blocking(bool blocking);
         static bool set_blocking(SOCKET s, bool blocking);
@@ -51,6 +52,7 @@ namespace network
 
         SOCKET get_socket() const;
         uint16_t get_port() const;
+        std::optional<address> get_name() const;
 
         int get_address_family() const;
 
@@ -61,8 +63,6 @@ namespace network
         static bool is_socket_ready(SOCKET s, bool in_poll);
 
       private:
-        int address_family_{AF_UNSPEC};
-        uint16_t port_ = 0;
         SOCKET socket_ = INVALID_SOCKET;
 
         void release();
