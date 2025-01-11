@@ -52,7 +52,7 @@ using BYTE = std::uint8_t;
 using WORD = std::uint16_t;
 
 #define UCHAR   unsigned char
-#define BOOLEAN bool
+#define BOOLEAN UCHAR
 
 using CSHORT = short;
 using USHORT = WORD;
@@ -60,6 +60,6 @@ using USHORT = WORD;
 #define DUMMYSTRUCTNAME
 
 #ifndef TRUE
-#define TRUE  true
-#define FALSE false
+#define TRUE  1
+#define FALSE 0
 #endif
