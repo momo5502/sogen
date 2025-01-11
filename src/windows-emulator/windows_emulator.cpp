@@ -15,10 +15,8 @@ namespace
     emulator_object<T> allocate_object_on_stack(x64_emulator& emu)
     {
         const auto old_sp = emu.reg(x64_register::rsp);
-        const auto new_sp =
-            align_down(old_sp - sizeof(CONTEXT64), std::max(alignof(CONTEXT64), alignof(x64_emulator::pointer_type)));
+        const auto new_sp = align_down(old_sp - sizeof(T), std::max(alignof(T), alignof(x64_emulator::pointer_type)));
         emu.reg(x64_register::rsp, new_sp);
-
         return {emu, new_sp};
     }
 
