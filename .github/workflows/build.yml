@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Dump Registry
-        run: src/grab-registry.bat
+        run: src/tools/grab-registry.bat
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
