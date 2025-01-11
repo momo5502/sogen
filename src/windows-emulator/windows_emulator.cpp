@@ -460,9 +460,9 @@ namespace
         const auto was_blocked = devices.block_mutation(true);
         const auto _ = utils::finally([&] { devices.block_mutation(was_blocked); });
 
-        for (auto& device : devices)
+        for (auto& dev : devices | std::views::values)
         {
-            device.second.work(win_emu);
+            dev.work(win_emu);
         }
     }
 
@@ -517,11 +517,11 @@ namespace
 
         bool next_thread = false;
 
-        for (auto& thread : context.threads)
+        for (auto& t : context.threads | std::views::values)
         {
             if (next_thread)
             {
-                if (switch_to_thread(win_emu, thread.second))
+                if (switch_to_thread(win_emu, t))
                 {
                     return true;
                 }
@@ -529,15 +529,15 @@ namespace
                 continue;
             }
 
-            if (&thread.second == context.active_thread)
+            if (&t == context.active_thread)
             {
                 next_thread = true;
             }
         }
 
-        for (auto& thread : context.threads)
+        for (auto& t : context.threads | std::views::values)
         {
-            if (switch_to_thread(win_emu, thread.second))
+            if (switch_to_thread(win_emu, t))
             {
                 return true;
             }
@@ -546,7 +546,7 @@ namespace
         return false;
     }
 
-    bool is_object_signaled(process_context& c, const handle h, uint32_t current_thread_id)
+    bool is_object_signaled(process_context& c, const handle h, const uint32_t current_thread_id)
     {
         const auto type = h.value.type;
 
@@ -798,7 +798,7 @@ void windows_emulator::perform_thread_switch()
     }
 }
 
-void windows_emulator::on_instruction_execution(uint64_t address)
+void windows_emulator::on_instruction_execution(const uint64_t address)
 {
     auto& process = this->process();
     auto& thread = this->current_thread();

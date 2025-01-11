@@ -476,9 +476,9 @@ namespace
 
         if (!name.empty())
         {
-            for (const auto& mutant : c.proc.mutants)
+            for (const auto& mutant : c.proc.mutants | std::views::values)
             {
-                if (mutant.second.name == name)
+                if (mutant.name == name)
                 {
                     return STATUS_OBJECT_NAME_EXISTS;
                 }
@@ -517,9 +517,9 @@ namespace
 
         if (!name.empty())
         {
-            for (const auto& event : c.proc.events)
+            for (const auto& event : c.proc.events | std::views::values)
             {
-                if (event.second.name == name)
+                if (event.name == name)
                 {
                     return STATUS_OBJECT_NAME_EXISTS;
                 }
@@ -799,7 +799,7 @@ namespace
                 image_info.AllocationBase = reinterpret_cast<void*>(region_info.allocation_base);
                 image_info.AllocationProtect = 0;
                 image_info.PartitionId = 0;
-                image_info.RegionSize = region_info.length;
+                image_info.RegionSize = static_cast<int64_t>(region_info.length);
                 image_info.State =
                     region_info.is_committed ? MEM_COMMIT : (region_info.is_reserved ? MEM_RESERVE : MEM_FREE);
                 image_info.Protect = map_emulator_to_nt_protection(region_info.permissions);
@@ -865,7 +865,7 @@ namespace
                 image_info.AllocationBase = reinterpret_cast<void*>(region_info.allocation_base);
                 image_info.AllocationProtect = 0;
                 image_info.PartitionId = 0;
-                image_info.RegionSize = region_info.allocation_length;
+                image_info.RegionSize = static_cast<int64_t>(region_info.allocation_length);
                 image_info.Reserved = 0x10;
             });
 
@@ -2458,7 +2458,7 @@ namespace
 
             c.emu.write_memory(token_information, TOKEN_BNO_ISOLATION_INFORMATION64{
                                                       .IsolationPrefix = 0,
-                                                      .IsolationEnabled = 0,
+                                                      .IsolationEnabled = FALSE,
                                                   });
 
             return STATUS_SUCCESS;
@@ -2629,7 +2629,7 @@ namespace
     NTSTATUS handle_NtReadFile(const syscall_context& c, const handle file_handle, const uint64_t /*event*/,
                                const uint64_t /*apc_routine*/, const uint64_t /*apc_context*/,
                                const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
-                               uint64_t buffer, const ULONG length,
+                               const uint64_t buffer, const ULONG length,
                                const emulator_object<LARGE_INTEGER> /*byte_offset*/,
                                const emulator_object<ULONG> /*key*/)
     {
@@ -2658,7 +2658,7 @@ namespace
     NTSTATUS handle_NtWriteFile(const syscall_context& c, const handle file_handle, const uint64_t /*event*/,
                                 const uint64_t /*apc_routine*/, const uint64_t /*apc_context*/,
                                 const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
-                                uint64_t buffer, const ULONG length,
+                                const uint64_t buffer, const ULONG length,
                                 const emulator_object<LARGE_INTEGER> /*byte_offset*/,
                                 const emulator_object<ULONG> /*key*/)
     {
@@ -2966,7 +2966,7 @@ namespace
     NTSTATUS handle_NtRaiseException(const syscall_context& c,
                                      const emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>>
                                      /*exception_record*/,
-                                     const emulator_object<CONTEXT64> thread_context, BOOLEAN handle_exception)
+                                     const emulator_object<CONTEXT64> thread_context, const BOOLEAN handle_exception)
     {
         if (handle_exception)
         {
@@ -3036,9 +3036,9 @@ namespace
 
         if (!s.name.empty())
         {
-            for (const auto& semaphore : c.proc.semaphores)
+            for (const auto& semaphore : c.proc.semaphores | std::views::values)
             {
-                if (semaphore.second.name == s.name)
+                if (semaphore.name == s.name)
                 {
                     return STATUS_OBJECT_NAME_EXISTS;
                 }
@@ -3311,11 +3311,11 @@ namespace
 
     NTSTATUS handle_NtAlertThreadByThreadId(const syscall_context& c, const uint64_t thread_id)
     {
-        for (auto& t : c.proc.threads)
+        for (auto& t : c.proc.threads | std::views::values)
         {
-            if (t.second.id == thread_id)
+            if (t.id == thread_id)
             {
-                t.second.alerted = true;
+                t.alerted = true;
                 return STATUS_SUCCESS;
             }
         }
@@ -3365,7 +3365,7 @@ namespace
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtGetContextThread(const syscall_context& c, handle thread_handle,
+    NTSTATUS handle_NtGetContextThread(const syscall_context& c, const handle thread_handle,
                                        const emulator_object<CONTEXT64> thread_context)
     {
         const auto* thread = thread_handle == CURRENT_THREAD ? c.proc.active_thread : c.proc.threads.get(thread_handle);
