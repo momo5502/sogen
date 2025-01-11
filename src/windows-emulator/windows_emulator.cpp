@@ -6,6 +6,10 @@
 
 #include <unicorn_x64_emulator.hpp>
 #include <utils/finally.hpp>
+#include "utils/compression.hpp"
+#include "utils/io.hpp"
+
+#include "apiset.hpp"
 
 constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 100000;
 
@@ -133,15 +137,54 @@ namespace
         return api_set_map_obj;
     }
 
-    emulator_object<API_SET_NAMESPACE> build_api_set_map(x64_emulator& emu, emulator_allocator& allocator)
+    std::vector<uint8_t> decompress_apiset(const std::vector<uint8_t>& apiset)
     {
-        // TODO: fix
+        auto buffer = utils::compression::zlib::decompress(apiset);
+        if (buffer.empty())
+            throw std::runtime_error("Failed to decompress API-SET");
+        return buffer;
+    }
+
+    std::vector<uint8_t> obtain_api_set(apiset_location location)
+    {
+        switch (location)
+        {
 #ifdef OS_WINDOWS
-        const auto& orig_api_set_map = *NtCurrentTeb64()->ProcessEnvironmentBlock->ApiSetMap;
-        return clone_api_set_map(emu, allocator, orig_api_set_map);
+        case apiset_location::host: {
+            auto apiSetMap =
+                reinterpret_cast<const API_SET_NAMESPACE*>(NtCurrentTeb64()->ProcessEnvironmentBlock->ApiSetMap);
+            const auto* dataPtr = reinterpret_cast<const uint8_t*>(apiSetMap);
+            std::vector<uint8_t> buffer(dataPtr, dataPtr + apiSetMap->Size);
+            return buffer;
+        }
 #else
-        return clone_api_set_map(emu, allocator, {});
+        case apiset_location::host:
+            throw std::runtime_error("The APISET host location is not supported on this platform");
 #endif
+        case apiset_location::file: {
+            auto apiset = utils::io::read_file("api-set.bin");
+            if (apiset.empty())
+                throw std::runtime_error("Failed to read file api-set.bin");
+            return decompress_apiset(apiset);
+        }
+        case apiset_location::default_windows_10: {
+            const std::vector<uint8_t> apiset{apiset_w10, apiset_w10 + sizeof(apiset_w10)};
+            return decompress_apiset(apiset);
+        }
+        case apiset_location::default_windows_11: {
+            const std::vector<uint8_t> apiset{apiset_w11, apiset_w11 + sizeof(apiset_w11)};
+            return decompress_apiset(apiset);
+        }
+        default:
+            throw std::runtime_error("Bad API set location");
+        }
+    }
+
+    emulator_object<API_SET_NAMESPACE> build_api_set_map(x64_emulator& emu, emulator_allocator& allocator,
+                                                         apiset_location location = apiset_location::host)
+    {
+        return clone_api_set_map(emu, allocator,
+                                 reinterpret_cast<const API_SET_NAMESPACE&>(*obtain_api_set(location).data()));
     }
 
     emulator_allocator create_allocator(emulator& emu, const size_t size)
@@ -247,10 +290,17 @@ namespace
             proc_params.MaximumLength = proc_params.Length;
         });
 
+// TODO: make this configurable
+#ifdef OS_WINDOWS
+        apiset_location apiset_loc = apiset_location::host;
+#else
+        apiset_location apiset_loc = apiset_location::default_windows_11;
+#endif
+
         context.peb.access([&](PEB64& peb) {
             peb.ImageBaseAddress = nullptr;
             peb.ProcessParameters = context.process_params.ptr();
-            peb.ApiSetMap = build_api_set_map(emu, allocator).ptr();
+            peb.ApiSetMap = build_api_set_map(emu, allocator, apiset_loc).ptr();
 
             peb.ProcessHeap = nullptr;
             peb.ProcessHeaps = nullptr;

@@ -22,6 +22,14 @@ struct emulator_settings
     bool use_relative_time{false};
 };
 
+enum class apiset_location
+{
+    host,
+    file,
+    default_windows_10,
+    default_windows_11
+};
+
 class windows_emulator
 {
   public:
