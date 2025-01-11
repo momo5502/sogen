@@ -360,7 +360,7 @@ namespace
             return STATUS_SUCCESS;
         }
 
-        printf("Unsupported thread set info class: %X\n", info_class);
+        c.win_emu.log.error("Unsupported thread set info class: %X\n", info_class);
         c.emu.stop();
         return STATUS_NOT_SUPPORTED;
     }
@@ -568,7 +568,7 @@ namespace
     {
         if (fs_information_class != FileFsDeviceInformation)
         {
-            printf("Unsupported fs info class: %X\n", fs_information_class);
+            c.win_emu.log.error("Unsupported fs info class: %X\n", fs_information_class);
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
         }
@@ -824,7 +824,7 @@ namespace
             const auto mod = c.proc.mod_manager.find_by_address(base_address);
             if (!mod)
             {
-                printf("Bad address for memory image request: 0x%" PRIx64 "\n", base_address);
+                c.win_emu.log.error("Bad address for memory image request: 0x%" PRIx64 "\n", base_address);
                 return STATUS_INVALID_ADDRESS;
             }
 
@@ -872,7 +872,7 @@ namespace
             return STATUS_SUCCESS;
         }
 
-        printf("Unsupported memory info class: %X\n", info_class);
+        c.win_emu.log.error("Unsupported memory info class: %X\n", info_class);
         c.emu.stop();
         return STATUS_NOT_SUPPORTED;
     }
@@ -1002,7 +1002,7 @@ namespace
 
         if (info_class != SystemBasicInformation && info_class != SystemEmulationBasicInformation)
         {
-            printf("Unsupported system info class: %X\n", info_class);
+            c.win_emu.log.error("Unsupported system info class: %X\n", info_class);
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
         }
@@ -1139,14 +1139,14 @@ namespace
                 return STATUS_SUCCESS;
             }
 
-            printf("Unsupported processor relationship: %X\n", request);
+            c.win_emu.log.error("Unsupported processor relationship: %X\n", request);
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
         }
 
         if (info_class != SystemBasicInformation && info_class != SystemEmulationBasicInformation)
         {
-            printf("Unsupported system info ex class: %X\n", info_class);
+            c.win_emu.log.error("Unsupported system info ex class: %X\n", info_class);
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
         }
@@ -1365,7 +1365,7 @@ namespace
             return STATUS_SUCCESS;
         }
 
-        printf("Unsupported process info class: %X\n", info_class);
+        c.win_emu.log.error("Unsupported process info class: %X\n", info_class);
         c.emu.stop();
 
         return STATUS_NOT_SUPPORTED;
@@ -1440,7 +1440,7 @@ namespace
             return STATUS_SUCCESS;
         }
 
-        printf("Unsupported thread query info class: %X\n", info_class);
+        c.win_emu.log.error("Unsupported thread query info class: %X\n", info_class);
         c.emu.stop();
 
         return STATUS_NOT_SUPPORTED;
@@ -1487,7 +1487,7 @@ namespace
             return STATUS_SUCCESS;
         }
 
-        printf("Unsupported set file info class: %X\n", info_class);
+        c.win_emu.log.error("Unsupported set file info class: %X\n", info_class);
         c.emu.stop();
 
         return STATUS_NOT_SUPPORTED;
@@ -1622,7 +1622,7 @@ namespace
                                                                       query_flags, f);
         }
 
-        printf("Unsupported query directory file info class: %X\n", info_class);
+        c.win_emu.log.error("Unsupported query directory file info class: %X\n", info_class);
         c.emu.stop();
 
         return STATUS_NOT_SUPPORTED;
@@ -1723,7 +1723,7 @@ namespace
             return STATUS_SUCCESS;
         }
 
-        printf("Unsupported query file info class: %X\n", info_class);
+        c.win_emu.log.error("Unsupported query file info class: %X\n", info_class);
         c.emu.stop();
 
         return STATUS_NOT_SUPPORTED;
@@ -1808,7 +1808,7 @@ namespace
             return STATUS_SUCCESS;
         }
 
-        printf("Unsupported info process class: %X\n", info_class);
+        c.win_emu.log.error("Unsupported info process class: %X\n", info_class);
         c.emu.stop();
 
         return STATUS_NOT_SUPPORTED;
@@ -2464,7 +2464,7 @@ namespace
             return STATUS_SUCCESS;
         }
 
-        printf("Unsupported token info class: %X\n", token_information_class);
+        c.win_emu.log.error("Unsupported token info class: %X\n", token_information_class);
         c.emu.stop();
         return STATUS_NOT_SUPPORTED;
     }
@@ -3184,7 +3184,7 @@ namespace
                     }
                     else
                     {
-                        printf("Unsupported thread attribute type: %" PRIx64 "\n", type);
+                        c.win_emu.log.error("Unsupported thread attribute type: %" PRIx64 "\n", type);
                     }
                 },
                 i);
