@@ -137,7 +137,7 @@ T resolve_indexed_argument(x64_emulator& emu, size_t& index)
     return resolve_argument<T>(emu, index++);
 }
 
-inline void write_status(const syscall_context& c, const NTSTATUS status, const uint64_t initial_ip)
+inline void write_syscall_status(const syscall_context& c, const NTSTATUS status, const uint64_t initial_ip)
 {
     if (c.write_status && !c.retrigger_syscall)
     {
@@ -156,7 +156,7 @@ inline void forward_syscall(const syscall_context& c, NTSTATUS (*handler)())
     const auto ip = c.emu.read_instruction_pointer();
 
     const auto ret = handler();
-    write_status(c, ret, ip);
+    write_syscall_status(c, ret, ip);
 }
 
 template <typename... Args>
@@ -171,7 +171,7 @@ void forward_syscall(const syscall_context& c, NTSTATUS (*handler)(const syscall
     (void)index;
 
     const auto ret = std::apply(handler, std::move(func_args));
-    write_status(c, ret, ip);
+    write_syscall_status(c, ret, ip);
 }
 
 template <auto Handler>
