@@ -67,6 +67,8 @@ namespace network
         socklen_t get_size() const;
         socklen_t get_max_size() const;
 
+        int get_family() const;
+
         bool is_ipv4() const;
         bool is_ipv6() const;
         bool is_supported() const;

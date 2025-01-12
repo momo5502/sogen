@@ -71,7 +71,7 @@ namespace network
 
     bool address::operator==(const address& obj) const
     {
-        if (this->address_.sa_family != obj.address_.sa_family)
+        if (this->get_family() != obj.get_family())
         {
             return false;
         }
@@ -81,11 +81,12 @@ namespace network
             return false;
         }
 
-        if (this->address_.sa_family == AF_INET)
+        if (this->is_ipv4())
         {
             return this->address4_.sin_addr.s_addr == obj.address4_.sin_addr.s_addr;
         }
-        else if (this->address_.sa_family == AF_INET6)
+
+        if (this->is_ipv6())
         {
             return !memcmp(this->address6_.sin6_addr.s6_addr, obj.address6_.sin6_addr.s6_addr,
                            sizeof(obj.address6_.sin6_addr.s6_addr));
@@ -126,7 +127,7 @@ namespace network
 
     void address::set_port(const unsigned short port)
     {
-        switch (this->address_.sa_family)
+        switch (this->get_family())
         {
         case AF_INET:
             this->address4_.sin_port = htons(port);
@@ -141,7 +142,7 @@ namespace network
 
     unsigned short address::get_port() const
     {
-        switch (this->address_.sa_family)
+        switch (this->get_family())
         {
         case AF_INET:
             return ntohs(this->address4_.sin_port);
@@ -154,17 +155,17 @@ namespace network
 
     std::string address::to_string() const
     {
-        char buffer[1000] = {0};
+        char buffer[1000] = {};
         std::string addr;
 
-        switch (this->address_.sa_family)
+        switch (this->get_family())
         {
         case AF_INET:
-            inet_ntop(this->address_.sa_family, &this->address4_.sin_addr, buffer, sizeof(buffer));
+            inet_ntop(this->get_family(), &this->address4_.sin_addr, buffer, sizeof(buffer));
             addr = std::string(buffer);
             break;
         case AF_INET6:
-            inet_ntop(this->address_.sa_family, &this->address6_.sin6_addr, buffer, sizeof(buffer));
+            inet_ntop(this->get_family(), &this->address6_.sin6_addr, buffer, sizeof(buffer));
             addr = "[" + std::string(buffer) + "]";
             break;
         default:
@@ -179,7 +180,7 @@ namespace network
 
     bool address::is_local() const
     {
-        if (this->address_.sa_family != AF_INET)
+        if (!this->is_ipv4())
         {
             return false;
         }
@@ -187,7 +188,7 @@ namespace network
         // According to: https://en.wikipedia.org/wiki/Private_network
 
         uint8_t bytes[4];
-        *reinterpret_cast<uint32_t*>(&bytes) = this->address4_.sin_addr.s_addr;
+        memcpy(bytes, &this->address4_.sin_addr.s_addr, sizeof(bytes));
 
         // 10.X.X.X
         if (bytes[0] == 10)
@@ -248,7 +249,7 @@ namespace network
 
     socklen_t address::get_size() const
     {
-        switch (this->address_.sa_family)
+        switch (this->get_family())
         {
         case AF_INET:
             return static_cast<socklen_t>(sizeof(this->address4_));
@@ -271,14 +272,19 @@ namespace network
         return static_cast<socklen_t>(max_size);
     }
 
+    int address::get_family() const
+    {
+        return this->address_.sa_family;
+    }
+
     bool address::is_ipv4() const
     {
-        return this->address_.sa_family == AF_INET;
+        return this->get_family() == AF_INET;
     }
 
     bool address::is_ipv6() const
     {
-        return this->address_.sa_family == AF_INET6;
+        return this->get_family() == AF_INET6;
     }
 
     bool address::is_supported() const
@@ -293,8 +299,8 @@ namespace network
         const auto pos = addr.find_last_of(':');
         if (pos != std::string::npos)
         {
-            auto port = addr.substr(pos + 1);
-            port_value = uint16_t(atoi(port.data()));
+            const auto port = addr.substr(pos + 1);
+            port_value = static_cast<uint16_t>(atoi(port.data()));
             addr = addr.substr(0, pos);
         }
 
@@ -334,7 +340,7 @@ namespace network
         {
             const auto _2 = utils::finally([&result] { freeaddrinfo(result); });
 
-            for (auto* i = result; i; i = i->ai_next)
+            for (const auto* i = result; i; i = i->ai_next)
             {
                 if (i->ai_family == AF_INET || i->ai_family == AF_INET6)
                 {
