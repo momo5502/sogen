@@ -7,7 +7,7 @@
 #include <network/socket.hpp>
 
 #include <utils/finally.hpp>
-#include <utils/timer.hpp>
+#include <utils/time.hpp>
 
 namespace
 {

@@ -193,3 +193,4 @@ void write_attribute(emulator& emu, const PS_ATTRIBUTE<Traits>& attribute, const
         emulator_object<T>{emu, attribute.Value}.write(value);
     }
 }
+

@@ -1,5 +1,5 @@
 #include "kusd_mmio.hpp"
-#include <utils/timer.hpp>
+#include <utils/time.hpp>
 #include "windows_emulator.hpp"
 
 #include <address_utils.hpp>

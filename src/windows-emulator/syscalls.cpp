@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <utils/io.hpp>
 #include <utils/string.hpp>
-#include <utils/timer.hpp>
+#include <utils/time.hpp>
 #include <utils/finally.hpp>
 
 #include <sys/stat.h>
