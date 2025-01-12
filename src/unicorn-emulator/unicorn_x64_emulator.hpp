@@ -12,6 +12,8 @@
 
 namespace unicorn
 {
+#if !MOMO_BUILD_AS_LIBRARY
     UNICORN_EMULATOR_DLL_STORAGE
+#endif
     std::unique_ptr<x64_emulator> create_x64_emulator();
 }
