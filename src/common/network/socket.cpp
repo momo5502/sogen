@@ -7,7 +7,7 @@ using namespace std::literals;
 
 namespace network
 {
-    socket::socket(SOCKET s)
+    socket::socket(const SOCKET s)
         : socket_(s)
     {
     }
@@ -23,6 +23,10 @@ namespace network
             setsockopt(this->socket_, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<char*>(&i),
                        static_cast<int>(sizeof(i)));
         }
+
+        int optval = 1;
+        setsockopt(this->socket_, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<char*>(&optval),
+                   static_cast<int>(sizeof(optval)));
     }
 
     socket::~socket()
