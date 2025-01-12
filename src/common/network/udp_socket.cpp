@@ -9,29 +9,39 @@ namespace network
 
     bool udp_socket::send(const address& target, const void* data, const size_t size) const
     {
-        const auto res = sendto(this->get_socket(), static_cast<const char*>(data), static_cast<send_size>(size), 0,
-                                &target.get_addr(), target.get_size());
-        return static_cast<size_t>(res) == size;
+        return this->send(target, std::string_view(static_cast<const char*>(data), size));
     }
 
     bool udp_socket::send(const address& target, const std::string_view data) const
     {
-        return this->send(target, data.data(), data.size());
+        while (true)
+        {
+            const auto res = sendto(this->get_socket(), data.data(), static_cast<send_size>(data.size()), 0,
+                                    &target.get_addr(), target.get_size());
+
+            if (res < 0 && GET_SOCKET_ERROR() == SERR(EWOULDBLOCK))
+            {
+                this->sleep(std::chrono::milliseconds(10), true);
+                continue;
+            }
+
+            return static_cast<size_t>(res) == data.size();
+        }
     }
 
-    bool udp_socket::receive(address& source, std::string& data) const
+    std::optional<std::pair<address, std::string>> udp_socket::receive() const
     {
         char buffer[0x2000];
+        address source{};
         auto len = source.get_max_size();
 
         const auto result =
             recvfrom(this->get_socket(), buffer, static_cast<int>(sizeof(buffer)), 0, &source.get_addr(), &len);
         if (result == SOCKET_ERROR)
         {
-            return false;
+            return std::nullopt;
         }
 
-        data.assign(buffer, buffer + result);
-        return true;
+        return {{source, std::string(buffer, result)}};
     }
 }

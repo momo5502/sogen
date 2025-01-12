@@ -26,27 +26,52 @@ namespace network
 
     bool tcp_client_socket::send(const void* data, const size_t size) const
     {
-        const auto res = ::send(this->get_socket(), static_cast<const char*>(data), static_cast<send_size>(size), 0);
-        return static_cast<size_t>(res) == size;
+        return this->send(std::string_view(static_cast<const char*>(data), size));
     }
 
-    bool tcp_client_socket::send(const std::string_view data) const
+    bool tcp_client_socket::send(std::string_view data) const
     {
-        return this->send(data.data(), data.size());
+        while (!data.empty())
+        {
+            const auto res = ::send(this->get_socket(), data.data(), static_cast<send_size>(data.size()), 0);
+            if (res < 0)
+            {
+                if (GET_SOCKET_ERROR() != SERR(EWOULDBLOCK))
+                {
+                    break;
+                }
+
+                this->sleep(std::chrono::milliseconds(10), true);
+                continue;
+            }
+
+            if (static_cast<size_t>(res) > data.size())
+            {
+                break;
+            }
+
+            data = data.substr(res);
+        }
+
+        return data.empty();
     }
 
-    bool tcp_client_socket::receive(std::string& data) const
+    std::optional<std::string> tcp_client_socket::receive()
     {
         char buffer[0x2000];
 
         const auto result = recv(this->get_socket(), buffer, static_cast<int>(sizeof(buffer)), 0);
-        if (result == SOCKET_ERROR)
+        if (result > 0)
         {
-            return false;
+            return std::string(buffer, result);
         }
 
-        data.assign(buffer, buffer + result);
-        return true;
+        if (result == 0 || (result < 0 && GET_SOCKET_ERROR() == SERR(ECONNRESET)))
+        {
+            this->close();
+        }
+
+        return std::nullopt;
     }
 
     std::optional<address> tcp_client_socket::get_target() const
@@ -69,6 +94,6 @@ namespace network
         }
 
         const auto error = GET_SOCKET_ERROR();
-        return error == SOCK_WOULDBLOCK;
+        return error == SERR(EWOULDBLOCK);
     }
 }

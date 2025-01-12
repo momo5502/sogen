@@ -31,7 +31,7 @@ namespace network
 
     socket::~socket()
     {
-        this->release();
+        this->close();
     }
 
     socket::socket(socket&& obj) noexcept
@@ -43,7 +43,7 @@ namespace network
     {
         if (this != &obj)
         {
-            this->release();
+            this->close();
             this->socket_ = obj.socket_;
 
             obj.socket_ = INVALID_SOCKET;
@@ -54,14 +54,19 @@ namespace network
 
     socket::operator bool() const
     {
+        return this->is_valid();
+    }
+
+    bool socket::is_valid() const
+    {
         return this->socket_ != INVALID_SOCKET;
     }
 
-    void socket::release()
+    void socket::close()
     {
         if (this->socket_ != INVALID_SOCKET)
         {
-            closesocket(this->socket_);
+            ::closesocket(this->socket_);
             this->socket_ = INVALID_SOCKET;
         }
     }
@@ -90,7 +95,7 @@ namespace network
 #endif
     }
 
-    bool socket::sleep(const std::chrono::milliseconds timeout) const
+    bool socket::sleep(const std::chrono::milliseconds timeout, const bool in_poll) const
     {
         /*fd_set fdr;
         FD_ZERO(&fdr);
@@ -119,13 +124,13 @@ namespace network
         std::vector<const socket*> sockets{};
         sockets.push_back(this);
 
-        return sleep_sockets(sockets, timeout);
+        return sleep_sockets(sockets, timeout, in_poll);
     }
 
-    bool socket::sleep_until(const std::chrono::high_resolution_clock::time_point time_point) const
+    bool socket::sleep_until(const std::chrono::high_resolution_clock::time_point time_point, const bool in_poll) const
     {
         const auto duration = time_point - std::chrono::high_resolution_clock::now();
-        return this->sleep(std::chrono::duration_cast<std::chrono::milliseconds>(duration));
+        return this->sleep(std::chrono::duration_cast<std::chrono::milliseconds>(duration), in_poll);
     }
 
     SOCKET socket::get_socket() const
@@ -167,7 +172,13 @@ namespace network
         return address->get_addr().sa_family;
     }
 
-    bool socket::sleep_sockets(const std::span<const socket*>& sockets, const std::chrono::milliseconds timeout)
+    bool socket::is_ready(const bool in_poll) const
+    {
+        return this->is_valid() && is_socket_ready(this->socket_, in_poll);
+    }
+
+    bool socket::sleep_sockets(const std::span<const socket*>& sockets, const std::chrono::milliseconds timeout,
+                               const bool in_poll)
     {
         std::vector<pollfd> pfds{};
         pfds.resize(sockets.size());
@@ -178,7 +189,7 @@ namespace network
             const auto& socket = sockets[i];
 
             pfd.fd = socket->get_socket();
-            pfd.events = POLLIN;
+            pfd.events = in_poll ? POLLIN : POLLOUT;
             pfd.revents = 0;
         }
 
@@ -223,9 +234,10 @@ namespace network
     }
 
     bool socket::sleep_sockets_until(const std::span<const socket*>& sockets,
-                                     const std::chrono::high_resolution_clock::time_point time_point)
+                                     const std::chrono::high_resolution_clock::time_point time_point,
+                                     const bool in_poll)
     {
         const auto duration = time_point - std::chrono::high_resolution_clock::now();
-        return sleep_sockets(sockets, std::chrono::duration_cast<std::chrono::milliseconds>(duration));
+        return sleep_sockets(sockets, std::chrono::duration_cast<std::chrono::milliseconds>(duration), in_poll);
     }
 }

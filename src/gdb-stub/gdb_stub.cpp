@@ -21,6 +21,21 @@ namespace gdb_stub
             return csum;
         }
 
+        std::string compute_checksum_string(const std::string_view data)
+        {
+            const auto checksum = compute_checksum(data);
+
+            std::stringstream stream{};
+            stream << std::hex << checksum;
+            return stream.str();
+        }
+
+        bool send_packet_reply(const network::tcp_client_socket& socket, const std::string_view data)
+        {
+            const auto checksum = compute_checksum_string(data);
+            return socket.send("$" + std::string(data) + "#" + checksum);
+        }
+
         network::tcp_client_socket accept_client(const network::address& bind_address)
         {
             network::tcp_server_socket server{bind_address.get_family()};
@@ -102,27 +117,61 @@ namespace gdb_stub
                 }
             }
         };
+
+        void read_from_socket(packet_queue& queue, network::tcp_client_socket& client)
+        {
+            while (client.is_ready(true))
+            {
+                auto packet = client.receive();
+                if (packet)
+                {
+                    queue.enqueue(std::move(*packet));
+                }
+            }
+        }
+
+        void handle_command(const uint8_t command, const std::string_view data)
+        {
+            switch (command)
+            {
+            case 'q':
+                break;
+            }
+        }
+
+        void process_packet(const std::string_view packet)
+        {
+            if (packet.empty())
+            {
+                return;
+            }
+
+            const auto command = packet.front();
+            handle_command(command, packet.substr(1));
+        }
     }
 
     bool run_gdb_stub(const network::address& bind_address)
     {
-        const auto client = accept_client(bind_address);
+        packet_queue queue{};
+
+        auto client = accept_client(bind_address);
         if (!client)
         {
             return false;
         }
 
-        packet_queue queue{};
+        client.set_blocking(false);
 
         while (true)
         {
-            std::string packet{};
-            if (!client.receive(packet))
-            {
-                break;
-            }
+            read_from_socket(queue, client);
 
-            queue.enqueue(packet);
+            while (!queue.packets.empty())
+            {
+                process_packet(queue.packets.front());
+                queue.packets.pop();
+            }
         }
 
         return true;

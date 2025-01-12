@@ -17,6 +17,6 @@ namespace network
 
         [[maybe_unused]] bool send(const address& target, const void* data, size_t size) const;
         [[maybe_unused]] bool send(const address& target, std::string_view data) const;
-        bool receive(address& source, std::string& data) const;
+        std::optional<std::pair<address, std::string>> receive() const;
     };
 }
