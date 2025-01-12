@@ -11,6 +11,7 @@ using send_size = int;
 #define GET_SOCKET_ERROR() (WSAGetLastError())
 #define poll               WSAPoll
 #define SOCK_WOULDBLOCK    WSAEWOULDBLOCK
+#define SHUT_RDWR          SD_BOTH
 #else
 using SOCKET = int;
 using send_size = size_t;
@@ -31,7 +32,7 @@ namespace network
         socket(SOCKET s);
 
         socket(int af, int type, int protocol);
-        ~socket();
+        virtual ~socket();
 
         socket(const socket& obj) = delete;
         socket& operator=(const socket& obj) = delete;
@@ -41,7 +42,7 @@ namespace network
 
         operator bool() const;
 
-        bool bind_port(const address& target);
+        bool bind(const address& target);
 
         bool set_blocking(bool blocking);
         static bool set_blocking(SOCKET s, bool blocking);

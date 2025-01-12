@@ -10,10 +10,11 @@ namespace network
 
     class tcp_client_socket : public socket
     {
-        // TODO: Construct and connect client!
+      public:
+        tcp_client_socket(int af);
 
         tcp_client_socket() = default;
-        ~tcp_client_socket() = default;
+        ~tcp_client_socket() override;
 
         tcp_client_socket(tcp_client_socket&& obj) noexcept = default;
         tcp_client_socket& operator=(tcp_client_socket&& obj) noexcept = default;
@@ -22,12 +23,12 @@ namespace network
         [[maybe_unused]] bool send(std::string_view data) const;
         bool receive(std::string& data) const;
 
-        address get_target() const;
+        std::optional<address> get_target() const;
+
+        bool connect(const address& target);
 
       private:
-        address target_{};
-
         friend tcp_server_socket;
-        tcp_client_socket(SOCKET s, const address& target);
+        tcp_client_socket(SOCKET s);
     };
 }

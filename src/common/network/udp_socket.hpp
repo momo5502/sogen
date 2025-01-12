@@ -10,7 +10,7 @@ namespace network
     {
         udp_socket(int af);
         udp_socket() = default;
-        ~udp_socket() = default;
+        ~udp_socket() override = default;
 
         udp_socket(udp_socket&& obj) noexcept = default;
         udp_socket& operator=(udp_socket&& obj) noexcept = default;

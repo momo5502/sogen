@@ -2,10 +2,22 @@
 
 namespace network
 {
-    tcp_client_socket::tcp_client_socket(SOCKET s, const address& target)
-        : socket(s),
-          target_(target)
+    tcp_client_socket::tcp_client_socket(const int af)
+        : socket(af, SOCK_STREAM, IPPROTO_TCP)
     {
+    }
+
+    tcp_client_socket::tcp_client_socket(SOCKET s)
+        : socket(s)
+    {
+    }
+
+    tcp_client_socket::~tcp_client_socket()
+    {
+        if (*this && this->get_target())
+        {
+            ::shutdown(this->get_socket(), SHUT_RDWR);
+        }
     }
 
     bool tcp_client_socket::send(const void* data, const size_t size) const
@@ -33,8 +45,26 @@ namespace network
         return true;
     }
 
-    address tcp_client_socket::get_target() const
+    std::optional<address> tcp_client_socket::get_target() const
     {
-        return this->target_;
+        address a{};
+        auto len = a.get_max_size();
+        if (getpeername(this->get_socket(), &a.get_addr(), &len) == SOCKET_ERROR)
+        {
+            return std::nullopt;
+        }
+
+        return a;
+    }
+
+    bool tcp_client_socket::connect(const address& target)
+    {
+        if (::connect(this->get_socket(), &target.get_addr(), target.get_size()) != SOCKET_ERROR)
+        {
+            return true;
+        }
+
+        const auto error = GET_SOCKET_ERROR();
+        return error == SOCK_WOULDBLOCK;
     }
 }

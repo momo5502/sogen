@@ -62,9 +62,9 @@ namespace network
         }
     }
 
-    bool socket::bind_port(const address& target)
+    bool socket::bind(const address& target)
     {
-        return bind(this->socket_, &target.get_addr(), target.get_size()) == 0;
+        return ::bind(this->socket_, &target.get_addr(), target.get_size()) == 0;
     }
 
     bool socket::set_blocking(const bool blocking)
