@@ -1,9 +1,9 @@
 #include "time.hpp"
+#include <cstring>
 
 namespace utils
 {
-    std::chrono::steady_clock::time_point convert_delay_interval_to_time_point(
-        const LARGE_INTEGER delay_interval)
+    std::chrono::steady_clock::time_point convert_delay_interval_to_time_point(const LARGE_INTEGER delay_interval)
     {
         if (delay_interval.QuadPart <= 0)
         {
