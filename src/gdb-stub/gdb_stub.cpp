@@ -10,6 +10,14 @@ namespace gdb_stub
     {
         constexpr size_t CHECKSUM_SIZE = 2;
 
+        enum class continuation_event
+        {
+            none,
+            cont,
+            detach,
+            step,
+        };
+
         uint8_t compute_checksum(const std::string_view data)
         {
             uint8_t csum = 0;
@@ -130,24 +138,71 @@ namespace gdb_stub
             }
         }
 
-        void handle_command(const uint8_t command, const std::string_view data)
+        void process_query(const network::tcp_client_socket& client, const std::string_view payload)
         {
-            switch (command)
+            auto name = payload;
+            std::string_view args{};
+
+            const auto separator = payload.find_first_of(':');
+            if (separator != std::string_view::npos)
+
             {
-            case 'q':
-                break;
+                name = payload.substr(0, separator);
+                args = payload.substr(separator + 1);
+            }
+
+            if (name == "Supported")
+            {
+                send_packet_reply(client, "PacketSize=1024;qXfer:features:read+");
+            }
+            else if (name == "Attached")
+            {
+                send_packet_reply(client, "1");
+            }
+            else if (name == "Xfer")
+            {
+                // process_xfer(gdbstub, args);
+            }
+            else if (name == "Symbol")
+            {
+                send_packet_reply(client, "OK");
+            }
+            else
+            {
+                send_packet_reply(client, {});
             }
         }
 
-        void process_packet(const std::string_view packet)
+        continuation_event handle_command(const network::tcp_client_socket& client, const uint8_t command,
+                                          const std::string_view data)
         {
+            auto event = continuation_event::none;
+
+            switch (command)
+            {
+            case 'q':
+                process_query(client, data);
+                break;
+
+            default:
+                send_packet_reply(client, {});
+                break;
+            }
+
+            return event;
+        }
+
+        void process_packet(const network::tcp_client_socket& client, const std::string_view packet)
+        {
+            (void)client.send("+");
+
             if (packet.empty())
             {
                 return;
             }
 
             const auto command = packet.front();
-            handle_command(command, packet.substr(1));
+            const auto event = handle_command(client, command, packet.substr(1));
         }
     }
 
@@ -163,13 +218,13 @@ namespace gdb_stub
 
         client.set_blocking(false);
 
-        while (true)
+        while (client.is_valid())
         {
             read_from_socket(queue, client);
 
             while (!queue.packets.empty())
             {
-                process_packet(queue.packets.front());
+                process_packet(client, queue.packets.front());
                 queue.packets.pop();
             }
         }
