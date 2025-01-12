@@ -1,5 +1,5 @@
 #include "kusd_mmio.hpp"
-#include "syscall_utils.hpp"
+#include <utils/time.hpp>
 #include "windows_emulator.hpp"
 
 #include <address_utils.hpp>
@@ -123,7 +123,7 @@ void kusd_mmio::setup(const bool use_relative_time)
     this->use_relative_time_ = use_relative_time;
 
     setup_kusd(this->kusd_, use_relative_time);
-    this->start_time_ = convert_from_ksystem_time(this->kusd_.SystemTime);
+    this->start_time_ = utils::convert_from_ksystem_time(this->kusd_.SystemTime);
 
     this->register_mmio();
 }
@@ -193,7 +193,7 @@ void kusd_mmio::update()
         time = std::chrono::system_clock::now();
     }
 
-    convert_to_ksystem_time(&this->kusd_.SystemTime, time);
+    utils::convert_to_ksystem_time(&this->kusd_.SystemTime, time);
 }
 
 void kusd_mmio::register_mmio()

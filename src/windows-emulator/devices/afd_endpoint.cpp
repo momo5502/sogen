@@ -2,12 +2,12 @@
 #include "afd_types.hpp"
 
 #include "../windows_emulator.hpp"
-#include "../syscall_utils.hpp"
 
 #include <network/address.hpp>
 #include <network/socket.hpp>
 
 #include <utils/finally.hpp>
+#include <utils/time.hpp>
 
 namespace
 {
@@ -410,7 +410,7 @@ namespace
                 std::optional<std::chrono::steady_clock::time_point> timeout{};
                 if (info.Timeout.QuadPart != std::numeric_limits<int64_t>::max())
                 {
-                    timeout = convert_delay_interval_to_time_point(info.Timeout);
+                    timeout = utils::convert_delay_interval_to_time_point(info.Timeout);
                 }
 
                 this->delay_ioctrl(c, timeout);
