@@ -29,6 +29,6 @@ namespace network
 
       private:
         friend tcp_server_socket;
-        tcp_client_socket(SOCKET s);
+        tcp_client_socket(SOCKET s, const address& target);
     };
 }

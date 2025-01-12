@@ -1,5 +1,7 @@
 #include "tcp_client_socket.hpp"
 
+#include <cassert>
+
 namespace network
 {
     tcp_client_socket::tcp_client_socket(const int af)
@@ -7,9 +9,11 @@ namespace network
     {
     }
 
-    tcp_client_socket::tcp_client_socket(SOCKET s)
+    tcp_client_socket::tcp_client_socket(SOCKET s, const address& target)
         : socket(s)
     {
+        (void)target;
+        assert(this->get_target() == target);
     }
 
     tcp_client_socket::~tcp_client_socket()

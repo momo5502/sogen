@@ -13,7 +13,13 @@ namespace network
 
         address a{};
         auto len = a.get_max_size();
-        return ::accept(this->get_socket(), &a.get_addr(), &len);
+        const auto s = ::accept(this->get_socket(), &a.get_addr(), &len);
+        if (s == INVALID_SOCKET)
+        {
+            return {};
+        }
+
+        return {s, a};
     }
 
     void tcp_server_socket::listen()
