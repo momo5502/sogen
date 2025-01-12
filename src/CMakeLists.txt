@@ -1,5 +1,6 @@
 add_subdirectory(common)
 add_subdirectory(emulator)
+add_subdirectory(gdb-stub)
 add_subdirectory(unicorn-emulator)
 add_subdirectory(windows-emulator)
 if (NOT MOMO_BUILD_AS_LIBRARY)

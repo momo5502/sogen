@@ -4,6 +4,7 @@
 #include <debugging/win_x64_gdb_stub_handler.hpp>
 
 #include "object_watching.hpp"
+#include "gdb-stub/gdb_stub.hpp"
 
 namespace
 {
@@ -229,6 +230,8 @@ int main(const int argc, char** argv)
 {
     try
     {
+        gdb_stub::run_gdb_stub(network::address{"0.0.0.0:28960", AF_INET});
+
         auto args = bundle_arguments(argc, argv);
         const auto options = parse_options(args);
 
