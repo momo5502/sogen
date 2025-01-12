@@ -1,4 +1,5 @@
 #include "socket.hpp"
+#include "address.hpp"
 
 #include <thread>
 
@@ -6,11 +7,15 @@ using namespace std::literals;
 
 namespace network
 {
-    socket::socket(const int af)
-        : address_family_(af)
+    socket::socket(SOCKET s)
+        : socket_(s)
+    {
+    }
+
+    socket::socket(const int af, const int type, const int protocol)
     {
         initialize_wsa();
-        this->socket_ = ::socket(af, SOCK_DGRAM, IPPROTO_UDP);
+        this->socket_ = ::socket(af, type, protocol);
 
         if (af == AF_INET6)
         {
@@ -36,14 +41,16 @@ namespace network
         {
             this->release();
             this->socket_ = obj.socket_;
-            this->port_ = obj.port_;
-            this->address_family_ = obj.address_family_;
 
             obj.socket_ = INVALID_SOCKET;
-            obj.address_family_ = AF_UNSPEC;
         }
 
         return *this;
+    }
+
+    socket::operator bool() const
+    {
+        return this->socket_ != INVALID_SOCKET;
     }
 
     void socket::release()
@@ -55,43 +62,9 @@ namespace network
         }
     }
 
-    bool socket::bind_port(const address& target)
+    bool socket::bind(const address& target)
     {
-        const auto result = bind(this->socket_, &target.get_addr(), target.get_size()) == 0;
-        if (result)
-        {
-            this->port_ = target.get_port();
-        }
-
-        return result;
-    }
-
-    bool socket::send(const address& target, const void* data, const size_t size) const
-    {
-        const auto res = sendto(this->socket_, static_cast<const char*>(data), static_cast<send_size>(size), 0,
-                                &target.get_addr(), target.get_size());
-        return static_cast<size_t>(res) == size;
-    }
-
-    bool socket::send(const address& target, const std::string& data) const
-    {
-        return this->send(target, data.data(), data.size());
-    }
-
-    bool socket::receive(address& source, std::string& data) const
-    {
-        char buffer[0x2000];
-        auto len = source.get_max_size();
-
-        const auto result =
-            recvfrom(this->socket_, buffer, static_cast<int>(sizeof(buffer)), 0, &source.get_addr(), &len);
-        if (result == SOCKET_ERROR)
-        {
-            return false;
-        }
-
-        data.assign(buffer, buffer + result);
-        return true;
+        return ::bind(this->socket_, &target.get_addr(), target.get_size()) == 0;
     }
 
     bool socket::set_blocking(const bool blocking)
@@ -156,14 +129,38 @@ namespace network
         return this->socket_;
     }
 
+    std::optional<address> socket::get_name() const
+    {
+        address a{};
+        auto len = a.get_max_size();
+        if (getsockname(this->socket_, &a.get_addr(), &len) == SOCKET_ERROR)
+        {
+            return std::nullopt;
+        }
+
+        return a;
+    }
+
     uint16_t socket::get_port() const
     {
-        return this->port_;
+        const auto address = this->get_name();
+        if (!address)
+        {
+            return 0;
+        }
+
+        return address->get_port();
     }
 
     int socket::get_address_family() const
     {
-        return this->address_family_;
+        const auto address = this->get_name();
+        if (!address)
+        {
+            return AF_UNSPEC;
+        }
+
+        return address->get_addr().sa_family;
     }
 
     bool socket::sleep_sockets(const std::span<const socket*>& sockets, const std::chrono::milliseconds timeout)
