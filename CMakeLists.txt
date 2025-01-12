@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.26.4)
 ##########################################
 
 option(MOMO_ENABLE_SANITIZER "Enable sanitizer" OFF)
+option(MOMO_BUILD_AS_LIBRARY "Configure and Build the emulator as a shared library (without the samples and tests)" OFF)
 
 ##########################################
 
