@@ -33,7 +33,7 @@ class registry_manager
 {
   public:
     using hive_ptr = std::unique_ptr<hive_parser>;
-    using hive_map = std::unordered_map<std::filesystem::path, hive_ptr>;
+    using hive_map = std::unordered_map<std::u16string, hive_ptr>;
 
     registry_manager();
     registry_manager(const std::filesystem::path& hive_path);
@@ -54,7 +54,7 @@ class registry_manager
   private:
     std::filesystem::path hive_path_{};
     hive_map hives_{};
-    std::unordered_map<std::filesystem::path, std::filesystem::path> path_mapping_{};
+    std::unordered_map<std::u16string, std::filesystem::path> path_mapping_{};
 
     std::filesystem::path normalize_path(const std::filesystem::path& path) const;
     void add_path_mapping(const std::filesystem::path& key, const std::filesystem::path& value);

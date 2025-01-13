@@ -32,7 +32,7 @@ namespace
     void register_hive(registry_manager::hive_map& hives, const std::filesystem::path& key,
                        const std::filesystem::path& file)
     {
-        hives[canonicalize_path(key)] = std::make_unique<hive_parser>(file);
+        hives[canonicalize_path(key).u16string()] = std::make_unique<hive_parser>(file);
     }
 }
 
@@ -95,7 +95,7 @@ std::filesystem::path registry_manager::normalize_path(const std::filesystem::pa
 
 void registry_manager::add_path_mapping(const std::filesystem::path& key, const std::filesystem::path& value)
 {
-    this->path_mapping_[canonicalize_path(key)] = canonicalize_path(value);
+    this->path_mapping_[canonicalize_path(key).u16string()] = canonicalize_path(value);
 }
 
 std::optional<registry_key> registry_manager::get_key(const std::filesystem::path& key)
@@ -137,7 +137,7 @@ std::optional<registry_value> registry_manager::get_value(const registry_key& ke
 {
     utils::string::to_lower_inplace(name);
 
-    const auto iterator = this->hives_.find(key.hive);
+    const auto iterator = this->hives_.find(key.hive.u16string());
     if (iterator == this->hives_.end())
     {
         return std::nullopt;

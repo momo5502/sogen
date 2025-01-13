@@ -2,6 +2,7 @@
 
 #include <span>
 #include <vector>
+#include <string>
 #include <string_view>
 #include <stdexcept>
 #include <cstring>

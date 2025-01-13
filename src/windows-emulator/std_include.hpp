@@ -34,6 +34,7 @@
 #include <map>
 #include <set>
 #include <list>
+#include <span>
 #include <array>
 #include <deque>
 #include <queue>
@@ -52,6 +53,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <unordered_set>
+#include <unordered_map>
 #include <condition_variable>
 
 #include <cassert>
