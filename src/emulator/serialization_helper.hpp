@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <utils/path_key.hpp>
 
 namespace utils
 {
@@ -43,5 +44,15 @@ namespace utils
     inline void deserialize(buffer_deserializer& buffer, std::filesystem::path& path)
     {
         path = buffer.read_string<char16_t>();
+    }
+
+    inline void serialize(buffer_serializer& buffer, const path_key& path)
+    {
+        buffer.write(path.get());
+    }
+
+    inline void deserialize(buffer_deserializer& buffer, path_key& path)
+    {
+        path = buffer.read<std::filesystem::path>();
     }
 }

@@ -56,6 +56,8 @@ jobs:
           - Linux GCC
           - Linux Clang
           - macOS
+          - Android x86_64
+          - Android arm64-v8a
         configuration:
           - Debug
           - Release
@@ -73,6 +75,12 @@ jobs:
             clang-version: 18
           - platform: macOS
             runner: macos-latest
+          - platform: Android x86_64
+            runner: ubuntu-24.04
+            abi: x86_64
+          - platform: Android arm64-v8a
+            runner: ubuntu-24.04
+            abi: arm64-v8a
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
@@ -100,8 +108,23 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1.13.0
         if: "${{ matrix.platform == 'Windows' }}"
 
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        if: ${{ startsWith(matrix.platform, 'Android') }}
+        with:
+          ndk-version: r26d
+          add-to-path: false
+
+      - name: CMake Build
+        run: cmake --preset=${{matrix.preset}} -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/cmake/toolchain/android-ndk.cmake && cmake --build --preset=${{matrix.preset}}
+        if: ${{ startsWith(matrix.platform, 'Android') }}
+        env:
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_ABI: ${{matrix.abi}}
+
       - name: CMake Build
         run: cmake --workflow --preset=${{matrix.preset}}
+        if: ${{ !startsWith(matrix.platform, 'Android') }}
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
