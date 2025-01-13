@@ -7,12 +7,6 @@
 
 namespace
 {
-    std::filesystem::path canonicalize_path(const std::filesystem::path& key)
-    {
-        auto path = key.lexically_normal().wstring();
-        return utils::string::to_lower_consume(path);
-    }
-
     bool is_subpath(const std::filesystem::path& root, const std::filesystem::path& p)
     {
         auto root_it = root.begin();
@@ -32,7 +26,7 @@ namespace
     void register_hive(registry_manager::hive_map& hives, const std::filesystem::path& key,
                        const std::filesystem::path& file)
     {
-        hives[canonicalize_path(key).u16string()] = std::make_unique<hive_parser>(file);
+        hives[key] = std::make_unique<hive_parser>(file);
     }
 }
 
@@ -80,22 +74,22 @@ void registry_manager::deserialize(utils::buffer_deserializer& buffer)
 
 std::filesystem::path registry_manager::normalize_path(const std::filesystem::path& path) const
 {
-    auto canonical_path = canonicalize_path(path);
+    const utils::path_key canonical_path = path;
 
     for (const auto& mapping : this->path_mapping_)
     {
-        if (is_subpath(mapping.first, canonical_path))
+        if (is_subpath(mapping.first.get(), canonical_path.get()))
         {
-            return mapping.second / canonical_path.lexically_relative(mapping.first);
+            return mapping.second.get() / canonical_path.get().lexically_relative(mapping.first.get());
         }
     }
 
-    return canonical_path;
+    return canonical_path.get();
 }
 
 void registry_manager::add_path_mapping(const std::filesystem::path& key, const std::filesystem::path& value)
 {
-    this->path_mapping_[canonicalize_path(key).u16string()] = canonicalize_path(value);
+    this->path_mapping_[key] = value;
 }
 
 std::optional<registry_key> registry_manager::get_key(const std::filesystem::path& key)
@@ -116,7 +110,7 @@ std::optional<registry_key> registry_manager::get_key(const std::filesystem::pat
     }
 
     registry_key reg_key{};
-    reg_key.hive = iterator->first;
+    reg_key.hive = iterator->first.get();
     reg_key.path = normal_key.lexically_relative(reg_key.hive);
 
     if (reg_key.path.empty())
@@ -137,7 +131,7 @@ std::optional<registry_value> registry_manager::get_value(const registry_key& ke
 {
     utils::string::to_lower_inplace(name);
 
-    const auto iterator = this->hives_.find(key.hive.u16string());
+    const auto iterator = this->hives_.find(key.hive);
     if (iterator == this->hives_.end())
     {
         return std::nullopt;
@@ -161,7 +155,7 @@ registry_manager::hive_map::iterator registry_manager::find_hive(const std::file
 {
     for (auto i = this->hives_.begin(); i != this->hives_.end(); ++i)
     {
-        if (is_subpath(i->first, key))
+        if (is_subpath(i->first.get(), key))
         {
             return i;
         }
