@@ -13,12 +13,12 @@ momo_assign_source_group(${SRC_FILES})
 target_precompile_headers(windows-emulator PRIVATE std_include.hpp)
 
 target_link_libraries(windows-emulator PRIVATE
-  common
   unicorn-emulator
   mini-gdbstub
 )
 
 target_link_libraries(windows-emulator PUBLIC
+  emulator-common
   emulator
 )
 
