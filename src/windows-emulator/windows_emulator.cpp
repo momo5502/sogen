@@ -742,13 +742,14 @@ std::unique_ptr<x64_emulator> create_default_x64_emulator()
     return unicorn::create_x64_emulator();
 }
 
-windows_emulator::windows_emulator(emulator_settings settings, std::unique_ptr<x64_emulator> emu)
+windows_emulator::windows_emulator(emulator_settings settings, emulator_callbacks callbacks,
+                                   std::unique_ptr<x64_emulator> emu)
     : windows_emulator(std::move(emu))
 {
     this->silent_until_main_ = settings.silent_until_main && !settings.disable_logging;
-    this->stdout_callback_ = std::move(settings.stdout_callback);
     this->use_relative_time_ = settings.use_relative_time;
     this->log.disable_output(settings.disable_logging || this->silent_until_main_);
+    this->callbacks_ = std::move(callbacks);
     this->setup_process(settings);
 }
 
@@ -1053,4 +1054,31 @@ void windows_emulator::restore_snapshot()
     utils::buffer_deserializer deserializer{this->process_snapshot_};
     this->process_.deserialize(deserializer);
     // this->process_ = *this->process_snapshot_;
+}
+
+void windows_emulator::on_stdout(const std::string_view data) const
+{
+    if (this->callbacks_.stdout_callback)
+    {
+        this->callbacks_.stdout_callback(data);
+    }
+}
+
+void windows_emulator::on_inline_syscall(uint32_t syscall_id, const x64_emulator::pointer_type address,
+                                         const std::string_view mod_name, const std::string_view name)
+{
+    if (this->callbacks_.inline_syscall)
+    {
+        this->callbacks_.inline_syscall(syscall_id, address, mod_name, name);
+    }
+}
+
+void windows_emulator::on_outofline_syscall(uint32_t syscall_id, x64_emulator::pointer_type address,
+                                            std::string_view mod_name, std::string_view syscall_name,
+                                            x64_emulator::pointer_type prev_address, std::string_view prev_mod_name)
+{
+    if (this->callbacks_.outofline_syscall)
+    {
+        this->callbacks_.outofline_syscall(syscall_id, address, mod_name, syscall_name, prev_address, prev_mod_name);
+    }
 }
