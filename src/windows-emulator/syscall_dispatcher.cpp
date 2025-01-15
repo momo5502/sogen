@@ -74,7 +74,7 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
         const auto entry = this->handlers_.find(syscall_id);
         if (entry == this->handlers_.end())
         {
-            printf("Unknown syscall: 0x%X\n", syscall_id);
+            win_emu.log.error("Unknown syscall: 0x%X\n", syscall_id);
             c.emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_SUPPORTED);
             c.emu.stop();
             return;
@@ -82,7 +82,7 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
 
         if (!entry->second.handler)
         {
-            printf("Unimplemented syscall: %s - 0x%X\n", entry->second.name.c_str(), syscall_id);
+            win_emu.log.error("Unimplemented syscall: %s - 0x%X\n", entry->second.name.c_str(), syscall_id);
             c.emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_SUPPORTED);
             c.emu.stop();
             return;
@@ -121,13 +121,13 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
     }
     catch (std::exception& e)
     {
-        printf("Syscall threw an exception: %X (0x%" PRIx64 ") - %s\n", syscall_id, address, e.what());
+        win_emu.log.error("Syscall threw an exception: %X (0x%" PRIx64 ") - %s\n", syscall_id, address, e.what());
         emu.reg<uint64_t>(x64_register::rax, STATUS_UNSUCCESSFUL);
         emu.stop();
     }
     catch (...)
     {
-        printf("Syscall threw an unknown exception: %X (0x%" PRIx64 ")\n", syscall_id, address);
+        win_emu.log.error("Syscall threw an unknown exception: %X (0x%" PRIx64 ")\n", syscall_id, address);
         emu.reg<uint64_t>(x64_register::rax, STATUS_UNSUCCESSFUL);
         emu.stop();
     }
