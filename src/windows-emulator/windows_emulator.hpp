@@ -16,7 +16,8 @@ struct emulator_callbacks
                        std::string_view syscall_name)>
         inline_syscall{};
     std::function<void(uint32_t syscall_id, x64_emulator::pointer_type address, std::string_view mod_name,
-                       std::string_view syscall_name, x64_emulator::pointer_type prev_address, std::string_view prev_mod_name)>
+                       std::string_view syscall_name, x64_emulator::pointer_type prev_address,
+                       std::string_view prev_mod_name)>
         outofline_syscall{};
 };
 
@@ -127,7 +128,6 @@ class windows_emulator
     bool silent_until_main_{false};
     std::unique_ptr<x64_emulator> emu_{};
     std::vector<instruction_hook_callback> syscall_hooks_{};
-    std::function<void(std::string_view)> stdout_callback_{};
 
     process_context process_;
     syscall_dispatcher dispatcher_;
