@@ -87,7 +87,7 @@ cmake --workflow --preset=release
 ## Dumping the Registry
 
 The emulator needs a registry dump to run, otherwise it will print `Bad hive file` errors.  
-You can create one by running the <a href="./src/grab-registry.bat">src/grab-registry.bat</a> script as administrator.  
+You can create one by running the <a href="./src/tools/grab-registry.bat">src/tools/grab-registry.bat</a> script as administrator.  
 This will create a `registry` folder that needs to be placed in the working directory of the emulator.
 
 ## Running Tests
