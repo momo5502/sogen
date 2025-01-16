@@ -7,6 +7,7 @@ class logger;
 class module_manager
 {
   public:
+    using module_map = std::map<uint64_t, mapped_module>;
     module_manager(emulator& emu);
 
     mapped_module* map_module(const std::filesystem::path& file, logger& logger);
@@ -37,11 +38,14 @@ class module_manager
     void deserialize(utils::buffer_deserializer& buffer);
 
     bool unmap(const uint64_t address);
+    const module_map& modules() const
+    {
+        return modules_;
+    }
 
   private:
     emulator* emu_{};
 
-    using module_map = std::map<uint64_t, mapped_module>;
     module_map modules_{};
 
     module_map::iterator get_module(const uint64_t address)
