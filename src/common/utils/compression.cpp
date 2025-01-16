@@ -58,7 +58,7 @@ namespace utils::compression
 
             int ret{};
             size_t offset = 0;
-            static thread_local uint8_t dest[CHUNK] = {0};
+            static thread_local uint8_t dest[ZCHUNK_SIZE] = {0};
             auto& stream = stream_container.get();
 
             do
