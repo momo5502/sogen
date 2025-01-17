@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <sstream>
 
 namespace gdb_stub
 {
@@ -16,14 +15,5 @@ namespace gdb_stub
         }
 
         return checksum;
-    }
-
-    inline std::string compute_checksum_as_string(const std::string_view data)
-    {
-        const auto checksum = compute_checksum(data);
-
-        std::stringstream stream{};
-        stream << std::hex << checksum;
-        return stream.str();
     }
 }

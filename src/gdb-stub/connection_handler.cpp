@@ -1,5 +1,6 @@
 #include "connection_handler.hpp"
 #include "checksum.hpp"
+#include <utils/string.hpp>
 
 #include <thread>
 
@@ -48,7 +49,7 @@ namespace gdb_stub
 
     void connection_handler::send_packet(const std::string_view data) const
     {
-        const auto checksum = compute_checksum_as_string(data);
+        const auto checksum = utils::string::to_hex_string(compute_checksum(data));
         this->send_raw_data("$" + std::string(data) + "#" + checksum);
     }
 

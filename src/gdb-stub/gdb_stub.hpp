@@ -24,21 +24,24 @@ namespace gdb_stub
     {
         virtual ~gdb_stub_handler() = default;
 
-        virtual gdb_action cont() = 0;
-        virtual gdb_action stepi() = 0;
+        virtual gdb_action run() = 0;
+        virtual gdb_action singlestep() = 0;
 
-        virtual bool read_reg(int regno, size_t* value) = 0;
-        virtual bool write_reg(int regno, size_t value) = 0;
+        virtual size_t get_register_count() = 0;
+        virtual size_t get_max_register_size() = 0;
 
-        virtual bool read_mem(size_t addr, size_t len, void* val) = 0;
-        virtual bool write_mem(size_t addr, size_t len, void* val) = 0;
+        virtual bool read_register(size_t reg, void* data, size_t max_length) = 0;
+        virtual bool write_register(size_t reg, const void* data, size_t size) = 0;
 
-        virtual bool set_bp(breakpoint_type type, size_t addr, size_t size) = 0;
-        virtual bool del_bp(breakpoint_type type, size_t addr, size_t size) = 0;
+        virtual bool read_memory(size_t address, void* data, size_t length) = 0;
+        virtual bool write_memory(size_t address, const void* data, size_t length) = 0;
+
+        virtual bool set_breakpoint(breakpoint_type type, size_t address, size_t size) = 0;
+        virtual bool delete_breakpoint(breakpoint_type type, size_t address, size_t size) = 0;
 
         virtual void on_interrupt() = 0;
 
-        virtual std::string get_target_description() const = 0;
+        virtual std::string get_target_description() = 0;
     };
 
     bool run_gdb_stub(const network::address& bind_address, gdb_stub_handler& handler);

@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
-#include <ranges>
+#include <cstddef>
+#include <sstream>
 #include <cwctype>
 #include <algorithm>
 
@@ -43,5 +44,28 @@ namespace utils::string
     std::basic_string<Elem, Traits, Alloc> to_lower_consume(std::basic_string<Elem, Traits, Alloc>& str)
     {
         return to_lower(std::move(str));
+    }
+
+    template <typename Integer>
+        requires(std::is_integral_v<Integer>)
+    std::string to_hex_string(const Integer& i)
+    {
+        std::stringstream stream{};
+        stream << std::hex << i;
+        return stream.str();
+    }
+
+    inline std::string to_hex_string(const void* data, const size_t size)
+    {
+        std::stringstream stream{};
+        stream << std::hex;
+
+        for (size_t i = 0; i < size; ++i)
+        {
+            const auto value = static_cast<const uint8_t*>(data)[i];
+            stream << value;
+        }
+
+        return stream.str();
     }
 }

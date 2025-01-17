@@ -2,6 +2,7 @@
 #include "checksum.hpp"
 
 #include <cassert>
+#include <stdexcept>
 
 namespace gdb_stub
 {

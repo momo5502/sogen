@@ -66,6 +66,10 @@ namespace gdb_stub
             }
         }
 
+        void read_registers()
+        {
+        }
+
         void handle_command(const connection_handler& connection, async_handler& async, gdb_stub_handler& handler,
                             const uint8_t command, const std::string_view data)
         {
@@ -73,17 +77,19 @@ namespace gdb_stub
             {
             case 'c':
                 async.run();
-                process_action(connection, handler.cont());
+                process_action(connection, handler.run());
                 async.pause();
                 break;
 
             case 's':
-                process_action(connection, handler.stepi());
+                process_action(connection, handler.singlestep());
                 break;
 
             case 'q':
                 process_query(connection, data);
                 break;
+
+            case 'g':
 
             default:
                 connection.send_packet({});
