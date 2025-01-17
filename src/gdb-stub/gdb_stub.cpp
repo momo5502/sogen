@@ -12,14 +12,6 @@ namespace gdb_stub
 {
     namespace
     {
-        enum class continuation_event
-        {
-            none,
-            cont,
-            detach,
-            step,
-        };
-
         network::tcp_client_socket accept_client(const network::address& bind_address)
         {
             network::tcp_server_socket server{bind_address.get_family()};
@@ -66,13 +58,29 @@ namespace gdb_stub
             }
         }
 
-        continuation_event handle_command(const connection_handler& connection, const uint8_t command,
-                                          const std::string_view data)
+        void process_action(const connection_handler& connection, const gdb_action action)
         {
-            auto event = continuation_event::none;
+            if (action == gdb_action::shutdown)
+            {
+                connection.close();
+            }
+        }
 
+        void handle_command(const connection_handler& connection, async_handler& async, gdb_stub_handler& handler,
+                            const uint8_t command, const std::string_view data)
+        {
             switch (command)
             {
+            case 'c':
+                async.run();
+                process_action(connection, handler.cont());
+                async.pause();
+                break;
+
+            case 's':
+                process_action(connection, handler.stepi());
+                break;
+
             case 'q':
                 process_query(connection, data);
                 break;
@@ -81,13 +89,12 @@ namespace gdb_stub
                 connection.send_packet({});
                 break;
             }
-
-            return event;
         }
 
-        void process_packet(const connection_handler& connection, const std::string_view packet)
+        void process_packet(const connection_handler& connection, async_handler& async, gdb_stub_handler& handler,
+                            const std::string_view packet)
         {
-            (void)connection.send_raw_data("+");
+            connection.send_raw_data("+");
 
             if (packet.empty())
             {
@@ -95,8 +102,7 @@ namespace gdb_stub
             }
 
             const auto command = packet.front();
-            const auto event = handle_command(connection, command, packet.substr(1));
-            (void)event;
+            handle_command(connection, async, handler, command, packet.substr(1));
         }
 
         bool is_interrupt_packet(const std::optional<std::string>& data)
@@ -138,7 +144,7 @@ namespace gdb_stub
                 break;
             }
 
-            process_packet(connection, *packet);
+            process_packet(connection, async, handler, *packet);
         }
 
         return true;

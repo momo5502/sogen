@@ -14,6 +14,8 @@ namespace gdb_stub
         void send_packet(std::string_view data) const;
         void send_raw_data(std::string_view data) const;
 
+        void close() const;
+
       private:
         network::tcp_client_socket& client_;
         stream_processor processor_{};

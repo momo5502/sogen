@@ -56,4 +56,9 @@ namespace gdb_stub
     {
         (void)this->client_.send(data);
     }
+
+    void connection_handler::close() const
+    {
+        this->client_.close();
+    }
 }
