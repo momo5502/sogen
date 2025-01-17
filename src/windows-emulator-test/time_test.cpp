@@ -6,14 +6,17 @@ namespace test
     {
         std::string output_buffer{};
 
+        emulator_callbacks callbacks{
+            .stdout_callback = [&output_buffer](const std::string_view data) { output_buffer.append(data); },
+        };
+
         const emulator_settings settings{
             .arguments = {u"-time"},
-            .stdout_callback = [&output_buffer](const std::string_view data) { output_buffer.append(data); },
             .disable_logging = true,
             .use_relative_time = false,
         };
 
-        auto emu = create_sample_emulator(settings);
+        auto emu = create_sample_emulator(settings, callbacks);
         emu.start();
 
         constexpr auto prefix = "Time: "sv;

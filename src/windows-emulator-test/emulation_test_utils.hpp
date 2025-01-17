@@ -20,10 +20,10 @@
 
 namespace test
 {
-    inline windows_emulator create_sample_emulator(emulator_settings settings)
+    inline windows_emulator create_sample_emulator(emulator_settings settings, emulator_callbacks callbacks = {})
     {
         settings.application = "./test-sample.exe";
-        return windows_emulator{std::move(settings)};
+        return windows_emulator{std::move(settings), std::move(callbacks)};
     }
 
     inline windows_emulator create_sample_emulator()
