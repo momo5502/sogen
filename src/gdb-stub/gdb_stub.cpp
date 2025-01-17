@@ -3,7 +3,10 @@
 #include <network/tcp_server_socket.hpp>
 
 #include "stream_processor.hpp"
+#include "async_handler.hpp"
 #include "checksum.hpp"
+
+using namespace std::literals;
 
 namespace gdb_stub
 {
@@ -111,10 +114,16 @@ namespace gdb_stub
 
             const auto command = packet.front();
             const auto event = handle_command(client, command, packet.substr(1));
+            (void)event;
+        }
+
+        bool is_interrupt_packet(const std::optional<std::string>& data)
+        {
+            return data && data->size() == 1 && data->front() == '\x03';
         }
     }
 
-    bool run_gdb_stub(const network::address& bind_address)
+    bool run_gdb_stub(const network::address& bind_address, gdb_stub_handler& handler)
     {
         stream_processor processor{};
 
@@ -123,6 +132,21 @@ namespace gdb_stub
         {
             return false;
         }
+
+        async_handler async{[&](std::atomic_bool& can_run) {
+            while (can_run)
+            {
+                std::this_thread::sleep_for(10ms);
+
+                const auto data = client.receive(1);
+
+                if (is_interrupt_packet(data) || !client.is_valid())
+                {
+                    handler.on_interrupt();
+                    can_run = false;
+                }
+            }
+        }};
 
         client.set_blocking(false);
 

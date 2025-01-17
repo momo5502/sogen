@@ -9,7 +9,7 @@ namespace gdb_stub
     class async_handler
     {
       public:
-        using handler = void(const std::atomic_bool& should_run);
+        using handler = void(std::atomic_bool& should_run);
         using handler_function = std::function<handler>;
 
         async_handler(handler_function handler);

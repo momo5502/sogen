@@ -4,7 +4,6 @@
 #include <debugging/win_x64_gdb_stub_handler.hpp>
 
 #include "object_watching.hpp"
-#include "gdb-stub/gdb_stub.hpp"
 
 namespace
 {
@@ -53,7 +52,7 @@ namespace
                 win_emu.log.print(color::pink, "Waiting for GDB connection on %s...\n", address);
 
                 win_x64_gdb_stub_handler handler{win_emu};
-                run_gdb_stub(handler, "i386:x86-64", gdb_registers.size(), address);
+                gdb_stub::run_gdb_stub(network::address{"0.0.0.0:28960", AF_INET}, handler);
             }
             else
             {
@@ -182,7 +181,7 @@ namespace
 
         for (int i = 1; i < argc; ++i)
         {
-            args.push_back(argv[i]);
+            args.emplace_back(argv[i]);
         }
 
         return args;
@@ -230,8 +229,6 @@ int main(const int argc, char** argv)
 {
     try
     {
-        gdb_stub::run_gdb_stub(network::address{"0.0.0.0:28960", AF_INET});
-
         auto args = bundle_arguments(argc, argv);
         const auto options = parse_options(args);
 

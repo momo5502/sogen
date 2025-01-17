@@ -1,8 +1,8 @@
 #pragma once
 #include <x64_emulator.hpp>
-#include "gdb_stub.hpp"
 #include "scoped_hook.hpp"
 #include <utils/concurrency.hpp>
+#include <gdb-stub/gdb_stub.hpp>
 
 inline std::vector gdb_registers{
     x64_register::rax, x64_register::rbx, x64_register::rcx, x64_register::rdx, x64_register::rsi, x64_register::rdi,
@@ -16,18 +16,20 @@ inline std::vector gdb_registers{
     x64_register::gs,*/
 };
 
-inline memory_operation map_breakpoint_type(const breakpoint_type type)
+inline memory_operation map_breakpoint_type(const gdb_stub::breakpoint_type type)
 {
+    using enum gdb_stub::breakpoint_type;
+
     switch (type)
     {
-    case breakpoint_type::software:
-    case breakpoint_type::hardware_exec:
+    case software:
+    case hardware_exec:
         return memory_operation::exec;
-    case breakpoint_type::hardware_read:
+    case hardware_read:
         return memory_permission::read;
-    case breakpoint_type::hardware_write:
+    case hardware_write:
         return memory_permission::write;
-    case breakpoint_type::hardware_read_write:
+    case hardware_read_write:
         return memory_permission::read_write;
     default:
         throw std::runtime_error("Bad bp type");
@@ -38,7 +40,7 @@ struct breakpoint_key
 {
     size_t addr{};
     size_t size{};
-    breakpoint_type type{};
+    gdb_stub::breakpoint_type type{};
 
     bool operator==(const breakpoint_key& other) const
     {
@@ -56,7 +58,7 @@ struct std::hash<breakpoint_key>
     }
 };
 
-class x64_gdb_stub_handler : public gdb_stub_handler
+class x64_gdb_stub_handler : public gdb_stub::gdb_stub_handler
 {
   public:
     x64_gdb_stub_handler(x64_emulator& emu)
@@ -66,7 +68,7 @@ class x64_gdb_stub_handler : public gdb_stub_handler
 
     ~x64_gdb_stub_handler() override = default;
 
-    gdb_action cont() override
+    gdb_stub::gdb_action cont() override
     {
         try
         {
@@ -77,10 +79,10 @@ class x64_gdb_stub_handler : public gdb_stub_handler
             puts(e.what());
         }
 
-        return gdb_action::resume;
+        return gdb_stub::gdb_action::resume;
     }
 
-    gdb_action stepi() override
+    gdb_stub::gdb_action stepi() override
     {
         try
         {
@@ -91,7 +93,7 @@ class x64_gdb_stub_handler : public gdb_stub_handler
             puts(e.what());
         }
 
-        return gdb_action::resume;
+        return gdb_stub::gdb_action::resume;
     }
 
     bool read_reg(const int regno, size_t* value) override
@@ -150,7 +152,7 @@ class x64_gdb_stub_handler : public gdb_stub_handler
         }
     }
 
-    bool set_bp(const breakpoint_type type, const size_t addr, const size_t size) override
+    bool set_bp(const gdb_stub::breakpoint_type type, const size_t addr, const size_t size) override
     {
         try
         {
@@ -170,7 +172,7 @@ class x64_gdb_stub_handler : public gdb_stub_handler
         }
     }
 
-    bool del_bp(const breakpoint_type type, const size_t addr, const size_t size) override
+    bool del_bp(const gdb_stub::breakpoint_type type, const size_t addr, const size_t size) override
     {
         try
         {

@@ -4,7 +4,6 @@
 
 namespace gdb_stub
 {
-    /*
     enum class gdb_action : uint8_t
     {
         none,
@@ -42,7 +41,5 @@ namespace gdb_stub
         virtual std::string get_target_description() const = 0;
     };
 
-    bool run_gdb_stub(gdb_stub_handler& handler, size_t register_count, const network::address& bind_address);
-    */
-    bool run_gdb_stub(const network::address& bind_address);
+    bool run_gdb_stub(const network::address& bind_address, gdb_stub_handler& handler);
 }
