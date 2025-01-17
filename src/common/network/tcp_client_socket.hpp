@@ -21,7 +21,7 @@ namespace network
 
         [[maybe_unused]] bool send(const void* data, size_t size) const;
         [[maybe_unused]] bool send(std::string_view data) const;
-        std::optional<std::string> receive();
+        std::optional<std::string> receive(std::optional<size_t> max_size = std::nullopt);
 
         std::optional<address> get_target() const;
 

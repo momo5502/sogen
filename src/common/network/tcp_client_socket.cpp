@@ -56,11 +56,12 @@ namespace network
         return data.empty();
     }
 
-    std::optional<std::string> tcp_client_socket::receive()
+    std::optional<std::string> tcp_client_socket::receive(const std::optional<size_t> max_size)
     {
         char buffer[0x2000];
+        const auto size = std::min(sizeof(buffer), max_size.value_or(sizeof(buffer)));
 
-        const auto result = recv(this->get_socket(), buffer, static_cast<int>(sizeof(buffer)), 0);
+        const auto result = recv(this->get_socket(), buffer, static_cast<int>(size), 0);
         if (result > 0)
         {
             return std::string(buffer, result);
