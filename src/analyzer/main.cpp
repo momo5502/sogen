@@ -206,12 +206,11 @@ namespace
             }
             else if (arg == "-r")
             {
-                // Make sure there is an argument following "-r"
                 if (args.size() < 2)
                 {
                     throw std::runtime_error("No registry path provided after -r");
                 }
-                arg_it = args.erase(arg_it); // Remove the "-r" token from args
+                arg_it = args.erase(arg_it);
                 options.registry_path = args[0];
             }
             else
