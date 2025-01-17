@@ -1,15 +1,14 @@
 #include "gdb_stub.hpp"
 
-#include <cassert>
-#include <queue>
 #include <network/tcp_server_socket.hpp>
+
+#include "stream_processor.hpp"
+#include "checksum.hpp"
 
 namespace gdb_stub
 {
     namespace
     {
-        constexpr size_t CHECKSUM_SIZE = 2;
-
         enum class continuation_event
         {
             none,
@@ -18,29 +17,9 @@ namespace gdb_stub
             step,
         };
 
-        uint8_t compute_checksum(const std::string_view data)
-        {
-            uint8_t csum = 0;
-            for (const auto c : data)
-            {
-                csum += static_cast<uint8_t>(c);
-            }
-
-            return csum;
-        }
-
-        std::string compute_checksum_string(const std::string_view data)
-        {
-            const auto checksum = compute_checksum(data);
-
-            std::stringstream stream{};
-            stream << std::hex << checksum;
-            return stream.str();
-        }
-
         bool send_packet_reply(const network::tcp_client_socket& socket, const std::string_view data)
         {
-            const auto checksum = compute_checksum_string(data);
+            const auto checksum = compute_checksum_as_string(data);
             return socket.send("$" + std::string(data) + "#" + checksum);
         }
 
@@ -55,85 +34,14 @@ namespace gdb_stub
             return server.accept();
         }
 
-        struct packet_queue
-        {
-            std::string buffer{};
-            std::queue<std::string> packets{};
-
-            void enqueue(const std::string& data)
-            {
-                buffer.append(data);
-                this->process();
-            }
-
-            void process()
-            {
-                while (true)
-                {
-                    this->trim_start();
-
-                    const auto end = this->buffer.find_first_of('#');
-                    if (end == std::string::npos)
-                    {
-                        break;
-                    }
-
-                    const auto packet_size = end + CHECKSUM_SIZE + 1;
-
-                    if (packet_size > this->buffer.size())
-                    {
-                        break;
-                    }
-
-                    auto packet = this->buffer.substr(0, packet_size);
-                    this->buffer.erase(0, packet_size);
-
-                    this->enqueue_packet(std::move(packet));
-                }
-            }
-
-            void enqueue_packet(std::string packet)
-            {
-                constexpr auto END_BYTES = CHECKSUM_SIZE + 1;
-
-                if (packet.size() < (END_BYTES + 1) //
-                    || packet.front() != '$'        //
-                    || packet[packet.size() - END_BYTES] != '#')
-                {
-                    return;
-                }
-
-                const auto checksum = strtoul(packet.c_str() + packet.size() - CHECKSUM_SIZE, nullptr, 16);
-                assert((checksum & 0xFF) == checksum);
-
-                packet.erase(packet.begin());
-                packet.erase(packet.size() - END_BYTES, END_BYTES);
-
-                const auto computed_checksum = compute_checksum(packet);
-
-                if (computed_checksum == checksum)
-                {
-                    this->packets.push(std::move(packet));
-                }
-            }
-
-            void trim_start()
-            {
-                while (!this->buffer.empty() && this->buffer.front() != '$')
-                {
-                    buffer.erase(buffer.begin());
-                }
-            }
-        };
-
-        void read_from_socket(packet_queue& queue, network::tcp_client_socket& client)
+        void read_from_socket(stream_processor& processor, network::tcp_client_socket& client)
         {
             while (client.is_ready(true))
             {
-                auto packet = client.receive();
-                if (packet)
+                const auto data = client.receive();
+                if (data)
                 {
-                    queue.enqueue(std::move(*packet));
+                    processor.push_stream_data(*data);
                 }
             }
         }
@@ -208,7 +116,7 @@ namespace gdb_stub
 
     bool run_gdb_stub(const network::address& bind_address)
     {
-        packet_queue queue{};
+        stream_processor processor{};
 
         auto client = accept_client(bind_address);
         if (!client)
@@ -220,12 +128,12 @@ namespace gdb_stub
 
         while (client.is_valid())
         {
-            read_from_socket(queue, client);
+            read_from_socket(processor, client);
 
-            while (!queue.packets.empty())
+            while (processor.has_packet())
             {
-                process_packet(client, queue.packets.front());
-                queue.packets.pop();
+                const auto packet = processor.get_next_packet();
+                process_packet(client, packet);
             }
         }
 

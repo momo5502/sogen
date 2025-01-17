@@ -11,7 +11,7 @@ add_library(gdb-stub ${SRC_FILES})
 momo_assign_source_group(${SRC_FILES})
 
 target_link_libraries(gdb-stub PRIVATE
-  common
+  emulator-common
 )
 
 target_include_directories(gdb-stub INTERFACE
