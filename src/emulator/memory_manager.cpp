@@ -26,7 +26,7 @@ namespace
 
                     i->second.length = first_length;
 
-                    regions[split_point] = memory_manager::committed_region{second_length, i->second.pemissions};
+                    regions[split_point] = memory_manager::committed_region{second_length, i->second.permissions};
                 }
             }
         }
@@ -51,7 +51,7 @@ namespace
             const auto end = i->first + i->second.length;
             assert(end <= next->first);
 
-            if (end != next->first || i->second.pemissions != next->second.pemissions)
+            if (end != next->first || i->second.permissions != next->second.permissions)
             {
                 ++i;
                 continue;
@@ -68,13 +68,13 @@ namespace utils
     static void serialize(buffer_serializer& buffer, const memory_manager::committed_region& region)
     {
         buffer.write<uint64_t>(region.length);
-        buffer.write(region.pemissions);
+        buffer.write(region.permissions);
     }
 
     static void deserialize(buffer_deserializer& buffer, memory_manager::committed_region& region)
     {
         region.length = static_cast<size_t>(buffer.read<uint64_t>());
-        region.pemissions = buffer.read<memory_permission>();
+        region.permissions = buffer.read<memory_permission>();
     }
 
     static void serialize(buffer_serializer& buffer, const memory_manager::reserved_region& region)
@@ -160,7 +160,7 @@ void memory_manager::deserialize_memory_state(utils::buffer_deserializer& buffer
 
             buffer.read(data.data(), region.second.length);
 
-            this->map_memory(region.first, region.second.length, region.second.pemissions);
+            this->map_memory(region.first, region.second.length, region.second.permissions);
             this->write_memory(region.first, data.data(), region.second.length);
         }
     }
@@ -200,11 +200,11 @@ bool memory_manager::protect_memory(const uint64_t address, const size_t size, c
         {
             if (!old_first_permissions.has_value())
             {
-                old_first_permissions = sub_region.second.pemissions;
+                old_first_permissions = sub_region.second.permissions;
             }
 
             this->apply_memory_protection(sub_region.first, sub_region.second.length, permissions);
-            sub_region.second.pemissions = permissions;
+            sub_region.second.permissions = permissions;
         }
     }
 
@@ -515,7 +515,7 @@ region_info memory_manager::get_region_info(const uint64_t address)
     result.is_committed = true;
     result.start = committed_entry->first;
     result.length = committed_entry->second.length;
-    result.permissions = committed_entry->second.pemissions;
+    result.permissions = committed_entry->second.permissions;
 
     return result;
 }

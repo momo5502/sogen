@@ -22,7 +22,7 @@ class memory_manager
     struct committed_region
     {
         size_t length{};
-        memory_permission pemissions{};
+        memory_permission permissions{};
     };
 
     using committed_region_map = std::map<uint64_t, committed_region>;
