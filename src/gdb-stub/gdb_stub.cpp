@@ -2,9 +2,9 @@
 
 #include <network/tcp_server_socket.hpp>
 
-#include "stream_processor.hpp"
-#include "async_handler.hpp"
 #include "checksum.hpp"
+#include "async_handler.hpp"
+#include "connection_handler.hpp"
 
 using namespace std::literals;
 
@@ -20,12 +20,6 @@ namespace gdb_stub
             step,
         };
 
-        bool send_packet_reply(const network::tcp_client_socket& socket, const std::string_view data)
-        {
-            const auto checksum = compute_checksum_as_string(data);
-            return socket.send("$" + std::string(data) + "#" + checksum);
-        }
-
         network::tcp_client_socket accept_client(const network::address& bind_address)
         {
             network::tcp_server_socket server{bind_address.get_family()};
@@ -37,19 +31,7 @@ namespace gdb_stub
             return server.accept();
         }
 
-        void read_from_socket(stream_processor& processor, network::tcp_client_socket& client)
-        {
-            while (client.is_ready(true))
-            {
-                const auto data = client.receive();
-                if (data)
-                {
-                    processor.push_stream_data(*data);
-                }
-            }
-        }
-
-        void process_query(const network::tcp_client_socket& client, const std::string_view payload)
+        void process_query(const connection_handler& connection, const std::string_view payload)
         {
             auto name = payload;
             std::string_view args{};
@@ -64,11 +46,11 @@ namespace gdb_stub
 
             if (name == "Supported")
             {
-                send_packet_reply(client, "PacketSize=1024;qXfer:features:read+");
+                connection.send_packet("PacketSize=1024;qXfer:features:read+");
             }
             else if (name == "Attached")
             {
-                send_packet_reply(client, "1");
+                connection.send_packet("1");
             }
             else if (name == "Xfer")
             {
@@ -76,15 +58,15 @@ namespace gdb_stub
             }
             else if (name == "Symbol")
             {
-                send_packet_reply(client, "OK");
+                connection.send_packet("OK");
             }
             else
             {
-                send_packet_reply(client, {});
+                connection.send_packet({});
             }
         }
 
-        continuation_event handle_command(const network::tcp_client_socket& client, const uint8_t command,
+        continuation_event handle_command(const connection_handler& connection, const uint8_t command,
                                           const std::string_view data)
         {
             auto event = continuation_event::none;
@@ -92,20 +74,20 @@ namespace gdb_stub
             switch (command)
             {
             case 'q':
-                process_query(client, data);
+                process_query(connection, data);
                 break;
 
             default:
-                send_packet_reply(client, {});
+                connection.send_packet({});
                 break;
             }
 
             return event;
         }
 
-        void process_packet(const network::tcp_client_socket& client, const std::string_view packet)
+        void process_packet(const connection_handler& connection, const std::string_view packet)
         {
-            (void)client.send("+");
+            (void)connection.send_raw_data("+");
 
             if (packet.empty())
             {
@@ -113,7 +95,7 @@ namespace gdb_stub
             }
 
             const auto command = packet.front();
-            const auto event = handle_command(client, command, packet.substr(1));
+            const auto event = handle_command(connection, command, packet.substr(1));
             (void)event;
         }
 
@@ -125,8 +107,6 @@ namespace gdb_stub
 
     bool run_gdb_stub(const network::address& bind_address, gdb_stub_handler& handler)
     {
-        stream_processor processor{};
-
         auto client = accept_client(bind_address);
         if (!client)
         {
@@ -148,17 +128,17 @@ namespace gdb_stub
             }
         }};
 
-        client.set_blocking(false);
+        connection_handler connection{client};
 
-        while (client.is_valid())
+        while (true)
         {
-            read_from_socket(processor, client);
-
-            while (processor.has_packet())
+            const auto packet = connection.get_packet();
+            if (!packet)
             {
-                const auto packet = processor.get_next_packet();
-                process_packet(client, packet);
+                break;
             }
+
+            process_packet(connection, *packet);
         }
 
         return true;
