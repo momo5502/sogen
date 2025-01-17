@@ -34,6 +34,8 @@ class memory_manager
         bool is_mmio{false};
     };
 
+    using reserved_region_map = std::map<uint64_t, reserved_region>;
+
     virtual ~memory_manager() = default;
 
     template <typename T>
@@ -97,10 +99,6 @@ class memory_manager
 
     bool release_memory(uint64_t address, size_t size);
 
-    uint64_t find_free_allocation_base(size_t size, uint64_t start = 0) const;
-
-    region_info get_region_info(uint64_t address);
-
     uint64_t allocate_memory(const size_t size, const memory_permission permissions, const bool reserve_only = false)
     {
         const auto allocation_base = this->find_free_allocation_base(size);
@@ -112,12 +110,21 @@ class memory_manager
         return allocation_base;
     }
 
-  private:
-    using reserved_region_map = std::map<uint64_t, reserved_region>;
-    reserved_region_map reserved_regions_{};
+    uint64_t find_free_allocation_base(size_t size, uint64_t start = 0) const;
+
+    region_info get_region_info(uint64_t address);
 
     reserved_region_map::iterator find_reserved_region(uint64_t address);
+
     bool overlaps_reserved_region(uint64_t address, size_t size) const;
+
+    const reserved_region_map& get_reserved_regions() const
+    {
+        return reserved_regions_;
+    }
+
+  private:
+    reserved_region_map reserved_regions_{};
 
     virtual void map_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) = 0;
     virtual void map_memory(uint64_t address, size_t size, memory_permission permissions) = 0;
