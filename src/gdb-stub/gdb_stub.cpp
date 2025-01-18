@@ -57,7 +57,7 @@ namespace gdb_stub
             {
                 connection.send_reply("l<target version=\"1.0\"><architecture>" //
                                       + handler.get_target_description()        //
-                                      + "<architecture>%s</architecture></target>");
+                                      + "</architecture></target>");
             }
             else
             {
