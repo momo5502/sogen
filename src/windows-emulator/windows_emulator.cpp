@@ -638,7 +638,7 @@ namespace
             const auto* t = c.threads.get(h);
             if (t)
             {
-                return t->exit_status.has_value();
+                return t->is_terminated();
             }
 
             break;
@@ -693,9 +693,14 @@ void emulator_thread::mark_as_ready(const NTSTATUS status)
     this->waiting_for_alert = false;
 }
 
+bool emulator_thread::is_terminated() const
+{
+    return this->exit_status.has_value();
+}
+
 bool emulator_thread::is_thread_ready(windows_emulator& win_emu)
 {
-    if (this->exit_status.has_value())
+    if (this->is_terminated())
     {
         return false;
     }

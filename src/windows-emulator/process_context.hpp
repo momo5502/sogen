@@ -379,6 +379,8 @@ class emulator_thread : ref_counted_object
         return this->await_time.has_value() && this->await_time.value() < std::chrono::steady_clock::now();
     }
 
+    bool is_terminated() const;
+
     bool is_thread_ready(windows_emulator& win_emu);
 
     void save(x64_emulator& emu)
