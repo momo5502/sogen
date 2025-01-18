@@ -242,13 +242,7 @@ namespace gdb_stub
             const auto res = register_size <= data.size() && //
                              handler.write_register(register_index, data.data(), register_size);
 
-            if (!res)
-            {
-                connection.send_reply("E01");
-                return;
-            }
-
-            connection.send_reply("OK");
+            connection.send_reply(res ? "OK" : "E01");
         }
 
         void read_memory(const connection_handler& connection, debugging_handler& handler, const std::string& payload)
@@ -295,13 +289,7 @@ namespace gdb_stub
             data.resize(size);
 
             const auto res = handler.write_memory(address, data.data(), data.size());
-            if (!res)
-            {
-                connection.send_reply("E01");
-                return;
-            }
-
-            connection.send_reply("OK");
+            connection.send_reply(res ? "OK" : "E01");
         }
 
         std::string decode_x_memory(const std::string_view payload)

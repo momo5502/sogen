@@ -81,6 +81,29 @@ namespace utils::string
 
     template <typename Integer>
         requires(std::is_integral_v<Integer>)
+    std::string to_hex_number(const Integer& i, const bool uppercase = false)
+    {
+        std::string res{};
+        res.reserve(sizeof(i) * 2);
+
+        const std::span data{reinterpret_cast<const std::byte*>(&i), sizeof(i)};
+
+        for (const auto value : data)
+        {
+            const auto [high, low] = to_hex(value, uppercase);
+            res.insert(res.begin(), {high, low});
+        }
+
+        while (res.size() > 1 && res.front() == '0')
+        {
+            res.erase(res.begin());
+        }
+
+        return res;
+    }
+
+    template <typename Integer>
+        requires(std::is_integral_v<Integer>)
     std::string to_hex_string(const Integer& i, const bool uppercase = false)
     {
         return to_hex_string(&i, sizeof(Integer), uppercase);
