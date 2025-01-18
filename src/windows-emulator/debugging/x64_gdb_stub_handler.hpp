@@ -250,6 +250,16 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
         return entry->second;
     }
 
+    uint32_t get_current_thread_id() override
+    {
+        return 1;
+    }
+
+    std::vector<uint32_t> get_thread_ids() override
+    {
+        return {this->get_current_thread_id()};
+    }
+
   private:
     x64_emulator* emu_{};
 

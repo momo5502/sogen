@@ -124,6 +124,7 @@ class windows_emulator
 
     void yield_thread();
     void perform_thread_switch();
+    bool activate_thread(uint32_t id);
 
     bool time_is_relative() const
     {

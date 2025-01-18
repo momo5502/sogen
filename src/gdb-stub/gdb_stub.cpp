@@ -115,6 +115,28 @@ namespace gdb_stub
             {
                 connection.send_reply("OK");
             }
+            else if (name == "C")
+            {
+                const auto thread_id = handler.get_current_thread_id();
+                connection.send_reply("QC" + utils::string::to_hex_number(thread_id));
+            }
+            else if (name == "sThreadInfo")
+            {
+                connection.send_reply("l");
+            }
+            else if (name == "fThreadInfo")
+            {
+                std::string reply{};
+                const auto ids = handler.get_thread_ids();
+
+                for (const auto id : ids)
+                {
+                    reply.push_back(reply.empty() ? 'm' : ',');
+                    reply.append(utils::string::to_hex_number(id));
+                }
+
+                connection.send_reply(reply);
+            }
             else
             {
                 connection.send_reply({});
@@ -389,6 +411,29 @@ namespace gdb_stub
             connection.send_reply("OK");
         }
 
+        void switch_to_thread(connection_handler& connection, debugging_handler& handler,
+                              const std::string_view payload)
+        {
+            if (payload.size() < 2)
+            {
+                connection.send_reply({});
+                return;
+            }
+
+            const auto operation = payload[0];
+            if (operation != 'g')
+            {
+                connection.send_reply("OK");
+                return;
+            }
+
+            uint32_t id{};
+            rt_assert(sscanf_s(std::string(payload.substr(1)).c_str(), "%x", &id) == 1);
+
+            const auto res = id == 0 || handler.switch_to_thread(id);
+            connection.send_reply(res ? "OK" : "E01");
+        }
+
         void handle_command(connection_handler& connection, async_handler& async, debugging_handler& handler,
                             const uint8_t command, const std::string_view data)
         {
@@ -451,6 +496,10 @@ namespace gdb_stub
 
             case 'X':
                 write_x_memory(connection, handler, data);
+                break;
+
+            case 'H':
+                switch_to_thread(connection, handler, data);
                 break;
 
             default:

@@ -40,6 +40,34 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
         return gdb_stub::action::resume;
     }
 
+    uint32_t get_current_thread_id() override
+    {
+        return this->win_emu_->current_thread().id;
+    }
+
+    std::vector<uint32_t> get_thread_ids() override
+    {
+        const auto& threads = this->win_emu_->process().threads;
+
+        std::vector<uint32_t> ids{};
+        ids.reserve(threads.size());
+
+        for (const auto& t : threads | std::views::values)
+        {
+            if (!t.is_terminated())
+            {
+                ids.push_back(t.id);
+            }
+        }
+
+        return ids;
+    }
+
+    bool switch_to_thread(const uint32_t thread_id) override
+    {
+        return this->win_emu_->activate_thread(thread_id);
+    }
+
   private:
     windows_emulator* win_emu_{};
 };
