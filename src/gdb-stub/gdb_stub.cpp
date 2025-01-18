@@ -6,6 +6,7 @@
 #include "checksum.hpp"
 #include "async_handler.hpp"
 #include "connection_handler.hpp"
+#include "utils/string.hpp"
 
 #include <cassert>
 #include <cinttypes>
@@ -33,17 +34,17 @@ namespace gdb_stub
             return server.accept();
         }
 
-        std::pair<std::string_view, std::string_view> split_colon(const std::string_view payload)
+        std::pair<std::string_view, std::string_view> split_string(const std::string_view payload, const char separator)
         {
             auto name = payload;
             std::string_view args{};
 
-            const auto separator = payload.find_first_of(':');
-            if (separator != std::string_view::npos)
+            const auto separator_pos = payload.find_first_of(separator);
+            if (separator_pos != std::string_view::npos)
 
             {
-                name = payload.substr(0, separator);
-                args = payload.substr(separator + 1);
+                name = payload.substr(0, separator_pos);
+                args = payload.substr(separator_pos + 1);
             }
 
             return {name, args};
@@ -52,7 +53,7 @@ namespace gdb_stub
         void process_xfer(const connection_handler& connection, gdb_stub_handler& handler,
                           const std::string_view payload)
         {
-            auto [name, args] = split_colon(payload);
+            auto [name, args] = split_string(payload, ':');
 
             if (name == "features")
             {
@@ -69,7 +70,7 @@ namespace gdb_stub
         void process_query(const connection_handler& connection, gdb_stub_handler& handler,
                            const std::string_view payload)
         {
-            auto [name, args] = split_colon(payload);
+            const auto [name, args] = split_string(payload, ':');
 
             if (name == "Supported")
             {
@@ -136,7 +137,7 @@ namespace gdb_stub
 
         void handle_v_packet(const connection_handler& connection, const std::string_view data)
         {
-            auto [name, args] = split_colon(data);
+            const auto [name, args] = split_string(data, ':');
 
             if (name == "Cont?")
             {
@@ -149,6 +150,213 @@ namespace gdb_stub
             {
                 connection.send_reply({});
             }
+        }
+
+        void read_registers(const connection_handler& connection, gdb_stub_handler& handler)
+        {
+            std::string response{};
+            std::vector<std::byte> data{};
+            data.resize(handler.get_max_register_size());
+
+            const auto registers = handler.get_register_count();
+
+            for (size_t i = 0; i < registers; ++i)
+            {
+                memset(data.data(), 0, data.size());
+                const auto res = handler.read_register(i, data.data(), data.size());
+
+                if (!res)
+                {
+                    connection.send_reply("E01");
+                    return;
+                }
+
+                response.append(utils::string::to_hex_string(data));
+            }
+
+            connection.send_reply(response);
+        }
+
+        void write_registers(const connection_handler& connection, gdb_stub_handler& handler,
+                             const std::string_view payload)
+        {
+            const auto data = utils::string::from_hex_string(payload);
+
+            const auto registers = handler.get_register_count();
+            const auto register_size = handler.get_max_register_size();
+
+            for (size_t i = 0; i < registers; ++i)
+            {
+                const auto offset = i * register_size;
+                const auto end_offset = offset + register_size;
+
+                if (data.size() < end_offset)
+                {
+                    connection.send_reply("E01");
+                    return;
+                }
+
+                const auto res = handler.write_register(i, data.data() + offset, register_size);
+
+                if (!res)
+                {
+                    connection.send_reply("E01");
+                    return;
+                }
+            }
+
+            connection.send_reply("OK");
+        }
+
+        void read_single_register(const connection_handler& connection, gdb_stub_handler& handler,
+                                  const std::string& payload)
+        {
+            size_t reg{};
+            rt_assert(sscanf_s(payload.c_str(), "%zx", &reg) == 3);
+
+            std::vector<std::byte> data{};
+            data.resize(handler.get_max_register_size());
+
+            const auto res = handler.read_register(reg, data.data(), data.size());
+
+            if (res)
+            {
+                connection.send_reply(utils::string::to_hex_string(data));
+            }
+            else
+            {
+                connection.send_reply("E01");
+            }
+        }
+
+        void write_single_register(const connection_handler& connection, gdb_stub_handler& handler,
+                                   const std::string_view payload)
+        {
+            const auto [reg, hex_data] = split_string(payload, '=');
+
+            size_t register_index{};
+            rt_assert(sscanf_s(std::string(reg).c_str(), "%zx", &register_index) == 1);
+
+            const auto register_size = handler.get_max_register_size();
+            const auto data = utils::string::from_hex_string(hex_data);
+
+            const auto res = register_size <= data.size() && //
+                             handler.write_register(register_index, data.data(), register_size);
+
+            if (!res)
+            {
+                connection.send_reply("E01");
+                return;
+            }
+
+            connection.send_reply("OK");
+        }
+
+        void read_memory(const connection_handler& connection, gdb_stub_handler& handler, const std::string& payload)
+        {
+            uint64_t address{};
+            size_t size{};
+            rt_assert(sscanf_s(payload.c_str(), "%" PRIx64 ",%zx", &address, &size) == 2);
+
+            if (size > 0x1000)
+            {
+                connection.send_reply("E01");
+                return;
+            }
+
+            std::vector<std::byte> data{};
+            data.resize(size);
+
+            const auto res = handler.read_memory(address, data.data(), data.size());
+            if (!res)
+            {
+                connection.send_reply("E01");
+                return;
+            }
+
+            connection.send_reply(utils::string::to_hex_string(data));
+        }
+
+        void write_memory(const connection_handler& connection, gdb_stub_handler& handler,
+                          const std::string_view payload)
+        {
+            const auto [info, hex_data] = split_string(payload, ':');
+
+            size_t size{};
+            uint64_t address{};
+            rt_assert(sscanf_s(std::string(info).c_str(), "%" PRIx64 ",%zx", &address, &size) == 2);
+
+            if (size > 0x1000)
+            {
+                connection.send_reply("E01");
+                return;
+            }
+
+            auto data = utils::string::from_hex_string(hex_data);
+            data.resize(size);
+
+            const auto res = handler.write_memory(address, data.data(), data.size());
+            if (!res)
+            {
+                connection.send_reply("E01");
+                return;
+            }
+
+            connection.send_reply("OK");
+        }
+
+        std::string decode_x_memory(const std::string_view payload)
+        {
+            std::string result{};
+            result.reserve(payload.size());
+
+            bool xor_next = false;
+
+            for (auto value : payload)
+            {
+                if (xor_next)
+                {
+                    value ^= 0x20;
+                    xor_next = false;
+                }
+                else if (value == '}')
+                {
+                    xor_next = true;
+                    continue;
+                }
+
+                result.push_back(value);
+            }
+
+            return result;
+        }
+
+        void write_x_memory(const connection_handler& connection, gdb_stub_handler& handler,
+                            const std::string_view payload)
+        {
+            const auto [info, encoded_data] = split_string(payload, ':');
+
+            size_t size{};
+            uint64_t address{};
+            rt_assert(sscanf_s(std::string(info).c_str(), "%" PRIx64 ",%zx", &address, &size) == 2);
+
+            if (size > 0x1000)
+            {
+                connection.send_reply("E01");
+                return;
+            }
+
+            auto data = decode_x_memory(encoded_data);
+            data.resize(size);
+
+            const auto res = handler.write_memory(address, data.data(), data.size());
+            if (!res)
+            {
+                connection.send_reply("E01");
+                return;
+            }
+
+            connection.send_reply("OK");
         }
 
         void handle_command(const connection_handler& connection, async_handler& async, gdb_stub_handler& handler,
@@ -187,14 +395,34 @@ namespace gdb_stub
                 handle_v_packet(connection, data);
                 break;
 
-                // TODO
             case 'g':
-            case 'm':
-            case 'p':
+                read_registers(connection, handler);
+                break;
+
             case 'G':
-            case 'M':
+                write_registers(connection, handler, data);
+                break;
+
+            case 'p':
+                read_single_register(connection, handler, std::string(data));
+                break;
+
             case 'P':
+                write_single_register(connection, handler, data);
+                break;
+
+            case 'm':
+                read_memory(connection, handler, std::string(data));
+                break;
+
+            case 'M':
+                write_memory(connection, handler, data);
+                break;
+
             case 'X':
+                write_x_memory(connection, handler, data);
+                break;
+
             default:
                 connection.send_reply({});
                 break;

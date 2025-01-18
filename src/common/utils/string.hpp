@@ -1,4 +1,5 @@
 #pragma once
+#include <span>
 #include <string>
 #include <cstddef>
 #include <sstream>
@@ -67,5 +68,46 @@ namespace utils::string
         }
 
         return stream.str();
+    }
+
+    inline std::string to_hex_string(const std::span<std::byte> data)
+    {
+        return to_hex_string(data.data(), data.size());
+    }
+
+    inline uint8_t parse_nibble(const char nibble)
+    {
+        const auto lower = char_to_lower(nibble);
+
+        if (lower >= '0' && lower <= '9')
+        {
+            return static_cast<uint8_t>(lower - '0');
+        }
+
+        if (lower >= 'a' && lower <= 'f')
+        {
+            return static_cast<uint8_t>(lower - 'a');
+        }
+
+        return 0;
+    }
+
+    inline std::vector<std::byte> from_hex_string(const std::string_view str)
+    {
+        const auto size = str.size() / 2;
+
+        std::vector<std::byte> data{};
+        data.resize(size);
+
+        for (size_t i = 0; i < size; ++i)
+        {
+            const auto high = parse_nibble(str[i * 2 + 0]);
+            const auto low = parse_nibble(str[i * 2 + 1]);
+            const auto value = static_cast<std::byte>((high << 4) | low);
+
+            data.push_back(value);
+        }
+
+        return data;
     }
 }
