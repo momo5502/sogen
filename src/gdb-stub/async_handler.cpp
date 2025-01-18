@@ -9,6 +9,9 @@ namespace gdb_stub
         : handler_(std::move(h))
     {
         this->stop_ = false;
+        this->runner_ = std::thread([this] {
+            this->work(); //
+        });
     }
 
     async_handler::~async_handler()

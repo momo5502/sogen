@@ -212,7 +212,7 @@ namespace gdb_stub
                                   const std::string& payload)
         {
             size_t reg{};
-            rt_assert(sscanf_s(payload.c_str(), "%zx", &reg) == 3);
+            rt_assert(sscanf_s(payload.c_str(), "%zx", &reg) == 1);
 
             std::vector<std::byte> data{};
             data.resize(handler.get_max_register_size());
@@ -368,10 +368,12 @@ namespace gdb_stub
                 async.run();
                 process_action(connection, handler.run());
                 async.pause();
+                connection.send_reply("S05");
                 break;
 
             case 's':
                 process_action(connection, handler.singlestep());
+                connection.send_reply("S05");
                 break;
 
             case 'q':

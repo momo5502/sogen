@@ -103,7 +103,8 @@ class x64_gdb_stub_handler : public gdb_stub::gdb_stub_handler
 
     size_t get_max_register_size() override
     {
-        return 256 / 8;
+        // return 256 / 8;
+        return 64 / 8;
     }
 
     bool read_register(const size_t reg, void* data, const size_t max_length) override
