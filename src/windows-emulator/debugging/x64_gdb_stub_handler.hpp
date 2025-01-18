@@ -58,7 +58,7 @@ struct std::hash<breakpoint_key>
     }
 };
 
-class x64_gdb_stub_handler : public gdb_stub::gdb_stub_handler
+class x64_gdb_stub_handler : public gdb_stub::debugging_handler
 {
   public:
     x64_gdb_stub_handler(x64_emulator& emu)
@@ -68,7 +68,7 @@ class x64_gdb_stub_handler : public gdb_stub::gdb_stub_handler
 
     ~x64_gdb_stub_handler() override = default;
 
-    gdb_stub::gdb_action run() override
+    gdb_stub::action run() override
     {
         try
         {
@@ -79,10 +79,10 @@ class x64_gdb_stub_handler : public gdb_stub::gdb_stub_handler
             puts(e.what());
         }
 
-        return gdb_stub::gdb_action::resume;
+        return gdb_stub::action::resume;
     }
 
-    gdb_stub::gdb_action singlestep() override
+    gdb_stub::action singlestep() override
     {
         try
         {
@@ -93,7 +93,7 @@ class x64_gdb_stub_handler : public gdb_stub::gdb_stub_handler
             puts(e.what());
         }
 
-        return gdb_stub::gdb_action::resume;
+        return gdb_stub::action::resume;
     }
 
     size_t get_register_count() override

@@ -4,7 +4,7 @@
 
 namespace gdb_stub
 {
-    enum class gdb_action : uint8_t
+    enum class action : uint8_t
     {
         none,
         resume,
@@ -21,12 +21,12 @@ namespace gdb_stub
         END,
     };
 
-    struct gdb_stub_handler
+    struct debugging_handler
     {
-        virtual ~gdb_stub_handler() = default;
+        virtual ~debugging_handler() = default;
 
-        virtual gdb_action run() = 0;
-        virtual gdb_action singlestep() = 0;
+        virtual action run() = 0;
+        virtual action singlestep() = 0;
 
         virtual size_t get_register_count() = 0;
         virtual size_t get_max_register_size() = 0;
@@ -45,5 +45,5 @@ namespace gdb_stub
         virtual std::string get_target_description() = 0;
     };
 
-    bool run_gdb_stub(const network::address& bind_address, gdb_stub_handler& handler);
+    bool run_gdb_stub(const network::address& bind_address, debugging_handler& handler);
 }

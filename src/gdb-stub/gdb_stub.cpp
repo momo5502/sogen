@@ -50,7 +50,7 @@ namespace gdb_stub
             return {name, args};
         }
 
-        void process_xfer(const connection_handler& connection, gdb_stub_handler& handler,
+        void process_xfer(const connection_handler& connection, debugging_handler& handler,
                           const std::string_view payload)
         {
             auto [name, args] = split_string(payload, ':');
@@ -67,7 +67,7 @@ namespace gdb_stub
             }
         }
 
-        void process_query(const connection_handler& connection, gdb_stub_handler& handler,
+        void process_query(const connection_handler& connection, debugging_handler& handler,
                            const std::string_view payload)
         {
             const auto [name, args] = split_string(payload, ':');
@@ -94,9 +94,9 @@ namespace gdb_stub
             }
         }
 
-        void process_action(const connection_handler& connection, const gdb_action action)
+        void process_action(const connection_handler& connection, const action a)
         {
-            if (action == gdb_action::shutdown)
+            if (a == action::shutdown)
             {
                 connection.close();
             }
@@ -112,7 +112,7 @@ namespace gdb_stub
             return static_cast<breakpoint_type>(type);
         }
 
-        bool change_breakpoint(gdb_stub_handler& handler, const bool set, const breakpoint_type type,
+        bool change_breakpoint(debugging_handler& handler, const bool set, const breakpoint_type type,
                                const uint64_t address, const size_t size)
         {
             if (set)
@@ -123,8 +123,8 @@ namespace gdb_stub
             return handler.delete_breakpoint(type, address, size);
         }
 
-        void handle_breakpoint(const connection_handler& connection, gdb_stub_handler& handler, const std::string& data,
-                               const bool set)
+        void handle_breakpoint(const connection_handler& connection, debugging_handler& handler,
+                               const std::string& data, const bool set)
         {
             uint32_t type{};
             uint64_t addr{};
@@ -152,7 +152,7 @@ namespace gdb_stub
             }
         }
 
-        void read_registers(const connection_handler& connection, gdb_stub_handler& handler)
+        void read_registers(const connection_handler& connection, debugging_handler& handler)
         {
             std::string response{};
             std::vector<std::byte> data{};
@@ -177,7 +177,7 @@ namespace gdb_stub
             connection.send_reply(response);
         }
 
-        void write_registers(const connection_handler& connection, gdb_stub_handler& handler,
+        void write_registers(const connection_handler& connection, debugging_handler& handler,
                              const std::string_view payload)
         {
             const auto data = utils::string::from_hex_string(payload);
@@ -208,7 +208,7 @@ namespace gdb_stub
             connection.send_reply("OK");
         }
 
-        void read_single_register(const connection_handler& connection, gdb_stub_handler& handler,
+        void read_single_register(const connection_handler& connection, debugging_handler& handler,
                                   const std::string& payload)
         {
             size_t reg{};
@@ -229,7 +229,7 @@ namespace gdb_stub
             }
         }
 
-        void write_single_register(const connection_handler& connection, gdb_stub_handler& handler,
+        void write_single_register(const connection_handler& connection, debugging_handler& handler,
                                    const std::string_view payload)
         {
             const auto [reg, hex_data] = split_string(payload, '=');
@@ -252,7 +252,7 @@ namespace gdb_stub
             connection.send_reply("OK");
         }
 
-        void read_memory(const connection_handler& connection, gdb_stub_handler& handler, const std::string& payload)
+        void read_memory(const connection_handler& connection, debugging_handler& handler, const std::string& payload)
         {
             uint64_t address{};
             size_t size{};
@@ -277,7 +277,7 @@ namespace gdb_stub
             connection.send_reply(utils::string::to_hex_string(data));
         }
 
-        void write_memory(const connection_handler& connection, gdb_stub_handler& handler,
+        void write_memory(const connection_handler& connection, debugging_handler& handler,
                           const std::string_view payload)
         {
             const auto [info, hex_data] = split_string(payload, ':');
@@ -331,7 +331,7 @@ namespace gdb_stub
             return result;
         }
 
-        void write_x_memory(const connection_handler& connection, gdb_stub_handler& handler,
+        void write_x_memory(const connection_handler& connection, debugging_handler& handler,
                             const std::string_view payload)
         {
             const auto [info, encoded_data] = split_string(payload, ':');
@@ -359,7 +359,7 @@ namespace gdb_stub
             connection.send_reply("OK");
         }
 
-        void handle_command(const connection_handler& connection, async_handler& async, gdb_stub_handler& handler,
+        void handle_command(const connection_handler& connection, async_handler& async, debugging_handler& handler,
                             const uint8_t command, const std::string_view data)
         {
             switch (command)
@@ -431,7 +431,7 @@ namespace gdb_stub
             }
         }
 
-        void process_packet(const connection_handler& connection, async_handler& async, gdb_stub_handler& handler,
+        void process_packet(const connection_handler& connection, async_handler& async, debugging_handler& handler,
                             const std::string_view packet)
         {
             connection.send_raw_data("+");
@@ -451,7 +451,7 @@ namespace gdb_stub
         }
     }
 
-    bool run_gdb_stub(const network::address& bind_address, gdb_stub_handler& handler)
+    bool run_gdb_stub(const network::address& bind_address, debugging_handler& handler)
     {
         auto client = accept_client(bind_address);
         if (!client)
