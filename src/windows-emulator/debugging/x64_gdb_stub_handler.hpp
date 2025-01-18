@@ -113,7 +113,8 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
         {
             if (reg >= gdb_registers.size())
             {
-                return false;
+                // TODO: Fix
+                return true;
             }
 
             this->emu_->read_register(gdb_registers[reg], data, max_length);
@@ -121,7 +122,8 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
         }
         catch (...)
         {
-            return false;
+            // TODO: Fix
+            return true;
         }
     }
 
@@ -131,7 +133,8 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
         {
             if (reg >= gdb_registers.size())
             {
-                return false;
+                // TODO: Fix
+                return true;
             }
 
             this->emu_->write_register(gdb_registers[reg], data, size);
