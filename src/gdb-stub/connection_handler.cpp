@@ -47,7 +47,7 @@ namespace gdb_stub
         return std::nullopt;
     }
 
-    void connection_handler::send_packet(const std::string_view data) const
+    void connection_handler::send_reply(const std::string_view data) const
     {
         const auto checksum = utils::string::to_hex_string(compute_checksum(data));
         this->send_raw_data("$" + std::string(data) + "#" + checksum);

@@ -13,11 +13,12 @@ namespace gdb_stub
 
     enum class breakpoint_type : uint8_t
     {
-        software,
-        hardware_exec,
-        hardware_write,
-        hardware_read,
-        hardware_read_write,
+        software = 0,
+        hardware_exec = 1,
+        hardware_write = 2,
+        hardware_read = 3,
+        hardware_read_write = 4,
+        END,
     };
 
     struct gdb_stub_handler
@@ -33,11 +34,11 @@ namespace gdb_stub
         virtual bool read_register(size_t reg, void* data, size_t max_length) = 0;
         virtual bool write_register(size_t reg, const void* data, size_t size) = 0;
 
-        virtual bool read_memory(size_t address, void* data, size_t length) = 0;
-        virtual bool write_memory(size_t address, const void* data, size_t length) = 0;
+        virtual bool read_memory(uint64_t address, void* data, size_t length) = 0;
+        virtual bool write_memory(uint64_t address, const void* data, size_t length) = 0;
 
-        virtual bool set_breakpoint(breakpoint_type type, size_t address, size_t size) = 0;
-        virtual bool delete_breakpoint(breakpoint_type type, size_t address, size_t size) = 0;
+        virtual bool set_breakpoint(breakpoint_type type, uint64_t address, size_t size) = 0;
+        virtual bool delete_breakpoint(breakpoint_type type, uint64_t address, size_t size) = 0;
 
         virtual void on_interrupt() = 0;
 

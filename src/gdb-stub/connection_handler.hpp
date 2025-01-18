@@ -11,7 +11,7 @@ namespace gdb_stub
 
         std::optional<std::string> get_packet();
 
-        void send_packet(std::string_view data) const;
+        void send_reply(std::string_view data) const;
         void send_raw_data(std::string_view data) const;
 
         void close() const;

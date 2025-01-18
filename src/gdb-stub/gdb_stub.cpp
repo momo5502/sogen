@@ -6,12 +6,20 @@
 #include "async_handler.hpp"
 #include "connection_handler.hpp"
 
+#include <cassert>
+#include <cinttypes>
+
 using namespace std::literals;
 
 namespace gdb_stub
 {
     namespace
     {
+        void rt_assert(const bool condition)
+        {
+            assert(condition);
+        }
+
         network::tcp_client_socket accept_client(const network::address& bind_address)
         {
             network::tcp_server_socket server{bind_address.get_family()};
@@ -23,7 +31,7 @@ namespace gdb_stub
             return server.accept();
         }
 
-        void process_query(const connection_handler& connection, const std::string_view payload)
+        std::pair<std::string_view, std::string_view> split_colon(const std::string_view payload)
         {
             auto name = payload;
             std::string_view args{};
@@ -36,25 +44,50 @@ namespace gdb_stub
                 args = payload.substr(separator + 1);
             }
 
-            if (name == "Supported")
+            return {name, args};
+        }
+
+        void process_xfer(const connection_handler& connection, gdb_stub_handler& handler,
+                          const std::string_view payload)
+        {
+            auto [name, args] = split_colon(payload);
+
+            if (name == "features")
             {
-                connection.send_packet("PacketSize=1024;qXfer:features:read+");
-            }
-            else if (name == "Attached")
-            {
-                connection.send_packet("1");
-            }
-            else if (name == "Xfer")
-            {
-                // process_xfer(gdbstub, args);
-            }
-            else if (name == "Symbol")
-            {
-                connection.send_packet("OK");
+                connection.send_reply("l<target version=\"1.0\"><architecture>" //
+                                      + handler.get_target_description()        //
+                                      + "<architecture>%s</architecture></target>");
             }
             else
             {
-                connection.send_packet({});
+                connection.send_reply({});
+            }
+        }
+
+        void process_query(const connection_handler& connection, gdb_stub_handler& handler,
+                           const std::string_view payload)
+        {
+            auto [name, args] = split_colon(payload);
+
+            if (name == "Supported")
+            {
+                connection.send_reply("PacketSize=1024;qXfer:features:read+");
+            }
+            else if (name == "Attached")
+            {
+                connection.send_reply("1");
+            }
+            else if (name == "Xfer")
+            {
+                process_xfer(connection, handler, args);
+            }
+            else if (name == "Symbol")
+            {
+                connection.send_reply("OK");
+            }
+            else
+            {
+                connection.send_reply({});
             }
         }
 
@@ -66,8 +99,54 @@ namespace gdb_stub
             }
         }
 
-        void read_registers()
+        breakpoint_type translate_breakpoint_type(const uint32_t type)
         {
+            if (type >= static_cast<size_t>(breakpoint_type::END))
+            {
+                return breakpoint_type::software;
+            }
+
+            return static_cast<breakpoint_type>(type);
+        }
+
+        bool change_breakpoint(gdb_stub_handler& handler, const bool set, const breakpoint_type type,
+                               const uint64_t address, const size_t size)
+        {
+            if (set)
+            {
+                return handler.set_breakpoint(type, address, size);
+            }
+
+            return handler.delete_breakpoint(type, address, size);
+        }
+
+        void handle_breakpoint(const connection_handler& connection, gdb_stub_handler& handler, const std::string& data,
+                               const bool set)
+        {
+            uint32_t type{};
+            uint64_t addr{};
+            size_t kind{};
+            rt_assert(sscanf(data.c_str(), "%x,%" PRIX64 ",%zx", &type, &addr, &kind) == 3);
+
+            const auto res = change_breakpoint(handler, set, translate_breakpoint_type(type), addr, kind);
+            connection.send_reply(res ? "OK" : "E01");
+        }
+
+        void handle_v_packet(const connection_handler& connection, const std::string_view data)
+        {
+            auto [name, args] = split_colon(data);
+
+            if (name == "Cont?")
+            {
+                // IDA pro gets confused if the reply arrives too early :(
+                std::this_thread::sleep_for(1s);
+
+                connection.send_reply("vCont;s;c;");
+            }
+            else
+            {
+                connection.send_reply({});
+            }
         }
 
         void handle_command(const connection_handler& connection, async_handler& async, gdb_stub_handler& handler,
@@ -86,13 +165,36 @@ namespace gdb_stub
                 break;
 
             case 'q':
-                process_query(connection, data);
+                process_query(connection, handler, data);
                 break;
 
-            case 'g':
+            case 'D':
+                connection.close();
+                break;
 
+            case 'z':
+            case 'Z':
+                handle_breakpoint(connection, handler, std::string(data), command == 'Z');
+                break;
+
+            case '?':
+                connection.send_reply("S05");
+                break;
+
+            case 'v':
+                handle_v_packet(connection, data);
+                break;
+
+                // TODO
+            case 'g':
+            case 'm':
+            case 'p':
+            case 'G':
+            case 'M':
+            case 'P':
+            case 'X':
             default:
-                connection.send_packet({});
+                connection.send_reply({});
                 break;
             }
         }
