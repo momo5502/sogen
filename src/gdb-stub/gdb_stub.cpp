@@ -49,8 +49,7 @@ namespace gdb_stub
             return {name, args};
         }
 
-        void process_xfer(const connection_handler& connection, debugging_handler& handler,
-                          const std::string_view payload)
+        void process_xfer(connection_handler& connection, debugging_handler& handler, const std::string_view payload)
         {
             auto [name, args] = split_string(payload, ':');
 
@@ -66,8 +65,7 @@ namespace gdb_stub
             }
         }
 
-        void process_query(const connection_handler& connection, debugging_handler& handler,
-                           const std::string_view payload)
+        void process_query(connection_handler& connection, debugging_handler& handler, const std::string_view payload)
         {
             const auto [name, args] = split_string(payload, ':');
 
@@ -93,7 +91,7 @@ namespace gdb_stub
             }
         }
 
-        void process_action(const connection_handler& connection, const action a)
+        void process_action(connection_handler& connection, const action a)
         {
             if (a == action::shutdown)
             {
@@ -122,8 +120,8 @@ namespace gdb_stub
             return handler.delete_breakpoint(type, address, size);
         }
 
-        void handle_breakpoint(const connection_handler& connection, debugging_handler& handler,
-                               const std::string& data, const bool set)
+        void handle_breakpoint(connection_handler& connection, debugging_handler& handler, const std::string& data,
+                               const bool set)
         {
             uint32_t type{};
             uint64_t addr{};
@@ -134,7 +132,7 @@ namespace gdb_stub
             connection.send_reply(res ? "OK" : "E01");
         }
 
-        void handle_v_packet(const connection_handler& connection, const std::string_view data)
+        void handle_v_packet(connection_handler& connection, const std::string_view data)
         {
             const auto [name, args] = split_string(data, ':');
 
@@ -151,7 +149,7 @@ namespace gdb_stub
             }
         }
 
-        void read_registers(const connection_handler& connection, debugging_handler& handler)
+        void read_registers(connection_handler& connection, debugging_handler& handler)
         {
             std::string response{};
             std::vector<std::byte> data{};
@@ -176,8 +174,7 @@ namespace gdb_stub
             connection.send_reply(response);
         }
 
-        void write_registers(const connection_handler& connection, debugging_handler& handler,
-                             const std::string_view payload)
+        void write_registers(connection_handler& connection, debugging_handler& handler, const std::string_view payload)
         {
             const auto data = utils::string::from_hex_string(payload);
 
@@ -207,7 +204,7 @@ namespace gdb_stub
             connection.send_reply("OK");
         }
 
-        void read_single_register(const connection_handler& connection, debugging_handler& handler,
+        void read_single_register(connection_handler& connection, debugging_handler& handler,
                                   const std::string& payload)
         {
             size_t reg{};
@@ -228,7 +225,7 @@ namespace gdb_stub
             }
         }
 
-        void write_single_register(const connection_handler& connection, debugging_handler& handler,
+        void write_single_register(connection_handler& connection, debugging_handler& handler,
                                    const std::string_view payload)
         {
             const auto [reg, hex_data] = split_string(payload, '=');
@@ -245,7 +242,7 @@ namespace gdb_stub
             connection.send_reply(res ? "OK" : "E01");
         }
 
-        void read_memory(const connection_handler& connection, debugging_handler& handler, const std::string& payload)
+        void read_memory(connection_handler& connection, debugging_handler& handler, const std::string& payload)
         {
             uint64_t address{};
             size_t size{};
@@ -270,8 +267,7 @@ namespace gdb_stub
             connection.send_reply(utils::string::to_hex_string(data));
         }
 
-        void write_memory(const connection_handler& connection, debugging_handler& handler,
-                          const std::string_view payload)
+        void write_memory(connection_handler& connection, debugging_handler& handler, const std::string_view payload)
         {
             const auto [info, hex_data] = split_string(payload, ':');
 
@@ -318,8 +314,7 @@ namespace gdb_stub
             return result;
         }
 
-        void write_x_memory(const connection_handler& connection, debugging_handler& handler,
-                            const std::string_view payload)
+        void write_x_memory(connection_handler& connection, debugging_handler& handler, const std::string_view payload)
         {
             const auto [info, encoded_data] = split_string(payload, ':');
 
@@ -346,7 +341,7 @@ namespace gdb_stub
             connection.send_reply("OK");
         }
 
-        void handle_command(const connection_handler& connection, async_handler& async, debugging_handler& handler,
+        void handle_command(connection_handler& connection, async_handler& async, debugging_handler& handler,
                             const uint8_t command, const std::string_view data)
         {
             // printf("GDB command: %c -> %.*s\n", command, static_cast<int>(data.size()), data.data());
@@ -420,7 +415,7 @@ namespace gdb_stub
             }
         }
 
-        void process_packet(const connection_handler& connection, async_handler& async, debugging_handler& handler,
+        void process_packet(connection_handler& connection, async_handler& async, debugging_handler& handler,
                             const std::string_view packet)
         {
             connection.send_raw_data("+");
