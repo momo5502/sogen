@@ -1,15 +1,14 @@
 #include "gdb_stub.hpp"
 
+#include <cassert>
+#include <cinttypes>
+
+#include <utils/string.hpp>
 #include <platform/compiler.hpp>
 #include <network/tcp_server_socket.hpp>
 
-#include "checksum.hpp"
 #include "async_handler.hpp"
 #include "connection_handler.hpp"
-#include "utils/string.hpp"
-
-#include <cassert>
-#include <cinttypes>
 
 using namespace std::literals;
 
