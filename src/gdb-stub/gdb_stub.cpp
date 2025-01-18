@@ -1,5 +1,6 @@
 #include "gdb_stub.hpp"
 
+#include <platform/compiler.hpp>
 #include <network/tcp_server_socket.hpp>
 
 #include "checksum.hpp"
@@ -17,6 +18,7 @@ namespace gdb_stub
     {
         void rt_assert(const bool condition)
         {
+            (void)condition;
             assert(condition);
         }
 
