@@ -26,27 +26,53 @@ namespace network
 
     bool tcp_client_socket::send(const void* data, const size_t size) const
     {
-        const auto res = ::send(this->get_socket(), static_cast<const char*>(data), static_cast<send_size>(size), 0);
-        return static_cast<size_t>(res) == size;
+        return this->send(std::string_view(static_cast<const char*>(data), size));
     }
 
-    bool tcp_client_socket::send(const std::string_view data) const
+    bool tcp_client_socket::send(std::string_view data) const
     {
-        return this->send(data.data(), data.size());
-    }
-
-    bool tcp_client_socket::receive(std::string& data) const
-    {
-        char buffer[0x2000];
-
-        const auto result = recv(this->get_socket(), buffer, static_cast<int>(sizeof(buffer)), 0);
-        if (result == SOCKET_ERROR)
+        while (!data.empty())
         {
-            return false;
+            const auto res = ::send(this->get_socket(), data.data(), static_cast<send_size>(data.size()), 0);
+            if (res < 0)
+            {
+                if (GET_SOCKET_ERROR() != SERR(EWOULDBLOCK))
+                {
+                    break;
+                }
+
+                this->sleep(std::chrono::milliseconds(10), true);
+                continue;
+            }
+
+            if (static_cast<size_t>(res) > data.size())
+            {
+                break;
+            }
+
+            data = data.substr(res);
         }
 
-        data.assign(buffer, buffer + result);
-        return true;
+        return data.empty();
+    }
+
+    std::optional<std::string> tcp_client_socket::receive(const std::optional<size_t> max_size)
+    {
+        char buffer[0x2000];
+        const auto size = std::min(sizeof(buffer), max_size.value_or(sizeof(buffer)));
+
+        const auto result = recv(this->get_socket(), buffer, static_cast<int>(size), 0);
+        if (result > 0)
+        {
+            return std::string(buffer, result);
+        }
+
+        if (result == 0 || (result < 0 && GET_SOCKET_ERROR() == SERR(ECONNRESET)))
+        {
+            this->close();
+        }
+
+        return std::nullopt;
     }
 
     std::optional<address> tcp_client_socket::get_target() const
@@ -69,6 +95,6 @@ namespace network
         }
 
         const auto error = GET_SOCKET_ERROR();
-        return error == SOCK_WOULDBLOCK;
+        return error == SERR(EWOULDBLOCK);
     }
 }

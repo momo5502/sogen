@@ -28,6 +28,7 @@
 
 #define DECLSPEC_ALIGN(n)  alignas(n)
 #define fopen_s            fopen
+#define sscanf_s           sscanf
 
 #define RESTRICTED_POINTER __restrict
 

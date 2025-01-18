@@ -48,6 +48,14 @@ namespace network
         address(const sockaddr_in6& addr);
         address(const sockaddr* addr, socklen_t length);
 
+        address(const address&) = default;
+        address(address&&) noexcept = default;
+
+        address& operator=(const address&) = default;
+        address& operator=(address&&) noexcept = default;
+
+        ~address() = default;
+
         void set_ipv4(uint32_t ip);
         void set_ipv4(const in_addr& addr);
         void set_ipv6(const in6_addr& addr);

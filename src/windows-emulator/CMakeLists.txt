@@ -14,7 +14,6 @@ target_precompile_headers(windows-emulator PRIVATE std_include.hpp)
 
 target_link_libraries(windows-emulator PRIVATE
   unicorn-emulator
-  mini-gdbstub
 )
 
 target_link_libraries(windows-emulator PUBLIC

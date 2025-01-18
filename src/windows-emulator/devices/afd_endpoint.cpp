@@ -457,7 +457,7 @@ namespace
             if (recevied_data < 0)
             {
                 const auto error = GET_SOCKET_ERROR();
-                if (error == SOCK_WOULDBLOCK)
+                if (error == SERR(EWOULDBLOCK))
                 {
                     this->delay_ioctrl(c, {}, true);
                     return STATUS_PENDING;
@@ -512,7 +512,7 @@ namespace
             if (sent_data < 0)
             {
                 const auto error = GET_SOCKET_ERROR();
-                if (error == SOCK_WOULDBLOCK)
+                if (error == SERR(EWOULDBLOCK))
                 {
                     this->delay_ioctrl(c, {}, false);
                     return STATUS_PENDING;
