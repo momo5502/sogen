@@ -58,6 +58,7 @@ namespace gdb_stub
         {
             while (!this->run_ && !this->stop_)
             {
+                this->is_running_ = false;
                 std::this_thread::sleep_for(10ms);
             }
 

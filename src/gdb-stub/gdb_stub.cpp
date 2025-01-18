@@ -126,7 +126,7 @@ namespace gdb_stub
             uint32_t type{};
             uint64_t addr{};
             size_t kind{};
-            rt_assert(sscanf(data.c_str(), "%x,%" PRIX64 ",%zx", &type, &addr, &kind) == 3);
+            rt_assert(sscanf_s(data.c_str(), "%x,%" PRIX64 ",%zx", &type, &addr, &kind) == 3);
 
             const auto res = change_breakpoint(handler, set, translate_breakpoint_type(type), addr, kind);
             connection.send_reply(res ? "OK" : "E01");

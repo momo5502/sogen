@@ -12,7 +12,7 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
     {
     }
 
-    gdb_stub::gdb_action cont() override
+    gdb_stub::gdb_action run() override
     {
         try
         {
@@ -26,7 +26,7 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
         return gdb_stub::gdb_action::resume;
     }
 
-    gdb_stub::gdb_action stepi() override
+    gdb_stub::gdb_action singlestep() override
     {
         try
         {
@@ -40,7 +40,7 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
         return gdb_stub::gdb_action::resume;
     }
 
-    std::string get_target_description() const override
+    std::string get_target_description() override
     {
         return "i386:x86-64";
     }

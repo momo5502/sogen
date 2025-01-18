@@ -68,7 +68,7 @@ class x64_gdb_stub_handler : public gdb_stub::gdb_stub_handler
 
     ~x64_gdb_stub_handler() override = default;
 
-    gdb_stub::gdb_action cont() override
+    gdb_stub::gdb_action run() override
     {
         try
         {
@@ -82,7 +82,7 @@ class x64_gdb_stub_handler : public gdb_stub::gdb_stub_handler
         return gdb_stub::gdb_action::resume;
     }
 
-    gdb_stub::gdb_action stepi() override
+    gdb_stub::gdb_action singlestep() override
     {
         try
         {
@@ -96,36 +96,26 @@ class x64_gdb_stub_handler : public gdb_stub::gdb_stub_handler
         return gdb_stub::gdb_action::resume;
     }
 
-    bool read_reg(const int regno, size_t* value) override
+    size_t get_register_count() override
     {
-        *value = 0;
-
-        try
-        {
-            if (static_cast<size_t>(regno) >= gdb_registers.size())
-            {
-                return true;
-            }
-
-            this->emu_->read_register(gdb_registers[regno], value, sizeof(*value));
-            return true;
-        }
-        catch (...)
-        {
-            return true;
-        }
+        return gdb_registers.size();
     }
 
-    bool write_reg(const int regno, const size_t value) override
+    size_t get_max_register_size() override
+    {
+        return 256 / 8;
+    }
+
+    bool read_register(const size_t reg, void* data, const size_t max_length) override
     {
         try
         {
-            if (static_cast<size_t>(regno) >= gdb_registers.size())
+            if (reg >= gdb_registers.size())
             {
-                return true;
+                return false;
             }
 
-            this->emu_->write_register(gdb_registers[regno], &value, sizeof(value));
+            this->emu_->read_register(gdb_registers[reg], data, max_length);
             return true;
         }
         catch (...)
@@ -134,16 +124,16 @@ class x64_gdb_stub_handler : public gdb_stub::gdb_stub_handler
         }
     }
 
-    bool read_mem(const size_t addr, const size_t len, void* val) override
-    {
-        return this->emu_->try_read_memory(addr, val, len);
-    }
-
-    bool write_mem(const size_t addr, const size_t len, void* val) override
+    bool write_register(const size_t reg, const void* data, const size_t size) override
     {
         try
         {
-            this->emu_->write_memory(addr, val, len);
+            if (reg >= gdb_registers.size())
+            {
+                return false;
+            }
+
+            this->emu_->write_register(gdb_registers[reg], data, size);
             return true;
         }
         catch (...)
@@ -152,7 +142,25 @@ class x64_gdb_stub_handler : public gdb_stub::gdb_stub_handler
         }
     }
 
-    bool set_bp(const gdb_stub::breakpoint_type type, const size_t addr, const size_t size) override
+    bool read_memory(const uint64_t address, void* data, const size_t length) override
+    {
+        return this->emu_->try_read_memory(address, data, length);
+    }
+
+    bool write_memory(const uint64_t address, const void* data, const size_t length) override
+    {
+        try
+        {
+            this->emu_->write_memory(address, data, length);
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
+    bool set_breakpoint(const gdb_stub::breakpoint_type type, const uint64_t addr, const size_t size) override
     {
         try
         {
@@ -172,7 +180,7 @@ class x64_gdb_stub_handler : public gdb_stub::gdb_stub_handler
         }
     }
 
-    bool del_bp(const gdb_stub::breakpoint_type type, const size_t addr, const size_t size) override
+    bool delete_breakpoint(const gdb_stub::breakpoint_type type, const uint64_t addr, const size_t size) override
     {
         try
         {
