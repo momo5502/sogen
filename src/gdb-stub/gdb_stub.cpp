@@ -132,16 +132,36 @@ namespace gdb_stub
             connection.send_reply(res ? "OK" : "E01");
         }
 
-        void handle_v_packet(connection_handler& connection, const std::string_view data)
+        void continue_execution(connection_handler& connection, async_handler& async, debugging_handler& handler)
+        {
+            async.run();
+            process_action(connection, handler.run());
+            async.pause();
+            connection.send_reply("S05");
+        }
+
+        void singlestep_execution(connection_handler& connection, debugging_handler& handler)
+        {
+            process_action(connection, handler.singlestep());
+            connection.send_reply("S05");
+        }
+
+        void handle_v_packet(connection_handler& connection, async_handler& async, debugging_handler& handler,
+                             const std::string_view data)
         {
             const auto [name, args] = split_string(data, ':');
 
             if (name == "Cont?")
             {
-                // IDA pro gets confused if the reply arrives too early :(
-                std::this_thread::sleep_for(1s);
-
-                connection.send_reply("vCont;s;c;");
+                connection.send_reply("vCont;s;c");
+            }
+            else if (name == "Cont;s")
+            {
+                singlestep_execution(connection, handler);
+            }
+            else if (name == "Cont;c")
+            {
+                continue_execution(connection, async, handler);
             }
             else
             {
@@ -349,15 +369,11 @@ namespace gdb_stub
             switch (command)
             {
             case 'c':
-                async.run();
-                process_action(connection, handler.run());
-                async.pause();
-                connection.send_reply("S05");
+                continue_execution(connection, async, handler);
                 break;
 
             case 's':
-                process_action(connection, handler.singlestep());
-                connection.send_reply("S05");
+                singlestep_execution(connection, handler);
                 break;
 
             case 'q':
@@ -378,7 +394,7 @@ namespace gdb_stub
                 break;
 
             case 'v':
-                handle_v_packet(connection, data);
+                handle_v_packet(connection, async, handler, data);
                 break;
 
             case 'g':
