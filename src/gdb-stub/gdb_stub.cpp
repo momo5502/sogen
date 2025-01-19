@@ -218,24 +218,28 @@ namespace gdb_stub
             }
         }
 
-        void continue_execution(const debugging_context& c)
+        void resume_execution(const debugging_context& c, const bool single_step)
         {
             apply_continuation_thread(c);
 
-            c.async.run();
-            process_action(c.connection, c.handler.run());
-            c.async.pause();
+            action a{};
+
+            if (single_step)
+            {
+                a = c.handler.singlestep();
+            }
+            else
+            {
+                c.async.run();
+                a = c.handler.run();
+                c.async.pause();
+            }
+
+            process_action(c.connection, a);
             signal_stop(c);
         }
 
-        void singlestep_execution(const debugging_context& c)
-        {
-            apply_continuation_thread(c);
-            process_action(c.connection, c.handler.singlestep());
-            signal_stop(c);
-        }
-
-        void apply_continuation_thread(const debugging_context& c, const std::string_view thread_string)
+        void store_continuation_thread(const debugging_context& c, const std::string_view thread_string)
         {
             if (thread_string.empty())
             {
@@ -255,17 +259,13 @@ namespace gdb_stub
             {
                 c.connection.send_reply("vCont;s;c");
             }
-            else if (name == "Cont;s")
+            else if (name == "Cont;s" || name == "Cont;c")
             {
+                const auto singlestep = name[5] == 's';
                 const auto [thread, _] = split_string(args, ':');
-                apply_continuation_thread(c, thread);
-                singlestep_execution(c);
-            }
-            else if (name == "Cont;c")
-            {
-                const auto [thread, _] = split_string(args, ':');
-                apply_continuation_thread(c, thread);
-                continue_execution(c);
+
+                store_continuation_thread(c, thread);
+                resume_execution(c, singlestep);
             }
             else
             {
@@ -496,11 +496,11 @@ namespace gdb_stub
             switch (command)
             {
             case 'c':
-                continue_execution(c);
+                resume_execution(c, false);
                 break;
 
             case 's':
-                singlestep_execution(c);
+                resume_execution(c, true);
                 break;
 
             case 'q':
