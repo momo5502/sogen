@@ -48,6 +48,8 @@ namespace gdb_stub
 
         virtual uint32_t get_current_thread_id() = 0;
         virtual std::vector<uint32_t> get_thread_ids() = 0;
+
+        virtual std::optional<uint32_t> get_exit_code() = 0;
     };
 
     bool run_gdb_stub(const network::address& bind_address, debugging_handler& handler);

@@ -204,6 +204,13 @@ namespace gdb_stub
 
         void signal_stop(const debugging_context& c)
         {
+            const auto exit_status = c.handler.get_exit_code();
+            if (exit_status)
+            {
+                c.connection.send_reply(*exit_status == 0 ? "W00" : "WFF");
+                return;
+            }
+
             const auto id = c.handler.get_current_thread_id();
             const auto hex_id = utils::string::to_hex_number(id);
             c.connection.send_reply("T05thread:" + hex_id + ";");

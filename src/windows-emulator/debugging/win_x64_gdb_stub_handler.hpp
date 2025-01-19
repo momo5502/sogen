@@ -68,6 +68,17 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
         return this->win_emu_->activate_thread(thread_id);
     }
 
+    std::optional<uint32_t> get_exit_code() override
+    {
+        const auto status = this->win_emu_->process().exit_status;
+        if (!status)
+        {
+            return std::nullopt;
+        }
+
+        return static_cast<uint32_t>(*status);
+    }
+
   private:
     windows_emulator* win_emu_{};
 };
