@@ -205,7 +205,8 @@ namespace gdb_stub
 
             if (name == "Cont?")
             {
-                connection.send_reply("vCont;s;c");
+                // connection.send_reply("vCont;s;c");
+                connection.send_reply({});
             }
             else if (name == "Cont;s")
             {
