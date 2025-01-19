@@ -22,6 +22,11 @@ namespace gdb_stub
             assert(condition);
         }
 
+        struct debugging_state
+        {
+            std::optional<uint32_t> continuation_thread{};
+        };
+
         network::tcp_client_socket accept_client(const network::address& bind_address)
         {
             network::tcp_server_socket server{bind_address.get_family()};
@@ -197,22 +202,35 @@ namespace gdb_stub
             connection.send_reply("T05thread:" + hex_id + ";");
         }
 
-        void continue_execution(connection_handler& connection, async_handler& async, debugging_handler& handler)
+        void apply_continuation_thread(debugging_handler& handler, debugging_state& state)
         {
+            if (state.continuation_thread)
+            {
+                handler.switch_to_thread(*state.continuation_thread);
+                state.continuation_thread = std::nullopt;
+            }
+        }
+
+        void continue_execution(connection_handler& connection, async_handler& async, debugging_state& state,
+                                debugging_handler& handler)
+        {
+            apply_continuation_thread(handler, state);
+
             async.run();
             process_action(connection, handler.run());
             async.pause();
             signal_stop(connection, handler);
         }
 
-        void singlestep_execution(connection_handler& connection, debugging_handler& handler)
+        void singlestep_execution(connection_handler& connection, debugging_handler& handler, debugging_state& state)
         {
+            apply_continuation_thread(handler, state);
             process_action(connection, handler.singlestep());
             signal_stop(connection, handler);
         }
 
         void handle_v_packet(connection_handler& connection, async_handler& async, debugging_handler& handler,
-                             const std::string_view data)
+                             debugging_state& state, const std::string_view data)
         {
             const auto [name, args] = split_string(data, ':');
 
@@ -223,11 +241,11 @@ namespace gdb_stub
             }
             else if (name == "Cont;s")
             {
-                singlestep_execution(connection, handler);
+                singlestep_execution(connection, handler, state);
             }
             else if (name == "Cont;c")
             {
-                continue_execution(connection, async, handler);
+                continue_execution(connection, async, state, handler);
             }
             else
             {
@@ -425,7 +443,7 @@ namespace gdb_stub
             connection.send_reply("OK");
         }
 
-        void switch_to_thread(connection_handler& connection, debugging_handler& handler,
+        void switch_to_thread(connection_handler& connection, debugging_handler& handler, debugging_state& state,
                               const std::string_view payload)
         {
             if (payload.size() < 2)
@@ -434,33 +452,39 @@ namespace gdb_stub
                 return;
             }
 
-            const auto operation = payload[0];
-            if (operation != 'g')
-            {
-                connection.send_reply("OK");
-                return;
-            }
-
             uint32_t id{};
             rt_assert(sscanf_s(std::string(payload.substr(1)).c_str(), "%x", &id) == 1);
 
-            const auto res = id == 0 || handler.switch_to_thread(id);
-            connection.send_reply(res ? "OK" : "E01");
+            const auto operation = payload[0];
+            if (operation == 'c')
+            {
+                state.continuation_thread = id;
+                connection.send_reply("OK");
+            }
+            else if (operation == 'g')
+            {
+                const auto res = id == 0 || handler.switch_to_thread(id);
+                connection.send_reply(res ? "OK" : "E01");
+            }
+            else
+            {
+                connection.send_reply({});
+            }
         }
 
         void handle_command(connection_handler& connection, async_handler& async, debugging_handler& handler,
-                            const uint8_t command, const std::string_view data)
+                            debugging_state& state, const uint8_t command, const std::string_view data)
         {
             // printf("GDB command: %c -> %.*s\n", command, static_cast<int>(data.size()), data.data());
 
             switch (command)
             {
             case 'c':
-                continue_execution(connection, async, handler);
+                continue_execution(connection, async, state, handler);
                 break;
 
             case 's':
-                singlestep_execution(connection, handler);
+                singlestep_execution(connection, handler, state);
                 break;
 
             case 'q':
@@ -481,7 +505,7 @@ namespace gdb_stub
                 break;
 
             case 'v':
-                handle_v_packet(connection, async, handler, data);
+                handle_v_packet(connection, async, handler, state, data);
                 break;
 
             case 'g':
@@ -513,7 +537,7 @@ namespace gdb_stub
                 break;
 
             case 'H':
-                switch_to_thread(connection, handler, data);
+                switch_to_thread(connection, handler, state, data);
                 break;
 
             default:
@@ -523,7 +547,7 @@ namespace gdb_stub
         }
 
         void process_packet(connection_handler& connection, async_handler& async, debugging_handler& handler,
-                            const std::string_view packet)
+                            debugging_state& state, const std::string_view packet)
         {
             connection.send_raw_data("+");
 
@@ -533,7 +557,7 @@ namespace gdb_stub
             }
 
             const auto command = packet.front();
-            handle_command(connection, async, handler, command, packet.substr(1));
+            handle_command(connection, async, handler, state, command, packet.substr(1));
         }
 
         bool is_interrupt_packet(const std::optional<std::string>& data)
@@ -565,6 +589,7 @@ namespace gdb_stub
             }
         }};
 
+        debugging_state state{};
         connection_handler connection{client};
 
         while (true)
@@ -575,7 +600,7 @@ namespace gdb_stub
                 break;
             }
 
-            process_packet(connection, async, handler, *packet);
+            process_packet(connection, async, handler, state, *packet);
         }
 
         return true;
