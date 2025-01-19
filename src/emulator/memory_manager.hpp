@@ -1,5 +1,9 @@
 #pragma once
 #include <map>
+#if MOMO_REFLECTION_LEVEL > 0
+#include <atomic>
+#include <cstdint>
+#endif
 
 #include "memory_region.hpp"
 #include "address_utils.hpp"
@@ -123,6 +127,13 @@ class memory_manager
         return reserved_regions_;
     }
 
+#if MOMO_REFLECTION_LEVEL > 0
+    std::uint64_t get_memory_layout_state_ver() const
+    {
+        return memory_layout_state_ver_.load(std::memory_order_relaxed);
+    }
+#endif
+
   private:
     reserved_region_map reserved_regions_{};
 
@@ -133,6 +144,15 @@ class memory_manager
     virtual void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) = 0;
 
   protected:
+#if MOMO_REFLECTION_LEVEL > 0
+    std::atomic<std::uint64_t> memory_layout_state_ver_{0};
+
+    void inc_memory_layout_state_ver()
+    {
+        memory_layout_state_ver_.fetch_add(1, std::memory_order_relaxed);
+    }
+#endif
+
     void serialize_memory_state(utils::buffer_serializer& buffer, bool is_snapshot) const;
     void deserialize_memory_state(utils::buffer_deserializer& buffer, bool is_snapshot);
 };
