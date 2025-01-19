@@ -49,15 +49,45 @@ namespace gdb_stub
             return {name, args};
         }
 
+        void handle_features(connection_handler& connection, debugging_handler& handler, const std::string_view payload)
+        {
+            const auto [command, args] = split_string(payload, ':');
+
+            if (command != "read")
+            {
+                connection.send_reply({});
+                return;
+            }
+
+            const auto [file, data] = split_string(args, ':');
+
+            size_t offset{}, length{};
+            rt_assert(sscanf_s(std::string(data).c_str(), "%zx,%zx", &offset, &length) == 2);
+
+            const auto target_description = handler.get_target_description(file);
+
+            if (offset >= target_description.size())
+            {
+                connection.send_reply("l");
+                return;
+            }
+
+            const auto remaining = target_description.size() - offset;
+            const auto real_length = std::min(remaining, length);
+            const auto is_end = real_length == remaining;
+
+            const auto sub_region = target_description.substr(offset, real_length);
+
+            connection.send_reply((is_end ? "l" : "m") + sub_region);
+        }
+
         void process_xfer(connection_handler& connection, debugging_handler& handler, const std::string_view payload)
         {
             auto [name, args] = split_string(payload, ':');
 
             if (name == "features")
             {
-                connection.send_reply("l<target version=\"1.0\"><architecture>" //
-                                      + handler.get_target_description()        //
-                                      + "</architecture></target>");
+                handle_features(connection, handler, args);
             }
             else
             {

@@ -4,6 +4,8 @@
 #include <utils/concurrency.hpp>
 #include <gdb-stub/gdb_stub.hpp>
 
+#include "x64_target_descriptions.hpp"
+
 inline std::vector gdb_registers{
     x64_register::rax, x64_register::rbx, x64_register::rcx, x64_register::rdx, x64_register::rsi, x64_register::rdi,
     x64_register::rbp, x64_register::rsp, x64_register::r8,  x64_register::r9,  x64_register::r10, x64_register::r11,
@@ -209,6 +211,17 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
     void on_interrupt() override
     {
         this->emu_->stop();
+    }
+
+    std::string get_target_description(const std::string_view file) override
+    {
+        const auto entry = x64_target_descriptions.find(file);
+        if (entry == x64_target_descriptions.end())
+        {
+            return {};
+        }
+
+        return entry->second;
     }
 
   private:

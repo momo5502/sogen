@@ -42,7 +42,7 @@ namespace gdb_stub
 
         virtual void on_interrupt() = 0;
 
-        virtual std::string get_target_description() = 0;
+        virtual std::string get_target_description(std::string_view file) = 0;
     };
 
     bool run_gdb_stub(const network::address& bind_address, debugging_handler& handler);
