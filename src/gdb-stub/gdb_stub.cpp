@@ -235,21 +235,36 @@ namespace gdb_stub
             signal_stop(c);
         }
 
+        void apply_continuation_thread(const debugging_context& c, const std::string_view thread_string)
+        {
+            if (thread_string.empty())
+            {
+                return;
+            }
+
+            uint32_t thread_id{};
+            rt_assert(sscanf_s(std::string(thread_string).c_str(), "%x", &thread_id) == 1);
+            c.state.continuation_thread = thread_id;
+        }
+
         void handle_v_packet(const debugging_context& c, const std::string_view data)
         {
             const auto [name, args] = split_string(data, ':');
 
             if (name == "Cont?")
             {
-                // connection.send_reply("vCont;s;c");
-                c.connection.send_reply({});
+                c.connection.send_reply("vCont;s;c");
             }
             else if (name == "Cont;s")
             {
+                const auto [thread, _] = split_string(args, ':');
+                apply_continuation_thread(c, thread);
                 singlestep_execution(c);
             }
             else if (name == "Cont;c")
             {
+                const auto [thread, _] = split_string(args, ':');
+                apply_continuation_thread(c, thread);
                 continue_execution(c);
             }
             else
