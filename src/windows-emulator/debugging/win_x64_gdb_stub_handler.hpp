@@ -40,11 +40,6 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
         return gdb_stub::action::resume;
     }
 
-    std::string get_target_description() override
-    {
-        return "i386:x86-64";
-    }
-
   private:
     windows_emulator* win_emu_{};
 };

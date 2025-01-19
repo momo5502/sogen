@@ -1,20 +1,13 @@
 #pragma once
 #include <x64_emulator.hpp>
-#include "scoped_hook.hpp"
+
 #include <utils/concurrency.hpp>
 #include <gdb-stub/gdb_stub.hpp>
 
-inline std::vector gdb_registers{
-    x64_register::rax, x64_register::rbx, x64_register::rcx, x64_register::rdx, x64_register::rsi, x64_register::rdi,
-    x64_register::rbp, x64_register::rsp, x64_register::r8,  x64_register::r9,  x64_register::r10, x64_register::r11,
-    x64_register::r12, x64_register::r13, x64_register::r14, x64_register::r15, x64_register::rip, x64_register::rflags,
-    /*x64_register::cs,
-    x64_register::ss,
-    x64_register::ds,
-    x64_register::es,
-    x64_register::fs,
-    x64_register::gs,*/
-};
+#include "scoped_hook.hpp"
+
+#include "x64_register_mapping.hpp"
+#include "x64_target_descriptions.hpp"
 
 inline memory_operation map_breakpoint_type(const gdb_stub::breakpoint_type type)
 {
@@ -103,46 +96,81 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
 
     size_t get_max_register_size() override
     {
-        // return 256 / 8;
-        return 64 / 8;
+        return 512 / 8;
     }
 
-    bool read_register(const size_t reg, void* data, const size_t max_length) override
+    size_t read_register(const size_t reg, void* data, const size_t max_length) override
     {
         try
         {
             if (reg >= gdb_registers.size())
             {
-                // TODO: Fix
-                return true;
+                return 0;
             }
 
-            this->emu_->read_register(gdb_registers[reg], data, max_length);
-            return true;
+            const auto real_reg = gdb_registers[reg];
+
+            auto size = this->emu_->read_register(real_reg.reg, data, max_length);
+
+            if (real_reg.offset)
+            {
+                size -= *real_reg.offset;
+                memcpy(data, static_cast<uint8_t*>(data) + *real_reg.offset, size);
+            }
+
+            const auto result_size = real_reg.expected_size.value_or(size);
+
+            if (result_size > size)
+            {
+                memset(static_cast<uint8_t*>(data) + size, 0, result_size - size);
+            }
+
+            return result_size;
         }
         catch (...)
         {
-            // TODO: Fix
-            return true;
+            return 0;
         }
     }
 
-    bool write_register(const size_t reg, const void* data, const size_t size) override
+    size_t write_register(const size_t reg, const void* data, const size_t size) override
     {
         try
         {
             if (reg >= gdb_registers.size())
             {
-                // TODO: Fix
-                return true;
+                return 0;
             }
 
-            this->emu_->write_register(gdb_registers[reg], data, size);
-            return true;
+            const auto real_reg = gdb_registers[reg];
+
+            size_t written_size = 0;
+
+            if (real_reg.offset)
+            {
+                std::vector<std::byte> full_data{};
+                full_data.resize(this->get_max_register_size());
+
+                written_size = this->emu_->read_register(real_reg.reg, full_data.data(), full_data.size());
+                if (written_size < *real_reg.offset)
+                {
+                    return 0;
+                }
+
+                memcpy(full_data.data() + *real_reg.offset, data, written_size - *real_reg.offset);
+                this->emu_->write_register(real_reg.reg, full_data.data(), written_size);
+                written_size -= *real_reg.offset;
+            }
+            else
+            {
+                written_size = this->emu_->write_register(real_reg.reg, data, size);
+            }
+
+            return real_reg.expected_size.value_or(written_size);
         }
         catch (...)
         {
-            return false;
+            return 0;
         }
     }
 
@@ -209,6 +237,17 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
     void on_interrupt() override
     {
         this->emu_->stop();
+    }
+
+    std::string get_target_description(const std::string_view file) override
+    {
+        const auto entry = x64_target_descriptions.find(file);
+        if (entry == x64_target_descriptions.end())
+        {
+            return {};
+        }
+
+        return entry->second;
     }
 
   private:

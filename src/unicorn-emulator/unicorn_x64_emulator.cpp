@@ -301,9 +301,9 @@ namespace unicorn
                 uce(uc_emu_stop(*this));
             }
 
-            void write_raw_register(const int reg, const void* value, const size_t size) override
+            size_t write_raw_register(const int reg, const void* value, const size_t size) override
             {
-                size_t result_size = size;
+                auto result_size = size;
                 uce(uc_reg_write2(*this, reg, value, &result_size));
 
                 if (size < result_size)
@@ -311,9 +311,11 @@ namespace unicorn
                     throw std::runtime_error("Register size mismatch: " + std::to_string(size) +
                                              " != " + std::to_string(result_size));
                 }
+
+                return result_size;
             }
 
-            void read_raw_register(const int reg, void* value, const size_t size) override
+            size_t read_raw_register(const int reg, void* value, const size_t size) override
             {
                 size_t result_size = size;
                 memset(value, 0, size);
@@ -324,6 +326,8 @@ namespace unicorn
                     throw std::runtime_error("Register size mismatch: " + std::to_string(size) +
                                              " != " + std::to_string(result_size));
                 }
+
+                return result_size;
             }
 
             void map_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb,

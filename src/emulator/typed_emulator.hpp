@@ -20,14 +20,14 @@ class typed_emulator : public emulator
         this->start(this->read_instruction_pointer(), 0, timeout, count);
     }
 
-    void write_register(registers reg, const void* value, const size_t size)
+    size_t write_register(registers reg, const void* value, const size_t size)
     {
-        this->write_raw_register(static_cast<int>(reg), value, size);
+        return this->write_raw_register(static_cast<int>(reg), value, size);
     }
 
-    void read_register(registers reg, void* value, const size_t size)
+    size_t read_register(registers reg, void* value, const size_t size)
     {
-        this->read_raw_register(static_cast<int>(reg), value, size);
+        return this->read_raw_register(static_cast<int>(reg), value, size);
     }
 
     template <typename T = pointer_type>
@@ -90,6 +90,6 @@ class typed_emulator : public emulator
   private:
     emulator_hook* hook_instruction(int instruction_type, instruction_hook_callback callback) override = 0;
 
-    void read_raw_register(int reg, void* value, size_t size) override = 0;
-    void write_raw_register(int reg, const void* value, size_t size) override = 0;
+    size_t read_raw_register(int reg, void* value, size_t size) override = 0;
+    size_t write_raw_register(int reg, const void* value, size_t size) override = 0;
 };
