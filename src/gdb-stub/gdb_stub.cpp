@@ -49,6 +49,29 @@ namespace gdb_stub
             return {name, args};
         }
 
+        void send_xfer_data(connection_handler& connection, const std::string& args, const std::string_view data)
+        {
+            size_t offset{}, length{};
+            rt_assert(sscanf_s(args.c_str(), "%zx,%zx", &offset, &length) == 2);
+
+            if (offset >= data.size())
+            {
+                connection.send_reply("l");
+                return;
+            }
+
+            const auto remaining = data.size() - offset;
+            const auto real_length = std::min(remaining, length);
+            const auto is_end = real_length == remaining;
+
+            const auto sub_region = data.substr(offset, real_length);
+
+            std::string reply = is_end ? "l" : "m";
+            reply.append(sub_region);
+
+            connection.send_reply(reply);
+        }
+
         void handle_features(connection_handler& connection, debugging_handler& handler, const std::string_view payload)
         {
             const auto [command, args] = split_string(payload, ':');
@@ -60,25 +83,8 @@ namespace gdb_stub
             }
 
             const auto [file, data] = split_string(args, ':');
-
-            size_t offset{}, length{};
-            rt_assert(sscanf_s(std::string(data).c_str(), "%zx,%zx", &offset, &length) == 2);
-
             const auto target_description = handler.get_target_description(file);
-
-            if (offset >= target_description.size())
-            {
-                connection.send_reply("l");
-                return;
-            }
-
-            const auto remaining = target_description.size() - offset;
-            const auto real_length = std::min(remaining, length);
-            const auto is_end = real_length == remaining;
-
-            const auto sub_region = target_description.substr(offset, real_length);
-
-            connection.send_reply((is_end ? "l" : "m") + sub_region);
+            send_xfer_data(connection, std::string(data), target_description);
         }
 
         void process_xfer(connection_handler& connection, debugging_handler& handler, const std::string_view payload)
