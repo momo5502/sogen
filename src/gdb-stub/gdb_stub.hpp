@@ -43,6 +43,11 @@ namespace gdb_stub
         virtual void on_interrupt() = 0;
 
         virtual std::string get_target_description(std::string_view file) = 0;
+
+        virtual bool switch_to_thread(uint32_t thread_id) = 0;
+
+        virtual uint32_t get_current_thread_id() = 0;
+        virtual std::vector<uint32_t> get_thread_ids() = 0;
     };
 
     bool run_gdb_stub(const network::address& bind_address, debugging_handler& handler);

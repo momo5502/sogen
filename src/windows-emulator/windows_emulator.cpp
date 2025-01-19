@@ -525,14 +525,39 @@ namespace
         }
     }
 
-    bool switch_to_thread(windows_emulator& win_emu, emulator_thread& thread)
+    emulator_thread* get_thread_by_id(process_context& process, const uint32_t id)
     {
+        for (auto& t : process.threads | std::views::values)
+        {
+            if (t.id == id)
+            {
+                return &t;
+            }
+        }
+
+        return nullptr;
+    }
+
+    bool switch_to_thread(windows_emulator& win_emu, emulator_thread& thread, const bool force = false)
+    {
+        if (thread.is_terminated())
+        {
+            return false;
+        }
+
         auto& emu = win_emu.emu();
         auto& context = win_emu.process();
 
-        if (!thread.is_thread_ready(win_emu))
+        const auto is_ready = thread.is_thread_ready(win_emu);
+
+        if (!is_ready)
         {
-            return false;
+            if (!force)
+            {
+                return false;
+            }
+
+            win_emu.yield_thread();
         }
 
         auto* active_thread = context.active_thread;
@@ -553,7 +578,6 @@ namespace
 
         thread.restore(emu);
         thread.setup_if_necessary(emu, context);
-
         return true;
     }
 
@@ -861,6 +885,17 @@ void windows_emulator::perform_thread_switch()
         // TODO: Optimize that
         std::this_thread::sleep_for(1ms);
     }
+}
+
+bool windows_emulator::activate_thread(const uint32_t id)
+{
+    const auto thread = get_thread_by_id(this->process(), id);
+    if (!thread)
+    {
+        return false;
+    }
+
+    return switch_to_thread(*this, *thread, true);
 }
 
 void windows_emulator::on_instruction_execution(const uint64_t address)
