@@ -215,9 +215,7 @@ bool memory_manager::protect_memory(const uint64_t address, const size_t size, c
 
     merge_regions(committed_regions);
 
-#if MOMO_REFLECTION_LEVEL > 0
-    inc_memory_layout_state_ver();
-#endif
+    invalidate_memory_layout_state_version();
 
     return true;
 }
@@ -242,9 +240,7 @@ bool memory_manager::allocate_mmio(const uint64_t address, const size_t size, mm
 
     entry->second.committed_regions[address] = committed_region{size, memory_permission::read_write};
 
-#if MOMO_REFLECTION_LEVEL > 0
-    inc_memory_layout_state_ver();
-#endif
+    invalidate_memory_layout_state_version();
 
     return true;
 }
@@ -270,9 +266,7 @@ bool memory_manager::allocate_memory(const uint64_t address, const size_t size, 
         entry->second.committed_regions[address] = committed_region{size, memory_permission::read_write};
     }
 
-#if MOMO_REFLECTION_LEVEL > 0
-    inc_memory_layout_state_ver();
-#endif
+    invalidate_memory_layout_state_version();
 
     return true;
 }
@@ -334,9 +328,7 @@ bool memory_manager::commit_memory(const uint64_t address, const size_t size, co
 
     merge_regions(committed_regions);
 
-#if MOMO_REFLECTION_LEVEL > 0
-    inc_memory_layout_state_ver();
-#endif
+    invalidate_memory_layout_state_version();
 
     return true;
 }
@@ -384,9 +376,7 @@ bool memory_manager::decommit_memory(const uint64_t address, const size_t size)
         ++i;
     }
 
-#if MOMO_REFLECTION_LEVEL > 0
-    inc_memory_layout_state_ver();
-#endif
+    invalidate_memory_layout_state_version();
 
     return true;
 }
@@ -440,10 +430,7 @@ bool memory_manager::release_memory(const uint64_t address, size_t size)
     }
 
     this->reserved_regions_.erase(entry);
-
-#if MOMO_REFLECTION_LEVEL > 0
-    inc_memory_layout_state_ver();
-#endif
+    invalidate_memory_layout_state_version();
     return true;
 }
 
