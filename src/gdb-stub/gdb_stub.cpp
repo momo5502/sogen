@@ -495,6 +495,7 @@ namespace gdb_stub
 
             switch (command)
             {
+            case 'S':
             case 'c':
                 resume_execution(c, false);
                 break;
