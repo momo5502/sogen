@@ -3,17 +3,16 @@
 #include "utils/compression.hpp"
 #include "utils/io.hpp"
 #include <vector>
-#include <iostream>
 
-void print_apiset(PAPI_SET_NAMESPACE apiSetMap);
+void print_apiset(PAPI_SET_NAMESPACE api_set_map);
 void create_header_file(const std::vector<uint8_t>& data);
 
 __forceinline PVOID GetCurrentProcessPeb()
 {
 #ifdef _WIN64
-    return (PVOID)__readgsqword(0x60);
+    return reinterpret_cast<PVOID>(__readgsqword(0x60));
 #else
-    return (PVOID)__readfsdword(0x30);
+    return reinterpret_cast<PVOID>(__readfsdword(0x30));
 #endif
 }
 
@@ -22,23 +21,23 @@ int main()
     printf("Dump API-SET\n");
     printf("------------\n\n");
 
-    const auto peb = (PPEB64)GetCurrentProcessPeb();
-    const auto apiSetMap = (PAPI_SET_NAMESPACE)(peb->ApiSetMap);
+    const auto peb = static_cast<PPEB64>(GetCurrentProcessPeb());
+    const auto api_set_map = peb->ApiSetMap;
 
-    printf("APISET: 0x%p\n", apiSetMap);
-    printf("Version: %d\n", apiSetMap->Version);
-    printf("Size: %08X\n", apiSetMap->Size);
-    printf("Flags: %08X\n", apiSetMap->Flags);
-    printf("Count: %d\n", apiSetMap->Count);
-    printf("EntryOffset: %08X\n", apiSetMap->EntryOffset);
-    printf("HashOffset: %08X\n", apiSetMap->HashOffset);
-    printf("HashFactor: %08X\n", apiSetMap->HashFactor);
+    printf("APISET: 0x%p\n", api_set_map);
+    printf("Version: %d\n", api_set_map->Version);
+    printf("Size: %08X\n", api_set_map->Size);
+    printf("Flags: %08X\n", api_set_map->Flags);
+    printf("Count: %d\n", api_set_map->Count);
+    printf("EntryOffset: %08X\n", api_set_map->EntryOffset);
+    printf("HashOffset: %08X\n", api_set_map->HashOffset);
+    printf("HashFactor: %08X\n", api_set_map->HashFactor);
     // print_apiset(apiSetMap);
 
     // Compress the API-SET binary blob
-    const auto* dataPtr = reinterpret_cast<const uint8_t*>(apiSetMap);
-    std::vector<uint8_t> buffer(dataPtr, dataPtr + apiSetMap->Size);
-    auto compressed = utils::compression::zlib::compress(buffer);
+    const auto* data_ptr = reinterpret_cast<const uint8_t*>(api_set_map);
+    const std::vector<uint8_t> buffer(data_ptr, data_ptr + api_set_map->Size);
+    const auto compressed = utils::compression::zlib::compress(buffer);
     if (compressed.empty())
     {
         printf("Failed to compress API-SET\n");
@@ -53,12 +52,13 @@ int main()
     return 0;
 }
 
-void print_apiset(PAPI_SET_NAMESPACE apiSetMap)
+void print_apiset(PAPI_SET_NAMESPACE api_set_map)
 {
-    for (ULONG i = 0; i < apiSetMap->Count; i++)
+    for (ULONG i = 0; i < api_set_map->Count; i++)
     {
-        auto entry = (PAPI_SET_NAMESPACE_ENTRY)((ULONG_PTR)apiSetMap + apiSetMap->EntryOffset +
-                                                i * sizeof(API_SET_NAMESPACE_ENTRY));
+        const auto entry = reinterpret_cast<PAPI_SET_NAMESPACE_ENTRY>(
+            reinterpret_cast<ULONG_PTR>(api_set_map) + api_set_map->EntryOffset + i * sizeof(API_SET_NAMESPACE_ENTRY));
+
         // printf("  Flags: %08X\n", entry->Flags);
         // printf("  NameOffset: %08X\n", entry->NameOffset);
         // printf("  NameLength: %08X\n", entry->NameLength);
@@ -66,13 +66,14 @@ void print_apiset(PAPI_SET_NAMESPACE apiSetMap)
         // printf("  ValueOffset: %08X\n", entry->ValueOffset);
         // printf("  ValueCount: %08X\n", entry->ValueCount);
 
-        std::wstring name((wchar_t*)((ULONG_PTR)apiSetMap + entry->NameOffset), entry->NameLength / sizeof(wchar_t));
+        std::wstring name(reinterpret_cast<wchar_t*>(reinterpret_cast<ULONG_PTR>(api_set_map) + entry->NameOffset),
+                          entry->NameLength / sizeof(wchar_t));
         printf("-----------\n[%05d]: Contract Name: %ls\n", i, name.data());
 
         for (ULONG x = 0; x < entry->ValueCount; x++)
         {
-            auto value =
-                (PAPI_SET_VALUE_ENTRY)((ULONG_PTR)apiSetMap + entry->ValueOffset + x * sizeof(API_SET_VALUE_ENTRY));
+            const auto value = reinterpret_cast<PAPI_SET_VALUE_ENTRY>(
+                reinterpret_cast<ULONG_PTR>(api_set_map) + entry->ValueOffset + x * sizeof(API_SET_VALUE_ENTRY));
             // printf("  Value %d\n", x);
             // printf("    Flags: %08X\n", value->Flags);
             // printf("    NameOffset: %08X\n", value->NameOffset);
@@ -80,10 +81,12 @@ void print_apiset(PAPI_SET_NAMESPACE apiSetMap)
             // printf("    ValueOffset: %08X\n", value->ValueOffset);
             // printf("    ValueLength: %08X\n", value->ValueLength);
 
-            std::wstring hostName((wchar_t*)((ULONG_PTR)apiSetMap + value->NameOffset),
-                                  value->NameLength / sizeof(wchar_t));
-            std::wstring altName((wchar_t*)((ULONG_PTR)apiSetMap + value->ValueOffset),
-                                 value->ValueLength / sizeof(wchar_t));
+            std::wstring hostName(
+                reinterpret_cast<wchar_t*>(reinterpret_cast<ULONG_PTR>(api_set_map) + value->NameOffset),
+                value->NameLength / sizeof(wchar_t));
+            std::wstring altName(
+                reinterpret_cast<wchar_t*>(reinterpret_cast<ULONG_PTR>(api_set_map) + value->ValueOffset),
+                value->ValueLength / sizeof(wchar_t));
             printf("    HostName: %ls - AltName: %ls\n", hostName.empty() ? L"<none>" : hostName.data(),
                    altName.empty() ? L"<none>" : altName.data());
         }
@@ -94,25 +97,25 @@ void print_apiset(PAPI_SET_NAMESPACE apiSetMap)
 void create_header_file(const std::vector<uint8_t>& data)
 {
     FILE* output;
-    fopen_s(&output, "api-set.h", "w");
+    (void)fopen_s(&output, "api-set.h", "w");
     if (!output)
     {
         printf("Failed to create output file\n");
         return;
     }
 
-    fprintf(output, "#pragma once\n\n");
-    fprintf(output, "#include <stdint.h>\n\n");
-    fprintf(output, "const uint8_t api_set_blob[] = {\n");
+    (void)fprintf(output, "#pragma once\n\n");
+    (void)fprintf(output, "#include <stdint.h>\n\n");
+    (void)fprintf(output, "const uint8_t api_set_blob[] = {\n");
     for (ULONG i = 0; i < data.size(); i++)
     {
-        fprintf(output, "0x%02X, ", data[i]);
+        (void)fprintf(output, "0x%02X, ", data[i]);
         if (i % 16 == 15)
         {
-            fprintf(output, "\n");
+            (void)fprintf(output, "\n");
         }
     }
 
-    fprintf(output, "};\n");
-    fclose(output);
+    (void)fprintf(output, "};\n");
+    (void)fclose(output);
 }
