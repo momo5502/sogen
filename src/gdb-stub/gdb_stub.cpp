@@ -27,6 +27,14 @@ namespace gdb_stub
             std::optional<uint32_t> continuation_thread{};
         };
 
+        struct debugging_context
+        {
+            connection_handler& connection;
+            debugging_handler& handler;
+            debugging_state& state;
+            async_handler& async;
+        };
+
         network::tcp_client_socket accept_client(const network::address& bind_address)
         {
             network::tcp_server_socket server{bind_address.get_family()};
@@ -77,68 +85,68 @@ namespace gdb_stub
             connection.send_reply(reply);
         }
 
-        void handle_features(connection_handler& connection, debugging_handler& handler, const std::string_view payload)
+        void handle_features(const debugging_context& c, const std::string_view payload)
         {
             const auto [command, args] = split_string(payload, ':');
 
             if (command != "read")
             {
-                connection.send_reply({});
+                c.connection.send_reply({});
                 return;
             }
 
             const auto [file, data] = split_string(args, ':');
-            const auto target_description = handler.get_target_description(file);
-            send_xfer_data(connection, std::string(data), target_description);
+            const auto target_description = c.handler.get_target_description(file);
+            send_xfer_data(c.connection, std::string(data), target_description);
         }
 
-        void process_xfer(connection_handler& connection, debugging_handler& handler, const std::string_view payload)
+        void process_xfer(const debugging_context& c, const std::string_view payload)
         {
             auto [name, args] = split_string(payload, ':');
 
             if (name == "features")
             {
-                handle_features(connection, handler, args);
+                handle_features(c, args);
             }
             else
             {
-                connection.send_reply({});
+                c.connection.send_reply({});
             }
         }
 
-        void process_query(connection_handler& connection, debugging_handler& handler, const std::string_view payload)
+        void process_query(const debugging_context& c, const std::string_view payload)
         {
             const auto [name, args] = split_string(payload, ':');
 
             if (name == "Supported")
             {
-                connection.send_reply("PacketSize=1024;qXfer:features:read+");
+                c.connection.send_reply("PacketSize=1024;qXfer:features:read+");
             }
             else if (name == "Attached")
             {
-                connection.send_reply("1");
+                c.connection.send_reply("1");
             }
             else if (name == "Xfer")
             {
-                process_xfer(connection, handler, args);
+                process_xfer(c, args);
             }
             else if (name == "Symbol")
             {
-                connection.send_reply("OK");
+                c.connection.send_reply("OK");
             }
             else if (name == "C")
             {
-                const auto thread_id = handler.get_current_thread_id();
-                connection.send_reply("QC" + utils::string::to_hex_number(thread_id));
+                const auto thread_id = c.handler.get_current_thread_id();
+                c.connection.send_reply("QC" + utils::string::to_hex_number(thread_id));
             }
             else if (name == "sThreadInfo")
             {
-                connection.send_reply("l");
+                c.connection.send_reply("l");
             }
             else if (name == "fThreadInfo")
             {
                 std::string reply{};
-                const auto ids = handler.get_thread_ids();
+                const auto ids = c.handler.get_thread_ids();
 
                 for (const auto id : ids)
                 {
@@ -146,15 +154,15 @@ namespace gdb_stub
                     reply.append(utils::string::to_hex_number(id));
                 }
 
-                connection.send_reply(reply);
+                c.connection.send_reply(reply);
             }
             else
             {
-                connection.send_reply({});
+                c.connection.send_reply({});
             }
         }
 
-        void process_action(connection_handler& connection, const action a)
+        void process_action(const connection_handler& connection, const action a)
         {
             if (a == action::shutdown)
             {
@@ -183,91 +191,88 @@ namespace gdb_stub
             return handler.delete_breakpoint(type, address, size);
         }
 
-        void handle_breakpoint(connection_handler& connection, debugging_handler& handler, const std::string& data,
-                               const bool set)
+        void handle_breakpoint(const debugging_context& c, const std::string& data, const bool set)
         {
             uint32_t type{};
             uint64_t addr{};
             size_t kind{};
             rt_assert(sscanf_s(data.c_str(), "%x,%" PRIX64 ",%zx", &type, &addr, &kind) == 3);
 
-            const auto res = change_breakpoint(handler, set, translate_breakpoint_type(type), addr, kind);
-            connection.send_reply(res ? "OK" : "E01");
+            const auto res = change_breakpoint(c.handler, set, translate_breakpoint_type(type), addr, kind);
+            c.connection.send_reply(res ? "OK" : "E01");
         }
 
-        void signal_stop(connection_handler& connection, debugging_handler& handler)
+        void signal_stop(const debugging_context& c)
         {
-            const auto id = handler.get_current_thread_id();
+            const auto id = c.handler.get_current_thread_id();
             const auto hex_id = utils::string::to_hex_number(id);
-            connection.send_reply("T05thread:" + hex_id + ";");
+            c.connection.send_reply("T05thread:" + hex_id + ";");
         }
 
-        void apply_continuation_thread(debugging_handler& handler, debugging_state& state)
+        void apply_continuation_thread(const debugging_context& c)
         {
-            if (state.continuation_thread)
+            if (c.state.continuation_thread)
             {
-                handler.switch_to_thread(*state.continuation_thread);
-                state.continuation_thread = std::nullopt;
+                c.handler.switch_to_thread(*c.state.continuation_thread);
+                c.state.continuation_thread = std::nullopt;
             }
         }
 
-        void continue_execution(connection_handler& connection, async_handler& async, debugging_state& state,
-                                debugging_handler& handler)
+        void continue_execution(const debugging_context& c)
         {
-            apply_continuation_thread(handler, state);
+            apply_continuation_thread(c);
 
-            async.run();
-            process_action(connection, handler.run());
-            async.pause();
-            signal_stop(connection, handler);
+            c.async.run();
+            process_action(c.connection, c.handler.run());
+            c.async.pause();
+            signal_stop(c);
         }
 
-        void singlestep_execution(connection_handler& connection, debugging_handler& handler, debugging_state& state)
+        void singlestep_execution(const debugging_context& c)
         {
-            apply_continuation_thread(handler, state);
-            process_action(connection, handler.singlestep());
-            signal_stop(connection, handler);
+            apply_continuation_thread(c);
+            process_action(c.connection, c.handler.singlestep());
+            signal_stop(c);
         }
 
-        void handle_v_packet(connection_handler& connection, async_handler& async, debugging_handler& handler,
-                             debugging_state& state, const std::string_view data)
+        void handle_v_packet(const debugging_context& c, const std::string_view data)
         {
             const auto [name, args] = split_string(data, ':');
 
             if (name == "Cont?")
             {
                 // connection.send_reply("vCont;s;c");
-                connection.send_reply({});
+                c.connection.send_reply({});
             }
             else if (name == "Cont;s")
             {
-                singlestep_execution(connection, handler, state);
+                singlestep_execution(c);
             }
             else if (name == "Cont;c")
             {
-                continue_execution(connection, async, state, handler);
+                continue_execution(c);
             }
             else
             {
-                connection.send_reply({});
+                c.connection.send_reply({});
             }
         }
 
-        void read_registers(connection_handler& connection, debugging_handler& handler)
+        void read_registers(const debugging_context& c)
         {
             std::string response{};
             std::vector<std::byte> data{};
-            data.resize(handler.get_max_register_size());
+            data.resize(c.handler.get_max_register_size());
 
-            const auto registers = handler.get_register_count();
+            const auto registers = c.handler.get_register_count();
 
             for (size_t i = 0; i < registers; ++i)
             {
-                const auto size = handler.read_register(i, data.data(), data.size());
+                const auto size = c.handler.read_register(i, data.data(), data.size());
 
                 if (!size)
                 {
-                    connection.send_reply("E01");
+                    c.connection.send_reply("E01");
                     return;
                 }
 
@@ -275,64 +280,62 @@ namespace gdb_stub
                 response.append(utils::string::to_hex_string(register_data));
             }
 
-            connection.send_reply(response);
+            c.connection.send_reply(response);
         }
 
-        void write_registers(connection_handler& connection, debugging_handler& handler, const std::string_view payload)
+        void write_registers(const debugging_context& c, const std::string_view payload)
         {
             const auto data = utils::string::from_hex_string(payload);
 
-            const auto registers = handler.get_register_count();
-            const auto register_size = handler.get_max_register_size();
+            const auto registers = c.handler.get_register_count();
+            const auto register_size = c.handler.get_max_register_size();
 
             size_t offset = 0;
             for (size_t i = 0; i < registers; ++i)
             {
                 if (offset >= data.size())
                 {
-                    connection.send_reply("E01");
+                    c.connection.send_reply("E01");
                     return;
                 }
 
                 const auto max_size = std::min(register_size, data.size() - offset);
-                const auto size = handler.write_register(i, data.data() + offset, max_size);
+                const auto size = c.handler.write_register(i, data.data() + offset, max_size);
 
                 offset += size;
 
                 if (!size)
                 {
-                    connection.send_reply("E01");
+                    c.connection.send_reply("E01");
                     return;
                 }
             }
 
-            connection.send_reply("OK");
+            c.connection.send_reply("OK");
         }
 
-        void read_single_register(connection_handler& connection, debugging_handler& handler,
-                                  const std::string& payload)
+        void read_single_register(const debugging_context& c, const std::string& payload)
         {
             size_t reg{};
             rt_assert(sscanf_s(payload.c_str(), "%zx", &reg) == 1);
 
             std::vector<std::byte> data{};
-            data.resize(handler.get_max_register_size());
+            data.resize(c.handler.get_max_register_size());
 
-            const auto size = handler.read_register(reg, data.data(), data.size());
+            const auto size = c.handler.read_register(reg, data.data(), data.size());
 
             if (size)
             {
                 const std::span register_data(data.data(), size);
-                connection.send_reply(utils::string::to_hex_string(register_data));
+                c.connection.send_reply(utils::string::to_hex_string(register_data));
             }
             else
             {
-                connection.send_reply("E01");
+                c.connection.send_reply("E01");
             }
         }
 
-        void write_single_register(connection_handler& connection, debugging_handler& handler,
-                                   const std::string_view payload)
+        void write_single_register(const debugging_context& c, const std::string_view payload)
         {
             const auto [reg, hex_data] = split_string(payload, '=');
 
@@ -340,11 +343,11 @@ namespace gdb_stub
             rt_assert(sscanf_s(std::string(reg).c_str(), "%zx", &register_index) == 1);
 
             const auto data = utils::string::from_hex_string(hex_data);
-            const auto res = handler.write_register(register_index, data.data(), data.size()) > 0;
-            connection.send_reply(res ? "OK" : "E01");
+            const auto res = c.handler.write_register(register_index, data.data(), data.size()) > 0;
+            c.connection.send_reply(res ? "OK" : "E01");
         }
 
-        void read_memory(connection_handler& connection, debugging_handler& handler, const std::string& payload)
+        void read_memory(const debugging_context& c, const std::string& payload)
         {
             uint64_t address{};
             size_t size{};
@@ -352,24 +355,24 @@ namespace gdb_stub
 
             if (size > 0x1000)
             {
-                connection.send_reply("E01");
+                c.connection.send_reply("E01");
                 return;
             }
 
             std::vector<std::byte> data{};
             data.resize(size);
 
-            const auto res = handler.read_memory(address, data.data(), data.size());
+            const auto res = c.handler.read_memory(address, data.data(), data.size());
             if (!res)
             {
-                connection.send_reply("E01");
+                c.connection.send_reply("E01");
                 return;
             }
 
-            connection.send_reply(utils::string::to_hex_string(data));
+            c.connection.send_reply(utils::string::to_hex_string(data));
         }
 
-        void write_memory(connection_handler& connection, debugging_handler& handler, const std::string_view payload)
+        void write_memory(const debugging_context& c, const std::string_view payload)
         {
             const auto [info, hex_data] = split_string(payload, ':');
 
@@ -379,15 +382,15 @@ namespace gdb_stub
 
             if (size > 0x1000)
             {
-                connection.send_reply("E01");
+                c.connection.send_reply("E01");
                 return;
             }
 
             auto data = utils::string::from_hex_string(hex_data);
             data.resize(size);
 
-            const auto res = handler.write_memory(address, data.data(), data.size());
-            connection.send_reply(res ? "OK" : "E01");
+            const auto res = c.handler.write_memory(address, data.data(), data.size());
+            c.connection.send_reply(res ? "OK" : "E01");
         }
 
         std::string decode_x_memory(const std::string_view payload)
@@ -416,7 +419,7 @@ namespace gdb_stub
             return result;
         }
 
-        void write_x_memory(connection_handler& connection, debugging_handler& handler, const std::string_view payload)
+        void write_x_memory(const debugging_context& c, const std::string_view payload)
         {
             const auto [info, encoded_data] = split_string(payload, ':');
 
@@ -426,29 +429,28 @@ namespace gdb_stub
 
             if (size > 0x1000)
             {
-                connection.send_reply("E01");
+                c.connection.send_reply("E01");
                 return;
             }
 
             auto data = decode_x_memory(encoded_data);
             data.resize(size);
 
-            const auto res = handler.write_memory(address, data.data(), data.size());
+            const auto res = c.handler.write_memory(address, data.data(), data.size());
             if (!res)
             {
-                connection.send_reply("E01");
+                c.connection.send_reply("E01");
                 return;
             }
 
-            connection.send_reply("OK");
+            c.connection.send_reply("OK");
         }
 
-        void switch_to_thread(connection_handler& connection, debugging_handler& handler, debugging_state& state,
-                              const std::string_view payload)
+        void switch_to_thread(const debugging_context& c, const std::string_view payload)
         {
             if (payload.size() < 2)
             {
-                connection.send_reply({});
+                c.connection.send_reply({});
                 return;
             }
 
@@ -458,98 +460,96 @@ namespace gdb_stub
             const auto operation = payload[0];
             if (operation == 'c')
             {
-                state.continuation_thread = id;
-                connection.send_reply("OK");
+                c.state.continuation_thread = id;
+                c.connection.send_reply("OK");
             }
             else if (operation == 'g')
             {
-                const auto res = id == 0 || handler.switch_to_thread(id);
-                connection.send_reply(res ? "OK" : "E01");
+                const auto res = id == 0 || c.handler.switch_to_thread(id);
+                c.connection.send_reply(res ? "OK" : "E01");
             }
             else
             {
-                connection.send_reply({});
+                c.connection.send_reply({});
             }
         }
 
-        void handle_command(connection_handler& connection, async_handler& async, debugging_handler& handler,
-                            debugging_state& state, const uint8_t command, const std::string_view data)
+        void handle_command(const debugging_context& c, const uint8_t command, const std::string_view data)
         {
-            // printf("GDB command: %c -> %.*s\n", command, static_cast<int>(data.size()), data.data());
+            printf("GDB command: %c -> %.*s\n", command, static_cast<int>(data.size()), data.data());
 
             switch (command)
             {
             case 'c':
-                continue_execution(connection, async, state, handler);
+                continue_execution(c);
                 break;
 
             case 's':
-                singlestep_execution(connection, handler, state);
+                singlestep_execution(c);
                 break;
 
             case 'q':
-                process_query(connection, handler, data);
+                process_query(c, data);
                 break;
 
             case 'D':
-                connection.close();
+                c.connection.close();
                 break;
 
             case 'z':
             case 'Z':
-                handle_breakpoint(connection, handler, std::string(data), command == 'Z');
+                handle_breakpoint(c, std::string(data), command == 'Z');
                 break;
 
             case '?':
-                signal_stop(connection, handler);
+                signal_stop(c);
                 break;
 
             case 'v':
-                handle_v_packet(connection, async, handler, state, data);
+                handle_v_packet(c, data);
                 break;
 
             case 'g':
-                read_registers(connection, handler);
+                read_registers(c);
                 break;
 
             case 'G':
-                write_registers(connection, handler, data);
+                write_registers(c, data);
                 break;
 
             case 'p':
-                read_single_register(connection, handler, std::string(data));
+                read_single_register(c, std::string(data));
                 break;
 
             case 'P':
-                write_single_register(connection, handler, data);
+                write_single_register(c, data);
                 break;
 
             case 'm':
-                read_memory(connection, handler, std::string(data));
+                read_memory(c, std::string(data));
                 break;
 
             case 'M':
-                write_memory(connection, handler, data);
+                write_memory(c, data);
                 break;
 
             case 'X':
-                write_x_memory(connection, handler, data);
+                write_x_memory(c, data);
                 break;
 
             case 'H':
-                switch_to_thread(connection, handler, state, data);
+                switch_to_thread(c, data);
                 break;
 
             default:
-                connection.send_reply({});
+                c.connection.send_reply({});
                 break;
             }
         }
 
-        void process_packet(connection_handler& connection, async_handler& async, debugging_handler& handler,
-                            debugging_state& state, const std::string_view packet)
+        void process_packet(const debugging_context& c, const std::string_view packet)
         {
-            connection.send_raw_data("+");
+            c.connection.send_raw_data("+");
 
             if (packet.empty())
             {
@@ -557,7 +557,7 @@ namespace gdb_stub
             }
 
             const auto command = packet.front();
-            handle_command(connection, async, handler, state, command, packet.substr(1));
+            handle_command(c, command, packet.substr(1));
         }
 
         bool is_interrupt_packet(const std::optional<std::string>& data)
@@ -592,6 +592,13 @@ namespace gdb_stub
         debugging_state state{};
         connection_handler connection{client};
 
+        debugging_context c{
+            .connection = connection,
+            .handler = handler,
+            .state = state,
+            .async = async,
+        };
+
         while (true)
         {
             const auto packet = connection.get_packet();
@@ -600,7 +607,7 @@ namespace gdb_stub
                 break;
             }
 
-            process_packet(connection, async, handler, state, *packet);
+            process_packet(c, *packet);
         }
 
         return true;
