@@ -550,14 +550,9 @@ namespace
 
         const auto is_ready = thread.is_thread_ready(win_emu);
 
-        if (!is_ready)
+        if (!is_ready && !force)
         {
-            if (!force)
-            {
-                return false;
-            }
-
-            win_emu.yield_thread();
+            return false;
         }
 
         auto* active_thread = context.active_thread;
@@ -570,7 +565,7 @@ namespace
 
         if (active_thread)
         {
-            win_emu.log.print(color::dark_gray, "Performing thread switch...\n");
+            win_emu.log.print(color::dark_gray, "Performing thread switch: %X -> %X\n", active_thread->id, thread.id);
             active_thread->save(emu);
         }
 
@@ -1059,7 +1054,7 @@ void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
 
     while (true)
     {
-        if (this->switch_thread)
+        if (this->switch_thread || !this->current_thread().is_thread_ready(*this))
         {
             this->perform_thread_switch();
         }
