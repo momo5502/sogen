@@ -491,7 +491,7 @@ namespace gdb_stub
 
         void handle_command(const debugging_context& c, const uint8_t command, const std::string_view data)
         {
-            printf("GDB command: %c -> %.*s\n", command, static_cast<int>(data.size()), data.data());
+            // printf("GDB command: %c -> %.*s\n", command, static_cast<int>(data.size()), data.data());
 
             switch (command)
             {
