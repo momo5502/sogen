@@ -190,18 +190,25 @@ namespace gdb_stub
             connection.send_reply(res ? "OK" : "E01");
         }
 
+        void signal_stop(connection_handler& connection, debugging_handler& handler)
+        {
+            const auto id = handler.get_current_thread_id();
+            const auto hex_id = utils::string::to_hex_number(id);
+            connection.send_reply("T05thread:" + hex_id + ";");
+        }
+
         void continue_execution(connection_handler& connection, async_handler& async, debugging_handler& handler)
         {
             async.run();
             process_action(connection, handler.run());
             async.pause();
-            connection.send_reply("S05");
+            signal_stop(connection, handler);
         }
 
         void singlestep_execution(connection_handler& connection, debugging_handler& handler)
         {
             process_action(connection, handler.singlestep());
-            connection.send_reply("S05");
+            signal_stop(connection, handler);
         }
 
         void handle_v_packet(connection_handler& connection, async_handler& async, debugging_handler& handler,
@@ -470,7 +477,7 @@ namespace gdb_stub
                 break;
 
             case '?':
-                connection.send_reply("S05");
+                signal_stop(connection, handler);
                 break;
 
             case 'v':
