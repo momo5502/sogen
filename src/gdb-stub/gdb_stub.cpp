@@ -209,16 +209,16 @@ namespace gdb_stub
 
             for (size_t i = 0; i < registers; ++i)
             {
-                memset(data.data(), 0, data.size());
-                const auto res = handler.read_register(i, data.data(), data.size());
+                const auto size = handler.read_register(i, data.data(), data.size());
 
-                if (!res)
+                if (!size)
                 {
                     connection.send_reply("E01");
                     return;
                 }
 
-                response.append(utils::string::to_hex_string(data));
+                const std::span register_data(data.data(), size);
+                response.append(utils::string::to_hex_string(register_data));
             }
 
             connection.send_reply(response);
@@ -231,20 +231,21 @@ namespace gdb_stub
             const auto registers = handler.get_register_count();
             const auto register_size = handler.get_max_register_size();
 
+            size_t offset = 0;
             for (size_t i = 0; i < registers; ++i)
             {
-                const auto offset = i * register_size;
-                const auto end_offset = offset + register_size;
-
-                if (data.size() < end_offset)
+                if (offset >= data.size())
                 {
                     connection.send_reply("E01");
                     return;
                 }
 
-                const auto res = handler.write_register(i, data.data() + offset, register_size);
+                const auto max_size = std::min(register_size, data.size() - offset);
+                const auto size = handler.write_register(i, data.data() + offset, max_size);
 
-                if (!res)
+                offset += size;
+
+                if (!size)
                 {
                     connection.send_reply("E01");
                     return;
@@ -263,11 +264,12 @@ namespace gdb_stub
             std::vector<std::byte> data{};
             data.resize(handler.get_max_register_size());
 
-            const auto res = handler.read_register(reg, data.data(), data.size());
+            const auto size = handler.read_register(reg, data.data(), data.size());
 
-            if (res)
+            if (size)
             {
-                connection.send_reply(utils::string::to_hex_string(data));
+                const std::span register_data(data.data(), size);
+                connection.send_reply(utils::string::to_hex_string(register_data));
             }
             else
             {
@@ -283,12 +285,8 @@ namespace gdb_stub
             size_t register_index{};
             rt_assert(sscanf_s(std::string(reg).c_str(), "%zx", &register_index) == 1);
 
-            const auto register_size = handler.get_max_register_size();
             const auto data = utils::string::from_hex_string(hex_data);
-
-            const auto res = register_size <= data.size() && //
-                             handler.write_register(register_index, data.data(), register_size);
-
+            const auto res = handler.write_register(register_index, data.data(), data.size()) > 0;
             connection.send_reply(res ? "OK" : "E01");
         }
 

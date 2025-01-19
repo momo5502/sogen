@@ -105,46 +105,40 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
 
     size_t get_max_register_size() override
     {
-        // return 256 / 8;
-        return 64 / 8;
+        return 512 / 8;
     }
 
-    bool read_register(const size_t reg, void* data, const size_t max_length) override
+    size_t read_register(const size_t reg, void* data, const size_t max_length) override
     {
         try
         {
             if (reg >= gdb_registers.size())
             {
-                // TODO: Fix
-                return true;
+                return 0;
             }
 
-            this->emu_->read_register(gdb_registers[reg], data, max_length);
-            return true;
+            return this->emu_->read_register(gdb_registers[reg], data, max_length);
         }
         catch (...)
         {
-            // TODO: Fix
-            return true;
+            return 0;
         }
     }
 
-    bool write_register(const size_t reg, const void* data, const size_t size) override
+    size_t write_register(const size_t reg, const void* data, const size_t size) override
     {
         try
         {
             if (reg >= gdb_registers.size())
             {
-                // TODO: Fix
-                return true;
+                return 0;
             }
 
-            this->emu_->write_register(gdb_registers[reg], data, size);
-            return true;
+            return this->emu_->write_register(gdb_registers[reg], data, size);
         }
         catch (...)
         {
-            return false;
+            return 0;
         }
     }
 

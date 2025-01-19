@@ -109,7 +109,7 @@ namespace utils::string
         return to_hex_string(&i, sizeof(Integer), uppercase);
     }
 
-    inline std::string to_hex_string(const std::span<std::byte> data, const bool uppercase = false)
+    inline std::string to_hex_string(const std::span<const std::byte> data, const bool uppercase = false)
     {
         return to_hex_string(data.data(), data.size(), uppercase);
     }
