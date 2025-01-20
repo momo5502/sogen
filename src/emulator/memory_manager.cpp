@@ -214,6 +214,9 @@ bool memory_manager::protect_memory(const uint64_t address, const size_t size, c
     }
 
     merge_regions(committed_regions);
+
+    invalidate_memory_layout_state_version();
+
     return true;
 }
 
@@ -236,6 +239,8 @@ bool memory_manager::allocate_mmio(const uint64_t address, const size_t size, mm
                            .first;
 
     entry->second.committed_regions[address] = committed_region{size, memory_permission::read_write};
+
+    invalidate_memory_layout_state_version();
 
     return true;
 }
@@ -260,6 +265,8 @@ bool memory_manager::allocate_memory(const uint64_t address, const size_t size, 
         this->map_memory(address, size, permissions);
         entry->second.committed_regions[address] = committed_region{size, memory_permission::read_write};
     }
+
+    invalidate_memory_layout_state_version();
 
     return true;
 }
@@ -320,6 +327,9 @@ bool memory_manager::commit_memory(const uint64_t address, const size_t size, co
     }
 
     merge_regions(committed_regions);
+
+    invalidate_memory_layout_state_version();
+
     return true;
 }
 
@@ -365,6 +375,8 @@ bool memory_manager::decommit_memory(const uint64_t address, const size_t size)
 
         ++i;
     }
+
+    invalidate_memory_layout_state_version();
 
     return true;
 }
@@ -418,6 +430,7 @@ bool memory_manager::release_memory(const uint64_t address, size_t size)
     }
 
     this->reserved_regions_.erase(entry);
+    invalidate_memory_layout_state_version();
     return true;
 }
 
