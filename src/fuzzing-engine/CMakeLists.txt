@@ -14,8 +14,6 @@ target_link_libraries(fuzzing-engine PRIVATE
   emulator-common
 )
 
-target_include_directories(fuzzing-engine INTERFACE
-    "${CMAKE_CURRENT_LIST_DIR}"
-)
+target_include_directories(fuzzing-engine INTERFACE "${CMAKE_CURRENT_LIST_DIR}")
 
 momo_strip_target(fuzzing-engine)

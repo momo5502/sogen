@@ -1,4 +1,1 @@
-if(WIN32)
-    add_subdirectory(dump-apiset)
-endif()
-
+add_subdirectory(dump-apiset)

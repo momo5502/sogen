@@ -12,9 +12,7 @@ else()
     add_library(unicorn-emulator SHARED ${SRC_FILES})
 endif()
 
-target_include_directories(unicorn-emulator INTERFACE
-    "${CMAKE_CURRENT_LIST_DIR}"
-)
+target_include_directories(unicorn-emulator INTERFACE "${CMAKE_CURRENT_LIST_DIR}")
 
 target_link_libraries(unicorn-emulator PUBLIC emulator)
 target_link_libraries(unicorn-emulator PRIVATE unicorn emulator-common)

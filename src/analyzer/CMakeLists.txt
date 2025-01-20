@@ -15,7 +15,7 @@ target_precompile_headers(analyzer PRIVATE std_include.hpp)
 target_link_libraries(analyzer PRIVATE
   reflect
   windows-emulator
-  gdb-stub
+  windows-gdb-stub
 )
 
 set_property(GLOBAL PROPERTY VS_STARTUP_PROJECT analyzer)

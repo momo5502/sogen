@@ -21,8 +21,6 @@ target_link_libraries(windows-emulator PUBLIC
   emulator
 )
 
-target_include_directories(windows-emulator INTERFACE
-    "${CMAKE_CURRENT_LIST_DIR}"
-)
+target_include_directories(windows-emulator INTERFACE "${CMAKE_CURRENT_LIST_DIR}")
 
 momo_strip_target(windows-emulator)

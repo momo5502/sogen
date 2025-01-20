@@ -51,7 +51,7 @@ momo_add_subdirectory_and_get_targets("src" OWN_TARGETS)
 
 ##########################################
 
-momo_targets_set_folder("External Dependencies" ${EXTERNAL_TARGETS})
+momo_targets_set_folder("dependencies" ${EXTERNAL_TARGETS})
 
 momo_targets_exclude_from_all(${EXTERNAL_TARGETS})
 momo_targets_disable_warnings(${EXTERNAL_TARGETS})
