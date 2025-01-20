@@ -1,10 +1,9 @@
 #pragma once
+#include <gdb_stub.hpp>
+#include <scoped_hook.hpp>
 #include <x64_emulator.hpp>
 
 #include <utils/concurrency.hpp>
-#include <gdb-stub/gdb_stub.hpp>
-
-#include "scoped_hook.hpp"
 
 #include "x64_register_mapping.hpp"
 #include "x64_target_descriptions.hpp"

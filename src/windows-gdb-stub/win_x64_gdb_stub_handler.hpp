@@ -1,7 +1,7 @@
 #pragma once
 #include "x64_gdb_stub_handler.hpp"
 
-#include "../windows_emulator.hpp"
+#include <windows_emulator.hpp>
 
 class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
 {

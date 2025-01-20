@@ -1,7 +1,7 @@
 #include "std_include.hpp"
 
 #include <windows_emulator.hpp>
-#include <debugging/win_x64_gdb_stub_handler.hpp>
+#include <win_x64_gdb_stub_handler.hpp>
 
 #include "object_watching.hpp"
 
