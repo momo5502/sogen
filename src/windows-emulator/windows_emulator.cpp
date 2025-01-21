@@ -268,18 +268,9 @@ namespace
                 command_line.append(arg);
             }
 
-            std::u16string current_folder{};
-            if (!settings.working_directory.empty())
-            {
-                current_folder = canonicalize_path(settings.working_directory).u16string() + u"\\";
-            }
-            else
-            {
-                current_folder = canonicalize_path(settings.application).parent_path().u16string() + u"\\";
-            }
-
             allocator.make_unicode_string(proc_params.CommandLine, command_line);
-            allocator.make_unicode_string(proc_params.CurrentDirectory.DosPath, current_folder);
+            allocator.make_unicode_string(proc_params.CurrentDirectory.DosPath,
+                                          win_emu.file_sys.get_working_directory());
             allocator.make_unicode_string(proc_params.ImagePathName,
                                           canonicalize_path(settings.application).u16string());
 
@@ -831,10 +822,15 @@ std::unique_ptr<x64_emulator> create_default_x64_emulator()
     return unicorn::create_x64_emulator();
 }
 
-windows_emulator::windows_emulator(emulator_settings settings, emulator_callbacks callbacks,
+windows_emulator::windows_emulator(const emulator_settings& settings, emulator_callbacks callbacks,
                                    std::unique_ptr<x64_emulator> emu)
     : windows_emulator(std::move(emu))
 {
+    if (!settings.working_directory.empty())
+    {
+        this->file_sys.set_working_directory(settings.working_directory.u16string());
+    }
+
     this->silent_until_main_ = settings.silent_until_main && !settings.disable_logging;
     this->use_relative_time_ = settings.use_relative_time;
     this->log.disable_output(settings.disable_logging || this->silent_until_main_);
@@ -843,8 +839,9 @@ windows_emulator::windows_emulator(emulator_settings settings, emulator_callback
 }
 
 windows_emulator::windows_emulator(std::unique_ptr<x64_emulator> emu)
-    : emu_(std::move(emu)),
-      process_(*emu_)
+    : file_sys(R"(C:\Users\mahe.WIBU\Desktop\emulator\src\tools\root)", u"C:\\"),
+      emu_(std::move(emu)),
+      process_(*emu_, file_sys)
 {
     this->setup_hooks();
 }
@@ -854,14 +851,15 @@ void windows_emulator::setup_process(const emulator_settings& settings)
     auto& emu = this->emu();
 
     auto& context = this->process();
-    context.mod_manager = module_manager(emu); // TODO: Cleanup module manager
+    context.mod_manager = module_manager(emu, this->file_sys); // TODO: Cleanup module manager
 
     setup_context(*this, settings);
 
-    context.executable = context.mod_manager.map_module(settings.application, this->log);
+    context.executable = context.mod_manager.map_local_module(settings.application, this->log);
 
-    context.peb.access(
-        [&](PEB64& peb) { peb.ImageBaseAddress = reinterpret_cast<std::uint64_t*>(context.executable->image_base); });
+    context.peb.access([&](PEB64& peb) {
+        peb.ImageBaseAddress = reinterpret_cast<std::uint64_t*>(context.executable->image_base); //
+    });
 
     context.ntdll = context.mod_manager.map_module(R"(C:\Windows\System32\ntdll.dll)", this->log);
     context.win32u = context.mod_manager.map_module(R"(C:\Windows\System32\win32u.dll)", this->log);

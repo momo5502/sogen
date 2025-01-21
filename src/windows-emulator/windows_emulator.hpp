@@ -8,6 +8,7 @@
 #include "syscall_dispatcher.hpp"
 #include "process_context.hpp"
 #include "logger.hpp"
+#include "file_system.hpp"
 
 std::unique_ptr<x64_emulator> create_default_x64_emulator();
 
@@ -47,7 +48,7 @@ class windows_emulator
 {
   public:
     windows_emulator(std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
-    windows_emulator(emulator_settings settings, emulator_callbacks callbacks = {},
+    windows_emulator(const emulator_settings& settings, emulator_callbacks callbacks = {},
                      std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
 
     windows_emulator(windows_emulator&&) = delete;
@@ -130,6 +131,8 @@ class windows_emulator
     {
         return this->callbacks_;
     }
+    
+    file_system file_sys;
 
   private:
     emulator_callbacks callbacks_{};

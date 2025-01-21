@@ -39,7 +39,10 @@ namespace utils
 
         static std::filesystem::path canonicalize_path(const std::filesystem::path& key)
         {
-            auto path = key.lexically_normal().wstring();
+            auto key_string = key.u16string();
+            std::ranges::replace(key_string, u'\\', '/');
+
+            auto path = std::filesystem::path(key).lexically_normal().wstring();
             return utils::string::to_lower_consume(path);
         }
 

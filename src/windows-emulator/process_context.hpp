@@ -529,12 +529,12 @@ class emulator_thread : ref_counted_object
 
 struct process_context
 {
-    process_context(x64_emulator& emu)
+    process_context(x64_emulator& emu, file_system& file_sys)
         : base_allocator(emu),
           peb(emu),
           process_params(emu),
           kusd(emu, *this),
-          mod_manager(emu)
+          mod_manager(emu, file_sys)
     {
     }
 

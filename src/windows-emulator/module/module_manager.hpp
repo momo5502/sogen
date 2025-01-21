@@ -1,6 +1,8 @@
 #pragma once
-#include "mapped_module.hpp"
 #include <emulator.hpp>
+
+#include "mapped_module.hpp"
+#include "../file_system.hpp"
 
 class logger;
 
@@ -8,9 +10,10 @@ class module_manager
 {
   public:
     using module_map = std::map<uint64_t, mapped_module>;
-    module_manager(emulator& emu);
+    module_manager(emulator& emu, file_system& file_sys);
 
-    mapped_module* map_module(const std::filesystem::path& file, logger& logger);
+    mapped_module* map_module(const std::filesystem::path& file, const logger& logger);
+    mapped_module* map_local_module(const std::filesystem::path& file, const logger& logger);
 
     mapped_module* find_by_address(const uint64_t address)
     {
@@ -45,6 +48,7 @@ class module_manager
 
   private:
     emulator* emu_{};
+    file_system* file_sys_{};
 
     module_map modules_{};
 
