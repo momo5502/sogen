@@ -1,16 +1,30 @@
 @ECHO OFF
 
-:: Host system directories
+NET SESSIONS > NUL 2>&1
+IF %ERRORLEVEL% NEQ 0 (
+	ECHO Error: This script requires administrative privileges.
+	EXIT /B 1
+)
+
 SET SYSDIR="%WINDIR%\System32"
 
 :: Qiling rootfs directories
-SET QL_WINDIR="Windows"
-SET QL_SYSDIR="%QL_WINDIR%\System32"
+SET EMU_ROOT=root
+SET EMU_FILESYS=%EMU_ROOT%\filesys
+SET EMU_WINDIR=%EMU_FILESYS%\c\windows
+SET EMU_SYSDIR=%EMU_WINDIR%\system32
+SET EMU_REGDIR=%EMU_ROOT%\registry
 
-MKDIR %QL_WINDIR%
-MKDIR %QL_SYSDIR%
+MKDIR %EMU_SYSDIR%
+MKDIR %EMU_REGDIR%
 
-:: Collect 32-bit DLL files
+REG SAVE HKLM\SYSTEM %EMU_REGDIR%\SYSTEM /Y
+REG SAVE HKLM\SECURITY %EMU_REGDIR%\SECURITY /Y
+REG SAVE HKLM\SOFTWARE %EMU_REGDIR%\SOFTWARE /Y
+REG SAVE HKLM\HARDWARE %EMU_REGDIR%\HARDWARE /Y
+REG SAVE HKLM\SAM %EMU_REGDIR%\SAM /Y
+COPY /B /Y C:\Users\Default\NTUSER.DAT "%EMU_REGDIR%\NTUSER.DAT"
+
 CALL :collect_dll advapi32.dll
 CALL :collect_dll bcrypt.dll
 CALL :collect_dll cfgmgr32.dll
@@ -25,12 +39,12 @@ CALL :collect_dll hal.dll
 CALL :collect_dll iphlpapi.dll
 CALL :collect_dll kdcom.dll
 CALL :collect_dll kernel32.dll
-CALL :collect_dll KernelBase.dll
+CALL :collect_dll kernelbase.dll
 CALL :collect_dll mpr.dll
 CALL :collect_dll mscoree.dll
 CALL :collect_dll msvcp_win.dll
 CALL :collect_dll msvcp60.dll
-CALL :collect_dll msvcr120_clr0400.dll, msvcr110.dll
+CALL :collect_dll msvcr120_clr0400.dll
 CALL :collect_dll msvcrt.dll
 CALL :collect_dll netapi32.dll
 CALL :collect_dll ntdll.dll
@@ -64,9 +78,6 @@ CALL :collect_dll msvcp140.dll
 
 CALL :collect_dll locale.nls
 
-:: Collect extras
-CALL :collect %SYSDIR64%, ntoskrnl.exe, %QL_SYSDIR32%
-
 :: All done!
 EXIT /B 0
 
@@ -77,7 +88,7 @@ EXIT /B
 
 :collect
 CALL :normpath SRC, %~1\%~2
-CALL :normpath DST, %~3\%~4
+CALL :normpath DST, %~3\%~2
 
 IF EXIST %SRC% (
 	ECHO %SRC% -^> %DST%
@@ -86,5 +97,5 @@ IF EXIST %SRC% (
 EXIT /B
 
 :collect_dll
-CALL :collect %SYSDIR%, %~1, %QL_SYSDIR%, %~2
+CALL :collect %SYSDIR%, %~1, %EMU_SYSDIR%
 EXIT /B
