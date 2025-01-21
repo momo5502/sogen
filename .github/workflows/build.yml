@@ -42,13 +42,10 @@ jobs:
           - Windows 2019
         include:
           - platform: Windows 2025
-            build-platform: Windows
             runner: windows-2025
           - platform: Windows 2022
-            build-platform: Windows
             runner: windows-2022
           - platform: Windows 2019
-            build-platform: Windows
             runner: windows-2019
     steps:
       - name: Checkout Source
@@ -176,11 +173,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          # TODO: Move different windows platforms into registry dump matrix
+        filesystem:
           - Windows 2025
           - Windows 2022
           - Windows 2019
+        platform:
+          - Windows
           - Linux GCC
           - Linux Clang
           - macOS
@@ -192,53 +190,42 @@ jobs:
             preset: debug
           - configuration: Release
             preset: release
-          - platform: Windows 2025
-            build-platform: Windows
-            runner: windows-2025
-          - platform: Windows 2022
-            build-platform: Windows
-            runner: windows-2022
-          - platform: Windows 2019
-            build-platform: Windows
-            runner: windows-2019
+          - platform: Windows
+            runner: windows-latest
           - platform: Linux GCC
-            build-platform: Linux GCC
             runner: ubuntu-24.04
           - platform: Linux Clang
-            build-platform: Linux Clang
             runner: ubuntu-24.04
           - platform: macOS
-            build-platform: macOS
             runner: macos-latest
     steps:
       - name: Download Test Config
         uses: actions/download-artifact@v4
         with:
-          name: Temp ${{ matrix.build-platform }} ${{matrix.configuration}} Test Config
+          name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
           path: build/${{matrix.preset}}
 
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
-          name: ${{ matrix.build-platform }} ${{matrix.configuration}} Artifacts
+          name: ${{ matrix.platform }} ${{matrix.configuration}} Artifacts
           path: build/${{matrix.preset}}/artifacts
 
       - name: Download Windows Artifacts
         uses: actions/download-artifact@v4
-        if: "${{ matrix.build-platform != 'Windows' }}"
+        if: "${{ matrix.platform != 'Windows' }}"
         with:
           name: Windows ${{matrix.configuration}} Artifacts
           path: build/${{matrix.preset}}/artifacts
   
-      - name: Download Registry Dump
+      - name: Download Root FS
         uses: actions/download-artifact@v4
         with:
-          name: Temp Registry Dump
-          path: build/${{matrix.preset}}/artifacts/registry
+          name: Temp ${{ matrix.filesystem }} Root FS
+          path: build/${{matrix.preset}}/artifacts/root
 
       - name: CMake Test
         run: cd build/${{matrix.preset}} && ctest --verbose
-        if: "${{ matrix.build-platform == 'Windows' }}"
 
   summary:
     name: Pipeline Summary
