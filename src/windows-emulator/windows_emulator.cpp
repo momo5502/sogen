@@ -948,11 +948,12 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
 
     auto& emu = this->emu();
 
-    printf("Inst: %16" PRIx64 " - RAX: %16" PRIx64 " - RBX: %16" PRIx64 " - RCX: %16" PRIx64 " - RDX: %16" PRIx64
-           " - R8: %16" PRIx64 " - R9: %16" PRIx64 " - RDI: %16" PRIx64 " - RSI: %16" PRIx64 " - %s\n",
-           address, emu.reg(x64_register::rax), emu.reg(x64_register::rbx), emu.reg(x64_register::rcx),
-           emu.reg(x64_register::rdx), emu.reg(x64_register::r8), emu.reg(x64_register::r9), emu.reg(x64_register::rdi),
-           emu.reg(x64_register::rsi), binary ? binary->name.c_str() : "<N/A>");
+    log.print(color::gray,
+              "Inst: %16" PRIx64 " - RAX: %16" PRIx64 " - RBX: %16" PRIx64 " - RCX: %16" PRIx64 " - RDX: %16" PRIx64
+              " - R8: %16" PRIx64 " - R9: %16" PRIx64 " - RDI: %16" PRIx64 " - RSI: %16" PRIx64 " - %s\n",
+              address, emu.reg(x64_register::rax), emu.reg(x64_register::rbx), emu.reg(x64_register::rcx),
+              emu.reg(x64_register::rdx), emu.reg(x64_register::r8), emu.reg(x64_register::r9),
+              emu.reg(x64_register::rdi), emu.reg(x64_register::rsi), binary ? binary->name.c_str() : "<N/A>");
 }
 
 void windows_emulator::setup_hooks()
