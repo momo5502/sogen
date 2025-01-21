@@ -32,6 +32,7 @@ jobs:
   dump-root:
     name: Dump Root FS
     runs-on: ${{ matrix.runner }}
+    needs: [build]
     strategy:
       fail-fast: false
       matrix:
@@ -53,8 +54,17 @@ jobs:
       - name: Checkout Source
         uses: actions/checkout@v4
 
+      - name: Download Windows Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: Windows Release Artifacts
+          path: build/release/artifacts
+
       - name: Dump Root FS
         run: src/tools/create-root.bat
+
+      - name: Dump API Set
+        run: cd root && ../build/release/artifacts/dump-apiset.exe
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
