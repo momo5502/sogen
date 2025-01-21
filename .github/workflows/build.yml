@@ -28,22 +28,40 @@ jobs:
           clang-format-version: '19'
           check-path: 'src'
 
-  dump-registry:
-    name: Dump Registry
-    runs-on: windows-latest
+
+  dump-root:
+    name: Dump Root FS
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - Windows 2025
+          - Windows 2022
+          - Windows 2019
+        include:
+          - platform: Windows 2025
+            build-platform: Windows
+            runner: windows-2025
+          - platform: Windows 2022
+            build-platform: Windows
+            runner: windows-2022
+          - platform: Windows 2019
+            build-platform: Windows
+            runner: windows-2019
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
 
-      - name: Dump Registry
-        run: src/tools/grab-registry.bat
+      - name: Dump Root FS
+        run: src/tools/create-root.bat
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Temp Registry Dump
+          name: Temp ${{ matrix.platform }} Root FS
           path: |
-            registry/*
+            root/*
 
   build:
     name: Build
@@ -144,7 +162,7 @@ jobs:
   test:
     name: Test
     runs-on: ${{ matrix.runner }}
-    needs: [dump-registry, build]
+    needs: [dump-root, build]
     strategy:
       fail-fast: false
       matrix:
@@ -215,7 +233,7 @@ jobs:
   summary:
     name: Pipeline Summary
     runs-on: ubuntu-24.04
-    needs: [dump-registry, build, test, verify-formatting]
+    needs: [dump-root, build, test, verify-formatting]
     if: always()
     steps:
       - uses: geekyeggo/delete-artifact@v5
