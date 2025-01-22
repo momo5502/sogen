@@ -22,11 +22,15 @@ set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
 
 ##########################################
 
 if(UNIX)
-  momo_add_c_and_cxx_compile_options(-fvisibility=hidden)
+  momo_add_c_and_cxx_compile_options(
+    -fvisibility=hidden
+    -ftrivial-auto-var-init=zero
+  )
 endif()
 
 ##########################################
@@ -45,7 +49,6 @@ if(LINUX)
     -fdata-sections
     -fstack-protector-strong
     -fdiagnostics-color=always
-    -ftrivial-auto-var-init=zero
   )
 
   add_compile_definitions(
