@@ -15,7 +15,7 @@ namespace utils
 
       public:
         optional_function() = default;
-		
+
         optional_function(std::function<Ret(Args...)> f)
             : func(std::move(f))
         {
