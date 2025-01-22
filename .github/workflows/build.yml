@@ -52,7 +52,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Download Windows Artifacts
-        uses: actions/download-artifact@v4
+        uses: pyTooling/download-artifact@v4
         with:
           name: Windows Release Artifacts
           path: build/release/artifacts
@@ -64,11 +64,11 @@ jobs:
         run: cd root && ../build/release/artifacts/dump-apiset.exe
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+        uses: pyTooling/upload-artifact@v4
         with:
           name: Temp ${{ matrix.platform }} Root FS
-          path: |
-            root/*
+          path: "*"
+          working-directory: root
 
   build:
     name: Build
@@ -152,19 +152,18 @@ jobs:
         if: ${{ !startsWith(matrix.platform, 'Android') }}
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+        uses: pyTooling/upload-artifact@v4
         with:
           name: ${{ matrix.platform }} ${{matrix.configuration}} Artifacts
-          path: |
-            build/${{matrix.preset}}/artifacts/*
+          working-directory: build/${{matrix.preset}}/artifacts/
+          path: "*"
 
       - name: Upload Test Configuration
-        uses: actions/upload-artifact@v4
+        uses: pyTooling/upload-artifact@v4
         with:
           name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
-          path: |
-            build/${{matrix.preset}}/**/CTestTestfile.cmake
-
+          path: "**/CTestTestfile.cmake"
+          working-directory: build/${{matrix.preset}}
 
   test:
     name: Test
@@ -200,26 +199,26 @@ jobs:
             runner: macos-latest
     steps:
       - name: Download Test Config
-        uses: actions/download-artifact@v4
+        uses: pyTooling/download-artifact@v4
         with:
           name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
           path: build/${{matrix.preset}}
 
       - name: Download Artifacts
-        uses: actions/download-artifact@v4
+        uses: pyTooling/download-artifact@v4
         with:
           name: ${{ matrix.platform }} ${{matrix.configuration}} Artifacts
           path: build/${{matrix.preset}}/artifacts
 
       - name: Download Windows Artifacts
-        uses: actions/download-artifact@v4
+        uses: pyTooling/download-artifact@v4
         if: "${{ matrix.platform != 'Windows' }}"
         with:
           name: Windows ${{matrix.configuration}} Artifacts
           path: build/${{matrix.preset}}/artifacts
   
       - name: Download Root FS
-        uses: actions/download-artifact@v4
+        uses: pyTooling/download-artifact@v4
         with:
           name: Temp ${{ matrix.filesystem }} Root FS
           path: build/${{matrix.preset}}/artifacts/root
