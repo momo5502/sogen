@@ -12,7 +12,7 @@ class module_manager
     using module_map = std::map<uint64_t, mapped_module>;
     module_manager(emulator& emu, file_system& file_sys);
 
-    mapped_module* map_module(const std::filesystem::path& file, const logger& logger);
+    mapped_module* map_module(const windows_path& file, const logger& logger);
     mapped_module* map_local_module(const std::filesystem::path& file, const logger& logger);
 
     mapped_module* find_by_address(const uint64_t address)

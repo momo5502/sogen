@@ -224,8 +224,13 @@ jobs:
           name: Temp ${{ matrix.filesystem }} Root FS
           path: build/${{matrix.preset}}/artifacts/root
 
+      - name: Copy Test Sample
+        run: cp build/${{matrix.preset}}/artifacts/test-sample.exe build/${{matrix.preset}}/artifacts/root/filesys/c/
+
       - name: CMake Test
         run: cd build/${{matrix.preset}} && ctest --verbose
+        env:
+          EMULATOR_ROOT: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/root
 
   summary:
     name: Pipeline Summary

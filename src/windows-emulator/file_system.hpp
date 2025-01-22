@@ -1,85 +1,67 @@
 #pragma once
 #include "std_include.hpp"
-#include <utils/path_key.hpp>
+#include "windows_path.hpp"
 
 class file_system
 {
   public:
-    static constexpr std::u16string_view nt_prefix = u"\\??\\";
-
-    file_system(std::filesystem::path root, std::u16string working_dir)
+    file_system(std::filesystem::path root, windows_path working_dir)
         : root_(std::move(root)),
           working_dir_(std::move(working_dir))
     {
     }
 
-    static std::filesystem::path canonicalize_windows_path(const std::filesystem::path& file)
+    std::filesystem::path translate(const windows_path& win_path) const
     {
-        const auto wide_file = file.u16string();
-
-        if (!wide_file.starts_with(nt_prefix))
+        if (win_path.is_absolute())
         {
-            return file;
+            return this->root_ / win_path.to_portable_path();
         }
 
-        return canonicalize_windows_path(wide_file.substr(nt_prefix.size()));
+        return this->root_ / (this->working_dir_ / win_path).to_portable_path();
     }
 
-    static std::filesystem::path canonicalize(const std::filesystem::path& path)
-    {
-        return utils::path_key::canonicalize_path(canonicalize_windows_path(path));
-    }
-
-    static std::filesystem::path canonicalize_drive_letter(const std::filesystem::path& path)
-    {
-        auto canonical_path = canonicalize(path);
-        if (canonical_path.empty() || !path.has_root_path())
-        {
-            return canonical_path;
-        }
-
-        return adapt_drive_component(canonical_path);
-    }
-
-    std::filesystem::path translate(const std::filesystem::path& win_path) const
-    {
-        const auto absolute_win_dir = make_absolute_windows_path(win_path.u16string());
-        return this->root_ / canonicalize_drive_letter(absolute_win_dir);
-    }
-
-    void set_working_directory(std::u16string working_dir)
+    void set_working_directory(windows_path working_dir)
     {
         this->working_dir_ = std::move(working_dir);
     }
 
-    const std::u16string& get_working_directory() const
+    const windows_path& get_working_directory() const
     {
         return this->working_dir_;
     }
 
+    windows_path local_to_windows_path(const std::filesystem::path& local_path) const
+    {
+        const auto absolute_local_path = absolute(local_path);
+        const auto relative_path = relative(absolute_local_path, this->root_);
+
+        if (relative_path.empty() || *relative_path.begin() == "..")
+        {
+            throw std::runtime_error("Path '" + local_path.string() + "' is not within the root filesystem!");
+        }
+
+        char drive{};
+        std::list<std::u16string> folders{};
+
+        for (auto i = relative_path.begin(); i != relative_path.end(); ++i)
+        {
+            if (i == relative_path.begin())
+            {
+                const auto str = i->string();
+                assert(str.size() == 1);
+                drive = str[0];
+            }
+            else
+            {
+                folders.push_back(i->u16string());
+            }
+        }
+
+        return windows_path{drive, std::move(folders)};
+    }
+
   private:
-    std::filesystem::path root_;
-    std::u16string working_dir_;
-
-    std::u16string make_absolute_windows_path(const std::u16string& path) const
-    {
-        if (!path.starts_with(nt_prefix) && (path.size() < 2 || path[1] != ':'))
-        {
-            return this->working_dir_ + u'/' + path;
-        }
-
-        return path;
-    }
-
-    static std::filesystem::path adapt_drive_component(const std::filesystem::path& original_path)
-    {
-        auto root_name = original_path.root_name().u16string();
-
-        if (!root_name.empty() && root_name.back() == u':')
-        {
-            root_name.pop_back();
-        }
-
-        return root_name + original_path.root_directory().u16string() + original_path.relative_path().u16string();
-    }
+    std::filesystem::path root_{};
+    windows_path working_dir_{};
 };

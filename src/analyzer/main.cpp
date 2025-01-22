@@ -12,7 +12,7 @@ namespace
         bool use_gdb{false};
         bool concise_logging{false};
         bool verbose_logging{false};
-        std::string registry_path{"./registry"};
+        std::string root_filesystem{"./root"};
     };
 
     void watch_system_objects(windows_emulator& win_emu, const bool cache_logging)
@@ -107,7 +107,7 @@ namespace
 
         emulator_settings settings{
             .application = args[0],
-            .registry_directory = options.registry_path,
+            .root_filesystem = options.root_filesystem,
             .arguments = parse_arguments(args),
             .silent_until_main = options.concise_logging,
         };
@@ -213,10 +213,10 @@ namespace
             {
                 if (args.size() < 2)
                 {
-                    throw std::runtime_error("No registry path provided after -r");
+                    throw std::runtime_error("No root path provided after -r");
                 }
                 arg_it = args.erase(arg_it);
-                options.registry_path = args[0];
+                options.root_filesystem = args[0];
             }
             else
             {

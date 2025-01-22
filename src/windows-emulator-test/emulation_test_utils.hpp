@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdlib>
 #include <gtest/gtest.h>
 #include <windows_emulator.hpp>
 
@@ -20,9 +21,21 @@
 
 namespace test
 {
+    inline std::filesystem::path get_emulator_root()
+    {
+        auto* env = getenv("EMULATOR_ROOT");
+        if (!env)
+        {
+            throw std::runtime_error("No EMULATOR_ROOT set!");
+        }
+
+        return env;
+    }
+
     inline windows_emulator create_sample_emulator(emulator_settings settings, emulator_callbacks callbacks = {})
     {
-        settings.application = "./test-sample.exe";
+        settings.application = "c:/test-sample.exe";
+        settings.root_filesystem = get_emulator_root();
         return windows_emulator{std::move(settings), std::move(callbacks)};
     }
 

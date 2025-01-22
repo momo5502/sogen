@@ -27,9 +27,9 @@ struct emulator_callbacks
 // TODO: Split up into application and emulator settings
 struct emulator_settings
 {
-    std::filesystem::path application{};
-    std::filesystem::path working_directory{};
-    std::filesystem::path registry_directory{"./registry"};
+    windows_path application{};
+    windows_path working_directory{};
+    std::filesystem::path root_filesystem{};
     std::vector<std::u16string> arguments{};
     bool disable_logging{false};
     bool silent_until_main{false};
@@ -47,7 +47,8 @@ enum class apiset_location
 class windows_emulator
 {
   public:
-    windows_emulator(std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
+    windows_emulator(const std::filesystem::path& root_path,
+                     std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
     windows_emulator(const emulator_settings& settings, emulator_callbacks callbacks = {},
                      std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
 
@@ -132,6 +133,7 @@ class windows_emulator
         return this->callbacks_;
     }
     
+    std::filesystem::path root_directory{};
     file_system file_sys;
 
   private:

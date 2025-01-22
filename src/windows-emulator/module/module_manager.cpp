@@ -28,8 +28,8 @@ namespace utils
 
     static void serialize(buffer_serializer& buffer, const mapped_module& mod)
     {
-        buffer.write_string(mod.name);
-        buffer.write(mod.path.u16string());
+        buffer.write(mod.name);
+        buffer.write(mod.path);
 
         buffer.write(mod.image_base);
         buffer.write(mod.size_of_image);
@@ -41,8 +41,8 @@ namespace utils
 
     static void deserialize(buffer_deserializer& buffer, mapped_module& mod)
     {
-        mod.name = buffer.read_string();
-        mod.path = buffer.read_string<std::u16string::value_type>();
+        buffer.read(mod.name);
+        buffer.read(mod.path);
 
         buffer.read(mod.image_base);
         buffer.read(mod.size_of_image);
@@ -59,7 +59,7 @@ module_manager::module_manager(emulator& emu, file_system& file_sys)
 {
 }
 
-mapped_module* module_manager::map_module(const std::filesystem::path& file, const logger& logger)
+mapped_module* module_manager::map_module(const windows_path& file, const logger& logger)
 {
     return this->map_local_module(this->file_sys_->translate(file), logger);
 }
@@ -70,7 +70,7 @@ mapped_module* module_manager::map_local_module(const std::filesystem::path& fil
 
     for (auto& mod : this->modules_ | std::views::values)
     {
-        if (mod.path == file)
+        if (mod.path == local_file)
         {
             return &mod;
         }

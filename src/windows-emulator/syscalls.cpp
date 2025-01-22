@@ -192,7 +192,7 @@ namespace
             return STATUS_OBJECT_NAME_NOT_FOUND;
         }
 
-        const std::wstring original_name(value->name.begin(), value->name.end());
+        const std::u16string original_name(value->name.begin(), value->name.end());
 
         if (key_value_information_class == KeyValueBasicInformation)
         {
@@ -2897,10 +2897,10 @@ namespace
 
         const auto filename = read_unicode_string(
             c.emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, attributes.ObjectName});
-        const auto u8_filename = u16_to_u8(filename);
+        const auto local_filename = c.win_emu.file_sys.translate(filename).string();
 
         struct _stat64 file_stat{};
-        if (_stat64(u8_filename.c_str(), &file_stat) != 0)
+        if (_stat64(local_filename.c_str(), &file_stat) != 0)
         {
             return STATUS_OBJECT_NAME_NOT_FOUND;
         }
