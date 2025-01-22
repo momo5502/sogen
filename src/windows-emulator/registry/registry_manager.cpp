@@ -55,7 +55,7 @@ void registry_manager::setup()
     register_hive(this->hives_, machine / "system", this->hive_path_ / "SYSTEM");
     register_hive(this->hives_, machine / "hardware", this->hive_path_ / "HARDWARE");
 
-    register_hive(this->hives_, root / "user", this->hive_path_ / "NTUSER.dat");
+    register_hive(this->hives_, root / "user", this->hive_path_ / "NTUSER.DAT");
 
     this->add_path_mapping(machine / "system" / "CurrentControlSet", machine / "system" / "ControlSet001");
 }
