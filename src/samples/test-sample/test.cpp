@@ -290,7 +290,7 @@ bool test_native_exceptions()
 void print_time()
 {
     const auto epoch_time = std::chrono::system_clock::now().time_since_epoch();
-    printf("Time: %lld\n", epoch_time.count());
+    printf("Time: %lld\n", std::chrono::duration_cast<std::chrono::nanoseconds>(epoch_time).count());
 }
 
 #define RUN_TEST(func, name)                 \

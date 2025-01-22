@@ -3,10 +3,7 @@
 #include "module_mapping.hpp"
 #include "windows-emulator/logger.hpp"
 
-namespace
-{
-
-}
+#include <serialization_helper.hpp>
 
 namespace utils
 {
