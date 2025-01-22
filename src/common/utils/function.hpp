@@ -40,7 +40,7 @@ namespace utils
                 }
             }
         }
-        explicit operator bool() const
+        explicit operator bool() const noexcept
         {
             return static_cast<bool>(func);
         }

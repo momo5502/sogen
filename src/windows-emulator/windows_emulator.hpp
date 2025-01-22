@@ -13,7 +13,7 @@ std::unique_ptr<x64_emulator> create_default_x64_emulator();
 
 struct emulator_callbacks
 {
-    utils::optional_function<void(const std::string_view)> stdout_callback{};
+    utils::optional_function<void(std::string_view)> stdout_callback{};
     utils::optional_function<void(uint32_t syscall_id, x64_emulator::pointer_type address, std::string_view mod_name,
                                   std::string_view syscall_name)>
         inline_syscall{};
