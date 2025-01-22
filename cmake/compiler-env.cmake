@@ -45,6 +45,7 @@ if(LINUX)
     -fdata-sections
     -fstack-protector-strong
     -fdiagnostics-color=always
+    -ftrivial-auto-var-init=zero
   )
 
   add_compile_definitions(
