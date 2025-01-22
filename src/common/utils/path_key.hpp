@@ -42,7 +42,7 @@ namespace utils
             auto key_string = key.u16string();
             std::ranges::replace(key_string, u'\\', '/');
 
-            auto path = std::filesystem::path(key).lexically_normal().wstring();
+            auto path = std::filesystem::path(key_string).lexically_normal().wstring();
             return utils::string::to_lower_consume(path);
         }
 
