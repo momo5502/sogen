@@ -180,7 +180,8 @@ jobs:
           - Windows
           - Linux GCC
           - Linux Clang
-          - macOS
+          - macOS arm64
+          - macOS x86_64
         configuration:
           - Debug
           - Release
@@ -190,29 +191,36 @@ jobs:
           - configuration: Release
             preset: release
           - platform: Windows
+            build-platform: Windows
             runner: windows-latest
           - platform: Linux GCC
+            build-platform: Linux GCC
             runner: ubuntu-24.04
           - platform: Linux Clang
+            build-platform: Linux Clang
             runner: ubuntu-24.04
-          - platform: macOS
+          - platform: macOS arm64
+            build-platform: macOS
             runner: macos-latest
+          - platform: macOS x86_64
+            build-platform: macOS
+            runner: macos-13
     steps:
       - name: Download Test Config
         uses: pyTooling/download-artifact@v4
         with:
-          name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
+          name: Temp ${{ matrix.build-platform }} ${{matrix.configuration}} Test Config
           path: build/${{matrix.preset}}
 
       - name: Download Artifacts
         uses: pyTooling/download-artifact@v4
         with:
-          name: ${{ matrix.platform }} ${{matrix.configuration}} Artifacts
+          name: ${{ matrix.build-platform }} ${{matrix.configuration}} Artifacts
           path: build/${{matrix.preset}}/artifacts
 
       - name: Download Windows Artifacts
         uses: pyTooling/download-artifact@v4
-        if: "${{ matrix.platform != 'Windows' }}"
+        if: "${{ matrix.build-platform != 'Windows' }}"
         with:
           name: Windows ${{matrix.configuration}} Artifacts
           path: build/${{matrix.preset}}/artifacts
