@@ -609,7 +609,7 @@ namespace
 
         if (attributes.RootDirectory != KNOWN_DLLS_DIRECTORY)
         {
-            puts("Unsupported section");
+            c.win_emu.log.error("Unsupported section");
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
         }
@@ -1036,7 +1036,7 @@ namespace
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtDuplicateObject(const syscall_context& /*c*/, const handle source_process_handle,
+    NTSTATUS handle_NtDuplicateObject(const syscall_context& c, const handle source_process_handle,
                                       const handle source_handle, const handle target_process_handle,
                                       const emulator_object<handle> target_handle, const ACCESS_MASK /*desired_access*/,
                                       const ULONG /*handle_attributes*/, const ULONG /*options*/)
@@ -1052,7 +1052,7 @@ namespace
             return STATUS_SUCCESS;
         }
 
-        puts("Duplicating non-pseudo object not supported yet!");
+        c.win_emu.log.error("Duplicating non-pseudo object not supported yet!");
         return STATUS_NOT_SUPPORTED;
     }
 
@@ -2555,7 +2555,7 @@ namespace
 
         if (port->name != u"\\Windows\\ApiPort")
         {
-            puts("!!! BAD PORT");
+            c.win_emu.log.error("!!! BAD PORT");
             return STATUS_NOT_SUPPORTED;
         }
 
@@ -2971,7 +2971,7 @@ namespace
     {
         if (handle_exception)
         {
-            puts("Unhandled exceptions not supported yet!");
+            c.win_emu.log.error("Unhandled exceptions not supported yet!");
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
         }
@@ -3115,7 +3115,7 @@ namespace
         const auto* mod = c.proc.mod_manager.find_by_address(base_address);
         if (!mod)
         {
-            puts("Unmapping non-module section not supported!");
+            c.win_emu.log.error("Unmapping non-module section not supported!");
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
         }
@@ -3232,7 +3232,7 @@ namespace
 
         if (wait_type != WaitAny && wait_type != WaitAll)
         {
-            puts("Wait type not supported!");
+            c.win_emu.log.error("Wait type not supported!");
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
         }
@@ -3312,7 +3312,7 @@ namespace
     {
         if (alertable)
         {
-            puts("Alertable NtDelayExecution not supported yet!");
+            c.win_emu.log.error("Alertable NtDelayExecution not supported yet!");
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
         }
