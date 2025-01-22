@@ -2897,6 +2897,9 @@ namespace
 
         const auto filename = read_unicode_string(
             c.emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, attributes.ObjectName});
+
+        c.win_emu.log.print(color::dark_gray, "--> Querying file attributes: %s\n", u16_to_u8(filename).c_str());
+
         const auto local_filename = c.win_emu.file_sys.translate(filename).string();
 
         struct _stat64 file_stat{};

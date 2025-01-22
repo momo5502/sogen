@@ -75,6 +75,7 @@ CALL :collect_dll winmm.dll
 CALL :collect_dll ws2_32.dll
 CALL :collect_dll wsock32.dll
 CALL :collect_dll msvcp140.dll
+CALL :collect_dll msvcp140d.dll
 
 CALL :collect_dll locale.nls
 
