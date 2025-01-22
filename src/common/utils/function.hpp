@@ -15,8 +15,15 @@ namespace utils
 
       public:
         optional_function() = default;
+		
         optional_function(std::function<Ret(Args...)> f)
             : func(std::move(f))
+        {
+        }
+
+        template <typename F, typename = std::enable_if_t<std::is_invocable_r_v<Ret, F, Args...>>>
+        optional_function(F&& f)
+            : func(std::forward<F>(f))
         {
         }
 
@@ -40,6 +47,7 @@ namespace utils
                 }
             }
         }
+
         explicit operator bool() const noexcept
         {
             return static_cast<bool>(func);
