@@ -77,13 +77,13 @@ namespace
                 return STATUS_INVALID_HANDLE;
             }
 
-            const std::filesystem::path full_path = parent_handle->hive / parent_handle->path / key;
+            const std::filesystem::path full_path = parent_handle->hive.get() / parent_handle->path.get() / key;
             key = full_path.u16string();
         }
 
         c.win_emu.log.print(color::dark_gray, "--> Registry key: %s\n", u16_to_u8(key).c_str());
 
-        auto entry = c.proc.registry.get_key(key);
+        auto entry = c.proc.registry.get_key({key});
         if (!entry.has_value())
         {
             return STATUS_OBJECT_NAME_NOT_FOUND;
@@ -115,8 +115,8 @@ namespace
 
         if (key_information_class == KeyNameInformation)
         {
-            auto key_name = (key->hive / key->path).wstring();
-            while (key_name.ends_with('/') || key_name.ends_with('\\'))
+            auto key_name = (key->hive.get() / key->path.get()).u16string();
+            while (key_name.ends_with(u'/') || key_name.ends_with(u'\\'))
             {
                 key_name.pop_back();
             }
