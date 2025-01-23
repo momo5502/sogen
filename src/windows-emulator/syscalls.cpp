@@ -3413,6 +3413,31 @@ namespace
         c.win_emu.yield_thread();
         return STATUS_SUCCESS;
     }
+    typedef UNICODE_STRING<EmulatorTraits<Emu64>> *PUNICODE_STRING;
+    typedef struct _CLSMENUNAME
+    {
+        LPSTR pszClientAnsiMenuName;
+        LPWSTR pwszClientUnicodeMenuName;
+        PUNICODE_STRING pusMenuName;
+    } CLSMENUNAME, *PCLSMENUNAME;
+    NTSTATUS handle_NtUserRegisterClassExWOW(
+        const syscall_context& c, const emulator_object<WNDCLASSEXW> lpwcx,
+        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> pustrClassName,
+        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> ClsNVersion,
+        const emulator_object<CLSMENUNAME> pClassMenuName)
+    {
+
+        UNICODE_STRING<EmulatorTraits<Emu64>> ClassName = pustrClassName.read();
+
+        const auto allocatedAddress = c.emu.allocate_memory(0x1000, memory_permission::read_write);
+
+        emulator_object<RTL_ATOM> atom{c.emu, allocatedAddress};
+
+        handle_NtAddAtomEx(c, ClassName.Buffer, ClassName.Length, atom, /*Flags=*/0);
+
+        return atom.read();
+    }
+
 }
 
 void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& handler_mapping)
@@ -3529,6 +3554,6 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserModifyUserStartupInfoFlags);
     add_handler(NtUserGetDCEx);
     add_handler(NtUserGetDpiForCurrentProcess);
-
+    add_handler(NtUserRegisterClassExWOW);
 #undef add_handler
 }
