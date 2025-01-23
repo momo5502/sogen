@@ -3426,7 +3426,7 @@ namespace
         LPWSTR pwszClientUnicodeMenuName;
         PUNICODE_STRING pusMenuName;
     } CLSMENUNAME, *PCLSMENUNAME;
-
+  
     NTSTATUS handle_NtUserRegisterClassExWOW(const syscall_context& c, const emulator_object<WNDCLASSEXW> lpwcx,
                                              emulator_object<UNICODE_STRING> pustrClassName,
                                              emulator_object<UNICODE_STRING> ClsNVersion,
@@ -3436,12 +3436,13 @@ namespace
         int index = 0;
 
         std::wstring name{};
-        std::wstring tempString;
+        std::wstring tempString; 
         int i = 0;
 
         while (true)
         {
             const auto character = c.emu.read_memory<wchar_t>(wndClassEx.lpszClassName + i);
+
 
             if (character == L'\0')
             {
@@ -3466,6 +3467,7 @@ namespace
             if (entry.second == name)
             {
                 return entry.first;
+
             }
 
             if (entry.first > 0)
@@ -3486,11 +3488,12 @@ namespace
 
             last_entry = entry.first;
         }
-        c.win_emu.log.print(color::gray, "Full ClassName: %ls , atom : %u\n", name.c_str(), index);
+        c.win_emu.log.print(color::gray, "Full ClassName: %ls , atom : %u\n", name.c_str(),index);
         c.proc.atoms[index] = std::move(name);
 
         return index;
     }
+
 }
 
 void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& handler_mapping)
