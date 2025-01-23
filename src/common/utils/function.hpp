@@ -39,12 +39,10 @@ namespace utils
             {
                 return func(std::forward<Args>(args)...);
             }
-            else
+
+            if constexpr (!std::is_void_v<Ret>)
             {
-                if constexpr (!std::is_void_v<Ret>)
-                {
-                    return Ret();
-                }
+                return Ret();
             }
         }
 
