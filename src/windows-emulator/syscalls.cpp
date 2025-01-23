@@ -3059,7 +3059,6 @@ namespace
         name.resize(length / 2);
 
         c.emu.read_memory(atom_name, name.data(), length);
-
         uint16_t index = 0;
         if (!c.proc.atoms.empty())
         {
@@ -3067,7 +3066,6 @@ namespace
             --i;
             index = i->first + 1;
         }
-
         std::optional<uint16_t> last_entry{};
         for (auto& entry : c.proc.atoms)
         {
@@ -3098,7 +3096,6 @@ namespace
 
             last_entry = entry.first;
         }
-
         c.proc.atoms[index] = std::move(name);
         atom.write(index);
         return STATUS_SUCCESS;
@@ -3413,13 +3410,8 @@ namespace
         c.win_emu.yield_thread();
         return STATUS_SUCCESS;
     }
-    typedef struct _UNICODE_STRING
-    {
-        USHORT Length;
-        USHORT MaximumLength;
-        PWSTR Buffer;
-    } UNICODE_STRING;
-    typedef UNICODE_STRING* PUNICODE_STRING;
+
+    typedef UNICODE_STRING<EmulatorTraits<Emu64>>* PUNICODE_STRING;
     typedef struct _CLSMENUNAME
     {
         LPSTR pszClientAnsiMenuName;
@@ -3428,70 +3420,20 @@ namespace
     } CLSMENUNAME, *PCLSMENUNAME;
   
     NTSTATUS handle_NtUserRegisterClassExWOW(const syscall_context& c, const emulator_object<WNDCLASSEXW> lpwcx,
-                                             emulator_object<UNICODE_STRING> pustrClassName,
-                                             emulator_object<UNICODE_STRING> ClsNVersion,
-                                             emulator_object<CLSMENUNAME> pClassMenuName)
+        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> pustrClassName,
+        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> ClsNVersion,
+        const emulator_object<CLSMENUNAME> pClassMenuName)
     {
-        WNDCLASSEXW wndClassEx = lpwcx.read();
-        int index = 0;
 
-        std::wstring name{};
-        std::wstring tempString; 
-        int i = 0;
+       UNICODE_STRING<EmulatorTraits<Emu64>> ClassName = pustrClassName.read();
+       const auto address = c.emu.allocate_memory(0x1000, memory_permission::read_write);
 
-        while (true)
-        {
-            const auto character = c.emu.read_memory<wchar_t>(wndClassEx.lpszClassName + i);
+ 
+       emulator_object<RTL_ATOM> atom{c.emu, address};
+       handle_NtAddAtomEx(c, ClassName.Buffer, ClassName.Length, atom, 1);
 
-
-            if (character == L'\0')
-            {
-                break;
-            }
-            tempString += character;
-            i++;
-        }
-
-        name = tempString.c_str();
-
-        if (!c.proc.atoms.empty())
-        {
-            auto i = c.proc.atoms.end();
-            --i;
-            index = i->first + 1;
-        }
-
-        std::optional<uint16_t> last_entry{};
-        for (auto& entry : c.proc.atoms)
-        {
-            if (entry.second == name)
-            {
-                return entry.first;
-
-            }
-
-            if (entry.first > 0)
-            {
-                if (!last_entry)
-                {
-                    index = 0;
-                }
-                else
-                {
-                    const auto diff = entry.first - *last_entry;
-                    if (diff > 1)
-                    {
-                        index = *last_entry + 1;
-                    }
-                }
-            }
-
-            last_entry = entry.first;
-        }
-        c.win_emu.log.print(color::gray, "Full ClassName: %ls , atom : %u\n", name.c_str(),index);
-        c.proc.atoms[index] = std::move(name);
-
-        return index;
+       
+        return atom.read();
     }
 
 }
