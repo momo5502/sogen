@@ -16,10 +16,7 @@ target_link_libraries(windows-emulator PRIVATE
   unicorn-emulator
 )
 
-target_link_libraries(windows-emulator PUBLIC
-  emulator-common
-  emulator
-)
+target_link_libraries(windows-emulator PUBLIC emulator)
 
 target_include_directories(windows-emulator INTERFACE "${CMAKE_CURRENT_LIST_DIR}")
 

@@ -3,6 +3,8 @@
 
 #include <x64_emulator.hpp>
 
+#include <utils/function.hpp>
+
 #include "syscall_dispatcher.hpp"
 #include "process_context.hpp"
 #include "logger.hpp"
@@ -11,13 +13,13 @@ std::unique_ptr<x64_emulator> create_default_x64_emulator();
 
 struct emulator_callbacks
 {
-    std::function<void(std::string_view)> stdout_callback{};
-    std::function<void(uint32_t syscall_id, x64_emulator::pointer_type address, std::string_view mod_name,
-                       std::string_view syscall_name)>
+    utils::optional_function<void(std::string_view)> stdout_callback{};
+    utils::optional_function<void(uint32_t syscall_id, x64_emulator::pointer_type address, std::string_view mod_name,
+                                  std::string_view syscall_name)>
         inline_syscall{};
-    std::function<void(uint32_t syscall_id, x64_emulator::pointer_type address, std::string_view mod_name,
-                       std::string_view syscall_name, x64_emulator::pointer_type prev_address,
-                       std::string_view prev_mod_name)>
+    utils::optional_function<void(uint32_t syscall_id, x64_emulator::pointer_type address, std::string_view mod_name,
+                                  std::string_view syscall_name, x64_emulator::pointer_type prev_address,
+                                  std::string_view prev_mod_name)>
         outofline_syscall{};
 };
 
@@ -108,13 +110,6 @@ class windows_emulator
         this->syscall_hooks_.push_back(std::move(callback));
     }
 
-    void on_stdout(const std::string_view data) const;
-    void on_inline_syscall(uint32_t syscall_id, const x64_emulator::pointer_type address,
-                           const std::string_view mod_name, const std::string_view name);
-    void on_outofline_syscall(uint32_t syscall_id, x64_emulator::pointer_type address, std::string_view mod_name,
-                              std::string_view syscall_name, x64_emulator::pointer_type prev_address,
-                              std::string_view prev_mod_name);
-
     logger log{};
     bool verbose{false};
     bool verbose_calls{false};
@@ -129,6 +124,11 @@ class windows_emulator
     bool time_is_relative() const
     {
         return this->use_relative_time_;
+    }
+
+    emulator_callbacks& callbacks()
+    {
+        return this->callbacks_;
     }
 
   private:
