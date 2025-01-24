@@ -449,14 +449,14 @@ namespace
             return STATUS_INVALID_HANDLE;
         }
 
-        const auto old_count = mutant->release();
+        const auto [old_count, succeeded] = mutant->release(c.proc.current_thread_id);
 
         if (previous_count)
         {
             previous_count.write(static_cast<LONG>(old_count));
         }
 
-        return STATUS_SUCCESS;
+        return succeeded ? STATUS_SUCCESS : STATUS_MUTANT_NOT_OWNED;
     }
 
     NTSTATUS handle_NtCreateMutant(const syscall_context& c, const emulator_object<handle> mutant_handle,
@@ -552,6 +552,12 @@ namespace
         const auto attributes = object_attributes.read();
         const auto name =
             read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
+
+        if (name == u"\\KernelObjects\\SystemErrorPortReady")
+        {
+            event_handle.write(WER_PORT_READY.bits);
+            return STATUS_SUCCESS;
+        }
 
         for (auto& entry : c.proc.events)
         {
@@ -3020,6 +3026,32 @@ namespace
         return STATUS_OBJECT_NAME_NOT_FOUND;
     }
 
+    NTSTATUS handle_NtReleaseSemaphore(const syscall_context& c, const handle semaphore_handle,
+                                       const ULONG release_count, const emulator_object<LONG> previous_count)
+    {
+        if (semaphore_handle.value.type != handle_types::semaphore)
+        {
+            c.win_emu.log.error("Bad handle type for NtReleaseSemaphore\n");
+            c.emu.stop();
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        auto* mutant = c.proc.semaphores.get(semaphore_handle);
+        if (!mutant)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        const auto [old_count, succeeded] = mutant->release(release_count);
+
+        if (previous_count)
+        {
+            previous_count.write(static_cast<LONG>(old_count));
+        }
+
+        return succeeded ? STATUS_SUCCESS : STATUS_SEMAPHORE_LIMIT_EXCEEDED;
+    }
+
     NTSTATUS handle_NtCreateSemaphore(const syscall_context& c, const emulator_object<handle> semaphore_handle,
                                       const ACCESS_MASK /*desired_access*/,
                                       const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
@@ -3222,8 +3254,9 @@ namespace
 
     bool is_awaitable_object_type(const handle h)
     {
-        return h.value.type == handle_types::thread    //
-               || h.value.type == handle_types::mutant //
+        return h.value.type == handle_types::thread       //
+               || h.value.type == handle_types::mutant    //
+               || h.value.type == handle_types::semaphore //
                || h.value.type == handle_types::event;
     }
 
@@ -3537,6 +3570,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserModifyUserStartupInfoFlags);
     add_handler(NtUserGetDCEx);
     add_handler(NtUserGetDpiForCurrentProcess);
+    add_handler(NtReleaseSemaphore);
 
 #undef add_handler
 }

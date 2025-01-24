@@ -634,6 +634,11 @@ namespace
             break;
 
         case handle_types::event: {
+            if (h.value.is_pseudo)
+            {
+                return true;
+            }
+
             auto* e = c.events.get(h);
             if (e)
             {
@@ -648,6 +653,16 @@ namespace
             if (e)
             {
                 return e->try_lock(current_thread_id);
+            }
+
+            break;
+        }
+
+        case handle_types::semaphore: {
+            auto* s = c.semaphores.get(h);
+            if (s)
+            {
+                return s->try_lock();
             }
 
             break;

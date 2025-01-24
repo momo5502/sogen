@@ -108,17 +108,17 @@ struct mutant : ref_counted_object
         return true;
     }
 
-    uint32_t release()
+    std::pair<uint32_t, bool> release(const uint32_t thread_id)
     {
         const auto old_count = this->locked_count;
 
-        if (this->locked_count <= 0)
+        if (this->locked_count <= 0 || this->owning_thread_id != thread_id)
         {
-            return old_count;
+            return {old_count, false};
         }
 
         --this->locked_count;
-        return old_count;
+        return {old_count, true};
     }
 
     void serialize(utils::buffer_serializer& buffer) const
@@ -239,8 +239,33 @@ struct section
 struct semaphore : ref_counted_object
 {
     std::u16string name{};
-    volatile uint32_t current_count{};
+    uint32_t current_count{};
     uint32_t max_count{};
+
+    bool try_lock()
+    {
+        if (this->current_count > 0)
+        {
+            --this->current_count;
+            return true;
+        }
+
+        return false;
+    }
+
+    std::pair<uint32_t, bool> release(const uint32_t release_count)
+    {
+        const auto old_count = this->current_count;
+
+        if (this->current_count + release_count > this->max_count)
+        {
+            return {old_count, false};
+        }
+
+        this->current_count += release_count;
+
+        return {old_count, true};
+    }
 
     void serialize(utils::buffer_serializer& buffer) const
     {
