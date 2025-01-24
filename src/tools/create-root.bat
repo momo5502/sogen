@@ -78,6 +78,7 @@ CALL :collect_dll msvcp140.dll
 CALL :collect_dll msvcp140d.dll
 CALL :collect_dll d3d11.dll
 CALL :collect_dll d3d9.dll
+CALL :collect_dll d3d12.dll
 CALL :collect_dll d3dcompiler_47.dll
 CALL :collect_dll dxgi.dll
 CALL :collect_dll dsound.dll
@@ -93,6 +94,7 @@ CALL :collect_dll wtsapi32.dll
 CALL :collect_dll x3daudio1_7.dll
 CALL :collect_dll xapofx1_5.dll
 CALL :collect_dll xinput1_3.dll
+CALL :collect_dll xinput9_1_0.dll
 CALL :collect_dll cryptsp.dll
 CALL :collect_dll resampledmo.dll
 CALL :collect_dll powrprof.dll
@@ -101,6 +103,13 @@ CALL :collect_dll gdi32full.dll
 CALL :collect_dll glu32.dll
 CALL :collect_dll msdmo.dll
 CALL :collect_dll dxcore.dll
+CALL :collect_dll mfplat.dll
+CALL :collect_dll wer.dll
+CALL :collect_dll dbghelp.dll
+CALL :collect_dll mscms.dll
+CALL :collect_dll ktmw32.dll
+CALL :collect_dll shcore.dll
+CALL :collect_dll diagnosticdatasettings.dll
 
 CALL :collect_dll locale.nls
 
