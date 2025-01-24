@@ -449,7 +449,7 @@ namespace
             return STATUS_INVALID_HANDLE;
         }
 
-        const auto [old_count, succeeded] = mutant->release(c.proc.current_thread_id);
+        const auto [old_count, succeeded] = mutant->release(c.win_emu.current_thread().id);
 
         if (previous_count)
         {
