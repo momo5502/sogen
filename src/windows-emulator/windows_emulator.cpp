@@ -145,7 +145,7 @@ namespace
         return buffer;
     }
 
-    std::vector<uint8_t> obtain_api_set(apiset_location location)
+    std::vector<uint8_t> obtain_api_set(const apiset_location location, const std::filesystem::path& root)
     {
         switch (location)
         {
@@ -162,7 +162,7 @@ namespace
             throw std::runtime_error("The APISET host location is not supported on this platform");
 #endif
         case apiset_location::file: {
-            auto apiset = utils::io::read_file("api-set.bin");
+            auto apiset = utils::io::read_file(root / "api-set.bin");
             if (apiset.empty())
                 throw std::runtime_error("Failed to read file api-set.bin");
             return decompress_apiset(apiset);
@@ -181,10 +181,11 @@ namespace
     }
 
     emulator_object<API_SET_NAMESPACE> build_api_set_map(x64_emulator& emu, emulator_allocator& allocator,
-                                                         apiset_location location = apiset_location::host)
+                                                         const apiset_location location = apiset_location::host,
+                                                         const std::filesystem::path& root = {})
     {
         return clone_api_set_map(emu, allocator,
-                                 reinterpret_cast<const API_SET_NAMESPACE&>(*obtain_api_set(location).data()));
+                                 reinterpret_cast<const API_SET_NAMESPACE&>(*obtain_api_set(location, root).data()));
     }
 
     emulator_allocator create_allocator(emulator& emu, const size_t size)
@@ -277,17 +278,13 @@ namespace
             proc_params.MaximumLength = proc_params.Length;
         });
 
-// TODO: make this configurable
-#ifdef OS_WINDOWS
-        apiset_location apiset_loc = apiset_location::host;
-#else
-        apiset_location apiset_loc = apiset_location::default_windows_11;
-#endif
+        // TODO: make this configurable
+        const apiset_location apiset_loc = apiset_location::file;
 
         context.peb.access([&](PEB64& peb) {
             peb.ImageBaseAddress = nullptr;
             peb.ProcessParameters = context.process_params.ptr();
-            peb.ApiSetMap = build_api_set_map(emu, allocator, apiset_loc).ptr();
+            peb.ApiSetMap = build_api_set_map(emu, allocator, apiset_loc, win_emu.root_directory).ptr();
 
             peb.ProcessHeap = nullptr;
             peb.ProcessHeaps = nullptr;
