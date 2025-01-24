@@ -117,7 +117,7 @@ namespace
         (void)&watch_system_objects;
         watch_system_objects(win_emu, options.concise_logging);
         win_emu.buffer_stdout = true;
-        // win_emu.verbose_calls = true;
+        win_emu.verbose_calls = options.verbose_logging;
 
         const auto& exe = *win_emu.process().executable;
 
