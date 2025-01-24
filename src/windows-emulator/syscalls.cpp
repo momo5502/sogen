@@ -477,10 +477,12 @@ namespace
 
         if (!name.empty())
         {
-            for (const auto& mutant : c.proc.mutants | std::views::values)
+            for (auto& entry : c.proc.mutants)
             {
-                if (mutant.name == name)
+                if (entry.second.name == name)
                 {
+                    ++entry.second.ref_count;
+                    mutant_handle.write(c.proc.mutants.make_handle(entry.first));
                     return STATUS_OBJECT_NAME_EXISTS;
                 }
             }
@@ -518,10 +520,12 @@ namespace
 
         if (!name.empty())
         {
-            for (const auto& event : c.proc.events | std::views::values)
+            for (auto& entry : c.proc.events)
             {
-                if (event.name == name)
+                if (entry.second.name == name)
                 {
+                    ++entry.second.ref_count;
+                    event_handle.write(c.proc.events.make_handle(entry.first));
                     return STATUS_OBJECT_NAME_EXISTS;
                 }
             }
@@ -3037,10 +3041,12 @@ namespace
 
         if (!s.name.empty())
         {
-            for (const auto& semaphore : c.proc.semaphores | std::views::values)
+            for (auto& entry : c.proc.semaphores)
             {
-                if (semaphore.name == s.name)
+                if (entry.second.name == s.name)
                 {
+                    ++entry.second.ref_count;
+                    semaphore_handle.write(c.proc.semaphores.make_handle(entry.first));
                     return STATUS_OBJECT_NAME_EXISTS;
                 }
             }
