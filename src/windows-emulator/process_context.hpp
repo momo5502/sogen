@@ -575,7 +575,7 @@ struct process_context
 
     std::vector<std::byte> default_register_set{};
 
-    uint32_t current_thread_id{0};
+    uint32_t spawned_thread_count{0};
     handle_store<handle_types::thread, emulator_thread> threads{};
     emulator_thread* active_thread{nullptr};
 
@@ -612,7 +612,7 @@ struct process_context
         buffer.write_map(this->atoms);
 
         buffer.write_vector(this->default_register_set);
-        buffer.write(this->current_thread_id);
+        buffer.write(this->spawned_thread_count);
         buffer.write(this->threads);
 
         buffer.write(this->threads.find_handle(this->active_thread).bits);
@@ -655,7 +655,7 @@ struct process_context
         buffer.read_map(this->atoms);
 
         buffer.read_vector(this->default_register_set);
-        buffer.read(this->current_thread_id);
+        buffer.read(this->spawned_thread_count);
 
         buffer.read(this->threads);
 
@@ -665,7 +665,7 @@ struct process_context
     handle create_thread(x64_emulator& emu, const uint64_t start_address, const uint64_t argument,
                          const uint64_t stack_size)
     {
-        emulator_thread t{emu, *this, start_address, argument, stack_size, ++this->current_thread_id};
+        emulator_thread t{emu, *this, start_address, argument, stack_size, ++this->spawned_thread_count};
         return this->threads.store(std::move(t));
     }
 };
