@@ -945,9 +945,13 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
         const auto export_entry = binary->address_names.find(address);
         if (export_entry != binary->address_names.end())
         {
+            const auto rsp = this->emu().read_stack_pointer();
+            const auto return_address = this->emu().read_memory<uint64_t>(rsp);
+            const auto* mod_name = this->process().mod_manager.find_name(return_address);
+
             log.print(is_interesting_call ? color::yellow : color::dark_gray,
-                      "Executing function: %s - %s (0x%" PRIx64 ")\n", binary->name.c_str(),
-                      export_entry->second.c_str(), address);
+                      "Executing function: %s - %s (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n", binary->name.c_str(),
+                      export_entry->second.c_str(), address, return_address, mod_name);
         }
         else if (address == binary->entry_point)
         {
