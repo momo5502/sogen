@@ -11,6 +11,7 @@ namespace
     {
         bool use_gdb{false};
         bool concise_logging{false};
+        bool verbose_logging{false};
         std::string registry_path{"./registry"};
     };
 
@@ -199,6 +200,10 @@ namespace
             if (arg == "-d")
             {
                 options.use_gdb = true;
+            }
+            else if (arg == "-v")
+            {
+                options.verbose_logging = true;
             }
             else if (arg == "-c")
             {
