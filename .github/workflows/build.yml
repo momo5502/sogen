@@ -51,6 +51,15 @@ jobs:
       - name: Checkout Source
         uses: actions/checkout@v4
 
+      - name: Download DirectX Runtime
+        run: curl -L -o directx_Jun2010_redist.exe https://download.microsoft.com/download/8/4/A/84A35BF1-DAFE-4AE8-82AF-AD2AE20B6B14/directx_Jun2010_redist.exe
+
+      - name: Extract DirectX Runtime
+        run: ./directx_Jun2010_redist.exe /Q /T:"${{github.workspace}}/dxrt"
+
+      - name: Install DirectX Runtime
+        run: "cmd /c \"start /wait .\\dxrt\\dxsetup.exe /silent\""
+
       - name: Download Windows Artifacts
         uses: pyTooling/download-artifact@v4
         with:
@@ -66,9 +75,10 @@ jobs:
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v4
         with:
-          name: Temp ${{ matrix.platform }} Root FS
+          name: ${{ matrix.platform }} Root FS
           path: "*"
           working-directory: root
+          retention-days: 1
 
   build:
     name: Build
@@ -226,7 +236,7 @@ jobs:
       - name: Download Root FS
         uses: pyTooling/download-artifact@v4
         with:
-          name: Temp ${{ matrix.filesystem }} Root FS
+          name: ${{ matrix.filesystem }} Root FS
           path: build/${{matrix.preset}}/artifacts/root
 
       - name: Copy Test Sample
