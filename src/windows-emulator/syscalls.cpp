@@ -3251,6 +3251,8 @@ namespace
                                     h.value.type);
                 return STATUS_NOT_SUPPORTED;
             }
+
+            t.await_objects.push_back(h);
         }
 
         if (timeout.value() && !t.await_time.has_value())
