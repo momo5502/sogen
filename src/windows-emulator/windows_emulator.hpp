@@ -132,7 +132,7 @@ class windows_emulator
     {
         return this->callbacks_;
     }
-    
+
     std::filesystem::path root_directory{};
     file_system file_sys;
 
