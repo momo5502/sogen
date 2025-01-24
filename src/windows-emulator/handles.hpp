@@ -114,7 +114,7 @@ namespace handle_detail
 struct generic_handle_store
 {
     virtual ~generic_handle_store() = default;
-    virtual bool erase(const handle h) = 0;
+    virtual bool erase(handle h) = 0;
 };
 
 template <handle_types::type Type, typename T, uint32_t IndexShift = 0>
@@ -205,7 +205,7 @@ class handle_store : public generic_handle_store
         {
             if (!T::deleter(entry->second))
             {
-                return false;
+                return true;
             }
         }
 
