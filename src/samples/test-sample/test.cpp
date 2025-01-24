@@ -287,6 +287,55 @@ bool test_native_exceptions()
     return test_access_violation_exception() && test_illegal_instruction_exception();
 }
 
+bool test_threads_winapi()
+{
+    struct ctx_t
+    {
+        int iterations;
+        int result;
+    };
+
+    static LPTHREAD_START_ROUTINE thread_proc = [](LPVOID lpParameter) -> DWORD {
+        ctx_t& c = *(ctx_t*)lpParameter;
+        c.result = 0;
+        for (int i = 1; i <= c.iterations; i++)
+        {
+            ++c.result;
+        }
+        return 0;
+    };
+
+    constexpr int thread_count = 5;
+    HANDLE threads[thread_count] = {nullptr};
+    ctx_t* ctxs[thread_count] = {nullptr};
+
+    for (int i = 0; i < thread_count; i++)
+    {
+        ctx_t* ctx = ctxs[i] = new ctx_t{5 * (i + 1), i - 2};
+        threads[i] = CreateThread(nullptr, 0, thread_proc, ctx, 0, nullptr);
+        if (!threads[i])
+        {
+            return false;
+        }
+    }
+
+    WaitForMultipleObjects(thread_count, threads, TRUE, INFINITE);
+
+    const int expected_results[thread_count] = {5, 10, 15, 20, 25};
+    for (int i = 0; i < thread_count; i++)
+    {
+        if (ctxs[i]->result != expected_results[i])
+        {
+            // printf("Error: thread %d returned %d, expected %d\n", i + 1, ctxs[i]->result, expected_results[i]);
+            return false;
+        }
+        CloseHandle(threads[i]);
+        delete ctxs[i];
+    }
+
+    return true;
+}
+
 void print_time()
 {
     const auto epoch_time = std::chrono::system_clock::now().time_since_epoch();
@@ -315,6 +364,7 @@ int main(int argc, const char* argv[])
     RUN_TEST(test_dir_io, "Dir I/O")
     RUN_TEST(test_registry, "Registry")
     RUN_TEST(test_threads, "Threads")
+    RUN_TEST(test_threads_winapi, "Threads WinAPI");
     RUN_TEST(test_env, "Environment")
     RUN_TEST(test_exceptions, "Exceptions")
     RUN_TEST(test_native_exceptions, "Native Exceptions")
