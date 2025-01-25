@@ -247,8 +247,8 @@ jobs:
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/root
 
-  smoke-test-android-x64:
-    name: Smoke Test Android x86_64
+  smoke-test-android:
+    name: Smoke Test Android
     runs-on: ubuntu-24.04
     needs: [create-emulation-root, build]
     strategy:
@@ -258,6 +258,9 @@ jobs:
           - Windows 2025
           - Windows 2022
           - Windows 2019
+        architecture:
+          - x86_64
+          - arm64-v8a
         configuration:
           - Debug
           - Release
@@ -276,7 +279,7 @@ jobs:
       - name: Download Artifacts
         uses: pyTooling/download-artifact@v4
         with:
-          name: Android x86_64 ${{matrix.configuration}} Artifacts
+          name: Android ${{matrix.architecture}} ${{matrix.configuration}} Artifacts
           path: build/${{matrix.preset}}/artifacts
 
       - name: Download Windows Artifacts
@@ -298,12 +301,13 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2.33.0
         with:
           api-level: 29
+          arch: ${{matrix.architecture}}
           script: "adb push build/${{matrix.preset}}/artifacts/* /data/local/tmp && adb shell \"cd /data/local/tmp && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && ./analyzer -e ./root c:/test-sample.exe\""
 
   summary:
     name: Pipeline Summary
     runs-on: ubuntu-24.04
-    needs: [smoke-test-android-x64, create-emulation-root, build, test, verify-formatting]
+    needs: [smoke-test-android, create-emulation-root, build, test, verify-formatting]
     if: always()
     steps:
       - uses: geekyeggo/delete-artifact@v5
