@@ -546,7 +546,7 @@ struct process_context
     handle_store<handle_types::port, port> ports{};
     handle_store<handle_types::mutant, mutant> mutants{};
     handle_store<handle_types::registry, registry_key, 2> registry_keys{};
-    std::map<uint16_t, std::wstring> atoms{};
+    std::map<uint16_t, std::u16string> atoms{};
 
     std::vector<std::byte> default_register_set{};
 

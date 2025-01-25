@@ -3055,7 +3055,7 @@ namespace
     NTSTATUS handle_NtAddAtomEx(const syscall_context& c, const uint64_t atom_name, const ULONG length,
                                 const emulator_object<RTL_ATOM> atom, const ULONG /*flags*/)
     {
-        std::wstring name{};
+        std::u16string name{};
         name.resize(length / 2);
 
         c.emu.read_memory(atom_name, name.data(), length);
