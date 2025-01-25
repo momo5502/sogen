@@ -66,7 +66,7 @@ jobs:
           name: Windows Release Artifacts
           path: build/release/artifacts
 
-      - name: Dump Root FS
+      - name: Create Emulation Root
         run: src/tools/create-root.bat
 
       - name: Dump API Set
@@ -75,7 +75,7 @@ jobs:
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v4
         with:
-          name: ${{ matrix.platform }} Root FS
+          name: ${{ matrix.platform }} Emulation Root
           path: "*"
           working-directory: root
           retention-days: 1
@@ -185,7 +185,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        filesystem:
+        emulation-root:
           - Windows 2025
           - Windows 2022
           - Windows 2019
@@ -233,10 +233,10 @@ jobs:
           name: Windows ${{matrix.configuration}} Artifacts
           path: build/${{matrix.preset}}/artifacts
   
-      - name: Download Root FS
+      - name: Download Emulation Root
         uses: pyTooling/download-artifact@v4
         with:
-          name: ${{ matrix.filesystem }} Root FS
+          name: ${{ matrix.emulation-root }} Emulation Root
           path: build/${{matrix.preset}}/artifacts/root
 
       - name: Copy Test Sample
