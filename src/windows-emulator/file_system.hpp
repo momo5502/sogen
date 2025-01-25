@@ -8,9 +8,9 @@ class file_system
 {
   public:
     file_system(std::filesystem::path root, windows_path working_dir = "C:\\")
-        : root_(std::move(root)),
-          working_dir_(std::move(working_dir))
+        : root_(std::move(root))
     {
+        this->set_working_directory(std::move(working_dir));
     }
 
     std::filesystem::path translate(const windows_path& win_path) const
@@ -32,6 +32,11 @@ class file_system
 
     void set_working_directory(windows_path working_dir)
     {
+        if (!working_dir.is_absolute())
+        {
+            throw std::runtime_error("Working directory is not an absolute path: " + working_dir.string());
+        }
+
         this->working_dir_ = std::move(working_dir);
     }
 

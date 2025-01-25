@@ -211,7 +211,7 @@ class windows_path
 
     bool empty() const
     {
-        return !this->is_relative() && this->folders_.empty();
+        return this->is_relative() && this->folders_.empty();
     }
 
   private:
