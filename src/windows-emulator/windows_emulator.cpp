@@ -1111,6 +1111,7 @@ void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
 void windows_emulator::serialize(utils::buffer_serializer& buffer) const
 {
     buffer.write(this->use_relative_time_);
+    this->file_sys.serialize(buffer);
     this->emu().serialize(buffer);
     this->process_.serialize(buffer);
     this->dispatcher_.serialize(buffer);
@@ -1118,11 +1119,16 @@ void windows_emulator::serialize(utils::buffer_serializer& buffer) const
 
 void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
 {
-    buffer.register_factory<x64_emulator_wrapper>([this] { return x64_emulator_wrapper{this->emu()}; });
+    buffer.register_factory<x64_emulator_wrapper>([this] {
+        return x64_emulator_wrapper{this->emu()}; //
+    });
 
-    buffer.register_factory<windows_emulator_wrapper>([this] { return windows_emulator_wrapper{*this}; });
+    buffer.register_factory<windows_emulator_wrapper>([this] {
+        return windows_emulator_wrapper{*this}; //
+    });
 
     buffer.read(this->use_relative_time_);
+    this->file_sys.deserialize(buffer);
 
     this->emu().deserialize(buffer);
     this->process_.deserialize(buffer);
@@ -1134,6 +1140,7 @@ void windows_emulator::save_snapshot()
     this->emu().save_snapshot();
 
     utils::buffer_serializer serializer{};
+    this->file_sys.serialize(serializer);
     this->process_.serialize(serializer);
 
     this->process_snapshot_ = serializer.move_buffer();
@@ -1153,6 +1160,7 @@ void windows_emulator::restore_snapshot()
     this->emu().restore_snapshot();
 
     utils::buffer_deserializer deserializer{this->process_snapshot_};
+    this->file_sys.deserialize(deserializer);
     this->process_.deserialize(deserializer);
     // this->process_ = *this->process_snapshot_;
 }

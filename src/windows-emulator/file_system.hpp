@@ -61,6 +61,16 @@ class file_system
         return windows_path{drive, std::move(folders)};
     }
 
+    void serialize(utils::buffer_serializer& buffer) const
+    {
+        buffer.write(this->working_dir_);
+    }
+
+    void deserialize(utils::buffer_deserializer& buffer)
+    {
+        buffer.read(this->working_dir_);
+    }
+
   private:
     std::filesystem::path root_{};
     windows_path working_dir_{};
