@@ -29,8 +29,8 @@ jobs:
           check-path: 'src'
 
 
-  dump-root:
-    name: Dump Root FS
+  create-emulation-root:
+    name: Create Emulation Root
     runs-on: ${{ matrix.runner }}
     needs: [build]
     strategy:
@@ -181,7 +181,7 @@ jobs:
   test:
     name: Test
     runs-on: ${{ matrix.runner }}
-    needs: [dump-root, build]
+    needs: [create-emulation-root, build]
     strategy:
       fail-fast: false
       matrix:
@@ -250,15 +250,17 @@ jobs:
   summary:
     name: Pipeline Summary
     runs-on: ubuntu-24.04
-    needs: [dump-root, build, test, verify-formatting]
+    needs: [create-emulation-root, build, test, verify-formatting]
     if: always()
     steps:
       - uses: geekyeggo/delete-artifact@v5
         with:
           name: 'Temp *'
+
       - name: Pipeline suceeded
         if: ${{ !(contains(needs.*.result, 'failure')) }}
         run: exit 0
+
       - name: Pipeline failed
         if: ${{ contains(needs.*.result, 'failure') }}
         run: exit 1
