@@ -44,7 +44,7 @@ namespace
 #endif
     }
 
-    void run_emulation(windows_emulator& win_emu, const analysis_options& options)
+    bool run_emulation(windows_emulator& win_emu, const analysis_options& options)
     {
         try
         {
@@ -78,10 +78,12 @@ namespace
         if (exit_status.has_value())
         {
             win_emu.log.print(color::red, "Emulation terminated with status: %X\n", *exit_status);
+            return false;
         }
         else
         {
-            win_emu.log.print(color::red, "Emulation terminated without status!\n");
+            win_emu.log.print(color::green, "Emulation terminated without status!\n");
+            return true;
         }
     }
 
@@ -99,11 +101,11 @@ namespace
         return wide_args;
     }
 
-    void run(const analysis_options& options, const std::span<const std::string_view> args)
+    bool run(const analysis_options& options, const std::span<const std::string_view> args)
     {
         if (args.empty())
         {
-            return;
+            return false;
         }
 
         emulator_settings settings{
@@ -175,7 +177,7 @@ namespace
             win_emu.emu().hook_memory_write(section.region.start, section.region.length, std::move(write_handler));
         }
 
-        run_emulation(win_emu, options);
+        return run_emulation(win_emu, options);
     }
 
     std::vector<std::string_view> bundle_arguments(const int argc, char** argv)
@@ -253,12 +255,14 @@ int main(const int argc, char** argv)
             throw std::runtime_error("Application not specified!");
         }
 
+        bool result{};
+
         do
         {
-            run(options, args);
+            result = run(options, args);
         } while (options.use_gdb);
 
-        return 0;
+        return result ? 0 : 1;
     }
     catch (std::exception& e)
     {
