@@ -14,8 +14,11 @@ namespace
 
 std::unique_ptr<io_device> create_device(const std::u16string_view device)
 {
-    if (device == u"CNG" || device == u"KsecDD" || device == u"PcwDrv" || device == u"DeviceApi\\CMApi" ||
-        device == u"ConDrv\\Server")
+    if (device == u"CNG"                 //
+        || device == u"KsecDD"           //
+        || device == u"PcwDrv"           //
+        || device == u"DeviceApi\\CMApi" //
+        || device == u"ConDrv\\Server")
     {
         return std::make_unique<dummy_device>();
     }

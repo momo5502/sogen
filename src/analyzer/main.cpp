@@ -77,12 +77,13 @@ namespace
         const auto exit_status = win_emu.process().exit_status;
         if (!exit_status.has_value())
         {
-            win_emu.log.print(color::green, "Emulation terminated without status!\n");
+            win_emu.log.print(color::red, "Emulation terminated without status!\n");
             return false;
         }
 
-        win_emu.log.print(color::red, "Emulation terminated with status: %X\n", *exit_status);
-        return *exit_status == STATUS_SUCCESS;
+        const auto success = *exit_status == STATUS_SUCCESS;
+        win_emu.log.print(success ? color::green : color::red, "Emulation terminated with status: %X\n", *exit_status);
+        return success;
     }
 
     std::vector<std::u16string> parse_arguments(const std::span<const std::string_view> args)
