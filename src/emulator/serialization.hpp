@@ -486,18 +486,36 @@ namespace utils
             this->break_offset_ = break_offset;
         }
 
-        void print_diff(const buffer_serializer& other) const
+        std::optional<size_t> get_diff(const buffer_serializer& other) const
         {
             auto& b1 = this->get_buffer();
             auto& b2 = other.get_buffer();
 
-            for (size_t i = 0; i < b1.size() && i < b2.size(); ++i)
+            const auto s1 = b1.size();
+            const auto s2 = b2.size();
+
+            for (size_t i = 0; i < s1 && i < s2; ++i)
             {
                 if (b1.at(i) != b2.at(i))
                 {
-                    printf("Diff at %zd\n", i);
-                    break;
+                    return i;
                 }
+            }
+
+            if (s1 != s2)
+            {
+                return std::min(s1, s2);
+            }
+
+            return std::nullopt;
+        }
+
+        void print_diff(const buffer_serializer& other) const
+        {
+            const auto diff = this->get_diff(other);
+            if (diff)
+            {
+                printf("Diff at %zd\n", *diff);
             }
         }
 
