@@ -151,7 +151,7 @@ namespace
         {
 #ifdef OS_WINDOWS
         case apiset_location::host: {
-            auto apiSetMap =
+            const auto apiSetMap =
                 reinterpret_cast<const API_SET_NAMESPACE*>(NtCurrentTeb64()->ProcessEnvironmentBlock->ApiSetMap);
             const auto* dataPtr = reinterpret_cast<const uint8_t*>(apiSetMap);
             std::vector<uint8_t> buffer(dataPtr, dataPtr + apiSetMap->Size);
@@ -162,7 +162,7 @@ namespace
             throw std::runtime_error("The APISET host location is not supported on this platform");
 #endif
         case apiset_location::file: {
-            auto apiset = utils::io::read_file(root / "api-set.bin");
+            const auto apiset = utils::io::read_file(root / "api-set.bin");
             if (apiset.empty())
                 throw std::runtime_error("Failed to read file api-set.bin");
             return decompress_apiset(apiset);
@@ -278,8 +278,16 @@ namespace
             proc_params.MaximumLength = proc_params.Length;
         });
 
-        // TODO: make this configurable
-        const apiset_location apiset_loc = apiset_location::file;
+        apiset_location apiset_loc = apiset_location::file;
+
+        if (win_emu.root_directory.empty())
+        {
+#ifdef OS_WINDOWS
+            apiset_loc = apiset_location::host;
+#else
+            apiset_loc = apiset_location::default_windows_11;
+#endif
+        }
 
         context.peb.access([&](PEB64& peb) {
             peb.ImageBaseAddress = nullptr;

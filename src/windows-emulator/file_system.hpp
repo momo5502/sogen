@@ -2,6 +2,8 @@
 #include "std_include.hpp"
 #include "windows_path.hpp"
 
+#include <platform/compiler.hpp>
+
 class file_system
 {
   public:
@@ -13,12 +15,18 @@ class file_system
 
     std::filesystem::path translate(const windows_path& win_path) const
     {
-        if (win_path.is_absolute())
-        {
-            return this->root_ / win_path.to_portable_path();
-        }
+        const auto& full_path = win_path.is_absolute() //
+                                    ? win_path
+                                    : (this->working_dir_ / win_path);
 
-        return this->root_ / (this->working_dir_ / win_path).to_portable_path();
+#ifdef OS_WINDOWS
+        if (this->root_.empty())
+        {
+            return full_path.u16string();
+        }
+#endif
+
+        return this->root_ / full_path.to_portable_path();
     }
 
     void set_working_directory(windows_path working_dir)
