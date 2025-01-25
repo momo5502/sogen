@@ -114,7 +114,7 @@ namespace handle_detail
 struct generic_handle_store
 {
     virtual ~generic_handle_store() = default;
-    virtual bool erase(const handle h) = 0;
+    virtual bool erase(handle h) = 0;
 };
 
 template <handle_types::type Type, typename T, uint32_t IndexShift = 0>
@@ -205,7 +205,7 @@ class handle_store : public generic_handle_store
         {
             if (!T::deleter(entry->second))
             {
-                return false;
+                return true;
             }
         }
 
@@ -353,6 +353,8 @@ constexpr auto BASE_NAMED_OBJECTS_DIRECTORY = make_pseudo_handle(0x2, handle_typ
 
 constexpr auto KNOWN_DLLS_SYMLINK = make_pseudo_handle(0x1, handle_types::symlink);
 constexpr auto SHARED_SECTION = make_pseudo_handle(0x1, handle_types::section);
+
+constexpr auto WER_PORT_READY = make_pseudo_handle(0x1, handle_types::event);
 
 constexpr auto CONSOLE_HANDLE = make_pseudo_handle(0x1, handle_types::file);
 constexpr auto STDOUT_HANDLE = make_pseudo_handle(0x2, handle_types::file);

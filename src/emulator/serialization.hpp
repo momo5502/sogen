@@ -1,5 +1,6 @@
 #pragma once
 
+#include <list>
 #include <span>
 #include <vector>
 #include <string>
@@ -205,6 +206,26 @@ namespace utils
             return result;
         }
 
+        template <typename T>
+        void read_list(std::list<T>& result)
+        {
+            const auto size = this->read<uint64_t>();
+            result.clear();
+
+            for (uint64_t i = 0; i < size; ++i)
+            {
+                result.emplace_back(this->read<T>());
+            }
+        }
+
+        template <typename T>
+        std::list<T> read_list()
+        {
+            std::list<T> result{};
+            this->read_list(result);
+            return result;
+        }
+
         template <typename Map>
         void read_map(Map& map)
         {
@@ -395,6 +416,17 @@ namespace utils
         void write_vector(const std::vector<T> vec)
         {
             this->write_span(std::span(vec));
+        }
+
+        template <typename T>
+        void write_list(const std::list<T> vec)
+        {
+            this->write(static_cast<uint64_t>(vec.size()));
+
+            for (const auto& v : vec)
+            {
+                this->write(v);
+            }
         }
 
         template <typename T>

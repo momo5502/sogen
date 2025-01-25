@@ -24,7 +24,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET 11.0)
-set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")
+
+# Prevent unicorn from generating universal binaries on macOS
+# It doesn't support it, even if it thinks it does...
+set(ENV{ARCHFLAGS} "nope")
+
 
 ##########################################
 

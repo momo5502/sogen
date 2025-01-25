@@ -8,6 +8,7 @@
 #include "syscall_dispatcher.hpp"
 #include "process_context.hpp"
 #include "logger.hpp"
+#include "file_system.hpp"
 
 std::unique_ptr<x64_emulator> create_default_x64_emulator();
 
@@ -26,16 +27,17 @@ struct emulator_callbacks
 // TODO: Split up into application and emulator settings
 struct emulator_settings
 {
-    std::filesystem::path application{};
-    std::filesystem::path working_directory{};
+    windows_path application{};
+    windows_path working_directory{};
     std::filesystem::path registry_directory{"./registry"};
+    std::filesystem::path emulation_root{};
     std::vector<std::u16string> arguments{};
     bool disable_logging{false};
     bool silent_until_main{false};
     bool use_relative_time{false};
 };
 
-enum class apiset_location
+enum class apiset_location : uint8_t
 {
     host,
     file,
@@ -46,8 +48,9 @@ enum class apiset_location
 class windows_emulator
 {
   public:
-    windows_emulator(std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
-    windows_emulator(emulator_settings settings, emulator_callbacks callbacks = {},
+    windows_emulator(const std::filesystem::path& emulation_root,
+                     std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
+    windows_emulator(const emulator_settings& settings, emulator_callbacks callbacks = {},
                      std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
 
     windows_emulator(windows_emulator&&) = delete;
@@ -131,7 +134,25 @@ class windows_emulator
         return this->callbacks_;
     }
 
+    file_system& file_sys()
+    {
+        return this->file_sys_;
+    }
+
+    const file_system& file_sys() const
+    {
+        return this->file_sys_;
+    }
+
+    const std::filesystem::path& get_emulation_root()
+    {
+        return this->emulation_root_;
+    }
+
   private:
+    std::filesystem::path emulation_root_{};
+    file_system file_sys_;
+
     emulator_callbacks callbacks_{};
     bool use_relative_time_{false};
     bool silent_until_main_{false};

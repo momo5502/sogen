@@ -1,7 +1,9 @@
 #pragma once
 
 #if _WIN32
+#ifndef _CRT_SECURE_NO_WARNINGS
 #define _CRT_SECURE_NO_WARNINGS
+#endif
 #define _CRT_NO_POSIX_ERROR_CODES
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN

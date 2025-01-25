@@ -3,21 +3,7 @@
 #include "module_mapping.hpp"
 #include "windows-emulator/logger.hpp"
 
-namespace
-{
-    std::filesystem::path canonicalize_module_path(const std::filesystem::path& file)
-    {
-        constexpr std::u16string_view nt_prefix = u"\\??\\";
-        const auto wide_file = file.u16string();
-
-        if (!wide_file.starts_with(nt_prefix))
-        {
-            return canonical(absolute(file));
-        }
-
-        return canonicalize_module_path(wide_file.substr(nt_prefix.size()));
-    }
-}
+#include <serialization_helper.hpp>
 
 namespace utils
 {
@@ -39,8 +25,8 @@ namespace utils
 
     static void serialize(buffer_serializer& buffer, const mapped_module& mod)
     {
-        buffer.write_string(mod.name);
-        buffer.write(mod.path.u16string());
+        buffer.write(mod.name);
+        buffer.write(mod.path);
 
         buffer.write(mod.image_base);
         buffer.write(mod.size_of_image);
@@ -52,8 +38,8 @@ namespace utils
 
     static void deserialize(buffer_deserializer& buffer, mapped_module& mod)
     {
-        mod.name = buffer.read_string();
-        mod.path = buffer.read_string<std::u16string::value_type>();
+        buffer.read(mod.name);
+        buffer.read(mod.path);
 
         buffer.read(mod.image_base);
         buffer.read(mod.size_of_image);
@@ -64,26 +50,32 @@ namespace utils
     }
 }
 
-module_manager::module_manager(emulator& emu)
-    : emu_(&emu)
+module_manager::module_manager(emulator& emu, file_system& file_sys)
+    : emu_(&emu),
+      file_sys_(&file_sys)
 {
 }
 
-mapped_module* module_manager::map_module(const std::filesystem::path& file, logger& logger)
+mapped_module* module_manager::map_module(const windows_path& file, const logger& logger)
 {
-    auto canonical_file = canonicalize_module_path(file);
+    return this->map_local_module(this->file_sys_->translate(file), logger);
+}
 
-    for (auto& mod : this->modules_)
+mapped_module* module_manager::map_local_module(const std::filesystem::path& file, const logger& logger)
+{
+    auto local_file = canonical(absolute(file));
+
+    for (auto& mod : this->modules_ | std::views::values)
     {
-        if (mod.second.path == canonical_file)
+        if (mod.path == local_file)
         {
-            return &mod.second;
+            return &mod;
         }
     }
 
     try
     {
-        auto mod = map_module_from_file(*this->emu_, std::move(canonical_file));
+        auto mod = map_module_from_file(*this->emu_, std::move(local_file));
 
         logger.log("Mapped %s at 0x%" PRIx64 "\n", mod.path.generic_string().c_str(), mod.image_base);
 

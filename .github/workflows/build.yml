@@ -28,22 +28,57 @@ jobs:
           clang-format-version: '19'
           check-path: 'src'
 
-  dump-registry:
-    name: Dump Registry
-    runs-on: windows-latest
+
+  dump-root:
+    name: Dump Root FS
+    runs-on: ${{ matrix.runner }}
+    needs: [build]
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - Windows 2025
+          - Windows 2022
+          - Windows 2019
+        include:
+          - platform: Windows 2025
+            runner: windows-2025
+          - platform: Windows 2022
+            runner: windows-2022
+          - platform: Windows 2019
+            runner: windows-2019
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
 
-      - name: Dump Registry
-        run: src/tools/grab-registry.bat
+      - name: Download DirectX Runtime
+        run: curl -L -o directx_Jun2010_redist.exe https://download.microsoft.com/download/8/4/A/84A35BF1-DAFE-4AE8-82AF-AD2AE20B6B14/directx_Jun2010_redist.exe
+
+      - name: Extract DirectX Runtime
+        run: ./directx_Jun2010_redist.exe /Q /T:"${{github.workspace}}/dxrt"
+
+      - name: Install DirectX Runtime
+        run: "cmd /c \"start /wait .\\dxrt\\dxsetup.exe /silent\""
+
+      - name: Download Windows Artifacts
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: Windows Release Artifacts
+          path: build/release/artifacts
+
+      - name: Dump Root FS
+        run: src/tools/create-root.bat
+
+      - name: Dump API Set
+        run: cd root && ../build/release/artifacts/dump-apiset.exe
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+        uses: pyTooling/upload-artifact@v4
         with:
-          name: Temp Registry Dump
-          path: |
-            registry/*
+          name: ${{ matrix.platform }} Root FS
+          path: "*"
+          working-directory: root
+          retention-days: 1
 
   build:
     name: Build
@@ -55,7 +90,8 @@ jobs:
           - Windows
           - Linux GCC
           - Linux Clang
-          - macOS
+          - macOS arm64
+          - macOS x86_64
           - Android x86_64
           - Android arm64-v8a
         configuration:
@@ -73,8 +109,10 @@ jobs:
           - platform: Linux Clang
             runner: ubuntu-24.04
             clang-version: 18
-          - platform: macOS
+          - platform: macOS arm64
             runner: macos-latest
+          - platform: macOS x86_64
+            runner: macos-13
           - platform: Android x86_64
             runner: ubuntu-24.04
             abi: x86_64
@@ -127,35 +165,36 @@ jobs:
         if: ${{ !startsWith(matrix.platform, 'Android') }}
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+        uses: pyTooling/upload-artifact@v4
         with:
           name: ${{ matrix.platform }} ${{matrix.configuration}} Artifacts
-          path: |
-            build/${{matrix.preset}}/artifacts/*
+          working-directory: build/${{matrix.preset}}/artifacts/
+          path: "*"
 
       - name: Upload Test Configuration
-        uses: actions/upload-artifact@v4
+        uses: pyTooling/upload-artifact@v4
         with:
           name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
-          path: |
-            build/${{matrix.preset}}/**/CTestTestfile.cmake
-
+          path: "**/CTestTestfile.cmake"
+          working-directory: build/${{matrix.preset}}
 
   test:
     name: Test
     runs-on: ${{ matrix.runner }}
-    needs: [dump-registry, build]
+    needs: [dump-root, build]
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          # TODO: Move different windows platforms into registry dump matrix
+        filesystem:
           - Windows 2025
           - Windows 2022
           - Windows 2019
+        platform:
+          - Windows
           - Linux GCC
           - Linux Clang
-          - macOS
+          - macOS arm64
+          - macOS x86_64
         configuration:
           - Debug
           - Release
@@ -164,58 +203,54 @@ jobs:
             preset: debug
           - configuration: Release
             preset: release
-          - platform: Windows 2025
-            build-platform: Windows
-            runner: windows-2025
-          - platform: Windows 2022
-            build-platform: Windows
-            runner: windows-2022
-          - platform: Windows 2019
-            build-platform: Windows
-            runner: windows-2019
+          - platform: Windows
+            runner: windows-latest
           - platform: Linux GCC
-            build-platform: Linux GCC
             runner: ubuntu-24.04
           - platform: Linux Clang
-            build-platform: Linux Clang
             runner: ubuntu-24.04
-          - platform: macOS
-            build-platform: macOS
+          - platform: macOS arm64
             runner: macos-latest
+          - platform: macOS x86_64
+            runner: macos-13
     steps:
       - name: Download Test Config
-        uses: actions/download-artifact@v4
+        uses: pyTooling/download-artifact@v4
         with:
-          name: Temp ${{ matrix.build-platform }} ${{matrix.configuration}} Test Config
+          name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
           path: build/${{matrix.preset}}
 
       - name: Download Artifacts
-        uses: actions/download-artifact@v4
+        uses: pyTooling/download-artifact@v4
         with:
-          name: ${{ matrix.build-platform }} ${{matrix.configuration}} Artifacts
+          name: ${{ matrix.platform }} ${{matrix.configuration}} Artifacts
           path: build/${{matrix.preset}}/artifacts
 
       - name: Download Windows Artifacts
-        uses: actions/download-artifact@v4
-        if: "${{ matrix.build-platform != 'Windows' }}"
+        uses: pyTooling/download-artifact@v4
+        if: "${{ matrix.platform != 'Windows' }}"
         with:
           name: Windows ${{matrix.configuration}} Artifacts
           path: build/${{matrix.preset}}/artifacts
   
-      - name: Download Registry Dump
-        uses: actions/download-artifact@v4
+      - name: Download Root FS
+        uses: pyTooling/download-artifact@v4
         with:
-          name: Temp Registry Dump
-          path: build/${{matrix.preset}}/artifacts/registry
+          name: ${{ matrix.filesystem }} Root FS
+          path: build/${{matrix.preset}}/artifacts/root
+
+      - name: Copy Test Sample
+        run: cp build/${{matrix.preset}}/artifacts/test-sample.exe build/${{matrix.preset}}/artifacts/root/filesys/c/
 
       - name: CMake Test
         run: cd build/${{matrix.preset}} && ctest --verbose
-        if: "${{ matrix.build-platform == 'Windows' }}"
+        env:
+          EMULATOR_ROOT: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/root
 
   summary:
     name: Pipeline Summary
     runs-on: ubuntu-24.04
-    needs: [dump-registry, build, test, verify-formatting]
+    needs: [dump-root, build, test, verify-formatting]
     if: always()
     steps:
       - uses: geekyeggo/delete-artifact@v5

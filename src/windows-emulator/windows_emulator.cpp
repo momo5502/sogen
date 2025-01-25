@@ -145,13 +145,13 @@ namespace
         return buffer;
     }
 
-    std::vector<uint8_t> obtain_api_set(apiset_location location)
+    std::vector<uint8_t> obtain_api_set(const apiset_location location, const std::filesystem::path& root)
     {
         switch (location)
         {
 #ifdef OS_WINDOWS
         case apiset_location::host: {
-            auto apiSetMap =
+            const auto apiSetMap =
                 reinterpret_cast<const API_SET_NAMESPACE*>(NtCurrentTeb64()->ProcessEnvironmentBlock->ApiSetMap);
             const auto* dataPtr = reinterpret_cast<const uint8_t*>(apiSetMap);
             std::vector<uint8_t> buffer(dataPtr, dataPtr + apiSetMap->Size);
@@ -162,7 +162,7 @@ namespace
             throw std::runtime_error("The APISET host location is not supported on this platform");
 #endif
         case apiset_location::file: {
-            auto apiset = utils::io::read_file("api-set.bin");
+            const auto apiset = utils::io::read_file(root / "api-set.bin");
             if (apiset.empty())
                 throw std::runtime_error("Failed to read file api-set.bin");
             return decompress_apiset(apiset);
@@ -181,10 +181,11 @@ namespace
     }
 
     emulator_object<API_SET_NAMESPACE> build_api_set_map(x64_emulator& emu, emulator_allocator& allocator,
-                                                         apiset_location location = apiset_location::host)
+                                                         const apiset_location location = apiset_location::host,
+                                                         const std::filesystem::path& root = {})
     {
         return clone_api_set_map(emu, allocator,
-                                 reinterpret_cast<const API_SET_NAMESPACE&>(*obtain_api_set(location).data()));
+                                 reinterpret_cast<const API_SET_NAMESPACE&>(*obtain_api_set(location, root).data()));
     }
 
     emulator_allocator create_allocator(emulator& emu, const size_t size)
@@ -208,11 +209,6 @@ namespace
         emu.reg<uint16_t>(x64_register::ss, 0x2B);
     }
 
-    std::filesystem::path canonicalize_path(const std::filesystem::path& path)
-    {
-        return canonical(absolute(path)).make_preferred();
-    }
-
     void setup_context(windows_emulator& win_emu, const emulator_settings& settings)
     {
         auto& emu = win_emu.emu();
@@ -220,7 +216,9 @@ namespace
 
         setup_gdt(emu);
 
-        context.registry = registry_manager(settings.registry_directory);
+        context.registry =
+            registry_manager(win_emu.get_emulation_root().empty() ? settings.registry_directory
+                                                                  : win_emu.get_emulation_root() / "registry");
 
         context.kusd.setup(settings.use_relative_time);
 
@@ -260,7 +258,9 @@ namespace
             allocator.copy_string(u"SystemRoot=C:\\WINDOWS");
             allocator.copy_string(u"");
 
-            std::u16string command_line = u"\"" + settings.application.u16string() + u"\"";
+            const auto application_str = settings.application.u16string();
+
+            std::u16string command_line = u"\"" + application_str + u"\"";
 
             for (const auto& arg : settings.arguments)
             {
@@ -268,20 +268,10 @@ namespace
                 command_line.append(arg);
             }
 
-            std::u16string current_folder{};
-            if (!settings.working_directory.empty())
-            {
-                current_folder = canonicalize_path(settings.working_directory).u16string() + u"\\";
-            }
-            else
-            {
-                current_folder = canonicalize_path(settings.application).parent_path().u16string() + u"\\";
-            }
-
             allocator.make_unicode_string(proc_params.CommandLine, command_line);
-            allocator.make_unicode_string(proc_params.CurrentDirectory.DosPath, current_folder);
-            allocator.make_unicode_string(proc_params.ImagePathName,
-                                          canonicalize_path(settings.application).u16string());
+            allocator.make_unicode_string(proc_params.CurrentDirectory.DosPath,
+                                          win_emu.file_sys().get_working_directory().u16string());
+            allocator.make_unicode_string(proc_params.ImagePathName, application_str);
 
             const auto total_length = allocator.get_next_address() - context.process_params.value();
 
@@ -290,17 +280,21 @@ namespace
             proc_params.MaximumLength = proc_params.Length;
         });
 
-// TODO: make this configurable
+        apiset_location apiset_loc = apiset_location::file;
+
+        if (win_emu.get_emulation_root().empty())
+        {
 #ifdef OS_WINDOWS
-        apiset_location apiset_loc = apiset_location::host;
+            apiset_loc = apiset_location::host;
 #else
-        apiset_location apiset_loc = apiset_location::default_windows_11;
+            apiset_loc = apiset_location::default_windows_11;
 #endif
+        }
 
         context.peb.access([&](PEB64& peb) {
             peb.ImageBaseAddress = nullptr;
             peb.ProcessParameters = context.process_params.ptr();
-            peb.ApiSetMap = build_api_set_map(emu, allocator, apiset_loc).ptr();
+            peb.ApiSetMap = build_api_set_map(emu, allocator, apiset_loc, win_emu.get_emulation_root()).ptr();
 
             peb.ProcessHeap = nullptr;
             peb.ProcessHeaps = nullptr;
@@ -634,6 +628,11 @@ namespace
             break;
 
         case handle_types::event: {
+            if (h.value.is_pseudo)
+            {
+                return true;
+            }
+
             auto* e = c.events.get(h);
             if (e)
             {
@@ -648,6 +647,16 @@ namespace
             if (e)
             {
                 return e->try_lock(current_thread_id);
+            }
+
+            break;
+        }
+
+        case handle_types::semaphore: {
+            auto* s = c.semaphores.get(h);
+            if (s)
+            {
+                return s->try_lock();
             }
 
             break;
@@ -816,10 +825,19 @@ std::unique_ptr<x64_emulator> create_default_x64_emulator()
     return unicorn::create_x64_emulator();
 }
 
-windows_emulator::windows_emulator(emulator_settings settings, emulator_callbacks callbacks,
+windows_emulator::windows_emulator(const emulator_settings& settings, emulator_callbacks callbacks,
                                    std::unique_ptr<x64_emulator> emu)
-    : windows_emulator(std::move(emu))
+    : windows_emulator(settings.emulation_root, std::move(emu))
 {
+    if (!settings.working_directory.empty())
+    {
+        this->file_sys().set_working_directory(settings.working_directory);
+    }
+    else
+    {
+        this->file_sys().set_working_directory(settings.application.parent());
+    }
+
     this->silent_until_main_ = settings.silent_until_main && !settings.disable_logging;
     this->use_relative_time_ = settings.use_relative_time;
     this->log.disable_output(settings.disable_logging || this->silent_until_main_);
@@ -827,10 +845,19 @@ windows_emulator::windows_emulator(emulator_settings settings, emulator_callback
     this->setup_process(settings);
 }
 
-windows_emulator::windows_emulator(std::unique_ptr<x64_emulator> emu)
-    : emu_(std::move(emu)),
-      process_(*emu_)
+windows_emulator::windows_emulator(const std::filesystem::path& emulation_root, std::unique_ptr<x64_emulator> emu)
+    : emulation_root_{emulation_root.empty() ? emulation_root : absolute(emulation_root)},
+      file_sys_(emulation_root_.empty() ? emulation_root_ : emulation_root_ / "filesys"),
+      emu_(std::move(emu)),
+      process_(*emu_, file_sys_)
 {
+#ifndef OS_WINDOWS
+    if (this->get_emulation_root().empty())
+    {
+        throw std::runtime_error("Emulation root directory can not be empty!");
+    }
+#endif
+
     this->setup_hooks();
 }
 
@@ -839,14 +866,15 @@ void windows_emulator::setup_process(const emulator_settings& settings)
     auto& emu = this->emu();
 
     auto& context = this->process();
-    context.mod_manager = module_manager(emu); // TODO: Cleanup module manager
+    context.mod_manager = module_manager(emu, this->file_sys()); // TODO: Cleanup module manager
 
     setup_context(*this, settings);
 
     context.executable = context.mod_manager.map_module(settings.application, this->log);
 
-    context.peb.access(
-        [&](PEB64& peb) { peb.ImageBaseAddress = reinterpret_cast<std::uint64_t*>(context.executable->image_base); });
+    context.peb.access([&](PEB64& peb) {
+        peb.ImageBaseAddress = reinterpret_cast<std::uint64_t*>(context.executable->image_base); //
+    });
 
     context.ntdll = context.mod_manager.map_module(R"(C:\Windows\System32\ntdll.dll)", this->log);
     context.win32u = context.mod_manager.map_module(R"(C:\Windows\System32\win32u.dll)", this->log);
@@ -930,9 +958,13 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
         const auto export_entry = binary->address_names.find(address);
         if (export_entry != binary->address_names.end())
         {
+            const auto rsp = this->emu().read_stack_pointer();
+            const auto return_address = this->emu().read_memory<uint64_t>(rsp);
+            const auto* mod_name = this->process().mod_manager.find_name(return_address);
+
             log.print(is_interesting_call ? color::yellow : color::dark_gray,
-                      "Executing function: %s - %s (0x%" PRIx64 ")\n", binary->name.c_str(),
-                      export_entry->second.c_str(), address);
+                      "Executing function: %s - %s (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n", binary->name.c_str(),
+                      export_entry->second.c_str(), address, return_address, mod_name);
         }
         else if (address == binary->entry_point)
         {
@@ -1096,6 +1128,7 @@ void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
 void windows_emulator::serialize(utils::buffer_serializer& buffer) const
 {
     buffer.write(this->use_relative_time_);
+    this->file_sys().serialize(buffer);
     this->emu().serialize(buffer);
     this->process_.serialize(buffer);
     this->dispatcher_.serialize(buffer);
@@ -1103,11 +1136,16 @@ void windows_emulator::serialize(utils::buffer_serializer& buffer) const
 
 void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
 {
-    buffer.register_factory<x64_emulator_wrapper>([this] { return x64_emulator_wrapper{this->emu()}; });
+    buffer.register_factory<x64_emulator_wrapper>([this] {
+        return x64_emulator_wrapper{this->emu()}; //
+    });
 
-    buffer.register_factory<windows_emulator_wrapper>([this] { return windows_emulator_wrapper{*this}; });
+    buffer.register_factory<windows_emulator_wrapper>([this] {
+        return windows_emulator_wrapper{*this}; //
+    });
 
     buffer.read(this->use_relative_time_);
+    this->file_sys().deserialize(buffer);
 
     this->emu().deserialize(buffer);
     this->process_.deserialize(buffer);
@@ -1119,6 +1157,7 @@ void windows_emulator::save_snapshot()
     this->emu().save_snapshot();
 
     utils::buffer_serializer serializer{};
+    this->file_sys().serialize(serializer);
     this->process_.serialize(serializer);
 
     this->process_snapshot_ = serializer.move_buffer();
@@ -1138,6 +1177,7 @@ void windows_emulator::restore_snapshot()
     this->emu().restore_snapshot();
 
     utils::buffer_deserializer deserializer{this->process_snapshot_};
+    this->file_sys().deserialize(deserializer);
     this->process_.deserialize(deserializer);
     // this->process_ = *this->process_snapshot_;
 }

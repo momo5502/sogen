@@ -108,17 +108,17 @@ struct mutant : ref_counted_object
         return true;
     }
 
-    uint32_t release()
+    std::pair<uint32_t, bool> release(const uint32_t thread_id)
     {
         const auto old_count = this->locked_count;
 
-        if (this->locked_count <= 0)
+        if (this->locked_count <= 0 || this->owning_thread_id != thread_id)
         {
-            return old_count;
+            return {old_count, false};
         }
 
         --this->locked_count;
-        return old_count;
+        return {old_count, true};
     }
 
     void serialize(utils::buffer_serializer& buffer) const
@@ -239,8 +239,33 @@ struct section
 struct semaphore : ref_counted_object
 {
     std::u16string name{};
-    volatile uint32_t current_count{};
+    uint32_t current_count{};
     uint32_t max_count{};
+
+    bool try_lock()
+    {
+        if (this->current_count > 0)
+        {
+            --this->current_count;
+            return true;
+        }
+
+        return false;
+    }
+
+    std::pair<uint32_t, bool> release(const uint32_t release_count)
+    {
+        const auto old_count = this->current_count;
+
+        if (this->current_count + release_count > this->max_count)
+        {
+            return {old_count, false};
+        }
+
+        this->current_count += release_count;
+
+        return {old_count, true};
+    }
 
     void serialize(utils::buffer_serializer& buffer) const
     {
@@ -504,12 +529,12 @@ class emulator_thread : ref_counted_object
 
 struct process_context
 {
-    process_context(x64_emulator& emu)
+    process_context(x64_emulator& emu, file_system& file_sys)
         : base_allocator(emu),
           peb(emu),
           process_params(emu),
           kusd(emu, *this),
-          mod_manager(emu)
+          mod_manager(emu, file_sys)
     {
     }
 
@@ -550,7 +575,7 @@ struct process_context
 
     std::vector<std::byte> default_register_set{};
 
-    uint32_t current_thread_id{0};
+    uint32_t spawned_thread_count{0};
     handle_store<handle_types::thread, emulator_thread> threads{};
     emulator_thread* active_thread{nullptr};
 
@@ -587,7 +612,7 @@ struct process_context
         buffer.write_map(this->atoms);
 
         buffer.write_vector(this->default_register_set);
-        buffer.write(this->current_thread_id);
+        buffer.write(this->spawned_thread_count);
         buffer.write(this->threads);
 
         buffer.write(this->threads.find_handle(this->active_thread).bits);
@@ -630,7 +655,7 @@ struct process_context
         buffer.read_map(this->atoms);
 
         buffer.read_vector(this->default_register_set);
-        buffer.read(this->current_thread_id);
+        buffer.read(this->spawned_thread_count);
 
         buffer.read(this->threads);
 
@@ -640,7 +665,7 @@ struct process_context
     handle create_thread(x64_emulator& emu, const uint64_t start_address, const uint64_t argument,
                          const uint64_t stack_size)
     {
-        emulator_thread t{emu, *this, start_address, argument, stack_size, ++this->current_thread_id};
+        emulator_thread t{emu, *this, start_address, argument, stack_size, ++this->spawned_thread_count};
         return this->threads.store(std::move(t));
     }
 };

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <filesystem>
 
 template <typename Traits>
 struct UNICODE_STRING
@@ -62,9 +63,9 @@ inline std::string w_to_u8(const std::wstring_view w_view)
 }
 
 #ifndef OS_WINDOWS
-inline int open_unicode(FILE** handle, const std::u16string& fileName, const std::u16string& mode)
+inline int open_unicode(FILE** handle, const std::filesystem::path& fileName, const std::u16string& mode)
 {
-    *handle = fopen(u16_to_u8(fileName).c_str(), u16_to_u8(mode).c_str());
+    *handle = fopen(fileName.string().c_str(), u16_to_u8(mode).c_str());
     return errno;
 }
 #else
@@ -73,8 +74,8 @@ inline std::wstring u16_to_w(const std::u16string& u16str)
     return std::wstring(reinterpret_cast<const wchar_t*>(u16str.data()), u16str.size());
 }
 
-inline auto open_unicode(FILE** handle, const std::u16string& fileName, const std::u16string& mode)
+inline auto open_unicode(FILE** handle, const std::filesystem::path& fileName, const std::u16string& mode)
 {
-    return _wfopen_s(handle, u16_to_w(fileName).c_str(), u16_to_w(mode).c_str());
+    return _wfopen_s(handle, fileName.wstring().c_str(), u16_to_w(mode).c_str());
 }
 #endif

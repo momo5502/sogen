@@ -80,7 +80,7 @@ namespace
             kusd.QpcFrequency = std::chrono::steady_clock::period::den;
         }
 
-        constexpr std::wstring_view root_dir{L"C:\\WINDOWS"};
+        constexpr std::u16string_view root_dir{u"C:\\WINDOWS"};
         memcpy(&kusd.NtSystemRoot.arr[0], root_dir.data(), root_dir.size() * 2);
 
         kusd.ImageNumberLow = IMAGE_FILE_MACHINE_I386;

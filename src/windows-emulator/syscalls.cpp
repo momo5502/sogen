@@ -77,13 +77,13 @@ namespace
                 return STATUS_INVALID_HANDLE;
             }
 
-            const std::filesystem::path full_path = parent_handle->hive / parent_handle->path / key;
+            const std::filesystem::path full_path = parent_handle->hive.get() / parent_handle->path.get() / key;
             key = full_path.u16string();
         }
 
         c.win_emu.log.print(color::dark_gray, "--> Registry key: %s\n", u16_to_u8(key).c_str());
 
-        auto entry = c.proc.registry.get_key(key);
+        auto entry = c.proc.registry.get_key({key});
         if (!entry.has_value())
         {
             return STATUS_OBJECT_NAME_NOT_FOUND;
@@ -115,8 +115,8 @@ namespace
 
         if (key_information_class == KeyNameInformation)
         {
-            auto key_name = (key->hive / key->path).wstring();
-            while (key_name.ends_with('/') || key_name.ends_with('\\'))
+            auto key_name = (key->hive.get() / key->path.get()).u16string();
+            while (key_name.ends_with(u'/') || key_name.ends_with(u'\\'))
             {
                 key_name.pop_back();
             }
@@ -192,7 +192,7 @@ namespace
             return STATUS_OBJECT_NAME_NOT_FOUND;
         }
 
-        const std::wstring original_name(value->name.begin(), value->name.end());
+        const std::u16string original_name(value->name.begin(), value->name.end());
 
         if (key_value_information_class == KeyValueBasicInformation)
         {
@@ -449,14 +449,14 @@ namespace
             return STATUS_INVALID_HANDLE;
         }
 
-        const auto old_count = mutant->release();
+        const auto [old_count, succeeded] = mutant->release(c.win_emu.current_thread().id);
 
         if (previous_count)
         {
             previous_count.write(static_cast<LONG>(old_count));
         }
 
-        return STATUS_SUCCESS;
+        return succeeded ? STATUS_SUCCESS : STATUS_MUTANT_NOT_OWNED;
     }
 
     NTSTATUS handle_NtCreateMutant(const syscall_context& c, const emulator_object<handle> mutant_handle,
@@ -477,10 +477,12 @@ namespace
 
         if (!name.empty())
         {
-            for (const auto& mutant : c.proc.mutants | std::views::values)
+            for (auto& entry : c.proc.mutants)
             {
-                if (mutant.name == name)
+                if (entry.second.name == name)
                 {
+                    ++entry.second.ref_count;
+                    mutant_handle.write(c.proc.mutants.make_handle(entry.first));
                     return STATUS_OBJECT_NAME_EXISTS;
                 }
             }
@@ -518,10 +520,12 @@ namespace
 
         if (!name.empty())
         {
-            for (const auto& event : c.proc.events | std::views::values)
+            for (auto& entry : c.proc.events)
             {
-                if (event.name == name)
+                if (entry.second.name == name)
                 {
+                    ++entry.second.ref_count;
+                    event_handle.write(c.proc.events.make_handle(entry.first));
                     return STATUS_OBJECT_NAME_EXISTS;
                 }
             }
@@ -548,6 +552,12 @@ namespace
         const auto attributes = object_attributes.read();
         const auto name =
             read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
+
+        if (name == u"\\KernelObjects\\SystemErrorPortReady")
+        {
+            event_handle.write(WER_PORT_READY.bits);
+            return STATUS_SUCCESS;
+        }
 
         for (auto& entry : c.proc.events)
         {
@@ -1520,7 +1530,7 @@ namespace
         if (!f->enumeration_state || query_flags & SL_RESTART_SCAN)
         {
             f->enumeration_state.emplace(file_enumeration_state{});
-            f->enumeration_state->files = scan_directory(f->name);
+            f->enumeration_state->files = scan_directory(c.win_emu.file_sys().translate(f->name));
         }
 
         auto& enum_state = *f->enumeration_state;
@@ -2575,7 +2585,8 @@ namespace
                                          const emulator_object<LCID> default_locale_id,
                                          const emulator_object<LARGE_INTEGER> /*default_casing_table_size*/)
     {
-        const auto locale_file = utils::io::read_file(R"(C:\Windows\System32\locale.nls)");
+        const auto locale_file =
+            utils::io::read_file(c.win_emu.file_sys().translate(R"(C:\Windows\System32\locale.nls)"));
         if (locale_file.empty())
         {
             return STATUS_FILE_INVALID;
@@ -2815,14 +2826,14 @@ namespace
             if (create_disposition & FILE_CREATE)
             {
                 std::error_code ec{};
-                std::filesystem::create_directory(f.name, ec);
+                create_directory(c.win_emu.file_sys().translate(f.name), ec);
 
                 if (ec)
                 {
                     return STATUS_ACCESS_DENIED;
                 }
             }
-            else if (!std::filesystem::is_directory(f.name))
+            else if (!std::filesystem::is_directory(c.win_emu.file_sys().translate(f.name)))
             {
                 return STATUS_OBJECT_NAME_NOT_FOUND;
             }
@@ -2844,7 +2855,7 @@ namespace
 
         FILE* file{};
 
-        const auto error = open_unicode(&file, f.name, mode);
+        const auto error = open_unicode(&file, c.win_emu.file_sys().translate(f.name), mode);
 
         if (!file)
         {
@@ -2886,10 +2897,13 @@ namespace
 
         const auto filename = read_unicode_string(
             c.emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, attributes.ObjectName});
-        const auto u8_filename = u16_to_u8(filename);
+
+        c.win_emu.log.print(color::dark_gray, "--> Querying file attributes: %s\n", u16_to_u8(filename).c_str());
+
+        const auto local_filename = c.win_emu.file_sys().translate(filename).string();
 
         struct _stat64 file_stat{};
-        if (_stat64(u8_filename.c_str(), &file_stat) != 0)
+        if (_stat64(local_filename.c_str(), &file_stat) != 0)
         {
             return STATUS_OBJECT_NAME_NOT_FOUND;
         }
@@ -3016,6 +3030,32 @@ namespace
         return STATUS_OBJECT_NAME_NOT_FOUND;
     }
 
+    NTSTATUS handle_NtReleaseSemaphore(const syscall_context& c, const handle semaphore_handle,
+                                       const ULONG release_count, const emulator_object<LONG> previous_count)
+    {
+        if (semaphore_handle.value.type != handle_types::semaphore)
+        {
+            c.win_emu.log.error("Bad handle type for NtReleaseSemaphore\n");
+            c.emu.stop();
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        auto* mutant = c.proc.semaphores.get(semaphore_handle);
+        if (!mutant)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        const auto [old_count, succeeded] = mutant->release(release_count);
+
+        if (previous_count)
+        {
+            previous_count.write(static_cast<LONG>(old_count));
+        }
+
+        return succeeded ? STATUS_SUCCESS : STATUS_SEMAPHORE_LIMIT_EXCEEDED;
+    }
+
     NTSTATUS handle_NtCreateSemaphore(const syscall_context& c, const emulator_object<handle> semaphore_handle,
                                       const ACCESS_MASK /*desired_access*/,
                                       const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
@@ -3037,10 +3077,12 @@ namespace
 
         if (!s.name.empty())
         {
-            for (const auto& semaphore : c.proc.semaphores | std::views::values)
+            for (auto& entry : c.proc.semaphores)
             {
-                if (semaphore.name == s.name)
+                if (entry.second.name == s.name)
                 {
+                    ++entry.second.ref_count;
+                    semaphore_handle.write(c.proc.semaphores.make_handle(entry.first));
                     return STATUS_OBJECT_NAME_EXISTS;
                 }
             }
@@ -3216,8 +3258,9 @@ namespace
 
     bool is_awaitable_object_type(const handle h)
     {
-        return h.value.type == handle_types::thread    //
-               || h.value.type == handle_types::mutant //
+        return h.value.type == handle_types::thread       //
+               || h.value.type == handle_types::mutant    //
+               || h.value.type == handle_types::semaphore //
                || h.value.type == handle_types::event;
     }
 
@@ -3531,6 +3574,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserModifyUserStartupInfoFlags);
     add_handler(NtUserGetDCEx);
     add_handler(NtUserGetDpiForCurrentProcess);
+    add_handler(NtReleaseSemaphore);
 
 #undef add_handler
 }

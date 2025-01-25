@@ -26,7 +26,10 @@ set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
 ##########################################
 
 if(UNIX)
-  momo_add_c_and_cxx_compile_options(-fvisibility=hidden)
+  momo_add_c_and_cxx_compile_options(
+    -fvisibility=hidden
+    -ftrivial-auto-var-init=zero
+  )
 endif()
 
 ##########################################
@@ -91,6 +94,8 @@ if(MSVC)
   momo_add_release_link_options(
     #/LTCG
   )
+
+  add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 endif()
 
 ##########################################

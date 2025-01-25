@@ -11,7 +11,9 @@ namespace
     {
         bool use_gdb{false};
         bool concise_logging{false};
+        bool verbose_logging{false};
         std::string registry_path{"./registry"};
+        std::string emulation_root{};
     };
 
     void watch_system_objects(windows_emulator& win_emu, const bool cache_logging)
@@ -107,6 +109,7 @@ namespace
         emulator_settings settings{
             .application = args[0],
             .registry_directory = options.registry_path,
+            .emulation_root = options.emulation_root,
             .arguments = parse_arguments(args),
             .silent_until_main = options.concise_logging,
         };
@@ -116,7 +119,7 @@ namespace
         (void)&watch_system_objects;
         watch_system_objects(win_emu, options.concise_logging);
         win_emu.buffer_stdout = true;
-        // win_emu.verbose_calls = true;
+        win_emu.verbose_calls = options.verbose_logging;
 
         const auto& exe = *win_emu.process().executable;
 
@@ -200,9 +203,22 @@ namespace
             {
                 options.use_gdb = true;
             }
+            else if (arg == "-v")
+            {
+                options.verbose_logging = true;
+            }
             else if (arg == "-c")
             {
                 options.concise_logging = true;
+            }
+            else if (arg == "-e")
+            {
+                if (args.size() < 2)
+                {
+                    throw std::runtime_error("No emulation root path provided after -e");
+                }
+                arg_it = args.erase(arg_it);
+                options.emulation_root = args[0];
             }
             else if (arg == "-r")
             {
