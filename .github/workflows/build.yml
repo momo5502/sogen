@@ -256,7 +256,7 @@ jobs:
       matrix:
         architecture:
           - x86_64
-          - arm64-v8a
+          #- arm64-v8a
         emulation-root:
           - Windows 2025
           - Windows 2022
@@ -271,8 +271,8 @@ jobs:
             preset: release
           - architecture: x86_64
             runner: ubuntu-24.04
-          - architecture: arm64-v8a
-            runner: macos-latest
+          #- architecture: arm64-v8a
+          #  runner: macos-latest
     steps:
       - name: Enable KVM
         if: ${{ startsWith(matrix.runner, 'ubuntu') }}
