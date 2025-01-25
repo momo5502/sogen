@@ -21,9 +21,15 @@
 
 namespace test
 {
+    inline bool enable_verbose_logging()
+    {
+        const auto* env = getenv("EMULATOR_VERBOSE");
+        return env && (env == "1"sv || env == "true"sv);
+    }
+
     inline std::filesystem::path get_emulator_root()
     {
-        auto* env = getenv("EMULATOR_ROOT");
+        const auto* env = getenv("EMULATOR_ROOT");
         if (!env)
         {
             throw std::runtime_error("No EMULATOR_ROOT set!");
@@ -34,6 +40,14 @@ namespace test
 
     inline windows_emulator create_sample_emulator(emulator_settings settings, emulator_callbacks callbacks = {})
     {
+        const auto is_verbose = enable_verbose_logging();
+
+        if (is_verbose)
+        {
+            settings.disable_logging = false;
+            settings.verbose_calls = true;
+        }
+
         settings.application = "c:/test-sample.exe";
         settings.emulation_root = get_emulator_root();
         return windows_emulator{std::move(settings), std::move(callbacks)};

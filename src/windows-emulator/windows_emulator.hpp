@@ -32,6 +32,7 @@ struct emulator_settings
     std::filesystem::path registry_directory{"./registry"};
     std::filesystem::path emulation_root{};
     std::vector<std::u16string> arguments{};
+    bool verbose_calls{false};
     bool disable_logging{false};
     bool silent_until_main{false};
     bool use_relative_time{false};

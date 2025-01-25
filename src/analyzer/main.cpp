@@ -111,6 +111,7 @@ namespace
             .registry_directory = options.registry_path,
             .emulation_root = options.emulation_root,
             .arguments = parse_arguments(args),
+            .verbose_calls = options.verbose_logging,
             .silent_until_main = options.concise_logging,
         };
 
@@ -119,7 +120,6 @@ namespace
         (void)&watch_system_objects;
         watch_system_objects(win_emu, options.concise_logging);
         win_emu.buffer_stdout = true;
-        win_emu.verbose_calls = options.verbose_logging;
 
         const auto& exe = *win_emu.process().executable;
 

@@ -838,6 +838,7 @@ windows_emulator::windows_emulator(const emulator_settings& settings, emulator_c
         this->file_sys().set_working_directory(settings.application.parent());
     }
 
+    this->verbose_calls = settings.verbose_calls;
     this->silent_until_main_ = settings.silent_until_main && !settings.disable_logging;
     this->use_relative_time_ = settings.use_relative_time;
     this->log.disable_output(settings.disable_logging || this->silent_until_main_);

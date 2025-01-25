@@ -9,6 +9,15 @@ on:
       - "**"
     types: [opened, synchronize, reopened]
   workflow_dispatch:
+    inputs:
+      verbose:
+        description: "Enable verbose logging during tests"
+        type: choice
+        required: false
+        default: "false"
+        options:
+          - "true"
+          - "false"
 
 #concurrency:
 #  group: ${{ github.ref }}
@@ -246,6 +255,7 @@ jobs:
         run: cd build/${{matrix.preset}} && ctest --verbose
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/root
+          EMULATOR_VERBOSE: ${{ github.event.inputs.verbose }}
 
   smoke-test-android:
     name: Smoke Test Android
