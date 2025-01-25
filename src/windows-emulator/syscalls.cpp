@@ -352,11 +352,22 @@ namespace
                 return STATUS_BUFFER_OVERFLOW;
             }
 
-            const auto tls_index = c.emu.read_memory<ULONG>(thread_information);
-            const auto teb = thread->teb->read();
+            const auto tls_cell = c.emu.read_memory<ULONG>(thread_information);
 
-            auto* tls_vector = teb.ThreadLocalStoragePointer;
-            c.emu.write_memory<void*>(tls_vector + tls_index, nullptr);
+            for (const auto& t : c.proc.threads | std::views::values)
+            {
+                t.teb->access([&](TEB64& teb) {
+                    if (tls_cell < TLS_MINIMUM_AVAILABLE)
+                    {
+                        teb.TlsSlots.arr[tls_cell] = nullptr;
+                    }
+                    else if (teb.TlsExpansionSlots)
+                    {
+                        const emulator_object<emulator_pointer> expansion_slots(c.emu, teb.TlsExpansionSlots);
+                        expansion_slots.write(0, tls_cell - TLS_MINIMUM_AVAILABLE);
+                    }
+                });
+            }
 
             return STATUS_SUCCESS;
         }
