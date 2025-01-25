@@ -349,6 +349,12 @@ namespace utils
             const uint64_t old_size = this->buffer_.size();
 #endif
 
+            if (this->break_offset_ && this->buffer_.size() <= *this->break_offset_ &&
+                this->buffer_.size() + length > *this->break_offset_)
+            {
+                throw std::runtime_error("Break offset reached!");
+            }
+
             const auto* byte_buffer = static_cast<const std::byte*>(buffer);
             this->buffer_.insert(this->buffer_.end(), byte_buffer, byte_buffer + length);
 
@@ -475,8 +481,29 @@ namespace utils
             return std::move(this->buffer_);
         }
 
+        void set_break_offset(const size_t break_offset)
+        {
+            this->break_offset_ = break_offset;
+        }
+
+        void print_diff(const buffer_serializer& other) const
+        {
+            auto& b1 = this->get_buffer();
+            auto& b2 = other.get_buffer();
+
+            for (size_t i = 0; i < b1.size() && i < b2.size(); ++i)
+            {
+                if (b1.at(i) != b2.at(i))
+                {
+                    printf("Diff at %zd\n", i);
+                    break;
+                }
+            }
+        }
+
       private:
         std::vector<std::byte> buffer_{};
+        std::optional<size_t> break_offset_{};
     };
 
     template <>
