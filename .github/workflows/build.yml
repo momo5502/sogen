@@ -63,7 +63,7 @@ jobs:
       - name: Download Windows Artifacts
         uses: pyTooling/download-artifact@v4
         with:
-          name: Windows Release Artifacts
+          name: Windows x86_64 Release Artifacts
           path: build/release/artifacts
 
       - name: Create Emulation Root
@@ -87,9 +87,9 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - Windows
-          - Linux GCC
-          - Linux Clang
+          - Windows x86_64
+          - Linux x86_64 GCC
+          - Linux x86_64 Clang
           - macOS arm64
           - macOS x86_64
           - Android x86_64
@@ -102,11 +102,11 @@ jobs:
             preset: debug
           - configuration: Release
             preset: release
-          - platform: Windows
+          - platform: Windows x86_64
             runner: windows-latest
-          - platform: Linux GCC
+          - platform: Linux x86_64 GCC
             runner: ubuntu-24.04
-          - platform: Linux Clang
+          - platform: Linux x86_64 Clang
             runner: ubuntu-24.04
             clang-version: 18
           - platform: macOS arm64
@@ -129,7 +129,7 @@ jobs:
         uses: seanmiddleditch/gha-setup-ninja@v5
 
       - name: Install Clang
-        if: "${{ matrix.platform == 'Linux Clang' }}"
+        if: "${{ matrix.platform == 'Linux x86_64 Clang' }}"
         run: |
           sudo apt update
           sudo apt install -y wget gnupg software-properties-common
@@ -144,7 +144,7 @@ jobs:
 
       - name: Enable Developer Command Prompt
         uses: ilammy/msvc-dev-cmd@v1.13.0
-        if: "${{ matrix.platform == 'Windows' }}"
+        if: ${{ startsWith(matrix.platform, 'Windows') }}
 
       - uses: nttld/setup-ndk@v1
         id: setup-ndk
@@ -186,9 +186,9 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - Windows
-          - Linux GCC
-          - Linux Clang
+          - Windows x86_64
+          - Linux x86_64 GCC
+          - Linux x86_64 Clang
           - macOS arm64
           - macOS x86_64
         emulation-root:
@@ -203,11 +203,11 @@ jobs:
             preset: debug
           - configuration: Release
             preset: release
-          - platform: Windows
+          - platform: Windows x86_64
             runner: windows-latest
-          - platform: Linux GCC
+          - platform: Linux x86_64 GCC
             runner: ubuntu-24.04
-          - platform: Linux Clang
+          - platform: Linux x86_64 Clang
             runner: ubuntu-24.04
           - platform: macOS arm64
             runner: macos-latest
@@ -228,9 +228,9 @@ jobs:
 
       - name: Download Windows Artifacts
         uses: pyTooling/download-artifact@v4
-        if: "${{ matrix.platform != 'Windows' }}"
+        if: "${{ matrix.platform != 'Windows x86_64' }}"
         with:
-          name: Windows ${{matrix.configuration}} Artifacts
+          name: Windows x86_64 ${{matrix.configuration}} Artifacts
           path: build/${{matrix.preset}}/artifacts
   
       - name: Download Emulation Root
@@ -290,7 +290,7 @@ jobs:
       - name: Download Windows Artifacts
         uses: pyTooling/download-artifact@v4
         with:
-          name: Windows ${{matrix.configuration}} Artifacts
+          name: Windows x86_64 ${{matrix.configuration}} Artifacts
           path: build/${{matrix.preset}}/artifacts
   
       - name: Download Emulation Root
