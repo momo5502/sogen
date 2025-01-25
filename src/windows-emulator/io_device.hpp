@@ -70,8 +70,9 @@ inline void write_io_status(const emulator_object<IO_STATUS_BLOCK<EmulatorTraits
 {
     if (io_status_block)
     {
-        io_status_block.access(
-            [&](IO_STATUS_BLOCK<EmulatorTraits<Emu64>>& status_block) { status_block.Status = status; });
+        io_status_block.access([&](IO_STATUS_BLOCK<EmulatorTraits<Emu64>>& status_block) {
+            status_block.Status = status; //
+        });
     }
 }
 
