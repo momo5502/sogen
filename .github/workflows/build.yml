@@ -52,7 +52,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Download DirectX Runtime
-        run: curl -L -o directx_Jun2010_redist.exe https://download.microsoft.com/download/8/4/A/84A35BF1-DAFE-4AE8-82AF-AD2AE20B6B14/directx_Jun2010_redist.exe
+        run: curl --connect-timeout 5 --max-time 10 --retry 5 --retry-delay 0 --retry-max-time 40 -L -o directx_Jun2010_redist.exe https://download.microsoft.com/download/8/4/A/84A35BF1-DAFE-4AE8-82AF-AD2AE20B6B14/directx_Jun2010_redist.exe
 
       - name: Extract DirectX Runtime
         run: ./directx_Jun2010_redist.exe /Q /T:"${{github.workspace}}/dxrt"
@@ -66,7 +66,7 @@ jobs:
           name: Windows Release Artifacts
           path: build/release/artifacts
 
-      - name: Dump Root FS
+      - name: Create Emulation Root
         run: src/tools/create-root.bat
 
       - name: Dump API Set
@@ -75,7 +75,7 @@ jobs:
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v4
         with:
-          name: ${{ matrix.platform }} Root FS
+          name: ${{ matrix.platform }} Emulation Root
           path: "*"
           working-directory: root
           retention-days: 1
@@ -185,16 +185,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        filesystem:
-          - Windows 2025
-          - Windows 2022
-          - Windows 2019
         platform:
           - Windows
           - Linux GCC
           - Linux Clang
           - macOS arm64
           - macOS x86_64
+        emulation-root:
+          - Windows 2025
+          - Windows 2022
+          - Windows 2019
         configuration:
           - Debug
           - Release
@@ -233,10 +233,10 @@ jobs:
           name: Windows ${{matrix.configuration}} Artifacts
           path: build/${{matrix.preset}}/artifacts
   
-      - name: Download Root FS
+      - name: Download Emulation Root
         uses: pyTooling/download-artifact@v4
         with:
-          name: ${{ matrix.filesystem }} Root FS
+          name: ${{ matrix.emulation-root }} Emulation Root
           path: build/${{matrix.preset}}/artifacts/root
 
       - name: Copy Test Sample
@@ -247,10 +247,72 @@ jobs:
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/root
 
+  smoke-test-android:
+    name: Smoke Test Android
+    runs-on: ${{ matrix.runner }}
+    needs: [create-emulation-root, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture:
+          - x86_64
+          #- arm64-v8a
+        emulation-root:
+          - Windows 2025
+          - Windows 2022
+          - Windows 2019
+        configuration:
+          - Debug
+          - Release
+        include:
+          - configuration: Debug
+            preset: debug
+          - configuration: Release
+            preset: release
+          - architecture: x86_64
+            runner: ubuntu-24.04
+          #- architecture: arm64-v8a
+          #  runner: macos-latest
+    steps:
+      - name: Enable KVM
+        if: ${{ startsWith(matrix.runner, 'ubuntu') }}
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Download Artifacts
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: Android ${{matrix.architecture}} ${{matrix.configuration}} Artifacts
+          path: build/${{matrix.preset}}/artifacts
+
+      - name: Download Windows Artifacts
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: Windows ${{matrix.configuration}} Artifacts
+          path: build/${{matrix.preset}}/artifacts
+  
+      - name: Download Emulation Root
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: ${{ matrix.emulation-root }} Emulation Root
+          path: build/${{matrix.preset}}/artifacts/root
+
+      - name: Copy Test Sample
+        run: cp build/${{matrix.preset}}/artifacts/test-sample.exe build/${{matrix.preset}}/artifacts/root/filesys/c/
+
+      - name: Run Test
+        uses: reactivecircus/android-emulator-runner@v2.33.0
+        with:
+          api-level: 29
+          arch: ${{matrix.architecture}}
+          script: "adb push build/${{matrix.preset}}/artifacts/* /data/local/tmp && adb shell \"cd /data/local/tmp && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && ./analyzer -e ./root c:/test-sample.exe\""
+
   summary:
     name: Pipeline Summary
     runs-on: ubuntu-24.04
-    needs: [create-emulation-root, build, test, verify-formatting]
+    needs: [smoke-test-android, create-emulation-root, build, test, verify-formatting]
     if: always()
     steps:
       - uses: geekyeggo/delete-artifact@v5
