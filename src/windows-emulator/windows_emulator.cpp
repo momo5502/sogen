@@ -216,7 +216,9 @@ namespace
 
         setup_gdt(emu);
 
-        context.registry = registry_manager(win_emu.root_directory / "registry");
+        context.registry =
+            registry_manager(win_emu.get_emulation_root().empty() ? settings.registry_directory
+                                                                  : win_emu.get_emulation_root() / "registry");
 
         context.kusd.setup(settings.use_relative_time);
 
@@ -268,7 +270,7 @@ namespace
 
             allocator.make_unicode_string(proc_params.CommandLine, command_line);
             allocator.make_unicode_string(proc_params.CurrentDirectory.DosPath,
-                                          win_emu.file_sys.get_working_directory().u16string());
+                                          win_emu.file_sys().get_working_directory().u16string());
             allocator.make_unicode_string(proc_params.ImagePathName, application_str);
 
             const auto total_length = allocator.get_next_address() - context.process_params.value();
@@ -280,7 +282,7 @@ namespace
 
         apiset_location apiset_loc = apiset_location::file;
 
-        if (win_emu.root_directory.empty())
+        if (win_emu.get_emulation_root().empty())
         {
 #ifdef OS_WINDOWS
             apiset_loc = apiset_location::host;
@@ -292,7 +294,7 @@ namespace
         context.peb.access([&](PEB64& peb) {
             peb.ImageBaseAddress = nullptr;
             peb.ProcessParameters = context.process_params.ptr();
-            peb.ApiSetMap = build_api_set_map(emu, allocator, apiset_loc, win_emu.root_directory).ptr();
+            peb.ApiSetMap = build_api_set_map(emu, allocator, apiset_loc, win_emu.get_emulation_root()).ptr();
 
             peb.ProcessHeap = nullptr;
             peb.ProcessHeaps = nullptr;
@@ -825,15 +827,15 @@ std::unique_ptr<x64_emulator> create_default_x64_emulator()
 
 windows_emulator::windows_emulator(const emulator_settings& settings, emulator_callbacks callbacks,
                                    std::unique_ptr<x64_emulator> emu)
-    : windows_emulator(settings.root_filesystem, std::move(emu))
+    : windows_emulator(settings.emulation_root, std::move(emu))
 {
     if (!settings.working_directory.empty())
     {
-        this->file_sys.set_working_directory(settings.working_directory);
+        this->file_sys().set_working_directory(settings.working_directory);
     }
     else
     {
-        this->file_sys.set_working_directory(settings.application.parent());
+        this->file_sys().set_working_directory(settings.application.parent());
     }
 
     this->silent_until_main_ = settings.silent_until_main && !settings.disable_logging;
@@ -843,12 +845,19 @@ windows_emulator::windows_emulator(const emulator_settings& settings, emulator_c
     this->setup_process(settings);
 }
 
-windows_emulator::windows_emulator(const std::filesystem::path& root_path, std::unique_ptr<x64_emulator> emu)
-    : root_directory{absolute(root_path)},
-      file_sys(root_directory / "filesys", u"C:\\"),
+windows_emulator::windows_emulator(const std::filesystem::path& emulation_root, std::unique_ptr<x64_emulator> emu)
+    : emulation_root_{emulation_root.empty() ? emulation_root : absolute(emulation_root)},
+      file_sys_(emulation_root_.empty() ? emulation_root_ : emulation_root_ / "filesys"),
       emu_(std::move(emu)),
-      process_(*emu_, file_sys)
+      process_(*emu_, file_sys_)
 {
+#ifndef OS_WINDOWS
+    if (this->get_emulation_root().empty())
+    {
+        throw std::runtime_error("Emulation root directory can not be empty!");
+    }
+#endif
+
     this->setup_hooks();
 }
 
@@ -857,7 +866,7 @@ void windows_emulator::setup_process(const emulator_settings& settings)
     auto& emu = this->emu();
 
     auto& context = this->process();
-    context.mod_manager = module_manager(emu, this->file_sys); // TODO: Cleanup module manager
+    context.mod_manager = module_manager(emu, this->file_sys()); // TODO: Cleanup module manager
 
     setup_context(*this, settings);
 
@@ -1119,7 +1128,7 @@ void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
 void windows_emulator::serialize(utils::buffer_serializer& buffer) const
 {
     buffer.write(this->use_relative_time_);
-    this->file_sys.serialize(buffer);
+    this->file_sys().serialize(buffer);
     this->emu().serialize(buffer);
     this->process_.serialize(buffer);
     this->dispatcher_.serialize(buffer);
@@ -1136,7 +1145,7 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
     });
 
     buffer.read(this->use_relative_time_);
-    this->file_sys.deserialize(buffer);
+    this->file_sys().deserialize(buffer);
 
     this->emu().deserialize(buffer);
     this->process_.deserialize(buffer);
@@ -1148,7 +1157,7 @@ void windows_emulator::save_snapshot()
     this->emu().save_snapshot();
 
     utils::buffer_serializer serializer{};
-    this->file_sys.serialize(serializer);
+    this->file_sys().serialize(serializer);
     this->process_.serialize(serializer);
 
     this->process_snapshot_ = serializer.move_buffer();
@@ -1168,7 +1177,7 @@ void windows_emulator::restore_snapshot()
     this->emu().restore_snapshot();
 
     utils::buffer_deserializer deserializer{this->process_snapshot_};
-    this->file_sys.deserialize(deserializer);
+    this->file_sys().deserialize(deserializer);
     this->process_.deserialize(deserializer);
     // this->process_ = *this->process_snapshot_;
 }

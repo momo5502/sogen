@@ -1530,7 +1530,7 @@ namespace
         if (!f->enumeration_state || query_flags & SL_RESTART_SCAN)
         {
             f->enumeration_state.emplace(file_enumeration_state{});
-            f->enumeration_state->files = scan_directory(c.win_emu.file_sys.translate(f->name));
+            f->enumeration_state->files = scan_directory(c.win_emu.file_sys().translate(f->name));
         }
 
         auto& enum_state = *f->enumeration_state;
@@ -2586,7 +2586,7 @@ namespace
                                          const emulator_object<LARGE_INTEGER> /*default_casing_table_size*/)
     {
         const auto locale_file =
-            utils::io::read_file(c.win_emu.file_sys.translate(R"(C:\Windows\System32\locale.nls)"));
+            utils::io::read_file(c.win_emu.file_sys().translate(R"(C:\Windows\System32\locale.nls)"));
         if (locale_file.empty())
         {
             return STATUS_FILE_INVALID;
@@ -2826,14 +2826,14 @@ namespace
             if (create_disposition & FILE_CREATE)
             {
                 std::error_code ec{};
-                std::filesystem::create_directory(c.win_emu.file_sys.translate(f.name), ec);
+                create_directory(c.win_emu.file_sys().translate(f.name), ec);
 
                 if (ec)
                 {
                     return STATUS_ACCESS_DENIED;
                 }
             }
-            else if (!std::filesystem::is_directory(c.win_emu.file_sys.translate(f.name)))
+            else if (!std::filesystem::is_directory(c.win_emu.file_sys().translate(f.name)))
             {
                 return STATUS_OBJECT_NAME_NOT_FOUND;
             }
@@ -2855,7 +2855,7 @@ namespace
 
         FILE* file{};
 
-        const auto error = open_unicode(&file, c.win_emu.file_sys.translate(f.name), mode);
+        const auto error = open_unicode(&file, c.win_emu.file_sys().translate(f.name), mode);
 
         if (!file)
         {
@@ -2900,7 +2900,7 @@ namespace
 
         c.win_emu.log.print(color::dark_gray, "--> Querying file attributes: %s\n", u16_to_u8(filename).c_str());
 
-        const auto local_filename = c.win_emu.file_sys.translate(filename).string();
+        const auto local_filename = c.win_emu.file_sys().translate(filename).string();
 
         struct _stat64 file_stat{};
         if (_stat64(local_filename.c_str(), &file_stat) != 0)

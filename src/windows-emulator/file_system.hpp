@@ -7,7 +7,7 @@
 class file_system
 {
   public:
-    file_system(std::filesystem::path root, windows_path working_dir)
+    file_system(std::filesystem::path root, windows_path working_dir = "C:\\")
         : root_(std::move(root)),
           working_dir_(std::move(working_dir))
     {
@@ -26,6 +26,7 @@ class file_system
         }
 #endif
 
+        // TODO: Sanitize path to prevent traversal!
         return this->root_ / full_path.to_portable_path();
     }
 

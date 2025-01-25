@@ -35,7 +35,7 @@ namespace test
     inline windows_emulator create_sample_emulator(emulator_settings settings, emulator_callbacks callbacks = {})
     {
         settings.application = "c:/test-sample.exe";
-        settings.root_filesystem = get_emulator_root();
+        settings.emulation_root = get_emulator_root();
         return windows_emulator{std::move(settings), std::move(callbacks)};
     }
 
