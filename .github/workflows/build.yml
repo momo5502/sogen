@@ -298,7 +298,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2.33.0
         with:
           api-level: 29
-          script: adb push build/${{matrix.preset}}/artifacts/* /data/local/tmp && adb shell \"cd /data/local/tmp && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && ./analyzer -e ./root c:/test-sample.exe\"
+          script: "adb push build/${{matrix.preset}}/artifacts/* /data/local/tmp && adb shell \"cd /data/local/tmp && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && ./analyzer -e ./root c:/test-sample.exe\""
 
   summary:
     name: Pipeline Summary
