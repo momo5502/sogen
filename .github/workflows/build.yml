@@ -247,10 +247,63 @@ jobs:
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/root
 
+  smoke-test-android-x64:
+    name: Smoke Test Android x86_64
+    runs-on: ubuntu-24.04
+    needs: [create-emulation-root, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        emulation-root:
+          - Windows 2025
+          - Windows 2022
+          - Windows 2019
+        configuration:
+          - Debug
+          - Release
+        include:
+          - configuration: Debug
+            preset: debug
+          - configuration: Release
+            preset: release
+    steps:
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Download Artifacts
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: Android x86_64 ${{matrix.configuration}} Artifacts
+          path: build/${{matrix.preset}}/artifacts
+
+      - name: Download Windows Artifacts
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: Windows ${{matrix.configuration}} Artifacts
+          path: build/${{matrix.preset}}/artifacts
+  
+      - name: Download Emulation Root
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: ${{ matrix.emulation-root }} Emulation Root
+          path: build/${{matrix.preset}}/artifacts/root
+
+      - name: Copy Test Sample
+        run: cp build/${{matrix.preset}}/artifacts/test-sample.exe build/${{matrix.preset}}/artifacts/root/filesys/c/
+
+      - name: Run Test
+        uses: reactivecircus/android-emulator-runner@v2.33.0
+        with:
+          api-level: 29
+          script: adb push build/${{matrix.preset}}/artifacts/* /data/local/tmp && adb shell \"cd /data/local/tmp && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && ./analyzer -e ./root c:/test-sample.exe\"
+
   summary:
     name: Pipeline Summary
     runs-on: ubuntu-24.04
-    needs: [create-emulation-root, build, test, verify-formatting]
+    needs: [smoke-test-android-x64, create-emulation-root, build, test, verify-formatting]
     if: always()
     steps:
       - uses: geekyeggo/delete-artifact@v5
