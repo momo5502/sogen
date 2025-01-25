@@ -185,16 +185,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        emulation-root:
-          - Windows 2025
-          - Windows 2022
-          - Windows 2019
         platform:
           - Windows
           - Linux GCC
           - Linux Clang
           - macOS arm64
           - macOS x86_64
+        emulation-root:
+          - Windows 2025
+          - Windows 2022
+          - Windows 2019
         configuration:
           - Debug
           - Release
@@ -249,18 +249,18 @@ jobs:
 
   smoke-test-android:
     name: Smoke Test Android
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     needs: [create-emulation-root, build]
     strategy:
       fail-fast: false
       matrix:
+        architecture:
+          - x86_64
+          - arm64-v8a
         emulation-root:
           - Windows 2025
           - Windows 2022
           - Windows 2019
-        architecture:
-          - x86_64
-          - arm64-v8a
         configuration:
           - Debug
           - Release
@@ -269,8 +269,13 @@ jobs:
             preset: debug
           - configuration: Release
             preset: release
+          - architecture: x86_64
+            runner: ubuntu-24.04
+          - architecture: arm64-v8a
+            runner: macos-latest
     steps:
       - name: Enable KVM
+        if: ${{ startsWith(matrix.runner, 'ubuntu') }}
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
