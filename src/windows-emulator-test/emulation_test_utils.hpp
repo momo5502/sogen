@@ -38,14 +38,20 @@ namespace test
         return env;
     }
 
-    inline windows_emulator create_sample_emulator(emulator_settings settings, emulator_callbacks callbacks = {})
+    inline windows_emulator create_sample_emulator(emulator_settings settings, const bool reproducible = false,
+                                                   emulator_callbacks callbacks = {})
     {
         const auto is_verbose = enable_verbose_logging();
 
         if (is_verbose)
         {
             settings.disable_logging = false;
-            settings.verbose_calls = true;
+            // settings.verbose_calls = true;
+        }
+
+        if (reproducible)
+        {
+            settings.arguments = {u"-reproducible"};
         }
 
         settings.application = "c:/test-sample.exe";
@@ -53,14 +59,14 @@ namespace test
         return windows_emulator{std::move(settings), std::move(callbacks)};
     }
 
-    inline windows_emulator create_sample_emulator()
+    inline windows_emulator create_sample_emulator(const bool reproducible = false)
     {
         emulator_settings settings{
             .disable_logging = true,
             .use_relative_time = true,
         };
 
-        return create_sample_emulator(std::move(settings));
+        return create_sample_emulator(std::move(settings), reproducible);
     }
 
     inline void bisect_emulation(windows_emulator& emu)

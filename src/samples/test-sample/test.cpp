@@ -333,10 +333,16 @@ void print_time()
 
 int main(const int argc, const char* argv[])
 {
-    if (argc == 2 && argv[1] == "-time"sv)
+    bool reproducible = false;
+    if (argc == 2)
     {
-        print_time();
-        return 0;
+        if (argv[1] == "-time"sv)
+        {
+            print_time();
+            return 0;
+        }
+
+        reproducible = argv[1] == "-reproducible"sv;
     }
 
     bool valid = true;
@@ -349,7 +355,11 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_exceptions, "Exceptions")
     RUN_TEST(test_native_exceptions, "Native Exceptions")
     RUN_TEST(test_tls, "TLS")
-    RUN_TEST(test_socket, "Socket")
+
+    if (!reproducible)
+    {
+        RUN_TEST(test_socket, "Socket")
+    }
 
     return valid ? 0 : 1;
 }

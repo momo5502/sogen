@@ -16,7 +16,7 @@ namespace test
             .use_relative_time = false,
         };
 
-        auto emu = create_sample_emulator(settings, callbacks);
+        auto emu = create_sample_emulator(settings, false, callbacks);
         emu.start();
 
         constexpr auto prefix = "Time: "sv;
