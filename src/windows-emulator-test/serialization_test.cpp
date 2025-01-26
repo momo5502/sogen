@@ -13,12 +13,20 @@ namespace test
 
         ASSERT_TERMINATED_SUCCESSFULLY(emu);
 
+        utils::buffer_serializer end_state1{};
+        emu.serialize(end_state1);
+
         utils::buffer_deserializer deserializer{start_state.get_buffer()};
         emu.deserialize(deserializer);
 
         emu.start();
 
         ASSERT_TERMINATED_SUCCESSFULLY(emu);
+
+        utils::buffer_serializer end_state2{};
+        emu.serialize(end_state2);
+
+        ASSERT_EQ(end_state1.get_buffer(), end_state2.get_buffer());
     }
 
     TEST(SerializationTest, SerializedDataIsReproducible)
