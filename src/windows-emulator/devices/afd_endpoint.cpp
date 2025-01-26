@@ -22,6 +22,65 @@ namespace
         // ...
     };
 
+    struct win_sockaddr
+    {
+        int16_t sa_family;
+        uint8_t sa_data[14];
+    };
+
+    struct win_sockaddr_in
+    {
+        int16_t sin_family;
+        uint16_t sin_port;
+        in_addr sin_addr;
+        uint8_t sin_zero[8];
+    };
+
+    struct win_sockaddr_in6
+    {
+        int16_t sin6_family;
+        uint16_t sin6_port;
+        uint32_t sin6_flowinfo;
+        in6_addr sin6_addr;
+        uint32_t sin6_scope_id;
+    };
+
+    static_assert(sizeof(win_sockaddr) == 16);
+    static_assert(sizeof(win_sockaddr_in) == 16);
+    static_assert(sizeof(win_sockaddr_in6) == 28);
+
+    static_assert(sizeof(win_sockaddr) == sizeof(sockaddr));
+    static_assert(sizeof(win_sockaddr_in) == sizeof(sockaddr_in));
+    static_assert(sizeof(win_sockaddr_in6) == sizeof(sockaddr_in6));
+
+    static_assert(offsetof(win_sockaddr, sa_family) == offsetof(sockaddr, sa_family));
+    static_assert(offsetof(win_sockaddr, sa_data) == offsetof(sockaddr, sa_data));
+
+    static_assert(sizeof(win_sockaddr::sa_family) == sizeof(sockaddr::sa_family));
+    static_assert(sizeof(win_sockaddr::sa_data) == sizeof(sockaddr::sa_data));
+
+    static_assert(offsetof(win_sockaddr_in, sin_family) == offsetof(sockaddr_in, sin_family));
+    static_assert(offsetof(win_sockaddr_in, sin_port) == offsetof(sockaddr_in, sin_port));
+    static_assert(offsetof(win_sockaddr_in, sin_addr) == offsetof(sockaddr_in, sin_addr));
+    static_assert(offsetof(win_sockaddr_in, sin_zero) == offsetof(sockaddr_in, sin_zero));
+
+    static_assert(sizeof(win_sockaddr_in::sin_family) == sizeof(sockaddr_in::sin_family));
+    static_assert(sizeof(win_sockaddr_in::sin_port) == sizeof(sockaddr_in::sin_port));
+    static_assert(sizeof(win_sockaddr_in::sin_addr) == sizeof(sockaddr_in::sin_addr));
+    static_assert(sizeof(win_sockaddr_in::sin_zero) == sizeof(sockaddr_in::sin_zero));
+
+    static_assert(offsetof(win_sockaddr_in6, sin6_family) == offsetof(sockaddr_in6, sin6_family));
+    static_assert(offsetof(win_sockaddr_in6, sin6_port) == offsetof(sockaddr_in6, sin6_port));
+    static_assert(offsetof(win_sockaddr_in6, sin6_flowinfo) == offsetof(sockaddr_in6, sin6_flowinfo));
+    static_assert(offsetof(win_sockaddr_in6, sin6_addr) == offsetof(sockaddr_in6, sin6_addr));
+    static_assert(offsetof(win_sockaddr_in6, sin6_scope_id) == offsetof(sockaddr_in6, sin6_scope_id));
+
+    static_assert(sizeof(win_sockaddr_in6::sin6_family) == sizeof(sockaddr_in6::sin6_family));
+    static_assert(sizeof(win_sockaddr_in6::sin6_port) == sizeof(sockaddr_in6::sin6_port));
+    static_assert(sizeof(win_sockaddr_in6::sin6_flowinfo) == sizeof(sockaddr_in6::sin6_flowinfo));
+    static_assert(sizeof(win_sockaddr_in6::sin6_addr) == sizeof(sockaddr_in6::sin6_addr));
+    static_assert(sizeof(win_sockaddr_in6::sin6_scope_id) == sizeof(sockaddr_in6::sin6_scope_id));
+
     const std::map<int, int> address_family_map{
         {0, AF_UNSPEC}, //
         {2, AF_INET},   //
