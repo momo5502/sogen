@@ -22,6 +22,189 @@ namespace
         // ...
     };
 
+    struct win_sockaddr
+    {
+        int16_t sa_family;
+        uint8_t sa_data[14];
+    };
+
+    struct win_sockaddr_in
+    {
+        int16_t sin_family;
+        uint16_t sin_port;
+        in_addr sin_addr;
+        uint8_t sin_zero[8];
+    };
+
+    struct win_sockaddr_in6
+    {
+        int16_t sin6_family;
+        uint16_t sin6_port;
+        uint32_t sin6_flowinfo;
+        in6_addr sin6_addr;
+        uint32_t sin6_scope_id;
+    };
+
+    static_assert(sizeof(win_sockaddr) == 16);
+    static_assert(sizeof(win_sockaddr_in) == 16);
+    static_assert(sizeof(win_sockaddr_in6) == 28);
+
+    static_assert(sizeof(win_sockaddr_in::sin_addr) == 4);
+    static_assert(sizeof(win_sockaddr_in6::sin6_addr) == 16);
+    static_assert(sizeof(win_sockaddr_in6::sin6_flowinfo) == sizeof(sockaddr_in6::sin6_flowinfo));
+    static_assert(sizeof(win_sockaddr_in6::sin6_scope_id) == sizeof(sockaddr_in6::sin6_scope_id));
+
+    const std::map<int, int> address_family_map{
+        {0, AF_UNSPEC}, //
+        {2, AF_INET},   //
+        {23, AF_INET6}, //
+    };
+
+    const std::map<int, int> socket_type_map{
+        {0, 0},           //
+        {1, SOCK_STREAM}, //
+        {2, SOCK_DGRAM},  //
+        {3, SOCK_RAW},    //
+        {4, SOCK_RDM},    //
+    };
+
+    const std::map<int, int> socket_protocol_map{
+        {0, 0},             //
+        {6, IPPROTO_TCP},   //
+        {17, IPPROTO_UDP},  //
+        {255, IPPROTO_RAW}, //
+    };
+
+    int16_t translate_host_to_win_address_family(const int host_af)
+    {
+        for (auto& entry : address_family_map)
+        {
+            if (entry.second == host_af)
+            {
+                return static_cast<int16_t>(entry.first);
+            }
+        }
+
+        throw std::runtime_error("Unknown host address family: " + std::to_string(host_af));
+    }
+
+    int translate_win_to_host_address_family(const int win_af)
+    {
+        const auto entry = address_family_map.find(win_af);
+        if (entry != address_family_map.end())
+        {
+            return entry->second;
+        }
+
+        throw std::runtime_error("Unknown address family: " + std::to_string(win_af));
+    }
+
+    int translate_win_to_host_type(const int win_type)
+    {
+        const auto entry = socket_type_map.find(win_type);
+        if (entry != socket_type_map.end())
+        {
+            return entry->second;
+        }
+
+        throw std::runtime_error("Unknown socket type: " + std::to_string(win_type));
+    }
+
+    int translate_win_to_host_protocol(const int win_protocol)
+    {
+        const auto entry = socket_protocol_map.find(win_protocol);
+        if (entry != socket_protocol_map.end())
+        {
+            return entry->second;
+        }
+
+        throw std::runtime_error("Unknown socket protocol: " + std::to_string(win_protocol));
+    }
+
+    std::vector<std::byte> convert_to_win_address(const network::address& a)
+    {
+        if (a.is_ipv4())
+        {
+            win_sockaddr_in win_addr{};
+            win_addr.sin_family = translate_host_to_win_address_family(a.get_family());
+            win_addr.sin_port = htons(a.get_port());
+            memcpy(&win_addr.sin_addr, &a.get_in_addr().sin_addr, sizeof(win_addr.sin_addr));
+
+            const auto ptr = reinterpret_cast<std::byte*>(&win_addr);
+            return {ptr, ptr + sizeof(win_addr)};
+        }
+
+        if (a.is_ipv6())
+        {
+            win_sockaddr_in6 win_addr{};
+            win_addr.sin6_family = translate_host_to_win_address_family(a.get_family());
+            win_addr.sin6_port = htons(a.get_port());
+
+            auto& addr = a.get_in6_addr();
+            memcpy(&win_addr.sin6_addr, &addr.sin6_addr, sizeof(win_addr.sin6_addr));
+            win_addr.sin6_flowinfo = addr.sin6_flowinfo;
+            win_addr.sin6_scope_id = addr.sin6_scope_id;
+
+            const auto ptr = reinterpret_cast<std::byte*>(&win_addr);
+            return {ptr, ptr + sizeof(win_addr)};
+        }
+
+        throw std::runtime_error("Unsupported host address family for conversion: " + std::to_string(a.get_family()));
+    }
+
+    network::address convert_to_host_address(const std::span<const std::byte> data)
+    {
+        if (data.size() < sizeof(win_sockaddr))
+        {
+            throw std::runtime_error("Bad address size");
+        }
+
+        win_sockaddr win_addr{};
+        memcpy(&win_addr, data.data(), sizeof(win_addr));
+
+        const auto family = translate_win_to_host_address_family(win_addr.sa_family);
+
+        network::address a{};
+
+        if (family == AF_INET)
+        {
+            if (data.size() < sizeof(win_sockaddr_in))
+            {
+                throw std::runtime_error("Bad IPv4 address size");
+            }
+
+            win_sockaddr_in win_addr4{};
+            memcpy(&win_addr4, data.data(), sizeof(win_addr4));
+
+            a.set_ipv4(win_addr4.sin_addr);
+            a.set_port(ntohs(win_addr4.sin_port));
+
+            return a;
+        }
+
+        if (family == AF_INET6)
+        {
+            if (data.size() < sizeof(win_sockaddr_in6))
+            {
+                throw std::runtime_error("Bad IPv6 address size");
+            }
+
+            win_sockaddr_in6 win_addr6{};
+            memcpy(&win_addr6, data.data(), sizeof(win_addr6));
+
+            a.set_ipv6(win_addr6.sin6_addr);
+            a.set_port(ntohs(win_addr6.sin6_port));
+
+            auto& addr = a.get_in6_addr();
+            addr.sin6_flowinfo = win_addr6.sin6_flowinfo;
+            addr.sin6_scope_id = win_addr6.sin6_scope_id;
+
+            return a;
+        }
+
+        throw std::runtime_error("Unsupported win address family for conversion: " + std::to_string(family));
+    }
+
     afd_creation_data get_creation_data(windows_emulator& win_emu, const io_device_creation_data& data)
     {
         if (!data.buffer || data.length < sizeof(afd_creation_data))
@@ -216,8 +399,11 @@ namespace
 
             const auto& data = *this->creation_data;
 
-            // TODO: values map to windows values; might not be the case for other platforms
-            const auto sock = socket(data.address_family, data.type, data.protocol);
+            const auto af = translate_win_to_host_address_family(data.address_family);
+            const auto type = translate_win_to_host_type(data.type);
+            const auto protocol = translate_win_to_host_protocol(data.protocol);
+
+            const auto sock = socket(af, type, protocol);
             if (sock == INVALID_SOCKET)
             {
                 throw std::runtime_error("Failed to create socket!");
@@ -290,20 +476,20 @@ namespace
 
         void deserialize(utils::buffer_deserializer& buffer) override
         {
-            buffer.read(this->creation_data);
+            buffer.read_optional(this->creation_data);
             this->setup();
 
-            buffer.read(this->require_poll_);
-            buffer.read(this->delayed_ioctl_);
-            buffer.read(this->timeout_);
+            buffer.read_optional(this->require_poll_);
+            buffer.read_optional(this->delayed_ioctl_);
+            buffer.read_optional(this->timeout_);
         }
 
         void serialize(utils::buffer_serializer& buffer) const override
         {
-            buffer.write(this->creation_data);
-            buffer.write(this->require_poll_);
-            buffer.write(this->delayed_ioctl_);
-            buffer.write(this->timeout_);
+            buffer.write_optional(this->creation_data);
+            buffer.write_optional(this->require_poll_);
+            buffer.write_optional(this->delayed_ioctl_);
+            buffer.write_optional(this->timeout_);
         }
 
         NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
@@ -339,7 +525,7 @@ namespace
 
         NTSTATUS ioctl_bind(windows_emulator& win_emu, const io_device_context& c) const
         {
-            const auto data = win_emu.emu().read_memory(c.input_buffer, c.input_buffer_length);
+            auto data = win_emu.emu().read_memory(c.input_buffer, c.input_buffer_length);
 
             constexpr auto address_offset = 4;
 
@@ -348,10 +534,7 @@ namespace
                 return STATUS_BUFFER_TOO_SMALL;
             }
 
-            const auto* address = reinterpret_cast<const sockaddr*>(data.data() + address_offset);
-            const auto address_size = static_cast<socklen_t>(data.size() - address_offset);
-
-            const network::address addr(address, address_size);
+            const auto addr = convert_to_host_address(std::span(data).subspan(address_offset));
 
             if (bind(*this->s_, &addr.get_addr(), addr.get_size()) == SOCKET_ERROR)
             {
@@ -431,28 +614,19 @@ namespace
             const auto receive_info = emu.read_memory<AFD_RECV_DATAGRAM_INFO<EmulatorTraits<Emu64>>>(c.input_buffer);
             const auto buffer = emu.read_memory<EMU_WSABUF<EmulatorTraits<Emu64>>>(receive_info.BufferArray);
 
-            std::vector<std::byte> address{};
-
-            unsigned long address_length = 0x1000;
-            if (receive_info.AddressLength)
-            {
-                address_length = emu.read_memory<ULONG>(receive_info.AddressLength);
-            }
-
-            address.resize(std::clamp(address_length, 1UL, 0x1000UL));
-
             if (!buffer.len || buffer.len > 0x10000 || !buffer.buf)
             {
                 return STATUS_INVALID_PARAMETER;
             }
 
-            auto fromlength = static_cast<socklen_t>(address.size());
+            network::address from{};
+            auto from_length = from.get_max_size();
 
             std::vector<char> data{};
             data.resize(buffer.len);
 
             const auto recevied_data = recvfrom(*this->s_, data.data(), static_cast<send_size>(data.size()), 0,
-                                                reinterpret_cast<sockaddr*>(address.data()), &fromlength);
+                                                &from.get_addr(), &from_length);
 
             if (recevied_data < 0)
             {
@@ -466,13 +640,20 @@ namespace
                 return STATUS_UNSUCCESSFUL;
             }
 
+            assert(from.get_size() == from_length);
+
             const auto data_size = std::min(data.size(), static_cast<size_t>(recevied_data));
             emu.write_memory(buffer.buf, data.data(), data_size);
 
-            if (receive_info.Address && address_length)
+            const auto win_from = convert_to_win_address(from);
+
+            if (receive_info.Address && receive_info.AddressLength)
             {
-                const auto address_size = std::min(address.size(), static_cast<size_t>(address_length));
-                emu.write_memory(receive_info.Address, address.data(), address_size);
+                const emulator_object<ULONG> address_length{emu, receive_info.AddressLength};
+                const auto address_size = std::min(win_from.size(), static_cast<size_t>(address_length.read()));
+
+                emu.write_memory(receive_info.Address, win_from.data(), address_size);
+                address_length.write(static_cast<ULONG>(address_size));
             }
 
             if (c.io_status_block)
@@ -497,17 +678,15 @@ namespace
             const auto send_info = emu.read_memory<AFD_SEND_DATAGRAM_INFO<EmulatorTraits<Emu64>>>(c.input_buffer);
             const auto buffer = emu.read_memory<EMU_WSABUF<EmulatorTraits<Emu64>>>(send_info.BufferArray);
 
-            const auto address = emu.read_memory(send_info.TdiConnInfo.RemoteAddress,
-                                                 static_cast<size_t>(send_info.TdiConnInfo.RemoteAddressLength));
+            auto address_buffer = emu.read_memory(send_info.TdiConnInfo.RemoteAddress,
+                                                  static_cast<size_t>(send_info.TdiConnInfo.RemoteAddressLength));
 
-            const network::address target(reinterpret_cast<const sockaddr*>(address.data()),
-                                          static_cast<socklen_t>(address.size()));
-
+            const auto target = convert_to_host_address(address_buffer);
             const auto data = emu.read_memory(buffer.buf, buffer.len);
 
             const auto sent_data =
                 sendto(*this->s_, reinterpret_cast<const char*>(data.data()), static_cast<send_size>(data.size()),
-                       0 /* ? */, &target.get_addr(), target.get_size());
+                       0 /* TODO */, &target.get_addr(), target.get_size());
 
             if (sent_data < 0)
             {

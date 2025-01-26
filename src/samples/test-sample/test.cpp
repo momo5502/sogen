@@ -9,7 +9,7 @@
 #include <filesystem>
 #include <string_view>
 
-#include <Windows.h>
+#include <network/udp_socket.hpp>
 
 using namespace std::literals;
 
@@ -195,7 +195,7 @@ std::optional<std::string> read_registry_string(const HKEY root, const char* pat
         return "";
     }
 
-    return {std::string(data, min(length - 1, sizeof(data)))};
+    return {std::string(data, std::min(static_cast<size_t>(length - 1), sizeof(data)))};
 }
 
 bool test_registry()
@@ -231,6 +231,36 @@ bool test_exceptions()
     }
 }
 
+bool test_socket()
+{
+    network::udp_socket receiver{AF_INET};
+    const network::udp_socket sender{AF_INET};
+    const network::address destination{"127.0.0.1:28970", AF_INET};
+    constexpr std::string_view send_data = "Hello World";
+
+    if (!receiver.bind(destination))
+    {
+        puts("Failed to bind socket!");
+        return false;
+    }
+
+    if (!sender.send(destination, send_data))
+    {
+        puts("Failed to send data!");
+        return false;
+    }
+
+    const auto response = receiver.receive();
+
+    if (!response)
+    {
+        puts("Failed to recieve data!");
+        return false;
+    }
+
+    return send_data == response->second;
+}
+
 void throw_access_violation()
 {
     if (do_the_task)
@@ -256,7 +286,7 @@ bool test_ud2_exception(void* address)
 {
     __try
     {
-        static_cast<void (*)()>(address)();
+        reinterpret_cast<void (*)()>(address)();
         return false;
     }
     __except (EXCEPTION_EXECUTE_HANDLER)
@@ -301,12 +331,18 @@ void print_time()
         puts(res ? "Success" : "Fail");      \
     }
 
-int main(int argc, const char* argv[])
+int main(const int argc, const char* argv[])
 {
-    if (argc == 2 && argv[1] == "-time"sv)
+    bool reproducible = false;
+    if (argc == 2)
     {
-        print_time();
-        return 0;
+        if (argv[1] == "-time"sv)
+        {
+            print_time();
+            return 0;
+        }
+
+        reproducible = argv[1] == "-reproducible"sv;
     }
 
     bool valid = true;
@@ -319,6 +355,11 @@ int main(int argc, const char* argv[])
     RUN_TEST(test_exceptions, "Exceptions")
     RUN_TEST(test_native_exceptions, "Native Exceptions")
     RUN_TEST(test_tls, "TLS")
+
+    if (!reproducible)
+    {
+        RUN_TEST(test_socket, "Socket")
+    }
 
     return valid ? 0 : 1;
 }

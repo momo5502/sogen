@@ -110,6 +110,8 @@ CALL :collect_dll mscms.dll
 CALL :collect_dll ktmw32.dll
 CALL :collect_dll shcore.dll
 CALL :collect_dll diagnosticdatasettings.dll
+CALL :collect_dll mswsock.dll
+CALL :collect_dll umpdc.dll
 
 CALL :collect_dll locale.nls
 

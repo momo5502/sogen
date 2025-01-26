@@ -22,6 +22,16 @@ namespace utils
         { a.deserialize(deserializer) } -> std::same_as<void>;
     };
 
+    template <typename T>
+    struct is_optional : std::false_type
+    {
+    };
+
+    template <typename T>
+    struct is_optional<std::optional<T>> : std::true_type
+    {
+    };
+
     namespace detail
     {
         template <typename, typename = void>
@@ -349,6 +359,12 @@ namespace utils
             const uint64_t old_size = this->buffer_.size();
 #endif
 
+            if (this->break_offset_ && this->buffer_.size() <= *this->break_offset_ &&
+                this->buffer_.size() + length > *this->break_offset_)
+            {
+                throw std::runtime_error("Break offset reached!");
+            }
+
             const auto* byte_buffer = static_cast<const std::byte*>(buffer);
             this->buffer_.insert(this->buffer_.end(), byte_buffer, byte_buffer + length);
 
@@ -365,6 +381,7 @@ namespace utils
         }
 
         template <typename T>
+            requires(!is_optional<T>::value)
         void write(const T& object)
         {
             constexpr auto is_trivially_copyable = std::is_trivially_copyable_v<T>;
@@ -475,8 +492,47 @@ namespace utils
             return std::move(this->buffer_);
         }
 
+        void set_break_offset(const size_t break_offset)
+        {
+            this->break_offset_ = break_offset;
+        }
+
+        std::optional<size_t> get_diff(const buffer_serializer& other) const
+        {
+            auto& b1 = this->get_buffer();
+            auto& b2 = other.get_buffer();
+
+            const auto s1 = b1.size();
+            const auto s2 = b2.size();
+
+            for (size_t i = 0; i < s1 && i < s2; ++i)
+            {
+                if (b1.at(i) != b2.at(i))
+                {
+                    return i;
+                }
+            }
+
+            if (s1 != s2)
+            {
+                return std::min(s1, s2);
+            }
+
+            return std::nullopt;
+        }
+
+        void print_diff(const buffer_serializer& other) const
+        {
+            const auto diff = this->get_diff(other);
+            if (diff)
+            {
+                printf("Diff at %zd\n", *diff);
+            }
+        }
+
       private:
         std::vector<std::byte> buffer_{};
+        std::optional<size_t> break_offset_{};
     };
 
     template <>

@@ -38,14 +38,20 @@ namespace test
         return env;
     }
 
-    inline windows_emulator create_sample_emulator(emulator_settings settings, emulator_callbacks callbacks = {})
+    inline windows_emulator create_sample_emulator(emulator_settings settings, const bool reproducible = false,
+                                                   emulator_callbacks callbacks = {})
     {
         const auto is_verbose = enable_verbose_logging();
 
         if (is_verbose)
         {
             settings.disable_logging = false;
-            settings.verbose_calls = true;
+            // settings.verbose_calls = true;
+        }
+
+        if (reproducible)
+        {
+            settings.arguments = {u"-reproducible"};
         }
 
         settings.application = "c:/test-sample.exe";
@@ -53,13 +59,73 @@ namespace test
         return windows_emulator{std::move(settings), std::move(callbacks)};
     }
 
-    inline windows_emulator create_sample_emulator()
+    inline windows_emulator create_sample_emulator(const bool reproducible = false)
     {
         emulator_settings settings{
             .disable_logging = true,
             .use_relative_time = true,
         };
 
-        return create_sample_emulator(std::move(settings));
+        return create_sample_emulator(std::move(settings), reproducible);
+    }
+
+    inline void bisect_emulation(windows_emulator& emu)
+    {
+        utils::buffer_serializer start_state{};
+        emu.serialize(start_state);
+
+        emu.start();
+        const auto limit = emu.process().executed_instructions;
+
+        const auto reset_emulator = [&] {
+            utils::buffer_deserializer deserializer{start_state.get_buffer()};
+            emu.deserialize(deserializer);
+        };
+
+        const auto get_state_for_count = [&](const size_t count) {
+            reset_emulator();
+            emu.start({}, count);
+
+            utils::buffer_serializer state{};
+            emu.serialize(state);
+            return state;
+        };
+
+        const auto has_diff_after_count = [&](const size_t count) {
+            const auto s1 = get_state_for_count(count);
+            const auto s2 = get_state_for_count(count);
+
+            return s1.get_diff(s2).has_value();
+        };
+
+        if (!has_diff_after_count(limit))
+        {
+            puts("Emulation has no diff");
+        }
+
+        auto upper_bound = limit;
+        decltype(upper_bound) lower_bound = 0;
+
+        printf("Bounds: %" PRIx64 " - %" PRIx64 "\n", lower_bound, upper_bound);
+
+        while (lower_bound + 1 < upper_bound)
+        {
+            const auto diff = (upper_bound - lower_bound);
+            const auto pivot = lower_bound + (diff / 2);
+
+            const auto has_diff = has_diff_after_count(pivot);
+
+            auto* bound = has_diff ? &upper_bound : &lower_bound;
+            *bound = pivot;
+
+            printf("Bounds: %" PRIx64 " - %" PRIx64 "\n", lower_bound, upper_bound);
+        }
+
+        (void)get_state_for_count(lower_bound);
+
+        const auto rip = emu.emu().read_instruction_pointer();
+
+        printf("Diff detected after 0x%" PRIx64 " instructions at 0x%" PRIx64 " (%s)\n", lower_bound, rip,
+               emu.process().mod_manager.find_name(rip));
     }
 }
