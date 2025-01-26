@@ -960,7 +960,10 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
         if (export_entry != binary->address_names.end())
         {
             const auto rsp = this->emu().read_stack_pointer();
-            const auto return_address = this->emu().read_memory<uint64_t>(rsp);
+
+            uint64_t return_address{};
+            this->emu().try_read_memory(rsp, &return_address, sizeof(return_address));
+
             const auto* mod_name = this->process().mod_manager.find_name(return_address);
 
             log.print(is_interesting_call ? color::yellow : color::dark_gray,
