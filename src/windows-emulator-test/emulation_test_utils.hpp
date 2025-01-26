@@ -109,8 +109,8 @@ namespace test
 
             const auto has_diff = has_diff_after_count(pivot);
 
-            auto& bound = has_diff ? upper_bound : lower_bound;
-            bound = pivot;
+            auto* bound = has_diff ? &upper_bound : &lower_bound;
+            *bound = pivot;
 
             printf("Bounds: %" PRIx64 " - %" PRIx64 "\n", lower_bound, upper_bound);
         }
