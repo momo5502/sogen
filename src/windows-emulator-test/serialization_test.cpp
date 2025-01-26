@@ -2,6 +2,25 @@
 
 namespace test
 {
+    TEST(SerializationTest, ResettingEmulatorWorks)
+    {
+        auto emu = create_sample_emulator();
+
+        utils::buffer_serializer serializer{};
+        emu.serialize(serializer);
+
+        emu.start();
+
+        ASSERT_TERMINATED_SUCCESSFULLY(emu);
+
+        utils::buffer_deserializer deserializer{serializer.get_buffer()};
+        emu.deserialize(deserializer);
+
+        emu.start();
+
+        ASSERT_TERMINATED_SUCCESSFULLY(emu);
+    }
+
     TEST(SerializationTest, SerializedDataIsReproducible)
     {
         auto emu1 = create_sample_emulator();

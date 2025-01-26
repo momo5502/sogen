@@ -94,6 +94,7 @@ namespace utils
 
 void memory_manager::serialize_memory_state(utils::buffer_serializer& buffer, const bool is_snapshot) const
 {
+    buffer.write_atomic(this->memory_layout_state_version_);
     buffer.write_map(this->reserved_regions_);
 
     if (is_snapshot)
@@ -125,15 +126,10 @@ void memory_manager::deserialize_memory_state(utils::buffer_deserializer& buffer
 {
     if (!is_snapshot)
     {
-        for (const auto& reserved_region : this->reserved_regions_)
-        {
-            for (const auto& region : reserved_region.second.committed_regions)
-            {
-                this->unmap_memory(region.first, region.second.length);
-            }
-        }
+        assert(this->reserved_regions_.empty());
     }
 
+    buffer.read_atomic(this->memory_layout_state_version_);
     buffer.read_map(this->reserved_regions_);
 
     if (is_snapshot)
@@ -432,6 +428,19 @@ bool memory_manager::release_memory(const uint64_t address, size_t size)
     this->reserved_regions_.erase(entry);
     invalidate_memory_layout_state_version();
     return true;
+}
+
+void memory_manager::unmap_all_memory()
+{
+    for (const auto& reserved_region : this->reserved_regions_)
+    {
+        for (const auto& region : reserved_region.second.committed_regions)
+        {
+            this->unmap_memory(region.first, region.second.length);
+        }
+    }
+
+    this->reserved_regions_.clear();
 }
 
 uint64_t memory_manager::find_free_allocation_base(const size_t size, const uint64_t start) const

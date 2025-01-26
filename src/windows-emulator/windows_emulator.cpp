@@ -897,13 +897,13 @@ void windows_emulator::setup_process(const emulator_settings& settings)
 
 void windows_emulator::yield_thread()
 {
-    this->switch_thread = true;
+    this->switch_thread_ = true;
     this->emu().stop();
 }
 
 void windows_emulator::perform_thread_switch()
 {
-    this->switch_thread = false;
+    this->switch_thread_ = false;
     while (!switch_to_next_thread(*this))
     {
         // TODO: Optimize that
@@ -931,7 +931,7 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
     const auto thread_insts = ++thread.executed_instructions;
     if (thread_insts % MAX_INSTRUCTIONS_PER_TIME_SLICE == 0)
     {
-        this->switch_thread = true;
+        this->switch_thread_ = true;
         this->emu().stop();
     }
 
@@ -1088,14 +1088,14 @@ void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
 
     while (true)
     {
-        if (this->switch_thread || !this->current_thread().is_thread_ready(*this))
+        if (this->switch_thread_ || !this->current_thread().is_thread_ready(*this))
         {
             this->perform_thread_switch();
         }
 
         this->emu().start_from_ip(timeout, count);
 
-        if (!this->switch_thread && !this->emu().has_violation())
+        if (!this->switch_thread_ && !this->emu().has_violation())
         {
             break;
         }
@@ -1128,6 +1128,7 @@ void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
 
 void windows_emulator::serialize(utils::buffer_serializer& buffer) const
 {
+    buffer.write(this->switch_thread_);
     buffer.write(this->use_relative_time_);
     this->file_sys().serialize(buffer);
     this->emu().serialize(buffer);
@@ -1145,6 +1146,7 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
         return windows_emulator_wrapper{*this}; //
     });
 
+    buffer.read(this->switch_thread_);
     buffer.read(this->use_relative_time_);
     this->file_sys().deserialize(buffer);
 

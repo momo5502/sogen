@@ -55,6 +55,11 @@ class emulator : public cpu_interface, public memory_manager, public hook_interf
 
     void perform_deserialization(utils::buffer_deserializer& buffer, const bool is_snapshot)
     {
+        if (!is_snapshot)
+        {
+            this->unmap_all_memory();
+        }
+
         this->deserialize_state(buffer, is_snapshot);
         this->deserialize_memory_state(buffer, is_snapshot);
     }
