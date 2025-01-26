@@ -6,14 +6,14 @@ namespace test
     {
         auto emu = create_sample_emulator();
 
-        utils::buffer_serializer serializer{};
-        emu.serialize(serializer);
+        utils::buffer_serializer start_state{};
+        emu.serialize(start_state);
 
         emu.start();
 
         ASSERT_TERMINATED_SUCCESSFULLY(emu);
 
-        utils::buffer_deserializer deserializer{serializer.get_buffer()};
+        utils::buffer_deserializer deserializer{start_state.get_buffer()};
         emu.deserialize(deserializer);
 
         emu.start();
