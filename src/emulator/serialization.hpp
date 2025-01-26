@@ -22,6 +22,16 @@ namespace utils
         { a.deserialize(deserializer) } -> std::same_as<void>;
     };
 
+    template <typename T>
+    struct is_optional : std::false_type
+    {
+    };
+
+    template <typename T>
+    struct is_optional<std::optional<T>> : std::true_type
+    {
+    };
+
     namespace detail
     {
         template <typename, typename = void>
@@ -371,6 +381,7 @@ namespace utils
         }
 
         template <typename T>
+            requires(!is_optional<T>::value)
         void write(const T& object)
         {
             constexpr auto is_trivially_copyable = std::is_trivially_copyable_v<T>;

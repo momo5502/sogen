@@ -290,20 +290,20 @@ namespace
 
         void deserialize(utils::buffer_deserializer& buffer) override
         {
-            buffer.read(this->creation_data);
+            buffer.read_optional(this->creation_data);
             this->setup();
 
-            buffer.read(this->require_poll_);
-            buffer.read(this->delayed_ioctl_);
-            buffer.read(this->timeout_);
+            buffer.read_optional(this->require_poll_);
+            buffer.read_optional(this->delayed_ioctl_);
+            buffer.read_optional(this->timeout_);
         }
 
         void serialize(utils::buffer_serializer& buffer) const override
         {
-            buffer.write(this->creation_data);
-            buffer.write(this->require_poll_);
-            buffer.write(this->delayed_ioctl_);
-            buffer.write(this->timeout_);
+            buffer.write_optional(this->creation_data);
+            buffer.write_optional(this->require_poll_);
+            buffer.write_optional(this->delayed_ioctl_);
+            buffer.write_optional(this->timeout_);
         }
 
         NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
