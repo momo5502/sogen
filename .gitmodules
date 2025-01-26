@@ -15,3 +15,6 @@
 	url = https://github.com/madler/zlib.git
 	branch = develop
 	ignore = dirty
+[submodule "deps/gtest-parallel"]
+	path = deps/gtest-parallel
+	url = https://github.com/google/gtest-parallel.git
