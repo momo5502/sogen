@@ -97,8 +97,8 @@ namespace test
             puts("Emulation has no diff");
         }
 
-        auto lower_bound = 0ULL;
         auto upper_bound = limit;
+        decltype(upper_bound) lower_bound = 0;
 
         printf("Bounds: %" PRIx64 " - %" PRIx64 "\n", lower_bound, upper_bound);
 
