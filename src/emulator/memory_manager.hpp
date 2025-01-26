@@ -101,6 +101,8 @@ class memory_manager
 
     bool release_memory(uint64_t address, size_t size);
 
+    void unmap_all_memory();
+
     uint64_t allocate_memory(const size_t size, const memory_permission permissions, const bool reserve_only = false)
     {
         const auto allocation_base = this->find_free_allocation_base(size);

@@ -338,6 +338,11 @@ class moved_marker
         return this->was_moved_;
     }
 
+    void mark_as_moved()
+    {
+        this->was_moved_ = true;
+    }
+
   private:
     bool was_moved_{false};
 };
@@ -498,6 +503,11 @@ class emulator_thread : ref_counted_object
         buffer.read_vector(this->last_registers);
     }
 
+    void leak_memory()
+    {
+        this->marker.mark_as_moved();
+    }
+
   private:
     void setup_registers(x64_emulator& emu, const process_context& context) const;
 
@@ -656,6 +666,11 @@ struct process_context
 
         buffer.read_vector(this->default_register_set);
         buffer.read(this->spawned_thread_count);
+
+        for (auto& thread : this->threads | std::views::values)
+        {
+            thread.leak_memory();
+        }
 
         buffer.read(this->threads);
 

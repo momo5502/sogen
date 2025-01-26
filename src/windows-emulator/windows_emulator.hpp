@@ -119,7 +119,6 @@ class windows_emulator
     bool verbose_calls{false};
     bool buffer_stdout{false};
     bool fuzzing{false};
-    bool switch_thread{false};
 
     void yield_thread();
     void perform_thread_switch();
@@ -155,8 +154,11 @@ class windows_emulator
     file_system file_sys_;
 
     emulator_callbacks callbacks_{};
+
+    bool switch_thread_{false};
     bool use_relative_time_{false};
     bool silent_until_main_{false};
+
     std::unique_ptr<x64_emulator> emu_{};
     std::vector<instruction_hook_callback> syscall_hooks_{};
 

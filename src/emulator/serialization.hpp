@@ -158,6 +158,12 @@ namespace utils
         }
 
         template <typename T>
+        void read_atomic(std::atomic<T>& val)
+        {
+            val = this->read<T>();
+        }
+
+        template <typename T>
         void read_optional(std::optional<T>& val)
         {
             if (this->read<bool>())
@@ -388,6 +394,12 @@ namespace utils
                 static_assert(!is_trivially_copyable, "Key must be trivially copyable or implement serializable!");
                 std::abort();
             }
+        }
+
+        template <typename T>
+        void write_atomic(const std::atomic<T>& val)
+        {
+            this->write(val.load());
         }
 
         template <typename T>
