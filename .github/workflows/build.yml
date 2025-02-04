@@ -334,10 +334,6 @@ jobs:
         with:
           name: 'Temp *'
 
-      - name: Pipeline suceeded
-        if: ${{ !(contains(needs.*.result, 'failure')) }}
-        run: exit 0
-
       - name: Pipeline failed
-        if: ${{ contains(needs.*.result, 'failure') }}
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: exit 1
