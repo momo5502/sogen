@@ -3550,7 +3550,7 @@ namespace
         thread->restore(c.emu);
 
         thread_context.access([&](CONTEXT64& context) {
-            if (context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64)
+            if ((context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64) == CONTEXT_DEBUG_REGISTERS_64)
             {
                 c.win_emu.log.print(color::pink, "--> Reading debug registers!\n");
             }
@@ -3588,6 +3588,12 @@ namespace
 
         const auto context = thread_context.read();
         context_frame::restore(c.emu, context);
+
+        if ((context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64) == CONTEXT_DEBUG_REGISTERS_64)
+        {
+            c.win_emu.log.print(color::pink, "--> Setting debug registers!\n");
+        }
+
         return STATUS_SUCCESS;
     }
 
