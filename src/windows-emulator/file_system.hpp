@@ -19,6 +19,12 @@ class file_system
                                     ? win_path
                                     : (this->working_dir_ / win_path);
 
+        const auto mapping = this->mappings_.find(full_path);
+        if (mapping != this->mappings_.end())
+        {
+            return mapping->second;
+        }
+
 #ifdef OS_WINDOWS
         if (this->root_.empty())
         {
@@ -85,7 +91,13 @@ class file_system
         buffer.read(this->working_dir_);
     }
 
+    void map(windows_path src, std::filesystem::path dest)
+    {
+        this->mappings_[std::move(src)] = std::move(dest);
+    }
+
   private:
     std::filesystem::path root_{};
     windows_path working_dir_{};
+    std::unordered_map<windows_path, std::filesystem::path> mappings_{};
 };

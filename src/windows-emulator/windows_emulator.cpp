@@ -838,6 +838,16 @@ windows_emulator::windows_emulator(const emulator_settings& settings, emulator_c
         this->file_sys().set_working_directory(settings.application.parent());
     }
 
+    for (const auto& mapping : settings.path_mappings)
+    {
+        this->file_sys().map(mapping.first, mapping.second);
+    }
+
+    for (const auto& mapping : settings.port_mappings)
+    {
+        this->map_port(mapping.first, mapping.second);
+    }
+
     this->verbose_calls = settings.verbose_calls;
     this->silent_until_main_ = settings.silent_until_main && !settings.disable_logging;
     this->use_relative_time_ = settings.use_relative_time;

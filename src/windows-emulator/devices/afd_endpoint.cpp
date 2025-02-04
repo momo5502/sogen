@@ -121,13 +121,13 @@ namespace
         throw std::runtime_error("Unknown socket protocol: " + std::to_string(win_protocol));
     }
 
-    std::vector<std::byte> convert_to_win_address(const network::address& a)
+    std::vector<std::byte> convert_to_win_address(const windows_emulator& win_emu, const network::address& a)
     {
         if (a.is_ipv4())
         {
             win_sockaddr_in win_addr{};
             win_addr.sin_family = translate_host_to_win_address_family(a.get_family());
-            win_addr.sin_port = htons(a.get_port());
+            win_addr.sin_port = htons(win_emu.get_emulator_port(a.get_port()));
             memcpy(&win_addr.sin_addr, &a.get_in_addr().sin_addr, sizeof(win_addr.sin_addr));
 
             const auto ptr = reinterpret_cast<std::byte*>(&win_addr);
@@ -138,7 +138,7 @@ namespace
         {
             win_sockaddr_in6 win_addr{};
             win_addr.sin6_family = translate_host_to_win_address_family(a.get_family());
-            win_addr.sin6_port = htons(a.get_port());
+            win_addr.sin6_port = htons(win_emu.get_emulator_port(a.get_port()));
 
             auto& addr = a.get_in6_addr();
             memcpy(&win_addr.sin6_addr, &addr.sin6_addr, sizeof(win_addr.sin6_addr));
@@ -152,7 +152,7 @@ namespace
         throw std::runtime_error("Unsupported host address family for conversion: " + std::to_string(a.get_family()));
     }
 
-    network::address convert_to_host_address(const std::span<const std::byte> data)
+    network::address convert_to_host_address(const windows_emulator& win_emu, const std::span<const std::byte> data)
     {
         if (data.size() < sizeof(win_sockaddr))
         {
@@ -177,7 +177,7 @@ namespace
             memcpy(&win_addr4, data.data(), sizeof(win_addr4));
 
             a.set_ipv4(win_addr4.sin_addr);
-            a.set_port(ntohs(win_addr4.sin_port));
+            a.set_port(win_emu.get_host_port(ntohs(win_addr4.sin_port)));
 
             return a;
         }
@@ -534,7 +534,7 @@ namespace
                 return STATUS_BUFFER_TOO_SMALL;
             }
 
-            const auto addr = convert_to_host_address(std::span(data).subspan(address_offset));
+            const auto addr = convert_to_host_address(win_emu, std::span(data).subspan(address_offset));
 
             if (bind(*this->s_, &addr.get_addr(), addr.get_size()) == SOCKET_ERROR)
             {
@@ -645,7 +645,7 @@ namespace
             const auto data_size = std::min(data.size(), static_cast<size_t>(recevied_data));
             emu.write_memory(buffer.buf, data.data(), data_size);
 
-            const auto win_from = convert_to_win_address(from);
+            const auto win_from = convert_to_win_address(win_emu, from);
 
             if (receive_info.Address && receive_info.AddressLength)
             {
@@ -681,7 +681,7 @@ namespace
             auto address_buffer = emu.read_memory(send_info.TdiConnInfo.RemoteAddress,
                                                   static_cast<size_t>(send_info.TdiConnInfo.RemoteAddressLength));
 
-            const auto target = convert_to_host_address(address_buffer);
+            const auto target = convert_to_host_address(win_emu, address_buffer);
             const auto data = emu.read_memory(buffer.buf, buffer.len);
 
             const auto sent_data =

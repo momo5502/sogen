@@ -36,6 +36,8 @@ struct emulator_settings
     bool disable_logging{false};
     bool silent_until_main{false};
     bool use_relative_time{false};
+    std::unordered_map<uint16_t, uint16_t> port_mappings{};
+    std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
 };
 
 enum class apiset_location : uint8_t
@@ -114,6 +116,45 @@ class windows_emulator
         this->syscall_hooks_.push_back(std::move(callback));
     }
 
+    uint16_t get_host_port(const uint16_t emulator_port) const
+    {
+        const auto entry = this->port_mappings_.find(emulator_port);
+        if (entry == this->port_mappings_.end())
+        {
+            return emulator_port;
+        }
+
+        return entry->second;
+    }
+
+    uint16_t get_emulator_port(const uint16_t host_port) const
+    {
+        for (const auto& mapping : this->port_mappings_)
+        {
+            if (mapping.second == host_port)
+            {
+                return mapping.first;
+            }
+        }
+
+        return host_port;
+    }
+
+    void map_port(const uint16_t emulator_port, const uint16_t host_port)
+    {
+        if (emulator_port != host_port)
+        {
+            this->port_mappings_[emulator_port] = host_port;
+            return;
+        }
+
+        const auto entry = this->port_mappings_.find(emulator_port);
+        if (entry != this->port_mappings_.end())
+        {
+            this->port_mappings_.erase(entry);
+        }
+    }
+
     logger log{};
     bool verbose{false};
     bool verbose_calls{false};
@@ -161,6 +202,7 @@ class windows_emulator
 
     std::unique_ptr<x64_emulator> emu_{};
     std::vector<instruction_hook_callback> syscall_hooks_{};
+    std::unordered_map<uint16_t, uint16_t> port_mappings_{};
 
     process_context process_;
     syscall_dispatcher dispatcher_;
