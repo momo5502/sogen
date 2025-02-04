@@ -1042,7 +1042,7 @@ namespace
             return STATUS_SUCCESS;
         }
 
-        if (info_class == SystemProcessInformation)
+        if (info_class == SystemProcessInformation || info_class == SystemModuleInformation)
         {
             return STATUS_NOT_SUPPORTED;
         }
@@ -3497,6 +3497,11 @@ namespace
         return STATUS_NOT_SUPPORTED;
     }
 
+    NTSTATUS handle_NtUserFindWindowEx()
+    {
+        return 0;
+    }
+
     NTSTATUS handle_NtGetNextThread(const syscall_context& c, const handle process_handle, const handle thread_handle,
                                     const ACCESS_MASK /*desired_access*/, const ULONG /*handle_attributes*/,
                                     const ULONG flags, const emulator_object<handle> new_thread_handle)
@@ -3728,6 +3733,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserReleaseDC);
     add_handler(NtUserFindExistingCursorIcon);
     add_handler(NtSetContextThread);
+    add_handler(NtUserFindWindowEx);
 
 #undef add_handler
 }
