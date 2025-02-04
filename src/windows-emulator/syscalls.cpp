@@ -588,28 +588,41 @@ namespace
                                                  const ULONG /*length*/,
                                                  const FS_INFORMATION_CLASS fs_information_class)
     {
-        if (fs_information_class != FileFsDeviceInformation)
+        if (fs_information_class == FileFsDeviceInformation)
         {
-            c.win_emu.log.error("Unsupported fs info class: %X\n", fs_information_class);
-            c.emu.stop();
-            return STATUS_NOT_SUPPORTED;
+            const emulator_object<FILE_FS_DEVICE_INFORMATION> info_obj{c.emu, fs_information};
+            info_obj.access([&](FILE_FS_DEVICE_INFORMATION& info) {
+                if (file_handle == STDOUT_HANDLE.bits && !c.win_emu.buffer_stdout)
+                {
+                    info.DeviceType = FILE_DEVICE_CONSOLE;
+                    info.Characteristics = 0x20000;
+                }
+                else
+                {
+                    info.DeviceType = FILE_DEVICE_DISK;
+                    info.Characteristics = 0x20020;
+                }
+            });
+
+            return STATUS_SUCCESS;
         }
 
-        const emulator_object<FILE_FS_DEVICE_INFORMATION> info_obj{c.emu, fs_information};
-        info_obj.access([&](FILE_FS_DEVICE_INFORMATION& info) {
-            if (file_handle == STDOUT_HANDLE.bits && !c.win_emu.buffer_stdout)
-            {
-                info.DeviceType = FILE_DEVICE_CONSOLE;
-                info.Characteristics = 0x20000;
-            }
-            else
-            {
-                info.DeviceType = FILE_DEVICE_DISK;
-                info.Characteristics = 0x20020;
-            }
-        });
+        if (fs_information_class == FileFsSizeInformation)
+        {
+            const emulator_object<FILE_FS_SIZE_INFORMATION> info_obj{c.emu, fs_information};
+            info_obj.access([&](FILE_FS_SIZE_INFORMATION& info) {
+                info.BytesPerSector = 0x1000;
+                info.SectorsPerAllocationUnit = 0x1000;
+                info.TotalAllocationUnits.QuadPart = 0x10000;
+                info.AvailableAllocationUnits.QuadPart = 0x1000;
+            });
 
-        return STATUS_SUCCESS;
+            return STATUS_SUCCESS;
+        }
+
+        c.win_emu.log.error("Unsupported fs info class: %X\n", fs_information_class);
+        c.emu.stop();
+        return STATUS_NOT_SUPPORTED;
     }
 
     NTSTATUS handle_NtOpenSection(const syscall_context& c, const emulator_object<handle> section_handle,
@@ -626,6 +639,13 @@ namespace
         {
             section_handle.write(SHARED_SECTION);
             return STATUS_SUCCESS;
+        }
+
+        if (filename == u"windows_shell_global_counters"             //
+            || filename == u"{00020000-0000-1005-8005-0000C06B5161}" //
+            || filename == u"Global\\{00020000-0000-1005-8005-0000C06B5161}")
+        {
+            return STATUS_NOT_SUPPORTED;
         }
 
         if (attributes.RootDirectory != KNOWN_DLLS_DIRECTORY)
@@ -1022,6 +1042,11 @@ namespace
             return STATUS_SUCCESS;
         }
 
+        if (info_class == SystemProcessInformation)
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
+
         if (info_class != SystemBasicInformation && info_class != SystemEmulationBasicInformation)
         {
             c.win_emu.log.error("Unsupported system info class: %X\n", info_class);
@@ -1073,7 +1098,7 @@ namespace
             return STATUS_SUCCESS;
         }
 
-        c.win_emu.log.error("Duplicating non-pseudo object not supported yet!");
+        c.win_emu.log.error("Duplicating non-pseudo object not supported yet!\n");
         return STATUS_NOT_SUPPORTED;
     }
 
@@ -3262,6 +3287,16 @@ namespace
         return 1;
     }
 
+    NTSTATUS handle_NtUserGetDC()
+    {
+        return handle_NtUserGetDCEx();
+    }
+
+    NTSTATUS handle_NtUserReleaseDC()
+    {
+        return STATUS_SUCCESS;
+    }
+
     NTSTATUS handle_NtUserModifyUserStartupInfoFlags()
     {
         return STATUS_SUCCESS;
@@ -3432,9 +3467,69 @@ namespace
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtSetInformationVirtualMemory(const syscall_context&)
+    NTSTATUS handle_NtSetInformationVirtualMemory()
     {
         return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtEnumerateKey()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtAlpcConnectPort()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtSetInformationObject()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtUserGetCursorPos()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtUserFindExistingCursorIcon()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtGetNextThread(const syscall_context& c, const handle process_handle, const handle thread_handle,
+                                    const ACCESS_MASK /*desired_access*/, const ULONG /*handle_attributes*/,
+                                    const ULONG flags, const emulator_object<handle> new_thread_handle)
+    {
+        if (process_handle != CURRENT_PROCESS || thread_handle.value.type != handle_types::thread)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        if (flags != 0)
+        {
+            c.win_emu.log.error("NtGetNextThread flags %X not supported\n", flags);
+            c.emu.stop();
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        bool return_next_thread = thread_handle == NULL_HANDLE;
+        for (const auto& t : c.proc.threads)
+        {
+            if (return_next_thread && !t.second.is_terminated())
+            {
+                new_thread_handle.write(c.proc.threads.make_handle(t.first));
+                return STATUS_SUCCESS;
+            }
+
+            if (t.first == thread_handle.value.id)
+            {
+                return_next_thread = true;
+            }
+        }
+
+        new_thread_handle.write(NULL_HANDLE);
+        return STATUS_NO_MORE_ENTRIES;
     }
 
     NTSTATUS handle_NtGetContextThread(const syscall_context& c, const handle thread_handle,
@@ -3584,8 +3679,16 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtYieldExecution);
     add_handler(NtUserModifyUserStartupInfoFlags);
     add_handler(NtUserGetDCEx);
+    add_handler(NtUserGetDC);
     add_handler(NtUserGetDpiForCurrentProcess);
     add_handler(NtReleaseSemaphore);
+    add_handler(NtEnumerateKey);
+    add_handler(NtAlpcConnectPort);
+    add_handler(NtGetNextThread);
+    add_handler(NtSetInformationObject);
+    add_handler(NtUserGetCursorPos);
+    add_handler(NtUserReleaseDC);
+    add_handler(NtUserFindExistingCursorIcon);
 
 #undef add_handler
 }
