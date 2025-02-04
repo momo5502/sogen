@@ -430,6 +430,16 @@ namespace
             return STATUS_SUCCESS;
         }
 
+        if (h.value.type == handle_types::thread)
+        {
+            const auto t = c.proc.threads.get(h);
+            if (t == c.proc.active_thread && t->ref_count == 1)
+            {
+                // TODO: Better handle ref counting
+                return STATUS_SUCCESS;
+            }
+        }
+
         auto* handle_store = get_handle_store(c.proc, h);
         if (handle_store && handle_store->erase(h))
         {
