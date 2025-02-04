@@ -505,6 +505,11 @@ namespace
         dispatch_exception(emu, proc, STATUS_INTEGER_DIVIDE_BY_ZERO, {});
     }
 
+    void dispatch_single_step(x64_emulator& emu, const process_context& proc)
+    {
+        dispatch_exception(emu, proc, STATUS_SINGLE_STEP, {});
+    }
+
     void perform_context_switch_work(windows_emulator& win_emu)
     {
         auto& devices = win_emu.process().devices;
@@ -1033,16 +1038,19 @@ void windows_emulator::setup_hooks()
     });
 
     this->emu().hook_interrupt([&](const int interrupt) {
-        if (interrupt == 0)
+        switch (interrupt)
         {
+        case 0:
             dispatch_integer_division_by_zero(this->emu(), this->process());
             return;
-        }
-
-        if (interrupt == 6)
-        {
+        case 1:
+            dispatch_single_step(this->emu(), this->process());
+            return;
+        case 6:
             dispatch_illegal_instruction_violation(this->emu(), this->process());
             return;
+        default:
+            break;
         }
 
         const auto rip = this->emu().read_instruction_pointer();
