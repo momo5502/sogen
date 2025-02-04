@@ -3543,7 +3543,9 @@ namespace
         }
 
         c.proc.active_thread->save(c.emu);
-        const auto _ = utils::finally([&] { c.proc.active_thread->restore(c.emu); });
+        const auto _ = utils::finally([&] {
+            c.proc.active_thread->restore(c.emu); //
+        });
 
         thread->restore(c.emu);
 
@@ -3556,6 +3558,36 @@ namespace
             context_frame::save(c.emu, context);
         });
 
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS handle_NtSetContextThread(const syscall_context& c, const handle thread_handle,
+                                       const emulator_object<CONTEXT64> thread_context)
+    {
+        const auto* thread = thread_handle == CURRENT_THREAD ? c.proc.active_thread : c.proc.threads.get(thread_handle);
+
+        if (!thread)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        const auto needs_swich = thread != c.proc.active_thread;
+
+        if (needs_swich)
+        {
+            c.proc.active_thread->save(c.emu);
+            thread->restore(c.emu);
+        }
+
+        const auto _ = utils::finally([&] {
+            if (needs_swich)
+            {
+                c.proc.active_thread->restore(c.emu); //
+            }
+        });
+
+        const auto context = thread_context.read();
+        context_frame::restore(c.emu, context);
         return STATUS_SUCCESS;
     }
 
@@ -3689,6 +3721,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserGetCursorPos);
     add_handler(NtUserReleaseDC);
     add_handler(NtUserFindExistingCursorIcon);
+    add_handler(NtSetContextThread);
 
 #undef add_handler
 }
