@@ -1038,12 +1038,15 @@ void windows_emulator::setup_hooks()
     });
 
     this->emu().hook_interrupt([&](const int interrupt) {
+        const auto rip = this->emu().read_instruction_pointer();
+
         switch (interrupt)
         {
         case 0:
             dispatch_integer_division_by_zero(this->emu(), this->process());
             return;
         case 1:
+            this->log.print(color::pink, "Singlestep: 0x%" PRIx64 "\n", rip);
             dispatch_single_step(this->emu(), this->process());
             return;
         case 6:
@@ -1053,7 +1056,6 @@ void windows_emulator::setup_hooks()
             break;
         }
 
-        const auto rip = this->emu().read_instruction_pointer();
         this->log.print(color::gray, "Interrupt: %i 0x%" PRIx64 "\n", interrupt, rip);
 
         if (this->fuzzing || true) // TODO: Fix
