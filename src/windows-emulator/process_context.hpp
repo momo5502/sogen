@@ -347,7 +347,7 @@ class moved_marker
     bool was_moved_{false};
 };
 
-class emulator_thread : ref_counted_object
+class emulator_thread : public ref_counted_object
 {
   public:
     emulator_thread(x64_emulator& emu)
