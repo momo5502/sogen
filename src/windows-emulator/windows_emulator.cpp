@@ -649,12 +649,7 @@ namespace
 
         case handle_types::mutant: {
             auto* e = c.mutants.get(h);
-            if (e)
-            {
-                return e->try_lock(current_thread_id);
-            }
-
-            break;
+            return !e || e->try_lock(current_thread_id);
         }
 
         case handle_types::semaphore: {
@@ -678,7 +673,7 @@ namespace
         }
         }
 
-        throw std::runtime_error("Bad object");
+        throw std::runtime_error("Bad object: " + std::to_string(h.value.type));
     }
 }
 
