@@ -56,6 +56,11 @@ namespace test
 
         settings.application = "c:/test-sample.exe";
         settings.emulation_root = get_emulator_root();
+
+        settings.port_mappings[28970] = static_cast<uint16_t>(getpid());
+        settings.path_mappings["C:\\a.txt"] =
+            std::filesystem::temp_directory_path() / ("emulator-test-file-" + std::to_string(getpid()) + ".txt");
+
         return windows_emulator{std::move(settings), std::move(callbacks)};
     }
 

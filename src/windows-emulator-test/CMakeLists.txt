@@ -19,8 +19,13 @@ if(WIN32)
   add_dependencies(windows-emulator-test test-sample)
 endif()
 
+set(PYTHON3_EXE "python3")
+if(CMAKE_SYSTEM_NAME MATCHES "Windows")
+  set(PYTHON3_EXE "python")
+endif()
+
 add_test(NAME windows-emulator-test
-         COMMAND windows-emulator-test
+         COMMAND "${PYTHON3_EXE}" "${PROJECT_SOURCE_DIR}/deps/gtest-parallel/gtest_parallel.py" ./windows-emulator-test
          WORKING_DIRECTORY "$<TARGET_FILE_DIR:windows-emulator-test>")
 
 momo_targets_set_folder("tests" windows-emulator-test)

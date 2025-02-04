@@ -95,7 +95,10 @@ if(MSVC)
     #/LTCG
   )
 
-  add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+  add_compile_definitions(
+    _CRT_SECURE_NO_WARNINGS
+    _CRT_NONSTDC_NO_WARNINGS
+  )
 endif()
 
 ##########################################

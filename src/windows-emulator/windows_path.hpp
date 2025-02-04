@@ -30,6 +30,8 @@ namespace windows_path_detail
 class windows_path
 {
   public:
+    friend std::hash<windows_path>;
+
     windows_path() = default;
 
     windows_path(const std::filesystem::path& path)
@@ -232,5 +234,26 @@ class windows_path
                 chr = utils::string::char_to_lower(chr);
             }
         }
+    }
+};
+
+template <>
+struct std::hash<windows_path>
+{
+    std::size_t operator()(const windows_path& k) const noexcept
+    {
+        auto hash = std::hash<bool>()(k.drive_.has_value());
+
+        if (k.drive_.has_value())
+        {
+            hash ^= std::hash<char>()(*k.drive_);
+        }
+
+        for (const auto& folder : k.folders_)
+        {
+            hash ^= std::hash<std::u16string>()(folder);
+        }
+
+        return hash;
     }
 };

@@ -223,6 +223,11 @@ jobs:
           - platform: macOS x86_64
             runner: macos-13
     steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
       - name: Download Test Config
         uses: pyTooling/download-artifact@v4
         with:
