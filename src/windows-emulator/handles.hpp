@@ -348,6 +348,8 @@ class handle_store : public generic_handle_store
     value_map store_{};
 };
 
+constexpr auto NULL_HANDLE = make_handle(0ULL);
+
 constexpr auto KNOWN_DLLS_DIRECTORY = make_pseudo_handle(0x1, handle_types::directory);
 constexpr auto BASE_NAMED_OBJECTS_DIRECTORY = make_pseudo_handle(0x2, handle_types::directory);
 

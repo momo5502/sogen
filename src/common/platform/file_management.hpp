@@ -272,6 +272,14 @@ struct OBJECT_ATTRIBUTES
     typename Traits::PVOID SecurityQualityOfService; // PSECURITY_QUALITY_OF_SERVICE
 };
 
+typedef struct _FILE_FS_SIZE_INFORMATION
+{
+    LARGE_INTEGER TotalAllocationUnits;
+    LARGE_INTEGER AvailableAllocationUnits;
+    ULONG SectorsPerAllocationUnit;
+    ULONG BytesPerSector;
+} FILE_FS_SIZE_INFORMATION, *PFILE_FS_SIZE_INFORMATION;
+
 typedef struct _FILE_FS_DEVICE_INFORMATION
 {
     DEVICE_TYPE DeviceType;
