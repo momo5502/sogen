@@ -630,7 +630,7 @@ namespace
 
         if (attributes.RootDirectory != KNOWN_DLLS_DIRECTORY)
         {
-            c.win_emu.log.error("Unsupported section");
+            c.win_emu.log.error("Unsupported section\n");
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
         }
@@ -2576,7 +2576,7 @@ namespace
 
         if (port->name != u"\\Windows\\ApiPort")
         {
-            c.win_emu.log.error("!!! BAD PORT");
+            c.win_emu.log.error("!!! BAD PORT\n");
             return STATUS_NOT_SUPPORTED;
         }
 
@@ -2996,7 +2996,7 @@ namespace
     {
         if (handle_exception)
         {
-            c.win_emu.log.error("Unhandled exceptions not supported yet!");
+            c.win_emu.log.error("Unhandled exceptions not supported yet!\n");
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
         }
@@ -3168,7 +3168,7 @@ namespace
         const auto* mod = c.proc.mod_manager.find_by_address(base_address);
         if (!mod)
         {
-            c.win_emu.log.error("Unmapping non-module section not supported!");
+            c.win_emu.log.error("Unmapping non-module section not supported!\n");
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
         }
@@ -3286,7 +3286,7 @@ namespace
 
         if (wait_type != WaitAny && wait_type != WaitAll)
         {
-            c.win_emu.log.error("Wait type not supported!");
+            c.win_emu.log.error("Wait type not supported!\n");
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
         }
@@ -3368,7 +3368,7 @@ namespace
     {
         if (alertable)
         {
-            c.win_emu.log.error("Alertable NtDelayExecution not supported yet!");
+            c.win_emu.log.error("Alertable NtDelayExecution not supported yet!\n");
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
         }
