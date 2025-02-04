@@ -135,7 +135,7 @@ jobs:
           submodules: recursive
 
       - name: Install Ninja
-        uses: seanmiddleditch/gha-setup-ninja@v5
+        uses: seanmiddleditch/gha-setup-ninja@v6
 
       - name: Install Clang
         if: "${{ matrix.platform == 'Linux x86_64 Clang' }}"
