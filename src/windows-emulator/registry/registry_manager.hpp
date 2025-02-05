@@ -3,19 +3,20 @@
 #include "../std_include.hpp"
 #include "hive_parser.hpp"
 #include "serialization_helper.hpp"
+#include "../handles.hpp"
 
-struct registry_key
+struct registry_key : ref_counted_object
 {
     utils::path_key hive{};
     utils::path_key path{};
 
-    void serialize(utils::buffer_serializer& buffer) const
+    void serialize_object(utils::buffer_serializer& buffer) const override
     {
         buffer.write(this->hive);
         buffer.write(this->path);
     }
 
-    void deserialize(utils::buffer_deserializer& buffer)
+    void deserialize_object(utils::buffer_deserializer& buffer) override
     {
         buffer.read(this->hive);
         buffer.read(this->path);

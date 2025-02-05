@@ -76,10 +76,10 @@ inline void write_io_status(const emulator_object<IO_STATUS_BLOCK<EmulatorTraits
     }
 }
 
-struct io_device
+struct io_device : ref_counted_object
 {
     io_device() = default;
-    virtual ~io_device() = default;
+    ~io_device() override = default;
 
     io_device(io_device&&) = default;
     io_device& operator=(io_device&&) = default;
@@ -100,9 +100,6 @@ struct io_device
         (void)win_emu;
     }
 
-    virtual void serialize(utils::buffer_serializer& buffer) const = 0;
-    virtual void deserialize(utils::buffer_deserializer& buffer) = 0;
-
     NTSTATUS execute_ioctl(windows_emulator& win_emu, const io_device_context& c)
     {
         if (c.io_status_block)
@@ -122,11 +119,11 @@ struct stateless_device : io_device
     {
     }
 
-    void serialize(utils::buffer_serializer&) const override
+    void serialize_object(utils::buffer_serializer&) const override
     {
     }
 
-    void deserialize(utils::buffer_deserializer&) override
+    void deserialize_object(utils::buffer_deserializer&) override
     {
     }
 };
@@ -157,7 +154,7 @@ class io_device_container : public io_device
         return this->device_->work(win_emu);
     }
 
-    void serialize(utils::buffer_serializer& buffer) const override
+    void serialize_object(utils::buffer_serializer& buffer) const override
     {
         this->assert_validity();
 
@@ -165,7 +162,7 @@ class io_device_container : public io_device
         this->device_->serialize(buffer);
     }
 
-    void deserialize(utils::buffer_deserializer& buffer) override
+    void deserialize_object(utils::buffer_deserializer& buffer) override
     {
         buffer.read_string(this->device_name_);
         this->setup();

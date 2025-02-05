@@ -27,26 +27,6 @@
 
 class windows_emulator;
 
-struct ref_counted_object
-{
-    uint32_t ref_count{1};
-
-    void serialize(utils::buffer_serializer& buffer) const
-    {
-        buffer.write(this->ref_count);
-    }
-
-    void deserialize(utils::buffer_deserializer& buffer)
-    {
-        buffer.read(this->ref_count);
-    }
-
-    static bool deleter(ref_counted_object& e)
-    {
-        return --e.ref_count == 0;
-    }
-};
-
 struct event : ref_counted_object
 {
     bool signaled{};
@@ -65,22 +45,18 @@ struct event : ref_counted_object
         return res;
     }
 
-    void serialize(utils::buffer_serializer& buffer) const
+    void serialize_object(utils::buffer_serializer& buffer) const override
     {
         buffer.write(this->signaled);
         buffer.write(this->type);
         buffer.write(this->name);
-
-        ref_counted_object::serialize(buffer);
     }
 
-    void deserialize(utils::buffer_deserializer& buffer)
+    void deserialize_object(utils::buffer_deserializer& buffer) override
     {
         buffer.read(this->signaled);
         buffer.read(this->type);
         buffer.read(this->name);
-
-        ref_counted_object::deserialize(buffer);
     }
 };
 
@@ -121,22 +97,18 @@ struct mutant : ref_counted_object
         return {old_count, true};
     }
 
-    void serialize(utils::buffer_serializer& buffer) const
+    void serialize_object(utils::buffer_serializer& buffer) const override
     {
         buffer.write(this->locked_count);
         buffer.write(this->owning_thread_id);
         buffer.write(this->name);
-
-        ref_counted_object::serialize(buffer);
     }
 
-    void deserialize(utils::buffer_deserializer& buffer)
+    void deserialize_object(utils::buffer_deserializer& buffer) override
     {
         buffer.read(this->locked_count);
         buffer.read(this->owning_thread_id);
         buffer.read(this->name);
-
-        ref_counted_object::deserialize(buffer);
     }
 };
 
@@ -173,7 +145,7 @@ struct file_enumeration_state
     }
 };
 
-struct file
+struct file : ref_counted_object
 {
     utils::file_handle handle{};
     std::u16string name{};
@@ -189,14 +161,14 @@ struct file
         return !this->is_file();
     }
 
-    void serialize(utils::buffer_serializer& buffer) const
+    void serialize_object(utils::buffer_serializer& buffer) const override
     {
         // TODO: Serialize handle
         buffer.write(this->name);
         buffer.write_optional(this->enumeration_state);
     }
 
-    void deserialize(utils::buffer_deserializer& buffer)
+    void deserialize_object(utils::buffer_deserializer& buffer) override
     {
         buffer.read(this->name);
         buffer.read_optional(this->enumeration_state);
@@ -204,7 +176,7 @@ struct file
     }
 };
 
-struct section
+struct section : ref_counted_object
 {
     std::u16string name{};
     std::u16string file_name{};
@@ -217,7 +189,7 @@ struct section
         return this->allocation_attributes & SEC_IMAGE;
     }
 
-    void serialize(utils::buffer_serializer& buffer) const
+    void serialize_object(utils::buffer_serializer& buffer) const override
     {
         buffer.write(this->name);
         buffer.write(this->file_name);
@@ -226,7 +198,7 @@ struct section
         buffer.write(this->allocation_attributes);
     }
 
-    void deserialize(utils::buffer_deserializer& buffer)
+    void deserialize_object(utils::buffer_deserializer& buffer) override
     {
         buffer.read(this->name);
         buffer.read(this->file_name);
@@ -267,37 +239,33 @@ struct semaphore : ref_counted_object
         return {old_count, true};
     }
 
-    void serialize(utils::buffer_serializer& buffer) const
+    void serialize_object(utils::buffer_serializer& buffer) const override
     {
         buffer.write(this->name);
         buffer.write(this->current_count);
         buffer.write(this->max_count);
-
-        ref_counted_object::serialize(buffer);
     }
 
-    void deserialize(utils::buffer_deserializer& buffer)
+    void deserialize_object(utils::buffer_deserializer& buffer) override
     {
         buffer.read(this->name);
         buffer.read(this->current_count);
         buffer.read(this->max_count);
-
-        ref_counted_object::deserialize(buffer);
     }
 };
 
-struct port
+struct port : ref_counted_object
 {
     std::u16string name{};
     uint64_t view_base{};
 
-    void serialize(utils::buffer_serializer& buffer) const
+    void serialize_object(utils::buffer_serializer& buffer) const override
     {
         buffer.write(this->name);
         buffer.write(this->view_base);
     }
 
-    void deserialize(utils::buffer_deserializer& buffer)
+    void deserialize_object(utils::buffer_deserializer& buffer) override
     {
         buffer.read(this->name);
         buffer.read(this->view_base);
@@ -439,7 +407,7 @@ class emulator_thread : public ref_counted_object
         }
     }
 
-    void serialize(utils::buffer_serializer& buffer) const
+    void serialize_object(utils::buffer_serializer& buffer) const
     {
         if (this->marker.was_moved())
         {
@@ -470,7 +438,7 @@ class emulator_thread : public ref_counted_object
         buffer.write_vector(this->last_registers);
     }
 
-    void deserialize(utils::buffer_deserializer& buffer)
+    void deserialize_object(utils::buffer_deserializer& buffer)
     {
         if (this->marker.was_moved())
         {
