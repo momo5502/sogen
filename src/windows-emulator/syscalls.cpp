@@ -1108,8 +1108,20 @@ namespace
             return STATUS_SUCCESS;
         }
 
-        c.win_emu.log.error("Duplicating non-pseudo object not supported yet!\n");
-        return STATUS_NOT_SUPPORTED;
+        auto* store = get_handle_store(c.proc, source_handle);
+        if (!store)
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        const auto new_handle = store->duplicate(source_handle);
+        if (!new_handle)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        target_handle.write(*new_handle);
+        return STATUS_SUCCESS;
     }
 
     NTSTATUS handle_NtQuerySystemInformationEx(const syscall_context& c, const uint32_t info_class,
@@ -3302,6 +3314,11 @@ namespace
         return handle_NtUserGetDCEx();
     }
 
+    NTSTATUS handle_NtUserGetWindowDC()
+    {
+        return 1;
+    }
+
     NTSTATUS handle_NtUserReleaseDC()
     {
         return STATUS_SUCCESS;
@@ -3734,6 +3751,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserModifyUserStartupInfoFlags);
     add_handler(NtUserGetDCEx);
     add_handler(NtUserGetDC);
+    add_handler(NtUserGetWindowDC);
     add_handler(NtUserGetDpiForCurrentProcess);
     add_handler(NtReleaseSemaphore);
     add_handler(NtEnumerateKey);

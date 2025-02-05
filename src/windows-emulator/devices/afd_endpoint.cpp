@@ -474,7 +474,7 @@ namespace
             this->clear_pending_state();
         }
 
-        void deserialize(utils::buffer_deserializer& buffer) override
+        void deserialize_object(utils::buffer_deserializer& buffer) override
         {
             buffer.read_optional(this->creation_data);
             this->setup();
@@ -484,7 +484,7 @@ namespace
             buffer.read_optional(this->timeout_);
         }
 
-        void serialize(utils::buffer_serializer& buffer) const override
+        void serialize_object(utils::buffer_serializer& buffer) const override
         {
             buffer.write_optional(this->creation_data);
             buffer.write_optional(this->require_poll_);

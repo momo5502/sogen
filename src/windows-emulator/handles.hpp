@@ -111,14 +111,44 @@ namespace handle_detail
     };
 }
 
+class ref_counted_object
+{
+  public:
+    virtual ~ref_counted_object() = default;
+
+    uint32_t ref_count{1};
+
+    void serialize(utils::buffer_serializer& buffer) const
+    {
+        buffer.write(this->ref_count);
+        this->serialize_object(buffer);
+    }
+
+    void deserialize(utils::buffer_deserializer& buffer)
+    {
+        buffer.read(this->ref_count);
+        this->deserialize_object(buffer);
+    }
+
+    static bool deleter(ref_counted_object& e)
+    {
+        return --e.ref_count == 0;
+    }
+
+  private:
+    virtual void serialize_object(utils::buffer_serializer& buffer) const = 0;
+    virtual void deserialize_object(utils::buffer_deserializer& buffer) = 0;
+};
+
 struct generic_handle_store
 {
     virtual ~generic_handle_store() = default;
     virtual bool erase(handle h) = 0;
+    virtual std::optional<handle> duplicate(handle h) = 0;
 };
 
 template <handle_types::type Type, typename T, uint32_t IndexShift = 0>
-    requires(utils::Serializable<T>)
+    requires(utils::Serializable<T> && std::is_base_of_v<ref_counted_object, T>)
 class handle_store : public generic_handle_store
 {
   public:
@@ -187,6 +217,18 @@ class handle_store : public generic_handle_store
     size_t size() const
     {
         return this->store_.size();
+    }
+
+    std::optional<handle> duplicate(const handle h) override
+    {
+        auto* entry = this->get(h);
+        if (!entry)
+        {
+            return std::nullopt;
+        }
+
+        ++static_cast<ref_counted_object*>(entry)->ref_count;
+        return h;
     }
 
     bool erase(const typename value_map::iterator& entry)
