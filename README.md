@@ -27,7 +27,7 @@ Built in C++ and powered by the Unicorn Engine.
 * 🧵 __Threading Support__
 	* Provides a scheduled (round-robin) threading model
 * 💾 __State Management__
-	* Supports both full state serialization and fast in-memory snapshots
+	* Supports both full state serialization and ~~fast in-memory snapshots~~ (currently broken 😕)
 * 💻 __Debugging Interface__
 	* Implements GDB serial protocol for integration with common debugging tools (IDA Pro, GDB, LLDB, VS Code, ...)
 
