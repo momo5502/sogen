@@ -651,6 +651,12 @@ namespace
             return STATUS_SUCCESS;
         }
 
+        if (filename == u"DBWIN_BUFFER")
+        {
+            section_handle.write(DBWIN_BUFFER);
+            return STATUS_SUCCESS;
+        }
+
         if (filename == u"windows_shell_global_counters"             //
             || filename == u"{00020000-0000-1005-8005-0000C06B5161}" //
             || filename == u"Global\\{00020000-0000-1005-8005-0000C06B5161}")
@@ -1052,6 +1058,28 @@ namespace
             return STATUS_SUCCESS;
         }
 
+        if (info_class == SystemKernelDebuggerInformation)
+        {
+            if (return_length)
+            {
+                return_length.write(sizeof(SYSTEM_KERNEL_DEBUGGER_INFORMATION));
+            }
+
+            if (system_information_length != sizeof(SYSTEM_KERNEL_DEBUGGER_INFORMATION))
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            const emulator_object<SYSTEM_KERNEL_DEBUGGER_INFORMATION> info_obj{c.emu, system_information};
+
+            info_obj.access([&](SYSTEM_KERNEL_DEBUGGER_INFORMATION& info) {
+                info.KernelDebuggerEnabled = FALSE;
+                info.KernelDebuggerNotPresent = TRUE;
+            });
+
+            return STATUS_SUCCESS;
+        }
+
         if (info_class == SystemProcessInformation || info_class == SystemModuleInformation)
         {
             return STATUS_NOT_SUPPORTED;
@@ -1341,7 +1369,8 @@ namespace
             return STATUS_SUCCESS;
         }
 
-        if (info_class == ProcessDefaultHardErrorMode || info_class == ProcessWx86Information)
+        if (info_class == ProcessDefaultHardErrorMode || info_class == ProcessWx86Information ||
+            info_class == ProcessDebugFlags)
         {
             if (return_length)
             {
@@ -1355,6 +1384,24 @@ namespace
 
             const emulator_object<ULONG> info{c.emu, process_information};
             info.write(0);
+
+            return STATUS_SUCCESS;
+        }
+
+        if (info_class == ProcessDebugObjectHandle)
+        {
+            if (return_length)
+            {
+                return_length.write(sizeof(handle));
+            }
+
+            if (process_information_length != sizeof(handle))
+            {
+                return STATUS_BUFFER_OVERFLOW;
+            }
+
+            const emulator_object<handle> info{c.emu, process_information};
+            info.write(NULL_HANDLE);
 
             return STATUS_SUCCESS;
         }
@@ -3524,7 +3571,17 @@ namespace
         return STATUS_NOT_SUPPORTED;
     }
 
+    NTSTATUS handle_NtSystemDebugControl()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
     NTSTATUS handle_NtUserFindWindowEx()
+    {
+        return 0;
+    }
+
+    NTSTATUS handle_NtUserMoveWindow()
     {
         return 0;
     }
@@ -3763,6 +3820,8 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserFindExistingCursorIcon);
     add_handler(NtSetContextThread);
     add_handler(NtUserFindWindowEx);
+    add_handler(NtUserMoveWindow);
+    add_handler(NtSystemDebugControl);
 
 #undef add_handler
 }

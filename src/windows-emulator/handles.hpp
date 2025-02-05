@@ -397,6 +397,7 @@ constexpr auto BASE_NAMED_OBJECTS_DIRECTORY = make_pseudo_handle(0x2, handle_typ
 
 constexpr auto KNOWN_DLLS_SYMLINK = make_pseudo_handle(0x1, handle_types::symlink);
 constexpr auto SHARED_SECTION = make_pseudo_handle(0x1, handle_types::section);
+constexpr auto DBWIN_BUFFER = make_pseudo_handle(0x2, handle_types::section);
 
 constexpr auto WER_PORT_READY = make_pseudo_handle(0x1, handle_types::event);
 
