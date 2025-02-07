@@ -2633,7 +2633,7 @@ namespace
 
     NTSTATUS handle_NtUserGetThreadState()
     {
-        return STATUS_NOT_SUPPORTED;
+        return 0;
     }
 
     NTSTATUS handle_NtIsUILanguageComitted()
