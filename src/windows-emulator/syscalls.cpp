@@ -2633,7 +2633,7 @@ namespace
 
     NTSTATUS handle_NtUserGetThreadState()
     {
-        return STATUS_NOT_SUPPORTED;
+        return 0;
     }
 
     NTSTATUS handle_NtIsUILanguageComitted()
@@ -3267,7 +3267,7 @@ namespace
             return STATUS_NOT_SUPPORTED;
         }
 
-        if (c.proc.mod_manager.unmap(base_address))
+        if (c.proc.mod_manager.unmap(base_address, c.win_emu.log))
         {
             return STATUS_SUCCESS;
         }
@@ -3576,6 +3576,11 @@ namespace
         return STATUS_NOT_SUPPORTED;
     }
 
+    NTSTATUS handle_NtRequestWaitReplyPort()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
     NTSTATUS handle_NtUserFindWindowEx()
     {
         return 0;
@@ -3822,6 +3827,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserFindWindowEx);
     add_handler(NtUserMoveWindow);
     add_handler(NtSystemDebugControl);
+    add_handler(NtRequestWaitReplyPort);
 
 #undef add_handler
 }

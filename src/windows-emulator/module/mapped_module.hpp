@@ -32,6 +32,8 @@ struct mapped_module
 
     std::vector<mapped_section> sections{};
 
+    bool is_static{false};
+
     bool is_within(const uint64_t address) const
     {
         return address >= this->image_base && address < (this->image_base + this->size_of_image);

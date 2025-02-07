@@ -96,6 +96,7 @@ bool test_tls()
 
     LoadLibraryA("d3dcompiler_47.dll");
     LoadLibraryA("dsound.dll");
+    LoadLibraryA("comctl32.dll");
     /*LoadLibraryA("d3d9.dll");
     LoadLibraryA("dxgi.dll");
     LoadLibraryA("wlanapi.dll");*/

@@ -34,6 +34,8 @@ namespace utils
 
         buffer.write_vector(mod.exports);
         buffer.write_map(mod.address_names);
+
+        buffer.write(mod.is_static);
     }
 
     static void deserialize(buffer_deserializer& buffer, mapped_module& mod)
@@ -47,6 +49,8 @@ namespace utils
 
         buffer.read_vector(mod.exports);
         buffer.read_map(mod.address_names);
+
+        buffer.read(mod.is_static);
     }
 }
 
@@ -56,12 +60,13 @@ module_manager::module_manager(emulator& emu, file_system& file_sys)
 {
 }
 
-mapped_module* module_manager::map_module(const windows_path& file, const logger& logger)
+mapped_module* module_manager::map_module(const windows_path& file, const logger& logger, const bool is_static)
 {
-    return this->map_local_module(this->file_sys_->translate(file), logger);
+    return this->map_local_module(this->file_sys_->translate(file), logger, is_static);
 }
 
-mapped_module* module_manager::map_local_module(const std::filesystem::path& file, const logger& logger)
+mapped_module* module_manager::map_local_module(const std::filesystem::path& file, const logger& logger,
+                                                const bool is_static)
 {
     auto local_file = canonical(absolute(file));
 
@@ -76,6 +81,7 @@ mapped_module* module_manager::map_local_module(const std::filesystem::path& fil
     try
     {
         auto mod = map_module_from_file(*this->emu_, std::move(local_file));
+        mod.is_static = is_static;
 
         logger.log("Mapped %s at 0x%" PRIx64 "\n", mod.path.generic_string().c_str(), mod.image_base);
 
@@ -105,13 +111,20 @@ void module_manager::deserialize(utils::buffer_deserializer& buffer)
     buffer.read_map(this->modules_);
 }
 
-bool module_manager::unmap(const uint64_t address)
+bool module_manager::unmap(const uint64_t address, const logger& logger)
 {
     const auto mod = this->modules_.find(address);
     if (mod == this->modules_.end())
     {
         return false;
     }
+
+    if (mod->second.is_static)
+    {
+        return true;
+    }
+
+    logger.log("Unmapping %s (0x%" PRIx64 ")\n", mod->second.path.generic_string().c_str(), mod->second.image_base);
 
     unmap_module(*this->emu_, mod->second);
     this->modules_.erase(mod);
