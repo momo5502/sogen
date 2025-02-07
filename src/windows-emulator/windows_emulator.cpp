@@ -887,14 +887,14 @@ void windows_emulator::setup_process(const emulator_settings& settings)
 
     setup_context(*this, settings);
 
-    context.executable = context.mod_manager.map_module(settings.application, this->log);
+    context.executable = context.mod_manager.map_module(settings.application, this->log, true);
 
     context.peb.access([&](PEB64& peb) {
         peb.ImageBaseAddress = reinterpret_cast<std::uint64_t*>(context.executable->image_base); //
     });
 
-    context.ntdll = context.mod_manager.map_module(R"(C:\Windows\System32\ntdll.dll)", this->log);
-    context.win32u = context.mod_manager.map_module(R"(C:\Windows\System32\win32u.dll)", this->log);
+    context.ntdll = context.mod_manager.map_module(R"(C:\Windows\System32\ntdll.dll)", this->log, true);
+    context.win32u = context.mod_manager.map_module(R"(C:\Windows\System32\win32u.dll)", this->log, true);
 
     const auto ntdll_data = emu.read_memory(context.ntdll->image_base, context.ntdll->size_of_image);
     const auto win32u_data = emu.read_memory(context.win32u->image_base, context.win32u->size_of_image);

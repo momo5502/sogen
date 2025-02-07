@@ -3267,7 +3267,7 @@ namespace
             return STATUS_NOT_SUPPORTED;
         }
 
-        if (c.proc.mod_manager.unmap(base_address))
+        if (c.proc.mod_manager.unmap(base_address, c.win_emu.log))
         {
             return STATUS_SUCCESS;
         }

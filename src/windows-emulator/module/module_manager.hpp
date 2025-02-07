@@ -12,8 +12,8 @@ class module_manager
     using module_map = std::map<uint64_t, mapped_module>;
     module_manager(emulator& emu, file_system& file_sys);
 
-    mapped_module* map_module(const windows_path& file, const logger& logger);
-    mapped_module* map_local_module(const std::filesystem::path& file, const logger& logger);
+    mapped_module* map_module(const windows_path& file, const logger& logger, bool is_static = false);
+    mapped_module* map_local_module(const std::filesystem::path& file, const logger& logger, bool is_static = false);
 
     mapped_module* find_by_address(const uint64_t address)
     {
@@ -40,7 +40,7 @@ class module_manager
     void serialize(utils::buffer_serializer& buffer) const;
     void deserialize(utils::buffer_deserializer& buffer);
 
-    bool unmap(const uint64_t address);
+    bool unmap(const uint64_t address, const logger& logger);
     const module_map& modules() const
     {
         return modules_;
