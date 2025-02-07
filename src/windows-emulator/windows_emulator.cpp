@@ -833,6 +833,12 @@ windows_emulator::windows_emulator(const emulator_settings& settings, emulator_c
     {
         this->file_sys().set_working_directory(settings.working_directory);
     }
+#ifdef OS_WINDOWS
+    else if (settings.application.is_relative())
+    {
+        this->file_sys().set_working_directory(std::filesystem::current_path());
+    }
+#endif
     else
     {
         this->file_sys().set_working_directory(settings.application.parent());
