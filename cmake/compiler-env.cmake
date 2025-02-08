@@ -88,11 +88,6 @@ if(MSVC)
 
   momo_add_c_and_cxx_release_compile_options(
     /Ob2
-    #/GL
-  )
-
-  momo_add_release_link_options(
-    #/LTCG
   )
 
   add_compile_definitions(
