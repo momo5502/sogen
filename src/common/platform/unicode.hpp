@@ -11,6 +11,11 @@ struct UNICODE_STRING
     EMULATOR_CAST(typename Traits::PVOID, char16_t*) Buffer;
 };
 
+inline std::u16string u8_to_u16(const std::string_view view)
+{
+    return std::u16string(view.begin(), view.end());
+}
+
 inline std::string u16_to_u8(const std::u16string_view u16_view)
 {
     std::string utf8_str;

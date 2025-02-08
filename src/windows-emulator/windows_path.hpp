@@ -155,6 +155,35 @@ class windows_path
         return path;
     }
 
+    std::u16string to_device_path() const
+    {
+        if (is_relative())
+        {
+            throw std::runtime_error("Device path can not be computed for relative paths!");
+        }
+
+        const auto drive_index = *this->drive_ - 'a';
+        const auto drive_number = std::to_string(drive_index + 1);
+        const std::u16string number(drive_number.begin(), drive_number.end());
+
+        std::u16string path = u"\\Device\\HarddiskVolume";
+        path.append(number);
+        path.push_back(u'\\');
+        path.append(this->without_drive().u16string());
+
+        return path;
+    }
+
+    std::optional<char> get_drive() const
+    {
+        return this->drive_;
+    }
+
+    windows_path without_drive() const
+    {
+        return windows_path{std::nullopt, this->folders_};
+    }
+
     windows_path operator/(const windows_path& path) const
     {
         if (path.is_absolute())
