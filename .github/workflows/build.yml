@@ -37,11 +37,35 @@ jobs:
           clang-format-version: '19'
           check-path: 'src'
 
+  build-apiset-dumper:
+    name: Build API Set Dumper
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v6
+
+      - name: Enable Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+
+      - name: CMake Build
+        run: cmake --preset=release && cmake --build --preset=release -t dump-apiset
+
+      - name: Upload Artifacts
+        uses: pyTooling/upload-artifact@v4
+        with:
+          name: Temp API Set Dumper
+          working-directory: build/release/artifacts/
+          path: "*"
 
   create-emulation-root:
     name: Create Emulation Root
     runs-on: ${{ matrix.runner }}
-    needs: [build]
+    needs: [build-apiset-dumper]
     strategy:
       fail-fast: false
       matrix:
@@ -69,10 +93,10 @@ jobs:
       - name: Install DirectX Runtime
         run: "cmd /c \"start /wait .\\dxrt\\dxsetup.exe /silent\""
 
-      - name: Download Windows Artifacts
+      - name: Download API Set Dumper
         uses: pyTooling/download-artifact@v4
         with:
-          name: Windows x86_64 Release Artifacts
+          name: Temp API Set Dumper
           path: build/release/artifacts
 
       - name: Create Emulation Root
@@ -327,7 +351,7 @@ jobs:
   summary:
     name: Pipeline Summary
     runs-on: ubuntu-24.04
-    needs: [smoke-test-android, create-emulation-root, build, test, verify-formatting]
+    needs: [build-apiset-dumper, smoke-test-android, create-emulation-root, build, test, verify-formatting]
     if: always()
     steps:
       - uses: geekyeggo/delete-artifact@v5
