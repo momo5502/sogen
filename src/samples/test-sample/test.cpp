@@ -127,10 +127,27 @@ bool test_env()
 
 bool test_io()
 {
-    const auto* filename = "a.txt";
+    const std::filesystem::path filename = "a.txt";
+    std::error_code ec{};
+    const auto absolute_file = std::filesystem::absolute(filename, ec);
+
+    if (ec)
+    {
+        puts("Getting absolute path failed");
+        return false;
+    }
+
+    const auto canonical_file = std::filesystem::canonical(filename, ec);
+    (void)canonical_file;
+
+    if (ec)
+    {
+        puts("Getting canonical path failed");
+        return false;
+    }
 
     FILE* fp{};
-    (void)fopen_s(&fp, filename, "wb");
+    (void)fopen_s(&fp, filename.string().c_str(), "wb");
 
     if (!fp)
     {
