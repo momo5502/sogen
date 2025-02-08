@@ -210,7 +210,7 @@ namespace
     }
 
     void setup_context(windows_emulator& win_emu, const emulator_settings& settings, const windows_path& application,
-                       const windows_path& working_directory)
+                       const windows_path& working_dir)
     {
         auto& emu = win_emu.emu();
         auto& context = win_emu.process();
@@ -270,7 +270,7 @@ namespace
             }
 
             allocator.make_unicode_string(proc_params.CommandLine, command_line);
-            allocator.make_unicode_string(proc_params.CurrentDirectory.DosPath, working_directory.u16string() + u"\\");
+            allocator.make_unicode_string(proc_params.CurrentDirectory.DosPath, working_dir.u16string() + u"\\", 1024);
             allocator.make_unicode_string(proc_params.ImagePathName, application_str);
 
             const auto total_length = allocator.get_next_address() - context.process_params.value();

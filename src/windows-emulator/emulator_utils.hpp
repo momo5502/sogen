@@ -187,13 +187,17 @@ class emulator_allocator
         return reinterpret_cast<char16_t*>(uc_str.Buffer);
     }
 
-    void make_unicode_string(UNICODE_STRING<EmulatorTraits<Emu64>>& result, const std::u16string_view str)
+    void make_unicode_string(UNICODE_STRING<EmulatorTraits<Emu64>>& result, const std::u16string_view str,
+                             const std::optional<size_t> maximum_length = std::nullopt)
     {
         constexpr auto element_size = sizeof(str[0]);
         constexpr auto required_alignment = alignof(decltype(str[0]));
         const auto total_length = str.size() * element_size;
+        const auto total_buffer_length = total_length + element_size;
 
-        const auto string_buffer = this->reserve(total_length + element_size, required_alignment);
+        const auto max_length = std::max(maximum_length.value_or(total_buffer_length), total_buffer_length);
+
+        const auto string_buffer = this->reserve(max_length, required_alignment);
 
         this->emu_->write_memory(string_buffer, str.data(), total_length);
 
@@ -202,15 +206,17 @@ class emulator_allocator
 
         result.Buffer = string_buffer;
         result.Length = static_cast<USHORT>(total_length);
-        result.MaximumLength = static_cast<USHORT>(total_length + element_size);
+        result.MaximumLength = static_cast<USHORT>(max_length);
     }
 
-    emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> make_unicode_string(const std::u16string_view str)
+    emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> make_unicode_string(
+        const std::u16string_view str, const std::optional<size_t> maximum_length = std::nullopt)
     {
         const auto unicode_string = this->reserve<UNICODE_STRING<EmulatorTraits<Emu64>>>();
 
-        unicode_string.access(
-            [&](UNICODE_STRING<EmulatorTraits<Emu64>>& unicode_str) { this->make_unicode_string(unicode_str, str); });
+        unicode_string.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& unicode_str) {
+            this->make_unicode_string(unicode_str, str, maximum_length); //
+        });
 
         return unicode_string;
     }
