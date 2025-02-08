@@ -1841,6 +1841,30 @@ namespace
             return ret(STATUS_SUCCESS);
         }
 
+        if (info_class == FileAttributeTagInformation)
+        {
+            if (!f->handle)
+            {
+                return ret(STATUS_NOT_SUPPORTED);
+            }
+
+            block.Information = sizeof(FILE_ATTRIBUTE_TAG_INFORMATION);
+
+            if (length < block.Information)
+            {
+                return ret(STATUS_BUFFER_OVERFLOW);
+            }
+
+            const emulator_object<FILE_ATTRIBUTE_TAG_INFORMATION> info{c.emu, file_information};
+            FILE_ATTRIBUTE_TAG_INFORMATION i{};
+
+            i.FileAttributes = f->is_directory() ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+
+            info.write(i);
+
+            return ret(STATUS_SUCCESS);
+        }
+
         c.win_emu.log.error("Unsupported query file info class: %X\n", info_class);
         c.emu.stop();
 
