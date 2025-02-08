@@ -152,11 +152,6 @@ bool test_io()
 {
     const std::filesystem::path filename = "a.txt";
 
-    if (!test_file_path_io(filename))
-    {
-        return false;
-    }
-
     FILE* fp{};
     (void)fopen_s(&fp, filename.string().c_str(), "wb");
 
@@ -170,6 +165,11 @@ bool test_io()
 
     (void)fwrite(text.data(), 1, text.size(), fp);
     (void)fclose(fp);
+
+    if (!test_file_path_io(filename))
+    {
+        return false;
+    }
 
     std::ifstream t(filename);
     t.seekg(0, std::ios::end);
