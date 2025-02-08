@@ -2936,7 +2936,8 @@ namespace
                 return STATUS_INVALID_HANDLE;
             }
 
-            f.name = root->name + f.name;
+            const auto has_separator = root->name.ends_with(u"\\") || root->name.ends_with(u"/");
+            f.name = root->name + (has_separator ? u"" : u"\\") + f.name;
         }
 
         printer.cancel();
