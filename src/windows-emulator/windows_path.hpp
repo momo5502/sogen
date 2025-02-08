@@ -74,7 +74,8 @@ class windows_path
     }
 
     template <typename T>
-        requires(!std::is_same_v<T, windows_path> && !std::is_same_v<T, std::filesystem::path>)
+        requires(!std::is_same_v<std::remove_cvref_t<T>, windows_path> &&
+                 !std::is_same_v<std::remove_cvref_t<T>, std::filesystem::path>)
     windows_path(T&& path_like)
         : windows_path(std::filesystem::path(std::forward<T>(path_like)))
     {

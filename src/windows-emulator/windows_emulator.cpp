@@ -209,7 +209,7 @@ namespace
         emu.reg<uint16_t>(x64_register::ss, 0x2B);
     }
 
-    void setup_context(windows_emulator& win_emu, const emulator_settings& settings,
+    void setup_context(windows_emulator& win_emu, const emulator_settings& settings, const windows_path& application,
                        const windows_path& working_directory)
     {
         auto& emu = win_emu.emu();
@@ -259,7 +259,7 @@ namespace
             allocator.copy_string(u"SystemRoot=C:\\WINDOWS");
             allocator.copy_string(u"");
 
-            const auto application_str = settings.application.u16string();
+            const auto application_str = application.u16string();
 
             std::u16string command_line = u"\"" + application_str + u"\"";
 
@@ -889,9 +889,13 @@ void windows_emulator::setup_process(const emulator_settings& settings, const wi
     auto& context = this->process();
     context.mod_manager = module_manager(emu, this->file_sys()); // TODO: Cleanup module manager
 
-    setup_context(*this, settings, working_directory);
+    const auto application = settings.application.is_absolute() //
+                                 ? settings.application
+                                 : (working_directory / settings.application);
 
-    context.executable = context.mod_manager.map_module(settings.application, this->log, true);
+    setup_context(*this, settings, application, working_directory);
+
+    context.executable = context.mod_manager.map_module(application, this->log, true);
 
     context.peb.access([&](PEB64& peb) {
         peb.ImageBaseAddress = reinterpret_cast<std::uint64_t*>(context.executable->image_base); //
