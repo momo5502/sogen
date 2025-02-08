@@ -48,7 +48,7 @@ enum class apiset_location : uint8_t
     default_windows_11
 };
 
-class windows_emulator
+class windows_emulator : working_directory_provider
 {
   public:
     windows_emulator(const std::filesystem::path& emulation_root,
@@ -61,7 +61,7 @@ class windows_emulator
     windows_emulator& operator=(windows_emulator&&) = delete;
     windows_emulator& operator=(const windows_emulator&) = delete;
 
-    ~windows_emulator() = default;
+    ~windows_emulator();
 
     x64_emulator& emu()
     {
@@ -190,6 +190,8 @@ class windows_emulator
         return this->emulation_root_;
     }
 
+    windows_path get_working_directory() override;
+
   private:
     std::filesystem::path emulation_root_{};
     file_system file_sys_;
@@ -211,6 +213,6 @@ class windows_emulator
     // std::optional<process_context> process_snapshot_{};
 
     void setup_hooks();
-    void setup_process(const emulator_settings& settings);
+    void setup_process(const emulator_settings& settings, const windows_path& working_directory);
     void on_instruction_execution(uint64_t address);
 };
