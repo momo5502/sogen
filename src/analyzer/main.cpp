@@ -12,6 +12,7 @@ namespace
         bool use_gdb{false};
         bool concise_logging{false};
         bool verbose_logging{false};
+        bool silent{false};
         std::string registry_path{"./registry"};
         std::string emulation_root{};
     };
@@ -113,6 +114,7 @@ namespace
             .emulation_root = options.emulation_root,
             .arguments = parse_arguments(args),
             .verbose_calls = options.verbose_logging,
+            .disable_logging = options.silent,
             .silent_until_main = options.concise_logging,
         };
 
@@ -121,6 +123,14 @@ namespace
         (void)&watch_system_objects;
         watch_system_objects(win_emu, options.concise_logging);
         win_emu.buffer_stdout = true;
+
+        if (options.silent)
+        {
+            win_emu.buffer_stdout = false;
+            win_emu.callbacks().stdout_callback = [](const std::string_view data) {
+                (void)fwrite(data.data(), 1, data.size(), stdout);
+            };
+        }
 
         const auto& exe = *win_emu.process().executable;
 
@@ -203,6 +213,10 @@ namespace
             if (arg == "-d")
             {
                 options.use_gdb = true;
+            }
+            else if (arg == "-s")
+            {
+                options.silent = true;
             }
             else if (arg == "-v")
             {
