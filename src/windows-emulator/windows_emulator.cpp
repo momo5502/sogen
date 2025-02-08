@@ -866,7 +866,7 @@ windows_emulator::windows_emulator(const emulator_settings& settings, emulator_c
 
 windows_emulator::windows_emulator(const std::filesystem::path& emulation_root, std::unique_ptr<x64_emulator> emu)
     : emulation_root_{emulation_root.empty() ? emulation_root : absolute(emulation_root)},
-      file_sys_(emulation_root_.empty() ? emulation_root_ : emulation_root_ / "filesys", *this),
+      file_sys_(emulation_root_.empty() ? emulation_root_ : emulation_root_ / "filesys"),
       emu_(std::move(emu)),
       process_(*emu_, file_sys_)
 {
@@ -940,25 +940,6 @@ bool windows_emulator::activate_thread(const uint32_t id)
     }
 
     return switch_to_thread(*this, *thread, true);
-}
-
-windows_path windows_emulator::get_working_directory()
-{
-    if (!this->process_.peb)
-    {
-        return {};
-    }
-
-    const auto peb = this->process_.peb.read();
-    if (!peb.ProcessParameters)
-    {
-        return {};
-    }
-
-    const auto& emu = this->emu();
-
-    const auto process_params = emu.read_memory<RTL_USER_PROCESS_PARAMETERS64>(peb.ProcessParameters);
-    return read_unicode_string(emu, process_params.CurrentDirectory.DosPath);
 }
 
 void windows_emulator::on_instruction_execution(const uint64_t address)

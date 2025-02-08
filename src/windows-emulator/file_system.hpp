@@ -4,28 +4,22 @@
 
 #include <platform/compiler.hpp>
 
-struct working_directory_provider
-{
-    virtual windows_path get_working_directory() = 0;
-};
-
 class file_system
 {
   public:
-    file_system(std::filesystem::path root, working_directory_provider& working_dir_provider)
-        : root_(std::move(root)),
-          working_dir_provider_(&working_dir_provider)
+    file_system(std::filesystem::path root)
+        : root_(std::move(root))
     {
     }
 
     std::filesystem::path translate(const windows_path& win_path) const
     {
-        assert(win_path.is_absolute() && "Path should always be absolute");
-        const auto& full_path = win_path.is_absolute() //
-                                    ? win_path
-                                    : (this->working_dir_provider_->get_working_directory() / win_path);
+        if (!win_path.is_absolute())
+        {
+            throw std::runtime_error("Only absolute paths can be translated!");
+        }
 
-        const auto mapping = this->mappings_.find(full_path);
+        const auto mapping = this->mappings_.find(win_path);
         if (mapping != this->mappings_.end())
         {
             return mapping->second;
@@ -34,18 +28,13 @@ class file_system
 #ifdef OS_WINDOWS
         if (this->root_.empty())
         {
-            return full_path.u16string();
+            return win_path.u16string();
         }
 #endif
 
         // TODO: Sanitize path to prevent traversal!
-        return this->root_ / full_path.to_portable_path();
+        return this->root_ / win_path.to_portable_path();
     }
-
-    /*const windows_path& get_working_directory() const
-    {
-        return this->working_dir_;
-    }*/
 
     windows_path local_to_windows_path(const std::filesystem::path& local_path) const
     {
@@ -84,6 +73,5 @@ class file_system
 
   private:
     std::filesystem::path root_{};
-    working_directory_provider* working_dir_provider_{};
     std::unordered_map<windows_path, std::filesystem::path> mappings_{};
 };

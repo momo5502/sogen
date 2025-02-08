@@ -48,7 +48,7 @@ enum class apiset_location : uint8_t
     default_windows_11
 };
 
-class windows_emulator : working_directory_provider
+class windows_emulator
 {
   public:
     windows_emulator(const std::filesystem::path& emulation_root,
@@ -189,8 +189,6 @@ class windows_emulator : working_directory_provider
     {
         return this->emulation_root_;
     }
-
-    windows_path get_working_directory() override;
 
   private:
     std::filesystem::path emulation_root_{};
