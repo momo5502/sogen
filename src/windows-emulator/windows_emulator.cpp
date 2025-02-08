@@ -209,7 +209,8 @@ namespace
         emu.reg<uint16_t>(x64_register::ss, 0x2B);
     }
 
-    void setup_context(windows_emulator& win_emu, const emulator_settings& settings)
+    void setup_context(windows_emulator& win_emu, const emulator_settings& settings, const windows_path& application,
+                       const windows_path& working_dir)
     {
         auto& emu = win_emu.emu();
         auto& context = win_emu.process();
@@ -258,7 +259,7 @@ namespace
             allocator.copy_string(u"SystemRoot=C:\\WINDOWS");
             allocator.copy_string(u"");
 
-            const auto application_str = settings.application.u16string();
+            const auto application_str = application.u16string();
 
             std::u16string command_line = u"\"" + application_str + u"\"";
 
@@ -269,8 +270,7 @@ namespace
             }
 
             allocator.make_unicode_string(proc_params.CommandLine, command_line);
-            allocator.make_unicode_string(proc_params.CurrentDirectory.DosPath,
-                                          win_emu.file_sys().get_working_directory().u16string());
+            allocator.make_unicode_string(proc_params.CurrentDirectory.DosPath, working_dir.u16string() + u"\\", 1024);
             allocator.make_unicode_string(proc_params.ImagePathName, application_str);
 
             const auto total_length = allocator.get_next_address() - context.process_params.value();
@@ -829,19 +829,21 @@ windows_emulator::windows_emulator(const emulator_settings& settings, emulator_c
                                    std::unique_ptr<x64_emulator> emu)
     : windows_emulator(settings.emulation_root, std::move(emu))
 {
+    windows_path working_dir{};
+
     if (!settings.working_directory.empty())
     {
-        this->file_sys().set_working_directory(settings.working_directory);
+        working_dir = settings.working_directory;
     }
 #ifdef OS_WINDOWS
     else if (settings.application.is_relative())
     {
-        this->file_sys().set_working_directory(std::filesystem::current_path());
+        working_dir = std::filesystem::current_path();
     }
 #endif
     else
     {
-        this->file_sys().set_working_directory(settings.application.parent());
+        working_dir = settings.application.parent();
     }
 
     for (const auto& mapping : settings.path_mappings)
@@ -859,7 +861,7 @@ windows_emulator::windows_emulator(const emulator_settings& settings, emulator_c
     this->use_relative_time_ = settings.use_relative_time;
     this->log.disable_output(settings.disable_logging || this->silent_until_main_);
     this->callbacks_ = std::move(callbacks);
-    this->setup_process(settings);
+    this->setup_process(settings, working_dir);
 }
 
 windows_emulator::windows_emulator(const std::filesystem::path& emulation_root, std::unique_ptr<x64_emulator> emu)
@@ -878,16 +880,22 @@ windows_emulator::windows_emulator(const std::filesystem::path& emulation_root, 
     this->setup_hooks();
 }
 
-void windows_emulator::setup_process(const emulator_settings& settings)
+windows_emulator::~windows_emulator() = default;
+
+void windows_emulator::setup_process(const emulator_settings& settings, const windows_path& working_directory)
 {
     auto& emu = this->emu();
 
     auto& context = this->process();
     context.mod_manager = module_manager(emu, this->file_sys()); // TODO: Cleanup module manager
 
-    setup_context(*this, settings);
+    const auto application = settings.application.is_absolute() //
+                                 ? settings.application
+                                 : (working_directory / settings.application);
 
-    context.executable = context.mod_manager.map_module(settings.application, this->log, true);
+    setup_context(*this, settings, application, working_directory);
+
+    context.executable = context.mod_manager.map_module(application, this->log, true);
 
     context.peb.access([&](PEB64& peb) {
         peb.ImageBaseAddress = reinterpret_cast<std::uint64_t*>(context.executable->image_base); //
@@ -1154,7 +1162,6 @@ void windows_emulator::serialize(utils::buffer_serializer& buffer) const
 {
     buffer.write(this->switch_thread_);
     buffer.write(this->use_relative_time_);
-    this->file_sys().serialize(buffer);
     this->emu().serialize(buffer);
     this->process_.serialize(buffer);
     this->dispatcher_.serialize(buffer);
@@ -1172,7 +1179,6 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
 
     buffer.read(this->switch_thread_);
     buffer.read(this->use_relative_time_);
-    this->file_sys().deserialize(buffer);
 
     this->emu().deserialize(buffer);
     this->process_.deserialize(buffer);
@@ -1184,7 +1190,6 @@ void windows_emulator::save_snapshot()
     this->emu().save_snapshot();
 
     utils::buffer_serializer serializer{};
-    this->file_sys().serialize(serializer);
     this->process_.serialize(serializer);
 
     this->process_snapshot_ = serializer.move_buffer();
@@ -1204,7 +1209,6 @@ void windows_emulator::restore_snapshot()
     this->emu().restore_snapshot();
 
     utils::buffer_deserializer deserializer{this->process_snapshot_};
-    this->file_sys().deserialize(deserializer);
     this->process_.deserialize(deserializer);
     // this->process_ = *this->process_snapshot_;
 }

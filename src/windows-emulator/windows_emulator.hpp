@@ -61,7 +61,7 @@ class windows_emulator
     windows_emulator& operator=(windows_emulator&&) = delete;
     windows_emulator& operator=(const windows_emulator&) = delete;
 
-    ~windows_emulator() = default;
+    ~windows_emulator();
 
     x64_emulator& emu()
     {
@@ -211,6 +211,6 @@ class windows_emulator
     // std::optional<process_context> process_snapshot_{};
 
     void setup_hooks();
-    void setup_process(const emulator_settings& settings);
+    void setup_process(const emulator_settings& settings, const windows_path& working_directory);
     void on_instruction_execution(uint64_t address);
 };

@@ -125,12 +125,35 @@ bool test_env()
     return !computername.empty() && blub == "LUL";
 }
 
+bool test_file_path_io(const std::filesystem::path& filename)
+{
+    std::error_code ec{};
+    const auto absolute_file = std::filesystem::absolute(filename, ec);
+
+    if (ec)
+    {
+        puts("Getting absolute path failed");
+        return false;
+    }
+
+    const auto canonical_file = std::filesystem::canonical(filename, ec);
+    (void)canonical_file;
+
+    if (ec)
+    {
+        puts("Getting canonical path failed");
+        return false;
+    }
+
+    return true;
+}
+
 bool test_io()
 {
-    const auto* filename = "a.txt";
+    const std::filesystem::path filename = "a.txt";
 
     FILE* fp{};
-    (void)fopen_s(&fp, filename, "wb");
+    (void)fopen_s(&fp, filename.string().c_str(), "wb");
 
     if (!fp)
     {
@@ -143,6 +166,11 @@ bool test_io()
     (void)fwrite(text.data(), 1, text.size(), fp);
     (void)fclose(fp);
 
+    if (!test_file_path_io(filename))
+    {
+        return false;
+    }
+
     std::ifstream t(filename);
     t.seekg(0, std::ios::end);
     const size_t size = t.tellg();
@@ -151,6 +179,43 @@ bool test_io()
     t.read(buffer.data(), static_cast<std::streamsize>(size));
 
     return text == buffer;
+}
+
+bool test_working_directory()
+{
+    std::error_code ec{};
+
+    const auto current_dir = std::filesystem::current_path(ec);
+    if (ec)
+    {
+        puts("Failed to get current path");
+        return false;
+    }
+
+    const std::filesystem::path sys32 = "C:/windows/system32";
+    current_path(sys32, ec);
+
+    if (ec)
+    {
+        puts("Failed to update working directory");
+        return false;
+    }
+
+    const auto new_current_dir = std::filesystem::current_path();
+    if (sys32 != new_current_dir)
+    {
+        puts("Updated directory is wrong!");
+        return false;
+    }
+
+    if (!std::ifstream("ntdll.dll"))
+    {
+        puts("Working directory is not active!");
+        return false;
+    }
+
+    std::filesystem::current_path(current_dir);
+    return std::filesystem::current_path() == current_dir;
 }
 
 bool test_dir_io()
@@ -350,6 +415,7 @@ int main(const int argc, const char* argv[])
 
     RUN_TEST(test_io, "I/O")
     RUN_TEST(test_dir_io, "Dir I/O")
+    RUN_TEST(test_working_directory, "Working Directory")
     RUN_TEST(test_registry, "Registry")
     RUN_TEST(test_threads, "Threads")
     RUN_TEST(test_env, "Environment")

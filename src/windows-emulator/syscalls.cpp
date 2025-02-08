@@ -1749,51 +1749,58 @@ namespace
         const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const uint64_t file_information,
         const uint32_t length, const uint32_t info_class)
     {
+        IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+        block.Status = STATUS_SUCCESS;
+        block.Information = 0;
+
+        const auto _ = utils::finally([&] {
+            if (io_status_block)
+            {
+                io_status_block.write(block);
+            }
+        });
+
+        const auto ret = [&](const NTSTATUS status) {
+            block.Status = status;
+            return status;
+        };
+
         const auto* f = c.proc.files.get(file_handle);
         if (!f)
         {
-            return STATUS_INVALID_HANDLE;
+            return ret(STATUS_INVALID_HANDLE);
         }
 
-        if (info_class == FileNameInformation)
+        if (info_class == FileNameInformation || info_class == FileNormalizedNameInformation)
         {
-            const auto required_length = sizeof(FILE_NAME_INFORMATION) + (f->name.size() * 2);
+            const auto relative_path = u"\\" + windows_path(f->name).without_drive().u16string();
+            const auto required_length = sizeof(FILE_NAME_INFORMATION) + (relative_path.size() * 2);
 
-            if (io_status_block)
-            {
-                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                block.Information = sizeof(FILE_NAME_INFORMATION) + required_length;
-                io_status_block.write(block);
-            }
+            block.Information = required_length;
 
-            if (length != required_length)
+            if (length < block.Information)
             {
-                return STATUS_BUFFER_OVERFLOW;
+                return ret(STATUS_BUFFER_OVERFLOW);
             }
 
             c.emu.write_memory(file_information, FILE_NAME_INFORMATION{
-                                                     .FileNameLength = static_cast<ULONG>(f->name.size() * 2),
+                                                     .FileNameLength = static_cast<ULONG>(relative_path.size() * 2),
                                                      .FileName = {},
                                                  });
 
-            c.emu.write_memory(file_information + offsetof(FILE_NAME_INFORMATION, FileName), f->name.c_str(),
-                               (f->name.size() + 1) * 2);
+            c.emu.write_memory(file_information + offsetof(FILE_NAME_INFORMATION, FileName), relative_path.c_str(),
+                               (relative_path.size() + 1) * 2);
 
-            return STATUS_SUCCESS;
+            return ret(STATUS_SUCCESS);
         }
 
         if (info_class == FileStandardInformation)
         {
-            if (io_status_block)
-            {
-                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                block.Information = sizeof(FILE_STANDARD_INFORMATION);
-                io_status_block.write(block);
-            }
+            block.Information = sizeof(FILE_STANDARD_INFORMATION);
 
-            if (length != sizeof(FILE_STANDARD_INFORMATION))
+            if (length < block.Information)
             {
-                return STATUS_BUFFER_OVERFLOW;
+                return ret(STATUS_BUFFER_OVERFLOW);
             }
 
             const emulator_object<FILE_STANDARD_INFORMATION> info{c.emu, file_information};
@@ -1807,26 +1814,21 @@ namespace
 
             info.write(i);
 
-            return STATUS_SUCCESS;
+            return ret(STATUS_SUCCESS);
         }
 
         if (info_class == FilePositionInformation)
         {
             if (!f->handle)
             {
-                return STATUS_NOT_SUPPORTED;
+                return ret(STATUS_NOT_SUPPORTED);
             }
 
-            if (io_status_block)
-            {
-                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                block.Information = sizeof(FILE_POSITION_INFORMATION);
-                io_status_block.write(block);
-            }
+            block.Information = sizeof(FILE_POSITION_INFORMATION);
 
-            if (length != sizeof(FILE_POSITION_INFORMATION))
+            if (length < block.Information)
             {
-                return STATUS_BUFFER_OVERFLOW;
+                return ret(STATUS_BUFFER_OVERFLOW);
             }
 
             const emulator_object<FILE_POSITION_INFORMATION> info{c.emu, file_information};
@@ -1836,13 +1838,13 @@ namespace
 
             info.write(i);
 
-            return STATUS_SUCCESS;
+            return ret(STATUS_SUCCESS);
         }
 
         c.win_emu.log.error("Unsupported query file info class: %X\n", info_class);
         c.emu.stop();
 
-        return STATUS_NOT_SUPPORTED;
+        return ret(STATUS_NOT_SUPPORTED);
     }
 
     NTSTATUS handle_NtSetInformationProcess(const syscall_context& c, const handle process_handle,
@@ -2868,6 +2870,22 @@ namespace
         return mode;
     }
 
+    std::optional<std::u16string_view> get_io_device_name(const std::u16string_view filename)
+    {
+        constexpr std::u16string_view device_prefix = u"\\Device\\";
+        if (filename.starts_with(device_prefix))
+        {
+            return filename.substr(device_prefix.size());
+        }
+
+        if (filename.starts_with(u"\\??\\MountPointManager"))
+        {
+            return u"MountPointManager";
+        }
+
+        return std::nullopt;
+    }
+
     NTSTATUS handle_NtCreateFile(const syscall_context& c, const emulator_object<handle> file_handle,
                                  ACCESS_MASK desired_access,
                                  const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
@@ -2883,16 +2901,15 @@ namespace
         auto printer = utils::finally(
             [&] { c.win_emu.log.print(color::dark_gray, "--> Opening file: %s\n", u16_to_u8(filename).c_str()); });
 
-        constexpr std::u16string_view device_prefix = u"\\Device\\";
-        if (filename.starts_with(device_prefix))
+        const auto io_device_name = get_io_device_name(filename);
+        if (io_device_name.has_value())
         {
             const io_device_creation_data data{
                 .buffer = ea_buffer,
                 .length = ea_length,
             };
 
-            auto device_name = filename.substr(device_prefix.size());
-            io_device_container container{std::move(device_name), c.win_emu, data};
+            io_device_container container{std::u16string(*io_device_name), c.win_emu, data};
 
             const auto handle = c.proc.devices.store(std::move(container));
             file_handle.write(handle);
@@ -2919,7 +2936,8 @@ namespace
                 return STATUS_INVALID_HANDLE;
             }
 
-            f.name = root->name + f.name;
+            const auto has_separator = root->name.ends_with(u"\\") || root->name.ends_with(u"/");
+            f.name = root->name + (has_separator ? u"" : u"\\") + f.name;
         }
 
         printer.cancel();
@@ -3034,12 +3052,44 @@ namespace
                                    share_access, FILE_OPEN, open_options, 0, 0);
     }
 
-    NTSTATUS handle_NtQueryObject(const syscall_context&, const handle /*handle*/,
-                                  const OBJECT_INFORMATION_CLASS /*object_information_class*/,
-                                  const emulator_pointer /*object_information*/,
-                                  const ULONG /*object_information_length*/,
-                                  const emulator_object<ULONG> /*return_length*/)
+    NTSTATUS handle_NtQueryObject(const syscall_context& c, const handle handle,
+                                  const OBJECT_INFORMATION_CLASS object_information_class,
+                                  const emulator_pointer object_information, const ULONG object_information_length,
+                                  const emulator_object<ULONG> return_length)
     {
+        if (object_information_class == ObjectNameInformation)
+        {
+            if (handle.value.type != handle_types::file)
+            {
+                c.win_emu.log.error("Unsupported handle type for name information query: %X\n", handle.value.type);
+                c.emu.stop();
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            const auto file = c.proc.files.get(handle);
+            if (!file)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            const auto device_path = windows_path(file->name).to_device_path();
+
+            const auto required_size = sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>) + (device_path.size() + 1) * 2;
+            return_length.write(static_cast<ULONG>(required_size));
+
+            if (required_size > object_information_length)
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            emulator_allocator allocator(c.emu, object_information, object_information_length);
+            allocator.make_unicode_string(device_path);
+
+            return STATUS_SUCCESS;
+        }
+
+        c.win_emu.log.error("Unsupported object info class: %X\n", object_information_class);
+        c.emu.stop();
         return STATUS_NOT_SUPPORTED;
     }
 

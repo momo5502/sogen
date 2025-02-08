@@ -33,6 +33,13 @@ namespace utils
             return *this;
         }
 
+        template <typename T>
+            requires(!std::is_same_v<std::remove_cvref_t<T>, std::function<Ret(Args...)>>)
+        optional_function& operator=(T&& t)
+        {
+            return this->operator=(std::function<Ret(Args...)>(std::forward<T>(t)));
+        }
+
         Ret operator()(Args... args) const
         {
             if (func)

@@ -7,19 +7,19 @@
 class file_system
 {
   public:
-    file_system(std::filesystem::path root, windows_path working_dir = "C:\\")
+    file_system(std::filesystem::path root)
         : root_(std::move(root))
     {
-        this->set_working_directory(std::move(working_dir));
     }
 
     std::filesystem::path translate(const windows_path& win_path) const
     {
-        const auto& full_path = win_path.is_absolute() //
-                                    ? win_path
-                                    : (this->working_dir_ / win_path);
+        if (!win_path.is_absolute())
+        {
+            throw std::runtime_error("Only absolute paths can be translated!");
+        }
 
-        const auto mapping = this->mappings_.find(full_path);
+        const auto mapping = this->mappings_.find(win_path);
         if (mapping != this->mappings_.end())
         {
             return mapping->second;
@@ -28,27 +28,12 @@ class file_system
 #ifdef OS_WINDOWS
         if (this->root_.empty())
         {
-            return full_path.u16string();
+            return win_path.u16string();
         }
 #endif
 
         // TODO: Sanitize path to prevent traversal!
-        return this->root_ / full_path.to_portable_path();
-    }
-
-    void set_working_directory(windows_path working_dir)
-    {
-        if (!working_dir.is_absolute())
-        {
-            throw std::runtime_error("Working directory is not an absolute path: " + working_dir.string());
-        }
-
-        this->working_dir_ = std::move(working_dir);
-    }
-
-    const windows_path& get_working_directory() const
-    {
-        return this->working_dir_;
+        return this->root_ / win_path.to_portable_path();
     }
 
     windows_path local_to_windows_path(const std::filesystem::path& local_path) const
@@ -81,16 +66,6 @@ class file_system
         return windows_path{drive, std::move(folders)};
     }
 
-    void serialize(utils::buffer_serializer& buffer) const
-    {
-        buffer.write(this->working_dir_);
-    }
-
-    void deserialize(utils::buffer_deserializer& buffer)
-    {
-        buffer.read(this->working_dir_);
-    }
-
     void map(windows_path src, std::filesystem::path dest)
     {
         this->mappings_[std::move(src)] = std::move(dest);
@@ -98,6 +73,5 @@ class file_system
 
   private:
     std::filesystem::path root_{};
-    windows_path working_dir_{};
     std::unordered_map<windows_path, std::filesystem::path> mappings_{};
 };
