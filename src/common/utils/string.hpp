@@ -125,7 +125,7 @@ namespace utils::string
 
         if (lower >= 'a' && lower <= 'f')
         {
-            return static_cast<std::byte>(lower - 'a');
+            return static_cast<std::byte>(10 + (lower - 'a'));
         }
 
         return static_cast<std::byte>(0);
