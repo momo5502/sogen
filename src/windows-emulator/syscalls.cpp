@@ -1499,6 +1499,25 @@ namespace
             return STATUS_INVALID_HANDLE;
         }
 
+        if (info_class == ThreadTebInformation)
+        {
+            if (return_length)
+            {
+                return_length.write(sizeof(THREAD_TEB_INFORMATION));
+            }
+
+            if (thread_information_length < sizeof(THREAD_TEB_INFORMATION))
+            {
+                return STATUS_BUFFER_OVERFLOW;
+            }
+
+            const auto teb_info = c.emu.read_memory<THREAD_TEB_INFORMATION>(thread_information);
+            const auto data = c.emu.read_memory(thread->teb->value() + teb_info.TebOffset, teb_info.BytesToRead);
+            c.emu.write_memory(teb_info.TebInformation, data.data(), data.size());
+
+            return STATUS_SUCCESS;
+        }
+
         if (info_class == ThreadBasicInformation)
         {
             if (return_length)
@@ -1506,7 +1525,7 @@ namespace
                 return_length.write(sizeof(THREAD_BASIC_INFORMATION64));
             }
 
-            if (thread_information_length != sizeof(THREAD_BASIC_INFORMATION64))
+            if (thread_information_length < sizeof(THREAD_BASIC_INFORMATION64))
             {
                 return STATUS_BUFFER_OVERFLOW;
             }
@@ -1527,7 +1546,7 @@ namespace
                 return_length.write(sizeof(ULONG));
             }
 
-            if (thread_information_length != sizeof(ULONG))
+            if (thread_information_length < sizeof(ULONG))
             {
                 return STATUS_BUFFER_OVERFLOW;
             }
@@ -1545,7 +1564,7 @@ namespace
                 return_length.write(sizeof(EmulatorTraits<Emu64>::PVOID));
             }
 
-            if (thread_information_length != sizeof(EmulatorTraits<Emu64>::PVOID))
+            if (thread_information_length < sizeof(EmulatorTraits<Emu64>::PVOID))
             {
                 return STATUS_BUFFER_OVERFLOW;
             }
@@ -2264,7 +2283,7 @@ namespace
         }
 
         std::vector<uint8_t> memory{};
-        memory.resize(number_of_bytes_read);
+        memory.resize(number_of_bytes_to_read);
 
         if (!c.emu.try_read_memory(base_address, memory.data(), memory.size()))
         {
@@ -2909,7 +2928,6 @@ namespace
 
         return mode;
     }
-
     std::optional<std::u16string_view> get_io_device_name(const std::u16string_view filename)
     {
         constexpr std::u16string_view device_prefix = u"\\Device\\";
@@ -2918,9 +2936,22 @@ namespace
             return filename.substr(device_prefix.size());
         }
 
-        if (filename.starts_with(u"\\??\\MountPointManager"))
+        constexpr std::u16string_view unc_prefix = u"\\??\\";
+        if (!filename.starts_with(unc_prefix))
         {
-            return u"MountPointManager";
+            return std::nullopt;
+        }
+
+        const auto path = filename.substr(unc_prefix.size());
+
+        const std::set<std::u16string, std::less<>> devices{
+            u"Nsi",
+            u"MountPointManager",
+        };
+
+        if (devices.contains(path))
+        {
+            return path;
         }
 
         return std::nullopt;
@@ -2938,8 +2969,9 @@ namespace
         auto filename =
             read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
 
-        auto printer = utils::finally(
-            [&] { c.win_emu.log.print(color::dark_gray, "--> Opening file: %s\n", u16_to_u8(filename).c_str()); });
+        auto printer = utils::finally([&] {
+            c.win_emu.log.print(color::dark_gray, "--> Opening file: %s\n", u16_to_u8(filename).c_str()); //
+        });
 
         const auto io_device_name = get_io_device_name(filename);
         if (io_device_name.has_value())
@@ -3009,16 +3041,17 @@ namespace
 
         c.win_emu.log.print(color::dark_gray, "--> Opening file: %s\n", u16_to_u8(f.name).c_str());
 
+        const windows_path path = f.name;
         std::u16string mode = map_mode(desired_access, create_disposition);
 
-        if (mode.empty())
+        if (mode.empty() || path.is_relative())
         {
             return STATUS_NOT_SUPPORTED;
         }
 
         FILE* file{};
 
-        const auto error = open_unicode(&file, c.win_emu.file_sys().translate(f.name), mode);
+        const auto error = open_unicode(&file, c.win_emu.file_sys().translate(path), mode);
 
         if (!file)
         {

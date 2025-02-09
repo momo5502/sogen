@@ -80,3 +80,10 @@ typedef struct _THREAD_BASIC_INFORMATION64
     EMULATOR_CAST(std::uint32_t, KPRIORITY) Priority;
     EMULATOR_CAST(std::uint32_t, KPRIORITY) BasePriority;
 } THREAD_BASIC_INFORMATION64, *PTHREAD_BASIC_INFORMATION64;
+
+typedef struct _THREAD_TEB_INFORMATION
+{
+    EmulatorTraits<Emu64>::PVOID TebInformation; // Buffer to write data into.
+    ULONG TebOffset;                             // Offset in TEB to begin reading from.
+    ULONG BytesToRead;                           // Number of bytes to read.
+} THREAD_TEB_INFORMATION, *PTHREAD_TEB_INFORMATION;
