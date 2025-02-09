@@ -84,7 +84,7 @@ class emulator_object
         return reinterpret_cast<T*>(this->address_);
     }
 
-    operator bool() const
+    explicit operator bool() const
     {
         return this->address_ != 0;
     }
