@@ -5,9 +5,11 @@
 #include "context_frame.hpp"
 
 #include <unicorn_x64_emulator.hpp>
+
+#include <utils/io.hpp>
 #include <utils/finally.hpp>
-#include "utils/compression.hpp"
-#include "utils/io.hpp"
+#include <utils/compression.hpp>
+#include <utils/lazy_object.hpp>
 
 #include "apiset.hpp"
 
@@ -861,6 +863,8 @@ windows_emulator::windows_emulator(const emulator_settings& settings, emulator_c
     this->use_relative_time_ = settings.use_relative_time;
     this->log.disable_output(settings.disable_logging || this->silent_until_main_);
     this->callbacks_ = std::move(callbacks);
+    this->modules_ = settings.modules;
+
     this->setup_process(settings, working_dir);
 }
 
@@ -955,15 +959,34 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
     const auto thread_insts = ++thread.executed_instructions;
     if (thread_insts % MAX_INSTRUCTIONS_PER_TIME_SLICE == 0)
     {
-        this->switch_thread_ = true;
-        this->emu().stop();
+        this->yield_thread();
     }
 
     process.previous_ip = process.current_ip;
     process.current_ip = this->emu().read_instruction_pointer();
 
+    const auto binary = utils::make_lazy([&] {
+        return this->process().mod_manager.find_by_address(address); //
+    });
+
+    const auto previous_binary = utils::make_lazy([&] {
+        return this->process().mod_manager.find_by_address(process.previous_ip); //
+    });
+
+    const auto is_in_interesting_module = [&] {
+        if (this->modules_.empty())
+        {
+            return false;
+        }
+
+        return (binary && this->modules_.contains(binary->name)) ||
+               (previous_binary && this->modules_.contains(previous_binary->name));
+    };
+
     const auto is_main_exe = process.executable->is_within(address);
-    const auto is_interesting_call = process.executable->is_within(process.previous_ip) || is_main_exe;
+    const auto is_interesting_call = process.executable->is_within(process.previous_ip) //
+                                     || is_main_exe                                     //
+                                     || is_in_interesting_module();
 
     if (this->silent_until_main_ && is_main_exe)
     {
@@ -975,8 +998,6 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
     {
         return;
     }
-
-    const auto* binary = this->process().mod_manager.find_by_address(address);
 
     if (binary)
     {

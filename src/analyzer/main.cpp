@@ -15,23 +15,28 @@ namespace
         bool silent{false};
         std::string registry_path{"./registry"};
         std::string emulation_root{};
+        std::set<std::string, std::less<>> modules{};
     };
 
-    void watch_system_objects(windows_emulator& win_emu, const bool cache_logging)
+    void watch_system_objects(windows_emulator& win_emu, const std::set<std::string, std::less<>>& modules,
+                              const bool cache_logging)
     {
         (void)win_emu;
+        (void)modules;
         (void)cache_logging;
 
 #ifdef OS_WINDOWS
-        watch_object(win_emu, *win_emu.current_thread().teb, cache_logging);
-        watch_object(win_emu, win_emu.process().peb, cache_logging);
-        watch_object(win_emu, emulator_object<KUSER_SHARED_DATA64>{win_emu.emu(), kusd_mmio::address()}, cache_logging);
+        watch_object(win_emu, modules, *win_emu.current_thread().teb, cache_logging);
+        watch_object(win_emu, modules, win_emu.process().peb, cache_logging);
+        watch_object(win_emu, modules, emulator_object<KUSER_SHARED_DATA64>{win_emu.emu(), kusd_mmio::address()},
+                     cache_logging);
 
-        auto* params_hook = watch_object(win_emu, win_emu.process().process_params, cache_logging);
+        auto* params_hook = watch_object(win_emu, modules, win_emu.process().process_params, cache_logging);
 
         win_emu.emu().hook_memory_write(
             win_emu.process().peb.value() + offsetof(PEB64, ProcessParameters), 0x8,
-            [&win_emu, cache_logging, params_hook](const uint64_t address, size_t, const uint64_t value) mutable {
+            [&win_emu, cache_logging, params_hook, modules](const uint64_t address, size_t,
+                                                            const uint64_t value) mutable {
                 const auto target_address = win_emu.process().peb.value() + offsetof(PEB64, ProcessParameters);
 
                 if (address == target_address)
@@ -39,7 +44,7 @@ namespace
                     const emulator_object<RTL_USER_PROCESS_PARAMETERS64> obj{win_emu.emu(), value};
 
                     win_emu.emu().delete_hook(params_hook);
-                    params_hook = watch_object(win_emu, obj, cache_logging);
+                    params_hook = watch_object(win_emu, modules, obj, cache_logging);
                 }
             });
 #endif
@@ -108,7 +113,7 @@ namespace
             return false;
         }
 
-        emulator_settings settings{
+        const emulator_settings settings{
             .application = args[0],
             .registry_directory = options.registry_path,
             .emulation_root = options.emulation_root,
@@ -116,12 +121,13 @@ namespace
             .verbose_calls = options.verbose_logging,
             .disable_logging = options.silent,
             .silent_until_main = options.concise_logging,
+            .modules = options.modules,
         };
 
-        windows_emulator win_emu{std::move(settings)};
+        windows_emulator win_emu{settings};
 
         (void)&watch_system_objects;
-        watch_system_objects(win_emu, options.concise_logging);
+        watch_system_objects(win_emu, options.modules, options.concise_logging);
         win_emu.buffer_stdout = true;
 
         if (options.silent)
@@ -225,6 +231,16 @@ namespace
             else if (arg == "-c")
             {
                 options.concise_logging = true;
+            }
+            else if (arg == "-m")
+            {
+                if (args.size() < 2)
+                {
+                    throw std::runtime_error("No module provided after -m");
+                }
+
+                arg_it = args.erase(arg_it);
+                options.modules.insert(std::string(args[0]));
             }
             else if (arg == "-e")
             {

@@ -1,18 +1,20 @@
 #pragma once
 
 #include "reflect_type_info.hpp"
+#include <set>
 
 template <typename T>
-emulator_hook* watch_object(windows_emulator& emu, emulator_object<T> object, const bool cache_logging = false)
+emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, std::less<>>& modules,
+                            emulator_object<T> object, const bool cache_logging = false)
 {
     const reflect_type_info<T> info{};
 
     return emu.emu().hook_memory_read(
         object.value(), object.size(),
-        [i = std::move(info), object, &emu, cache_logging](const uint64_t address, size_t, uint64_t) {
+        [i = std::move(info), object, &emu, cache_logging, modules](const uint64_t address, size_t, uint64_t) {
             const auto rip = emu.emu().read_instruction_pointer();
             const auto* mod = emu.process().mod_manager.find_by_address(rip);
-            const auto is_main_access = mod == emu.process().executable;
+            const auto is_main_access = mod == emu.process().executable || modules.contains(mod->name);
 
             if (!emu.verbose_calls && !is_main_access)
             {
