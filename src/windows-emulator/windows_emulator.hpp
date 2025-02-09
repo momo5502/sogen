@@ -38,6 +38,7 @@ struct emulator_settings
     bool use_relative_time{false};
     std::unordered_map<uint16_t, uint16_t> port_mappings{};
     std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
+    std::set<std::string, std::less<>> modules{};
 };
 
 enum class apiset_location : uint8_t
@@ -203,6 +204,8 @@ class windows_emulator
     std::unique_ptr<x64_emulator> emu_{};
     std::vector<instruction_hook_callback> syscall_hooks_{};
     std::unordered_map<uint16_t, uint16_t> port_mappings_{};
+
+    std::set<std::string, std::less<>> modules_{};
 
     process_context process_;
     syscall_dispatcher dispatcher_;
