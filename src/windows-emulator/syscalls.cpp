@@ -8,6 +8,7 @@
 #include <ranges>
 #include <cwctype>
 #include <algorithm>
+#include <iostream>
 #include <utils/io.hpp>
 #include <utils/string.hpp>
 #include <utils/time.hpp>
@@ -602,7 +603,7 @@ namespace
         {
             const emulator_object<FILE_FS_DEVICE_INFORMATION> info_obj{c.emu, fs_information};
             info_obj.access([&](FILE_FS_DEVICE_INFORMATION& info) {
-                if (file_handle == STDOUT_HANDLE.bits && !c.win_emu.buffer_stdout)
+                if (file_handle == STDOUT_HANDLE && !c.win_emu.buffer_stdout)
                 {
                     info.DeviceType = FILE_DEVICE_CONSOLE;
                     info.Characteristics = 0x20000;
@@ -2803,6 +2804,20 @@ namespace
         return STATUS_NOT_SUPPORTED;
     }
 
+    void commit_file_data(const std::string_view data, emulator& emu,
+                          const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                          const uint64_t buffer)
+    {
+        if (io_status_block)
+        {
+            IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+            block.Information = data.size();
+            io_status_block.write(block);
+        }
+
+        emu.write_memory(buffer, data.data(), data.size());
+    }
+
     NTSTATUS handle_NtReadFile(const syscall_context& c, const handle file_handle, const uint64_t /*event*/,
                                const uint64_t /*apc_routine*/, const uint64_t /*apc_context*/,
                                const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
@@ -2810,25 +2825,36 @@ namespace
                                const emulator_object<LARGE_INTEGER> /*byte_offset*/,
                                const emulator_object<ULONG> /*key*/)
     {
+        std::string temp_buffer{};
+        temp_buffer.resize(length);
+
+        if (file_handle == STDIN_HANDLE)
+        {
+            char chr{};
+            if (std::cin.readsome(&chr, 1) <= 0)
+            {
+                std::cin.read(&chr, 1);
+            }
+
+            std::cin.putback(chr);
+
+            const auto read_count =
+                std::cin.readsome(temp_buffer.data(), static_cast<std::streamsize>(temp_buffer.size()));
+            const auto count = std::max(read_count, static_cast<std::streamsize>(0));
+
+            commit_file_data(std::string_view(temp_buffer.data(), count), c.emu, io_status_block, buffer);
+            return STATUS_SUCCESS;
+        }
+
         const auto* f = c.proc.files.get(file_handle);
         if (!f)
         {
             return STATUS_INVALID_HANDLE;
         }
 
-        std::string temp_buffer{};
-        temp_buffer.resize(length);
-
         const auto bytes_read = fread(temp_buffer.data(), 1, temp_buffer.size(), f->handle);
+        commit_file_data(std::string_view(temp_buffer.data(), bytes_read), c.emu, io_status_block, buffer);
 
-        if (io_status_block)
-        {
-            IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-            block.Information = bytes_read;
-            io_status_block.write(block);
-        }
-
-        c.emu.write_memory(buffer, temp_buffer.data(), temp_buffer.size());
         return STATUS_SUCCESS;
     }
 
