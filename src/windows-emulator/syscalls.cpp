@@ -2918,9 +2918,22 @@ namespace
             return filename.substr(device_prefix.size());
         }
 
-        if (filename.starts_with(u"\\??\\MountPointManager"))
+        constexpr std::u16string_view unc_prefix = u"\\??\\";
+        if (!filename.starts_with(unc_prefix))
         {
-            return u"MountPointManager";
+            return std::nullopt;
+        }
+
+        const auto path = filename.substr(unc_prefix.size());
+
+        const std::set<std::u16string, std::less<>> devices{
+            u"Nsi",
+            u"MountPointManager",
+        };
+
+        if (devices.contains(path))
+        {
+            return path;
         }
 
         return std::nullopt;

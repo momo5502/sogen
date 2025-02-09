@@ -16,6 +16,7 @@ namespace
 std::unique_ptr<io_device> create_device(const std::u16string_view device)
 {
     if (device == u"CNG"                 //
+        || device == u"Nsi"              //
         || device == u"KsecDD"           //
         || device == u"PcwDrv"           //
         || device == u"DeviceApi\\CMApi" //
