@@ -1,9 +1,9 @@
 #pragma once
 
-#include <x64_emulator.hpp>
 #include "mapped_module.hpp"
+#include "../memory_manager.hpp"
 
-mapped_module map_module_from_data(emulator& emu, std::span<const uint8_t> data, std::filesystem::path file);
-mapped_module map_module_from_file(emulator& emu, std::filesystem::path file);
+mapped_module map_module_from_data(memory_manager& memory, std::span<const uint8_t> data, std::filesystem::path file);
+mapped_module map_module_from_file(memory_manager& memory, std::filesystem::path file);
 
-bool unmap_module(emulator& emu, const mapped_module& mod);
+bool unmap_module(memory_manager& memory, const mapped_module& mod);

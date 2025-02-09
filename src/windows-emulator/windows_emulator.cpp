@@ -190,19 +190,19 @@ namespace
                                  reinterpret_cast<const API_SET_NAMESPACE&>(*obtain_api_set(location, root).data()));
     }
 
-    emulator_allocator create_allocator(emulator& emu, const size_t size)
+    emulator_allocator create_allocator(memory_manager& memory, const size_t size)
     {
-        const auto base = emu.find_free_allocation_base(size);
-        emu.allocate_memory(base, size, memory_permission::read_write);
+        const auto base = memory.find_free_allocation_base(size);
+        memory.allocate_memory(base, size, memory_permission::read_write);
 
-        return emulator_allocator{emu, base, size};
+        return emulator_allocator{memory, base, size};
     }
 
-    void setup_gdt(x64_emulator& emu)
+    void setup_gdt(x64_emulator& emu, memory_manager& memory)
     {
         constexpr uint64_t gdtr[4] = {0, GDT_ADDR, GDT_LIMIT, 0};
         emu.write_register(x64_register::gdtr, &gdtr, sizeof(gdtr));
-        emu.allocate_memory(GDT_ADDR, GDT_LIMIT, memory_permission::read);
+        memory.allocate_memory(GDT_ADDR, GDT_LIMIT, memory_permission::read);
 
         emu.write_memory<uint64_t>(GDT_ADDR + 6 * (sizeof(uint64_t)), 0xEFFE000000FFFF);
         emu.reg<uint16_t>(x64_register::cs, 0x33);
@@ -216,8 +216,9 @@ namespace
     {
         auto& emu = win_emu.emu();
         auto& context = win_emu.process();
+        auto& memory = win_emu.memory();
 
-        setup_gdt(emu);
+        setup_gdt(emu, memory);
 
         context.registry =
             registry_manager(win_emu.get_emulation_root().empty() ? settings.registry_directory
@@ -225,7 +226,7 @@ namespace
 
         context.kusd.setup(settings.use_relative_time);
 
-        context.base_allocator = create_allocator(emu, PEB_SEGMENT_SIZE);
+        context.base_allocator = create_allocator(memory, PEB_SEGMENT_SIZE);
         auto& allocator = context.base_allocator;
 
         context.peb = allocator.reserve<PEB64>();
@@ -317,23 +318,22 @@ namespace
         });
     }
 
-    using exception_record_map = std::unordered_map<const EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>*,
-                                                    emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>>>;
+    using exception_record = EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>;
+    using exception_record_map = std::unordered_map<const exception_record*, emulator_object<exception_record>>;
 
-    emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>> save_exception_record(
-        emulator_allocator& allocator, const EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>& record,
-        exception_record_map& record_mapping)
+    emulator_object<exception_record> save_exception_record(emulator_allocator& allocator,
+                                                            const exception_record& record,
+                                                            exception_record_map& record_mapping)
     {
-        const auto record_obj = allocator.reserve<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>>();
+        const auto record_obj = allocator.reserve<exception_record>();
         record_obj.write(record);
 
         if (record.ExceptionRecord)
         {
             record_mapping.emplace(&record, record_obj);
 
-            emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>> nested_record_obj{allocator.get_emulator()};
-            const auto nested_record = record_mapping.find(
-                reinterpret_cast<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>*>(record.ExceptionRecord));
+            emulator_object<exception_record> nested_record_obj{allocator.get_memory()};
+            const auto nested_record = record_mapping.find(reinterpret_cast<exception_record*>(record.ExceptionRecord));
 
             if (nested_record != record_mapping.end())
             {
@@ -342,11 +342,10 @@ namespace
             else
             {
                 nested_record_obj = save_exception_record(
-                    allocator, *reinterpret_cast<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>*>(record.ExceptionRecord),
-                    record_mapping);
+                    allocator, *reinterpret_cast<exception_record*>(record.ExceptionRecord), record_mapping);
             }
 
-            record_obj.access([&](EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>& r) {
+            record_obj.access([&](exception_record& r) {
                 r.ExceptionRecord = reinterpret_cast<EmulatorTraits<Emu64>::PVOID>(nested_record_obj.ptr());
             });
         }
@@ -354,8 +353,8 @@ namespace
         return record_obj;
     }
 
-    emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>> save_exception_record(
-        emulator_allocator& allocator, const EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>& record)
+    emulator_object<exception_record> save_exception_record(emulator_allocator& allocator,
+                                                            const exception_record& record)
     {
         exception_record_map record_mapping{};
         return save_exception_record(allocator, record, record_mapping);
@@ -374,12 +373,12 @@ namespace
         }
     }
 
-    size_t calculate_exception_record_size(const EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>& record)
+    size_t calculate_exception_record_size(const exception_record& record)
     {
-        std::unordered_set<const EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>*> records{};
+        std::unordered_set<const exception_record*> records{};
         size_t total_size = 0;
 
-        const EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>* current_record = &record;
+        const exception_record* current_record = &record;
         while (current_record)
         {
             if (!records.insert(current_record).second)
@@ -388,7 +387,7 @@ namespace
             }
 
             total_size += sizeof(*current_record);
-            current_record = reinterpret_cast<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>*>(record.ExceptionRecord);
+            current_record = reinterpret_cast<exception_record*>(record.ExceptionRecord);
         }
 
         return total_size;
@@ -408,8 +407,8 @@ namespace
     {
         constexpr auto mach_frame_size = 0x40;
         constexpr auto context_record_size = 0x4F0;
-        const auto exception_record_size = calculate_exception_record_size(
-            *reinterpret_cast<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>*>(pointers.ExceptionRecord));
+        const auto exception_record_size =
+            calculate_exception_record_size(*reinterpret_cast<exception_record*>(pointers.ExceptionRecord));
         const auto combined_size = align_up(exception_record_size + context_record_size, 0x10);
 
         assert(combined_size == 0x590);
@@ -434,8 +433,8 @@ namespace
         context_record_obj.write(*reinterpret_cast<CONTEXT64*>(pointers.ContextRecord));
 
         emulator_allocator allocator{emu, new_sp + context_record_size, exception_record_size};
-        const auto exception_record_obj = save_exception_record(
-            allocator, *reinterpret_cast<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>*>(pointers.ExceptionRecord));
+        const auto exception_record_obj =
+            save_exception_record(allocator, *reinterpret_cast<exception_record*>(pointers.ExceptionRecord));
 
         if (exception_record_obj.value() != allocator.get_base())
         {
@@ -462,7 +461,7 @@ namespace
         ctx.ContextFlags = CONTEXT64_ALL;
         context_frame::save(emu, ctx);
 
-        EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>> record{};
+        exception_record record{};
         memset(&record, 0, sizeof(record));
         record.ExceptionCode = static_cast<DWORD>(status);
         record.ExceptionFlags = 0;
@@ -679,20 +678,20 @@ namespace
     }
 }
 
-emulator_thread::emulator_thread(x64_emulator& emu, const process_context& context, const uint64_t start_address,
+emulator_thread::emulator_thread(memory_manager& memory, const process_context& context, const uint64_t start_address,
                                  const uint64_t argument, const uint64_t stack_size, const uint32_t id)
-    : emu_ptr(&emu),
+    : memory_ptr(&memory),
       stack_size(page_align_up(std::max(stack_size, static_cast<uint64_t>(STACK_SIZE)))),
       start_address(start_address),
       argument(argument),
       id(id),
       last_registers(context.default_register_set)
 {
-    this->stack_base = emu.allocate_memory(this->stack_size, memory_permission::read_write);
+    this->stack_base = memory.allocate_memory(this->stack_size, memory_permission::read_write);
 
     this->gs_segment = emulator_allocator{
-        emu,
-        emu.allocate_memory(GS_SEGMENT_SIZE, memory_permission::read_write),
+        memory,
+        memory.allocate_memory(GS_SEGMENT_SIZE, memory_permission::read_write),
         GS_SEGMENT_SIZE,
     };
 
@@ -877,7 +876,8 @@ windows_emulator::windows_emulator(const std::filesystem::path& emulation_root, 
     : emulation_root_{emulation_root.empty() ? emulation_root : absolute(emulation_root)},
       file_sys_(emulation_root_.empty() ? emulation_root_ : emulation_root_ / "filesys"),
       emu_(std::move(emu)),
-      process_(*emu_, file_sys_)
+      memory_manager_(*this->emu_),
+      process_(*emu_, memory_manager_, file_sys_)
 {
 #ifndef OS_WINDOWS
     if (this->get_emulation_root().empty())
@@ -896,7 +896,7 @@ void windows_emulator::setup_process(const emulator_settings& settings, const wi
     auto& emu = this->emu();
 
     auto& context = this->process();
-    context.mod_manager = module_manager(emu, this->file_sys()); // TODO: Cleanup module manager
+    context.mod_manager = module_manager(this->memory(), this->file_sys()); // TODO: Cleanup module manager
 
     const auto application = settings.application.is_absolute() //
                                  ? settings.application
@@ -924,7 +924,7 @@ void windows_emulator::setup_process(const emulator_settings& settings, const wi
 
     context.default_register_set = emu.save_registers();
 
-    const auto main_thread_id = context.create_thread(emu, context.executable->entry_point, 0, 0);
+    const auto main_thread_id = context.create_thread(this->memory(), context.executable->entry_point, 0, 0);
     switch_to_thread(*this, main_thread_id);
 }
 
@@ -1188,13 +1188,18 @@ void windows_emulator::serialize(utils::buffer_serializer& buffer) const
 {
     buffer.write(this->switch_thread_);
     buffer.write(this->use_relative_time_);
-    this->emu().serialize(buffer);
+    this->emu().serialize_state(buffer, false);
+    this->memory().serialize_memory_state(buffer, false);
     this->process_.serialize(buffer);
     this->dispatcher_.serialize(buffer);
 }
 
 void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
 {
+    buffer.register_factory<memory_manager_wrapper>([this] {
+        return memory_manager_wrapper{this->memory()}; //
+    });
+
     buffer.register_factory<x64_emulator_wrapper>([this] {
         return x64_emulator_wrapper{this->emu()}; //
     });
@@ -1206,16 +1211,19 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
     buffer.read(this->switch_thread_);
     buffer.read(this->use_relative_time_);
 
-    this->emu().deserialize(buffer);
+    this->memory().unmap_all_memory();
+
+    this->emu().deserialize_state(buffer, false);
+    this->memory().deserialize_memory_state(buffer, false);
     this->process_.deserialize(buffer);
     this->dispatcher_.deserialize(buffer);
 }
 
 void windows_emulator::save_snapshot()
 {
-    this->emu().save_snapshot();
-
     utils::buffer_serializer serializer{};
+    this->emu().serialize_state(serializer, true);
+    this->memory().serialize_memory_state(serializer, true);
     this->process_.serialize(serializer);
 
     this->process_snapshot_ = serializer.move_buffer();
@@ -1232,9 +1240,9 @@ void windows_emulator::restore_snapshot()
         return;
     }
 
-    this->emu().restore_snapshot();
-
     utils::buffer_deserializer deserializer{this->process_snapshot_};
+    this->emu().deserialize_state(deserializer, true);
+    this->memory().deserialize_memory_state(deserializer, true);
     this->process_.deserialize(deserializer);
     // this->process_ = *this->process_snapshot_;
 }

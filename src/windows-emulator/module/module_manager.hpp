@@ -10,7 +10,7 @@ class module_manager
 {
   public:
     using module_map = std::map<uint64_t, mapped_module>;
-    module_manager(emulator& emu, file_system& file_sys);
+    module_manager(memory_manager& memory, file_system& file_sys);
 
     mapped_module* map_module(const windows_path& file, const logger& logger, bool is_static = false);
     mapped_module* map_local_module(const std::filesystem::path& file, const logger& logger, bool is_static = false);
@@ -47,7 +47,7 @@ class module_manager
     }
 
   private:
-    emulator* emu_{};
+    memory_manager* memory_{};
     file_system* file_sys_{};
 
     module_map modules_{};

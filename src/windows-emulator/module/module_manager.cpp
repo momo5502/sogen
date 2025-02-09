@@ -54,8 +54,8 @@ namespace utils
     }
 }
 
-module_manager::module_manager(emulator& emu, file_system& file_sys)
-    : emu_(&emu),
+module_manager::module_manager(memory_manager& memory, file_system& file_sys)
+    : memory_(&memory),
       file_sys_(&file_sys)
 {
 }
@@ -80,7 +80,7 @@ mapped_module* module_manager::map_local_module(const std::filesystem::path& fil
 
     try
     {
-        auto mod = map_module_from_file(*this->emu_, std::move(local_file));
+        auto mod = map_module_from_file(*this->memory_, std::move(local_file));
         mod.is_static = is_static;
 
         logger.log("Mapped %s at 0x%" PRIx64 "\n", mod.path.generic_string().c_str(), mod.image_base);
@@ -126,7 +126,7 @@ bool module_manager::unmap(const uint64_t address, const logger& logger)
 
     logger.log("Unmapping %s (0x%" PRIx64 ")\n", mod->second.path.generic_string().c_str(), mod->second.image_base);
 
-    unmap_module(*this->emu_, mod->second);
+    unmap_module(*this->memory_, mod->second);
     this->modules_.erase(mod);
 
     return true;

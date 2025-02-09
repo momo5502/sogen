@@ -18,5 +18,6 @@ struct cpu_interface
     virtual std::vector<std::byte> save_registers() = 0;
     virtual void restore_registers(const std::vector<std::byte>& register_data) = 0;
 
+    // TODO: Remove this
     virtual bool has_violation() const = 0;
 };
