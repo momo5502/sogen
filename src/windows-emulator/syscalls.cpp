@@ -2102,6 +2102,8 @@ namespace
 
         if (!potential_base)
         {
+            c.win_emu.log.print(color::dark_gray, "--> Not allocated\n");
+
             return STATUS_MEMORY_NOT_ALLOCATED;
         }
 
@@ -2117,8 +2119,14 @@ namespace
 
         if (commit && !reserve && c.emu.commit_memory(potential_base, allocation_bytes, protection))
         {
+            c.win_emu.log.print(color::dark_gray, "--> Committed 0x%" PRIx64 " - 0x%" PRIx64 "\n", potential_base,
+                                potential_base + allocation_bytes);
+
             return STATUS_SUCCESS;
         }
+
+        c.win_emu.log.print(color::dark_gray, "--> Allocated 0x%" PRIx64 " - 0x%" PRIx64 "\n", potential_base,
+                            potential_base + allocation_bytes);
 
         return c.emu.allocate_memory(potential_base, allocation_bytes, protection, !commit)
                    ? STATUS_SUCCESS
@@ -2733,6 +2741,13 @@ namespace
         return STATUS_SUCCESS;
     }
 
+    NTSTATUS handle_NtQueryDefaultLocale(const syscall_context&, BOOLEAN /*user_profile*/,
+                                         const emulator_object<LCID> default_locale_id)
+    {
+        default_locale_id.write(0x407);
+        return STATUS_SUCCESS;
+    }
+
     NTSTATUS handle_NtContinue(const syscall_context& c, const emulator_object<CONTEXT64> thread_context,
                                const BOOLEAN /*raise_alert*/)
     {
@@ -2818,12 +2833,13 @@ namespace
                 io_status_block.write(block);
             }
 
+            c.win_emu.callbacks().stdout_callback(temp_buffer);
+
             if (!temp_buffer.ends_with("\n"))
             {
                 temp_buffer.push_back('\n');
             }
 
-            c.win_emu.callbacks().stdout_callback(temp_buffer);
             c.win_emu.log.info("%.*s", static_cast<int>(temp_buffer.size()), temp_buffer.data());
 
             return STATUS_SUCCESS;
@@ -3902,6 +3918,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserMoveWindow);
     add_handler(NtSystemDebugControl);
     add_handler(NtRequestWaitReplyPort);
+    add_handler(NtQueryDefaultLocale);
 
 #undef add_handler
 }

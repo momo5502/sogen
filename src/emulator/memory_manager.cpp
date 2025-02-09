@@ -10,6 +10,7 @@
 
 namespace
 {
+    constexpr auto ALLOCATION_GRANULARITY = 0x0000000000010000ULL;
     constexpr auto MIN_ALLOCATION_ADDRESS = 0x0000000000010000ULL;
     constexpr auto MAX_ALLOCATION_ADDRESS = 0x00007ffffffeffffULL;
 
@@ -446,6 +447,7 @@ void memory_manager::unmap_all_memory()
 uint64_t memory_manager::find_free_allocation_base(const size_t size, const uint64_t start) const
 {
     uint64_t start_address = std::max(MIN_ALLOCATION_ADDRESS, start ? start : 0x100000000ULL);
+    start_address = align_up(start_address, ALLOCATION_GRANULARITY);
 
     for (const auto& region : this->reserved_regions_)
     {
@@ -460,7 +462,7 @@ uint64_t memory_manager::find_free_allocation_base(const size_t size, const uint
             return start_address;
         }
 
-        start_address = page_align_up(region_end);
+        start_address = align_up(region_end, ALLOCATION_GRANULARITY);
     }
 
     if (start_address + size <= MAX_ALLOCATION_ADDRESS)
