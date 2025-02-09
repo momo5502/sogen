@@ -2264,7 +2264,7 @@ namespace
         }
 
         std::vector<uint8_t> memory{};
-        memory.resize(number_of_bytes_read);
+        memory.resize(number_of_bytes_to_read);
 
         if (!c.emu.try_read_memory(base_address, memory.data(), memory.size()))
         {
