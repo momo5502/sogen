@@ -20,13 +20,13 @@ namespace
         return nt_headers_offset + (first_section_absolute - absolute_base);
     }
 
-    std::vector<uint8_t> read_mapped_memory(const emulator& emu, const mapped_module& binary)
+    std::vector<uint8_t> read_mapped_memory(const memory_manager& memory, const mapped_module& binary)
     {
-        std::vector<uint8_t> memory{};
-        memory.resize(binary.size_of_image);
-        emu.read_memory(binary.image_base, memory.data(), memory.size());
+        std::vector<uint8_t> mem{};
+        mem.resize(binary.size_of_image);
+        memory.read_memory(binary.image_base, mem.data(), mem.size());
 
-        return memory;
+        return mem;
     }
 
     void collect_exports(mapped_module& binary, const utils::safe_buffer_accessor<const uint8_t> buffer,
@@ -141,7 +141,8 @@ namespace
         }
     }
 
-    void map_sections(emulator& emu, mapped_module& binary, const utils::safe_buffer_accessor<const uint8_t> buffer,
+    void map_sections(memory_manager& memory, mapped_module& binary,
+                      const utils::safe_buffer_accessor<const uint8_t> buffer,
                       const PENTHeaders_t<std::uint64_t>& nt_headers, const uint64_t nt_headers_offset)
     {
         const auto first_section_offset = get_first_section_offset(nt_headers, nt_headers_offset);
@@ -156,7 +157,7 @@ namespace
             {
                 const auto size_of_data = std::min(section.SizeOfRawData, section.Misc.VirtualSize);
                 const auto* source_ptr = buffer.get_pointer_for_range(section.PointerToRawData, size_of_data);
-                emu.write_memory(target_ptr, source_ptr, size_of_data);
+                memory.write_memory(target_ptr, source_ptr, size_of_data);
             }
 
             auto permissions = memory_permission::none;
@@ -178,7 +179,7 @@ namespace
 
             const auto size_of_section = page_align_up(std::max(section.SizeOfRawData, section.Misc.VirtualSize));
 
-            emu.protect_memory(target_ptr, size_of_section, permissions, nullptr);
+            memory.protect_memory(target_ptr, size_of_section, permissions, nullptr);
 
             mapped_section section_info{};
             section_info.region.start = target_ptr;
@@ -195,7 +196,8 @@ namespace
     }
 }
 
-mapped_module map_module_from_data(emulator& emu, const std::span<const uint8_t> data, std::filesystem::path file)
+mapped_module map_module_from_data(memory_manager& memory, const std::span<const uint8_t> data,
+                                   std::filesystem::path file)
 {
     mapped_module binary{};
     binary.path = std::move(file);
@@ -217,14 +219,15 @@ mapped_module map_module_from_data(emulator& emu, const std::span<const uint8_t>
     binary.image_base = optional_header.ImageBase;
     binary.size_of_image = page_align_up(optional_header.SizeOfImage); // TODO: Sanitize
 
-    if (!emu.allocate_memory(binary.image_base, binary.size_of_image, memory_permission::read))
+    if (!memory.allocate_memory(binary.image_base, binary.size_of_image, memory_permission::read))
     {
-        binary.image_base = emu.find_free_allocation_base(binary.size_of_image);
+        binary.image_base = memory.find_free_allocation_base(binary.size_of_image);
         const auto is_dll = nt_headers.FileHeader.Characteristics & IMAGE_FILE_DLL;
         const auto has_dynamic_base = optional_header.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
         const auto is_relocatable = is_dll || has_dynamic_base;
 
-        if (!is_relocatable || !emu.allocate_memory(binary.image_base, binary.size_of_image, memory_permission::read))
+        if (!is_relocatable ||
+            !memory.allocate_memory(binary.image_base, binary.size_of_image, memory_permission::read))
         {
             throw std::runtime_error("Memory range not allocatable");
         }
@@ -233,22 +236,22 @@ mapped_module map_module_from_data(emulator& emu, const std::span<const uint8_t>
     binary.entry_point = binary.image_base + optional_header.AddressOfEntryPoint;
 
     const auto* header_buffer = buffer.get_pointer_for_range(0, optional_header.SizeOfHeaders);
-    emu.write_memory(binary.image_base, header_buffer, optional_header.SizeOfHeaders);
+    memory.write_memory(binary.image_base, header_buffer, optional_header.SizeOfHeaders);
 
-    map_sections(emu, binary, buffer, nt_headers, nt_headers_offset);
+    map_sections(memory, binary, buffer, nt_headers, nt_headers_offset);
 
-    auto mapped_memory = read_mapped_memory(emu, binary);
+    auto mapped_memory = read_mapped_memory(memory, binary);
     utils::safe_buffer_accessor<uint8_t> mapped_buffer{mapped_memory};
 
     apply_relocations(binary, mapped_buffer, optional_header);
     collect_exports(binary, mapped_buffer, optional_header);
 
-    emu.write_memory(binary.image_base, mapped_memory.data(), mapped_memory.size());
+    memory.write_memory(binary.image_base, mapped_memory.data(), mapped_memory.size());
 
     return binary;
 }
 
-mapped_module map_module_from_file(emulator& emu, std::filesystem::path file)
+mapped_module map_module_from_file(memory_manager& memory, std::filesystem::path file)
 {
     const auto data = utils::io::read_file(file);
     if (data.empty())
@@ -256,10 +259,10 @@ mapped_module map_module_from_file(emulator& emu, std::filesystem::path file)
         throw std::runtime_error("Bad file data");
     }
 
-    return map_module_from_data(emu, data, std::move(file));
+    return map_module_from_data(memory, data, std::move(file));
 }
 
-bool unmap_module(emulator& emu, const mapped_module& mod)
+bool unmap_module(memory_manager& memory, const mapped_module& mod)
 {
-    return emu.release_memory(mod.image_base, mod.size_of_image);
+    return memory.release_memory(mod.image_base, mod.size_of_image);
 }

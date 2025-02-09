@@ -9,6 +9,7 @@
 #include "process_context.hpp"
 #include "logger.hpp"
 #include "file_system.hpp"
+#include "memory_manager.hpp"
 
 std::unique_ptr<x64_emulator> create_default_x64_emulator();
 
@@ -186,6 +187,16 @@ class windows_emulator
         return this->file_sys_;
     }
 
+    memory_manager& memory()
+    {
+        return this->memory_manager_;
+    }
+
+    const memory_manager& memory() const
+    {
+        return this->memory_manager_;
+    }
+
     const std::filesystem::path& get_emulation_root()
     {
         return this->emulation_root_;
@@ -204,6 +215,8 @@ class windows_emulator
     std::unique_ptr<x64_emulator> emu_{};
     std::vector<instruction_hook_callback> syscall_hooks_{};
     std::unordered_map<uint16_t, uint16_t> port_mappings_{};
+
+    memory_manager memory_manager_;
 
     std::set<std::string, std::less<>> modules_{};
 

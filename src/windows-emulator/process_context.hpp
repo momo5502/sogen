@@ -318,17 +318,17 @@ class moved_marker
 class emulator_thread : public ref_counted_object
 {
   public:
-    emulator_thread(x64_emulator& emu)
-        : emu_ptr(&emu)
+    emulator_thread(memory_manager& memory)
+        : memory_ptr(&memory)
     {
     }
 
     emulator_thread(utils::buffer_deserializer& buffer)
-        : emulator_thread(buffer.read<x64_emulator_wrapper>().get())
+        : emulator_thread(buffer.read<memory_manager_wrapper>().get())
     {
     }
 
-    emulator_thread(x64_emulator& emu, const process_context& context, uint64_t start_address, uint64_t argument,
+    emulator_thread(memory_manager& memory, const process_context& context, uint64_t start_address, uint64_t argument,
                     uint64_t stack_size, uint32_t id);
 
     emulator_thread(const emulator_thread&) = delete;
@@ -337,14 +337,14 @@ class emulator_thread : public ref_counted_object
     emulator_thread(emulator_thread&& obj) noexcept = default;
     emulator_thread& operator=(emulator_thread&& obj) noexcept = default;
 
-    ~emulator_thread()
+    ~emulator_thread() override
     {
         this->release();
     }
 
     moved_marker marker{};
 
-    x64_emulator* emu_ptr{};
+    memory_manager* memory_ptr{};
 
     uint64_t stack_base{};
     uint64_t stack_size{};
@@ -407,7 +407,7 @@ class emulator_thread : public ref_counted_object
         }
     }
 
-    void serialize_object(utils::buffer_serializer& buffer) const
+    void serialize_object(utils::buffer_serializer& buffer) const override
     {
         if (this->marker.was_moved())
         {
@@ -438,7 +438,7 @@ class emulator_thread : public ref_counted_object
         buffer.write_vector(this->last_registers);
     }
 
-    void deserialize_object(utils::buffer_deserializer& buffer)
+    void deserialize_object(utils::buffer_deserializer& buffer) override
     {
         if (this->marker.was_moved())
         {
@@ -465,8 +465,8 @@ class emulator_thread : public ref_counted_object
 
         buffer.read_optional(this->await_time);
         buffer.read_optional(this->pending_status);
-        buffer.read_optional(this->gs_segment, [this] { return emulator_allocator(*this->emu_ptr); });
-        buffer.read_optional(this->teb, [this] { return emulator_object<TEB64>(*this->emu_ptr); });
+        buffer.read_optional(this->gs_segment, [this] { return emulator_allocator(*this->memory_ptr); });
+        buffer.read_optional(this->teb, [this] { return emulator_object<TEB64>(*this->memory_ptr); });
 
         buffer.read_vector(this->last_registers);
     }
@@ -488,18 +488,18 @@ class emulator_thread : public ref_counted_object
 
         if (this->stack_base)
         {
-            if (!this->emu_ptr)
+            if (!this->memory_ptr)
             {
                 throw std::runtime_error("Emulator was never assigned!");
             }
 
-            this->emu_ptr->release_memory(this->stack_base, this->stack_size);
+            this->memory_ptr->release_memory(this->stack_base, this->stack_size);
             this->stack_base = 0;
         }
 
         if (this->gs_segment)
         {
-            this->gs_segment->release();
+            this->gs_segment->release(*this->memory_ptr);
             this->gs_segment = {};
         }
     }
@@ -507,12 +507,12 @@ class emulator_thread : public ref_counted_object
 
 struct process_context
 {
-    process_context(x64_emulator& emu, file_system& file_sys)
+    process_context(x64_emulator& emu, memory_manager& memory, file_system& file_sys)
         : base_allocator(emu),
           peb(emu),
           process_params(emu),
-          kusd(emu, *this),
-          mod_manager(emu, file_sys)
+          kusd(memory, *this),
+          mod_manager(memory, file_sys)
     {
     }
 
@@ -645,10 +645,10 @@ struct process_context
         this->active_thread = this->threads.get(buffer.read<uint64_t>());
     }
 
-    handle create_thread(x64_emulator& emu, const uint64_t start_address, const uint64_t argument,
+    handle create_thread(memory_manager& memory, const uint64_t start_address, const uint64_t argument,
                          const uint64_t stack_size)
     {
-        emulator_thread t{emu, *this, start_address, argument, stack_size, ++this->spawned_thread_count};
+        emulator_thread t{memory, *this, start_address, argument, stack_size, ++this->spawned_thread_count};
         return this->threads.store(std::move(t));
     }
 };

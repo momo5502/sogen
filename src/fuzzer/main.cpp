@@ -83,8 +83,8 @@ namespace
 
             restore_emulator();
 
-            const auto memory = emu.emu().allocate_memory(page_align_up(std::max(data.size(), size_t(1))),
-                                                          memory_permission::read_write);
+            const auto memory = emu.memory().allocate_memory(
+                page_align_up(std::max(data.size(), static_cast<size_t>(1))), memory_permission::read_write);
             emu.emu().write_memory(memory, data.data(), data.size());
 
             emu.emu().reg(x64_register::rcx, memory);

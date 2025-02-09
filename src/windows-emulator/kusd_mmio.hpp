@@ -11,7 +11,7 @@ class windows_emulator;
 class kusd_mmio
 {
   public:
-    kusd_mmio(x64_emulator& emu, process_context& process);
+    kusd_mmio(memory_manager& memory, process_context& process);
     ~kusd_mmio();
 
     kusd_mmio(utils::buffer_deserializer& buffer);
@@ -39,7 +39,7 @@ class kusd_mmio
     void setup(bool use_relative_time);
 
   private:
-    x64_emulator* emu_{};
+    memory_manager* memory_{};
     process_context* process_{};
 
     bool registered_{};

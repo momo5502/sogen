@@ -102,8 +102,8 @@ namespace utils
     }
 }
 
-kusd_mmio::kusd_mmio(x64_emulator& emu, process_context& process)
-    : emu_(&emu),
+kusd_mmio::kusd_mmio(memory_manager& memory, process_context& process)
+    : memory_(&memory),
       process_(&process)
 {
 }
@@ -114,7 +114,7 @@ kusd_mmio::~kusd_mmio()
 }
 
 kusd_mmio::kusd_mmio(utils::buffer_deserializer& buffer)
-    : kusd_mmio(buffer.read<x64_emulator_wrapper>(), buffer.read<process_context_wrapper>())
+    : kusd_mmio(buffer.read<memory_manager_wrapper>(), buffer.read<process_context_wrapper>())
 {
 }
 
@@ -205,7 +205,7 @@ void kusd_mmio::register_mmio()
 
     this->registered_ = true;
 
-    this->emu_->allocate_mmio(
+    this->memory_->allocate_mmio(
         KUSD_ADDRESS, KUSD_BUFFER_SIZE,
         [this](const uint64_t addr, const size_t size) { return this->read(addr, size); },
         [](const uint64_t, const size_t, const uint64_t) {
@@ -218,6 +218,6 @@ void kusd_mmio::deregister_mmio()
     if (this->registered_)
     {
         this->registered_ = false;
-        this->emu_->release_memory(KUSD_ADDRESS, KUSD_BUFFER_SIZE);
+        this->memory_->release_memory(KUSD_ADDRESS, KUSD_BUFFER_SIZE);
     }
 }

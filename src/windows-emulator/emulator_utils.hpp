@@ -1,6 +1,10 @@
 #pragma once
-#include "memory_utils.hpp"
+
 #include <x64_emulator.hpp>
+
+#include "memory_manager.hpp"
+#include "memory_utils.hpp"
+#include "address_utils.hpp"
 
 // TODO: Replace with pointer handling structure for future 32 bit support
 using emulator_pointer = uint64_t;
@@ -39,6 +43,7 @@ class windows_emulator;
 struct process_context;
 
 using x64_emulator_wrapper = object_wrapper<x64_emulator>;
+using memory_manager_wrapper = object_wrapper<memory_manager>;
 using process_context_wrapper = object_wrapper<process_context>;
 using windows_emulator_wrapper = object_wrapper<windows_emulator>;
 
@@ -53,8 +58,8 @@ class emulator_object
     {
     }
 
-    emulator_object(emulator& emu, const uint64_t address = 0)
-        : emu_(&emu),
+    emulator_object(memory_interface& memory, const uint64_t address = 0)
+        : memory_(&memory),
           address_(address)
     {
     }
@@ -92,13 +97,13 @@ class emulator_object
     T read(const size_t index = 0) const
     {
         T obj{};
-        this->emu_->read_memory(this->address_ + index * this->size(), &obj, sizeof(obj));
+        this->memory_->read_memory(this->address_ + index * this->size(), &obj, sizeof(obj));
         return obj;
     }
 
     void write(const T& value, const size_t index = 0) const
     {
-        this->emu_->write_memory(this->address_ + index * this->size(), &value, sizeof(value));
+        this->memory_->write_memory(this->address_ + index * this->size(), &value, sizeof(value));
     }
 
     void write_if_valid(const T& value, const size_t index = 0) const
@@ -113,7 +118,7 @@ class emulator_object
     void access(const F& accessor, const size_t index = 0) const
     {
         T obj{};
-        this->emu_->read_memory(this->address_ + index * this->size(), &obj, sizeof(obj));
+        this->memory_->read_memory(this->address_ + index * this->size(), &obj, sizeof(obj));
 
         accessor(obj);
 
@@ -136,7 +141,7 @@ class emulator_object
     }
 
   private:
-    emulator* emu_{};
+    memory_interface* memory_{};
     uint64_t address_{};
 };
 
@@ -144,13 +149,13 @@ class emulator_object
 class emulator_allocator
 {
   public:
-    emulator_allocator(emulator& emu)
-        : emu_(&emu)
+    emulator_allocator(memory_interface& memory)
+        : memory_(&memory)
     {
     }
 
-    emulator_allocator(emulator& emu, const uint64_t address, const uint64_t size)
-        : emu_(&emu),
+    emulator_allocator(memory_interface& memory, const uint64_t address, const uint64_t size)
+        : memory_(&memory),
           address_(address),
           size_(size),
           active_address_(address)
@@ -177,7 +182,7 @@ class emulator_allocator
     emulator_object<T> reserve(const size_t count = 1)
     {
         const auto potential_start = this->reserve(sizeof(T) * count, alignof(T));
-        return emulator_object<T>(*this->emu_, potential_start);
+        return emulator_object<T>(*this->memory_, potential_start);
     }
 
     char16_t* copy_string(const std::u16string_view str)
@@ -199,10 +204,10 @@ class emulator_allocator
 
         const auto string_buffer = this->reserve(max_length, required_alignment);
 
-        this->emu_->write_memory(string_buffer, str.data(), total_length);
+        this->memory_->write_memory(string_buffer, str.data(), total_length);
 
         constexpr std::array<char, element_size> nullbyte{};
-        this->emu_->write_memory(string_buffer + total_length, nullbyte.data(), nullbyte.size());
+        this->memory_->write_memory(string_buffer + total_length, nullbyte.data(), nullbyte.size());
 
         result.Buffer = string_buffer;
         result.Length = static_cast<USHORT>(total_length);
@@ -236,9 +241,9 @@ class emulator_allocator
         return this->active_address_;
     }
 
-    emulator& get_emulator() const
+    memory_interface& get_memory() const
     {
-        return *this->emu_;
+        return *this->memory_;
     }
 
     void serialize(utils::buffer_serializer& buffer) const
@@ -255,18 +260,18 @@ class emulator_allocator
         buffer.read(this->active_address_);
     }
 
-    void release()
+    void release(memory_manager& manager)
     {
-        if (this->emu_ && this->address_ && this->size_)
+        if (this->address_ && this->size_)
         {
-            this->emu_->release_memory(this->address_, this->size_);
+            manager.release_memory(this->address_, this->size_);
             this->address_ = 0;
             this->size_ = 0;
         }
     }
 
   private:
-    emulator* emu_{};
+    memory_interface* memory_{};
     uint64_t address_{};
     uint64_t size_{};
     uint64_t active_address_{0};
