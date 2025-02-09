@@ -2833,12 +2833,13 @@ namespace
                 io_status_block.write(block);
             }
 
+            c.win_emu.callbacks().stdout_callback(temp_buffer);
+
             if (!temp_buffer.ends_with("\n"))
             {
                 temp_buffer.push_back('\n');
             }
 
-            c.win_emu.callbacks().stdout_callback(temp_buffer);
             c.win_emu.log.info("%.*s", static_cast<int>(temp_buffer.size()), temp_buffer.data());
 
             return STATUS_SUCCESS;
