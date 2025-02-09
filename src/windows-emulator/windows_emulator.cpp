@@ -699,6 +699,11 @@ emulator_thread::emulator_thread(x64_emulator& emu, const process_context& conte
     this->teb = this->gs_segment->reserve<TEB64>();
 
     this->teb->access([&](TEB64& teb_obj) {
+        // Skips GetCurrentNlsCache
+        // This hack can be removed once this is fixed:
+        // https://github.com/momo5502/emulator/issues/128
+        reinterpret_cast<uint8_t*>(&teb_obj)[0x179C] = 1;
+
         teb_obj.ClientId.UniqueProcess = 1ul;
         teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
         teb_obj.NtTib.StackLimit = reinterpret_cast<std::uint64_t*>(this->stack_base);
