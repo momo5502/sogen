@@ -2102,6 +2102,8 @@ namespace
 
         if (!potential_base)
         {
+            c.win_emu.log.print(color::dark_gray, "--> Not allocated\n");
+
             return STATUS_MEMORY_NOT_ALLOCATED;
         }
 
@@ -2117,8 +2119,14 @@ namespace
 
         if (commit && !reserve && c.emu.commit_memory(potential_base, allocation_bytes, protection))
         {
+            c.win_emu.log.print(color::dark_gray, "--> Committed 0x%" PRIx64 " - 0x%" PRIx64 "\n", potential_base,
+                                potential_base + allocation_bytes);
+
             return STATUS_SUCCESS;
         }
+
+        c.win_emu.log.print(color::dark_gray, "--> Allocated 0x%" PRIx64 " - 0x%" PRIx64 "\n", potential_base,
+                            potential_base + allocation_bytes);
 
         return c.emu.allocate_memory(potential_base, allocation_bytes, protection, !commit)
                    ? STATUS_SUCCESS
