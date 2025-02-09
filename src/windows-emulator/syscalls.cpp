@@ -1499,6 +1499,25 @@ namespace
             return STATUS_INVALID_HANDLE;
         }
 
+        if (info_class == ThreadTebInformation)
+        {
+            if (return_length)
+            {
+                return_length.write(sizeof(THREAD_TEB_INFORMATION));
+            }
+
+            if (thread_information_length < sizeof(THREAD_TEB_INFORMATION))
+            {
+                return STATUS_BUFFER_OVERFLOW;
+            }
+
+            const auto teb_info = c.emu.read_memory<THREAD_TEB_INFORMATION>(thread_information);
+            const auto data = c.emu.read_memory(thread->teb->value() + teb_info.TebOffset, teb_info.BytesToRead);
+            c.emu.write_memory(teb_info.TebInformation, data.data(), data.size());
+
+            return STATUS_SUCCESS;
+        }
+
         if (info_class == ThreadBasicInformation)
         {
             if (return_length)
@@ -2909,7 +2928,6 @@ namespace
 
         return mode;
     }
-
     std::optional<std::u16string_view> get_io_device_name(const std::u16string_view filename)
     {
         constexpr std::u16string_view device_prefix = u"\\Device\\";
