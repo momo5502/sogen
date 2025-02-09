@@ -1506,7 +1506,7 @@ namespace
                 return_length.write(sizeof(THREAD_BASIC_INFORMATION64));
             }
 
-            if (thread_information_length != sizeof(THREAD_BASIC_INFORMATION64))
+            if (thread_information_length < sizeof(THREAD_BASIC_INFORMATION64))
             {
                 return STATUS_BUFFER_OVERFLOW;
             }
@@ -1527,7 +1527,7 @@ namespace
                 return_length.write(sizeof(ULONG));
             }
 
-            if (thread_information_length != sizeof(ULONG))
+            if (thread_information_length < sizeof(ULONG))
             {
                 return STATUS_BUFFER_OVERFLOW;
             }
@@ -1545,7 +1545,7 @@ namespace
                 return_length.write(sizeof(EmulatorTraits<Emu64>::PVOID));
             }
 
-            if (thread_information_length != sizeof(EmulatorTraits<Emu64>::PVOID))
+            if (thread_information_length < sizeof(EmulatorTraits<Emu64>::PVOID))
             {
                 return STATUS_BUFFER_OVERFLOW;
             }
