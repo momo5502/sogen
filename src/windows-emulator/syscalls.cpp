@@ -2741,6 +2741,13 @@ namespace
         return STATUS_SUCCESS;
     }
 
+    NTSTATUS handle_NtQueryDefaultLocale(const syscall_context&, BOOLEAN /*user_profile*/,
+                                         const emulator_object<LCID> default_locale_id)
+    {
+        default_locale_id.write(0x407);
+        return STATUS_SUCCESS;
+    }
+
     NTSTATUS handle_NtContinue(const syscall_context& c, const emulator_object<CONTEXT64> thread_context,
                                const BOOLEAN /*raise_alert*/)
     {
@@ -3910,6 +3917,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserMoveWindow);
     add_handler(NtSystemDebugControl);
     add_handler(NtRequestWaitReplyPort);
+    add_handler(NtQueryDefaultLocale);
 
 #undef add_handler
 }
