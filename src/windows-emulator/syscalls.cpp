@@ -2951,8 +2951,9 @@ namespace
         auto filename =
             read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
 
-        auto printer = utils::finally(
-            [&] { c.win_emu.log.print(color::dark_gray, "--> Opening file: %s\n", u16_to_u8(filename).c_str()); });
+        auto printer = utils::finally([&] {
+            c.win_emu.log.print(color::dark_gray, "--> Opening file: %s\n", u16_to_u8(filename).c_str()); //
+        });
 
         const auto io_device_name = get_io_device_name(filename);
         if (io_device_name.has_value())
@@ -3022,16 +3023,17 @@ namespace
 
         c.win_emu.log.print(color::dark_gray, "--> Opening file: %s\n", u16_to_u8(f.name).c_str());
 
+        const windows_path path = f.name;
         std::u16string mode = map_mode(desired_access, create_disposition);
 
-        if (mode.empty())
+        if (mode.empty() || path.is_relative())
         {
             return STATUS_NOT_SUPPORTED;
         }
 
         FILE* file{};
 
-        const auto error = open_unicode(&file, c.win_emu.file_sys().translate(f.name), mode);
+        const auto error = open_unicode(&file, c.win_emu.file_sys().translate(path), mode);
 
         if (!file)
         {
