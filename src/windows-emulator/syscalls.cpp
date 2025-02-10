@@ -1,6 +1,6 @@
 #include "std_include.hpp"
 #include "syscall_dispatcher.hpp"
-#include "context_frame.hpp"
+#include "cpu_context.hpp"
 #include "emulator_utils.hpp"
 #include "syscall_utils.hpp"
 
@@ -2775,7 +2775,7 @@ namespace
         c.write_status = false;
 
         const auto context = thread_context.read();
-        context_frame::restore(c.emu, context);
+        cpu_context::restore(c.emu, context);
 
         return STATUS_SUCCESS;
     }
@@ -3800,7 +3800,7 @@ namespace
                 c.win_emu.log.print(color::pink, "--> Reading debug registers!\n");
             }
 
-            context_frame::save(c.emu, context);
+            cpu_context::save(c.emu, context);
         });
 
         return STATUS_SUCCESS;
@@ -3832,7 +3832,7 @@ namespace
         });
 
         const auto context = thread_context.read();
-        context_frame::restore(c.emu, context);
+        cpu_context::restore(c.emu, context);
 
         if ((context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64) == CONTEXT_DEBUG_REGISTERS_64)
         {

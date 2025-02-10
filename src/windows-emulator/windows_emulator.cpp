@@ -2,7 +2,7 @@
 #include "windows_emulator.hpp"
 
 #include "address_utils.hpp"
-#include "context_frame.hpp"
+#include "cpu_context.hpp"
 
 #include <unicorn_x64_emulator.hpp>
 

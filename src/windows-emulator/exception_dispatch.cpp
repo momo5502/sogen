@@ -1,6 +1,6 @@
 #include "exception_dispatch.hpp"
 #include "process_context.hpp"
-#include "context_frame.hpp"
+#include "cpu_context.hpp"
 
 #include <platform/status.hpp>
 
@@ -146,7 +146,7 @@ void dispatch_exception(x64_emulator& emu, const process_context& proc, const DW
 {
     CONTEXT64 ctx{};
     ctx.ContextFlags = CONTEXT64_ALL;
-    context_frame::save(emu, ctx);
+    cpu_context::save(emu, ctx);
 
     exception_record record{};
     memset(&record, 0, sizeof(record));
