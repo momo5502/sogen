@@ -154,7 +154,7 @@ namespace
 
             auto read_handler = [&, section, concise_logging](const uint64_t address, size_t, uint64_t) {
                 const auto rip = win_emu.emu().read_instruction_pointer();
-                if (win_emu.process.mod_manager.find_by_address(rip) != win_emu.process.executable)
+                if (win_emu.mod_manager.find_by_address(rip) != win_emu.process.executable)
                 {
                     return;
                 }
@@ -174,7 +174,7 @@ namespace
 
             const auto write_handler = [&, section, concise_logging](const uint64_t address, size_t, uint64_t) {
                 const auto rip = win_emu.emu().read_instruction_pointer();
-                if (win_emu.process.mod_manager.find_by_address(rip) != win_emu.process.executable)
+                if (win_emu.mod_manager.find_by_address(rip) != win_emu.process.executable)
                 {
                     return;
                 }

@@ -756,7 +756,7 @@ namespace
 
         if (section_entry->is_image())
         {
-            const auto binary = c.proc.mod_manager.map_module(section_entry->file_name, c.win_emu.log);
+            const auto binary = c.win_emu.mod_manager.map_module(section_entry->file_name, c.win_emu.log);
             if (!binary)
             {
                 return STATUS_FILE_INVALID;
@@ -880,7 +880,7 @@ namespace
                 return STATUS_BUFFER_OVERFLOW;
             }
 
-            const auto mod = c.proc.mod_manager.find_by_address(base_address);
+            const auto mod = c.win_emu.mod_manager.find_by_address(base_address);
             if (!mod)
             {
                 c.win_emu.log.error("Bad address for memory image request: 0x%" PRIx64 "\n", base_address);
@@ -3408,7 +3408,7 @@ namespace
             return STATUS_NOT_SUPPORTED;
         }
 
-        const auto* mod = c.proc.mod_manager.find_by_address(base_address);
+        const auto* mod = c.win_emu.mod_manager.find_by_address(base_address);
         if (!mod)
         {
             c.win_emu.log.error("Unmapping non-module section not supported!\n");
@@ -3416,7 +3416,7 @@ namespace
             return STATUS_NOT_SUPPORTED;
         }
 
-        if (c.proc.mod_manager.unmap(base_address, c.win_emu.log))
+        if (c.win_emu.mod_manager.unmap(base_address, c.win_emu.log))
         {
             return STATUS_SUCCESS;
         }

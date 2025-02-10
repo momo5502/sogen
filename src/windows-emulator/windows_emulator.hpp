@@ -66,6 +66,7 @@ class windows_emulator
     file_system file_sys;
     memory_manager memory;
     registry_manager registry{};
+    module_manager mod_manager;
     process_context process;
     syscall_dispatcher dispatcher;
 

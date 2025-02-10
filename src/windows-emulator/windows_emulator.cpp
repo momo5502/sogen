@@ -448,7 +448,8 @@ windows_emulator::windows_emulator(const emulator_settings& settings, std::uniqu
       file_sys(emulation_root.empty() ? emulation_root : emulation_root / "filesys"),
       memory(*this->emu_),
       registry(emulation_root.empty() ? settings.registry_directory : emulation_root / "registry"),
-      process(*this->emu_, memory, file_sys)
+      mod_manager(memory, file_sys),
+      process(*this->emu_, memory)
 {
 #ifndef OS_WINDOWS
     if (this->emulation_root.empty())
@@ -483,18 +484,17 @@ void windows_emulator::setup_process(const application_settings& app_settings, c
     auto& emu = this->emu();
 
     auto& context = this->process;
-    context.mod_manager = module_manager(this->memory, this->file_sys); // TODO: Cleanup module manager
 
     setup_context(*this, app_settings, emu_settings);
 
-    context.executable = context.mod_manager.map_module(app_settings.application, this->log, true);
+    context.executable = this->mod_manager.map_module(app_settings.application, this->log, true);
 
     context.peb.access([&](PEB64& peb) {
         peb.ImageBaseAddress = reinterpret_cast<std::uint64_t*>(context.executable->image_base); //
     });
 
-    context.ntdll = context.mod_manager.map_module(R"(C:\Windows\System32\ntdll.dll)", this->log, true);
-    context.win32u = context.mod_manager.map_module(R"(C:\Windows\System32\win32u.dll)", this->log, true);
+    context.ntdll = this->mod_manager.map_module(R"(C:\Windows\System32\ntdll.dll)", this->log, true);
+    context.win32u = this->mod_manager.map_module(R"(C:\Windows\System32\win32u.dll)", this->log, true);
 
     const auto ntdll_data = emu.read_memory(context.ntdll->image_base, context.ntdll->size_of_image);
     const auto win32u_data = emu.read_memory(context.win32u->image_base, context.win32u->size_of_image);
@@ -553,11 +553,11 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
     this->process.current_ip = this->emu().read_instruction_pointer();
 
     const auto binary = utils::make_lazy([&] {
-        return this->process.mod_manager.find_by_address(address); //
+        return this->mod_manager.find_by_address(address); //
     });
 
     const auto previous_binary = utils::make_lazy([&] {
-        return this->process.mod_manager.find_by_address(this->process.previous_ip); //
+        return this->mod_manager.find_by_address(this->process.previous_ip); //
     });
 
     const auto is_in_interesting_module = [&] {
@@ -596,7 +596,7 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
             uint64_t return_address{};
             this->emu().try_read_memory(rsp, &return_address, sizeof(return_address));
 
-            const auto* mod_name = this->process.mod_manager.find_name(return_address);
+            const auto* mod_name = this->mod_manager.find_name(return_address);
 
             log.print(is_interesting_call ? color::yellow : color::dark_gray,
                       "Executing function: %s - %s (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n", binary->name.c_str(),
@@ -687,7 +687,7 @@ void windows_emulator::setup_hooks()
                                           const memory_violation_type type) {
         const auto permission = get_permission_string(operation);
         const auto ip = this->emu().read_instruction_pointer();
-        const char* name = this->process.mod_manager.find_name(ip);
+        const char* name = this->mod_manager.find_name(ip);
 
         if (type == memory_violation_type::protection)
         {
@@ -773,6 +773,7 @@ void windows_emulator::serialize(utils::buffer_serializer& buffer) const
     buffer.write(this->use_relative_time_);
     this->emu().serialize_state(buffer, false);
     this->memory.serialize_memory_state(buffer, false);
+    this->mod_manager.serialize(buffer);
     this->process.serialize(buffer);
     this->dispatcher.serialize(buffer);
 }
@@ -781,6 +782,10 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
 {
     buffer.register_factory<memory_manager_wrapper>([this] {
         return memory_manager_wrapper{this->memory}; //
+    });
+
+    buffer.register_factory<module_manager_wrapper>([this] {
+        return module_manager_wrapper{this->mod_manager}; //
     });
 
     buffer.register_factory<x64_emulator_wrapper>([this] {
@@ -798,26 +803,30 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
 
     this->emu().deserialize_state(buffer, false);
     this->memory.deserialize_memory_state(buffer, false);
+    this->mod_manager.deserialize(buffer);
     this->process.deserialize(buffer);
     this->dispatcher.deserialize(buffer);
 }
 
 void windows_emulator::save_snapshot()
 {
-    utils::buffer_serializer serializer{};
+    throw std::runtime_error("Not supported");
+    /*utils::buffer_serializer serializer{};
     this->emu().serialize_state(serializer, true);
     this->memory.serialize_memory_state(serializer, true);
+    this->mod_manager.serialize(serializer);
     this->process.serialize(serializer);
 
     this->process_snapshot_ = serializer.move_buffer();
 
     // TODO: Make process copyable
-    // this->process_snapshot_ = this->process;
+    // this->process_snapshot_ = this->process;*/
 }
 
 void windows_emulator::restore_snapshot()
 {
-    if (this->process_snapshot_.empty())
+    throw std::runtime_error("Not supported");
+    /*if (this->process_snapshot_.empty())
     {
         assert(false);
         return;
@@ -826,6 +835,7 @@ void windows_emulator::restore_snapshot()
     utils::buffer_deserializer deserializer{this->process_snapshot_};
     this->emu().deserialize_state(deserializer, true);
     this->memory.deserialize_memory_state(deserializer, true);
+    this->mod_manager.deserialize(deserializer);
     this->process.deserialize(deserializer);
-    // this->process = *this->process_snapshot_;
+    // this->process = *this->process_snapshot_;*/
 }
