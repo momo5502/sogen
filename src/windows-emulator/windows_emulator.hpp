@@ -57,7 +57,17 @@ enum class apiset_location : uint8_t
 
 class windows_emulator
 {
+    std::unique_ptr<x64_emulator> emu_{};
+
   public:
+    std::filesystem::path emulation_root{};
+    emulator_callbacks callbacks{};
+    logger log{};
+    file_system file_sys;
+    memory_manager memory;
+    process_context process;
+    syscall_dispatcher dispatcher;
+
     windows_emulator(const std::filesystem::path& emulation_root,
                      std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
     windows_emulator(application_settings app_settings, const emulator_settings& settings = {},
@@ -81,34 +91,14 @@ class windows_emulator
         return *this->emu_;
     }
 
-    process_context& process()
-    {
-        return this->process_;
-    }
-
-    const process_context& process() const
-    {
-        return this->process_;
-    }
-
-    syscall_dispatcher& dispatcher()
-    {
-        return this->dispatcher_;
-    }
-
-    const syscall_dispatcher& dispatcher() const
-    {
-        return this->dispatcher_;
-    }
-
     emulator_thread& current_thread() const
     {
-        if (!this->process_.active_thread)
+        if (!this->process.active_thread)
         {
             throw std::runtime_error("No active thread!");
         }
 
-        return *this->process_.active_thread;
+        return *this->process.active_thread;
     }
 
     void start(std::chrono::nanoseconds timeout = {}, size_t count = 0);
@@ -163,7 +153,6 @@ class windows_emulator
         }
     }
 
-    logger log{};
     bool verbose{false};
     bool verbose_calls{false};
     bool buffer_stdout{false};
@@ -178,57 +167,15 @@ class windows_emulator
         return this->use_relative_time_;
     }
 
-    emulator_callbacks& callbacks()
-    {
-        return this->callbacks_;
-    }
-
-    file_system& file_sys()
-    {
-        return this->file_sys_;
-    }
-
-    const file_system& file_sys() const
-    {
-        return this->file_sys_;
-    }
-
-    memory_manager& memory()
-    {
-        return this->memory_manager_;
-    }
-
-    const memory_manager& memory() const
-    {
-        return this->memory_manager_;
-    }
-
-    const std::filesystem::path& get_emulation_root()
-    {
-        return this->emulation_root_;
-    }
-
   private:
-    std::filesystem::path emulation_root_{};
-    file_system file_sys_;
-
-    emulator_callbacks callbacks_{};
-
     bool switch_thread_{false};
     bool use_relative_time_{false};
     bool silent_until_main_{false};
 
-    std::unique_ptr<x64_emulator> emu_{};
     std::vector<instruction_hook_callback> syscall_hooks_{};
     std::unordered_map<uint16_t, uint16_t> port_mappings_{};
 
-    memory_manager memory_manager_;
-
     std::set<std::string, std::less<>> modules_{};
-
-    process_context process_;
-    syscall_dispatcher dispatcher_;
-
     std::vector<std::byte> process_snapshot_{};
     // std::optional<process_context> process_snapshot_{};
 

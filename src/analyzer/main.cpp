@@ -27,17 +27,17 @@ namespace
 
 #ifdef OS_WINDOWS
         watch_object(win_emu, modules, *win_emu.current_thread().teb, cache_logging);
-        watch_object(win_emu, modules, win_emu.process().peb, cache_logging);
+        watch_object(win_emu, modules, win_emu.process.peb, cache_logging);
         watch_object(win_emu, modules, emulator_object<KUSER_SHARED_DATA64>{win_emu.emu(), kusd_mmio::address()},
                      cache_logging);
 
-        auto* params_hook = watch_object(win_emu, modules, win_emu.process().process_params, cache_logging);
+        auto* params_hook = watch_object(win_emu, modules, win_emu.process.process_params, cache_logging);
 
         win_emu.emu().hook_memory_write(
-            win_emu.process().peb.value() + offsetof(PEB64, ProcessParameters), 0x8,
+            win_emu.process.peb.value() + offsetof(PEB64, ProcessParameters), 0x8,
             [&win_emu, cache_logging, params_hook, modules](const uint64_t address, size_t,
                                                             const uint64_t value) mutable {
-                const auto target_address = win_emu.process().peb.value() + offsetof(PEB64, ProcessParameters);
+                const auto target_address = win_emu.process.peb.value() + offsetof(PEB64, ProcessParameters);
 
                 if (address == target_address)
                 {
@@ -80,7 +80,7 @@ namespace
             throw;
         }
 
-        const auto exit_status = win_emu.process().exit_status;
+        const auto exit_status = win_emu.process.exit_status;
         if (!exit_status.has_value())
         {
             win_emu.log.print(color::red, "Emulation terminated without status!\n");
@@ -136,12 +136,12 @@ namespace
         if (options.silent)
         {
             win_emu.buffer_stdout = false;
-            win_emu.callbacks().stdout_callback = [](const std::string_view data) {
+            win_emu.callbacks.stdout_callback = [](const std::string_view data) {
                 (void)fwrite(data.data(), 1, data.size(), stdout);
             };
         }
 
-        const auto& exe = *win_emu.process().executable;
+        const auto& exe = *win_emu.process.executable;
 
         const auto concise_logging = options.concise_logging;
 
@@ -154,7 +154,7 @@ namespace
 
             auto read_handler = [&, section, concise_logging](const uint64_t address, size_t, uint64_t) {
                 const auto rip = win_emu.emu().read_instruction_pointer();
-                if (win_emu.process().mod_manager.find_by_address(rip) != win_emu.process().executable)
+                if (win_emu.process.mod_manager.find_by_address(rip) != win_emu.process.executable)
                 {
                     return;
                 }
@@ -174,7 +174,7 @@ namespace
 
             const auto write_handler = [&, section, concise_logging](const uint64_t address, size_t, uint64_t) {
                 const auto rip = win_emu.emu().read_instruction_pointer();
-                if (win_emu.process().mod_manager.find_by_address(rip) != win_emu.process().executable)
+                if (win_emu.process.mod_manager.find_by_address(rip) != win_emu.process.executable)
                 {
                     return;
                 }

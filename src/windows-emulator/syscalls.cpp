@@ -704,8 +704,8 @@ namespace
         {
             constexpr auto shared_section_size = 0x10000;
 
-            const auto address = c.win_emu.memory().find_free_allocation_base(shared_section_size);
-            c.win_emu.memory().allocate_memory(address, shared_section_size, memory_permission::read_write);
+            const auto address = c.win_emu.memory.find_free_allocation_base(shared_section_size);
+            c.win_emu.memory.allocate_memory(address, shared_section_size, memory_permission::read_write);
 
             const std::u16string_view windows_dir = c.proc.kusd.get().NtSystemRoot.arr;
             const auto windows_dir_size = windows_dir.size() * 2;
@@ -789,7 +789,7 @@ namespace
         }
 
         const auto protection = map_nt_to_emulator_protection(section_entry->section_page_protection);
-        const auto address = c.win_emu.memory().allocate_memory(size, protection);
+        const auto address = c.win_emu.memory.allocate_memory(size, protection);
 
         if (!file_data.empty())
         {
@@ -850,7 +850,7 @@ namespace
             const emulator_object<EMU_MEMORY_BASIC_INFORMATION64> info{c.emu, memory_information};
 
             info.access([&](EMU_MEMORY_BASIC_INFORMATION64& image_info) {
-                const auto region_info = c.win_emu.memory().get_region_info(base_address);
+                const auto region_info = c.win_emu.memory.get_region_info(base_address);
 
                 assert(!region_info.is_committed || region_info.is_reserved);
 
@@ -910,7 +910,7 @@ namespace
                 return STATUS_BUFFER_OVERFLOW;
             }
 
-            const auto region_info = c.win_emu.memory().get_region_info(base_address);
+            const auto region_info = c.win_emu.memory.get_region_info(base_address);
             if (!region_info.is_reserved)
             {
                 return STATUS_INVALID_ADDRESS;
@@ -1655,7 +1655,7 @@ namespace
         if (!f->enumeration_state || query_flags & SL_RESTART_SCAN)
         {
             f->enumeration_state.emplace(file_enumeration_state{});
-            f->enumeration_state->files = scan_directory(c.win_emu.file_sys().translate(f->name));
+            f->enumeration_state->files = scan_directory(c.win_emu.file_sys.translate(f->name));
         }
 
         auto& enum_state = *f->enumeration_state;
@@ -2015,8 +2015,7 @@ namespace
 
         try
         {
-            c.win_emu.memory().protect_memory(aligned_start, aligned_length, requested_protection,
-                                              &old_protection_value);
+            c.win_emu.memory.protect_memory(aligned_start, aligned_length, requested_protection, &old_protection_value);
         }
         catch (...)
         {
@@ -2118,7 +2117,7 @@ namespace
         auto potential_base = base_address.read();
         if (!potential_base)
         {
-            potential_base = c.win_emu.memory().find_free_allocation_base(allocation_bytes);
+            potential_base = c.win_emu.memory.find_free_allocation_base(allocation_bytes);
         }
 
         if (!potential_base)
@@ -2138,7 +2137,7 @@ namespace
             throw std::runtime_error("Unsupported allocation type!");
         }
 
-        if (commit && !reserve && c.win_emu.memory().commit_memory(potential_base, allocation_bytes, protection))
+        if (commit && !reserve && c.win_emu.memory.commit_memory(potential_base, allocation_bytes, protection))
         {
             c.win_emu.log.print(color::dark_gray, "--> Committed 0x%" PRIx64 " - 0x%" PRIx64 "\n", potential_base,
                                 potential_base + allocation_bytes);
@@ -2149,7 +2148,7 @@ namespace
         c.win_emu.log.print(color::dark_gray, "--> Allocated 0x%" PRIx64 " - 0x%" PRIx64 "\n", potential_base,
                             potential_base + allocation_bytes);
 
-        return c.win_emu.memory().allocate_memory(potential_base, allocation_bytes, protection, !commit)
+        return c.win_emu.memory.allocate_memory(potential_base, allocation_bytes, protection, !commit)
                    ? STATUS_SUCCESS
                    : STATUS_MEMORY_NOT_ALLOCATED;
     }
@@ -2177,14 +2176,14 @@ namespace
 
         if (free_type & MEM_RELEASE)
         {
-            return c.win_emu.memory().release_memory(allocation_base, allocation_size) ? STATUS_SUCCESS
-                                                                                       : STATUS_MEMORY_NOT_ALLOCATED;
+            return c.win_emu.memory.release_memory(allocation_base, allocation_size) ? STATUS_SUCCESS
+                                                                                     : STATUS_MEMORY_NOT_ALLOCATED;
         }
 
         if (free_type & MEM_DECOMMIT)
         {
-            return c.win_emu.memory().decommit_memory(allocation_base, allocation_size) ? STATUS_SUCCESS
-                                                                                        : STATUS_MEMORY_NOT_ALLOCATED;
+            return c.win_emu.memory.decommit_memory(allocation_base, allocation_size) ? STATUS_SUCCESS
+                                                                                      : STATUS_MEMORY_NOT_ALLOCATED;
         }
 
         throw std::runtime_error("Bad free type");
@@ -2261,7 +2260,7 @@ namespace
         }
 
         client_shared_memory.access([&](PORT_VIEW64& view) {
-            p.view_base = c.win_emu.memory().allocate_memory(view.ViewSize, memory_permission::read_write);
+            p.view_base = c.win_emu.memory.allocate_memory(view.ViewSize, memory_permission::read_write);
             view.ViewBase = p.view_base;
             view.ViewRemoteBase = view.ViewBase;
         });
@@ -2746,14 +2745,14 @@ namespace
                                          const emulator_object<LARGE_INTEGER> /*default_casing_table_size*/)
     {
         const auto locale_file =
-            utils::io::read_file(c.win_emu.file_sys().translate(R"(C:\Windows\System32\locale.nls)"));
+            utils::io::read_file(c.win_emu.file_sys.translate(R"(C:\Windows\System32\locale.nls)"));
         if (locale_file.empty())
         {
             return STATUS_FILE_INVALID;
         }
 
         const auto size = page_align_up(locale_file.size());
-        const auto base = c.win_emu.memory().allocate_memory(size, memory_permission::read);
+        const auto base = c.win_emu.memory.allocate_memory(size, memory_permission::read);
         c.emu.write_memory(base, locale_file.data(), locale_file.size());
 
         base_address.write(base);
@@ -2879,7 +2878,7 @@ namespace
                 io_status_block.write(block);
             }
 
-            c.win_emu.callbacks().stdout_callback(temp_buffer);
+            c.win_emu.callbacks.stdout_callback(temp_buffer);
 
             if (!temp_buffer.ends_with("\n"))
             {
@@ -3048,14 +3047,14 @@ namespace
             if (create_disposition & FILE_CREATE)
             {
                 std::error_code ec{};
-                create_directory(c.win_emu.file_sys().translate(f.name), ec);
+                create_directory(c.win_emu.file_sys.translate(f.name), ec);
 
                 if (ec)
                 {
                     return STATUS_ACCESS_DENIED;
                 }
             }
-            else if (!std::filesystem::is_directory(c.win_emu.file_sys().translate(f.name)))
+            else if (!std::filesystem::is_directory(c.win_emu.file_sys.translate(f.name)))
             {
                 return STATUS_OBJECT_NAME_NOT_FOUND;
             }
@@ -3078,7 +3077,7 @@ namespace
 
         FILE* file{};
 
-        const auto error = open_unicode(&file, c.win_emu.file_sys().translate(path), mode);
+        const auto error = open_unicode(&file, c.win_emu.file_sys.translate(path), mode);
 
         if (!file)
         {
@@ -3123,7 +3122,7 @@ namespace
 
         c.win_emu.log.print(color::dark_gray, "--> Querying file attributes: %s\n", u16_to_u8(filename).c_str());
 
-        const auto local_filename = c.win_emu.file_sys().translate(filename).string();
+        const auto local_filename = c.win_emu.file_sys.translate(filename).string();
 
         struct _stat64 file_stat{};
         if (_stat64(local_filename.c_str(), &file_stat) != 0)
@@ -3446,7 +3445,7 @@ namespace
             return STATUS_NOT_SUPPORTED;
         }
 
-        const auto h = c.proc.create_thread(c.win_emu.memory(), start_routine, argument, stack_size);
+        const auto h = c.proc.create_thread(c.win_emu.memory, start_routine, argument, stack_size);
         thread_handle.write(h);
 
         if (!attribute_list)

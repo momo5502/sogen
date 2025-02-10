@@ -213,15 +213,14 @@ namespace
                        const emulator_settings& emu_settings)
     {
         auto& emu = win_emu.emu();
-        auto& context = win_emu.process();
-        auto& memory = win_emu.memory();
+        auto& context = win_emu.process;
+        auto& memory = win_emu.memory;
 
         setup_gdt(emu, memory);
 
         // TODO: Move that out
-        context.registry =
-            registry_manager(win_emu.get_emulation_root().empty() ? emu_settings.registry_directory
-                                                                  : win_emu.get_emulation_root() / "registry");
+        context.registry = registry_manager(win_emu.emulation_root.empty() ? emu_settings.registry_directory
+                                                                           : win_emu.emulation_root / "registry");
 
         context.kusd.setup(emu_settings.use_relative_time);
 
@@ -285,7 +284,7 @@ namespace
 
         apiset_location apiset_loc = apiset_location::file;
 
-        if (win_emu.get_emulation_root().empty())
+        if (win_emu.emulation_root.empty())
         {
 #ifdef OS_WINDOWS
             apiset_loc = apiset_location::host;
@@ -297,7 +296,7 @@ namespace
         context.peb.access([&](PEB64& peb) {
             peb.ImageBaseAddress = nullptr;
             peb.ProcessParameters = context.process_params.ptr();
-            peb.ApiSetMap = build_api_set_map(emu, allocator, apiset_loc, win_emu.get_emulation_root()).ptr();
+            peb.ApiSetMap = build_api_set_map(emu, allocator, apiset_loc, win_emu.emulation_root).ptr();
 
             peb.ProcessHeap = nullptr;
             peb.ProcessHeaps = nullptr;
@@ -320,7 +319,7 @@ namespace
 
     void perform_context_switch_work(windows_emulator& win_emu)
     {
-        auto& devices = win_emu.process().devices;
+        auto& devices = win_emu.process.devices;
 
         // Crappy mechanism to prevent mutation while iterating.
         const auto was_blocked = devices.block_mutation(true);
@@ -353,7 +352,7 @@ namespace
         }
 
         auto& emu = win_emu.emu();
-        auto& context = win_emu.process();
+        auto& context = win_emu.process;
 
         const auto is_ready = thread.is_thread_ready(context);
 
@@ -385,7 +384,7 @@ namespace
 
     bool switch_to_thread(windows_emulator& win_emu, const handle thread_handle)
     {
-        auto* thread = win_emu.process().threads.get(thread_handle);
+        auto* thread = win_emu.process.threads.get(thread_handle);
         if (!thread)
         {
             throw std::runtime_error("Bad thread handle");
@@ -398,7 +397,7 @@ namespace
     {
         perform_context_switch_work(win_emu);
 
-        auto& context = win_emu.process();
+        auto& context = win_emu.process;
 
         bool next_thread = false;
 
@@ -445,7 +444,7 @@ windows_emulator::windows_emulator(application_settings app_settings, const emul
 
     for (const auto& mapping : settings.path_mappings)
     {
-        this->file_sys().map(mapping.first, mapping.second);
+        this->file_sys.map(mapping.first, mapping.second);
     }
 
     for (const auto& mapping : settings.port_mappings)
@@ -457,21 +456,22 @@ windows_emulator::windows_emulator(application_settings app_settings, const emul
     this->silent_until_main_ = settings.silent_until_main && !settings.disable_logging;
     this->use_relative_time_ = settings.use_relative_time;
     this->log.disable_output(settings.disable_logging || this->silent_until_main_);
-    this->callbacks_ = std::move(callbacks);
+    this->callbacks = std::move(callbacks);
     this->modules_ = settings.modules;
 
     this->setup_process(app_settings, settings);
 }
 
-windows_emulator::windows_emulator(const std::filesystem::path& emulation_root, std::unique_ptr<x64_emulator> emu)
-    : emulation_root_{emulation_root.empty() ? emulation_root : absolute(emulation_root)},
-      file_sys_(emulation_root_.empty() ? emulation_root_ : emulation_root_ / "filesys"),
-      emu_(std::move(emu)),
-      memory_manager_(*this->emu_),
-      process_(*emu_, memory_manager_, file_sys_)
+windows_emulator::windows_emulator(const std::filesystem::path& emulation_root_directory,
+                                   std::unique_ptr<x64_emulator> emu)
+    : emu_(std::move(emu)),
+      emulation_root{emulation_root_directory.empty() ? emulation_root_directory : absolute(emulation_root_directory)},
+      file_sys(emulation_root.empty() ? emulation_root : emulation_root / "filesys"),
+      memory(*this->emu_),
+      process(*this->emu_, memory, file_sys)
 {
 #ifndef OS_WINDOWS
-    if (this->get_emulation_root().empty())
+    if (this->emulation_root.empty())
     {
         throw std::runtime_error("Emulation root directory can not be empty!");
     }
@@ -486,8 +486,8 @@ void windows_emulator::setup_process(const application_settings& app_settings, c
 {
     auto& emu = this->emu();
 
-    auto& context = this->process();
-    context.mod_manager = module_manager(this->memory(), this->file_sys()); // TODO: Cleanup module manager
+    auto& context = this->process;
+    context.mod_manager = module_manager(this->memory, this->file_sys); // TODO: Cleanup module manager
 
     setup_context(*this, app_settings, emu_settings);
 
@@ -503,7 +503,7 @@ void windows_emulator::setup_process(const application_settings& app_settings, c
     const auto ntdll_data = emu.read_memory(context.ntdll->image_base, context.ntdll->size_of_image);
     const auto win32u_data = emu.read_memory(context.win32u->image_base, context.win32u->size_of_image);
 
-    this->dispatcher_.setup(context.ntdll->exports, ntdll_data, context.win32u->exports, win32u_data);
+    this->dispatcher.setup(context.ntdll->exports, ntdll_data, context.win32u->exports, win32u_data);
 
     context.ldr_initialize_thunk = context.ntdll->find_export("LdrInitializeThunk");
     context.rtl_user_thread_start = context.ntdll->find_export("RtlUserThreadStart");
@@ -511,7 +511,7 @@ void windows_emulator::setup_process(const application_settings& app_settings, c
 
     context.default_register_set = emu.save_registers();
 
-    const auto main_thread_id = context.create_thread(this->memory(), context.executable->entry_point, 0, 0);
+    const auto main_thread_id = context.create_thread(this->memory, context.executable->entry_point, 0, 0);
     switch_to_thread(*this, main_thread_id);
 }
 
@@ -533,7 +533,7 @@ void windows_emulator::perform_thread_switch()
 
 bool windows_emulator::activate_thread(const uint32_t id)
 {
-    const auto thread = get_thread_by_id(this->process(), id);
+    const auto thread = get_thread_by_id(this->process, id);
     if (!thread)
     {
         return false;
@@ -544,25 +544,24 @@ bool windows_emulator::activate_thread(const uint32_t id)
 
 void windows_emulator::on_instruction_execution(const uint64_t address)
 {
-    auto& process = this->process();
     auto& thread = this->current_thread();
 
-    ++process.executed_instructions;
+    ++this->process.executed_instructions;
     const auto thread_insts = ++thread.executed_instructions;
     if (thread_insts % MAX_INSTRUCTIONS_PER_TIME_SLICE == 0)
     {
         this->yield_thread();
     }
 
-    process.previous_ip = process.current_ip;
-    process.current_ip = this->emu().read_instruction_pointer();
+    this->process.previous_ip = this->process.current_ip;
+    this->process.current_ip = this->emu().read_instruction_pointer();
 
     const auto binary = utils::make_lazy([&] {
-        return this->process().mod_manager.find_by_address(address); //
+        return this->process.mod_manager.find_by_address(address); //
     });
 
     const auto previous_binary = utils::make_lazy([&] {
-        return this->process().mod_manager.find_by_address(process.previous_ip); //
+        return this->process.mod_manager.find_by_address(this->process.previous_ip); //
     });
 
     const auto is_in_interesting_module = [&] {
@@ -575,9 +574,9 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
                (previous_binary && this->modules_.contains(previous_binary->name));
     };
 
-    const auto is_main_exe = process.executable->is_within(address);
-    const auto is_interesting_call = process.executable->is_within(process.previous_ip) //
-                                     || is_main_exe                                     //
+    const auto is_main_exe = this->process.executable->is_within(address);
+    const auto is_interesting_call = process.executable->is_within(this->process.previous_ip) //
+                                     || is_main_exe                                           //
                                      || is_in_interesting_module();
 
     if (this->silent_until_main_ && is_main_exe)
@@ -601,7 +600,7 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
             uint64_t return_address{};
             this->emu().try_read_memory(rsp, &return_address, sizeof(return_address));
 
-            const auto* mod_name = this->process().mod_manager.find_name(return_address);
+            const auto* mod_name = this->process.mod_manager.find_name(return_address);
 
             log.print(is_interesting_call ? color::yellow : color::dark_gray,
                       "Executing function: %s - %s (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n", binary->name.c_str(),
@@ -621,6 +620,7 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
 
     auto& emu = this->emu();
 
+    // TODO: Remove or cleanup
     log.print(color::gray,
               "Inst: %16" PRIx64 " - RAX: %16" PRIx64 " - RBX: %16" PRIx64 " - RCX: %16" PRIx64 " - RDX: %16" PRIx64
               " - R8: %16" PRIx64 " - R9: %16" PRIx64 " - RDI: %16" PRIx64 " - RSI: %16" PRIx64 " - %s\n",
@@ -640,12 +640,12 @@ void windows_emulator::setup_hooks()
             }
         }
 
-        this->dispatcher_.dispatch(*this);
+        this->dispatcher.dispatch(*this);
         return instruction_hook_continuation::skip_instruction;
     });
 
     this->emu().hook_instruction(x64_hookable_instructions::rdtsc, [&] {
-        const auto instructions = this->process().executed_instructions;
+        const auto instructions = this->process.executed_instructions;
         this->emu().reg(x64_register::rax, instructions & 0xFFFFFFFF);
         this->emu().reg(x64_register::rdx, (instructions >> 32) & 0xFFFFFFFF);
         return instruction_hook_continuation::skip_instruction;
@@ -665,14 +665,14 @@ void windows_emulator::setup_hooks()
         switch (interrupt)
         {
         case 0:
-            dispatch_integer_division_by_zero(this->emu(), this->process());
+            dispatch_integer_division_by_zero(this->emu(), this->process);
             return;
         case 1:
             this->log.print(color::pink, "Singlestep: 0x%" PRIx64 "\n", rip);
-            dispatch_single_step(this->emu(), this->process());
+            dispatch_single_step(this->emu(), this->process);
             return;
         case 6:
-            dispatch_illegal_instruction_violation(this->emu(), this->process());
+            dispatch_illegal_instruction_violation(this->emu(), this->process);
             return;
         default:
             break;
@@ -682,7 +682,7 @@ void windows_emulator::setup_hooks()
 
         if (this->fuzzing || true) // TODO: Fix
         {
-            this->process().exception_rip = rip;
+            this->process.exception_rip = rip;
             this->emu().stop();
         }
     });
@@ -691,7 +691,7 @@ void windows_emulator::setup_hooks()
                                           const memory_violation_type type) {
         const auto permission = get_permission_string(operation);
         const auto ip = this->emu().read_instruction_pointer();
-        const char* name = this->process().mod_manager.find_name(ip);
+        const char* name = this->process.mod_manager.find_name(ip);
 
         if (type == memory_violation_type::protection)
         {
@@ -706,12 +706,12 @@ void windows_emulator::setup_hooks()
 
         if (this->fuzzing)
         {
-            this->process().exception_rip = ip;
+            this->process.exception_rip = ip;
             this->emu().stop();
             return memory_violation_continuation::stop;
         }
 
-        dispatch_access_violation(this->emu(), this->process(), address, operation);
+        dispatch_access_violation(this->emu(), this->process, address, operation);
         return memory_violation_continuation::resume;
     });
 
@@ -726,14 +726,14 @@ void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
     const auto use_timeout = timeout != std::chrono::nanoseconds{};
 
     const auto start_time = std::chrono::high_resolution_clock::now();
-    const auto start_instructions = this->process().executed_instructions;
+    const auto start_instructions = this->process.executed_instructions;
 
     const auto target_time = start_time + timeout;
     const auto target_instructions = start_instructions + count;
 
     while (true)
     {
-        if (this->switch_thread_ || !this->current_thread().is_thread_ready(this->process()))
+        if (this->switch_thread_ || !this->current_thread().is_thread_ready(this->process))
         {
             this->perform_thread_switch();
         }
@@ -759,7 +759,7 @@ void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
 
         if (use_count)
         {
-            const auto current_instructions = this->process().executed_instructions;
+            const auto current_instructions = this->process.executed_instructions;
 
             if (current_instructions >= target_instructions)
             {
@@ -776,15 +776,15 @@ void windows_emulator::serialize(utils::buffer_serializer& buffer) const
     buffer.write(this->switch_thread_);
     buffer.write(this->use_relative_time_);
     this->emu().serialize_state(buffer, false);
-    this->memory().serialize_memory_state(buffer, false);
-    this->process_.serialize(buffer);
-    this->dispatcher_.serialize(buffer);
+    this->memory.serialize_memory_state(buffer, false);
+    this->process.serialize(buffer);
+    this->dispatcher.serialize(buffer);
 }
 
 void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
 {
     buffer.register_factory<memory_manager_wrapper>([this] {
-        return memory_manager_wrapper{this->memory()}; //
+        return memory_manager_wrapper{this->memory}; //
     });
 
     buffer.register_factory<x64_emulator_wrapper>([this] {
@@ -798,25 +798,25 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
     buffer.read(this->switch_thread_);
     buffer.read(this->use_relative_time_);
 
-    this->memory().unmap_all_memory();
+    this->memory.unmap_all_memory();
 
     this->emu().deserialize_state(buffer, false);
-    this->memory().deserialize_memory_state(buffer, false);
-    this->process_.deserialize(buffer);
-    this->dispatcher_.deserialize(buffer);
+    this->memory.deserialize_memory_state(buffer, false);
+    this->process.deserialize(buffer);
+    this->dispatcher.deserialize(buffer);
 }
 
 void windows_emulator::save_snapshot()
 {
     utils::buffer_serializer serializer{};
     this->emu().serialize_state(serializer, true);
-    this->memory().serialize_memory_state(serializer, true);
-    this->process_.serialize(serializer);
+    this->memory.serialize_memory_state(serializer, true);
+    this->process.serialize(serializer);
 
     this->process_snapshot_ = serializer.move_buffer();
 
     // TODO: Make process copyable
-    // this->process_snapshot_ = this->process();
+    // this->process_snapshot_ = this->process;
 }
 
 void windows_emulator::restore_snapshot()
@@ -829,7 +829,7 @@ void windows_emulator::restore_snapshot()
 
     utils::buffer_deserializer deserializer{this->process_snapshot_};
     this->emu().deserialize_state(deserializer, true);
-    this->memory().deserialize_memory_state(deserializer, true);
-    this->process_.deserialize(deserializer);
-    // this->process_ = *this->process_snapshot_;
+    this->memory.deserialize_memory_state(deserializer, true);
+    this->process.deserialize(deserializer);
+    // this->process = *this->process_snapshot_;
 }

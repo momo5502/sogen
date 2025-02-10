@@ -16,7 +16,7 @@ namespace
             win_emu.log.disable_output(true);
             win_emu.start();
 
-            if (win_emu.process().exception_rip.has_value())
+            if (win_emu.process.exception_rip.has_value())
             {
                 throw std::runtime_error("Exception!");
             }
@@ -34,7 +34,7 @@ namespace
 
     void forward_emulator(windows_emulator& win_emu)
     {
-        const auto target = win_emu.process().executable->find_export("vulnerable");
+        const auto target = win_emu.process.executable->find_export("vulnerable");
         win_emu.emu().hook_memory_execution(target, 1, [&](uint64_t, size_t, uint64_t) { win_emu.emu().stop(); });
 
         run_emulation(win_emu);
@@ -83,8 +83,8 @@ namespace
 
             restore_emulator();
 
-            const auto memory = emu.memory().allocate_memory(
-                page_align_up(std::max(data.size(), static_cast<size_t>(1))), memory_permission::read_write);
+            const auto memory = emu.memory.allocate_memory(page_align_up(std::max(data.size(), static_cast<size_t>(1))),
+                                                           memory_permission::read_write);
             emu.emu().write_memory(memory, data.data(), data.size());
 
             emu.emu().reg(x64_register::rcx, memory);

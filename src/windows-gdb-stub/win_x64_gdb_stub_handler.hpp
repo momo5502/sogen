@@ -47,7 +47,7 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
 
     std::vector<uint32_t> get_thread_ids() override
     {
-        const auto& threads = this->win_emu_->process().threads;
+        const auto& threads = this->win_emu_->process.threads;
 
         std::vector<uint32_t> ids{};
         ids.reserve(threads.size());
@@ -70,7 +70,7 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
 
     std::optional<uint32_t> get_exit_code() override
     {
-        const auto status = this->win_emu_->process().exit_status;
+        const auto status = this->win_emu_->process.exit_status;
         if (!status)
         {
             return std::nullopt;

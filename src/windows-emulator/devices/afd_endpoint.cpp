@@ -465,7 +465,7 @@ namespace
                 write_io_status(this->delayed_ioctl_->io_status_block, STATUS_TIMEOUT);
             }
 
-            auto* e = win_emu.process().events.get(this->delayed_ioctl_->event);
+            auto* e = win_emu.process.events.get(this->delayed_ioctl_->event);
             if (e)
             {
                 e->signaled = true;
@@ -547,7 +547,7 @@ namespace
         static std::vector<SOCKET> resolve_endpoints(windows_emulator& win_emu,
                                                      const std::span<const AFD_POLL_HANDLE_INFO64> handles)
         {
-            auto& proc = win_emu.process();
+            auto& proc = win_emu.process;
 
             std::vector<SOCKET> endpoints{};
             endpoints.reserve(handles.size());

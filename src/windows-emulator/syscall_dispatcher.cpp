@@ -62,7 +62,7 @@ void syscall_dispatcher::add_handlers()
 void syscall_dispatcher::dispatch(windows_emulator& win_emu)
 {
     auto& emu = win_emu.emu();
-    auto& context = win_emu.process();
+    auto& context = win_emu.process;
 
     const auto address = emu.read_instruction_pointer();
     const auto syscall_id = emu.reg<uint32_t>(x64_register::eax);
@@ -91,8 +91,8 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
         const auto* mod = context.mod_manager.find_by_address(address);
         if (mod != context.ntdll && mod != context.win32u)
         {
-            win_emu.callbacks().inline_syscall(syscall_id, address, mod ? mod->name.c_str() : "<N/A>",
-                                               entry->second.name);
+            win_emu.callbacks.inline_syscall(syscall_id, address, mod ? mod->name.c_str() : "<N/A>",
+                                             entry->second.name);
 
             win_emu.log.print(color::blue, "Executing inline syscall: %s (0x%X) at 0x%" PRIx64 " (%s)\n",
                               entry->second.name.c_str(), syscall_id, address, mod ? mod->name.c_str() : "<N/A>");
@@ -116,9 +116,9 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
             {
                 const auto* previous_mod = context.mod_manager.find_by_address(context.previous_ip);
 
-                win_emu.callbacks().outofline_syscall(syscall_id, address, mod ? mod->name.c_str() : "<N/A>",
-                                                      entry->second.name, context.previous_ip,
-                                                      previous_mod ? previous_mod->name.c_str() : "<N/A>");
+                win_emu.callbacks.outofline_syscall(syscall_id, address, mod ? mod->name.c_str() : "<N/A>",
+                                                    entry->second.name, context.previous_ip,
+                                                    previous_mod ? previous_mod->name.c_str() : "<N/A>");
 
                 win_emu.log.print(color::blue,
                                   "Crafted out-of-line syscall: %s (0x%X) at 0x%" PRIx64 " (%s) via 0x%" PRIx64
