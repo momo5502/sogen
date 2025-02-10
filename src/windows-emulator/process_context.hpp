@@ -14,6 +14,8 @@
 #include "windows_objects.hpp"
 #include "emulator_thread.hpp"
 
+#include "apiset/apiset.hpp"
+
 #define PEB_SEGMENT_SIZE (20 << 20) // 20 MB
 #define GS_SEGMENT_SIZE  (1 << 20)  // 1 MB
 
@@ -25,6 +27,9 @@
 #define GDT_LIMIT        0x1000
 #define GDT_ENTRY_SIZE   0x8
 
+struct emulator_settings;
+struct application_settings;
+
 struct process_context
 {
     process_context(x64_emulator& emu, memory_manager& memory)
@@ -34,6 +39,10 @@ struct process_context
           kusd(memory, *this)
     {
     }
+
+    void setup(x64_emulator& emu, memory_manager& memory, const application_settings& app_settings,
+               const emulator_settings& emu_settings, const uint64_t process_image_base,
+               const apiset::container& apiset_container);
 
     uint64_t executed_instructions{0};
     uint64_t current_ip{0};
