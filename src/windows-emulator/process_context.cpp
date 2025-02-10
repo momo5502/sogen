@@ -201,5 +201,7 @@ handle process_context::create_thread(memory_manager& memory, const uint64_t sta
                                       const uint64_t stack_size)
 {
     emulator_thread t{memory, *this, start_address, argument, stack_size, ++this->spawned_thread_count};
-    return this->threads.store(std::move(t));
+    auto h = this->threads.store(std::move(t));
+    on_create_thread(h, *this->threads.get(h));
+    return h;
 }

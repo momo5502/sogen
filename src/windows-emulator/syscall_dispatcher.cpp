@@ -91,7 +91,7 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
         const auto* mod = win_emu.mod_manager.find_by_address(address);
         if (mod != win_emu.mod_manager.ntdll && mod != win_emu.mod_manager.win32u)
         {
-            win_emu.callbacks.inline_syscall(syscall_id, address, mod ? mod->name.c_str() : "<N/A>",
+            win_emu.callbacks().inline_syscall(syscall_id, address, mod ? mod->name.c_str() : "<N/A>",
                                              entry->second.name);
 
             win_emu.log.print(color::blue, "Executing inline syscall: %s (0x%X) at 0x%" PRIx64 " (%s)\n",
@@ -116,7 +116,7 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
             {
                 const auto* previous_mod = win_emu.mod_manager.find_by_address(context.previous_ip);
 
-                win_emu.callbacks.outofline_syscall(syscall_id, address, mod ? mod->name.c_str() : "<N/A>",
+                win_emu.callbacks().outofline_syscall(syscall_id, address, mod ? mod->name.c_str() : "<N/A>",
                                                     entry->second.name, context.previous_ip,
                                                     previous_mod ? previous_mod->name.c_str() : "<N/A>");
 

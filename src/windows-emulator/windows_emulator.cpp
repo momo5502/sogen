@@ -172,7 +172,7 @@ windows_emulator::windows_emulator(application_settings app_settings, const emul
                                    emulator_callbacks callbacks, std::unique_ptr<x64_emulator> emu)
     : windows_emulator(settings, std::move(emu))
 {
-    this->callbacks = std::move(callbacks);
+    this->callbacks_ = std::move(callbacks);
 
     fixup_application_settings(app_settings);
     this->setup_process(app_settings, settings);
@@ -219,6 +219,10 @@ void windows_emulator::setup_process(const application_settings& app_settings, c
 {
     const auto& emu = this->emu();
     auto& context = this->process;
+
+    mod_manager.on_module_load = [this](mapped_module& mod) { this->callbacks().module_loaded(mod); };
+    mod_manager.on_module_unload = [this](mapped_module& mod) { this->callbacks().module_unloaded(mod); };
+    context.on_create_thread = [this](handle h, emulator_thread& thr) { this->callbacks().thread_created(h, thr); };
 
     this->mod_manager.map_main_modules(app_settings.application, R"(C:\Windows\System32\ntdll.dll)",
                                        R"(C:\Windows\System32\win32u.dll)", this->log);
