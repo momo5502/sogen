@@ -46,9 +46,6 @@ class registry_manager
     registry_manager(const registry_manager&) = delete;
     registry_manager& operator=(const registry_manager&) = delete;
 
-    void serialize(utils::buffer_serializer& buffer) const;
-    void deserialize(utils::buffer_deserializer& buffer);
-
     std::optional<registry_key> get_key(const utils::path_key& key);
     std::optional<registry_value> get_value(const registry_key& key, std::string name);
 

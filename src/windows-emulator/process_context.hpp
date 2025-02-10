@@ -36,8 +36,6 @@ struct process_context
     {
     }
 
-    registry_manager registry{};
-
     uint64_t executed_instructions{0};
     uint64_t current_ip{0};
     uint64_t previous_ip{0};
@@ -79,7 +77,6 @@ struct process_context
 
     void serialize(utils::buffer_serializer& buffer) const
     {
-        buffer.write(this->registry);
         buffer.write(this->executed_instructions);
         buffer.write(this->current_ip);
         buffer.write(this->previous_ip);
@@ -118,7 +115,6 @@ struct process_context
 
     void deserialize(utils::buffer_deserializer& buffer)
     {
-        buffer.read(this->registry);
         buffer.read(this->executed_instructions);
         buffer.read(this->current_ip);
         buffer.read(this->previous_ip);

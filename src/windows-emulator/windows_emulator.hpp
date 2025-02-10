@@ -34,8 +34,8 @@ struct application_settings
 
 struct emulator_settings
 {
-    std::filesystem::path registry_directory{"./registry"};
     std::filesystem::path emulation_root{};
+    std::filesystem::path registry_directory{"./registry"};
 
     bool verbose_calls{false};
     bool disable_logging{false};
@@ -65,10 +65,11 @@ class windows_emulator
     logger log{};
     file_system file_sys;
     memory_manager memory;
+    registry_manager registry{};
     process_context process;
     syscall_dispatcher dispatcher;
 
-    windows_emulator(const std::filesystem::path& emulation_root,
+    windows_emulator(const emulator_settings& settings = {},
                      std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
     windows_emulator(application_settings app_settings, const emulator_settings& settings = {},
                      emulator_callbacks callbacks = {},

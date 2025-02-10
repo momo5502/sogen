@@ -119,8 +119,8 @@ namespace
         };
 
         const emulator_settings settings{
-            .registry_directory = options.registry_path,
             .emulation_root = options.emulation_root,
+            .registry_directory = options.registry_path,
             .verbose_calls = options.verbose_logging,
             .disable_logging = options.silent,
             .silent_until_main = options.concise_logging,

@@ -42,7 +42,7 @@ namespace
 
     struct fuzzer_executer : fuzzer::executer
     {
-        windows_emulator emu{"./"}; // TODO: Fix root directory
+        windows_emulator emu{{.emulation_root = "./"}}; // TODO: Fix root directory
         std::span<const std::byte> emulator_data{};
         std::unordered_set<uint64_t> visited_blocks{};
         const std::function<fuzzer::coverage_functor>* handler{nullptr};

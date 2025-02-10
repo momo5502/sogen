@@ -60,30 +60,17 @@ void registry_manager::setup()
     this->add_path_mapping(machine / "system" / "CurrentControlSet", machine / "system" / "ControlSet001");
 }
 
-void registry_manager::serialize(utils::buffer_serializer& buffer) const
-{
-    buffer.write(this->hive_path_);
-}
-
-void registry_manager::deserialize(utils::buffer_deserializer& buffer)
-{
-    buffer.read(this->hive_path_);
-    this->setup();
-}
-
 utils::path_key registry_manager::normalize_path(const utils::path_key& path) const
 {
-    const utils::path_key canonical_path = path;
-
     for (const auto& mapping : this->path_mapping_)
     {
-        if (is_subpath(mapping.first.get(), canonical_path.get()))
+        if (is_subpath(mapping.first.get(), path.get()))
         {
-            return mapping.second.get() / canonical_path.get().lexically_relative(mapping.first.get());
+            return mapping.second.get() / path.get().lexically_relative(mapping.first.get());
         }
     }
 
-    return canonical_path.get();
+    return path;
 }
 
 void registry_manager::add_path_mapping(const utils::path_key& key, const utils::path_key& value)

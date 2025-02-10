@@ -49,7 +49,7 @@ namespace test
 
         utils::buffer_deserializer deserializer{serializer1.get_buffer()};
 
-        windows_emulator new_emu{get_emulator_root()};
+        windows_emulator new_emu{{.emulation_root = get_emulator_root()}};
         new_emu.deserialize(deserializer);
 
         utils::buffer_serializer serializer2{};
@@ -92,7 +92,7 @@ namespace test
 
         utils::buffer_deserializer deserializer{serializer.get_buffer()};
 
-        windows_emulator new_emu{get_emulator_root()};
+        windows_emulator new_emu{{.emulation_root = get_emulator_root()}};
         new_emu.log.disable_output(true);
         new_emu.deserialize(deserializer);
 

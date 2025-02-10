@@ -84,7 +84,7 @@ namespace
 
         c.win_emu.log.print(color::dark_gray, "--> Registry key: %s\n", u16_to_u8(key).c_str());
 
-        auto entry = c.proc.registry.get_key({key});
+        auto entry = c.win_emu.registry.get_key({key});
         if (!entry.has_value())
         {
             return STATUS_OBJECT_NAME_NOT_FOUND;
@@ -187,7 +187,7 @@ namespace
 
         const auto query_name = read_unicode_string(c.emu, value_name);
 
-        const auto value = c.proc.registry.get_value(*key, u16_to_u8(query_name));
+        const auto value = c.win_emu.registry.get_value(*key, u16_to_u8(query_name));
         if (!value)
         {
             return STATUS_OBJECT_NAME_NOT_FOUND;

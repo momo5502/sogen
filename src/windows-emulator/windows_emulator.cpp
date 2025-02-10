@@ -218,10 +218,6 @@ namespace
 
         setup_gdt(emu, memory);
 
-        // TODO: Move that out
-        context.registry = registry_manager(win_emu.emulation_root.empty() ? emu_settings.registry_directory
-                                                                           : win_emu.emulation_root / "registry");
-
         context.kusd.setup(emu_settings.use_relative_time);
 
         context.base_allocator = create_allocator(memory, PEB_SEGMENT_SIZE);
@@ -438,9 +434,28 @@ std::unique_ptr<x64_emulator> create_default_x64_emulator()
 
 windows_emulator::windows_emulator(application_settings app_settings, const emulator_settings& settings,
                                    emulator_callbacks callbacks, std::unique_ptr<x64_emulator> emu)
-    : windows_emulator(settings.emulation_root, std::move(emu))
+    : windows_emulator(settings, std::move(emu))
 {
+    this->callbacks = std::move(callbacks);
+
     fixup_application_settings(app_settings);
+    this->setup_process(app_settings, settings);
+}
+
+windows_emulator::windows_emulator(const emulator_settings& settings, std::unique_ptr<x64_emulator> emu)
+    : emu_(std::move(emu)),
+      emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
+      file_sys(emulation_root.empty() ? emulation_root : emulation_root / "filesys"),
+      memory(*this->emu_),
+      registry(emulation_root.empty() ? settings.registry_directory : emulation_root / "registry"),
+      process(*this->emu_, memory, file_sys)
+{
+#ifndef OS_WINDOWS
+    if (this->emulation_root.empty())
+    {
+        throw std::runtime_error("Emulation root directory can not be empty!");
+    }
+#endif
 
     for (const auto& mapping : settings.path_mappings)
     {
@@ -456,26 +471,7 @@ windows_emulator::windows_emulator(application_settings app_settings, const emul
     this->silent_until_main_ = settings.silent_until_main && !settings.disable_logging;
     this->use_relative_time_ = settings.use_relative_time;
     this->log.disable_output(settings.disable_logging || this->silent_until_main_);
-    this->callbacks = std::move(callbacks);
     this->modules_ = settings.modules;
-
-    this->setup_process(app_settings, settings);
-}
-
-windows_emulator::windows_emulator(const std::filesystem::path& emulation_root_directory,
-                                   std::unique_ptr<x64_emulator> emu)
-    : emu_(std::move(emu)),
-      emulation_root{emulation_root_directory.empty() ? emulation_root_directory : absolute(emulation_root_directory)},
-      file_sys(emulation_root.empty() ? emulation_root : emulation_root / "filesys"),
-      memory(*this->emu_),
-      process(*this->emu_, memory, file_sys)
-{
-#ifndef OS_WINDOWS
-    if (this->emulation_root.empty())
-    {
-        throw std::runtime_error("Emulation root directory can not be empty!");
-    }
-#endif
 
     this->setup_hooks();
 }
