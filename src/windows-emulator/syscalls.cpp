@@ -1301,7 +1301,7 @@ namespace
 
             const emulator_object<SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>>> info{c.emu, process_information};
             info.access([&](SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>>& i) {
-                const auto& mod = *c.proc.executable;
+                const auto& mod = *c.win_emu.mod_manager.executable;
 
                 const emulator_object<PEDosHeader_t> dos_header_obj{c.emu, mod.image_base};
                 const auto dos_header = dos_header_obj.read();

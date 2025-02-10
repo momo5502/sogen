@@ -34,7 +34,7 @@ namespace
 
     void forward_emulator(windows_emulator& win_emu)
     {
-        const auto target = win_emu.process.executable->find_export("vulnerable");
+        const auto target = win_emu.mod_manager.executable->find_export("vulnerable");
         win_emu.emu().hook_memory_execution(target, 1, [&](uint64_t, size_t, uint64_t) { win_emu.emu().stop(); });
 
         run_emulation(win_emu);

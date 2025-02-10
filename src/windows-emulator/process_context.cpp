@@ -28,8 +28,8 @@ namespace
 }
 
 void process_context::setup(x64_emulator& emu, memory_manager& memory, const application_settings& app_settings,
-                            const emulator_settings& emu_settings, const uint64_t process_image_base,
-                            const apiset::container& apiset_container)
+                            const emulator_settings& emu_settings, const mapped_module& executable,
+                            const mapped_module& ntdll, const apiset::container& apiset_container)
 {
     setup_gdt(emu, memory);
 
@@ -92,26 +92,114 @@ void process_context::setup(x64_emulator& emu, memory_manager& memory, const app
         proc_params.MaximumLength = proc_params.Length;
     });
 
-    this->peb.access([&](PEB64& peb) {
-        peb.ImageBaseAddress = process_image_base;
-        peb.ProcessParameters = this->process_params.ptr();
-        peb.ApiSetMap = apiset::clone(emu, allocator, apiset_container).ptr();
+    this->peb.access([&](PEB64& p) {
+        p.ImageBaseAddress = executable.image_base;
+        p.ProcessParameters = this->process_params.ptr();
+        p.ApiSetMap = apiset::clone(emu, allocator, apiset_container).ptr();
 
-        peb.ProcessHeap = nullptr;
-        peb.ProcessHeaps = nullptr;
-        peb.HeapSegmentReserve = 0x0000000000100000; // TODO: Read from executable
-        peb.HeapSegmentCommit = 0x0000000000002000;
-        peb.HeapDeCommitTotalFreeThreshold = 0x0000000000010000;
-        peb.HeapDeCommitFreeBlockThreshold = 0x0000000000001000;
-        peb.NumberOfHeaps = 0x00000000;
-        peb.MaximumNumberOfHeaps = 0x00000010;
+        p.ProcessHeap = nullptr;
+        p.ProcessHeaps = nullptr;
+        p.HeapSegmentReserve = 0x0000000000100000; // TODO: Read from executable
+        p.HeapSegmentCommit = 0x0000000000002000;
+        p.HeapDeCommitTotalFreeThreshold = 0x0000000000010000;
+        p.HeapDeCommitFreeBlockThreshold = 0x0000000000001000;
+        p.NumberOfHeaps = 0x00000000;
+        p.MaximumNumberOfHeaps = 0x00000010;
 
-        peb.OSPlatformId = 2;
-        peb.OSMajorVersion = 0x0000000a;
-        peb.OSBuildNumber = 0x00006c51;
+        p.OSPlatformId = 2;
+        p.OSMajorVersion = 0x0000000a;
+        p.OSBuildNumber = 0x00006c51;
 
-        // peb.AnsiCodePageData = allocator.reserve<CPTABLEINFO>().value();
-        // peb.OemCodePageData = allocator.reserve<CPTABLEINFO>().value();
-        peb.UnicodeCaseTableData = allocator.reserve<NLSTABLEINFO>().value();
+        // p.AnsiCodePageData = allocator.reserve<CPTABLEINFO>().value();
+        // p.OemCodePageData = allocator.reserve<CPTABLEINFO>().value();
+        p.UnicodeCaseTableData = allocator.reserve<NLSTABLEINFO>().value();
     });
+
+    this->ntdll_image_base = ntdll.image_base;
+    this->ldr_initialize_thunk = ntdll.find_export("LdrInitializeThunk");
+    this->rtl_user_thread_start = ntdll.find_export("RtlUserThreadStart");
+    this->ki_user_exception_dispatcher = ntdll.find_export("KiUserExceptionDispatcher");
+
+    this->default_register_set = emu.save_registers();
+}
+
+void process_context::serialize(utils::buffer_serializer& buffer) const
+{
+    buffer.write(this->executed_instructions);
+    buffer.write(this->current_ip);
+    buffer.write(this->previous_ip);
+    buffer.write_optional(this->exception_rip);
+    buffer.write_optional(this->exit_status);
+    buffer.write(this->base_allocator);
+    buffer.write(this->peb);
+    buffer.write(this->process_params);
+    buffer.write(this->kusd);
+
+    buffer.write(this->ntdll_image_base);
+    buffer.write(this->ldr_initialize_thunk);
+    buffer.write(this->rtl_user_thread_start);
+    buffer.write(this->ki_user_exception_dispatcher);
+
+    buffer.write(this->events);
+    buffer.write(this->files);
+    buffer.write(this->sections);
+    buffer.write(this->devices);
+    buffer.write(this->semaphores);
+    buffer.write(this->ports);
+    buffer.write(this->mutants);
+    buffer.write(this->registry_keys);
+    buffer.write_map(this->atoms);
+
+    buffer.write_vector(this->default_register_set);
+    buffer.write(this->spawned_thread_count);
+    buffer.write(this->threads);
+
+    buffer.write(this->threads.find_handle(this->active_thread).bits);
+}
+
+void process_context::deserialize(utils::buffer_deserializer& buffer)
+{
+    buffer.read(this->executed_instructions);
+    buffer.read(this->current_ip);
+    buffer.read(this->previous_ip);
+    buffer.read_optional(this->exception_rip);
+    buffer.read_optional(this->exit_status);
+    buffer.read(this->base_allocator);
+    buffer.read(this->peb);
+    buffer.read(this->process_params);
+    buffer.read(this->kusd);
+
+    buffer.read(this->ntdll_image_base);
+    buffer.read(this->ldr_initialize_thunk);
+    buffer.read(this->rtl_user_thread_start);
+    buffer.read(this->ki_user_exception_dispatcher);
+
+    buffer.read(this->events);
+    buffer.read(this->files);
+    buffer.read(this->sections);
+    buffer.read(this->devices);
+    buffer.read(this->semaphores);
+    buffer.read(this->ports);
+    buffer.read(this->mutants);
+    buffer.read(this->registry_keys);
+    buffer.read_map(this->atoms);
+
+    buffer.read_vector(this->default_register_set);
+    buffer.read(this->spawned_thread_count);
+
+    for (auto& thread : this->threads | std::views::values)
+    {
+        thread.leak_memory();
+    }
+
+    buffer.read(this->threads);
+
+    this->active_thread = this->threads.get(buffer.read<uint64_t>());
+}
+
+handle process_context::create_thread(memory_manager& memory, const uint64_t start_address, const uint64_t argument,
+                                      const uint64_t stack_size)
+{
+    emulator_thread t{memory, *this, start_address, argument, stack_size, ++this->spawned_thread_count};
+    return this->threads.store(std::move(t));
 }

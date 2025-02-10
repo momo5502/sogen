@@ -14,7 +14,7 @@ emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, s
         [i = std::move(info), object, &emu, cache_logging, modules](const uint64_t address, size_t, uint64_t) {
             const auto rip = emu.emu().read_instruction_pointer();
             const auto* mod = emu.mod_manager.find_by_address(rip);
-            const auto is_main_access = mod == emu.process.executable || modules.contains(mod->name);
+            const auto is_main_access = mod == emu.mod_manager.executable || modules.contains(mod->name);
 
             if (!emu.verbose_calls && !is_main_access)
             {

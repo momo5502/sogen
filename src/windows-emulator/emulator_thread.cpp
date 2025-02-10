@@ -238,6 +238,6 @@ void emulator_thread::setup_registers(x64_emulator& emu, const process_context& 
     unalign_stack(emu);
 
     emu.reg(x64_register::rcx, ctx_obj.value());
-    emu.reg(x64_register::rdx, context.ntdll->image_base);
+    emu.reg(x64_register::rdx, context.ntdll_image_base);
     emu.reg(x64_register::rip, context.ldr_initialize_thunk);
 }

@@ -217,32 +217,26 @@ windows_emulator::~windows_emulator() = default;
 
 void windows_emulator::setup_process(const application_settings& app_settings, const emulator_settings& emu_settings)
 {
-    auto& emu = this->emu();
-
+    const auto& emu = this->emu();
     auto& context = this->process;
 
-    auto* exe = this->mod_manager.map_module(app_settings.application, this->log, true);
+    this->mod_manager.map_main_modules(app_settings.application, R"(C:\Windows\System32\ntdll.dll)",
+                                       R"(C:\Windows\System32\win32u.dll)", this->log);
+
+    const auto* executable = this->mod_manager.executable;
+    const auto* ntdll = this->mod_manager.ntdll;
+    const auto* win32u = this->mod_manager.win32u;
 
     const auto apiset_data = apiset::obtain(this->emulation_root);
 
-    this->process.setup(this->emu(), this->memory, app_settings, emu_settings, exe->image_base, apiset_data);
+    this->process.setup(this->emu(), this->memory, app_settings, emu_settings, *executable, *ntdll, apiset_data);
 
-    context.executable = exe;
-    context.ntdll = this->mod_manager.map_module(R"(C:\Windows\System32\ntdll.dll)", this->log, true);
-    context.win32u = this->mod_manager.map_module(R"(C:\Windows\System32\win32u.dll)", this->log, true);
+    const auto ntdll_data = emu.read_memory(ntdll->image_base, ntdll->size_of_image);
+    const auto win32u_data = emu.read_memory(win32u->image_base, win32u->size_of_image);
 
-    const auto ntdll_data = emu.read_memory(context.ntdll->image_base, context.ntdll->size_of_image);
-    const auto win32u_data = emu.read_memory(context.win32u->image_base, context.win32u->size_of_image);
+    this->dispatcher.setup(ntdll->exports, ntdll_data, win32u->exports, win32u_data);
 
-    this->dispatcher.setup(context.ntdll->exports, ntdll_data, context.win32u->exports, win32u_data);
-
-    context.ldr_initialize_thunk = context.ntdll->find_export("LdrInitializeThunk");
-    context.rtl_user_thread_start = context.ntdll->find_export("RtlUserThreadStart");
-    context.ki_user_exception_dispatcher = context.ntdll->find_export("KiUserExceptionDispatcher");
-
-    context.default_register_set = emu.save_registers();
-
-    const auto main_thread_id = context.create_thread(this->memory, context.executable->entry_point, 0, 0);
+    const auto main_thread_id = context.create_thread(this->memory, this->mod_manager.executable->entry_point, 0, 0);
     switch_to_thread(*this, main_thread_id);
 }
 
@@ -305,9 +299,9 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
                (previous_binary && this->modules_.contains(previous_binary->name));
     };
 
-    const auto is_main_exe = this->process.executable->is_within(address);
-    const auto is_interesting_call = process.executable->is_within(this->process.previous_ip) //
-                                     || is_main_exe                                           //
+    const auto is_main_exe = this->mod_manager.executable->is_within(address);
+    const auto is_interesting_call = this->mod_manager.executable->is_within(this->process.previous_ip) //
+                                     || is_main_exe                                                     //
                                      || is_in_interesting_module();
 
     if (this->silent_until_main_ && is_main_exe)

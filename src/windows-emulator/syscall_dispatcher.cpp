@@ -89,7 +89,7 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
         }
 
         const auto* mod = win_emu.mod_manager.find_by_address(address);
-        if (mod != context.ntdll && mod != context.win32u)
+        if (mod != win_emu.mod_manager.ntdll && mod != win_emu.mod_manager.win32u)
         {
             win_emu.callbacks.inline_syscall(syscall_id, address, mod ? mod->name.c_str() : "<N/A>",
                                              entry->second.name);
