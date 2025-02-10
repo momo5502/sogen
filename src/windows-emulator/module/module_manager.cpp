@@ -60,6 +60,14 @@ module_manager::module_manager(memory_manager& memory, file_system& file_sys)
 {
 }
 
+void module_manager::map_main_modules(const windows_path& executable_path, const windows_path& ntdll_path,
+                                      const windows_path& win32u_path, const logger& logger)
+{
+    this->executable = this->map_module(executable_path, logger, true);
+    this->ntdll = this->map_module(ntdll_path, logger, true);
+    this->win32u = this->map_module(win32u_path, logger, true);
+}
+
 mapped_module* module_manager::map_module(const windows_path& file, const logger& logger, const bool is_static)
 {
     return this->map_local_module(this->file_sys_->translate(file), logger, is_static);
@@ -104,11 +112,23 @@ mapped_module* module_manager::map_local_module(const std::filesystem::path& fil
 void module_manager::serialize(utils::buffer_serializer& buffer) const
 {
     buffer.write_map(this->modules_);
+
+    buffer.write(this->executable->image_base);
+    buffer.write(this->ntdll->image_base);
+    buffer.write(this->win32u->image_base);
 }
 
 void module_manager::deserialize(utils::buffer_deserializer& buffer)
 {
     buffer.read_map(this->modules_);
+
+    const auto executable_base = buffer.read<uint64_t>();
+    const auto ntdll_base = buffer.read<uint64_t>();
+    const auto win32u_base = buffer.read<uint64_t>();
+
+    this->executable = this->find_by_address(executable_base);
+    this->ntdll = this->find_by_address(ntdll_base);
+    this->win32u = this->find_by_address(win32u_base);
 }
 
 bool module_manager::unmap(const uint64_t address, const logger& logger)

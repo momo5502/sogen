@@ -17,7 +17,7 @@ namespace test
         auto emu = create_sample_emulator();
         emu.start({}, count);
 
-        ASSERT_EQ(emu.process().executed_instructions, count);
+        ASSERT_EQ(emu.process.executed_instructions, count);
     }
 
     TEST(EmulationTest, CountedEmulationIsAccurate)
@@ -27,7 +27,7 @@ namespace test
 
         ASSERT_TERMINATED_SUCCESSFULLY(emu);
 
-        const auto executedInstructions = emu.process().executed_instructions;
+        const auto executedInstructions = emu.process.executed_instructions;
 
         auto new_emu = create_sample_emulator();
 
@@ -36,12 +36,12 @@ namespace test
 
         new_emu.start({}, instructionsToExecute);
 
-        ASSERT_EQ(new_emu.process().executed_instructions, instructionsToExecute);
+        ASSERT_EQ(new_emu.process.executed_instructions, instructionsToExecute);
         ASSERT_NOT_TERMINATED(new_emu);
 
         new_emu.start({}, offset);
 
         ASSERT_TERMINATED_SUCCESSFULLY(new_emu);
-        ASSERT_EQ(new_emu.process().executed_instructions, executedInstructions);
+        ASSERT_EQ(new_emu.process.executed_instructions, executedInstructions);
     }
 }

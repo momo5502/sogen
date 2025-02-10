@@ -1,7 +1,7 @@
 #include "std_include.hpp"
-#include "context_frame.hpp"
+#include "cpu_context.hpp"
 
-namespace context_frame
+namespace cpu_context
 {
     void restore(x64_emulator& emu, const CONTEXT64& context)
     {

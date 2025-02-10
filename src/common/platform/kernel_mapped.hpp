@@ -250,7 +250,7 @@ typedef struct _PEB64
 
     EmulatorTraits<Emu64>::HANDLE Mutant;
 
-    std::uint64_t* ImageBaseAddress;
+    std::uint64_t ImageBaseAddress;
     PPEB_LDR_DATA64 Ldr;
     PRTL_USER_PROCESS_PARAMETERS64 ProcessParameters;
     std::uint64_t* SubSystemData;

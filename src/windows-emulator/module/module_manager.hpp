@@ -12,6 +12,9 @@ class module_manager
     using module_map = std::map<uint64_t, mapped_module>;
     module_manager(memory_manager& memory, file_system& file_sys);
 
+    void map_main_modules(const windows_path& executable_path, const windows_path& ntdll_path,
+                          const windows_path& win32u_path, const logger& logger);
+
     mapped_module* map_module(const windows_path& file, const logger& logger, bool is_static = false);
     mapped_module* map_local_module(const std::filesystem::path& file, const logger& logger, bool is_static = false);
 
@@ -45,6 +48,10 @@ class module_manager
     {
         return modules_;
     }
+
+    mapped_module* executable{};
+    mapped_module* ntdll{};
+    mapped_module* win32u{};
 
   private:
     memory_manager* memory_{};

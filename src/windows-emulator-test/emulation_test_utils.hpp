@@ -4,17 +4,17 @@
 #include <gtest/gtest.h>
 #include <windows_emulator.hpp>
 
-#define ASSERT_NOT_TERMINATED(win_emu)                             \
-    do                                                             \
-    {                                                              \
-        ASSERT_FALSE((win_emu).process().exit_status.has_value()); \
+#define ASSERT_NOT_TERMINATED(win_emu)                           \
+    do                                                           \
+    {                                                            \
+        ASSERT_FALSE((win_emu).process.exit_status.has_value()); \
     } while (false)
 
-#define ASSERT_TERMINATED_WITH_STATUS(win_emu, status)            \
-    do                                                            \
-    {                                                             \
-        ASSERT_TRUE((win_emu).process().exit_status.has_value()); \
-        ASSERT_EQ(*(win_emu).process().exit_status, status);      \
+#define ASSERT_TERMINATED_WITH_STATUS(win_emu, status)          \
+    do                                                          \
+    {                                                           \
+        ASSERT_TRUE((win_emu).process.exit_status.has_value()); \
+        ASSERT_EQ(*(win_emu).process.exit_status, status);      \
     } while (false)
 
 #define ASSERT_TERMINATED_SUCCESSFULLY(win_emu) ASSERT_TERMINATED_WITH_STATUS(win_emu, STATUS_SUCCESS)
@@ -38,7 +38,30 @@ namespace test
         return env;
     }
 
-    inline windows_emulator create_sample_emulator(emulator_settings settings, const bool reproducible = false,
+    struct sample_configuration
+    {
+        bool reproducible{false};
+        bool print_time{false};
+    };
+
+    inline application_settings get_sample_app_settings(const sample_configuration& config)
+    {
+        application_settings settings{.application = "C:\\test-sample.exe"};
+
+        if (config.print_time)
+        {
+            settings.arguments.emplace_back(u"-time");
+        }
+
+        if (config.reproducible)
+        {
+            settings.arguments.emplace_back(u"-reproducible");
+        }
+
+        return settings;
+    }
+
+    inline windows_emulator create_sample_emulator(emulator_settings settings, const sample_configuration& config = {},
                                                    emulator_callbacks callbacks = {})
     {
         const auto is_verbose = enable_verbose_logging();
@@ -49,29 +72,27 @@ namespace test
             // settings.verbose_calls = true;
         }
 
-        if (reproducible)
-        {
-            settings.arguments = {u"-reproducible"};
-        }
-
-        settings.application = "c:/test-sample.exe";
         settings.emulation_root = get_emulator_root();
 
         settings.port_mappings[28970] = static_cast<uint16_t>(getpid());
         settings.path_mappings["C:\\a.txt"] =
             std::filesystem::temp_directory_path() / ("emulator-test-file-" + std::to_string(getpid()) + ".txt");
 
-        return windows_emulator{std::move(settings), std::move(callbacks)};
+        return windows_emulator{
+            get_sample_app_settings(config),
+            settings,
+            std::move(callbacks),
+        };
     }
 
-    inline windows_emulator create_sample_emulator(const bool reproducible = false)
+    inline windows_emulator create_sample_emulator(const sample_configuration& config = {})
     {
         emulator_settings settings{
             .disable_logging = true,
             .use_relative_time = true,
         };
 
-        return create_sample_emulator(std::move(settings), reproducible);
+        return create_sample_emulator(std::move(settings), config);
     }
 
     inline void bisect_emulation(windows_emulator& emu)
@@ -80,7 +101,7 @@ namespace test
         emu.serialize(start_state);
 
         emu.start();
-        const auto limit = emu.process().executed_instructions;
+        const auto limit = emu.process.executed_instructions;
 
         const auto reset_emulator = [&] {
             utils::buffer_deserializer deserializer{start_state.get_buffer()};
@@ -131,6 +152,6 @@ namespace test
         const auto rip = emu.emu().read_instruction_pointer();
 
         printf("Diff detected after 0x%" PRIx64 " instructions at 0x%" PRIx64 " (%s)\n", lower_bound, rip,
-               emu.process().mod_manager.find_name(rip));
+               emu.mod_manager.find_name(rip));
     }
 }

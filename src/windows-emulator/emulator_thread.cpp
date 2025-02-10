@@ -1,6 +1,6 @@
 #include "emulator_thread.hpp"
 
-#include "context_frame.hpp"
+#include "cpu_context.hpp"
 #include "process_context.hpp"
 
 namespace
@@ -226,7 +226,7 @@ void emulator_thread::setup_registers(x64_emulator& emu, const process_context& 
     ctx.ContextFlags = CONTEXT64_ALL;
 
     unalign_stack(emu);
-    context_frame::save(emu, ctx);
+    cpu_context::save(emu, ctx);
 
     ctx.Rip = context.rtl_user_thread_start;
     ctx.Rcx = this->start_address;
@@ -238,6 +238,6 @@ void emulator_thread::setup_registers(x64_emulator& emu, const process_context& 
     unalign_stack(emu);
 
     emu.reg(x64_register::rcx, ctx_obj.value());
-    emu.reg(x64_register::rdx, context.ntdll->image_base);
+    emu.reg(x64_register::rdx, context.ntdll_image_base);
     emu.reg(x64_register::rip, context.ldr_initialize_thunk);
 }
