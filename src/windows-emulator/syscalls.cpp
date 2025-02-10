@@ -1111,9 +1111,9 @@ namespace
             basic_info.PageSize = 0x1000;
             basic_info.LowestPhysicalPageNumber = 0x00000001;
             basic_info.HighestPhysicalPageNumber = 0x00c9c7ff;
-            basic_info.AllocationGranularity = 0x10000;
-            basic_info.MinimumUserModeAddress = 0x0000000000010000;
-            basic_info.MaximumUserModeAddress = 0x00007ffffffeffff;
+            basic_info.AllocationGranularity = ALLOCATION_GRANULARITY;
+            basic_info.MinimumUserModeAddress = MIN_ALLOCATION_ADDRESS;
+            basic_info.MaximumUserModeAddress = MAX_ALLOCATION_ADDRESS;
             basic_info.ActiveProcessorsAffinityMask = 0x0000000000000fff;
             basic_info.NumberOfProcessors = 1;
         });
@@ -1267,9 +1267,9 @@ namespace
             basic_info.PageSize = 0x1000;
             basic_info.LowestPhysicalPageNumber = 0x00000001;
             basic_info.HighestPhysicalPageNumber = 0x00c9c7ff;
-            basic_info.AllocationGranularity = 0x10000;
-            basic_info.MinimumUserModeAddress = 0x0000000000010000;
-            basic_info.MaximumUserModeAddress = 0x00007ffffffeffff;
+            basic_info.AllocationGranularity = ALLOCATION_GRANULARITY;
+            basic_info.MinimumUserModeAddress = MIN_ALLOCATION_ADDRESS;
+            basic_info.MaximumUserModeAddress = MAX_ALLOCATION_ADDRESS;
             basic_info.ActiveProcessorsAffinityMask = 0x0000000000000fff;
             basic_info.NumberOfProcessors = 1;
         });
