@@ -2,9 +2,17 @@
 
 namespace test
 {
+    namespace
+    {
+        auto create_reproducible_sample_emulator()
+        {
+            return create_sample_emulator({.reproducible = true});
+        }
+    }
+
     TEST(SerializationTest, ResettingEmulatorWorks)
     {
-        auto emu = create_sample_emulator(true);
+        auto emu = create_reproducible_sample_emulator();
 
         utils::buffer_serializer start_state{};
         emu.serialize(start_state);
@@ -31,7 +39,7 @@ namespace test
 
     TEST(SerializationTest, SerializedDataIsReproducible)
     {
-        auto emu1 = create_sample_emulator(true);
+        auto emu1 = create_reproducible_sample_emulator();
         emu1.start();
 
         ASSERT_TERMINATED_SUCCESSFULLY(emu1);
@@ -55,7 +63,7 @@ namespace test
 
     TEST(SerializationTest, EmulationIsReproducible)
     {
-        auto emu1 = create_sample_emulator(true);
+        auto emu1 = create_reproducible_sample_emulator();
         emu1.start();
 
         ASSERT_TERMINATED_SUCCESSFULLY(emu1);
@@ -63,7 +71,7 @@ namespace test
         utils::buffer_serializer serializer1{};
         emu1.serialize(serializer1);
 
-        auto emu2 = create_sample_emulator(true);
+        auto emu2 = create_reproducible_sample_emulator();
         emu2.start();
 
         ASSERT_TERMINATED_SUCCESSFULLY(emu2);
@@ -76,7 +84,7 @@ namespace test
 
     TEST(SerializationTest, DeserializedEmulatorBehavesLikeSource)
     {
-        auto emu = create_sample_emulator(true);
+        auto emu = create_reproducible_sample_emulator();
         emu.start({}, 100);
 
         utils::buffer_serializer serializer{};

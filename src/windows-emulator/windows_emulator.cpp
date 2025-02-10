@@ -18,6 +18,38 @@ constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 100000;
 
 namespace
 {
+    void adjust_working_directory(application_settings& app_settings)
+    {
+        if (!app_settings.working_directory.empty())
+        {
+            // Do nothing
+        }
+#ifdef OS_WINDOWS
+        else if (app_settings.application.is_relative())
+        {
+            app_settings.working_directory = std::filesystem::current_path();
+        }
+#endif
+        else
+        {
+            app_settings.working_directory = app_settings.application.parent();
+        }
+    }
+
+    void adjust_application(application_settings& app_settings)
+    {
+        if (app_settings.application.is_relative())
+        {
+            app_settings.application = app_settings.working_directory / app_settings.application;
+        }
+    }
+
+    void fixup_application_settings(application_settings& app_settings)
+    {
+        adjust_working_directory(app_settings);
+        adjust_application(app_settings);
+    }
+
     uint64_t copy_string(x64_emulator& emu, emulator_allocator& allocator, const void* base_ptr, const uint64_t offset,
                          const size_t length)
     {
@@ -177,8 +209,8 @@ namespace
         emu.reg<uint16_t>(x64_register::ss, 0x2B);
     }
 
-    void setup_context(windows_emulator& win_emu, const emulator_settings& settings, const windows_path& application,
-                       const windows_path& working_dir)
+    void setup_context(windows_emulator& win_emu, const application_settings& app_settings,
+                       const emulator_settings& emu_settings)
     {
         auto& emu = win_emu.emu();
         auto& context = win_emu.process();
@@ -186,11 +218,12 @@ namespace
 
         setup_gdt(emu, memory);
 
+        // TODO: Move that out
         context.registry =
-            registry_manager(win_emu.get_emulation_root().empty() ? settings.registry_directory
+            registry_manager(win_emu.get_emulation_root().empty() ? emu_settings.registry_directory
                                                                   : win_emu.get_emulation_root() / "registry");
 
-        context.kusd.setup(settings.use_relative_time);
+        context.kusd.setup(emu_settings.use_relative_time);
 
         context.base_allocator = create_allocator(memory, PEB_SEGMENT_SIZE);
         auto& allocator = context.base_allocator;
@@ -228,18 +261,19 @@ namespace
             allocator.copy_string(u"SystemRoot=C:\\WINDOWS");
             allocator.copy_string(u"");
 
-            const auto application_str = application.u16string();
+            const auto application_str = app_settings.application.u16string();
 
             std::u16string command_line = u"\"" + application_str + u"\"";
 
-            for (const auto& arg : settings.arguments)
+            for (const auto& arg : app_settings.arguments)
             {
                 command_line.push_back(u' ');
                 command_line.append(arg);
             }
 
             allocator.make_unicode_string(proc_params.CommandLine, command_line);
-            allocator.make_unicode_string(proc_params.CurrentDirectory.DosPath, working_dir.u16string() + u"\\", 1024);
+            allocator.make_unicode_string(proc_params.CurrentDirectory.DosPath,
+                                          app_settings.working_directory.u16string() + u"\\", 1024);
             allocator.make_unicode_string(proc_params.ImagePathName, application_str);
 
             const auto total_length = allocator.get_next_address() - context.process_params.value();
@@ -403,26 +437,11 @@ std::unique_ptr<x64_emulator> create_default_x64_emulator()
     return unicorn::create_x64_emulator();
 }
 
-windows_emulator::windows_emulator(const emulator_settings& settings, emulator_callbacks callbacks,
-                                   std::unique_ptr<x64_emulator> emu)
+windows_emulator::windows_emulator(application_settings app_settings, const emulator_settings& settings,
+                                   emulator_callbacks callbacks, std::unique_ptr<x64_emulator> emu)
     : windows_emulator(settings.emulation_root, std::move(emu))
 {
-    windows_path working_dir{};
-
-    if (!settings.working_directory.empty())
-    {
-        working_dir = settings.working_directory;
-    }
-#ifdef OS_WINDOWS
-    else if (settings.application.is_relative())
-    {
-        working_dir = std::filesystem::current_path();
-    }
-#endif
-    else
-    {
-        working_dir = settings.application.parent();
-    }
+    fixup_application_settings(app_settings);
 
     for (const auto& mapping : settings.path_mappings)
     {
@@ -441,7 +460,7 @@ windows_emulator::windows_emulator(const emulator_settings& settings, emulator_c
     this->callbacks_ = std::move(callbacks);
     this->modules_ = settings.modules;
 
-    this->setup_process(settings, working_dir);
+    this->setup_process(app_settings, settings);
 }
 
 windows_emulator::windows_emulator(const std::filesystem::path& emulation_root, std::unique_ptr<x64_emulator> emu)
@@ -463,20 +482,16 @@ windows_emulator::windows_emulator(const std::filesystem::path& emulation_root, 
 
 windows_emulator::~windows_emulator() = default;
 
-void windows_emulator::setup_process(const emulator_settings& settings, const windows_path& working_directory)
+void windows_emulator::setup_process(const application_settings& app_settings, const emulator_settings& emu_settings)
 {
     auto& emu = this->emu();
 
     auto& context = this->process();
     context.mod_manager = module_manager(this->memory(), this->file_sys()); // TODO: Cleanup module manager
 
-    const auto application = settings.application.is_absolute() //
-                                 ? settings.application
-                                 : (working_directory / settings.application);
+    setup_context(*this, app_settings, emu_settings);
 
-    setup_context(*this, settings, application, working_directory);
-
-    context.executable = context.mod_manager.map_module(application, this->log, true);
+    context.executable = context.mod_manager.map_module(app_settings.application, this->log, true);
 
     context.peb.access([&](PEB64& peb) {
         peb.ImageBaseAddress = reinterpret_cast<std::uint64_t*>(context.executable->image_base); //

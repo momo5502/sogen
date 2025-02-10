@@ -113,18 +113,21 @@ namespace
             return false;
         }
 
-        const emulator_settings settings{
+        application_settings app_settings{
             .application = args[0],
+            .arguments = parse_arguments(args),
+        };
+
+        const emulator_settings settings{
             .registry_directory = options.registry_path,
             .emulation_root = options.emulation_root,
-            .arguments = parse_arguments(args),
             .verbose_calls = options.verbose_logging,
             .disable_logging = options.silent,
             .silent_until_main = options.concise_logging,
             .modules = options.modules,
         };
 
-        windows_emulator win_emu{settings};
+        windows_emulator win_emu{std::move(app_settings), settings};
 
         (void)&watch_system_objects;
         watch_system_objects(win_emu, options.modules, options.concise_logging);

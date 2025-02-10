@@ -25,18 +25,23 @@ struct emulator_callbacks
         outofline_syscall{};
 };
 
-// TODO: Split up into application and emulator settings
-struct emulator_settings
+struct application_settings
 {
     windows_path application{};
     windows_path working_directory{};
+    std::vector<std::u16string> arguments{};
+};
+
+struct emulator_settings
+{
     std::filesystem::path registry_directory{"./registry"};
     std::filesystem::path emulation_root{};
-    std::vector<std::u16string> arguments{};
+
     bool verbose_calls{false};
     bool disable_logging{false};
     bool silent_until_main{false};
     bool use_relative_time{false};
+
     std::unordered_map<uint16_t, uint16_t> port_mappings{};
     std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
     std::set<std::string, std::less<>> modules{};
@@ -55,7 +60,8 @@ class windows_emulator
   public:
     windows_emulator(const std::filesystem::path& emulation_root,
                      std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
-    windows_emulator(const emulator_settings& settings, emulator_callbacks callbacks = {},
+    windows_emulator(application_settings app_settings, const emulator_settings& settings = {},
+                     emulator_callbacks callbacks = {},
                      std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
 
     windows_emulator(windows_emulator&&) = delete;
@@ -227,6 +233,6 @@ class windows_emulator
     // std::optional<process_context> process_snapshot_{};
 
     void setup_hooks();
-    void setup_process(const emulator_settings& settings, const windows_path& working_directory);
+    void setup_process(const application_settings& app_settings, const emulator_settings& emu_settings);
     void on_instruction_execution(uint64_t address);
 };

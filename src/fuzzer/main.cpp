@@ -137,7 +137,7 @@ namespace
 
     void run(const std::string_view application)
     {
-        emulator_settings settings{
+        application_settings settings{
             .application = application,
         };
 
