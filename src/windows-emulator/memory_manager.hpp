@@ -8,6 +8,10 @@
 
 #include <memory_interface.hpp>
 
+constexpr auto ALLOCATION_GRANULARITY = 0x0000000000010000ULL;
+constexpr auto MIN_ALLOCATION_ADDRESS = 0x0000000000010000ULL;
+constexpr auto MAX_ALLOCATION_ADDRESS = 0x00007ffffffeffffULL;
+
 struct region_info : basic_memory_region
 {
     uint64_t allocation_base{};

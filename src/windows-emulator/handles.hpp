@@ -1,5 +1,7 @@
 #pragma once
 
+#include <serialization.hpp>
+
 struct handle_types
 {
     enum type : uint16_t

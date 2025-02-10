@@ -10,10 +10,6 @@
 
 namespace
 {
-    constexpr auto ALLOCATION_GRANULARITY = 0x0000000000010000ULL;
-    constexpr auto MIN_ALLOCATION_ADDRESS = 0x0000000000010000ULL;
-    constexpr auto MAX_ALLOCATION_ADDRESS = 0x00007ffffffeffffULL;
-
     void split_regions(memory_manager::committed_region_map& regions, const std::vector<uint64_t>& split_points)
     {
         for (auto i = regions.begin(); i != regions.end(); ++i)
