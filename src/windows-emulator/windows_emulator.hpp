@@ -47,14 +47,6 @@ struct emulator_settings
     std::set<std::string, std::less<>> modules{};
 };
 
-enum class apiset_location : uint8_t
-{
-    host,
-    file,
-    default_windows_10,
-    default_windows_11
-};
-
 class windows_emulator
 {
     std::unique_ptr<x64_emulator> emu_{};
