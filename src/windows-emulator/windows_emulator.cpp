@@ -210,7 +210,7 @@ namespace
     }
 
     void setup_context(windows_emulator& win_emu, const application_settings& app_settings,
-                       const emulator_settings& emu_settings)
+                       const emulator_settings& emu_settings, const uint64_t process_image_base)
     {
         auto& emu = win_emu.emu();
         auto& context = win_emu.process;
@@ -290,7 +290,7 @@ namespace
         }
 
         context.peb.access([&](PEB64& peb) {
-            peb.ImageBaseAddress = nullptr;
+            peb.ImageBaseAddress = process_image_base;
             peb.ProcessParameters = context.process_params.ptr();
             peb.ApiSetMap = build_api_set_map(emu, allocator, apiset_loc, win_emu.emulation_root).ptr();
 
@@ -485,14 +485,11 @@ void windows_emulator::setup_process(const application_settings& app_settings, c
 
     auto& context = this->process;
 
-    setup_context(*this, app_settings, emu_settings);
+    auto* exe = this->mod_manager.map_module(app_settings.application, this->log, true);
 
-    context.executable = this->mod_manager.map_module(app_settings.application, this->log, true);
+    setup_context(*this, app_settings, emu_settings, exe->image_base);
 
-    context.peb.access([&](PEB64& peb) {
-        peb.ImageBaseAddress = reinterpret_cast<std::uint64_t*>(context.executable->image_base); //
-    });
-
+    context.executable = exe;
     context.ntdll = this->mod_manager.map_module(R"(C:\Windows\System32\ntdll.dll)", this->log, true);
     context.win32u = this->mod_manager.map_module(R"(C:\Windows\System32\win32u.dll)", this->log, true);
 
