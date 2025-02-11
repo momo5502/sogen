@@ -49,6 +49,7 @@ class module_manager
         return modules_;
     }
 
+    // TODO: These is wrong here. A good mechanism for quick module access is needed.
     mapped_module* executable{};
     mapped_module* ntdll{};
     mapped_module* win32u{};
