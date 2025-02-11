@@ -136,7 +136,7 @@ namespace
         if (options.silent)
         {
             win_emu.buffer_stdout = false;
-            win_emu.callbacks().stdout_callback = [](const std::string_view data) {
+            win_emu.callbacks.stdout_callback = [](const std::string_view data) {
                 (void)fwrite(data.data(), 1, data.size(), stdout);
             };
         }

@@ -2878,7 +2878,7 @@ namespace
                 io_status_block.write(block);
             }
 
-            c.win_emu.callbacks().stdout_callback(temp_buffer);
+            c.win_emu.callbacks.stdout_callback(temp_buffer);
 
             if (!temp_buffer.ends_with("\n"))
             {
@@ -3124,7 +3124,9 @@ namespace
 
         const auto local_filename = c.win_emu.file_sys.translate(filename).string();
 
-        struct _stat64 file_stat{};
+        struct _stat64 file_stat
+        {
+        };
         if (_stat64(local_filename.c_str(), &file_stat) != 0)
         {
             return STATUS_OBJECT_NAME_NOT_FOUND;
@@ -3613,7 +3615,7 @@ namespace
         }
 
         thread->exit_status = exit_status;
-        c.win_emu.callbacks().thread_terminated(thread_handle, *thread);
+        c.win_emu.callbacks.thread_terminated(thread_handle, *thread);
         if (thread == c.proc.active_thread)
         {
             c.win_emu.yield_thread();

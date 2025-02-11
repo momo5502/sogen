@@ -21,13 +21,15 @@ namespace utils
         {
         }
 
-        template <typename F, typename = std::enable_if_t<std::is_invocable_r_v<Ret, F, Args...>>>
+        template <typename F>
+            requires(std::is_invocable_r_v<Ret, F, Args...>)
         optional_function(F&& f)
             : func(std::forward<F>(f))
         {
         }
 
-        template <typename F, typename = std::enable_if_t<std::is_invocable_r_v<Ret, F, Args...>>>
+        template <typename F>
+            requires(std::is_invocable_r_v<Ret, F, Args...>)
         optional_function& operator=(F&& f)
         {
             func = std::forward<F>(f);

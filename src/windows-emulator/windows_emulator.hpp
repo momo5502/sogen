@@ -64,6 +64,7 @@ class windows_emulator
     module_manager mod_manager;
     process_context process;
     syscall_dispatcher dispatcher;
+    emulator_callbacks callbacks{};
 
     windows_emulator(const emulator_settings& settings = {},
                      std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
@@ -164,17 +165,10 @@ class windows_emulator
         return this->use_relative_time_;
     }
 
-    emulator_callbacks& callbacks()
-    {
-        return this->callbacks_;
-    }
-
   private:
     bool switch_thread_{false};
     bool use_relative_time_{false};
     bool silent_until_main_{false};
-
-    emulator_callbacks callbacks_{};
 
     std::vector<instruction_hook_callback> syscall_hooks_{};
     std::unordered_map<uint16_t, uint16_t> port_mappings_{};
