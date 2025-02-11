@@ -3124,9 +3124,7 @@ namespace
 
         const auto local_filename = c.win_emu.file_sys.translate(filename).string();
 
-        struct _stat64 file_stat
-        {
-        };
+        struct _stat64 file_stat{};
         if (_stat64(local_filename.c_str(), &file_stat) != 0)
         {
             return STATUS_OBJECT_NAME_NOT_FOUND;
