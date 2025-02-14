@@ -846,7 +846,12 @@ struct GDI_HANDLE_ENTRY64
 struct GDI_SHARED_MEMORY64
 {
     GDI_HANDLE_ENTRY64 Handles[GDI_MAX_HANDLE_COUNT];
+    char pad[0xC8];
+    uint64_t Objects[0x20];
+    uint64_t Data[0x200]; // ?
 };
+
+static_assert(offsetof(GDI_SHARED_MEMORY64, Objects) == 0x1800B0);
 
 struct CLIENT_ID64
 {

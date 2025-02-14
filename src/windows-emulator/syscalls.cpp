@@ -2669,8 +2669,14 @@ namespace
         c.proc.peb.access([&](PEB64& peb) {
             if (!peb.GdiSharedHandleTable)
             {
-                peb.GdiSharedHandleTable = reinterpret_cast<EmulatorTraits<Emu64>::PVOID*>(
-                    c.proc.base_allocator.reserve<GDI_SHARED_MEMORY64>().ptr());
+                const auto shared_memory = c.proc.base_allocator.reserve<GDI_SHARED_MEMORY64>();
+
+                shared_memory.access([](GDI_SHARED_MEMORY64& mem) {
+                    mem.Objects[0x12] = 1;
+                    mem.Objects[0x13] = 1;
+                });
+
+                peb.GdiSharedHandleTable = shared_memory.value();
             }
         });
 

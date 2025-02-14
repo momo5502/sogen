@@ -117,14 +117,24 @@ class emulator_object
     }
 
     template <typename F>
+    void access_safe(const F& accessor, const size_t index = 0) const
+    {
+        auto obj = std::make_unique<T>();
+        this->access_object(accessor, *obj, index);
+    }
+
+    template <typename F>
     void access(const F& accessor, const size_t index = 0) const
     {
-        T obj{};
-        this->memory_->read_memory(this->address_ + index * this->size(), &obj, sizeof(obj));
-
-        accessor(obj);
-
-        this->write(obj, index);
+        if constexpr (sizeof(T) < 0x4000)
+        {
+            T obj{};
+            this->access_object(accessor, obj, index);
+        }
+        else
+        {
+            this->access_safe(accessor, index);
+        }
     }
 
     void serialize(utils::buffer_serializer& buffer) const
@@ -145,6 +155,16 @@ class emulator_object
   private:
     memory_interface* memory_{};
     uint64_t address_{};
+
+    template <typename F>
+    void access_object(const F& accessor, T& obj, const size_t index = 0) const
+    {
+        this->memory_->read_memory(this->address_ + index * this->size(), &obj, sizeof(obj));
+
+        accessor(obj);
+
+        this->write(obj, index);
+    }
 };
 
 // TODO: warning emulator_utils is hardcoded for 64bit unicode_string usage
