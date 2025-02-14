@@ -21,23 +21,19 @@ namespace utils
         {
         }
 
-        template <typename F, typename = std::enable_if_t<std::is_invocable_r_v<Ret, F, Args...>>>
+        template <typename F>
+            requires(std::is_invocable_r_v<Ret, F, Args...>)
         optional_function(F&& f)
             : func(std::forward<F>(f))
         {
         }
 
-        optional_function& operator=(std::function<Ret(Args...)> f)
+        template <typename F>
+            requires(std::is_invocable_r_v<Ret, F, Args...>)
+        optional_function& operator=(F&& f)
         {
-            func = std::move(f);
+            func = std::forward<F>(f);
             return *this;
-        }
-
-        template <typename T>
-            requires(!std::is_same_v<std::remove_cvref_t<T>, std::function<Ret(Args...)>>)
-        optional_function& operator=(T&& t)
-        {
-            return this->operator=(std::function<Ret(Args...)>(std::forward<T>(t)));
         }
 
         Ret operator()(Args... args) const

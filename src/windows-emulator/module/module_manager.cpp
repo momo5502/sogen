@@ -95,6 +95,7 @@ mapped_module* module_manager::map_local_module(const std::filesystem::path& fil
 
         const auto image_base = mod.image_base;
         const auto entry = this->modules_.try_emplace(image_base, std::move(mod));
+        this->on_module_load(entry.first->second);
         return &entry.first->second;
     }
     catch (const std::exception& e)
@@ -146,6 +147,7 @@ bool module_manager::unmap(const uint64_t address, const logger& logger)
 
     logger.log("Unmapping %s (0x%" PRIx64 ")\n", mod->second.path.generic_string().c_str(), mod->second.image_base);
 
+    this->on_module_unload(mod->second);
     unmap_module(*this->memory_, mod->second);
     this->modules_.erase(mod);
 

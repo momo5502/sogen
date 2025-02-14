@@ -44,6 +44,8 @@ struct process_context
                const emulator_settings& emu_settings, const mapped_module& executable, const mapped_module& ntdll,
                const apiset::container& apiset_container);
 
+    utils::optional_function<void(handle h, emulator_thread& thr)> on_create_thread{};
+
     handle create_thread(memory_manager& memory, const uint64_t start_address, const uint64_t argument,
                          const uint64_t stack_size);
 

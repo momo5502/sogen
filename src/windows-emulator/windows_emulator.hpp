@@ -23,6 +23,10 @@ struct emulator_callbacks
                                   std::string_view syscall_name, x64_emulator::pointer_type prev_address,
                                   std::string_view prev_mod_name)>
         outofline_syscall{};
+    utils::optional_function<void(mapped_module& mod)> module_loaded{};
+    utils::optional_function<void(mapped_module& mod)> module_unloaded{};
+    utils::optional_function<void(handle h, emulator_thread& thr)> thread_created{};
+    utils::optional_function<void(handle h, emulator_thread& thr)> thread_terminated{};
 };
 
 struct application_settings
@@ -53,7 +57,6 @@ class windows_emulator
 
   public:
     std::filesystem::path emulation_root{};
-    emulator_callbacks callbacks{};
     logger log{};
     file_system file_sys;
     memory_manager memory;
@@ -61,6 +64,7 @@ class windows_emulator
     module_manager mod_manager;
     process_context process;
     syscall_dispatcher dispatcher;
+    emulator_callbacks callbacks{};
 
     windows_emulator(const emulator_settings& settings = {},
                      std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());

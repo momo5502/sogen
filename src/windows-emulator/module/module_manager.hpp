@@ -3,6 +3,7 @@
 
 #include "mapped_module.hpp"
 #include "../file_system.hpp"
+#include <utils/function.hpp>
 
 class logger;
 
@@ -10,6 +11,9 @@ class module_manager
 {
   public:
     using module_map = std::map<uint64_t, mapped_module>;
+    utils::optional_function<void(mapped_module& mod)> on_module_load{};
+    utils::optional_function<void(mapped_module& mod)> on_module_unload{};
+
     module_manager(memory_manager& memory, file_system& file_sys);
 
     void map_main_modules(const windows_path& executable_path, const windows_path& ntdll_path,

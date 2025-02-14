@@ -3613,6 +3613,7 @@ namespace
         }
 
         thread->exit_status = exit_status;
+        c.win_emu.callbacks.thread_terminated(thread_handle, *thread);
         if (thread == c.proc.active_thread)
         {
             c.win_emu.yield_thread();
