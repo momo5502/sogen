@@ -2878,7 +2878,7 @@ namespace
                 io_status_block.write(block);
             }
 
-            c.win_emu.callbacks.stdout_callback(temp_buffer);
+            c.win_emu.callbacks.on_stdout(temp_buffer);
 
             if (!temp_buffer.ends_with("\n"))
             {
@@ -3613,7 +3613,7 @@ namespace
         }
 
         thread->exit_status = exit_status;
-        c.win_emu.callbacks.thread_terminated(thread_handle, *thread);
+        c.win_emu.callbacks.on_thread_terminated(thread_handle, *thread);
         if (thread == c.proc.active_thread)
         {
             c.win_emu.yield_thread();

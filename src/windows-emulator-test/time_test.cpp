@@ -6,11 +6,9 @@ namespace test
     {
         std::string output_buffer{};
 
-        emulator_callbacks callbacks{
-            .stdout_callback =
-                [&output_buffer](const std::string_view data) {
-                    output_buffer.append(data); //
-                },
+        emulator_callbacks callbacks{};
+        callbacks.on_stdout = [&output_buffer](const std::string_view data) {
+            output_buffer.append(data); //
         };
 
         const emulator_settings settings{

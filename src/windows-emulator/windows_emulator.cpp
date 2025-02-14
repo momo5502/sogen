@@ -184,8 +184,8 @@ windows_emulator::windows_emulator(const emulator_settings& settings, std::uniqu
       file_sys(emulation_root.empty() ? emulation_root : emulation_root / "filesys"),
       memory(*this->emu_),
       registry(emulation_root.empty() ? settings.registry_directory : emulation_root / "registry"),
-      mod_manager(memory, file_sys),
-      process(*this->emu_, memory)
+      mod_manager(memory, file_sys, callbacks),
+      process(*this->emu_, memory, callbacks)
 {
 #ifndef OS_WINDOWS
     if (this->emulation_root.empty())
@@ -219,10 +219,6 @@ void windows_emulator::setup_process(const application_settings& app_settings, c
 {
     const auto& emu = this->emu();
     auto& context = this->process;
-
-    mod_manager.on_module_load = std::move(callbacks.module_loaded);
-    mod_manager.on_module_unload = std::move(callbacks.module_unloaded);
-    context.on_create_thread = std::move(callbacks.thread_created);
 
     this->mod_manager.map_main_modules(app_settings.application, R"(C:\Windows\System32\ntdll.dll)",
                                        R"(C:\Windows\System32\win32u.dll)", this->log);
@@ -361,14 +357,6 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
 void windows_emulator::setup_hooks()
 {
     this->emu().hook_instruction(x64_hookable_instructions::syscall, [&] {
-        for (const auto& hook : this->syscall_hooks_)
-        {
-            if (hook() == instruction_hook_continuation::skip_instruction)
-            {
-                return instruction_hook_continuation::skip_instruction;
-            }
-        }
-
         this->dispatcher.dispatch(*this);
         return instruction_hook_continuation::skip_instruction;
     });

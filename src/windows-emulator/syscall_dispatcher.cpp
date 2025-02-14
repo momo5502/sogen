@@ -71,12 +71,21 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
 
     try
     {
+        const auto* mod = win_emu.mod_manager.find_by_address(address);
+
         const auto entry = this->handlers_.find(syscall_id);
         if (entry == this->handlers_.end())
         {
             win_emu.log.error("Unknown syscall: 0x%X\n", syscall_id);
             c.emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_SUPPORTED);
             c.emu.stop();
+            return;
+        }
+
+        const std::string_view mod_name = mod ? mod->name : std::string_view{};
+        const auto res = win_emu.callbacks.on_syscall(syscall_id, address, mod_name, entry->second.name);
+        if (res == instruction_hook_continuation::skip_instruction)
+        {
             return;
         }
 
@@ -88,12 +97,8 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
             return;
         }
 
-        const auto* mod = win_emu.mod_manager.find_by_address(address);
         if (mod != win_emu.mod_manager.ntdll && mod != win_emu.mod_manager.win32u)
         {
-            win_emu.callbacks.inline_syscall(syscall_id, address, mod ? mod->name.c_str() : "<N/A>",
-                                             entry->second.name);
-
             win_emu.log.print(color::blue, "Executing inline syscall: %s (0x%X) at 0x%" PRIx64 " (%s)\n",
                               entry->second.name.c_str(), syscall_id, address, mod ? mod->name.c_str() : "<N/A>");
         }
@@ -106,19 +111,15 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
                 uint64_t return_address{};
                 c.emu.try_read_memory(rsp, &return_address, sizeof(return_address));
 
-                const auto* mod_name = win_emu.mod_manager.find_name(return_address);
+                const auto* caller_mod_name = win_emu.mod_manager.find_name(return_address);
 
                 win_emu.log.print(color::dark_gray,
                                   "Executing syscall: %s (0x%X) at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n",
-                                  entry->second.name.c_str(), syscall_id, address, return_address, mod_name);
+                                  entry->second.name.c_str(), syscall_id, address, return_address, caller_mod_name);
             }
             else
             {
                 const auto* previous_mod = win_emu.mod_manager.find_by_address(context.previous_ip);
-
-                win_emu.callbacks.outofline_syscall(syscall_id, address, mod ? mod->name.c_str() : "<N/A>",
-                                                    entry->second.name, context.previous_ip,
-                                                    previous_mod ? previous_mod->name.c_str() : "<N/A>");
 
                 win_emu.log.print(color::blue,
                                   "Crafted out-of-line syscall: %s (0x%X) at 0x%" PRIx64 " (%s) via 0x%" PRIx64

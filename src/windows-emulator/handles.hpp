@@ -163,7 +163,7 @@ class handle_store : public generic_handle_store
         return blocked;
     }
 
-    handle store(T value)
+    std::pair<handle, T*> store_and_get(T value)
     {
         if (this->block_mutation_)
         {
@@ -171,9 +171,14 @@ class handle_store : public generic_handle_store
         }
 
         auto index = this->find_free_index();
-        this->store_.emplace(index, std::move(value));
+        const auto it = this->store_.emplace(index, std::move(value)).first;
 
-        return make_handle(index);
+        return {make_handle(index), &it->second};
+    }
+
+    handle store(T value)
+    {
+        return this->store_and_get(std::move(value)).first;
     }
 
     handle make_handle(const index_type index) const

@@ -32,8 +32,15 @@ struct application_settings;
 
 struct process_context
 {
-    process_context(x64_emulator& emu, memory_manager& memory)
-        : base_allocator(emu),
+    struct callbacks
+    {
+        utils::optional_function<void(handle h, emulator_thread& thr)> on_create_thread{};
+        utils::optional_function<void(handle h, emulator_thread& thr)> on_thread_terminated{};
+    };
+
+    process_context(x64_emulator& emu, memory_manager& memory, callbacks& cb)
+        : callbacks_(&cb),
+          base_allocator(emu),
           peb(emu),
           process_params(emu),
           kusd(memory, *this)
@@ -44,13 +51,13 @@ struct process_context
                const emulator_settings& emu_settings, const mapped_module& executable, const mapped_module& ntdll,
                const apiset::container& apiset_container);
 
-    utils::optional_function<void(handle h, emulator_thread& thr)> on_create_thread{};
-
     handle create_thread(memory_manager& memory, const uint64_t start_address, const uint64_t argument,
                          const uint64_t stack_size);
 
     void serialize(utils::buffer_serializer& buffer) const;
     void deserialize(utils::buffer_deserializer& buffer);
+
+    callbacks* callbacks_{};
 
     uint64_t executed_instructions{0};
     uint64_t current_ip{0};

@@ -10,11 +10,15 @@ class logger;
 class module_manager
 {
   public:
-    using module_map = std::map<uint64_t, mapped_module>;
-    utils::optional_function<void(mapped_module& mod)> on_module_load{};
-    utils::optional_function<void(mapped_module& mod)> on_module_unload{};
+    struct callbacks
+    {
+        utils::optional_function<void(mapped_module& mod)> on_module_load{};
+        utils::optional_function<void(mapped_module& mod)> on_module_unload{};
+    };
 
-    module_manager(memory_manager& memory, file_system& file_sys);
+    using module_map = std::map<uint64_t, mapped_module>;
+
+    module_manager(memory_manager& memory, file_system& file_sys, callbacks& cb);
 
     void map_main_modules(const windows_path& executable_path, const windows_path& ntdll_path,
                           const windows_path& win32u_path, const logger& logger);
@@ -61,6 +65,7 @@ class module_manager
   private:
     memory_manager* memory_{};
     file_system* file_sys_{};
+    callbacks* callbacks_{};
 
     module_map modules_{};
 

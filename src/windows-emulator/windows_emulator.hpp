@@ -10,23 +10,17 @@
 #include "logger.hpp"
 #include "file_system.hpp"
 #include "memory_manager.hpp"
+#include "module/module_manager.hpp"
 
 std::unique_ptr<x64_emulator> create_default_x64_emulator();
 
-struct emulator_callbacks
+struct emulator_callbacks : module_manager::callbacks, process_context::callbacks
 {
-    utils::optional_function<void(std::string_view)> stdout_callback{};
-    utils::optional_function<void(uint32_t syscall_id, x64_emulator::pointer_type address, std::string_view mod_name,
-                                  std::string_view syscall_name)>
-        inline_syscall{};
-    utils::optional_function<void(uint32_t syscall_id, x64_emulator::pointer_type address, std::string_view mod_name,
-                                  std::string_view syscall_name, x64_emulator::pointer_type prev_address,
-                                  std::string_view prev_mod_name)>
-        outofline_syscall{};
-    utils::optional_function<void(mapped_module& mod)> module_loaded{};
-    utils::optional_function<void(mapped_module& mod)> module_unloaded{};
-    utils::optional_function<void(handle h, emulator_thread& thr)> thread_created{};
-    utils::optional_function<void(handle h, emulator_thread& thr)> thread_terminated{};
+    utils::optional_function<instruction_hook_continuation(uint32_t syscall_id, x64_emulator::pointer_type address,
+                                                           std::string_view mod_name, std::string_view syscall_name)>
+        on_syscall{};
+
+    utils::optional_function<void(std::string_view)> on_stdout{};
 };
 
 struct application_settings
@@ -57,6 +51,7 @@ class windows_emulator
 
   public:
     std::filesystem::path emulation_root{};
+    emulator_callbacks callbacks{};
     logger log{};
     file_system file_sys;
     memory_manager memory;
@@ -64,7 +59,6 @@ class windows_emulator
     module_manager mod_manager;
     process_context process;
     syscall_dispatcher dispatcher;
-    emulator_callbacks callbacks{};
 
     windows_emulator(const emulator_settings& settings = {},
                      std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
@@ -106,11 +100,6 @@ class windows_emulator
 
     void save_snapshot();
     void restore_snapshot();
-
-    void add_syscall_hook(instruction_hook_callback callback)
-    {
-        this->syscall_hooks_.push_back(std::move(callback));
-    }
 
     uint16_t get_host_port(const uint16_t emulator_port) const
     {
@@ -170,7 +159,6 @@ class windows_emulator
     bool use_relative_time_{false};
     bool silent_until_main_{false};
 
-    std::vector<instruction_hook_callback> syscall_hooks_{};
     std::unordered_map<uint16_t, uint16_t> port_mappings_{};
 
     std::set<std::string, std::less<>> modules_{};
