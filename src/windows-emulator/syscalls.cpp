@@ -631,6 +631,14 @@ namespace
             return STATUS_SUCCESS;
         }
 
+        if (fs_information_class == FileFsVolumeInformation)
+        {
+            constexpr FILE_FS_VOLUME_INFORMATION volume_info{};
+            c.emu.write_memory(fs_information, volume_info);
+
+            return STATUS_SUCCESS;
+        }
+
         c.win_emu.log.error("Unsupported fs info class: %X\n", fs_information_class);
         c.emu.stop();
         return STATUS_NOT_SUPPORTED;
