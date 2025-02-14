@@ -289,7 +289,7 @@ typedef struct _PEB64
     ULONG MaximumNumberOfHeaps;
     std::uint64_t** ProcessHeaps; // PHEAP
 
-    std::uint64_t* GdiSharedHandleTable; // PGDI_SHARED_MEMORY
+    std::uint64_t GdiSharedHandleTable; // PGDI_SHARED_MEMORY
     std::uint64_t* ProcessStarterHelper;
     ULONG GdiDCAttributeList;
 
