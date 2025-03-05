@@ -1397,6 +1397,44 @@ namespace
             return STATUS_SUCCESS;
         }
 
+        if (info_class == ProcessDeviceMap)
+        {
+            c.win_emu.log.info("Handling ProcessDeviceMap request.\n");
+
+            if (return_length)
+            {
+                return_length.write(sizeof(EmulatorTraits<Emu64>::PVOID));
+            }
+
+            if (process_information_length != sizeof(EmulatorTraits<Emu64>::PVOID))
+            {
+                return STATUS_BUFFER_OVERFLOW;
+            }
+
+            const emulator_object<EmulatorTraits<Emu64>::PVOID> info{c.emu, process_information};
+            info.write(0); // NULL pointer
+
+            return STATUS_SUCCESS;
+        }
+
+        if (info_class == ProcessEnableAlignmentFaultFixup)
+        {
+            if (return_length)
+            {
+                return_length.write(sizeof(BOOLEAN));
+            }
+
+            if (process_information_length != sizeof(BOOLEAN))
+            {
+                return STATUS_BUFFER_OVERFLOW;
+            }
+
+            const emulator_object<BOOLEAN> info{c.emu, process_information};
+            info.write(FALSE); // Alignment fault fixup is disabled
+
+            return STATUS_SUCCESS;
+        }
+
         if (info_class == ProcessDebugObjectHandle)
         {
             if (return_length)
@@ -1580,6 +1618,24 @@ namespace
 
             const emulator_object<EmulatorTraits<Emu64>::PVOID> info{c.emu, thread_information};
             info.write(thread->start_address);
+
+            return STATUS_SUCCESS;
+        }
+
+        if (info_class == ThreadTimes)
+        {
+            if (return_length)
+            {
+                return_length.write(sizeof(KERNEL_USER_TIMES));
+            }
+
+            if (thread_information_length != sizeof(KERNEL_USER_TIMES))
+            {
+                return STATUS_BUFFER_OVERFLOW;
+            }
+
+            const emulator_object<KERNEL_USER_TIMES> info{c.emu, thread_information};
+            info.write(KERNEL_USER_TIMES{});
 
             return STATUS_SUCCESS;
         }
