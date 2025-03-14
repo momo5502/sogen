@@ -33,7 +33,7 @@ Built in C++ and powered by the Unicorn Engine.
 
 ##
 > [!NOTE]  
-> The project is still in a very early, prototypy state. The code still needs a lot of cleanup and many features and syscalls need to be implemented. However, constant progress is being made :)
+> The project is still in a very early, prototype state. The code still needs a lot of cleanup and many features and syscalls need to be implemented. However, constant progress is being made :)
 
 ## Preview
 
