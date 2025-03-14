@@ -3,6 +3,7 @@
 #ifndef OS_WINDOWS
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
+#pragma GCC diagnostic ignored "-Wtautological-compare"
 #endif
 
 #include "reflect_extension.hpp"
