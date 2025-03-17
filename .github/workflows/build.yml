@@ -88,14 +88,10 @@ jobs:
         run: curl --connect-timeout 5 --max-time 10 --retry 5 --retry-delay 0 --retry-max-time 40 -L -o directx_Jun2010_redist.exe https://download.microsoft.com/download/8/4/A/84A35BF1-DAFE-4AE8-82AF-AD2AE20B6B14/directx_Jun2010_redist.exe
 
       - name: Extract DirectX Runtime
-        run: ./directx_Jun2010_redist.exe /Q /T:"${{github.workspace}}/dxrt"
+        run: "cmd /c \"start directx_Jun2010_redist.exe /Q /T:${{github.workspace}}/dxrt\""
 
       - name: Install DirectX Runtime
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 3
-          max_attempts: 3
-          command: "cmd /c \"start /wait .\\dxrt\\dxsetup.exe /silent\""
+        run: "cmd /c \"start /wait .\\dxrt\\dxsetup.exe /silent\""
 
       - name: Download API Set Dumper
         uses: pyTooling/download-artifact@v4
