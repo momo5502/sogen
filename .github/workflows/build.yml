@@ -91,11 +91,7 @@ jobs:
         run: ./directx_Jun2010_redist.exe /Q /T:"${{github.workspace}}/dxrt"
 
       - name: Install DirectX Runtime
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 3
-          max_attempts: 3
-          command: "cmd /c \"start /wait .\\dxrt\\dxsetup.exe /silent\""
+        run: "cmd /c \"start /wait .\\dxrt\\dxsetup.exe /silent\""
 
       - name: Download API Set Dumper
         uses: pyTooling/download-artifact@v4
