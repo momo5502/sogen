@@ -88,7 +88,7 @@ jobs:
         run: curl --connect-timeout 5 --max-time 10 --retry 5 --retry-delay 0 --retry-max-time 40 -L -o directx_Jun2010_redist.exe https://download.microsoft.com/download/8/4/A/84A35BF1-DAFE-4AE8-82AF-AD2AE20B6B14/directx_Jun2010_redist.exe
 
       - name: Extract DirectX Runtime
-        run: "cmd /c \"start directx_Jun2010_redist.exe /Q /T:${{github.workspace}}/dxrt\""
+        run: "cmd /c \"start /wait directx_Jun2010_redist.exe /Q /T:${{github.workspace}}/dxrt\""
 
       - name: Install DirectX Runtime
         run: "cmd /c \"start /wait .\\dxrt\\dxsetup.exe /silent\""
