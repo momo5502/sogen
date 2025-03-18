@@ -150,10 +150,11 @@ bool test_file_path_io(const std::filesystem::path& filename)
 
 bool test_io()
 {
-    const std::filesystem::path filename = "a.txt";
+    const std::filesystem::path filename1 = "a.txt";
+    const std::filesystem::path filename2 = "A.tXt";
 
     FILE* fp{};
-    (void)fopen_s(&fp, filename.string().c_str(), "wb");
+    (void)fopen_s(&fp, filename1.string().c_str(), "wb");
 
     if (!fp)
     {
@@ -166,12 +167,12 @@ bool test_io()
     (void)fwrite(text.data(), 1, text.size(), fp);
     (void)fclose(fp);
 
-    if (!test_file_path_io(filename))
+    if (!test_file_path_io(filename1))
     {
         return false;
     }
 
-    std::ifstream t(filename);
+    std::ifstream t(filename2);
     t.seekg(0, std::ios::end);
     const size_t size = t.tellg();
     std::string buffer(size, ' ');
