@@ -38,18 +38,17 @@ struct process_context
         utils::optional_function<void(handle h, emulator_thread& thr)> on_thread_terminated{};
     };
 
-    process_context(x64_emulator& emu, memory_manager& memory, callbacks& cb)
+    process_context(x64_emulator& emu, memory_manager& memory, utils::system_clock& clock, callbacks& cb)
         : callbacks_(&cb),
           base_allocator(emu),
           peb(emu),
           process_params(emu),
-          kusd(memory, *this)
+          kusd(memory, clock)
     {
     }
 
     void setup(x64_emulator& emu, memory_manager& memory, const application_settings& app_settings,
-               const emulator_settings& emu_settings, const mapped_module& executable, const mapped_module& ntdll,
-               const apiset::container& apiset_container);
+               const mapped_module& executable, const mapped_module& ntdll, const apiset::container& apiset_container);
 
     handle create_thread(memory_manager& memory, const uint64_t start_address, const uint64_t argument,
                          const uint64_t stack_size);

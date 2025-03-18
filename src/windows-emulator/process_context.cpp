@@ -28,12 +28,12 @@ namespace
 }
 
 void process_context::setup(x64_emulator& emu, memory_manager& memory, const application_settings& app_settings,
-                            const emulator_settings& emu_settings, const mapped_module& executable,
-                            const mapped_module& ntdll, const apiset::container& apiset_container)
+                            const mapped_module& executable, const mapped_module& ntdll,
+                            const apiset::container& apiset_container)
 {
     setup_gdt(emu, memory);
 
-    this->kusd.setup(emu_settings.use_relative_time);
+    this->kusd.setup();
 
     this->base_allocator = create_allocator(memory, PEB_SEGMENT_SIZE);
     auto& allocator = this->base_allocator;

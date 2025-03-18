@@ -65,14 +65,14 @@ class emulator_thread : public ref_counted_object
 
     void mark_as_ready(NTSTATUS status);
 
-    bool is_await_time_over() const
+    bool is_await_time_over(utils::steady_clock& steady_clock) const
     {
-        return this->await_time.has_value() && this->await_time.value() < std::chrono::steady_clock::now();
+        return this->await_time.has_value() && this->await_time.value() < steady_clock.now();
     }
 
     bool is_terminated() const;
 
-    bool is_thread_ready(process_context& process);
+    bool is_thread_ready(process_context& process, utils::steady_clock& steady_clock);
 
     void save(x64_emulator& emu)
     {

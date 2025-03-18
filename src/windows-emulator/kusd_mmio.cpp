@@ -10,7 +10,7 @@ constexpr auto KUSD_BUFFER_SIZE = page_align_up(KUSD_SIZE);
 
 namespace
 {
-    void setup_kusd(KUSER_SHARED_DATA64& kusd, const bool use_relative_time)
+    void setup_kusd(KUSER_SHARED_DATA64& kusd)
     {
         memset(reinterpret_cast<void*>(&kusd), 0, sizeof(kusd));
 
@@ -60,25 +60,17 @@ namespace
         kusd.TelemetryCoverageRound = 0x00000001;
         kusd.LangGenerationCount = 0x00000003;
         kusd.InterruptTimeBias = 0x00000015a5d56406;
-        kusd.QpcBias = 0x000000159530c4af;
         kusd.ActiveProcessorCount = 0x0000000c;
         kusd.ActiveGroupCount = 0x01;
-        kusd.QpcData.QpcData = 0x0083;
-        kusd.QpcData.QpcBypassEnabled = 0x83;
         kusd.TimeZoneBiasEffectiveStart.QuadPart = 0x01db276e654cb2ff;
         kusd.TimeZoneBiasEffectiveEnd.QuadPart = 0x01db280b8c3b2800;
         kusd.XState.EnabledFeatures = 0x000000000000001f;
         kusd.XState.EnabledVolatileFeatures = 0x000000000000000f;
         kusd.XState.Size = 0x000003c0;
-
-        if (use_relative_time)
-        {
-            kusd.QpcFrequency = 1000;
-        }
-        else
-        {
-            kusd.QpcFrequency = std::chrono::steady_clock::period::den;
-        }
+        kusd.QpcData.QpcData = 0x0083;
+        kusd.QpcData.QpcBypassEnabled = 0x83;
+        kusd.QpcBias = 0x000000159530c4af;
+        kusd.QpcFrequency = utils::steady_clock::duration::period::den;
 
         constexpr std::u16string_view root_dir{u"C:\\WINDOWS"};
         memcpy(&kusd.NtSystemRoot.arr[0], root_dir.data(), root_dir.size() * 2);
@@ -102,9 +94,9 @@ namespace utils
     }
 }
 
-kusd_mmio::kusd_mmio(memory_manager& memory, process_context& process)
+kusd_mmio::kusd_mmio(memory_manager& memory, utils::system_clock& clock)
     : memory_(&memory),
-      process_(&process)
+      system_clock_(&clock)
 {
 }
 
@@ -114,32 +106,24 @@ kusd_mmio::~kusd_mmio()
 }
 
 kusd_mmio::kusd_mmio(utils::buffer_deserializer& buffer)
-    : kusd_mmio(buffer.read<memory_manager_wrapper>(), buffer.read<process_context_wrapper>())
+    : kusd_mmio(buffer.read<memory_manager_wrapper>(), buffer.read<system_clock_wrapper>())
 {
 }
 
-void kusd_mmio::setup(const bool use_relative_time)
+void kusd_mmio::setup()
 {
-    this->use_relative_time_ = use_relative_time;
-
-    setup_kusd(this->kusd_, use_relative_time);
-    this->start_time_ = utils::convert_from_ksystem_time(this->kusd_.SystemTime);
-
+    setup_kusd(this->kusd_);
     this->register_mmio();
 }
 
 void kusd_mmio::serialize(utils::buffer_serializer& buffer) const
 {
-    buffer.write(this->use_relative_time_);
     buffer.write(this->kusd_);
-    buffer.write(this->start_time_);
 }
 
 void kusd_mmio::deserialize(utils::buffer_deserializer& buffer)
 {
-    buffer.read(this->use_relative_time_);
     buffer.read(this->kusd_);
-    buffer.read(this->start_time_);
 
     this->deregister_mmio();
     this->register_mmio();
@@ -178,21 +162,7 @@ uint64_t kusd_mmio::address()
 
 void kusd_mmio::update()
 {
-    auto time = this->start_time_;
-
-    if (this->use_relative_time_)
-    {
-        const auto passed_time = this->process_->executed_instructions;
-        const auto clock_frequency = static_cast<uint64_t>(this->kusd_.QpcFrequency);
-
-        using duration = std::chrono::system_clock::duration;
-        time += duration(passed_time * duration::period::den / clock_frequency);
-    }
-    else
-    {
-        time = std::chrono::system_clock::now();
-    }
-
+    const auto time = this->system_clock_->now();
     utils::convert_to_ksystem_time(&this->kusd_.SystemTime, time);
 }
 

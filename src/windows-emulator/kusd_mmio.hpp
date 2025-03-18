@@ -5,13 +5,15 @@
 
 #include "x64_emulator.hpp"
 
+#include <utils/time.hpp>
+
 struct process_context;
 class windows_emulator;
 
 class kusd_mmio
 {
   public:
-    kusd_mmio(memory_manager& memory, process_context& process);
+    kusd_mmio(memory_manager& memory, utils::system_clock& clock);
     ~kusd_mmio();
 
     kusd_mmio(utils::buffer_deserializer& buffer);
@@ -36,17 +38,15 @@ class kusd_mmio
 
     static uint64_t address();
 
-    void setup(bool use_relative_time);
+    void setup();
 
   private:
     memory_manager* memory_{};
-    process_context* process_{};
+    utils::system_clock* system_clock_{};
 
     bool registered_{};
-    bool use_relative_time_{};
 
     KUSER_SHARED_DATA64 kusd_{};
-    std::chrono::system_clock::time_point start_time_{};
 
     uint64_t read(uint64_t addr, size_t size);
 

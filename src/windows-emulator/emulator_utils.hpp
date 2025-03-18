@@ -6,6 +6,8 @@
 #include "memory_utils.hpp"
 #include "address_utils.hpp"
 
+#include <utils/time.hpp>
+
 // TODO: Replace with pointer handling structure for future 32 bit support
 using emulator_pointer = uint64_t;
 
@@ -47,6 +49,8 @@ using x64_emulator_wrapper = object_wrapper<x64_emulator>;
 using memory_manager_wrapper = object_wrapper<memory_manager>;
 using module_manager_wrapper = object_wrapper<module_manager>;
 using process_context_wrapper = object_wrapper<process_context>;
+using system_clock_wrapper = object_wrapper<utils::system_clock>;
+using steady_clock_wrapper = object_wrapper<utils::steady_clock>;
 using windows_emulator_wrapper = object_wrapper<windows_emulator>;
 
 template <typename T>

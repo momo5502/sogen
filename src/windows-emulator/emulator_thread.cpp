@@ -148,7 +148,7 @@ bool emulator_thread::is_terminated() const
     return this->exit_status.has_value();
 }
 
-bool emulator_thread::is_thread_ready(process_context& process)
+bool emulator_thread::is_thread_ready(process_context& process, utils::steady_clock& steady_clock)
 {
     if (this->is_terminated())
     {
@@ -162,7 +162,7 @@ bool emulator_thread::is_thread_ready(process_context& process)
             this->mark_as_ready(STATUS_ALERTED);
             return true;
         }
-        if (this->is_await_time_over())
+        if (this->is_await_time_over(steady_clock))
         {
             this->mark_as_ready(STATUS_TIMEOUT);
             return true;
@@ -194,7 +194,7 @@ bool emulator_thread::is_thread_ready(process_context& process)
             return true;
         }
 
-        if (this->is_await_time_over())
+        if (this->is_await_time_over(steady_clock))
         {
             this->mark_as_ready(STATUS_TIMEOUT);
             return true;
@@ -205,7 +205,7 @@ bool emulator_thread::is_thread_ready(process_context& process)
 
     if (this->await_time.has_value())
     {
-        if (this->is_await_time_over())
+        if (this->is_await_time_over(steady_clock))
         {
             this->mark_as_ready(STATUS_SUCCESS);
             return true;

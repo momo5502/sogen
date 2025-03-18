@@ -86,7 +86,7 @@ namespace
         auto& emu = win_emu.emu();
         auto& context = win_emu.process;
 
-        const auto is_ready = thread.is_thread_ready(context);
+        const auto is_ready = thread.is_thread_ready(context, win_emu.steady_clock());
 
         if (!is_ready && !force)
         {
@@ -161,6 +161,48 @@ namespace
 
         return false;
     }
+
+    template <typename Clock>
+    struct instruction_tick_clock : utils::tick_clock<Clock>
+    {
+        windows_emulator* win_emu_{};
+
+        instruction_tick_clock(windows_emulator& win_emu, const typename instruction_tick_clock::time_point start = {})
+            : utils::tick_clock<Clock>(start, 1000),
+              win_emu_(&win_emu)
+        {
+        }
+
+        uint64_t ticks() override
+        {
+            if (!this->win_emu_->base_constructed_) // TODO: Remove that
+            {
+                throw std::runtime_error("Requesting ticks before construction!");
+            }
+
+            return this->win_emu_->process.executed_instructions;
+        }
+    };
+
+    std::unique_ptr<utils::steady_clock> get_steady_clock(windows_emulator& win_emu, const bool use_relative_time)
+    {
+        if (use_relative_time)
+        {
+            return std::make_unique<instruction_tick_clock<utils::steady_clock::base_clock>>(win_emu);
+        }
+
+        return std::make_unique<utils::steady_clock>();
+    }
+
+    std::unique_ptr<utils::system_clock> get_system_clock(windows_emulator& win_emu, const bool use_relative_time)
+    {
+        if (use_relative_time)
+        {
+            return std::make_unique<instruction_tick_clock<utils::system_clock::base_clock>>(win_emu);
+        }
+
+        return std::make_unique<utils::system_clock>();
+    }
 }
 
 std::unique_ptr<x64_emulator> create_default_x64_emulator()
@@ -175,18 +217,22 @@ windows_emulator::windows_emulator(application_settings app_settings, const emul
     this->callbacks = std::move(callbacks);
 
     fixup_application_settings(app_settings);
-    this->setup_process(app_settings, settings);
+    this->setup_process(app_settings);
 }
 
 windows_emulator::windows_emulator(const emulator_settings& settings, std::unique_ptr<x64_emulator> emu)
     : emu_(std::move(emu)),
+      system_clock_(get_system_clock(*this, settings.use_relative_time)),
+      steady_clock_(get_steady_clock(*this, settings.use_relative_time)),
       emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
       file_sys(emulation_root.empty() ? emulation_root : emulation_root / "filesys"),
       memory(*this->emu_),
       registry(emulation_root.empty() ? settings.registry_directory : emulation_root / "registry"),
       mod_manager(memory, file_sys, callbacks),
-      process(*this->emu_, memory, callbacks)
+      process(*this->emu_, memory, *this->system_clock_, callbacks)
 {
+    this->base_constructed_ = true;
+
 #ifndef OS_WINDOWS
     if (this->emulation_root.empty())
     {
@@ -215,7 +261,7 @@ windows_emulator::windows_emulator(const emulator_settings& settings, std::uniqu
 
 windows_emulator::~windows_emulator() = default;
 
-void windows_emulator::setup_process(const application_settings& app_settings, const emulator_settings& emu_settings)
+void windows_emulator::setup_process(const application_settings& app_settings)
 {
     const auto& emu = this->emu();
     auto& context = this->process;
@@ -229,7 +275,7 @@ void windows_emulator::setup_process(const application_settings& app_settings, c
 
     const auto apiset_data = apiset::obtain(this->emulation_root);
 
-    this->process.setup(this->emu(), this->memory, app_settings, emu_settings, *executable, *ntdll, apiset_data);
+    this->process.setup(this->emu(), this->memory, app_settings, *executable, *ntdll, apiset_data);
 
     const auto ntdll_data = emu.read_memory(ntdll->image_base, ntdll->size_of_image);
     const auto win32u_data = emu.read_memory(win32u->image_base, win32u->size_of_image);
@@ -251,8 +297,14 @@ void windows_emulator::perform_thread_switch()
     this->switch_thread_ = false;
     while (!switch_to_next_thread(*this))
     {
-        // TODO: Optimize that
-        std::this_thread::sleep_for(1ms);
+        if (this->use_relative_time_)
+        {
+            this->process.executed_instructions += MAX_INSTRUCTIONS_PER_TIME_SLICE;
+        }
+        else
+        {
+            std::this_thread::sleep_for(1ms);
+        }
     }
 }
 
@@ -450,7 +502,7 @@ void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
 
     while (true)
     {
-        if (this->switch_thread_ || !this->current_thread().is_thread_ready(this->process))
+        if (this->switch_thread_ || !this->current_thread().is_thread_ready(this->process, this->steady_clock()))
         {
             this->perform_thread_switch();
         }
@@ -517,8 +569,23 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
         return windows_emulator_wrapper{*this}; //
     });
 
+    buffer.register_factory<system_clock_wrapper>([this] {
+        return system_clock_wrapper{this->system_clock()}; //
+    });
+
+    buffer.register_factory<steady_clock_wrapper>([this] {
+        return steady_clock_wrapper{this->steady_clock()}; //
+    });
+
     buffer.read(this->switch_thread_);
+
+    const auto old_relative_time = this->use_relative_time_;
     buffer.read(this->use_relative_time_);
+
+    if (old_relative_time != this->use_relative_time_)
+    {
+        throw std::runtime_error("Can not deserialize emulator with different time dimensions");
+    }
 
     this->memory.unmap_all_memory();
 

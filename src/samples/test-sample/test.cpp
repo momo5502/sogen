@@ -423,6 +423,8 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_native_exceptions, "Native Exceptions")
     RUN_TEST(test_tls, "TLS")
 
+    Sleep(1);
+
     if (!reproducible)
     {
         RUN_TEST(test_socket, "Socket")

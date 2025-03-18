@@ -48,6 +48,8 @@ struct emulator_settings
 class windows_emulator
 {
     std::unique_ptr<x64_emulator> emu_{};
+    std::unique_ptr<utils::system_clock> system_clock_{};
+    std::unique_ptr<utils::steady_clock> steady_clock_{};
 
   public:
     std::filesystem::path emulation_root{};
@@ -81,6 +83,26 @@ class windows_emulator
     const x64_emulator& emu() const
     {
         return *this->emu_;
+    }
+
+    utils::system_clock& system_clock()
+    {
+        return *this->system_clock_;
+    }
+
+    const utils::system_clock& system_clock() const
+    {
+        return *this->system_clock_;
+    }
+
+    utils::steady_clock& steady_clock()
+    {
+        return *this->steady_clock_;
+    }
+
+    const utils::steady_clock& steady_clock() const
+    {
+        return *this->steady_clock_;
     }
 
     emulator_thread& current_thread() const
@@ -149,10 +171,7 @@ class windows_emulator
     void perform_thread_switch();
     bool activate_thread(uint32_t id);
 
-    bool time_is_relative() const
-    {
-        return this->use_relative_time_;
-    }
+    bool base_constructed_{false};
 
   private:
     bool switch_thread_{false};
@@ -166,6 +185,6 @@ class windows_emulator
     // std::optional<process_context> process_snapshot_{};
 
     void setup_hooks();
-    void setup_process(const application_settings& app_settings, const emulator_settings& emu_settings);
+    void setup_process(const application_settings& app_settings);
     void on_instruction_execution(uint64_t address);
 };
