@@ -1,0 +1,25 @@
+name: Review
+on: [pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Clang Tidy Review
+        uses: ZedThree/clang-tidy-review@v0.20.1
+        id: review
+        with:
+          cmake_command: cmake . -DCMAKE_EXPORT_COMPILE_COMMANDS=on
+
+      - name: Upload Review
+        uses: ZedThree/clang-tidy-review/upload@v0.20.1
+        id: upload-review
+
+      - if: steps.review.outputs.total_comments > 0
+        run: exit 1
