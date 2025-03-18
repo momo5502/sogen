@@ -164,11 +164,9 @@ jobs:
       - name: Install Clang
         if: "${{ matrix.platform == 'Linux x86_64 Clang' }}"
         run: |
-          sudo apt update
-          sudo apt install -y wget gnupg software-properties-common
-          wget https://apt.llvm.org/llvm-snapshot.gpg.key -O- | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/$(lsb_release -sc)/ llvm-toolchain-$(lsb_release -sc)-${{ matrix.clang-version }} main" | sudo tee /etc/apt/sources.list.d/llvm.list
-          sudo apt update
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh ${{ matrix.clang-version }}
           sudo apt install -y clang-${{ matrix.clang-version }} lld-${{ matrix.clang-version }}
           sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang-${{ matrix.clang-version }} 100
           sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${{ matrix.clang-version }} 100
