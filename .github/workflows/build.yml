@@ -141,7 +141,7 @@ jobs:
             runner: ubuntu-24.04
           - platform: Linux x86_64 Clang
             runner: ubuntu-24.04
-            clang-version: 18
+            clang-version: 20
           - platform: macOS arm64
             runner: macos-latest
           - platform: macOS x86_64
