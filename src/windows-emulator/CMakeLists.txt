@@ -10,7 +10,9 @@ add_library(windows-emulator ${SRC_FILES})
 
 momo_assign_source_group(${SRC_FILES})
 
-target_precompile_headers(windows-emulator PRIVATE std_include.hpp)
+if(NOT MOMO_ENABLE_CLANG_TIDY)
+  target_precompile_headers(windows-emulator PRIVATE std_include.hpp)
+endif()
 
 target_link_libraries(windows-emulator PRIVATE
   unicorn-emulator
