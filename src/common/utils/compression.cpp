@@ -1,6 +1,7 @@
 #include "compression.hpp"
 
 #include <zlib.h>
+#include <array>
 #include <cstring>
 
 namespace utils::compression
@@ -58,20 +59,20 @@ namespace utils::compression
 
             int ret{};
             size_t offset = 0;
-            static thread_local uint8_t dest[ZCHUNK_SIZE] = {0};
+            static thread_local std::array<uint8_t, ZCHUNK_SIZE> dest{};
             auto& stream = stream_container.get();
 
             do
             {
-                const auto input_size = std::min(sizeof(dest), data.size() - offset);
+                const auto input_size = std::min(dest.size(), data.size() - offset);
                 stream.avail_in = static_cast<uInt>(input_size);
                 stream.next_in = reinterpret_cast<const Bytef*>(data.data()) + offset;
                 offset += stream.avail_in;
 
                 do
                 {
-                    stream.avail_out = sizeof(dest);
-                    stream.next_out = dest;
+                    stream.avail_out = static_cast<uInt>(dest.size());
+                    stream.next_out = dest.data();
 
                     ret = inflate(&stream, Z_NO_FLUSH);
                     if (ret != Z_OK && ret != Z_STREAM_END)
@@ -79,7 +80,7 @@ namespace utils::compression
                         return {};
                     }
 
-                    buffer.insert(buffer.end(), dest, dest + sizeof(dest) - stream.avail_out);
+                    buffer.insert(buffer.end(), dest.data(), dest.data() + dest.size() - stream.avail_out);
                 } while (stream.avail_out == 0);
             } while (ret != Z_STREAM_END);
 

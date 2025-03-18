@@ -63,8 +63,8 @@ namespace network
         void set_ipv6(const in6_addr& addr);
         void set_address(const sockaddr* addr, socklen_t length);
 
-        void set_port(unsigned short port);
-        [[nodiscard]] unsigned short get_port() const;
+        void set_port(uint16_t port);
+        [[nodiscard]] uint16_t get_port() const;
 
         sockaddr& get_addr();
         sockaddr_in& get_in_addr();

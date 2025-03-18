@@ -64,7 +64,9 @@ namespace gdb_stub
 
         void send_xfer_data(connection_handler& connection, const std::string& args, const std::string_view data)
         {
-            size_t offset{}, length{};
+            size_t offset{};
+            size_t length{};
+
             rt_assert(sscanf_s(args.c_str(), "%zx,%zx", &offset, &length) == 2);
 
             if (offset >= data.size())

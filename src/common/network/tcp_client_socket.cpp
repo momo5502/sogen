@@ -1,5 +1,6 @@
 #include "tcp_client_socket.hpp"
 
+#include <array>
 #include <cassert>
 
 namespace network
@@ -58,13 +59,13 @@ namespace network
 
     std::optional<std::string> tcp_client_socket::receive(const std::optional<size_t> max_size)
     {
-        char buffer[0x2000];
-        const auto size = std::min(sizeof(buffer), max_size.value_or(sizeof(buffer)));
+        std::array<char, 0x2000> buffer{};
+        const auto size = std::min(buffer.size(), max_size.value_or(buffer.size()));
 
-        const auto result = recv(this->get_socket(), buffer, static_cast<int>(size), 0);
+        const auto result = recv(this->get_socket(), buffer.data(), static_cast<int>(size), 0);
         if (result > 0)
         {
-            return std::string(buffer, result);
+            return std::string(buffer.data(), static_cast<size_t>(result));
         }
 
         if (result == 0 || (result < 0 && GET_SOCKET_ERROR() == SERR(ECONNRESET)))
