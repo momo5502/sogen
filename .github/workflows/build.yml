@@ -27,6 +27,8 @@ jobs:
   clang-tidy:
       name: Run Clang Tidy
       runs-on: ubuntu-24.04
+      env:
+        LLVM_VERSION: 20
       steps:
         - name: Checkout Source
           uses: actions/checkout@v4
@@ -40,8 +42,13 @@ jobs:
           run: |
             wget https://apt.llvm.org/llvm.sh
             chmod +x llvm.sh
-            sudo ./llvm.sh 20
-            sudo apt install -y clang-tidy-20
+            sudo ./llvm.sh ${{ env.LLVM_VERSION }}
+            sudo apt install -y clang-tidy-${{ env.LLVM_VERSION }}
+            sudo apt install -y clang-${{ env.LLVM_VERSION }} lld-${{ env.LLVM_VERSION }}
+            sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang-${{ env.LLVM_VERSION }} 100
+            sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${{ env.LLVM_VERSION }} 100
+            sudo update-alternatives --set cc /usr/bin/clang-${{ env.LLVM_VERSION }}
+            sudo update-alternatives --set c++ /usr/bin/clang++-${{ env.LLVM_VERSION }}
 
         - name: CMake Build
           run: cmake --preset=${{matrix.preset}} -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/cmake/toolchain/android-ndk.cmake && cmake --build --preset=${{matrix.preset}}
