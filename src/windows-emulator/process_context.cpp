@@ -28,12 +28,12 @@ namespace
 }
 
 void process_context::setup(x64_emulator& emu, memory_manager& memory, const application_settings& app_settings,
-                            const emulator_settings& emu_settings, const mapped_module& executable,
-                            const mapped_module& ntdll, const apiset::container& apiset_container)
+                            const mapped_module& executable, const mapped_module& ntdll,
+                            const apiset::container& apiset_container)
 {
     setup_gdt(emu, memory);
 
-    this->kusd.setup(emu_settings.use_relative_time);
+    this->kusd.setup();
 
     this->base_allocator = create_allocator(memory, PEB_SEGMENT_SIZE);
     auto& allocator = this->base_allocator;
@@ -125,7 +125,6 @@ void process_context::setup(x64_emulator& emu, memory_manager& memory, const app
 
 void process_context::serialize(utils::buffer_serializer& buffer) const
 {
-    buffer.write(this->executed_instructions);
     buffer.write(this->current_ip);
     buffer.write(this->previous_ip);
     buffer.write_optional(this->exception_rip);
@@ -159,7 +158,6 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
 
 void process_context::deserialize(utils::buffer_deserializer& buffer)
 {
-    buffer.read(this->executed_instructions);
     buffer.read(this->current_ip);
     buffer.read(this->previous_ip);
     buffer.read_optional(this->exception_rip);

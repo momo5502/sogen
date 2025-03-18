@@ -457,7 +457,7 @@ namespace
             const auto status = this->execute_ioctl(win_emu, *this->delayed_ioctl_);
             if (status == STATUS_PENDING)
             {
-                if (!this->timeout_ || this->timeout_ > std::chrono::steady_clock::now())
+                if (!this->timeout_ || this->timeout_ > win_emu.clock().steady_now())
                 {
                     return;
                 }
@@ -593,7 +593,7 @@ namespace
                 std::optional<std::chrono::steady_clock::time_point> timeout{};
                 if (info.Timeout.QuadPart != std::numeric_limits<int64_t>::max())
                 {
-                    timeout = utils::convert_delay_interval_to_time_point(info.Timeout);
+                    timeout = utils::convert_delay_interval_to_time_point(win_emu.clock(), info.Timeout);
                 }
 
                 this->delay_ioctrl(c, timeout);

@@ -27,21 +27,15 @@ namespace
             if (performance_counter)
             {
                 performance_counter.access([&](LARGE_INTEGER& value) {
-                    if (c.win_emu.time_is_relative())
-                    {
-                        value.QuadPart = static_cast<LONGLONG>(c.proc.executed_instructions);
-                    }
-                    else
-                    {
-                        value.QuadPart = std::chrono::steady_clock::now().time_since_epoch().count();
-                    }
+                    value.QuadPart = c.win_emu.clock().steady_now().time_since_epoch().count();
                 });
             }
 
             if (performance_frequency)
             {
-                performance_frequency.access(
-                    [&](LARGE_INTEGER& value) { value.QuadPart = c.proc.kusd.get().QpcFrequency; });
+                performance_frequency.access([&](LARGE_INTEGER& value) {
+                    value.QuadPart = c.proc.kusd.get().QpcFrequency; //
+                });
             }
 
             return STATUS_SUCCESS;
@@ -3639,7 +3633,7 @@ namespace
 
         if (timeout.value() && !t.await_time.has_value())
         {
-            t.await_time = utils::convert_delay_interval_to_time_point(timeout.read());
+            t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
         }
 
         c.win_emu.yield_thread();
@@ -3666,7 +3660,7 @@ namespace
 
         if (timeout.value() && !t.await_time.has_value())
         {
-            t.await_time = utils::convert_delay_interval_to_time_point(timeout.read());
+            t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
         }
 
         c.win_emu.yield_thread();
@@ -3703,7 +3697,7 @@ namespace
         }
 
         auto& t = c.win_emu.current_thread();
-        t.await_time = utils::convert_delay_interval_to_time_point(delay_interval.read());
+        t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), delay_interval.read());
 
         c.win_emu.yield_thread();
 
@@ -3745,7 +3739,7 @@ namespace
 
         if (timeout.value() && !t.await_time.has_value())
         {
-            t.await_time = utils::convert_delay_interval_to_time_point(timeout.read());
+            t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
         }
 
         c.win_emu.yield_thread();
