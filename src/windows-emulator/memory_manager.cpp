@@ -1,3 +1,4 @@
+#include "std_include.hpp"
 #include "memory_manager.hpp"
 
 #include "memory_region.hpp"

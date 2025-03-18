@@ -1,3 +1,4 @@
+#include "std_include.hpp"
 #include "process_context.hpp"
 
 #include "emulator_utils.hpp"

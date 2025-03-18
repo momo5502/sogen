@@ -1,3 +1,4 @@
+#include "std_include.hpp"
 #include "emulator_thread.hpp"
 
 #include "cpu_context.hpp"

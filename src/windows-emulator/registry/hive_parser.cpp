@@ -1,3 +1,4 @@
+#include "../std_include.hpp"
 #include "hive_parser.hpp"
 #include <utils/string.hpp>
 

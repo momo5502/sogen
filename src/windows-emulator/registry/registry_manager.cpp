@@ -1,3 +1,4 @@
+#include "../std_include.hpp"
 #include "registry_manager.hpp"
 
 #include <serialization_helper.hpp>
