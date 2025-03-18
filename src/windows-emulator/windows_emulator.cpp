@@ -86,7 +86,7 @@ namespace
         auto& emu = win_emu.emu();
         auto& context = win_emu.process;
 
-        const auto is_ready = thread.is_thread_ready(context, win_emu.steady_clock());
+        const auto is_ready = thread.is_thread_ready(context, win_emu.clock());
 
         if (!is_ready && !force)
         {
@@ -162,13 +162,13 @@ namespace
         return false;
     }
 
-    template <typename Clock>
-    struct instruction_tick_clock : utils::tick_clock<Clock>
+    struct instruction_tick_clock : utils::tick_clock
     {
         windows_emulator* win_emu_{};
 
-        instruction_tick_clock(windows_emulator& win_emu, const typename instruction_tick_clock::time_point start = {})
-            : utils::tick_clock<Clock>(start, 1000),
+        instruction_tick_clock(windows_emulator& win_emu, const system_time_point system_start = {},
+                               const steady_time_point steady_start = {})
+            : tick_clock(1000, system_start, steady_start),
               win_emu_(&win_emu)
         {
         }
@@ -184,24 +184,14 @@ namespace
         }
     };
 
-    std::unique_ptr<utils::steady_clock> get_steady_clock(windows_emulator& win_emu, const bool use_relative_time)
+    std::unique_ptr<utils::clock> get_clock(windows_emulator& win_emu, const bool use_relative_time)
     {
         if (use_relative_time)
         {
-            return std::make_unique<instruction_tick_clock<utils::steady_clock::base_clock>>(win_emu);
+            return std::make_unique<instruction_tick_clock>(win_emu);
         }
 
-        return std::make_unique<utils::steady_clock>();
-    }
-
-    std::unique_ptr<utils::system_clock> get_system_clock(windows_emulator& win_emu, const bool use_relative_time)
-    {
-        if (use_relative_time)
-        {
-            return std::make_unique<instruction_tick_clock<utils::system_clock::base_clock>>(win_emu);
-        }
-
-        return std::make_unique<utils::system_clock>();
+        return std::make_unique<utils::clock>();
     }
 }
 
@@ -222,14 +212,13 @@ windows_emulator::windows_emulator(application_settings app_settings, const emul
 
 windows_emulator::windows_emulator(const emulator_settings& settings, std::unique_ptr<x64_emulator> emu)
     : emu_(std::move(emu)),
-      system_clock_(get_system_clock(*this, settings.use_relative_time)),
-      steady_clock_(get_steady_clock(*this, settings.use_relative_time)),
+      clock_(get_clock(*this, settings.use_relative_time)),
       emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
       file_sys(emulation_root.empty() ? emulation_root : emulation_root / "filesys"),
       memory(*this->emu_),
       registry(emulation_root.empty() ? settings.registry_directory : emulation_root / "registry"),
       mod_manager(memory, file_sys, callbacks),
-      process(*this->emu_, memory, *this->system_clock_, callbacks)
+      process(*this->emu_, memory, *this->clock_, callbacks)
 {
     this->base_constructed_ = true;
 
@@ -502,7 +491,7 @@ void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
 
     while (true)
     {
-        if (this->switch_thread_ || !this->current_thread().is_thread_ready(this->process, this->steady_clock()))
+        if (this->switch_thread_ || !this->current_thread().is_thread_ready(this->process, this->clock()))
         {
             this->perform_thread_switch();
         }
@@ -569,12 +558,8 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
         return windows_emulator_wrapper{*this}; //
     });
 
-    buffer.register_factory<system_clock_wrapper>([this] {
-        return system_clock_wrapper{this->system_clock()}; //
-    });
-
-    buffer.register_factory<steady_clock_wrapper>([this] {
-        return steady_clock_wrapper{this->steady_clock()}; //
+    buffer.register_factory<clock_wrapper>([this] {
+        return clock_wrapper{this->clock()}; //
     });
 
     buffer.read(this->switch_thread_);

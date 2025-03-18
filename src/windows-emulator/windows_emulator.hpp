@@ -48,8 +48,7 @@ struct emulator_settings
 class windows_emulator
 {
     std::unique_ptr<x64_emulator> emu_{};
-    std::unique_ptr<utils::system_clock> system_clock_{};
-    std::unique_ptr<utils::steady_clock> steady_clock_{};
+    std::unique_ptr<utils::clock> clock_{};
 
   public:
     std::filesystem::path emulation_root{};
@@ -85,24 +84,14 @@ class windows_emulator
         return *this->emu_;
     }
 
-    utils::system_clock& system_clock()
+    utils::clock& clock()
     {
-        return *this->system_clock_;
+        return *this->clock_;
     }
 
-    const utils::system_clock& system_clock() const
+    const utils::clock& clock() const
     {
-        return *this->system_clock_;
-    }
-
-    utils::steady_clock& steady_clock()
-    {
-        return *this->steady_clock_;
-    }
-
-    const utils::steady_clock& steady_clock() const
-    {
-        return *this->steady_clock_;
+        return *this->clock_;
     }
 
     emulator_thread& current_thread() const

@@ -3,8 +3,7 @@
 
 namespace utils
 {
-    std::chrono::steady_clock::time_point convert_delay_interval_to_time_point(steady_clock& steady_time,
-                                                                               system_clock& system_time,
+    std::chrono::steady_clock::time_point convert_delay_interval_to_time_point(clock& c,
                                                                                const LARGE_INTEGER delay_interval)
     {
         if (delay_interval.QuadPart <= 0)
@@ -15,7 +14,7 @@ namespace utils
             const auto relative_duration =
                 std::chrono::microseconds(relative_ticks_in_ms) + std::chrono::nanoseconds(relative_fraction_ns);
 
-            return steady_time.now() + relative_duration;
+            return c.steady_now() + relative_duration;
         }
 
         const auto delay_seconds_since_1601 = delay_interval.QuadPart / HUNDRED_NANOSECONDS_IN_ONE_SECOND;
@@ -26,12 +25,12 @@ namespace utils
         const auto target_time = std::chrono::system_clock::from_time_t(delay_seconds_since_1970) +
                                  std::chrono::nanoseconds(delay_fraction_ns);
 
-        const auto now_system = system_time.now();
+        const auto now_system = c.system_now();
 
         const auto duration_until_target =
             std::chrono::duration_cast<std::chrono::microseconds>(target_time - now_system);
 
-        return steady_time.now() + duration_until_target;
+        return c.steady_now() + duration_until_target;
     }
 
     KSYSTEM_TIME convert_to_ksystem_time(const std::chrono::system_clock::time_point& tp)

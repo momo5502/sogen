@@ -70,7 +70,7 @@ namespace
         kusd.QpcData.QpcData = 0x0083;
         kusd.QpcData.QpcBypassEnabled = 0x83;
         kusd.QpcBias = 0x000000159530c4af;
-        kusd.QpcFrequency = utils::steady_clock::duration::period::den;
+        kusd.QpcFrequency = utils::clock::steady_duration::period::den;
 
         constexpr std::u16string_view root_dir{u"C:\\WINDOWS"};
         memcpy(&kusd.NtSystemRoot.arr[0], root_dir.data(), root_dir.size() * 2);
@@ -94,9 +94,9 @@ namespace utils
     }
 }
 
-kusd_mmio::kusd_mmio(memory_manager& memory, utils::system_clock& clock)
+kusd_mmio::kusd_mmio(memory_manager& memory, utils::clock& clock)
     : memory_(&memory),
-      system_clock_(&clock)
+      clock_(&clock)
 {
 }
 
@@ -106,7 +106,7 @@ kusd_mmio::~kusd_mmio()
 }
 
 kusd_mmio::kusd_mmio(utils::buffer_deserializer& buffer)
-    : kusd_mmio(buffer.read<memory_manager_wrapper>(), buffer.read<system_clock_wrapper>())
+    : kusd_mmio(buffer.read<memory_manager_wrapper>(), buffer.read<clock_wrapper>())
 {
 }
 
@@ -162,7 +162,7 @@ uint64_t kusd_mmio::address()
 
 void kusd_mmio::update()
 {
-    const auto time = this->system_clock_->now();
+    const auto time = this->clock_->system_now();
     utils::convert_to_ksystem_time(&this->kusd_.SystemTime, time);
 }
 

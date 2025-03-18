@@ -27,7 +27,7 @@ namespace
             if (performance_counter)
             {
                 performance_counter.access([&](LARGE_INTEGER& value) {
-                    value.QuadPart = c.win_emu.steady_clock().now().time_since_epoch().count();
+                    value.QuadPart = c.win_emu.clock().steady_now().time_since_epoch().count();
                 });
             }
 
@@ -3633,8 +3633,7 @@ namespace
 
         if (timeout.value() && !t.await_time.has_value())
         {
-            t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.steady_clock(),
-                                                                       c.win_emu.system_clock(), timeout.read());
+            t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
         }
 
         c.win_emu.yield_thread();
@@ -3661,8 +3660,7 @@ namespace
 
         if (timeout.value() && !t.await_time.has_value())
         {
-            t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.steady_clock(),
-                                                                       c.win_emu.system_clock(), timeout.read());
+            t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
         }
 
         c.win_emu.yield_thread();
@@ -3699,8 +3697,7 @@ namespace
         }
 
         auto& t = c.win_emu.current_thread();
-        t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.steady_clock(), c.win_emu.system_clock(),
-                                                                   delay_interval.read());
+        t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), delay_interval.read());
 
         c.win_emu.yield_thread();
 
@@ -3742,8 +3739,7 @@ namespace
 
         if (timeout.value() && !t.await_time.has_value())
         {
-            t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.steady_clock(),
-                                                                       c.win_emu.system_clock(), timeout.read());
+            t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
         }
 
         c.win_emu.yield_thread();

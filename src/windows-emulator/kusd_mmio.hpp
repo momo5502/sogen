@@ -13,7 +13,7 @@ class windows_emulator;
 class kusd_mmio
 {
   public:
-    kusd_mmio(memory_manager& memory, utils::system_clock& clock);
+    kusd_mmio(memory_manager& memory, utils::clock& clock);
     ~kusd_mmio();
 
     kusd_mmio(utils::buffer_deserializer& buffer);
@@ -42,7 +42,7 @@ class kusd_mmio
 
   private:
     memory_manager* memory_{};
-    utils::system_clock* system_clock_{};
+    utils::clock* clock_{};
 
     bool registered_{};
 

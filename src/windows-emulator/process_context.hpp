@@ -38,7 +38,7 @@ struct process_context
         utils::optional_function<void(handle h, emulator_thread& thr)> on_thread_terminated{};
     };
 
-    process_context(x64_emulator& emu, memory_manager& memory, utils::system_clock& clock, callbacks& cb)
+    process_context(x64_emulator& emu, memory_manager& memory, utils::clock& clock, callbacks& cb)
         : callbacks_(&cb),
           base_allocator(emu),
           peb(emu),
