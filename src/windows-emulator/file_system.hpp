@@ -7,9 +7,20 @@
 class file_system
 {
   public:
-    file_system(std::filesystem::path root)
-        : root_(std::move(root))
+    file_system(const std::filesystem::path& root)
+        : root_(canonical(root))
     {
+    }
+
+    static bool is_escaping_relative_path(const std::filesystem::path& p)
+    {
+        return p.empty() || *p.begin() == "..";
+    }
+
+    static bool is_subpath(const std::filesystem::path& normal_root, const std::filesystem::path& normal_target)
+    {
+        const auto relative_path = relative(normal_target, normal_root);
+        return !is_escaping_relative_path(relative_path);
     }
 
     std::filesystem::path translate(const windows_path& win_path) const
@@ -32,16 +43,25 @@ class file_system
         }
 #endif
 
-        // TODO: Sanitize path to prevent traversal!
-        return this->root_ / win_path.to_portable_path();
+        const char root_drive[2] = {win_path.get_drive().value_or('c'), 0};
+        const auto root = this->root_ / root_drive;
+
+        auto path = this->root_ / win_path.to_portable_path();
+        path = weakly_canonical(path);
+        if (is_subpath(root, path))
+        {
+            return path;
+        }
+
+        return root;
     }
 
     windows_path local_to_windows_path(const std::filesystem::path& local_path) const
     {
-        const auto absolute_local_path = absolute(local_path);
+        const auto absolute_local_path = weakly_canonical(absolute(local_path));
         const auto relative_path = relative(absolute_local_path, this->root_);
 
-        if (relative_path.empty() || *relative_path.begin() == "..")
+        if (is_escaping_relative_path(relative_path))
         {
             throw std::runtime_error("Path '" + local_path.string() + "' is not within the root filesystem!");
         }
