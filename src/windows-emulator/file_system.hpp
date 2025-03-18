@@ -44,7 +44,7 @@ class file_system
 #endif
 
         const char root_drive[2] = {win_path.get_drive().value_or('c'), 0};
-        const auto root = this->root_ / root_drive;
+        auto root = this->root_ / root_drive;
 
         auto path = this->root_ / win_path.to_portable_path();
         path = weakly_canonical(path);
