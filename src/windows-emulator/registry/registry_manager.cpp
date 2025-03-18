@@ -105,7 +105,7 @@ std::optional<registry_key> registry_manager::get_key(const utils::path_key& key
         return {std::move(reg_key)};
     }
 
-    const auto entry = iterator->second->get_sub_key(reg_key.path.get());
+    const auto* entry = iterator->second->get_sub_key(reg_key.path.get());
     if (!entry)
     {
         return std::nullopt;
@@ -124,7 +124,7 @@ std::optional<registry_value> registry_manager::get_value(const registry_key& ke
         return std::nullopt;
     }
 
-    auto* entry = iterator->second->get_value(key.path.get(), name);
+    const auto* entry = iterator->second->get_value(key.path.get(), name);
     if (!entry)
     {
         return std::nullopt;

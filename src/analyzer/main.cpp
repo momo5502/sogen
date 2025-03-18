@@ -164,7 +164,9 @@ namespace
                     static uint64_t count{0};
                     ++count;
                     if (count > 100 && count % 10000 != 0)
+                    {
                         return;
+                    }
                 }
 
                 win_emu.log.print(color::green,
@@ -184,7 +186,9 @@ namespace
                     static uint64_t count{0};
                     ++count;
                     if (count > 100 && count % 10000 != 0)
+                    {
                         return;
+                    }
                 }
 
                 win_emu.log.print(color::blue, "Writing to executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",

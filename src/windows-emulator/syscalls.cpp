@@ -375,7 +375,7 @@ namespace
     NTSTATUS handle_NtSetEvent(const syscall_context& c, const uint64_t handle,
                                const emulator_object<LONG> previous_state)
     {
-        const auto entry = c.proc.events.get(handle);
+        auto* entry = c.proc.events.get(handle);
         if (!entry)
         {
             return STATUS_INVALID_HANDLE;
@@ -427,7 +427,7 @@ namespace
 
         if (h.value.type == handle_types::thread)
         {
-            const auto t = c.proc.threads.get(h);
+            const auto* t = c.proc.threads.get(h);
             if (t == c.proc.active_thread && t->ref_count == 1)
             {
                 // TODO: Better handle ref counting
@@ -750,7 +750,7 @@ namespace
             return STATUS_SUCCESS;
         }
 
-        const auto section_entry = c.proc.sections.get(section_handle);
+        auto* section_entry = c.proc.sections.get(section_handle);
         if (!section_entry)
         {
             return STATUS_INVALID_HANDLE;
@@ -758,7 +758,7 @@ namespace
 
         if (section_entry->is_image())
         {
-            const auto binary = c.win_emu.mod_manager.map_module(section_entry->file_name, c.win_emu.log);
+            const auto* binary = c.win_emu.mod_manager.map_module(section_entry->file_name, c.win_emu.log);
             if (!binary)
             {
                 return STATUS_FILE_INVALID;
@@ -855,14 +855,14 @@ namespace
                 const auto region_info = c.win_emu.memory.get_region_info(base_address);
 
                 assert(!region_info.is_committed || region_info.is_reserved);
-
+                const auto state = region_info.is_reserved ? MEM_RESERVE : MEM_FREE;
+                image_info.State = region_info.is_committed ? MEM_COMMIT : state;
                 image_info.BaseAddress = reinterpret_cast<void*>(region_info.start);
                 image_info.AllocationBase = reinterpret_cast<void*>(region_info.allocation_base);
                 image_info.AllocationProtect = 0;
                 image_info.PartitionId = 0;
                 image_info.RegionSize = static_cast<int64_t>(region_info.length);
-                image_info.State =
-                    region_info.is_committed ? MEM_COMMIT : (region_info.is_reserved ? MEM_RESERVE : MEM_FREE);
+
                 image_info.Protect = map_emulator_to_nt_protection(region_info.permissions);
                 image_info.Type = MEM_PRIVATE;
             });
@@ -882,7 +882,7 @@ namespace
                 return STATUS_BUFFER_OVERFLOW;
             }
 
-            const auto mod = c.win_emu.mod_manager.find_by_address(base_address);
+            const auto* mod = c.win_emu.mod_manager.find_by_address(base_address);
             if (!mod)
             {
                 c.win_emu.log.error("Bad address for memory image request: 0x%" PRIx64 "\n", base_address);
@@ -893,7 +893,7 @@ namespace
 
             info.access([&](MEMORY_IMAGE_INFORMATION64& image_info) {
                 image_info.ImageBase = reinterpret_cast<void*>(mod->image_base);
-                image_info.SizeOfImage = mod->size_of_image;
+                image_info.SizeOfImage = static_cast<int64_t>(mod->size_of_image);
                 image_info.ImageFlags = 0;
             });
 
@@ -1998,11 +1998,11 @@ namespace
                 thread_iterator->second.teb->access([&](TEB64& teb) {
                     entry.ThreadId = teb.ClientId.UniqueThread;
 
-                    const auto tls_vector = teb.ThreadLocalStoragePointer;
+                    auto* tls_vector = teb.ThreadLocalStoragePointer;
 
                     if (tls_info.TlsRequest == ProcessTlsReplaceIndex)
                     {
-                        const auto tls_entry_ptr = tls_vector + tls_info.TlsIndex;
+                        auto* tls_entry_ptr = tls_vector + tls_info.TlsIndex;
 
                         const auto old_entry = c.emu.read_memory<EmulatorTraits<Emu64>::PVOID>(tls_entry_ptr);
                         c.emu.write_memory<EmulatorTraits<Emu64>::PVOID>(tls_entry_ptr, entry.TlsModulePointer);
@@ -2011,11 +2011,11 @@ namespace
                     }
                     else if (tls_info.TlsRequest == ProcessTlsReplaceVector)
                     {
-                        const auto new_tls_vector = entry.TlsVector;
+                        auto* new_tls_vector = entry.TlsVector;
 
                         for (uint32_t index = 0; index < tls_info.TlsVectorLength; ++index)
                         {
-                            const auto old_entry = c.emu.read_memory<void*>(tls_vector + index);
+                            auto* old_entry = c.emu.read_memory<void*>(tls_vector + index);
                             c.emu.write_memory<void*>(new_tls_vector + index, old_entry);
                         }
 
@@ -2270,7 +2270,7 @@ namespace
             const auto attributes = object_attributes.read();
             if (attributes.ObjectName)
             {
-                const auto name = read_unicode_string(
+                auto name = read_unicode_string(
                     c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
                 c.win_emu.log.print(color::dark_gray, "--> Section with name %s\n", u16_to_u8(name).c_str());
                 s.name = std::move(name);
@@ -2510,6 +2510,7 @@ namespace
             return STATUS_NOT_SUPPORTED;
         }
 
+        // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
         const uint8_t sid[] = {
             0x01, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x15, 0x00, 0x00, 0x00, 0x84, 0x94,
             0xD4, 0x04, 0x4B, 0x68, 0x42, 0x34, 0x23, 0xBE, 0x69, 0x4E, 0xE9, 0x03, 0x00, 0x00,
@@ -3229,7 +3230,7 @@ namespace
                 return STATUS_NOT_SUPPORTED;
             }
 
-            const auto file = c.proc.files.get(handle);
+            const auto* file = c.proc.files.get(handle);
             if (!file)
             {
                 return STATUS_INVALID_HANDLE;
