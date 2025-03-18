@@ -163,7 +163,7 @@ class windows_path
             throw std::runtime_error("Device path can not be computed for relative paths!");
         }
 
-        const auto drive_index = *this->drive_ - 'a';
+        const auto drive_index = this->drive_.value_or('a') - 'a';
         const auto drive_number = std::to_string(drive_index + 1);
         const std::u16string number(drive_number.begin(), drive_number.end());
 

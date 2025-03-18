@@ -2,6 +2,8 @@
 
 #include "../std_include.hpp"
 
+// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+
 typedef LONG TDI_STATUS;
 
 template <typename Traits>
@@ -171,3 +173,5 @@ struct AFD_POLL_INFO64
 #define AFD_NO_OPERATION                39
 #define AFD_VALIDATE_GROUP              40
 #define AFD_GET_UNACCEPTED_CONNECT_DATA 41
+
+// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)

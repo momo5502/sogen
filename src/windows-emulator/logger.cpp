@@ -73,17 +73,20 @@ namespace
 
     std::string_view format(va_list* ap, const char* message)
     {
-        thread_local char buffer[0x1000];
+        thread_local std::array<char, 0x1000> buffer{};
 
 #ifdef _WIN32
-        const int count = _vsnprintf_s(buffer, sizeof(buffer), sizeof(buffer), message, *ap);
+        const int count = _vsnprintf_s(buffer.data(), buffer.size(), buffer.size(), message, *ap);
 #else
-        const int count = vsnprintf(buffer, sizeof(buffer), message, *ap);
+        const int count = vsnprintf(buffer.data(), buffer.size(), message, *ap);
 #endif
 
         if (count < 0)
+        {
             return {};
-        return {buffer, static_cast<size_t>(count)};
+        }
+
+        return {buffer.data(), static_cast<size_t>(count)};
     }
 
 #define format_to_string(msg, str)     \
@@ -110,36 +113,42 @@ void logger::print(const color c, const std::string_view message) const
     print_colored(message, get_color_type(c));
 }
 
+// NOLINTNEXTLINE(cert-dcl50-cpp)
 void logger::print(const color c, const char* message, ...) const
 {
     format_to_string(message, data);
     this->print(c, data);
 }
 
+// NOLINTNEXTLINE(cert-dcl50-cpp)
 void logger::info(const char* message, ...) const
 {
     format_to_string(message, data);
     this->print(color::cyan, data);
 }
 
+// NOLINTNEXTLINE(cert-dcl50-cpp)
 void logger::warn(const char* message, ...) const
 {
     format_to_string(message, data);
     this->print(color::yellow, data);
 }
 
+// NOLINTNEXTLINE(cert-dcl50-cpp)
 void logger::error(const char* message, ...) const
 {
     format_to_string(message, data);
     this->print(color::red, data);
 }
 
+// NOLINTNEXTLINE(cert-dcl50-cpp)
 void logger::success(const char* message, ...) const
 {
     format_to_string(message, data);
     this->print(color::green, data);
 }
 
+// NOLINTNEXTLINE(cert-dcl50-cpp)
 void logger::log(const char* message, ...) const
 {
     format_to_string(message, data);

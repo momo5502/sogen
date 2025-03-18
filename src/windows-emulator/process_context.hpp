@@ -50,8 +50,7 @@ struct process_context
     void setup(x64_emulator& emu, memory_manager& memory, const application_settings& app_settings,
                const mapped_module& executable, const mapped_module& ntdll, const apiset::container& apiset_container);
 
-    handle create_thread(memory_manager& memory, const uint64_t start_address, const uint64_t argument,
-                         const uint64_t stack_size);
+    handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size);
 
     void serialize(utils::buffer_serializer& buffer) const;
     void deserialize(utils::buffer_deserializer& buffer);
