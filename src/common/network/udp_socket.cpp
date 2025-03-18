@@ -1,4 +1,5 @@
 #include "udp_socket.hpp"
+#include <array>
 
 namespace network
 {
@@ -31,17 +32,17 @@ namespace network
 
     std::optional<std::pair<address, std::string>> udp_socket::receive() const
     {
-        char buffer[0x2000];
+        std::array<char, 0x2000> buffer{};
         address source{};
         auto len = source.get_max_size();
 
         const auto result =
-            recvfrom(this->get_socket(), buffer, static_cast<int>(sizeof(buffer)), 0, &source.get_addr(), &len);
+            recvfrom(this->get_socket(), buffer.data(), static_cast<int>(buffer.size()), 0, &source.get_addr(), &len);
         if (result == SOCKET_ERROR)
         {
             return std::nullopt;
         }
 
-        return {{source, std::string(buffer, result)}};
+        return {{source, std::string(buffer.data(), static_cast<size_t>(result))}};
     }
 }

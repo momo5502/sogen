@@ -499,8 +499,8 @@ namespace utils
 
         std::optional<size_t> get_diff(const buffer_serializer& other) const
         {
-            auto& b1 = this->get_buffer();
-            auto& b2 = other.get_buffer();
+            const auto& b1 = this->get_buffer();
+            const auto& b2 = other.get_buffer();
 
             const auto s1 = b1.size();
             const auto s2 = b2.size();

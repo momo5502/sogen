@@ -4,7 +4,9 @@
 #pragma warning(push)
 #pragma warning(disable : 4201) // nameless struct/union
 #pragma warning(disable : 4702) // unreachable code
-#else
+#endif
+
+#if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
 #endif
@@ -24,8 +26,10 @@
 #include "network.hpp"
 #include "threading.hpp"
 
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
 #ifdef OS_WINDOWS
 #pragma warning(pop)
-#else
-#pragma GCC diagnostic pop
 #endif

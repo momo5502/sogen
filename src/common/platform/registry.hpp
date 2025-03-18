@@ -1,5 +1,7 @@
 #pragma once
 
+// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+
 typedef enum _KEY_INFORMATION_CLASS
 {
     KeyBasicInformation,          // KEY_BASIC_INFORMATION
@@ -77,3 +79,5 @@ struct KEY_VALUE_FULL_INFORMATION
     ULONG NameLength;
     char16_t Name[1];
 };
+
+// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)

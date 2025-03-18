@@ -43,8 +43,8 @@ class file_system
         }
 #endif
 
-        const char root_drive[2] = {win_path.get_drive().value_or('c'), 0};
-        auto root = this->root_ / root_drive;
+        const std::array<char, 2> root_drive{win_path.get_drive().value_or('c'), 0};
+        auto root = this->root_ / root_drive.data();
 
         auto path = this->root_ / win_path.to_portable_path();
         path = weakly_canonical(path);

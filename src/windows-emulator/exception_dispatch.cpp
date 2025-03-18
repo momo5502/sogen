@@ -1,8 +1,7 @@
+#include "std_include.hpp"
 #include "exception_dispatch.hpp"
 #include "process_context.hpp"
 #include "cpu_context.hpp"
-
-#include <platform/status.hpp>
 
 namespace
 {

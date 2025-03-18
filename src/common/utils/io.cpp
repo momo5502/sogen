@@ -51,12 +51,17 @@ namespace utils::io
     bool read_file(const std::filesystem::path& file, std::vector<uint8_t>* data)
     {
         if (!data)
+        {
             return false;
+        }
+
         data->clear();
 
         std::ifstream stream(file, std::ios::binary);
         if (!stream)
+        {
             return false;
+        }
 
         *data = std::vector<uint8_t>{(std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>()};
         return true;
@@ -108,14 +113,14 @@ namespace utils::io
 
         if (recursive)
         {
-            for (auto& file : std::filesystem::recursive_directory_iterator(directory, code))
+            for (const auto& file : std::filesystem::recursive_directory_iterator(directory, code))
             {
                 files.push_back(file.path());
             }
         }
         else
         {
-            for (auto& file : std::filesystem::directory_iterator(directory, code))
+            for (const auto& file : std::filesystem::directory_iterator(directory, code))
             {
                 files.push_back(file.path());
             }

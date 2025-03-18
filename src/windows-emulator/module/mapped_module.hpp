@@ -41,7 +41,7 @@ struct mapped_module
 
     uint64_t find_export(const std::string_view export_name) const
     {
-        for (auto& symbol : this->exports)
+        for (const auto& symbol : this->exports)
         {
             if (symbol.name == export_name)
             {

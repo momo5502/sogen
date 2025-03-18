@@ -1,3 +1,4 @@
+#include "../std_include.hpp"
 #include "mount_point_manager.hpp"
 
 #include "../windows_emulator.hpp"

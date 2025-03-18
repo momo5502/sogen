@@ -138,7 +138,7 @@ namespace cpu_context
             }
         }
 
-        if ((context.ContextFlags & CONTEXT_XSTATE_64) == CONTEXT_INTEGER_64)
+        if ((context.ContextFlags & CONTEXT_INTEGER_64) == CONTEXT_INTEGER_64)
         {
             context.MxCsr = emu.reg<uint32_t>(x64_register::mxcsr);
             for (int i = 0; i < 16; i++)

@@ -62,4 +62,5 @@
 
 #include "platform/platform.hpp"
 
+// NOLINTNEXTLINE(google-global-names-in-headers)
 using namespace std::literals;

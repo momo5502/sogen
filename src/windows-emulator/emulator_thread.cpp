@@ -1,3 +1,4 @@
+#include "std_include.hpp"
 #include "emulator_thread.hpp"
 
 #include "cpu_context.hpp"
@@ -219,6 +220,11 @@ bool emulator_thread::is_thread_ready(process_context& process, utils::clock& cl
 
 void emulator_thread::setup_registers(x64_emulator& emu, const process_context& context) const
 {
+    if (!this->gs_segment)
+    {
+        throw std::runtime_error("Missing GS segment");
+    }
+
     setup_stack(emu, this->stack_base, this->stack_size);
     setup_gs_segment(emu, *this->gs_segment);
 

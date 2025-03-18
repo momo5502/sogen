@@ -1,3 +1,4 @@
+#include "../std_include.hpp"
 #include "hive_parser.hpp"
 #include <utils/string.hpp>
 
@@ -7,6 +8,8 @@ namespace
 {
     constexpr uint64_t MAIN_ROOT_OFFSET = 0x1000;
     constexpr uint64_t MAIN_KEY_BLOCK_OFFSET = MAIN_ROOT_OFFSET + 0x20;
+
+    // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
     struct offset_entry_t
     {
@@ -51,6 +54,8 @@ namespace
         int16_t dummy;
         char name[255];
     };
+
+    // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
     bool read_file_data_safe(std::ifstream& file, const uint64_t offset, void* buffer, const size_t size)
     {
@@ -170,7 +175,7 @@ void hive_key::parse(std::ifstream& file)
         const auto offset = read_file_object<int>(file, MAIN_ROOT_OFFSET + this->value_offsets_ + 4, i);
         const auto value = read_file_object<value_block_t>(file, MAIN_ROOT_OFFSET + offset);
 
-        std::string value_name(value.name, std::min(value.name_len, static_cast<short>(sizeof(value.name))));
+        std::string value_name(value.name, std::min(value.name_len, static_cast<int16_t>(sizeof(value.name))));
 
         raw_hive_value raw_value{};
         raw_value.parsed = false;
@@ -199,7 +204,7 @@ void hive_key::parse(std::ifstream& file)
 
     const auto entry_offsets = this->subkey_block_offset_ + offsetof(offsets_t, entries);
 
-    for (short i = 0; i < item.count; ++i)
+    for (int16_t i = 0; i < item.count; ++i)
     {
         const auto offset_entry = read_file_object<offset_entry_t>(file, MAIN_ROOT_OFFSET + entry_offsets, i);
 

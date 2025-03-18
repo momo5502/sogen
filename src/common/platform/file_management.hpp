@@ -1,5 +1,7 @@
 #pragma once
 
+// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+
 #define ACCESS_MASK              DWORD
 #define DEVICE_TYPE              DWORD
 
@@ -408,3 +410,5 @@ typedef struct _REMOTE_PORT_VIEW64
     EMULATOR_CAST(std::int64_t, SIZE_T) ViewSize;
     EmulatorTraits<Emu64>::PVOID ViewBase;
 } REMOTE_PORT_VIEW64, *PREMOTE_PORT_VIEW64;
+
+// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)

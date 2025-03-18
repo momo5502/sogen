@@ -24,7 +24,7 @@ namespace utils::string
 
     inline wchar_t char_to_lower(const wchar_t val)
     {
-        return std::towlower(val);
+        return static_cast<wchar_t>(std::towlower(val));
     }
 
     template <class Elem, class Traits, class Alloc>

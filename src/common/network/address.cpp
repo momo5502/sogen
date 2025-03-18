@@ -1,5 +1,6 @@
 #include "address.hpp"
 
+#include <array>
 #include <stdexcept>
 
 #include "../utils/finally.hpp"
@@ -125,7 +126,7 @@ namespace network
         }
     }
 
-    void address::set_port(const unsigned short port)
+    void address::set_port(const uint16_t port)
     {
         switch (this->get_family())
         {
@@ -140,7 +141,7 @@ namespace network
         }
     }
 
-    unsigned short address::get_port() const
+    uint16_t address::get_port() const
     {
         switch (this->get_family())
         {
@@ -155,27 +156,27 @@ namespace network
 
     std::string address::to_string() const
     {
-        char buffer[1000] = {};
-        std::string addr;
+        std::string addr{};
+        std::array<char, 1000> buffer{};
 
         switch (this->get_family())
         {
         case AF_INET:
-            inet_ntop(this->get_family(), &this->address4_.sin_addr, buffer, sizeof(buffer));
-            addr = std::string(buffer);
+            inet_ntop(this->get_family(), &this->address4_.sin_addr, buffer.data(), buffer.size());
+            addr = std::string(buffer.data());
             break;
         case AF_INET6:
-            inet_ntop(this->get_family(), &this->address6_.sin6_addr, buffer, sizeof(buffer));
-            addr = "[" + std::string(buffer) + "]";
+            inet_ntop(this->get_family(), &this->address6_.sin6_addr, buffer.data(), buffer.size());
+            addr = "[" + std::string(buffer.data()) + "]";
             break;
         default:
             buffer[0] = '?';
             buffer[1] = 0;
-            addr = std::string(buffer);
+            addr = std::string(buffer.data());
             break;
         }
 
-        return addr + ":"s + std::to_string(this->get_port());
+        return addr + ":" + std::to_string(this->get_port());
     }
 
     bool address::is_local() const
@@ -187,8 +188,8 @@ namespace network
 
         // According to: https://en.wikipedia.org/wiki/Private_network
 
-        uint8_t bytes[4];
-        memcpy(bytes, &this->address4_.sin_addr.s_addr, sizeof(bytes));
+        std::array<uint8_t, 4> bytes{};
+        memcpy(bytes.data(), &this->address4_.sin_addr.s_addr, bytes.size());
 
         // 10.X.X.X
         if (bytes[0] == 10)
@@ -346,7 +347,7 @@ namespace network
                 {
                     address a{};
                     a.set_address(i->ai_addr, static_cast<socklen_t>(i->ai_addrlen));
-                    results.emplace_back(std::move(a));
+                    results.emplace_back(a);
                 }
             }
         }
@@ -371,6 +372,8 @@ std::size_t std::hash<network::address>::operator()(const network::address& a) c
         hash ^= std::hash<std::string_view>{}(
             std::string_view{reinterpret_cast<const char*>(a.get_in6_addr().sin6_addr.s6_addr),
                              sizeof(a.get_in6_addr().sin6_addr.s6_addr)});
+        break;
+    default:
         break;
     }
 

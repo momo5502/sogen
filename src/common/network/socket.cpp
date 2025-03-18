@@ -71,11 +71,13 @@ namespace network
         }
     }
 
+    // NOLINTNEXTLINE(readability-make-member-function-const)
     bool socket::bind(const address& target)
     {
         return ::bind(this->socket_, &target.get_addr(), target.get_size()) == 0;
     }
 
+    // NOLINTNEXTLINE(readability-make-member-function-const)
     bool socket::set_blocking(const bool blocking)
     {
         return socket::set_blocking(this->socket_, blocking);
@@ -89,7 +91,10 @@ namespace network
 #else
         int flags = fcntl(s, F_GETFL, 0);
         if (flags == -1)
+        {
             return false;
+        }
+
         flags = blocking ? (flags & ~O_NONBLOCK) : (flags | O_NONBLOCK);
         return fcntl(s, F_SETFL, flags) == 0;
 #endif
@@ -97,30 +102,6 @@ namespace network
 
     bool socket::sleep(const std::chrono::milliseconds timeout, const bool in_poll) const
     {
-        /*fd_set fdr;
-        FD_ZERO(&fdr);
-        FD_SET(this->socket_, &fdr);
-
-        const auto msec = timeout.count();
-
-        timeval tv{};
-        tv.tv_sec = static_cast<long>(msec / 1000ll);
-        tv.tv_usec = static_cast<long>((msec % 1000) * 1000);
-
-        const auto retval = select(static_cast<int>(this->socket_) + 1, &fdr, nullptr, nullptr, &tv);
-        if (retval == SOCKET_ERROR)
-        {
-            std::this_thread::sleep_for(1ms);
-            return socket_is_ready;
-        }
-
-        if (retval > 0)
-        {
-            return socket_is_ready;
-        }
-
-        return !socket_is_ready;*/
-
         std::vector<const socket*> sockets{};
         sockets.push_back(this);
 

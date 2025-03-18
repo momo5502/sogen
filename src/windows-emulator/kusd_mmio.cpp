@@ -1,3 +1,4 @@
+#include "std_include.hpp"
 #include "kusd_mmio.hpp"
 #include <utils/time.hpp>
 #include "windows_emulator.hpp"

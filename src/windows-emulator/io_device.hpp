@@ -151,7 +151,7 @@ class io_device_container : public io_device
     void work(windows_emulator& win_emu) override
     {
         this->assert_validity();
-        return this->device_->work(win_emu);
+        this->device_->work(win_emu);
     }
 
     void serialize_object(utils::buffer_serializer& buffer) const override

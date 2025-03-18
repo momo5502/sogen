@@ -292,7 +292,7 @@ void windows_emulator::perform_thread_switch()
 
 bool windows_emulator::activate_thread(const uint32_t id)
 {
-    const auto thread = get_thread_by_id(this->process, id);
+    auto* thread = get_thread_by_id(this->process, id);
     if (!thread)
     {
         return false;
@@ -576,6 +576,7 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
     this->dispatcher.deserialize(buffer);
 }
 
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 void windows_emulator::save_snapshot()
 {
     throw std::runtime_error("Not supported");
@@ -591,6 +592,7 @@ void windows_emulator::save_snapshot()
     // this->process_snapshot_ = this->process;*/
 }
 
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 void windows_emulator::restore_snapshot()
 {
     throw std::runtime_error("Not supported");

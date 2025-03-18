@@ -9,11 +9,11 @@ namespace
 {
     uint64_t get_first_section_offset(const PENTHeaders_t<std::uint64_t>& nt_headers, const uint64_t nt_headers_offset)
     {
-        const uint8_t* nt_headers_addr = reinterpret_cast<const uint8_t*>(&nt_headers);
+        const auto* nt_headers_addr = reinterpret_cast<const uint8_t*>(&nt_headers);
         size_t optional_header_offset =
             reinterpret_cast<uintptr_t>(&(nt_headers.OptionalHeader)) - reinterpret_cast<uintptr_t>(&nt_headers);
         size_t optional_header_size = nt_headers.FileHeader.SizeOfOptionalHeader;
-        const uint8_t* first_section_addr = nt_headers_addr + optional_header_offset + optional_header_size;
+        const auto* first_section_addr = nt_headers_addr + optional_header_offset + optional_header_size;
 
         const auto first_section_absolute = reinterpret_cast<uint64_t>(first_section_addr);
         const auto absolute_base = reinterpret_cast<uint64_t>(&nt_headers);
@@ -32,7 +32,7 @@ namespace
     void collect_exports(mapped_module& binary, const utils::safe_buffer_accessor<const uint8_t> buffer,
                          const PEOptionalHeader_t<std::uint64_t>& optional_header)
     {
-        auto& export_directory_entry = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+        const auto& export_directory_entry = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
         if (export_directory_entry.VirtualAddress == 0 || export_directory_entry.Size == 0)
         {
             return;
@@ -88,7 +88,7 @@ namespace
             return;
         }
 
-        const auto directory = &optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
+        const auto* directory = &optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
         if (directory->Size == 0)
         {
             return;
@@ -209,7 +209,7 @@ mapped_module map_module_from_data(memory_manager& memory, const std::span<const
     const auto nt_headers_offset = dos_header.e_lfanew;
 
     const auto nt_headers = buffer.as<PENTHeaders_t<std::uint64_t>>(nt_headers_offset).get();
-    auto& optional_header = nt_headers.OptionalHeader;
+    const auto& optional_header = nt_headers.OptionalHeader;
 
     if (nt_headers.FileHeader.Machine != PEMachineType::AMD64)
     {

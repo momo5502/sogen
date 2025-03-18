@@ -42,7 +42,7 @@ class hive_key
         return &entry->second;
     }
 
-    const hive_value* get_value(std::ifstream& file, const std::string_view name);
+    const hive_value* get_value(std::ifstream& file, std::string_view name);
 
   private:
     struct raw_hive_value : hive_value

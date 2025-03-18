@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+
 #define IMAGE_DIRECTORY_ENTRY_EXPORT          0 // Export Directory
 #define IMAGE_DIRECTORY_ENTRY_IMPORT          1 // Import Directory
 #define IMAGE_DIRECTORY_ENTRY_RESOURCE        2 // Resource Directory
@@ -339,3 +341,5 @@ struct SECTION_IMAGE_INFORMATION
     ULONG ImageFileSize;
     ULONG CheckSum;
 };
+
+// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
