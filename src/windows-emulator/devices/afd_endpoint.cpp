@@ -11,6 +11,8 @@
 
 namespace
 {
+    // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+
     struct afd_creation_data
     {
         uint64_t unk1;
@@ -45,6 +47,8 @@ namespace
         uint32_t sin6_scope_id;
     };
 
+    // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+
     static_assert(sizeof(win_sockaddr) == 16);
     static_assert(sizeof(win_sockaddr_in) == 16);
     static_assert(sizeof(win_sockaddr_in6) == 28);
@@ -77,7 +81,7 @@ namespace
 
     int16_t translate_host_to_win_address_family(const int host_af)
     {
-        for (auto& entry : address_family_map)
+        for (const auto& entry : address_family_map)
         {
             if (entry.second == host_af)
             {
@@ -130,7 +134,7 @@ namespace
             win_addr.sin_port = htons(win_emu.get_emulator_port(a.get_port()));
             memcpy(&win_addr.sin_addr, &a.get_in_addr().sin_addr, sizeof(win_addr.sin_addr));
 
-            const auto ptr = reinterpret_cast<std::byte*>(&win_addr);
+            const auto* ptr = reinterpret_cast<std::byte*>(&win_addr);
             return {ptr, ptr + sizeof(win_addr)};
         }
 
@@ -140,12 +144,12 @@ namespace
             win_addr.sin6_family = translate_host_to_win_address_family(a.get_family());
             win_addr.sin6_port = htons(win_emu.get_emulator_port(a.get_port()));
 
-            auto& addr = a.get_in6_addr();
+            const auto& addr = a.get_in6_addr();
             memcpy(&win_addr.sin6_addr, &addr.sin6_addr, sizeof(win_addr.sin6_addr));
             win_addr.sin6_flowinfo = addr.sin6_flowinfo;
             win_addr.sin6_scope_id = addr.sin6_scope_id;
 
-            const auto ptr = reinterpret_cast<std::byte*>(&win_addr);
+            const auto* ptr = reinterpret_cast<std::byte*>(&win_addr);
             return {ptr, ptr + sizeof(win_addr)};
         }
 
@@ -241,7 +245,7 @@ namespace
             handle_info.emplace_back(handle_info_obj.read(i));
         }
 
-        return {std::move(poll_info), std::move(handle_info)};
+        return {poll_info, std::move(handle_info)};
     }
 
     int16_t map_afd_request_events_to_socket(const ULONG poll_events)
@@ -317,7 +321,7 @@ namespace
         for (size_t i = 0; i < endpoints.size() && i < handles.size(); ++i)
         {
             auto& pfd = poll_data.at(i);
-            auto& handle = handles[i];
+            const auto& handle = handles[i];
 
             pfd.fd = endpoints[i];
             pfd.events = map_afd_request_events_to_socket(handle.PollEvents);
@@ -525,6 +529,11 @@ namespace
 
         NTSTATUS ioctl_bind(windows_emulator& win_emu, const io_device_context& c) const
         {
+            if (!this->s_)
+            {
+                throw std::runtime_error("Invalid AFD endpoint socket!");
+            }
+
             auto data = win_emu.emu().read_memory(c.input_buffer, c.input_buffer_length);
 
             constexpr auto address_offset = 4;
@@ -561,9 +570,9 @@ namespace
                 }
 
                 const auto* endpoint = device->get_internal_device<afd_endpoint>();
-                if (!endpoint)
+                if (!endpoint || !endpoint->s_)
                 {
-                    throw std::runtime_error("Device is not an AFD endpoint!");
+                    throw std::runtime_error("Invalid AFD endpoint!");
                 }
 
                 endpoints.push_back(*endpoint->s_);
@@ -604,6 +613,11 @@ namespace
 
         NTSTATUS ioctl_receive_datagram(windows_emulator& win_emu, const io_device_context& c)
         {
+            if (!this->s_)
+            {
+                throw std::runtime_error("Invalid AFD endpoint socket!");
+            }
+
             auto& emu = win_emu.emu();
 
             if (c.input_buffer_length < sizeof(AFD_RECV_DATAGRAM_INFO<EmulatorTraits<Emu64>>))
@@ -668,6 +682,11 @@ namespace
 
         NTSTATUS ioctl_send_datagram(windows_emulator& win_emu, const io_device_context& c)
         {
+            if (!this->s_)
+            {
+                throw std::runtime_error("Invalid AFD endpoint socket!");
+            }
+
             const auto& emu = win_emu.emu();
 
             if (c.input_buffer_length < sizeof(AFD_SEND_DATAGRAM_INFO<EmulatorTraits<Emu64>>))

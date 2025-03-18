@@ -44,7 +44,10 @@ namespace apiset
         {
             auto buffer = utils::compression::zlib::decompress(apiset);
             if (buffer.empty())
+            {
                 throw std::runtime_error("Failed to decompress API-SET");
+            }
+
             return buffer;
         }
 
@@ -66,7 +69,10 @@ namespace apiset
             case location::file: {
                 const auto apiset = utils::io::read_file(root / "api-set.bin");
                 if (apiset.empty())
+                {
                     throw std::runtime_error("Failed to read file api-set.bin");
+                }
+
                 return decompress_apiset(apiset);
             }
             case location::default_windows_10: {
@@ -123,9 +129,9 @@ namespace apiset
             api_set.HashOffset = static_cast<ULONG>(hash_entries_obj.value() - api_set_map_obj.value());
         });
 
-        const auto orig_ns_entries =
+        const auto* orig_ns_entries =
             offset_pointer<API_SET_NAMESPACE_ENTRY>(&orig_api_set_map, orig_api_set_map.EntryOffset);
-        const auto orig_hash_entries =
+        const auto* orig_hash_entries =
             offset_pointer<API_SET_HASH_ENTRY>(&orig_api_set_map, orig_api_set_map.HashOffset);
 
         for (ULONG i = 0; i < orig_api_set_map.Count; ++i)
@@ -142,7 +148,7 @@ namespace apiset
             }
 
             const auto values_obj = allocator.reserve<API_SET_VALUE_ENTRY>(ns_entry.ValueCount);
-            const auto orig_values = offset_pointer<API_SET_VALUE_ENTRY>(&orig_api_set_map, ns_entry.ValueOffset);
+            const auto* orig_values = offset_pointer<API_SET_VALUE_ENTRY>(&orig_api_set_map, ns_entry.ValueOffset);
 
             ns_entry.ValueOffset = static_cast<ULONG>(values_obj.value() - api_set_map_obj.value());
 
