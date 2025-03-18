@@ -13,7 +13,7 @@ namespace utils
     class final_action
     {
       public:
-        static_assert(!std::is_reference<F>::value && !std::is_const<F>::value && !std::is_volatile<F>::value,
+        static_assert(!std::is_reference_v<F> && !std::is_const_v<F> && !std::is_volatile_v<F>,
                       "Final_action should store its callable by value");
 
         explicit final_action(F f) noexcept
@@ -33,14 +33,16 @@ namespace utils
 
         ~final_action() noexcept
         {
-            if (invoke_)
-                f_();
+            if (this->invoke_)
+            {
+                this->f_();
+            }
         }
 
         // Added by momo5502
         void cancel()
         {
-            invoke_ = false;
+            this->invoke_ = false;
         }
 
       private:
@@ -49,8 +51,8 @@ namespace utils
     };
 
     template <class F>
-    final_action<typename std::remove_cv<typename std::remove_reference<F>::type>::type> finally(F&& f) noexcept
+    final_action<std::remove_cv_t<std::remove_reference_t<F>>> finally(F&& f) noexcept
     {
-        return final_action<typename std::remove_cv<typename std::remove_reference<F>::type>::type>(std::forward<F>(f));
+        return final_action<std::remove_cv_t<std::remove_reference_t<F>>>(std::forward<F>(f));
     }
 }
