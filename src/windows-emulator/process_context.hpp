@@ -58,7 +58,6 @@ struct process_context
 
     callbacks* callbacks_{};
 
-    uint64_t executed_instructions{0};
     uint64_t current_ip{0};
     uint64_t previous_ip{0};
 

@@ -47,6 +47,8 @@ struct emulator_settings
 
 class windows_emulator
 {
+    uint64_t executed_instructions_{0};
+
     std::unique_ptr<x64_emulator> emu_{};
     std::unique_ptr<utils::clock> clock_{};
 
@@ -104,6 +106,11 @@ class windows_emulator
         return *this->process.active_thread;
     }
 
+    uint64_t get_executed_instructions() const
+    {
+        return this->executed_instructions_;
+    }
+
     void start(std::chrono::nanoseconds timeout = {}, size_t count = 0);
 
     void serialize(utils::buffer_serializer& buffer) const;
@@ -159,8 +166,6 @@ class windows_emulator
     void yield_thread();
     void perform_thread_switch();
     bool activate_thread(uint32_t id);
-
-    bool base_constructed_{false};
 
   private:
     bool switch_thread_{false};

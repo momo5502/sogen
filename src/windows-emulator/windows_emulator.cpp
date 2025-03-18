@@ -164,31 +164,26 @@ namespace
 
     struct instruction_tick_clock : utils::tick_clock
     {
-        windows_emulator* win_emu_{};
+        const uint64_t* instructions_{};
 
-        instruction_tick_clock(windows_emulator& win_emu, const system_time_point system_start = {},
+        instruction_tick_clock(const uint64_t& instructions, const system_time_point system_start = {},
                                const steady_time_point steady_start = {})
             : tick_clock(1000, system_start, steady_start),
-              win_emu_(&win_emu)
+              instructions_(&instructions)
         {
         }
 
         uint64_t ticks() override
         {
-            if (!this->win_emu_->base_constructed_) // TODO: Remove that
-            {
-                throw std::runtime_error("Requesting ticks before construction!");
-            }
-
-            return this->win_emu_->process.executed_instructions;
+            return *this->instructions_;
         }
     };
 
-    std::unique_ptr<utils::clock> get_clock(windows_emulator& win_emu, const bool use_relative_time)
+    std::unique_ptr<utils::clock> get_clock(const uint64_t& instructions, const bool use_relative_time)
     {
         if (use_relative_time)
         {
-            return std::make_unique<instruction_tick_clock>(win_emu);
+            return std::make_unique<instruction_tick_clock>(instructions);
         }
 
         return std::make_unique<utils::clock>();
@@ -212,7 +207,7 @@ windows_emulator::windows_emulator(application_settings app_settings, const emul
 
 windows_emulator::windows_emulator(const emulator_settings& settings, std::unique_ptr<x64_emulator> emu)
     : emu_(std::move(emu)),
-      clock_(get_clock(*this, settings.use_relative_time)),
+      clock_(get_clock(this->executed_instructions_, settings.use_relative_time)),
       emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
       file_sys(emulation_root.empty() ? emulation_root : emulation_root / "filesys"),
       memory(*this->emu_),
@@ -220,8 +215,6 @@ windows_emulator::windows_emulator(const emulator_settings& settings, std::uniqu
       mod_manager(memory, file_sys, callbacks),
       process(*this->emu_, memory, *this->clock_, callbacks)
 {
-    this->base_constructed_ = true;
-
 #ifndef OS_WINDOWS
     if (this->emulation_root.empty())
     {
@@ -288,7 +281,7 @@ void windows_emulator::perform_thread_switch()
     {
         if (this->use_relative_time_)
         {
-            this->process.executed_instructions += MAX_INSTRUCTIONS_PER_TIME_SLICE;
+            this->executed_instructions_ += MAX_INSTRUCTIONS_PER_TIME_SLICE;
         }
         else
         {
@@ -312,7 +305,7 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
 {
     auto& thread = this->current_thread();
 
-    ++this->process.executed_instructions;
+    ++this->executed_instructions_;
     const auto thread_insts = ++thread.executed_instructions;
     if (thread_insts % MAX_INSTRUCTIONS_PER_TIME_SLICE == 0)
     {
@@ -403,7 +396,7 @@ void windows_emulator::setup_hooks()
     });
 
     this->emu().hook_instruction(x64_hookable_instructions::rdtsc, [&] {
-        const auto instructions = this->process.executed_instructions;
+        const auto instructions = this->executed_instructions_;
         this->emu().reg(x64_register::rax, instructions & 0xFFFFFFFF);
         this->emu().reg(x64_register::rdx, (instructions >> 32) & 0xFFFFFFFF);
         return instruction_hook_continuation::skip_instruction;
@@ -484,7 +477,7 @@ void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
     const auto use_timeout = timeout != std::chrono::nanoseconds{};
 
     const auto start_time = std::chrono::high_resolution_clock::now();
-    const auto start_instructions = this->process.executed_instructions;
+    const auto start_instructions = this->executed_instructions_;
 
     const auto target_time = start_time + timeout;
     const auto target_instructions = start_instructions + count;
@@ -517,7 +510,7 @@ void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
 
         if (use_count)
         {
-            const auto current_instructions = this->process.executed_instructions;
+            const auto current_instructions = this->executed_instructions_;
 
             if (current_instructions >= target_instructions)
             {
@@ -531,6 +524,7 @@ void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
 
 void windows_emulator::serialize(utils::buffer_serializer& buffer) const
 {
+    buffer.write(this->executed_instructions_);
     buffer.write(this->switch_thread_);
     buffer.write(this->use_relative_time_);
     this->emu().serialize_state(buffer, false);
@@ -562,6 +556,7 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
         return clock_wrapper{this->clock()}; //
     });
 
+    buffer.read(this->executed_instructions_);
     buffer.read(this->switch_thread_);
 
     const auto old_relative_time = this->use_relative_time_;
