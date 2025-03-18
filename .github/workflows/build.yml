@@ -24,6 +24,35 @@ on:
 #  cancel-in-progress: true
 
 jobs:
+  clang-tidy:
+      name: Run Clang Tidy
+      runs-on: ubuntu-24.04
+      steps:
+        - name: Checkout Source
+          uses: actions/checkout@v4
+          with:
+            submodules: recursive
+
+        - name: Install Ninja
+          uses: seanmiddleditch/gha-setup-ninja@v6
+
+        - name: Install Clang
+          run: |
+            wget https://apt.llvm.org/llvm.sh
+            chmod +x llvm.sh
+            sudo ./llvm.sh 20
+            sudo apt install -y clang-tidy-20
+
+        - name: CMake Build
+          run: cmake --preset=${{matrix.preset}} -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/cmake/toolchain/android-ndk.cmake && cmake --build --preset=${{matrix.preset}}
+          if: ${{ startsWith(matrix.platform, 'Android') }}
+          env:
+            ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+            ANDROID_ABI: ${{matrix.abi}}
+
+        - name: CMake Build
+          run: cmake --preset=release -DMOMO_ENABLE_CLANG_TIDY=On && cmake --build --preset=release
+
   verify-formatting:
     name: Verify Formatting
     runs-on: ubuntu-24.04
@@ -349,7 +378,7 @@ jobs:
   summary:
     name: Pipeline Summary
     runs-on: ubuntu-24.04
-    needs: [build-apiset-dumper, smoke-test-android, create-emulation-root, build, test, verify-formatting]
+    needs: [clang-tidy, build-apiset-dumper, smoke-test-android, create-emulation-root, build, test, verify-formatting]
     if: always()
     steps:
       - uses: geekyeggo/delete-artifact@v5

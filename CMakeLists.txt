@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.26.4)
 ##########################################
 
 option(MOMO_ENABLE_SANITIZER "Enable sanitizer" OFF)
+option(MOMO_ENABLE_CLANG_TIDY "Enable clang-tidy checks" OFF)
 option(MOMO_BUILD_AS_LIBRARY "Configure and Build the emulator as a shared library (without the samples and tests)" OFF)
 
 set(MOMO_REFLECTION_LEVEL "0" CACHE STRING "Reflection level for the build")
@@ -62,3 +63,4 @@ momo_targets_disable_warnings(${EXTERNAL_TARGETS})
 
 momo_targets_expose_includes(${OWN_TARGETS})
 momo_targets_set_warnings_as_errors(${OWN_TARGETS})
+momo_targets_enable_clang_tidy(${OWN_TARGETS})

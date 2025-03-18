@@ -346,3 +346,22 @@ endfunction()
 macro(momo_assign_source_group)
   source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${ARGN})
 endmacro()
+
+##########################################
+
+function(momo_target_enable_clang_tidy target)
+  if(MOMO_ENABLE_CLANG_TIDY)
+    set(CLANG_TIDY_COMMAND "clang-tidy;--use-color;--config-file=${CMAKE_CURRENT_SOURCE_DIR}/.clang-tidy")
+
+    set_target_properties(${target} PROPERTIES C_CLANG_TIDY "${CLANG_TIDY_COMMAND}")
+    set_target_properties(${target} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}")
+  endif()
+endfunction()
+
+##########################################
+
+function(momo_targets_enable_clang_tidy)
+  foreach(target ${ARGV})
+    momo_target_enable_clang_tidy(${target})
+  endforeach()
+endfunction()
