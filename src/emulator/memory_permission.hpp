@@ -15,22 +15,22 @@ enum class memory_permission : uint8_t
  *
  ****************************************************************************/
 
-inline constexpr memory_permission operator&(const memory_permission x, const memory_permission y)
+constexpr memory_permission operator&(const memory_permission x, const memory_permission y)
 {
     return static_cast<memory_permission>(static_cast<uint8_t>(x) & static_cast<uint8_t>(y));
 }
 
-inline constexpr memory_permission operator|(const memory_permission x, const memory_permission y)
+constexpr memory_permission operator|(const memory_permission x, const memory_permission y)
 {
     return static_cast<memory_permission>(static_cast<uint8_t>(x) | static_cast<uint8_t>(y));
 }
 
-inline constexpr memory_permission operator^(const memory_permission x, const memory_permission y)
+constexpr memory_permission operator^(const memory_permission x, const memory_permission y)
 {
     return static_cast<memory_permission>(static_cast<uint8_t>(x) ^ static_cast<uint8_t>(y));
 }
 
-inline constexpr memory_permission operator~(memory_permission x)
+constexpr memory_permission operator~(memory_permission x)
 {
     return static_cast<memory_permission>(~static_cast<uint8_t>(x));
 }

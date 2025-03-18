@@ -1,5 +1,7 @@
 #pragma once
 
+// NOLINTBEGIN(modernize-use-using)
+
 typedef enum _EVENT_TYPE
 {
     NotificationEvent,
@@ -14,3 +16,5 @@ typedef enum _WAIT_TYPE
     WaitDequeue,
     WaitDpc,
 } WAIT_TYPE;
+
+// NOLINTEND(modernize-use-using)

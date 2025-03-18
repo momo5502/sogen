@@ -1,5 +1,7 @@
 #pragma once
 
+// NOLINTBEGIN(modernize-use-using)
+
 typedef enum _THREADINFOCLASS
 {
     ThreadBasicInformation,          // q: THREAD_BASIC_INFORMATION
@@ -87,3 +89,5 @@ typedef struct _THREAD_TEB_INFORMATION
     ULONG TebOffset;                             // Offset in TEB to begin reading from.
     ULONG BytesToRead;                           // Number of bytes to read.
 } THREAD_TEB_INFORMATION, *PTHREAD_TEB_INFORMATION;
+
+// NOLINTEND(modernize-use-using)

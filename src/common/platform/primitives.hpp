@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+// NOLINTBEGIN(modernize-use-using)
+
 #ifdef OS_WINDOWS
 
 #define WIN32_LEAN_AND_MEAN
@@ -51,10 +53,10 @@ using BYTE = std::uint8_t;
 
 using WORD = std::uint16_t;
 
-#define UCHAR   unsigned char
+#define UCHAR   uint8_t
 #define BOOLEAN UCHAR
 
-using CSHORT = short;
+using CSHORT = int16_t;
 using USHORT = WORD;
 
 #define DUMMYSTRUCTNAME
@@ -63,3 +65,5 @@ using USHORT = WORD;
 #define TRUE  1
 #define FALSE 0
 #endif
+
+// NOLINTEND(modernize-use-using)

@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+
 #define PROCESSOR_FEATURE_MAX                                           64
 #define GDI_HANDLE_BUFFER_SIZE64                                        60
 #define RTL_ACTIVATION_CONTEXT_STACK_FRAME_FLAG_RELEASE_ON_DEACTIVATION 0x00000001
@@ -388,10 +390,10 @@ typedef struct _GDI_TEB_BATCH64
 #ifndef OS_WINDOWS
 typedef struct _GUID
 {
-    unsigned long Data1;
-    unsigned short Data2;
-    unsigned short Data3;
-    unsigned char Data4[8];
+    uint32_t Data1;
+    uint16_t Data2;
+    uint16_t Data3;
+    uint8_t Data4[8];
 } GUID;
 
 typedef struct _PROCESSOR_NUMBER
@@ -913,3 +915,5 @@ struct PROCESS_TLS_INFO
 };
 
 static_assert(sizeof(PROCESS_TLS_INFO) - sizeof(THREAD_TLS_INFO) == 0x10);
+
+// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)

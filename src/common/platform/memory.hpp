@@ -1,5 +1,7 @@
 #pragma once
 
+// NOLINTBEGIN(modernize-use-using)
+
 #define PAGE_EXECUTE                0x10
 #define PAGE_EXECUTE_READ           0x20
 #define PAGE_EXECUTE_READWRITE      0x40
@@ -127,3 +129,5 @@ typedef struct _MEMORY_REGION_INFORMATION
     DWORD64 PartitionId;    // 19H1
     DWORD64 NodePreference; // 20H1
 } MEMORY_REGION_INFORMATION64, *PMEMORY_REGION_INFORMATION64;
+
+// NOLINTEND(modernize-use-using)
