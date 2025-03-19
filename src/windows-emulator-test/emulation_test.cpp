@@ -22,14 +22,14 @@ namespace test
 
     TEST(EmulationTest, CountedEmulationIsAccurate)
     {
-        auto emu = create_sample_emulator();
+        auto emu = create_reproducible_sample_emulator();
         emu.start();
 
         ASSERT_TERMINATED_SUCCESSFULLY(emu);
 
         const auto executedInstructions = emu.get_executed_instructions();
 
-        auto new_emu = create_sample_emulator();
+        auto new_emu = create_reproducible_sample_emulator();
 
         constexpr auto offset = 1;
         const auto instructionsToExecute = executedInstructions - offset;

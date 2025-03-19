@@ -95,6 +95,11 @@ namespace test
         return create_sample_emulator(std::move(settings), config);
     }
 
+    inline windows_emulator create_reproducible_sample_emulator()
+    {
+        return create_sample_emulator({.reproducible = true});
+    }
+
     inline void bisect_emulation(windows_emulator& emu)
     {
         utils::buffer_serializer start_state{};

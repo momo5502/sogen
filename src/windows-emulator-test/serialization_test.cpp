@@ -2,14 +2,6 @@
 
 namespace test
 {
-    namespace
-    {
-        auto create_reproducible_sample_emulator()
-        {
-            return create_sample_emulator({.reproducible = true});
-        }
-    }
-
     TEST(SerializationTest, ResettingEmulatorWorks)
     {
         auto emu = create_reproducible_sample_emulator();
