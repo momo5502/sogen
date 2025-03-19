@@ -319,7 +319,7 @@ jobs:
         run: cp build/${{matrix.preset}}/artifacts/test-sample.exe build/${{matrix.preset}}/artifacts/root/filesys/c/
 
       - name: CMake Test
-        run: cd build/${{matrix.preset}} && ctest --verbose
+        run: cd build/${{matrix.preset}} && ctest --verbose -j
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/root
           EMULATOR_VERBOSE: ${{ github.event.inputs.verbose }}
