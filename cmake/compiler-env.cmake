@@ -99,9 +99,8 @@ endif()
 ##########################################
 
 if(MOMO_ENABLE_SANITIZER)
-momo_add_c_and_cxx_compile_options(
-  -fsanitize=address
-)
+  momo_add_c_and_cxx_compile_options(-fsanitize=address)
+  add_link_options(-fsanitize=address)
 endif()
 
 ##########################################

@@ -151,6 +151,7 @@ jobs:
         platform:
           - Windows x86_64
           - Linux x86_64 GCC
+          - Linux x86_64 GCC Sanitizer
           - Linux x86_64 Clang
           - macOS arm64
           - macOS x86_64
@@ -166,6 +167,9 @@ jobs:
             preset: release
           - platform: Windows x86_64
             runner: windows-latest
+          - platform: Linux x86_64 GCC Sanitizer
+            runner: ubuntu-24.04
+            cmake-options: "-DMOMO_ENABLE_SANITIZER=On"
           - platform: Linux x86_64 GCC
             runner: ubuntu-24.04
           - platform: Linux x86_64 Clang
@@ -178,9 +182,11 @@ jobs:
           - platform: Android x86_64
             runner: ubuntu-24.04
             abi: x86_64
+            cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake"
           - platform: Android arm64-v8a
             runner: ubuntu-24.04
             abi: arm64-v8a
+            cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake"
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
@@ -213,16 +219,14 @@ jobs:
           ndk-version: r26d
           add-to-path: false
 
-      - name: CMake Build
-        run: cmake --preset=${{matrix.preset}} -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/cmake/toolchain/android-ndk.cmake && cmake --build --preset=${{matrix.preset}}
+      - name: Setup Environment Variables
         if: ${{ startsWith(matrix.platform, 'Android') }}
-        env:
-          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
-          ANDROID_ABI: ${{matrix.abi}}
+        run: |
+          echo "ANDROID_NDK_ROOT=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
+          echo "ANDROID_ABI=${{ matrix.abi }}" >> $GITHUB_ENV
 
       - name: CMake Build
-        run: cmake --workflow --preset=${{matrix.preset}}
-        if: ${{ !startsWith(matrix.platform, 'Android') }}
+        run: cmake --preset=${{matrix.preset}} ${{matrix.cmake-options}} && cmake --build --preset=${{matrix.preset}}
 
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v4
@@ -248,6 +252,7 @@ jobs:
         platform:
           - Windows x86_64
           - Linux x86_64 GCC
+          - Linux x86_64 GCC Sanitizer
           - Linux x86_64 Clang
           - macOS arm64
           - macOS x86_64
@@ -267,6 +272,8 @@ jobs:
             runner: windows-latest
           - platform: Linux x86_64 GCC
             runner: ubuntu-24.04
+          - platform: Linux x86_64 GCC Sanitizer
+            runner: ubuntu-24.04
           - platform: Linux x86_64 Clang
             runner: ubuntu-24.04
           - platform: macOS arm64
@@ -278,6 +285,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Setup Environment Variables
+        if: ${{ contains(matrix.platform, 'Sanitizer') }}
+        run: |
+          echo "ASAN_OPTIONS=detect_odr_violation=0" >> $GITHUB_ENV
 
       - name: Download Test Config
         uses: pyTooling/download-artifact@v4
