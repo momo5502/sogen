@@ -24,7 +24,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(CMAKE_OSX_DEPLOYMENT_TARGET 11.0)
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  set(CMAKE_OSX_DEPLOYMENT_TARGET 11.0)
+endif()
 
 # Prevent unicorn from generating universal binaries on macOS
 # It doesn't support it, even if it thinks it does...
