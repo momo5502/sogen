@@ -16,6 +16,7 @@ namespace
         std::string registry_path{"./registry"};
         std::string emulation_root{};
         std::set<std::string, std::less<>> modules{};
+        std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
     };
 
     void watch_system_objects(windows_emulator& win_emu, const std::set<std::string, std::less<>>& modules,
@@ -124,6 +125,7 @@ namespace
             .verbose_calls = options.verbose_logging,
             .disable_logging = options.silent,
             .silent_until_main = options.concise_logging,
+            .path_mappings = options.path_mappings,
             .modules = options.modules,
         };
 
@@ -257,6 +259,19 @@ namespace
                 }
                 arg_it = args.erase(arg_it);
                 options.emulation_root = args[0];
+            }
+            else if (arg == "-p")
+            {
+                if (args.size() < 3)
+                {
+                    throw std::runtime_error("No path mapping provided after -p");
+                }
+                arg_it = args.erase(arg_it);
+                windows_path source = args[0];
+                arg_it = args.erase(arg_it);
+                std::filesystem::path target = std::filesystem::absolute(args[0]);
+
+                options.path_mappings[std::move(source)] = std::move(target);
             }
             else if (arg == "-r")
             {

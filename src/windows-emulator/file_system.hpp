@@ -27,7 +27,7 @@ class file_system
     {
         if (!win_path.is_absolute())
         {
-            throw std::runtime_error("Only absolute paths can be translated!");
+            throw std::runtime_error("Only absolute paths can be translated: " + win_path.string());
         }
 
         const auto mapping = this->mappings_.find(win_path);
