@@ -286,6 +286,11 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Setup Environment Variables
+        if: ${{ contains(matrix.platform, 'Sanitizer') }}
+        run: |
+          echo "ASAN_OPTIONS=detect_odr_violation=0" >> $GITHUB_ENV
+
       - name: Download Test Config
         uses: pyTooling/download-artifact@v4
         with:
