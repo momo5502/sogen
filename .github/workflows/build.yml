@@ -178,9 +178,11 @@ jobs:
           - platform: Android x86_64
             runner: ubuntu-24.04
             abi: x86_64
+            cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake"
           - platform: Android arm64-v8a
             runner: ubuntu-24.04
             abi: arm64-v8a
+            cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake"
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
@@ -213,16 +215,14 @@ jobs:
           ndk-version: r26d
           add-to-path: false
 
-      - name: CMake Build
-        run: cmake --preset=${{matrix.preset}} -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/cmake/toolchain/android-ndk.cmake && cmake --build --preset=${{matrix.preset}}
+      - name: Setup Environment Variables
         if: ${{ startsWith(matrix.platform, 'Android') }}
-        env:
-          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
-          ANDROID_ABI: ${{matrix.abi}}
+        run: |
+          echo "ANDROID_NDK_ROOT=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
+          echo "ANDROID_ABI=${{ matrix.abi }}" >> $GITHUB_ENV
 
       - name: CMake Build
-        run: cmake --workflow --preset=${{matrix.preset}}
-        if: ${{ !startsWith(matrix.platform, 'Android') }}
+        run: cmake --preset=${{matrix.preset}} ${{matrix.cmake-options}} && cmake --build --preset=${{matrix.preset}}
 
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v4
