@@ -51,13 +51,6 @@ jobs:
             sudo update-alternatives --set c++ /usr/bin/clang++-${{ env.LLVM_VERSION }}
 
         - name: CMake Build
-          run: cmake --preset=${{matrix.preset}} -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/cmake/toolchain/android-ndk.cmake && cmake --build --preset=${{matrix.preset}}
-          if: ${{ startsWith(matrix.platform, 'Android') }}
-          env:
-            ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
-            ANDROID_ABI: ${{matrix.abi}}
-
-        - name: CMake Build
           run: cmake --preset=release -DMOMO_ENABLE_CLANG_TIDY=On && cmake --build --preset=release
 
   verify-formatting:
