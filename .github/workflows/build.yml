@@ -323,6 +323,7 @@ jobs:
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/root
           EMULATOR_VERBOSE: ${{ github.event.inputs.verbose }}
+          ANALYSIS_SAMPLE: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/dump-apiset.exe
 
   smoke-test-android:
     name: Smoke Test Android

@@ -2,6 +2,13 @@ include_guard()
 
 ##########################################
 
+set(PYTHON3_EXE "python3")
+if(CMAKE_SYSTEM_NAME MATCHES "Windows")
+  set(PYTHON3_EXE "python")
+endif()
+
+##########################################
+
 function(momo_silence_deprecation_warnings)
     set(CMAKE_WARN_DEPRECATED_OLD ${CMAKE_WARN_DEPRECATED} PARENT_SCOPE)
     set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)
