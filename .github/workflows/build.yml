@@ -151,6 +151,7 @@ jobs:
         platform:
           - Windows x86_64
           - Linux x86_64 GCC
+          - Linux x86_64 GCC Sanitizer
           - Linux x86_64 Clang
           - macOS arm64
           - macOS x86_64
@@ -166,6 +167,9 @@ jobs:
             preset: release
           - platform: Windows x86_64
             runner: windows-latest
+          - platform: Linux x86_64 GCC Sanitizer
+            runner: ubuntu-24.04
+            cmake-options: "-DMOMO_ENABLE_SANITIZER=On"
           - platform: Linux x86_64 GCC
             runner: ubuntu-24.04
           - platform: Linux x86_64 Clang
@@ -248,6 +252,7 @@ jobs:
         platform:
           - Windows x86_64
           - Linux x86_64 GCC
+          - Linux x86_64 GCC Sanitizer
           - Linux x86_64 Clang
           - macOS arm64
           - macOS x86_64
@@ -266,6 +271,8 @@ jobs:
           - platform: Windows x86_64
             runner: windows-latest
           - platform: Linux x86_64 GCC
+            runner: ubuntu-24.04
+          - platform: Linux x86_64 GCC Sanitizer
             runner: ubuntu-24.04
           - platform: Linux x86_64 Clang
             runner: ubuntu-24.04
