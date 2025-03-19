@@ -155,6 +155,7 @@ jobs:
           - Linux x86_64 Clang
           - macOS arm64
           - macOS x86_64
+          - iOS arm64
           - Android x86_64
           - Android arm64-v8a
         configuration:
@@ -175,6 +176,9 @@ jobs:
           - platform: Linux x86_64 Clang
             runner: ubuntu-24.04
             clang-version: 20
+          - platform: iOS arm64
+            runner: macos-latest
+            cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/ios.cmake"
           - platform: macOS arm64
             runner: macos-latest
           - platform: macOS x86_64
