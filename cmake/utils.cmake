@@ -312,7 +312,7 @@ endmacro()
 ##########################################
 
 function(momo_strip_target target)
-  if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+  if (CMAKE_BUILD_TYPE STREQUAL "Debug" OR MOMO_ENABLE_SANITIZER)
     return()
   endif()
 
