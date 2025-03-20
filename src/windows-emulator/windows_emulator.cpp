@@ -213,25 +213,24 @@ std::unique_ptr<x64_emulator> create_default_x64_emulator()
 windows_emulator::windows_emulator(application_settings app_settings, const emulator_settings& settings,
                                    emulator_callbacks callbacks, emulator_interfaces interfaces,
                                    std::unique_ptr<x64_emulator> emu)
-    : windows_emulator(settings, std::move(interfaces), std::move(emu))
+    : windows_emulator(settings, std::move(callbacks), std::move(interfaces), std::move(emu))
 {
-    this->callbacks = std::move(callbacks);
-
     fixup_application_settings(app_settings);
     this->setup_process(app_settings);
 }
 
-windows_emulator::windows_emulator(const emulator_settings& settings, emulator_interfaces interfaces,
-                                   std::unique_ptr<x64_emulator> emu)
+windows_emulator::windows_emulator(const emulator_settings& settings, emulator_callbacks callbacks,
+                                   emulator_interfaces interfaces, std::unique_ptr<x64_emulator> emu)
     : emu_(std::move(emu)),
       clock_(get_clock(interfaces, this->executed_instructions_, settings.use_relative_time)),
       socket_factory_(get_socket_factory(interfaces)),
       emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
+      callbacks(std::move(callbacks)),
       file_sys(emulation_root.empty() ? emulation_root : emulation_root / "filesys"),
       memory(*this->emu_),
       registry(emulation_root.empty() ? settings.registry_directory : emulation_root / "registry"),
-      mod_manager(memory, file_sys, callbacks),
-      process(*this->emu_, memory, *this->clock_, callbacks)
+      mod_manager(memory, file_sys, this->callbacks),
+      process(*this->emu_, memory, *this->clock_, this->callbacks)
 {
 #ifndef OS_WINDOWS
     if (this->emulation_root.empty())

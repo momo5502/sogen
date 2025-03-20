@@ -71,7 +71,8 @@ class windows_emulator
     process_context process;
     syscall_dispatcher dispatcher;
 
-    windows_emulator(const emulator_settings& settings = {}, emulator_interfaces interfaces = {},
+    windows_emulator(const emulator_settings& settings = {}, emulator_callbacks callbacks = {},
+                     emulator_interfaces interfaces = {},
                      std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
     windows_emulator(application_settings app_settings, const emulator_settings& settings = {},
                      emulator_callbacks callbacks = {}, emulator_interfaces interfaces = {},

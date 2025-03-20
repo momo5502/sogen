@@ -57,6 +57,29 @@ namespace test
         return settings;
     }
 
+    inline windows_emulator create_emulator(emulator_settings settings, emulator_callbacks callbacks = {})
+    {
+        const auto is_verbose = enable_verbose_logging();
+
+        if (is_verbose)
+        {
+            settings.disable_logging = false;
+        }
+
+        settings.emulation_root = get_emulator_root();
+
+        settings.path_mappings["C:\\a.txt"] =
+            std::filesystem::temp_directory_path() / ("emulator-test-file-" + std::to_string(getpid()) + ".txt");
+
+        return windows_emulator{
+            settings,
+            std::move(callbacks),
+            emulator_interfaces{
+                .socket_factory = network::create_static_socket_factory(),
+            },
+        };
+    }
+
     inline windows_emulator create_sample_emulator(emulator_settings settings, const sample_configuration& config = {},
                                                    emulator_callbacks callbacks = {})
     {
@@ -93,9 +116,14 @@ namespace test
         return create_sample_emulator(std::move(settings), config);
     }
 
-    inline windows_emulator create_reproducible_sample_emulator()
+    inline windows_emulator create_empty_emulator()
     {
-        return create_sample_emulator();
+        emulator_settings settings{
+            .disable_logging = true,
+            .use_relative_time = true,
+        };
+
+        return create_emulator(std::move(settings));
     }
 
     inline void bisect_emulation(windows_emulator& emu)
