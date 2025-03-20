@@ -65,6 +65,193 @@ namespace utils
         };
     }
 
+    class buffer_serializer
+    {
+      public:
+        buffer_serializer() = default;
+
+        void write(const void* buffer, const size_t length)
+        {
+#ifndef NDEBUG
+            const uint64_t old_size = this->buffer_.size();
+#endif
+
+            if (this->break_offset_ && this->buffer_.size() <= *this->break_offset_ &&
+                this->buffer_.size() + length > *this->break_offset_)
+            {
+                throw std::runtime_error("Break offset reached!");
+            }
+
+            const auto* byte_buffer = static_cast<const std::byte*>(buffer);
+            this->buffer_.insert(this->buffer_.end(), byte_buffer, byte_buffer + length);
+
+#ifndef NDEBUG
+            const auto* security_buffer = reinterpret_cast<const std::byte*>(&old_size);
+            this->buffer_.insert(this->buffer_.end(), security_buffer, security_buffer + sizeof(old_size));
+#endif
+        }
+
+        void write(const buffer_serializer& object)
+        {
+            const auto& buffer = object.get_buffer();
+            this->write(buffer.data(), buffer.size());
+        }
+
+        template <typename T>
+            requires(!is_optional<T>::value)
+        void write(const T& object)
+        {
+            constexpr auto is_trivially_copyable = std::is_trivially_copyable_v<T>;
+
+            if constexpr (Serializable<T>)
+            {
+                object.serialize(*this);
+            }
+            else if constexpr (detail::has_serialize_function<T>::value)
+            {
+                serialize(*this, object);
+            }
+            else if constexpr (is_trivially_copyable)
+            {
+                union
+                {
+                    const T* type_{};
+                    const void* void_;
+                } pointers;
+
+                pointers.type_ = &object;
+
+                this->write(pointers.void_, sizeof(object));
+            }
+            else
+            {
+                static_assert(!is_trivially_copyable, "Key must be trivially copyable or implement serializable!");
+                std::abort();
+            }
+        }
+
+        template <typename T>
+        void write_atomic(const std::atomic<T>& val)
+        {
+            this->write(val.load());
+        }
+
+        template <typename T>
+        void write_optional(const std::optional<T>& val)
+        {
+            this->write(val.has_value());
+
+            if (val.has_value())
+            {
+                this->write(*val);
+            }
+        }
+
+        template <typename T>
+        void write_span(const std::span<T> vec)
+        {
+            this->write(static_cast<uint64_t>(vec.size()));
+
+            for (const auto& v : vec)
+            {
+                this->write(v);
+            }
+        }
+
+        template <typename T>
+        void write_vector(const std::vector<T>& vec)
+        {
+            this->write_span(std::span(vec));
+        }
+
+        template <typename T>
+        void write_list(const std::list<T>& vec)
+        {
+            this->write(static_cast<uint64_t>(vec.size()));
+
+            for (const auto& v : vec)
+            {
+                this->write(v);
+            }
+        }
+
+        template <typename T>
+        void write_string(const std::basic_string_view<T> str)
+        {
+            this->write_span<const T>(str);
+        }
+
+        template <typename T>
+        void write_string(const std::basic_string<T>& str)
+        {
+            this->write_string(std::basic_string_view<T>(str));
+        }
+
+        template <typename Map>
+        void write_map(const Map& map)
+        {
+            this->write<uint64_t>(map.size());
+
+            for (const auto& entry : map)
+            {
+                this->write(entry.first);
+                this->write(entry.second);
+            }
+        }
+
+        const std::vector<std::byte>& get_buffer() const
+        {
+            return this->buffer_;
+        }
+
+        std::vector<std::byte> move_buffer()
+        {
+            return std::move(this->buffer_);
+        }
+
+        void set_break_offset(const size_t break_offset)
+        {
+            this->break_offset_ = break_offset;
+        }
+
+        std::optional<size_t> get_diff(const buffer_serializer& other) const
+        {
+            const auto& b1 = this->get_buffer();
+            const auto& b2 = other.get_buffer();
+
+            const auto s1 = b1.size();
+            const auto s2 = b2.size();
+
+            for (size_t i = 0; i < s1 && i < s2; ++i)
+            {
+                if (b1.at(i) != b2.at(i))
+                {
+                    return i;
+                }
+            }
+
+            if (s1 != s2)
+            {
+                return std::min(s1, s2);
+            }
+
+            return std::nullopt;
+        }
+
+        void print_diff(const buffer_serializer& other) const
+        {
+            const auto diff = this->get_diff(other);
+            if (diff)
+            {
+                printf("Diff at %zd\n", *diff);
+            }
+        }
+
+      private:
+        std::vector<std::byte> buffer_{};
+        std::optional<size_t> break_offset_{};
+    };
+
     class buffer_deserializer
     {
       public:
@@ -77,8 +264,13 @@ namespace utils
         }
 
         template <typename T>
-        buffer_deserializer(const std::vector<T>& buffer, bool no_debugging = false)
+        buffer_deserializer(const std::vector<T>& buffer, const bool no_debugging = false)
             : buffer_deserializer(std::span(buffer), no_debugging)
+        {
+        }
+
+        buffer_deserializer(const buffer_serializer& serializer, const bool no_debugging = false)
+            : buffer_deserializer(serializer.get_buffer(), no_debugging)
         {
         }
 
@@ -346,193 +538,6 @@ namespace utils
                 return obj;
             }
         }
-    };
-
-    class buffer_serializer
-    {
-      public:
-        buffer_serializer() = default;
-
-        void write(const void* buffer, const size_t length)
-        {
-#ifndef NDEBUG
-            const uint64_t old_size = this->buffer_.size();
-#endif
-
-            if (this->break_offset_ && this->buffer_.size() <= *this->break_offset_ &&
-                this->buffer_.size() + length > *this->break_offset_)
-            {
-                throw std::runtime_error("Break offset reached!");
-            }
-
-            const auto* byte_buffer = static_cast<const std::byte*>(buffer);
-            this->buffer_.insert(this->buffer_.end(), byte_buffer, byte_buffer + length);
-
-#ifndef NDEBUG
-            const auto* security_buffer = reinterpret_cast<const std::byte*>(&old_size);
-            this->buffer_.insert(this->buffer_.end(), security_buffer, security_buffer + sizeof(old_size));
-#endif
-        }
-
-        void write(const buffer_serializer& object)
-        {
-            const auto& buffer = object.get_buffer();
-            this->write(buffer.data(), buffer.size());
-        }
-
-        template <typename T>
-            requires(!is_optional<T>::value)
-        void write(const T& object)
-        {
-            constexpr auto is_trivially_copyable = std::is_trivially_copyable_v<T>;
-
-            if constexpr (Serializable<T>)
-            {
-                object.serialize(*this);
-            }
-            else if constexpr (detail::has_serialize_function<T>::value)
-            {
-                serialize(*this, object);
-            }
-            else if constexpr (is_trivially_copyable)
-            {
-                union
-                {
-                    const T* type_{};
-                    const void* void_;
-                } pointers;
-
-                pointers.type_ = &object;
-
-                this->write(pointers.void_, sizeof(object));
-            }
-            else
-            {
-                static_assert(!is_trivially_copyable, "Key must be trivially copyable or implement serializable!");
-                std::abort();
-            }
-        }
-
-        template <typename T>
-        void write_atomic(const std::atomic<T>& val)
-        {
-            this->write(val.load());
-        }
-
-        template <typename T>
-        void write_optional(const std::optional<T>& val)
-        {
-            this->write(val.has_value());
-
-            if (val.has_value())
-            {
-                this->write(*val);
-            }
-        }
-
-        template <typename T>
-        void write_span(const std::span<T> vec)
-        {
-            this->write(static_cast<uint64_t>(vec.size()));
-
-            for (const auto& v : vec)
-            {
-                this->write(v);
-            }
-        }
-
-        template <typename T>
-        void write_vector(const std::vector<T> vec)
-        {
-            this->write_span(std::span(vec));
-        }
-
-        template <typename T>
-        void write_list(const std::list<T> vec)
-        {
-            this->write(static_cast<uint64_t>(vec.size()));
-
-            for (const auto& v : vec)
-            {
-                this->write(v);
-            }
-        }
-
-        template <typename T>
-        void write_string(const std::basic_string_view<T> str)
-        {
-            this->write_span<const T>(str);
-        }
-
-        template <typename T>
-        void write_string(const std::basic_string<T>& str)
-        {
-            this->write_string(std::basic_string_view<T>(str));
-        }
-
-        template <typename Map>
-        void write_map(const Map& map)
-        {
-            this->write<uint64_t>(map.size());
-
-            for (const auto& entry : map)
-            {
-                this->write(entry.first);
-                this->write(entry.second);
-            }
-        }
-
-        const std::vector<std::byte>& get_buffer() const
-        {
-            return this->buffer_;
-        }
-
-        std::vector<std::byte> move_buffer()
-        {
-            return std::move(this->buffer_);
-        }
-
-        void set_break_offset(const size_t break_offset)
-        {
-            this->break_offset_ = break_offset;
-        }
-
-        std::optional<size_t> get_diff(const buffer_serializer& other) const
-        {
-            const auto& b1 = this->get_buffer();
-            const auto& b2 = other.get_buffer();
-
-            const auto s1 = b1.size();
-            const auto s2 = b2.size();
-
-            for (size_t i = 0; i < s1 && i < s2; ++i)
-            {
-                if (b1.at(i) != b2.at(i))
-                {
-                    return i;
-                }
-            }
-
-            if (s1 != s2)
-            {
-                return std::min(s1, s2);
-            }
-
-            return std::nullopt;
-        }
-
-        void print_diff(const buffer_serializer& other) const
-        {
-            const auto diff = this->get_diff(other);
-            if (diff)
-            {
-                printf("Diff at %zd\n", *diff);
-            }
-        }
-
-      private:
-        std::vector<std::byte> buffer_{};
-        std::optional<size_t> break_offset_{};
     };
 
     template <>

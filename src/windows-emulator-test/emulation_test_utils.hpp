@@ -135,7 +135,7 @@ namespace test
         const auto limit = emu.get_executed_instructions();
 
         const auto reset_emulator = [&] {
-            utils::buffer_deserializer deserializer{start_state.get_buffer()};
+            utils::buffer_deserializer deserializer{start_state};
             emu.deserialize(deserializer);
         };
 

@@ -16,7 +16,7 @@ namespace test
         utils::buffer_serializer end_state1{};
         emu.serialize(end_state1);
 
-        utils::buffer_deserializer deserializer{start_state.get_buffer()};
+        utils::buffer_deserializer deserializer{start_state};
         emu.deserialize(deserializer);
 
         emu.start();
@@ -39,7 +39,7 @@ namespace test
         utils::buffer_serializer serializer1{};
         emu1.serialize(serializer1);
 
-        utils::buffer_deserializer deserializer{serializer1.get_buffer()};
+        utils::buffer_deserializer deserializer{serializer1};
 
         auto new_emu = create_empty_emulator();
         new_emu.deserialize(deserializer);
@@ -82,7 +82,7 @@ namespace test
         utils::buffer_serializer serializer{};
         emu.serialize(serializer);
 
-        utils::buffer_deserializer deserializer{serializer.get_buffer()};
+        utils::buffer_deserializer deserializer{serializer};
 
         auto new_emu = create_empty_emulator();
         new_emu.deserialize(deserializer);
