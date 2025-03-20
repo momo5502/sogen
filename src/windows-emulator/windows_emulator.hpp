@@ -11,6 +11,7 @@
 #include "file_system.hpp"
 #include "memory_manager.hpp"
 #include "module/module_manager.hpp"
+#include "network/socket_factory.hpp"
 
 std::unique_ptr<x64_emulator> create_default_x64_emulator();
 
@@ -45,12 +46,19 @@ struct emulator_settings
     std::set<std::string, std::less<>> modules{};
 };
 
+struct emulator_interfaces
+{
+    std::unique_ptr<utils::clock> clock{};
+    std::unique_ptr<network::socket_factory> socket_factory{};
+};
+
 class windows_emulator
 {
     uint64_t executed_instructions_{0};
 
     std::unique_ptr<x64_emulator> emu_{};
     std::unique_ptr<utils::clock> clock_{};
+    std::unique_ptr<network::socket_factory> socket_factory_{};
 
   public:
     std::filesystem::path emulation_root{};
@@ -63,10 +71,11 @@ class windows_emulator
     process_context process;
     syscall_dispatcher dispatcher;
 
-    windows_emulator(const emulator_settings& settings = {},
+    windows_emulator(const emulator_settings& settings = {}, emulator_callbacks callbacks = {},
+                     emulator_interfaces interfaces = {},
                      std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
     windows_emulator(application_settings app_settings, const emulator_settings& settings = {},
-                     emulator_callbacks callbacks = {},
+                     emulator_callbacks callbacks = {}, emulator_interfaces interfaces = {},
                      std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
 
     windows_emulator(windows_emulator&&) = delete;
@@ -94,6 +103,16 @@ class windows_emulator
     const utils::clock& clock() const
     {
         return *this->clock_;
+    }
+
+    network::socket_factory& socket_factory()
+    {
+        return *this->socket_factory_;
+    }
+
+    const network::socket_factory& socket_factory() const
+    {
+        return *this->socket_factory_;
     }
 
     emulator_thread& current_thread() const

@@ -8,6 +8,7 @@
 
 #ifdef _WIN32
 using send_size = int;
+using sent_size = int;
 #define GET_SOCKET_ERROR() (WSAGetLastError())
 #define poll               WSAPoll
 #define SERR(x)            (WSA##x)
@@ -15,6 +16,7 @@ using send_size = int;
 #else
 using SOCKET = int;
 using send_size = size_t;
+using sent_size = ssize_t;
 #define INVALID_SOCKET     (SOCKET)(~0)
 #define SOCKET_ERROR       (-1)
 #define GET_SOCKET_ERROR() (errno)

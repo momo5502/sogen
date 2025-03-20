@@ -8,6 +8,11 @@
 
 #include <utils/time.hpp>
 
+namespace network
+{
+    struct socket_factory;
+}
+
 // TODO: Replace with pointer handling structure for future 32 bit support
 using emulator_pointer = uint64_t;
 
@@ -51,6 +56,7 @@ using memory_manager_wrapper = object_wrapper<memory_manager>;
 using module_manager_wrapper = object_wrapper<module_manager>;
 using process_context_wrapper = object_wrapper<process_context>;
 using windows_emulator_wrapper = object_wrapper<windows_emulator>;
+using socket_factory_wrapper = object_wrapper<network::socket_factory>;
 
 template <typename T>
 class emulator_object

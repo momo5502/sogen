@@ -4,7 +4,7 @@ namespace test
 {
     TEST(SerializationTest, ResettingEmulatorWorks)
     {
-        auto emu = create_reproducible_sample_emulator();
+        auto emu = create_sample_emulator();
 
         utils::buffer_serializer start_state{};
         emu.serialize(start_state);
@@ -31,7 +31,7 @@ namespace test
 
     TEST(SerializationTest, SerializedDataIsReproducible)
     {
-        auto emu1 = create_reproducible_sample_emulator();
+        auto emu1 = create_sample_emulator();
         emu1.start();
 
         ASSERT_TERMINATED_SUCCESSFULLY(emu1);
@@ -41,7 +41,7 @@ namespace test
 
         utils::buffer_deserializer deserializer{serializer1.get_buffer()};
 
-        windows_emulator new_emu{{.emulation_root = get_emulator_root(), .use_relative_time = true}};
+        auto new_emu = create_empty_emulator();
         new_emu.deserialize(deserializer);
 
         utils::buffer_serializer serializer2{};
@@ -55,7 +55,7 @@ namespace test
 
     TEST(SerializationTest, EmulationIsReproducible)
     {
-        auto emu1 = create_reproducible_sample_emulator();
+        auto emu1 = create_sample_emulator();
         emu1.start();
 
         ASSERT_TERMINATED_SUCCESSFULLY(emu1);
@@ -63,7 +63,7 @@ namespace test
         utils::buffer_serializer serializer1{};
         emu1.serialize(serializer1);
 
-        auto emu2 = create_reproducible_sample_emulator();
+        auto emu2 = create_sample_emulator();
         emu2.start();
 
         ASSERT_TERMINATED_SUCCESSFULLY(emu2);
@@ -76,7 +76,7 @@ namespace test
 
     TEST(SerializationTest, DeserializedEmulatorBehavesLikeSource)
     {
-        auto emu = create_reproducible_sample_emulator();
+        auto emu = create_sample_emulator();
         emu.start({}, 100);
 
         utils::buffer_serializer serializer{};
@@ -84,8 +84,7 @@ namespace test
 
         utils::buffer_deserializer deserializer{serializer.get_buffer()};
 
-        windows_emulator new_emu{{.emulation_root = get_emulator_root(), .use_relative_time = true}};
-        new_emu.log.disable_output(true);
+        auto new_emu = create_empty_emulator();
         new_emu.deserialize(deserializer);
 
         new_emu.start();
