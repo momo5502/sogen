@@ -179,14 +179,29 @@ namespace
         }
     };
 
-    std::unique_ptr<utils::clock> get_clock(const uint64_t& instructions, const bool use_relative_time)
+    std::unique_ptr<utils::clock> get_clock(emulator_interfaces& interfaces, const uint64_t& instructions,
+                                            const bool use_relative_time)
     {
+        if (interfaces.clock)
+        {
+            return std::move(interfaces.clock);
+        }
+
         if (use_relative_time)
         {
             return std::make_unique<instruction_tick_clock>(instructions);
         }
 
         return std::make_unique<utils::clock>();
+    }
+    std::unique_ptr<network::socket_factory> get_socket_factory(emulator_interfaces& interfaces)
+    {
+        if (interfaces.socket_factory)
+        {
+            return std::move(interfaces.socket_factory);
+        }
+
+        return std::make_unique<network::socket_factory>();
     }
 }
 
@@ -196,8 +211,9 @@ std::unique_ptr<x64_emulator> create_default_x64_emulator()
 }
 
 windows_emulator::windows_emulator(application_settings app_settings, const emulator_settings& settings,
-                                   emulator_callbacks callbacks, std::unique_ptr<x64_emulator> emu)
-    : windows_emulator(settings, std::move(emu))
+                                   emulator_callbacks callbacks, emulator_interfaces interfaces,
+                                   std::unique_ptr<x64_emulator> emu)
+    : windows_emulator(settings, std::move(interfaces), std::move(emu))
 {
     this->callbacks = std::move(callbacks);
 
@@ -205,9 +221,11 @@ windows_emulator::windows_emulator(application_settings app_settings, const emul
     this->setup_process(app_settings);
 }
 
-windows_emulator::windows_emulator(const emulator_settings& settings, std::unique_ptr<x64_emulator> emu)
+windows_emulator::windows_emulator(const emulator_settings& settings, emulator_interfaces interfaces,
+                                   std::unique_ptr<x64_emulator> emu)
     : emu_(std::move(emu)),
-      clock_(get_clock(this->executed_instructions_, settings.use_relative_time)),
+      clock_(get_clock(interfaces, this->executed_instructions_, settings.use_relative_time)),
+      socket_factory_(get_socket_factory(interfaces)),
       emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
       file_sys(emulation_root.empty() ? emulation_root : emulation_root / "filesys"),
       memory(*this->emu_),
@@ -554,6 +572,10 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
 
     buffer.register_factory<clock_wrapper>([this] {
         return clock_wrapper{this->clock()}; //
+    });
+
+    buffer.register_factory<socket_factory_wrapper>([this] {
+        return socket_factory_wrapper{this->socket_factory()}; //
     });
 
     buffer.read(this->executed_instructions_);

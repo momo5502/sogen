@@ -4,6 +4,8 @@
 #include <gtest/gtest.h>
 #include <windows_emulator.hpp>
 
+#include "static_socket_factory.hpp"
+
 #define ASSERT_NOT_TERMINATED(win_emu)                           \
     do                                                           \
     {                                                            \
@@ -40,7 +42,6 @@ namespace test
 
     struct sample_configuration
     {
-        bool reproducible{false};
         bool print_time{false};
     };
 
@@ -51,11 +52,6 @@ namespace test
         if (config.print_time)
         {
             settings.arguments.emplace_back(u"-time");
-        }
-
-        if (config.reproducible)
-        {
-            settings.arguments.emplace_back(u"-reproducible");
         }
 
         return settings;
@@ -74,7 +70,6 @@ namespace test
 
         settings.emulation_root = get_emulator_root();
 
-        settings.port_mappings[28970] = static_cast<uint16_t>(getpid());
         settings.path_mappings["C:\\a.txt"] =
             std::filesystem::temp_directory_path() / ("emulator-test-file-" + std::to_string(getpid()) + ".txt");
 
@@ -82,6 +77,9 @@ namespace test
             get_sample_app_settings(config),
             settings,
             std::move(callbacks),
+            emulator_interfaces{
+                .socket_factory = network::create_static_socket_factory(),
+            },
         };
     }
 
@@ -97,7 +95,7 @@ namespace test
 
     inline windows_emulator create_reproducible_sample_emulator()
     {
-        return create_sample_emulator({.reproducible = true});
+        return create_sample_emulator();
     }
 
     inline void bisect_emulation(windows_emulator& emu)

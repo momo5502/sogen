@@ -84,7 +84,13 @@ namespace test
 
         utils::buffer_deserializer deserializer{serializer.get_buffer()};
 
-        windows_emulator new_emu{{.emulation_root = get_emulator_root(), .use_relative_time = true}};
+        windows_emulator new_emu{
+            {.emulation_root = get_emulator_root(), .use_relative_time = true},
+            {
+                .socket_factory = network::create_static_socket_factory(),
+            },
+        };
+
         new_emu.log.disable_output(true);
         new_emu.deserialize(deserializer);
 
