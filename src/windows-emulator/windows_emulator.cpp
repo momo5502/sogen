@@ -332,11 +332,24 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
     this->process.previous_ip = this->process.current_ip;
     this->process.current_ip = this->emu().read_instruction_pointer();
 
+    const auto is_main_exe = this->mod_manager.executable->is_within(address);
+    const auto is_previous_main_exe = this->mod_manager.executable->is_within(this->process.previous_ip);
+
     const auto binary = utils::make_lazy([&] {
+        if (is_main_exe)
+        {
+            return this->mod_manager.executable;
+        }
+
         return this->mod_manager.find_by_address(address); //
     });
 
     const auto previous_binary = utils::make_lazy([&] {
+        if (is_previous_main_exe)
+        {
+            return this->mod_manager.executable;
+        }
+
         return this->mod_manager.find_by_address(this->process.previous_ip); //
     });
 
@@ -350,9 +363,8 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
                (previous_binary && this->modules_.contains(previous_binary->name));
     };
 
-    const auto is_main_exe = this->mod_manager.executable->is_within(address);
-    const auto is_interesting_call = this->mod_manager.executable->is_within(this->process.previous_ip) //
-                                     || is_main_exe                                                     //
+    const auto is_interesting_call = is_previous_main_exe //
+                                     || is_main_exe       //
                                      || is_in_interesting_module();
 
     if (this->silent_until_main_ && is_main_exe)
