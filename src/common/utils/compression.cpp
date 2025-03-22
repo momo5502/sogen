@@ -57,32 +57,25 @@ namespace utils::compression
                 return {};
             }
 
-            int ret{};
-            size_t offset = 0;
             static thread_local std::array<uint8_t, ZCHUNK_SIZE> dest{};
             auto& stream = stream_container.get();
 
+            stream.avail_in = static_cast<uInt>(data.size());
+            stream.next_in = reinterpret_cast<const Bytef*>(data.data());
+
             do
             {
-                const auto input_size = std::min(dest.size(), data.size() - offset);
-                stream.avail_in = static_cast<uInt>(input_size);
-                stream.next_in = reinterpret_cast<const Bytef*>(data.data()) + offset;
-                offset += stream.avail_in;
+                stream.avail_out = static_cast<uInt>(dest.size());
+                stream.next_out = dest.data();
 
-                do
+                const auto ret = inflate(&stream, Z_FINISH);
+                if (ret != Z_OK && ret != Z_BUF_ERROR && ret != Z_STREAM_END)
                 {
-                    stream.avail_out = static_cast<uInt>(dest.size());
-                    stream.next_out = dest.data();
+                    return {};
+                }
 
-                    ret = inflate(&stream, Z_NO_FLUSH);
-                    if (ret != Z_OK && ret != Z_STREAM_END)
-                    {
-                        return {};
-                    }
-
-                    buffer.insert(buffer.end(), dest.data(), dest.data() + dest.size() - stream.avail_out);
-                } while (stream.avail_out == 0);
-            } while (ret != Z_STREAM_END);
+                buffer.insert(buffer.end(), dest.data(), dest.data() + dest.size() - stream.avail_out);
+            } while (stream.avail_out == 0);
 
             return buffer;
         }
