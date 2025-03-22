@@ -1083,6 +1083,12 @@ namespace
             return STATUS_SUCCESS;
         }
 
+        if (info_class == SystemControlFlowTransition)
+        {
+            c.win_emu.log.print(color::pink, "Warbird control flow transition!\n");
+            return STATUS_NOT_SUPPORTED;
+        }
+
         if (info_class == SystemProcessInformation || info_class == SystemModuleInformation)
         {
             return STATUS_NOT_SUPPORTED;
@@ -1960,7 +1966,8 @@ namespace
 
         if (info_class == ProcessSchedulerSharedData || info_class == ProcessConsoleHostProcess ||
             info_class == ProcessFaultInformation || info_class == ProcessDefaultHardErrorMode ||
-            info_class == ProcessRaiseUMExceptionOnInvalidHandleClose)
+            info_class == ProcessRaiseUMExceptionOnInvalidHandleClose ||
+            info_class == ProcessDynamicFunctionTableInformation)
         {
             return STATUS_SUCCESS;
         }
