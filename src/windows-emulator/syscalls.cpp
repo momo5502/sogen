@@ -1090,7 +1090,8 @@ namespace
             return STATUS_NOT_SUPPORTED;
         }
 
-        if (info_class == SystemProcessInformation || info_class == SystemModuleInformation)
+        if (info_class == SystemProcessInformation || info_class == SystemModuleInformation ||
+            info_class == SystemMemoryUsageInformation)
         {
             return STATUS_NOT_SUPPORTED;
         }
