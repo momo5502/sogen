@@ -5,7 +5,7 @@
 struct basic_memory_region
 {
     uint64_t start{};
-    size_t length{};
+    size_t length{}; // uint64_t?
     memory_permission permissions{};
 };
 
