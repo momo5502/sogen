@@ -48,7 +48,7 @@ namespace utils::compression
             };
         }
 
-        std::vector<std::uint8_t> decompress(const std::vector<std::uint8_t>& data)
+        std::vector<std::uint8_t> decompress(const std::span<const std::uint8_t> data)
         {
             std::vector<std::uint8_t> buffer{};
             zlib_stream stream_container{};
@@ -80,7 +80,12 @@ namespace utils::compression
             return buffer;
         }
 
-        std::vector<std::uint8_t> compress(const std::vector<std::uint8_t>& data)
+        std::vector<std::uint8_t> decompress(const std::span<const std::byte>& data)
+        {
+            return decompress(std::span(reinterpret_cast<const uint8_t*>(data.data()), data.size()));
+        }
+
+        std::vector<std::uint8_t> compress(const std::span<const std::uint8_t> data)
         {
             std::vector<std::uint8_t> result{};
             auto length = compressBound(static_cast<uLong>(data.size()));
@@ -94,6 +99,11 @@ namespace utils::compression
 
             result.resize(length);
             return result;
+        }
+
+        std::vector<std::uint8_t> compress(const std::span<const std::byte> data)
+        {
+            return compress(std::span(reinterpret_cast<const uint8_t*>(data.data()), data.size()));
         }
     }
 }
