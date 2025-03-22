@@ -1012,4 +1012,33 @@ _Struct_size_bytes_(Size) struct EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64
     };
 };
 
+struct EMU_CACHE_DESCRIPTOR
+{
+    BYTE Level;
+    BYTE Associativity;
+    WORD LineSize;
+    DWORD Size;
+    PROCESSOR_CACHE_TYPE Type;
+};
+
+template <typename Traits>
+struct EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION
+{
+    typename Traits::ULONG_PTR ProcessorMask;
+    LOGICAL_PROCESSOR_RELATIONSHIP Relationship;
+    union
+    {
+        struct
+        {
+            BYTE Flags;
+        } ProcessorCore;
+        struct
+        {
+            DWORD NodeNumber;
+        } NumaNode;
+        EMU_CACHE_DESCRIPTOR Cache;
+        ULONGLONG Reserved[2];
+    } DUMMYUNIONNAME;
+};
+
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)

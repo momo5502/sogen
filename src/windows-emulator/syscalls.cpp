@@ -986,8 +986,9 @@ namespace
 
             const emulator_object<SYSTEM_RANGE_START_INFORMATION64> info_obj{c.emu, system_information};
 
-            info_obj.access(
-                [&](SYSTEM_RANGE_START_INFORMATION64& info) { info.SystemRangeStart = 0xFFFF800000000000; });
+            info_obj.access([&](SYSTEM_RANGE_START_INFORMATION64& info) {
+                info.SystemRangeStart = 0xFFFF800000000000; //
+            });
 
             return STATUS_SUCCESS;
         }
@@ -1169,10 +1170,45 @@ namespace
     {
         if (info_class == SystemFlushInformation || info_class == SystemFeatureConfigurationInformation ||
             info_class == SystemSupportedProcessorArchitectures2 ||
-            info_class == SystemFeatureConfigurationSectionInformation ||
-            info_class == SystemLogicalProcessorInformation)
+            info_class == SystemFeatureConfigurationSectionInformation)
         {
             return STATUS_NOT_SUPPORTED;
+        }
+
+        if (info_class == SystemLogicalProcessorInformation)
+        {
+            if (input_buffer_length != sizeof(USHORT))
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            using INFO_TYPE = EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION<EmulatorTraits<Emu64>>;
+
+            const auto processor_group = c.emu.read_memory<USHORT>(input_buffer);
+            constexpr auto required_size = sizeof(INFO_TYPE);
+
+            if (return_length)
+            {
+                return_length.write(required_size);
+            }
+
+            if (system_information_length < required_size)
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            INFO_TYPE information{};
+            information.Relationship = RelationProcessorCore;
+
+            if (processor_group == 0)
+            {
+                const auto active_processor_count = c.proc.kusd.get().ActiveProcessorCount;
+                information.ProcessorMask =
+                    (static_cast<decltype(information.ProcessorMask)>(1) << active_processor_count) - 1;
+            }
+
+            c.emu.write_memory(system_information, information);
+            return STATUS_SUCCESS;
         }
 
         if (info_class == SystemLogicalProcessorAndGroupInformation)
