@@ -518,6 +518,18 @@ namespace
         return STATUS_SUCCESS;
     }
 
+    NTSTATUS handle_NtClearEvent(const syscall_context& c, const handle event_handle)
+    {
+        auto* e = c.proc.events.get(event_handle);
+        if (!e)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        e->signaled = false;
+        return STATUS_SUCCESS;
+    }
+
     NTSTATUS handle_NtCreateEvent(const syscall_context& c, const emulator_object<handle> event_handle,
                                   const ACCESS_MASK /*desired_access*/,
                                   const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
@@ -4137,6 +4149,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtQueryDefaultLocale);
     add_handler(NtSetTimerResolution);
     add_handler(NtResumeThread);
+    add_handler(NtClearEvent);
 
 #undef add_handler
 }
