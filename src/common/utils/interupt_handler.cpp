@@ -6,7 +6,7 @@
 #include "win.hpp"
 
 #ifndef _WIN32
-#include <signal.h>
+#include <csignal>
 #endif
 
 namespace utils
