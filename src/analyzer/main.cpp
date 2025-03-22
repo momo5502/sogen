@@ -165,7 +165,7 @@ namespace
                 {
                     static uint64_t count{0};
                     ++count;
-                    if (count > 100 && count % 10000 != 0)
+                    if (count > 100 && count % 100000 != 0)
                     {
                         return;
                     }
@@ -187,7 +187,7 @@ namespace
                 {
                     static uint64_t count{0};
                     ++count;
-                    if (count > 100 && count % 10000 != 0)
+                    if (count > 100 && count % 100000 != 0)
                     {
                         return;
                     }
