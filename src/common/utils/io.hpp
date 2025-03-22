@@ -1,6 +1,6 @@
 #pragma once
 
-#include <string>
+#include <span>
 #include <vector>
 #include <filesystem>
 
@@ -9,7 +9,8 @@ namespace utils::io
     bool remove_file(const std::filesystem::path& file);
     bool move_file(const std::filesystem::path& src, const std::filesystem::path& target);
     bool file_exists(const std::filesystem::path& file);
-    bool write_file(const std::filesystem::path& file, const std::vector<uint8_t>& data, bool append = false);
+    bool write_file(const std::filesystem::path& file, std::span<const uint8_t> data, bool append = false);
+    bool write_file(const std::filesystem::path& file, std::span<const std::byte> data, bool append = false);
     bool read_file(const std::filesystem::path& file, std::vector<uint8_t>* data);
     std::vector<uint8_t> read_file(const std::filesystem::path& file);
     size_t file_size(const std::filesystem::path& file);

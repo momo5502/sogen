@@ -21,7 +21,7 @@ namespace utils::io
         return std::ifstream(file).good();
     }
 
-    bool write_file(const std::filesystem::path& file, const std::vector<uint8_t>& data, const bool append)
+    bool write_file(const std::filesystem::path& file, const std::span<const uint8_t> data, const bool append)
     {
         if (file.has_parent_path())
         {
@@ -39,6 +39,11 @@ namespace utils::io
         }
 
         return false;
+    }
+
+    bool write_file(const std::filesystem::path& file, const std::span<const std::byte> data, const bool append)
+    {
+        return write_file(file, std::span(reinterpret_cast<const uint8_t*>(data.data()), data.size()), append);
     }
 
     std::vector<uint8_t> read_file(const std::filesystem::path& file)
