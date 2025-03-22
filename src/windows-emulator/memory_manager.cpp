@@ -395,6 +395,8 @@ bool memory_manager::release_memory(const uint64_t address, size_t size)
         size = entry->second.length;
     }
 
+    size = page_align_up(size);
+
     if (size > entry->second.length)
     {
         throw std::runtime_error("Cross region release not supported yet!");
