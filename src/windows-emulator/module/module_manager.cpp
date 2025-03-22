@@ -23,6 +23,32 @@ namespace utils
         buffer.read(sym.address);
     }
 
+    static void serialize(buffer_serializer& buffer, const basic_memory_region& region)
+    {
+        buffer.write(region.start);
+        buffer.write<uint64_t>(region.length);
+        buffer.write(region.permissions);
+    }
+
+    static void deserialize(buffer_deserializer& buffer, basic_memory_region& region)
+    {
+        buffer.read(region.start);
+        region.length = static_cast<size_t>(buffer.read<uint64_t>());
+        buffer.read(region.permissions);
+    }
+
+    static void serialize(buffer_serializer& buffer, const mapped_section& mod)
+    {
+        buffer.write(mod.name);
+        buffer.write(mod.region);
+    }
+
+    static void deserialize(buffer_deserializer& buffer, mapped_section& mod)
+    {
+        buffer.read(mod.name);
+        buffer.read(mod.region);
+    }
+
     static void serialize(buffer_serializer& buffer, const mapped_module& mod)
     {
         buffer.write(mod.name);
@@ -34,6 +60,8 @@ namespace utils
 
         buffer.write_vector(mod.exports);
         buffer.write_map(mod.address_names);
+
+        buffer.write_vector(mod.sections);
 
         buffer.write(mod.is_static);
     }
@@ -49,6 +77,8 @@ namespace utils
 
         buffer.read_vector(mod.exports);
         buffer.read_map(mod.address_names);
+
+        buffer.read_vector(mod.sections);
 
         buffer.read(mod.is_static);
     }
