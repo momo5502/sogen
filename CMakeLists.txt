@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.26.4)
 
 ##########################################
 
+option(MOMO_ENABLE_AVX2 "Enable AVX2 support" ON)
 option(MOMO_ENABLE_SANITIZER "Enable sanitizer" OFF)
 option(MOMO_ENABLE_CLANG_TIDY "Enable clang-tidy checks" OFF)
 option(MOMO_ENABLE_RUST_CODE "Enable code parts written in rust" ON)
