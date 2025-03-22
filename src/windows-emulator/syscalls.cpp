@@ -299,7 +299,7 @@ namespace
             return STATUS_INVALID_HANDLE;
         }
 
-        if (info_class == ThreadSchedulerSharedDataSlot)
+        if (info_class == ThreadSchedulerSharedDataSlot || info_class == ThreadBasePriority)
         {
             return STATUS_SUCCESS;
         }
@@ -1169,7 +1169,8 @@ namespace
     {
         if (info_class == SystemFlushInformation || info_class == SystemFeatureConfigurationInformation ||
             info_class == SystemSupportedProcessorArchitectures2 ||
-            info_class == SystemFeatureConfigurationSectionInformation)
+            info_class == SystemFeatureConfigurationSectionInformation ||
+            info_class == SystemLogicalProcessorInformation)
         {
             return STATUS_NOT_SUPPORTED;
         }
@@ -1453,7 +1454,8 @@ namespace
             return STATUS_SUCCESS;
         }
 
-        if (info_class == ProcessEnclaveInformation || info_class == ProcessMitigationPolicy)
+        if (info_class == ProcessEnclaveInformation || info_class == ProcessMitigationPolicy ||
+            info_class == ProcessGroupInformation)
         {
             return STATUS_NOT_SUPPORTED;
         }
@@ -2523,6 +2525,11 @@ namespace
             0xD4, 0x04, 0x4B, 0x68, 0x42, 0x34, 0x23, 0xBE, 0x69, 0x4E, 0xE9, 0x03, 0x00, 0x00,
         };
 
+        if (token_information_class == TokenAppContainerSid)
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
+
         if (token_information_class == TokenUser)
         {
             constexpr auto required_size = sizeof(sid) + 0x10;
@@ -3507,7 +3514,7 @@ namespace
                                      const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>>
                                      /*object_attributes*/,
                                      const handle process_handle, const uint64_t start_routine, const uint64_t argument,
-                                     const ULONG /*create_flags*/, const EmulatorTraits<Emu64>::SIZE_T /*zero_bits*/,
+                                     const ULONG create_flags, const EmulatorTraits<Emu64>::SIZE_T /*zero_bits*/,
                                      const EmulatorTraits<Emu64>::SIZE_T stack_size,
                                      const EmulatorTraits<Emu64>::SIZE_T /*maximum_stack_size*/,
                                      const emulator_object<PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>> attribute_list)
@@ -3517,7 +3524,8 @@ namespace
             return STATUS_NOT_SUPPORTED;
         }
 
-        const auto h = c.proc.create_thread(c.win_emu.memory, start_routine, argument, stack_size);
+        const auto h = c.proc.create_thread(c.win_emu.memory, start_routine, argument, stack_size,
+                                            create_flags & CREATE_SUSPENDED);
         thread_handle.write(h);
 
         if (!attribute_list)
@@ -3878,6 +3886,22 @@ namespace
         return STATUS_SUCCESS;
     }
 
+    NTSTATUS handle_NtSetTimerResolution(const syscall_context&, const ULONG /*desired_resolution*/,
+                                         const BOOLEAN set_resolution, const emulator_object<ULONG> current_resolution)
+    {
+        if (current_resolution)
+        {
+            current_resolution.write(0x0002625a);
+        }
+
+        if (set_resolution)
+        {
+            return STATUS_TIMER_RESOLUTION_NOT_SET;
+        }
+
+        return STATUS_SUCCESS;
+    }
+
     NTSTATUS handle_NtSetContextThread(const syscall_context& c, const handle thread_handle,
                                        const emulator_object<CONTEXT64> thread_context)
     {
@@ -3917,6 +3941,29 @@ namespace
     NTSTATUS handle_NtYieldExecution(const syscall_context& c)
     {
         c.win_emu.yield_thread();
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS handle_NtResumeThread(const syscall_context& c, const handle thread_handle,
+                                   const emulator_object<ULONG> previous_suspend_count)
+    {
+        auto* thread = c.proc.threads.get(thread_handle);
+        if (!thread)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        const auto old_count = thread->suspended;
+        if (previous_suspend_count)
+        {
+            previous_suspend_count.write(old_count);
+        }
+
+        if (old_count > 0)
+        {
+            thread->suspended -= 1;
+        }
+
         return STATUS_SUCCESS;
     }
 }
@@ -4051,6 +4098,8 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtSystemDebugControl);
     add_handler(NtRequestWaitReplyPort);
     add_handler(NtQueryDefaultLocale);
+    add_handler(NtSetTimerResolution);
+    add_handler(NtResumeThread);
 
 #undef add_handler
 }

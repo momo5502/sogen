@@ -198,9 +198,9 @@ void process_context::deserialize(utils::buffer_deserializer& buffer)
 }
 
 handle process_context::create_thread(memory_manager& memory, const uint64_t start_address, const uint64_t argument,
-                                      const uint64_t stack_size)
+                                      const uint64_t stack_size, const bool suspended)
 {
-    emulator_thread t{memory, *this, start_address, argument, stack_size, ++this->spawned_thread_count};
+    emulator_thread t{memory, *this, start_address, argument, stack_size, suspended, ++this->spawned_thread_count};
     auto [h, thr] = this->threads.store_and_get(std::move(t));
     this->callbacks_->on_create_thread(h, *thr);
     return h;

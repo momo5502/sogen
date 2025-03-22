@@ -96,12 +96,14 @@ namespace
 }
 
 emulator_thread::emulator_thread(memory_manager& memory, const process_context& context, const uint64_t start_address,
-                                 const uint64_t argument, const uint64_t stack_size, const uint32_t id)
+                                 const uint64_t argument, const uint64_t stack_size, const bool suspended,
+                                 const uint32_t id)
     : memory_ptr(&memory),
       stack_size(page_align_up(std::max(stack_size, static_cast<uint64_t>(STACK_SIZE)))),
       start_address(start_address),
       argument(argument),
       id(id),
+      suspended(suspended),
       last_registers(context.default_register_set)
 {
     this->stack_base = memory.allocate_memory(this->stack_size, memory_permission::read_write);
@@ -151,7 +153,7 @@ bool emulator_thread::is_terminated() const
 
 bool emulator_thread::is_thread_ready(process_context& process, utils::clock& clock)
 {
-    if (this->is_terminated())
+    if (this->is_terminated() || this->suspended > 0)
     {
         return false;
     }

@@ -22,7 +22,7 @@ class emulator_thread : public ref_counted_object
     }
 
     emulator_thread(memory_manager& memory, const process_context& context, uint64_t start_address, uint64_t argument,
-                    uint64_t stack_size, uint32_t id);
+                    uint64_t stack_size, bool suspended, uint32_t id);
 
     emulator_thread(const emulator_thread&) = delete;
     emulator_thread& operator=(const emulator_thread&) = delete;
@@ -54,6 +54,7 @@ class emulator_thread : public ref_counted_object
     bool await_any{false};
     bool waiting_for_alert{false};
     bool alerted{false};
+    uint32_t suspended{0};
     std::optional<std::chrono::steady_clock::time_point> await_time{};
 
     std::optional<NTSTATUS> pending_status{};
@@ -123,6 +124,8 @@ class emulator_thread : public ref_counted_object
         buffer.write(this->waiting_for_alert);
         buffer.write(this->alerted);
 
+        buffer.write(this->suspended);
+
         buffer.write_optional(this->await_time);
         buffer.write_optional(this->pending_status);
         buffer.write_optional(this->gs_segment);
@@ -155,6 +158,8 @@ class emulator_thread : public ref_counted_object
 
         buffer.read(this->waiting_for_alert);
         buffer.read(this->alerted);
+
+        buffer.read(this->suspended);
 
         buffer.read_optional(this->await_time);
         buffer.read_optional(this->pending_status);

@@ -2,6 +2,10 @@
 
 // NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
+#ifndef OS_WINDOWS
+#define CREATE_SUSPENDED 0x00000004
+#endif
+
 #define CONTEXT_X86_MAIN           0x00010000
 #define CONTEXT_AMD64_MAIN         0x100000
 #define CONTEXT_CONTROL_32         (CONTEXT_X86_MAIN | 0x1L)
