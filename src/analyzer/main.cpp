@@ -5,6 +5,12 @@
 
 #include "object_watching.hpp"
 
+#include <utils/io.hpp>
+#include <utils/compression.hpp>
+#include <utils/interupt_handler.hpp>
+
+#include <cstdio>
+
 namespace
 {
     struct analysis_options
@@ -13,11 +19,73 @@ namespace
         bool concise_logging{false};
         bool verbose_logging{false};
         bool silent{false};
+        std::filesystem::path dump{};
         std::string registry_path{"./registry"};
         std::string emulation_root{};
         std::set<std::string, std::less<>> modules{};
         std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
     };
+
+    std::vector<uint8_t> build_dump_data(const windows_emulator& win_emu)
+    {
+        utils::buffer_serializer serializer{};
+        win_emu.serialize(serializer);
+
+        auto compressed_data = utils::compression::zlib::compress(serializer.get_buffer());
+
+        // TODO: Add version
+        compressed_data.insert(compressed_data.begin(), {'E', 'D', 'M', 'P'});
+
+        return compressed_data;
+    }
+
+    std::string get_main_executable_name(const windows_emulator& win_emu)
+    {
+        const auto* exe = win_emu.mod_manager.executable;
+        if (exe)
+        {
+            return std::filesystem::path(exe->name).stem().string();
+        }
+
+        return "process";
+    }
+
+    void generate_dump(const windows_emulator& win_emu)
+    {
+        std::filesystem::path dump = get_main_executable_name(win_emu) + "-" + std::to_string(time(nullptr)) + ".edmp";
+        win_emu.log.log("Writing to %s...\n", dump.string().c_str());
+
+        const auto data = build_dump_data(win_emu);
+        utils::io::write_file(dump, data);
+    }
+
+    void load_dump_data(windows_emulator& win_emu, const std::span<const uint8_t> data)
+    {
+        if (data.size() < 4 || memcmp(data.data(), "EDMP", 4) != 0)
+        {
+            throw std::runtime_error("Invalid dump");
+        }
+
+        const auto plain_data = utils::compression::zlib::decompress(data.subspan(4));
+        if (plain_data.empty())
+        {
+            throw std::runtime_error("Failed to decompress dump");
+        }
+
+        utils::buffer_deserializer deserializer{plain_data, true};
+        win_emu.deserialize(deserializer);
+    }
+
+    void load_dump(windows_emulator& win_emu, const std::filesystem::path& dump)
+    {
+        std::vector<uint8_t> data{};
+        if (!utils::io::read_file(dump, &data))
+        {
+            throw std::runtime_error("Failed to read dump file: " + dump.string());
+        }
+
+        load_dump_data(win_emu, data);
+    }
 
     void watch_system_objects(windows_emulator& win_emu, const std::set<std::string, std::less<>>& modules,
                               const bool cache_logging)
@@ -53,6 +121,21 @@ namespace
 
     bool run_emulation(windows_emulator& win_emu, const analysis_options& options)
     {
+        std::atomic_uint32_t signals_received{0};
+        utils::interupt_handler _{[&] {
+            const auto value = signals_received++;
+            if (value == 1)
+            {
+                win_emu.log.log("Exit already requested. Press CTRL+C again to force kill!");
+            }
+            else if (value >= 2)
+            {
+                _Exit(1);
+            }
+
+            win_emu.emu().stop();
+        }};
+
         try
         {
             if (options.use_gdb)
@@ -66,6 +149,25 @@ namespace
             else
             {
                 win_emu.start();
+            }
+
+            if (signals_received > 0)
+            {
+                win_emu.log.log("Do you want to create a dump? (y/n)\n");
+
+                bool write_dump = false;
+
+                char res{};
+                while (res != 'n' && res != 'y')
+                {
+                    res = static_cast<char>(getchar());
+                    write_dump = res == 'y';
+                }
+
+                if (write_dump)
+                {
+                    generate_dump(win_emu);
+                }
             }
         }
         catch (const std::exception& e)
@@ -107,19 +209,9 @@ namespace
         return wide_args;
     }
 
-    bool run(const analysis_options& options, const std::span<const std::string_view> args)
+    emulator_settings create_emulator_settings(const analysis_options& options)
     {
-        if (args.empty())
-        {
-            return false;
-        }
-
-        application_settings app_settings{
-            .application = args[0],
-            .arguments = parse_arguments(args),
-        };
-
-        const emulator_settings settings{
+        return {
             .emulation_root = options.emulation_root,
             .registry_directory = options.registry_path,
             .verbose_calls = options.verbose_logging,
@@ -128,22 +220,61 @@ namespace
             .path_mappings = options.path_mappings,
             .modules = options.modules,
         };
+    }
 
-        windows_emulator win_emu{std::move(app_settings), settings};
+    std::unique_ptr<windows_emulator> create_empty_emulator(const analysis_options& options)
+    {
+        const auto settings = create_emulator_settings(options);
+        return std::make_unique<windows_emulator>(settings);
+    }
+
+    std::unique_ptr<windows_emulator> create_application_emulator(const analysis_options& options,
+                                                                  const std::span<const std::string_view> args)
+    {
+        if (args.empty())
+        {
+            throw std::runtime_error("No args provided");
+        }
+
+        application_settings app_settings{
+            .application = args[0],
+            .arguments = parse_arguments(args),
+        };
+
+        const auto settings = create_emulator_settings(options);
+        return std::make_unique<windows_emulator>(std::move(app_settings), settings);
+    }
+
+    std::unique_ptr<windows_emulator> setup_emulator(const analysis_options& options,
+                                                     const std::span<const std::string_view> args)
+    {
+        if (options.dump.empty())
+        {
+            return create_application_emulator(options, args);
+        }
+
+        auto win_emu = create_empty_emulator(options);
+        load_dump(*win_emu, options.dump);
+        return win_emu;
+    }
+
+    bool run(const analysis_options& options, const std::span<const std::string_view> args)
+    {
+        const auto win_emu = setup_emulator(options, args);
 
         (void)&watch_system_objects;
-        watch_system_objects(win_emu, options.modules, options.concise_logging);
-        win_emu.buffer_stdout = true;
+        watch_system_objects(*win_emu, options.modules, options.concise_logging);
+        win_emu->buffer_stdout = true;
 
         if (options.silent)
         {
-            win_emu.buffer_stdout = false;
-            win_emu.callbacks.on_stdout = [](const std::string_view data) {
+            win_emu->buffer_stdout = false;
+            win_emu->callbacks.on_stdout = [](const std::string_view data) {
                 (void)fwrite(data.data(), 1, data.size(), stdout);
             };
         }
 
-        const auto& exe = *win_emu.mod_manager.executable;
+        const auto& exe = *win_emu->mod_manager.executable;
 
         const auto concise_logging = options.concise_logging;
 
@@ -155,8 +286,8 @@ namespace
             }
 
             auto read_handler = [&, section, concise_logging](const uint64_t address, size_t, uint64_t) {
-                const auto rip = win_emu.emu().read_instruction_pointer();
-                if (!win_emu.mod_manager.executable->is_within(rip))
+                const auto rip = win_emu->emu().read_instruction_pointer();
+                if (!win_emu->mod_manager.executable->is_within(rip))
                 {
                     return;
                 }
@@ -171,14 +302,14 @@ namespace
                     }
                 }
 
-                win_emu.log.print(color::green,
-                                  "Reading from executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
-                                  section.name.c_str(), address, rip);
+                win_emu->log.print(color::green,
+                                   "Reading from executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
+                                   section.name.c_str(), address, rip);
             };
 
             const auto write_handler = [&, section, concise_logging](const uint64_t address, size_t, uint64_t) {
-                const auto rip = win_emu.emu().read_instruction_pointer();
-                if (!win_emu.mod_manager.executable->is_within(rip))
+                const auto rip = win_emu->emu().read_instruction_pointer();
+                if (!win_emu->mod_manager.executable->is_within(rip))
                 {
                     return;
                 }
@@ -193,15 +324,15 @@ namespace
                     }
                 }
 
-                win_emu.log.print(color::blue, "Writing to executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
-                                  section.name.c_str(), address, rip);
+                win_emu->log.print(color::blue, "Writing to executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
+                                   section.name.c_str(), address, rip);
             };
 
-            win_emu.emu().hook_memory_read(section.region.start, section.region.length, std::move(read_handler));
-            win_emu.emu().hook_memory_write(section.region.start, section.region.length, std::move(write_handler));
+            win_emu->emu().hook_memory_read(section.region.start, section.region.length, std::move(read_handler));
+            win_emu->emu().hook_memory_write(section.region.start, section.region.length, std::move(write_handler));
         }
 
-        return run_emulation(win_emu, options);
+        return run_emulation(*win_emu, options);
     }
 
     std::vector<std::string_view> bundle_arguments(const int argc, char** argv)
@@ -260,6 +391,15 @@ namespace
                 arg_it = args.erase(arg_it);
                 options.emulation_root = args[0];
             }
+            else if (arg == "-a")
+            {
+                if (args.size() < 2)
+                {
+                    throw std::runtime_error("No dump path provided after -a");
+                }
+                arg_it = args.erase(arg_it);
+                options.dump = args[0];
+            }
             else if (arg == "-p")
             {
                 if (args.size() < 3)
@@ -301,7 +441,7 @@ int main(const int argc, char** argv)
         auto args = bundle_arguments(argc, argv);
         const auto options = parse_options(args);
 
-        if (args.empty())
+        if (args.empty() && options.dump.empty())
         {
             throw std::runtime_error("Application not specified!");
         }
