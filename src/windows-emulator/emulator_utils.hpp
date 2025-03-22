@@ -308,6 +308,27 @@ class emulator_allocator
     uint64_t active_address_{0};
 };
 
+template <typename Element>
+std::basic_string<Element> read_string(memory_manager& mem, const uint64_t address)
+{
+    std::basic_string<Element> result{};
+
+    for (size_t i = 0;; ++i)
+    {
+        Element element{};
+        mem.read_memory(address + (i * sizeof(element)), &element, sizeof(element));
+
+        if (!element)
+        {
+            break;
+        }
+
+        result.push_back(element);
+    }
+
+    return result;
+}
+
 inline std::u16string read_unicode_string(const emulator& emu, const UNICODE_STRING<EmulatorTraits<Emu64>> ucs)
 {
     static_assert(offsetof(UNICODE_STRING<EmulatorTraits<Emu64>>, Length) == 0);

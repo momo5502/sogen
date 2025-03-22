@@ -394,6 +394,16 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
             log.print(is_interesting_call ? color::yellow : color::dark_gray,
                       "Executing function: %s - %s (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n", binary->name.c_str(),
                       export_entry->second.c_str(), address, return_address, mod_name);
+
+            if (export_entry->second == "MessageBoxW")
+            {
+                log.log("--> %s\n",
+                        u16_to_u8(read_string<char16_t>(this->memory, this->emu().reg(x64_register::rdx))).c_str());
+            }
+            else if (export_entry->second == "MessageBoxA")
+            {
+                log.log("--> %s\n", read_string<char>(this->memory, this->emu().reg(x64_register::rdx)).c_str());
+            }
         }
         else if (address == binary->entry_point)
         {
