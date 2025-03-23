@@ -20,16 +20,16 @@ namespace
         return nt_headers_offset + (first_section_absolute - absolute_base);
     }
 
-    std::vector<uint8_t> read_mapped_memory(const memory_manager& memory, const mapped_module& binary)
+    std::vector<std::byte> read_mapped_memory(const memory_manager& memory, const mapped_module& binary)
     {
-        std::vector<uint8_t> mem{};
+        std::vector<std::byte> mem{};
         mem.resize(binary.size_of_image);
         memory.read_memory(binary.image_base, mem.data(), mem.size());
 
         return mem;
     }
 
-    void collect_exports(mapped_module& binary, const utils::safe_buffer_accessor<const uint8_t> buffer,
+    void collect_exports(mapped_module& binary, const utils::safe_buffer_accessor<const std::byte> buffer,
                          const PEOptionalHeader_t<std::uint64_t>& optional_header)
     {
         const auto& export_directory_entry = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
@@ -70,7 +70,7 @@ namespace
 
     template <typename T>
         requires(std::is_integral_v<T>)
-    void apply_relocation(const utils::safe_buffer_accessor<uint8_t> buffer, const uint64_t offset,
+    void apply_relocation(const utils::safe_buffer_accessor<std::byte> buffer, const uint64_t offset,
                           const uint64_t delta)
     {
         const auto obj = buffer.as<T>(offset);
@@ -79,7 +79,7 @@ namespace
         obj.set(new_value);
     }
 
-    void apply_relocations(const mapped_module& binary, const utils::safe_buffer_accessor<uint8_t> buffer,
+    void apply_relocations(const mapped_module& binary, const utils::safe_buffer_accessor<std::byte> buffer,
                            const PEOptionalHeader_t<std::uint64_t>& optional_header)
     {
         const auto delta = binary.image_base - optional_header.ImageBase;
@@ -142,7 +142,7 @@ namespace
     }
 
     void map_sections(memory_manager& memory, mapped_module& binary,
-                      const utils::safe_buffer_accessor<const uint8_t> buffer,
+                      const utils::safe_buffer_accessor<const std::byte> buffer,
                       const PENTHeaders_t<std::uint64_t>& nt_headers, const uint64_t nt_headers_offset)
     {
         const auto first_section_offset = get_first_section_offset(nt_headers, nt_headers_offset);
@@ -196,7 +196,7 @@ namespace
     }
 }
 
-mapped_module map_module_from_data(memory_manager& memory, const std::span<const uint8_t> data,
+mapped_module map_module_from_data(memory_manager& memory, const std::span<const std::byte> data,
                                    std::filesystem::path file)
 {
     mapped_module binary{};
@@ -241,7 +241,7 @@ mapped_module map_module_from_data(memory_manager& memory, const std::span<const
     map_sections(memory, binary, buffer, nt_headers, nt_headers_offset);
 
     auto mapped_memory = read_mapped_memory(memory, binary);
-    utils::safe_buffer_accessor<uint8_t> mapped_buffer{mapped_memory};
+    utils::safe_buffer_accessor<std::byte> mapped_buffer{mapped_memory};
 
     apply_relocations(binary, mapped_buffer, optional_header);
     collect_exports(binary, mapped_buffer, optional_header);

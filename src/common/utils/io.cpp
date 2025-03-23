@@ -21,7 +21,7 @@ namespace utils::io
         return std::ifstream(file).good();
     }
 
-    bool write_file(const std::filesystem::path& file, const std::span<const uint8_t> data, const bool append)
+    bool write_file(const std::filesystem::path& file, const std::span<const std::byte> data, const bool append)
     {
         if (file.has_parent_path())
         {
@@ -41,34 +41,42 @@ namespace utils::io
         return false;
     }
 
-    bool write_file(const std::filesystem::path& file, const std::span<const std::byte> data, const bool append)
+    std::vector<std::byte> read_file(const std::filesystem::path& file)
     {
-        return write_file(file, std::span(reinterpret_cast<const uint8_t*>(data.data()), data.size()), append);
-    }
-
-    std::vector<uint8_t> read_file(const std::filesystem::path& file)
-    {
-        std::vector<uint8_t> data;
+        std::vector<std::byte> data{};
         read_file(file, &data);
         return data;
     }
 
-    bool read_file(const std::filesystem::path& file, std::vector<uint8_t>* data)
+    bool read_file(const std::filesystem::path& file, std::vector<std::byte>* data)
     {
         if (!data)
         {
             return false;
         }
 
-        data->clear();
+        *data = {};
 
-        std::ifstream stream(file, std::ios::binary);
-        if (!stream)
+        std::ifstream file_stream(file, std::ios::binary);
+        if (!file_stream)
         {
             return false;
         }
 
-        *data = std::vector<uint8_t>{(std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>()};
+        std::vector<char> temp_buffer(0x1000);
+
+        while (file_stream)
+        {
+            file_stream.read(temp_buffer.data(), static_cast<std::streamsize>(temp_buffer.size()));
+            const auto bytes_read = file_stream.gcount();
+
+            if (bytes_read > 0)
+            {
+                const auto* buffer = reinterpret_cast<const std::byte*>(temp_buffer.data());
+                data->insert(data->end(), buffer, buffer + bytes_read);
+            }
+        }
+
         return true;
     }
 

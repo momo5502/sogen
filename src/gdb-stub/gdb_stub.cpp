@@ -35,12 +35,24 @@ namespace gdb_stub
             async_handler& async;
         };
 
-        network::tcp_client_socket accept_client(const network::address& bind_address)
+        network::tcp_client_socket accept_client(const network::address& bind_address,
+                                                 const utils::optional_function<bool()>& should_stop)
         {
             network::tcp_server_socket server{bind_address.get_family()};
             if (!server.bind(bind_address))
             {
                 return false;
+            }
+
+            server.set_blocking(false);
+            server.listen();
+
+            while (true)
+            {
+                if (should_stop() || server.sleep(100ms))
+                {
+                    break;
+                }
             }
 
             return server.accept();
@@ -593,7 +605,11 @@ namespace gdb_stub
 
     bool run_gdb_stub(const network::address& bind_address, debugging_handler& handler)
     {
-        auto client = accept_client(bind_address);
+        const auto should_stop = [&] {
+            return handler.should_stop(); //
+        };
+
+        auto client = accept_client(bind_address, should_stop);
         if (!client)
         {
             return false;
@@ -602,11 +618,10 @@ namespace gdb_stub
         async_handler async{[&](std::atomic_bool& can_run) {
             while (can_run)
             {
-                std::this_thread::sleep_for(10ms);
-
+                (void)client.sleep(100ms);
                 const auto data = client.receive(1);
 
-                if (is_interrupt_packet(data) || !client.is_valid())
+                if (is_interrupt_packet(data) || !client.is_valid() || should_stop())
                 {
                     handler.on_interrupt();
                     can_run = false;
@@ -615,7 +630,7 @@ namespace gdb_stub
         }};
 
         debugging_state state{};
-        connection_handler connection{client};
+        connection_handler connection{client, should_stop};
 
         debugging_context c{
             .connection = connection,
@@ -624,10 +639,10 @@ namespace gdb_stub
             .async = async,
         };
 
-        while (true)
+        while (!should_stop())
         {
             const auto packet = connection.get_packet();
-            if (!packet)
+            if (!packet || should_stop())
             {
                 break;
             }

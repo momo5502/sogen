@@ -18,7 +18,7 @@ namespace apiset
 
     struct container
     {
-        std::vector<uint8_t> data{};
+        std::vector<std::byte> data{};
 
         const API_SET_NAMESPACE& get() const
         {

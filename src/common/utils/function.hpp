@@ -10,7 +10,6 @@ namespace utils
     template <typename Ret, typename... Args>
     class optional_function<Ret(Args...)>
     {
-      private:
         std::function<Ret(Args...)> func;
 
       public:

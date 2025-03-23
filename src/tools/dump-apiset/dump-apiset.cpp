@@ -35,8 +35,8 @@ int main()
     // print_apiset(apiSetMap);
 
     // Compress the API-SET binary blob
-    const auto* data_ptr = reinterpret_cast<const uint8_t*>(api_set_map);
-    const std::vector<uint8_t> buffer(data_ptr, data_ptr + api_set_map->Size);
+    const auto* data_ptr = reinterpret_cast<const std::byte*>(api_set_map);
+    const std::span buffer(data_ptr, data_ptr + api_set_map->Size);
     const auto compressed = utils::compression::zlib::compress(buffer);
     if (compressed.empty())
     {

@@ -72,23 +72,20 @@ namespace utils
 
         void write(const void* buffer, const size_t length)
         {
-#ifndef NDEBUG
-            const uint64_t old_size = this->buffer_.size();
-#endif
+            const auto old_size_remainder = static_cast<uint8_t>(length);
+            constexpr auto check_size = sizeof(old_size_remainder);
 
             if (this->break_offset_ && this->buffer_.size() <= *this->break_offset_ &&
-                this->buffer_.size() + length > *this->break_offset_)
+                this->buffer_.size() + length + check_size > *this->break_offset_)
             {
                 throw std::runtime_error("Break offset reached!");
             }
 
+            const auto* security_buffer = reinterpret_cast<const std::byte*>(&old_size_remainder);
+            this->buffer_.insert(this->buffer_.end(), security_buffer, security_buffer + check_size);
+
             const auto* byte_buffer = static_cast<const std::byte*>(buffer);
             this->buffer_.insert(this->buffer_.end(), byte_buffer, byte_buffer + length);
-
-#ifndef NDEBUG
-            const auto* security_buffer = reinterpret_cast<const std::byte*>(&old_size);
-            this->buffer_.insert(this->buffer_.end(), security_buffer, security_buffer + sizeof(old_size));
-#endif
         }
 
         void write(const buffer_serializer& object)
@@ -256,59 +253,42 @@ namespace utils
     {
       public:
         template <typename T>
-        buffer_deserializer(const std::span<T> buffer, const bool no_debugging = false)
-            : no_debugging_(no_debugging),
-              buffer_(reinterpret_cast<const std::byte*>(buffer.data()), buffer.size() * sizeof(T))
+        buffer_deserializer(const std::span<T> buffer)
+            : buffer_(reinterpret_cast<const std::byte*>(buffer.data()), buffer.size() * sizeof(T))
         {
             static_assert(std::is_trivially_copyable_v<T>, "Type must be trivially copyable");
         }
 
         template <typename T>
-        buffer_deserializer(const std::vector<T>& buffer, const bool no_debugging = false)
-            : buffer_deserializer(std::span(buffer), no_debugging)
+        buffer_deserializer(const std::vector<T>& buffer)
+            : buffer_deserializer(std::span(buffer))
         {
         }
 
-        buffer_deserializer(const buffer_serializer& serializer, const bool no_debugging = false)
-            : buffer_deserializer(serializer.get_buffer(), no_debugging)
+        buffer_deserializer(const buffer_serializer& serializer)
+            : buffer_deserializer(serializer.get_buffer())
         {
         }
 
         std::span<const std::byte> read_data(const size_t length)
         {
-#ifndef NDEBUG
-            const uint64_t real_old_size = this->offset_;
-            (void)real_old_size;
-#endif
+            const auto length_rest = static_cast<uint8_t>(length);
+            constexpr auto check_size = sizeof(length_rest);
 
-            if (this->offset_ + length > this->buffer_.size())
+            if (this->offset_ + (length + check_size) > this->buffer_.size())
             {
                 throw std::runtime_error("Out of bounds read from byte buffer");
             }
 
+            if (static_cast<uint8_t>(this->buffer_[this->offset_]) != length_rest)
+            {
+                throw std::runtime_error("Reading from serialized buffer mismatches written data!");
+            }
+
+            this->offset_ += check_size;
+
             const std::span result(this->buffer_.data() + this->offset_, length);
             this->offset_ += length;
-
-            (void)this->no_debugging_;
-
-#ifndef NDEBUG
-            if (!this->no_debugging_)
-            {
-                uint64_t old_size{};
-                if (this->offset_ + sizeof(old_size) > this->buffer_.size())
-                {
-                    throw std::runtime_error("Out of bounds read from byte buffer");
-                }
-
-                memcpy(&old_size, this->buffer_.data() + this->offset_, sizeof(old_size));
-                if (old_size != real_old_size)
-                {
-                    throw std::runtime_error("Reading from serialized buffer mismatches written data!");
-                }
-
-                this->offset_ += sizeof(old_size);
-            }
-#endif
 
             return result;
         }
@@ -506,7 +486,6 @@ namespace utils
         }
 
       private:
-        bool no_debugging_{false};
         size_t offset_{0};
         std::span<const std::byte> buffer_{};
         std::unordered_map<std::type_index, std::function<void*()>> factories_{};

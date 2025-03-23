@@ -42,7 +42,7 @@ namespace apiset
             return static_cast<ULONG>(address - result_base);
         }
 
-        std::vector<uint8_t> decompress_apiset(const std::vector<uint8_t>& apiset)
+        std::vector<std::byte> decompress_apiset(const std::vector<std::byte>& apiset)
         {
             auto buffer = utils::compression::zlib::decompress(apiset);
             if (buffer.empty())
@@ -53,7 +53,7 @@ namespace apiset
             return buffer;
         }
 
-        std::vector<uint8_t> obtain_data(const location location, const std::filesystem::path& root)
+        std::vector<std::byte> obtain_data(const location location, const std::filesystem::path& root)
         {
             switch (location)
             {
@@ -61,7 +61,7 @@ namespace apiset
             case location::host: {
                 const auto apiSetMap =
                     reinterpret_cast<const API_SET_NAMESPACE*>(NtCurrentTeb64()->ProcessEnvironmentBlock->ApiSetMap);
-                const auto* dataPtr = reinterpret_cast<const uint8_t*>(apiSetMap);
+                const auto* dataPtr = reinterpret_cast<const std::byte*>(apiSetMap);
                 return {dataPtr, dataPtr + apiSetMap->Size};
             }
 #else
@@ -78,11 +78,13 @@ namespace apiset
                 return decompress_apiset(apiset);
             }
             case location::default_windows_10: {
-                const std::vector<uint8_t> apiset{apiset_w10, apiset_w10 + sizeof(apiset_w10)};
+                const auto* byte_apiset = reinterpret_cast<const std::byte*>(apiset_w10);
+                const std::vector<std::byte> apiset{byte_apiset, byte_apiset + sizeof(apiset_w10)};
                 return decompress_apiset(apiset);
             }
             case location::default_windows_11: {
-                const std::vector<uint8_t> apiset{apiset_w11, apiset_w11 + sizeof(apiset_w11)};
+                const auto* byte_apiset = reinterpret_cast<const std::byte*>(apiset_w11);
+                const std::vector<std::byte> apiset{byte_apiset, byte_apiset + sizeof(apiset_w11)};
                 return decompress_apiset(apiset);
             }
             default:
