@@ -4,9 +4,8 @@
 #include <win_x64_gdb_stub_handler.hpp>
 
 #include "object_watching.hpp"
+#include "snapshot.hpp"
 
-#include <utils/io.hpp>
-#include <utils/compression.hpp>
 #include <utils/interupt_handler.hpp>
 
 #include <cstdio>
@@ -25,67 +24,6 @@ namespace
         std::set<std::string, std::less<>> modules{};
         std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
     };
-
-    std::vector<uint8_t> build_dump_data(const windows_emulator& win_emu)
-    {
-        utils::buffer_serializer serializer{};
-        win_emu.serialize(serializer);
-
-        auto compressed_data = utils::compression::zlib::compress(serializer.get_buffer());
-
-        // TODO: Add version
-        compressed_data.insert(compressed_data.begin(), {'E', 'D', 'M', 'P'});
-
-        return compressed_data;
-    }
-
-    std::string get_main_executable_name(const windows_emulator& win_emu)
-    {
-        const auto* exe = win_emu.mod_manager.executable;
-        if (exe)
-        {
-            return std::filesystem::path(exe->name).stem().string();
-        }
-
-        return "process";
-    }
-
-    void generate_dump(const windows_emulator& win_emu)
-    {
-        std::filesystem::path dump = get_main_executable_name(win_emu) + "-" + std::to_string(time(nullptr)) + ".edmp";
-        win_emu.log.log("Writing to %s...\n", dump.string().c_str());
-
-        const auto data = build_dump_data(win_emu);
-        utils::io::write_file(dump, data);
-    }
-
-    void load_dump_data(windows_emulator& win_emu, const std::span<const uint8_t> data)
-    {
-        if (data.size() < 4 || memcmp(data.data(), "EDMP", 4) != 0)
-        {
-            throw std::runtime_error("Invalid dump");
-        }
-
-        const auto plain_data = utils::compression::zlib::decompress(data.subspan(4));
-        if (plain_data.empty())
-        {
-            throw std::runtime_error("Failed to decompress dump");
-        }
-
-        utils::buffer_deserializer deserializer{plain_data, true};
-        win_emu.deserialize(deserializer);
-    }
-
-    void load_dump(windows_emulator& win_emu, const std::filesystem::path& dump)
-    {
-        std::vector<uint8_t> data{};
-        if (!utils::io::read_file(dump, &data))
-        {
-            throw std::runtime_error("Failed to read dump file: " + dump.string());
-        }
-
-        load_dump_data(win_emu, data);
-    }
 
     void watch_system_objects(windows_emulator& win_emu, const std::set<std::string, std::less<>>& modules,
                               const bool cache_logging)
@@ -117,6 +55,23 @@ namespace
                 }
             });
 #endif
+    }
+
+    bool read_yes_no_answer()
+    {
+        while (true)
+        {
+            const auto chr = static_cast<char>(getchar());
+            if (chr == 'y')
+            {
+                return true;
+            }
+
+            if (chr == 'n')
+            {
+                return false;
+            }
+        }
     }
 
     bool run_emulation(windows_emulator& win_emu, const analysis_options& options)
@@ -153,20 +108,12 @@ namespace
 
             if (signals_received > 0)
             {
-                win_emu.log.log("Do you want to create a dump? (y/n)\n");
+                win_emu.log.log("Do you want to create a snapshot? (y/n)\n");
+                const auto write_snapshot = read_yes_no_answer();
 
-                bool write_dump = false;
-
-                char res{};
-                while (res != 'n' && res != 'y')
+                if (write_snapshot)
                 {
-                    res = static_cast<char>(getchar());
-                    write_dump = res == 'y';
-                }
-
-                if (write_dump)
-                {
-                    generate_dump(win_emu);
+                    snapshot::write_emulator_snapshot(win_emu);
                 }
             }
         }
@@ -254,7 +201,7 @@ namespace
         }
 
         auto win_emu = create_empty_emulator(options);
-        load_dump(*win_emu, options.dump);
+        snapshot::load_emulator_snapshot(*win_emu, options.dump);
         return win_emu;
     }
 

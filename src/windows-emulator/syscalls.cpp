@@ -791,7 +791,7 @@ namespace
         }
 
         uint64_t size = section_entry->maximum_size;
-        std::vector<uint8_t> file_data{};
+        std::vector<std::byte> file_data{};
 
         if (!section_entry->file_name.empty())
         {

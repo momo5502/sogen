@@ -2,6 +2,7 @@
 
 #include <zlib.h>
 #include <array>
+#include <cstdint>
 #include <cstring>
 
 namespace utils::compression
@@ -48,16 +49,16 @@ namespace utils::compression
             };
         }
 
-        std::vector<std::uint8_t> decompress(const std::span<const std::uint8_t> data)
+        std::vector<std::byte> decompress(const std::span<const std::byte> data)
         {
-            std::vector<std::uint8_t> buffer{};
+            std::vector<std::byte> buffer{};
             zlib_stream stream_container{};
             if (!stream_container.is_valid())
             {
                 return {};
             }
 
-            static thread_local std::array<uint8_t, ZCHUNK_SIZE> dest{};
+            static thread_local std::array<std::byte, ZCHUNK_SIZE> dest{};
             auto& stream = stream_container.get();
 
             stream.avail_in = static_cast<uInt>(data.size());
@@ -66,7 +67,7 @@ namespace utils::compression
             do
             {
                 stream.avail_out = static_cast<uInt>(dest.size());
-                stream.next_out = dest.data();
+                stream.next_out = reinterpret_cast<uint8_t*>(dest.data());
 
                 const auto ret = inflate(&stream, Z_FINISH);
                 if (ret != Z_OK && ret != Z_BUF_ERROR && ret != Z_STREAM_END)
@@ -80,14 +81,9 @@ namespace utils::compression
             return buffer;
         }
 
-        std::vector<std::uint8_t> decompress(const std::span<const std::byte>& data)
+        std::vector<std::byte> compress(const std::span<const std::byte> data)
         {
-            return decompress(std::span(reinterpret_cast<const uint8_t*>(data.data()), data.size()));
-        }
-
-        std::vector<std::uint8_t> compress(const std::span<const std::uint8_t> data)
-        {
-            std::vector<std::uint8_t> result{};
+            std::vector<std::byte> result{};
             auto length = compressBound(static_cast<uLong>(data.size()));
             result.resize(length);
 
@@ -99,11 +95,6 @@ namespace utils::compression
 
             result.resize(length);
             return result;
-        }
-
-        std::vector<std::uint8_t> compress(const std::span<const std::byte> data)
-        {
-            return compress(std::span(reinterpret_cast<const uint8_t*>(data.data()), data.size()));
         }
     }
 }
