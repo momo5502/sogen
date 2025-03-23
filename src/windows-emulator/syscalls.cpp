@@ -673,6 +673,7 @@ namespace
         }
 
         if (filename == u"windows_shell_global_counters"             //
+            || filename == u"Global\\__ComCatalogCache__"            //
             || filename == u"{00020000-0000-1005-8005-0000C06B5161}" //
             || filename == u"Global\\{00020000-0000-1005-8005-0000C06B5161}")
         {
@@ -1103,7 +1104,7 @@ namespace
         }
 
         if (info_class == SystemProcessInformation || info_class == SystemModuleInformation ||
-            info_class == SystemMemoryUsageInformation)
+            info_class == SystemMemoryUsageInformation || info_class == SystemCodeIntegrityPolicyInformation)
         {
             return STATUS_NOT_SUPPORTED;
         }
@@ -3860,6 +3861,16 @@ namespace
         return STATUS_NOT_SUPPORTED;
     }
 
+    NTSTATUS handle_NtTraceControl()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtUserGetProcessUIContextInformation()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
     NTSTATUS handle_NtUserFindWindowEx()
     {
         return 0;
@@ -4150,6 +4161,8 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtSetTimerResolution);
     add_handler(NtResumeThread);
     add_handler(NtClearEvent);
+    add_handler(NtTraceControl);
+    add_handler(NtUserGetProcessUIContextInformation);
 
 #undef add_handler
 }
