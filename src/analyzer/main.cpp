@@ -14,7 +14,7 @@ namespace
 {
     struct analysis_options
     {
-        bool use_gdb{false};
+        mutable bool use_gdb{false};
         bool concise_logging{false};
         bool verbose_logging{false};
         bool silent{false};
@@ -98,7 +98,9 @@ namespace
                 const auto* address = "127.0.0.1:28960";
                 win_emu.log.print(color::pink, "Waiting for GDB connection on %s...\n", address);
 
-                win_x64_gdb_stub_handler handler{win_emu};
+                const auto should_stop = [&] { return signals_received > 0; };
+
+                win_x64_gdb_stub_handler handler{win_emu, should_stop};
                 gdb_stub::run_gdb_stub(network::address{"0.0.0.0:28960", AF_INET}, handler);
             }
             else
@@ -108,6 +110,8 @@ namespace
 
             if (signals_received > 0)
             {
+                options.use_gdb = false;
+
                 win_emu.log.log("Do you want to create a snapshot? (y/n)\n");
                 const auto write_snapshot = read_yes_no_answer();
 

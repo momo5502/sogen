@@ -1,7 +1,7 @@
 #pragma once
 #include "stream_processor.hpp"
 
-#include <utils/concurrency.hpp>
+#include <utils/function.hpp>
 #include <network/tcp_client_socket.hpp>
 
 #include <thread>
@@ -13,7 +13,7 @@ namespace gdb_stub
     class connection_handler
     {
       public:
-        connection_handler(network::tcp_client_socket& client);
+        connection_handler(network::tcp_client_socket& client, utils::optional_function<bool()> should_stop = {});
         ~connection_handler();
 
         connection_handler(connection_handler&&) = delete;
@@ -32,6 +32,7 @@ namespace gdb_stub
         bool should_stop() const;
 
       private:
+        utils::optional_function<bool()> should_stop_{};
         network::tcp_client_socket& client_;
         stream_processor processor_{};
 

@@ -23,8 +23,10 @@ namespace gdb_stub
         }
     }
 
-    connection_handler::connection_handler(network::tcp_client_socket& client)
-        : client_(client)
+    connection_handler::connection_handler(network::tcp_client_socket& client,
+                                           utils::optional_function<bool()> should_stop)
+        : should_stop_(std::move(should_stop)),
+          client_(client)
     {
         this->client_.set_blocking(false);
 
@@ -48,7 +50,7 @@ namespace gdb_stub
 
     std::optional<std::string> connection_handler::get_packet()
     {
-        while (this->client_.is_valid() && !this->processor_.has_packet())
+        while (this->client_.is_valid() && !this->processor_.has_packet() && !this->should_stop_())
         {
             if (!read_from_socket(this->processor_, this->client_))
             {

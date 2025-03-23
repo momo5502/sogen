@@ -50,6 +50,11 @@ namespace gdb_stub
         virtual std::vector<uint32_t> get_thread_ids() = 0;
 
         virtual std::optional<uint32_t> get_exit_code() = 0;
+
+        virtual bool should_stop()
+        {
+            return false;
+        }
     };
 
     bool run_gdb_stub(const network::address& bind_address, debugging_handler& handler);

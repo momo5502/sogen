@@ -18,9 +18,9 @@ namespace network
 
         tcp_client_socket accept();
 
+        void listen();
+
       private:
         bool listening_{false};
-
-        void listen();
     };
 }

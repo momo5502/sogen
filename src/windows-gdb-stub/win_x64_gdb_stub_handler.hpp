@@ -2,14 +2,21 @@
 #include "x64_gdb_stub_handler.hpp"
 
 #include <windows_emulator.hpp>
+#include <utils/function.hpp>
 
 class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
 {
   public:
-    win_x64_gdb_stub_handler(windows_emulator& win_emu)
+    win_x64_gdb_stub_handler(windows_emulator& win_emu, utils::optional_function<bool()> should_stop = {})
         : x64_gdb_stub_handler(win_emu.emu()),
-          win_emu_(&win_emu)
+          win_emu_(&win_emu),
+          should_stop_(std::move(should_stop))
     {
+    }
+
+    bool should_stop() override
+    {
+        return this->should_stop_();
     }
 
     gdb_stub::action run() override
@@ -81,4 +88,5 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
 
   private:
     windows_emulator* win_emu_{};
+    utils::optional_function<bool()> should_stop_{};
 };
