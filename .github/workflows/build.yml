@@ -63,7 +63,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Verify Formatting
-        uses: jidicula/clang-format-action@v4.14.0
+        uses: jidicula/clang-format-action@v4.15.0
         with:
           clang-format-version: '19'
           check-path: 'src'
