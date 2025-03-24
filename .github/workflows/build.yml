@@ -65,7 +65,7 @@ jobs:
       - name: Verify Formatting
         uses: jidicula/clang-format-action@v4.15.0
         with:
-          clang-format-version: '19'
+          clang-format-version: '20'
           check-path: 'src'
 
   build-apiset-dumper:
