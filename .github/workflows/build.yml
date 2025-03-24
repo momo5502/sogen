@@ -297,7 +297,7 @@ jobs:
           echo "ASAN_OPTIONS=detect_odr_violation=0" >> $GITHUB_ENV
 
       - name: Download Test Configuration
-        uses: actions/download-artifact@v4.2.0
+        uses: actions/download-artifact@v4.2.1
         with:
           name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
           path: build/${{matrix.preset}}
