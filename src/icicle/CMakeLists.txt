@@ -4,23 +4,32 @@ set(ICICLE_BUILD_DIR ${CMAKE_CURRENT_BINARY_DIR}/cargo-build)
 set(ICICLE_ARTIFACT_DIR ${ICICLE_BUILD_DIR}/$<IF:$<CONFIG:Debug>,debug,release>)
 
 set(ICICLE_RUST_PROJECT_NAME "icicle")
-set(ICICLE_RUST_LIB ${ICICLE_ARTIFACT_DIR}/lib${ICICLE_RUST_PROJECT_NAME}.a)
+set(ICICLE_RUST_LIBNAME "lib${ICICLE_RUST_PROJECT_NAME}.a")
 
 if(MSVC)
-    set(ICICLE_RUST_LIB ${ICICLE_ARTIFACT_DIR}/${ICICLE_RUST_PROJECT_NAME}.lib)
+    set(ICICLE_RUST_LIBNAME "${ICICLE_RUST_PROJECT_NAME}.lib")
 endif()
 
-set(CARGO_OPTIONS "")
+set(CARGO_TRIPLE)
+set(CARGO_OPTIONS)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
-  set(CARGO_OPTIONS "--target=aarch64-apple-ios")
+  set(CARGO_TRIPLE "aarch64-apple-ios")
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Android")
   if(CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
-    set(CARGO_OPTIONS "--target=aarch64-linux-android")
+    set(CARGO_TRIPLE "aarch64-linux-android")
   else()
-    set(CARGO_OPTIONS "--target=${CMAKE_ANDROID_ARCH_ABI}-linux-android")
+    set(CARGO_TRIPLE "${CMAKE_ANDROID_ARCH_ABI}-linux-android")
   endif()
 endif()
+
+if(CARGO_TRIPLE)
+  set(CARGO_OPTIONS ${CARGO_OPTIONS} "--target=${CARGO_TRIPLE}")
+  set(ICICLE_ARTIFACT_DIR ${ICICLE_BUILD_DIR}/${CARGO_TRIPLE}/$<IF:$<CONFIG:Debug>,debug,release>)
+endif()
+
+
+set(ICICLE_RUST_LIB ${ICICLE_ARTIFACT_DIR}/${ICICLE_RUST_LIBNAME})
 
 ExternalProject_Add(
     icicle-rust-project
