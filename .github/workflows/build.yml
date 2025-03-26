@@ -180,6 +180,7 @@ jobs:
             clang-version: 20
           - platform: iOS arm64
             runner: macos-latest
+            rust-target: aarch64-apple-ios
             cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/ios.cmake"
           - platform: macOS arm64
             runner: macos-latest
@@ -201,6 +202,10 @@ jobs:
 
       - name: Install Ninja
         uses: seanmiddleditch/gha-setup-ninja@v6
+
+      - name: Install Rust Target
+        if: "${{ matrix.rust-target }}"
+        run: rustup target add ${{ matrix.rust-target }}
 
       - name: Install Clang
         if: "${{ matrix.platform == 'Linux x86_64 Clang' }}"
