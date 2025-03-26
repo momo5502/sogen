@@ -14,6 +14,12 @@ set(CARGO_OPTIONS "")
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   set(CARGO_OPTIONS "--target=aarch64-apple-ios")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Android")
+  if(CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
+    set(CARGO_OPTIONS "--target=aarch64-linux-android")
+  else()
+    set(CARGO_OPTIONS "--target=${CMAKE_ANDROID_ARCH_ABI}-linux-android")
+  endif()
 endif()
 
 ExternalProject_Add(
@@ -22,7 +28,7 @@ ExternalProject_Add(
     SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}
     BINARY_DIR ${CMAKE_CURRENT_LIST_DIR}
     CONFIGURE_COMMAND ""
-    BUILD_COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${ICICLE_BUILD_DIR}" cargo build ${CARGO_OPTIONS} --all-targets $<IF:$<CONFIG:Debug>,--lib,--release>
+    BUILD_COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${ICICLE_BUILD_DIR}" cargo build ${CARGO_OPTIONS} --lib $<IF:$<CONFIG:Debug>,-v,--release>
     INSTALL_COMMAND ""
     USES_TERMINAL_CONFIGURE 1
     USES_TERMINAL_BUILD 1
