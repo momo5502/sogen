@@ -37,6 +37,10 @@ impl IcicleEmulator {
         }
     }
 
+    fn get_mem(&mut self) -> &mut icicle_vm::cpu::Mmu {
+        return &mut self.vm.cpu.mem;
+    }
+
     pub fn map_memory(&mut self, address: u64, length: u64, permissions: u8) -> bool {
         const MAPPING_PERMISSIONS: u8 = icicle_vm::cpu::mem::perm::MAP
             | icicle_vm::cpu::mem::perm::INIT
@@ -55,11 +59,27 @@ impl IcicleEmulator {
             align: 0x1000,
         };
 
-        let res = self.vm.cpu.mem.alloc_memory(layout, mapping);
+        let res = self.get_mem().alloc_memory(layout, mapping);
         return res.is_ok();
     }
 
     pub fn unmap_memory(&mut self, address: u64, length: u64) -> bool {
-        return self.vm.cpu.mem.unmap_memory_len(address, length);
+        return self.get_mem().unmap_memory_len(address, length);
+    }
+
+    pub fn protect_memory(&mut self, address: u64, length: u64, permissions: u8) -> bool {
+        let native_permissions = map_permissions(permissions);
+        let res = self.get_mem().update_perm(address, length, native_permissions);
+        return res.is_ok();
+    }
+
+    pub fn write_memory(&mut self, address: u64, data: &[u8]) -> bool {
+        let res = self.get_mem().write_bytes(address, data, icicle_vm::cpu::mem::perm::WRITE);
+        return res.is_ok();
+    }
+
+    pub fn read_memory(&mut self, address: u64, data: &mut [u8]) -> bool {
+        let res = self.get_mem().read_bytes(address, data, icicle_vm::cpu::mem::perm::READ);
+        return res.is_ok();
     }
 }

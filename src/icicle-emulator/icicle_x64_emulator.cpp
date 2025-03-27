@@ -6,13 +6,27 @@ using icicle_emulator = struct icicle_emulator_;
 extern "C"
 {
     icicle_emulator* icicle_create_emulator();
+    int32_t icicle_protect_memory(icicle_emulator*, uint64_t address, uint64_t length, uint8_t permissions);
     int32_t icicle_map_memory(icicle_emulator*, uint64_t address, uint64_t length, uint8_t permissions);
     int32_t icicle_unmap_memory(icicle_emulator*, uint64_t address, uint64_t length);
+    int32_t icicle_read_memory(icicle_emulator*, uint64_t address, void* data, size_t length);
+    int32_t icicle_write_memory(icicle_emulator*, uint64_t address, const void* data, size_t length);
     void icicle_destroy_emulator(icicle_emulator*);
 }
 
 namespace icicle
 {
+    namespace
+    {
+        void ice(const bool result, const std::string_view error)
+        {
+            if (!result)
+            {
+                throw std::runtime_error(std::string(error));
+            }
+        }
+    }
+
     class icicle_x64_emulator : public x64_emulator
     {
       public:
@@ -66,42 +80,36 @@ namespace icicle
         void map_memory(const uint64_t address, const size_t size, memory_permission permissions) override
         {
             const auto res = icicle_map_memory(this->emu_, address, size, static_cast<uint8_t>(permissions));
-            if (!res)
-            {
-                throw std::runtime_error("Failed to map memory");
-            }
+            ice(res, "Failed to map memory");
         }
 
         void unmap_memory(const uint64_t address, const size_t size) override
         {
             const auto res = icicle_unmap_memory(this->emu_, address, size);
-            if (!res)
-            {
-                throw std::runtime_error("Failed to map memory");
-            }
+            ice(res, "Failed to unmap memory");
         }
 
         bool try_read_memory(const uint64_t address, void* data, const size_t size) const override
         {
-            throw std::runtime_error("Not implemented");
+            return icicle_read_memory(this->emu_, address, data, size);
         }
 
         void read_memory(const uint64_t address, void* data, const size_t size) const override
         {
-            if (!this->try_read_memory(address, data, size))
-            {
-                throw std::runtime_error("Failed to read memory");
-            }
+            const auto res = this->try_read_memory(address, data, size);
+            ice(res, "Failed to read memory");
         }
 
         void write_memory(const uint64_t address, const void* data, const size_t size) override
         {
-            throw std::runtime_error("Not implemented");
+            const auto res = icicle_write_memory(this->emu_, address, data, size);
+            ice(res, "Failed to write memory");
         }
 
         void apply_memory_protection(const uint64_t address, const size_t size, memory_permission permissions) override
         {
-            throw std::runtime_error("Not implemented");
+            const auto res = icicle_protect_memory(this->emu_, address, size, static_cast<uint8_t>(permissions));
+            ice(res, "Failed to apply permissions");
         }
 
         emulator_hook* hook_instruction(int instruction_type, instruction_hook_callback callback) override
