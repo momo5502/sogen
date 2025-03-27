@@ -16,6 +16,7 @@ endif()
 
 target_link_libraries(windows-emulator PRIVATE
   unicorn-emulator
+  icicle-emulator
 )
 
 target_link_libraries(windows-emulator PUBLIC emulator)
