@@ -11,6 +11,8 @@ extern "C"
     int32_t icicle_unmap_memory(icicle_emulator*, uint64_t address, uint64_t length);
     int32_t icicle_read_memory(icicle_emulator*, uint64_t address, void* data, size_t length);
     int32_t icicle_write_memory(icicle_emulator*, uint64_t address, const void* data, size_t length);
+    size_t icicle_read_register(icicle_emulator*, int reg, void* data, size_t length);
+    size_t icicle_write_register(icicle_emulator*, int reg, const void* data, size_t length);
     void icicle_destroy_emulator(icicle_emulator*);
 }
 
@@ -63,12 +65,12 @@ namespace icicle
 
         size_t write_raw_register(const int reg, const void* value, const size_t size) override
         {
-            throw std::runtime_error("Not implemented");
+            return icicle_write_register(this->emu_, reg, value, size);
         }
 
         size_t read_raw_register(const int reg, void* value, const size_t size) override
         {
-            throw std::runtime_error("Not implemented");
+            return icicle_read_register(this->emu_, reg, value, size);
         }
 
         void map_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb,

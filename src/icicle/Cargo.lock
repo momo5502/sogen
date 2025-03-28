@@ -362,6 +362,7 @@ dependencies = [
 name = "icicle"
 version = "0.1.0"
 dependencies = [
+ "icicle-cpu",
  "icicle-vm",
  "pcode",
 ]
