@@ -2,9 +2,16 @@ use icicle_cpu::ValueSource;
 use std::collections::HashMap;
 
 fn create_x64_vm() -> icicle_vm::Vm {
-    let cpu_config = icicle_vm::cpu::Config::from_target_triple("x86_64-none");
-    let vm = icicle_vm::build(&cpu_config).unwrap();
-    return vm;
+    let mut cpu_config = icicle_vm::cpu::Config::from_target_triple("x86_64-none");
+    cpu_config.enable_jit = true;
+    cpu_config.enable_jit_mem = true;
+    cpu_config.enable_shadow_stack = false;
+    cpu_config.enable_recompilation = true;
+    cpu_config.track_uninitialized = false;
+    cpu_config.optimize_instructions = true;
+    cpu_config.optimize_block = false;
+    
+    return icicle_vm::build(&cpu_config).unwrap();
 }
 
 fn map_permissions(foreign_permissions: u8) -> u8 {
