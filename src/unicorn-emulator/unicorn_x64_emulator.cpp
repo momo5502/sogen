@@ -1,6 +1,8 @@
 #define UNICORN_EMULATOR_IMPL
 #include "unicorn_x64_emulator.hpp"
 
+#include <array>
+
 #include "unicorn_memory_regions.hpp"
 #include "unicorn_hook.hpp"
 
@@ -300,6 +302,12 @@ namespace unicorn
             void stop() override
             {
                 uce(uc_emu_stop(*this));
+            }
+
+            void load_gdt(const pointer_type address, const uint32_t limit) override
+            {
+                const std::array<uint64_t, 4> gdtr = {0, address, limit, 0};
+                this->write_register(x64_register::gdtr, gdtr.data(), gdtr.size());
             }
 
             void set_segment_base(const x64_register base, const pointer_type value) override

@@ -66,6 +66,21 @@ namespace icicle
         {
         }
 
+        void load_gdt(const pointer_type address, const uint32_t limit) override
+        {
+            struct gdtr
+            {
+                uint32_t padding{};
+                uint32_t limit{};
+                uint64_t address{};
+            };
+
+            const gdtr entry{.limit = limit, .address = address};
+            static_assert(sizeof(gdtr) - offsetof(gdtr, limit) == 12);
+
+            this->write_register(x64_register::gdtr, &entry.limit, 12);
+        }
+
         void set_segment_base(const x64_register base, const pointer_type value) override
         {
             switch (base)

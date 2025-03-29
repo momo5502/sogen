@@ -151,6 +151,7 @@ impl IcicleEmulator {
 // ------------------------------
 
 #[repr(i32)]
+#[derive(PartialEq)]
 pub enum X64Register {
     Invalid = 0,
     Ah,
