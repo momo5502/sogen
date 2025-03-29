@@ -46,6 +46,14 @@ impl IcicleEmulator {
         return &mut self.vm.cpu.mem;
     }
 
+    pub fn start(&mut self) {
+        self.vm.run();
+    }
+
+    pub fn stop(&mut self) {
+        //self.vm.stop();
+    }
+
     pub fn map_memory(&mut self, address: u64, length: u64, permissions: u8) -> bool {
         const MAPPING_PERMISSIONS: u8 = icicle_vm::cpu::mem::perm::MAP
             | icicle_vm::cpu::mem::perm::INIT
@@ -608,8 +616,8 @@ struct X64RegisterNodes {
     fptag: pcode::VarNode,
     //msr: pcode::VarNode,
     mxcsr: pcode::VarNode,
-    //fs_base: pcode::VarNode,
-    //gs_base: pcode::VarNode,
+    fs_base: pcode::VarNode,
+    gs_base: pcode::VarNode,
     flags: pcode::VarNode,
     rflags: pcode::VarNode,
     fip: pcode::VarNode,
@@ -849,9 +857,9 @@ impl X64RegisterNodes {
             fop: r("FPULastInstructionOpcode"),
             /*fds: r("FDS"),
             msr: r("MSR"),
-            fcs: r("FCS"),
-            fs_base: r("FSBASE"),
-            gs_base: r("GSBASE"),*/
+            fcs: r("FCS"),*/
+            fs_base: r("FS_OFFSET"),
+            gs_base: r("GS_OFFSET"),
         }
     }
 
@@ -1077,8 +1085,8 @@ impl X64RegisterNodes {
             X64Register::Fptag => self.fptag,
             //X64Register::Msr => self.msr,
             X64Register::Mxcsr => self.mxcsr,
-            //X64Register::FsBase => self.fs_base,
-            //X64Register::GsBase => self.gs_base,
+            X64Register::FsBase => self.fs_base,
+            X64Register::GsBase => self.gs_base,
             X64Register::Flags => self.flags,
             X64Register::Rflags => self.rflags,
             X64Register::Fip => self.fip,

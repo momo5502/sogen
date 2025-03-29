@@ -18,6 +18,14 @@ pub fn icicle_create_emulator() -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
+pub fn icicle_start(ptr: *mut c_void) {
+    unsafe {
+        let emulator = &mut *(ptr as *mut IcicleEmulator);
+        emulator.start();
+    }
+}
+
+#[unsafe(no_mangle)]
 pub fn icicle_map_memory(ptr: *mut c_void, address: u64, length: u64, permissions: u8) -> i32 {
     unsafe {
         let emulator = &mut *(ptr as *mut IcicleEmulator);
@@ -45,7 +53,12 @@ pub fn icicle_protect_memory(ptr: *mut c_void, address: u64, length: u64, permis
 }
 
 #[unsafe(no_mangle)]
-pub fn icicle_write_memory(ptr: *mut c_void, address: u64, data: *const c_void, size: usize) -> i32 {
+pub fn icicle_write_memory(
+    ptr: *mut c_void,
+    address: u64,
+    data: *const c_void,
+    size: usize,
+) -> i32 {
     unsafe {
         let emulator = &mut *(ptr as *mut IcicleEmulator);
         let u8_slice = std::slice::from_raw_parts(data as *const u8, size);
@@ -65,20 +78,30 @@ pub fn icicle_read_memory(ptr: *mut c_void, address: u64, data: *mut c_void, siz
 }
 
 #[unsafe(no_mangle)]
-pub fn icicle_read_register(ptr: *mut c_void, reg: X64Register, data: *mut c_void, size: usize) -> usize {
+pub fn icicle_read_register(
+    ptr: *mut c_void,
+    reg: X64Register,
+    data: *mut c_void,
+    size: usize,
+) -> usize {
     unsafe {
         let emulator = &mut *(ptr as *mut IcicleEmulator);
         let u8_slice = std::slice::from_raw_parts_mut(data as *mut u8, size);
-       return emulator.read_register(reg, u8_slice);
+        return emulator.read_register(reg, u8_slice);
     }
 }
 
 #[unsafe(no_mangle)]
-pub fn icicle_write_register(ptr: *mut c_void, reg: X64Register, data: *const c_void, size: usize) -> usize {
+pub fn icicle_write_register(
+    ptr: *mut c_void,
+    reg: X64Register,
+    data: *const c_void,
+    size: usize,
+) -> usize {
     unsafe {
         let emulator = &mut *(ptr as *mut IcicleEmulator);
         let u8_slice = std::slice::from_raw_parts(data as *const u8, size);
-       return emulator.write_register(reg, u8_slice);
+        return emulator.write_register(reg, u8_slice);
     }
 }
 

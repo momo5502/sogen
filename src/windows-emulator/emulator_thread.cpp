@@ -28,19 +28,6 @@ namespace
         emu.reg(x64_register::rsp, stack_end);
     }
 
-    void setup_gs_segment(x64_emulator& emu, const emulator_allocator& allocator)
-    {
-        struct msr_value
-        {
-            uint32_t id;
-            uint64_t value;
-        };
-
-        const msr_value value{IA32_GS_BASE_MSR, allocator.get_base()};
-
-        emu.write_register(x64_register::msr, &value, sizeof(value));
-    }
-
     bool is_object_signaled(process_context& c, const handle h, const uint32_t current_thread_id)
     {
         const auto type = h.value.type;
@@ -228,7 +215,7 @@ void emulator_thread::setup_registers(x64_emulator& emu, const process_context& 
     }
 
     setup_stack(emu, this->stack_base, this->stack_size);
-    setup_gs_segment(emu, *this->gs_segment);
+    emu.set_segment_base(x64_register::gs, this->gs_segment->get_base());
 
     CONTEXT64 ctx{};
     ctx.ContextFlags = CONTEXT64_ALL;

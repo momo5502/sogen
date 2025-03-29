@@ -302,6 +302,39 @@ namespace unicorn
                 uce(uc_emu_stop(*this));
             }
 
+            void set_segment_base(const x64_register base, const pointer_type value) override
+            {
+                constexpr auto IA32_FS_BASE_MSR = 0xC0000100;
+                constexpr auto IA32_GS_BASE_MSR = 0xC0000101;
+
+                struct msr_value
+                {
+                    uint32_t id;
+                    uint64_t value;
+                };
+
+                msr_value msr_val{
+                    .id = 0,
+                    .value = value,
+                };
+
+                switch (base)
+                {
+                case x64_register::fs:
+                case x64_register::fs_base:
+                    msr_val.id = IA32_FS_BASE_MSR;
+                    break;
+                case x64_register::gs:
+                case x64_register::gs_base:
+                    msr_val.id = IA32_GS_BASE_MSR;
+                    break;
+                default:
+                    return;
+                }
+
+                this->write_register(x64_register::msr, &msr_val, sizeof(msr_val));
+            }
+
             size_t write_raw_register(const int reg, const void* value, const size_t size) override
             {
                 auto result_size = size;

@@ -13,6 +13,7 @@ extern "C"
     int32_t icicle_write_memory(icicle_emulator*, uint64_t address, const void* data, size_t length);
     size_t icicle_read_register(icicle_emulator*, int reg, void* data, size_t length);
     size_t icicle_write_register(icicle_emulator*, int reg, const void* data, size_t length);
+    void icicle_start(icicle_emulator*);
     void icicle_destroy_emulator(icicle_emulator*);
 }
 
@@ -57,10 +58,29 @@ namespace icicle
             {
                 timeout = {};
             }
+
+            icicle_start(this->emu_);
         }
 
         void stop() override
         {
+        }
+
+        void set_segment_base(const x64_register base, const pointer_type value) override
+        {
+            switch (base)
+            {
+            case x64_register::fs:
+            case x64_register::fs_base:
+                this->reg(x64_register::fs_base, value);
+                break;
+            case x64_register::gs:
+            case x64_register::gs_base:
+                this->reg(x64_register::gs_base, value);
+                break;
+            default:
+                break;
+            }
         }
 
         size_t write_raw_register(const int reg, const void* value, const size_t size) override
