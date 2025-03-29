@@ -4,6 +4,7 @@
 #include "cpu_context.hpp"
 
 #include <unicorn_x64_emulator.hpp>
+#include <icicle_x64_emulator.hpp>
 
 #include <utils/io.hpp>
 #include <utils/finally.hpp>
@@ -207,7 +208,7 @@ namespace
 
 std::unique_ptr<x64_emulator> create_default_x64_emulator()
 {
-    return unicorn::create_x64_emulator();
+    return icicle::create_x64_emulator();
 }
 
 windows_emulator::windows_emulator(application_settings app_settings, const emulator_settings& settings,

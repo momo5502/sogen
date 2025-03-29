@@ -96,7 +96,7 @@ impl IcicleEmulator {
 
     pub fn read_register(&mut self, reg: X64Register, buffer: &mut [u8]) -> usize {
         let reg_node = self.reg.get_node(reg);
-        
+
         let res = self.vm.cpu.read_dynamic(pcode::Value::Var(reg_node));
         let bytes: [u8; 32] = res.zxt();
 
@@ -113,7 +113,28 @@ impl IcicleEmulator {
         let len = std::cmp::min(data.len(), buffer.len());
         buffer[..len].copy_from_slice(&data[..len]);
 
-        self.vm.cpu.write_var(reg_node, buffer);
+        //let value = icicle_cpu::regs::DynamicValue::new(buffer, reg_node.size.into());
+        //self.vm.cpu.write_trunc(reg_node, value);
+
+        match reg_node.size {
+            1 => self.vm.cpu.write_var::<[u8; 1]>(reg_node, buffer[..1].try_into().expect("")),
+            2 => self.vm.cpu.write_var::<[u8; 2]>(reg_node, buffer[..2].try_into().expect("")),
+            3 => self.vm.cpu.write_var::<[u8; 3]>(reg_node, buffer[..3].try_into().expect("")),
+            4 => self.vm.cpu.write_var::<[u8; 4]>(reg_node, buffer[..4].try_into().expect("")),
+            5 => self.vm.cpu.write_var::<[u8; 5]>(reg_node, buffer[..5].try_into().expect("")),
+            6 => self.vm.cpu.write_var::<[u8; 6]>(reg_node, buffer[..6].try_into().expect("")),
+            7 => self.vm.cpu.write_var::<[u8; 7]>(reg_node, buffer[..7].try_into().expect("")),
+            8 => self.vm.cpu.write_var::<[u8; 8]>(reg_node, buffer[..8].try_into().expect("")),
+            9 => self.vm.cpu.write_var::<[u8; 9]>(reg_node, buffer[..9].try_into().expect("")),
+            10 => self.vm.cpu.write_var::<[u8; 10]>(reg_node, buffer[..10].try_into().expect("")),
+            11 => self.vm.cpu.write_var::<[u8; 11]>(reg_node, buffer[..11].try_into().expect("")),
+            12 => self.vm.cpu.write_var::<[u8; 12]>(reg_node, buffer[..12].try_into().expect("")),
+            13 => self.vm.cpu.write_var::<[u8; 13]>(reg_node, buffer[..13].try_into().expect("")),
+            14 => self.vm.cpu.write_var::<[u8; 14]>(reg_node, buffer[..14].try_into().expect("")),
+            15 => self.vm.cpu.write_var::<[u8; 15]>(reg_node, buffer[..15].try_into().expect("")),
+            16 => self.vm.cpu.write_var::<[u8; 16]>(reg_node, buffer[..16].try_into().expect("")),
+            _ => panic!("invalid dynamic value size"),
+        }
 
         return reg_node.size.into();
     }
@@ -674,7 +695,7 @@ impl X64RegisterNodes {
             fp5: r("ST5"),
             fp6: r("ST6"),
             fp7: r("ST7"),
-            /*k0: r("K0"), 
+            /*k0: r("K0"),
             k1: r("K1"),
             k2: r("K2"),
             k3: r("K3"),

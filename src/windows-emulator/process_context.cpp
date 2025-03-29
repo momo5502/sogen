@@ -33,7 +33,7 @@ void process_context::setup(x64_emulator& emu, memory_manager& memory, const app
                             const mapped_module& executable, const mapped_module& ntdll,
                             const apiset::container& apiset_container)
 {
-    setup_gdt(emu, memory);
+    // setup_gdt(emu, memory);
 
     this->kusd.setup();
 

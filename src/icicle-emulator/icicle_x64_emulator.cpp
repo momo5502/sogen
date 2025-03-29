@@ -76,7 +76,8 @@ namespace icicle
         void map_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb,
                       mmio_write_callback write_cb) override
         {
-            throw std::runtime_error("Not implemented");
+            return;
+            // throw std::runtime_error("Not implemented");
         }
 
         void map_memory(const uint64_t address, const size_t size, memory_permission permissions) override
@@ -116,28 +117,33 @@ namespace icicle
 
         emulator_hook* hook_instruction(int instruction_type, instruction_hook_callback callback) override
         {
-            throw std::runtime_error("Not implemented");
+            return nullptr;
+            // throw std::runtime_error("Not implemented");
         }
 
         emulator_hook* hook_basic_block(basic_block_hook_callback callback) override
         {
-            throw std::runtime_error("Not implemented");
+            return nullptr;
+            // throw std::runtime_error("Not implemented");
         }
 
         emulator_hook* hook_edge_generation(edge_generation_hook_callback callback) override
         {
-            throw std::runtime_error("Not implemented");
+            return nullptr;
+            // throw std::runtime_error("Not implemented");
         }
 
         emulator_hook* hook_interrupt(interrupt_hook_callback callback) override
         {
-            throw std::runtime_error("Not implemented");
+            return nullptr;
+            // throw std::runtime_error("Not implemented");
         }
 
         emulator_hook* hook_memory_violation(uint64_t address, size_t size,
                                              memory_violation_hook_callback callback) override
         {
-            throw std::runtime_error("Not implemented");
+            return nullptr;
+            // throw std::runtime_error("Not implemented");
         }
 
         emulator_hook* hook_memory_access(const uint64_t address, const size_t size, const memory_operation filter,
@@ -148,32 +154,34 @@ namespace icicle
                 return nullptr;
             }
 
-            throw std::runtime_error("Not implemented");
+            return nullptr;
+            // throw std::runtime_error("Not implemented");
         }
 
         void delete_hook(emulator_hook* hook) override
         {
-            throw std::runtime_error("Not implemented");
+            // throw std::runtime_error("Not implemented");
         }
 
         void serialize_state(utils::buffer_serializer& buffer, const bool is_snapshot) const override
         {
-            throw std::runtime_error("Not implemented");
+            // throw std::runtime_error("Not implemented");
         }
 
         void deserialize_state(utils::buffer_deserializer& buffer, const bool is_snapshot) override
         {
-            throw std::runtime_error("Not implemented");
+            // throw std::runtime_error("Not implemented");
         }
 
         std::vector<std::byte> save_registers() override
         {
-            throw std::runtime_error("Not implemented");
+            // throw std::runtime_error("Not implemented");
+            return {};
         }
 
         void restore_registers(const std::vector<std::byte>& register_data) override
         {
-            throw std::runtime_error("Not implemented");
+            // throw std::runtime_error("Not implemented");
         }
 
         bool has_violation() const override
