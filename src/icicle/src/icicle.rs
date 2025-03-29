@@ -68,6 +68,8 @@ impl IcicleEmulator {
             for (_key, func) in &self.syscall_hooks {
                 func();
             }
+
+            self.vm.cpu.write_pc(self.vm.cpu.read_pc() + 2);
         }
     }
 
