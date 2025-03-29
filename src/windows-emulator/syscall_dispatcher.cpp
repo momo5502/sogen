@@ -41,18 +41,17 @@ void syscall_dispatcher::setup(const exported_symbols& ntdll_exports, std::span<
 void syscall_dispatcher::add_handlers()
 {
     std::map<std::string, syscall_handler> handler_mapping{};
-
     syscall_dispatcher::add_handlers(handler_mapping);
 
-    for (auto& entry : this->handlers_)
+    for (auto& entry : this->handlers_ | std::views::values)
     {
-        const auto handler = handler_mapping.find(entry.second.name);
+        const auto handler = handler_mapping.find(entry.name);
         if (handler == handler_mapping.end())
         {
             continue;
         }
 
-        entry.second.handler = handler->second;
+        entry.handler = handler->second;
 
 #ifndef NDEBUG
         handler_mapping.erase(handler);
@@ -68,7 +67,12 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
     const auto address = emu.read_instruction_pointer();
     const auto syscall_id = emu.reg<uint32_t>(x64_register::eax);
 
-    const syscall_context c{win_emu, emu, context, true};
+    const syscall_context c{
+        .win_emu = win_emu,
+        .emu = emu,
+        .proc = context,
+        .write_status = true,
+    };
 
     try
     {
