@@ -11,6 +11,8 @@ extern "C"
     int32_t icicle_unmap_memory(icicle_emulator*, uint64_t address, uint64_t length);
     int32_t icicle_read_memory(icicle_emulator*, uint64_t address, void* data, size_t length);
     int32_t icicle_write_memory(icicle_emulator*, uint64_t address, const void* data, size_t length);
+    uint32_t icicle_add_syscall_hook(icicle_emulator*, void (*callback)(void*), void* data);
+    void icicle_remove_syscall_hook(icicle_emulator*, uint32_t id);
     size_t icicle_read_register(icicle_emulator*, int reg, void* data, size_t length);
     size_t icicle_write_register(icicle_emulator*, int reg, const void* data, size_t length);
     void icicle_start(icicle_emulator*);
@@ -111,7 +113,7 @@ namespace icicle
         void map_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb,
                       mmio_write_callback write_cb) override
         {
-            return;
+            this->map_memory(address, size, memory_permission::read_write);
             // throw std::runtime_error("Not implemented");
         }
 
@@ -152,8 +154,23 @@ namespace icicle
 
         emulator_hook* hook_instruction(int instruction_type, instruction_hook_callback callback) override
         {
-            return nullptr;
-            // throw std::runtime_error("Not implemented");
+            if (static_cast<x64_hookable_instructions>(instruction_type) != x64_hookable_instructions::syscall)
+            {
+                return nullptr;
+            }
+
+            auto callback_store = std::make_unique<std::function<void()>>([c = std::move(callback)] {
+                (void)c(); //
+            });
+
+            const auto invoker = +[](void* cb) {
+                (*static_cast<std::function<void()>*>(cb))(); //
+            };
+
+            const auto id = icicle_add_syscall_hook(this->emu_, invoker, callback_store.get());
+            this->syscall_hooks_[id] = std::move(callback_store);
+
+            return reinterpret_cast<emulator_hook*>(static_cast<size_t>(id));
         }
 
         emulator_hook* hook_basic_block(basic_block_hook_callback callback) override
@@ -195,7 +212,15 @@ namespace icicle
 
         void delete_hook(emulator_hook* hook) override
         {
-            // throw std::runtime_error("Not implemented");
+            const auto id = static_cast<uint32_t>(reinterpret_cast<size_t>(hook));
+            const auto entry = this->syscall_hooks_.find(id);
+            if (entry == this->syscall_hooks_.end())
+            {
+                return;
+            }
+
+            icicle_remove_syscall_hook(this->emu_, id);
+            this->syscall_hooks_.erase(entry);
         }
 
         void serialize_state(utils::buffer_serializer& buffer, const bool is_snapshot) const override
@@ -225,6 +250,8 @@ namespace icicle
         }
 
       private:
+        using syscall_hook_storage = std::unique_ptr<std::function<void()>>;
+        std::unordered_map<uint32_t, syscall_hook_storage> syscall_hooks_{};
         icicle_emulator* emu_{};
     };
 

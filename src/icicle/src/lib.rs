@@ -77,6 +77,24 @@ pub fn icicle_read_memory(ptr: *mut c_void, address: u64, data: *mut c_void, siz
     }
 }
 
+type CFunctionPointer = extern "C" fn(*mut c_void);
+
+#[unsafe(no_mangle)]
+pub fn icicle_add_syscall_hook(ptr: *mut c_void, callback: CFunctionPointer, data: *mut c_void) {
+    unsafe {
+        let emulator = &mut *(ptr as *mut IcicleEmulator);
+       emulator.add_syscall_hook(Box::new(move || callback(data)));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub fn icicle_remove_syscall_hook(ptr: *mut c_void, id: u32) {
+    unsafe {
+        let emulator = &mut *(ptr as *mut IcicleEmulator);
+        emulator.remove_syscall_hook(id);
+    }
+}
+
 #[unsafe(no_mangle)]
 pub fn icicle_read_register(
     ptr: *mut c_void,

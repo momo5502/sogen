@@ -1,4 +1,5 @@
 use icicle_cpu::ValueSource;
+use std::collections::HashMap;
 
 fn create_x64_vm() -> icicle_vm::Vm {
     let cpu_config = icicle_vm::cpu::Config::from_target_triple("x86_64-none");
@@ -31,6 +32,9 @@ fn map_permissions(foreign_permissions: u8) -> u8 {
 pub struct IcicleEmulator {
     vm: icicle_vm::Vm,
     reg: X64RegisterNodes,
+    
+    syscall_hook_id: u32,
+    syscall_hooks: HashMap<u32, Box<dyn Fn()>>,
 }
 
 impl IcicleEmulator {
@@ -39,6 +43,8 @@ impl IcicleEmulator {
         Self {
             reg: X64RegisterNodes::new(&vm_i.cpu.arch),
             vm: vm_i,
+            syscall_hook_id: 0,
+            syscall_hooks: HashMap::new(),
         }
     }
 
@@ -47,11 +53,33 @@ impl IcicleEmulator {
     }
 
     pub fn start(&mut self) {
-        self.vm.run();
+        loop {
+            let reason = self.vm.run();
+
+            let invoke_syscall = match reason {
+                icicle_vm::VmExit::UnhandledException((code, _)) => code == icicle_cpu::ExceptionCode::Syscall,
+                _ => false,
+            };
+
+            if !invoke_syscall {
+                break;
+            }
+
+            for (_key, func) in &self.syscall_hooks {
+                func();
+            }
+        }
     }
 
-    pub fn stop(&mut self) {
-        //self.vm.stop();
+    pub fn add_syscall_hook(&mut self, callback: Box<dyn Fn()>) -> u32 {
+        self.syscall_hook_id += 1;
+        let id = self.syscall_hook_id;
+        self.syscall_hooks.insert(id, callback);
+        return id;
+    }
+
+    pub fn remove_syscall_hook(&mut self, id: u32) {
+        self.syscall_hooks.remove(&id);
     }
 
     pub fn map_memory(&mut self, address: u64, length: u64, permissions: u8) -> bool {
