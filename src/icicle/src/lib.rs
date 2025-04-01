@@ -25,6 +25,8 @@ pub fn icicle_start(ptr: *mut c_void) {
     }
 }
 
+type RawFunction = extern "C" fn(*mut c_void);
+type DataFunction = extern "C" fn(*mut c_void, *const c_void, usize);
 type MmioReadFunction = extern "C" fn(*mut c_void, u64, usize, *mut c_void);
 type MmioWriteFunction = extern "C" fn(*mut c_void, u64, usize, *const c_void);
 
@@ -99,6 +101,24 @@ pub fn icicle_write_memory(
 }
 
 #[unsafe(no_mangle)]
+pub fn icicle_save_registers(ptr: *mut c_void, accessor: DataFunction, accessor_data: *mut c_void) {
+    unsafe {
+        let emulator = &mut *(ptr as *mut IcicleEmulator);
+        let registers = emulator.save_registers();
+        accessor(accessor_data, registers.as_ptr() as *const c_void, registers.len());
+    }
+}
+
+#[unsafe(no_mangle)]
+pub fn icicle_restore_registers(ptr: *mut c_void, data: *const c_void, size: usize) {
+    unsafe {
+        let emulator = &mut *(ptr as *mut IcicleEmulator);
+        let u8_slice = std::slice::from_raw_parts(data as *const u8, size);
+        emulator.restore_registers(u8_slice);
+    }
+}
+
+#[unsafe(no_mangle)]
 pub fn icicle_read_memory(ptr: *mut c_void, address: u64, data: *mut c_void, size: usize) -> i32 {
     unsafe {
         let emulator = &mut *(ptr as *mut IcicleEmulator);
@@ -108,10 +128,8 @@ pub fn icicle_read_memory(ptr: *mut c_void, address: u64, data: *mut c_void, siz
     }
 }
 
-type CFunctionPointer = extern "C" fn(*mut c_void);
-
 #[unsafe(no_mangle)]
-pub fn icicle_add_syscall_hook(ptr: *mut c_void, callback: CFunctionPointer, data: *mut c_void) {
+pub fn icicle_add_syscall_hook(ptr: *mut c_void, callback: RawFunction, data: *mut c_void) {
     unsafe {
         let emulator = &mut *(ptr as *mut IcicleEmulator);
         emulator.add_syscall_hook(Box::new(move || callback(data)));

@@ -10,6 +10,8 @@ extern "C"
     using icicle_mmio_read_func = void(void* user, uint64_t address, size_t length, void* data);
     using icicle_mmio_write_func = void(void* user, uint64_t address, size_t length, const void* data);
 
+    using data_accessor_func = void(void* user, const void* data, size_t length);
+
     icicle_emulator* icicle_create_emulator();
     int32_t icicle_protect_memory(icicle_emulator*, uint64_t address, uint64_t length, uint8_t permissions);
     int32_t icicle_map_memory(icicle_emulator*, uint64_t address, uint64_t length, uint8_t permissions);
@@ -18,6 +20,8 @@ extern "C"
     int32_t icicle_unmap_memory(icicle_emulator*, uint64_t address, uint64_t length);
     int32_t icicle_read_memory(icicle_emulator*, uint64_t address, void* data, size_t length);
     int32_t icicle_write_memory(icicle_emulator*, uint64_t address, const void* data, size_t length);
+    int32_t icicle_save_registers(icicle_emulator*, data_accessor_func* accessor, void* accessor_data);
+    int32_t icicle_restore_registers(icicle_emulator*, const void* data, size_t length);
     uint32_t icicle_add_syscall_hook(icicle_emulator*, void (*callback)(void*), void* data);
     void icicle_remove_syscall_hook(icicle_emulator*, uint32_t id);
     size_t icicle_read_register(icicle_emulator*, int reg, void* data, size_t length);
@@ -295,14 +299,21 @@ namespace icicle
 
         std::vector<std::byte> save_registers() override
         {
-            // throw std::runtime_error("Not implemented");
-            return {};
+            std::vector<std::byte> data{};
+            auto* accessor = +[](void* user, const void* data, const size_t length) {
+                auto& vec = *static_cast<std::vector<std::byte>*>(user);
+                vec.resize(length);
+                memcpy(vec.data(), data, length);
+            };
+
+            icicle_save_registers(this->emu_, accessor, &data);
+
+            return data;
         }
 
         void restore_registers(const std::vector<std::byte>& register_data) override
         {
-            (void)register_data;
-            // throw std::runtime_error("Not implemented");
+            icicle_restore_registers(this->emu_, register_data.data(), register_data.size());
         }
 
         bool has_violation() const override

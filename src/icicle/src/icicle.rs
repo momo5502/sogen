@@ -251,6 +251,26 @@ impl IcicleEmulator {
         return res.is_ok();
     }
 
+    pub fn save_registers(&self) -> Vec<u8> {
+        const REG_SIZE: usize = std::mem::size_of::<icicle_cpu::Regs>();
+        unsafe {
+            let data: [u8; REG_SIZE] = self.vm.cpu.regs.read_at(0);
+            return data.to_vec();
+        }
+    }
+
+    pub fn restore_registers(&mut self, data: &[u8]) {
+        const REG_SIZE: usize = std::mem::size_of::<icicle_cpu::Regs>();
+
+        let mut buffer: [u8; REG_SIZE] = [0; REG_SIZE];
+        let size = std::cmp::min(REG_SIZE, data.len());
+        buffer.copy_from_slice(&data[..size]);
+
+        unsafe {
+            self.vm.cpu.regs.write_at(0, buffer);
+        };
+    }
+
     pub fn read_register(&mut self, reg: X64Register, buffer: &mut [u8]) -> usize {
         let reg_node = self.reg.get_node(reg);
 
