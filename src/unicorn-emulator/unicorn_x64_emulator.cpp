@@ -1,6 +1,8 @@
 #define UNICORN_EMULATOR_IMPL
 #include "unicorn_x64_emulator.hpp"
 
+#include <array>
+
 #include "unicorn_memory_regions.hpp"
 #include "unicorn_hook.hpp"
 
@@ -73,7 +75,7 @@ namespace unicorn
             }
         }
 
-        struct hook_object : object
+        struct hook_object : utils::object
         {
             emulator_hook* as_opaque_hook()
             {
@@ -85,7 +87,7 @@ namespace unicorn
         {
           public:
             template <typename T>
-                requires(std::is_base_of_v<object, T> && std::is_move_constructible_v<T>)
+                requires(std::is_base_of_v<utils::object, T> && std::is_move_constructible_v<T>)
             void add(T data, unicorn_hook hook)
             {
                 hook_entry entry{};
@@ -99,7 +101,7 @@ namespace unicorn
           private:
             struct hook_entry
             {
-                std::unique_ptr<object> data{};
+                std::unique_ptr<utils::object> data{};
                 unicorn_hook hook{};
             };
 
@@ -300,6 +302,45 @@ namespace unicorn
             void stop() override
             {
                 uce(uc_emu_stop(*this));
+            }
+
+            void load_gdt(const pointer_type address, const uint32_t limit) override
+            {
+                const std::array<uint64_t, 4> gdtr = {0, address, limit, 0};
+                this->write_register(x64_register::gdtr, gdtr.data(), gdtr.size() * sizeof(uint64_t));
+            }
+
+            void set_segment_base(const x64_register base, const pointer_type value) override
+            {
+                constexpr auto IA32_FS_BASE_MSR = 0xC0000100;
+                constexpr auto IA32_GS_BASE_MSR = 0xC0000101;
+
+                struct msr_value
+                {
+                    uint32_t id;
+                    uint64_t value;
+                };
+
+                msr_value msr_val{
+                    .id = 0,
+                    .value = value,
+                };
+
+                switch (base)
+                {
+                case x64_register::fs:
+                case x64_register::fs_base:
+                    msr_val.id = IA32_FS_BASE_MSR;
+                    break;
+                case x64_register::gs:
+                case x64_register::gs_base:
+                    msr_val.id = IA32_GS_BASE_MSR;
+                    break;
+                default:
+                    return;
+                }
+
+                this->write_register(x64_register::msr, &msr_val, sizeof(msr_val));
             }
 
             size_t write_raw_register(const int reg, const void* value, const size_t size) override

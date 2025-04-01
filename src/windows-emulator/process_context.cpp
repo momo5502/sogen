@@ -16,10 +16,8 @@ namespace
 
     void setup_gdt(x64_emulator& emu, memory_manager& memory)
     {
-        // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-        constexpr uint64_t gdtr[4] = {0, GDT_ADDR, GDT_LIMIT, 0};
-        emu.write_register(x64_register::gdtr, &gdtr, sizeof(gdtr));
         memory.allocate_memory(GDT_ADDR, GDT_LIMIT, memory_permission::read);
+        emu.load_gdt(GDT_ADDR, GDT_LIMIT);
 
         emu.write_memory<uint64_t>(GDT_ADDR + 6 * (sizeof(uint64_t)), 0xEFFE000000FFFF);
         emu.reg<uint16_t>(x64_register::cs, 0x33);

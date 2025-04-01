@@ -5,9 +5,12 @@
 
 #include <unicorn_x64_emulator.hpp>
 
+#if MOMO_ENABLE_RUST_CODE
+#include <icicle_x64_emulator.hpp>
+#endif
+
 #include <utils/io.hpp>
 #include <utils/finally.hpp>
-#include <utils/compression.hpp>
 #include <utils/lazy_object.hpp>
 
 #include "exception_dispatch.hpp"

@@ -5,6 +5,11 @@ add_subdirectory(unicorn-emulator)
 add_subdirectory(windows-emulator)
 add_subdirectory(windows-gdb-stub)
 
+if (MOMO_ENABLE_RUST_CODE)
+    add_subdirectory(icicle-emulator)
+    add_subdirectory(icicle)
+endif()
+
 if (NOT MOMO_BUILD_AS_LIBRARY)
     add_subdirectory(analyzer)
     add_subdirectory(fuzzing-engine)

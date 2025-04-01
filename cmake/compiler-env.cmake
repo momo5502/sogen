@@ -25,6 +25,22 @@ set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
 
 ##########################################
 
+if(MOMO_BUILD_AS_LIBRARY)
+    add_compile_definitions(MOMO_BUILD_AS_LIBRARY=1)
+else()
+    add_compile_definitions(MOMO_BUILD_AS_LIBRARY=0)
+endif()
+
+##########################################
+
+if(MOMO_ENABLE_RUST_CODE)
+  add_compile_definitions(MOMO_ENABLE_RUST_CODE=1)
+else()
+  add_compile_definitions(MOMO_ENABLE_RUST_CODE=0)
+endif()
+
+##########################################
+
 if(UNIX)
   momo_add_c_and_cxx_compile_options(
     -fvisibility=hidden

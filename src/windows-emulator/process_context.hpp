@@ -19,8 +19,6 @@
 #define PEB_SEGMENT_SIZE (20 << 20) // 20 MB
 #define GS_SEGMENT_SIZE  (1 << 20)  // 1 MB
 
-#define IA32_GS_BASE_MSR 0xC0000101
-
 #define STACK_SIZE       0x40000ULL
 
 #define GDT_ADDR         0x30000
