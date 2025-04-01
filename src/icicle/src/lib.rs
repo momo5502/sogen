@@ -1,6 +1,8 @@
 mod icicle;
+mod registers;
 
-use icicle::{IcicleEmulator, X64Register};
+use icicle::IcicleEmulator;
+use registers::X64Register;
 use std::os::raw::c_void;
 
 fn to_cbool(value: bool) -> i32 {
