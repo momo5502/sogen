@@ -175,14 +175,14 @@ namespace icicle
 
         emulator_hook* hook_basic_block(basic_block_hook_callback callback) override
         {
-            return nullptr;
-            // throw std::runtime_error("Not implemented");
+            (void)callback;
+            throw std::runtime_error("Not implemented");
         }
 
         emulator_hook* hook_edge_generation(edge_generation_hook_callback callback) override
         {
-            return nullptr;
-            // throw std::runtime_error("Not implemented");
+            (void)callback;
+            throw std::runtime_error("Not implemented");
         }
 
         emulator_hook* hook_interrupt(interrupt_hook_callback callback) override
