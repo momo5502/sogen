@@ -96,6 +96,39 @@ impl<Func: ?Sized> HookContainer<Func> {
     }
 }
 
+struct InstructionHookInjector {
+    hook: pcode::HookId,
+}
+
+impl icicle_vm::CodeInjector for InstructionHookInjector {
+    fn inject(
+        &mut self,
+        _cpu: &mut icicle_vm::cpu::Cpu,
+        group: &icicle_vm::cpu::BlockGroup,
+        code: &mut icicle_vm::BlockTable,
+    ) {
+        for id in group.range() {
+            let block = &mut code.blocks[id];
+
+            let mut tmp_block = pcode::Block::new();
+            tmp_block.next_tmp = block.pcode.next_tmp;
+
+            for stmt in block.pcode.instructions.drain(..) {
+                tmp_block.push(stmt);
+                if let pcode::Op::InstructionMarker = stmt.op {
+                    tmp_block.push(pcode::Op::Hook(self.hook));
+                    code.modified.insert(id);
+                }
+            }
+
+            std::mem::swap(
+                &mut tmp_block.instructions,
+                &mut block.pcode.instructions,
+            );
+        }
+    }
+}
+
 pub struct IcicleEmulator {
     vm: icicle_vm::Vm,
     reg: registers::X64RegisterNodes,
@@ -133,7 +166,14 @@ impl icicle_cpu::mem::IoMemory for MmioHandler {
 
 impl IcicleEmulator {
     pub fn new() -> Self {
-        let virtual_machine = create_x64_vm();
+        let mut virtual_machine = create_x64_vm();
+        let hook = icicle_cpu::InstHook::new(move |_: &mut icicle_cpu::Cpu, addr: u64| {
+             println!("TEST hook: {:#x}", addr);
+        });
+
+        let hook = virtual_machine.cpu.add_hook(hook);
+        virtual_machine.add_injector(InstructionHookInjector { hook });
+
         Self {
             reg: registers::X64RegisterNodes::new(&virtual_machine.cpu.arch),
             vm: virtual_machine,
