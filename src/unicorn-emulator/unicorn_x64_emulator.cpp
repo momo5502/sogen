@@ -75,7 +75,7 @@ namespace unicorn
             }
         }
 
-        struct hook_object : object
+        struct hook_object : utils::object
         {
             emulator_hook* as_opaque_hook()
             {
@@ -87,7 +87,7 @@ namespace unicorn
         {
           public:
             template <typename T>
-                requires(std::is_base_of_v<object, T> && std::is_move_constructible_v<T>)
+                requires(std::is_base_of_v<utils::object, T> && std::is_move_constructible_v<T>)
             void add(T data, unicorn_hook hook)
             {
                 hook_entry entry{};
@@ -101,7 +101,7 @@ namespace unicorn
           private:
             struct hook_entry
             {
-                std::unique_ptr<object> data{};
+                std::unique_ptr<utils::object> data{};
                 unicorn_hook hook{};
             };
 

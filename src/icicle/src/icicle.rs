@@ -10,7 +10,7 @@ fn create_x64_vm() -> icicle_vm::Vm {
     cpu_config.track_uninitialized = false;
     cpu_config.optimize_instructions = true;
     cpu_config.optimize_block = false;
-    
+
     return icicle_vm::build(&cpu_config).unwrap();
 }
 
@@ -36,22 +36,107 @@ fn map_permissions(foreign_permissions: u8) -> u8 {
     return permissions;
 }
 
+#[repr(u8)]
+#[allow(dead_code)]
+#[derive(PartialEq)]
+enum HookType {
+    Syscall = 1,
+    Read,
+    Write,
+    Execute,
+    Unknown,
+}
+
+fn u8_to_hook_type_unsafe(value: u8) -> HookType {
+    // This is unsafe because it assumes the value is valid
+    unsafe { std::mem::transmute(value) }
+}
+
+fn split_hook_id(id: u32) -> (u32, HookType) {
+    let hook_id = id & 0xFFFFFF;
+    let hook_type = u8_to_hook_type_unsafe((id >> 24) as u8);
+
+    return (hook_id, hook_type);
+}
+
+fn qualify_hook_id(hook_id: u32, hook_type: HookType) -> u32 {
+    let hook_type: u32 = (hook_type as u8).into();
+    let hook_type_mask: u32 = hook_type << 24;
+    return (hook_id | hook_type_mask).into();
+}
+
+pub struct HookContainer<Func: ?Sized> {
+    hook_id: u32,
+    hooks: HashMap<u32, Box<Func>>,
+}
+
+impl<Func: ?Sized> HookContainer<Func> {
+    pub fn new() -> Self {
+        Self {
+            hook_id: 0,
+            hooks: HashMap::new(),
+        }
+    }
+
+    pub fn add_hook(&mut self, callback: Box<Func>) -> u32 {
+        self.hook_id += 1;
+        let id = self.hook_id;
+        self.hooks.insert(id, callback);
+
+        return id;
+    }
+
+    pub fn get_hooks(&self) -> &HashMap<u32, Box<Func>> {
+        return &self.hooks;
+    }
+
+    pub fn remove_hook(&mut self, id: u32) {
+        self.hooks.remove(&id);
+    }
+}
+
 pub struct IcicleEmulator {
     vm: icicle_vm::Vm,
     reg: X64RegisterNodes,
-    
-    syscall_hook_id: u32,
-    syscall_hooks: HashMap<u32, Box<dyn Fn()>>,
+    syscall_hooks: HookContainer<dyn Fn()>,
+}
+
+pub struct MmioHandler {
+    read_handler: Box<dyn Fn(u64, &mut [u8])>,
+    write_handler: Box<dyn Fn(u64, &[u8])>,
+}
+
+impl MmioHandler {
+    pub fn new(
+        read_function: Box<dyn Fn(u64, &mut [u8])>,
+        write_function: Box<dyn Fn(u64, &[u8])>,
+    ) -> Self {
+        Self {
+            read_handler: read_function,
+            write_handler: write_function,
+        }
+    }
+}
+
+impl icicle_cpu::mem::IoMemory for MmioHandler {
+    fn read(&mut self, addr: u64, buf: &mut [u8]) -> icicle_cpu::mem::MemResult<()> {
+        (self.read_handler)(addr, buf);
+        return Ok(());
+    }
+
+    fn write(&mut self, addr: u64, value: &[u8]) -> icicle_cpu::mem::MemResult<()> {
+        (self.write_handler)(addr, value);
+        return Ok(());
+    }
 }
 
 impl IcicleEmulator {
     pub fn new() -> Self {
-        let vm_i = create_x64_vm();
+        let virtual_machine = create_x64_vm();
         Self {
-            reg: X64RegisterNodes::new(&vm_i.cpu.arch),
-            vm: vm_i,
-            syscall_hook_id: 0,
-            syscall_hooks: HashMap::new(),
+            reg: X64RegisterNodes::new(&virtual_machine.cpu.arch),
+            vm: virtual_machine,
+            syscall_hooks: HookContainer::new(),
         }
     }
 
@@ -64,7 +149,9 @@ impl IcicleEmulator {
             let reason = self.vm.run();
 
             let invoke_syscall = match reason {
-                icicle_vm::VmExit::UnhandledException((code, _)) => code == icicle_cpu::ExceptionCode::Syscall,
+                icicle_vm::VmExit::UnhandledException((code, _)) => {
+                    code == icicle_cpu::ExceptionCode::Syscall
+                }
                 _ => false,
             };
 
@@ -72,7 +159,7 @@ impl IcicleEmulator {
                 break;
             }
 
-            for (_key, func) in &self.syscall_hooks {
+            for (_key, func) in self.syscall_hooks.get_hooks() {
                 func();
             }
 
@@ -81,14 +168,17 @@ impl IcicleEmulator {
     }
 
     pub fn add_syscall_hook(&mut self, callback: Box<dyn Fn()>) -> u32 {
-        self.syscall_hook_id += 1;
-        let id = self.syscall_hook_id;
-        self.syscall_hooks.insert(id, callback);
-        return id;
+        let hook_id = self.syscall_hooks.add_hook(callback);
+        return qualify_hook_id(hook_id, HookType::Syscall);
     }
 
-    pub fn remove_syscall_hook(&mut self, id: u32) {
-        self.syscall_hooks.remove(&id);
+    pub fn remove_hook(&mut self, id: u32) {
+        let (hook_id, hook_type) = split_hook_id(id);
+
+        match hook_type {
+            HookType::Syscall => self.syscall_hooks.remove_hook(hook_id),
+            _ => {}
+        }
     }
 
     pub fn map_memory(&mut self, address: u64, length: u64, permissions: u8) -> bool {
@@ -110,6 +200,28 @@ impl IcicleEmulator {
         };
 
         let res = self.get_mem().alloc_memory(layout, mapping);
+        return res.is_ok();
+    }
+
+    pub fn map_mmio(
+        &mut self,
+        address: u64,
+        length: u64,
+        read_function: Box<dyn Fn(u64, &mut [u8])>,
+        write_function: Box<dyn Fn(u64, &[u8])>,
+    ) -> bool {
+        let mem = self.get_mem();
+
+        let handler = MmioHandler::new(read_function, write_function);
+        let handler_id = mem.register_io_handler(handler);
+
+        let layout = icicle_vm::cpu::mem::AllocLayout {
+            addr: Some(address),
+            size: length,
+            align: 0x1000,
+        };
+
+        let res = mem.alloc_memory(layout, handler_id);
         return res.is_ok();
     }
 
@@ -162,22 +274,70 @@ impl IcicleEmulator {
         //self.vm.cpu.write_trunc(reg_node, value);
 
         match reg_node.size {
-            1 => self.vm.cpu.write_var::<[u8; 1]>(reg_node, buffer[..1].try_into().expect("")),
-            2 => self.vm.cpu.write_var::<[u8; 2]>(reg_node, buffer[..2].try_into().expect("")),
-            3 => self.vm.cpu.write_var::<[u8; 3]>(reg_node, buffer[..3].try_into().expect("")),
-            4 => self.vm.cpu.write_var::<[u8; 4]>(reg_node, buffer[..4].try_into().expect("")),
-            5 => self.vm.cpu.write_var::<[u8; 5]>(reg_node, buffer[..5].try_into().expect("")),
-            6 => self.vm.cpu.write_var::<[u8; 6]>(reg_node, buffer[..6].try_into().expect("")),
-            7 => self.vm.cpu.write_var::<[u8; 7]>(reg_node, buffer[..7].try_into().expect("")),
-            8 => self.vm.cpu.write_var::<[u8; 8]>(reg_node, buffer[..8].try_into().expect("")),
-            9 => self.vm.cpu.write_var::<[u8; 9]>(reg_node, buffer[..9].try_into().expect("")),
-            10 => self.vm.cpu.write_var::<[u8; 10]>(reg_node, buffer[..10].try_into().expect("")),
-            11 => self.vm.cpu.write_var::<[u8; 11]>(reg_node, buffer[..11].try_into().expect("")),
-            12 => self.vm.cpu.write_var::<[u8; 12]>(reg_node, buffer[..12].try_into().expect("")),
-            13 => self.vm.cpu.write_var::<[u8; 13]>(reg_node, buffer[..13].try_into().expect("")),
-            14 => self.vm.cpu.write_var::<[u8; 14]>(reg_node, buffer[..14].try_into().expect("")),
-            15 => self.vm.cpu.write_var::<[u8; 15]>(reg_node, buffer[..15].try_into().expect("")),
-            16 => self.vm.cpu.write_var::<[u8; 16]>(reg_node, buffer[..16].try_into().expect("")),
+            1 => self
+                .vm
+                .cpu
+                .write_var::<[u8; 1]>(reg_node, buffer[..1].try_into().expect("")),
+            2 => self
+                .vm
+                .cpu
+                .write_var::<[u8; 2]>(reg_node, buffer[..2].try_into().expect("")),
+            3 => self
+                .vm
+                .cpu
+                .write_var::<[u8; 3]>(reg_node, buffer[..3].try_into().expect("")),
+            4 => self
+                .vm
+                .cpu
+                .write_var::<[u8; 4]>(reg_node, buffer[..4].try_into().expect("")),
+            5 => self
+                .vm
+                .cpu
+                .write_var::<[u8; 5]>(reg_node, buffer[..5].try_into().expect("")),
+            6 => self
+                .vm
+                .cpu
+                .write_var::<[u8; 6]>(reg_node, buffer[..6].try_into().expect("")),
+            7 => self
+                .vm
+                .cpu
+                .write_var::<[u8; 7]>(reg_node, buffer[..7].try_into().expect("")),
+            8 => self
+                .vm
+                .cpu
+                .write_var::<[u8; 8]>(reg_node, buffer[..8].try_into().expect("")),
+            9 => self
+                .vm
+                .cpu
+                .write_var::<[u8; 9]>(reg_node, buffer[..9].try_into().expect("")),
+            10 => self
+                .vm
+                .cpu
+                .write_var::<[u8; 10]>(reg_node, buffer[..10].try_into().expect("")),
+            11 => self
+                .vm
+                .cpu
+                .write_var::<[u8; 11]>(reg_node, buffer[..11].try_into().expect("")),
+            12 => self
+                .vm
+                .cpu
+                .write_var::<[u8; 12]>(reg_node, buffer[..12].try_into().expect("")),
+            13 => self
+                .vm
+                .cpu
+                .write_var::<[u8; 13]>(reg_node, buffer[..13].try_into().expect("")),
+            14 => self
+                .vm
+                .cpu
+                .write_var::<[u8; 14]>(reg_node, buffer[..14].try_into().expect("")),
+            15 => self
+                .vm
+                .cpu
+                .write_var::<[u8; 15]>(reg_node, buffer[..15].try_into().expect("")),
+            16 => self
+                .vm
+                .cpu
+                .write_var::<[u8; 16]>(reg_node, buffer[..16].try_into().expect("")),
             _ => panic!("invalid dynamic value size"),
         }
 

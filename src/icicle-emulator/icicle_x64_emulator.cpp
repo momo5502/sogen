@@ -1,13 +1,20 @@
 #define ICICLE_EMULATOR_IMPL
 #include "icicle_x64_emulator.hpp"
 
+#include <utils/object.hpp>
+
 using icicle_emulator = struct icicle_emulator_;
 
 extern "C"
 {
+    using icicle_mmio_read_func = void(void* user, uint64_t address, size_t length, void* data);
+    using icicle_mmio_write_func = void(void* user, uint64_t address, size_t length, const void* data);
+
     icicle_emulator* icicle_create_emulator();
     int32_t icicle_protect_memory(icicle_emulator*, uint64_t address, uint64_t length, uint8_t permissions);
     int32_t icicle_map_memory(icicle_emulator*, uint64_t address, uint64_t length, uint8_t permissions);
+    int32_t icicle_map_mmio(icicle_emulator*, uint64_t address, uint64_t length, icicle_mmio_read_func* read_callback,
+                            void* read_data, icicle_mmio_write_func* write_callback, void* write_data);
     int32_t icicle_unmap_memory(icicle_emulator*, uint64_t address, uint64_t length);
     int32_t icicle_read_memory(icicle_emulator*, uint64_t address, void* data, size_t length);
     int32_t icicle_write_memory(icicle_emulator*, uint64_t address, const void* data, size_t length);
@@ -61,6 +68,9 @@ namespace icicle
                 timeout = {};
             }
 
+            (void)start;
+            (void)end;
+            (void)count;
             icicle_start(this->emu_);
         }
 
@@ -113,8 +123,47 @@ namespace icicle
         void map_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb,
                       mmio_write_callback write_cb) override
         {
-            this->map_memory(address, size, memory_permission::read_write);
-            // throw std::runtime_error("Not implemented");
+            struct mmio_wrapper : utils::object
+            {
+                uint64_t base{};
+                mmio_read_callback read_cb{};
+                mmio_write_callback write_cb{};
+            };
+
+            auto wrapper = std::make_unique<mmio_wrapper>();
+            wrapper->base = address;
+            wrapper->read_cb = std::move(read_cb);
+            wrapper->write_cb = std::move(write_cb);
+
+            auto* ptr = wrapper.get();
+            this->storage_.push_back(std::move(wrapper));
+
+            auto* read_wrapper = +[](void* user, const uint64_t address, const size_t length, void* data) {
+                constexpr auto limit = sizeof(uint64_t);
+                const auto* w = static_cast<mmio_wrapper*>(user);
+
+                for (size_t offset = 0; offset < length; offset += limit)
+                {
+                    const auto max_read = std::min(limit, length - offset);
+                    const auto value = w->read_cb(address + offset - w->base, max_read);
+                    memcpy(static_cast<uint8_t*>(data) + offset, &value, max_read);
+                }
+            };
+
+            auto* write_wrapper = +[](void* user, const uint64_t address, const size_t length, const void* data) {
+                constexpr auto limit = sizeof(uint64_t);
+                const auto* w = static_cast<mmio_wrapper*>(user);
+
+                for (size_t offset = 0; offset < length; offset += limit)
+                {
+                    uint64_t value{};
+                    const auto max_read = std::min(limit, length - offset);
+                    memcpy(&value, static_cast<const uint8_t*>(data) + offset, max_read);
+                    w->write_cb(address + offset - w->base, max_read, value);
+                }
+            };
+
+            icicle_map_mmio(this->emu_, address, size, read_wrapper, ptr, write_wrapper, ptr);
         }
 
         void map_memory(const uint64_t address, const size_t size, memory_permission permissions) override
@@ -187,6 +236,7 @@ namespace icicle
 
         emulator_hook* hook_interrupt(interrupt_hook_callback callback) override
         {
+            (void)callback;
             return nullptr;
             // throw std::runtime_error("Not implemented");
         }
@@ -194,6 +244,9 @@ namespace icicle
         emulator_hook* hook_memory_violation(uint64_t address, size_t size,
                                              memory_violation_hook_callback callback) override
         {
+            (void)address;
+            (void)size;
+            (void)callback;
             return nullptr;
             // throw std::runtime_error("Not implemented");
         }
@@ -206,6 +259,9 @@ namespace icicle
                 return nullptr;
             }
 
+            (void)address;
+            (void)size;
+            (void)callback;
             return nullptr;
             // throw std::runtime_error("Not implemented");
         }
@@ -225,12 +281,16 @@ namespace icicle
 
         void serialize_state(utils::buffer_serializer& buffer, const bool is_snapshot) const override
         {
-            // throw std::runtime_error("Not implemented");
+            (void)buffer;
+            (void)is_snapshot;
+            throw std::runtime_error("Not implemented");
         }
 
         void deserialize_state(utils::buffer_deserializer& buffer, const bool is_snapshot) override
         {
-            // throw std::runtime_error("Not implemented");
+            (void)buffer;
+            (void)is_snapshot;
+            throw std::runtime_error("Not implemented");
         }
 
         std::vector<std::byte> save_registers() override
@@ -241,6 +301,7 @@ namespace icicle
 
         void restore_registers(const std::vector<std::byte>& register_data) override
         {
+            (void)register_data;
             // throw std::runtime_error("Not implemented");
         }
 
@@ -250,6 +311,7 @@ namespace icicle
         }
 
       private:
+        std::list<std::unique_ptr<utils::object>> storage_{};
         using syscall_hook_storage = std::unique_ptr<std::function<void()>>;
         std::unordered_map<uint32_t, syscall_hook_storage> syscall_hooks_{};
         icicle_emulator* emu_{};

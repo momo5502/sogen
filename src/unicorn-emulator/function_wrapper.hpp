@@ -3,10 +3,10 @@
 #include <memory>
 #include <functional>
 
-#include "object.hpp"
+#include <utils/object.hpp>
 
 template <typename ReturnType, typename... Args>
-class function_wrapper : public object
+class function_wrapper : public utils::object
 {
   public:
     using user_data_pointer = void*;
