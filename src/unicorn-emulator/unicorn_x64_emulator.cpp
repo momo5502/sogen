@@ -307,7 +307,7 @@ namespace unicorn
             void load_gdt(const pointer_type address, const uint32_t limit) override
             {
                 const std::array<uint64_t, 4> gdtr = {0, address, limit, 0};
-                this->write_register(x64_register::gdtr, gdtr.data(), gdtr.size());
+                this->write_register(x64_register::gdtr, gdtr.data(), gdtr.size() * sizeof(uint64_t));
             }
 
             void set_segment_base(const x64_register base, const pointer_type value) override

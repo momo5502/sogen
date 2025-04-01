@@ -8,7 +8,6 @@
 
 #include <utils/io.hpp>
 #include <utils/finally.hpp>
-#include <utils/compression.hpp>
 #include <utils/lazy_object.hpp>
 
 #include "exception_dispatch.hpp"
@@ -208,7 +207,7 @@ namespace
 
 std::unique_ptr<x64_emulator> create_default_x64_emulator()
 {
-    return icicle::create_x64_emulator();
+    return unicorn::create_x64_emulator();
 }
 
 windows_emulator::windows_emulator(application_settings app_settings, const emulator_settings& settings,
