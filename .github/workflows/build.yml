@@ -394,7 +394,7 @@ jobs:
         run: cp build/${{matrix.preset}}/artifacts/test-sample.exe build/${{matrix.preset}}/artifacts/root/filesys/c/
 
       - name: Run Test
-        uses: reactivecircus/android-emulator-runner@v2.33.0
+        uses: reactivecircus/android-emulator-runner@v2.34.0
         with:
           api-level: 29
           arch: ${{matrix.architecture}}
