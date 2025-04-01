@@ -41,6 +41,13 @@ namespace icicle
                 throw std::runtime_error(std::string(error));
             }
         }
+
+        template <typename T>
+        struct function_object : std::function<T>, utils::object
+        {
+            using std::function<T>::function;
+            ~function_object() override = default;
+        };
     }
 
     class icicle_x64_emulator : public x64_emulator
@@ -212,16 +219,16 @@ namespace icicle
                 return nullptr;
             }
 
-            auto callback_store = std::make_unique<std::function<void()>>([c = std::move(callback)] {
+            auto callback_store = std::make_unique<function_object<void()>>([c = std::move(callback)] {
                 (void)c(); //
             });
 
             const auto invoker = +[](void* cb) {
-                (*static_cast<std::function<void()>*>(cb))(); //
+                (*static_cast<function_object<void()>*>(cb))(); //
             };
 
             const auto id = icicle_add_syscall_hook(this->emu_, invoker, callback_store.get());
-            this->syscall_hooks_[id] = std::move(callback_store);
+            this->hooks_[id] = std::move(callback_store);
 
             return reinterpret_cast<emulator_hook*>(static_cast<size_t>(id));
         }
@@ -273,14 +280,14 @@ namespace icicle
         void delete_hook(emulator_hook* hook) override
         {
             const auto id = static_cast<uint32_t>(reinterpret_cast<size_t>(hook));
-            const auto entry = this->syscall_hooks_.find(id);
-            if (entry == this->syscall_hooks_.end())
+            const auto entry = this->hooks_.find(id);
+            if (entry == this->hooks_.end())
             {
                 return;
             }
 
             icicle_remove_syscall_hook(this->emu_, id);
-            this->syscall_hooks_.erase(entry);
+            this->hooks_.erase(entry);
         }
 
         void serialize_state(utils::buffer_serializer& buffer, const bool is_snapshot) const override
@@ -330,8 +337,7 @@ namespace icicle
 
       private:
         std::list<std::unique_ptr<utils::object>> storage_{};
-        using syscall_hook_storage = std::unique_ptr<std::function<void()>>;
-        std::unordered_map<uint32_t, syscall_hook_storage> syscall_hooks_{};
+        std::unordered_map<uint32_t, std::unique_ptr<utils::object>> hooks_{};
         icicle_emulator* emu_{};
     };
 
