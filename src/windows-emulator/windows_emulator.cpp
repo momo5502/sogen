@@ -4,7 +4,10 @@
 #include "cpu_context.hpp"
 
 #include <unicorn_x64_emulator.hpp>
+
+#if MOMO_ENABLE_RUST_CODE
 #include <icicle_x64_emulator.hpp>
+#endif
 
 #include <utils/io.hpp>
 #include <utils/finally.hpp>

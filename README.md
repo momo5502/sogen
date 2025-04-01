@@ -51,6 +51,7 @@ Click <a href="https://docs.google.com/presentation/d/1pha4tFfDMpVzJ_ehJJ21SA_HA
 * Windows 64-bit (click [here](https://github.com/momo5502/emulator/milestone/1) for cross-platform status)
 * CMake
 * Git
+* Rust (pass `-DMOMO_ENABLE_RUST_CODE=0` to cmake to disable requirement)
 
 ### Getting Started
 

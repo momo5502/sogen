@@ -16,8 +16,13 @@ endif()
 
 target_link_libraries(windows-emulator PRIVATE
   unicorn-emulator
+)
+
+if (MOMO_ENABLE_RUST_CODE)
+target_link_libraries(windows-emulator PRIVATE
   icicle-emulator
 )
+endif()
 
 target_link_libraries(windows-emulator PUBLIC emulator)
 
