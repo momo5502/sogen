@@ -647,7 +647,7 @@ namespace unicorn
                 serializer.deserialize(buffer);
             }
 
-            std::vector<std::byte> save_registers() override
+            std::vector<std::byte> save_registers() const override
             {
                 utils::buffer_serializer buffer{};
                 const uc_context_serializer serializer(this->uc_, false);

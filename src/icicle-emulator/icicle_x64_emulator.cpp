@@ -285,19 +285,26 @@ namespace icicle
 
         void serialize_state(utils::buffer_serializer& buffer, const bool is_snapshot) const override
         {
-            (void)buffer;
-            (void)is_snapshot;
-            throw std::runtime_error("Not implemented");
+            if (is_snapshot)
+            {
+                throw std::runtime_error("Not implemented");
+            }
+
+            buffer.write_vector(this->save_registers());
         }
 
         void deserialize_state(utils::buffer_deserializer& buffer, const bool is_snapshot) override
         {
-            (void)buffer;
-            (void)is_snapshot;
-            throw std::runtime_error("Not implemented");
+            if (is_snapshot)
+            {
+                throw std::runtime_error("Not implemented");
+            }
+
+            const auto data = buffer.read_vector<std::byte>();
+            this->restore_registers(data);
         }
 
-        std::vector<std::byte> save_registers() override
+        std::vector<std::byte> save_registers() const override
         {
             std::vector<std::byte> data{};
             auto* accessor = +[](void* user, const void* data, const size_t length) {
