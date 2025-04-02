@@ -9,6 +9,7 @@ extern "C"
 {
     using raw_func = void(void*);
     using ptr_func = void(void*, uint64_t);
+    using violation_func = int32_t(void*, uint64_t address, uint8_t operation, int32_t unmapped);
     using data_accessor_func = void(void* user, const void* data, size_t length);
 
     using icicle_mmio_read_func = void(void* user, uint64_t address, size_t length, void* data);
@@ -26,6 +27,7 @@ extern "C"
     int32_t icicle_restore_registers(icicle_emulator*, const void* data, size_t length);
     uint32_t icicle_add_syscall_hook(icicle_emulator*, raw_func* callback, void* data);
     uint32_t icicle_add_execution_hook(icicle_emulator*, ptr_func* callback, void* data);
+    uint32_t icicle_add_violation_hook(icicle_emulator*, violation_func* callback, void* data);
     void icicle_remove_syscall_hook(icicle_emulator*, uint32_t id);
     size_t icicle_read_register(icicle_emulator*, int reg, void* data, size_t length);
     size_t icicle_write_register(icicle_emulator*, int reg, const void* data, size_t length);
@@ -46,12 +48,35 @@ namespace icicle
             }
         }
 
-        template <typename T>
-        struct function_object : std::function<T>, utils::object
+        emulator_hook* wrap_hook(const uint32_t id)
         {
-            using std::function<T>::function;
+            return reinterpret_cast<emulator_hook*>(static_cast<size_t>(id));
+        }
+
+        template <typename T>
+        struct function_object : utils::object
+        {
+            std::function<T> func{};
+
+            function_object(std::function<T> f = {})
+                : func(std::move(f))
+            {
+            }
+
+            template <typename... Args>
+            auto operator()(Args&&... args) const
+            {
+                return this->func.operator()(std::forward<Args>(args)...);
+            }
+
             ~function_object() override = default;
         };
+
+        template <typename T>
+        std::unique_ptr<function_object<T>> make_function_object(std::function<T> func)
+        {
+            return std::make_unique<function_object<T>>(std::move(func));
+        }
 
         template <typename T>
         std::unique_ptr<utils::object> wrap_shared(std::shared_ptr<T> shared_ptr)
@@ -242,18 +267,18 @@ namespace icicle
                 return nullptr;
             }
 
-            auto callback_store = std::make_unique<function_object<void()>>([c = std::move(callback)] {
-                (void)c(); //
-            });
+            auto obj = make_function_object(std::move(callback));
+            auto* ptr = obj.get();
 
             const auto invoker = +[](void* cb) {
-                (*static_cast<function_object<void()>*>(cb))(); //
+                const auto& func = *static_cast<decltype(ptr)>(cb);
+                (void)func(); //
             };
 
-            const auto id = icicle_add_syscall_hook(this->emu_, invoker, callback_store.get());
-            this->hooks_[id] = std::move(callback_store);
+            const auto id = icicle_add_syscall_hook(this->emu_, invoker, ptr);
+            this->hooks_[id] = std::move(obj);
 
-            return reinterpret_cast<emulator_hook*>(static_cast<size_t>(id));
+            return wrap_hook(id);
         }
 
         emulator_hook* hook_basic_block(basic_block_hook_callback callback) override
@@ -278,15 +303,29 @@ namespace icicle
             // throw std::runtime_error("Not implemented");
         }
 
-        emulator_hook* hook_memory_violation(uint64_t address, size_t size,
+        emulator_hook* hook_memory_violation(const uint64_t address, const size_t size,
                                              memory_violation_hook_callback callback) override
         {
-            // TODO
             (void)address;
             (void)size;
-            (void)callback;
-            return nullptr;
-            // throw std::runtime_error("Not implemented");
+
+            auto obj = make_function_object(std::move(callback));
+            auto* ptr = obj.get();
+            auto* wrapper =
+                +[](void* user, const uint64_t address, const uint8_t operation, const int32_t unmapped) -> int32_t {
+                const auto violation_type = unmapped //
+                                                ? memory_violation_type::unmapped
+                                                : memory_violation_type::protection;
+
+                const auto& func = *static_cast<decltype(ptr)>(user);
+                const auto res = func(address, 1, static_cast<memory_operation>(operation), violation_type);
+                return res == memory_violation_continuation::resume ? 1 : 0;
+            };
+
+            const auto id = icicle_add_violation_hook(this->emu_, wrapper, ptr);
+            this->hooks_[id] = std::move(obj);
+
+            return wrap_hook(id);
         }
 
         emulator_hook* hook_memory_access(const uint64_t address, const size_t size, const memory_operation filter,
@@ -297,7 +336,7 @@ namespace icicle
                 return nullptr;
             }
 
-            auto shared_callback = std::make_shared<complex_memory_hook_callback>(std::move(callback));
+            const auto shared_callback = std::make_shared<complex_memory_hook_callback>(std::move(callback));
 
             if ((filter & memory_permission::exec) == memory_permission::exec)
             {
@@ -315,7 +354,7 @@ namespace icicle
                 const auto id = icicle_add_execution_hook(this->emu_, func, ptr);
                 this->hooks_[id] = std::move(wrapper);
 
-                return reinterpret_cast<emulator_hook*>(static_cast<size_t>(id));
+                return wrap_hook(id);
             }
 
             return nullptr;
