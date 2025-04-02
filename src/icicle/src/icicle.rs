@@ -207,6 +207,11 @@ impl IcicleEmulator {
             };
 
             if !invoke_syscall {
+                if reason == icicle_vm::VmExit::InstructionLimit {
+                    break;
+                }
+
+                println!("NO SYSCALL");
                 break;
             }
 
@@ -219,7 +224,7 @@ impl IcicleEmulator {
     }
 
     pub fn stop(&mut self) {
-       self.vm.icount_limit = self.vm.cpu.icount + 1;
+       self.vm.icount_limit = self.vm.cpu.icount;
     }
 
     pub fn add_execution_hook(&mut self, callback: Box<dyn Fn(u64)>) -> u32 {
