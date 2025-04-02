@@ -27,7 +27,16 @@ pub fn icicle_start(ptr: *mut c_void) {
     }
 }
 
+#[unsafe(no_mangle)]
+pub fn icicle_stop(ptr: *mut c_void) {
+    unsafe {
+        let emulator = &mut *(ptr as *mut IcicleEmulator);
+        emulator.stop();
+    }
+}
+
 type RawFunction = extern "C" fn(*mut c_void);
+type PtrFunction = extern "C" fn(*mut c_void, u64);
 type DataFunction = extern "C" fn(*mut c_void, *const c_void, usize);
 type MmioReadFunction = extern "C" fn(*mut c_void, u64, usize, *mut c_void);
 type MmioWriteFunction = extern "C" fn(*mut c_void, u64, usize, *const c_void);
@@ -135,6 +144,14 @@ pub fn icicle_add_syscall_hook(ptr: *mut c_void, callback: RawFunction, data: *m
     unsafe {
         let emulator = &mut *(ptr as *mut IcicleEmulator);
         emulator.add_syscall_hook(Box::new(move || callback(data)));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub fn icicle_add_execution_hook(ptr: *mut c_void, callback: PtrFunction, data: *mut c_void) {
+    unsafe {
+        let emulator = &mut *(ptr as *mut IcicleEmulator);
+        emulator.add_execution_hook(Box::new(move |ptr: u64| callback(data, ptr)));
     }
 }
 

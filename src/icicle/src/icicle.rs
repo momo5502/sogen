@@ -1,5 +1,5 @@
 use icicle_cpu::ValueSource;
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::registers;
 
@@ -133,6 +133,7 @@ pub struct IcicleEmulator {
     vm: icicle_vm::Vm,
     reg: registers::X64RegisterNodes,
     syscall_hooks: HookContainer<dyn Fn()>,
+    execution_hooks: Rc<RefCell<HookContainer<dyn Fn(u64)>>>,
 }
 
 pub struct MmioHandler {
@@ -167,8 +168,14 @@ impl icicle_cpu::mem::IoMemory for MmioHandler {
 impl IcicleEmulator {
     pub fn new() -> Self {
         let mut virtual_machine = create_x64_vm();
+        let exec_hooks: Rc<RefCell<HookContainer<dyn Fn(u64)>>> = Rc::new(RefCell::new(HookContainer::new()));
+
+        let exec_hooks_clone = Rc::clone(&exec_hooks);
+
         let hook = icicle_cpu::InstHook::new(move |_: &mut icicle_cpu::Cpu, addr: u64| {
-             println!("TEST hook: {:#x}", addr);
+            for (_key, func) in exec_hooks_clone.borrow().get_hooks() {
+                func(addr);
+            }
         });
 
         let hook = virtual_machine.cpu.add_hook(hook);
@@ -178,6 +185,7 @@ impl IcicleEmulator {
             reg: registers::X64RegisterNodes::new(&virtual_machine.cpu.arch),
             vm: virtual_machine,
             syscall_hooks: HookContainer::new(),
+            execution_hooks: exec_hooks,
         }
     }
 
@@ -186,6 +194,8 @@ impl IcicleEmulator {
     }
 
     pub fn start(&mut self) {
+        self.vm.icount_limit = u64::MAX;
+
         loop {
             let reason = self.vm.run();
 
@@ -208,6 +218,15 @@ impl IcicleEmulator {
         }
     }
 
+    pub fn stop(&mut self) {
+       self.vm.icount_limit = self.vm.cpu.icount + 1;
+    }
+
+    pub fn add_execution_hook(&mut self, callback: Box<dyn Fn(u64)>) -> u32 {
+        let hook_id = self.execution_hooks.borrow_mut().add_hook(callback);
+        return qualify_hook_id(hook_id, HookType::Execute);
+    }
+
     pub fn add_syscall_hook(&mut self, callback: Box<dyn Fn()>) -> u32 {
         let hook_id = self.syscall_hooks.add_hook(callback);
         return qualify_hook_id(hook_id, HookType::Syscall);
@@ -218,6 +237,7 @@ impl IcicleEmulator {
 
         match hook_type {
             HookType::Syscall => self.syscall_hooks.remove_hook(hook_id),
+            HookType::Execute => self.execution_hooks.borrow_mut().remove_hook(hook_id),
             _ => {}
         }
     }
