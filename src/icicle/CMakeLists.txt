@@ -45,6 +45,12 @@ ExternalProject_Add(
     BUILD_BYPRODUCTS ${ICICLE_RUST_LIB}
 )
 
+add_custom_command(
+    TARGET icicle-rust-project POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_LIST_DIR}/data" "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}"
+    COMMENT "Copying Ghidra Processor Specification"
+)
+
 add_library(icicle INTERFACE)
 add_dependencies(icicle icicle-rust-project)
 target_link_libraries(icicle INTERFACE ${ICICLE_RUST_LIB})
