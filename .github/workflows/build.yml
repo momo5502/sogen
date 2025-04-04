@@ -268,6 +268,9 @@ jobs:
           - Linux x86_64 Clang
           - macOS arm64
           - macOS x86_64
+        emulator:
+          - Unicorn
+          - Icicle
         emulation-root:
           - Windows 2025
           - Windows 2022
@@ -298,10 +301,15 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Setup Environment Variables
+      - name: Setup Asan Environment Variables
         if: ${{ contains(matrix.platform, 'Sanitizer') }}
         run: |
           echo "ASAN_OPTIONS=detect_odr_violation=0" >> $GITHUB_ENV
+
+      - name: Setup Icicle Environment Variables
+        if: ${{ matrix.emulator == 'Icicle' }}
+        run: |
+          echo "EMULATOR_ICICLE=1" >> $GITHUB_ENV
 
       - name: Download Test Configuration
         uses: actions/download-artifact@v4.2.1
@@ -348,6 +356,9 @@ jobs:
         architecture:
           - x86_64
           #- arm64-v8a
+        emulator:
+          - Unicorn
+          - Icicle
         emulation-root:
           - Windows 2025
           - Windows 2022
@@ -398,7 +409,7 @@ jobs:
         with:
           api-level: 29
           arch: ${{matrix.architecture}}
-          script: "adb push build/${{matrix.preset}}/artifacts/* /data/local/tmp && adb shell \"cd /data/local/tmp && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && ./analyzer -e ./root c:/test-sample.exe\""
+          script: "adb push build/${{matrix.preset}}/artifacts/* /data/local/tmp && adb shell \"cd /data/local/tmp && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }} ./analyzer -e ./root c:/test-sample.exe\""
 
   summary:
     name: Pipeline Summary
