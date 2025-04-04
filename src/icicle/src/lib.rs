@@ -104,6 +104,14 @@ pub fn icicle_write_memory(
     data: *const c_void,
     size: usize,
 ) -> i32 {
+    if size == 0 {
+        return 1;
+    }
+
+    if data.is_null() {
+        return 0;
+    }
+
     unsafe {
         let emulator = &mut *(ptr as *mut IcicleEmulator);
         let u8_slice = std::slice::from_raw_parts(data as *const u8, size);
@@ -127,6 +135,10 @@ pub fn icicle_save_registers(ptr: *mut c_void, accessor: DataFunction, accessor_
 
 #[unsafe(no_mangle)]
 pub fn icicle_restore_registers(ptr: *mut c_void, data: *const c_void, size: usize) {
+    if size == 0 || data.is_null() {
+        return;
+    }
+
     unsafe {
         let emulator = &mut *(ptr as *mut IcicleEmulator);
         let u8_slice = std::slice::from_raw_parts(data as *const u8, size);
@@ -136,6 +148,14 @@ pub fn icicle_restore_registers(ptr: *mut c_void, data: *const c_void, size: usi
 
 #[unsafe(no_mangle)]
 pub fn icicle_read_memory(ptr: *mut c_void, address: u64, data: *mut c_void, size: usize) -> i32 {
+    if size == 0 {
+        return 1;
+    }
+
+    if data.is_null() {
+        return 0;
+    }
+
     unsafe {
         let emulator = &mut *(ptr as *mut IcicleEmulator);
         let u8_slice = std::slice::from_raw_parts_mut(data as *mut u8, size);
@@ -192,6 +212,14 @@ pub fn icicle_read_register(
     data: *mut c_void,
     size: usize,
 ) -> usize {
+    if size == 0 {
+        return 1;
+    }
+
+    if data.is_null() {
+        return 0;
+    }
+
     unsafe {
         let emulator = &mut *(ptr as *mut IcicleEmulator);
         let u8_slice = std::slice::from_raw_parts_mut(data as *mut u8, size);
@@ -206,6 +234,14 @@ pub fn icicle_write_register(
     data: *const c_void,
     size: usize,
 ) -> usize {
+    if size == 0 {
+        return 1;
+    }
+
+    if data.is_null() {
+        return 0;
+    }
+
     unsafe {
         let emulator = &mut *(ptr as *mut IcicleEmulator);
         let u8_slice = std::slice::from_raw_parts(data as *const u8, size);
