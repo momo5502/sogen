@@ -130,7 +130,7 @@ class windows_emulator
         return this->executed_instructions_;
     }
 
-    void start(std::chrono::nanoseconds timeout = {}, size_t count = 0);
+    void start(size_t count = 0);
 
     void serialize(utils::buffer_serializer& buffer) const;
     void deserialize(utils::buffer_deserializer& buffer);

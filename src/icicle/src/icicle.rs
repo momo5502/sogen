@@ -1,5 +1,6 @@
 use icicle_cpu::ValueSource;
-use std::collections::HashMap;
+use icicle_cpu::ExceptionCode;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::registers;
 
@@ -16,11 +17,11 @@ fn create_x64_vm() -> icicle_vm::Vm {
     return icicle_vm::build(&cpu_config).unwrap();
 }
 
-fn map_permissions(foreign_permissions: u8) -> u8 {
-    const FOREIGN_READ: u8 = 1 << 0;
-    const FOREIGN_WRITE: u8 = 1 << 1;
-    const FOREIGN_EXEC: u8 = 1 << 2;
+const FOREIGN_READ: u8 = 1 << 0;
+const FOREIGN_WRITE: u8 = 1 << 1;
+const FOREIGN_EXEC: u8 = 1 << 2;
 
+fn map_permissions(foreign_permissions: u8) -> u8 {
     let mut permissions: u8 = 0;
 
     if (foreign_permissions & FOREIGN_READ) != 0 {
@@ -46,6 +47,7 @@ enum HookType {
     Read,
     Write,
     Execute,
+    Violation,
     Unknown,
 }
 
@@ -96,10 +98,45 @@ impl<Func: ?Sized> HookContainer<Func> {
     }
 }
 
+struct InstructionHookInjector {
+    hook: pcode::HookId,
+}
+
+impl icicle_vm::CodeInjector for InstructionHookInjector {
+    fn inject(
+        &mut self,
+        _cpu: &mut icicle_vm::cpu::Cpu,
+        group: &icicle_vm::cpu::BlockGroup,
+        code: &mut icicle_vm::BlockTable,
+    ) {
+        for id in group.range() {
+            let block = &mut code.blocks[id];
+
+            let mut tmp_block = pcode::Block::new();
+            tmp_block.next_tmp = block.pcode.next_tmp;
+
+            for stmt in block.pcode.instructions.drain(..) {
+                tmp_block.push(stmt);
+                if let pcode::Op::InstructionMarker = stmt.op {
+                    tmp_block.push(pcode::Op::Hook(self.hook));
+                    code.modified.insert(id);
+                }
+            }
+
+            std::mem::swap(
+                &mut tmp_block.instructions,
+                &mut block.pcode.instructions,
+            );
+        }
+    }
+}
+
 pub struct IcicleEmulator {
     vm: icicle_vm::Vm,
     reg: registers::X64RegisterNodes,
     syscall_hooks: HookContainer<dyn Fn()>,
+    violation_hooks: HookContainer<dyn Fn(u64, u8, bool) -> bool>,
+    execution_hooks: Rc<RefCell<HookContainer<dyn Fn(u64)>>>,
 }
 
 pub struct MmioHandler {
@@ -133,11 +170,26 @@ impl icicle_cpu::mem::IoMemory for MmioHandler {
 
 impl IcicleEmulator {
     pub fn new() -> Self {
-        let virtual_machine = create_x64_vm();
+        let mut virtual_machine = create_x64_vm();
+        let exec_hooks: Rc<RefCell<HookContainer<dyn Fn(u64)>>> = Rc::new(RefCell::new(HookContainer::new()));
+
+        let exec_hooks_clone = Rc::clone(&exec_hooks);
+
+        let hook = icicle_cpu::InstHook::new(move |_: &mut icicle_cpu::Cpu, addr: u64| {
+            for (_key, func) in exec_hooks_clone.borrow().get_hooks() {
+                func(addr);
+            }
+        });
+
+        let hook = virtual_machine.cpu.add_hook(hook);
+        virtual_machine.add_injector(InstructionHookInjector { hook });
+
         Self {
             reg: registers::X64RegisterNodes::new(&virtual_machine.cpu.arch),
             vm: virtual_machine,
             syscall_hooks: HookContainer::new(),
+            violation_hooks: HookContainer::new(),
+            execution_hooks: exec_hooks,
         }
     }
 
@@ -145,27 +197,78 @@ impl IcicleEmulator {
         return &mut self.vm.cpu.mem;
     }
 
-    pub fn start(&mut self) {
+    pub fn start(&mut self, count: u64) {
+        self.vm.icount_limit = match count {
+            0 => u64::MAX,
+            _ => self.vm.cpu.icount + count,
+        };
+
         loop {
             let reason = self.vm.run();
 
-            let invoke_syscall = match reason {
-                icicle_vm::VmExit::UnhandledException((code, _)) => {
-                    code == icicle_cpu::ExceptionCode::Syscall
-                }
-                _ => false,
+            match reason {
+                icicle_vm::VmExit::InstructionLimit => break,
+                icicle_vm::VmExit::UnhandledException((code, value)) => {
+                    let continue_execution = self.handle_exception(code, value);
+                    if !continue_execution {
+                        break
+                    }
+                },
+                _ => break,
             };
-
-            if !invoke_syscall {
-                break;
-            }
-
-            for (_key, func) in self.syscall_hooks.get_hooks() {
-                func();
-            }
-
-            self.vm.cpu.write_pc(self.vm.cpu.read_pc() + 2);
         }
+    }
+
+    fn handle_exception(&mut self, code: ExceptionCode, value: u64) -> bool {
+        let continue_execution = match code {
+            ExceptionCode::Syscall => self.handle_syscall(),
+            ExceptionCode::ReadPerm => self.handle_violation(value, FOREIGN_READ, false),
+            ExceptionCode::WritePerm => self.handle_violation(value, FOREIGN_WRITE, false),
+            ExceptionCode::ReadUnmapped => self.handle_violation(value, FOREIGN_READ, true),
+            ExceptionCode::WriteUnmapped => self.handle_violation(value, FOREIGN_WRITE, true),
+            ExceptionCode::ExecViolation => self.handle_violation(value, FOREIGN_EXEC, true),
+            _ => false
+        };
+
+        return continue_execution;
+    }
+
+    fn handle_violation(&mut self, address: u64, permission: u8, unmapped: bool) -> bool {
+        let hooks = &self.violation_hooks.get_hooks();
+        if hooks.is_empty() {
+            return false;
+        }
+
+        let mut continue_execution = true;
+
+        for (_key, func) in self.violation_hooks.get_hooks() {
+            continue_execution &= func(address, permission, unmapped );
+        }
+
+        return continue_execution;
+    }
+
+    fn handle_syscall(&mut self) -> bool{
+        for (_key, func) in self.syscall_hooks.get_hooks() {
+            func();
+        }
+
+        self.vm.cpu.write_pc(self.vm.cpu.read_pc() + 2);
+        return true;
+    }
+
+    pub fn stop(&mut self) {
+       self.vm.icount_limit = 0;
+    }
+
+    pub fn add_violation_hook(&mut self, callback: Box<dyn Fn(u64, u8, bool) -> bool>) -> u32 {
+        let hook_id = self.violation_hooks.add_hook(callback);
+        return qualify_hook_id(hook_id, HookType::Violation);
+    }
+
+    pub fn add_execution_hook(&mut self, callback: Box<dyn Fn(u64)>) -> u32 {
+        let hook_id = self.execution_hooks.borrow_mut().add_hook(callback);
+        return qualify_hook_id(hook_id, HookType::Execute);
     }
 
     pub fn add_syscall_hook(&mut self, callback: Box<dyn Fn()>) -> u32 {
@@ -178,6 +281,8 @@ impl IcicleEmulator {
 
         match hook_type {
             HookType::Syscall => self.syscall_hooks.remove_hook(hook_id),
+            HookType::Violation => self.violation_hooks.remove_hook(hook_id),
+            HookType::Execute => self.execution_hooks.borrow_mut().remove_hook(hook_id),
             _ => {}
         }
     }

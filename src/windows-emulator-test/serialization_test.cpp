@@ -77,7 +77,7 @@ namespace test
     TEST(SerializationTest, DeserializedEmulatorBehavesLikeSource)
     {
         auto emu = create_sample_emulator();
-        emu.start({}, 100);
+        emu.start(100);
 
         utils::buffer_serializer serializer{};
         emu.serialize(serializer);

@@ -20,17 +20,27 @@ pub fn icicle_create_emulator() -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
-pub fn icicle_start(ptr: *mut c_void) {
+pub fn icicle_start(ptr: *mut c_void, count: usize) {
     unsafe {
         let emulator = &mut *(ptr as *mut IcicleEmulator);
-        emulator.start();
+        emulator.start(count as u64);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub fn icicle_stop(ptr: *mut c_void) {
+    unsafe {
+        let emulator = &mut *(ptr as *mut IcicleEmulator);
+        emulator.stop();
     }
 }
 
 type RawFunction = extern "C" fn(*mut c_void);
+type PtrFunction = extern "C" fn(*mut c_void, u64);
 type DataFunction = extern "C" fn(*mut c_void, *const c_void, usize);
 type MmioReadFunction = extern "C" fn(*mut c_void, u64, usize, *mut c_void);
 type MmioWriteFunction = extern "C" fn(*mut c_void, u64, usize, *const c_void);
+type ViolationFunction = extern "C" fn(*mut c_void, u64, u8, i32) -> i32;
 
 #[unsafe(no_mangle)]
 pub fn icicle_map_mmio(
@@ -107,7 +117,11 @@ pub fn icicle_save_registers(ptr: *mut c_void, accessor: DataFunction, accessor_
     unsafe {
         let emulator = &mut *(ptr as *mut IcicleEmulator);
         let registers = emulator.save_registers();
-        accessor(accessor_data, registers.as_ptr() as *const c_void, registers.len());
+        accessor(
+            accessor_data,
+            registers.as_ptr() as *const c_void,
+            registers.len(),
+        );
     }
 }
 
@@ -131,10 +145,35 @@ pub fn icicle_read_memory(ptr: *mut c_void, address: u64, data: *mut c_void, siz
 }
 
 #[unsafe(no_mangle)]
-pub fn icicle_add_syscall_hook(ptr: *mut c_void, callback: RawFunction, data: *mut c_void) {
+pub fn icicle_add_violation_hook(ptr: *mut c_void, callback: ViolationFunction, data: *mut c_void) -> u32 {
     unsafe {
         let emulator = &mut *(ptr as *mut IcicleEmulator);
-        emulator.add_syscall_hook(Box::new(move || callback(data)));
+        return emulator.add_violation_hook(Box::new(
+            move |address: u64, permission: u8, unmapped: bool| {
+                let result = callback(data, address, permission, to_cbool(unmapped));
+                if result == 0 {
+                    return false;
+                }
+
+                return true;
+            },
+        ));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub fn icicle_add_syscall_hook(ptr: *mut c_void, callback: RawFunction, data: *mut c_void) -> u32 {
+    unsafe {
+        let emulator = &mut *(ptr as *mut IcicleEmulator);
+        return emulator.add_syscall_hook(Box::new(move || callback(data)));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub fn icicle_add_execution_hook(ptr: *mut c_void, callback: PtrFunction, data: *mut c_void) -> u32 {
+    unsafe {
+        let emulator = &mut *(ptr as *mut IcicleEmulator);
+        return emulator.add_execution_hook(Box::new(move |ptr: u64| callback(data, ptr)));
     }
 }
 

@@ -37,7 +37,7 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
     {
         try
         {
-            this->win_emu_->start({}, 1);
+            this->win_emu_->start(1);
         }
         catch (const std::exception& e)
         {
