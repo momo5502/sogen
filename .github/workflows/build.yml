@@ -301,15 +301,11 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Setup Asan Environment Variables
-        if: ${{ contains(matrix.platform, 'Sanitizer') }}
+      - name: Setup Environment Variables
         run: |
+          echo "RUST_BACKTRACE=1" >> $GITHUB_ENV
           echo "ASAN_OPTIONS=detect_odr_violation=0" >> $GITHUB_ENV
-
-      - name: Setup Icicle Environment Variables
-        if: ${{ matrix.emulator == 'Icicle' }}
-        run: |
-          echo "EMULATOR_ICICLE=1" >> $GITHUB_ENV
+          echo "EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }}" >> $GITHUB_ENV
 
       - name: Download Test Configuration
         uses: actions/download-artifact@v4.2.1
