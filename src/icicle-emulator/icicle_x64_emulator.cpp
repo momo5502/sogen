@@ -31,7 +31,7 @@ extern "C"
     void icicle_remove_syscall_hook(icicle_emulator*, uint32_t id);
     size_t icicle_read_register(icicle_emulator*, int reg, void* data, size_t length);
     size_t icicle_write_register(icicle_emulator*, int reg, const void* data, size_t length);
-    void icicle_start(icicle_emulator*);
+    void icicle_start(icicle_emulator*, size_t count);
     void icicle_stop(icicle_emulator*);
     void icicle_destroy_emulator(icicle_emulator*);
 }
@@ -115,18 +115,9 @@ namespace icicle
             }
         }
 
-        void start(const uint64_t start, const uint64_t end, std::chrono::nanoseconds timeout,
-                   const size_t count) override
+        void start(const size_t count) override
         {
-            if (timeout.count() < 0)
-            {
-                timeout = {};
-            }
-
-            (void)start;
-            (void)end;
-            (void)count;
-            icicle_start(this->emu_);
+            icicle_start(this->emu_, count);
         }
 
         void stop() override

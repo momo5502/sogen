@@ -197,8 +197,11 @@ impl IcicleEmulator {
         return &mut self.vm.cpu.mem;
     }
 
-    pub fn start(&mut self) {
-        self.vm.icount_limit = u64::MAX;
+    pub fn start(&mut self, count: u64) {
+        self.vm.icount_limit = match count {
+            0 => u64::MAX,
+            _ => self.vm.cpu.icount + count,
+        };
 
         loop {
             let reason = self.vm.run();
@@ -255,7 +258,7 @@ impl IcicleEmulator {
     }
 
     pub fn stop(&mut self) {
-       self.vm.icount_limit = self.vm.cpu.icount;
+       self.vm.icount_limit = 0;
     }
 
     pub fn add_violation_hook(&mut self, callback: Box<dyn Fn(u64, u8, bool) -> bool>) -> u32 {

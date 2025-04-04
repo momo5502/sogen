@@ -269,17 +269,12 @@ namespace unicorn
                 uc_close(this->uc_);
             }
 
-            void start(const uint64_t start, const uint64_t end, std::chrono::nanoseconds timeout,
-                       const size_t count) override
+            void start(const size_t count) override
             {
-                if (timeout.count() < 0)
-                {
-                    timeout = {};
-                }
-
                 this->has_violation_ = false;
-                const auto timeoutYs = std::chrono::duration_cast<std::chrono::microseconds>(timeout);
-                const auto res = uc_emu_start(*this, start, end, static_cast<uint64_t>(timeoutYs.count()), count);
+                const auto start = this->read_instruction_pointer();
+                constexpr auto end = std::numeric_limits<uint64_t>::max();
+                const auto res = uc_emu_start(*this, start, end, 0, count);
                 if (res == UC_ERR_OK)
                 {
                     return;

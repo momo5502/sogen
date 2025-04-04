@@ -141,7 +141,7 @@ namespace test
 
         const auto get_state_for_count = [&](const size_t count) {
             reset_emulator();
-            emu.start({}, count);
+            emu.start(count);
 
             utils::buffer_serializer state{};
             emu.serialize(state);

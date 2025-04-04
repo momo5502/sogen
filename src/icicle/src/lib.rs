@@ -20,10 +20,10 @@ pub fn icicle_create_emulator() -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
-pub fn icicle_start(ptr: *mut c_void) {
+pub fn icicle_start(ptr: *mut c_void, count: usize) {
     unsafe {
         let emulator = &mut *(ptr as *mut IcicleEmulator);
-        emulator.start();
+        emulator.start(count as u64);
     }
 }
 

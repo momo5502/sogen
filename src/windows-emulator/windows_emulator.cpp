@@ -514,15 +514,10 @@ void windows_emulator::setup_hooks()
         [&](const uint64_t address, const size_t, const uint64_t) { this->on_instruction_execution(address); });
 }
 
-void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
+void windows_emulator::start(size_t count)
 {
     const auto use_count = count > 0;
-    const auto use_timeout = timeout != std::chrono::nanoseconds{};
-
-    const auto start_time = std::chrono::high_resolution_clock::now();
     const auto start_instructions = this->executed_instructions_;
-
-    const auto target_time = start_time + timeout;
     const auto target_instructions = start_instructions + count;
 
     while (true)
@@ -532,23 +527,11 @@ void windows_emulator::start(std::chrono::nanoseconds timeout, size_t count)
             this->perform_thread_switch();
         }
 
-        this->emu().start_from_ip(timeout, count);
+        this->emu().start(count);
 
         if (!this->switch_thread_ && !this->emu().has_violation())
         {
             break;
-        }
-
-        if (use_timeout)
-        {
-            const auto now = std::chrono::high_resolution_clock::now();
-
-            if (now >= target_time)
-            {
-                break;
-            }
-
-            timeout = target_time - now;
         }
 
         if (use_count)

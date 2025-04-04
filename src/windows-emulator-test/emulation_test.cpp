@@ -15,7 +15,7 @@ namespace test
         constexpr auto count = 200000;
 
         auto emu = create_sample_emulator();
-        emu.start({}, count);
+        emu.start(count);
 
         ASSERT_EQ(emu.get_executed_instructions(), count);
     }
@@ -34,12 +34,12 @@ namespace test
         constexpr auto offset = 1;
         const auto instructionsToExecute = executedInstructions - offset;
 
-        new_emu.start({}, instructionsToExecute);
+        new_emu.start(instructionsToExecute);
 
         ASSERT_EQ(new_emu.get_executed_instructions(), instructionsToExecute);
         ASSERT_NOT_TERMINATED(new_emu);
 
-        new_emu.start({}, offset);
+        new_emu.start(offset);
 
         ASSERT_TERMINATED_SUCCESSFULLY(new_emu);
         ASSERT_EQ(new_emu.get_executed_instructions(), executedInstructions);

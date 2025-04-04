@@ -9,7 +9,7 @@ struct cpu_interface
 {
     virtual ~cpu_interface() = default;
 
-    virtual void start(uint64_t start, uint64_t end = 0, std::chrono::nanoseconds timeout = {}, size_t count = 0) = 0;
+    virtual void start(size_t count = 0) = 0;
     virtual void stop() = 0;
 
     virtual size_t read_raw_register(int reg, void* value, size_t size) = 0;

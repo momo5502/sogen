@@ -64,7 +64,7 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
     {
         try
         {
-            this->emu_->start_from_ip();
+            this->emu_->start();
         }
         catch (const std::exception& e)
         {
@@ -78,7 +78,7 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
     {
         try
         {
-            this->emu_->start_from_ip({}, 1);
+            this->emu_->start(1);
         }
         catch (const std::exception& e)
         {

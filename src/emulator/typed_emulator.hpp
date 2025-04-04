@@ -15,11 +15,6 @@ class typed_emulator : public emulator
     static constexpr registers stack_pointer = StackPointer;
     static constexpr registers instruction_pointer = InstructionPointer;
 
-    void start_from_ip(const std::chrono::nanoseconds timeout = {}, const size_t count = 0)
-    {
-        this->start(this->read_instruction_pointer(), 0, timeout, count);
-    }
-
     size_t write_register(registers reg, const void* value, const size_t size)
     {
         return this->write_raw_register(static_cast<int>(reg), value, size);
