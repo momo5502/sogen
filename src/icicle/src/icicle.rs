@@ -46,7 +46,8 @@ enum HookType {
     Syscall = 1,
     Read,
     Write,
-    Execute,
+    ExecuteGeneric,
+    ExecuteSpecific,
     Violation,
     Unknown,
 }
@@ -128,12 +129,72 @@ impl icicle_vm::CodeInjector for InstructionHookInjector {
     }
 }
 
+struct ExecutionHooks {
+    generic_hooks: HookContainer<dyn Fn(u64)>,
+    specific_hooks: HookContainer<dyn Fn(u64)>,
+    address_mapping: HashMap<u64, Vec<u32>>,
+}
+
+impl ExecutionHooks {
+    pub fn new() -> Self {
+        Self {
+            generic_hooks: HookContainer::new(),
+            specific_hooks: HookContainer::new(),
+            address_mapping: HashMap::new(),
+        }
+    }
+
+    pub fn execute(&self, address: u64) {
+        for (_key, func) in self.generic_hooks.get_hooks() {
+            func(address);
+        }
+
+        let mapping = self.address_mapping.get(&address);
+        if mapping.is_none(){
+            return;
+        }
+
+        for id in mapping.unwrap() {
+            let func = self.specific_hooks.get_hooks().get(&id);
+            if func.is_some() {
+                func.unwrap()(address);
+            }
+        }
+    }
+
+    pub fn add_generic_hook(&mut self, callback: Box<dyn Fn(u64)>) -> u32 {
+        self.generic_hooks.add_hook(callback)
+    }
+
+    pub fn add_specific_hook(&mut self, address: u64, callback: Box<dyn Fn(u64)>) -> u32 {
+        let id = self.specific_hooks.add_hook(callback);
+
+        let mapping = self.address_mapping.entry(address).or_insert_with(Vec::new);
+        mapping.push(id);
+
+        return id;
+    }
+
+    pub fn remove_generic_hook(&mut self, id: u32) {
+       self.generic_hooks.remove_hook(id);
+    }
+
+    pub fn remove_specific_hook(&mut self, id: u32) {
+        self.address_mapping.retain(|_, vec| {
+            vec.retain(|&x| x != id);
+            !vec.is_empty()
+        });
+
+        self.specific_hooks.remove_hook(id);
+     }
+}
+
 pub struct IcicleEmulator {
     vm: icicle_vm::Vm,
     reg: registers::X64RegisterNodes,
     syscall_hooks: HookContainer<dyn Fn()>,
     violation_hooks: HookContainer<dyn Fn(u64, u8, bool) -> bool>,
-    execution_hooks: Rc<RefCell<HookContainer<dyn Fn(u64)>>>,
+    execution_hooks: Rc<RefCell<ExecutionHooks>>,
 }
 
 struct MemoryHook {
@@ -184,15 +245,12 @@ impl icicle_cpu::mem::IoMemory for MmioHandler {
 impl IcicleEmulator {
     pub fn new() -> Self {
         let mut virtual_machine = create_x64_vm();
-        let exec_hooks: Rc<RefCell<HookContainer<dyn Fn(u64)>>> =
-            Rc::new(RefCell::new(HookContainer::new()));
+        let exec_hooks = Rc::new(RefCell::new(ExecutionHooks::new()));
 
         let exec_hooks_clone = Rc::clone(&exec_hooks);
 
         let hook = icicle_cpu::InstHook::new(move |_: &mut icicle_cpu::Cpu, addr: u64| {
-            for (_key, func) in exec_hooks_clone.borrow().get_hooks() {
-                func(addr);
-            }
+            exec_hooks_clone.borrow().execute(addr);
         });
 
         let hook = virtual_machine.cpu.add_hook(hook);
@@ -279,10 +337,15 @@ impl IcicleEmulator {
         let hook_id = self.violation_hooks.add_hook(callback);
         return qualify_hook_id(hook_id, HookType::Violation);
     }
+    
+    pub fn add_execution_hook(&mut self, address:u64, callback: Box<dyn Fn(u64)>) -> u32 {
+        let hook_id = self.execution_hooks.borrow_mut().add_specific_hook(address, callback);
+        return qualify_hook_id(hook_id, HookType::ExecuteSpecific);
+    }
 
-    pub fn add_execution_hook(&mut self, callback: Box<dyn Fn(u64)>) -> u32 {
-        let hook_id = self.execution_hooks.borrow_mut().add_hook(callback);
-        return qualify_hook_id(hook_id, HookType::Execute);
+    pub fn add_generic_execution_hook(&mut self, callback: Box<dyn Fn(u64)>) -> u32 {
+        let hook_id = self.execution_hooks.borrow_mut().add_generic_hook(callback);
+        return qualify_hook_id(hook_id, HookType::ExecuteGeneric);
     }
 
     pub fn add_syscall_hook(&mut self, callback: Box<dyn Fn()>) -> u32 {
@@ -301,7 +364,7 @@ impl IcicleEmulator {
             return 0;
         }
 
-        return qualify_hook_id(id.expect("Hook id needed"), HookType::Read);
+        return qualify_hook_id(id.unwrap(), HookType::Read);
     }
 
     pub fn add_write_hook(
@@ -315,7 +378,7 @@ impl IcicleEmulator {
             return 0;
         }
 
-        return qualify_hook_id(id.expect("Hook id needed"), HookType::Write);
+        return qualify_hook_id(id.unwrap(), HookType::Write);
     }
 
     pub fn remove_hook(&mut self, id: u32) {
@@ -324,7 +387,8 @@ impl IcicleEmulator {
         match hook_type {
             HookType::Syscall => self.syscall_hooks.remove_hook(hook_id),
             HookType::Violation => self.violation_hooks.remove_hook(hook_id),
-            HookType::Execute => self.execution_hooks.borrow_mut().remove_hook(hook_id),
+            HookType::ExecuteGeneric => self.execution_hooks.borrow_mut().remove_generic_hook(hook_id),
+            HookType::ExecuteSpecific => self.execution_hooks.borrow_mut().remove_specific_hook(hook_id),
             HookType::Read => {self.get_mem().remove_read_after_hook(hook_id);()},
             HookType::Write => {self.get_mem().remove_write_hook(hook_id);()},
             _ => {}

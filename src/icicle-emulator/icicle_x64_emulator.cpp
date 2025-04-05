@@ -27,7 +27,8 @@ extern "C"
     int32_t icicle_save_registers(icicle_emulator*, data_accessor_func* accessor, void* accessor_data);
     int32_t icicle_restore_registers(icicle_emulator*, const void* data, size_t length);
     uint32_t icicle_add_syscall_hook(icicle_emulator*, raw_func* callback, void* data);
-    uint32_t icicle_add_execution_hook(icicle_emulator*, ptr_func* callback, void* data);
+    uint32_t icicle_add_execution_hook(icicle_emulator*, uint64_t address, ptr_func* callback, void* data);
+    uint32_t icicle_add_generic_execution_hook(icicle_emulator*, ptr_func* callback, void* data);
     uint32_t icicle_add_violation_hook(icicle_emulator*, violation_func* callback, void* data);
     uint32_t icicle_add_read_hook(icicle_emulator*, uint64_t start, uint64_t end, memory_access_func* cb, void* data);
     uint32_t icicle_add_write_hook(icicle_emulator*, uint64_t start, uint64_t end, memory_access_func* cb, void* data);
@@ -288,9 +289,17 @@ namespace icicle
 
         emulator_hook* hook_memory_execution(const uint64_t address, memory_execution_hook_callback callback) override
         {
-            // TODO
-            (void)address;
-            throw std::runtime_error("Not implemented");
+            auto object = make_function_object(std::move(callback));
+            auto* ptr = object.get();
+            auto* wrapper = +[](void* user, const uint64_t addr) {
+                auto& func = *static_cast<decltype(ptr)>(user);
+                (func)(addr);
+            };
+
+            const auto id = icicle_add_execution_hook(this->emu_, address, wrapper, ptr);
+            this->hooks_[id] = std::move(object);
+
+            return wrap_hook(id);
         }
 
         emulator_hook* hook_memory_execution(memory_execution_hook_callback callback) override
@@ -302,7 +311,7 @@ namespace icicle
                 (func)(addr);
             };
 
-            const auto id = icicle_add_execution_hook(this->emu_, wrapper, ptr);
+            const auto id = icicle_add_generic_execution_hook(this->emu_, wrapper, ptr);
             this->hooks_[id] = std::move(object);
 
             return wrap_hook(id);

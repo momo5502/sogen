@@ -215,10 +215,18 @@ pub fn icicle_add_syscall_hook(ptr: *mut c_void, callback: RawFunction, data: *m
 }
 
 #[unsafe(no_mangle)]
-pub fn icicle_add_execution_hook(ptr: *mut c_void, callback: PtrFunction, data: *mut c_void) -> u32 {
+pub fn icicle_add_generic_execution_hook(ptr: *mut c_void, callback: PtrFunction, data: *mut c_void) -> u32 {
     unsafe {
         let emulator = &mut *(ptr as *mut IcicleEmulator);
-        return emulator.add_execution_hook(Box::new(move |ptr: u64| callback(data, ptr)));
+        return emulator.add_generic_execution_hook(Box::new(move |ptr: u64| callback(data, ptr)));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub fn icicle_add_execution_hook(ptr: *mut c_void, address: u64, callback: PtrFunction, data: *mut c_void) -> u32 {
+    unsafe {
+        let emulator = &mut *(ptr as *mut IcicleEmulator);
+        return emulator.add_execution_hook(address, Box::new(move |ptr: u64| callback(data, ptr)));
     }
 }
 
