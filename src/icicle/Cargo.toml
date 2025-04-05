@@ -7,6 +7,6 @@ edition = "2024"
 crate-type = ["staticlib"]
 
 [dependencies]
-icicle-vm = { git = "https://github.com/icicle-emu/icicle-emu" }
-icicle-cpu = { git = "https://github.com/icicle-emu/icicle-emu" }
-pcode = { git = "https://github.com/icicle-emu/icicle-emu" }
+icicle-vm = { git = "https://github.com/momo5502/icicle-emu" }
+icicle-cpu = { git = "https://github.com/momo5502/icicle-emu" }
+pcode = { git = "https://github.com/momo5502/icicle-emu" }
