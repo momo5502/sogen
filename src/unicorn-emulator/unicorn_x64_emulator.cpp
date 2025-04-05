@@ -537,8 +537,7 @@ namespace unicorn
                 return result;
             }
 
-            emulator_hook* hook_memory_violation(uint64_t address, size_t size,
-                                                 memory_violation_hook_callback callback) override
+            emulator_hook* hook_memory_violation(memory_violation_hook_callback callback) override
             {
                 function_wrapper<bool, uc_engine*, uc_mem_type, uint64_t, int, int64_t> wrapper(
                     [c = std::move(callback), this](uc_engine*, const uc_mem_type type, const uint64_t address,
@@ -573,7 +572,7 @@ namespace unicorn
                 auto container = std::make_unique<hook_container>();
 
                 uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_MEM_INVALID, wrapper.get_function(),
-                                wrapper.get_user_data(), address, size));
+                                wrapper.get_user_data(), 0, std::numeric_limits<uint64_t>::max()));
 
                 container->add(std::move(wrapper), std::move(hook));
 

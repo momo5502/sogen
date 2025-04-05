@@ -53,8 +53,7 @@ class hook_interface
   public:
     virtual ~hook_interface() = default;
 
-    virtual emulator_hook* hook_memory_violation(uint64_t address, size_t size,
-                                                 memory_violation_hook_callback callback) = 0;
+    virtual emulator_hook* hook_memory_violation(memory_violation_hook_callback callback) = 0;
 
     virtual emulator_hook* hook_memory_access(uint64_t address, size_t size, memory_operation filter,
                                               complex_memory_hook_callback callback) = 0;
@@ -66,11 +65,6 @@ class hook_interface
     virtual emulator_hook* hook_basic_block(basic_block_hook_callback callback) = 0;
 
     virtual void delete_hook(emulator_hook* hook) = 0;
-
-    emulator_hook* hook_memory_violation(memory_violation_hook_callback callback)
-    {
-        return this->hook_memory_violation(0, std::numeric_limits<size_t>::max(), std::move(callback));
-    }
 
     emulator_hook* hook_memory_read(const uint64_t address, const size_t size, simple_memory_hook_callback callback)
     {

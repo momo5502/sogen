@@ -277,12 +277,8 @@ namespace icicle
             // throw std::runtime_error("Not implemented");
         }
 
-        emulator_hook* hook_memory_violation(const uint64_t address, const size_t size,
-                                             memory_violation_hook_callback callback) override
+        emulator_hook* hook_memory_violation(memory_violation_hook_callback callback) override
         {
-            (void)address;
-            (void)size;
-
             auto obj = make_function_object(std::move(callback));
             auto* ptr = obj.get();
             auto* wrapper =
