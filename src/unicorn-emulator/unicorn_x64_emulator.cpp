@@ -60,6 +60,7 @@ namespace unicorn
             {
             case UC_MEM_READ:
             case UC_MEM_READ_PROT:
+            case UC_MEM_READ_AFTER:
             case UC_MEM_READ_UNMAPPED:
                 return memory_operation::read;
             case UC_MEM_WRITE:
@@ -382,7 +383,7 @@ namespace unicorn
                 uce(uc_mem_protect(*this, address, size, static_cast<uint32_t>(permissions)));
             }
 
-            emulator_hook* hook_instruction(int instruction_type, instruction_hook_callback callback) override
+            emulator_hook* hook_instruction(const int instruction_type, instruction_hook_callback callback) override
             {
                 function_wrapper<int, uc_engine*> wrapper([c = std::move(callback)](uc_engine*) {
                     return (c() == instruction_hook_continuation::skip_instruction) ? 1 : 0;
@@ -524,7 +525,7 @@ namespace unicorn
                 return result;
             }
 
-            emulator_hook* hook_memory_execution(uint64_t address, uint64_t size,
+            emulator_hook* hook_memory_execution(const uint64_t address, const uint64_t size,
                                                  memory_execution_hook_callback callback)
             {
                 auto exec_wrapper = [c = std::move(callback)](uc_engine*, const uint64_t address,
@@ -555,14 +556,14 @@ namespace unicorn
                 return this->hook_memory_execution(address, 1, std::move(callback));
             }
 
-            emulator_hook* hook_memory_read(uint64_t address, size_t size,
+            emulator_hook* hook_memory_read(const uint64_t address, const size_t size,
                                             memory_access_hook_callback callback) override
             {
                 auto read_wrapper = [c = std::move(callback)](uc_engine*, const uc_mem_type type,
                                                               const uint64_t address, const int size,
                                                               const uint64_t value) {
                     const auto operation = map_memory_operation(type);
-                    if (operation != memory_permission::none && size > 0)
+                    if (operation == memory_operation::read && size > 0)
                     {
                         c(address, &value, std::min(static_cast<size_t>(size), sizeof(value)));
                     }
@@ -580,16 +581,15 @@ namespace unicorn
                 return container->as_opaque_hook();
             }
 
-            emulator_hook* hook_memory_write(uint64_t address, size_t size,
+            emulator_hook* hook_memory_write(const uint64_t address, const size_t size,
                                              memory_access_hook_callback callback) override
             {
-                auto write_wrapper = [c = std::move(callback)](uc_engine*, const uc_mem_type type,
-                                                               const uint64_t address, const int size,
-                                                               const uint64_t value) {
+                auto write_wrapper = [c = std::move(callback)](uc_engine*, const uc_mem_type type, const uint64_t addr,
+                                                               const int length, const uint64_t value) {
                     const auto operation = map_memory_operation(type);
-                    if (operation != memory_permission::none && size > 0)
+                    if (operation == memory_operation::write && length > 0)
                     {
-                        c(address, &value, std::min(static_cast<size_t>(size), sizeof(value)));
+                        c(addr, &value, std::min(static_cast<size_t>(length), sizeof(value)));
                     }
                 };
 
