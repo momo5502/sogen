@@ -35,7 +35,9 @@ namespace
     void forward_emulator(windows_emulator& win_emu)
     {
         const auto target = win_emu.mod_manager.executable->find_export("vulnerable");
-        win_emu.emu().hook_memory_execution(target, 1, [&](uint64_t, size_t, uint64_t) { win_emu.emu().stop(); });
+        win_emu.emu().hook_memory_execution(target, [&](uint64_t) {
+            win_emu.emu().stop(); //
+        });
 
         run_emulation(win_emu);
     }
@@ -64,7 +66,9 @@ namespace
 
             const auto ret = emu.emu().read_stack(0);
 
-            emu.emu().hook_memory_execution(ret, 1, [&](uint64_t, size_t, uint64_t) { emu.emu().stop(); });
+            emu.emu().hook_memory_execution(ret, [&](uint64_t) {
+                emu.emu().stop(); //
+            });
         }
 
         void restore_emulator()

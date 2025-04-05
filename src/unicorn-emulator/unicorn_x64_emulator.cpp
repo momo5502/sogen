@@ -175,63 +175,6 @@ namespace unicorn
             size_t size_{};
         };
 
-        void add_read_hook(uc_engine* uc, const uint64_t address, const size_t size, hook_container& container,
-                           const std::shared_ptr<complex_memory_hook_callback>& callback)
-        {
-            function_wrapper<void, uc_engine*, uc_mem_type, uint64_t, int, int64_t> wrapper(
-                [callback](uc_engine*, const uc_mem_type type, const uint64_t address, const int size, const int64_t) {
-                    const auto operation = map_memory_operation(type);
-                    if (operation != memory_permission::none)
-                    {
-                        (*callback)(address, static_cast<uint64_t>(size), 0, operation);
-                    }
-                });
-
-            unicorn_hook hook{uc};
-
-            uce(uc_hook_add(uc, hook.make_reference(), UC_HOOK_MEM_READ, wrapper.get_function(),
-                            wrapper.get_user_data(), address, address + size));
-
-            container.add(std::move(wrapper), std::move(hook));
-        }
-
-        void add_write_hook(uc_engine* uc, const uint64_t address, const size_t size, hook_container& container,
-                            const std::shared_ptr<complex_memory_hook_callback>& callback)
-        {
-            function_wrapper<void, uc_engine*, uc_mem_type, uint64_t, int, int64_t> wrapper(
-                [callback](uc_engine*, const uc_mem_type type, const uint64_t address, const int size,
-                           const uint64_t value) {
-                    const auto operation = map_memory_operation(type);
-                    if (operation != memory_permission::none)
-                    {
-                        (*callback)(address, static_cast<uint64_t>(size), value, operation);
-                    }
-                });
-
-            unicorn_hook hook{uc};
-
-            uce(uc_hook_add(uc, hook.make_reference(), UC_HOOK_MEM_WRITE, wrapper.get_function(),
-                            wrapper.get_user_data(), address, address + size));
-
-            container.add(std::move(wrapper), std::move(hook));
-        }
-
-        void add_exec_hook(uc_engine* uc, const uint64_t address, const size_t size, hook_container& container,
-                           const std::shared_ptr<complex_memory_hook_callback>& callback)
-        {
-            function_wrapper<void, uc_engine*, uint64_t, uint32_t> wrapper(
-                [callback](uc_engine*, const uint64_t address, const uint32_t size) {
-                    (*callback)(address, size, 0, memory_permission::exec);
-                });
-
-            unicorn_hook hook{uc};
-
-            uce(uc_hook_add(uc, hook.make_reference(), UC_HOOK_CODE, wrapper.get_function(), wrapper.get_user_data(),
-                            address, address + size));
-
-            container.add(std::move(wrapper), std::move(hook));
-        }
-
         basic_block map_block(const uc_tb& translation_block)
         {
             basic_block block{};
@@ -581,38 +524,94 @@ namespace unicorn
                 return result;
             }
 
-            emulator_hook* hook_memory_access(const uint64_t address, const size_t size, const memory_operation filter,
-                                              complex_memory_hook_callback callback) override
+            emulator_hook* hook_memory_execution(uint64_t address, uint64_t size,
+                                                 memory_execution_hook_callback callback)
             {
-                if (filter == memory_permission::none)
-                {
-                    return nullptr;
-                }
+                auto exec_wrapper = [c = std::move(callback)](uc_engine*, const uint64_t address,
+                                                              const uint32_t /*size*/) {
+                    c(address); //
+                };
 
-                const auto shared_callback = std::make_shared<complex_memory_hook_callback>(std::move(callback));
+                function_wrapper<void, uc_engine*, uint64_t, uint32_t> wrapper(std::move(exec_wrapper));
 
+                unicorn_hook hook{*this};
+
+                uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_CODE, wrapper.get_function(),
+                                wrapper.get_user_data(), address, address + size));
+
+                auto* container = this->create_hook_container();
+                container->add(std::move(wrapper), std::move(hook));
+                return container->as_opaque_hook();
+            }
+
+            emulator_hook* hook_memory_execution(memory_execution_hook_callback callback) override
+            {
+                return this->hook_memory_execution(0, std::numeric_limits<uint64_t>::max(), std::move(callback));
+            }
+
+            emulator_hook* hook_memory_execution(const uint64_t address,
+                                                 memory_execution_hook_callback callback) override
+            {
+                return this->hook_memory_execution(address, 1, std::move(callback));
+            }
+
+            emulator_hook* hook_memory_read(uint64_t address, size_t size,
+                                            memory_access_hook_callback callback) override
+            {
+                auto read_wrapper = [c = std::move(callback)](uc_engine*, const uc_mem_type type,
+                                                              const uint64_t address, const int size,
+                                                              const uint64_t value) {
+                    const auto operation = map_memory_operation(type);
+                    if (operation != memory_permission::none && size > 0)
+                    {
+                        c(address, &value, std::min(static_cast<size_t>(size), sizeof(value)));
+                    }
+                };
+
+                function_wrapper<void, uc_engine*, uc_mem_type, uint64_t, int, int64_t> wrapper(
+                    std::move(read_wrapper));
+
+                unicorn_hook hook{*this};
+                uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_MEM_READ_AFTER, wrapper.get_function(),
+                                wrapper.get_user_data(), address, address + size));
+
+                auto* container = this->create_hook_container();
+                container->add(std::move(wrapper), std::move(hook));
+                return container->as_opaque_hook();
+            }
+
+            emulator_hook* hook_memory_write(uint64_t address, size_t size,
+                                             memory_access_hook_callback callback) override
+            {
+                auto write_wrapper = [c = std::move(callback)](uc_engine*, const uc_mem_type type,
+                                                               const uint64_t address, const int size,
+                                                               const uint64_t value) {
+                    const auto operation = map_memory_operation(type);
+                    if (operation != memory_permission::none && size > 0)
+                    {
+                        c(address, &value, std::min(static_cast<size_t>(size), sizeof(value)));
+                    }
+                };
+
+                function_wrapper<void, uc_engine*, uc_mem_type, uint64_t, int, int64_t> wrapper(
+                    std::move(write_wrapper));
+
+                unicorn_hook hook{*this};
+
+                uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_MEM_WRITE, wrapper.get_function(),
+                                wrapper.get_user_data(), address, address + size));
+
+                auto* container = this->create_hook_container();
+                container->add(std::move(wrapper), std::move(hook));
+                return container->as_opaque_hook();
+            }
+
+            hook_container* create_hook_container()
+            {
                 auto container = std::make_unique<hook_container>();
-
-                if ((filter & memory_operation::read) != memory_operation::none)
-                {
-                    add_read_hook(*this, address, size, *container, shared_callback);
-                }
-
-                if ((filter & memory_operation::write) != memory_operation::none)
-                {
-                    add_write_hook(*this, address, size, *container, shared_callback);
-                }
-
-                if ((filter & memory_operation::exec) != memory_operation::none)
-                {
-                    add_exec_hook(*this, address, size, *container, shared_callback);
-                }
-
-                auto* result = container->as_opaque_hook();
-
+                auto* ptr = container.get();
                 this->hooks_.push_back(std::move(container));
-
-                return result;
+                return ptr;
             }
 
             void delete_hook(emulator_hook* hook) override

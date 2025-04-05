@@ -517,9 +517,9 @@ void windows_emulator::setup_hooks()
         return memory_violation_continuation::resume;
     });
 
-    this->emu().hook_memory_execution(
-        0, std::numeric_limits<size_t>::max(),
-        [&](const uint64_t address, const size_t, const uint64_t) { this->on_instruction_execution(address); });
+    this->emu().hook_memory_execution([&](const uint64_t address) {
+        this->on_instruction_execution(address); //
+    });
 }
 
 void windows_emulator::start(size_t count)

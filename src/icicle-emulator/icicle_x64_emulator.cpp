@@ -298,36 +298,46 @@ namespace icicle
             return wrap_hook(id);
         }
 
-        emulator_hook* hook_memory_access(const uint64_t address, const size_t size, const memory_operation filter,
-                                          complex_memory_hook_callback callback) override
+        emulator_hook* hook_memory_execution(const uint64_t address, memory_execution_hook_callback callback) override
         {
-            if (filter == memory_permission::none)
-            {
-                return nullptr;
-            }
+            // TODO
+            (void)address;
+            throw std::runtime_error("Not implemented");
+        }
 
-            const auto shared_callback = std::make_shared<complex_memory_hook_callback>(std::move(callback));
+        emulator_hook* hook_memory_execution(memory_execution_hook_callback callback) override
+        {
+            auto wrapper = make_function_object(std::move(callback));
+            auto* ptr = wrapper.get();
+            auto* func = +[](void* user, const uint64_t addr) {
+                auto& func = *static_cast<memory_execution_hook_callback*>(user);
+                (func)(addr);
+            };
 
-            if ((filter & memory_permission::exec) == memory_permission::exec)
-            {
-                if (address != 0 || size != std::numeric_limits<size_t>::max())
-                {
-                    throw std::runtime_error("Not supported!");
-                }
+            const auto id = icicle_add_execution_hook(this->emu_, func, ptr);
+            this->hooks_[id] = std::move(wrapper);
 
-                auto* ptr = shared_callback.get();
-                auto wrapper = wrap_shared(shared_callback);
-                auto* func = +[](void* user, const uint64_t ptr) {
-                    (*static_cast<complex_memory_hook_callback*>(user))(ptr, 0, 0, memory_permission::exec);
-                };
+            return wrap_hook(id);
+        }
 
-                const auto id = icicle_add_execution_hook(this->emu_, func, ptr);
-                this->hooks_[id] = std::move(wrapper);
+        emulator_hook* hook_memory_read(const uint64_t address, const size_t size,
+                                        memory_access_hook_callback callback) override
+        {
+            // TODO
+            (void)address;
+            (void)size;
+            (void)callback;
+            throw std::runtime_error("Not implemented");
+        }
 
-                return wrap_hook(id);
-            }
-
-            return nullptr;
+        emulator_hook* hook_memory_write(const uint64_t address, const size_t size,
+                                         const memory_access_hook_callback callback) override
+        {
+            // TODO
+            (void)address;
+            (void)size;
+            (void)callback;
+            throw std::runtime_error("Not implemented");
         }
 
         void delete_hook(emulator_hook* hook) override
