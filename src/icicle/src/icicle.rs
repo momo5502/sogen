@@ -130,21 +130,25 @@ impl icicle_vm::CodeInjector for InstructionHookInjector {
 }
 
 struct ExecutionHooks {
+    skip_ip: Option<u64>,
+    stop: Rc<RefCell<bool>>,
     generic_hooks: HookContainer<dyn Fn(u64)>,
     specific_hooks: HookContainer<dyn Fn(u64)>,
     address_mapping: HashMap<u64, Vec<u32>>,
 }
 
 impl ExecutionHooks {
-    pub fn new() -> Self {
+    pub fn new(stop_value: Rc<RefCell<bool>>) -> Self {
         Self {
+            skip_ip: None,
+            stop: stop_value,
             generic_hooks: HookContainer::new(),
             specific_hooks: HookContainer::new(),
             address_mapping: HashMap::new(),
         }
     }
 
-    pub fn execute(&self, address: u64) {
+    fn run_hooks(&self, address: u64) {
         for (_key, func) in self.generic_hooks.get_hooks() {
             func(address);
         }
@@ -159,6 +163,24 @@ impl ExecutionHooks {
             if func.is_some() {
                 func.unwrap()(address);
             }
+        }
+    }
+
+    pub fn execute(&mut self,cpu: &mut icicle_cpu::Cpu, address: u64) {
+        let mut skip = false;
+        if self.skip_ip.is_some() {
+            skip = self.skip_ip.unwrap() == address;
+            self.skip_ip = None;
+        }
+
+        if !skip {
+            self.run_hooks(address);
+        }
+
+        if *self.stop.borrow() {
+            self.skip_ip = Some(address);
+            cpu.exception.code = ExceptionCode::InstructionLimit as u32;
+            cpu.exception.value = address;
         }
     }
 
@@ -190,11 +212,13 @@ impl ExecutionHooks {
 }
 
 pub struct IcicleEmulator {
+    executing_thread: std::thread::ThreadId,
     vm: icicle_vm::Vm,
     reg: registers::X64RegisterNodes,
     syscall_hooks: HookContainer<dyn Fn()>,
     violation_hooks: HookContainer<dyn Fn(u64, u8, bool) -> bool>,
     execution_hooks: Rc<RefCell<ExecutionHooks>>,
+    stop: Rc<RefCell<bool>>,
 }
 
 struct MemoryHook {
@@ -245,18 +269,21 @@ impl icicle_cpu::mem::IoMemory for MmioHandler {
 impl IcicleEmulator {
     pub fn new() -> Self {
         let mut virtual_machine = create_x64_vm();
-        let exec_hooks = Rc::new(RefCell::new(ExecutionHooks::new()));
+        let stop_value = Rc::new(RefCell::new(false));
+        let exec_hooks = Rc::new(RefCell::new(ExecutionHooks::new(stop_value.clone())));
 
         let exec_hooks_clone = Rc::clone(&exec_hooks);
 
-        let hook = icicle_cpu::InstHook::new(move |_: &mut icicle_cpu::Cpu, addr: u64| {
-            exec_hooks_clone.borrow().execute(addr);
+        let hook = icicle_cpu::InstHook::new(move |cpu: &mut icicle_cpu::Cpu, addr: u64| {
+            exec_hooks_clone.borrow_mut().execute(cpu, addr);
         });
 
         let hook = virtual_machine.cpu.add_hook(hook);
         virtual_machine.add_injector(InstructionHookInjector { hook });
 
         Self {
+            stop: stop_value,
+            executing_thread: std::thread::current().id(),
             reg: registers::X64RegisterNodes::new(&virtual_machine.cpu.arch),
             vm: virtual_machine,
             syscall_hooks: HookContainer::new(),
@@ -270,9 +297,12 @@ impl IcicleEmulator {
     }
 
     pub fn start(&mut self, count: u64) {
+        self.executing_thread = std::thread::current().id();
+        *self.stop.borrow_mut() = false;
+
         self.vm.icount_limit = match count {
             0 => u64::MAX,
-            _ => self.vm.cpu.icount + count,
+            _ => self.vm.cpu.icount.saturating_add(count),
         };
 
         loop {
@@ -331,6 +361,10 @@ impl IcicleEmulator {
 
     pub fn stop(&mut self) {
         self.vm.icount_limit = 0;
+
+        if self.executing_thread == std::thread::current().id() {
+            *self.stop.borrow_mut() = true;
+        }
     }
 
     pub fn add_violation_hook(&mut self, callback: Box<dyn Fn(u64, u8, bool) -> bool>) -> u32 {
