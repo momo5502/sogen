@@ -470,9 +470,9 @@ pub(crate) struct X64RegisterNodes {
     flags: pcode::VarNode,
     rflags: pcode::VarNode,
     fip: pcode::VarNode,
-    //fcs: pcode::VarNode,
+    fcs: pcode::VarNode,
     fdp: pcode::VarNode,
-    //fds: pcode::VarNode,
+    fds: pcode::VarNode,
     fop: pcode::VarNode,
 }
 
@@ -704,9 +704,9 @@ impl X64RegisterNodes {
             fip: r("FPUInstructionPointer"),
             fdp: r("FPUDataPointer"),
             fop: r("FPULastInstructionOpcode"),
-            /*fds: r("FDS"),
-            msr: r("MSR"),
-            fcs: r("FCS"),*/
+            fds: r("DS"), // ?
+            fcs: r("CS"), // ?
+            //msr: r("MSR"),
             fs_base: r("FS_OFFSET"),
             gs_base: r("GS_OFFSET"),
         }
@@ -939,9 +939,9 @@ impl X64RegisterNodes {
             X64Register::Flags => self.flags,
             X64Register::Rflags => self.rflags,
             X64Register::Fip => self.fip,
-            //X64Register::Fcs => self.fcs,
+            X64Register::Fcs => self.fcs,
             X64Register::Fdp => self.fdp,
-            //X64Register::Fds => self.fds,
+            X64Register::Fds => self.fds,
             X64Register::Fop => self.fop,
             _ => panic!("Unsupported register"),
         }
