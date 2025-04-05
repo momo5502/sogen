@@ -83,13 +83,13 @@ namespace
 
 namespace utils
 {
-    inline void serialize(buffer_serializer& buffer, const KUSER_SHARED_DATA64& kusd)
+    static void serialize(buffer_serializer& buffer, const KUSER_SHARED_DATA64& kusd)
     {
         static_assert(KUSD_SIZE == sizeof(kusd));
         buffer.write(&kusd, KUSD_SIZE);
     }
 
-    inline void deserialize(buffer_deserializer& buffer, KUSER_SHARED_DATA64& kusd)
+    static void deserialize(buffer_deserializer& buffer, KUSER_SHARED_DATA64& kusd)
     {
         buffer.read(&kusd, KUSD_SIZE);
     }
@@ -130,30 +130,21 @@ void kusd_mmio::deserialize(utils::buffer_deserializer& buffer)
     this->register_mmio();
 }
 
-uint64_t kusd_mmio::read(const uint64_t addr, const size_t size)
+void kusd_mmio::read(const uint64_t addr, void* data, const size_t size)
 {
-    uint64_t result{};
-
     this->update();
 
     if (addr >= KUSD_SIZE)
     {
-        return result;
+        return;
     }
 
     const auto end = addr + size;
     const auto valid_end = std::min(end, static_cast<uint64_t>(KUSD_SIZE));
     const auto real_size = valid_end - addr;
 
-    if (real_size > sizeof(result))
-    {
-        return result;
-    }
-
     const auto* kusd_buffer = reinterpret_cast<uint8_t*>(&this->kusd_);
-    memcpy(&result, kusd_buffer + addr, real_size);
-
-    return result;
+    memcpy(data, kusd_buffer + addr, real_size);
 }
 
 uint64_t kusd_mmio::address()
@@ -178,8 +169,10 @@ void kusd_mmio::register_mmio()
 
     this->memory_->allocate_mmio(
         KUSD_ADDRESS, KUSD_BUFFER_SIZE,
-        [this](const uint64_t addr, const size_t size) { return this->read(addr, size); },
-        [](const uint64_t, const size_t, const uint64_t) {
+        [this](const uint64_t addr, void* data, const size_t size) {
+            this->read(addr, data, size); //
+        },
+        [](const uint64_t, const void*, const size_t) {
             // Writing not supported!
         });
 }

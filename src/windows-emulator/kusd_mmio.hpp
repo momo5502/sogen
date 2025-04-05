@@ -48,7 +48,7 @@ class kusd_mmio
 
     KUSER_SHARED_DATA64 kusd_{};
 
-    uint64_t read(uint64_t addr, size_t size);
+    void read(uint64_t addr, void* data, size_t size);
 
     void update();
 

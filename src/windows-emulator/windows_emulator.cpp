@@ -210,6 +210,14 @@ namespace
 
 std::unique_ptr<x64_emulator> create_default_x64_emulator()
 {
+#if MOMO_ENABLE_RUST_CODE
+    const auto* env = getenv("EMULATOR_ICICLE");
+    if (env && (env == "1"sv || env == "true"sv))
+    {
+        return icicle::create_x64_emulator();
+    }
+#endif
+
     return unicorn::create_x64_emulator();
 }
 

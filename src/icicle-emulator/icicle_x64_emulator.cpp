@@ -12,8 +12,8 @@ extern "C"
     using violation_func = int32_t(void*, uint64_t address, uint8_t operation, int32_t unmapped);
     using data_accessor_func = void(void* user, const void* data, size_t length);
 
-    using icicle_mmio_read_func = void(void* user, uint64_t address, size_t length, void* data);
-    using icicle_mmio_write_func = void(void* user, uint64_t address, size_t length, const void* data);
+    using icicle_mmio_read_func = void(void* user, uint64_t address, void* data, size_t length);
+    using icicle_mmio_write_func = void(void* user, uint64_t address, const void* data, size_t length);
 
     icicle_emulator* icicle_create_emulator();
     int32_t icicle_protect_memory(icicle_emulator*, uint64_t address, uint64_t length, uint8_t permissions);
@@ -185,31 +185,14 @@ namespace icicle
             auto* ptr = wrapper.get();
             this->storage_.push_back(std::move(wrapper));
 
-            auto* read_wrapper = +[](void* user, const uint64_t addr, const size_t length, void* data) {
-                constexpr auto limit = sizeof(uint64_t);
+            auto* read_wrapper = +[](void* user, const uint64_t addr, void* data, const size_t length) {
                 const auto* w = static_cast<mmio_wrapper*>(user);
-
-                // TODO: Change interface to get rid of loop
-                for (size_t offset = 0; offset < length; offset += limit)
-                {
-                    const auto max_read = std::min(limit, length - offset);
-                    const auto value = w->read_cb(addr + offset - w->base, max_read);
-                    memcpy(static_cast<uint8_t*>(data) + offset, &value, max_read);
-                }
+                w->read_cb(addr - w->base, data, length);
             };
 
-            auto* write_wrapper = +[](void* user, const uint64_t addr, const size_t length, const void* data) {
-                constexpr auto limit = sizeof(uint64_t);
+            auto* write_wrapper = +[](void* user, const uint64_t addr, const void* data, const size_t length) {
                 const auto* w = static_cast<mmio_wrapper*>(user);
-
-                // TODO: Change interface to get rid of loop
-                for (size_t offset = 0; offset < length; offset += limit)
-                {
-                    uint64_t value{};
-                    const auto max_read = std::min(limit, length - offset);
-                    memcpy(&value, static_cast<const uint8_t*>(data) + offset, max_read);
-                    w->write_cb(addr + offset - w->base, max_read, value);
-                }
+                w->write_cb(addr + w->base, data, length);
             };
 
             icicle_map_mmio(this->emu_, address, size, read_wrapper, ptr, write_wrapper, ptr);
