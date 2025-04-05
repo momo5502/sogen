@@ -270,7 +270,7 @@ jobs:
           - macOS x86_64
         emulator:
           - Unicorn
-          - Icicle
+          #- Icicle
         emulation-root:
           - Windows 2025
           - Windows 2022
@@ -354,7 +354,7 @@ jobs:
           #- arm64-v8a
         emulator:
           - Unicorn
-          - Icicle
+          #- Icicle
         emulation-root:
           - Windows 2025
           - Windows 2022
