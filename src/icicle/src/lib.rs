@@ -38,8 +38,8 @@ pub fn icicle_stop(ptr: *mut c_void) {
 type RawFunction = extern "C" fn(*mut c_void);
 type PtrFunction = extern "C" fn(*mut c_void, u64);
 type DataFunction = extern "C" fn(*mut c_void, *const c_void, usize);
-type MmioReadFunction = extern "C" fn(*mut c_void, u64, usize, *mut c_void);
-type MmioWriteFunction = extern "C" fn(*mut c_void, u64, usize, *const c_void);
+type MmioReadFunction = extern "C" fn(*mut c_void, u64, *mut c_void, usize);
+type MmioWriteFunction = extern "C" fn(*mut c_void, u64, *const c_void, usize);
 type ViolationFunction = extern "C" fn(*mut c_void, u64, u8, i32) -> i32;
 
 #[unsafe(no_mangle)]
@@ -57,12 +57,12 @@ pub fn icicle_map_mmio(
 
         let read_wrapper = Box::new(move |addr: u64, data: &mut [u8]| {
             let raw_pointer: *mut u8 = data.as_mut_ptr();
-            read_cb(read_data, addr, data.len(), raw_pointer as *mut c_void);
+            read_cb(read_data, addr, raw_pointer as *mut c_void, data.len());
         });
 
         let write_wrapper = Box::new(move |addr: u64, data: &[u8]| {
             let raw_pointer: *const u8 = data.as_ptr();
-            write_cb(write_data, addr, data.len(), raw_pointer as *const c_void);
+            write_cb(write_data, addr, raw_pointer as *const c_void, data.len());
         });
 
         let res = emulator.map_mmio(address, length, read_wrapper, write_wrapper);

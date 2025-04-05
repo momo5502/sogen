@@ -4,8 +4,8 @@
 
 #include "memory_permission.hpp"
 
-using mmio_read_callback = std::function<uint64_t(uint64_t addr, size_t size)>;
-using mmio_write_callback = std::function<void(uint64_t addr, size_t size, uint64_t data)>;
+using mmio_read_callback = std::function<void(uint64_t addr, void* data, size_t size)>;
+using mmio_write_callback = std::function<void(uint64_t addr, const void* data, size_t size)>;
 
 class memory_manager;
 

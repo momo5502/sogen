@@ -243,6 +243,14 @@ namespace unicorn
             return block;
         }
 
+        void assert_64bit_limit(const size_t size)
+        {
+            if (size > sizeof(uint64_t))
+            {
+                throw std::runtime_error("Exceeded uint64_t size limit");
+            }
+        }
+
         class unicorn_x64_emulator : public x64_emulator
         {
           public:
@@ -370,13 +378,23 @@ namespace unicorn
             void map_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb,
                           mmio_write_callback write_cb) override
             {
-                mmio_callbacks cb{.read = mmio_callbacks::read_wrapper(
-                                      [c = std::move(read_cb)](uc_engine*, const uint64_t addr, const uint32_t s) {
-                                          return c(addr, s);
-                                      }),
-                                  .write = mmio_callbacks::write_wrapper(
-                                      [c = std::move(write_cb)](uc_engine*, const uint64_t addr, const uint32_t s,
-                                                                const uint64_t value) { c(addr, s, value); })};
+                auto read_wrapper = [c = std::move(read_cb)](uc_engine*, const uint64_t addr, const uint32_t s) {
+                    assert_64bit_limit(s);
+                    uint64_t value{};
+                    c(addr, &value, s);
+                    return value;
+                };
+
+                auto write_wrapper = [c = std::move(write_cb)](uc_engine*, const uint64_t addr, const uint32_t s,
+                                                               const uint64_t value) {
+                    assert_64bit_limit(s);
+                    c(addr, &value, s);
+                };
+
+                mmio_callbacks cb{
+                    .read = mmio_callbacks::read_wrapper(std::move(read_wrapper)),
+                    .write = mmio_callbacks::write_wrapper(std::move(write_wrapper)),
+                };
 
                 uce(uc_mmio_map(*this, address, size, cb.read.get_c_function(), cb.read.get_user_data(),
                                 cb.write.get_c_function(), cb.write.get_user_data()));
