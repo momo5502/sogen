@@ -130,6 +130,7 @@ impl icicle_vm::CodeInjector for InstructionHookInjector {
 }
 
 struct ExecutionHooks {
+    vm_ptr: *mut icicle_vm::Vm,
     skip_ip: Option<u64>,
     stop: Rc<RefCell<bool>>,
     generic_hooks: HookContainer<dyn Fn(u64)>,
@@ -138,8 +139,9 @@ struct ExecutionHooks {
 }
 
 impl ExecutionHooks {
-    pub fn new(stop_value: Rc<RefCell<bool>>) -> Self {
+    pub fn new(stop_value: Rc<RefCell<bool>>, vm: &mut icicle_vm::Vm) -> Self {
         Self {
+            vm_ptr: vm as *mut icicle_vm::Vm,
             skip_ip: None,
             stop: stop_value,
             generic_hooks: HookContainer::new(),
@@ -171,6 +173,13 @@ impl ExecutionHooks {
         if self.skip_ip.is_some() {
             skip = self.skip_ip.unwrap() == address;
             self.skip_ip = None;
+
+            // TODO: Get rid of that
+            unsafe { 
+                let vm = &mut *self.vm_ptr;
+                vm.icount_limit = vm.icount_limit.saturating_sub(1);
+                vm.next_timer = vm.next_timer.saturating_sub(1);
+            }
         }
 
         if !skip {
@@ -213,7 +222,7 @@ impl ExecutionHooks {
 
 pub struct IcicleEmulator {
     executing_thread: std::thread::ThreadId,
-    vm: icicle_vm::Vm,
+    vm: Box<icicle_vm::Vm>,
     reg: registers::X64RegisterNodes,
     syscall_hooks: HookContainer<dyn Fn()>,
     violation_hooks: HookContainer<dyn Fn(u64, u8, bool) -> bool>,
@@ -268,9 +277,9 @@ impl icicle_cpu::mem::IoMemory for MmioHandler {
 
 impl IcicleEmulator {
     pub fn new() -> Self {
-        let mut virtual_machine = create_x64_vm();
+        let mut virtual_machine = Box::new(create_x64_vm());
         let stop_value = Rc::new(RefCell::new(false));
-        let exec_hooks = Rc::new(RefCell::new(ExecutionHooks::new(stop_value.clone())));
+        let exec_hooks = Rc::new(RefCell::new(ExecutionHooks::new(stop_value.clone(), &mut virtual_machine)));
 
         let exec_hooks_clone = Rc::clone(&exec_hooks);
 
