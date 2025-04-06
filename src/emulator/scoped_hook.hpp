@@ -49,7 +49,7 @@ class scoped_hook
         auto hooks = std::move(this->hooks_);
         this->hooks_ = {};
 
-        for (auto* hook : hooks_)
+        for (auto* hook : hooks)
         {
             try
             {
