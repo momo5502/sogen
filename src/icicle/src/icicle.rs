@@ -519,7 +519,7 @@ impl IcicleEmulator {
         };
     }
 
-    pub fn read_register(&mut self, reg: registers::X64Register, buffer: &mut [u8]) -> usize {
+    fn read_generic_register(&mut self, reg: registers::X64Register, buffer: &mut [u8]) -> usize {
         let reg_node = self.reg.get_node(reg);
 
         let res = self.vm.cpu.read_dynamic(pcode::Value::Var(reg_node));
@@ -531,7 +531,58 @@ impl IcicleEmulator {
         return reg_node.size.into();
     }
 
+    
+    fn read_flags<T>(&mut self, data: &mut [u8]) -> usize
+    {
+        const REAL_SIZE: usize = std::mem::size_of::<u64>();
+        let limit: usize = std::mem::size_of::<T>();
+        let size = std::cmp::min(REAL_SIZE, limit);
+
+        let flags: u64 = self.reg.get_flags(&mut self.vm.cpu);
+
+        let copy_size = std::cmp::min(data.len(), size);
+        data[..copy_size].copy_from_slice(&flags.to_ne_bytes()[..copy_size]);
+
+        return limit;
+    }
+
+    pub fn read_register(&mut self, reg: registers::X64Register, data: &mut [u8]) -> usize {
+        match reg {
+            registers::X64Register::Rflags => self.read_flags::<u64>(data),
+            registers::X64Register::Eflags => self.read_flags::<u32>(data),
+            registers::X64Register::Flags => self.read_flags::<u16>(data),
+            _ => self.read_generic_register(reg, data),
+        }
+    }
+
+    fn write_flags<T>(&mut self, data: &[u8]) -> usize
+    {
+        const REAL_SIZE: usize = std::mem::size_of::<u64>();
+        let limit: usize = std::mem::size_of::<T>();
+        let size = std::cmp::min(REAL_SIZE, limit);
+        let copy_size = std::cmp::min(data.len(), size);
+
+        let mut buffer = [0u8; REAL_SIZE];
+        self.read_flags::<u64>(&mut buffer);
+
+        buffer[..copy_size].copy_from_slice(&data[..copy_size]);
+
+        let flags = u64::from_ne_bytes(buffer);
+        self.reg.set_flags(&mut self.vm.cpu, flags);
+
+        return limit;
+    }
+
     pub fn write_register(&mut self, reg: registers::X64Register, data: &[u8]) -> usize {
+        match reg {
+            registers::X64Register::Rflags => self.write_flags::<u64>(data),
+            registers::X64Register::Eflags => self.write_flags::<u32>(data),
+            registers::X64Register::Flags => self.write_flags::<u16>(data),
+            _ => self.write_generic_register(reg, data),
+        }
+    }
+
+    fn write_generic_register(&mut self, reg: registers::X64Register, data: &[u8]) -> usize {
         let reg_node = self.reg.get_node(reg);
 
         let mut buffer = [0u8; 32];
@@ -541,71 +592,25 @@ impl IcicleEmulator {
         //let value = icicle_cpu::regs::DynamicValue::new(buffer, reg_node.size.into());
         //self.vm.cpu.write_trunc(reg_node, value);
 
+        let cpu = &mut self.vm.cpu;
+
         match reg_node.size {
-            1 => self
-                .vm
-                .cpu
-                .write_var::<[u8; 1]>(reg_node, buffer[..1].try_into().expect("")),
-            2 => self
-                .vm
-                .cpu
-                .write_var::<[u8; 2]>(reg_node, buffer[..2].try_into().expect("")),
-            3 => self
-                .vm
-                .cpu
-                .write_var::<[u8; 3]>(reg_node, buffer[..3].try_into().expect("")),
-            4 => self
-                .vm
-                .cpu
-                .write_var::<[u8; 4]>(reg_node, buffer[..4].try_into().expect("")),
-            5 => self
-                .vm
-                .cpu
-                .write_var::<[u8; 5]>(reg_node, buffer[..5].try_into().expect("")),
-            6 => self
-                .vm
-                .cpu
-                .write_var::<[u8; 6]>(reg_node, buffer[..6].try_into().expect("")),
-            7 => self
-                .vm
-                .cpu
-                .write_var::<[u8; 7]>(reg_node, buffer[..7].try_into().expect("")),
-            8 => self
-                .vm
-                .cpu
-                .write_var::<[u8; 8]>(reg_node, buffer[..8].try_into().expect("")),
-            9 => self
-                .vm
-                .cpu
-                .write_var::<[u8; 9]>(reg_node, buffer[..9].try_into().expect("")),
-            10 => self
-                .vm
-                .cpu
-                .write_var::<[u8; 10]>(reg_node, buffer[..10].try_into().expect("")),
-            11 => self
-                .vm
-                .cpu
-                .write_var::<[u8; 11]>(reg_node, buffer[..11].try_into().expect("")),
-            12 => self
-                .vm
-                .cpu
-                .write_var::<[u8; 12]>(reg_node, buffer[..12].try_into().expect("")),
-            13 => self
-                .vm
-                .cpu
-                .write_var::<[u8; 13]>(reg_node, buffer[..13].try_into().expect("")),
-            14 => self
-                .vm
-                .cpu
-                .write_var::<[u8; 14]>(reg_node, buffer[..14].try_into().expect("")),
-            15 => self
-                .vm
-                .cpu
-                .write_var::<[u8; 15]>(reg_node, buffer[..15].try_into().expect("")),
-            16 => self
-                .vm
-                .cpu
-                .write_var::<[u8; 16]>(reg_node, buffer[..16].try_into().expect("")),
+            1 => cpu.write_var::<[u8; 1]>(reg_node, buffer[..1].try_into().unwrap()),
+            2 => cpu.write_var::<[u8; 2]>(reg_node, buffer[..2].try_into().unwrap()),
+            3 => cpu.write_var::<[u8; 3]>(reg_node, buffer[..3].try_into().unwrap()),
+            4 => cpu.write_var::<[u8; 4]>(reg_node, buffer[..4].try_into().unwrap()),
+            5 => cpu.write_var::<[u8; 5]>(reg_node, buffer[..5].try_into().unwrap()),
+            6 => cpu.write_var::<[u8; 6]>(reg_node, buffer[..6].try_into().unwrap()),
+            7 => cpu.write_var::<[u8; 7]>(reg_node, buffer[..7].try_into().unwrap()),
+            8 => cpu.write_var::<[u8; 8]>(reg_node, buffer[..8].try_into().unwrap()),
+            9 => cpu.write_var::<[u8; 9]>(reg_node, buffer[..9].try_into().unwrap()),
+            10 => cpu.write_var::<[u8; 10]>(reg_node, buffer[..10].try_into().unwrap()),
+            11 => cpu.write_var::<[u8; 11]>(reg_node, buffer[..11].try_into().unwrap()),
+            12 => cpu.write_var::<[u8; 12]>(reg_node, buffer[..12].try_into().unwrap()),
+            13 => cpu.write_var::<[u8; 13]>(reg_node, buffer[..13].try_into().unwrap()),
+            14 => cpu.write_var::<[u8; 14]>(reg_node, buffer[..14].try_into().unwrap()),
+            15 => cpu.write_var::<[u8; 15]>(reg_node, buffer[..15].try_into().unwrap()),
+            16 => cpu.write_var::<[u8; 16]>(reg_node, buffer[..16].try_into().unwrap()),
             _ => panic!("invalid dynamic value size"),
         }
 

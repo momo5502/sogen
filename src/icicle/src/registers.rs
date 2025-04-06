@@ -262,7 +262,6 @@ pub(crate) struct X64RegisterNodes {
     r14: pcode::VarNode,
     r15: pcode::VarNode,
     rip: pcode::VarNode,
-    eflags: pcode::VarNode,
     cs: pcode::VarNode,
     ds: pcode::VarNode,
     es: pcode::VarNode,
@@ -467,18 +466,22 @@ pub(crate) struct X64RegisterNodes {
     mxcsr: pcode::VarNode,
     fs_base: pcode::VarNode,
     gs_base: pcode::VarNode,
-    flags: pcode::VarNode,
-    rflags: pcode::VarNode,
     fip: pcode::VarNode,
     fcs: pcode::VarNode,
     fdp: pcode::VarNode,
     fds: pcode::VarNode,
     fop: pcode::VarNode,
+    flags: Vec<pcode::VarNode>,
 }
 
 impl X64RegisterNodes {
     pub fn new(arch: &icicle_cpu::Arch) -> Self {
         let r = |name: &str| arch.sleigh.get_reg(name).unwrap().var;
+        let nodes = [
+            "CF", "F1", "PF", "F3", "AF", "F5", "ZF", "SF", "TF", "IF", "DF", "OF", "IOPL", "NT",
+            "F15", "RF", "VM", "AC", "VIF", "VIP", "ID",
+        ];
+
         Self {
             rax: r("RAX"),
             rbx: r("RBX"),
@@ -497,7 +500,6 @@ impl X64RegisterNodes {
             r14: r("R14"),
             r15: r("R15"),
             rip: r("RIP"),
-            eflags: r("eflags"),
             cs: r("CS"),
             ds: r("DS"),
             es: r("ES"),
@@ -699,8 +701,6 @@ impl X64RegisterNodes {
             fpcw: r("FPUControlWord"),
             fptag: r("FPUTagWord"),
             mxcsr: r("MXCSR"),
-            flags: r("flags"),
-            rflags: r("rflags"),
             fip: r("FPUInstructionPointer"),
             fdp: r("FPUDataPointer"),
             fop: r("FPULastInstructionOpcode"),
@@ -709,6 +709,25 @@ impl X64RegisterNodes {
             //msr: r("MSR"),
             fs_base: r("FS_OFFSET"),
             gs_base: r("GS_OFFSET"),
+            flags: nodes.map(|name: &str| r(name)).to_vec(),
+        }
+    }
+
+    pub fn get_flags(&self, cpu: &mut icicle_cpu::Cpu) -> u64 {
+        let mut res: u64 = 0;
+
+        for (index, element) in self.flags.iter().enumerate() {
+            let flag = cpu.read_reg(*element);
+            res |= (flag & 1) << index;
+        }
+
+        res
+    }
+
+    pub fn set_flags(&self, cpu: &mut icicle_cpu::Cpu, value: u64) {
+        for (index, element) in self.flags.iter().enumerate() {
+            let flag = (value >> index) & 1;
+            cpu.write_reg(*element, flag);
         }
     }
 
@@ -731,7 +750,6 @@ impl X64RegisterNodes {
             X64Register::R14 => self.r14,
             X64Register::R15 => self.r15,
             X64Register::Rip => self.rip,
-            X64Register::Eflags => self.eflags,
             X64Register::Cs => self.cs,
             X64Register::Ds => self.ds,
             X64Register::Es => self.es,
@@ -936,8 +954,6 @@ impl X64RegisterNodes {
             X64Register::Mxcsr => self.mxcsr,
             X64Register::FsBase => self.fs_base,
             X64Register::GsBase => self.gs_base,
-            X64Register::Flags => self.flags,
-            X64Register::Rflags => self.rflags,
             X64Register::Fip => self.fip,
             X64Register::Fcs => self.fcs,
             X64Register::Fdp => self.fdp,
