@@ -2866,7 +2866,7 @@ enterFrames: low5 is low5 { tmp:1 = low5; export tmp; }
 :IRETD          is vexMode=0 & addrsize=1 & opsize=1 & byte=0xcf            { pop44(EIP); tmp:4=0; pop44(tmp); CS=tmp(0); pop44(eflags); return [EIP]; }
 @ifdef IA64
 :IRETD          is $(LONGMODE_ON) & vexMode=0 & addrsize=2 & opsize=1 & byte=0xcf            { pop84(EIP); RIP=zext(EIP); tmp:4=0; pop84(tmp); CS=tmp(0); pop84(eflags); return [RIP]; }
-:IRETQ          is $(LONGMODE_ON) & vexMode=0 & addrsize=2 & opsize=2 & byte=0xcf            { pop88(RIP); tmp:8=0; pop88(tmp); CS=tmp(0); pop88(rflags); return [RIP]; }
+:IRETQ          is $(LONGMODE_ON) & vexMode=0 & addrsize=2 & opsize=2 & byte=0xcf            { pop88(RIP); tmp:8=0; pop88(tmp); CS=tmp(0); pop88(rflags); pop88(RSP); return [RIP]; }
 @endif
 
 :J^cc rel8      is vexMode=0 & row=7 & cc; rel8                                          { if (cc) goto rel8; }
