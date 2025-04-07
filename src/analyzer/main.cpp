@@ -26,6 +26,32 @@ namespace
         std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
     };
 
+    void split_and_insert(std::set<std::string, std::less<>>& container, const std::string_view str,
+                          const char splitter = ',')
+    {
+        size_t current_start = 0;
+        for (size_t i = 0; i < str.size(); ++i)
+        {
+            const auto value = str[i];
+            if (value != splitter)
+            {
+                continue;
+            }
+
+            if (current_start < i)
+            {
+                container.emplace(str.substr(current_start, i - current_start));
+            }
+
+            current_start = i + 1;
+        }
+
+        if (current_start < str.size())
+        {
+            container.emplace(str.substr(current_start));
+        }
+    }
+
     void watch_system_objects(windows_emulator& win_emu, const std::set<std::string, std::less<>>& modules,
                               const bool cache_logging)
     {
@@ -359,10 +385,10 @@ namespace
             {
                 if (args.size() < 2)
                 {
-                    throw std::runtime_error("No ignored function provided after -i");
+                    throw std::runtime_error("No ignored function(s) provided after -i");
                 }
                 arg_it = args.erase(arg_it);
-                options.ignored_functions.emplace(args[0]);
+                split_and_insert(options.ignored_functions, args[0]);
             }
             else if (arg == "-p")
             {
