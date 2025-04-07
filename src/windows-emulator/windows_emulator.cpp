@@ -457,7 +457,8 @@ void windows_emulator::setup_hooks()
     this->emu().hook_instruction(x64_hookable_instructions::invalid, [&] {
         const auto ip = this->emu().read_instruction_pointer();
 
-        this->log.print(color::gray, "Invalid instruction at: 0x%" PRIx64 "\n", ip);
+        this->log.print(color::gray, "Invalid instruction at: 0x%" PRIx64 " (via 0x%" PRIx64 ")\n", ip,
+                        this->process.previous_ip);
 
         return instruction_hook_continuation::skip_instruction;
     });

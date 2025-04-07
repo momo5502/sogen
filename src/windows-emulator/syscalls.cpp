@@ -3853,7 +3853,7 @@ namespace
 
     NTSTATUS handle_NtSystemDebugControl()
     {
-        return STATUS_NOT_SUPPORTED;
+        return STATUS_DEBUGGER_INACTIVE;
     }
 
     NTSTATUS handle_NtRequestWaitReplyPort()
