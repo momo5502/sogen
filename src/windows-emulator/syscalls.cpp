@@ -1443,7 +1443,7 @@ namespace
             }
 
             const emulator_object<ULONG> info{c.emu, process_information};
-            info.write(0);
+            info.write(info_class == ProcessDebugFlags ? 1 : 0);
 
             return STATUS_SUCCESS;
         }
