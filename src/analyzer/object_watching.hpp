@@ -11,7 +11,7 @@ emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, s
 
     return emu.emu().hook_memory_read(
         object.value(), object.size(),
-        [i = std::move(info), object, &emu, cache_logging, modules](const uint64_t address, size_t, uint64_t) {
+        [i = std::move(info), object, &emu, cache_logging, modules](const uint64_t address, const void*, size_t) {
             const auto rip = emu.emu().read_instruction_pointer();
             const auto* mod = emu.mod_manager.find_by_address(rip);
             const auto is_main_access = mod == emu.mod_manager.executable || modules.contains(mod->name);

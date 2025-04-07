@@ -12,7 +12,7 @@ A high-performance Windows process emulator that operates at syscall level, prov
 
 Perfect for security research, malware analysis, and DRM research where fine-grained control over process execution is required.
 
-Built in C++ and powered by the Unicorn Engine.
+Built in C++ and powered by the [Unicorn Engine](https://github.com/unicorn-engine/unicorn) (or the [icicle-emu](https://github.com/icicle-emu/icicle-emu) 🆕).
 
 ## Key Features
 

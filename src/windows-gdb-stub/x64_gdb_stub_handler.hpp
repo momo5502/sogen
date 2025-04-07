@@ -8,26 +8,6 @@
 #include "x64_register_mapping.hpp"
 #include "x64_target_descriptions.hpp"
 
-inline memory_operation map_breakpoint_type(const gdb_stub::breakpoint_type type)
-{
-    using enum gdb_stub::breakpoint_type;
-
-    switch (type)
-    {
-    case software:
-    case hardware_exec:
-        return memory_operation::exec;
-    case hardware_read:
-        return memory_permission::read;
-    case hardware_write:
-        return memory_permission::write;
-    case hardware_read_write:
-        return memory_permission::read_write;
-    default:
-        throw std::runtime_error("Bad bp type");
-    }
-}
-
 struct breakpoint_key
 {
     size_t addr{};
@@ -196,11 +176,9 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
         try
         {
             return this->hooks_.access<bool>([&](hook_map& hooks) {
-                hooks[{addr, size, type}] = scoped_hook(
-                    *this->emu_, this->emu_->hook_memory_access(addr, size, map_breakpoint_type(type),
-                                                                [this](uint64_t, size_t, uint64_t, memory_operation) {
-                                                                    this->on_interrupt(); //
-                                                                }));
+                auto hook_vector = this->create_hook(type, addr, size);
+
+                hooks[{addr, size, type}] = scoped_hook(*this->emu_, std::move(hook_vector));
 
                 return true;
             });
@@ -264,4 +242,64 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
 
     using hook_map = std::unordered_map<breakpoint_key, scoped_hook>;
     utils::concurrency::container<hook_map> hooks_{};
+
+    std::vector<emulator_hook*> create_execute_hook(const uint64_t addr, const size_t size)
+    {
+        std::vector<emulator_hook*> hooks{};
+        hooks.reserve(size);
+
+        for (size_t i = 0; i < size; ++i)
+        {
+            auto* hook = this->emu_->hook_memory_execution(addr + i, [this](const uint64_t) {
+                this->on_interrupt(); //
+            });
+
+            hooks.push_back(hook);
+        }
+
+        return hooks;
+    }
+
+    std::vector<emulator_hook*> create_read_hook(const uint64_t addr, const size_t size)
+    {
+        auto* hook = this->emu_->hook_memory_read(addr, size, [this](const uint64_t, const void*, const size_t) {
+            this->on_interrupt(); //
+        });
+
+        return {hook};
+    }
+
+    std::vector<emulator_hook*> create_write_hook(const uint64_t addr, const size_t size)
+    {
+        auto* hook = this->emu_->hook_memory_write(addr, size, [this](const uint64_t, const void*, const size_t) {
+            this->on_interrupt(); //
+        });
+
+        return {hook};
+    }
+
+    std::vector<emulator_hook*> create_hook(const gdb_stub::breakpoint_type type, const uint64_t addr,
+                                            const size_t size)
+    {
+        using enum gdb_stub::breakpoint_type;
+
+        switch (type)
+        {
+        case software:
+        case hardware_exec:
+            return this->create_execute_hook(addr, size);
+        case hardware_read:
+            return this->create_read_hook(addr, size);
+        case hardware_write:
+            return this->create_write_hook(addr, size);
+        case hardware_read_write: {
+            auto hooks1 = this->create_hook(hardware_read, addr, size);
+            auto hooks2 = this->create_hook(hardware_write, addr, size);
+            hooks1.insert(hooks1.end(), hooks2.begin(), hooks2.end());
+            return hooks1;
+        }
+        default:
+            throw std::runtime_error("Bad bp type");
+        }
+    }
 };

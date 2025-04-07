@@ -7,8 +7,13 @@ class scoped_hook
     scoped_hook() = default;
 
     scoped_hook(emulator& emu, emulator_hook* hook)
+        : scoped_hook(emu, std::vector{hook})
+    {
+    }
+
+    scoped_hook(emulator& emu, std::vector<emulator_hook*> hooks)
         : emu_(&emu),
-          hook_(hook)
+          hooks_(std::move(hooks))
     {
     }
 
@@ -31,9 +36,9 @@ class scoped_hook
         {
             this->remove();
             this->emu_ = obj.emu_;
-            this->hook_ = obj.hook_;
+            this->hooks_ = std::move(obj.hooks_);
 
-            obj.hook_ = {};
+            obj.hooks_ = {};
         }
 
         return *this;
@@ -41,14 +46,22 @@ class scoped_hook
 
     void remove()
     {
-        if (this->hook_)
+        auto hooks = std::move(this->hooks_);
+        this->hooks_ = {};
+
+        for (auto* hook : hooks)
         {
-            this->emu_->delete_hook(this->hook_);
-            this->hook_ = {};
+            try
+            {
+                this->emu_->delete_hook(hook);
+            }
+            catch (...)
+            {
+            }
         }
     }
 
   private:
     emulator* emu_{};
-    emulator_hook* hook_{};
+    std::vector<emulator_hook*> hooks_{};
 };

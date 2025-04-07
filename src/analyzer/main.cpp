@@ -42,13 +42,15 @@ namespace
 
         win_emu.emu().hook_memory_write(
             win_emu.process.peb.value() + offsetof(PEB64, ProcessParameters), 0x8,
-            [&win_emu, cache_logging, params_hook, modules](const uint64_t address, size_t,
-                                                            const uint64_t value) mutable {
+            [&win_emu, cache_logging, params_hook, modules](const uint64_t address, const void*, size_t) mutable {
                 const auto target_address = win_emu.process.peb.value() + offsetof(PEB64, ProcessParameters);
 
                 if (address == target_address)
                 {
-                    const emulator_object<RTL_USER_PROCESS_PARAMETERS64> obj{win_emu.emu(), value};
+                    const emulator_object<RTL_USER_PROCESS_PARAMETERS64> obj{
+                        win_emu.emu(),
+                        win_emu.emu().read_memory<uint64_t>(address),
+                    };
 
                     win_emu.emu().delete_hook(params_hook);
                     params_hook = watch_object(win_emu, modules, obj, cache_logging);
@@ -236,7 +238,7 @@ namespace
                 continue;
             }
 
-            auto read_handler = [&, section, concise_logging](const uint64_t address, size_t, uint64_t) {
+            auto read_handler = [&, section, concise_logging](const uint64_t address, const void*, size_t) {
                 const auto rip = win_emu->emu().read_instruction_pointer();
                 if (!win_emu->mod_manager.executable->is_within(rip))
                 {
@@ -258,7 +260,7 @@ namespace
                                    section.name.c_str(), address, rip);
             };
 
-            const auto write_handler = [&, section, concise_logging](const uint64_t address, size_t, uint64_t) {
+            const auto write_handler = [&, section, concise_logging](const uint64_t address, const void*, size_t) {
                 const auto rip = win_emu->emu().read_instruction_pointer();
                 if (!win_emu->mod_manager.executable->is_within(rip))
                 {
