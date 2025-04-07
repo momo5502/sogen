@@ -12,6 +12,7 @@ extern "C"
 
     using raw_func = void(void*);
     using ptr_func = void(void*, uint64_t);
+    using interrupt_func = void(void*, int32_t);
     using violation_func = int32_t(void*, uint64_t address, uint8_t operation, int32_t unmapped);
     using data_accessor_func = void(void* user, const void* data, size_t length);
     using memory_access_func = icicle_mmio_write_func;
@@ -27,6 +28,7 @@ extern "C"
     int32_t icicle_save_registers(icicle_emulator*, data_accessor_func* accessor, void* accessor_data);
     int32_t icicle_restore_registers(icicle_emulator*, const void* data, size_t length);
     uint32_t icicle_add_syscall_hook(icicle_emulator*, raw_func* callback, void* data);
+    uint32_t icicle_add_interrupt_hook(icicle_emulator*, interrupt_func* callback, void* data);
     uint32_t icicle_add_execution_hook(icicle_emulator*, uint64_t address, ptr_func* callback, void* data);
     uint32_t icicle_add_generic_execution_hook(icicle_emulator*, ptr_func* callback, void* data);
     uint32_t icicle_add_violation_hook(icicle_emulator*, violation_func* callback, void* data);
@@ -260,10 +262,17 @@ namespace icicle
 
         emulator_hook* hook_interrupt(interrupt_hook_callback callback) override
         {
-            // TODO
-            (void)callback;
-            return nullptr;
-            // throw std::runtime_error("Not implemented");
+            auto obj = make_function_object(std::move(callback));
+            auto* ptr = obj.get();
+            auto* wrapper = +[](void* user, const int32_t code) {
+                const auto& func = *static_cast<decltype(ptr)>(user);
+                func(code);
+            };
+
+            const auto id = icicle_add_interrupt_hook(this->emu_, wrapper, ptr);
+            this->hooks_[id] = std::move(obj);
+
+            return wrap_hook(id);
         }
 
         emulator_hook* hook_memory_violation(memory_violation_hook_callback callback) override
@@ -292,7 +301,7 @@ namespace icicle
             auto object = make_function_object(std::move(callback));
             auto* ptr = object.get();
             auto* wrapper = +[](void* user, const uint64_t addr) {
-                auto& func = *static_cast<decltype(ptr)>(user);
+                const auto& func = *static_cast<decltype(ptr)>(user);
                 (func)(addr);
             };
 
@@ -307,7 +316,7 @@ namespace icicle
             auto object = make_function_object(std::move(callback));
             auto* ptr = object.get();
             auto* wrapper = +[](void* user, const uint64_t addr) {
-                auto& func = *static_cast<decltype(ptr)>(user);
+                const auto& func = *static_cast<decltype(ptr)>(user);
                 (func)(addr);
             };
 

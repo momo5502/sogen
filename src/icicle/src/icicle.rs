@@ -49,6 +49,7 @@ enum HookType {
     ExecuteGeneric,
     ExecuteSpecific,
     Violation,
+    Interrupt,
     Unknown,
 }
 
@@ -216,6 +217,7 @@ pub struct IcicleEmulator {
     vm: icicle_vm::Vm,
     reg: registers::X64RegisterNodes,
     syscall_hooks: HookContainer<dyn Fn()>,
+    interrupt_hooks: HookContainer<dyn Fn(i32)>,
     violation_hooks: HookContainer<dyn Fn(u64, u8, bool) -> bool>,
     execution_hooks: Rc<RefCell<ExecutionHooks>>,
     stop: Rc<RefCell<bool>>,
@@ -287,6 +289,7 @@ impl IcicleEmulator {
             reg: registers::X64RegisterNodes::new(&virtual_machine.cpu.arch),
             vm: virtual_machine,
             syscall_hooks: HookContainer::new(),
+            interrupt_hooks: HookContainer::new(),
             violation_hooks: HookContainer::new(),
             execution_hooks: exec_hooks,
         }
@@ -326,6 +329,14 @@ impl IcicleEmulator {
         }
     }
 
+    fn handle_interrupt(&self, code: i32) -> bool {
+        for (_key, func) in self.interrupt_hooks.get_hooks() {
+            func(code);
+        }
+
+        return true;
+    }
+
     fn handle_exception(&mut self, code: ExceptionCode, value: u64) -> bool {
         let continue_execution = match code {
             ExceptionCode::Syscall => self.handle_syscall(),
@@ -333,7 +344,8 @@ impl IcicleEmulator {
             ExceptionCode::WritePerm => self.handle_violation(value, FOREIGN_WRITE, false),
             ExceptionCode::ReadUnmapped => self.handle_violation(value, FOREIGN_READ, true),
             ExceptionCode::WriteUnmapped => self.handle_violation(value, FOREIGN_WRITE, true),
-            ExceptionCode::ExecViolation => self.handle_violation(value, FOREIGN_EXEC, true),
+            ExceptionCode::InvalidInstruction => self.handle_interrupt(6),
+            ExceptionCode::DivisionException => self.handle_interrupt(0),
             _ => false,
         };
 
@@ -392,6 +404,11 @@ impl IcicleEmulator {
         return qualify_hook_id(hook_id, HookType::Syscall);
     }
 
+    pub fn add_interrupt_hook(&mut self, callback: Box<dyn Fn(i32)>) -> u32 {
+        let hook_id = self.interrupt_hooks.add_hook(callback);
+        return qualify_hook_id(hook_id, HookType::Interrupt);
+    }
+
     pub fn add_read_hook(
         &mut self,
         start: u64,
@@ -426,6 +443,7 @@ impl IcicleEmulator {
         match hook_type {
             HookType::Syscall => self.syscall_hooks.remove_hook(hook_id),
             HookType::Violation => self.violation_hooks.remove_hook(hook_id),
+            HookType::Interrupt => self.interrupt_hooks.remove_hook(hook_id),
             HookType::ExecuteGeneric => self.execution_hooks.borrow_mut().remove_generic_hook(hook_id),
             HookType::ExecuteSpecific => self.execution_hooks.borrow_mut().remove_specific_hook(hook_id),
             HookType::Read => {self.get_mem().remove_read_after_hook(hook_id);()},

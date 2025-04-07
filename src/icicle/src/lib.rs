@@ -41,6 +41,7 @@ type DataFunction = extern "C" fn(*mut c_void, *const c_void, usize);
 type MmioReadFunction = extern "C" fn(*mut c_void, u64, *mut c_void, usize);
 type MmioWriteFunction = extern "C" fn(*mut c_void, u64, *const c_void, usize);
 type ViolationFunction = extern "C" fn(*mut c_void, u64, u8, i32) -> i32;
+type InterruptFunction = extern "C" fn(*mut c_void, i32);
 type MemoryAccessFunction = MmioWriteFunction;
 
 #[unsafe(no_mangle)]
@@ -162,6 +163,16 @@ pub fn icicle_read_memory(ptr: *mut c_void, address: u64, data: *mut c_void, siz
         let u8_slice = std::slice::from_raw_parts_mut(data as *mut u8, size);
         let res = emulator.read_memory(address, u8_slice);
         return to_cbool(res);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub fn icicle_add_interrupt_hook(ptr: *mut c_void, callback: InterruptFunction, data: *mut c_void) -> u32 {
+    unsafe {
+        let emulator = &mut *(ptr as *mut IcicleEmulator);
+        return emulator.add_interrupt_hook(Box::new(
+            move |code: i32| callback(data, code),
+        ));
     }
 }
 
