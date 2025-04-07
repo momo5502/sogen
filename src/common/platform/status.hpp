@@ -9,6 +9,7 @@ using NTSTATUS = std::uint32_t;
 #define STATUS_TIMEOUT                ((NTSTATUS)0x00000102L)
 #define STATUS_PENDING                ((NTSTATUS)0x00000103L)
 
+#define STATUS_BREAKPOINT             ((NTSTATUS)0x80000003L)
 #define STATUS_SINGLE_STEP            ((NTSTATUS)0x80000004L)
 
 #define STATUS_ACCESS_VIOLATION       ((NTSTATUS)0xC0000005L)

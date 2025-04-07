@@ -1718,6 +1718,42 @@ namespace
             return STATUS_SUCCESS;
         }
 
+        if (info_class == ThreadPerformanceCount)
+        {
+            if (return_length)
+            {
+                return_length.write(sizeof(LARGE_INTEGER));
+            }
+
+            if (thread_information_length < sizeof(LARGE_INTEGER))
+            {
+                return STATUS_BUFFER_OVERFLOW;
+            }
+
+            const emulator_object<LARGE_INTEGER> info{c.emu, thread_information};
+            info.write({});
+
+            return STATUS_SUCCESS;
+        }
+
+        if (info_class == ThreadHideFromDebugger)
+        {
+            if (return_length)
+            {
+                return_length.write(sizeof(BOOLEAN));
+            }
+
+            if (thread_information_length < sizeof(BOOLEAN))
+            {
+                return STATUS_BUFFER_OVERFLOW;
+            }
+
+            const emulator_object<BOOLEAN> info{c.emu, thread_information};
+            info.write(0);
+
+            return STATUS_SUCCESS;
+        }
+
         if (info_class == ThreadTimes)
         {
             if (return_length)

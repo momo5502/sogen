@@ -22,3 +22,4 @@ void dispatch_access_violation(x64_emulator& emu, const process_context& proc, u
 void dispatch_illegal_instruction_violation(x64_emulator& emu, const process_context& proc);
 void dispatch_integer_division_by_zero(x64_emulator& emu, const process_context& proc);
 void dispatch_single_step(x64_emulator& emu, const process_context& proc);
+void dispatch_breakpoint(x64_emulator& emu, const process_context& proc);

@@ -196,3 +196,8 @@ void dispatch_single_step(x64_emulator& emu, const process_context& proc)
 {
     dispatch_exception(emu, proc, STATUS_SINGLE_STEP, {});
 }
+
+void dispatch_breakpoint(x64_emulator& emu, const process_context& proc)
+{
+    dispatch_exception(emu, proc, STATUS_BREAKPOINT, {});
+}

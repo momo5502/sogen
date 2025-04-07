@@ -93,6 +93,7 @@ void process_context::setup(x64_emulator& emu, memory_manager& memory, const app
     });
 
     this->peb.access([&](PEB64& p) {
+        p.BeingDebugged = 0;
         p.ImageBaseAddress = executable.image_base;
         p.ProcessParameters = this->process_params.ptr();
         p.ApiSetMap = apiset::clone(emu, allocator, apiset_container).ptr();

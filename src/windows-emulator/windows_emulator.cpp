@@ -475,6 +475,10 @@ void windows_emulator::setup_hooks()
             this->log.print(color::pink, "Singlestep: 0x%" PRIx64 "\n", rip);
             dispatch_single_step(this->emu(), this->process);
             return;
+        case 3:
+            this->log.print(color::pink, "Breakpoint: 0x%" PRIx64 "\n", rip);
+            dispatch_breakpoint(this->emu(), this->process);
+            return;
         case 6:
             dispatch_illegal_instruction_violation(this->emu(), this->process);
             return;
