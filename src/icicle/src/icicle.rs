@@ -131,7 +131,6 @@ impl icicle_vm::CodeInjector for InstructionHookInjector {
 }
 
 struct ExecutionHooks {
-    skip_ip: Option<u64>,
     stop: Rc<RefCell<bool>>,
     generic_hooks: HookContainer<dyn Fn(u64)>,
     specific_hooks: HookContainer<dyn Fn(u64)>,
@@ -141,7 +140,6 @@ struct ExecutionHooks {
 impl ExecutionHooks {
     pub fn new(stop_value: Rc<RefCell<bool>>) -> Self {
         Self {
-            skip_ip: None,
             stop: stop_value,
             generic_hooks: HookContainer::new(),
             specific_hooks: HookContainer::new(),
@@ -168,18 +166,9 @@ impl ExecutionHooks {
     }
 
     pub fn execute(&mut self,cpu: &mut icicle_cpu::Cpu, address: u64) {
-        let mut skip = false;
-        if self.skip_ip.is_some() {
-            skip = self.skip_ip.unwrap() == address;
-            self.skip_ip = None;
-        }
-
-        if !skip {
-            self.run_hooks(address);
-        }
+        self.run_hooks(address);
 
         if *self.stop.borrow() {
-            self.skip_ip = Some(address);
             cpu.exception.code = ExceptionCode::InstructionLimit as u32;
             cpu.exception.value = address;
         }
