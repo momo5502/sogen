@@ -44,6 +44,7 @@ struct emulator_settings
     std::unordered_map<uint16_t, uint16_t> port_mappings{};
     std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
     std::set<std::string, std::less<>> modules{};
+    std::set<std::string, std::less<>> ignored_functions{};
 };
 
 struct emulator_interfaces
@@ -194,6 +195,7 @@ class windows_emulator
     std::unordered_map<uint16_t, uint16_t> port_mappings_{};
 
     std::set<std::string, std::less<>> modules_{};
+    std::set<std::string, std::less<>> ignored_functions_{};
     std::vector<std::byte> process_snapshot_{};
     // std::optional<process_context> process_snapshot_{};
 

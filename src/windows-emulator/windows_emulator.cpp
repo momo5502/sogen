@@ -241,7 +241,9 @@ windows_emulator::windows_emulator(const emulator_settings& settings, emulator_c
       memory(*this->emu_),
       registry(emulation_root.empty() ? settings.registry_directory : emulation_root / "registry"),
       mod_manager(memory, file_sys, this->callbacks),
-      process(*this->emu_, memory, *this->clock_, this->callbacks)
+      process(*this->emu_, memory, *this->clock_, this->callbacks),
+      modules_(settings.modules),
+      ignored_functions_(settings.ignored_functions)
 {
 #ifndef OS_WINDOWS
     if (this->emulation_root.empty())
@@ -264,7 +266,6 @@ windows_emulator::windows_emulator(const emulator_settings& settings, emulator_c
     this->silent_until_main_ = settings.silent_until_main && !settings.disable_logging;
     this->use_relative_time_ = settings.use_relative_time;
     this->log.disable_output(settings.disable_logging || this->silent_until_main_);
-    this->modules_ = settings.modules;
 
     this->setup_hooks();
 }
@@ -393,7 +394,7 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
     if (binary)
     {
         const auto export_entry = binary->address_names.find(address);
-        if (export_entry != binary->address_names.end())
+        if (export_entry != binary->address_names.end() && !this->ignored_functions_.contains(export_entry->second))
         {
             const auto rsp = this->emu().read_stack_pointer();
 

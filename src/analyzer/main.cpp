@@ -22,6 +22,7 @@ namespace
         std::string registry_path{"./registry"};
         std::string emulation_root{};
         std::set<std::string, std::less<>> modules{};
+        std::set<std::string, std::less<>> ignored_functions{};
         std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
     };
 
@@ -172,6 +173,7 @@ namespace
             .silent_until_main = options.concise_logging,
             .path_mappings = options.path_mappings,
             .modules = options.modules,
+            .ignored_functions = options.ignored_functions,
         };
     }
 
@@ -352,6 +354,15 @@ namespace
                 }
                 arg_it = args.erase(arg_it);
                 options.dump = args[0];
+            }
+            else if (arg == "-i")
+            {
+                if (args.size() < 2)
+                {
+                    throw std::runtime_error("No ignored function provided after -i");
+                }
+                arg_it = args.erase(arg_it);
+                options.ignored_functions.emplace(args[0]);
             }
             else if (arg == "-p")
             {
