@@ -375,6 +375,18 @@ namespace
     NTSTATUS handle_NtSetEvent(const syscall_context& c, const uint64_t handle,
                                const emulator_object<LONG> previous_state)
     {
+        if (handle == DBWIN_DATA_READY)
+        {
+            if (c.proc.dbwin_buffer)
+            {
+                constexpr auto pid_length = 4;
+                const auto debug_data = read_string<char>(c.win_emu.memory, c.proc.dbwin_buffer + pid_length);
+                c.win_emu.log.info("--> Debug string: %s\n", debug_data.c_str());
+            }
+
+            return STATUS_SUCCESS;
+        }
+
         auto* entry = c.proc.events.get(handle);
         if (!entry)
         {
@@ -488,6 +500,7 @@ namespace
             {
                 name = read_unicode_string(
                     c.emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, attributes.ObjectName});
+                c.win_emu.log.print(color::dark_gray, "--> Mutant name: %s\n", u16_to_u8(name).c_str());
             }
         }
 
@@ -580,10 +593,23 @@ namespace
         const auto attributes = object_attributes.read();
         const auto name =
             read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
+        c.win_emu.log.print(color::dark_gray, "--> Event name: %s\n", u16_to_u8(name).c_str());
 
         if (name == u"\\KernelObjects\\SystemErrorPortReady")
         {
             event_handle.write(WER_PORT_READY.bits);
+            return STATUS_SUCCESS;
+        }
+
+        if (name == u"DBWIN_DATA_READY")
+        {
+            event_handle.write(DBWIN_DATA_READY.bits);
+            return STATUS_SUCCESS;
+        }
+
+        if (name == u"DBWIN_BUFFER_READY")
+        {
+            event_handle.write(DBWIN_BUFFER_READY.bits);
             return STATUS_SUCCESS;
         }
 
@@ -756,6 +782,24 @@ namespace
             if (view_size)
             {
                 view_size.write(shared_section_size);
+            }
+
+            base_address.write(address);
+
+            return STATUS_SUCCESS;
+        }
+
+        if (section_handle == DBWIN_BUFFER)
+        {
+            constexpr auto dbwin_buffer_section_size = 0x1000;
+
+            const auto address = c.win_emu.memory.find_free_allocation_base(dbwin_buffer_section_size);
+            c.win_emu.memory.allocate_memory(address, dbwin_buffer_section_size, memory_permission::read_write);
+            c.proc.dbwin_buffer = address;
+
+            if (view_size)
+            {
+                view_size.write(dbwin_buffer_section_size);
             }
 
             base_address.write(address);
@@ -3535,6 +3579,18 @@ namespace
         if (process_handle != CURRENT_PROCESS)
         {
             return STATUS_NOT_SUPPORTED;
+        }
+
+        if (!base_address)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        if (base_address == c.proc.dbwin_buffer)
+        {
+            c.proc.dbwin_buffer = 0;
+            c.win_emu.memory.release_memory(base_address, 0x1000);
+            return STATUS_SUCCESS;
         }
 
         const auto* mod = c.win_emu.mod_manager.find_by_address(base_address);

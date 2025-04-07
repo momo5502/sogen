@@ -59,6 +59,8 @@ struct process_context
     uint64_t current_ip{0};
     uint64_t previous_ip{0};
 
+    uint64_t dbwin_buffer{0};
+
     std::optional<uint64_t> exception_rip{};
     std::optional<NTSTATUS> exit_status{};
 
