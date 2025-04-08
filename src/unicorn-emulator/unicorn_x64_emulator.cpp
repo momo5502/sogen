@@ -678,6 +678,11 @@ namespace unicorn
                 return this->has_violation_;
             }
 
+            std::string get_name() const override
+            {
+                return "Unicorn Engine";
+            }
+
           private:
             mutable bool has_snapshots_{false};
             uc_engine* uc_{};
