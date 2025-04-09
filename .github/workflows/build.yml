@@ -323,7 +323,7 @@ jobs:
         uses: pyTooling/download-artifact@v4
         if: "${{ matrix.platform != 'Windows x86_64' }}"
         with:
-          name: Windows x86_64 ${{matrix.configuration}} Artifacts
+          name: Windows x86_64 Release Artifacts
           path: build/${{matrix.preset}}/artifacts
   
       - name: Download Emulation Root
@@ -388,7 +388,7 @@ jobs:
       - name: Download Windows Artifacts
         uses: pyTooling/download-artifact@v4
         with:
-          name: Windows x86_64 ${{matrix.configuration}} Artifacts
+          name: Windows x86_64 Release Artifacts
           path: build/${{matrix.preset}}/artifacts
   
       - name: Download Emulation Root
