@@ -323,7 +323,7 @@ function(momo_strip_target target)
     return()
   endif()
 
-  if(MSVC OR MOMO_ENABLE_SANITIZER OR CMAKE_SYSTEM_NAME STREQUAL "iOS" OR CMAKE_SYSTEM_NAME STREQUAL "Android")
+  if(MSVC OR MOMO_ENABLE_SANITIZER OR CMAKE_SYSTEM_NAME STREQUAL "Android")
     return()
   endif()
 
