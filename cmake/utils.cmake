@@ -323,7 +323,7 @@ function(momo_strip_target target)
     return()
   endif()
 
-  if(MSVC)
+  if(MSVC OR MOMO_ENABLE_SANITIZER)
     return()
   endif()
 
