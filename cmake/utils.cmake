@@ -323,29 +323,38 @@ function(momo_strip_target target)
     return()
   endif()
 
-  if(NOT MSVC)
-    # TODO: detect LLVM IR bitcode and abort
+  if(MSVC OR MOMO_ENABLE_SANITIZER OR CMAKE_SYSTEM_NAME STREQUAL "iOS" OR CMAKE_SYSTEM_NAME STREQUAL "Android")
     return()
-    if(NOT DEFINED STRIP_COMMAND)
-      set(STRIP_COMMAND strip)
-    endif()
-
-    if(NOT DEFINED STRIP_FLAGS)
-      set(STRIP_FLAGS -g -s)
-      if(OSX)
-        set(STRIP_FLAGS -x)
-      endif()
-    endif()
-
-    set(IN_FILE "$<TARGET_FILE:${target}>")
-    set(OUT_FILE "$<TARGET_FILE_DIR:${target}>/$<TARGET_FILE_PREFIX:${target}>$<TARGET_FILE_BASE_NAME:${target}>-unstripped$<TARGET_FILE_SUFFIX:${target}>")
-
-    add_custom_command(TARGET ${target} POST_BUILD 
-      COMMAND ${CMAKE_COMMAND} -E copy ${IN_FILE} ${OUT_FILE}
-      COMMAND "${STRIP_COMMAND}" ${STRIP_FLAGS} "${IN_FILE}"
-      COMMENT "Strippping ${target}"
-    )
   endif()
+
+  find_program(STRIP_COMMAND NAMES strip llvm-strip)
+  if(NOT STRIP_COMMAND)
+    message(WARNING "strip command not found, target ${target} will not be stripped.")
+    return()
+  endif()
+
+  set(STRIP_FLAGS "-s")
+
+  if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    set(STRIP_FLAGS "-x")
+  endif()
+
+  get_property(target_type TARGET ${target} PROPERTY TYPE)
+
+  if(NOT (target_type STREQUAL "EXECUTABLE" OR target_type STREQUAL "SHARED_LIBRARY"))
+    return()
+  endif()
+
+  set(TARGET_FILE "$<TARGET_FILE:${target}>")
+
+  add_custom_command(TARGET ${target} POST_BUILD
+    COMMAND "${STRIP_COMMAND}" ${STRIP_FLAGS} "${TARGET_FILE}"
+    COMMAND_EXPAND_LISTS
+    COMMENT "Stripping ${target}"
+    VERBATIM
+  )
+
+  message(STATUS "Will strip ${target} using ${STRIP_COMMAND} ${STRIP_FLAGS}")
 endfunction()
 
 ##########################################
