@@ -25,3 +25,5 @@ add_test(NAME windows-emulator-test
          WORKING_DIRECTORY "$<TARGET_FILE_DIR:windows-emulator-test>")
 
 momo_targets_set_folder("tests" windows-emulator-test)
+
+momo_strip_target(windows-emulator-test)
