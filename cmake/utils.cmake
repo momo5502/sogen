@@ -323,7 +323,7 @@ function(momo_strip_target target)
     return()
   endif()
 
-  if(MSVC OR MOMO_ENABLE_SANITIZER)
+  if(MSVC OR MOMO_ENABLE_SANITIZER OR CMAKE_SYSTEM_NAME STREQUAL "iOS" OR CMAKE_SYSTEM_NAME STREQUAL "Android")
     return()
   endif()
 
@@ -334,6 +334,10 @@ function(momo_strip_target target)
   endif()
 
   set(STRIP_FLAGS "-s")
+
+  if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    set(STRIP_FLAGS "-x")
+  endif()
 
   get_property(target_type TARGET ${target} PROPERTY TYPE)
 
