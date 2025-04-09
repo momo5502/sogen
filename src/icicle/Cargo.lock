@@ -78,9 +78,9 @@ dependencies = [
 
 [[package]]
 name = "bstr"
-version = "1.11.3"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "531a9155a481e2ee699d4f98f43c0ca4ff8ee1bfd55c31e9e98fb29d2b176fe0"
+checksum = "234113d19d0d7d613b40e86fb654acf958910802bcceab913a4f9e7cda03b1a4"
 dependencies = [
  "memchr",
  "serde",
@@ -332,9 +332,9 @@ dependencies = [
 
 [[package]]
 name = "half"
-version = "2.5.0"
+version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7db2ff139bba50379da6aa0766b52fdcb62cb5b263009b09ed58ba604e14bbd1"
+checksum = "459196ed295495a68f7d7fe1d84f6c4b7ff0e21fe3017b2f283c6fac3ad803c9"
 dependencies = [
  "cfg-if",
  "crunchy",
@@ -370,7 +370,7 @@ dependencies = [
 [[package]]
 name = "icicle-cpu"
 version = "0.1.0"
-source = "git+https://github.com/momo5502/icicle-emu#ec78c91d68d0e724d2e9225778a33e447bb0d960"
+source = "git+https://github.com/icicle-emu/icicle-emu#fe930922ea1ec39578ee545ccced61649f3da00a"
 dependencies = [
  "addr2line",
  "ahash",
@@ -390,7 +390,7 @@ dependencies = [
 [[package]]
 name = "icicle-jit"
 version = "0.2.0"
-source = "git+https://github.com/momo5502/icicle-emu#ec78c91d68d0e724d2e9225778a33e447bb0d960"
+source = "git+https://github.com/icicle-emu/icicle-emu#fe930922ea1ec39578ee545ccced61649f3da00a"
 dependencies = [
  "cranelift",
  "cranelift-codegen",
@@ -408,7 +408,7 @@ dependencies = [
 [[package]]
 name = "icicle-linux"
 version = "0.1.0"
-source = "git+https://github.com/momo5502/icicle-emu#ec78c91d68d0e724d2e9225778a33e447bb0d960"
+source = "git+https://github.com/icicle-emu/icicle-emu#fe930922ea1ec39578ee545ccced61649f3da00a"
 dependencies = [
  "bitflags 2.9.0",
  "bstr",
@@ -424,15 +424,16 @@ dependencies = [
 [[package]]
 name = "icicle-mem"
 version = "0.3.0"
-source = "git+https://github.com/momo5502/icicle-emu#ec78c91d68d0e724d2e9225778a33e447bb0d960"
+source = "git+https://github.com/icicle-emu/icicle-emu#fe930922ea1ec39578ee545ccced61649f3da00a"
 dependencies = [
+ "ahash",
  "tracing",
 ]
 
 [[package]]
 name = "icicle-vm"
 version = "0.2.0"
-source = "git+https://github.com/momo5502/icicle-emu#ec78c91d68d0e724d2e9225778a33e447bb0d960"
+source = "git+https://github.com/icicle-emu/icicle-emu#fe930922ea1ec39578ee545ccced61649f3da00a"
 dependencies = [
  "anyhow",
  "icicle-cpu",
@@ -519,9 +520,9 @@ dependencies = [
 
 [[package]]
 name = "miniz_oxide"
-version = "0.8.7"
+version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff70ce3e48ae43fa075863cef62e8b43b71a4f2382229920e0df362592919430"
+checksum = "3be647b768db090acb35d5ec5db2b0e1f1de11133ca123b9eacf5137868f892a"
 dependencies = [
  "adler2",
 ]
@@ -549,7 +550,7 @@ checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 [[package]]
 name = "pcode"
 version = "0.2.0"
-source = "git+https://github.com/momo5502/icicle-emu#ec78c91d68d0e724d2e9225778a33e447bb0d960"
+source = "git+https://github.com/icicle-emu/icicle-emu#fe930922ea1ec39578ee545ccced61649f3da00a"
 
 [[package]]
 name = "pin-project-lite"
@@ -681,7 +682,7 @@ dependencies = [
 [[package]]
 name = "sleigh-compile"
 version = "0.3.0"
-source = "git+https://github.com/momo5502/icicle-emu#ec78c91d68d0e724d2e9225778a33e447bb0d960"
+source = "git+https://github.com/icicle-emu/icicle-emu#fe930922ea1ec39578ee545ccced61649f3da00a"
 dependencies = [
  "pcode",
  "serde",
@@ -694,12 +695,12 @@ dependencies = [
 [[package]]
 name = "sleigh-parse"
 version = "0.3.0"
-source = "git+https://github.com/momo5502/icicle-emu#ec78c91d68d0e724d2e9225778a33e447bb0d960"
+source = "git+https://github.com/icicle-emu/icicle-emu#fe930922ea1ec39578ee545ccced61649f3da00a"
 
 [[package]]
 name = "sleigh-runtime"
 version = "0.1.0"
-source = "git+https://github.com/momo5502/icicle-emu#ec78c91d68d0e724d2e9225778a33e447bb0d960"
+source = "git+https://github.com/icicle-emu/icicle-emu#fe930922ea1ec39578ee545ccced61649f3da00a"
 dependencies = [
  "pcode",
  "sleigh-parse",
