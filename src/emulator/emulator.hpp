@@ -18,6 +18,8 @@ class emulator : public cpu_interface, public memory_interface, public hook_inte
     emulator(emulator&&) = delete;
     emulator& operator=(emulator&&) = delete;
 
+    virtual std::string get_name() const = 0;
+
     virtual void serialize_state(utils::buffer_serializer& buffer, bool is_snapshot) const = 0;
     virtual void deserialize_state(utils::buffer_deserializer& buffer, bool is_snapshot) = 0;
 };

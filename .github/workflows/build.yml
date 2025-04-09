@@ -20,14 +20,6 @@ on:
         options:
           - "true"
           - "false"
-      icicle_debug:
-        description: "Run debug tests with icicle emulator"
-        type: choice
-        required: false
-        default: "false"
-        options:
-          - "true"
-          - "false"
 
 #concurrency:
 #  group: ${{ github.ref }}
@@ -344,7 +336,6 @@ jobs:
         run: cp build/${{matrix.preset}}/artifacts/test-sample.exe build/${{matrix.preset}}/artifacts/root/filesys/c/
 
       - name: CMake Test
-        if: "${{ matrix.emulator != 'Icicle' || matrix.configuration != 'Debug' || github.event.inputs.icicle_debug == 'true' || github.event.inputs.icicle_debug == 'true' || github.event_name == 'schedule' }}"
         run: cd build/${{matrix.preset}} && ctest --verbose -j
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/root
@@ -410,7 +401,6 @@ jobs:
         run: cp build/${{matrix.preset}}/artifacts/test-sample.exe build/${{matrix.preset}}/artifacts/root/filesys/c/
 
       - name: Run Test
-        if: "${{ matrix.emulator != 'Icicle' || matrix.configuration != 'Debug' || github.event.inputs.icicle_debug == 'true' || github.event.inputs.icicle_debug == 'true' || github.event_name == 'schedule' }}"
         uses: reactivecircus/android-emulator-runner@v2.34.0
         with:
           api-level: 29

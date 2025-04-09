@@ -416,6 +416,11 @@ namespace icicle
             return false;
         }
 
+        std::string get_name() const override
+        {
+            return "icicle-emu";
+        }
+
       private:
         std::list<std::unique_ptr<utils::object>> storage_{};
         std::unordered_map<uint32_t, std::unique_ptr<utils::object>> hooks_{};
