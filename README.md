@@ -45,61 +45,6 @@ Built in C++ and powered by the [Unicorn Engine](https://github.com/unicorn-engi
 
 Click <a href="https://docs.google.com/presentation/d/1pha4tFfDMpVzJ_ehJJ21SA_HAWkufQBVYQvh1IFhVls/edit">here</a> for the slides.
 
-## Build Instructions
+## Build & Run Instructions
 
-### Prerequisites
-* Windows 64-bit (click [here](https://github.com/momo5502/emulator/milestone/1) for cross-platform status)
-* CMake
-* Git
-* Rust (pass `-DMOMO_ENABLE_RUST_CODE=0` to cmake to disable requirement)
-
-### Getting Started
-
-Clone the repository with submodules:
-```bash
-git clone https://github.com/momo5502/emulator.git
-cd emulator
-git submodule update --init --recursive
-```
-
-Run the following commands in an x64 Development Command Prompt
-
-### Visual Studio 2022
-
-```bash
-cmake --preset=vs2022
-```
-Solution will be generated at `build/vs2022/emulator.sln`
-
-### Ninja
-
-Debug build:
-
-```bash
-cmake --workflow --preset=debug
-```
-
-Release build:
-
-```bash
-cmake --workflow --preset=release
-```
-
-## Dumping the Registry
-
-The emulator needs a registry dump to run, otherwise it will print `Bad hive file` errors.  
-You can create one by running the <a href="./src/tools/grab-registry.bat">src/tools/grab-registry.bat</a> script as administrator.  
-This will create a `registry` folder that needs to be placed in the working directory of the emulator.
-
-## Running Tests
-
-The project uses CTest for testing. Choose your preferred method:
-
-**Visual Studio:**
-- Build the `RUN_TESTS` target
-
-**Ninja:**
-```bash
-cd build/release  # or build/debug
-ctest
-```
+Instructions on how to build & run the emulator and more can be found in the [Wiki](https://github.com/momo5502/emulator/wiki)!
