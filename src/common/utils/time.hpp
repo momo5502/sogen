@@ -4,11 +4,9 @@
 
 #include "../platform/platform.hpp"
 #if defined(_MSC_VER)
-#define ARCH_x86
 #include <intrin.h>
 #pragma intrinsic(__rdtsc)
 #elif defined(__x86_64__) || defined(__i386__) || defined(__amd64__)
-#define ARCH_x86
 #include <x86intrin.h>
 #endif
 
@@ -42,10 +40,14 @@ namespace utils
         /// TODO: find better solution for ARM and Figure out better CPU base frequency heuristics
         virtual uint64_t timestamp_counter()
         {
-#if defined(ARCH_x86)
-            return __rdtsc(); 
-#endif // We are using x86, regardless of compiler the instrinsic is the same
+#if defined(_MSC_VER)
+#if defined(_M_X64) || defined(_M_AMD64) || defined(_M_IX86)
+            return __rdtsc(); // 64-bit with MSVC intrinsic
+#endif
 
+#elif defined(__x86_64__) || defined(__i386__) || defined(__amd64__) // If we are using clang or gcc
+            return __rdtsc(); // 64-bit with clang/gcc intrinsic
+#endif
             int64_t count = std::chrono::high_resolution_clock::now().time_since_epoch().count();
             return static_cast<uint64_t>((count * 38LL) / 10LL);
         }
