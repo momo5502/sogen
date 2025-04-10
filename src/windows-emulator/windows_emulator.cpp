@@ -448,9 +448,25 @@ void windows_emulator::setup_hooks()
     });
 
     this->emu().hook_instruction(x64_hookable_instructions::rdtsc, [&] {
-        const auto instructions = this->executed_instructions_;
-        this->emu().reg(x64_register::rax, instructions & 0xFFFFFFFF);
-        this->emu().reg(x64_register::rdx, (instructions >> 32) & 0xFFFFFFFF);
+        uint64_t ticks = this->clock_.get()->timestamp_counter();
+        static uint64_t fake_ticks = ticks;
+        static uint64_t prev_ticks = 0;
+
+        if (prev_ticks != 0)
+        {
+            if (ticks > prev_ticks)
+            {
+                fake_ticks += (ticks - prev_ticks); 
+            }
+        }
+        if (fake_ticks > ticks)
+        { 
+            fake_ticks = ticks;
+        }
+        prev_ticks = ticks;
+
+        this->emu().reg(x64_register::rax, fake_ticks & 0xFFFFFFFF);
+        this->emu().reg(x64_register::rdx, (fake_ticks >> 32) & 0xFFFFFFFF);
         return instruction_hook_continuation::skip_instruction;
     });
 
