@@ -6,6 +6,8 @@
 #if defined(_MSC_VER)
 #include <intrin.h>
 #pragma intrinsic(__rdtsc)
+#elif defined(__x86_64__) || defined(__i386__) || defined(__amd64__)
+#include <x86intrin.h>
 #endif
 
 constexpr auto HUNDRED_NANOSECONDS_IN_ONE_SECOND = 10000000LL;
@@ -44,12 +46,10 @@ namespace utils
 #endif
 
 #elif defined(__x86_64__) || defined(__i386__) || defined(__amd64__) // If we are using clang or gcc
-            unsigned int lo, hi;
-            __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
-            return ((uint64_t)hi << 32) | lo;
+            return __rdtsc(); // 64-bit with clang/gcc intrinsic
 #endif
-            return static_cast<uint64_t>(std::chrono::high_resolution_clock::now().time_since_epoch().count()) *
-                   3.8; // should be base cpu frequency here;
+            int64_t count = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+            return static_cast<uint64_t>((count * 38LL) / 10LL);
         }
     };
 
