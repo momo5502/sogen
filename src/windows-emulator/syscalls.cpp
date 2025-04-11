@@ -45,9 +45,10 @@ namespace syscalls
     NTSTATUS handle_NtSetInformationFile(const syscall_context& c, handle file_handle,
                                          emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                          uint64_t file_information, ULONG length, FILE_INFORMATION_CLASS info_class);
-    NTSTATUS handle_NtQueryVolumeInformationFile(const syscall_context& c, handle file_handle,
-                                                 uint64_t /*io_status_block*/, uint64_t fs_information,
-                                                 ULONG /*length*/, FS_INFORMATION_CLASS fs_information_class);
+    NTSTATUS handle_NtQueryVolumeInformationFile(
+        const syscall_context& c, handle file_handle,
+        emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, uint64_t fs_information, ULONG length,
+        FS_INFORMATION_CLASS fs_information_class);
     NTSTATUS handle_NtQueryDirectoryFileEx(const syscall_context& c, handle file_handle, handle /*event_handle*/,
                                            emulator_pointer /*PIO_APC_ROUTINE*/ /*apc_routine*/,
                                            emulator_pointer /*apc_context*/,

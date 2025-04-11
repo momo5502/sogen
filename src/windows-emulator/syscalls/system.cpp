@@ -175,7 +175,6 @@ namespace syscalls
 
             return handle_query<info_type>(
                 c.emu, system_information, system_information_length, return_length, [&](info_type& info) {
-                    info = {};
                     info.Relationship = RelationProcessorCore;
 
                     if (processor_group == 0)
