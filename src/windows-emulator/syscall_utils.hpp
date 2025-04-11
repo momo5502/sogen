@@ -2,6 +2,7 @@
 
 #include "windows_emulator.hpp"
 #include <ctime>
+#include <platform/primitives.hpp>
 
 struct syscall_context
 {
@@ -194,27 +195,57 @@ void write_attribute(emulator& emu, const PS_ATTRIBUTE<Traits>& attribute, const
     }
 }
 
-template <typename ResponseType, typename Action, NTSTATUS TooSmallResponse = STATUS_BUFFER_TOO_SMALL,
-          NTSTATUS SuccessResponse = STATUS_SUCCESS>
-NTSTATUS handle_query(x64_emulator& emu, const uint64_t buffer, const uint32_t length,
-                      const emulator_object<uint32_t> return_length, const Action& action)
+template <typename ResponseType, typename Action, typename ReturnLengthSetter>
+NTSTATUS handle_query_internal(x64_emulator& emu, const uint64_t buffer, const uint32_t length,
+                               const ReturnLengthSetter& return_length_setter, const Action& action)
 {
     constexpr auto required_size = sizeof(ResponseType);
-
-    if (return_length)
-    {
-        return_length.write(required_size);
-    }
+    return_length_setter(required_size);
 
     if (length < required_size)
     {
-        return TooSmallResponse;
+        return STATUS_BUFFER_TOO_SMALL;
     }
 
-    const emulator_object<ResponseType> obj{emu, buffer};
-    obj.access([&](ResponseType& resp_obj) {
-        action(resp_obj); //
-    });
+    ResponseType obj{};
+    action(obj);
 
-    return SuccessResponse;
+    emu.write_memory(buffer, obj);
+
+    return STATUS_SUCCESS;
+}
+
+template <typename ResponseType, typename Action>
+NTSTATUS handle_query(x64_emulator& emu, const uint64_t buffer, const uint32_t length,
+                      const emulator_object<uint32_t> return_length, const Action& action)
+{
+    const auto length_setter = [&](const uint32_t required_size) {
+        if (return_length)
+        {
+            return_length.write(required_size);
+        }
+    };
+
+    return handle_query_internal<ResponseType>(emu, buffer, length, length_setter, action);
+}
+
+template <typename ResponseType, typename Action>
+NTSTATUS handle_query(x64_emulator& emu, const uint64_t buffer, const uint32_t length,
+                      const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                      const Action& action)
+{
+    IO_STATUS_BLOCK<EmulatorTraits<Emu64>> status_block{};
+
+    const auto length_setter = [&](const EmulatorTraits<Emu64>::ULONG_PTR required_size) {
+        status_block.Information = required_size; //
+    };
+
+    status_block.Status = handle_query_internal<ResponseType>(emu, buffer, length, length_setter, action);
+
+    if (io_status_block)
+    {
+        io_status_block.write(status_block);
+    }
+
+    return status_block.Status;
 }

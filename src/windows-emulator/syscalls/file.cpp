@@ -56,54 +56,46 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtQueryVolumeInformationFile(const syscall_context& c, const handle file_handle,
-                                                 const uint64_t /*io_status_block*/, const uint64_t fs_information,
-                                                 const ULONG /*length*/,
-                                                 const FS_INFORMATION_CLASS fs_information_class)
+    NTSTATUS handle_NtQueryVolumeInformationFile(
+        const syscall_context& c, const handle file_handle,
+        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const uint64_t fs_information,
+        const ULONG length, const FS_INFORMATION_CLASS fs_information_class)
     {
-        if (fs_information_class == FileFsDeviceInformation)
+        switch (fs_information_class)
         {
-            const emulator_object<FILE_FS_DEVICE_INFORMATION> info_obj{c.emu, fs_information};
-            info_obj.access([&](FILE_FS_DEVICE_INFORMATION& info) {
-                if (file_handle == STDOUT_HANDLE && !c.win_emu.buffer_stdout)
-                {
-                    info.DeviceType = FILE_DEVICE_CONSOLE;
-                    info.Characteristics = 0x20000;
-                }
-                else
-                {
-                    info.DeviceType = FILE_DEVICE_DISK;
-                    info.Characteristics = 0x20020;
-                }
-            });
+        case FileFsDeviceInformation:
+            return handle_query<FILE_FS_DEVICE_INFORMATION>(
+                c.emu, fs_information, length, io_status_block, [&](FILE_FS_DEVICE_INFORMATION& info) {
+                    if (file_handle == STDOUT_HANDLE && !c.win_emu.buffer_stdout)
+                    {
+                        info.DeviceType = FILE_DEVICE_CONSOLE;
+                        info.Characteristics = 0x20000;
+                    }
+                    else
+                    {
+                        info.DeviceType = FILE_DEVICE_DISK;
+                        info.Characteristics = 0x20020;
+                    }
+                });
 
-            return STATUS_SUCCESS;
+        case FileFsSizeInformation:
+            return handle_query<FILE_FS_SIZE_INFORMATION>(c.emu, fs_information, length, io_status_block,
+                                                          [&](FILE_FS_SIZE_INFORMATION& info) {
+                                                              info.BytesPerSector = 0x1000;
+                                                              info.SectorsPerAllocationUnit = 0x1000;
+                                                              info.TotalAllocationUnits.QuadPart = 0x10000;
+                                                              info.AvailableAllocationUnits.QuadPart = 0x1000;
+                                                          });
+
+        case FileFsVolumeInformation:
+            return handle_query<FILE_FS_VOLUME_INFORMATION>(c.emu, fs_information, length, io_status_block,
+                                                            [&](FILE_FS_VOLUME_INFORMATION&) {});
+
+        default:
+            c.win_emu.log.error("Unsupported fs info class: %X\n", fs_information_class);
+            c.emu.stop();
+            return write_io_status(io_status_block, STATUS_NOT_SUPPORTED, true);
         }
-
-        if (fs_information_class == FileFsSizeInformation)
-        {
-            const emulator_object<FILE_FS_SIZE_INFORMATION> info_obj{c.emu, fs_information};
-            info_obj.access([&](FILE_FS_SIZE_INFORMATION& info) {
-                info.BytesPerSector = 0x1000;
-                info.SectorsPerAllocationUnit = 0x1000;
-                info.TotalAllocationUnits.QuadPart = 0x10000;
-                info.AvailableAllocationUnits.QuadPart = 0x1000;
-            });
-
-            return STATUS_SUCCESS;
-        }
-
-        if (fs_information_class == FileFsVolumeInformation)
-        {
-            constexpr FILE_FS_VOLUME_INFORMATION volume_info{};
-            c.emu.write_memory(fs_information, volume_info);
-
-            return STATUS_SUCCESS;
-        }
-
-        c.win_emu.log.error("Unsupported fs info class: %X\n", fs_information_class);
-        c.emu.stop();
-        return STATUS_NOT_SUPPORTED;
     }
 
     std::vector<file_entry> scan_directory(const std::filesystem::path& dir)
@@ -173,8 +165,9 @@ namespace syscalls
             {
                 const auto object_offset = object.value() - file_information;
 
-                object.access(
-                    [&](T& dir_info) { dir_info.NextEntryOffset = static_cast<ULONG>(new_offset - object_offset); });
+                object.access([&](T& dir_info) {
+                    dir_info.NextEntryOffset = static_cast<ULONG>(new_offset - object_offset); //
+                });
             }
 
             T info{};
@@ -619,7 +612,7 @@ namespace syscalls
                     return STATUS_ACCESS_DENIED;
                 }
             }
-            else if (!std::filesystem::is_directory(c.win_emu.file_sys.translate(f.name)))
+            else if (!is_directory(c.win_emu.file_sys.translate(f.name)))
             {
                 return STATUS_OBJECT_NAME_NOT_FOUND;
             }
