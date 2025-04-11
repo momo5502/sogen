@@ -51,12 +51,12 @@ add_custom_command(
     COMMENT "Copying Ghidra Processor Specification"
 )
 
-add_library(icicle INTERFACE)
-add_dependencies(icicle icicle-rust-project)
-target_link_libraries(icicle INTERFACE ${ICICLE_RUST_LIB})
+add_library(icicle-bridge INTERFACE)
+add_dependencies(icicle-bridge icicle-rust-project)
+target_link_libraries(icicle-bridge INTERFACE ${ICICLE_RUST_LIB})
 
 if(MSVC)
-  target_link_libraries(icicle INTERFACE
+  target_link_libraries(icicle-bridge INTERFACE
     ws2_32.lib
     Userenv.lib
     ntdll.lib

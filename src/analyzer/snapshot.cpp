@@ -18,8 +18,8 @@ namespace snapshot
 
         std::span<const std::byte> validate_header(const std::span<const std::byte> snapshot)
         {
-            snapshot_header default_header;
             snapshot_header header{};
+            constexpr snapshot_header default_header{};
 
             if (snapshot.size() < sizeof(header))
             {
