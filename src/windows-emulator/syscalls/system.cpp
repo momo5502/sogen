@@ -4,123 +4,13 @@
 
 namespace syscalls
 {
-    NTSTATUS handle_NtQuerySystemInformationEx(const syscall_context& c, const uint32_t info_class,
-                                               const uint64_t input_buffer, const uint32_t input_buffer_length,
-                                               const uint64_t system_information,
-                                               const uint32_t system_information_length,
-                                               const emulator_object<uint32_t> return_length)
+    namespace
     {
-        if (info_class == SystemFlushInformation                    //
-            || info_class == SystemHypervisorSharedPageInformation  //
-            || info_class == 250                                    // Build 27744
-            || info_class == SystemProcessInformation               //
-            || info_class == SystemModuleInformation                //
-            || info_class == SystemMemoryUsageInformation           //
-            || info_class == SystemCodeIntegrityPolicyInformation   //
-            || info_class == SystemFeatureConfigurationInformation  //
-            || info_class == SystemSupportedProcessorArchitectures2 //
-            || info_class == SystemFeatureConfigurationSectionInformation)
-        {
-            return STATUS_NOT_SUPPORTED;
-        }
-
-        if (info_class == SystemTimeOfDayInformation)
-        {
-            return handle_query<SYSTEM_TIMEOFDAY_INFORMATION64>(c.emu, system_information, system_information_length,
-                                                                return_length,
-                                                                [&](SYSTEM_TIMEOFDAY_INFORMATION64& info) {
-                                                                    info.BootTime.QuadPart = 0;
-                                                                    // TODO: Fill
-                                                                });
-        }
-
-        if (info_class == SystemRangeStartInformation)
-        {
-            return handle_query<SYSTEM_RANGE_START_INFORMATION64>(c.emu, system_information, system_information_length,
-                                                                  return_length,
-                                                                  [&](SYSTEM_RANGE_START_INFORMATION64& info) {
-                                                                      info.SystemRangeStart = 0xFFFF800000000000; //
-                                                                  });
-        }
-
-        if (info_class == SystemProcessorInformation)
-        {
-            return handle_query<SYSTEM_PROCESSOR_INFORMATION64>(
-                c.emu, system_information, system_information_length, return_length,
-                [&](SYSTEM_PROCESSOR_INFORMATION64& info) {
-                    memset(&info, 0, sizeof(info));
-                    info.MaximumProcessors = 2;
-                    info.ProcessorArchitecture = PROCESSOR_ARCHITECTURE_AMD64;
-                });
-        }
-
-        if (info_class == SystemNumaProcessorMap)
-        {
-            return handle_query<SYSTEM_NUMA_INFORMATION64>(c.emu, system_information, system_information_length,
-                                                           return_length, [&](SYSTEM_NUMA_INFORMATION64& info) {
-                                                               memset(&info, 0, sizeof(info));
-                                                               info.ActiveProcessorsGroupAffinity->Mask = 0xFFF;
-                                                               info.AvailableMemory[0] = 0xFFF;
-                                                               info.Pad[0] = 0xFFF;
-                                                           });
-        }
-
-        if (info_class == SystemErrorPortTimeouts)
-        {
-            return handle_query<SYSTEM_ERROR_PORT_TIMEOUTS>(c.emu, system_information, system_information_length,
-                                                            return_length, [&](SYSTEM_ERROR_PORT_TIMEOUTS& info) {
-                                                                info.StartTimeout = 0;
-                                                                info.CommTimeout = 0;
-                                                            });
-        }
-
-        if (info_class == SystemKernelDebuggerInformation)
-        {
-            return handle_query<SYSTEM_KERNEL_DEBUGGER_INFORMATION>(c.emu, system_information,
-                                                                    system_information_length, return_length,
-                                                                    [&](SYSTEM_KERNEL_DEBUGGER_INFORMATION& info) {
-                                                                        info.KernelDebuggerEnabled = FALSE;
-                                                                        info.KernelDebuggerNotPresent = TRUE;
-                                                                    });
-        }
-
-        if (info_class == SystemLogicalProcessorInformation)
-        {
-            if (input_buffer_length != sizeof(USHORT))
-            {
-                return STATUS_INVALID_PARAMETER;
-            }
-
-            using INFO_TYPE = EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION<EmulatorTraits<Emu64>>;
-
-            const auto processor_group = c.emu.read_memory<USHORT>(input_buffer);
-            constexpr auto required_size = sizeof(INFO_TYPE);
-
-            if (return_length)
-            {
-                return_length.write(required_size);
-            }
-
-            if (system_information_length < required_size)
-            {
-                return STATUS_INFO_LENGTH_MISMATCH;
-            }
-
-            INFO_TYPE information{};
-            information.Relationship = RelationProcessorCore;
-
-            if (processor_group == 0)
-            {
-                const auto active_processor_count = c.proc.kusd.get().ActiveProcessorCount;
-                information.ProcessorMask =
-                    (static_cast<decltype(information.ProcessorMask)>(1) << active_processor_count) - 1;
-            }
-
-            c.emu.write_memory(system_information, information);
-            return STATUS_SUCCESS;
-        }
-
-        if (info_class == SystemLogicalProcessorAndGroupInformation)
+        NTSTATUS handle_logical_processor_and_group_information(const syscall_context& c, const uint64_t input_buffer,
+                                                                const uint32_t input_buffer_length,
+                                                                const uint64_t system_information,
+                                                                const uint32_t system_information_length,
+                                                                const emulator_object<uint32_t> return_length)
         {
             if (input_buffer_length != sizeof(LOGICAL_PROCESSOR_RELATIONSHIP))
             {
@@ -195,15 +85,110 @@ namespace syscalls
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
         }
+    }
 
-        if (info_class == SystemControlFlowTransition)
+    NTSTATUS handle_NtQuerySystemInformationEx(const syscall_context& c, const uint32_t info_class,
+                                               const uint64_t input_buffer, const uint32_t input_buffer_length,
+                                               const uint64_t system_information,
+                                               const uint32_t system_information_length,
+                                               const emulator_object<uint32_t> return_length)
+    {
+        switch (info_class)
         {
+        case 250: // Build 27744
+        case SystemFlushInformation:
+        case SystemModuleInformation:
+        case SystemProcessInformation:
+        case SystemMemoryUsageInformation:
+        case SystemCodeIntegrityPolicyInformation:
+        case SystemHypervisorSharedPageInformation:
+        case SystemFeatureConfigurationInformation:
+        case SystemSupportedProcessorArchitectures2:
+        case SystemFeatureConfigurationSectionInformation:
+            return STATUS_NOT_SUPPORTED;
+
+        case SystemControlFlowTransition:
             c.win_emu.log.print(color::pink, "Warbird control flow transition!\n");
             return STATUS_NOT_SUPPORTED;
+
+        case SystemTimeOfDayInformation:
+            return handle_query<SYSTEM_TIMEOFDAY_INFORMATION64>(c.emu, system_information, system_information_length,
+                                                                return_length,
+                                                                [&](SYSTEM_TIMEOFDAY_INFORMATION64& info) {
+                                                                    info.BootTime.QuadPart = 0;
+                                                                    // TODO: Fill
+                                                                });
+
+        case SystemRangeStartInformation:
+            return handle_query<SYSTEM_RANGE_START_INFORMATION64>(c.emu, system_information, system_information_length,
+                                                                  return_length,
+                                                                  [&](SYSTEM_RANGE_START_INFORMATION64& info) {
+                                                                      info.SystemRangeStart = 0xFFFF800000000000; //
+                                                                  });
+
+        case SystemProcessorInformation:
+            return handle_query<SYSTEM_PROCESSOR_INFORMATION64>(
+                c.emu, system_information, system_information_length, return_length,
+                [&](SYSTEM_PROCESSOR_INFORMATION64& info) {
+                    memset(&info, 0, sizeof(info));
+                    info.MaximumProcessors = 2;
+                    info.ProcessorArchitecture = PROCESSOR_ARCHITECTURE_AMD64;
+                });
+
+        case SystemNumaProcessorMap:
+            return handle_query<SYSTEM_NUMA_INFORMATION64>(c.emu, system_information, system_information_length,
+                                                           return_length, [&](SYSTEM_NUMA_INFORMATION64& info) {
+                                                               memset(&info, 0, sizeof(info));
+                                                               info.ActiveProcessorsGroupAffinity->Mask = 0xFFF;
+                                                               info.AvailableMemory[0] = 0xFFF;
+                                                               info.Pad[0] = 0xFFF;
+                                                           });
+
+        case SystemErrorPortTimeouts:
+            return handle_query<SYSTEM_ERROR_PORT_TIMEOUTS>(c.emu, system_information, system_information_length,
+                                                            return_length, [&](SYSTEM_ERROR_PORT_TIMEOUTS& info) {
+                                                                info.StartTimeout = 0;
+                                                                info.CommTimeout = 0;
+                                                            });
+
+        case SystemKernelDebuggerInformation:
+            return handle_query<SYSTEM_KERNEL_DEBUGGER_INFORMATION>(c.emu, system_information,
+                                                                    system_information_length, return_length,
+                                                                    [&](SYSTEM_KERNEL_DEBUGGER_INFORMATION& info) {
+                                                                        info.KernelDebuggerEnabled = FALSE;
+                                                                        info.KernelDebuggerNotPresent = TRUE;
+                                                                    });
+
+        case SystemLogicalProcessorAndGroupInformation:
+            return handle_logical_processor_and_group_information(
+                c, input_buffer, input_buffer_length, system_information, system_information_length, return_length);
+
+        case SystemLogicalProcessorInformation: {
+            if (!input_buffer || input_buffer_length != sizeof(USHORT))
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            using info_type = EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION<EmulatorTraits<Emu64>>;
+
+            const auto processor_group = c.emu.read_memory<USHORT>(input_buffer);
+
+            return handle_query<info_type>(
+                c.emu, system_information, system_information_length, return_length, [&](info_type& info) {
+                    info = {};
+                    info.Relationship = RelationProcessorCore;
+
+                    if (processor_group == 0)
+                    {
+                        using mask_type = decltype(info.ProcessorMask);
+                        const auto active_processor_count = c.proc.kusd.get().ActiveProcessorCount;
+                        info.ProcessorMask = (static_cast<mask_type>(1) << active_processor_count) - 1;
+                    }
+                });
         }
 
-        if (info_class == SystemBasicInformation || info_class == SystemEmulationBasicInformation)
-        {
+        case SystemBasicInformation:
+        case SystemEmulationBasicInformation:
             return handle_query<SYSTEM_BASIC_INFORMATION64>(
                 c.emu, system_information, system_information_length, return_length,
                 [&](SYSTEM_BASIC_INFORMATION64& basic_info) {
@@ -218,11 +203,12 @@ namespace syscalls
                     basic_info.ActiveProcessorsAffinityMask = 0x0000000000000fff;
                     basic_info.NumberOfProcessors = 1;
                 });
-        }
 
-        c.win_emu.log.error("Unsupported system info class: %X\n", info_class);
-        c.emu.stop();
-        return STATUS_NOT_SUPPORTED;
+        default:
+            c.win_emu.log.error("Unsupported system info class: %X\n", info_class);
+            c.emu.stop();
+            return STATUS_NOT_SUPPORTED;
+        }
     }
 
     NTSTATUS handle_NtQuerySystemInformation(const syscall_context& c, const uint32_t info_class,
