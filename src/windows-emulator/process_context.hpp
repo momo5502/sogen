@@ -54,6 +54,8 @@ struct process_context
     void serialize(utils::buffer_serializer& buffer) const;
     void deserialize(utils::buffer_deserializer& buffer);
 
+    generic_handle_store* get_handle_store(handle handle);
+
     callbacks* callbacks_{};
 
     uint64_t current_ip{0};

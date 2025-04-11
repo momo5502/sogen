@@ -198,6 +198,33 @@ void process_context::deserialize(utils::buffer_deserializer& buffer)
     this->active_thread = this->threads.get(buffer.read<uint64_t>());
 }
 
+generic_handle_store* process_context::get_handle_store(const handle handle)
+{
+    switch (handle.value.type)
+    {
+    case handle_types::thread:
+        return &threads;
+    case handle_types::event:
+        return &events;
+    case handle_types::file:
+        return &files;
+    case handle_types::device:
+        return &devices;
+    case handle_types::semaphore:
+        return &semaphores;
+    case handle_types::registry:
+        return &registry_keys;
+    case handle_types::mutant:
+        return &mutants;
+    case handle_types::port:
+        return &ports;
+    case handle_types::section:
+        return &sections;
+    default:
+        return nullptr;
+    }
+}
+
 handle process_context::create_thread(memory_manager& memory, const uint64_t start_address, const uint64_t argument,
                                       const uint64_t stack_size, const bool suspended)
 {
