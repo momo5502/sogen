@@ -193,3 +193,28 @@ void write_attribute(emulator& emu, const PS_ATTRIBUTE<Traits>& attribute, const
         emulator_object<T>{emu, attribute.Value}.write(value);
     }
 }
+
+template <typename ResponseType, typename Action, NTSTATUS TooSmallResponse = STATUS_BUFFER_TOO_SMALL,
+          NTSTATUS SuccessResponse = STATUS_SUCCESS>
+NTSTATUS handle_query(x64_emulator& emu, const uint64_t buffer, const uint32_t length,
+                      const emulator_object<uint32_t> return_length, const Action& action)
+{
+    constexpr auto required_size = sizeof(ResponseType);
+
+    if (return_length)
+    {
+        return_length.write(required_size);
+    }
+
+    if (length < required_size)
+    {
+        return TooSmallResponse;
+    }
+
+    const emulator_object<ResponseType> obj{emu, buffer};
+    obj.access([&](ResponseType& resp_obj) {
+        action(resp_obj); //
+    });
+
+    return SuccessResponse;
+}
