@@ -272,9 +272,9 @@ jobs:
           - Unicorn
           - Icicle
         emulation-root:
-          - Windows 2025
+          #- Windows 2025
           - Windows 2022
-          - Windows 2019
+          #- Windows 2019
         configuration:
           - Debug
           - Release
@@ -342,6 +342,61 @@ jobs:
           EMULATOR_VERBOSE: ${{ github.event.inputs.verbose }}
           ANALYSIS_SAMPLE: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/dump-apiset.exe
 
+  win-test:
+    name: Windows Test
+    runs-on: windows-latest
+    needs: [create-emulation-root, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        emulator:
+          - Unicorn
+          - Icicle
+        emulation-root:
+          - Windows 2025
+          - Windows 2022
+          - Windows 2019
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Environment Variables
+        run: |
+          echo "RUST_BACKTRACE=1" >> $GITHUB_ENV
+          echo "ASAN_OPTIONS=detect_odr_violation=0" >> $GITHUB_ENV
+          echo "EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }}" >> $GITHUB_ENV
+
+      - name: Download Test Configuration
+        uses: actions/download-artifact@v4.2.1
+        with:
+          name: Temp Windows x86_64 Release Test Config
+          path: build/release
+
+      - name: Download Artifacts
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: Windows x86_64 Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Emulation Root
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: ${{ matrix.emulation-root }} Emulation Root
+          path: build/release/artifacts/root
+
+      - name: Copy Test Sample
+        run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
+
+      - name: CMake Test
+        run: cd build/release && ctest --verbose -j
+        env:
+          EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
+          EMULATOR_VERBOSE: ${{ github.event.inputs.verbose }}
+          ANALYSIS_SAMPLE: ${{github.workspace}}/build/release/artifacts/dump-apiset.exe
+
+
   smoke-test-android:
     name: Smoke Test Android
     runs-on: ${{ matrix.runner }}
@@ -356,9 +411,9 @@ jobs:
           - Unicorn
           - Icicle
         emulation-root:
-          - Windows 2025
+          #- Windows 2025
           - Windows 2022
-          - Windows 2019
+          #- Windows 2019
         configuration:
           - Debug
           - Release
@@ -410,7 +465,7 @@ jobs:
   summary:
     name: Pipeline Summary
     runs-on: ubuntu-24.04
-    needs: [clang-tidy, build-apiset-dumper, smoke-test-android, create-emulation-root, build, test, verify-formatting]
+    needs: [clang-tidy, build-apiset-dumper, smoke-test-android, create-emulation-root, build, test, win-test, verify-formatting]
     if: always()
     steps:
       - uses: geekyeggo/delete-artifact@v5
