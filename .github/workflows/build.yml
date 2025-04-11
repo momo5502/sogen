@@ -21,9 +21,9 @@ on:
           - "true"
           - "false"
 
-#concurrency:
-#  group: ${{ github.ref }}
-#  cancel-in-progress: true
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   clang-tidy:
