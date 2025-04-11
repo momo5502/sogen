@@ -449,18 +449,8 @@ void windows_emulator::setup_hooks()
 
     this->emu().hook_instruction(x64_hookable_instructions::rdtsc, [&] {
         uint64_t ticks = this->clock_->timestamp_counter();
-        static uint64_t fake_ticks = ticks;
-        static uint64_t prev_ticks = 0;
-
-        if (ticks > prev_ticks)
-        {
-            fake_ticks += (ticks - prev_ticks);
-        }
-        fake_ticks = std::min(fake_ticks, ticks);
-        prev_ticks = ticks;
-
-        this->emu().reg(x64_register::rax, fake_ticks & 0xFFFFFFFF);
-        this->emu().reg(x64_register::rdx, (fake_ticks >> 32) & 0xFFFFFFFF);
+        this->emu().reg(x64_register::rax, ticks & 0xFFFFFFFF);
+        this->emu().reg(x64_register::rdx, (ticks >> 32) & 0xFFFFFFFF);
         return instruction_hook_continuation::skip_instruction;
     });
 

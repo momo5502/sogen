@@ -40,16 +40,13 @@ namespace utils
         /// TODO: find better solution for ARM and Figure out better CPU base frequency heuristics
         virtual uint64_t timestamp_counter()
         {
-#if defined(_MSC_VER)
-#if defined(_M_X64) || defined(_M_AMD64) || defined(_M_IX86)
-            return __rdtsc(); // 64-bit with MSVC intrinsic
-#endif
-
-#elif defined(__x86_64__) || defined(__i386__) || defined(__amd64__) // If we are using clang or gcc
-            return __rdtsc(); // 64-bit with clang/gcc intrinsic
-#endif
-            int64_t count = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+#if defined(_M_X64) || defined(_M_AMD64) || defined(_M_IX86) || defined(__x86_64__) || defined(__i386__) || \
+    defined(__amd64__)
+            return __rdtsc(); // any x86 system will have this instrinsic
+#else
+            const auto count = std::chrono::high_resolution_clock::now().time_since_epoch().count();
             return static_cast<uint64_t>((count * 38LL) / 10LL);
+#endif
         }
     };
 
