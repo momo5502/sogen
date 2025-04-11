@@ -36,7 +36,7 @@ namespace utils
             return std::chrono::steady_clock::now();
         }
 
-        // Returnds the current timestamp counter value. RDTSC on x86/x64, or just time since epoch for ARM
+        // Returns the current timestamp counter value. RDTSC on x86/x64, or just time since epoch for ARM
         /// TODO: find better solution for ARM and Figure out better CPU base frequency heuristics
         virtual uint64_t timestamp_counter()
         {
