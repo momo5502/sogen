@@ -3,6 +3,12 @@
 #include <chrono>
 
 #include "../platform/platform.hpp"
+#if defined(_MSC_VER)
+#include <intrin.h>
+#pragma intrinsic(__rdtsc)
+#elif defined(__x86_64__) || defined(__i386__) || defined(__amd64__)
+#include <x86intrin.h>
+#endif
 
 constexpr auto HUNDRED_NANOSECONDS_IN_ONE_SECOND = 10000000LL;
 constexpr auto EPOCH_DIFFERENCE_1601_TO_1970_SECONDS = 11644473600LL;
@@ -28,6 +34,19 @@ namespace utils
         virtual steady_time_point steady_now()
         {
             return std::chrono::steady_clock::now();
+        }
+
+        // Returns the current timestamp counter value. RDTSC on x86/x64, or just time since epoch for ARM
+        /// TODO: find better solution for ARM and Figure out better CPU base frequency heuristics
+        virtual uint64_t timestamp_counter()
+        {
+#if defined(_M_X64) || defined(_M_AMD64) || defined(_M_IX86) || defined(__x86_64__) || defined(__i386__) || \
+    defined(__amd64__)
+            return __rdtsc(); // any x86 system will have this instrinsic
+#else
+            const auto count = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+            return static_cast<uint64_t>((count * 38LL) / 10LL);
+#endif
         }
     };
 
