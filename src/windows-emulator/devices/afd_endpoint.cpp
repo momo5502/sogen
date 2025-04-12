@@ -501,7 +501,7 @@ namespace
                 return STATUS_NOT_SUPPORTED;
             }
 
-            win_emu.log.print(color::cyan, "AFD IOCTL: %X\n", c.io_control_code);
+            win_emu.log.print(color::dark_gray, "--> AFD IOCTL: %X\n", c.io_control_code);
 
             const auto request = _AFD_REQUEST(c.io_control_code);
 
