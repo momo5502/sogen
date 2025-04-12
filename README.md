@@ -45,6 +45,29 @@ Built in C++ and powered by the [Unicorn Engine](https://github.com/unicorn-engi
 
 Click <a href="https://docs.google.com/presentation/d/1pha4tFfDMpVzJ_ehJJ21SA_HAWkufQBVYQvh1IFhVls/edit">here</a> for the slides.
 
-## Build & Run Instructions
+## Quick Start (Windows + Visual Studio)
 
-Instructions on how to build & run the emulator and more can be found in the [Wiki](https://github.com/momo5502/emulator/wiki)!
+> [!TIP]  
+> Checkout the [Wiki](https://github.com/momo5502/emulator/wiki) for more details on how to build & run the emulator on Windows, Linux, macOS, ...
+
+1\. Checkout the code:
+
+```bash
+git clone --recurse-submodules https://github.com/momo5502/emulator.git
+```
+
+2\. Run the following command in an x64 Development Command Prompt in the cloned directory:
+
+```bash
+cmake --preset=vs2022
+```
+
+3\. Build the solution that was generated at `build/vs2022/emulator.sln`
+
+4\. Create a registry dump by running the [grab-registry.bat](https://github.com/momo5502/emulator/blob/main/src/tools/grab-registry.bat) as administrator and place it in the artifacts folder next to the `analyzer.exe`
+
+5\. Run the program of your choice:
+
+```bash
+analyzer.exe C:\example.exe
+```
