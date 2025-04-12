@@ -340,7 +340,7 @@ jobs:
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/root
           EMULATOR_VERBOSE: ${{ github.event.inputs.verbose }}
-          ANALYSIS_SAMPLE: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/dump-apiset.exe
+          ANALYSIS_SAMPLE: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/test-sample.exe
 
   win-test:
     name: Windows Test
