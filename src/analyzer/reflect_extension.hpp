@@ -21,7 +21,7 @@ namespace
     static_cast<typename ::REFLECT_FWD_LIKE2<::std::is_lvalue_reference_v<T>>::template type<decltype(__VA_ARGS__)>>( \
         __VA_ARGS__)
 
-namespace reflect::inline v1_2_4
+namespace reflect::inline v1_2_5
 {
     namespace detail
     {
