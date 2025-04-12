@@ -115,7 +115,7 @@ endif()
 
 ##########################################
 
-if(MOMO_ENABLE_AVX2)
+if(MOMO_ENABLE_AVX2 AND NOT (CMAKE_SYSTEM_NAME STREQUAL "Android"))
   set(CMAKE_REQUIRED_FLAGS -Werror)
   check_cxx_compiler_flag(-mavx2 COMPILER_SUPPORTS_MAVX2)
   set(CMAKE_REQUIRED_FLAGS "")
