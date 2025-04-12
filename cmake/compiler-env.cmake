@@ -1,4 +1,5 @@
 include_guard()
+include(CheckCXXCompilerFlag)
 
 ##########################################
 # System identification
@@ -110,6 +111,24 @@ if(MSVC)
     _CRT_SECURE_NO_WARNINGS
     _CRT_NONSTDC_NO_WARNINGS
   )
+endif()
+
+##########################################
+
+if(MOMO_ENABLE_AVX2 AND NOT (CMAKE_SYSTEM_NAME STREQUAL "Android"))
+  set(CMAKE_REQUIRED_FLAGS -Werror)
+  check_cxx_compiler_flag(-mavx2 COMPILER_SUPPORTS_MAVX2)
+  set(CMAKE_REQUIRED_FLAGS "")
+
+  check_cxx_compiler_flag(/arch:AVX2 COMPILER_SUPPORTS_ARCH_AVX2)
+
+  if(COMPILER_SUPPORTS_MAVX2)
+    momo_add_c_and_cxx_compile_options(-mavx2)
+  endif()
+
+  if (COMPILER_SUPPORTS_ARCH_AVX2)
+    momo_add_c_and_cxx_compile_options(/arch:AVX2)
+  endif()
 endif()
 
 ##########################################

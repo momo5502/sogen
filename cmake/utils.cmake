@@ -109,12 +109,16 @@ macro(momo_target_remove_compile_option target option)
     get_target_property(target_flags ${target} COMPILE_OPTIONS)
     if(target_flags)
         list(REMOVE_ITEM target_flags ${option})
+        list(REMOVE_ITEM target_flags "$<$<COMPILE_LANGUAGE:C>:${option}>")
+        list(REMOVE_ITEM target_flags "$<$<COMPILE_LANGUAGE:CXX>:${option}>")
         set_target_properties(${target} PROPERTIES COMPILE_OPTIONS "${target_flags}")
     endif()
 
     get_target_property(target_interface_flags ${target} INTERFACE_COMPILE_OPTIONS)
     if(target_interface_flags)
         list(REMOVE_ITEM target_interface_flags ${option})
+        list(REMOVE_ITEM target_interface_flags "$<$<COMPILE_LANGUAGE:C>:${option}>")
+        list(REMOVE_ITEM target_interface_flags "$<$<COMPILE_LANGUAGE:CXX>:${option}>")
         set_target_properties(${target} PROPERTIES INTERFACE_COMPILE_OPTIONS "${target_interface_flags}")
     endif()
 endmacro()
@@ -122,10 +126,18 @@ endmacro()
 ##########################################
 
 macro(momo_target_remove_compile_options target)
-  foreach(option ${ARGV})
+  foreach(option ${ARGN})
     momo_target_remove_compile_option(${target} ${option})
   endforeach()
 endmacro()
+
+##########################################
+
+function(momo_targets_remove_compile_options targets)
+  foreach(target ${targets})
+    momo_target_remove_compile_options(${target} ${ARGN})
+  endforeach()
+endfunction()
 
 ##########################################
 
