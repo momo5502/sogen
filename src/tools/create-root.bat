@@ -8,7 +8,6 @@ IF %ERRORLEVEL% NEQ 0 (
 
 SET SYSDIR="%WINDIR%\System32"
 
-:: Qiling rootfs directories
 SET EMU_ROOT=root
 SET EMU_FILESYS=%EMU_ROOT%\filesys
 SET EMU_WINDIR=%EMU_FILESYS%\c\windows
@@ -25,105 +24,103 @@ REG SAVE HKLM\HARDWARE %EMU_REGDIR%\HARDWARE /Y
 REG SAVE HKLM\SAM %EMU_REGDIR%\SAM /Y
 COPY /B /Y C:\Users\Default\NTUSER.DAT "%EMU_REGDIR%\NTUSER.DAT"
 
-CALL :collect_dll advapi32.dll
-CALL :collect_dll bcrypt.dll
-CALL :collect_dll cfgmgr32.dll
-CALL :collect_dll ci.dll
-CALL :collect_dll combase.dll
-CALL :collect_dll comctl32.dll
-CALL :collect_dll comdlg32.dll
-CALL :collect_dll crypt32.dll
-CALL :collect_dll cryptbase.dll
-CALL :collect_dll gdi32.dll
-CALL :collect_dll hal.dll
-CALL :collect_dll iphlpapi.dll
-CALL :collect_dll kdcom.dll
-CALL :collect_dll kernel32.dll
-CALL :collect_dll kernelbase.dll
-CALL :collect_dll mpr.dll
-CALL :collect_dll mscoree.dll
-CALL :collect_dll msvcp_win.dll
-CALL :collect_dll msvcp60.dll
-CALL :collect_dll msvcr120_clr0400.dll
-CALL :collect_dll msvcrt.dll
-CALL :collect_dll netapi32.dll
-CALL :collect_dll ntdll.dll
-CALL :collect_dll ole32.dll
-CALL :collect_dll oleaut32.dll
-CALL :collect_dll psapi.dll
-CALL :collect_dll rpcrt4.dll
-CALL :collect_dll sechost.dll
-CALL :collect_dll setupapi.dll
-CALL :collect_dll shell32.dll
-CALL :collect_dll shlwapi.dll
-CALL :collect_dll sspicli.dll
-CALL :collect_dll ucrtbase.dll
-CALL :collect_dll ucrtbased.dll
-CALL :collect_dll urlmon.dll
-CALL :collect_dll user32.dll
-CALL :collect_dll userenv.dll
-CALL :collect_dll uxtheme.dll
-CALL :collect_dll vcruntime140.dll
-CALL :collect_dll vcruntime140d.dll
-CALL :collect_dll vcruntime140_1.dll
-CALL :collect_dll vcruntime140_1d.dll
-CALL :collect_dll version.dll
-CALL :collect_dll win32u.dll
-CALL :collect_dll winhttp.dll
-CALL :collect_dll wininet.dll
-CALL :collect_dll winmm.dll
-CALL :collect_dll ws2_32.dll
-CALL :collect_dll wsock32.dll
-CALL :collect_dll msvcp140.dll
-CALL :collect_dll msvcp140d.dll
-CALL :collect_dll d3d11.dll
-CALL :collect_dll d3d9.dll
-CALL :collect_dll d3d12.dll
-CALL :collect_dll d3dcompiler_47.dll
-CALL :collect_dll dxgi.dll
-CALL :collect_dll dsound.dll
-CALL :collect_dll dwmapi.dll
-CALL :collect_dll hid.dll
-CALL :collect_dll imm32.dll
-CALL :collect_dll uiautomationcore.dll
-CALL :collect_dll opengl32.dll
-CALL :collect_dll normaliz.dll
-CALL :collect_dll wintrust.dll
-CALL :collect_dll wldap32.dll
-CALL :collect_dll wtsapi32.dll
-CALL :collect_dll x3daudio1_7.dll
-CALL :collect_dll xapofx1_5.dll
-CALL :collect_dll xinput1_3.dll
-CALL :collect_dll xinput9_1_0.dll
-CALL :collect_dll cryptsp.dll
-CALL :collect_dll resampledmo.dll
-CALL :collect_dll powrprof.dll
-CALL :collect_dll winmmbase.dll
-CALL :collect_dll gdi32full.dll
-CALL :collect_dll glu32.dll
-CALL :collect_dll msdmo.dll
-CALL :collect_dll dxcore.dll
-CALL :collect_dll mfplat.dll
-CALL :collect_dll wer.dll
-CALL :collect_dll dbghelp.dll
-CALL :collect_dll mscms.dll
-CALL :collect_dll ktmw32.dll
-CALL :collect_dll shcore.dll
-CALL :collect_dll diagnosticdatasettings.dll
-CALL :collect_dll mswsock.dll
-CALL :collect_dll umpdc.dll
+CALL :collect advapi32.dll
+CALL :collect bcrypt.dll
+CALL :collect cfgmgr32.dll
+CALL :collect ci.dll
+CALL :collect combase.dll
+CALL :collect comctl32.dll
+CALL :collect comdlg32.dll
+CALL :collect crypt32.dll
+CALL :collect cryptbase.dll
+CALL :collect gdi32.dll
+CALL :collect hal.dll
+CALL :collect iphlpapi.dll
+CALL :collect kdcom.dll
+CALL :collect kernel32.dll
+CALL :collect kernelbase.dll
+CALL :collect mpr.dll
+CALL :collect mscoree.dll
+CALL :collect msvcp_win.dll
+CALL :collect msvcp60.dll
+CALL :collect msvcr120_clr0400.dll
+CALL :collect msvcrt.dll
+CALL :collect netapi32.dll
+CALL :collect ntdll.dll
+CALL :collect ole32.dll
+CALL :collect oleaut32.dll
+CALL :collect psapi.dll
+CALL :collect rpcrt4.dll
+CALL :collect sechost.dll
+CALL :collect setupapi.dll
+CALL :collect shell32.dll
+CALL :collect shlwapi.dll
+CALL :collect sspicli.dll
+CALL :collect ucrtbase.dll
+CALL :collect ucrtbased.dll
+CALL :collect urlmon.dll
+CALL :collect user32.dll
+CALL :collect userenv.dll
+CALL :collect uxtheme.dll
+CALL :collect vcruntime140.dll
+CALL :collect vcruntime140d.dll
+CALL :collect vcruntime140_1.dll
+CALL :collect vcruntime140_1d.dll
+CALL :collect version.dll
+CALL :collect win32u.dll
+CALL :collect winhttp.dll
+CALL :collect wininet.dll
+CALL :collect winmm.dll
+CALL :collect ws2_32.dll
+CALL :collect wsock32.dll
+CALL :collect msvcp140.dll
+CALL :collect msvcp140d.dll
+CALL :collect d3d11.dll
+CALL :collect d3d9.dll
+CALL :collect d3d12.dll
+CALL :collect d3dcompiler_47.dll
+CALL :collect dxgi.dll
+CALL :collect dsound.dll
+CALL :collect dwmapi.dll
+CALL :collect hid.dll
+CALL :collect imm32.dll
+CALL :collect uiautomationcore.dll
+CALL :collect opengl32.dll
+CALL :collect normaliz.dll
+CALL :collect wintrust.dll
+CALL :collect wldap32.dll
+CALL :collect wtsapi32.dll
+CALL :collect x3daudio1_7.dll
+CALL :collect xapofx1_5.dll
+CALL :collect xinput1_3.dll
+CALL :collect xinput9_1_0.dll
+CALL :collect cryptsp.dll
+CALL :collect resampledmo.dll
+CALL :collect powrprof.dll
+CALL :collect winmmbase.dll
+CALL :collect gdi32full.dll
+CALL :collect glu32.dll
+CALL :collect msdmo.dll
+CALL :collect dxcore.dll
+CALL :collect mfplat.dll
+CALL :collect wer.dll
+CALL :collect dbghelp.dll
+CALL :collect mscms.dll
+CALL :collect ktmw32.dll
+CALL :collect shcore.dll
+CALL :collect diagnosticdatasettings.dll
+CALL :collect mswsock.dll
+CALL :collect umpdc.dll
 
-CALL :collect_dll locale.nls
+CALL :collect locale.nls
 
-:: All done!
 EXIT /B 0
 
-:: Functions definitions
 :normpath
 SET %1=%~dpfn2
 EXIT /B
 
-:collect
+:collect_file
 CALL :normpath SRC, %~1\%~2
 CALL :normpath DST, %~3\%~2
 
@@ -133,6 +130,6 @@ IF EXIST %SRC% (
 )
 EXIT /B
 
-:collect_dll
-CALL :collect %SYSDIR%, %~1, %EMU_SYSDIR%
+:collect
+CALL :collect_file %SYSDIR%, %~1, %EMU_SYSDIR%
 EXIT /B
