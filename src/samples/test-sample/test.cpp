@@ -9,7 +9,13 @@
 #include <filesystem>
 #include <string_view>
 
-#include <network/udp_socket.hpp>
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#include <WinSock2.h>
+#include <WS2tcpip.h>
+
+#pragma comment(lib, "ws2_32.lib")
 
 using namespace std::literals;
 
@@ -130,7 +136,7 @@ namespace
     bool test_file_path_io(const std::filesystem::path& filename)
     {
         std::error_code ec{};
-        const auto absolute_file = std::filesystem::absolute(filename, ec);
+        const auto absolute_file = absolute(filename, ec);
 
         if (ec)
         {
@@ -138,7 +144,7 @@ namespace
             return false;
         }
 
-        const auto canonical_file = std::filesystem::canonical(filename, ec);
+        const auto canonical_file = canonical(filename, ec);
         (void)canonical_file;
 
         if (ec)
@@ -217,7 +223,7 @@ namespace
             return false;
         }
 
-        std::filesystem::current_path(current_dir);
+        current_path(current_dir);
         return std::filesystem::current_path() == current_dir;
     }
 
@@ -300,34 +306,68 @@ namespace
         }
     }
 
+    struct wsa_initializer
+    {
+        wsa_initializer()
+        {
+            WSADATA wsa_data;
+            if (WSAStartup(MAKEWORD(2, 2), &wsa_data))
+            {
+                throw std::runtime_error("Unable to initialize WSA");
+            }
+        }
+
+        ~wsa_initializer()
+        {
+            WSACleanup();
+        }
+    };
+
     bool test_socket()
     {
-        network::udp_socket receiver{AF_INET};
-        const network::udp_socket sender{AF_INET};
-        const network::address destination{"127.0.0.1:28970", AF_INET};
+        wsa_initializer _{};
         constexpr std::string_view send_data = "Hello World";
 
-        if (!receiver.bind(destination))
+        const auto sender = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        const auto receiver = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (sender == INVALID_SOCKET || receiver == INVALID_SOCKET)
+        {
+            puts("Socket creation failed");
+            return false;
+        }
+
+        sockaddr_in destination{};
+        destination.sin_family = AF_INET;
+        destination.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        destination.sin_port = htons(28970);
+
+        if (bind(receiver, reinterpret_cast<sockaddr*>(&destination), sizeof(destination)) == SOCKET_ERROR)
         {
             puts("Failed to bind socket!");
             return false;
         }
 
-        if (!sender.send(destination, send_data))
+        if (sendto(sender, send_data.data(), static_cast<int>(send_data.size()), 0,
+                   reinterpret_cast<sockaddr*>(&destination), sizeof(destination)) != send_data.size())
         {
             puts("Failed to send data!");
             return false;
         }
 
-        const auto response = receiver.receive();
+        char buffer[100] = {};
+        sockaddr_in sender_addr{};
+        int sender_length = sizeof(sender_addr);
 
-        if (!response)
+        const auto len =
+            recvfrom(receiver, buffer, sizeof(buffer), 0, reinterpret_cast<sockaddr*>(&sender_addr), &sender_length);
+
+        if (len != send_data.size())
         {
-            puts("Failed to recieve data!");
+            puts("Failed to receive data!");
             return false;
         }
 
-        return send_data == response->second;
+        return send_data == std::string_view(buffer, len);
     }
 
     void throw_access_violation()
