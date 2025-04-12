@@ -9,7 +9,3 @@ list(SORT SRC_FILES)
 add_executable(test-sample ${SRC_FILES})
 
 momo_assign_source_group(${SRC_FILES})
-
-target_link_libraries(test-sample PRIVATE
-  emulator-common
-)
