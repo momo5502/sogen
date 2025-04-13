@@ -162,6 +162,7 @@ namespace
 
         if (can_dispatch_apcs)
         {
+            thread.mark_as_ready(STATUS_USER_APC);
             dispatch_next_apc(win_emu, thread);
         }
 
