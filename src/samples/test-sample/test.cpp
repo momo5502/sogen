@@ -431,6 +431,26 @@ namespace
         const auto epoch_time = std::chrono::system_clock::now().time_since_epoch();
         printf("Time: %lld\n", std::chrono::duration_cast<std::chrono::nanoseconds>(epoch_time).count());
     }
+
+    bool test_apc()
+    {
+        bool executed = false;
+        QueueUserAPC(
+            +[](ULONG_PTR param) {
+                *reinterpret_cast<bool*>(param) = true; //
+            },
+            GetCurrentThread(), reinterpret_cast<ULONG_PTR>(&executed));
+
+        Sleep(1);
+
+        if (executed)
+        {
+            return false;
+        }
+
+        SleepEx(1, TRUE);
+        return executed;
+    }
 }
 
 #define RUN_TEST(func, name)                 \
@@ -461,8 +481,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_native_exceptions, "Native Exceptions")
     RUN_TEST(test_tls, "TLS")
     RUN_TEST(test_socket, "Socket")
-
-    Sleep(1);
+    RUN_TEST(test_apc, "APC")
 
     return valid ? 0 : 1;
 }
