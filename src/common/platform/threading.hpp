@@ -1,6 +1,6 @@
 #pragma once
 
-// NOLINTBEGIN(modernize-use-using)
+// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
 typedef enum _THREADINFOCLASS
 {
@@ -109,4 +109,4 @@ typedef struct _KCONTINUE_ARGUMENT
 #define KCONTINUE_FLAG_TEST_ALERT  0x00000001
 #define KCONTINUE_FLAG_DELIVER_APC 0x00000002
 
-// NOLINTEND(modernize-use-using)
+// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
