@@ -18,6 +18,7 @@ namespace
         bool concise_logging{false};
         bool verbose_logging{false};
         bool silent{false};
+        bool buffer_stdout{false};
         std::filesystem::path dump{};
         std::string registry_path{"./registry"};
         std::string emulation_root{};
@@ -245,7 +246,7 @@ namespace
 
         (void)&watch_system_objects;
         watch_system_objects(*win_emu, options.modules, options.concise_logging);
-        win_emu->buffer_stdout = true;
+        win_emu->buffer_stdout = options.buffer_stdout;
 
         if (options.silent)
         {
@@ -348,6 +349,10 @@ namespace
             else if (arg == "-v")
             {
                 options.verbose_logging = true;
+            }
+            else if (arg == "-b")
+            {
+                options.buffer_stdout = true;
             }
             else if (arg == "-c")
             {
