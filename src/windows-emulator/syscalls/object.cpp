@@ -116,11 +116,6 @@ namespace syscalls
                                              const emulator_object<handle> handles, const WAIT_TYPE wait_type,
                                              const BOOLEAN alertable, const emulator_object<LARGE_INTEGER> timeout)
     {
-        if (alertable)
-        {
-            c.win_emu.log.print(color::gray, "Alertable NtWaitForMultipleObjects not supported yet!\n");
-        }
-
         if (wait_type != WaitAny && wait_type != WaitAll)
         {
             c.win_emu.log.error("Wait type not supported!\n");
@@ -151,18 +146,13 @@ namespace syscalls
             t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
         }
 
-        c.win_emu.yield_thread();
+        c.win_emu.yield_thread(alertable);
         return STATUS_SUCCESS;
     }
 
     NTSTATUS handle_NtWaitForSingleObject(const syscall_context& c, const handle h, const BOOLEAN alertable,
                                           const emulator_object<LARGE_INTEGER> timeout)
     {
-        if (alertable)
-        {
-            c.win_emu.log.print(color::gray, "Alertable NtWaitForSingleObject not supported yet!\n");
-        }
-
         if (!is_awaitable_object_type(h))
         {
             c.win_emu.log.print(color::gray, "Unsupported handle type for NtWaitForSingleObject: %d!\n", h.value.type);
@@ -178,7 +168,7 @@ namespace syscalls
             t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
         }
 
-        c.win_emu.yield_thread();
+        c.win_emu.yield_thread(alertable);
         return STATUS_SUCCESS;
     }
 

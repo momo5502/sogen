@@ -282,17 +282,9 @@ namespace syscalls
     NTSTATUS handle_NtDelayExecution(const syscall_context& c, const BOOLEAN alertable,
                                      const emulator_object<LARGE_INTEGER> delay_interval)
     {
-        if (alertable)
-        {
-            c.win_emu.log.error("Alertable NtDelayExecution not supported yet!\n");
-            c.emu.stop();
-            return STATUS_NOT_SUPPORTED;
-        }
-
         auto& t = c.win_emu.current_thread();
         t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), delay_interval.read());
-
-        c.win_emu.yield_thread();
+        c.win_emu.yield_thread(alertable);
 
         return STATUS_SUCCESS;
     }
@@ -369,15 +361,36 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtContinue(const syscall_context& c, const emulator_object<CONTEXT64> thread_context,
-                               const BOOLEAN /*raise_alert*/)
+    NTSTATUS handle_NtContinueEx(const syscall_context& c, const emulator_object<CONTEXT64> thread_context,
+                                 const uint64_t continue_argument)
     {
         c.write_status = false;
+
+        KCONTINUE_ARGUMENT argument{};
+        if (continue_argument <= 0xFF)
+        {
+            argument.ContinueFlags = KCONTINUE_FLAG_TEST_ALERT;
+        }
+        else
+        {
+            argument = c.emu.read_memory<KCONTINUE_ARGUMENT>(continue_argument);
+        }
 
         const auto context = thread_context.read();
         cpu_context::restore(c.emu, context);
 
+        if (argument.ContinueFlags & KCONTINUE_FLAG_TEST_ALERT)
+        {
+            c.win_emu.yield_thread(true);
+        }
+
         return STATUS_SUCCESS;
+    }
+
+    NTSTATUS handle_NtContinue(const syscall_context& c, const emulator_object<CONTEXT64> thread_context,
+                               const BOOLEAN raise_alert)
+    {
+        return handle_NtContinueEx(c, thread_context, raise_alert ? 1 : 0);
     }
 
     NTSTATUS handle_NtGetNextThread(const syscall_context& c, const handle process_handle, const handle thread_handle,
@@ -548,5 +561,61 @@ namespace syscalls
         constexpr PROCESSOR_NUMBER number{};
         processor_number.write(number);
         return STATUS_SUCCESS;
+    }
+
+    NTSTATUS handle_NtQueueApcThreadEx2(const syscall_context& c, const handle thread_handle,
+                                        const handle /*reserve_handle*/, const uint32_t apc_flags,
+                                        const uint64_t apc_routine, const uint64_t apc_argument1,
+                                        const uint64_t apc_argument2, const uint64_t apc_argument3)
+    {
+        auto* thread = thread_handle == CURRENT_THREAD ? c.proc.active_thread : c.proc.threads.get(thread_handle);
+
+        if (!thread)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        if (apc_flags)
+        {
+            c.win_emu.log.error("Unsupported APC flags: %X\n", apc_flags);
+            c.emu.stop();
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        thread->pending_apcs.push_back({
+            .flags = apc_flags,
+            .apc_routine = apc_routine,
+            .apc_argument1 = apc_argument1,
+            .apc_argument2 = apc_argument2,
+            .apc_argument3 = apc_argument3,
+        });
+
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtQueueApcThreadEx(const syscall_context& c, const handle thread_handle,
+                                       const handle reserve_handle, const uint64_t apc_routine,
+                                       const uint64_t apc_argument1, const uint64_t apc_argument2,
+                                       const uint64_t apc_argument3)
+    {
+        uint32_t flags{0};
+        auto real_reserve_handle = reserve_handle;
+        if (reserve_handle.bits == QUEUE_USER_APC_FLAGS_SPECIAL_USER_APC)
+        {
+            real_reserve_handle.bits = 0;
+            flags = QUEUE_USER_APC_FLAGS_SPECIAL_USER_APC;
+            static_assert(QUEUE_USER_APC_FLAGS_SPECIAL_USER_APC == 1);
+        }
+
+        return handle_NtQueueApcThreadEx2(c, thread_handle, real_reserve_handle, flags, apc_routine, apc_argument1,
+                                          apc_argument2, apc_argument3);
+    }
+
+    NTSTATUS handle_NtQueueApcThread(const syscall_context& c, const handle thread_handle, const uint64_t apc_routine,
+                                     const uint64_t apc_argument1, const uint64_t apc_argument2,
+                                     const uint64_t apc_argument3)
+    {
+        return handle_NtQueueApcThreadEx(c, thread_handle, make_handle(0), apc_routine, apc_argument1, apc_argument2,
+                                         apc_argument3);
     }
 }

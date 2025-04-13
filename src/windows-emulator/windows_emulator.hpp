@@ -183,7 +183,7 @@ class windows_emulator
     bool buffer_stdout{false};
     bool fuzzing{false};
 
-    void yield_thread();
+    void yield_thread(bool alertable = false);
     void perform_thread_switch();
     bool activate_thread(uint32_t id);
 

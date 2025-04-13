@@ -119,6 +119,7 @@ void process_context::setup(x64_emulator& emu, memory_manager& memory, const app
     this->ntdll_image_base = ntdll.image_base;
     this->ldr_initialize_thunk = ntdll.find_export("LdrInitializeThunk");
     this->rtl_user_thread_start = ntdll.find_export("RtlUserThreadStart");
+    this->ki_user_apc_dispatcher = ntdll.find_export("KiUserApcDispatcher");
     this->ki_user_exception_dispatcher = ntdll.find_export("KiUserExceptionDispatcher");
 
     this->default_register_set = emu.save_registers();
@@ -139,6 +140,7 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
     buffer.write(this->ntdll_image_base);
     buffer.write(this->ldr_initialize_thunk);
     buffer.write(this->rtl_user_thread_start);
+    buffer.write(this->ki_user_apc_dispatcher);
     buffer.write(this->ki_user_exception_dispatcher);
 
     buffer.write(this->events);
@@ -173,6 +175,7 @@ void process_context::deserialize(utils::buffer_deserializer& buffer)
     buffer.read(this->ntdll_image_base);
     buffer.read(this->ldr_initialize_thunk);
     buffer.read(this->rtl_user_thread_start);
+    buffer.read(this->ki_user_apc_dispatcher);
     buffer.read(this->ki_user_exception_dispatcher);
 
     buffer.read(this->events);

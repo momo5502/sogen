@@ -79,6 +79,51 @@ namespace
         return nullptr;
     }
 
+    void dispatch_next_apc(windows_emulator& win_emu, emulator_thread& thread)
+    {
+        assert(&win_emu.current_thread() == &thread);
+
+        auto& emu = win_emu.emu();
+        auto& apcs = thread.pending_apcs;
+        if (apcs.empty())
+        {
+            return;
+        }
+
+        win_emu.log.print(color::dark_gray, "Dispatching APC...\n");
+
+        const auto next_apx = apcs.front();
+        apcs.erase(apcs.begin());
+
+        struct
+        {
+            CONTEXT64 context{};
+            CONTEXT_EX context_ex{};
+            KCONTINUE_ARGUMENT continue_argument{};
+        } stack_layout;
+
+        static_assert(offsetof(decltype(stack_layout), continue_argument) == 0x4F0);
+
+        stack_layout.context.P1Home = next_apx.apc_argument1;
+        stack_layout.context.P2Home = next_apx.apc_argument2;
+        stack_layout.context.P3Home = next_apx.apc_argument3;
+        stack_layout.context.P4Home = next_apx.apc_routine;
+
+        stack_layout.continue_argument.ContinueFlags |= KCONTINUE_FLAG_TEST_ALERT;
+
+        auto& ctx = stack_layout.context;
+        ctx.ContextFlags = CONTEXT64_ALL;
+        cpu_context::save(emu, ctx);
+
+        const auto initial_sp = emu.reg(x64_register::rsp);
+        const auto new_sp = align_down(initial_sp - sizeof(stack_layout), 0x100);
+
+        emu.write_memory(new_sp, stack_layout);
+
+        emu.reg(x64_register::rsp, new_sp);
+        emu.reg(x64_register::rip, win_emu.process.ki_user_apc_dispatcher);
+    }
+
     bool switch_to_thread(windows_emulator& win_emu, emulator_thread& thread, const bool force = false)
     {
         if (thread.is_terminated())
@@ -90,30 +135,38 @@ namespace
         auto& context = win_emu.process;
 
         const auto is_ready = thread.is_thread_ready(context, win_emu.clock());
+        const auto can_dispatch_apcs = thread.apc_alertable && !thread.pending_apcs.empty();
 
-        if (!is_ready && !force)
+        if (!is_ready && !force && !can_dispatch_apcs)
         {
             return false;
         }
 
         auto* active_thread = context.active_thread;
 
-        if (active_thread == &thread)
+        if (active_thread != &thread)
         {
-            thread.setup_if_necessary(emu, context);
-            return true;
+            if (active_thread)
+            {
+                win_emu.log.print(color::dark_gray, "Performing thread switch: %X -> %X\n", active_thread->id,
+                                  thread.id);
+                active_thread->save(emu);
+            }
+
+            context.active_thread = &thread;
+
+            thread.restore(emu);
         }
 
-        if (active_thread)
-        {
-            win_emu.log.print(color::dark_gray, "Performing thread switch: %X -> %X\n", active_thread->id, thread.id);
-            active_thread->save(emu);
-        }
-
-        context.active_thread = &thread;
-
-        thread.restore(emu);
         thread.setup_if_necessary(emu, context);
+
+        if (can_dispatch_apcs)
+        {
+            thread.mark_as_ready(STATUS_USER_APC);
+            dispatch_next_apc(win_emu, thread);
+        }
+
+        thread.apc_alertable = false;
         return true;
     }
 
@@ -298,9 +351,10 @@ void windows_emulator::setup_process(const application_settings& app_settings)
     switch_to_thread(*this, main_thread_id);
 }
 
-void windows_emulator::yield_thread()
+void windows_emulator::yield_thread(const bool alertable)
 {
     this->switch_thread_ = true;
+    this->current_thread().apc_alertable = alertable;
     this->emu().stop();
 }
 

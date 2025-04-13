@@ -270,7 +270,9 @@ namespace syscalls
     NTSTATUS handle_NtResumeThread(const syscall_context& c, handle thread_handle,
                                    emulator_object<ULONG> previous_suspend_count);
     NTSTATUS handle_NtContinue(const syscall_context& c, emulator_object<CONTEXT64> thread_context,
-                               BOOLEAN /*raise_alert*/);
+                               BOOLEAN raise_alert);
+    NTSTATUS handle_NtContinueEx(const syscall_context& c, emulator_object<CONTEXT64> thread_context,
+                                 uint64_t continue_argument);
     NTSTATUS handle_NtGetNextThread(const syscall_context& c, handle process_handle, handle thread_handle,
                                     ACCESS_MASK /*desired_access*/, ULONG /*handle_attributes*/, ULONG flags,
                                     emulator_object<handle> new_thread_handle);
@@ -289,6 +291,14 @@ namespace syscalls
                                      emulator_object<PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>> attribute_list);
     NTSTATUS handle_NtGetCurrentProcessorNumberEx(const syscall_context&,
                                                   emulator_object<PROCESSOR_NUMBER> processor_number);
+    NTSTATUS handle_NtQueueApcThreadEx2(const syscall_context& c, handle thread_handle, handle reserve_handle,
+                                        uint32_t apc_flags, uint64_t apc_routine, uint64_t apc_argument1,
+                                        uint64_t apc_argument2, uint64_t apc_argument3);
+    NTSTATUS handle_NtQueueApcThreadEx(const syscall_context& c, handle thread_handle, handle reserve_handle,
+                                       uint64_t apc_routine, uint64_t apc_argument1, uint64_t apc_argument2,
+                                       uint64_t apc_argument3);
+    NTSTATUS handle_NtQueueApcThread(const syscall_context& c, handle thread_handle, uint64_t apc_routine,
+                                     uint64_t apc_argument1, uint64_t apc_argument2, uint64_t apc_argument3);
 
     // syscalls/timer.cpp:
     NTSTATUS handle_NtQueryTimerResolution(const syscall_context&, emulator_object<ULONG> maximum_time,
@@ -413,10 +423,10 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtTestAlert()
+    NTSTATUS handle_NtTestAlert(const syscall_context& c)
     {
-        // puts("NtTestAlert not supported");
-        return STATUS_NOT_SUPPORTED;
+        c.win_emu.yield_thread(true);
+        return STATUS_SUCCESS;
     }
 
     NTSTATUS handle_NtUserSystemParametersInfo()
@@ -664,6 +674,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtQueryLicenseValue);
     add_handler(NtTestAlert);
     add_handler(NtContinue);
+    add_handler(NtContinueEx);
     add_handler(NtTerminateProcess);
     add_handler(NtWriteFile);
     add_handler(NtRaiseHardError);
@@ -749,6 +760,9 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtClearEvent);
     add_handler(NtTraceControl);
     add_handler(NtUserGetProcessUIContextInformation);
+    add_handler(NtQueueApcThreadEx2);
+    add_handler(NtQueueApcThreadEx);
+    add_handler(NtQueueApcThread);
 
 #undef add_handler
 }

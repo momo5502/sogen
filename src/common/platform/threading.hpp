@@ -1,6 +1,6 @@
 #pragma once
 
-// NOLINTBEGIN(modernize-use-using)
+// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
 typedef enum _THREADINFOCLASS
 {
@@ -90,4 +90,32 @@ typedef struct _THREAD_TEB_INFORMATION
     ULONG BytesToRead;                           // Number of bytes to read.
 } THREAD_TEB_INFORMATION, *PTHREAD_TEB_INFORMATION;
 
-// NOLINTEND(modernize-use-using)
+typedef enum _KCONTINUE_TYPE
+{
+    KCONTINUE_UNWIND,
+    KCONTINUE_RESUME,
+    KCONTINUE_LONGJUMP,
+    KCONTINUE_SET,
+    KCONTINUE_LAST,
+} KCONTINUE_TYPE;
+
+typedef struct _KCONTINUE_ARGUMENT
+{
+    KCONTINUE_TYPE ContinueType;
+    ULONG ContinueFlags;
+    ULONGLONG Reserved[2];
+} KCONTINUE_ARGUMENT, *PKCONTINUE_ARGUMENT;
+
+#define KCONTINUE_FLAG_TEST_ALERT  0x00000001
+#define KCONTINUE_FLAG_DELIVER_APC 0x00000002
+
+#ifndef OS_WINDOWS
+typedef enum _QUEUE_USER_APC_FLAGS
+{
+    QUEUE_USER_APC_FLAGS_NONE,
+    QUEUE_USER_APC_FLAGS_SPECIAL_USER_APC,
+    QUEUE_USER_APC_CALLBACK_DATA_CONTEXT
+} QUEUE_USER_APC_FLAGS;
+#endif
+
+// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)

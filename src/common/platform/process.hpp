@@ -670,6 +670,20 @@ typedef struct DECLSPEC_ALIGN(16) _CONTEXT64
     DWORD64 LastExceptionFromRip;
 } CONTEXT64, *PCONTEXT64;
 
+typedef struct _CONTEXT_CHUNK
+{
+    LONG Offset; // Offset may be negative.
+    ULONG Length;
+} CONTEXT_CHUNK, *PCONTEXT_CHUNK;
+
+typedef struct _CONTEXT_EX
+{
+    CONTEXT_CHUNK All;
+    CONTEXT_CHUNK Legacy;
+    CONTEXT_CHUNK XState;
+    CONTEXT_CHUNK KernelCet;
+} CONTEXT_EX, *PCONTEXT_EX;
+
 template <typename Traits>
 struct EMU_EXCEPTION_RECORD
 {

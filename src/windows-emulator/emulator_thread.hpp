@@ -8,6 +8,33 @@
 
 struct process_context;
 
+struct pending_apc
+{
+    uint32_t flags{};
+    uint64_t apc_routine{};
+    uint64_t apc_argument1{};
+    uint64_t apc_argument2{};
+    uint64_t apc_argument3{};
+
+    void serialize(utils::buffer_serializer& buffer) const
+    {
+        buffer.write(this->flags);
+        buffer.write(this->apc_routine);
+        buffer.write(this->apc_argument1);
+        buffer.write(this->apc_argument2);
+        buffer.write(this->apc_argument3);
+    }
+
+    void deserialize(utils::buffer_deserializer& buffer)
+    {
+        buffer.read(this->flags);
+        buffer.read(this->apc_routine);
+        buffer.read(this->apc_argument1);
+        buffer.read(this->apc_argument2);
+        buffer.read(this->apc_argument3);
+    }
+};
+
 class emulator_thread : public ref_counted_object
 {
   public:
@@ -56,6 +83,9 @@ class emulator_thread : public ref_counted_object
     bool alerted{false};
     uint32_t suspended{0};
     std::optional<std::chrono::steady_clock::time_point> await_time{};
+
+    bool apc_alertable{false};
+    std::vector<pending_apc> pending_apcs{};
 
     std::optional<NTSTATUS> pending_status{};
 
@@ -125,8 +155,11 @@ class emulator_thread : public ref_counted_object
         buffer.write(this->alerted);
 
         buffer.write(this->suspended);
-
         buffer.write_optional(this->await_time);
+
+        buffer.write(this->apc_alertable);
+        buffer.write_vector(this->pending_apcs);
+
         buffer.write_optional(this->pending_status);
         buffer.write_optional(this->gs_segment);
         buffer.write_optional(this->teb);
@@ -160,8 +193,11 @@ class emulator_thread : public ref_counted_object
         buffer.read(this->alerted);
 
         buffer.read(this->suspended);
-
         buffer.read_optional(this->await_time);
+
+        buffer.read(this->apc_alertable);
+        buffer.read_vector(this->pending_apcs);
+
         buffer.read_optional(this->pending_status);
         buffer.read_optional(this->gs_segment, [this] { return emulator_allocator(*this->memory_ptr); });
         buffer.read_optional(this->teb, [this] { return emulator_object<TEB64>(*this->memory_ptr); });

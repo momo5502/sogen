@@ -75,6 +75,7 @@ struct process_context
     uint64_t ntdll_image_base{};
     uint64_t ldr_initialize_thunk{};
     uint64_t rtl_user_thread_start{};
+    uint64_t ki_user_apc_dispatcher{};
     uint64_t ki_user_exception_dispatcher{};
 
     handle_store<handle_types::event, event> events{};
