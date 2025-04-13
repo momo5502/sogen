@@ -10,7 +10,7 @@ struct process_context;
 
 struct pending_apc
 {
-    ULONG flags{};
+    uint32_t flags{};
     uint64_t apc_routine{};
     uint64_t apc_argument1{};
     uint64_t apc_argument2{};

@@ -565,7 +565,7 @@ namespace syscalls
     }
 
     NTSTATUS handle_NtQueueApcThreadEx2(const syscall_context& c, const handle thread_handle,
-                                        const handle /*reserve_handle*/, const ULONG apc_flags,
+                                        const handle /*reserve_handle*/, const uint32_t apc_flags,
                                         const uint64_t apc_routine, const uint64_t apc_argument1,
                                         const uint64_t apc_argument2, const uint64_t apc_argument3)
     {
@@ -574,6 +574,13 @@ namespace syscalls
         if (!thread)
         {
             return STATUS_INVALID_HANDLE;
+        }
+
+        if (apc_flags)
+        {
+            c.win_emu.log.error("Unsupported APC flags: %X\n", apc_flags);
+            c.emu.stop();
+            return STATUS_NOT_SUPPORTED;
         }
 
         thread->pending_apcs.push_back({

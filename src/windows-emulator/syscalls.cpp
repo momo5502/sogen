@@ -292,7 +292,7 @@ namespace syscalls
     NTSTATUS handle_NtGetCurrentProcessorNumberEx(const syscall_context&,
                                                   emulator_object<PROCESSOR_NUMBER> processor_number);
     NTSTATUS handle_NtQueueApcThreadEx2(const syscall_context& c, handle thread_handle, handle reserve_handle,
-                                        ULONG apc_flags, uint64_t apc_routine, uint64_t apc_argument1,
+                                        uint32_t apc_flags, uint64_t apc_routine, uint64_t apc_argument1,
                                         uint64_t apc_argument2, uint64_t apc_argument3);
 
     // syscalls/timer.cpp:
