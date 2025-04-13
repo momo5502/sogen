@@ -565,10 +565,25 @@ namespace syscalls
     }
 
     NTSTATUS handle_NtQueueApcThreadEx2(const syscall_context& c, const handle thread_handle,
-                                        const handle reserve_handle, const ULONG apc_flags, const uint64_t apc_routine,
-                                        const uint64_t apc_argument1, const uint64_t apc_argument2,
-                                        const uint64_t apc_argument3)
+                                        const handle /*reserve_handle*/, const ULONG apc_flags,
+                                        const uint64_t apc_routine, const uint64_t apc_argument1,
+                                        const uint64_t apc_argument2, const uint64_t apc_argument3)
     {
+        auto* thread = thread_handle == CURRENT_THREAD ? c.proc.active_thread : c.proc.threads.get(thread_handle);
+
+        if (!thread)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        thread->pending_apcs.push_back({
+            .flags = apc_flags,
+            .apc_routine = apc_routine,
+            .apc_argument1 = apc_argument1,
+            .apc_argument2 = apc_argument2,
+            .apc_argument3 = apc_argument3,
+        });
+
         return STATUS_NOT_SUPPORTED;
     }
 }
