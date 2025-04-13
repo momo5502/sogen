@@ -328,11 +328,12 @@ impl IcicleEmulator {
 
     fn handle_exception(&mut self, code: ExceptionCode, value: u64) -> bool {
         let continue_execution = match code {
-            ExceptionCode::Syscall => self.handle_syscall(),
+            ExceptionCode::Syscall => self.handle_syscall(value),
             ExceptionCode::ReadPerm => self.handle_violation(value, FOREIGN_READ, false),
             ExceptionCode::WritePerm => self.handle_violation(value, FOREIGN_WRITE, false),
             ExceptionCode::ReadUnmapped => self.handle_violation(value, FOREIGN_READ, true),
             ExceptionCode::WriteUnmapped => self.handle_violation(value, FOREIGN_WRITE, true),
+            ExceptionCode::SoftwareBreakpoint => self.handle_interrupt(3),
             ExceptionCode::InvalidInstruction => self.handle_interrupt(6),
             ExceptionCode::DivisionException => self.handle_interrupt(0),
             _ => false,
@@ -356,7 +357,11 @@ impl IcicleEmulator {
         return continue_execution;
     }
 
-    fn handle_syscall(&mut self) -> bool {
+    fn handle_syscall(&mut self, value: u64) -> bool {
+        if value != 0 {
+            return self.handle_interrupt(value as i32);
+        }
+
         for (_key, func) in self.syscall_hooks.get_hooks() {
             func();
         }
