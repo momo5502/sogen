@@ -434,22 +434,24 @@ namespace
 
     bool test_apc()
     {
-        bool executed = false;
-        QueueUserAPC(
-            +[](ULONG_PTR param) {
-                *reinterpret_cast<bool*>(param) = true; //
-            },
-            GetCurrentThread(), reinterpret_cast<ULONG_PTR>(&executed));
+        int executions = 0;
+
+        auto* apc_func = +[](ULONG_PTR param) {
+            *reinterpret_cast<int*>(param) += 1; //
+        };
+
+        QueueUserAPC(apc_func, GetCurrentThread(), reinterpret_cast<ULONG_PTR>(&executions));
+        QueueUserAPC(apc_func, GetCurrentThread(), reinterpret_cast<ULONG_PTR>(&executions));
 
         Sleep(1);
 
-        if (executed)
+        if (executions != 0)
         {
             return false;
         }
 
         SleepEx(1, TRUE);
-        return executed;
+        return executions == 2;
     }
 }
 
