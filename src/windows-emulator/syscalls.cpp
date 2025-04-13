@@ -496,6 +496,11 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
+    NTSTATUS handle_NtCreateUserProcess()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
     NTSTATUS handle_NtAddAtomEx(const syscall_context& c, const uint64_t atom_name, const ULONG length,
                                 const emulator_object<RTL_ATOM> atom, const ULONG /*flags*/)
     {
@@ -763,6 +768,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtQueueApcThreadEx2);
     add_handler(NtQueueApcThreadEx);
     add_handler(NtQueueApcThread);
+    add_handler(NtCreateUserProcess);
 
 #undef add_handler
 }
