@@ -243,6 +243,7 @@ namespace
     bool run(const analysis_options& options, const std::span<const std::string_view> args)
     {
         const auto win_emu = setup_emulator(options, args);
+        win_emu->log.log("Using emulator: %s\n", win_emu->emu().get_name().c_str());
 
         (void)&watch_system_objects;
         watch_system_objects(*win_emu, options.modules, options.concise_logging);
