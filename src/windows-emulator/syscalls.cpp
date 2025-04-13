@@ -413,10 +413,10 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtTestAlert()
+    NTSTATUS handle_NtTestAlert(const syscall_context& c)
     {
-        // puts("NtTestAlert not supported");
-        return STATUS_NOT_SUPPORTED;
+        c.win_emu.yield_thread(true);
+        return STATUS_SUCCESS;
     }
 
     NTSTATUS handle_NtUserSystemParametersInfo()

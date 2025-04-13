@@ -298,9 +298,10 @@ void windows_emulator::setup_process(const application_settings& app_settings)
     switch_to_thread(*this, main_thread_id);
 }
 
-void windows_emulator::yield_thread()
+void windows_emulator::yield_thread(const bool alertable)
 {
     this->switch_thread_ = true;
+    this->current_thread().apc_alertable = alertable;
     this->emu().stop();
 }
 

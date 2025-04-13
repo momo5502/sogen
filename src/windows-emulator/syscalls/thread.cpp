@@ -282,17 +282,9 @@ namespace syscalls
     NTSTATUS handle_NtDelayExecution(const syscall_context& c, const BOOLEAN alertable,
                                      const emulator_object<LARGE_INTEGER> delay_interval)
     {
-        if (alertable)
-        {
-            c.win_emu.log.error("Alertable NtDelayExecution not supported yet!\n");
-            c.emu.stop();
-            return STATUS_NOT_SUPPORTED;
-        }
-
         auto& t = c.win_emu.current_thread();
         t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), delay_interval.read());
-
-        c.win_emu.yield_thread();
+        c.win_emu.yield_thread(alertable);
 
         return STATUS_SUCCESS;
     }
@@ -370,9 +362,14 @@ namespace syscalls
     }
 
     NTSTATUS handle_NtContinue(const syscall_context& c, const emulator_object<CONTEXT64> thread_context,
-                               const BOOLEAN /*raise_alert*/)
+                               const BOOLEAN raise_alert)
     {
         c.write_status = false;
+
+        if (raise_alert)
+        {
+            c.win_emu.current_thread().apc_alertable = false;
+        }
 
         const auto context = thread_context.read();
         cpu_context::restore(c.emu, context);
