@@ -600,7 +600,16 @@ namespace syscalls
                                        const uint64_t apc_argument1, const uint64_t apc_argument2,
                                        const uint64_t apc_argument3)
     {
-        return handle_NtQueueApcThreadEx2(c, thread_handle, reserve_handle, 0, apc_routine, apc_argument1,
+        uint32_t flags{0};
+        auto real_reserve_handle = reserve_handle;
+        if (reserve_handle.bits == QUEUE_USER_APC_FLAGS_SPECIAL_USER_APC)
+        {
+            real_reserve_handle.bits = 0;
+            flags = QUEUE_USER_APC_FLAGS_SPECIAL_USER_APC;
+            static_assert(QUEUE_USER_APC_FLAGS_SPECIAL_USER_APC == 1);
+        }
+
+        return handle_NtQueueApcThreadEx2(c, thread_handle, real_reserve_handle, flags, apc_routine, apc_argument1,
                                           apc_argument2, apc_argument3);
     }
 
