@@ -404,6 +404,23 @@ namespace
         }
     }
 
+    bool test_unhandled_exception()
+    {
+        thread_local bool caught{};
+        caught = false;
+
+        auto* old = SetUnhandledExceptionFilter(+[](struct _EXCEPTION_POINTERS* ExceptionInfo) -> LONG {
+            caught = true;
+            ExceptionInfo->ContextRecord->Rip += 1;
+            return EXCEPTION_CONTINUE_EXECUTION; //
+        });
+
+        DebugBreak();
+        SetUnhandledExceptionFilter(old);
+
+        return caught;
+    }
+
     bool test_illegal_instruction_exception()
     {
         const auto address = VirtualAlloc(nullptr, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
@@ -423,7 +440,9 @@ namespace
 
     bool test_native_exceptions()
     {
-        return test_access_violation_exception() && test_illegal_instruction_exception();
+        return test_access_violation_exception()       //
+               && test_illegal_instruction_exception() //
+               && test_unhandled_exception();
     }
 
     void print_time()
