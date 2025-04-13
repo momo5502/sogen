@@ -90,27 +90,24 @@ namespace
             return;
         }
 
-        win_emu.log.print(color::dark_gray, "Dispatching APC...");
+        win_emu.log.print(color::dark_gray, "Dispatching APC...\n");
 
         const auto next_apx = apcs.front();
         apcs.erase(apcs.begin());
 
         struct
         {
-            uint64_t apc_argument1{};
-            uint64_t apc_argument2{};
-            uint64_t apc_argument3{};
-            uint64_t apc_routine{};
             CONTEXT64 context{};
+            CONTEXT_EX context_ex{};
             KCONTINUE_ARGUMENT continue_argument{};
         } stack_layout;
 
         static_assert(offsetof(decltype(stack_layout), continue_argument) == 0x4F0);
 
-        stack_layout.apc_routine = next_apx.apc_routine;
-        stack_layout.apc_argument1 = next_apx.apc_argument1;
-        stack_layout.apc_argument2 = next_apx.apc_argument2;
-        stack_layout.apc_argument3 = next_apx.apc_argument3;
+        stack_layout.context.P1Home = next_apx.apc_argument1;
+        stack_layout.context.P2Home = next_apx.apc_argument2;
+        stack_layout.context.P3Home = next_apx.apc_argument3;
+        stack_layout.context.P4Home = next_apx.apc_routine;
 
         stack_layout.continue_argument.ContinueFlags |= KCONTINUE_FLAG_TEST_ALERT;
 
