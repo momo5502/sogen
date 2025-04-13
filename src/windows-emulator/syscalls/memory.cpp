@@ -91,7 +91,7 @@ namespace syscalls
                 return_length.write(sizeof(MEMORY_REGION_INFORMATION64));
             }
 
-            if (memory_information_length != sizeof(MEMORY_REGION_INFORMATION64))
+            if (memory_information_length < sizeof(MEMORY_REGION_INFORMATION64))
             {
                 return STATUS_BUFFER_OVERFLOW;
             }
@@ -108,8 +108,8 @@ namespace syscalls
                 memset(&image_info, 0, sizeof(image_info));
 
                 image_info.AllocationBase = reinterpret_cast<void*>(region_info.allocation_base);
-                image_info.AllocationProtect = 0;
-                image_info.PartitionId = 0;
+                image_info.AllocationProtect = map_emulator_to_nt_protection(region_info.initial_permissions);
+                // image_info.PartitionId = 0;
                 image_info.RegionSize = static_cast<int64_t>(region_info.allocation_length);
                 image_info.Reserved = 0x10;
             });

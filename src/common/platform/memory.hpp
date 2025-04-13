@@ -126,8 +126,8 @@ typedef struct _MEMORY_REGION_INFORMATION
 
     std::int64_t RegionSize;
     std::int64_t CommitSize;
-    DWORD64 PartitionId;    // 19H1
-    DWORD64 NodePreference; // 20H1
+    // DWORD64 PartitionId;    // 19H1
+    // DWORD64 NodePreference; // 20H1
 } MEMORY_REGION_INFORMATION64, *PMEMORY_REGION_INFORMATION64;
 
 // NOLINTEND(modernize-use-using)
