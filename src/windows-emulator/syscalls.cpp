@@ -291,6 +291,9 @@ namespace syscalls
                                      emulator_object<PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>> attribute_list);
     NTSTATUS handle_NtGetCurrentProcessorNumberEx(const syscall_context&,
                                                   emulator_object<PROCESSOR_NUMBER> processor_number);
+    NTSTATUS handle_NtQueueApcThreadEx2(const syscall_context& c, handle thread_handle, handle reserve_handle,
+                                        ULONG apc_flags, uint64_t apc_routine, uint64_t apc_argument1,
+                                        uint64_t apc_argument2, uint64_t apc_argument3);
 
     // syscalls/timer.cpp:
     NTSTATUS handle_NtQueryTimerResolution(const syscall_context&, emulator_object<ULONG> maximum_time,
@@ -752,6 +755,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtClearEvent);
     add_handler(NtTraceControl);
     add_handler(NtUserGetProcessUIContextInformation);
+    add_handler(NtQueueApcThreadEx2);
 
 #undef add_handler
 }

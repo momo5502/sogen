@@ -563,4 +563,12 @@ namespace syscalls
         processor_number.write(number);
         return STATUS_SUCCESS;
     }
+
+    NTSTATUS handle_NtQueueApcThreadEx2(const syscall_context& c, const handle thread_handle,
+                                        const handle reserve_handle, const ULONG apc_flags, const uint64_t apc_routine,
+                                        const uint64_t apc_argument1, const uint64_t apc_argument2,
+                                        const uint64_t apc_argument3)
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
 }
