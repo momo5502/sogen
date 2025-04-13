@@ -361,15 +361,13 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtContinueEx(const syscall_context& c, const emulator_object<CONTEXT64> thread_context,
+    NTSTATUS handle_NtContinueEx(const syscall_context& c, emulator_object<CONTEXT64> thread_context,
                                  const uint64_t continue_argument)
     {
         c.write_status = false;
 
-        const auto context = thread_context.read();
-        cpu_context::restore(c.emu, context);
-
         KCONTINUE_ARGUMENT argument{};
+        thread_context = thread_context.shift(0x20); // TODO: Figure out what that is? Extended context?
 
         if (continue_argument <= 0xFF)
         {
@@ -379,6 +377,9 @@ namespace syscalls
         {
             argument = c.emu.read_memory<KCONTINUE_ARGUMENT>(continue_argument);
         }
+
+        const auto context = thread_context.read();
+        cpu_context::restore(c.emu, context);
 
         if (argument.ContinueFlags & KCONTINUE_FLAG_TEST_ALERT)
         {
@@ -391,7 +392,7 @@ namespace syscalls
     NTSTATUS handle_NtContinue(const syscall_context& c, const emulator_object<CONTEXT64> thread_context,
                                const BOOLEAN raise_alert)
     {
-        return handle_NtContinueEx(c, thread_context, raise_alert ? 1 : 0);
+        return handle_NtContinueEx(c, thread_context.shift(-0x20), raise_alert ? 1 : 0);
     }
 
     NTSTATUS handle_NtGetNextThread(const syscall_context& c, const handle process_handle, const handle thread_handle,

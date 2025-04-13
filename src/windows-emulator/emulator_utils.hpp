@@ -161,6 +161,11 @@ class emulator_object
         this->address_ = address;
     }
 
+    emulator_object<T> shift(const int64_t offset) const
+    {
+        return emulator_object<T>(*this->memory_, this->address_ + offset);
+    }
+
   private:
     memory_interface* memory_{};
     uint64_t address_{};
