@@ -294,6 +294,11 @@ namespace syscalls
     NTSTATUS handle_NtQueueApcThreadEx2(const syscall_context& c, handle thread_handle, handle reserve_handle,
                                         uint32_t apc_flags, uint64_t apc_routine, uint64_t apc_argument1,
                                         uint64_t apc_argument2, uint64_t apc_argument3);
+    NTSTATUS handle_NtQueueApcThreadEx(const syscall_context& c, handle thread_handle, handle reserve_handle,
+                                       uint64_t apc_routine, uint64_t apc_argument1, uint64_t apc_argument2,
+                                       uint64_t apc_argument3);
+    NTSTATUS handle_NtQueueApcThread(const syscall_context& c, handle thread_handle, uint64_t apc_routine,
+                                     uint64_t apc_argument1, uint64_t apc_argument2, uint64_t apc_argument3);
 
     // syscalls/timer.cpp:
     NTSTATUS handle_NtQueryTimerResolution(const syscall_context&, emulator_object<ULONG> maximum_time,
@@ -756,6 +761,8 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtTraceControl);
     add_handler(NtUserGetProcessUIContextInformation);
     add_handler(NtQueueApcThreadEx2);
+    add_handler(NtQueueApcThreadEx);
+    add_handler(NtQueueApcThread);
 
 #undef add_handler
 }

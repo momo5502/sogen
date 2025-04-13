@@ -594,4 +594,21 @@ namespace syscalls
 
         return STATUS_NOT_SUPPORTED;
     }
+
+    NTSTATUS handle_NtQueueApcThreadEx(const syscall_context& c, const handle thread_handle,
+                                       const handle reserve_handle, const uint64_t apc_routine,
+                                       const uint64_t apc_argument1, const uint64_t apc_argument2,
+                                       const uint64_t apc_argument3)
+    {
+        return handle_NtQueueApcThreadEx2(c, thread_handle, reserve_handle, 0, apc_routine, apc_argument1,
+                                          apc_argument2, apc_argument3);
+    }
+
+    NTSTATUS handle_NtQueueApcThread(const syscall_context& c, const handle thread_handle, const uint64_t apc_routine,
+                                     const uint64_t apc_argument1, const uint64_t apc_argument2,
+                                     const uint64_t apc_argument3)
+    {
+        return handle_NtQueueApcThreadEx(c, thread_handle, make_handle(0), apc_routine, apc_argument1, apc_argument2,
+                                         apc_argument3);
+    }
 }
