@@ -270,7 +270,9 @@ namespace syscalls
     NTSTATUS handle_NtResumeThread(const syscall_context& c, handle thread_handle,
                                    emulator_object<ULONG> previous_suspend_count);
     NTSTATUS handle_NtContinue(const syscall_context& c, emulator_object<CONTEXT64> thread_context,
-                               BOOLEAN /*raise_alert*/);
+                               BOOLEAN raise_alert);
+    NTSTATUS handle_NtContinueEx(const syscall_context& c, emulator_object<CONTEXT64> thread_context,
+                                 uint64_t continue_argument);
     NTSTATUS handle_NtGetNextThread(const syscall_context& c, handle process_handle, handle thread_handle,
                                     ACCESS_MASK /*desired_access*/, ULONG /*handle_attributes*/, ULONG flags,
                                     emulator_object<handle> new_thread_handle);
@@ -664,6 +666,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtQueryLicenseValue);
     add_handler(NtTestAlert);
     add_handler(NtContinue);
+    add_handler(NtContinueEx);
     add_handler(NtTerminateProcess);
     add_handler(NtWriteFile);
     add_handler(NtRaiseHardError);
