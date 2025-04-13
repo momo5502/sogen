@@ -18,6 +18,7 @@ struct region_info : basic_memory_region
     size_t allocation_length{};
     bool is_reserved{};
     bool is_committed{};
+    memory_permission initial_permissions{};
 };
 
 using mmio_read_callback = std::function<void(uint64_t addr, void* data, size_t size)>;
@@ -42,6 +43,7 @@ class memory_manager : public memory_interface
     struct reserved_region
     {
         size_t length{};
+        memory_permission initial_permission{};
         committed_region_map committed_regions{};
         bool is_mmio{false};
     };

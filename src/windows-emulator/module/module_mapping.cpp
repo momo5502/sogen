@@ -219,19 +219,21 @@ mapped_module map_module_from_data(memory_manager& memory, const std::span<const
     binary.image_base = optional_header.ImageBase;
     binary.size_of_image = page_align_up(optional_header.SizeOfImage); // TODO: Sanitize
 
-    if (!memory.allocate_memory(binary.image_base, binary.size_of_image, memory_permission::read))
+    if (!memory.allocate_memory(binary.image_base, binary.size_of_image, memory_permission::all))
     {
         binary.image_base = memory.find_free_allocation_base(binary.size_of_image);
         const auto is_dll = nt_headers.FileHeader.Characteristics & IMAGE_FILE_DLL;
         const auto has_dynamic_base = optional_header.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
         const auto is_relocatable = is_dll || has_dynamic_base;
 
-        if (!is_relocatable ||
-            !memory.allocate_memory(binary.image_base, binary.size_of_image, memory_permission::read))
+        if (!is_relocatable || !memory.allocate_memory(binary.image_base, binary.size_of_image, memory_permission::all))
         {
             throw std::runtime_error("Memory range not allocatable");
         }
     }
+
+    // TODO: Make sure to match kernel allocation patterns to attain correct initial permissions!
+    memory.protect_memory(binary.image_base, binary.size_of_image, memory_permission::read);
 
     binary.entry_point = binary.image_base + optional_header.AddressOfEntryPoint;
 

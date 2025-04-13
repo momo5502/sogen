@@ -43,11 +43,11 @@ namespace syscalls
                 image_info.State = region_info.is_committed ? MEM_COMMIT : state;
                 image_info.BaseAddress = reinterpret_cast<void*>(region_info.start);
                 image_info.AllocationBase = reinterpret_cast<void*>(region_info.allocation_base);
-                image_info.AllocationProtect = 0;
                 image_info.PartitionId = 0;
                 image_info.RegionSize = static_cast<int64_t>(region_info.length);
 
                 image_info.Protect = map_emulator_to_nt_protection(region_info.permissions);
+                image_info.AllocationProtect = map_emulator_to_nt_protection(region_info.initial_permissions);
                 image_info.Type = MEM_PRIVATE;
             });
 
