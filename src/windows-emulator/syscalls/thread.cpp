@@ -577,7 +577,7 @@ namespace syscalls
 
         if (apc_flags)
         {
-            c.win_emu.log.error("Unsupported APC flags: %X\n", apc_flags);
+            c.win_emu.log.warn("Unsupported APC flags: %X\n", apc_flags);
             // c.emu.stop();
             // return STATUS_NOT_SUPPORTED;
         }

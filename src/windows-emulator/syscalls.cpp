@@ -96,6 +96,19 @@ namespace syscalls
     NTSTATUS handle_NtQuerySymbolicLinkObject(const syscall_context& c, handle link_handle,
                                               emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> link_target,
                                               emulator_object<ULONG> returned_length);
+    NTSTATUS handle_NtCreateNamedPipeFile(const syscall_context& c, emulator_object<handle> file_handle,
+                                          ULONG desired_access,
+                                          emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                          emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                                          ULONG share_access, ULONG create_disposition, ULONG create_options,
+                                          ULONG named_pipe_type, ULONG read_mode, ULONG completion_mode,
+                                          ULONG maximum_instances, ULONG inbound_quota, ULONG outbound_quota,
+                                          emulator_object<LARGE_INTEGER> default_timeout);
+    NTSTATUS handle_NtFsControlFile(const syscall_context& c, handle event_handle, uint64_t apc_routine,
+                                    uint64_t app_context,
+                                    emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                                    ULONG fs_control_code, uint64_t input_buffer, ULONG input_buffer_length,
+                                    uint64_t output_buffer, ULONG output_buffer_length);
 
     // syscalls/locale.cpp:
     NTSTATUS handle_NtInitializeNlsFiles(const syscall_context& c, emulator_object<uint64_t> base_address,
@@ -112,7 +125,7 @@ namespace syscalls
     // syscalls/memory.cpp:
     NTSTATUS handle_NtQueryVirtualMemory(const syscall_context& c, handle process_handle, uint64_t base_address,
                                          uint32_t info_class, uint64_t memory_information,
-                                         uint32_t memory_information_length, emulator_object<uint32_t> return_length);
+                                         uint32_t memory_information_length, emulator_object<uint64_t> return_length);
     NTSTATUS handle_NtProtectVirtualMemory(const syscall_context& c, handle process_handle,
                                            emulator_object<uint64_t> base_address,
                                            emulator_object<uint32_t> bytes_to_protect, uint32_t protection,
@@ -629,29 +642,6 @@ namespace syscalls
     NTSTATUS handle_NtUserMoveWindow()
     {
         return 0;
-    }
-
-    NTSTATUS handle_NtCreateNamedPipeFile(
-        const syscall_context& c, const emulator_object<handle> file_handle, const ULONG desired_access,
-        const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
-        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const ULONG share_access,
-        const ULONG create_disposition, const ULONG create_options, const ULONG named_pipe_type, const ULONG read_mode,
-        const ULONG completion_mode, const ULONG maximum_instances, const ULONG inbound_quota,
-        const ULONG outbound_quota, const emulator_object<LARGE_INTEGER> default_timeout)
-    {
-        file_handle.write(handle{.value = {.id = 1337, .type = handle_types::file, .is_pseudo = 1}});
-
-        return STATUS_SUCCESS;
-    }
-
-    NTSTATUS handle_NtFsControlFile(const syscall_context& c, const handle event_handle, const uint64_t apc_routine,
-                                    const uint64_t app_context,
-                                    const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
-                                    const ULONG fs_control_code, const uint64_t input_buffer,
-                                    const ULONG input_buffer_length, const uint64_t output_buffer,
-                                    const ULONG output_buffer_length)
-    {
-        return STATUS_SUCCESS;
     }
 }
 

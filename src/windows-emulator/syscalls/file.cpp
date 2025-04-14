@@ -820,4 +820,31 @@ namespace syscalls
 
         return STATUS_NOT_SUPPORTED;
     }
+
+    NTSTATUS handle_NtCreateNamedPipeFile(
+        const syscall_context& c, const emulator_object<handle> file_handle, const ULONG desired_access,
+        const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const ULONG share_access,
+        const ULONG create_disposition, const ULONG create_options, const ULONG named_pipe_type, const ULONG read_mode,
+        const ULONG completion_mode, const ULONG maximum_instances, const ULONG inbound_quota,
+        const ULONG outbound_quota, const emulator_object<LARGE_INTEGER> default_timeout)
+    {
+        c.win_emu.log.error("Unimplemented syscall NtCreateNamedPipeFile!");
+        c.emu.stop();
+
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtFsControlFile(const syscall_context& c, const handle event_handle, const uint64_t apc_routine,
+                                    const uint64_t app_context,
+                                    const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                                    const ULONG fs_control_code, const uint64_t input_buffer,
+                                    const ULONG input_buffer_length, const uint64_t output_buffer,
+                                    const ULONG output_buffer_length)
+    {
+        c.win_emu.log.error("Unimplemented syscall NtFsControlFile!");
+        c.emu.stop();
+
+        return STATUS_NOT_SUPPORTED;
+    }
 }

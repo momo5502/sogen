@@ -9,7 +9,7 @@ namespace syscalls
     NTSTATUS handle_NtQueryVirtualMemory(const syscall_context& c, const handle process_handle,
                                          const uint64_t base_address, const uint32_t info_class,
                                          const uint64_t memory_information, const uint32_t memory_information_length,
-                                         const emulator_object<uint32_t> return_length)
+                                         const emulator_object<uint64_t> return_length)
     {
         if (process_handle != CURRENT_PROCESS)
         {
