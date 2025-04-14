@@ -153,7 +153,7 @@ impl ExecutionHooks {
         }
 
         let mapping = self.address_mapping.get(&address);
-        if mapping.is_none(){
+        if mapping.is_none() {
             return;
         }
 
@@ -165,7 +165,7 @@ impl ExecutionHooks {
         }
     }
 
-    pub fn execute(&mut self,cpu: &mut icicle_cpu::Cpu, address: u64) {
+    pub fn execute(&mut self, cpu: &mut icicle_cpu::Cpu, address: u64) {
         self.run_hooks(address);
 
         if *self.stop.borrow() {
@@ -188,7 +188,7 @@ impl ExecutionHooks {
     }
 
     pub fn remove_generic_hook(&mut self, id: u32) {
-       self.generic_hooks.remove_hook(id);
+        self.generic_hooks.remove_hook(id);
     }
 
     pub fn remove_specific_hook(&mut self, id: u32) {
@@ -198,7 +198,7 @@ impl ExecutionHooks {
         });
 
         self.specific_hooks.remove_hook(id);
-     }
+    }
 }
 
 pub struct IcicleEmulator {
@@ -328,11 +328,12 @@ impl IcicleEmulator {
 
     fn handle_exception(&mut self, code: ExceptionCode, value: u64) -> bool {
         let continue_execution = match code {
-            ExceptionCode::Syscall => self.handle_syscall(),
+            ExceptionCode::Syscall => self.handle_syscall(value),
             ExceptionCode::ReadPerm => self.handle_violation(value, FOREIGN_READ, false),
             ExceptionCode::WritePerm => self.handle_violation(value, FOREIGN_WRITE, false),
             ExceptionCode::ReadUnmapped => self.handle_violation(value, FOREIGN_READ, true),
             ExceptionCode::WriteUnmapped => self.handle_violation(value, FOREIGN_WRITE, true),
+            ExceptionCode::SoftwareBreakpoint => self.handle_interrupt(3),
             ExceptionCode::InvalidInstruction => self.handle_interrupt(6),
             ExceptionCode::DivisionException => self.handle_interrupt(0),
             _ => false,
@@ -356,7 +357,11 @@ impl IcicleEmulator {
         return continue_execution;
     }
 
-    fn handle_syscall(&mut self) -> bool {
+    fn handle_syscall(&mut self, value: u64) -> bool {
+        if value != 0 {
+            return self.handle_interrupt(value as i32);
+        }
+
         for (_key, func) in self.syscall_hooks.get_hooks() {
             func();
         }
@@ -377,9 +382,12 @@ impl IcicleEmulator {
         let hook_id = self.violation_hooks.add_hook(callback);
         return qualify_hook_id(hook_id, HookType::Violation);
     }
-    
-    pub fn add_execution_hook(&mut self, address:u64, callback: Box<dyn Fn(u64)>) -> u32 {
-        let hook_id = self.execution_hooks.borrow_mut().add_specific_hook(address, callback);
+
+    pub fn add_execution_hook(&mut self, address: u64, callback: Box<dyn Fn(u64)>) -> u32 {
+        let hook_id = self
+            .execution_hooks
+            .borrow_mut()
+            .add_specific_hook(address, callback);
         return qualify_hook_id(hook_id, HookType::ExecuteSpecific);
     }
 
@@ -404,7 +412,9 @@ impl IcicleEmulator {
         end: u64,
         callback: Box<dyn Fn(u64, &[u8])>,
     ) -> u32 {
-        let id = self.get_mem().add_read_after_hook(start, end, Box::new(MemoryHook { callback }));
+        let id = self
+            .get_mem()
+            .add_read_after_hook(start, end, Box::new(MemoryHook { callback }));
         if id.is_none() {
             return 0;
         }
@@ -418,7 +428,9 @@ impl IcicleEmulator {
         end: u64,
         callback: Box<dyn Fn(u64, &[u8])>,
     ) -> u32 {
-        let id = self.get_mem().add_write_hook(start, end, Box::new(MemoryHook { callback }));
+        let id = self
+            .get_mem()
+            .add_write_hook(start, end, Box::new(MemoryHook { callback }));
         if id.is_none() {
             return 0;
         }
@@ -433,10 +445,22 @@ impl IcicleEmulator {
             HookType::Syscall => self.syscall_hooks.remove_hook(hook_id),
             HookType::Violation => self.violation_hooks.remove_hook(hook_id),
             HookType::Interrupt => self.interrupt_hooks.remove_hook(hook_id),
-            HookType::ExecuteGeneric => self.execution_hooks.borrow_mut().remove_generic_hook(hook_id),
-            HookType::ExecuteSpecific => self.execution_hooks.borrow_mut().remove_specific_hook(hook_id),
-            HookType::Read => {self.get_mem().remove_read_after_hook(hook_id);()},
-            HookType::Write => {self.get_mem().remove_write_hook(hook_id);()},
+            HookType::ExecuteGeneric => self
+                .execution_hooks
+                .borrow_mut()
+                .remove_generic_hook(hook_id),
+            HookType::ExecuteSpecific => self
+                .execution_hooks
+                .borrow_mut()
+                .remove_specific_hook(hook_id),
+            HookType::Read => {
+                self.get_mem().remove_read_after_hook(hook_id);
+                ()
+            }
+            HookType::Write => {
+                self.get_mem().remove_write_hook(hook_id);
+                ()
+            }
             _ => {}
         }
     }
@@ -543,9 +567,7 @@ impl IcicleEmulator {
         return reg_node.size.into();
     }
 
-    
-    fn read_flags<T>(&mut self, data: &mut [u8]) -> usize
-    {
+    fn read_flags<T>(&mut self, data: &mut [u8]) -> usize {
         const REAL_SIZE: usize = std::mem::size_of::<u64>();
         let limit: usize = std::mem::size_of::<T>();
         let size = std::cmp::min(REAL_SIZE, limit);
@@ -567,8 +589,7 @@ impl IcicleEmulator {
         }
     }
 
-    fn write_flags<T>(&mut self, data: &[u8]) -> usize
-    {
+    fn write_flags<T>(&mut self, data: &[u8]) -> usize {
         const REAL_SIZE: usize = std::mem::size_of::<u64>();
         let limit: usize = std::mem::size_of::<T>();
         let size = std::cmp::min(REAL_SIZE, limit);

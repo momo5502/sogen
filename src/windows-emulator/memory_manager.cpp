@@ -78,6 +78,7 @@ namespace utils
     static void serialize(buffer_serializer& buffer, const memory_manager::reserved_region& region)
     {
         buffer.write(region.is_mmio);
+        buffer.write(region.initial_permission);
         buffer.write<uint64_t>(region.length);
         buffer.write_map(region.committed_regions);
     }
@@ -85,6 +86,7 @@ namespace utils
     static void deserialize(buffer_deserializer& buffer, memory_manager::reserved_region& region)
     {
         buffer.read(region.is_mmio);
+        buffer.read(region.initial_permission);
         region.length = static_cast<size_t>(buffer.read<uint64_t>());
         buffer.read_map(region.committed_regions);
     }
@@ -258,6 +260,7 @@ bool memory_manager::allocate_memory(const uint64_t address, const size_t size, 
                            .try_emplace(address,
                                         reserved_region{
                                             .length = size,
+                                            .initial_permission = permissions,
                                         })
                            .first;
 
@@ -497,6 +500,7 @@ region_info memory_manager::get_region_info(const uint64_t address)
     result.start = MIN_ALLOCATION_ADDRESS;
     result.length = MAX_ALLOCATION_ADDRESS - result.start;
     result.permissions = memory_permission::none;
+    result.initial_permissions = memory_permission::none;
     result.allocation_base = {};
     result.allocation_length = result.length;
     result.is_committed = false;
@@ -532,6 +536,7 @@ region_info memory_manager::get_region_info(const uint64_t address)
     result.allocation_length = reserved_region.length;
     result.start = result.allocation_base;
     result.length = result.allocation_length;
+    result.initial_permissions = entry->second.initial_permission;
 
     if (committed_regions.empty())
     {
