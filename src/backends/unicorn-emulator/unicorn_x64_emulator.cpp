@@ -207,10 +207,8 @@ namespace unicorn
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
 #endif
-                if constexpr (sizeof(void*) >= 8)
-                {
-                    uce(uc_ctl_set_tcg_buffer_size(this->uc_, 2 << 30 /* 2 gb */));
-                }
+                constexpr auto is_64_bit = sizeof(void*) >= 8;
+                uce(uc_ctl_set_tcg_buffer_size(this->uc_, (is_64_bit ? 2 : 1) << 30 /* 2 gb */));
 
 #ifndef OS_WINDOWS
 #pragma GCC diagnostic pop
