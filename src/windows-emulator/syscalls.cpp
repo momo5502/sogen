@@ -125,7 +125,7 @@ namespace syscalls
     // syscalls/memory.cpp:
     NTSTATUS handle_NtQueryVirtualMemory(const syscall_context& c, handle process_handle, uint64_t base_address,
                                          uint32_t info_class, uint64_t memory_information,
-                                         uint32_t memory_information_length, emulator_object<uint64_t> return_length);
+                                         uint64_t memory_information_length, emulator_object<uint64_t> return_length);
     NTSTATUS handle_NtProtectVirtualMemory(const syscall_context& c, handle process_handle,
                                            emulator_object<uint64_t> base_address,
                                            emulator_object<uint32_t> bytes_to_protect, uint32_t protection,
