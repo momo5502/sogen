@@ -55,8 +55,8 @@ class hook_interface
 
     virtual emulator_hook* hook_memory_execution(memory_execution_hook_callback callback) = 0;
     virtual emulator_hook* hook_memory_execution(uint64_t address, memory_execution_hook_callback callback) = 0;
-    virtual emulator_hook* hook_memory_read(uint64_t address, size_t size, memory_access_hook_callback callback) = 0;
-    virtual emulator_hook* hook_memory_write(uint64_t address, size_t size, memory_access_hook_callback callback) = 0;
+    virtual emulator_hook* hook_memory_read(uint64_t address, uint64_t size, memory_access_hook_callback callback) = 0;
+    virtual emulator_hook* hook_memory_write(uint64_t address, uint64_t size, memory_access_hook_callback callback) = 0;
 
     virtual emulator_hook* hook_instruction(int instruction_type, instruction_hook_callback callback) = 0;
 

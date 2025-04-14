@@ -326,7 +326,7 @@ namespace icicle
             return wrap_hook(id);
         }
 
-        emulator_hook* hook_memory_read(const uint64_t address, const size_t size,
+        emulator_hook* hook_memory_read(const uint64_t address, const uint64_t size,
                                         memory_access_hook_callback callback) override
         {
             auto obj = make_function_object(std::move(callback));
@@ -342,7 +342,7 @@ namespace icicle
             return wrap_hook(id);
         }
 
-        emulator_hook* hook_memory_write(const uint64_t address, const size_t size,
+        emulator_hook* hook_memory_write(const uint64_t address, const uint64_t size,
                                          memory_access_hook_callback callback) override
         {
             auto obj = make_function_object(std::move(callback));
