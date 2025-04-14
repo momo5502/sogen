@@ -109,7 +109,7 @@ namespace syscalls
         const syscall_context& c, const handle section_handle, const handle process_handle,
         const emulator_object<uint64_t> base_address,
         const EMULATOR_CAST(EmulatorTraits<Emu64>::ULONG_PTR, ULONG_PTR) /*zero_bits*/,
-        const EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T) commit_size,
+        const EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T) /*commit_size*/,
         const emulator_object<LARGE_INTEGER> /*section_offset*/,
         const emulator_object<EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T)> view_size,
         const SECTION_INHERIT /*inherit_disposition*/, const ULONG /*allocation_type*/, const ULONG /*win32_protect*/)
