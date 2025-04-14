@@ -107,7 +107,7 @@ mapped_module* module_manager::map_module(const windows_path& file, const logger
 mapped_module* module_manager::map_local_module(const std::filesystem::path& file, const logger& logger,
                                                 const bool is_static)
 {
-    auto local_file = canonical(absolute(file));
+    auto local_file = weakly_canonical(absolute(file));
 
     for (auto& mod : this->modules_ | std::views::values)
     {

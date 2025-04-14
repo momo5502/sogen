@@ -207,8 +207,10 @@ namespace unicorn
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
 #endif
-
-                uce(uc_ctl_set_tcg_buffer_size(this->uc_, 2 << 30 /* 2 gb */));
+                if constexpr (sizeof(void*) >= 8)
+                {
+                    uce(uc_ctl_set_tcg_buffer_size(this->uc_, 2 << 30 /* 2 gb */));
+                }
 
 #ifndef OS_WINDOWS
 #pragma GCC diagnostic pop
@@ -264,8 +266,8 @@ namespace unicorn
 
                 struct msr_value
                 {
-                    uint32_t id;
-                    uint64_t value;
+                    uint64_t id{};
+                    uint64_t value{};
                 };
 
                 msr_value msr_val{
