@@ -22,7 +22,7 @@ int main()
     printf("------------\n\n");
 
     const auto peb = static_cast<PPEB64>(GetCurrentProcessPeb());
-    const auto api_set_map = peb->ApiSetMap;
+    const auto api_set_map = reinterpret_cast<API_SET_NAMESPACE*>(peb->ApiSetMap);
 
     printf("APISET: 0x%p\n", api_set_map);
     printf("Version: %d\n", api_set_map->Version);

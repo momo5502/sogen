@@ -73,7 +73,7 @@ namespace syscalls
                 t.teb->access([&](TEB64& teb) {
                     if (tls_cell < TLS_MINIMUM_AVAILABLE)
                     {
-                        teb.TlsSlots.arr[tls_cell] = nullptr;
+                        teb.TlsSlots.arr[tls_cell] = 0;
                     }
                     else if (teb.TlsExpansionSlots)
                     {
@@ -136,7 +136,7 @@ namespace syscalls
 
             const emulator_object<THREAD_BASIC_INFORMATION64> info{c.emu, thread_information};
             info.access([&](THREAD_BASIC_INFORMATION64& i) {
-                i.TebBaseAddress = thread->teb->ptr();
+                i.TebBaseAddress = thread->teb->value();
                 i.ClientId = thread->teb->read().ClientId;
             });
 
@@ -542,7 +542,7 @@ namespace syscalls
                     }
                     else if (type == PsAttributeTebAddress)
                     {
-                        write_attribute(c.emu, attribute, thread->teb->ptr());
+                        write_attribute(c.emu, attribute, thread->teb->value());
                     }
                     else
                     {

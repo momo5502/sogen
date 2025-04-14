@@ -65,7 +65,7 @@ void process_context::setup(x64_emulator& emu, memory_manager& memory, const app
         proc_params.StandardInput = STDIN_HANDLE.h;
         proc_params.StandardError = proc_params.StandardOutput;
 
-        proc_params.Environment = reinterpret_cast<std::uint64_t*>(allocator.copy_string(u"=::=::\\"));
+        proc_params.Environment = allocator.copy_string(u"=::=::\\");
         allocator.copy_string(u"EMULATOR=1");
         allocator.copy_string(u"COMPUTERNAME=momo");
         allocator.copy_string(u"SystemRoot=C:\\WINDOWS");
@@ -95,11 +95,11 @@ void process_context::setup(x64_emulator& emu, memory_manager& memory, const app
     this->peb.access([&](PEB64& p) {
         p.BeingDebugged = 0;
         p.ImageBaseAddress = executable.image_base;
-        p.ProcessParameters = this->process_params.ptr();
-        p.ApiSetMap = apiset::clone(emu, allocator, apiset_container).ptr();
+        p.ProcessParameters = this->process_params.value();
+        p.ApiSetMap = apiset::clone(emu, allocator, apiset_container).value();
 
-        p.ProcessHeap = nullptr;
-        p.ProcessHeaps = nullptr;
+        p.ProcessHeap = 0;
+        p.ProcessHeaps = 0;
         p.HeapSegmentReserve = 0x0000000000100000; // TODO: Read from executable
         p.HeapSegmentCommit = 0x0000000000002000;
         p.HeapDeCommitTotalFreeThreshold = 0x0000000000010000;

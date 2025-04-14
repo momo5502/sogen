@@ -33,7 +33,7 @@ namespace
             }
 
             record_obj.access([&](exception_record& r) {
-                r.ExceptionRecord = reinterpret_cast<EmulatorTraits<Emu64>::PVOID>(nested_record_obj.ptr());
+                r.ExceptionRecord = nested_record_obj.value(); //
             });
         }
 

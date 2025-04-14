@@ -111,10 +111,10 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
 
         teb_obj.ClientId.UniqueProcess = 1ul;
         teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
-        teb_obj.NtTib.StackLimit = reinterpret_cast<std::uint64_t*>(this->stack_base);
-        teb_obj.NtTib.StackBase = reinterpret_cast<std::uint64_t*>(this->stack_base + this->stack_size);
-        teb_obj.NtTib.Self = &this->teb->ptr()->NtTib;
-        teb_obj.ProcessEnvironmentBlock = context.peb.ptr();
+        teb_obj.NtTib.StackLimit = this->stack_base;
+        teb_obj.NtTib.StackBase = this->stack_base + this->stack_size;
+        teb_obj.NtTib.Self = this->teb->value();
+        teb_obj.ProcessEnvironmentBlock = context.peb.value();
     });
 }
 
