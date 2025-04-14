@@ -151,6 +151,7 @@ jobs:
       fail-fast: false
       matrix:
         platform:
+          - Windows x86
           - Windows x86_64
           - Linux x86_64 GCC
           - Linux x86_64 GCC Sanitizer
@@ -168,8 +169,12 @@ jobs:
             preset: debug
           - configuration: Release
             preset: release
+          - platform: Windows x86
+            runner: windows-latest
+            devcmd_arch: x86
           - platform: Windows x86_64
             runner: windows-latest
+            devcmd_arch: x64
           - platform: Linux x86_64 GCC Sanitizer
             runner: ubuntu-24.04
             cmake-options: "-DMOMO_ENABLE_SANITIZER=On"
@@ -224,6 +229,8 @@ jobs:
       - name: Enable Developer Command Prompt
         uses: ilammy/msvc-dev-cmd@v1.13.0
         if: ${{ startsWith(matrix.platform, 'Windows') }}
+        with:
+          arch: ${{ matrix.devcmd_arch }}
 
       - uses: nttld/setup-ndk@v1
         id: setup-ndk
@@ -262,6 +269,7 @@ jobs:
       fail-fast: false
       matrix:
         platform:
+          - Windows x86
           - Windows x86_64
           - Linux x86_64 GCC
           - Linux x86_64 GCC Sanitizer
@@ -283,6 +291,8 @@ jobs:
             preset: debug
           - configuration: Release
             preset: release
+          - platform: Windows x86
+            runner: windows-latest
           - platform: Windows x86_64
             runner: windows-latest
           - platform: Linux x86_64 GCC
@@ -336,6 +346,7 @@ jobs:
         run: cp build/${{matrix.preset}}/artifacts/test-sample.exe build/${{matrix.preset}}/artifacts/root/filesys/c/
 
       - name: CMake Test
+        if: ${{ matrix.emulator != 'Icicle' || matrix.platform != 'Windows x86' }}
         run: cd build/${{matrix.preset}} && ctest --verbose -j
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/root
