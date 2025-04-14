@@ -73,6 +73,7 @@
 #define SL_NO_CURSOR_UPDATE            0x10
 
 #define SEC_IMAGE                      0x01000000
+#define SEC_RESERVE                    0x04000000
 
 typedef enum _FSINFOCLASS
 {
@@ -97,7 +98,7 @@ typedef enum _FSINFOCLASS
     FileFsMaximumInformation
 } FSINFOCLASS, *PFSINFOCLASS;
 
-typedef enum _FSINFOCLASS FS_INFORMATION_CLASS;
+using FS_INFORMATION_CLASS = enum _FSINFOCLASS;
 
 typedef enum _FILE_INFORMATION_CLASS
 {
@@ -210,7 +211,7 @@ typedef enum _FILE_INFORMATION_CLASS
     FileMaximumInformation
 } FILE_INFORMATION_CLASS, *PFILE_INFORMATION_CLASS;
 
-typedef enum _OBJECT_INFORMATION_CLASS
+using OBJECT_INFORMATION_CLASS = enum _OBJECT_INFORMATION_CLASS
 {
     ObjectBasicInformation,         // q: OBJECT_BASIC_INFORMATION
     ObjectNameInformation,          // q: OBJECT_NAME_INFORMATION
@@ -220,9 +221,9 @@ typedef enum _OBJECT_INFORMATION_CLASS
     ObjectSessionInformation,       // s: void // change object session // (requires SeTcbPrivilege)
     ObjectSessionObjectInformation, // s: void // change object session // (requires SeTcbPrivilege)
     MaxObjectInfoClass
-} OBJECT_INFORMATION_CLASS;
+};
 
-typedef enum _HARDERROR_RESPONSE_OPTION
+using HARDERROR_RESPONSE_OPTION = enum _HARDERROR_RESPONSE_OPTION
 {
     OptionAbortRetryIgnore,
     OptionOk,
@@ -233,9 +234,9 @@ typedef enum _HARDERROR_RESPONSE_OPTION
     OptionShutdownSystem,
     OptionOkNoWait,
     OptionCancelTryContinue
-} HARDERROR_RESPONSE_OPTION;
+};
 
-typedef enum _HARDERROR_RESPONSE
+using HARDERROR_RESPONSE = enum _HARDERROR_RESPONSE
 {
     ResponseReturnToCaller,
     ResponseNotHandled,
@@ -248,9 +249,9 @@ typedef enum _HARDERROR_RESPONSE
     ResponseYes,
     ResponseTryAgain,
     ResponseContinue
-} HARDERROR_RESPONSE;
+};
 
-typedef USHORT RTL_ATOM;
+using RTL_ATOM = USHORT;
 
 template <typename Traits>
 struct IO_STATUS_BLOCK
@@ -332,6 +333,17 @@ typedef struct _FILE_BASIC_INFORMATION
     LARGE_INTEGER ChangeTime;     // Specifies the last time the file was changed.
     ULONG FileAttributes;         // Specifies one or more FILE_ATTRIBUTE_XXX flags.
 } FILE_BASIC_INFORMATION, *PFILE_BASIC_INFORMATION;
+
+typedef struct _FILE_NETWORK_OPEN_INFORMATION
+{
+    LARGE_INTEGER CreationTime;
+    LARGE_INTEGER LastAccessTime;
+    LARGE_INTEGER LastWriteTime;
+    LARGE_INTEGER ChangeTime;
+    LARGE_INTEGER AllocationSize;
+    LARGE_INTEGER EndOfFile;
+    ULONG FileAttributes;
+} FILE_NETWORK_OPEN_INFORMATION, *PFILE_NETWORK_OPEN_INFORMATION;
 
 typedef struct _FILE_DIRECTORY_INFORMATION
 {

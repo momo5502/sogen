@@ -79,6 +79,9 @@ namespace syscalls
     NTSTATUS handle_NtQueryAttributesFile(const syscall_context& c,
                                           emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                           emulator_object<FILE_BASIC_INFORMATION> file_information);
+    NTSTATUS handle_NtQueryFullAttributesFile(
+        const syscall_context& c, emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+        emulator_object<FILE_NETWORK_OPEN_INFORMATION> file_information);
     NTSTATUS handle_NtOpenFile(const syscall_context& c, emulator_object<handle> file_handle,
                                ACCESS_MASK desired_access,
                                emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
@@ -93,6 +96,19 @@ namespace syscalls
     NTSTATUS handle_NtQuerySymbolicLinkObject(const syscall_context& c, handle link_handle,
                                               emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> link_target,
                                               emulator_object<ULONG> returned_length);
+    NTSTATUS handle_NtCreateNamedPipeFile(const syscall_context& c, emulator_object<handle> file_handle,
+                                          ULONG desired_access,
+                                          emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                          emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                                          ULONG share_access, ULONG create_disposition, ULONG create_options,
+                                          ULONG named_pipe_type, ULONG read_mode, ULONG completion_mode,
+                                          ULONG maximum_instances, ULONG inbound_quota, ULONG outbound_quota,
+                                          emulator_object<LARGE_INTEGER> default_timeout);
+    NTSTATUS handle_NtFsControlFile(const syscall_context& c, handle event_handle, uint64_t apc_routine,
+                                    uint64_t app_context,
+                                    emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                                    ULONG fs_control_code, uint64_t input_buffer, ULONG input_buffer_length,
+                                    uint64_t output_buffer, ULONG output_buffer_length);
 
     // syscalls/locale.cpp:
     NTSTATUS handle_NtInitializeNlsFiles(const syscall_context& c, emulator_object<uint64_t> base_address,
@@ -109,7 +125,7 @@ namespace syscalls
     // syscalls/memory.cpp:
     NTSTATUS handle_NtQueryVirtualMemory(const syscall_context& c, handle process_handle, uint64_t base_address,
                                          uint32_t info_class, uint64_t memory_information,
-                                         uint32_t memory_information_length, emulator_object<uint32_t> return_length);
+                                         uint64_t memory_information_length, emulator_object<uint64_t> return_length);
     NTSTATUS handle_NtProtectVirtualMemory(const syscall_context& c, handle process_handle,
                                            emulator_object<uint64_t> base_address,
                                            emulator_object<uint32_t> bytes_to_protect, uint32_t protection,
@@ -769,6 +785,9 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtQueueApcThreadEx);
     add_handler(NtQueueApcThread);
     add_handler(NtCreateUserProcess);
+    add_handler(NtCreateNamedPipeFile);
+    add_handler(NtFsControlFile);
+    add_handler(NtQueryFullAttributesFile);
 
 #undef add_handler
 }

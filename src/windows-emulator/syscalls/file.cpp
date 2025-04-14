@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
+#include "utils/io.hpp"
 
 #include <iostream>
 #include <utils/finally.hpp>
@@ -660,6 +661,47 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
+    NTSTATUS handle_NtQueryFullAttributesFile(
+        const syscall_context& c, const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+        const emulator_object<FILE_NETWORK_OPEN_INFORMATION> file_information)
+    {
+        if (!object_attributes)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const auto attributes = object_attributes.read();
+        if (!attributes.ObjectName)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const auto filename = read_unicode_string(
+            c.emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, attributes.ObjectName});
+
+        c.win_emu.log.print(color::dark_gray, "--> Querying file attributes: %s\n", u16_to_u8(filename).c_str());
+
+        const auto local_filename = c.win_emu.file_sys.translate(filename).string();
+
+        struct _stat64 file_stat{};
+        if (_stat64(local_filename.c_str(), &file_stat) != 0)
+        {
+            return STATUS_OBJECT_NAME_NOT_FOUND;
+        }
+
+        file_information.access([&](FILE_NETWORK_OPEN_INFORMATION& info) {
+            info.CreationTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
+            info.LastAccessTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
+            info.LastWriteTime = utils::convert_unix_to_windows_time(file_stat.st_mtime);
+            info.AllocationSize.QuadPart = file_stat.st_size;
+            info.EndOfFile.QuadPart = file_stat.st_size;
+            info.ChangeTime = info.LastWriteTime;
+            info.FileAttributes = FILE_ATTRIBUTE_NORMAL;
+        });
+
+        return STATUS_SUCCESS;
+    }
+
     NTSTATUS handle_NtQueryAttributesFile(
         const syscall_context& c, const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
         const emulator_object<FILE_BASIC_INFORMATION> file_information)
@@ -775,6 +817,34 @@ namespace syscalls
 
             return too_small ? STATUS_BUFFER_TOO_SMALL : STATUS_SUCCESS;
         }
+
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtCreateNamedPipeFile(
+        const syscall_context& c, const emulator_object<handle> /*file_handle*/, const ULONG /*desired_access*/,
+        const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
+        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> /*io_status_block*/, const ULONG /*share_access*/,
+        const ULONG /*create_disposition*/, const ULONG /*create_options*/, const ULONG /*named_pipe_type*/,
+        const ULONG /*read_mode*/, const ULONG /*completion_mode*/, const ULONG /*maximum_instances*/,
+        const ULONG /*inbound_quota*/, const ULONG /*outbound_quota*/,
+        const emulator_object<LARGE_INTEGER> /*default_timeout*/)
+    {
+        c.win_emu.log.error("Unimplemented syscall NtCreateNamedPipeFile!");
+        c.emu.stop();
+
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtFsControlFile(const syscall_context& c, const handle /*event_handle*/,
+                                    const uint64_t /*apc_routine*/, const uint64_t /*app_context*/,
+                                    const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> /*io_status_block*/,
+                                    const ULONG /*fs_control_code*/, const uint64_t /*input_buffer*/,
+                                    const ULONG /*input_buffer_length*/, const uint64_t /*output_buffer*/,
+                                    const ULONG /*output_buffer_length*/)
+    {
+        c.win_emu.log.error("Unimplemented syscall NtFsControlFile!");
+        c.emu.stop();
 
         return STATUS_NOT_SUPPORTED;
     }

@@ -75,6 +75,24 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
+        if (token_information_class == TokenOwner)
+        {
+            constexpr auto required_size = sizeof(sid) + sizeof(TOKEN_OWNER64);
+            return_length.write(required_size);
+
+            if (required_size > token_information_length)
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            TOKEN_OWNER64 owner{};
+            owner.Owner = token_information + sizeof(TOKEN_OWNER64);
+
+            emulator_object<TOKEN_OWNER64>{c.emu, token_information}.write(owner);
+            c.emu.write_memory(token_information + sizeof(TOKEN_OWNER64), sid, sizeof(sid));
+            return STATUS_SUCCESS;
+        }
+
         if (token_information_class == TokenType)
         {
             constexpr auto required_size = sizeof(TOKEN_TYPE);

@@ -225,10 +225,11 @@ namespace syscalls
             size = page_align_up(file_data.size());
         }
 
+        const auto reserve_only = section_entry->allocation_attributes == SEC_RESERVE;
         const auto protection = map_nt_to_emulator_protection(section_entry->section_page_protection);
-        const auto address = c.win_emu.memory.allocate_memory(size, protection);
+        const auto address = c.win_emu.memory.allocate_memory(size, protection, reserve_only);
 
-        if (!file_data.empty())
+        if (!reserve_only && !file_data.empty())
         {
             c.emu.write_memory(address, file_data.data(), file_data.size());
         }
@@ -263,19 +264,24 @@ namespace syscalls
         }
 
         const auto* mod = c.win_emu.mod_manager.find_by_address(base_address);
-        if (!mod)
+        if (mod != nullptr)
         {
-            c.win_emu.log.error("Unmapping non-module section not supported!\n");
-            c.emu.stop();
-            return STATUS_NOT_SUPPORTED;
+            if (c.win_emu.mod_manager.unmap(base_address, c.win_emu.log))
+            {
+                return STATUS_SUCCESS;
+            }
+
+            return STATUS_INVALID_PARAMETER;
         }
 
-        if (c.win_emu.mod_manager.unmap(base_address, c.win_emu.log))
+        if (c.win_emu.memory.release_memory(base_address, 0))
         {
             return STATUS_SUCCESS;
         }
 
-        return STATUS_INVALID_PARAMETER;
+        c.win_emu.log.error("Unmapping non-module/non-memory section not supported!\n");
+        c.emu.stop();
+        return STATUS_NOT_SUPPORTED;
     }
 
     NTSTATUS handle_NtUnmapViewOfSectionEx(const syscall_context& c, const handle process_handle,
