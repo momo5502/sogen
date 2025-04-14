@@ -73,6 +73,7 @@
 #define SL_NO_CURSOR_UPDATE            0x10
 
 #define SEC_IMAGE                      0x01000000
+#define SEC_RESERVE                    0x04000000
 
 typedef enum _FSINFOCLASS
 {
