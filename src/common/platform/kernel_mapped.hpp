@@ -51,8 +51,8 @@ union PEB_BITFIELD_UNION
 
 typedef struct _LIST_ENTRY64
 {
-    struct _LIST_ENTRY* Flink;
-    struct _LIST_ENTRY* Blink;
+    ULONGLONG Flink;
+    ULONGLONG Blink;
 } LIST_ENTRY64, *PLIST_ENTRY64, *RESTRICTED_POINTER PRLIST_ENTRY64;
 
 #endif
@@ -187,9 +187,9 @@ typedef struct _API_SET_NAMESPACE
 
 union PEB_CONTEXT_DATA_UNION64
 {
-    void* pContextData; // WIN7
-    void* pUnused;      // WIN10
-    void* EcCodeBitMap; // WIN11
+    std::uint64_t pContextData; // WIN7
+    std::uint64_t pUnused;      // WIN10
+    std::uint64_t EcCodeBitMap; // WIN11
 };
 
 union PEB_TRACING_FLAGS_UNION
@@ -228,18 +228,18 @@ typedef struct _CPTABLEINFO
     USHORT TransUniDefaultChar;
     USHORT DBCSCodePage;
     UCHAR LeadByte[MAXIMUM_LEADBYTES];
-    USHORT* MultiByteTable;
-    void* WideCharTable;
-    USHORT* DBCSRanges;
-    USHORT* DBCSOffsets;
+    EMULATOR_CAST(uint64_t, USHORT*) MultiByteTable;
+    EMULATOR_CAST(uint64_t, void*) WideCharTable;
+    EMULATOR_CAST(uint64_t, USHORT*) DBCSRanges;
+    EMULATOR_CAST(uint64_t, USHORT*) DBCSOffsets;
 } CPTABLEINFO, *PCPTABLEINFO;
 
 typedef struct _NLSTABLEINFO
 {
     CPTABLEINFO OemTableInfo;
     CPTABLEINFO AnsiTableInfo;
-    USHORT* UpperCaseTable;
-    USHORT* LowerCaseTable;
+    EMULATOR_CAST(uint64_t, USHORT*) UpperCaseTable;
+    EMULATOR_CAST(uint64_t, USHORT*) LowerCaseTable;
 } NLSTABLEINFO, *PNLSTABLEINFO;
 
 typedef struct _PEB64

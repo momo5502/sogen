@@ -78,7 +78,7 @@ typedef struct DECLSPEC_ALIGN(16) _EMU_MEMORY_BASIC_INFORMATION64
 
 typedef struct _MEMORY_IMAGE_INFORMATION64
 {
-    void* ImageBase;
+    uint64_t ImageBase;
     std::int64_t SizeOfImage;
 
     union
@@ -98,7 +98,7 @@ typedef struct _MEMORY_IMAGE_INFORMATION64
 
 typedef struct _MEMORY_REGION_INFORMATION
 {
-    void* AllocationBase;
+    uint64_t AllocationBase;
     ULONG AllocationProtect;
 
     union

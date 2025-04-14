@@ -76,7 +76,7 @@ namespace syscalls
             const emulator_object<MEMORY_IMAGE_INFORMATION64> info{c.emu, memory_information};
 
             info.access([&](MEMORY_IMAGE_INFORMATION64& image_info) {
-                image_info.ImageBase = reinterpret_cast<void*>(mod->image_base);
+                image_info.ImageBase = mod->image_base;
                 image_info.SizeOfImage = static_cast<int64_t>(mod->size_of_image);
                 image_info.ImageFlags = 0;
             });
@@ -107,7 +107,7 @@ namespace syscalls
             info.access([&](MEMORY_REGION_INFORMATION64& image_info) {
                 memset(&image_info, 0, sizeof(image_info));
 
-                image_info.AllocationBase = reinterpret_cast<void*>(region_info.allocation_base);
+                image_info.AllocationBase = region_info.allocation_base;
                 image_info.AllocationProtect = map_emulator_to_nt_protection(region_info.initial_permissions);
                 // image_info.PartitionId = 0;
                 image_info.RegionSize = static_cast<int64_t>(region_info.allocation_length);
