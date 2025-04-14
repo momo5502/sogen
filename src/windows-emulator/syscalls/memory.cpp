@@ -28,9 +28,9 @@ namespace syscalls
                 return_length.write(sizeof(EMU_MEMORY_BASIC_INFORMATION64));
             }
 
-            if (memory_information_length != sizeof(EMU_MEMORY_BASIC_INFORMATION64))
+            if (memory_information_length < sizeof(EMU_MEMORY_BASIC_INFORMATION64))
             {
-                return STATUS_BUFFER_OVERFLOW;
+                return STATUS_BUFFER_TOO_SMALL;
             }
 
             const emulator_object<EMU_MEMORY_BASIC_INFORMATION64> info{c.emu, memory_information};
@@ -198,7 +198,7 @@ namespace syscalls
         const bool reserve = allocation_type & MEM_RESERVE;
         const bool commit = allocation_type & MEM_COMMIT;
 
-        if ((allocation_type & ~(MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN)) || (!commit && !reserve))
+        if ((allocation_type & ~(MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN | MEM_WRITE_WATCH)) || (!commit && !reserve))
         {
             throw std::runtime_error("Unsupported allocation type!");
         }

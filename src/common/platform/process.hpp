@@ -25,7 +25,7 @@
     (CONTEXT_CONTROL_64 | CONTEXT_INTEGER_64 | CONTEXT_SEGMENTS_64 | CONTEXT_FLOATING_POINT_64 | \
      CONTEXT_DEBUG_REGISTERS_64)
 
-typedef enum _SYSTEM_INFORMATION_CLASS
+using SYSTEM_INFORMATION_CLASS = enum _SYSTEM_INFORMATION_CLASS
 {
     SystemBasicInformation,                // q: SYSTEM_BASIC_INFORMATION
     SystemProcessorInformation,            // q: SYSTEM_PROCESSOR_INFORMATION
@@ -323,7 +323,7 @@ typedef enum _SYSTEM_INFORMATION_CLASS
     SystemBreakOnContextUnwindFailureInformation, // ULONG (requires SeDebugPrivilege)
     SystemOslRamdiskInformation,                  // SYSTEM_OSL_RAMDISK_INFORMATION
     MaxSystemInfoClass
-} SYSTEM_INFORMATION_CLASS;
+};
 
 #ifndef OS_WINDOWS
 typedef enum _TOKEN_INFORMATION_CLASS
@@ -383,7 +383,7 @@ typedef enum _TOKEN_INFORMATION_CLASS
 
 #endif
 
-typedef enum _PROCESSINFOCLASS
+using PROCESSINFOCLASS = enum _PROCESSINFOCLASS
 {
     ProcessBasicInformation,          // q: PROCESS_BASIC_INFORMATION, PROCESS_EXTENDED_BASIC_INFORMATION
     ProcessQuotaLimits,               // qs: QUOTA_LIMITS, QUOTA_LIMITS_EX
@@ -502,9 +502,9 @@ typedef enum _PROCESSINFOCLASS
     ProcessNetworkIoCounters,         // q: PROCESS_NETWORK_COUNTERS
     ProcessFindFirstThreadByTebValue, // PROCESS_TEB_VALUE_INFORMATION
     MaxProcessInfoClass
-} PROCESSINFOCLASS;
+};
 
-typedef enum _PS_ATTRIBUTE_NUM
+using PS_ATTRIBUTE_NUM = enum _PS_ATTRIBUTE_NUM
 {
     PsAttributeParentProcess,      // in HANDLE
     PsAttributeDebugObject,        // in HANDLE
@@ -542,7 +542,7 @@ typedef enum _PS_ATTRIBUTE_NUM
     PsAttributeSupportedMachines,            // since 24H2
     PsAttributeSveVectorLength,              // PPS_PROCESS_CREATION_SVE_VECTOR_LENGTH
     PsAttributeMax
-} PS_ATTRIBUTE_NUM;
+};
 
 struct SYSTEM_PROCESSOR_INFORMATION64
 {
@@ -583,11 +583,11 @@ typedef struct _XMM_SAVE_AREA32
 
 #endif
 
-typedef struct _NEON128
+using NEON128 = struct _NEON128
 {
     ULONGLONG Low;
     LONGLONG High;
-} NEON128;
+};
 
 typedef struct DECLSPEC_ALIGN(16) _CONTEXT64
 {
@@ -766,6 +766,11 @@ struct SID_AND_ATTRIBUTES64
 struct TOKEN_USER64
 {
     SID_AND_ATTRIBUTES64 User;
+};
+
+struct TOKEN_OWNER64
+{
+    EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, PSID) Owner;
 };
 
 struct TOKEN_BNO_ISOLATION_INFORMATION64

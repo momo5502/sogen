@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
+#include "utils/io.hpp"
 
 #include <iostream>
 #include <utils/finally.hpp>
@@ -656,6 +657,47 @@ namespace syscalls
 
         const auto handle = c.proc.files.store(std::move(f));
         file_handle.write(handle);
+
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS handle_NtQueryFullAttributesFile(
+        const syscall_context& c, const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+        const emulator_object<FILE_NETWORK_OPEN_INFORMATION> file_information)
+    {
+        if (!object_attributes)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const auto attributes = object_attributes.read();
+        if (!attributes.ObjectName)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const auto filename = read_unicode_string(
+            c.emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, attributes.ObjectName});
+
+        c.win_emu.log.print(color::dark_gray, "--> Querying file attributes: %s\n", u16_to_u8(filename).c_str());
+
+        const auto local_filename = c.win_emu.file_sys.translate(filename).string();
+
+        struct _stat64 file_stat{};
+        if (_stat64(local_filename.c_str(), &file_stat) != 0)
+        {
+            return STATUS_OBJECT_NAME_NOT_FOUND;
+        }
+
+        file_information.access([&](FILE_NETWORK_OPEN_INFORMATION& info) {
+            info.CreationTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
+            info.LastAccessTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
+            info.LastWriteTime = utils::convert_unix_to_windows_time(file_stat.st_mtime);
+            info.AllocationSize.QuadPart = file_stat.st_size;
+            info.EndOfFile.QuadPart = file_stat.st_size;
+            info.ChangeTime = info.LastWriteTime;
+            info.FileAttributes = FILE_ATTRIBUTE_NORMAL;
+        });
 
         return STATUS_SUCCESS;
     }

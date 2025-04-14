@@ -578,8 +578,8 @@ namespace syscalls
         if (apc_flags)
         {
             c.win_emu.log.error("Unsupported APC flags: %X\n", apc_flags);
-            c.emu.stop();
-            return STATUS_NOT_SUPPORTED;
+            // c.emu.stop();
+            // return STATUS_NOT_SUPPORTED;
         }
 
         thread->pending_apcs.push_back({
@@ -590,7 +590,7 @@ namespace syscalls
             .apc_argument3 = apc_argument3,
         });
 
-        return STATUS_NOT_SUPPORTED;
+        return STATUS_SUCCESS;
     }
 
     NTSTATUS handle_NtQueueApcThreadEx(const syscall_context& c, const handle thread_handle,

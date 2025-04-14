@@ -79,6 +79,9 @@ namespace syscalls
     NTSTATUS handle_NtQueryAttributesFile(const syscall_context& c,
                                           emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                           emulator_object<FILE_BASIC_INFORMATION> file_information);
+    NTSTATUS handle_NtQueryFullAttributesFile(
+        const syscall_context& c, emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+        emulator_object<FILE_NETWORK_OPEN_INFORMATION> file_information);
     NTSTATUS handle_NtOpenFile(const syscall_context& c, emulator_object<handle> file_handle,
                                ACCESS_MASK desired_access,
                                emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
@@ -627,6 +630,29 @@ namespace syscalls
     {
         return 0;
     }
+
+    NTSTATUS handle_NtCreateNamedPipeFile(
+        const syscall_context& c, const emulator_object<handle> file_handle, const ULONG desired_access,
+        const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const ULONG share_access,
+        const ULONG create_disposition, const ULONG create_options, const ULONG named_pipe_type, const ULONG read_mode,
+        const ULONG completion_mode, const ULONG maximum_instances, const ULONG inbound_quota,
+        const ULONG outbound_quota, const emulator_object<LARGE_INTEGER> default_timeout)
+    {
+        file_handle.write(handle{.value = {.id = 1337, .type = handle_types::file, .is_pseudo = 1}});
+
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS handle_NtFsControlFile(const syscall_context& c, const handle event_handle, const uint64_t apc_routine,
+                                    const uint64_t app_context,
+                                    const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                                    const ULONG fs_control_code, const uint64_t input_buffer,
+                                    const ULONG input_buffer_length, const uint64_t output_buffer,
+                                    const ULONG output_buffer_length)
+    {
+        return STATUS_SUCCESS;
+    }
 }
 
 void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& handler_mapping)
@@ -769,6 +795,9 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtQueueApcThreadEx);
     add_handler(NtQueueApcThread);
     add_handler(NtCreateUserProcess);
+    add_handler(NtCreateNamedPipeFile);
+    add_handler(NtFsControlFile);
+    add_handler(NtQueryFullAttributesFile);
 
 #undef add_handler
 }
