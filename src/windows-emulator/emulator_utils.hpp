@@ -95,11 +95,6 @@ class emulator_object
         return this->value() + this->size();
     }
 
-    T* ptr() const
-    {
-        return reinterpret_cast<T*>(this->address_);
-    }
-
     explicit operator bool() const
     {
         return this->address_ != 0;
@@ -221,11 +216,11 @@ class emulator_allocator
         return emulator_object<T>(*this->memory_, potential_start);
     }
 
-    char16_t* copy_string(const std::u16string_view str)
+    uint64_t copy_string(const std::u16string_view str)
     {
         UNICODE_STRING<EmulatorTraits<Emu64>> uc_str{};
         this->make_unicode_string(uc_str, str);
-        return reinterpret_cast<char16_t*>(uc_str.Buffer);
+        return uc_str.Buffer;
     }
 
     void make_unicode_string(UNICODE_STRING<EmulatorTraits<Emu64>>& result, const std::u16string_view str,
@@ -300,7 +295,8 @@ class emulator_allocator
     {
         if (this->address_ && this->size_)
         {
-            manager.release_memory(this->address_, this->size_);
+            // TODO: Make all sizes uint64_t
+            manager.release_memory(this->address_, static_cast<size_t>(this->size_));
             this->address_ = 0;
             this->size_ = 0;
         }
@@ -356,7 +352,7 @@ inline std::u16string read_unicode_string(const emulator& emu,
     return read_unicode_string(emu, ucs);
 }
 
-inline std::u16string read_unicode_string(emulator& emu, const UNICODE_STRING<EmulatorTraits<Emu64>>* uc_string)
+inline std::u16string read_unicode_string(emulator& emu, const uint64_t uc_string)
 {
     return read_unicode_string(emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{emu, uc_string});
 }

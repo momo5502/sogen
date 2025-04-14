@@ -41,8 +41,8 @@ namespace syscalls
                 assert(!region_info.is_committed || region_info.is_reserved);
                 const auto state = region_info.is_reserved ? MEM_RESERVE : MEM_FREE;
                 image_info.State = region_info.is_committed ? MEM_COMMIT : state;
-                image_info.BaseAddress = reinterpret_cast<void*>(region_info.start);
-                image_info.AllocationBase = reinterpret_cast<void*>(region_info.allocation_base);
+                image_info.BaseAddress = region_info.start;
+                image_info.AllocationBase = region_info.allocation_base;
                 image_info.PartitionId = 0;
                 image_info.RegionSize = static_cast<int64_t>(region_info.length);
 
@@ -76,7 +76,7 @@ namespace syscalls
             const emulator_object<MEMORY_IMAGE_INFORMATION64> info{c.emu, memory_information};
 
             info.access([&](MEMORY_IMAGE_INFORMATION64& image_info) {
-                image_info.ImageBase = reinterpret_cast<void*>(mod->image_base);
+                image_info.ImageBase = mod->image_base;
                 image_info.SizeOfImage = static_cast<int64_t>(mod->size_of_image);
                 image_info.ImageFlags = 0;
             });
@@ -107,7 +107,7 @@ namespace syscalls
             info.access([&](MEMORY_REGION_INFORMATION64& image_info) {
                 memset(&image_info, 0, sizeof(image_info));
 
-                image_info.AllocationBase = reinterpret_cast<void*>(region_info.allocation_base);
+                image_info.AllocationBase = region_info.allocation_base;
                 image_info.AllocationProtect = map_emulator_to_nt_protection(region_info.initial_permissions);
                 // image_info.PartitionId = 0;
                 image_info.RegionSize = static_cast<int64_t>(region_info.allocation_length);
@@ -151,7 +151,8 @@ namespace syscalls
 
         try
         {
-            c.win_emu.memory.protect_memory(aligned_start, aligned_length, requested_protection, &old_protection_value);
+            c.win_emu.memory.protect_memory(aligned_start, static_cast<size_t>(aligned_length), requested_protection,
+                                            &old_protection_value);
         }
         catch (...)
         {
@@ -183,7 +184,7 @@ namespace syscalls
         auto potential_base = base_address.read();
         if (!potential_base)
         {
-            potential_base = c.win_emu.memory.find_free_allocation_base(allocation_bytes);
+            potential_base = c.win_emu.memory.find_free_allocation_base(static_cast<size_t>(allocation_bytes));
         }
 
         if (!potential_base)
@@ -203,7 +204,8 @@ namespace syscalls
             throw std::runtime_error("Unsupported allocation type!");
         }
 
-        if (commit && !reserve && c.win_emu.memory.commit_memory(potential_base, allocation_bytes, protection))
+        if (commit && !reserve &&
+            c.win_emu.memory.commit_memory(potential_base, static_cast<size_t>(allocation_bytes), protection))
         {
             c.win_emu.log.print(color::dark_gray, "--> Committed 0x%" PRIx64 " - 0x%" PRIx64 "\n", potential_base,
                                 potential_base + allocation_bytes);
@@ -214,7 +216,8 @@ namespace syscalls
         c.win_emu.log.print(color::dark_gray, "--> Allocated 0x%" PRIx64 " - 0x%" PRIx64 "\n", potential_base,
                             potential_base + allocation_bytes);
 
-        return c.win_emu.memory.allocate_memory(potential_base, allocation_bytes, protection, !commit)
+        return c.win_emu.memory.allocate_memory(potential_base, static_cast<size_t>(allocation_bytes), protection,
+                                                !commit)
                    ? STATUS_SUCCESS
                    : STATUS_MEMORY_NOT_ALLOCATED;
     }
@@ -242,14 +245,16 @@ namespace syscalls
 
         if (free_type & MEM_RELEASE)
         {
-            return c.win_emu.memory.release_memory(allocation_base, allocation_size) ? STATUS_SUCCESS
-                                                                                     : STATUS_MEMORY_NOT_ALLOCATED;
+            return c.win_emu.memory.release_memory(allocation_base, static_cast<size_t>(allocation_size))
+                       ? STATUS_SUCCESS
+                       : STATUS_MEMORY_NOT_ALLOCATED;
         }
 
         if (free_type & MEM_DECOMMIT)
         {
-            return c.win_emu.memory.decommit_memory(allocation_base, allocation_size) ? STATUS_SUCCESS
-                                                                                      : STATUS_MEMORY_NOT_ALLOCATED;
+            return c.win_emu.memory.decommit_memory(allocation_base, static_cast<size_t>(allocation_size))
+                       ? STATUS_SUCCESS
+                       : STATUS_MEMORY_NOT_ALLOCATED;
         }
 
         throw std::runtime_error("Bad free type");

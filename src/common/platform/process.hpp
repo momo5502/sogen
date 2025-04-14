@@ -553,13 +553,15 @@ struct SYSTEM_PROCESSOR_INFORMATION64
     ULONG ProcessorFeatureBits;
 };
 
-#ifndef OS_WINDOWS
+#if !defined(OS_WINDOWS) || !defined(_WIN64)
 
+#if !defined(OS_WINDOWS)
 typedef struct _M128A
 {
     ULONGLONG Low;
     LONGLONG High;
 } M128A, *PM128A;
+#endif
 
 typedef struct _XMM_SAVE_AREA32
 {

@@ -11,8 +11,17 @@
 #pragma clang diagnostic ignored "-Wunused-private-field"
 #endif
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4308)
+#endif
+
 #include "reflect_extension.hpp"
 #include <reflect>
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 #if defined(__clang__)
 #pragma clang diagnostic pop

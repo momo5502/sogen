@@ -57,12 +57,13 @@ namespace apiset
         {
             switch (location)
             {
-#ifdef OS_WINDOWS
+#ifdef OS_WINDOWS_64
             case location::host: {
-                const auto apiSetMap =
-                    reinterpret_cast<const API_SET_NAMESPACE*>(NtCurrentTeb64()->ProcessEnvironmentBlock->ApiSetMap);
-                const auto* dataPtr = reinterpret_cast<const std::byte*>(apiSetMap);
-                return {dataPtr, dataPtr + apiSetMap->Size};
+                const auto* teb = NtCurrentTeb64();
+                const auto* peb = reinterpret_cast<PEB64*>(teb->ProcessEnvironmentBlock);
+                const auto* api_set_map = reinterpret_cast<const API_SET_NAMESPACE*>(peb->ApiSetMap);
+                const auto* data_ptr = reinterpret_cast<const std::byte*>(api_set_map);
+                return {data_ptr, data_ptr + api_set_map->Size};
             }
 #else
             case location::host:

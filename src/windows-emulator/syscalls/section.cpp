@@ -29,8 +29,7 @@ namespace syscalls
             const auto attributes = object_attributes.read();
             if (attributes.ObjectName)
             {
-                auto name = read_unicode_string(
-                    c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
+                auto name = read_unicode_string(c.emu, attributes.ObjectName);
                 c.win_emu.log.print(color::dark_gray, "--> Section with name %s\n", u16_to_u8(name).c_str());
                 s.name = std::move(name);
             }
@@ -60,8 +59,7 @@ namespace syscalls
     {
         const auto attributes = object_attributes.read();
 
-        auto filename =
-            read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
+        auto filename = read_unicode_string(c.emu, attributes.ObjectName);
         c.win_emu.log.print(color::dark_gray, "--> Opening section: %s\n", u16_to_u8(filename).c_str());
 
         if (filename == u"\\Windows\\SharedSection")
@@ -227,7 +225,7 @@ namespace syscalls
 
         const auto reserve_only = section_entry->allocation_attributes == SEC_RESERVE;
         const auto protection = map_nt_to_emulator_protection(section_entry->section_page_protection);
-        const auto address = c.win_emu.memory.allocate_memory(size, protection, reserve_only);
+        const auto address = c.win_emu.memory.allocate_memory(static_cast<size_t>(size), protection, reserve_only);
 
         if (!reserve_only && !file_data.empty())
         {

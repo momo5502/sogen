@@ -227,7 +227,7 @@ class emulator_thread : public ref_counted_object
                 throw std::runtime_error("Emulator was never assigned!");
             }
 
-            this->memory_ptr->release_memory(this->stack_base, this->stack_size);
+            this->memory_ptr->release_memory(this->stack_base, static_cast<size_t>(this->stack_size));
             this->stack_base = 0;
         }
 

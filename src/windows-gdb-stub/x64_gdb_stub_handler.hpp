@@ -10,7 +10,7 @@
 
 struct breakpoint_key
 {
-    size_t addr{};
+    uint64_t addr{};
     size_t size{};
     gdb_stub::breakpoint_type type{};
 
@@ -25,7 +25,7 @@ struct std::hash<breakpoint_key>
 {
     std::size_t operator()(const breakpoint_key& k) const noexcept
     {
-        return ((std::hash<size_t>()(k.addr) ^ (std::hash<size_t>()(k.size) << 1)) >> 1) ^
+        return ((std::hash<uint64_t>()(k.addr) ^ (std::hash<size_t>()(k.size) << 1)) >> 1) ^
                (std::hash<size_t>()(static_cast<size_t>(k.type)) << 1);
     }
 };

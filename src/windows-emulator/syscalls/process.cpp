@@ -212,7 +212,7 @@ namespace syscalls
 
             const emulator_object<PROCESS_BASIC_INFORMATION64> info{c.emu, process_information};
             info.access([&](PROCESS_BASIC_INFORMATION64& basic_info) {
-                basic_info.PebBaseAddress = c.proc.peb.ptr();
+                basic_info.PebBaseAddress = c.proc.peb.value();
                 basic_info.UniqueProcessId = 1;
             });
 
@@ -306,11 +306,12 @@ namespace syscalls
                 thread_iterator->second.teb->access([&](TEB64& teb) {
                     entry.ThreadId = teb.ClientId.UniqueThread;
 
-                    auto* tls_vector = teb.ThreadLocalStoragePointer;
+                    const auto tls_vector = teb.ThreadLocalStoragePointer;
+                    constexpr auto ptr_size = sizeof(EmulatorTraits<Emu64>::PVOID);
 
                     if (tls_info.TlsRequest == ProcessTlsReplaceIndex)
                     {
-                        auto* tls_entry_ptr = tls_vector + tls_info.TlsIndex;
+                        const auto tls_entry_ptr = tls_vector + (tls_info.TlsIndex * ptr_size);
 
                         const auto old_entry = c.emu.read_memory<EmulatorTraits<Emu64>::PVOID>(tls_entry_ptr);
                         c.emu.write_memory<EmulatorTraits<Emu64>::PVOID>(tls_entry_ptr, entry.TlsModulePointer);
@@ -319,12 +320,12 @@ namespace syscalls
                     }
                     else if (tls_info.TlsRequest == ProcessTlsReplaceVector)
                     {
-                        auto* new_tls_vector = entry.TlsVector;
+                        const auto new_tls_vector = entry.TlsVector;
 
                         for (uint32_t index = 0; index < tls_info.TlsVectorLength; ++index)
                         {
-                            auto* old_entry = c.emu.read_memory<void*>(tls_vector + index);
-                            c.emu.write_memory<void*>(new_tls_vector + index, old_entry);
+                            const auto old_entry = c.emu.read_memory<uint64_t>(tls_vector + index * ptr_size);
+                            c.emu.write_memory(new_tls_vector + index * ptr_size, old_entry);
                         }
 
                         teb.ThreadLocalStoragePointer = new_tls_vector;

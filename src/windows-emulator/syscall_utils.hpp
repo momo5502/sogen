@@ -54,7 +54,8 @@ inline std::optional<uint32_t> extract_syscall_id(const exported_symbol& symbol,
 
     const auto instruction_rva = symbol.rva + instruction_offset;
 
-    if (data.size() < (instruction_rva + instruction_size) || data[instruction_rva] != instruction_opcode)
+    if (data.size() < (instruction_rva + instruction_size) ||
+        data[static_cast<size_t>(instruction_rva)] != instruction_opcode)
     {
         return std::nullopt;
     }

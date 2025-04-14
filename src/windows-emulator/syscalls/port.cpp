@@ -27,7 +27,8 @@ namespace syscalls
         }
 
         client_shared_memory.access([&](PORT_VIEW64& view) {
-            p.view_base = c.win_emu.memory.allocate_memory(view.ViewSize, memory_permission::read_write);
+            p.view_base =
+                c.win_emu.memory.allocate_memory(static_cast<size_t>(view.ViewSize), memory_permission::read_write);
             view.ViewBase = p.view_base;
             view.ViewRemoteBase = view.ViewBase;
         });
