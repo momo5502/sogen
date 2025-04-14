@@ -583,7 +583,7 @@ typedef struct _TEB64
     ARRAY_CONTAINER<ULONG, 2> Rcu;
 } TEB64, *PTEB64;
 
-#ifdef OS_WINDOWS
+#if defined(OS_WINDOWS) && defined(_WIN64)
 inline TEB64* NtCurrentTeb64()
 {
     return reinterpret_cast<TEB64*>(__readgsqword(FIELD_OFFSET(EMU_NT_TIB64, Self)));

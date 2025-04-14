@@ -5,6 +5,10 @@
 
 #include "utils/finally.hpp"
 
+#ifdef _MSC_VER
+#pragma warning(disable : 4702)
+#endif
+
 bool use_gdb = false;
 
 namespace
@@ -63,12 +67,6 @@ namespace
             utils::buffer_deserializer deserializer{emulator_data};
             emu.deserialize(deserializer);
             emu.save_snapshot();
-
-            const auto ret = emu.emu().read_stack(0);
-
-            emu.emu().hook_memory_execution(ret, [&](uint64_t) {
-                emu.emu().stop(); //
-            });
         }
 
         void restore_emulator()
@@ -87,8 +85,9 @@ namespace
 
             restore_emulator();
 
-            const auto memory = emu.memory.allocate_memory(page_align_up(std::max(data.size(), static_cast<size_t>(1))),
-                                                           memory_permission::read_write);
+            const auto memory = emu.memory.allocate_memory(
+                static_cast<size_t>(page_align_up(std::max(data.size(), static_cast<size_t>(1)))),
+                memory_permission::read_write);
             emu.emu().write_memory(memory, data.data(), data.size());
 
             emu.emu().reg(x64_register::rcx, memory);

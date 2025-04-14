@@ -300,7 +300,8 @@ class emulator_allocator
     {
         if (this->address_ && this->size_)
         {
-            manager.release_memory(this->address_, this->size_);
+            // TODO: Make all sizes uint64_t
+            manager.release_memory(this->address_, static_cast<size_t>(this->size_));
             this->address_ = 0;
             this->size_ = 0;
         }

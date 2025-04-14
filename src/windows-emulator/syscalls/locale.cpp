@@ -17,7 +17,7 @@ namespace syscalls
             return STATUS_FILE_INVALID;
         }
 
-        const auto size = page_align_up(locale_file.size());
+        const auto size = static_cast<size_t>(page_align_up(locale_file.size()));
         const auto base = c.win_emu.memory.allocate_memory(size, memory_permission::read);
         c.emu.write_memory(base, locale_file.data(), locale_file.size());
 

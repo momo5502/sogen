@@ -109,7 +109,7 @@ namespace
         assert(total_size >= allocation_size);
 
         std::vector<uint8_t> zero_memory{};
-        zero_memory.resize(total_size, 0);
+        zero_memory.resize(static_cast<size_t>(total_size), 0);
 
         emu.write_memory(new_sp, zero_memory.data(), zero_memory.size());
 

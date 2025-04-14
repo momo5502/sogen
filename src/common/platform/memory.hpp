@@ -66,8 +66,8 @@ typedef enum _SECTION_INHERIT
 
 typedef struct DECLSPEC_ALIGN(16) _EMU_MEMORY_BASIC_INFORMATION64
 {
-    void* BaseAddress;
-    void* AllocationBase;
+    uint64_t BaseAddress;
+    uint64_t AllocationBase;
     DWORD AllocationProtect;
     WORD PartitionId;
     std::int64_t RegionSize;

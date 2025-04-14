@@ -144,7 +144,7 @@ void kusd_mmio::read(const uint64_t addr, void* data, const size_t size)
     const auto real_size = valid_end - addr;
 
     const auto* kusd_buffer = reinterpret_cast<uint8_t*>(&this->kusd_);
-    memcpy(data, kusd_buffer + addr, real_size);
+    memcpy(data, kusd_buffer + addr, static_cast<size_t>(real_size));
 }
 
 uint64_t kusd_mmio::address()

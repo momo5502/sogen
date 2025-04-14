@@ -93,7 +93,7 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
       suspended(suspended),
       last_registers(context.default_register_set)
 {
-    this->stack_base = memory.allocate_memory(this->stack_size, memory_permission::read_write);
+    this->stack_base = memory.allocate_memory(static_cast<size_t>(this->stack_size), memory_permission::read_write);
 
     this->gs_segment = emulator_allocator{
         memory,
@@ -214,7 +214,7 @@ void emulator_thread::setup_registers(x64_emulator& emu, const process_context& 
         throw std::runtime_error("Missing GS segment");
     }
 
-    setup_stack(emu, this->stack_base, this->stack_size);
+    setup_stack(emu, this->stack_base, static_cast<size_t>(this->stack_size));
     emu.set_segment_base(x64_register::gs, this->gs_segment->get_base());
 
     CONTEXT64 ctx{};

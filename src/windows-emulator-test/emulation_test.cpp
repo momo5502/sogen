@@ -34,7 +34,7 @@ namespace test
         constexpr auto offset = 1;
         const auto instructionsToExecute = executedInstructions - offset;
 
-        new_emu.start(instructionsToExecute);
+        new_emu.start(static_cast<size_t>(instructionsToExecute));
 
         ASSERT_EQ(new_emu.get_executed_instructions(), instructionsToExecute);
         ASSERT_NOT_TERMINATED(new_emu);

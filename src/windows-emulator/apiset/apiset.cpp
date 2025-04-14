@@ -57,7 +57,7 @@ namespace apiset
         {
             switch (location)
             {
-#ifdef OS_WINDOWS
+#ifdef OS_WINDOWS_64
             case location::host: {
                 const auto apiSetMap =
                     reinterpret_cast<const API_SET_NAMESPACE*>(NtCurrentTeb64()->ProcessEnvironmentBlock->ApiSetMap);

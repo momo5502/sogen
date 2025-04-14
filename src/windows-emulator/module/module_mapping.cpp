@@ -10,9 +10,9 @@ namespace
     uint64_t get_first_section_offset(const PENTHeaders_t<std::uint64_t>& nt_headers, const uint64_t nt_headers_offset)
     {
         const auto* nt_headers_addr = reinterpret_cast<const uint8_t*>(&nt_headers);
-        size_t optional_header_offset =
+        const size_t optional_header_offset =
             reinterpret_cast<uintptr_t>(&(nt_headers.OptionalHeader)) - reinterpret_cast<uintptr_t>(&nt_headers);
-        size_t optional_header_size = nt_headers.FileHeader.SizeOfOptionalHeader;
+        const size_t optional_header_size = nt_headers.FileHeader.SizeOfOptionalHeader;
         const auto* first_section_addr = nt_headers_addr + optional_header_offset + optional_header_size;
 
         const auto first_section_absolute = reinterpret_cast<uint64_t>(first_section_addr);
@@ -23,7 +23,7 @@ namespace
     std::vector<std::byte> read_mapped_memory(const memory_manager& memory, const mapped_module& binary)
     {
         std::vector<std::byte> mem{};
-        mem.resize(binary.size_of_image);
+        mem.resize(static_cast<size_t>(binary.size_of_image));
         memory.read_memory(binary.image_base, mem.data(), mem.size());
 
         return mem;
@@ -73,7 +73,7 @@ namespace
     void apply_relocation(const utils::safe_buffer_accessor<std::byte> buffer, const uint64_t offset,
                           const uint64_t delta)
     {
-        const auto obj = buffer.as<T>(offset);
+        const auto obj = buffer.as<T>(static_cast<size_t>(offset));
         const auto value = obj.get();
         const auto new_value = value + static_cast<T>(delta);
         obj.set(new_value);
@@ -146,7 +146,7 @@ namespace
                       const PENTHeaders_t<std::uint64_t>& nt_headers, const uint64_t nt_headers_offset)
     {
         const auto first_section_offset = get_first_section_offset(nt_headers, nt_headers_offset);
-        const auto sections = buffer.as<IMAGE_SECTION_HEADER>(first_section_offset);
+        const auto sections = buffer.as<IMAGE_SECTION_HEADER>(static_cast<size_t>(first_section_offset));
 
         for (size_t i = 0; i < nt_headers.FileHeader.NumberOfSections; ++i)
         {
@@ -179,11 +179,11 @@ namespace
 
             const auto size_of_section = page_align_up(std::max(section.SizeOfRawData, section.Misc.VirtualSize));
 
-            memory.protect_memory(target_ptr, size_of_section, permissions, nullptr);
+            memory.protect_memory(target_ptr, static_cast<size_t>(size_of_section), permissions, nullptr);
 
             mapped_section section_info{};
             section_info.region.start = target_ptr;
-            section_info.region.length = size_of_section;
+            section_info.region.length = static_cast<size_t>(size_of_section);
             section_info.region.permissions = permissions;
 
             for (size_t j = 0; j < sizeof(section.Name) && section.Name[j]; ++j)
@@ -219,21 +219,22 @@ mapped_module map_module_from_data(memory_manager& memory, const std::span<const
     binary.image_base = optional_header.ImageBase;
     binary.size_of_image = page_align_up(optional_header.SizeOfImage); // TODO: Sanitize
 
-    if (!memory.allocate_memory(binary.image_base, binary.size_of_image, memory_permission::all))
+    if (!memory.allocate_memory(binary.image_base, static_cast<size_t>(binary.size_of_image), memory_permission::all))
     {
-        binary.image_base = memory.find_free_allocation_base(binary.size_of_image);
+        binary.image_base = memory.find_free_allocation_base(static_cast<size_t>(binary.size_of_image));
         const auto is_dll = nt_headers.FileHeader.Characteristics & IMAGE_FILE_DLL;
         const auto has_dynamic_base = optional_header.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
         const auto is_relocatable = is_dll || has_dynamic_base;
 
-        if (!is_relocatable || !memory.allocate_memory(binary.image_base, binary.size_of_image, memory_permission::all))
+        if (!is_relocatable || !memory.allocate_memory(binary.image_base, static_cast<size_t>(binary.size_of_image),
+                                                       memory_permission::all))
         {
             throw std::runtime_error("Memory range not allocatable");
         }
     }
 
     // TODO: Make sure to match kernel allocation patterns to attain correct initial permissions!
-    memory.protect_memory(binary.image_base, binary.size_of_image, memory_permission::read);
+    memory.protect_memory(binary.image_base, static_cast<size_t>(binary.size_of_image), memory_permission::read);
 
     binary.entry_point = binary.image_base + optional_header.AddressOfEntryPoint;
 
@@ -266,5 +267,5 @@ mapped_module map_module_from_file(memory_manager& memory, std::filesystem::path
 
 bool unmap_module(memory_manager& memory, const mapped_module& mod)
 {
-    return memory.release_memory(mod.image_base, mod.size_of_image);
+    return memory.release_memory(mod.image_base, static_cast<size_t>(mod.size_of_image));
 }

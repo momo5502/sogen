@@ -130,7 +130,7 @@ namespace syscalls
 
         auto& enum_state = *f->enumeration_state;
 
-        size_t current_offset{0};
+        uint64_t current_offset{0};
         emulator_object<T> object{c.emu};
 
         size_t current_index = enum_state.current_index;
@@ -400,7 +400,8 @@ namespace syscalls
                 std::cin.readsome(temp_buffer.data(), static_cast<std::streamsize>(temp_buffer.size()));
             const auto count = std::max(read_count, static_cast<std::streamsize>(0));
 
-            commit_file_data(std::string_view(temp_buffer.data(), count), c.emu, io_status_block, buffer);
+            commit_file_data(std::string_view(temp_buffer.data(), static_cast<size_t>(count)), c.emu, io_status_block,
+                             buffer);
             return STATUS_SUCCESS;
         }
 

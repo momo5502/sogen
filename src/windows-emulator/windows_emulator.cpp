@@ -341,8 +341,8 @@ void windows_emulator::setup_process(const application_settings& app_settings)
 
     this->process.setup(this->emu(), this->memory, app_settings, *executable, *ntdll, apiset_data);
 
-    const auto ntdll_data = emu.read_memory(ntdll->image_base, ntdll->size_of_image);
-    const auto win32u_data = emu.read_memory(win32u->image_base, win32u->size_of_image);
+    const auto ntdll_data = emu.read_memory(ntdll->image_base, static_cast<size_t>(ntdll->size_of_image));
+    const auto win32u_data = emu.read_memory(win32u->image_base, static_cast<size_t>(win32u->size_of_image));
 
     this->dispatcher.setup(ntdll->exports, ntdll_data, win32u->exports, win32u_data);
 
@@ -601,7 +601,7 @@ void windows_emulator::start(size_t count)
                 break;
             }
 
-            count = target_instructions - current_instructions;
+            count = static_cast<size_t>(target_instructions - current_instructions);
         }
     }
 }

@@ -155,7 +155,7 @@ namespace test
             return s1.get_diff(s2).has_value();
         };
 
-        if (!has_diff_after_count(limit))
+        if (!has_diff_after_count(static_cast<size_t>(limit)))
         {
             puts("Emulation has no diff");
         }
@@ -170,7 +170,7 @@ namespace test
             const auto diff = (upper_bound - lower_bound);
             const auto pivot = lower_bound + (diff / 2);
 
-            const auto has_diff = has_diff_after_count(pivot);
+            const auto has_diff = has_diff_after_count(static_cast<size_t>(pivot));
 
             auto* bound = has_diff ? &upper_bound : &lower_bound;
             *bound = pivot;
@@ -178,7 +178,7 @@ namespace test
             printf("Bounds: %" PRIx64 " - %" PRIx64 "\n", lower_bound, upper_bound);
         }
 
-        (void)get_state_for_count(lower_bound);
+        (void)get_state_for_count(static_cast<size_t>(lower_bound));
 
         const auto rip = emu.emu().read_instruction_pointer();
 
