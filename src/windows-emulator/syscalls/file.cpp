@@ -552,8 +552,7 @@ namespace syscalls
                                  uint64_t ea_buffer, ULONG ea_length)
     {
         const auto attributes = object_attributes.read();
-        auto filename =
-            read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
+        auto filename = read_unicode_string(c.emu, attributes.ObjectName);
 
         auto printer = utils::finally([&] {
             c.win_emu.log.print(color::dark_gray, "--> Opening file: %s\n", u16_to_u8(filename).c_str()); //
@@ -757,8 +756,7 @@ namespace syscalls
         const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
     {
         const auto attributes = object_attributes.read();
-        const auto object_name =
-            read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
+        const auto object_name = read_unicode_string(c.emu, attributes.ObjectName);
 
         if (object_name == u"\\KnownDlls")
         {
@@ -780,8 +778,7 @@ namespace syscalls
         const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
     {
         const auto attributes = object_attributes.read();
-        const auto object_name =
-            read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
+        const auto object_name = read_unicode_string(c.emu, attributes.ObjectName);
 
         if (object_name == u"KnownDllPath")
         {

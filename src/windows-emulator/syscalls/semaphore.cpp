@@ -78,8 +78,7 @@ namespace syscalls
             const auto attributes = object_attributes.read();
             if (attributes.ObjectName)
             {
-                s.name = read_unicode_string(
-                    c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
+                s.name = read_unicode_string(c.emu, attributes.ObjectName);
             }
         }
 

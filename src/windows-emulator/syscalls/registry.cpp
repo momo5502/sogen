@@ -11,8 +11,7 @@ namespace syscalls
                               const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
     {
         const auto attributes = object_attributes.read();
-        auto key =
-            read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
+        auto key = read_unicode_string(c.emu, attributes.ObjectName);
 
         if (attributes.RootDirectory)
         {

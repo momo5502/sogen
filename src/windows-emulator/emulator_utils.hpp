@@ -352,7 +352,7 @@ inline std::u16string read_unicode_string(const emulator& emu,
     return read_unicode_string(emu, ucs);
 }
 
-inline std::u16string read_unicode_string(emulator& emu, const UNICODE_STRING<EmulatorTraits<Emu64>>* uc_string)
+inline std::u16string read_unicode_string(emulator& emu, const uint64_t uc_string)
 {
     return read_unicode_string(emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{emu, uc_string});
 }
