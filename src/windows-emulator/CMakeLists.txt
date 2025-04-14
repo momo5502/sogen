@@ -14,9 +14,11 @@ if(NOT MOMO_ENABLE_CLANG_TIDY)
   target_precompile_headers(windows-emulator PRIVATE std_include.hpp)
 endif()
 
+if (NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
 target_link_libraries(windows-emulator PRIVATE
   unicorn-emulator
 )
+endif()
 
 if (MOMO_ENABLE_RUST_CODE)
 target_link_libraries(windows-emulator PRIVATE

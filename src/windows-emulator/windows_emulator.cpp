@@ -3,7 +3,9 @@
 
 #include "cpu_context.hpp"
 
+#ifndef OS_EMSCRIPTEN
 #include <unicorn_x64_emulator.hpp>
+#endif
 
 #if MOMO_ENABLE_RUST_CODE
 #include <icicle_x64_emulator.hpp>
@@ -263,6 +265,10 @@ namespace
 
 std::unique_ptr<x64_emulator> create_default_x64_emulator()
 {
+#ifdef OS_EMSCRIPTEN
+    return icicle::create_x64_emulator();
+#else
+
 #if MOMO_ENABLE_RUST_CODE
     const auto* env = getenv("EMULATOR_ICICLE");
     if (env && (env == "1"sv || env == "true"sv))
@@ -270,8 +276,8 @@ std::unique_ptr<x64_emulator> create_default_x64_emulator()
         return icicle::create_x64_emulator();
     }
 #endif
-
     return unicorn::create_x64_emulator();
+#endif
 }
 
 windows_emulator::windows_emulator(application_settings app_settings, const emulator_settings& settings,
