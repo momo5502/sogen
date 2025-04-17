@@ -6,16 +6,19 @@
 namespace
 {
 #ifdef _WIN32
-#define COLOR(win, posix) win
+#define COLOR(win, posix, web) win
     using color_type = WORD;
+#elif defined(__EMSCRIPTEN__)
+#define COLOR(win, posix, web) web
+    using color_type = const char*;
 #else
-#define COLOR(win, posix) posix
+#define COLOR(win, posix, web) posix
     using color_type = const char*;
 #endif
 
     color_type get_reset_color()
     {
-        return COLOR(7, "\033[0m");
+        return COLOR(7, "\033[0m", "</span>");
     }
 
     color_type get_color_type(const color c)
@@ -25,23 +28,23 @@ namespace
         switch (c)
         {
         case black:
-            return COLOR(0x8, "\033[0;90m");
+            return COLOR(0x8, "\033[0;90m", "<span class=\"terminal-black\">");
         case red:
-            return COLOR(0xC, "\033[0;91m");
+            return COLOR(0xC, "\033[0;91m", "<span class=\"terminal-red\">");
         case green:
-            return COLOR(0xA, "\033[0;92m");
+            return COLOR(0xA, "\033[0;92m", "<span class=\"terminal-green\">");
         case yellow:
-            return COLOR(0xE, "\033[0;93m");
+            return COLOR(0xE, "\033[0;93m", "<span class=\"terminal-yellow\">");
         case blue:
-            return COLOR(0x9, "\033[0;94m");
+            return COLOR(0x9, "\033[0;94m", "<span class=\"terminal-blue\">");
         case cyan:
-            return COLOR(0xB, "\033[0;96m");
+            return COLOR(0xB, "\033[0;96m", "<span class=\"terminal-cyan\">");
         case pink:
-            return COLOR(0xD, "\033[0;95m");
+            return COLOR(0xD, "\033[0;95m", "<span class=\"terminal-pink\">");
         case white:
-            return COLOR(0xF, "\033[0;97m");
+            return COLOR(0xF, "\033[0;97m", "<span class=\"terminal-white\">");
         case dark_gray:
-            return COLOR(0x8, "\033[0;97m");
+            return COLOR(0x8, "\033[0;97m", "<span class=\"terminal-dark-gray\">");
         case gray:
         default:
             return get_reset_color();
