@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <title>Windows User Space Emulator</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,300..800;1,300..800&display=swap');
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: #242322;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: #f0f0f0;
+            position: relative;
+            flex-direction: column;
+            font-family: "Open Sans", sans-serif;
+        }
+
+        .buttons {
+            z-index: 201;
+            margin-top: 10px;
+            margin-bottom: 15px;
+            display: flex;
+            gap: 15px;
+        }
+
+        .button {
+            text-decoration: none;
+            box-shadow: 0 2px 3px rgba(0, 0, 0, .1);
+            transition: all .1s ease-out;
+            color: #f3f3f3d2;
+            background-color: rgba(26, 25, 24, 0.54);
+            padding: 12px;
+            border-radius: 14px;
+            min-width: 100px;
+            text-align: center;
+            display: inline-block;
+            transition: all 0.2s ease;
+            border: 1px solid rgba(255, 255, 255, 0);
+        }
+
+        .button:hover {
+            border: 1px solid rgba(255, 255, 255, 0.13);
+        }
+
+        .background-container {
+            position: fixed;
+            inset: 0px;
+            z-index: -1;
+        }
+
+        .background-container::before {
+            content: "";
+            position: fixed;
+            width: 100%;
+            height: 100%;
+            top: 0px;
+            background-image: url(./bigboiii.webp);
+            background-repeat: no-repeat;
+            background-size: cover;
+            background-position: center center;
+            opacity: 0.25;
+            filter: saturate(1.3) contrast(1.3) brightness(0.5);
+            transform: scale(1.3);
+        }
+
+        .background-container::after {
+            content: "";
+            position: fixed;
+            width: 100%;
+            top: 0px;
+            height: 100%;
+            background-image: url(./noise.webp);
+            background-repeat: repeat;
+            opacity: 0.1;
+            mix-blend-mode: overlay;
+        }
+
+        .eclipse {
+            position: fixed;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .eclipse1 {
+            bottom: -260px;
+            left: 0;
+        }
+
+        .eclipse2 {
+            top: -260px;
+            right: 0;
+            transform: rotate(180deg);
+        }
+
+        .terminal-container {
+            width: 95%;
+            max-width: 1000px;
+            height: 700px;
+            background-color: rgba(34, 33, 32, 0.76);
+            border-radius: 12px;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.4);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            z-index: 200;
+            margin: 15px;
+        }
+
+        .terminal-header {
+            background-color: #333231;
+            ;
+            padding: 8px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .terminal-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .terminal-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .terminal-button {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        .close-button {
+            background-color: #ff5f56;
+        }
+
+        .minimize-button {
+            background-color: #ffbd2e;
+        }
+
+        .maximize-button {
+            background-color: #27c93f;
+        }
+
+        #output {
+            flex: 1;
+            padding: 16px;
+            overflow-y: auto;
+            font-size: 14px;
+            line-height: 1.5;
+            font-weight: 600;
+            font-family: monospace;
+        }
+
+        .terminal-black {
+            color: #0C0C0C;
+        }
+
+        .terminal-red {
+            color: #FF3131;
+        }
+
+        .terminal-green {
+            color: #86C000;
+        }
+
+        .terminal-yellow {
+            color: #FFB940;
+        }
+
+        .terminal-blue {
+            color: #00ADF7;
+        }
+
+        .terminal-cyan {
+            color: #3A96DD;
+        }
+
+        .terminal-pink {
+            color: #9750DD;
+        }
+
+        .terminal-white {
+            color: #ECECEC;
+        }
+
+        .terminal-dark-gray {
+            color: rgb(65, 65, 65);
+        }
+
+        @media (pointer:fine) {
+            ::-webkit-scrollbar {
+                width: 20px;
+            }
+
+            ::-webkit-scrollbar-track {
+                background-color: transparent;
+            }
+
+            ::-webkit-scrollbar-thumb {
+                background-color: rgba(97, 97, 97, 0.4);
+                border-radius: 20px;
+                border: 6px solid transparent;
+                background-clip: content-box;
+                transition: all 0.1s linear;
+            }
+
+            ::-webkit-scrollbar-thumb:hover {
+                background-color: rgba(97, 97, 97, 0.8);
+            }
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+    <script>
+        function openDatabase() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open('cacheDB', 1);
+
+                request.onerror = (event) => {
+                    reject('Database error: ' + event.target.errorCode);
+                };
+
+                request.onsuccess = (event) => {
+                    resolve(event.target.result);
+                };
+
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains('cacheStore')) {
+                        db.createObjectStore('cacheStore', { keyPath: 'id' });
+                    }
+                };
+            });
+        }
+
+        async function saveData(id, data) {
+            const db = await openDatabase();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction(['cacheStore'], 'readwrite');
+                const objectStore = transaction.objectStore('cacheStore');
+                const request = objectStore.put({ id: id, data: data });
+
+                request.onsuccess = () => {
+                    resolve('Data saved successfully');
+                };
+
+                request.onerror = (event) => {
+                    reject('Save error: ' + event.target.errorCode);
+                };
+            });
+        }
+
+        async function getData(id) {
+            const db = await openDatabase();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction(['cacheStore'], 'readonly');
+                const objectStore = transaction.objectStore('cacheStore');
+                const request = objectStore.get(id);
+
+                request.onsuccess = (event) => {
+                    if (event.target.result) {
+                        resolve(event.target.result.data);
+                    } else {
+                        resolve(null);
+                    }
+                };
+
+                request.onerror = (event) => {
+                    reject('Retrieve error: ' + event.target.errorCode);
+                };
+            });
+        }
+
+        async function cacheAndUseData(id, asyncFunction) {
+            try {
+                let data = await getData(id);
+                if (!data) {
+                    data = await asyncFunction();
+                    await saveData(id, data);
+                }
+                return data;
+            } catch (error) {
+                console.error('Error:', error);
+                throw error;
+            }
+        }
+
+
+        function fetchFilesystemZip() {
+            return fetch("./root.zip?1", {
+                method: "GET",
+                headers: {
+                    'Content-Type': 'application/octet-stream',
+                },
+                responseType: "arraybuffer"
+            }).then(r => r.arrayBuffer());
+        }
+
+        async function parseZipFromArrayBuffer(arrayBuffer) {
+            const zip = await JSZip.loadAsync(arrayBuffer);
+
+            const files = [];
+            const progress = {
+                files: 0,
+                processed: 0,
+            };
+            zip.forEach(function (relativePath, zipEntry) {
+                progress.files += 1;
+                files.push(zipEntry.async('arraybuffer').then(data => {
+                    progress.processed += 1;
+                    logLine(`Processing filesystem: ${progress.processed}/${progress.files}: ${relativePath}`);
+                    return { name: relativePath, data };
+                }));
+            });
+
+            return await Promise.all(files);
+        }
+
+        async function fetchFilesystem() {
+            logLine("Downloading filesystem...");
+            const filesys = await fetchFilesystemZip();
+            return await parseZipFromArrayBuffer(filesys);
+        }
+
+        function getFilesystem() {
+            return cacheAndUseData("emulator-filesystem-2", fetchFilesystem);
+        }
+
+        function printText(lines) {
+            if (lines.length == 0) {
+                return;
+            }
+
+            var outputDiv = document.getElementById('output');
+            if (!outputDiv) {
+                return;
+            }
+
+            var text = lines.join("<br>");
+            if (outputDiv.innerHTML.length > 0) {
+                text = "<br>" + text;
+            }
+
+            outputDiv.innerHTML += text;
+            outputDiv.scrollTop = outputDiv.scrollHeight;
+        }
+
+        function flushLines() {
+            const lines = globalThis.logLines;
+            globalThis.logLines = [];
+            printText(lines);
+            requestAnimationFrame(flushLines);
+        }
+
+        function logLine(text) {
+            globalThis.logLines.push(text);
+        }
+
+        async function startEmulation() {
+            if (window.emulationStarted) {
+                return;
+            }
+
+            window.emulationStarted = true;
+
+            const filesystem = await getFilesystem();
+
+            logLine("Starting emulation...");
+
+            const worker = new Worker("./emulator.js?4");
+            worker.onmessage = (event) => {
+                logLine(event.data);
+            };
+            worker.postMessage({
+                message: "run",
+                data: filesystem,
+            });
+        }
+
+        window.addEventListener("load", () => {
+            globalThis.logLines = globalThis.logLines || [];
+            flushLines();
+        });
+
+    </script>
+</head>
+
+<body>
+    <div class="background-container"></div>
+    <img class="eclipse eclipse1" src="why-eclipse.svg" />
+    <img class="eclipse eclipse2" src="why-eclipse2.svg" />
+
+    <div class="terminal-container">
+        <div class="terminal-header">
+            <div class="terminal-buttons">
+                <div class="terminal-button close-button"></div>
+                <div class="terminal-button minimize-button"></div>
+                <div class="terminal-button maximize-button"></div>
+            </div>
+            <div class="terminal-title">
+                <span>Windows User Space Emulator</span>
+            </div>
+            <div></div>
+        </div>
+        <div id="output"></div>
+    </div>
+
+    <div class="buttons">
+        <a class="button" href="#" onclick="startEmulation()">Start Emulation</a>
+        <!--<a class="button" href="#" onclick="startEmulation()">Select .exe</a>-->
+        <a class="button" href="https://github.com/momo5502/emulator" target="_blank">GitHub</a>
+    </div>
+</body>
+
+</html>
