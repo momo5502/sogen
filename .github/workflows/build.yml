@@ -161,6 +161,7 @@ jobs:
           - iOS arm64
           - Android x86_64
           - Android arm64-v8a
+          - Emscripten
         configuration:
           - Debug
           - Release
@@ -201,6 +202,9 @@ jobs:
             abi: arm64-v8a
             rust-target: aarch64-linux-android
             cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake"
+          - platform: Emscripten
+            runner: ubuntu-24.04
+            cmake-options: "-DMOMO_ENABLE_RUST_CODE=Off -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
@@ -213,6 +217,10 @@ jobs:
       - name: Install Rust Target
         if: "${{ matrix.rust-target }}"
         run: rustup target add ${{ matrix.rust-target }}
+
+      - name: Install Emscripten
+        if: "${{ matrix.platform == 'Emscripten' }}"
+        uses: mymindstorm/setup-emsdk@v14
 
       - name: Install Clang
         if: "${{ matrix.platform == 'Linux x86_64 Clang' }}"

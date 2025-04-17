@@ -1,7 +1,5 @@
-if (NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
-  set(UNICORN_ARCH "x86" CACHE STRING "")
-  add_subdirectory(unicorn)
-endif()
+set(UNICORN_ARCH "x86" CACHE STRING "")
+add_subdirectory(unicorn)
 
 ##########################################
 
