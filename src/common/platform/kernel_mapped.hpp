@@ -883,6 +883,7 @@ typedef struct _KERNEL_USER_TIMES
 struct THREAD_TLS_INFO
 {
     ULONG Flags;
+    uint32_t _Padding;
 
     union
     {

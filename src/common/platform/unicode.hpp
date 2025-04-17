@@ -8,6 +8,7 @@ struct UNICODE_STRING
 {
     USHORT Length;
     USHORT MaximumLength;
+    uint32_t _Padding;
     EMULATOR_CAST(typename Traits::PVOID, char16_t*) Buffer;
 };
 
