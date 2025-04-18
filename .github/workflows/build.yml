@@ -288,7 +288,6 @@ jobs:
           - Linux x86_64 Clang
           - macOS arm64
           - macOS x86_64
-          - Emscripten Node.js
         emulator:
           - Unicorn
           - Icicle
@@ -361,7 +360,7 @@ jobs:
         run: cp build/${{matrix.preset}}/artifacts/test-sample.exe build/${{matrix.preset}}/artifacts/root/filesys/c/
 
       - name: CMake Test
-        if: ${{ matrix.emulator != 'Icicle' || (matrix.platform != 'Windows x86' && !startsWith(matrix.platform, 'Emscripten')) }}
+        if: ${{ matrix.emulator != 'Icicle' || matrix.platform != 'Windows x86' }}
         run: cd build/${{matrix.preset}} && ctest --verbose -j
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/root
@@ -421,6 +420,44 @@ jobs:
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ github.event.inputs.verbose }}
           ANALYSIS_SAMPLE: ${{github.workspace}}/build/release/artifacts/test-sample.exe
+
+
+  smoke-test-node:
+    name: Smoke Test Node.js
+    runs-on: ubuntu-24.04
+    needs: [create-emulation-root, build]
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download Artifacts
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: Emscripten Node.js Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Windows Artifacts
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: Windows x86_64 Release Artifacts
+          path: build/release/artifacts
+  
+      - name: Download Emulation Root
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: Windows 2022 Emulation Root
+          path: build/release/artifacts/root
+
+      - name: Copy Test Sample
+        run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
+
+      - name: CMake Test
+        run: cd build/release/artifacts && node ./windows-emulator-test.js
+        env:
+          EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
+          EMULATOR_VERBOSE: ${{ github.event.inputs.verbose }}
 
 
   smoke-test-android:
@@ -569,7 +606,7 @@ jobs:
   summary:
     name: Pipeline Summary
     runs-on: ubuntu-24.04
-    needs: [build-page, clang-tidy, build-apiset-dumper, smoke-test-android, create-emulation-root, build, test, win-test, verify-formatting]
+    needs: [build-page, clang-tidy, build-apiset-dumper, smoke-test-node, smoke-test-android, create-emulation-root, build, test, win-test, verify-formatting]
     if: always()
     steps:
       - uses: geekyeggo/delete-artifact@v5
