@@ -1,5 +1,4 @@
 import os
-import sys
 import subprocess
 
 emulator_root = os.getenv('EMULATOR_ROOT')
@@ -8,12 +7,7 @@ virtual_sample = 'C:/analysis-sample.exe'
 
 application = 'analyzer'
 
-is_node = len(sys.argv) > 1 and sys.argv == "node"
-
 def make_app(app):
-    if is_node:
-        return app + ".js"
-
     if os.name == 'nt':
         return app + ".exe"
 
@@ -26,9 +20,6 @@ command = [
     '-p', virtual_sample, analysis_sample,
     virtual_sample
 ]
-
-if is_node:
-    command = ["node"] + command
 
 result = subprocess.run(command, cwd=os.getcwd())
 
