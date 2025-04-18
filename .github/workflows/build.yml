@@ -161,6 +161,7 @@ jobs:
           - iOS arm64
           - Android x86_64
           - Android arm64-v8a
+          - Emscripten
         configuration:
           - Debug
           - Release
@@ -201,6 +202,9 @@ jobs:
             abi: arm64-v8a
             rust-target: aarch64-linux-android
             cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake"
+          - platform: Emscripten
+            runner: ubuntu-24.04
+            cmake-options: "-DMOMO_ENABLE_RUST_CODE=Off -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
@@ -213,6 +217,10 @@ jobs:
       - name: Install Rust Target
         if: "${{ matrix.rust-target }}"
         run: rustup target add ${{ matrix.rust-target }}
+
+      - name: Install Emscripten
+        if: "${{ matrix.platform == 'Emscripten' }}"
+        uses: mymindstorm/setup-emsdk@v14
 
       - name: Install Clang
         if: "${{ matrix.platform == 'Linux x86_64 Clang' }}"
@@ -473,10 +481,88 @@ jobs:
           arch: ${{matrix.architecture}}
           script: "adb push build/${{matrix.preset}}/artifacts/* /data/local/tmp && adb shell \"cd /data/local/tmp && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }} ./analyzer -e ./root c:/test-sample.exe\""
 
+  build-page:
+    name: Build Page
+    runs-on: ubuntu-latest
+    needs: [create-emulation-root, build]
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download Emscripten Artifacts
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: Emscripten Release Artifacts
+          path: build/release/artifacts
+  
+      - name: Download Windows Artifacts
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: Windows x86_64 Release Artifacts
+          path: build/release/artifacts
+    
+      - name: Download Emulation Root
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: Windows 2022 Emulation Root
+          path: build/release/artifacts/root
+        
+      - name: Copy Sample
+        run: cp ./build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
+
+      - name: Create Emulation Root zip
+        run: cd ./build/release/artifacts && zip -r "${{github.workspace}}/page/root.zip" ./root
+
+      - name: Copy Files
+        run: |
+          cp ./build/release/artifacts/analyzer.js ./page/
+          cp ./build/release/artifacts/analyzer.wasm ./page/
+ 
+      - name: Upload Page Artifacts
+        uses: pyTooling/upload-artifact@v4
+        with:
+          name: Page Artifacts
+          working-directory: page/
+          path: "*"
+
+  deploy-page:
+    name: Deploy Page
+    runs-on: ubuntu-latest
+    needs: [build-page, summary]
+    if: github.repository_owner == 'momo5502' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - name: Download Page Artifacts
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: Page Artifacts
+          path: ./page/
+        
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./page
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
   summary:
     name: Pipeline Summary
     runs-on: ubuntu-24.04
-    needs: [clang-tidy, build-apiset-dumper, smoke-test-android, create-emulation-root, build, test, win-test, verify-formatting]
+    needs: [build-page, clang-tidy, build-apiset-dumper, smoke-test-android, create-emulation-root, build, test, win-test, verify-formatting]
     if: always()
     steps:
       - uses: geekyeggo/delete-artifact@v5

@@ -22,7 +22,12 @@ cmake_policy(SET CMP0069 NEW)
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+
+##########################################
+
+if(NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+endif()
 
 ##########################################
 
@@ -79,6 +84,22 @@ if(LINUX)
   endif()
 
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pie")
+endif()
+
+##########################################
+
+if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
+  add_link_options(
+    -sALLOW_MEMORY_GROWTH=1
+    -sASSERTIONS
+    -sWASM_BIGINT
+    -sENVIRONMENT=web
+    -sUSE_OFFSET_CONVERTER
+    -sEXCEPTION_CATCHING_ALLOWED=[..]
+    -sEXIT_RUNTIME
+    #-lnodefs.js -sNODERAWFS=1
+    #-sASYNCIFY
+)
 endif()
 
 ##########################################

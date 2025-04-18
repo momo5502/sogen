@@ -4,7 +4,7 @@
 #include <gtest/gtest.h>
 #include <windows_emulator.hpp>
 
-#include "static_socket_factory.hpp"
+#include <network/static_socket_factory.hpp>
 
 #define ASSERT_NOT_TERMINATED(win_emu)                           \
     do                                                           \

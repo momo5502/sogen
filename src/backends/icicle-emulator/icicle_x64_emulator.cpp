@@ -25,8 +25,8 @@ extern "C"
     int32_t icicle_unmap_memory(icicle_emulator*, uint64_t address, uint64_t length);
     int32_t icicle_read_memory(icicle_emulator*, uint64_t address, void* data, size_t length);
     int32_t icicle_write_memory(icicle_emulator*, uint64_t address, const void* data, size_t length);
-    int32_t icicle_save_registers(icicle_emulator*, data_accessor_func* accessor, void* accessor_data);
-    int32_t icicle_restore_registers(icicle_emulator*, const void* data, size_t length);
+    void icicle_save_registers(icicle_emulator*, data_accessor_func* accessor, void* accessor_data);
+    void icicle_restore_registers(icicle_emulator*, const void* data, size_t length);
     uint32_t icicle_add_syscall_hook(icicle_emulator*, raw_func* callback, void* data);
     uint32_t icicle_add_interrupt_hook(icicle_emulator*, interrupt_func* callback, void* data);
     uint32_t icicle_add_execution_hook(icicle_emulator*, uint64_t address, ptr_func* callback, void* data);

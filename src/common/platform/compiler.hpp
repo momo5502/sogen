@@ -13,6 +13,8 @@
 #define OS_MAC
 #elif defined(__linux__)
 #define OS_LINUX
+#elif defined(__EMSCRIPTEN__)
+#define OS_EMSCRIPTEN
 #else
 #error "Unsupported platform"
 #endif
