@@ -20,8 +20,14 @@ if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
   add_dependencies(windows-emulator-test test-sample)
 endif()
 
+set(TEST_COMMAND "./windows-emulator-test")
+
+if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
+  set(TEST_COMMAND node "./windows-emulator-test.js")
+endif()
+
 add_test(NAME windows-emulator-test
-         COMMAND "${PYTHON3_EXE}" "${PROJECT_SOURCE_DIR}/deps/gtest-parallel/gtest_parallel.py" ./windows-emulator-test
+         COMMAND "${PYTHON3_EXE}" "${PROJECT_SOURCE_DIR}/deps/gtest-parallel/gtest_parallel.py" ${TEST_COMMAND}
          WORKING_DIRECTORY "$<TARGET_FILE_DIR:windows-emulator-test>")
 
 momo_targets_set_folder("tests" windows-emulator-test)

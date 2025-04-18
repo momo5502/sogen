@@ -32,6 +32,12 @@ set(ENV_PREFIX "%")
 set(ENV_SUFFIX "%")
 endif()
 
+set(ANYLZER_TEST_ENVIRONMENT "default")
+
+if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
+  set(ANYLZER_TEST_ENVIRONMENT "node")
+endif()
+
 add_test(NAME analyzer-test
-         COMMAND "${PYTHON3_EXE}" "${CMAKE_CURRENT_LIST_DIR}/test.py"
+         COMMAND "${PYTHON3_EXE}" "${CMAKE_CURRENT_LIST_DIR}/test.py" "${ANYLZER_TEST_ENVIRONMENT}"
          WORKING_DIRECTORY "$<TARGET_FILE_DIR:analyzer>")
