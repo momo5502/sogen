@@ -317,8 +317,6 @@ jobs:
             runner: macos-latest
           - platform: macOS x86_64
             runner: macos-13
-          - platform: Emscripten Node.js
-            runner: ubuntu-24.04
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
