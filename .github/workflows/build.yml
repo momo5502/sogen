@@ -517,7 +517,7 @@ jobs:
         run: cp ./build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
 
       - name: Create Emulation Root zip
-        run: zip -r ./page/root.zip ./build/release/artifacts/test-sample.exe build/release/artifacts/root
+        run: cd ./build/release/artifacts && zip -r "${{github.workspace}}/page/root.zip" ./root
 
       - name: Copy Files
         run: |
