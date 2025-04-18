@@ -259,7 +259,7 @@ mapped_module map_module_from_file(memory_manager& memory, std::filesystem::path
     const auto data = utils::io::read_file(file);
     if (data.empty())
     {
-        throw std::runtime_error("Bad file data");
+        throw std::runtime_error("Bad file data: " + file.string());
     }
 
     return map_module_from_data(memory, data, std::move(file));
