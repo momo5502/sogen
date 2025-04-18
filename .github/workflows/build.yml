@@ -530,10 +530,6 @@ jobs:
     name: Build Page
     runs-on: ubuntu-latest
     needs: [create-emulation-root, build]
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
