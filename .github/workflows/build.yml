@@ -161,7 +161,8 @@ jobs:
           - iOS arm64
           - Android x86_64
           - Android arm64-v8a
-          - Emscripten
+          - Emscripten Web
+          - Emscripten Node.js
         configuration:
           - Debug
           - Release
@@ -202,9 +203,12 @@ jobs:
             abi: arm64-v8a
             rust-target: aarch64-linux-android
             cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake"
-          - platform: Emscripten
+          - platform: Emscripten Web
             runner: ubuntu-24.04
             cmake-options: "-DMOMO_ENABLE_RUST_CODE=Off -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
+          - platform: Emscripten Node.js
+            runner: ubuntu-24.04
+            cmake-options: "-DMOMO_EMSCRIPTEN_SUPPORT_NODEJS=On -DMOMO_ENABLE_RUST_CODE=Off -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
@@ -219,7 +223,7 @@ jobs:
         run: rustup target add ${{ matrix.rust-target }}
 
       - name: Install Emscripten
-        if: "${{ matrix.platform == 'Emscripten' }}"
+        if: "${{ startsWith(matrix.platform, 'Emscripten') }}"
         uses: mymindstorm/setup-emsdk@v14
 
       - name: Install Clang
@@ -284,6 +288,7 @@ jobs:
           - Linux x86_64 Clang
           - macOS arm64
           - macOS x86_64
+          - Emscripten Node.js
         emulator:
           - Unicorn
           - Icicle
@@ -313,6 +318,8 @@ jobs:
             runner: macos-latest
           - platform: macOS x86_64
             runner: macos-13
+          - platform: Emscripten Node.js
+            runner: ubuntu-24.04
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
@@ -354,7 +361,7 @@ jobs:
         run: cp build/${{matrix.preset}}/artifacts/test-sample.exe build/${{matrix.preset}}/artifacts/root/filesys/c/
 
       - name: CMake Test
-        if: ${{ matrix.emulator != 'Icicle' || matrix.platform != 'Windows x86' }}
+        if: ${{ matrix.emulator != 'Icicle' || (matrix.platform != 'Windows x86' && !startsWith(matrix.platform, 'Emscripten')) }}
         run: cd build/${{matrix.preset}} && ctest --verbose -j
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/root
@@ -495,10 +502,10 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Download Emscripten Artifacts
+      - name: Download Emscripten Web Artifacts
         uses: pyTooling/download-artifact@v4
         with:
-          name: Emscripten Release Artifacts
+          name: Emscripten Web Release Artifacts
           path: build/release/artifacts
   
       - name: Download Windows Artifacts
