@@ -96,7 +96,7 @@ namespace
     va_list ap;                        \
     va_start(ap, msg);                 \
     const auto str = format(&ap, msg); \
-    va_end(ap);
+    va_end(ap)
 
     void print_colored(const std::string_view& line, const color_type base_color)
     {
@@ -106,9 +106,9 @@ namespace
     }
 }
 
-void logger::print(const color c, const std::string_view message) const
+void logger::print_message(const color c, const std::string_view message, const bool force) const
 {
-    if (this->disable_output_)
+    if (!force && this->disable_output_)
     {
         return;
     }
@@ -120,40 +120,40 @@ void logger::print(const color c, const std::string_view message) const
 void logger::print(const color c, const char* message, ...) const
 {
     format_to_string(message, data);
-    this->print(c, data);
+    this->print_message(c, data);
 }
 
 // NOLINTNEXTLINE(cert-dcl50-cpp)
 void logger::info(const char* message, ...) const
 {
     format_to_string(message, data);
-    this->print(color::cyan, data);
+    this->print_message(color::cyan, data);
 }
 
 // NOLINTNEXTLINE(cert-dcl50-cpp)
 void logger::warn(const char* message, ...) const
 {
     format_to_string(message, data);
-    this->print(color::yellow, data);
+    this->print_message(color::yellow, data);
 }
 
 // NOLINTNEXTLINE(cert-dcl50-cpp)
 void logger::error(const char* message, ...) const
 {
     format_to_string(message, data);
-    this->print(color::red, data);
+    this->print_message(color::red, data, true);
 }
 
 // NOLINTNEXTLINE(cert-dcl50-cpp)
 void logger::success(const char* message, ...) const
 {
     format_to_string(message, data);
-    this->print(color::green, data);
+    this->print_message(color::green, data);
 }
 
 // NOLINTNEXTLINE(cert-dcl50-cpp)
 void logger::log(const char* message, ...) const
 {
     format_to_string(message, data);
-    this->print(color::gray, data);
+    this->print_message(color::gray, data);
 }
