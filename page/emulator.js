@@ -11,7 +11,7 @@ function logLine(text) {
 
 function runEmulation(filesystem) {
     globalThis.Module = {
-        arguments: ["-b", "-c", "-e", "./root", "c:/lul.exe",],
+        arguments: ["-b", "-c", "-e", "./root", "c:/test-sample.exe",],
         onRuntimeInitialized: function () {
             filesystem.forEach(e => {
                 if (e.name.endsWith("/")) {
