@@ -7,7 +7,6 @@
 #include "unicorn_hook.hpp"
 
 #include "function_wrapper.hpp"
-#include "function_wrapper_tcg.hpp"
 #include <ranges>
 
 namespace unicorn
@@ -550,7 +549,7 @@ namespace unicorn
                     c(address); //
                 };
 
-                function_wrapper_tcg<void, uc_engine*, uint64_t, uint32_t> wrapper(std::move(exec_wrapper));
+                function_wrapper<void, uc_engine*, uint64_t, uint32_t> wrapper(std::move(exec_wrapper));
 
                 unicorn_hook hook{*this};
 

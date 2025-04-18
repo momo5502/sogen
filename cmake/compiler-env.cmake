@@ -89,8 +89,9 @@ endif()
 ##########################################
 
 if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
-  add_compile_options(
+  momo_add_c_and_cxx_compile_options(
     -fexceptions
+    -ftrivial-auto-var-init=zero
   )
 
   add_link_options(
@@ -98,13 +99,24 @@ if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
     -sALLOW_MEMORY_GROWTH=1
     -sASSERTIONS
     -sWASM_BIGINT
-    -sENVIRONMENT=web
     -sUSE_OFFSET_CONVERTER
     #-sEXCEPTION_CATCHING_ALLOWED=[..]
     -sEXIT_RUNTIME
-    #-lnodefs.js -sNODERAWFS=1
     #-sASYNCIFY
-)
+  )
+
+  if(MOMO_EMSCRIPTEN_SUPPORT_NODEJS)
+    add_link_options(
+      -lnodefs.js -sNODERAWFS=1
+      -sENVIRONMENT=node
+      -sMAXIMUM_MEMORY=4gb
+      --pre-js ${CMAKE_CURRENT_LIST_DIR}/misc/node-pre-script.js
+    )
+  else() 
+    add_link_options(
+      -sENVIRONMENT=worker
+    )
+  endif()
 endif()
 
 ##########################################

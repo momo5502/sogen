@@ -161,7 +161,8 @@ jobs:
           - iOS arm64
           - Android x86_64
           - Android arm64-v8a
-          - Emscripten
+          - Emscripten Web
+          - Emscripten Node.js
         configuration:
           - Debug
           - Release
@@ -202,9 +203,12 @@ jobs:
             abi: arm64-v8a
             rust-target: aarch64-linux-android
             cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake"
-          - platform: Emscripten
+          - platform: Emscripten Web
             runner: ubuntu-24.04
             cmake-options: "-DMOMO_ENABLE_RUST_CODE=Off -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
+          - platform: Emscripten Node.js
+            runner: ubuntu-24.04
+            cmake-options: "-DMOMO_EMSCRIPTEN_SUPPORT_NODEJS=On -DMOMO_ENABLE_RUST_CODE=Off -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
@@ -219,7 +223,7 @@ jobs:
         run: rustup target add ${{ matrix.rust-target }}
 
       - name: Install Emscripten
-        if: "${{ matrix.platform == 'Emscripten' }}"
+        if: "${{ startsWith(matrix.platform, 'Emscripten') }}"
         uses: mymindstorm/setup-emsdk@v14
 
       - name: Install Clang
@@ -248,6 +252,7 @@ jobs:
           add-to-path: false
 
       - name: Setup Environment Variables
+        shell: bash
         if: ${{ startsWith(matrix.platform, 'Android') }}
         run: |
           echo "ANDROID_NDK_ROOT=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
@@ -320,6 +325,7 @@ jobs:
           submodules: recursive
 
       - name: Setup Environment Variables
+        shell: bash
         run: |
           echo "RUST_BACKTRACE=1" >> $GITHUB_ENV
           echo "ASAN_OPTIONS=detect_odr_violation=0" >> $GITHUB_ENV
@@ -382,6 +388,7 @@ jobs:
           submodules: recursive
 
       - name: Setup Environment Variables
+        shell: bash
         run: |
           echo "RUST_BACKTRACE=1" >> $GITHUB_ENV
           echo "ASAN_OPTIONS=detect_odr_violation=0" >> $GITHUB_ENV
@@ -414,6 +421,44 @@ jobs:
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ github.event.inputs.verbose }}
           ANALYSIS_SAMPLE: ${{github.workspace}}/build/release/artifacts/test-sample.exe
+
+
+  smoke-test-node:
+    name: Smoke Test Node.js
+    runs-on: ubuntu-24.04
+    needs: [create-emulation-root, build]
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download Artifacts
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: Emscripten Node.js Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Windows Artifacts
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: Windows x86_64 Release Artifacts
+          path: build/release/artifacts
+  
+      - name: Download Emulation Root
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: Windows 2022 Emulation Root
+          path: build/release/artifacts/root
+
+      - name: Copy Test Sample
+        run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
+
+      - name: CMake Test
+        run: cd build/release/artifacts && node ./windows-emulator-test.js
+        env:
+          EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
+          EMULATOR_VERBOSE: ${{ github.event.inputs.verbose }}
 
 
   smoke-test-android:
@@ -495,10 +540,10 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Download Emscripten Artifacts
+      - name: Download Emscripten Web Artifacts
         uses: pyTooling/download-artifact@v4
         with:
-          name: Emscripten Release Artifacts
+          name: Emscripten Web Release Artifacts
           path: build/release/artifacts
   
       - name: Download Windows Artifacts
@@ -562,7 +607,7 @@ jobs:
   summary:
     name: Pipeline Summary
     runs-on: ubuntu-24.04
-    needs: [build-page, clang-tidy, build-apiset-dumper, smoke-test-android, create-emulation-root, build, test, win-test, verify-formatting]
+    needs: [build-page, clang-tidy, build-apiset-dumper, smoke-test-node, smoke-test-android, create-emulation-root, build, test, win-test, verify-formatting]
     if: always()
     steps:
       - uses: geekyeggo/delete-artifact@v5
