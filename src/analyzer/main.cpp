@@ -265,7 +265,7 @@ namespace
 
         const auto& exe = *win_emu->mod_manager.executable;
 
-        const auto concise_logging = options.concise_logging;
+        const auto concise_logging = !options.verbose_logging;
 
         for (const auto& section : exe.sections)
         {
