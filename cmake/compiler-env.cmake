@@ -51,9 +51,6 @@ if(UNIX)
   momo_add_c_and_cxx_compile_options(
     -fvisibility=hidden
     -ftrivial-auto-var-init=zero
-    #-Wbad-function-cast
-    #-Wcast-function-type
-    -Wno-int-conversion
   )
 endif()
 
