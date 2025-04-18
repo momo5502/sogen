@@ -1,17 +1,18 @@
 onmessage = async (event) => {
     const data = event.data;
     if (data.message == "run") {
-        runEmulation(data.data);
+        const payload = data.data;
+        runEmulation(payload.filesystem, payload.file);
     }
 };
 
 function logLine(text) {
-    postMessage(text);
+    postMessage({ message: "log", data: text });
 }
 
-function runEmulation(filesystem) {
+function runEmulation(filesystem, file) {
     globalThis.Module = {
-        arguments: ["-b", "-c", "-e", "./root", "c:/test-sample.exe",],
+        arguments: ["-b", /*"-c",*/ "-e", "./root", file],
         onRuntimeInitialized: function () {
             filesystem.forEach(e => {
                 if (e.name.endsWith("/")) {
@@ -20,6 +21,9 @@ function runEmulation(filesystem) {
                     const dirs = e.name.split("/")
                     const file = dirs.pop();
                     const buffer = new Uint8Array(e.data);
+                    if (FS.analyzePath(e.name).exists) {
+                        FS.unlink(e.name);
+                    }
                     FS.createDataFile("/" + dirs.join('/'), file, buffer, true, true);
                 }
             })
@@ -27,6 +31,7 @@ function runEmulation(filesystem) {
         print: logLine,
         printErr: logLine,
         postRun: () => {
+            postMessage({ message: "end", data: null });
             self.close();
         },
     };

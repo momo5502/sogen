@@ -153,26 +153,32 @@ namespace
         }
         catch (const std::exception& e)
         {
-            win_emu.log.print(color::red, "Emulation failed at: 0x%" PRIx64 " - %s\n",
-                              win_emu.emu().read_instruction_pointer(), e.what());
+            win_emu.log.error("Emulation failed at: 0x%" PRIx64 " - %s\n", win_emu.emu().read_instruction_pointer(),
+                              e.what());
             throw;
         }
         catch (...)
         {
-            win_emu.log.print(color::red, "Emulation failed at: 0x%" PRIx64 "\n",
-                              win_emu.emu().read_instruction_pointer());
+            win_emu.log.error("Emulation failed at: 0x%" PRIx64 "\n", win_emu.emu().read_instruction_pointer());
             throw;
         }
 
         const auto exit_status = win_emu.process.exit_status;
         if (!exit_status.has_value())
         {
-            win_emu.log.print(color::red, "Emulation terminated without status!\n");
+            win_emu.log.error("Emulation terminated without status!\n");
             return false;
         }
 
         const auto success = *exit_status == STATUS_SUCCESS;
-        win_emu.log.print(success ? color::green : color::red, "Emulation terminated with status: %X\n", *exit_status);
+
+        if (!options.silent)
+        {
+            win_emu.log.disable_output(false);
+            win_emu.log.print(success ? color::green : color::red, "Emulation terminated with status: %X\n",
+                              *exit_status);
+        }
+
         return success;
     }
 
