@@ -252,6 +252,7 @@ jobs:
           add-to-path: false
 
       - name: Setup Environment Variables
+        shell: bash
         if: ${{ startsWith(matrix.platform, 'Android') }}
         run: |
           echo "ANDROID_NDK_ROOT=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
@@ -324,6 +325,7 @@ jobs:
           submodules: recursive
 
       - name: Setup Environment Variables
+        shell: bash
         run: |
           echo "RUST_BACKTRACE=1" >> $GITHUB_ENV
           echo "ASAN_OPTIONS=detect_odr_violation=0" >> $GITHUB_ENV
@@ -386,6 +388,7 @@ jobs:
           submodules: recursive
 
       - name: Setup Environment Variables
+        shell: bash
         run: |
           echo "RUST_BACKTRACE=1" >> $GITHUB_ENV
           echo "ASAN_OPTIONS=detect_odr_violation=0" >> $GITHUB_ENV
