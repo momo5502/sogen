@@ -7,7 +7,7 @@
 #include "unicorn_hook.hpp"
 
 #include "function_wrapper.hpp"
-#include "function_wrapper2.hpp"
+#include "function_wrapper_tcg.hpp"
 #include <ranges>
 
 namespace unicorn
@@ -386,7 +386,6 @@ namespace unicorn
 
             emulator_hook* hook_instruction(const int instruction_type, instruction_hook_callback callback) override
             {
-            
                 unicorn_hook hook{*this};
                 auto container = std::make_unique<hook_container>();
 
@@ -400,19 +399,18 @@ namespace unicorn
 
                     uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_INSN_INVALID, wrapper.get_function(),
                                     wrapper.get_user_data(), 0, std::numeric_limits<pointer_type>::max()));
-                                    container->add(std::move(wrapper), std::move(hook));
-                                }
-                else if(inst_type == x64_hookable_instructions::syscall){
-                    function_wrapper<void, uc_engine*> wrapper([c = std::move(callback)](uc_engine*) {
-                        c();
-                    });
+                    container->add(std::move(wrapper), std::move(hook));
+                }
+                else if (inst_type == x64_hookable_instructions::syscall)
+                {
+                    function_wrapper<void, uc_engine*> wrapper([c = std::move(callback)](uc_engine*) { c(); });
 
                     const auto uc_instruction = map_hookable_instruction(inst_type);
                     uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_INSN, wrapper.get_function(),
                                     wrapper.get_user_data(), 0, std::numeric_limits<pointer_type>::max(),
                                     uc_instruction));
 
-                                    container->add(std::move(wrapper), std::move(hook));
+                    container->add(std::move(wrapper), std::move(hook));
                 }
                 else
                 {
@@ -425,7 +423,7 @@ namespace unicorn
                                     wrapper.get_user_data(), 0, std::numeric_limits<pointer_type>::max(),
                                     uc_instruction));
 
-                                    container->add(std::move(wrapper), std::move(hook));
+                    container->add(std::move(wrapper), std::move(hook));
                 }
 
                 auto* result = container->as_opaque_hook();
@@ -552,7 +550,7 @@ namespace unicorn
                     c(address); //
                 };
 
-                function_wrapper2<void, uc_engine*, uint64_t, uint32_t> wrapper(std::move(exec_wrapper));
+                function_wrapper_tcg<void, uc_engine*, uint64_t, uint32_t> wrapper(std::move(exec_wrapper));
 
                 unicorn_hook hook{*this};
 
