@@ -89,13 +89,18 @@ endif()
 ##########################################
 
 if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
+  add_compile_options(
+    -fexceptions
+  )
+
   add_link_options(
+    -fexceptions
     -sALLOW_MEMORY_GROWTH=1
     -sASSERTIONS
     -sWASM_BIGINT
     -sENVIRONMENT=web
     -sUSE_OFFSET_CONVERTER
-    -sEXCEPTION_CATCHING_ALLOWED=[..]
+    #-sEXCEPTION_CATCHING_ALLOWED=[..]
     -sEXIT_RUNTIME
     #-lnodefs.js -sNODERAWFS=1
     #-sASYNCIFY
