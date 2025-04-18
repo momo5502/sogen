@@ -16,6 +16,8 @@
 #include "exception_dispatch.hpp"
 #include "apiset/apiset.hpp"
 
+#include "network/static_socket_factory.hpp"
+
 constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 100000;
 
 namespace
@@ -257,7 +259,11 @@ namespace
             return std::move(interfaces.socket_factory);
         }
 
+#ifdef OS_EMSCRIPTEN
+        return network::create_static_socket_factory();
+#else
         return std::make_unique<network::socket_factory>();
+#endif
     }
 }
 
