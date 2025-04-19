@@ -2,6 +2,7 @@
 
 #include "reflect_type_info.hpp"
 #include <set>
+#include <cinttypes>
 
 template <typename T>
 emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, std::less<>>& modules,
@@ -31,9 +32,12 @@ emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, s
             }
 
             const auto offset = address - object.value();
+            const auto* mod_name = mod ? mod->name.c_str() : "<N/A>";
+            const auto& type_name = i.get_type_name();
+            const auto member_name = i.get_member_name(static_cast<size_t>(offset));
+
             emu.log.print(is_main_access ? color::green : color::dark_gray,
-                          "Object access: %s - 0x%" PRIx64 " (%s) at 0x" PRIx64 " (%s)\n", i.get_type_name().c_str(),
-                          offset, i.get_member_name(static_cast<size_t>(offset)).c_str(), rip,
-                          mod ? mod->name.c_str() : "<N/A>");
+                          "Object access: %s - 0x%" PRIx64 " (%s) at 0x%" PRIx64 " (%s)\n", type_name.c_str(), offset,
+                          member_name.c_str(), rip, mod_name);
         });
 }
