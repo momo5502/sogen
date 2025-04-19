@@ -537,9 +537,9 @@ namespace syscalls
         return handle_NtAddAtomEx(c, atom_name, length, atom, 0);
     }
 
-    NTSTATUS handle_NtDeleteAtom(const syscall_context& c, const emulator_object<RTL_ATOM> atom)
+    NTSTATUS handle_NtDeleteAtom(const syscall_context& c, const RTL_ATOM atom)
     {
-        c.proc.delete_atom(atom.read());
+        c.proc.delete_atom(atom);
         return STATUS_SUCCESS;
     }
 
