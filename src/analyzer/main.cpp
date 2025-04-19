@@ -252,7 +252,7 @@ namespace
         win_emu->log.log("Using emulator: %s\n", win_emu->emu().get_name().c_str());
 
         (void)&watch_system_objects;
-        watch_system_objects(*win_emu, options.modules, options.concise_logging);
+        watch_system_objects(*win_emu, options.modules, !options.verbose_logging);
         win_emu->buffer_stdout = options.buffer_stdout;
 
         if (options.silent)
