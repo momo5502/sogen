@@ -29,9 +29,9 @@ namespace apiset
     container obtain(location location, const std::filesystem::path& root);
     container obtain(const std::filesystem::path& root);
 
-    emulator_object<API_SET_NAMESPACE> clone(x64_emulator& emu, emulator_allocator& allocator,
+    emulator_object<API_SET_NAMESPACE> clone(x86_64_emulator& emu, emulator_allocator& allocator,
                                              const API_SET_NAMESPACE& orig_api_set_map);
 
-    emulator_object<API_SET_NAMESPACE> clone(x64_emulator& emu, emulator_allocator& allocator,
+    emulator_object<API_SET_NAMESPACE> clone(x86_64_emulator& emu, emulator_allocator& allocator,
                                              const container& container);
 }

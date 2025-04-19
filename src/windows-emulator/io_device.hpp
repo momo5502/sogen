@@ -1,7 +1,7 @@
 #pragma once
 
 #include <memory>
-#include <x64_emulator.hpp>
+#include <arch_emulator.hpp>
 #include <serialization.hpp>
 
 #include "emulator_utils.hpp"
@@ -22,7 +22,7 @@ struct io_device_context
     emulator_pointer output_buffer{};
     ULONG output_buffer_length{};
 
-    io_device_context(x64_emulator& emu)
+    io_device_context(x86_64_emulator& emu)
         : io_status_block(emu)
     {
     }

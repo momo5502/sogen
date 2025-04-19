@@ -204,7 +204,7 @@ impl ExecutionHooks {
 pub struct IcicleEmulator {
     executing_thread: std::thread::ThreadId,
     vm: icicle_vm::Vm,
-    reg: registers::X64RegisterNodes,
+    reg: registers::X86RegisterNodes,
     syscall_hooks: HookContainer<dyn Fn()>,
     interrupt_hooks: HookContainer<dyn Fn(i32)>,
     violation_hooks: HookContainer<dyn Fn(u64, u8, bool) -> bool>,
@@ -275,7 +275,7 @@ impl IcicleEmulator {
         Self {
             stop: stop_value,
             executing_thread: std::thread::current().id(),
-            reg: registers::X64RegisterNodes::new(&virtual_machine.cpu.arch),
+            reg: registers::X86RegisterNodes::new(&virtual_machine.cpu.arch),
             vm: virtual_machine,
             syscall_hooks: HookContainer::new(),
             interrupt_hooks: HookContainer::new(),
@@ -555,7 +555,7 @@ impl IcicleEmulator {
         };
     }
 
-    fn read_generic_register(&mut self, reg: registers::X64Register, buffer: &mut [u8]) -> usize {
+    fn read_generic_register(&mut self, reg: registers::X86Register, buffer: &mut [u8]) -> usize {
         let reg_node = self.reg.get_node(reg);
 
         let res = self.vm.cpu.read_dynamic(pcode::Value::Var(reg_node));
@@ -580,11 +580,11 @@ impl IcicleEmulator {
         return limit;
     }
 
-    pub fn read_register(&mut self, reg: registers::X64Register, data: &mut [u8]) -> usize {
+    pub fn read_register(&mut self, reg: registers::X86Register, data: &mut [u8]) -> usize {
         match reg {
-            registers::X64Register::Rflags => self.read_flags::<u64>(data),
-            registers::X64Register::Eflags => self.read_flags::<u32>(data),
-            registers::X64Register::Flags => self.read_flags::<u16>(data),
+            registers::X86Register::Rflags => self.read_flags::<u64>(data),
+            registers::X86Register::Eflags => self.read_flags::<u32>(data),
+            registers::X86Register::Flags => self.read_flags::<u16>(data),
             _ => self.read_generic_register(reg, data),
         }
     }
@@ -606,16 +606,16 @@ impl IcicleEmulator {
         return limit;
     }
 
-    pub fn write_register(&mut self, reg: registers::X64Register, data: &[u8]) -> usize {
+    pub fn write_register(&mut self, reg: registers::X86Register, data: &[u8]) -> usize {
         match reg {
-            registers::X64Register::Rflags => self.write_flags::<u64>(data),
-            registers::X64Register::Eflags => self.write_flags::<u32>(data),
-            registers::X64Register::Flags => self.write_flags::<u16>(data),
+            registers::X86Register::Rflags => self.write_flags::<u64>(data),
+            registers::X86Register::Eflags => self.write_flags::<u32>(data),
+            registers::X86Register::Flags => self.write_flags::<u16>(data),
             _ => self.write_generic_register(reg, data),
         }
     }
 
-    fn write_generic_register(&mut self, reg: registers::X64Register, data: &[u8]) -> usize {
+    fn write_generic_register(&mut self, reg: registers::X86Register, data: &[u8]) -> usize {
         let reg_node = self.reg.get_node(reg);
 
         let mut buffer = [0u8; 32];

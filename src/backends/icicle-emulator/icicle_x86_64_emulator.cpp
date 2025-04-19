@@ -1,5 +1,5 @@
 #define ICICLE_EMULATOR_IMPL
-#include "icicle_x64_emulator.hpp"
+#include "icicle_x86_64_emulator.hpp"
 
 #include <utils/object.hpp>
 
@@ -85,10 +85,10 @@ namespace icicle
         }
     }
 
-    class icicle_x64_emulator : public x64_emulator
+    class icicle_x86_64_emulator : public x86_64_emulator
     {
       public:
-        icicle_x64_emulator()
+        icicle_x86_64_emulator()
             : emu_(icicle_create_emulator())
         {
             if (!this->emu_)
@@ -97,7 +97,7 @@ namespace icicle
             }
         }
 
-        ~icicle_x64_emulator() override
+        ~icicle_x86_64_emulator() override
         {
             if (this->emu_)
             {
@@ -128,20 +128,20 @@ namespace icicle
             const gdtr entry{.limit = limit, .address = address};
             static_assert(sizeof(gdtr) - offsetof(gdtr, limit) == 12);
 
-            this->write_register(x64_register::gdtr, &entry.limit, 12);
+            this->write_register(x86_register::gdtr, &entry.limit, 12);
         }
 
-        void set_segment_base(const x64_register base, const pointer_type value) override
+        void set_segment_base(const x86_register base, const pointer_type value) override
         {
             switch (base)
             {
-            case x64_register::fs:
-            case x64_register::fs_base:
-                this->reg(x64_register::fs_base, value);
+            case x86_register::fs:
+            case x86_register::fs_base:
+                this->reg(x86_register::fs_base, value);
                 break;
-            case x64_register::gs:
-            case x64_register::gs_base:
-                this->reg(x64_register::gs_base, value);
+            case x86_register::gs:
+            case x86_register::gs_base:
+                this->reg(x86_register::gs_base, value);
                 break;
             default:
                 break;
@@ -226,7 +226,7 @@ namespace icicle
 
         emulator_hook* hook_instruction(int instruction_type, instruction_hook_callback callback) override
         {
-            if (static_cast<x64_hookable_instructions>(instruction_type) != x64_hookable_instructions::syscall)
+            if (static_cast<x86_hookable_instructions>(instruction_type) != x86_hookable_instructions::syscall)
             {
                 // TODO
                 return nullptr;
@@ -427,8 +427,8 @@ namespace icicle
         icicle_emulator* emu_{};
     };
 
-    std::unique_ptr<x64_emulator> create_x64_emulator()
+    std::unique_ptr<x86_64_emulator> create_x86_64_emulator()
     {
-        return std::make_unique<icicle_x64_emulator>();
+        return std::make_unique<icicle_x86_64_emulator>();
     }
 }

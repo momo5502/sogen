@@ -1,7 +1,7 @@
 #pragma once
 #include "std_include.hpp"
 
-#include <x64_emulator.hpp>
+#include <arch_emulator.hpp>
 
 #include <utils/function.hpp>
 
@@ -13,11 +13,11 @@
 #include "module/module_manager.hpp"
 #include "network/socket_factory.hpp"
 
-std::unique_ptr<x64_emulator> create_default_x64_emulator();
+std::unique_ptr<x86_64_emulator> create_default_x86_64_emulator();
 
 struct emulator_callbacks : module_manager::callbacks, process_context::callbacks
 {
-    utils::optional_function<instruction_hook_continuation(uint32_t syscall_id, x64_emulator::pointer_type address,
+    utils::optional_function<instruction_hook_continuation(uint32_t syscall_id, x86_64_emulator::pointer_type address,
                                                            std::string_view mod_name, std::string_view syscall_name)>
         on_syscall{};
 
@@ -57,7 +57,7 @@ class windows_emulator
 {
     uint64_t executed_instructions_{0};
 
-    std::unique_ptr<x64_emulator> emu_{};
+    std::unique_ptr<x86_64_emulator> emu_{};
     std::unique_ptr<utils::clock> clock_{};
     std::unique_ptr<network::socket_factory> socket_factory_{};
 
@@ -74,10 +74,10 @@ class windows_emulator
 
     windows_emulator(const emulator_settings& settings = {}, emulator_callbacks callbacks = {},
                      emulator_interfaces interfaces = {},
-                     std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
+                     std::unique_ptr<x86_64_emulator> emu = create_default_x86_64_emulator());
     windows_emulator(application_settings app_settings, const emulator_settings& settings = {},
                      emulator_callbacks callbacks = {}, emulator_interfaces interfaces = {},
-                     std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
+                     std::unique_ptr<x86_64_emulator> emu = create_default_x86_64_emulator());
 
     windows_emulator(windows_emulator&&) = delete;
     windows_emulator(const windows_emulator&) = delete;
@@ -86,12 +86,12 @@ class windows_emulator
 
     ~windows_emulator();
 
-    x64_emulator& emu()
+    x86_64_emulator& emu()
     {
         return *this->emu_;
     }
 
-    const x64_emulator& emu() const
+    const x86_64_emulator& emu() const
     {
         return *this->emu_;
     }

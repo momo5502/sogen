@@ -2,7 +2,7 @@ mod icicle;
 mod registers;
 
 use icicle::IcicleEmulator;
-use registers::X64Register;
+use registers::X86Register;
 use std::os::raw::c_void;
 
 fn to_cbool(value: bool) -> i32 {
@@ -252,7 +252,7 @@ pub fn icicle_remove_hook(ptr: *mut c_void, id: u32) {
 #[unsafe(no_mangle)]
 pub fn icicle_read_register(
     ptr: *mut c_void,
-    reg: X64Register,
+    reg: X86Register,
     data: *mut c_void,
     size: usize,
 ) -> usize {
@@ -274,7 +274,7 @@ pub fn icicle_read_register(
 #[unsafe(no_mangle)]
 pub fn icicle_write_register(
     ptr: *mut c_void,
-    reg: X64Register,
+    reg: X86Register,
     data: *const c_void,
     size: usize,
 ) -> usize {
