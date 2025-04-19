@@ -621,11 +621,11 @@ namespace syscalls
     template <typename Traits>
     struct CLSMENUNAME
     {
-        LPSTR pszClientAnsiMenuName;
-        LPWSTR pwszClientUnicodeMenuName;
+        EMULATOR_CAST(typename Traits::PVOID, char*) pszClientAnsiMenuName;
+        EMULATOR_CAST(typename Traits::PVOID, char16_t*) pwszClientUnicodeMenuName;
         EMULATOR_CAST(typename Traits::PVOID, UNICODE_STRING*) pusMenuName;
     };
-    NTSTATUS handle_NtUserRegisterClassExWOW(const syscall_context& c, const emulator_object<WNDCLASSEXW> /*wnd_class_ex*/,
+    NTSTATUS handle_NtUserRegisterClassExWOW(const syscall_context& c, const emulator_pointer /*wnd_class_ex*/,
                                              const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                              const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*class_version*/,
                                              const emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> /*class_menu_name*/,
