@@ -117,6 +117,7 @@ CALL :collect propsys.dll
 CALL :collect wintypes.dll
 CALL :collect slwga.dll
 CALL :collect sppc.dll
+CALL :collect kernel.appcore.dll
 
 CALL :collect locale.nls
 
