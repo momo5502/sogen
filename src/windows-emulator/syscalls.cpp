@@ -651,7 +651,7 @@ namespace syscalls
 
     NTSTATUS handle_NtUserGetProcessWindowStation()
     {
-        return NULL;
+        return 0;
     }
 }
 
