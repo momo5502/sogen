@@ -100,6 +100,7 @@ if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
     -sASSERTIONS
     -sWASM_BIGINT
     -sUSE_OFFSET_CONVERTER
+    -sMAXIMUM_MEMORY=4gb
     #-sEXCEPTION_CATCHING_ALLOWED=[..]
     -sEXIT_RUNTIME
     #-sASYNCIFY
@@ -109,7 +110,6 @@ if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
     add_link_options(
       -lnodefs.js -sNODERAWFS=1
       -sENVIRONMENT=node
-      -sMAXIMUM_MEMORY=4gb
       --pre-js ${CMAKE_CURRENT_LIST_DIR}/misc/node-pre-script.js
     )
   else() 
