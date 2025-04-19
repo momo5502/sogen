@@ -847,8 +847,9 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtFlushBuffersFile(const syscall_context& c, const handle file_handle,
-                                       const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> /*io_status_block*/)
+    NTSTATUS handle_NtFlushBuffersFile(
+        const syscall_context& c, const handle file_handle,
+        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> /*io_status_block*/)
     {
         if (file_handle == STDOUT_HANDLE)
         {
