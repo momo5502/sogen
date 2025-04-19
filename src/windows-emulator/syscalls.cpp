@@ -626,12 +626,12 @@ namespace syscalls
         EMULATOR_CAST(typename Traits::PVOID, UNICODE_STRING*) pusMenuName;
     };
 
-    NTSTATUS handle_NtUserRegisterClassExWOW(const syscall_context& c, const emulator_pointer /*wnd_class_ex*/,
-                                             const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
-                                             const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*class_version*/,
-                                             const emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> /*class_menu_name*/,
-                                             const DWORD /*function_id*/, const DWORD /*flags*/,
-                                             const emulator_pointer /*wow*/)
+    NTSTATUS handle_NtUserRegisterClassExWOW(
+        const syscall_context& c, const emulator_pointer /*wnd_class_ex*/,
+        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
+        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*class_version*/,
+        const emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> /*class_menu_name*/, const DWORD /*function_id*/,
+        const DWORD /*flags*/, const emulator_pointer /*wow*/)
     {
         uint16_t index = c.proc.add_or_find_atom(read_unicode_string(c.emu, class_name));
         return index;
