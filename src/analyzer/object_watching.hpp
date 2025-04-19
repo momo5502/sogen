@@ -32,8 +32,8 @@ emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, s
 
             const auto offset = address - object.value();
             emu.log.print(is_main_access ? color::green : color::dark_gray,
-                          "Object access: %s - 0x%llX (%s) at 0x%llX (%s)\n", i.get_type_name().c_str(), offset,
-                          i.get_member_name(static_cast<size_t>(offset)).c_str(), rip,
+                          "Object access: %s - 0x%" PRIx64 " (%s) at 0x" PRIx64 " (%s)\n", i.get_type_name().c_str(),
+                          offset, i.get_member_name(static_cast<size_t>(offset)).c_str(), rip,
                           mod ? mod->name.c_str() : "<N/A>");
         });
 }
