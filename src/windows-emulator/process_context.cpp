@@ -236,3 +236,79 @@ handle process_context::create_thread(memory_manager& memory, const uint64_t sta
     this->callbacks_->on_create_thread(h, *thr);
     return h;
 }
+
+uint16_t process_context::add_or_find_atom(std::u16string name)
+{
+    uint16_t index = 0;
+    if (!atoms.empty())
+    {
+        auto i = atoms.end();
+        --i;
+        index = i->first + 1;
+    }
+
+    std::optional<uint16_t> last_entry{};
+    for (auto& entry : atoms)
+    {
+        if (entry.second.name == name)
+        {
+            entry.second.ref_count++;
+            return entry.first;
+        }
+
+        if (entry.first > 0)
+        {
+            if (!last_entry)
+            {
+                index = 0;
+            }
+            else
+            {
+                const auto diff = entry.first - *last_entry;
+                if (diff > 1)
+                {
+                    index = *last_entry + 1;
+                }
+            }
+        }
+
+        last_entry = entry.first;
+    }
+
+    atoms[index] = {std::move(name), 1};
+
+    return index;
+}
+
+bool process_context::delete_atom(const std::u16string& name)
+{
+    for (auto it = atoms.begin(); it != atoms.end(); ++it)
+    {
+        if (it->second.name == name)
+        {
+            if (--it->second.ref_count == 0)
+            {
+                atoms.erase(it);
+            }
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool process_context::delete_atom(uint16_t atom_id)
+{
+    const auto it = atoms.find(atom_id);
+    if (it == atoms.end())
+    {
+        return false;
+    }
+
+    if (--it->second.ref_count == 0)
+    {
+        atoms.erase(it);
+    }
+
+    return true;
+}

@@ -36,6 +36,20 @@ struct process_context
         utils::optional_function<void(handle h, emulator_thread& thr)> on_thread_terminated{};
     };
 
+    struct atom_entry
+    {
+        std::u16string name;
+        uint32_t ref_count = 0;
+
+        atom_entry(std::u16string n, uint32_t count)
+            : name(std::move(n)),
+              ref_count(count)
+        {
+        }
+
+        atom_entry() = default;
+    };
+
     process_context(x64_emulator& emu, memory_manager& memory, utils::clock& clock, callbacks& cb)
         : callbacks_(&cb),
           base_allocator(emu),
@@ -50,6 +64,10 @@ struct process_context
 
     handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size,
                          bool suspended);
+
+    uint16_t add_or_find_atom(std::u16string name);
+    bool delete_atom(const std::u16string& name);
+    bool delete_atom(uint16_t atom_id);
 
     void serialize(utils::buffer_serializer& buffer) const;
     void deserialize(utils::buffer_deserializer& buffer);
@@ -86,7 +104,7 @@ struct process_context
     handle_store<handle_types::port, port> ports{};
     handle_store<handle_types::mutant, mutant> mutants{};
     handle_store<handle_types::registry, registry_key, 2> registry_keys{};
-    std::map<uint16_t, std::u16string> atoms{};
+    std::map<uint16_t, atom_entry> atoms{};
 
     std::vector<std::byte> default_register_set{};
 

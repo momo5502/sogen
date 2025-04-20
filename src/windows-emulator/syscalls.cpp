@@ -530,47 +530,21 @@ namespace syscalls
 
         c.emu.read_memory(atom_name, name.data(), length);
 
-        uint16_t index = 0;
-        if (!c.proc.atoms.empty())
-        {
-            auto i = c.proc.atoms.end();
-            --i;
-            index = i->first + 1;
-        }
-
-        std::optional<uint16_t> last_entry{};
-        for (auto& entry : c.proc.atoms)
-        {
-            if (entry.second == name)
-            {
-                if (atom)
-                {
-                    atom.write(entry.first);
-                    return STATUS_SUCCESS;
-                }
-            }
-
-            if (entry.first > 0)
-            {
-                if (!last_entry)
-                {
-                    index = 0;
-                }
-                else
-                {
-                    const auto diff = entry.first - *last_entry;
-                    if (diff > 1)
-                    {
-                        index = *last_entry + 1;
-                    }
-                }
-            }
-
-            last_entry = entry.first;
-        }
-
-        c.proc.atoms[index] = std::move(name);
+        uint16_t index = c.proc.add_or_find_atom(name);
         atom.write(index);
+
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS handle_NtAddAtom(const syscall_context& c, const uint64_t atom_name, const ULONG length,
+                              const emulator_object<RTL_ATOM> atom)
+    {
+        return handle_NtAddAtomEx(c, atom_name, length, atom, 0);
+    }
+
+    NTSTATUS handle_NtDeleteAtom(const syscall_context& c, const RTL_ATOM atom)
+    {
+        c.proc.delete_atom(atom);
         return STATUS_SUCCESS;
     }
 
@@ -653,6 +627,33 @@ namespace syscalls
     {
         return 0;
     }
+
+    template <typename Traits>
+    struct CLSMENUNAME
+    {
+        EMULATOR_CAST(typename Traits::PVOID, char*) pszClientAnsiMenuName;
+        EMULATOR_CAST(typename Traits::PVOID, char16_t*) pwszClientUnicodeMenuName;
+        EMULATOR_CAST(typename Traits::PVOID, UNICODE_STRING*) pusMenuName;
+    };
+
+    NTSTATUS handle_NtUserRegisterClassExWOW(
+        const syscall_context& c, const emulator_pointer /*wnd_class_ex*/,
+        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
+        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*class_version*/,
+        const emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> /*class_menu_name*/, const DWORD /*function_id*/,
+        const DWORD /*flags*/, const emulator_pointer /*wow*/)
+    {
+        uint16_t index = c.proc.add_or_find_atom(read_unicode_string(c.emu, class_name));
+        return index;
+    }
+
+    NTSTATUS handle_NtUserUnregisterClass(const syscall_context& c,
+                                          const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
+                                          const emulator_pointer /*instance*/,
+                                          const emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> /*class_menu_name*/)
+    {
+        return c.proc.delete_atom(read_unicode_string(c.emu, class_name));
+    }
 }
 
 void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& handler_mapping)
@@ -716,6 +717,8 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtQueryInformationToken);
     add_handler(NtDxgkIsFeatureEnabled);
     add_handler(NtAddAtomEx);
+    add_handler(NtAddAtom);
+    add_handler(NtDeleteAtom);
     add_handler(NtInitializeNlsFiles);
     add_handler(NtUnmapViewOfSection);
     add_handler(NtUnmapViewOfSectionEx);
@@ -801,6 +804,8 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtQueryFullAttributesFile);
     add_handler(NtFlushBuffersFile);
     add_handler(NtUserGetProcessWindowStation);
+    add_handler(NtUserRegisterClassExWOW);
+    add_handler(NtUserUnregisterClass);
 
 #undef add_handler
 }
