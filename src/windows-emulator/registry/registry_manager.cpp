@@ -179,5 +179,11 @@ std::optional<std::string_view> registry_manager::get_sub_key_name(const registr
         return std::nullopt;
     }
 
-    return *iterator->second->get_sub_key_name(key.path.get(), index);
+    const auto* name = iterator->second->get_sub_key_name(key.path.get(), index);
+    if (!name)
+    {
+        return std::nullopt;
+    }
+
+    return *name;
 }
