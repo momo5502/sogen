@@ -116,8 +116,6 @@ std::optional<registry_key> registry_manager::get_key(const utils::path_key& key
 
 std::optional<registry_value> registry_manager::get_value(const registry_key& key, std::string name)
 {
-    utils::string::to_lower_inplace(name);
-
     const auto iterator = this->hives_.find(key.hive);
     if (iterator == this->hives_.end())
     {
@@ -125,6 +123,28 @@ std::optional<registry_value> registry_manager::get_value(const registry_key& ke
     }
 
     const auto* entry = iterator->second->get_value(key.path.get(), name);
+    if (!entry)
+    {
+        return std::nullopt;
+    }
+
+    registry_value v{};
+    v.type = entry->type;
+    v.name = entry->name;
+    v.data = entry->data;
+
+    return v;
+}
+
+std::optional<registry_value> registry_manager::get_value(const registry_key& key, size_t index)
+{
+    const auto iterator = this->hives_.find(key.hive);
+    if (iterator == this->hives_.end())
+    {
+        return std::nullopt;
+    }
+
+    const auto* entry = iterator->second->get_value(key.path.get(), index);
     if (!entry)
     {
         return std::nullopt;
@@ -149,4 +169,15 @@ registry_manager::hive_map::iterator registry_manager::find_hive(const utils::pa
     }
 
     return this->hives_.end();
+}
+
+std::optional<std::string_view> registry_manager::get_sub_key_name(const registry_key& key, size_t index)
+{
+    const auto iterator = this->hives_.find(key.hive);
+    if (iterator == this->hives_.end())
+    {
+        return std::nullopt;
+    }
+
+    return *iterator->second->get_sub_key_name(key.path.get(), index);
 }
