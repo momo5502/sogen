@@ -111,6 +111,13 @@ CALL :collect shcore.dll
 CALL :collect diagnosticdatasettings.dll
 CALL :collect mswsock.dll
 CALL :collect umpdc.dll
+CALL :collect pdh.dll
+CALL :collect dxva2.dll
+CALL :collect propsys.dll
+CALL :collect wintypes.dll
+CALL :collect slwga.dll
+CALL :collect sppc.dll
+CALL :collect kernel.appcore.dll
 
 CALL :collect locale.nls
 

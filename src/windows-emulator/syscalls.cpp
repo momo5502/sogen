@@ -109,6 +109,8 @@ namespace syscalls
                                     emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                     ULONG fs_control_code, uint64_t input_buffer, ULONG input_buffer_length,
                                     uint64_t output_buffer, ULONG output_buffer_length);
+    NTSTATUS handle_NtFlushBuffersFile(const syscall_context& c, handle file_handle,
+                                       emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> /*io_status_block*/);
 
     // syscalls/locale.cpp:
     NTSTATUS handle_NtInitializeNlsFiles(const syscall_context& c, emulator_object<uint64_t> base_address,
@@ -269,6 +271,9 @@ namespace syscalls
     NTSTATUS handle_NtQueryInformationThread(const syscall_context& c, handle thread_handle, uint32_t info_class,
                                              uint64_t thread_information, uint32_t thread_information_length,
                                              emulator_object<uint32_t> return_length);
+    NTSTATUS handle_NtOpenThread(const syscall_context&, handle thread_handle, ACCESS_MASK /*desired_access*/,
+                                 emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
+                                 emulator_pointer /*client_id*/);
     NTSTATUS handle_NtOpenThreadToken(const syscall_context&, handle thread_handle, ACCESS_MASK /*desired_access*/,
                                       BOOLEAN /*open_as_self*/, emulator_object<handle> token_handle);
     NTSTATUS handle_NtOpenThreadTokenEx(const syscall_context& c, handle thread_handle, ACCESS_MASK desired_access,
@@ -618,6 +623,11 @@ namespace syscalls
         return 0;
     }
 
+    NTSTATUS handle_NtUserGetProcessWindowStation()
+    {
+        return 0;
+    }
+
     template <typename Traits>
     struct CLSMENUNAME
     {
@@ -664,6 +674,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtSetInformationVirtualMemory);
     add_handler(NtFreeVirtualMemory);
     add_handler(NtQueryVirtualMemory);
+    add_handler(NtOpenThread);
     add_handler(NtOpenThreadToken);
     add_handler(NtOpenThreadTokenEx);
     add_handler(NtQueryPerformanceCounter);
@@ -791,6 +802,8 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtCreateNamedPipeFile);
     add_handler(NtFsControlFile);
     add_handler(NtQueryFullAttributesFile);
+    add_handler(NtFlushBuffersFile);
+    add_handler(NtUserGetProcessWindowStation);
     add_handler(NtUserRegisterClassExWOW);
     add_handler(NtUserUnregisterClass);
 
