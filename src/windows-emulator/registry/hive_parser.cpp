@@ -163,7 +163,7 @@ const hive_value* hive_key::get_value(std::ifstream& file, size_t index)
 {
     this->parse(file);
 
-    if (index < 0 || index >= values_by_index_.size())
+    if (index >= values_by_index_.size())
     {
         return nullptr;
     }

@@ -33,7 +33,7 @@ class hive_key
     {
         this->parse(file);
 
-        if (index < 0 || index >= sub_keys_by_index_.size())
+        if (index >= sub_keys_by_index_.size())
         {
             return nullptr;
         }
