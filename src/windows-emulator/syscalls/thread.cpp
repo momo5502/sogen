@@ -239,6 +239,13 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
+    NTSTATUS handle_NtOpenThread(const syscall_context&, handle /*thread_handle*/, ACCESS_MASK /*desired_access*/,
+                                 emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
+                                 emulator_pointer /*client_id*/)
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
     NTSTATUS handle_NtOpenThreadToken(const syscall_context&, const handle thread_handle,
                                       const ACCESS_MASK /*desired_access*/, const BOOLEAN /*open_as_self*/,
                                       const emulator_object<handle> token_handle)
