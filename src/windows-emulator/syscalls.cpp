@@ -548,6 +548,25 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
+    NTSTATUS handle_NtUserGetAtomName(const syscall_context& c, const RTL_ATOM atom, const uint64_t atom_name,
+                                      const ULONG length)
+    {
+        const auto* name = c.proc.get_atom_name(atom);
+        if (!name)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        if (length < name->size())
+        {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        c.emu.write_memory(atom_name, name->data(), name->size());
+
+        return STATUS_SUCCESS;
+    }
+
     NTSTATUS handle_NtQueryDebugFilterState()
     {
         return FALSE;
@@ -719,6 +738,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtAddAtomEx);
     add_handler(NtAddAtom);
     add_handler(NtDeleteAtom);
+    add_handler(NtUserGetAtomName);
     add_handler(NtInitializeNlsFiles);
     add_handler(NtUnmapViewOfSection);
     add_handler(NtUnmapViewOfSectionEx);

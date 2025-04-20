@@ -68,6 +68,7 @@ struct process_context
     uint16_t add_or_find_atom(std::u16string name);
     bool delete_atom(const std::u16string& name);
     bool delete_atom(uint16_t atom_id);
+    const std::u16string* get_atom_name(uint16_t atom_id) const;
 
     void serialize(utils::buffer_serializer& buffer) const;
     void deserialize(utils::buffer_deserializer& buffer);

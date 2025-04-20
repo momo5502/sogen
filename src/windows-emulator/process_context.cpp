@@ -312,3 +312,14 @@ bool process_context::delete_atom(uint16_t atom_id)
 
     return true;
 }
+
+const std::u16string* process_context::get_atom_name(uint16_t atom_id) const
+{
+    const auto it = atoms.find(atom_id);
+    if (it == atoms.end())
+    {
+        return nullptr;
+    }
+
+    return &it->second.name;
+}
