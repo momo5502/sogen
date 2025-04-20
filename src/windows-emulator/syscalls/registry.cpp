@@ -400,7 +400,7 @@ namespace syscalls
             constexpr auto base_size = offsetof(KEY_VALUE_FULL_INFORMATION, Name);
             const auto name_size = value_name_u16.size() * 2;
             const auto data_size = value->data.size();
-            const ULONG data_offset = static_cast<ULONG>(base_size + name_size);
+            const auto data_offset = static_cast<ULONG>(base_size + name_size);
             const auto required_size = data_offset + data_size;
 
             result_length.write(static_cast<ULONG>(required_size));

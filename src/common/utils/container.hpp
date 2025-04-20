@@ -40,8 +40,8 @@ namespace utils
 
         bool operator()(const std::string_view lhs, const std::string_view rhs) const
         {
-            return std::equal(lhs.begin(), lhs.end(), rhs.begin(), rhs.end(),
-                              [](unsigned char c1, unsigned char c2) { return std::tolower(c1) == std::tolower(c2); });
+            return std::ranges::equal(
+                lhs, rhs, [](unsigned char c1, unsigned char c2) { return std::tolower(c1) == std::tolower(c2); });
         }
     };
 
