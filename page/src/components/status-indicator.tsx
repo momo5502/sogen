@@ -1,5 +1,5 @@
 import { Badge } from '@/components/ui/badge'
-import { CircleIcon } from '@radix-ui/react-icons';
+import { CircleFill } from 'react-bootstrap-icons';
 
 export interface StatusIndicatorProps {
     running: boolean;
@@ -16,6 +16,6 @@ export function StatusIndicator(props: StatusIndicatorProps) {
     }
 
     return (
-        <Badge variant="outline"><CircleIcon className={getColor() + " rounded-full mr-1 n  duration-200 ease-in-out"} color='transparent' />{getText()}</Badge>
+        <Badge variant="outline"><CircleFill className={getColor() + " rounded-full mr-1 n  duration-200 ease-in-out"} color='transparent' />{getText()}</Badge>
     );
 }

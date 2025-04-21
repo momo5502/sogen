@@ -20,7 +20,7 @@ import { Popover, PopoverContent, PopoverTrigger } from './components/ui/popover
 import { createDefaultSettings } from './settings';
 import { SettingsMenu } from './components/settings-menu';
 
-import { PlayIcon, GearIcon, StopIcon } from "@radix-ui/react-icons";
+import { PlayFill, StopFill, GearFill } from 'react-bootstrap-icons';
 import { StatusIndicator } from './components/status-indicator'
 
 function selectAndReadFile(): Promise<UserFile> {
@@ -99,13 +99,13 @@ function App() {
           <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4 overflow-y-auto">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Button onClick={() => createEmulator()}><PlayIcon /> Run Sample</Button>
-            <Button onClick={() => loadAndRunUserFile()}><PlayIcon /> Run your .exe</Button>
-            <Button variant="secondary" onClick={() => emulator?.stop()}><StopIcon /> Stop Emulation</Button>
+            <Button onClick={() => createEmulator()}><PlayFill /> Run Sample</Button>
+            <Button onClick={() => loadAndRunUserFile()}><PlayFill /> Run your .exe</Button>
+            <Button variant="secondary" onClick={() => emulator?.stop()}><StopFill /> Stop Emulation</Button>
 
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="secondary"><GearIcon /> Settings</Button>
+                <Button variant="secondary"><GearFill /> Settings</Button>
               </PopoverTrigger>
               <PopoverContent>
                 <SettingsMenu settings={settings} onChange={setSettings} />
