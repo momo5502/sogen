@@ -1,18 +1,34 @@
+var logLines = [];
+var lastFlush = new Date().getTime();
+
 onmessage = async (event) => {
     const data = event.data;
     if (data.message == "run") {
         const payload = data.data;
-        runEmulation(payload.filesystem, payload.file);
+        runEmulation(payload.filesystem, payload.file, payload.options);
     }
 };
 
-function logLine(text) {
-    postMessage({ message: "log", data: text });
+function flushLines() {
+    const lines = logLines;
+    logLines = []; 
+    lastFlush = new Date().getTime();
+    postMessage({ message: "log", data: lines });
 }
 
-function runEmulation(filesystem, file) {
+function logLine(text) {
+    logLines.push(text);
+
+    const now = new Date().getTime();
+
+    if(lastFlush + 15 < now) {
+        flushLines();
+    }
+}
+
+function runEmulation(filesystem, file, options) {
     globalThis.Module = {
-        arguments: ["-b", /*"-c",*/ "-e", "./root", file],
+        arguments: [...options, "-e", "./root", file],
         onRuntimeInitialized: function () {
             filesystem.forEach(e => {
                 if (e.name.endsWith("/")) {
@@ -31,6 +47,7 @@ function runEmulation(filesystem, file) {
         print: logLine,
         printErr: logLine,
         postRun: () => {
+            flushLines();
             postMessage({ message: "end", data: null });
             self.close();
         },

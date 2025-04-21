@@ -1,0 +1,70 @@
+@media (pointer:fine) {
+  ::-webkit-scrollbar {
+      width: 20px;
+  }
+
+  ::-webkit-scrollbar-track {
+      background-color: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+      background-color: rgba(97, 97, 97, 0.7);
+      border-radius: 20px;
+      min-height: 50px;
+      border: 6px solid transparent;
+      background-clip: content-box;
+      transition: all 0.1s linear;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+      background-color: rgba(97, 97, 97, 0.9);
+  }
+}
+
+html {
+  overflow: hidden;
+}
+
+.terminal-output {
+  line-height: 1.5;
+  font-weight: 600;
+  font-size: 1.05em;
+  font-family: monospace;
+  height: 100%;
+}
+
+.terminal-black {
+  color: #0C0C0C;
+}
+
+.terminal-red {
+  color: #FF3131;
+}
+
+.terminal-green {
+  color: #86C000;
+}
+
+.terminal-yellow {
+  color: #FFB940;
+}
+
+.terminal-blue {
+  color: #3A96DD;
+}
+
+.terminal-cyan {
+  color: #00ADF7;
+}
+
+.terminal-pink {
+  color: #9750DD;
+}
+
+.terminal-white {
+  color: #ECECEC;
+}
+
+.terminal-dark-gray {
+  color: rgb(65, 65, 65);
+}
