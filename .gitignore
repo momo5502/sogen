@@ -147,3 +147,7 @@ UpgradeLog*.htm
 user*.bat
 
 .vscode/
+
+page/public/analyzer.js
+page/public/analyzer.wasm
+page/public/root.zip
