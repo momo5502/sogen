@@ -558,18 +558,21 @@ jobs:
         run: cp ./build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
 
       - name: Create Emulation Root zip
-        run: cd ./build/release/artifacts && zip -r "${{github.workspace}}/page/root.zip" ./root
+        run: cd ./build/release/artifacts && zip -r "${{github.workspace}}/page/public/root.zip" ./root
 
       - name: Copy Files
         run: |
-          cp ./build/release/artifacts/analyzer.js ./page/
-          cp ./build/release/artifacts/analyzer.wasm ./page/
+          cp ./build/release/artifacts/analyzer.js ./page/public/
+          cp ./build/release/artifacts/analyzer.wasm ./page/public/
+
+      - name: Build Page
+        run: cd ./page && npm i && npm run build
  
       - name: Upload Page Artifacts
         uses: pyTooling/upload-artifact@v4
         with:
           name: Page Artifacts
-          working-directory: page/
+          working-directory: page/dist/
           path: "*"
 
   deploy-page:
@@ -586,7 +589,7 @@ jobs:
         uses: pyTooling/download-artifact@v4
         with:
           name: Page Artifacts
-          path: ./page/
+          path: ./page/dist/
         
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -594,7 +597,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./page
+          path: ./page/dist
 
       - name: Deploy to GitHub Pages
         id: deployment
