@@ -18,7 +18,8 @@ namespace syscalls
             return STATUS_INVALID_HANDLE;
         }
 
-        if (info_class == ThreadSchedulerSharedDataSlot || info_class == ThreadBasePriority)
+        if (info_class == ThreadSchedulerSharedDataSlot || info_class == ThreadBasePriority ||
+            info_class == ThreadAffinityMask)
         {
             return STATUS_SUCCESS;
         }
