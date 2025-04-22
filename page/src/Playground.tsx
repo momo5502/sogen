@@ -97,7 +97,7 @@ export function Playground() {
 
   return (
     <>
-      <Header title="Playground - Sogen" />
+      <Header title="Playground - Sogen" description="Playground to test and run Sogen, the Windows user space emulator, right in your browser." />
       <SidebarProvider defaultOpen={false}>
         <AppSidebar />
         <SidebarInset className="h-[100dvh]">
