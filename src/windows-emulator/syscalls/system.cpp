@@ -115,9 +115,86 @@ namespace syscalls
             return handle_query<SYSTEM_TIMEOFDAY_INFORMATION64>(c.emu, system_information, system_information_length,
                                                                 return_length,
                                                                 [&](SYSTEM_TIMEOFDAY_INFORMATION64& info) {
+                                                                    memset(&info, 0, sizeof(info));
                                                                     info.BootTime.QuadPart = 0;
+                                                                    info.TimeZoneId = 0x00000002;
                                                                     // TODO: Fill
                                                                 });
+
+        case SystemTimeZoneInformation:
+        case SystemCurrentTimeZoneInformation:
+            return handle_query<SYSTEM_TIMEZONE_INFORMATION>(
+                c.emu, system_information, system_information_length, return_length, [&](SYSTEM_TIMEZONE_INFORMATION& tzi) {
+                    memset(&tzi, 0, sizeof(tzi));
+
+                    tzi.Bias = -60;
+                    tzi.StandardBias = 0;
+                    tzi.DaylightBias = -60;
+
+                    constexpr std::u16string_view std_name{u"W. Europe Standard Time"};
+                    memcpy(&tzi.StandardName.arr[0], std_name.data(), std_name.size() * sizeof(char16_t));
+
+                    constexpr std::u16string_view dlt_name{u"W. Europe Daylight Time"};
+                    memcpy(&tzi.DaylightName.arr[0], dlt_name.data(), dlt_name.size() * sizeof(char16_t));
+
+                    // Standard Time: Last Sunday in October, 03:00
+                    tzi.StandardDate.wMonth = 10;
+                    tzi.StandardDate.wDayOfWeek = 0;
+                    tzi.StandardDate.wDay = 5;
+                    tzi.StandardDate.wHour = 3;
+                    tzi.StandardDate.wMinute = 0;
+                    tzi.StandardDate.wSecond = 0;
+                    tzi.StandardDate.wMilliseconds = 0;
+
+                    // Daylight Time: Last Sunday in March, 02:00
+                    tzi.DaylightDate.wMonth = 3;
+                    tzi.DaylightDate.wDayOfWeek = 0;
+                    tzi.DaylightDate.wDay = 5;
+                    tzi.DaylightDate.wHour = 2;
+                    tzi.DaylightDate.wMinute = 0;
+                    tzi.DaylightDate.wSecond = 0;
+                    tzi.DaylightDate.wMilliseconds = 0;
+                });
+
+        case SystemDynamicTimeZoneInformation:
+            return handle_query<SYSTEM_DYNAMIC_TIMEZONE_INFORMATION>(
+                c.emu, system_information, system_information_length, return_length,
+                [&](SYSTEM_DYNAMIC_TIMEZONE_INFORMATION& dtzi) {
+                    memset(&dtzi, 0, sizeof(dtzi));
+
+                    dtzi.Bias = -60;
+                    dtzi.StandardBias = 0;
+                    dtzi.DaylightBias = -60;
+
+                    constexpr std::u16string_view std_name{u"W. Europe Standard Time"};
+                    memcpy(&dtzi.StandardName.arr[0], std_name.data(), std_name.size() * sizeof(char16_t));
+
+                    constexpr std::u16string_view dlt_name{u"W. Europe Daylight Time"};
+                    memcpy(&dtzi.DaylightName.arr[0], dlt_name.data(), dlt_name.size() * sizeof(char16_t));
+
+                    constexpr std::u16string_view key_name{u"W. Europe Standard Time"};
+                    memcpy(&dtzi.TimeZoneKeyName.arr[0], key_name.data(), key_name.size() * sizeof(char16_t));
+
+                    // Standard Time: Last Sunday in October, 03:00
+                    dtzi.StandardDate.wMonth = 10;
+                    dtzi.StandardDate.wDayOfWeek = 0;
+                    dtzi.StandardDate.wDay = 5;
+                    dtzi.StandardDate.wHour = 3;
+                    dtzi.StandardDate.wMinute = 0;
+                    dtzi.StandardDate.wSecond = 0;
+                    dtzi.StandardDate.wMilliseconds = 0;
+
+                    // Daylight Time: Last Sunday in March, 02:00
+                    dtzi.DaylightDate.wMonth = 3;
+                    dtzi.DaylightDate.wDayOfWeek = 0;
+                    dtzi.DaylightDate.wDay = 5;
+                    dtzi.DaylightDate.wHour = 2;
+                    dtzi.DaylightDate.wMinute = 0;
+                    dtzi.DaylightDate.wSecond = 0;
+                    dtzi.DaylightDate.wMilliseconds = 0;
+
+                    dtzi.DynamicDaylightTimeDisabled = FALSE;
+                });
 
         case SystemRangeStartInformation:
             return handle_query<SYSTEM_RANGE_START_INFORMATION64>(c.emu, system_information, system_information_length,

@@ -118,11 +118,14 @@ namespace syscalls
                                          emulator_object<LARGE_INTEGER> /*default_casing_table_size*/);
     NTSTATUS handle_NtQueryDefaultLocale(const syscall_context&, BOOLEAN /*user_profile*/,
                                          emulator_object<LCID> default_locale_id);
-    NTSTATUS handle_NtGetNlsSectionPtr();
+    NTSTATUS handle_NtGetNlsSectionPtr(const syscall_context& c, ULONG section_type, ULONG section_data,
+                                       emulator_pointer /*context_data*/, emulator_object<uint64_t> section_pointer,
+                                       emulator_object<ULONG> section_size);
     NTSTATUS handle_NtGetMUIRegistryInfo();
     NTSTATUS handle_NtIsUILanguageComitted();
     NTSTATUS handle_NtUserGetKeyboardLayout();
-    NTSTATUS handle_NtQueryInstallUILanguage();
+    NTSTATUS handle_NtQueryDefaultUILanguage(const syscall_context&, emulator_object<LANGID> language_id);
+    NTSTATUS handle_NtQueryInstallUILanguage(const syscall_context&, emulator_object<LANGID> language_id);
 
     // syscalls/memory.cpp:
     NTSTATUS handle_NtQueryVirtualMemory(const syscall_context& c, handle process_handle, uint64_t base_address,
@@ -180,6 +183,14 @@ namespace syscalls
                                   emulator_object<REMOTE_PORT_VIEW64> /*server_shared_memory*/,
                                   emulator_object<ULONG> /*maximum_message_length*/, emulator_pointer connection_info,
                                   emulator_object<ULONG> connection_info_length);
+    NTSTATUS handle_NtSecureConnectPort(const syscall_context& c, emulator_object<handle> client_port_handle,
+                                        emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> server_port_name,
+                                        emulator_object<SECURITY_QUALITY_OF_SERVICE> security_qos,
+                                        emulator_object<PORT_VIEW64> client_shared_memory,
+                                        emulator_object<SID> /*server_sid*/,
+                                        emulator_object<REMOTE_PORT_VIEW64> server_shared_memory,
+                                        emulator_object<ULONG> maximum_message_length, emulator_pointer connection_info,
+                                        emulator_object<ULONG> connection_info_length);
     NTSTATUS handle_NtAlpcSendWaitReceivePort(const syscall_context& c, handle port_handle, ULONG /*flags*/,
                                               emulator_object<PORT_MESSAGE64> /*send_message*/,
                                               emulator_object<ALPC_MESSAGE_ATTRIBUTES>
@@ -732,6 +743,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtApphelpCacheControl);
     add_handler(NtCreateSection);
     add_handler(NtConnectPort);
+    add_handler(NtSecureConnectPort);
     add_handler(NtCreateFile);
     add_handler(NtDeviceIoControlFile);
     add_handler(NtQueryWnfStateData);
@@ -769,6 +781,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtOpenEvent);
     add_handler(NtGetMUIRegistryInfo);
     add_handler(NtIsUILanguageComitted);
+    add_handler(NtQueryDefaultUILanguage);
     add_handler(NtQueryInstallUILanguage);
     add_handler(NtUpdateWnfStateData);
     add_handler(NtRaiseException);

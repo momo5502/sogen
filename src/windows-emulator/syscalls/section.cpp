@@ -64,12 +64,26 @@ namespace syscalls
 
         if (filename == u"\\Windows\\SharedSection")
         {
+            constexpr auto shared_section_size = 0x10000;
+
+            const auto address = c.win_emu.memory.find_free_allocation_base(shared_section_size);
+            c.win_emu.memory.allocate_memory(address, shared_section_size, memory_permission::read_write);
+            c.proc.shared_section_address = address;
+            c.proc.shared_section_size = shared_section_size;
+
             section_handle.write(SHARED_SECTION);
             return STATUS_SUCCESS;
         }
 
         if (filename == u"DBWIN_BUFFER")
         {
+            constexpr auto dbwin_buffer_section_size = 0x1000;
+
+            const auto address = c.win_emu.memory.find_free_allocation_base(dbwin_buffer_section_size);
+            c.win_emu.memory.allocate_memory(address, dbwin_buffer_section_size, memory_permission::read_write);
+            c.proc.dbwin_buffer = address;
+            c.proc.dbwin_buffer_size = dbwin_buffer_section_size;
+
             section_handle.write(DBWIN_BUFFER);
             return STATUS_SUCCESS;
         }
@@ -120,10 +134,8 @@ namespace syscalls
 
         if (section_handle == SHARED_SECTION)
         {
-            constexpr auto shared_section_size = 0x10000;
-
-            const auto address = c.win_emu.memory.find_free_allocation_base(shared_section_size);
-            c.win_emu.memory.allocate_memory(address, shared_section_size, memory_permission::read_write);
+            const auto shared_section_size = c.proc.shared_section_size;
+            const auto address = c.proc.shared_section_address;
 
             const std::u16string_view windows_dir = c.proc.kusd.get().NtSystemRoot.arr;
             const auto windows_dir_size = windows_dir.size() * 2;
@@ -168,11 +180,8 @@ namespace syscalls
 
         if (section_handle == DBWIN_BUFFER)
         {
-            constexpr auto dbwin_buffer_section_size = 0x1000;
-
-            const auto address = c.win_emu.memory.find_free_allocation_base(dbwin_buffer_section_size);
-            c.win_emu.memory.allocate_memory(address, dbwin_buffer_section_size, memory_permission::read_write);
-            c.proc.dbwin_buffer = address;
+            const auto dbwin_buffer_section_size = c.proc.dbwin_buffer_size;
+            const auto address = c.proc.dbwin_buffer;
 
             if (view_size)
             {
@@ -255,10 +264,17 @@ namespace syscalls
             return STATUS_INVALID_PARAMETER;
         }
 
+        if (base_address == c.proc.shared_section_address)
+        {
+            c.proc.shared_section_address = 0;
+            c.win_emu.memory.release_memory(base_address, c.proc.shared_section_size);
+            return STATUS_SUCCESS;
+        }
+
         if (base_address == c.proc.dbwin_buffer)
         {
             c.proc.dbwin_buffer = 0;
-            c.win_emu.memory.release_memory(base_address, 0x1000);
+            c.win_emu.memory.release_memory(base_address, c.proc.dbwin_buffer_size);
             return STATUS_SUCCESS;
         }
 
