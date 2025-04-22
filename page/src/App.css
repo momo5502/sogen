@@ -1,23 +1,23 @@
-@media (pointer:fine) {
+@media (pointer: fine) {
   ::-webkit-scrollbar {
-      width: 20px;
+    width: 20px;
   }
 
   ::-webkit-scrollbar-track {
-      background-color: transparent;
+    background-color: transparent;
   }
 
   ::-webkit-scrollbar-thumb {
-      background-color: rgba(97, 97, 97, 0.7);
-      border-radius: 20px;
-      min-height: 50px;
-      border: 6px solid transparent;
-      background-clip: content-box;
-      transition: all 0.1s linear;
+    background-color: rgba(97, 97, 97, 0.7);
+    border-radius: 20px;
+    min-height: 50px;
+    border: 6px solid transparent;
+    background-clip: content-box;
+    transition: all 0.1s linear;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-      background-color: rgba(97, 97, 97, 0.9);
+    background-color: rgba(97, 97, 97, 0.9);
   }
 }
 
@@ -34,35 +34,35 @@ button {
 }
 
 .terminal-black {
-  color: #0C0C0C;
+  color: #0c0c0c;
 }
 
 .terminal-red {
-  color: #FF3131;
+  color: #ff3131;
 }
 
 .terminal-green {
-  color: #86C000;
+  color: #86c000;
 }
 
 .terminal-yellow {
-  color: #FFB940;
+  color: #ffb940;
 }
 
 .terminal-blue {
-  color: #3A96DD;
+  color: #3a96dd;
 }
 
 .terminal-cyan {
-  color: #00ADF7;
+  color: #00adf7;
 }
 
 .terminal-pink {
-  color: #9750DD;
+  color: #9750dd;
 }
 
 .terminal-white {
-  color: #ECECEC;
+  color: #ececec;
 }
 
 .terminal-dark-gray {

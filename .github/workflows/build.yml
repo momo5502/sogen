@@ -67,6 +67,9 @@ jobs:
         with:
           clang-format-version: '20'
           check-path: 'src'
+      
+      - name: Verify Page Formatting
+        run: cd page && npx --yes prettier . --check
 
   build-apiset-dumper:
     name: Build API Set Dumper
