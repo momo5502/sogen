@@ -50,12 +50,12 @@ Click <a href="https://docs.google.com/presentation/d/1pha4tFfDMpVzJ_ehJJ21SA_HA
 ## Quick Start (Windows + Visual Studio)
 
 > [!TIP]  
-> Checkout the [Wiki](https://github.com/momo5502/emulator/wiki) for more details on how to build & run the emulator on Windows, Linux, macOS, ...
+> Checkout the [Wiki](https://github.com/momo5502/sogen/wiki) for more details on how to build & run the emulator on Windows, Linux, macOS, ...
 
 1\. Checkout the code:
 
 ```bash
-git clone --recurse-submodules https://github.com/momo5502/emulator.git
+git clone --recurse-submodules https://github.com/momo5502/sogen.git
 ```
 
 2\. Run the following command in an x64 Development Command Prompt in the cloned directory:
@@ -66,7 +66,7 @@ cmake --preset=vs2022
 
 3\. Build the solution that was generated at `build/vs2022/emulator.sln`
 
-4\. Create a registry dump by running the [grab-registry.bat](https://github.com/momo5502/emulator/blob/main/src/tools/grab-registry.bat) as administrator and place it in the artifacts folder next to the `analyzer.exe`
+4\. Create a registry dump by running the [grab-registry.bat](https://github.com/momo5502/sogen/blob/main/src/tools/grab-registry.bat) as administrator and place it in the artifacts folder next to the `analyzer.exe`
 
 5\. Run the program of your choice:
 
