@@ -559,8 +559,8 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtUserGetAtomName(const syscall_context& c, const RTL_ATOM atom, const uint64_t atom_name,
-                                      const ULONG length)
+    NTSTATUS handle_NtUserGetAtomName(const syscall_context& c, const RTL_ATOM atom,
+                                      const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> atom_name)
     {
         const auto* name = c.proc.get_atom_name(atom);
         if (!name)
@@ -568,14 +568,22 @@ namespace syscalls
             return STATUS_INVALID_PARAMETER;
         }
 
-        if (length < name->size())
-        {
-            return STATUS_BUFFER_TOO_SMALL;
-        }
+        const size_t name_length = name->size() * 2;
+        const size_t max_length = name_length + 2;
 
-        c.emu.write_memory(atom_name, name->data(), name->size());
+        bool too_small = false;
+        atom_name.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& str) {
+            if (str.MaximumLength < max_length)
+            {
+                too_small = true;
+                return;
+            }
 
-        return STATUS_SUCCESS;
+            str.Length = static_cast<USHORT>(name_length);
+            c.emu.write_memory(str.Buffer, name->data(), max_length);
+        });
+
+        return too_small ? STATUS_BUFFER_TOO_SMALL : STATUS_SUCCESS;
     }
 
     NTSTATUS handle_NtQueryDebugFilterState()
