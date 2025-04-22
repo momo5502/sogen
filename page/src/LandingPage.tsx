@@ -54,7 +54,10 @@ export function LandingPage() {
 
   return (
     <>
-      <Header title="Sogen - Windows User Space Emulator" description="Sogen is a high-performance Windows user space emulator operating at syscall level that can emulate windows processes. It is ideal for security-, DRM- or malware research." />
+      <Header
+        title="Sogen - Windows User Space Emulator"
+        description="Sogen is a high-performance Windows user space emulator operating at syscall level that can emulate windows processes. It is ideal for security-, DRM- or malware research."
+      />
       <div className="flex flex-col min-h-screen">
         {/* Hero Section */}
         <header className="bg-gradient-to-r from-blue-600 to-cyan-500 py-16 md:py-24">
@@ -150,9 +153,12 @@ export function LandingPage() {
                   className="rounded-2xl"
                   width="100%"
                   height="100%"
-                  src="https://www.youtube.com/embed/wY9Q0DhodOQ?si=ag_zebGFpQPXBsTx"
+                  src="https://www.youtube.com/embed/wY9Q0DhodOQ?si=Lm_anpeBU6Txl5AW"
                   title="YouTube video player"
+                  frameBorder="0"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  referrerPolicy="strict-origin-when-cross-origin"
+                  allowFullScreen
                 ></iframe>
               </div>
               <div className="mt-4 text-center"></div>
