@@ -21,10 +21,6 @@
   }
 }
 
-html {
-  overflow: hidden;
-}
-
 .terminal-output {
   line-height: 1.5;
   font-weight: 600;
