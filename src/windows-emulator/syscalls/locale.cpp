@@ -34,8 +34,32 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtGetNlsSectionPtr()
+    NTSTATUS handle_NtGetNlsSectionPtr(const syscall_context& c, ULONG section_type, ULONG section_data,
+                                       emulator_pointer /*context_data*/, emulator_object<uint64_t> section_pointer,
+                                       emulator_object<ULONG> section_size)
     {
+        if (section_type == 11)
+        {
+            c.win_emu.log.print(color::dark_gray, "--> Code Page: %d\n", section_data);
+
+            const auto file_path = R"(C:\Windows\System32\C_)" + std::to_string(section_data) + ".NLS";
+            const auto locale_file = utils::io::read_file(c.win_emu.file_sys.translate(file_path));
+            if (locale_file.empty())
+            {
+                return STATUS_OBJECT_NAME_NOT_FOUND;
+            }
+
+            const auto size = static_cast<size_t>(page_align_up(locale_file.size()));
+            const auto section_memory = c.win_emu.memory.allocate_memory(size, memory_permission::read);
+            c.emu.write_memory(section_memory, locale_file.data(), locale_file.size());
+
+            section_pointer.write_if_valid(section_memory);
+            section_size.write_if_valid(static_cast<ULONG>(size));
+
+            return STATUS_SUCCESS;
+        }
+
+        c.win_emu.log.print(color::gray, "Unsupported section type: %X\n", section_type);
         return STATUS_NOT_SUPPORTED;
     }
 
@@ -54,8 +78,15 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtQueryInstallUILanguage()
+    NTSTATUS handle_NtQueryDefaultUILanguage(const syscall_context&, emulator_object<LANGID> language_id)
     {
-        return STATUS_NOT_SUPPORTED;
+        language_id.write(0x407);
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS handle_NtQueryInstallUILanguage(const syscall_context&, emulator_object<LANGID> language_id)
+    {
+        language_id.write(0x407);
+        return STATUS_SUCCESS;
     }
 }

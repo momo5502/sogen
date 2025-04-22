@@ -453,6 +453,7 @@ union TEB_SAME_TEB_FLAGS_UNION
 
 #ifndef OS_WINDOWS
 using LCID = DWORD;
+using LANGID = WORD;
 #endif
 
 typedef struct _TEB64
@@ -861,6 +862,44 @@ typedef struct _SYSTEM_TIMEOFDAY_INFORMATION64
     ULONGLONG BootTimeBias;
     ULONGLONG SleepTimeBias;
 } SYSTEM_TIMEOFDAY_INFORMATION64, *PSYSTEM_TIMEOFDAY_INFORMATION64;
+
+#ifndef OS_WINDOWS
+typedef struct _SYSTEMTIME
+{
+    WORD wYear;
+    WORD wMonth;
+    WORD wDayOfWeek;
+    WORD wDay;
+    WORD wHour;
+    WORD wMinute;
+    WORD wSecond;
+    WORD wMilliseconds;
+} SYSTEMTIME, *PSYSTEMTIME, *LPSYSTEMTIME;
+#endif
+
+typedef struct _SYSTEM_TIMEZONE_INFORMATION
+{
+    LONG Bias;
+    ARRAY_CONTAINER<char16_t, 32> StandardName;
+    SYSTEMTIME StandardDate;
+    LONG StandardBias;
+    ARRAY_CONTAINER<char16_t, 32> DaylightName;
+    SYSTEMTIME DaylightDate;
+    LONG DaylightBias;
+} SYSTEM_TIMEZONE_INFORMATION, *PSYSTEM_TIMEZONE_INFORMATION;
+
+typedef struct _SYSTEM_DYNAMIC_TIMEZONE_INFORMATION
+{
+    LONG Bias;
+    ARRAY_CONTAINER<char16_t, 32> StandardName;
+    SYSTEMTIME StandardDate;
+    LONG StandardBias;
+    ARRAY_CONTAINER<char16_t, 32> DaylightName;
+    SYSTEMTIME DaylightDate;
+    LONG DaylightBias;
+    ARRAY_CONTAINER<char16_t, 128> TimeZoneKeyName;
+    BOOLEAN DynamicDaylightTimeDisabled;
+} SYSTEM_DYNAMIC_TIMEZONE_INFORMATION, *PSYSTEM_DYNAMIC_TIMEZONE_INFORMATION;
 
 typedef struct _PROCESS_BASIC_INFORMATION64
 {

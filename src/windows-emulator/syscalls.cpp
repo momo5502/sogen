@@ -118,11 +118,14 @@ namespace syscalls
                                          emulator_object<LARGE_INTEGER> /*default_casing_table_size*/);
     NTSTATUS handle_NtQueryDefaultLocale(const syscall_context&, BOOLEAN /*user_profile*/,
                                          emulator_object<LCID> default_locale_id);
-    NTSTATUS handle_NtGetNlsSectionPtr();
+    NTSTATUS handle_NtGetNlsSectionPtr(const syscall_context& c, ULONG section_type, ULONG section_data,
+                                       emulator_pointer /*context_data*/, emulator_object<uint64_t> section_pointer,
+                                       emulator_object<ULONG> section_size);
     NTSTATUS handle_NtGetMUIRegistryInfo();
     NTSTATUS handle_NtIsUILanguageComitted();
     NTSTATUS handle_NtUserGetKeyboardLayout();
-    NTSTATUS handle_NtQueryInstallUILanguage();
+    NTSTATUS handle_NtQueryDefaultUILanguage(const syscall_context&, emulator_object<LANGID> language_id);
+    NTSTATUS handle_NtQueryInstallUILanguage(const syscall_context&, emulator_object<LANGID> language_id);
 
     // syscalls/memory.cpp:
     NTSTATUS handle_NtQueryVirtualMemory(const syscall_context& c, handle process_handle, uint64_t base_address,
@@ -180,6 +183,14 @@ namespace syscalls
                                   emulator_object<REMOTE_PORT_VIEW64> /*server_shared_memory*/,
                                   emulator_object<ULONG> /*maximum_message_length*/, emulator_pointer connection_info,
                                   emulator_object<ULONG> connection_info_length);
+    NTSTATUS handle_NtSecureConnectPort(const syscall_context& c, emulator_object<handle> client_port_handle,
+                                        emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> server_port_name,
+                                        emulator_object<SECURITY_QUALITY_OF_SERVICE> security_qos,
+                                        emulator_object<PORT_VIEW64> client_shared_memory,
+                                        emulator_pointer /*server_sid*/,
+                                        emulator_object<REMOTE_PORT_VIEW64> server_shared_memory,
+                                        emulator_object<ULONG> maximum_message_length, emulator_pointer connection_info,
+                                        emulator_object<ULONG> connection_info_length);
     NTSTATUS handle_NtAlpcSendWaitReceivePort(const syscall_context& c, handle port_handle, ULONG /*flags*/,
                                               emulator_object<PORT_MESSAGE64> /*send_message*/,
                                               emulator_object<ALPC_MESSAGE_ATTRIBUTES>
@@ -554,6 +565,33 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
+    NTSTATUS handle_NtUserGetAtomName(const syscall_context& c, const RTL_ATOM atom,
+                                      const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> atom_name)
+    {
+        const auto* name = c.proc.get_atom_name(atom);
+        if (!name)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const size_t name_length = name->size() * 2;
+        const size_t max_length = name_length + 2;
+
+        bool too_small = false;
+        atom_name.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& str) {
+            if (str.MaximumLength < max_length)
+            {
+                too_small = true;
+                return;
+            }
+
+            str.Length = static_cast<USHORT>(name_length);
+            c.emu.write_memory(str.Buffer, name->data(), max_length);
+        });
+
+        return too_small ? STATUS_BUFFER_TOO_SMALL : STATUS_SUCCESS;
+    }
+
     NTSTATUS handle_NtQueryDebugFilterState()
     {
         return FALSE;
@@ -660,6 +698,21 @@ namespace syscalls
     {
         return c.proc.delete_atom(read_unicode_string(c.emu, class_name));
     }
+
+    NTSTATUS handle_NtUserSetWindowsHookEx()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtUserUnhookWindowsHookEx()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtUserCreateWindowEx()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
 }
 
 void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& handler_mapping)
@@ -704,6 +757,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtApphelpCacheControl);
     add_handler(NtCreateSection);
     add_handler(NtConnectPort);
+    add_handler(NtSecureConnectPort);
     add_handler(NtCreateFile);
     add_handler(NtDeviceIoControlFile);
     add_handler(NtQueryWnfStateData);
@@ -725,6 +779,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtAddAtomEx);
     add_handler(NtAddAtom);
     add_handler(NtDeleteAtom);
+    add_handler(NtUserGetAtomName);
     add_handler(NtInitializeNlsFiles);
     add_handler(NtUnmapViewOfSection);
     add_handler(NtUnmapViewOfSectionEx);
@@ -740,6 +795,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtOpenEvent);
     add_handler(NtGetMUIRegistryInfo);
     add_handler(NtIsUILanguageComitted);
+    add_handler(NtQueryDefaultUILanguage);
     add_handler(NtQueryInstallUILanguage);
     add_handler(NtUpdateWnfStateData);
     add_handler(NtRaiseException);
@@ -813,6 +869,9 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserGetProcessWindowStation);
     add_handler(NtUserRegisterClassExWOW);
     add_handler(NtUserUnregisterClass);
+    add_handler(NtUserSetWindowsHookEx);
+    add_handler(NtUserUnhookWindowsHookEx);
+    add_handler(NtUserCreateWindowEx);
 
 #undef add_handler
 }

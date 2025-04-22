@@ -68,6 +68,7 @@ struct process_context
     uint16_t add_or_find_atom(std::u16string name);
     bool delete_atom(const std::u16string& name);
     bool delete_atom(uint16_t atom_id);
+    const std::u16string* get_atom_name(uint16_t atom_id) const;
 
     void serialize(utils::buffer_serializer& buffer) const;
     void deserialize(utils::buffer_deserializer& buffer);
@@ -79,7 +80,10 @@ struct process_context
     uint64_t current_ip{0};
     uint64_t previous_ip{0};
 
+    uint64_t shared_section_address{0};
+    uint64_t shared_section_size{0};
     uint64_t dbwin_buffer{0};
+    uint64_t dbwin_buffer_size{0};
 
     std::optional<uint64_t> exception_rip{};
     std::optional<NTSTATUS> exit_status{};
