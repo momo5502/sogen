@@ -14,7 +14,7 @@ Perfect for security research, malware analysis, and DRM research where fine-gra
 
 Built in C++ and powered by the [Unicorn Engine](https://github.com/unicorn-engine/unicorn) (or the [icicle-emu](https://github.com/icicle-emu/icicle-emu) 🆕).
 
-Try it out on: <a href="https://sogen.dev">sogen.dev</a>
+Try it out: <a href="https://sogen.dev">sogen.dev</a>
 
 ## Key Features
 
