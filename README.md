@@ -1,6 +1,6 @@
 <img src="./docs/images/cover.png" />
 <h1 align="center">
-	Windows User Space Emulator
+	Sogen - Windows User Space Emulator
 	<br>
 	<a href="https://github.com/momo5502/emulator?tab=GPL-2.0-1-ov-file"><img src="https://img.shields.io/github/license/momo5502/emulator?color=00B0F8"/></a>
 	<a href="https://github.com/momo5502/emulator/actions"><img src="https://img.shields.io/github/actions/workflow/status/momo5502/emulator/build.yml?branch=main&label=build"/></a>
@@ -13,6 +13,8 @@ A high-performance Windows process emulator that operates at syscall level, prov
 Perfect for security research, malware analysis, and DRM research where fine-grained control over process execution is required.
 
 Built in C++ and powered by the [Unicorn Engine](https://github.com/unicorn-engine/unicorn) (or the [icicle-emu](https://github.com/icicle-emu/icicle-emu) 🆕).
+
+Try it out on: <a href="https://sogen.dev">sogen.dev</a>
 
 ## Key Features
 
