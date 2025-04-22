@@ -56,7 +56,7 @@ export function LandingPage() {
     <>
       <Header
         title="Sogen - Windows User Space Emulator"
-        description="Sogen is a high-performance Windows user space emulator operating at syscall level that can emulate windows processes. It is ideal for security-, DRM- or malware research."
+        description="Sogen is a high-performance Windows user space emulator that can emulate windows processes. It is ideal for security-, DRM- or malware research."
       />
       <div className="flex flex-col min-h-screen">
         {/* Hero Section */}
@@ -68,8 +68,7 @@ export function LandingPage() {
                   Sogen
                 </h1>
                 <p className="text-xl md:text-2xl font-light">
-                  High-performance Windows user space emulator operating at
-                  syscall level
+                  A high-performance Windows user space emulator
                 </p>
                 <div className="flex flex-wrap gap-4 justify-center md:justify-start">
                   <a href="#/playground" target="_blank">
