@@ -1,14 +1,14 @@
 <img src="./docs/images/cover.png" />
 <h1 align="center">
-	Sogen - Windows User Space Emulator
+	Sogen
 	<br>
 	<a href="https://github.com/momo5502/emulator?tab=GPL-2.0-1-ov-file"><img src="https://img.shields.io/github/license/momo5502/emulator?color=00B0F8"/></a>
 	<a href="https://github.com/momo5502/emulator/actions"><img src="https://img.shields.io/github/actions/workflow/status/momo5502/emulator/build.yml?branch=main&label=build"/></a>
 	<a href="https://github.com/momo5502/emulator/issues"><img src="https://img.shields.io/github/issues/momo5502/emulator?color=F8B000"/></a>
-	<img src="https://img.shields.io/github/commit-activity/m/momo5502/emulator?color=FF3131"/>
+	<img src="https://img.shields.io/github/commit-activity/m/momo5502/emulator?color=FF3131"/>  
 </h1>
 
-A high-performance Windows process emulator that operates at syscall level, providing full control over process execution through comprehensive hooking capabilities.
+Sogen is a high-performance Windows userspace emulator that operates at syscall level, providing full control over process execution through comprehensive hooking capabilities.
 
 Perfect for security research, malware analysis, and DRM research where fine-grained control over process execution is required.
 
