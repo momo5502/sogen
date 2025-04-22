@@ -124,7 +124,8 @@ namespace syscalls
         case SystemTimeZoneInformation:
         case SystemCurrentTimeZoneInformation:
             return handle_query<SYSTEM_TIMEZONE_INFORMATION>(
-                c.emu, system_information, system_information_length, return_length, [&](SYSTEM_TIMEZONE_INFORMATION& tzi) {
+                c.emu, system_information, system_information_length, return_length,
+                [&](SYSTEM_TIMEZONE_INFORMATION& tzi) {
                     memset(&tzi, 0, sizeof(tzi));
 
                     tzi.Bias = -60;

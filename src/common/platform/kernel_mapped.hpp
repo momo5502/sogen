@@ -453,6 +453,7 @@ union TEB_SAME_TEB_FLAGS_UNION
 
 #ifndef OS_WINDOWS
 using LCID = DWORD;
+using LANGID = WORD;
 #endif
 
 typedef struct _TEB64

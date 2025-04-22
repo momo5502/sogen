@@ -42,7 +42,7 @@ namespace syscalls
         {
             c.win_emu.log.print(color::dark_gray, "--> Code Page: %d\n", section_data);
 
-            const auto file_path = std::format(R"(C:\Windows\System32\C_{}.NLS)", section_data);
+            const auto file_path = R"(C:\Windows\System32\C_)" + std::to_string(section_data) + ".NLS";
             const auto locale_file = utils::io::read_file(c.win_emu.file_sys.translate(file_path));
             if (locale_file.empty())
             {

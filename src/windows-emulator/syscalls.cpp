@@ -187,7 +187,7 @@ namespace syscalls
                                         emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> server_port_name,
                                         emulator_object<SECURITY_QUALITY_OF_SERVICE> security_qos,
                                         emulator_object<PORT_VIEW64> client_shared_memory,
-                                        emulator_object<SID> /*server_sid*/,
+                                        emulator_pointer /*server_sid*/,
                                         emulator_object<REMOTE_PORT_VIEW64> server_shared_memory,
                                         emulator_object<ULONG> maximum_message_length, emulator_pointer connection_info,
                                         emulator_object<ULONG> connection_info_length);
