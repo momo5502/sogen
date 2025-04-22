@@ -1,34 +1,39 @@
-import { useState, useRef } from 'react'
-import { Output } from '@/components/output'
+import { useState, useRef } from "react";
+import { Output } from "@/components/output";
 
-import { AppSidebar } from "@/components/app-sidebar"
-import { Separator } from "@/components/ui/separator"
+import { AppSidebar } from "@/components/app-sidebar";
+import { Separator } from "@/components/ui/separator";
 import {
   SidebarInset,
   SidebarProvider,
   SidebarTrigger,
-} from "@/components/ui/sidebar"
-import { Button } from './components/ui/button'
+} from "@/components/ui/sidebar";
+import { Button } from "./components/ui/button";
 
-import { Emulator, UserFile } from './emulator';
-import { getFilesystem } from './filesystem';
+import { Emulator, UserFile } from "./emulator";
+import { getFilesystem } from "./filesystem";
 
-import './App.css'
-import { Popover, PopoverContent, PopoverTrigger } from './components/ui/popover'
+import "./App.css";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "./components/ui/popover";
 
-import { createDefaultSettings } from './settings';
-import { SettingsMenu } from './components/settings-menu';
+import { createDefaultSettings } from "./settings";
+import { SettingsMenu } from "./components/settings-menu";
 
-import { PlayFill, StopFill, GearFill } from 'react-bootstrap-icons';
-import { StatusIndicator } from './components/status-indicator'
+import { PlayFill, StopFill, GearFill } from "react-bootstrap-icons";
+import { StatusIndicator } from "./components/status-indicator";
+import { Header } from "./Header";
 
 function selectAndReadFile(): Promise<UserFile> {
   return new Promise((resolve, reject) => {
-    const fileInput = document.createElement('input');
-    fileInput.type = 'file';
-    fileInput.accept = '.exe';
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = ".exe";
 
-    fileInput.addEventListener('change', function (event) {
+    fileInput.addEventListener("change", function (event) {
       const file = (event as any).target.files[0];
       if (file) {
         const reader = new FileReader();
@@ -37,17 +42,17 @@ function selectAndReadFile(): Promise<UserFile> {
           const arrayBuffer = e.target?.result;
           resolve({
             name: file.name,
-            data: arrayBuffer as ArrayBuffer
+            data: arrayBuffer as ArrayBuffer,
           });
         };
 
         reader.onerror = function (e: ProgressEvent<FileReader>) {
-          reject(new Error('Error reading file: ' + e.target?.error));
+          reject(new Error("Error reading file: " + e.target?.error));
         };
 
         reader.readAsArrayBuffer(file);
       } else {
-        reject(new Error('No file selected'));
+        reject(new Error("No file selected"));
       }
     });
 
@@ -91,25 +96,35 @@ export function Playground() {
   }
 
   return (
+    <>
+      <Header title="Playground - Sogen" />
       <SidebarProvider defaultOpen={false}>
         <AppSidebar />
-        <SidebarInset className='h-[100dvh]'>
+        <SidebarInset className="h-[100dvh]">
           <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4 overflow-y-auto">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Button onClick={() => createEmulator()}><PlayFill /> Run Sample</Button>
-            <Button onClick={() => loadAndRunUserFile()}><PlayFill /> Run your .exe</Button>
-            <Button variant="secondary" onClick={() => emulator?.stop()}><StopFill /> Stop Emulation</Button>
+            <Button onClick={() => createEmulator()}>
+              <PlayFill /> Run Sample
+            </Button>
+            <Button onClick={() => loadAndRunUserFile()}>
+              <PlayFill /> Run your .exe
+            </Button>
+            <Button variant="secondary" onClick={() => emulator?.stop()}>
+              <StopFill /> Stop Emulation
+            </Button>
 
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="secondary"><GearFill /> Settings</Button>
+                <Button variant="secondary">
+                  <GearFill /> Settings
+                </Button>
               </PopoverTrigger>
               <PopoverContent>
                 <SettingsMenu settings={settings} onChange={setSettings} />
               </PopoverContent>
             </Popover>
-            <div className='text-right flex-1'>
+            <div className="text-right flex-1">
               <StatusIndicator running={!!emulator} />
             </div>
           </header>
@@ -118,6 +133,6 @@ export function Playground() {
           </div>
         </SidebarInset>
       </SidebarProvider>
-    )
+    </>
+  );
 }
-

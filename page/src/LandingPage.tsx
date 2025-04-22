@@ -11,6 +11,7 @@ import {
   Github,
   Play,
 } from "lucide-react";
+import { Header } from "./Header";
 
 export function LandingPage() {
   const features = [
@@ -53,6 +54,7 @@ export function LandingPage() {
 
   return (
     <>
+      <Header title="Sogen - Windows User Space Emulator" />
       <div className="flex flex-col min-h-screen">
         {/* Hero Section */}
         <header className="bg-gradient-to-r from-blue-600 to-cyan-500 py-16 md:py-24">

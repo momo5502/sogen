@@ -7,14 +7,14 @@ import "./App.css";
 
 function App() {
   return (
-    <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
-      <HashRouter>
-        <Routes>
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/playground" element={<Playground />} />
-        </Routes>
-      </HashRouter>
-    </ThemeProvider>
+      <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
+        <HashRouter>
+          <Routes>
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/playground" element={<Playground />} />
+          </Routes>
+        </HashRouter>
+      </ThemeProvider>
   );
 }
 
