@@ -3,7 +3,7 @@
 #include "std_include.hpp"
 #include <serialization.hpp>
 
-#include "x64_emulator.hpp"
+#include "arch_emulator.hpp"
 
 #include <utils/time.hpp>
 

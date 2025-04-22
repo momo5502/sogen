@@ -105,17 +105,17 @@ class emulator_thread : public ref_counted_object
 
     bool is_thread_ready(process_context& process, utils::clock& clock);
 
-    void save(x64_emulator& emu)
+    void save(x86_64_emulator& emu)
     {
         this->last_registers = emu.save_registers();
     }
 
-    void restore(x64_emulator& emu) const
+    void restore(x86_64_emulator& emu) const
     {
         emu.restore_registers(this->last_registers);
     }
 
-    void setup_if_necessary(x64_emulator& emu, const process_context& context)
+    void setup_if_necessary(x86_64_emulator& emu, const process_context& context)
     {
         if (!this->executed_instructions)
         {
@@ -127,7 +127,7 @@ class emulator_thread : public ref_counted_object
             const auto status = *this->pending_status;
             this->pending_status = {};
 
-            emu.reg<uint64_t>(x64_register::rax, static_cast<uint64_t>(status));
+            emu.reg<uint64_t>(x86_register::rax, static_cast<uint64_t>(status));
         }
     }
 
@@ -211,7 +211,7 @@ class emulator_thread : public ref_counted_object
     }
 
   private:
-    void setup_registers(x64_emulator& emu, const process_context& context) const;
+    void setup_registers(x86_64_emulator& emu, const process_context& context) const;
 
     void release()
     {

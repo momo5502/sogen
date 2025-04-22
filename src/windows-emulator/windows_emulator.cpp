@@ -3,10 +3,10 @@
 
 #include "cpu_context.hpp"
 
-#include <unicorn_x64_emulator.hpp>
+#include <unicorn_x86_64_emulator.hpp>
 
 #if MOMO_ENABLE_RUST_CODE
-#include <icicle_x64_emulator.hpp>
+#include <icicle_x86_64_emulator.hpp>
 #endif
 
 #include <utils/io.hpp>
@@ -117,13 +117,13 @@ namespace
         ctx.ContextFlags = CONTEXT64_ALL;
         cpu_context::save(emu, ctx);
 
-        const auto initial_sp = emu.reg(x64_register::rsp);
+        const auto initial_sp = emu.reg(x86_register::rsp);
         const auto new_sp = align_down(initial_sp - sizeof(stack_layout), 0x100);
 
         emu.write_memory(new_sp, stack_layout);
 
-        emu.reg(x64_register::rsp, new_sp);
-        emu.reg(x64_register::rip, win_emu.process.ki_user_apc_dispatcher);
+        emu.reg(x86_register::rsp, new_sp);
+        emu.reg(x86_register::rip, win_emu.process.ki_user_apc_dispatcher);
     }
 
     bool switch_to_thread(windows_emulator& win_emu, emulator_thread& thread, const bool force = false)
@@ -267,22 +267,22 @@ namespace
     }
 }
 
-std::unique_ptr<x64_emulator> create_default_x64_emulator()
+std::unique_ptr<x86_64_emulator> create_default_x86_64_emulator()
 {
 #if MOMO_ENABLE_RUST_CODE
     const auto* env = getenv("EMULATOR_ICICLE");
     if (env && (env == "1"sv || env == "true"sv))
     {
-        return icicle::create_x64_emulator();
+        return icicle::create_x86_64_emulator();
     }
 #endif
 
-    return unicorn::create_x64_emulator();
+    return unicorn::create_x86_64_emulator();
 }
 
 windows_emulator::windows_emulator(application_settings app_settings, const emulator_settings& settings,
                                    emulator_callbacks callbacks, emulator_interfaces interfaces,
-                                   std::unique_ptr<x64_emulator> emu)
+                                   std::unique_ptr<x86_64_emulator> emu)
     : windows_emulator(settings, std::move(callbacks), std::move(interfaces), std::move(emu))
 {
     fixup_application_settings(app_settings);
@@ -290,7 +290,7 @@ windows_emulator::windows_emulator(application_settings app_settings, const emul
 }
 
 windows_emulator::windows_emulator(const emulator_settings& settings, emulator_callbacks callbacks,
-                                   emulator_interfaces interfaces, std::unique_ptr<x64_emulator> emu)
+                                   emulator_interfaces interfaces, std::unique_ptr<x86_64_emulator> emu)
     : emu_(std::move(emu)),
       clock_(get_clock(interfaces, this->executed_instructions_, settings.use_relative_time)),
       socket_factory_(get_socket_factory(interfaces)),
@@ -485,26 +485,26 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
     log.print(color::gray,
               "Inst: %16" PRIx64 " - RAX: %16" PRIx64 " - RBX: %16" PRIx64 " - RCX: %16" PRIx64 " - RDX: %16" PRIx64
               " - R8: %16" PRIx64 " - R9: %16" PRIx64 " - RDI: %16" PRIx64 " - RSI: %16" PRIx64 " - %s\n",
-              address, emu.reg(x64_register::rax), emu.reg(x64_register::rbx), emu.reg(x64_register::rcx),
-              emu.reg(x64_register::rdx), emu.reg(x64_register::r8), emu.reg(x64_register::r9),
-              emu.reg(x64_register::rdi), emu.reg(x64_register::rsi), binary ? binary->name.c_str() : "<N/A>");
+              address, emu.reg(x86_register::rax), emu.reg(x86_register::rbx), emu.reg(x86_register::rcx),
+              emu.reg(x86_register::rdx), emu.reg(x86_register::r8), emu.reg(x86_register::r9),
+              emu.reg(x86_register::rdi), emu.reg(x86_register::rsi), binary ? binary->name.c_str() : "<N/A>");
 }
 
 void windows_emulator::setup_hooks()
 {
-    this->emu().hook_instruction(x64_hookable_instructions::syscall, [&] {
+    this->emu().hook_instruction(x86_hookable_instructions::syscall, [&] {
         this->dispatcher.dispatch(*this);
         return instruction_hook_continuation::skip_instruction;
     });
 
-    this->emu().hook_instruction(x64_hookable_instructions::rdtsc, [&] {
+    this->emu().hook_instruction(x86_hookable_instructions::rdtsc, [&] {
         const auto ticks = this->clock_->timestamp_counter();
-        this->emu().reg(x64_register::rax, ticks & 0xFFFFFFFF);
-        this->emu().reg(x64_register::rdx, (ticks >> 32) & 0xFFFFFFFF);
+        this->emu().reg(x86_register::rax, ticks & 0xFFFFFFFF);
+        this->emu().reg(x86_register::rdx, (ticks >> 32) & 0xFFFFFFFF);
         return instruction_hook_continuation::skip_instruction;
     });
 
-    this->emu().hook_instruction(x64_hookable_instructions::invalid, [&] {
+    this->emu().hook_instruction(x86_hookable_instructions::invalid, [&] {
         const auto ip = this->emu().read_instruction_pointer();
 
         this->log.print(color::gray, "Invalid instruction at: 0x%" PRIx64 " (via 0x%" PRIx64 ")\n", ip,

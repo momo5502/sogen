@@ -1,5 +1,5 @@
 #define UNICORN_EMULATOR_IMPL
-#include "unicorn_x64_emulator.hpp"
+#include "unicorn_x86_64_emulator.hpp"
 
 #include <array>
 
@@ -18,19 +18,19 @@ namespace unicorn
         static_assert(static_cast<uint32_t>(memory_permission::exec) == UC_PROT_EXEC);
         static_assert(static_cast<uint32_t>(memory_permission::all) == UC_PROT_ALL);
 
-        static_assert(static_cast<uint32_t>(x64_register::end) == UC_X86_REG_ENDING);
+        static_assert(static_cast<uint32_t>(x86_register::end) == UC_X86_REG_ENDING);
 
-        uc_x86_insn map_hookable_instruction(const x64_hookable_instructions instruction)
+        uc_x86_insn map_hookable_instruction(const x86_hookable_instructions instruction)
         {
             switch (instruction)
             {
-            case x64_hookable_instructions::syscall:
+            case x86_hookable_instructions::syscall:
                 return UC_X86_INS_SYSCALL;
-            case x64_hookable_instructions::cpuid:
+            case x86_hookable_instructions::cpuid:
                 return UC_X86_INS_CPUID;
-            case x64_hookable_instructions::rdtsc:
+            case x86_hookable_instructions::rdtsc:
                 return UC_X86_INS_RDTSC;
-            case x64_hookable_instructions::rdtscp:
+            case x86_hookable_instructions::rdtscp:
                 return UC_X86_INS_RDTSCP;
             default:
                 throw std::runtime_error("Bad instruction for mapping");
@@ -195,10 +195,10 @@ namespace unicorn
             }
         }
 
-        class unicorn_x64_emulator : public x64_emulator
+        class unicorn_x86_64_emulator : public x86_64_emulator
         {
           public:
-            unicorn_x64_emulator()
+            unicorn_x86_64_emulator()
             {
                 uce(uc_open(UC_ARCH_X86, UC_MODE_64, &this->uc_));
                 uce(uc_ctl_set_cpu_model(this->uc_, UC_CPU_X86_EPYC_ROME));
@@ -215,7 +215,7 @@ namespace unicorn
 #endif
             }
 
-            ~unicorn_x64_emulator() override
+            ~unicorn_x86_64_emulator() override
             {
                 this->hooks_.clear();
                 uc_close(this->uc_);
@@ -254,10 +254,10 @@ namespace unicorn
             void load_gdt(const pointer_type address, const uint32_t limit) override
             {
                 const std::array<uint64_t, 4> gdtr = {0, address, limit, 0};
-                this->write_register(x64_register::gdtr, gdtr.data(), gdtr.size() * sizeof(uint64_t));
+                this->write_register(x86_register::gdtr, gdtr.data(), gdtr.size() * sizeof(uint64_t));
             }
 
-            void set_segment_base(const x64_register base, const pointer_type value) override
+            void set_segment_base(const x86_register base, const pointer_type value) override
             {
                 constexpr auto IA32_FS_BASE_MSR = 0xC0000100;
                 constexpr auto IA32_GS_BASE_MSR = 0xC0000101;
@@ -275,19 +275,19 @@ namespace unicorn
 
                 switch (base)
                 {
-                case x64_register::fs:
-                case x64_register::fs_base:
+                case x86_register::fs:
+                case x86_register::fs_base:
                     msr_val.id = IA32_FS_BASE_MSR;
                     break;
-                case x64_register::gs:
-                case x64_register::gs_base:
+                case x86_register::gs:
+                case x86_register::gs_base:
                     msr_val.id = IA32_GS_BASE_MSR;
                     break;
                 default:
                     return;
                 }
 
-                this->write_register(x64_register::msr, &msr_val, sizeof(msr_val));
+                this->write_register(x86_register::msr, &msr_val, sizeof(msr_val));
             }
 
             size_t write_raw_register(const int reg, const void* value, const size_t size) override
@@ -388,9 +388,9 @@ namespace unicorn
                 unicorn_hook hook{*this};
                 auto container = std::make_unique<hook_container>();
 
-                const auto inst_type = static_cast<x64_hookable_instructions>(instruction_type);
+                const auto inst_type = static_cast<x86_hookable_instructions>(instruction_type);
 
-                if (inst_type == x64_hookable_instructions::invalid)
+                if (inst_type == x86_hookable_instructions::invalid)
                 {
                     function_wrapper<int, uc_engine*> wrapper([c = std::move(callback)](uc_engine*) {
                         return (c() == instruction_hook_continuation::skip_instruction) ? 1 : 0;
@@ -400,7 +400,7 @@ namespace unicorn
                                     wrapper.get_user_data(), 0, std::numeric_limits<pointer_type>::max()));
                     container->add(std::move(wrapper), std::move(hook));
                 }
-                else if (inst_type == x64_hookable_instructions::syscall)
+                else if (inst_type == x86_hookable_instructions::syscall)
                 {
                     function_wrapper<void, uc_engine*> wrapper([c = std::move(callback)](uc_engine*) { c(); });
 
@@ -708,8 +708,8 @@ namespace unicorn
         };
     }
 
-    std::unique_ptr<x64_emulator> create_x64_emulator()
+    std::unique_ptr<x86_64_emulator> create_x86_64_emulator()
     {
-        return std::make_unique<unicorn_x64_emulator>();
+        return std::make_unique<unicorn_x86_64_emulator>();
     }
 }

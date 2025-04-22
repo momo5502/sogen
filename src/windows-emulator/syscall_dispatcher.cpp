@@ -65,7 +65,7 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
     auto& context = win_emu.process;
 
     const auto address = emu.read_instruction_pointer();
-    const auto syscall_id = emu.reg<uint32_t>(x64_register::eax);
+    const auto syscall_id = emu.reg<uint32_t>(x86_register::eax);
 
     const syscall_context c{
         .win_emu = win_emu,
@@ -82,7 +82,7 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
         if (entry == this->handlers_.end())
         {
             win_emu.log.error("Unknown syscall: 0x%X\n", syscall_id);
-            c.emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_SUPPORTED);
+            c.emu.reg<uint64_t>(x86_register::rax, STATUS_NOT_SUPPORTED);
             c.emu.stop();
             return;
         }
@@ -97,7 +97,7 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
         if (!entry->second.handler)
         {
             win_emu.log.error("Unimplemented syscall: %s - 0x%X\n", entry->second.name.c_str(), syscall_id);
-            c.emu.reg<uint64_t>(x64_register::rax, STATUS_NOT_SUPPORTED);
+            c.emu.reg<uint64_t>(x86_register::rax, STATUS_NOT_SUPPORTED);
             c.emu.stop();
             return;
         }
@@ -139,13 +139,13 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
     catch (std::exception& e)
     {
         win_emu.log.error("Syscall threw an exception: %X (0x%" PRIx64 ") - %s\n", syscall_id, address, e.what());
-        emu.reg<uint64_t>(x64_register::rax, STATUS_UNSUCCESSFUL);
+        emu.reg<uint64_t>(x86_register::rax, STATUS_UNSUCCESSFUL);
         emu.stop();
     }
     catch (...)
     {
         win_emu.log.error("Syscall threw an unknown exception: %X (0x%" PRIx64 ")\n", syscall_id, address);
-        emu.reg<uint64_t>(x64_register::rax, STATUS_UNSUCCESSFUL);
+        emu.reg<uint64_t>(x86_register::rax, STATUS_UNSUCCESSFUL);
         emu.stop();
     }
 }

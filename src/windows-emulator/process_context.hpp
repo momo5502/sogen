@@ -7,7 +7,7 @@
 #include "module/module_manager.hpp"
 #include <utils/nt_handle.hpp>
 
-#include <x64_emulator.hpp>
+#include <arch_emulator.hpp>
 
 #include "io_device.hpp"
 #include "kusd_mmio.hpp"
@@ -50,7 +50,7 @@ struct process_context
         atom_entry() = default;
     };
 
-    process_context(x64_emulator& emu, memory_manager& memory, utils::clock& clock, callbacks& cb)
+    process_context(x86_64_emulator& emu, memory_manager& memory, utils::clock& clock, callbacks& cb)
         : callbacks_(&cb),
           base_allocator(emu),
           peb(emu),
@@ -59,7 +59,7 @@ struct process_context
     {
     }
 
-    void setup(x64_emulator& emu, memory_manager& memory, const application_settings& app_settings,
+    void setup(x86_64_emulator& emu, memory_manager& memory, const application_settings& app_settings,
                const mapped_module& executable, const mapped_module& ntdll, const apiset::container& apiset_container);
 
     handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size,

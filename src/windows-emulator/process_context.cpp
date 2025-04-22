@@ -14,20 +14,20 @@ namespace
         return emulator_allocator{memory, base, size};
     }
 
-    void setup_gdt(x64_emulator& emu, memory_manager& memory)
+    void setup_gdt(x86_64_emulator& emu, memory_manager& memory)
     {
         memory.allocate_memory(GDT_ADDR, GDT_LIMIT, memory_permission::read);
         emu.load_gdt(GDT_ADDR, GDT_LIMIT);
 
         emu.write_memory<uint64_t>(GDT_ADDR + 6 * (sizeof(uint64_t)), 0xEFFE000000FFFF);
-        emu.reg<uint16_t>(x64_register::cs, 0x33);
+        emu.reg<uint16_t>(x86_register::cs, 0x33);
 
         emu.write_memory<uint64_t>(GDT_ADDR + 5 * (sizeof(uint64_t)), 0xEFF6000000FFFF);
-        emu.reg<uint16_t>(x64_register::ss, 0x2B);
+        emu.reg<uint16_t>(x86_register::ss, 0x2B);
     }
 }
 
-void process_context::setup(x64_emulator& emu, memory_manager& memory, const application_settings& app_settings,
+void process_context::setup(x86_64_emulator& emu, memory_manager& memory, const application_settings& app_settings,
                             const mapped_module& executable, const mapped_module& ntdll,
                             const apiset::container& apiset_container)
 {

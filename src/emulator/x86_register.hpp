@@ -1,6 +1,7 @@
 #pragma once
 
-enum class x64_register
+// x86_64 and x86_32 register definitions
+enum class x86_register
 {
     invalid = 0,
     ah,

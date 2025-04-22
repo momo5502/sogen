@@ -89,8 +89,8 @@ namespace
                 memory_permission::read_write);
             emu.emu().write_memory(memory, data.data(), data.size());
 
-            emu.emu().reg(x64_register::rcx, memory);
-            emu.emu().reg<uint64_t>(x64_register::rdx, data.size());
+            emu.emu().reg(x86_register::rcx, memory);
+            emu.emu().reg<uint64_t>(x86_register::rdx, data.size());
 
             try
             {

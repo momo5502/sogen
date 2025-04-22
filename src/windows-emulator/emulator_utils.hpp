@@ -1,6 +1,6 @@
 #pragma once
 
-#include <x64_emulator.hpp>
+#include <arch_emulator.hpp>
 
 #include "memory_manager.hpp"
 #include "memory_utils.hpp"
@@ -51,7 +51,7 @@ class module_manager;
 struct process_context;
 
 using clock_wrapper = object_wrapper<utils::clock>;
-using x64_emulator_wrapper = object_wrapper<x64_emulator>;
+using x64_emulator_wrapper = object_wrapper<x86_64_emulator>;
 using memory_manager_wrapper = object_wrapper<memory_manager>;
 using module_manager_wrapper = object_wrapper<module_manager>;
 using process_context_wrapper = object_wrapper<process_context>;
