@@ -267,14 +267,14 @@ namespace syscalls
         if (base_address == c.proc.shared_section_address)
         {
             c.proc.shared_section_address = 0;
-            c.win_emu.memory.release_memory(base_address, c.proc.shared_section_size);
+            c.win_emu.memory.release_memory(base_address, static_cast<size_t>(c.proc.shared_section_size));
             return STATUS_SUCCESS;
         }
 
         if (base_address == c.proc.dbwin_buffer)
         {
             c.proc.dbwin_buffer = 0;
-            c.win_emu.memory.release_memory(base_address, c.proc.dbwin_buffer_size);
+            c.win_emu.memory.release_memory(base_address, static_cast<size_t>(c.proc.dbwin_buffer_size));
             return STATUS_SUCCESS;
         }
 
