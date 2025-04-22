@@ -673,6 +673,21 @@ namespace syscalls
     {
         return c.proc.delete_atom(read_unicode_string(c.emu, class_name));
     }
+
+    NTSTATUS handle_NtUserSetWindowsHookEx()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtUserUnhookWindowsHookEx()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtUserCreateWindowEx()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
 }
 
 void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& handler_mapping)
@@ -826,6 +841,9 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserGetProcessWindowStation);
     add_handler(NtUserRegisterClassExWOW);
     add_handler(NtUserUnregisterClass);
+    add_handler(NtUserSetWindowsHookEx);
+    add_handler(NtUserUnhookWindowsHookEx);
+    add_handler(NtUserCreateWindowEx);
 
 #undef add_handler
 }
