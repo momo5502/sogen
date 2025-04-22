@@ -220,7 +220,13 @@ namespace syscalls
     NTSTATUS handle_NtCreateKey();
     NTSTATUS handle_NtNotifyChangeKey();
     NTSTATUS handle_NtSetInformationKey();
-    NTSTATUS handle_NtEnumerateKey();
+    NTSTATUS handle_NtEnumerateKey(const syscall_context& c, handle key_handle, ULONG index,
+                                   KEY_INFORMATION_CLASS key_information_class, uint64_t key_information, ULONG length,
+                                   emulator_object<ULONG> result_length);
+    NTSTATUS handle_NtEnumerateValueKey(const syscall_context& c, handle key_handle, ULONG index,
+                                        KEY_VALUE_INFORMATION_CLASS key_value_information_class,
+                                        uint64_t key_value_information, ULONG length,
+                                        emulator_object<ULONG> result_length);
 
     // syscalls/section.cpp:
     NTSTATUS handle_NtCreateSection(const syscall_context& c, emulator_object<handle> section_handle,
@@ -778,6 +784,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserGetDpiForCurrentProcess);
     add_handler(NtReleaseSemaphore);
     add_handler(NtEnumerateKey);
+    add_handler(NtEnumerateValueKey);
     add_handler(NtAlpcConnectPort);
     add_handler(NtGetNextThread);
     add_handler(NtSetInformationObject);

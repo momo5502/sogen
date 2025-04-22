@@ -159,6 +159,18 @@ const hive_value* hive_key::get_value(std::ifstream& file, const std::string_vie
     return &value;
 }
 
+const hive_value* hive_key::get_value(std::ifstream& file, size_t index)
+{
+    this->parse(file);
+
+    if (index >= values_by_index_.size())
+    {
+        return nullptr;
+    }
+
+    return get_value(file, values_by_index_[index]);
+}
+
 void hive_key::parse(std::ifstream& file)
 {
     if (this->parsed_)
@@ -189,8 +201,11 @@ void hive_key::parse(std::ifstream& file)
             raw_value.data_offset = offset + static_cast<int>(offsetof(value_block_t, offset));
         }
 
-        utils::string::to_lower_inplace(value_name);
-        this->values_[std::move(value_name)] = std::move(raw_value);
+        const auto [it, inserted] = this->values_.emplace(std::move(value_name), std::move(raw_value));
+        if (inserted)
+        {
+            this->values_by_index_.emplace_back(it->first);
+        }
     }
 
     // Subkeys
@@ -212,9 +227,13 @@ void hive_key::parse(std::ifstream& file)
         const auto subkey = read_file_object<key_block_t>(file, subkey_block_offset);
 
         std::string subkey_name(subkey.name, std::min(subkey.len, static_cast<int16_t>(sizeof(subkey.name))));
-        utils::string::to_lower_inplace(subkey_name);
 
-        this->sub_keys_.emplace(std::move(subkey_name), hive_key{subkey.subkeys, subkey.value_count, subkey.offsets});
+        const auto [it, inserted] = this->sub_keys_.emplace(
+            std::move(subkey_name), hive_key{subkey.subkeys, subkey.value_count, subkey.offsets});
+        if (inserted)
+        {
+            this->sub_keys_by_index_.emplace_back(it->first);
+        }
     }
 }
 
