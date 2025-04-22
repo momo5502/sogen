@@ -81,9 +81,9 @@ struct process_context
     uint64_t previous_ip{0};
 
     uint64_t shared_section_address{0};
-    size_t shared_section_size{0};
+    uint64_t shared_section_size{0};
     uint64_t dbwin_buffer{0};
-    size_t dbwin_buffer_size{0};
+    uint64_t dbwin_buffer_size{0};
 
     std::optional<uint64_t> exception_rip{};
     std::optional<NTSTATUS> exit_status{};

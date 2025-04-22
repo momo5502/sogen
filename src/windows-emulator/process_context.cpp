@@ -129,7 +129,10 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
 {
     buffer.write(this->current_ip);
     buffer.write(this->previous_ip);
+    buffer.write(this->shared_section_address);
+    buffer.write(this->shared_section_size);
     buffer.write(this->dbwin_buffer);
+    buffer.write(this->dbwin_buffer_size);
     buffer.write_optional(this->exception_rip);
     buffer.write_optional(this->exit_status);
     buffer.write(this->base_allocator);
@@ -164,7 +167,10 @@ void process_context::deserialize(utils::buffer_deserializer& buffer)
 {
     buffer.read(this->current_ip);
     buffer.read(this->previous_ip);
+    buffer.read(this->shared_section_address);
+    buffer.read(this->shared_section_size);
     buffer.read(this->dbwin_buffer);
+    buffer.read(this->dbwin_buffer_size);
     buffer.read_optional(this->exception_rip);
     buffer.read_optional(this->exit_status);
     buffer.read(this->base_allocator);
