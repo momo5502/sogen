@@ -4,6 +4,7 @@
 #include <string_view>
 #include <unordered_set>
 #include <unordered_map>
+#include "string.hpp"
 
 namespace utils
 {
@@ -26,9 +27,9 @@ namespace utils
         {
             size_t hash = 0;
             constexpr std::hash<int> hasher{};
-            for (unsigned char c : str)
+            for (const char c : str)
             {
-                hash ^= hasher(std::tolower(c)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+                hash ^= hasher(string::char_to_lower(c)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
             }
             return hash;
         }
@@ -40,8 +41,9 @@ namespace utils
 
         bool operator()(const std::string_view lhs, const std::string_view rhs) const
         {
-            return std::ranges::equal(
-                lhs, rhs, [](unsigned char c1, unsigned char c2) { return std::tolower(c1) == std::tolower(c2); });
+            return std::ranges::equal(lhs, rhs, [](const char c1, const char c2) {
+                return string::char_to_lower(c1) == string::char_to_lower(c2);
+            });
         }
     };
 

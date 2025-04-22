@@ -47,7 +47,7 @@ class registry_manager
     registry_manager& operator=(const registry_manager&) = delete;
 
     std::optional<registry_key> get_key(const utils::path_key& key);
-    std::optional<registry_value> get_value(const registry_key& key, const std::string& name);
+    std::optional<registry_value> get_value(const registry_key& key, std::string_view name);
     std::optional<registry_value> get_value(const registry_key& key, size_t index);
 
     std::optional<std::string_view> get_sub_key_name(const registry_key& key, size_t index);

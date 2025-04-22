@@ -114,7 +114,7 @@ std::optional<registry_key> registry_manager::get_key(const utils::path_key& key
     return {std::move(reg_key)};
 }
 
-std::optional<registry_value> registry_manager::get_value(const registry_key& key, const std::string& name)
+std::optional<registry_value> registry_manager::get_value(const registry_key& key, std::string_view name)
 {
     const auto iterator = this->hives_.find(key.hive);
     if (iterator == this->hives_.end())
