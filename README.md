@@ -8,7 +8,7 @@
 	<img src="https://img.shields.io/github/commit-activity/m/momo5502/emulator?color=FF3131"/>  
 </h1>
 
-Sogen is a high-performance Windows userspace emulator that operates at syscall level, providing full control over process execution through comprehensive hooking capabilities.
+Sogen is a high-performance Windows user space emulator that operates at syscall level, providing full control over process execution through comprehensive hooking capabilities.
 
 Perfect for security research, malware analysis, and DRM research where fine-grained control over process execution is required.
 
