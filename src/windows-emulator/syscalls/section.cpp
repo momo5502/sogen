@@ -304,4 +304,10 @@ namespace syscalls
     {
         return handle_NtUnmapViewOfSection(c, process_handle, base_address);
     }
+
+    NTSTATUS handle_NtAreMappedFilesTheSame(const syscall_context& c, const emulator_pointer address1,
+                                            const emulator_pointer address2)
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
 }

@@ -259,6 +259,8 @@ namespace syscalls
     NTSTATUS handle_NtUnmapViewOfSection(const syscall_context& c, handle process_handle, uint64_t base_address);
     NTSTATUS handle_NtUnmapViewOfSectionEx(const syscall_context& c, handle process_handle, uint64_t base_address,
                                            ULONG /*flags*/);
+    NTSTATUS handle_NtAreMappedFilesTheSame(const syscall_context& c, emulator_pointer address1,
+                                            emulator_pointer address2);
 
     // syscalls/semaphore.cpp:
     NTSTATUS handle_NtOpenSemaphore(const syscall_context& c, emulator_object<handle> semaphore_handle,
@@ -866,6 +868,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtFsControlFile);
     add_handler(NtQueryFullAttributesFile);
     add_handler(NtFlushBuffersFile);
+    add_handler(NtAreMappedFilesTheSame);
     add_handler(NtUserGetProcessWindowStation);
     add_handler(NtUserRegisterClassExWOW);
     add_handler(NtUserUnregisterClass);

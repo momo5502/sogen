@@ -239,7 +239,7 @@ namespace syscalls
 
     NTSTATUS handle_NtSetInformationKey()
     {
-        return STATUS_NOT_SUPPORTED;
+        return STATUS_SUCCESS;
     }
 
     NTSTATUS handle_NtEnumerateKey(const syscall_context& c, const handle key_handle, const ULONG index,
