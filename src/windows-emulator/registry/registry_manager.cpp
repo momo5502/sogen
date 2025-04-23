@@ -105,7 +105,22 @@ std::optional<registry_key> registry_manager::get_key(const utils::path_key& key
         return {std::move(reg_key)};
     }
 
-    const auto* entry = iterator->second->get_sub_key(reg_key.path.get());
+    auto path = reg_key.path.get();
+    const auto* entry = iterator->second->get_sub_key(path);
+
+    if (!entry)
+    {
+        constexpr std::wstring_view wowPrefix = L"wow6432node\\";
+
+        const auto pathStr = path.wstring();
+        if (pathStr.starts_with(wowPrefix))
+        {
+            path = pathStr.substr(wowPrefix.size());
+            reg_key.path = path;
+            entry = iterator->second->get_sub_key(path);
+        }
+    }
+
     if (!entry)
     {
         return std::nullopt;
