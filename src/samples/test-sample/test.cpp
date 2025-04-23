@@ -273,16 +273,189 @@ namespace
         return {std::string(data, std::min(static_cast<size_t>(length - 1), sizeof(data)))};
     }
 
+    std::optional<std::vector<std::string>> get_all_registry_keys(const HKEY root, const char* path)
+    {
+        HKEY key{};
+        if (RegOpenKeyExA(root, path, 0, KEY_READ | KEY_ENUMERATE_SUB_KEYS | KEY_QUERY_VALUE, &key) != ERROR_SUCCESS)
+        {
+            return std::nullopt;
+        }
+
+        std::vector<std::string> keys;
+        std::vector<char> name_buffer(MAX_PATH + 1);
+
+        for (DWORD i = 0;; ++i)
+        {
+            auto name_buffer_len = static_cast<DWORD>(name_buffer.size());
+            const LSTATUS status =
+                RegEnumKeyExA(key, i, name_buffer.data(), &name_buffer_len, nullptr, nullptr, nullptr, nullptr);
+            if (status == ERROR_SUCCESS)
+            {
+                keys.emplace_back(name_buffer.data(), name_buffer_len);
+            }
+            else if (status == ERROR_NO_MORE_ITEMS)
+            {
+                break;
+            }
+            else
+            {
+                keys.clear();
+                break;
+            }
+        }
+
+        if (keys.empty())
+        {
+            RegCloseKey(key);
+            return std::nullopt;
+        }
+
+        if (RegCloseKey(key) != ERROR_SUCCESS)
+        {
+            return std::nullopt;
+        }
+
+        return keys;
+    }
+
+    std::optional<std::vector<std::string>> get_all_registry_values(const HKEY root, const char* path)
+    {
+        HKEY key{};
+        if (RegOpenKeyExA(root, path, 0, KEY_READ | KEY_ENUMERATE_SUB_KEYS | KEY_QUERY_VALUE, &key) != ERROR_SUCCESS)
+        {
+            return std::nullopt;
+        }
+
+        std::vector<std::string> values;
+        std::vector<char> name_buffer(MAX_PATH + 1);
+
+        for (DWORD i = 0;; ++i)
+        {
+            auto name_buffer_len = static_cast<DWORD>(name_buffer.size());
+            const auto status =
+                RegEnumValueA(key, i, name_buffer.data(), &name_buffer_len, nullptr, nullptr, nullptr, nullptr);
+            if (status == ERROR_SUCCESS)
+            {
+                values.emplace_back(name_buffer.data(), name_buffer_len);
+            }
+            else if (status == ERROR_NO_MORE_ITEMS)
+            {
+                break;
+            }
+            else
+            {
+                values.clear();
+                break;
+            }
+        }
+
+        if (values.empty())
+        {
+            RegCloseKey(key);
+            return std::nullopt;
+        }
+
+        if (RegCloseKey(key) != ERROR_SUCCESS)
+        {
+            return std::nullopt;
+        }
+
+        return values;
+    }
+
     bool test_registry()
     {
-        const auto val =
+        // Basic Reading Test
+        const auto prog_files_dir =
             read_registry_string(HKEY_LOCAL_MACHINE, R"(SOFTWARE\Microsoft\Windows\CurrentVersion)", "ProgramFilesDir");
-        if (!val)
+        if (!prog_files_dir || *prog_files_dir != "C:\\Program Files")
         {
             return false;
         }
 
-        return *val == "C:\\Program Files";
+        // WOW64 Redirection Test
+        const auto pst_display = read_registry_string(
+            HKEY_LOCAL_MACHINE,
+            R"(SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\Time Zones\Pacific Standard Time)", "Display");
+        if (!pst_display || pst_display->empty())
+        {
+            return false;
+        }
+
+        // Key Sub-keys Enumeration Test
+        const auto subkeys_opt =
+            get_all_registry_keys(HKEY_LOCAL_MACHINE, R"(SOFTWARE\Microsoft\Windows NT\CurrentVersion)");
+        if (!subkeys_opt)
+        {
+            return false;
+        }
+
+        bool found_fonts = false;
+        for (const auto& key_name : *subkeys_opt)
+        {
+            if (key_name == "Fonts")
+            {
+                found_fonts = true;
+                break;
+            }
+        }
+        if (!found_fonts)
+        {
+            return false;
+        }
+
+        // Key Values Enumeration Test
+        const auto values_opt =
+            get_all_registry_values(HKEY_LOCAL_MACHINE, R"(SOFTWARE\Microsoft\Windows NT\CurrentVersion)");
+        if (!values_opt)
+        {
+            return false;
+        }
+
+        bool found_product_name = false;
+        for (const auto& val_name : *values_opt)
+        {
+            if (val_name == "ProductName")
+            {
+                found_product_name = true;
+                break;
+            }
+        }
+        if (!found_product_name)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    bool test_system_info()
+    {
+        char sys_dir[MAX_PATH];
+        if (GetSystemDirectoryA(sys_dir, sizeof(sys_dir)) == 0)
+        {
+            return false;
+        }
+        if (strlen(sys_dir) != 19)
+        {
+            return false;
+        }
+
+        // TODO: This currently doesn't work.
+        /*
+        char username[256];
+        DWORD username_len = sizeof(username);
+        if (!GetUserNameA(username, &username_len))
+        {
+            return false;
+        }
+        if (username_len <= 1)
+        {
+            return false;
+        }
+        */
+
+        return true;
     }
 
     void throw_exception()
@@ -477,6 +650,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_dir_io, "Dir I/O")
     RUN_TEST(test_working_directory, "Working Directory")
     RUN_TEST(test_registry, "Registry")
+    RUN_TEST(test_system_info, "System Info")
     RUN_TEST(test_threads, "Threads")
     RUN_TEST(test_env, "Environment")
     RUN_TEST(test_exceptions, "Exceptions")
