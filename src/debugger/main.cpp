@@ -2,6 +2,7 @@
 
 #include <windows_emulator.hpp>
 #include <cstdio>
+#include <nlohmann/json.hpp>
 
 #ifdef OS_EMSCRIPTEN
 #include <emscripten.h>
@@ -73,18 +74,35 @@ namespace
 #endif
     }
 
-    void handle_messages()
+    void send_object(const nlohmann::json& json)
+    {
+        const std::string res = json.dump();
+        send_message(res);
+    }
+
+    nlohmann::json receive_object()
+    {
+        auto message = receive_message();
+        if (message.empty())
+        {
+            return {};
+        }
+
+        return nlohmann::json::parse(message);
+    }
+
+    void handle_messages(windows_emulator& win_emu)
     {
         while (true)
         {
             suspend_execution(0ms);
-            const auto message = receive_message();
-            if (message.empty())
+            const auto message = receive_object();
+            if (message.is_null())
             {
                 break;
             }
 
-            puts(message.c_str());
+            puts(message.dump().c_str());
         }
     }
 
@@ -144,7 +162,7 @@ namespace
         windows_emulator win_emu{app_settings, settings};
 
         win_emu.callbacks.on_thread_switch = [&] {
-            handle_messages(); //
+            handle_messages(win_emu); //
         };
 
         return run_emulation(win_emu);

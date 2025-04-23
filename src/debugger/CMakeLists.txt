@@ -16,6 +16,7 @@ endif()
 
 target_link_libraries(debugger PRIVATE
   windows-emulator
+  nlohmann_json
 )
 
 set_property(GLOBAL PROPERTY VS_STARTUP_PROJECT debugger)

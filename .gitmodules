@@ -18,3 +18,7 @@
 [submodule "deps/gtest-parallel"]
 	path = deps/gtest-parallel
 	url = https://github.com/google/gtest-parallel.git
+[submodule "deps/json"]
+	path = deps/json
+	url = https://github.com/nlohmann/json.git
+	branch = master
