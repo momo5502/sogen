@@ -4,18 +4,6 @@
 
 namespace syscalls
 {
-    struct CSR_API_CONNECTINFO
-    {
-        uint64_t SharedSectionBase;
-        uint64_t SharedStaticServerData;
-        uint64_t SharedSectionHeap;
-        ULONG DebugFlags;
-        ULONG SizeOfPebData;
-        ULONG SizeOfTebData;
-        ULONG NumberOfServerDllNames;
-        EMULATOR_CAST(uint64_t, HANDLE) ServerProcessId;
-    };
-
     NTSTATUS handle_NtConnectPort(const syscall_context& c, const emulator_object<handle> client_port_handle,
                                   const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> server_port_name,
                                   const emulator_object<SECURITY_QUALITY_OF_SERVICE> /*security_qos*/,
@@ -33,34 +21,9 @@ namespace syscalls
 
         if (connection_info)
         {
-            if (p.name == u"\\Windows\\ApiPort")
-            {
-                CSR_API_CONNECTINFO connect_info{};
-
-                const auto expected_connect_length = connection_info_length.read();
-                if (expected_connect_length < sizeof(CSR_API_CONNECTINFO))
-                {
-                    return STATUS_BUFFER_TOO_SMALL;
-                }
-
-                // TODO: Use client_shared_memory to get the section entry and get the address from it?
-                connect_info.SharedSectionBase = c.proc.shared_section_address;
-                c.emu.write_memory(c.proc.shared_section_address + 2504,
-                                   0xFFFFFFFF); // BaseStaticServerData->TermsrvClientTimeZoneId
-
-                const auto static_server_data =
-                    c.win_emu.memory.allocate_memory(0x10000, memory_permission::read_write);
-                connect_info.SharedStaticServerData = static_server_data;
-                c.emu.write_memory(static_server_data + 8, connect_info.SharedSectionBase);
-
-                c.emu.write_memory(connection_info, &connect_info, sizeof(connect_info));
-            }
-            else
-            {
-                std::vector<uint8_t> zero_mem{};
-                zero_mem.resize(connection_info_length.read(), 0);
-                c.emu.write_memory(connection_info, zero_mem.data(), zero_mem.size());
-            }
+            std::vector<uint8_t> zero_mem{};
+            zero_mem.resize(connection_info_length.read(), 0);
+            c.emu.write_memory(connection_info, zero_mem.data(), zero_mem.size());
         }
 
         client_shared_memory.access([&](PORT_VIEW64& view) {

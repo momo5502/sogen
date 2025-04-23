@@ -143,6 +143,7 @@ namespace syscalls
             constexpr auto windows_dir_offset = 0x10;
             c.emu.write_memory(address + 8, windows_dir_offset);
 
+            // aka. BaseStaticServerData (BASE_STATIC_SERVER_DATA)
             const auto obj_address = address + windows_dir_offset;
 
             const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> windir_obj{c.emu, obj_address};
@@ -167,6 +168,8 @@ namespace syscalls
                 c.proc.base_allocator.make_unicode_string(ucs, u"\\Sessions\\1\\BaseNamedObjects");
                 ucs.Buffer = ucs.Buffer - obj_address;
             });
+
+            c.emu.write_memory(obj_address + 0x9C8, 0xFFFFFFFF); // TIME_ZONE_ID_INVALID
 
             if (view_size)
             {
