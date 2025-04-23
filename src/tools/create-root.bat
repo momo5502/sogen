@@ -26,7 +26,6 @@ COPY /B /Y C:\Users\Default\NTUSER.DAT "%EMU_REGDIR%\NTUSER.DAT"
 
 CALL :collect advapi32.dll
 CALL :collect bcrypt.dll
-CALL :collect bcryptprimitives.dll
 CALL :collect cfgmgr32.dll
 CALL :collect ci.dll
 CALL :collect combase.dll
