@@ -87,7 +87,7 @@ namespace syscalls
 
             TOKEN_GROUPS64 groups{};
             groups.GroupCount = 1;
-            groups.Groups[0].Attributes = SE_GROUP_ENABLED | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_MANDATORY;
+            groups.Groups[0].Attributes = 0;
             groups.Groups[0].Sid = token_information + sizeof(TOKEN_GROUPS64);
 
             emulator_object<TOKEN_GROUPS64>{c.emu, token_information}.write(groups);
