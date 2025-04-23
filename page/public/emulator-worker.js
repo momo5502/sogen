@@ -26,6 +26,12 @@ function logLine(text) {
   }
 }
 
+function notifyExit(code) {
+  flushLines();
+  postMessage({ message: "end", data: code });
+  self.close();
+}
+
 function runEmulation(filesystem, file, options) {
   globalThis.Module = {
     arguments: [...options, "-e", "./root", file],
@@ -46,12 +52,10 @@ function runEmulation(filesystem, file, options) {
     },
     print: logLine,
     printErr: logLine,
-    postRun: () => {
-      flushLines();
-      postMessage({ message: "end", data: null });
-      self.close();
-    },
+    onAbort: () => notifyExit(null),
+    onExit: notifyExit,
+    postRun: flushLines,
   };
 
-  importScripts("./analyzer.js?1");
+  importScripts("./analyzer.js");
 }
