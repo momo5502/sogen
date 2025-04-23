@@ -26,6 +26,7 @@ COPY /B /Y C:\Users\Default\NTUSER.DAT "%EMU_REGDIR%\NTUSER.DAT"
 
 CALL :collect advapi32.dll
 CALL :collect bcrypt.dll
+CALL :collect bcryptprimitives.dll
 CALL :collect cfgmgr32.dll
 CALL :collect ci.dll
 CALL :collect combase.dll
@@ -118,8 +119,18 @@ CALL :collect wintypes.dll
 CALL :collect slwga.dll
 CALL :collect sppc.dll
 CALL :collect kernel.appcore.dll
+CALL :collect winnlsres.dll
+CALL :collect nlsbres.dll
+CALL :collect netutils.dll
+CALL :collect dinput8.dll
+CALL :collect d3d10.dll
+CALL :collect d3d10core.dll
+CALL :collect cabinet.dll
+CALL :collect msacm32.dll
 
 CALL :collect locale.nls
+CALL :collect c_1252.nls
+CALL :collect c_850.nls
 
 EXIT /B 0
 
