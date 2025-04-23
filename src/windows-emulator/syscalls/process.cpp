@@ -309,6 +309,11 @@ namespace syscalls
                     const auto tls_vector = teb.ThreadLocalStoragePointer;
                     constexpr auto ptr_size = sizeof(EmulatorTraits<Emu64>::PVOID);
 
+                    if (!tls_vector)
+                    {
+                        return;
+                    }
+
                     if (tls_info.TlsRequest == ProcessTlsReplaceIndex)
                     {
                         const auto tls_entry_ptr = tls_vector + (tls_info.TlsIndex * ptr_size);
