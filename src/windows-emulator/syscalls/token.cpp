@@ -75,6 +75,26 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
+        if (token_information_class == TokenGroups)
+        {
+            constexpr auto required_size = sizeof(TOKEN_GROUPS64) + sizeof(sid);
+            return_length.write(required_size);
+
+            if (required_size > token_information_length)
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            TOKEN_GROUPS64 groups{};
+            groups.GroupCount = 1;
+            groups.Groups[0].Attributes = SE_GROUP_ENABLED | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_MANDATORY;
+            groups.Groups[0].Sid = token_information + sizeof(TOKEN_GROUPS64);
+
+            emulator_object<TOKEN_GROUPS64>{c.emu, token_information}.write(groups);
+            c.emu.write_memory(token_information + sizeof(TOKEN_GROUPS64), sid, sizeof(sid));
+            return STATUS_SUCCESS;
+        }
+
         if (token_information_class == TokenOwner)
         {
             constexpr auto required_size = sizeof(sid) + sizeof(TOKEN_OWNER64);
