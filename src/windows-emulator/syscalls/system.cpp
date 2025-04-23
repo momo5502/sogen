@@ -105,6 +105,7 @@ namespace syscalls
         case SystemFeatureConfigurationInformation:
         case SystemSupportedProcessorArchitectures2:
         case SystemFeatureConfigurationSectionInformation:
+        case SystemFirmwareTableInformation:
             return STATUS_NOT_SUPPORTED;
 
         case SystemControlFlowTransition:
