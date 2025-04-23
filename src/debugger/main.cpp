@@ -7,6 +7,8 @@
 #include <emscripten.h>
 #endif
 
+#include <utils/finally.hpp>
+
 namespace
 {
     void suspend_execution(const std::chrono::milliseconds ms = 0ms)
@@ -25,44 +27,65 @@ namespace
 #endif
     }
 
-    void sendMessage(const std::string& message)
+    void send_message(const std::string& message)
     {
 #ifdef OS_EMSCRIPTEN
-        EM_ASM_(
-            {
-                // JavaScript code to handle the message
-                console.log('Received message from C++: ' + UTF8ToString($0));
-                // You can post the message to a message queue or handle it as needed
-            },
-            message.c_str());
+        // clang-format off
+        EM_ASM_({
+                handleMessage(UTF8ToString($0));
+        }, message.c_str());
+        // clang-format on
 #else
         (void)message;
 #endif
     }
 
-    // Function to receive a message from JavaScript
-    std::string receiveMessage()
+    std::string receive_message()
     {
-        /*#ifdef OS_EMSCRIPTEN
-                // Allocate a buffer to receive the message
-                char* buffer = (char*)malloc(256); // Adjust size as needed
-                EM_ASM_(
-                    {
-                        // JavaScript code to retrieve the message
-                        var message = getMessageFromQueue(); // Implement this function in JavaScript
-                        if (message && message.length > 0)
-                        {
-                            stringToUTF8($0, _malloc(lengthBytesUTF8(message) + 1), lengthBytesUTF8(message) + 1);
-                        }
-                    },
-                    buffer);
+#ifdef OS_EMSCRIPTEN
+        // clang-format off
+        auto* ptr = EM_ASM_PTR({
+            var message = getMessageFromQueue();
+            if (!message || message.length == 0)
+            {
+                return null;
+            }
 
-                std::string result(buffer);
-                free(buffer);
-                return result;
-        #else*/
+            const length = lengthBytesUTF8(message) + 1;
+            const buffer = _malloc(length);
+            stringToUTF8(message, buffer, length);
+            return buffer;
+        });
+        // clang-format on
+
+        if (!ptr)
+        {
+            return {};
+        }
+
+        const auto _ = utils::finally([&] {
+            free(ptr); //
+        });
+
+        return {reinterpret_cast<const char*>(ptr)};
+#else
         return {};
-        // #endif
+#endif
+    }
+
+    void handle_messages()
+    {
+        while (true)
+        {
+            suspend_execution(0ms);
+            const auto message = receive_message();
+            if (message.empty())
+            {
+                break;
+            }
+
+            puts(message.c_str());
+        }
     }
 
     bool run_emulation(windows_emulator& win_emu)
@@ -98,39 +121,41 @@ namespace
         return success;
     }
 
-    bool run()
+    bool run(const int argc, char** argv)
     {
-        (void)&run_emulation;
-
-        for (size_t i = 0; i < 10; ++i)
+        if (argc < 3)
         {
-            sendMessage("PING");
-
-            while (true)
-            {
-                suspend_execution(0ms);
-                const auto message = receiveMessage();
-                if (message.empty())
-                {
-                    puts("EMPTY MSG");
-                    break;
-                }
-
-                puts(message.c_str());
-            }
-
-            suspend_execution(1s);
+            return false;
         }
 
-        return true;
+        const emulator_settings settings{
+            .emulation_root = argv[1],
+        };
+
+        application_settings app_settings{
+            .application = argv[2],
+        };
+
+        for (int i = 3; i < argc; ++i)
+        {
+            app_settings.arguments.push_back(u8_to_u16(argv[i]));
+        }
+
+        windows_emulator win_emu{app_settings, settings};
+
+        win_emu.callbacks.on_thread_switch = [&] {
+            handle_messages(); //
+        };
+
+        return run_emulation(win_emu);
     }
 }
 
-int main(const int, char**)
+int main(const int argc, char** argv)
 {
     try
     {
-        const auto result = run();
+        const auto result = run(argc, argv);
         return result ? 0 : 1;
     }
     catch (std::exception& e)
