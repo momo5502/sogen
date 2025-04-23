@@ -32,6 +32,10 @@ function notifyExit(code) {
   self.close();
 }
 
+function getMessageFromQueue() {
+  return "";
+}
+
 function runEmulation(filesystem, file, options) {
   globalThis.Module = {
     arguments: [...options, "-e", "./root", file],

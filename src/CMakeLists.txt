@@ -9,6 +9,7 @@ momo_targets_set_folder("backends" ${BACKEND_TARGETS})
 
 if (NOT MOMO_BUILD_AS_LIBRARY)
     add_subdirectory(analyzer)
+    add_subdirectory(debugger)
     add_subdirectory(fuzzing-engine)
     add_subdirectory(fuzzer)
     add_subdirectory(windows-emulator-test)

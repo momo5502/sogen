@@ -92,6 +92,7 @@ if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
   momo_add_c_and_cxx_compile_options(
     -fexceptions
     -ftrivial-auto-var-init=zero
+    -Wno-dollar-in-identifier-extension
   )
 
   add_link_options(
