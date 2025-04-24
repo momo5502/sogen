@@ -21,6 +21,11 @@ namespace syscalls
             return STATUS_INVALID_HANDLE;
         }
 
+        if (info_class == FileBasicInformation)
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
+
         if (info_class == FilePositionInformation)
         {
             if (!f->handle)
