@@ -33,7 +33,7 @@ namespace utils::wildcard
                 char16_t mask_char = mask[mask_pos];
                 char16_t name_char = name[name_pos];
 
-                bool char_matches;
+                bool char_matches = false;
                 if (mask_char == u'?' || mask_char == u'>')
                 {
                     char_matches = true;
