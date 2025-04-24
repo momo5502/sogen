@@ -117,6 +117,11 @@ class windows_path
             path.append(folder);
         }
 
+        if (this->is_absolute() && this->folders_.empty())
+        {
+            path.push_back(u'\\');
+        }
+
         return path;
     }
 
