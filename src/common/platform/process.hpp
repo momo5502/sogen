@@ -770,6 +770,12 @@ struct TOKEN_USER64
     SID_AND_ATTRIBUTES64 User;
 };
 
+struct TOKEN_GROUPS64
+{
+    ULONG GroupCount;
+    SID_AND_ATTRIBUTES64 Groups[1];
+};
+
 struct TOKEN_OWNER64
 {
     EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, PSID) Owner;

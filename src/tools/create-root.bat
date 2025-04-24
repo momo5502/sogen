@@ -130,6 +130,7 @@ CALL :collect msacm32.dll
 CALL :collect locale.nls
 CALL :collect c_1252.nls
 CALL :collect c_850.nls
+CALL :collect c_437.nls
 
 EXIT /B 0
 
