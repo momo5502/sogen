@@ -268,9 +268,13 @@ namespace syscalls
     {
         ULONG query_flags = 0;
         if (return_single_entry)
+        {
             query_flags |= SL_RETURN_SINGLE_ENTRY;
+        }
         if (restart_scan)
-            query_flags |= SL_RETURN_SINGLE_ENTRY;
+        {
+            query_flags |= SL_RESTART_SCAN;
+        }
         return handle_NtQueryDirectoryFileEx(c, file_handle, event_handle, apc_routine, apc_context, io_status_block,
                                              file_information, length, info_class, query_flags, file_name);
     }
