@@ -94,15 +94,21 @@ struct mutant : ref_counted_object
 struct file_entry
 {
     std::filesystem::path file_path{};
+    uint64_t file_size{};
+    bool is_directory{};
 
     void serialize(utils::buffer_serializer& buffer) const
     {
         buffer.write(this->file_path);
+        buffer.write(this->file_size);
+        buffer.write(this->is_directory);
     }
 
     void deserialize(utils::buffer_deserializer& buffer)
     {
         buffer.read(this->file_path);
+        buffer.read(this->file_size);
+        buffer.read(this->is_directory);
     }
 };
 

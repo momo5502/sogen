@@ -41,9 +41,7 @@ namespace utils
 
         bool operator()(const std::string_view lhs, const std::string_view rhs) const
         {
-            return std::ranges::equal(lhs, rhs, [](const char c1, const char c2) {
-                return string::char_to_lower(c1) == string::char_to_lower(c2);
-            });
+            return string::equals_ignore_case(lhs, rhs);
         }
     };
 
