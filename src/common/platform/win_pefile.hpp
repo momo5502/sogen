@@ -1,6 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <system_error>
+#include <variant>
 
 // NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
@@ -341,5 +345,64 @@ struct SECTION_IMAGE_INFORMATION
     ULONG ImageFileSize;
     ULONG CheckSum;
 };
+
+namespace winpe
+{
+
+    enum class pe_arch
+    {
+        pe32,
+        pe64
+    };
+
+    inline std::variant<pe_arch, std::error_code> get_pe_arch(const std::filesystem::path& file)
+    {
+        std::ifstream f(file, std::ios::binary);
+        if (!f)
+        {
+            return std::make_error_code(std::errc::no_such_file_or_directory);
+        }
+
+        PEDosHeader_t dos{};
+        f.read(reinterpret_cast<char*>(&dos), sizeof(dos));
+        if (!f || dos.e_magic != PEDosHeader_t::k_Magic)
+        {
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        f.seekg(dos.e_lfanew, std::ios::beg);
+        uint32_t nt_signature = 0;
+        f.read(reinterpret_cast<char*>(&nt_signature), sizeof(nt_signature));
+        if (!f || nt_signature != PENTHeaders_t<std::uint32_t>::k_Signature)
+        {
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        PEFileHeader_t file_header{};
+        f.read(reinterpret_cast<char*>(&file_header), sizeof(file_header));
+        if (!f)
+        {
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        uint16_t magic = 0;
+        f.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+        if (!f)
+        {
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        if (magic == PEOptionalHeader_t<std::uint32_t>::k_Magic)
+        {
+            return pe_arch::pe32;
+        }
+        if (magic == PEOptionalHeader_t<std::uint64_t>::k_Magic)
+        {
+            return pe_arch::pe64;
+        }
+
+        return std::make_error_code(std::errc::executable_format_error);
+    }
+}
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)

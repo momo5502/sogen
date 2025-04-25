@@ -7,7 +7,8 @@
 
 namespace
 {
-    uint64_t get_first_section_offset(const PENTHeaders_t<std::uint64_t>& nt_headers, const uint64_t nt_headers_offset)
+    template <typename T>
+    uint64_t get_first_section_offset(const PENTHeaders_t<T>& nt_headers, const uint64_t nt_headers_offset)
     {
         const auto* nt_headers_addr = reinterpret_cast<const uint8_t*>(&nt_headers);
         const size_t optional_header_offset =
@@ -29,8 +30,9 @@ namespace
         return mem;
     }
 
+    template <typename T>
     void collect_exports(mapped_module& binary, const utils::safe_buffer_accessor<const std::byte> buffer,
-                         const PEOptionalHeader_t<std::uint64_t>& optional_header)
+                         const PEOptionalHeader_t<T>& optional_header)
     {
         const auto& export_directory_entry = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
         if (export_directory_entry.VirtualAddress == 0 || export_directory_entry.Size == 0)
@@ -79,8 +81,9 @@ namespace
         obj.set(new_value);
     }
 
+    template <typename T>
     void apply_relocations(const mapped_module& binary, const utils::safe_buffer_accessor<std::byte> buffer,
-                           const PEOptionalHeader_t<std::uint64_t>& optional_header)
+                           const PEOptionalHeader_t<T>& optional_header)
     {
         const auto delta = binary.image_base - optional_header.ImageBase;
         if (delta == 0)
@@ -141,9 +144,10 @@ namespace
         }
     }
 
+    template <typename T>
     void map_sections(memory_manager& memory, mapped_module& binary,
-                      const utils::safe_buffer_accessor<const std::byte> buffer,
-                      const PENTHeaders_t<std::uint64_t>& nt_headers, const uint64_t nt_headers_offset)
+                      const utils::safe_buffer_accessor<const std::byte> buffer, const PENTHeaders_t<T>& nt_headers,
+                      const uint64_t nt_headers_offset)
     {
         const auto first_section_offset = get_first_section_offset(nt_headers, nt_headers_offset);
         const auto sections = buffer.as<IMAGE_SECTION_HEADER>(static_cast<size_t>(first_section_offset));
@@ -196,6 +200,7 @@ namespace
     }
 }
 
+template <typename T>
 mapped_module map_module_from_data(memory_manager& memory, const std::span<const std::byte> data,
                                    std::filesystem::path file)
 {
@@ -208,10 +213,10 @@ mapped_module map_module_from_data(memory_manager& memory, const std::span<const
     const auto dos_header = buffer.as<PEDosHeader_t>(0).get();
     const auto nt_headers_offset = dos_header.e_lfanew;
 
-    const auto nt_headers = buffer.as<PENTHeaders_t<std::uint64_t>>(nt_headers_offset).get();
+    const auto nt_headers = buffer.as<PENTHeaders_t<T>>(nt_headers_offset).get();
     const auto& optional_header = nt_headers.OptionalHeader;
 
-    if (nt_headers.FileHeader.Machine != PEMachineType::AMD64)
+    if (nt_headers.FileHeader.Machine != PEMachineType::I386 && nt_headers.FileHeader.Machine != PEMachineType::AMD64)
     {
         throw std::runtime_error("Unsupported architecture!");
     }
@@ -254,6 +259,7 @@ mapped_module map_module_from_data(memory_manager& memory, const std::span<const
     return binary;
 }
 
+template <typename T>
 mapped_module map_module_from_file(memory_manager& memory, std::filesystem::path file)
 {
     const auto data = utils::io::read_file(file);
@@ -262,10 +268,19 @@ mapped_module map_module_from_file(memory_manager& memory, std::filesystem::path
         throw std::runtime_error("Bad file data: " + file.string());
     }
 
-    return map_module_from_data(memory, data, std::move(file));
+    return map_module_from_data<T>(memory, data, std::move(file));
 }
 
 bool unmap_module(memory_manager& memory, const mapped_module& mod)
 {
     return memory.release_memory(mod.image_base, static_cast<size_t>(mod.size_of_image));
 }
+
+template mapped_module map_module_from_data<std::uint32_t>(memory_manager& memory,
+                                                           const std::span<const std::byte> data,
+                                                           std::filesystem::path file);
+template mapped_module map_module_from_data<std::uint64_t>(memory_manager& memory,
+                                                           const std::span<const std::byte> data,
+                                                           std::filesystem::path file);
+template mapped_module map_module_from_file<std::uint32_t>(memory_manager& memory, std::filesystem::path file);
+template mapped_module map_module_from_file<std::uint64_t>(memory_manager& memory, std::filesystem::path file);

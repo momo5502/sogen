@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include "module_manager.hpp"
 #include "module_mapping.hpp"
+#include "platform/win_pefile.hpp"
 #include "windows-emulator/logger.hpp"
 
 #include <serialization_helper.hpp>
@@ -119,7 +120,28 @@ mapped_module* module_manager::map_local_module(const std::filesystem::path& fil
 
     try
     {
-        auto mod = map_module_from_file(*this->memory_, std::move(local_file));
+        mapped_module mod;
+        auto petype_result = winpe::get_pe_arch(file);
+        if (std::holds_alternative<winpe::pe_arch>(petype_result))
+        {
+            if (std::get<winpe::pe_arch>(petype_result) == winpe::pe_arch::pe32)
+            {
+                mod = map_module_from_file<std::uint32_t>(*this->memory_, std::move(local_file));
+            }
+            else if (std::get<winpe::pe_arch>(petype_result) == winpe::pe_arch::pe64)
+            {
+                mod = map_module_from_file<std::uint64_t>(*this->memory_, std::move(local_file));
+            }
+            else
+            {
+                throw std::runtime_error("Unknown PE architecture");
+            }
+        }
+        else
+        {
+            throw std::runtime_error("Unknown PE architecture");
+        }
+
         mod.is_static = is_static;
 
         logger.log("Mapped %s at 0x%" PRIx64 "\n", mod.path.generic_string().c_str(), mod.image_base);
