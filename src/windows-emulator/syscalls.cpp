@@ -55,7 +55,14 @@ namespace syscalls
                                            emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                            uint64_t file_information, uint32_t length, uint32_t info_class,
                                            ULONG query_flags,
-                                           emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*file_name*/);
+                                           emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> file_name);
+    NTSTATUS handle_NtQueryDirectoryFile(const syscall_context& c, handle file_handle, handle event_handle,
+                                         emulator_pointer /*PIO_APC_ROUTINE*/ apc_routine, emulator_pointer apc_context,
+                                         emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                                         uint64_t file_information, uint32_t length, uint32_t info_class,
+                                         BOOLEAN return_single_entry,
+                                         emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> file_name,
+                                         BOOLEAN restart_scan);
     NTSTATUS handle_NtQueryInformationFile(const syscall_context& c, handle file_handle,
                                            emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                            uint64_t file_information, uint32_t length, uint32_t info_class);
@@ -831,6 +838,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtSetInformationKey);
     add_handler(NtUserGetKeyboardLayout);
     add_handler(NtQueryDirectoryFileEx);
+    add_handler(NtQueryDirectoryFile);
     add_handler(NtUserSystemParametersInfo);
     add_handler(NtGetContextThread);
     add_handler(NtYieldExecution);

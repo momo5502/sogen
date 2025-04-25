@@ -149,4 +149,20 @@ namespace utils::string
 
         return data;
     }
+
+    template <class Elem, class Traits, class Alloc>
+    bool equals_ignore_case(const std::basic_string<Elem, Traits, Alloc>& lhs,
+                            const std::basic_string<Elem, Traits, Alloc>& rhs)
+    {
+        return std::ranges::equal(lhs, rhs,
+                                  [](const auto c1, const auto c2) { return char_to_lower(c1) == char_to_lower(c2); });
+    }
+
+    template <class Elem, class Traits>
+    bool equals_ignore_case(const std::basic_string_view<Elem, Traits>& lhs,
+                            const std::basic_string_view<Elem, Traits>& rhs)
+    {
+        return std::ranges::equal(lhs, rhs,
+                                  [](const auto c1, const auto c2) { return char_to_lower(c1) == char_to_lower(c2); });
+    }
 }
