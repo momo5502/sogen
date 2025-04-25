@@ -64,3 +64,16 @@ struct x86_64_traits
 };
 
 using x86_64_emulator = x86_emulator<x86_64_traits>;
+
+// --[x86_32]-------------------------------------------------------------------------
+
+struct x86_32_traits
+{
+    using pointer_type = uint32_t;
+    using register_type = x86_register;
+    static constexpr register_type instruction_pointer = x86_register::eip;
+    static constexpr register_type stack_pointer = x86_register::esp;
+    using hookable_instructions = x86_hookable_instructions;
+};
+
+using x86_32_emulator = x86_emulator<x86_32_traits>;
