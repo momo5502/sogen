@@ -1,6 +1,6 @@
 #pragma once
 
-#include "process_context.hpp"
+#include "module/module_manager.hpp"
 
 struct syscall_context;
 using syscall_handler = void (*)(const syscall_context& c);

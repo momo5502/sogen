@@ -8,7 +8,6 @@
 #include "handles.hpp"
 
 class windows_emulator;
-struct process_context;
 
 struct io_device_context
 {

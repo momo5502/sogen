@@ -7,7 +7,6 @@
 
 #include <utils/time.hpp>
 
-struct process_context;
 class windows_emulator;
 
 class kusd_mmio
