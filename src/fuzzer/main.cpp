@@ -20,7 +20,7 @@ namespace
             win_emu.log.disable_output(true);
             win_emu.start();
 
-            if (win_emu.process.exception_rip.has_value())
+            if (win_emu.process.exception_ip.has_value())
             {
                 throw std::runtime_error("Exception!");
             }

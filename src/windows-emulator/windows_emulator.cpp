@@ -68,7 +68,7 @@ namespace
         }
     }
 
-    emulator_thread* get_thread_by_id(process_context& process, const uint32_t id)
+    emulator_thread* get_thread_by_id(process_context64& process, const uint32_t id)
     {
         for (auto& t : process.threads | std::views::values)
         {
@@ -540,7 +540,7 @@ void windows_emulator::setup_hooks()
 
         if (this->fuzzing || true) // TODO: Fix
         {
-            this->process.exception_rip = rip;
+            this->process.exception_ip = rip;
             this->emu().stop();
         }
     });
@@ -564,7 +564,7 @@ void windows_emulator::setup_hooks()
 
         if (this->fuzzing)
         {
-            this->process.exception_rip = ip;
+            this->process.exception_ip = ip;
             this->emu().stop();
             return memory_violation_continuation::stop;
         }

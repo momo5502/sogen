@@ -18,7 +18,7 @@ namespace syscalls
         }
 
         c.proc.exit_status = error_status;
-        c.proc.exception_rip = c.emu.read_instruction_pointer();
+        c.proc.exception_ip = c.emu.read_instruction_pointer();
         c.emu.stop();
 
         return STATUS_SUCCESS;
@@ -36,7 +36,7 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
         }
 
-        c.proc.exception_rip = thread_context.read().Rip;
+        c.proc.exception_ip = thread_context.read().Rip;
         c.emu.stop();
 
         return STATUS_SUCCESS;

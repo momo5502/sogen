@@ -28,7 +28,7 @@
 struct emulator_settings;
 struct application_settings;
 
-struct process_context
+struct process_context_common
 {
     struct callbacks
     {
@@ -50,7 +50,44 @@ struct process_context
         atom_entry() = default;
     };
 
-    process_context(x86_64_emulator& emu, memory_manager& memory, utils::clock& clock, callbacks& cb)
+    std::map<uint16_t, atom_entry> atoms{};
+    uint16_t add_or_find_atom(std::u16string name);
+    bool delete_atom(const std::u16string& name);
+    bool delete_atom(uint16_t atom_id);
+    const std::u16string* get_atom_name(uint16_t atom_id) const;
+
+    uint64_t current_ip{0};
+    uint64_t previous_ip{0};
+
+    uint64_t shared_section_address{0};
+    uint64_t shared_section_size{0};
+    uint64_t dbwin_buffer{0};
+    uint64_t dbwin_buffer_size{0};
+
+    std::optional<NTSTATUS> exit_status{};
+
+    uint64_t ntdll_image_base{};
+    uint64_t ldr_initialize_thunk{};
+    uint64_t rtl_user_thread_start{};
+    uint64_t ki_user_apc_dispatcher{};
+    uint64_t ki_user_exception_dispatcher{};
+
+    std::optional<uint64_t> exception_ip{};
+
+    handle_store<handle_types::event, event> events{};
+    handle_store<handle_types::file, file> files{};
+    handle_store<handle_types::section, section> sections{};
+    handle_store<handle_types::semaphore, semaphore> semaphores{};
+    handle_store<handle_types::port, port> ports{};
+    handle_store<handle_types::mutant, mutant> mutants{};
+    handle_store<handle_types::registry, registry_key, 2> registry_keys{};
+
+    std::vector<std::byte> default_register_set{};
+};
+
+struct process_context64 final : process_context_common
+{
+    process_context64(x86_64_emulator& emu, memory_manager& memory, utils::clock& clock, callbacks& cb)
         : callbacks_(&cb),
           base_allocator(emu),
           peb(emu),
@@ -65,11 +102,6 @@ struct process_context
     handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size,
                          bool suspended);
 
-    uint16_t add_or_find_atom(std::u16string name);
-    bool delete_atom(const std::u16string& name);
-    bool delete_atom(uint16_t atom_id);
-    const std::u16string* get_atom_name(uint16_t atom_id) const;
-
     void serialize(utils::buffer_serializer& buffer) const;
     void deserialize(utils::buffer_deserializer& buffer);
 
@@ -77,40 +109,13 @@ struct process_context
 
     callbacks* callbacks_{};
 
-    uint64_t current_ip{0};
-    uint64_t previous_ip{0};
-
-    uint64_t shared_section_address{0};
-    uint64_t shared_section_size{0};
-    uint64_t dbwin_buffer{0};
-    uint64_t dbwin_buffer_size{0};
-
-    std::optional<uint64_t> exception_rip{};
-    std::optional<NTSTATUS> exit_status{};
-
     emulator_allocator base_allocator;
 
     emulator_object<PEB64> peb;
     emulator_object<RTL_USER_PROCESS_PARAMETERS64> process_params;
     kusd_mmio kusd;
 
-    uint64_t ntdll_image_base{};
-    uint64_t ldr_initialize_thunk{};
-    uint64_t rtl_user_thread_start{};
-    uint64_t ki_user_apc_dispatcher{};
-    uint64_t ki_user_exception_dispatcher{};
-
-    handle_store<handle_types::event, event> events{};
-    handle_store<handle_types::file, file> files{};
-    handle_store<handle_types::section, section> sections{};
     handle_store<handle_types::device, io_device_container> devices{};
-    handle_store<handle_types::semaphore, semaphore> semaphores{};
-    handle_store<handle_types::port, port> ports{};
-    handle_store<handle_types::mutant, mutant> mutants{};
-    handle_store<handle_types::registry, registry_key, 2> registry_keys{};
-    std::map<uint16_t, atom_entry> atoms{};
-
-    std::vector<std::byte> default_register_set{};
 
     uint32_t spawned_thread_count{0};
     handle_store<handle_types::thread, emulator_thread> threads{};

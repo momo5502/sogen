@@ -140,7 +140,7 @@ namespace
     }
 }
 
-void dispatch_exception(x86_64_emulator& emu, const process_context& proc, const DWORD status,
+void dispatch_exception(x86_64_emulator& emu, const process_context64& proc, const DWORD status,
                         const std::vector<EmulatorTraits<Emu64>::ULONG_PTR>& parameters)
 {
     CONTEXT64 ctx{};
@@ -172,7 +172,7 @@ void dispatch_exception(x86_64_emulator& emu, const process_context& proc, const
     dispatch_exception_pointers(emu, proc.ki_user_exception_dispatcher, pointers);
 }
 
-void dispatch_access_violation(x86_64_emulator& emu, const process_context& proc, const uint64_t address,
+void dispatch_access_violation(x86_64_emulator& emu, const process_context64& proc, const uint64_t address,
                                const memory_operation operation)
 {
     dispatch_exception(emu, proc, STATUS_ACCESS_VIOLATION,
@@ -182,22 +182,22 @@ void dispatch_access_violation(x86_64_emulator& emu, const process_context& proc
                        });
 }
 
-void dispatch_illegal_instruction_violation(x86_64_emulator& emu, const process_context& proc)
+void dispatch_illegal_instruction_violation(x86_64_emulator& emu, const process_context64& proc)
 {
     dispatch_exception(emu, proc, STATUS_ILLEGAL_INSTRUCTION, {});
 }
 
-void dispatch_integer_division_by_zero(x86_64_emulator& emu, const process_context& proc)
+void dispatch_integer_division_by_zero(x86_64_emulator& emu, const process_context64& proc)
 {
     dispatch_exception(emu, proc, STATUS_INTEGER_DIVIDE_BY_ZERO, {});
 }
 
-void dispatch_single_step(x86_64_emulator& emu, const process_context& proc)
+void dispatch_single_step(x86_64_emulator& emu, const process_context64& proc)
 {
     dispatch_exception(emu, proc, STATUS_SINGLE_STEP, {});
 }
 
-void dispatch_breakpoint(x86_64_emulator& emu, const process_context& proc)
+void dispatch_breakpoint(x86_64_emulator& emu, const process_context64& proc)
 {
     dispatch_exception(emu, proc, STATUS_BREAKPOINT, {});
 }

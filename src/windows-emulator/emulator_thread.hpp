@@ -6,7 +6,7 @@
 
 #include <utils/moved_marker.hpp>
 
-struct process_context;
+struct process_context64;
 
 struct pending_apc
 {
@@ -48,7 +48,7 @@ class emulator_thread : public ref_counted_object
     {
     }
 
-    emulator_thread(memory_manager& memory, const process_context& context, uint64_t start_address, uint64_t argument,
+    emulator_thread(memory_manager& memory, const process_context64& context, uint64_t start_address, uint64_t argument,
                     uint64_t stack_size, bool suspended, uint32_t id);
 
     emulator_thread(const emulator_thread&) = delete;
@@ -103,7 +103,7 @@ class emulator_thread : public ref_counted_object
 
     bool is_terminated() const;
 
-    bool is_thread_ready(process_context& process, utils::clock& clock);
+    bool is_thread_ready(process_context64& process, utils::clock& clock);
 
     void save(x86_64_emulator& emu)
     {
@@ -115,7 +115,7 @@ class emulator_thread : public ref_counted_object
         emu.restore_registers(this->last_registers);
     }
 
-    void setup_if_necessary(x86_64_emulator& emu, const process_context& context)
+    void setup_if_necessary(x86_64_emulator& emu, const process_context64& context)
     {
         if (!this->executed_instructions)
         {
@@ -211,7 +211,7 @@ class emulator_thread : public ref_counted_object
     }
 
   private:
-    void setup_registers(x86_64_emulator& emu, const process_context& context) const;
+    void setup_registers(x86_64_emulator& emu, const process_context64& context) const;
 
     void release()
     {

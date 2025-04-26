@@ -29,7 +29,7 @@ namespace
         emu.reg(x86_register::rsp, stack_end);
     }
 
-    bool is_object_signaled(process_context& c, const handle h, const uint32_t current_thread_id)
+    bool is_object_signaled(process_context64& c, const handle h, const uint32_t current_thread_id)
     {
         const auto type = h.value.type;
 
@@ -83,7 +83,7 @@ namespace
     }
 }
 
-emulator_thread::emulator_thread(memory_manager& memory, const process_context& context, const uint64_t start_address,
+emulator_thread::emulator_thread(memory_manager& memory, const process_context64& context, const uint64_t start_address,
                                  const uint64_t argument, const uint64_t stack_size, const bool suspended,
                                  const uint32_t id)
     : memory_ptr(&memory),
@@ -139,7 +139,7 @@ bool emulator_thread::is_terminated() const
     return this->exit_status.has_value();
 }
 
-bool emulator_thread::is_thread_ready(process_context& process, utils::clock& clock)
+bool emulator_thread::is_thread_ready(process_context64& process, utils::clock& clock)
 {
     if (this->is_terminated() || this->suspended > 0)
     {
@@ -208,7 +208,7 @@ bool emulator_thread::is_thread_ready(process_context& process, utils::clock& cl
     return true;
 }
 
-void emulator_thread::setup_registers(x86_64_emulator& emu, const process_context& context) const
+void emulator_thread::setup_registers(x86_64_emulator& emu, const process_context64& context) const
 {
     if (!this->gs_segment)
     {

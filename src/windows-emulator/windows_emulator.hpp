@@ -15,7 +15,7 @@
 
 std::unique_ptr<x86_64_emulator> create_default_x86_64_emulator();
 
-struct emulator_callbacks : module_manager::callbacks, process_context::callbacks
+struct emulator_callbacks : module_manager::callbacks, process_context64::callbacks
 {
     utils::optional_function<instruction_hook_continuation(uint32_t syscall_id, x86_64_emulator::pointer_type address,
                                                            std::string_view mod_name, std::string_view syscall_name)>
@@ -69,7 +69,7 @@ class windows_emulator
     memory_manager memory;
     registry_manager registry{};
     module_manager mod_manager;
-    process_context process;
+    process_context64 process;
     syscall_dispatcher dispatcher;
 
     windows_emulator(const emulator_settings& settings = {}, emulator_callbacks callbacks = {},

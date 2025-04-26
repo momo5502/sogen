@@ -27,9 +27,9 @@ namespace
     }
 }
 
-void process_context::setup(x86_64_emulator& emu, memory_manager& memory, const application_settings& app_settings,
-                            const mapped_module& executable, const mapped_module& ntdll,
-                            const apiset::container& apiset_container)
+void process_context64::setup(x86_64_emulator& emu, memory_manager& memory, const application_settings& app_settings,
+                              const mapped_module& executable, const mapped_module& ntdll,
+                              const apiset::container& apiset_container)
 {
     setup_gdt(emu, memory);
 
@@ -125,7 +125,7 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, const 
     this->default_register_set = emu.save_registers();
 }
 
-void process_context::serialize(utils::buffer_serializer& buffer) const
+void process_context64::serialize(utils::buffer_serializer& buffer) const
 {
     buffer.write(this->current_ip);
     buffer.write(this->previous_ip);
@@ -133,7 +133,7 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
     buffer.write(this->shared_section_size);
     buffer.write(this->dbwin_buffer);
     buffer.write(this->dbwin_buffer_size);
-    buffer.write_optional(this->exception_rip);
+    buffer.write_optional(this->exception_ip);
     buffer.write_optional(this->exit_status);
     buffer.write(this->base_allocator);
     buffer.write(this->peb);
@@ -163,7 +163,7 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
     buffer.write(this->threads.find_handle(this->active_thread).bits);
 }
 
-void process_context::deserialize(utils::buffer_deserializer& buffer)
+void process_context64::deserialize(utils::buffer_deserializer& buffer)
 {
     buffer.read(this->current_ip);
     buffer.read(this->previous_ip);
@@ -171,7 +171,7 @@ void process_context::deserialize(utils::buffer_deserializer& buffer)
     buffer.read(this->shared_section_size);
     buffer.read(this->dbwin_buffer);
     buffer.read(this->dbwin_buffer_size);
-    buffer.read_optional(this->exception_rip);
+    buffer.read_optional(this->exception_ip);
     buffer.read_optional(this->exit_status);
     buffer.read(this->base_allocator);
     buffer.read(this->peb);
@@ -207,7 +207,7 @@ void process_context::deserialize(utils::buffer_deserializer& buffer)
     this->active_thread = this->threads.get(buffer.read<uint64_t>());
 }
 
-generic_handle_store* process_context::get_handle_store(const handle handle)
+generic_handle_store* process_context64::get_handle_store(const handle handle)
 {
     switch (handle.value.type)
     {
@@ -234,8 +234,8 @@ generic_handle_store* process_context::get_handle_store(const handle handle)
     }
 }
 
-handle process_context::create_thread(memory_manager& memory, const uint64_t start_address, const uint64_t argument,
-                                      const uint64_t stack_size, const bool suspended)
+handle process_context64::create_thread(memory_manager& memory, const uint64_t start_address, const uint64_t argument,
+                                        const uint64_t stack_size, const bool suspended)
 {
     emulator_thread t{memory, *this, start_address, argument, stack_size, suspended, ++this->spawned_thread_count};
     auto [h, thr] = this->threads.store_and_get(std::move(t));
@@ -243,7 +243,9 @@ handle process_context::create_thread(memory_manager& memory, const uint64_t sta
     return h;
 }
 
-uint16_t process_context::add_or_find_atom(std::u16string name)
+// --[ process_context_common ]-----------------------------------------------------------------------------------------
+
+uint16_t process_context_common::add_or_find_atom(std::u16string name)
 {
     uint16_t index = 0;
     if (!atoms.empty())
@@ -286,7 +288,7 @@ uint16_t process_context::add_or_find_atom(std::u16string name)
     return index;
 }
 
-bool process_context::delete_atom(const std::u16string& name)
+bool process_context_common::delete_atom(const std::u16string& name)
 {
     for (auto it = atoms.begin(); it != atoms.end(); ++it)
     {
@@ -303,7 +305,7 @@ bool process_context::delete_atom(const std::u16string& name)
     return false;
 }
 
-bool process_context::delete_atom(uint16_t atom_id)
+bool process_context_common::delete_atom(uint16_t atom_id)
 {
     const auto it = atoms.find(atom_id);
     if (it == atoms.end())
@@ -319,7 +321,7 @@ bool process_context::delete_atom(uint16_t atom_id)
     return true;
 }
 
-const std::u16string* process_context::get_atom_name(uint16_t atom_id) const
+const std::u16string* process_context_common::get_atom_name(uint16_t atom_id) const
 {
     const auto it = atoms.find(atom_id);
     if (it == atoms.end())

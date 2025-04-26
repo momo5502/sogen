@@ -8,7 +8,7 @@ struct syscall_context
 {
     windows_emulator& win_emu;
     x86_64_emulator& emu;
-    process_context& proc;
+    process_context64& proc;
     mutable bool write_status{true};
     mutable bool retrigger_syscall{false};
 };
