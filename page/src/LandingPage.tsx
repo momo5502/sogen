@@ -71,7 +71,7 @@ export function LandingPage() {
                   A high-performance Windows user space emulator
                 </p>
                 <div className="flex flex-wrap gap-4 justify-center md:justify-start">
-                  <a href="#/playground" target="_blank">
+                  <a href="#/playground">
                     <Button
                       size="lg"
                       className="bg-white text-blue-700 hover:bg-blue-50"
@@ -183,11 +183,7 @@ export function LandingPage() {
                 >
                   <Github className="h-6 w-6" />
                 </a>
-                <a
-                  href="#/playground"
-                  target="_blank"
-                  className="hover:text-blue-400"
-                >
+                <a href="#/playground" className="hover:text-blue-400">
                   <ExternalLink className="h-6 w-6" />
                 </a>
               </div>
