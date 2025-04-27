@@ -1,5 +1,5 @@
 #include "event_handler.hpp"
-#include "events.hpp"
+#include "events_generated.hxx"
 
 #include "message_transmitter.hpp"
 

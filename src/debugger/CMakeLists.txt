@@ -22,3 +22,9 @@ target_link_libraries(debugger PRIVATE
 set_property(GLOBAL PROPERTY VS_STARTUP_PROJECT debugger)
 
 momo_strip_target(debugger)
+
+add_custom_target(gen_fbs
+  COMMAND "$<TARGET_FILE:flatc>" --gen-mutable --gen-object-api --filename-ext hxx --cpp -o "${CMAKE_CURRENT_LIST_DIR}" "${CMAKE_CURRENT_LIST_DIR}/events.fbs"
+)
+
+add_dependencies(gen_fbs flatc)

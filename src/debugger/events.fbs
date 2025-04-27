@@ -1,0 +1,18 @@
+namespace Debugger;
+
+table PauseEvent {}
+
+table RunEvent {
+    singleStep: bool;
+}
+
+union Event { 
+    PauseEvent, 
+    RunEvent,
+}
+
+table DebugEvent {
+    event: Event;
+}
+
+root_type DebugEvent;
