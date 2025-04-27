@@ -18,10 +18,6 @@
 [submodule "deps/gtest-parallel"]
 	path = deps/gtest-parallel
 	url = https://github.com/google/gtest-parallel.git
-[submodule "deps/json"]
-	path = deps/json
-	url = https://github.com/nlohmann/json.git
-	branch = master
 [submodule "deps/flatbuffers"]
 	path = deps/flatbuffers
 	url = https://github.com/google/flatbuffers.git
