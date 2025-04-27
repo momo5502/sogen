@@ -2,110 +2,12 @@
 
 #include <windows_emulator.hpp>
 #include <cstdio>
-#include <nlohmann/json.hpp>
-
-#ifdef OS_EMSCRIPTEN
-#include <emscripten.h>
-#endif
+#include "event_handler.hpp"
 
 #include <utils/finally.hpp>
 
 namespace
 {
-    void suspend_execution(const std::chrono::milliseconds ms = 0ms)
-    {
-#ifdef OS_EMSCRIPTEN
-        emscripten_sleep(static_cast<uint32_t>(ms.count()));
-#else
-        if (ms > 0ms)
-        {
-            std::this_thread::sleep_for(ms);
-        }
-        else
-        {
-            std::this_thread::yield();
-        }
-#endif
-    }
-
-    void send_message(const std::string& message)
-    {
-#ifdef OS_EMSCRIPTEN
-        // clang-format off
-        EM_ASM_({
-                handleMessage(UTF8ToString($0));
-        }, message.c_str());
-        // clang-format on
-#else
-        (void)message;
-#endif
-    }
-
-    std::string receive_message()
-    {
-#ifdef OS_EMSCRIPTEN
-        // clang-format off
-        auto* ptr = EM_ASM_PTR({
-            var message = getMessageFromQueue();
-            if (!message || message.length == 0)
-            {
-                return null;
-            }
-
-            const length = lengthBytesUTF8(message) + 1;
-            const buffer = _malloc(length);
-            stringToUTF8(message, buffer, length);
-            return buffer;
-        });
-        // clang-format on
-
-        if (!ptr)
-        {
-            return {};
-        }
-
-        const auto _ = utils::finally([&] {
-            free(ptr); //
-        });
-
-        return {reinterpret_cast<const char*>(ptr)};
-#else
-        return {};
-#endif
-    }
-
-    void send_object(const nlohmann::json& json)
-    {
-        const std::string res = json.dump();
-        send_message(res);
-    }
-
-    nlohmann::json receive_object()
-    {
-        auto message = receive_message();
-        if (message.empty())
-        {
-            return {};
-        }
-
-        return nlohmann::json::parse(message);
-    }
-
-    void handle_messages(windows_emulator& win_emu)
-    {
-        while (true)
-        {
-            suspend_execution(0ms);
-            const auto message = receive_object();
-            if (message.is_null())
-            {
-                break;
-            }
-
-            puts(message.dump().c_str());
-        }
-    }
-
     bool run_emulation(windows_emulator& win_emu)
     {
         try
@@ -162,7 +64,8 @@ namespace
         windows_emulator win_emu{app_settings, settings};
 
         win_emu.callbacks.on_thread_switch = [&] {
-            handle_messages(win_emu); //
+            debugger::event_context c{.win_emu = win_emu};
+            debugger::handle_events(c); //
         };
 
         return run_emulation(win_emu);

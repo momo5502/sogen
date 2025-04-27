@@ -3,7 +3,9 @@ add_subdirectory(unicorn)
 
 ##########################################
 
-add_subdirectory(json)
+option(FLATBUFFERS_BUILD_TESTS "" OFF)
+option(FLATBUFFERS_INSTALL "" OFF)
+add_subdirectory(flatbuffers)
 
 ##########################################
 

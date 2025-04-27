@@ -22,3 +22,6 @@
 	path = deps/json
 	url = https://github.com/nlohmann/json.git
 	branch = master
+[submodule "deps/flatbuffers"]
+	path = deps/flatbuffers
+	url = https://github.com/google/flatbuffers.git
