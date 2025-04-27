@@ -32,15 +32,29 @@ function notifyExit(code) {
   self.close();
 }
 
+var msgQueue = [];
+
+setInterval(() => {
+  msgQueue.push("OI YEAH BABY :D");
+}, 2100);
+
+function handleMessage(message) {
+  console.log("MSG from C++: " + message);
+}
+
 function getMessageFromQueue() {
-  return "";
+  if(msgQueue.length == 0){
+    return "";
+  }
+  
+  return msgQueue.pop();
 }
 
 function runEmulation(filesystem, file, options) {
   globalThis.Module = {
     arguments: [...options, "-e", "./root", file],
     onRuntimeInitialized: function () {
-      filesystem.forEach((e) => {
+      /*filesystem.forEach((e) => {
         if (e.name.endsWith("/")) {
           FS.mkdir(e.name.slice(0, -1));
         } else {
@@ -52,7 +66,7 @@ function runEmulation(filesystem, file, options) {
           }
           FS.createDataFile("/" + dirs.join("/"), file, buffer, true, true);
         }
-      });
+      });*/
     },
     print: logLine,
     printErr: logLine,
@@ -61,5 +75,5 @@ function runEmulation(filesystem, file, options) {
     postRun: flushLines,
   };
 
-  importScripts("./analyzer.js");
+  importScripts("./debugger.js");
 }

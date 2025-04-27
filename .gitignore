@@ -150,4 +150,6 @@ user*.bat
 
 page/public/analyzer.js
 page/public/analyzer.wasm
+page/public/debugger.js
+page/public/debugger.wasm
 page/public/root.zip
