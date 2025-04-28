@@ -43,10 +43,10 @@ function handleMessage(message) {
 }
 
 function getMessageFromQueue() {
-  if(msgQueue.length == 0){
+  if (msgQueue.length == 0) {
     return "";
   }
-  
+
   return msgQueue.pop();
 }
 

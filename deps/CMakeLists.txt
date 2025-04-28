@@ -3,6 +3,11 @@ add_subdirectory(unicorn)
 
 ##########################################
 
+option(BASE64_ENABLE_TESTING "" OFF)
+add_subdirectory(base64)
+
+##########################################
+
 option(FLATBUFFERS_BUILD_TESTS "" OFF)
 option(FLATBUFFERS_INSTALL "" OFF)
 add_subdirectory(flatbuffers)

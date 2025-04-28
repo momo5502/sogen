@@ -1,39 +1,59 @@
 #include "event_handler.hpp"
+#include "message_transmitter.hpp"
+
+#include <base64.hpp>
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4244)
+#endif
+
 #include "events_generated.hxx"
 
-#include "message_transmitter.hpp"
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 namespace debugger
 {
     namespace
     {
-        void handle_event(event_context& c, const event& e, const nlohmann::json& obj)
+        std::optional<Debugger::DebugEventT> receive_event()
         {
-            switch (e.type)
+            const auto message = receive_message();
+            if (message.empty())
             {
-            case event_type::pause:
+                return std::nullopt;
+            }
+
+            const auto data = base64::from_base64(message);
+
+            flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(data.data()), data.size());
+            if (!Debugger::VerifyDebugEventBuffer(verifier))
+            {
+                return std::nullopt;
+            }
+
+            Debugger::DebugEventT e{};
+            Debugger::GetDebugEvent(data.data())->UnPackTo(&e);
+
+            return {std::move(e)};
+        }
+
+        void handle_event(event_context& c, const Debugger::DebugEventT& e)
+        {
+            switch (e.event.type)
+            {
+            case Debugger::Event_PauseEvent:
                 c.win_emu.emu().stop();
                 break;
 
-            case event_type::run:
+            case Debugger::Event_RunEvent:
                 c.resume = true;
                 break;
 
             default:
                 break;
-            }
-        }
-
-        void handle_object(event_context& c, const nlohmann::json& obj)
-        {
-            try
-            {
-                const auto e = obj.get<event>();
-                handle_event(c, e, obj);
-            }
-            catch (const std::exception& e)
-            {
-                puts(e.what());
             }
         }
     }
@@ -44,13 +64,13 @@ namespace debugger
         {
             suspend_execution(0ms);
 
-            const auto obj = receive_object();
-            if (obj.is_null())
+            const auto e = receive_event();
+            if (!e.has_value())
             {
                 break;
             }
 
-            handle_object(c, obj);
+            handle_event(c, *e);
         }
     }
 }

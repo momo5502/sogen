@@ -21,3 +21,6 @@
 [submodule "deps/flatbuffers"]
 	path = deps/flatbuffers
 	url = https://github.com/google/flatbuffers.git
+[submodule "deps/base64"]
+	path = deps/base64
+	url = https://github.com/tobiaslocker/base64.git

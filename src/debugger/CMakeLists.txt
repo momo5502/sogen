@@ -17,6 +17,7 @@ endif()
 target_link_libraries(debugger PRIVATE
   windows-emulator
   flatbuffers
+  base64
 )
 
 set_property(GLOBAL PROPERTY VS_STARTUP_PROJECT debugger)

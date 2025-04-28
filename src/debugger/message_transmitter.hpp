@@ -1,10 +1,11 @@
 #pragma once
 
-#include <nlohmann/json.hpp>
+#include <chrono>
+#include <string>
 
 namespace debugger
 {
-    void suspend_execution(const std::chrono::milliseconds ms = 0ms);
-    void send_object(const nlohmann::json& json);
-    nlohmann::json receive_object();
+    void suspend_execution(std::chrono::milliseconds ms = std::chrono::milliseconds(0));
+    void send_message(const std::string& message);
+    std::string receive_message();
 }

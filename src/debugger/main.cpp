@@ -4,8 +4,6 @@
 #include <cstdio>
 #include "event_handler.hpp"
 
-#include <utils/finally.hpp>
-
 namespace
 {
     bool run_emulation(windows_emulator& win_emu)

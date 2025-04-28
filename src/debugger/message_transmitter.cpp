@@ -1,31 +1,34 @@
 #include "message_transmitter.hpp"
 #include <platform/compiler.hpp>
 
+#include <thread>
+
+#include <utils/finally.hpp>
 #ifdef OS_EMSCRIPTEN
 #include <emscripten.h>
 #endif
 
+using namespace std::literals;
+
 namespace debugger
 {
-    namespace
+    void send_message(const std::string& message)
     {
-        void send_message(const std::string& message)
-        {
 #ifdef OS_EMSCRIPTEN
-            // clang-format off
+        // clang-format off
         EM_ASM_({
                 handleMessage(UTF8ToString($0));
         }, message.c_str());
-            // clang-format on
+        // clang-format on
 #else
-            (void)message;
+        (void)message;
 #endif
-        }
+    }
 
-        std::string receive_message()
-        {
+    std::string receive_message()
+    {
 #ifdef OS_EMSCRIPTEN
-            // clang-format off
+        // clang-format off
         auto* ptr = EM_ASM_PTR({
             var message = getMessageFromQueue();
             if (!message || message.length == 0)
@@ -38,54 +41,36 @@ namespace debugger
             stringToUTF8(message, buffer, length);
             return buffer;
         });
-            // clang-format on
+        // clang-format on
 
-            if (!ptr)
-            {
-                return {};
-            }
-
-            const auto _ = utils::finally([&] {
-                free(ptr); //
-            });
-
-            return {reinterpret_cast<const char*>(ptr)};
-#else
+        if (!ptr)
+        {
             return {};
-#endif
         }
 
-        void send_object(const nlohmann::json& json)
-        {
-            const std::string res = json.dump();
-            send_message(res);
-        }
+        const auto _ = utils::finally([&] {
+            free(ptr); //
+        });
 
-        nlohmann::json receive_object()
-        {
-            auto message = receive_message();
-            if (message.empty())
-            {
-                return {};
-            }
-
-            return nlohmann::json::parse(message);
-        }
-
-        void suspend_execution(const std::chrono::milliseconds ms)
-        {
-#ifdef OS_EMSCRIPTEN
-            emscripten_sleep(static_cast<uint32_t>(ms.count()));
+        return {reinterpret_cast<const char*>(ptr)};
 #else
-            if (ms > 0ms)
-            {
-                std::this_thread::sleep_for(ms);
-            }
-            else
-            {
-                std::this_thread::yield();
-            }
+        return {};
 #endif
+    }
+
+    void suspend_execution(const std::chrono::milliseconds ms)
+    {
+#ifdef OS_EMSCRIPTEN
+        emscripten_sleep(static_cast<uint32_t>(ms.count()));
+#else
+        if (ms > 0ms)
+        {
+            std::this_thread::sleep_for(ms);
         }
+        else
+        {
+            std::this_thread::yield();
+        }
+#endif
     }
-    }
+}
