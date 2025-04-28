@@ -125,15 +125,15 @@ namespace debugger
 
         void handle_read_register(const event_context& c, const Debugger::ReadRegisterRequestT& request)
         {
-            uint8_t buffer[512]{};
-            const auto res =
-                c.win_emu.emu().read_register(static_cast<x86_register>(request.register_), buffer, sizeof(buffer));
+            std::array<uint8_t, 512> buffer{};
+            const auto res = c.win_emu.emu().read_register(static_cast<x86_register>(request.register_), buffer.data(),
+                                                           buffer.size());
 
-            const auto size = std::min(sizeof(buffer), res);
+            const auto size = std::min(buffer.size(), res);
 
             Debugger::ReadRegisterResponseT response{};
             response.register_ = request.register_;
-            response.data.assign(buffer, buffer + size);
+            response.data.assign(buffer.data(), buffer.data() + size);
 
             send_event(std::move(response));
         }

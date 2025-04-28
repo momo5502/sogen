@@ -46,7 +46,7 @@ function getMessageFromQueue() {
     return "";
   }
 
-  return msgQueue.pop();
+  return msgQueue.shift();
 }
 
 function runEmulation(filesystem, file, options) {

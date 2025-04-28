@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useReducer } from "react";
 import { Output } from "@/components/output";
 
 import { AppSidebar } from "@/components/app-sidebar";
@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Button } from "./components/ui/button";
 
-import { Emulator, UserFile } from "./emulator";
+import { Emulator, UserFile, EmulationState } from "./emulator";
 import { getFilesystem } from "./filesystem";
 
 import "./App.css";
@@ -23,7 +23,7 @@ import {
 import { createDefaultSettings } from "./settings";
 import { SettingsMenu } from "./components/settings-menu";
 
-import { PlayFill, StopFill, GearFill } from "react-bootstrap-icons";
+import { PlayFill, StopFill, GearFill, PauseFill } from "react-bootstrap-icons";
 import { StatusIndicator } from "./components/status-indicator";
 import { Header } from "./Header";
 
@@ -64,6 +64,7 @@ export function Playground() {
   const output = useRef<Output>(null);
   const [settings, setSettings] = useState(createDefaultSettings());
   const [emulator, setEmulator] = useState<Emulator | null>(null);
+  const [, forceUpdate] = useReducer((x) => x + 1, 0);
 
   function logLine(line: string) {
     output.current?.logLine(line);
@@ -71,6 +72,18 @@ export function Playground() {
 
   function logLines(lines: string[]) {
     output.current?.logLines(lines);
+  }
+
+  function isEmulatorPaused() {
+    return emulator && emulator.getState() == EmulationState.Paused;
+  }
+
+  function toggleEmulatorState() {
+    if (isEmulatorPaused()) {
+      emulator?.resume();
+    } else {
+      emulator?.pause();
+    }
   }
 
   async function createEmulator(userFile: UserFile | null = null) {
@@ -83,7 +96,7 @@ export function Playground() {
       logLine(`Processing filesystem (${current}/${total}): ${file}`);
     });
 
-    const new_emulator = new Emulator(fs, logLines);
+    const new_emulator = new Emulator(fs, logLines, (_) => forceUpdate());
     new_emulator.onTerminate().then(() => setEmulator(null));
     setEmulator(new_emulator);
 
@@ -116,8 +129,16 @@ export function Playground() {
             <Button variant="secondary" onClick={() => emulator?.stop()}>
               <StopFill /> Stop Emulation
             </Button>
-            <Button variant="secondary" onClick={() => emulator?.pause()}>
-              <StopFill /> Pause Emulation
+            <Button variant="secondary" onClick={toggleEmulatorState}>
+              {isEmulatorPaused() ? (
+                <>
+                  <PlayFill /> Resume Emulation
+                </>
+              ) : (
+                <>
+                  <PauseFill /> Pause Emulation
+                </>
+              )}
             </Button>
 
             <Popover>
@@ -131,7 +152,9 @@ export function Playground() {
               </PopoverContent>
             </Popover>
             <div className="text-right flex-1">
-              <StatusIndicator running={!!emulator} />
+              <StatusIndicator
+                state={emulator ? emulator.getState() : EmulationState.Stopped}
+              />
             </div>
           </header>
           <div className="flex flex-1 flex-col gap-4 p-4 overflow-auto">

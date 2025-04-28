@@ -12,6 +12,12 @@ export interface UserFile {
   data: ArrayBuffer;
 }
 
+export enum EmulationState {
+  Stopped,
+  Paused,
+  Running,
+}
+
 function base64Encode(uint8Array: Uint8Array): string {
   let binaryString = "";
   for (let i = 0; i < uint8Array.byteLength; i++) {
@@ -41,17 +47,26 @@ function decodeEvent(data: string) {
   return event.unpack();
 }
 
+type StateChangeHandler = (state: EmulationState) => void;
+
 export class Emulator {
   filesystem: FileEntry[];
   logHandler: LogHandler;
+  stateChangeHandler: StateChangeHandler;
   terminatePromise: Promise<number | null>;
   terminateResolve: (value: number | null) => void;
   terminateReject: (reason?: any) => void;
   worker: Worker;
+  state: EmulationState = EmulationState.Stopped;
 
-  constructor(filesystem: FileEntry[], logHandler: LogHandler) {
+  constructor(
+    filesystem: FileEntry[],
+    logHandler: LogHandler,
+    stateChangeHandler: StateChangeHandler,
+  ) {
     this.filesystem = filesystem;
     this.logHandler = logHandler;
+    this.stateChangeHandler = stateChangeHandler;
     this.terminateResolve = () => {};
     this.terminateReject = () => {};
     this.terminatePromise = new Promise((resolve, reject) => {
@@ -81,6 +96,7 @@ export class Emulator {
       });
     }
 
+    this._setState(EmulationState.Running);
     this.worker.postMessage({
       message: "run",
       data: {
@@ -89,6 +105,19 @@ export class Emulator {
         options: translateSettings(settings),
       },
     });
+  }
+
+  updateState() {
+    this.sendEvent(
+      new fbDebugger.DebugEventT(
+        fbDebugger.Event.GetStateRequest,
+        new fbDebugger.GetStateRequestT(),
+      ),
+    );
+  }
+
+  getState() {
+    return this.state;
   }
 
   stop() {
@@ -119,6 +148,8 @@ export class Emulator {
         new fbDebugger.PauseRequestT(),
       ),
     );
+
+    this.updateState();
   }
 
   resume() {
@@ -128,6 +159,8 @@ export class Emulator {
         new fbDebugger.RunRequestT(),
       ),
     );
+
+    this.updateState();
   }
 
   _onMessage(event: MessageEvent) {
@@ -136,11 +169,39 @@ export class Emulator {
     } else if (event.data.message == "event") {
       this._onEvent(decodeEvent(event.data.data));
     } else if (event.data.message == "end") {
+      this._setState(EmulationState.Stopped);
       this.terminateResolve(0);
     }
   }
 
   _onEvent(event: fbDebugger.DebugEventT) {
-    console.log(event);
+    switch (event.eventType) {
+      case fbDebugger.Event.GetStateResponse:
+        this._handle_state_response(
+          event.event as fbDebugger.GetStateResponseT,
+        );
+        break;
+    }
+  }
+
+  _setState(state: EmulationState) {
+    this.state = state;
+    this.stateChangeHandler(this.state);
+  }
+
+  _handle_state_response(response: fbDebugger.GetStateResponseT) {
+    switch (response.state) {
+      case fbDebugger.State.None:
+        this._setState(EmulationState.Stopped);
+        break;
+
+      case fbDebugger.State.Paused:
+        this._setState(EmulationState.Paused);
+        break;
+
+      case fbDebugger.State.Running:
+        this._setState(EmulationState.Running);
+        break;
+    }
   }
 }
