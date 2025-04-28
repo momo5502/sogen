@@ -27,9 +27,9 @@ namespace
     }
 }
 
-void process_context::setup(x86_64_emulator& emu, memory_manager& memory, const application_settings& app_settings,
-                            const mapped_module& executable, const mapped_module& ntdll,
-                            const apiset::container& apiset_container)
+void process_context::setup(x86_64_emulator& emu, memory_manager& memory, registry_manager& registry,
+                            const application_settings& app_settings, const mapped_module& executable,
+                            const mapped_module& ntdll, const apiset::container& apiset_container)
 {
     setup_gdt(emu, memory);
 
@@ -66,8 +66,28 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, const 
         proc_params.StandardError = proc_params.StandardOutput;
 
         proc_params.Environment = allocator.copy_string(u"=::=::\\");
+
+        const auto env_key =
+            registry.get_key({R"(\Registry\Machine\System\CurrentControlSet\Control\Session Manager\Environment)"});
+        if (env_key)
+        {
+            size_t i = 0;
+            while (const auto value = registry.get_value(*env_key, ++i))
+            {
+                if ((value->type != REG_SZ && value->type != REG_EXPAND_SZ) || value->data.empty() ||
+                    value->data.size() % 2 != 0)
+                    continue;
+
+                std::u16string entry =
+                    u8_to_u16(value->name) + u"=" + reinterpret_cast<const char16_t*>(value->data.data());
+                allocator.copy_string(entry);
+            }
+        }
+
         allocator.copy_string(u"EMULATOR=1");
         allocator.copy_string(u"COMPUTERNAME=momo");
+        allocator.copy_string(u"USERNAME=momo");
+        allocator.copy_string(u"SystemDrive=C:");
         allocator.copy_string(u"SystemRoot=C:\\WINDOWS");
         allocator.copy_string(u"");
 

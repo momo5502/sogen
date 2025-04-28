@@ -345,7 +345,7 @@ void windows_emulator::setup_process(const application_settings& app_settings)
 
     const auto apiset_data = apiset::obtain(this->emulation_root);
 
-    this->process.setup(this->emu(), this->memory, app_settings, *executable, *ntdll, apiset_data);
+    this->process.setup(this->emu(), this->memory, this->registry, app_settings, *executable, *ntdll, apiset_data);
 
     const auto ntdll_data = emu.read_memory(ntdll->image_base, static_cast<size_t>(ntdll->size_of_image));
     const auto win32u_data = emu.read_memory(win32u->image_base, static_cast<size_t>(win32u->size_of_image));
