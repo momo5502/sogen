@@ -31,6 +31,22 @@ struct RunRequest;
 struct RunRequestBuilder;
 struct RunRequestT;
 
+struct WriteMemoryRequest;
+struct WriteMemoryRequestBuilder;
+struct WriteMemoryRequestT;
+
+struct WriteMemoryResponse;
+struct WriteMemoryResponseBuilder;
+struct WriteMemoryResponseT;
+
+struct ReadMemoryRequest;
+struct ReadMemoryRequestBuilder;
+struct ReadMemoryRequestT;
+
+struct ReadMemoryResponse;
+struct ReadMemoryResponseBuilder;
+struct ReadMemoryResponseT;
+
 struct DebugEvent;
 struct DebugEventBuilder;
 struct DebugEventT;
@@ -74,35 +90,47 @@ enum Event : uint8_t {
   Event_RunRequest = 2,
   Event_GetStateRequest = 3,
   Event_GetStateResponse = 4,
+  Event_WriteMemoryRequest = 5,
+  Event_WriteMemoryResponse = 6,
+  Event_ReadMemoryRequest = 7,
+  Event_ReadMemoryResponse = 8,
   Event_MIN = Event_NONE,
-  Event_MAX = Event_GetStateResponse
+  Event_MAX = Event_ReadMemoryResponse
 };
 
-inline const Event (&EnumValuesEvent())[5] {
+inline const Event (&EnumValuesEvent())[9] {
   static const Event values[] = {
     Event_NONE,
     Event_PauseRequest,
     Event_RunRequest,
     Event_GetStateRequest,
-    Event_GetStateResponse
+    Event_GetStateResponse,
+    Event_WriteMemoryRequest,
+    Event_WriteMemoryResponse,
+    Event_ReadMemoryRequest,
+    Event_ReadMemoryResponse
   };
   return values;
 }
 
 inline const char * const *EnumNamesEvent() {
-  static const char * const names[6] = {
+  static const char * const names[10] = {
     "NONE",
     "PauseRequest",
     "RunRequest",
     "GetStateRequest",
     "GetStateResponse",
+    "WriteMemoryRequest",
+    "WriteMemoryResponse",
+    "ReadMemoryRequest",
+    "ReadMemoryResponse",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameEvent(Event e) {
-  if (::flatbuffers::IsOutRange(e, Event_NONE, Event_GetStateResponse)) return "";
+  if (::flatbuffers::IsOutRange(e, Event_NONE, Event_ReadMemoryResponse)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesEvent()[index];
 }
@@ -127,6 +155,22 @@ template<> struct EventTraits<Debugger::GetStateResponse> {
   static const Event enum_value = Event_GetStateResponse;
 };
 
+template<> struct EventTraits<Debugger::WriteMemoryRequest> {
+  static const Event enum_value = Event_WriteMemoryRequest;
+};
+
+template<> struct EventTraits<Debugger::WriteMemoryResponse> {
+  static const Event enum_value = Event_WriteMemoryResponse;
+};
+
+template<> struct EventTraits<Debugger::ReadMemoryRequest> {
+  static const Event enum_value = Event_ReadMemoryRequest;
+};
+
+template<> struct EventTraits<Debugger::ReadMemoryResponse> {
+  static const Event enum_value = Event_ReadMemoryResponse;
+};
+
 template<typename T> struct EventUnionTraits {
   static const Event enum_value = Event_NONE;
 };
@@ -145,6 +189,22 @@ template<> struct EventUnionTraits<Debugger::GetStateRequestT> {
 
 template<> struct EventUnionTraits<Debugger::GetStateResponseT> {
   static const Event enum_value = Event_GetStateResponse;
+};
+
+template<> struct EventUnionTraits<Debugger::WriteMemoryRequestT> {
+  static const Event enum_value = Event_WriteMemoryRequest;
+};
+
+template<> struct EventUnionTraits<Debugger::WriteMemoryResponseT> {
+  static const Event enum_value = Event_WriteMemoryResponse;
+};
+
+template<> struct EventUnionTraits<Debugger::ReadMemoryRequestT> {
+  static const Event enum_value = Event_ReadMemoryRequest;
+};
+
+template<> struct EventUnionTraits<Debugger::ReadMemoryResponseT> {
+  static const Event enum_value = Event_ReadMemoryResponse;
 };
 
 struct EventUnion {
@@ -208,6 +268,38 @@ struct EventUnion {
   const Debugger::GetStateResponseT *AsGetStateResponse() const {
     return type == Event_GetStateResponse ?
       reinterpret_cast<const Debugger::GetStateResponseT *>(value) : nullptr;
+  }
+  Debugger::WriteMemoryRequestT *AsWriteMemoryRequest() {
+    return type == Event_WriteMemoryRequest ?
+      reinterpret_cast<Debugger::WriteMemoryRequestT *>(value) : nullptr;
+  }
+  const Debugger::WriteMemoryRequestT *AsWriteMemoryRequest() const {
+    return type == Event_WriteMemoryRequest ?
+      reinterpret_cast<const Debugger::WriteMemoryRequestT *>(value) : nullptr;
+  }
+  Debugger::WriteMemoryResponseT *AsWriteMemoryResponse() {
+    return type == Event_WriteMemoryResponse ?
+      reinterpret_cast<Debugger::WriteMemoryResponseT *>(value) : nullptr;
+  }
+  const Debugger::WriteMemoryResponseT *AsWriteMemoryResponse() const {
+    return type == Event_WriteMemoryResponse ?
+      reinterpret_cast<const Debugger::WriteMemoryResponseT *>(value) : nullptr;
+  }
+  Debugger::ReadMemoryRequestT *AsReadMemoryRequest() {
+    return type == Event_ReadMemoryRequest ?
+      reinterpret_cast<Debugger::ReadMemoryRequestT *>(value) : nullptr;
+  }
+  const Debugger::ReadMemoryRequestT *AsReadMemoryRequest() const {
+    return type == Event_ReadMemoryRequest ?
+      reinterpret_cast<const Debugger::ReadMemoryRequestT *>(value) : nullptr;
+  }
+  Debugger::ReadMemoryResponseT *AsReadMemoryResponse() {
+    return type == Event_ReadMemoryResponse ?
+      reinterpret_cast<Debugger::ReadMemoryResponseT *>(value) : nullptr;
+  }
+  const Debugger::ReadMemoryResponseT *AsReadMemoryResponse() const {
+    return type == Event_ReadMemoryResponse ?
+      reinterpret_cast<const Debugger::ReadMemoryResponseT *>(value) : nullptr;
   }
 };
 
@@ -402,6 +494,320 @@ inline ::flatbuffers::Offset<RunRequest> CreateRunRequest(
 
 ::flatbuffers::Offset<RunRequest> CreateRunRequest(::flatbuffers::FlatBufferBuilder &_fbb, const RunRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct WriteMemoryRequestT : public ::flatbuffers::NativeTable {
+  typedef WriteMemoryRequest TableType;
+  uint64_t address = 0;
+  std::vector<uint8_t> data{};
+};
+
+struct WriteMemoryRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef WriteMemoryRequestT NativeTableType;
+  typedef WriteMemoryRequestBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ADDRESS = 4,
+    VT_DATA = 6
+  };
+  uint64_t address() const {
+    return GetField<uint64_t>(VT_ADDRESS, 0);
+  }
+  bool mutate_address(uint64_t _address = 0) {
+    return SetField<uint64_t>(VT_ADDRESS, _address, 0);
+  }
+  const ::flatbuffers::Vector<uint8_t> *data() const {
+    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_DATA);
+  }
+  ::flatbuffers::Vector<uint8_t> *mutable_data() {
+    return GetPointer<::flatbuffers::Vector<uint8_t> *>(VT_DATA);
+  }
+  bool Verify(::flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint64_t>(verifier, VT_ADDRESS, 8) &&
+           VerifyOffset(verifier, VT_DATA) &&
+           verifier.VerifyVector(data()) &&
+           verifier.EndTable();
+  }
+  WriteMemoryRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(WriteMemoryRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<WriteMemoryRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const WriteMemoryRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct WriteMemoryRequestBuilder {
+  typedef WriteMemoryRequest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_address(uint64_t address) {
+    fbb_.AddElement<uint64_t>(WriteMemoryRequest::VT_ADDRESS, address, 0);
+  }
+  void add_data(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> data) {
+    fbb_.AddOffset(WriteMemoryRequest::VT_DATA, data);
+  }
+  explicit WriteMemoryRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<WriteMemoryRequest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<WriteMemoryRequest>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<WriteMemoryRequest> CreateWriteMemoryRequest(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint64_t address = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> data = 0) {
+  WriteMemoryRequestBuilder builder_(_fbb);
+  builder_.add_address(address);
+  builder_.add_data(data);
+  return builder_.Finish();
+}
+
+inline ::flatbuffers::Offset<WriteMemoryRequest> CreateWriteMemoryRequestDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint64_t address = 0,
+    const std::vector<uint8_t> *data = nullptr) {
+  auto data__ = data ? _fbb.CreateVector<uint8_t>(*data) : 0;
+  return Debugger::CreateWriteMemoryRequest(
+      _fbb,
+      address,
+      data__);
+}
+
+::flatbuffers::Offset<WriteMemoryRequest> CreateWriteMemoryRequest(::flatbuffers::FlatBufferBuilder &_fbb, const WriteMemoryRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct WriteMemoryResponseT : public ::flatbuffers::NativeTable {
+  typedef WriteMemoryResponse TableType;
+  uint64_t address = 0;
+  uint32_t size = 0;
+  bool success = false;
+};
+
+struct WriteMemoryResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef WriteMemoryResponseT NativeTableType;
+  typedef WriteMemoryResponseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ADDRESS = 4,
+    VT_SIZE = 6,
+    VT_SUCCESS = 8
+  };
+  uint64_t address() const {
+    return GetField<uint64_t>(VT_ADDRESS, 0);
+  }
+  bool mutate_address(uint64_t _address = 0) {
+    return SetField<uint64_t>(VT_ADDRESS, _address, 0);
+  }
+  uint32_t size() const {
+    return GetField<uint32_t>(VT_SIZE, 0);
+  }
+  bool mutate_size(uint32_t _size = 0) {
+    return SetField<uint32_t>(VT_SIZE, _size, 0);
+  }
+  bool success() const {
+    return GetField<uint8_t>(VT_SUCCESS, 0) != 0;
+  }
+  bool mutate_success(bool _success = 0) {
+    return SetField<uint8_t>(VT_SUCCESS, static_cast<uint8_t>(_success), 0);
+  }
+  bool Verify(::flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint64_t>(verifier, VT_ADDRESS, 8) &&
+           VerifyField<uint32_t>(verifier, VT_SIZE, 4) &&
+           VerifyField<uint8_t>(verifier, VT_SUCCESS, 1) &&
+           verifier.EndTable();
+  }
+  WriteMemoryResponseT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(WriteMemoryResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<WriteMemoryResponse> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const WriteMemoryResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct WriteMemoryResponseBuilder {
+  typedef WriteMemoryResponse Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_address(uint64_t address) {
+    fbb_.AddElement<uint64_t>(WriteMemoryResponse::VT_ADDRESS, address, 0);
+  }
+  void add_size(uint32_t size) {
+    fbb_.AddElement<uint32_t>(WriteMemoryResponse::VT_SIZE, size, 0);
+  }
+  void add_success(bool success) {
+    fbb_.AddElement<uint8_t>(WriteMemoryResponse::VT_SUCCESS, static_cast<uint8_t>(success), 0);
+  }
+  explicit WriteMemoryResponseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<WriteMemoryResponse> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<WriteMemoryResponse>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<WriteMemoryResponse> CreateWriteMemoryResponse(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint64_t address = 0,
+    uint32_t size = 0,
+    bool success = false) {
+  WriteMemoryResponseBuilder builder_(_fbb);
+  builder_.add_address(address);
+  builder_.add_size(size);
+  builder_.add_success(success);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<WriteMemoryResponse> CreateWriteMemoryResponse(::flatbuffers::FlatBufferBuilder &_fbb, const WriteMemoryResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct ReadMemoryRequestT : public ::flatbuffers::NativeTable {
+  typedef ReadMemoryRequest TableType;
+  uint64_t address = 0;
+  uint32_t size = 0;
+};
+
+struct ReadMemoryRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef ReadMemoryRequestT NativeTableType;
+  typedef ReadMemoryRequestBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ADDRESS = 4,
+    VT_SIZE = 6
+  };
+  uint64_t address() const {
+    return GetField<uint64_t>(VT_ADDRESS, 0);
+  }
+  bool mutate_address(uint64_t _address = 0) {
+    return SetField<uint64_t>(VT_ADDRESS, _address, 0);
+  }
+  uint32_t size() const {
+    return GetField<uint32_t>(VT_SIZE, 0);
+  }
+  bool mutate_size(uint32_t _size = 0) {
+    return SetField<uint32_t>(VT_SIZE, _size, 0);
+  }
+  bool Verify(::flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint64_t>(verifier, VT_ADDRESS, 8) &&
+           VerifyField<uint32_t>(verifier, VT_SIZE, 4) &&
+           verifier.EndTable();
+  }
+  ReadMemoryRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(ReadMemoryRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<ReadMemoryRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ReadMemoryRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct ReadMemoryRequestBuilder {
+  typedef ReadMemoryRequest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_address(uint64_t address) {
+    fbb_.AddElement<uint64_t>(ReadMemoryRequest::VT_ADDRESS, address, 0);
+  }
+  void add_size(uint32_t size) {
+    fbb_.AddElement<uint32_t>(ReadMemoryRequest::VT_SIZE, size, 0);
+  }
+  explicit ReadMemoryRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<ReadMemoryRequest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<ReadMemoryRequest>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<ReadMemoryRequest> CreateReadMemoryRequest(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint64_t address = 0,
+    uint32_t size = 0) {
+  ReadMemoryRequestBuilder builder_(_fbb);
+  builder_.add_address(address);
+  builder_.add_size(size);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<ReadMemoryRequest> CreateReadMemoryRequest(::flatbuffers::FlatBufferBuilder &_fbb, const ReadMemoryRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct ReadMemoryResponseT : public ::flatbuffers::NativeTable {
+  typedef ReadMemoryResponse TableType;
+  uint64_t address = 0;
+  std::vector<uint8_t> data{};
+};
+
+struct ReadMemoryResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef ReadMemoryResponseT NativeTableType;
+  typedef ReadMemoryResponseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ADDRESS = 4,
+    VT_DATA = 6
+  };
+  uint64_t address() const {
+    return GetField<uint64_t>(VT_ADDRESS, 0);
+  }
+  bool mutate_address(uint64_t _address = 0) {
+    return SetField<uint64_t>(VT_ADDRESS, _address, 0);
+  }
+  const ::flatbuffers::Vector<uint8_t> *data() const {
+    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_DATA);
+  }
+  ::flatbuffers::Vector<uint8_t> *mutable_data() {
+    return GetPointer<::flatbuffers::Vector<uint8_t> *>(VT_DATA);
+  }
+  bool Verify(::flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint64_t>(verifier, VT_ADDRESS, 8) &&
+           VerifyOffset(verifier, VT_DATA) &&
+           verifier.VerifyVector(data()) &&
+           verifier.EndTable();
+  }
+  ReadMemoryResponseT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(ReadMemoryResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<ReadMemoryResponse> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ReadMemoryResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct ReadMemoryResponseBuilder {
+  typedef ReadMemoryResponse Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_address(uint64_t address) {
+    fbb_.AddElement<uint64_t>(ReadMemoryResponse::VT_ADDRESS, address, 0);
+  }
+  void add_data(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> data) {
+    fbb_.AddOffset(ReadMemoryResponse::VT_DATA, data);
+  }
+  explicit ReadMemoryResponseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<ReadMemoryResponse> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<ReadMemoryResponse>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<ReadMemoryResponse> CreateReadMemoryResponse(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint64_t address = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> data = 0) {
+  ReadMemoryResponseBuilder builder_(_fbb);
+  builder_.add_address(address);
+  builder_.add_data(data);
+  return builder_.Finish();
+}
+
+inline ::flatbuffers::Offset<ReadMemoryResponse> CreateReadMemoryResponseDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint64_t address = 0,
+    const std::vector<uint8_t> *data = nullptr) {
+  auto data__ = data ? _fbb.CreateVector<uint8_t>(*data) : 0;
+  return Debugger::CreateReadMemoryResponse(
+      _fbb,
+      address,
+      data__);
+}
+
+::flatbuffers::Offset<ReadMemoryResponse> CreateReadMemoryResponse(::flatbuffers::FlatBufferBuilder &_fbb, const ReadMemoryResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct DebugEventT : public ::flatbuffers::NativeTable {
   typedef DebugEvent TableType;
   Debugger::EventUnion event{};
@@ -433,6 +839,18 @@ struct DebugEvent FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const Debugger::GetStateResponse *event_as_GetStateResponse() const {
     return event_type() == Debugger::Event_GetStateResponse ? static_cast<const Debugger::GetStateResponse *>(event()) : nullptr;
   }
+  const Debugger::WriteMemoryRequest *event_as_WriteMemoryRequest() const {
+    return event_type() == Debugger::Event_WriteMemoryRequest ? static_cast<const Debugger::WriteMemoryRequest *>(event()) : nullptr;
+  }
+  const Debugger::WriteMemoryResponse *event_as_WriteMemoryResponse() const {
+    return event_type() == Debugger::Event_WriteMemoryResponse ? static_cast<const Debugger::WriteMemoryResponse *>(event()) : nullptr;
+  }
+  const Debugger::ReadMemoryRequest *event_as_ReadMemoryRequest() const {
+    return event_type() == Debugger::Event_ReadMemoryRequest ? static_cast<const Debugger::ReadMemoryRequest *>(event()) : nullptr;
+  }
+  const Debugger::ReadMemoryResponse *event_as_ReadMemoryResponse() const {
+    return event_type() == Debugger::Event_ReadMemoryResponse ? static_cast<const Debugger::ReadMemoryResponse *>(event()) : nullptr;
+  }
   void *mutable_event() {
     return GetPointer<void *>(VT_EVENT);
   }
@@ -462,6 +880,22 @@ template<> inline const Debugger::GetStateRequest *DebugEvent::event_as<Debugger
 
 template<> inline const Debugger::GetStateResponse *DebugEvent::event_as<Debugger::GetStateResponse>() const {
   return event_as_GetStateResponse();
+}
+
+template<> inline const Debugger::WriteMemoryRequest *DebugEvent::event_as<Debugger::WriteMemoryRequest>() const {
+  return event_as_WriteMemoryRequest();
+}
+
+template<> inline const Debugger::WriteMemoryResponse *DebugEvent::event_as<Debugger::WriteMemoryResponse>() const {
+  return event_as_WriteMemoryResponse();
+}
+
+template<> inline const Debugger::ReadMemoryRequest *DebugEvent::event_as<Debugger::ReadMemoryRequest>() const {
+  return event_as_ReadMemoryRequest();
+}
+
+template<> inline const Debugger::ReadMemoryResponse *DebugEvent::event_as<Debugger::ReadMemoryResponse>() const {
+  return event_as_ReadMemoryResponse();
 }
 
 struct DebugEventBuilder {
@@ -595,6 +1029,125 @@ inline ::flatbuffers::Offset<RunRequest> CreateRunRequest(::flatbuffers::FlatBuf
       _single_step);
 }
 
+inline WriteMemoryRequestT *WriteMemoryRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<WriteMemoryRequestT>(new WriteMemoryRequestT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void WriteMemoryRequest::UnPackTo(WriteMemoryRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = address(); _o->address = _e; }
+  { auto _e = data(); if (_e) { _o->data.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->data.begin()); } }
+}
+
+inline ::flatbuffers::Offset<WriteMemoryRequest> WriteMemoryRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const WriteMemoryRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return CreateWriteMemoryRequest(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<WriteMemoryRequest> CreateWriteMemoryRequest(::flatbuffers::FlatBufferBuilder &_fbb, const WriteMemoryRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const WriteMemoryRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _address = _o->address;
+  auto _data = _o->data.size() ? _fbb.CreateVector(_o->data) : 0;
+  return Debugger::CreateWriteMemoryRequest(
+      _fbb,
+      _address,
+      _data);
+}
+
+inline WriteMemoryResponseT *WriteMemoryResponse::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<WriteMemoryResponseT>(new WriteMemoryResponseT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void WriteMemoryResponse::UnPackTo(WriteMemoryResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = address(); _o->address = _e; }
+  { auto _e = size(); _o->size = _e; }
+  { auto _e = success(); _o->success = _e; }
+}
+
+inline ::flatbuffers::Offset<WriteMemoryResponse> WriteMemoryResponse::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const WriteMemoryResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return CreateWriteMemoryResponse(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<WriteMemoryResponse> CreateWriteMemoryResponse(::flatbuffers::FlatBufferBuilder &_fbb, const WriteMemoryResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const WriteMemoryResponseT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _address = _o->address;
+  auto _size = _o->size;
+  auto _success = _o->success;
+  return Debugger::CreateWriteMemoryResponse(
+      _fbb,
+      _address,
+      _size,
+      _success);
+}
+
+inline ReadMemoryRequestT *ReadMemoryRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<ReadMemoryRequestT>(new ReadMemoryRequestT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void ReadMemoryRequest::UnPackTo(ReadMemoryRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = address(); _o->address = _e; }
+  { auto _e = size(); _o->size = _e; }
+}
+
+inline ::flatbuffers::Offset<ReadMemoryRequest> ReadMemoryRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ReadMemoryRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return CreateReadMemoryRequest(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<ReadMemoryRequest> CreateReadMemoryRequest(::flatbuffers::FlatBufferBuilder &_fbb, const ReadMemoryRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const ReadMemoryRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _address = _o->address;
+  auto _size = _o->size;
+  return Debugger::CreateReadMemoryRequest(
+      _fbb,
+      _address,
+      _size);
+}
+
+inline ReadMemoryResponseT *ReadMemoryResponse::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<ReadMemoryResponseT>(new ReadMemoryResponseT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void ReadMemoryResponse::UnPackTo(ReadMemoryResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = address(); _o->address = _e; }
+  { auto _e = data(); if (_e) { _o->data.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->data.begin()); } }
+}
+
+inline ::flatbuffers::Offset<ReadMemoryResponse> ReadMemoryResponse::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ReadMemoryResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return CreateReadMemoryResponse(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<ReadMemoryResponse> CreateReadMemoryResponse(::flatbuffers::FlatBufferBuilder &_fbb, const ReadMemoryResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const ReadMemoryResponseT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _address = _o->address;
+  auto _data = _o->data.size() ? _fbb.CreateVector(_o->data) : 0;
+  return Debugger::CreateReadMemoryResponse(
+      _fbb,
+      _address,
+      _data);
+}
+
 inline DebugEventT *DebugEvent::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
   auto _o = std::unique_ptr<DebugEventT>(new DebugEventT());
   UnPackTo(_o.get(), _resolver);
@@ -645,6 +1198,22 @@ inline bool VerifyEvent(::flatbuffers::Verifier &verifier, const void *obj, Even
       auto ptr = reinterpret_cast<const Debugger::GetStateResponse *>(obj);
       return verifier.VerifyTable(ptr);
     }
+    case Event_WriteMemoryRequest: {
+      auto ptr = reinterpret_cast<const Debugger::WriteMemoryRequest *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case Event_WriteMemoryResponse: {
+      auto ptr = reinterpret_cast<const Debugger::WriteMemoryResponse *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case Event_ReadMemoryRequest: {
+      auto ptr = reinterpret_cast<const Debugger::ReadMemoryRequest *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case Event_ReadMemoryResponse: {
+      auto ptr = reinterpret_cast<const Debugger::ReadMemoryResponse *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
     default: return true;
   }
 }
@@ -680,6 +1249,22 @@ inline void *EventUnion::UnPack(const void *obj, Event type, const ::flatbuffers
       auto ptr = reinterpret_cast<const Debugger::GetStateResponse *>(obj);
       return ptr->UnPack(resolver);
     }
+    case Event_WriteMemoryRequest: {
+      auto ptr = reinterpret_cast<const Debugger::WriteMemoryRequest *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case Event_WriteMemoryResponse: {
+      auto ptr = reinterpret_cast<const Debugger::WriteMemoryResponse *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case Event_ReadMemoryRequest: {
+      auto ptr = reinterpret_cast<const Debugger::ReadMemoryRequest *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case Event_ReadMemoryResponse: {
+      auto ptr = reinterpret_cast<const Debugger::ReadMemoryResponse *>(obj);
+      return ptr->UnPack(resolver);
+    }
     default: return nullptr;
   }
 }
@@ -703,6 +1288,22 @@ inline ::flatbuffers::Offset<void> EventUnion::Pack(::flatbuffers::FlatBufferBui
       auto ptr = reinterpret_cast<const Debugger::GetStateResponseT *>(value);
       return CreateGetStateResponse(_fbb, ptr, _rehasher).Union();
     }
+    case Event_WriteMemoryRequest: {
+      auto ptr = reinterpret_cast<const Debugger::WriteMemoryRequestT *>(value);
+      return CreateWriteMemoryRequest(_fbb, ptr, _rehasher).Union();
+    }
+    case Event_WriteMemoryResponse: {
+      auto ptr = reinterpret_cast<const Debugger::WriteMemoryResponseT *>(value);
+      return CreateWriteMemoryResponse(_fbb, ptr, _rehasher).Union();
+    }
+    case Event_ReadMemoryRequest: {
+      auto ptr = reinterpret_cast<const Debugger::ReadMemoryRequestT *>(value);
+      return CreateReadMemoryRequest(_fbb, ptr, _rehasher).Union();
+    }
+    case Event_ReadMemoryResponse: {
+      auto ptr = reinterpret_cast<const Debugger::ReadMemoryResponseT *>(value);
+      return CreateReadMemoryResponse(_fbb, ptr, _rehasher).Union();
+    }
     default: return 0;
   }
 }
@@ -723,6 +1324,22 @@ inline EventUnion::EventUnion(const EventUnion &u) : type(u.type), value(nullptr
     }
     case Event_GetStateResponse: {
       value = new Debugger::GetStateResponseT(*reinterpret_cast<Debugger::GetStateResponseT *>(u.value));
+      break;
+    }
+    case Event_WriteMemoryRequest: {
+      value = new Debugger::WriteMemoryRequestT(*reinterpret_cast<Debugger::WriteMemoryRequestT *>(u.value));
+      break;
+    }
+    case Event_WriteMemoryResponse: {
+      value = new Debugger::WriteMemoryResponseT(*reinterpret_cast<Debugger::WriteMemoryResponseT *>(u.value));
+      break;
+    }
+    case Event_ReadMemoryRequest: {
+      value = new Debugger::ReadMemoryRequestT(*reinterpret_cast<Debugger::ReadMemoryRequestT *>(u.value));
+      break;
+    }
+    case Event_ReadMemoryResponse: {
+      value = new Debugger::ReadMemoryResponseT(*reinterpret_cast<Debugger::ReadMemoryResponseT *>(u.value));
       break;
     }
     default:
@@ -749,6 +1366,26 @@ inline void EventUnion::Reset() {
     }
     case Event_GetStateResponse: {
       auto ptr = reinterpret_cast<Debugger::GetStateResponseT *>(value);
+      delete ptr;
+      break;
+    }
+    case Event_WriteMemoryRequest: {
+      auto ptr = reinterpret_cast<Debugger::WriteMemoryRequestT *>(value);
+      delete ptr;
+      break;
+    }
+    case Event_WriteMemoryResponse: {
+      auto ptr = reinterpret_cast<Debugger::WriteMemoryResponseT *>(value);
+      delete ptr;
+      break;
+    }
+    case Event_ReadMemoryRequest: {
+      auto ptr = reinterpret_cast<Debugger::ReadMemoryRequestT *>(value);
+      delete ptr;
+      break;
+    }
+    case Event_ReadMemoryResponse: {
+      auto ptr = reinterpret_cast<Debugger::ReadMemoryResponseT *>(value);
       delete ptr;
       break;
     }

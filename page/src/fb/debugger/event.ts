@@ -5,7 +5,11 @@
 import { GetStateRequest, GetStateRequestT } from '../debugger/get-state-request.js';
 import { GetStateResponse, GetStateResponseT } from '../debugger/get-state-response.js';
 import { PauseRequest, PauseRequestT } from '../debugger/pause-request.js';
+import { ReadMemoryRequest, ReadMemoryRequestT } from '../debugger/read-memory-request.js';
+import { ReadMemoryResponse, ReadMemoryResponseT } from '../debugger/read-memory-response.js';
 import { RunRequest, RunRequestT } from '../debugger/run-request.js';
+import { WriteMemoryRequest, WriteMemoryRequestT } from '../debugger/write-memory-request.js';
+import { WriteMemoryResponse, WriteMemoryResponseT } from '../debugger/write-memory-response.js';
 
 
 export enum Event {
@@ -13,34 +17,46 @@ export enum Event {
   PauseRequest = 1,
   RunRequest = 2,
   GetStateRequest = 3,
-  GetStateResponse = 4
+  GetStateResponse = 4,
+  WriteMemoryRequest = 5,
+  WriteMemoryResponse = 6,
+  ReadMemoryRequest = 7,
+  ReadMemoryResponse = 8
 }
 
 export function unionToEvent(
   type: Event,
-  accessor: (obj:GetStateRequest|GetStateResponse|PauseRequest|RunRequest) => GetStateRequest|GetStateResponse|PauseRequest|RunRequest|null
-): GetStateRequest|GetStateResponse|PauseRequest|RunRequest|null {
+  accessor: (obj:GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse) => GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|null
+): GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|null {
   switch(Event[type]) {
     case 'NONE': return null; 
     case 'PauseRequest': return accessor(new PauseRequest())! as PauseRequest;
     case 'RunRequest': return accessor(new RunRequest())! as RunRequest;
     case 'GetStateRequest': return accessor(new GetStateRequest())! as GetStateRequest;
     case 'GetStateResponse': return accessor(new GetStateResponse())! as GetStateResponse;
+    case 'WriteMemoryRequest': return accessor(new WriteMemoryRequest())! as WriteMemoryRequest;
+    case 'WriteMemoryResponse': return accessor(new WriteMemoryResponse())! as WriteMemoryResponse;
+    case 'ReadMemoryRequest': return accessor(new ReadMemoryRequest())! as ReadMemoryRequest;
+    case 'ReadMemoryResponse': return accessor(new ReadMemoryResponse())! as ReadMemoryResponse;
     default: return null;
   }
 }
 
 export function unionListToEvent(
   type: Event, 
-  accessor: (index: number, obj:GetStateRequest|GetStateResponse|PauseRequest|RunRequest) => GetStateRequest|GetStateResponse|PauseRequest|RunRequest|null, 
+  accessor: (index: number, obj:GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse) => GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|null, 
   index: number
-): GetStateRequest|GetStateResponse|PauseRequest|RunRequest|null {
+): GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|null {
   switch(Event[type]) {
     case 'NONE': return null; 
     case 'PauseRequest': return accessor(index, new PauseRequest())! as PauseRequest;
     case 'RunRequest': return accessor(index, new RunRequest())! as RunRequest;
     case 'GetStateRequest': return accessor(index, new GetStateRequest())! as GetStateRequest;
     case 'GetStateResponse': return accessor(index, new GetStateResponse())! as GetStateResponse;
+    case 'WriteMemoryRequest': return accessor(index, new WriteMemoryRequest())! as WriteMemoryRequest;
+    case 'WriteMemoryResponse': return accessor(index, new WriteMemoryResponse())! as WriteMemoryResponse;
+    case 'ReadMemoryRequest': return accessor(index, new ReadMemoryRequest())! as ReadMemoryRequest;
+    case 'ReadMemoryResponse': return accessor(index, new ReadMemoryResponse())! as ReadMemoryResponse;
     default: return null;
   }
 }

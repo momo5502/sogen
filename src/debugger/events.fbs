@@ -18,11 +18,36 @@ table RunRequest {
     single_step: bool;
 }
 
+table WriteMemoryRequest {
+    address: uint64;
+    data: [ubyte];
+}
+
+table WriteMemoryResponse {
+    address: uint64;
+    size: uint32;
+    success: bool;
+}
+
+table ReadMemoryRequest {
+    address: uint64;
+    size: uint32;
+}
+
+table ReadMemoryResponse {
+    address: uint64;
+    data: [ubyte];
+}
+
 union Event { 
     PauseRequest, 
     RunRequest,
     GetStateRequest,
     GetStateResponse,
+    WriteMemoryRequest,
+    WriteMemoryResponse,
+    ReadMemoryRequest,
+    ReadMemoryResponse,
 }
 
 table DebugEvent {

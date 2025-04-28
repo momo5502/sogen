@@ -76,12 +76,51 @@ namespace debugger
             }
         }
 
-        void handle_get_state_request(const event_context& c)
+        void handle_get_state(const event_context& c)
         {
-            Debugger::GetStateResponseT stateResponse{};
-            stateResponse.state = translate_state(c.state);
+            Debugger::GetStateResponseT response{};
+            response.state = translate_state(c.state);
 
-            send_event(stateResponse);
+            send_event(response);
+        }
+
+        void handle_read_memory(const event_context& c, const Debugger::ReadMemoryRequestT& request)
+        {
+            std::vector<uint8_t> buffer{};
+            buffer.resize(request.size);
+            const auto res = c.win_emu.memory.try_read_memory(request.address, buffer.data(), buffer.size());
+
+            Debugger::ReadMemoryResponseT response{};
+            response.address = request.address;
+
+            if (res)
+            {
+                response.data = std::move(buffer);
+            }
+
+            send_event(std::move(response));
+        }
+
+        void handle_write_memory(const event_context& c, const Debugger::WriteMemoryRequestT& request)
+        {
+            bool success{};
+
+            try
+            {
+                c.win_emu.memory.write_memory(request.address, request.data.data(), request.data.size());
+                success = true;
+            }
+            catch (...)
+            {
+                success = false;
+            }
+
+            Debugger::WriteMemoryResponseT response{};
+            response.address = request.address;
+            response.size = static_cast<uint32_t>(request.data.size());
+            response.success = success;
+
+            send_event(response);
         }
 
         void handle_event(event_context& c, const Debugger::DebugEventT& e)
@@ -97,7 +136,15 @@ namespace debugger
                 break;
 
             case Debugger::Event_GetStateRequest:
-                handle_get_state_request(c);
+                handle_get_state(c);
+                break;
+
+            case Debugger::Event_ReadMemoryRequest:
+                handle_read_memory(c, *e.event.AsReadMemoryRequest());
+                break;
+
+            case Debugger::Event_WriteMemoryRequest:
+                handle_write_memory(c, *e.event.AsWriteMemoryRequest());
                 break;
 
             default:
