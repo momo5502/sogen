@@ -238,7 +238,7 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
           width={this.state.width}
           height={this.state.height}
           itemCount={this.state.lines.length}
-          itemSize={20}
+          itemSize={16}
         >
           {({ index, style }) => {
             const line = this.state.lines[index];
