@@ -6,6 +6,43 @@
 
 typedef LONG TDI_STATUS;
 
+#pragma pack(push, 1)
+
+struct TDI_ADDRESS_IP
+{
+    USHORT sin_port;
+    ULONG in_addr;
+    UCHAR sin_zero[8];
+};
+
+struct TA_ADDRESS
+{
+    // USHORT AddressLength;
+    USHORT AddressType;
+    TDI_ADDRESS_IP Address[1];
+};
+
+struct TRANSPORT_ADDRESS
+{
+    // LONG TAAddressCount;
+    TA_ADDRESS Address[1];
+};
+
+struct AFD_LISTEN_RESPONSE_INFO
+{
+    LONG Sequence;
+    TRANSPORT_ADDRESS RemoteAddress;
+};
+
+#pragma pack(pop)
+
+struct AFD_ACCEPT_INFO
+{
+    BOOLEAN SanActive;
+    LONG Sequence;
+    handle AcceptHandle;
+};
+
 template <typename Traits>
 struct TDI_CONNECTION_INFORMATION
 {

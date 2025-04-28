@@ -3,6 +3,11 @@
 
 namespace network
 {
+    socket_wrapper::socket_wrapper(SOCKET s)
+        : socket_(s)
+    {
+    }
+
     socket_wrapper::socket_wrapper(const int af, const int type, const int protocol)
         : socket_(af, type, protocol)
     {
@@ -26,6 +31,22 @@ namespace network
     bool socket_wrapper::bind(const address& addr)
     {
         return this->socket_.bind(addr);
+    }
+
+    bool socket_wrapper::listen(int backlog)
+    {
+        return this->socket_.listen(backlog);
+    }
+
+    std::unique_ptr<i_socket> socket_wrapper::accept(address& address)
+    {
+        const auto s = this->socket_.accept(address);
+        if (s == INVALID_SOCKET)
+        {
+            return nullptr;
+        }
+
+        return std::make_unique<socket_wrapper>(s);
     }
 
     sent_size socket_wrapper::send(const std::span<const std::byte> data)

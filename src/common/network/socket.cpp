@@ -78,6 +78,27 @@ namespace network
     }
 
     // NOLINTNEXTLINE(readability-make-member-function-const)
+    bool socket::listen(int backlog)
+    {
+        return ::listen(this->socket_, backlog) == 0;
+    }
+
+    // NOLINTNEXTLINE(readability-make-member-function-const)
+    SOCKET socket::accept(address& address)
+    {
+        sockaddr addr{};
+        int addrlen = sizeof(sockaddr);
+        const auto s = ::accept(this->socket_, &addr, &addrlen);
+
+        if (s != INVALID_SOCKET)
+        {
+            address.set_address(&addr, addrlen);
+        }
+
+        return s;
+    }
+
+    // NOLINTNEXTLINE(readability-make-member-function-const)
     bool socket::set_blocking(const bool blocking)
     {
         return socket::set_blocking(this->socket_, blocking);
