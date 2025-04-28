@@ -116,6 +116,9 @@ export function Playground() {
             <Button variant="secondary" onClick={() => emulator?.stop()}>
               <StopFill /> Stop Emulation
             </Button>
+            <Button variant="secondary" onClick={() => emulator?.pause()}>
+              <StopFill /> Pause Emulation
+            </Button>
 
             <Popover>
               <PopoverTrigger asChild>

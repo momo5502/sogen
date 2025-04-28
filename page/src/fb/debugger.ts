@@ -4,5 +4,8 @@
 
 export { DebugEvent, DebugEventT } from './debugger/debug-event.js';
 export { Event } from './debugger/event.js';
-export { PauseEvent, PauseEventT } from './debugger/pause-event.js';
-export { RunEvent, RunEventT } from './debugger/run-event.js';
+export { GetStateRequest, GetStateRequestT } from './debugger/get-state-request.js';
+export { GetStateResponse, GetStateResponseT } from './debugger/get-state-response.js';
+export { PauseRequest, PauseRequestT } from './debugger/pause-request.js';
+export { RunRequest, RunRequestT } from './debugger/run-request.js';
+export { State } from './debugger/state.js';

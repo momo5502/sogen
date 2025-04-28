@@ -5,8 +5,10 @@
 import * as flatbuffers from 'flatbuffers';
 
 import { Event, unionToEvent, unionListToEvent } from '../debugger/event.js';
-import { PauseEvent, PauseEventT } from '../debugger/pause-event.js';
-import { RunEvent, RunEventT } from '../debugger/run-event.js';
+import { GetStateRequest, GetStateRequestT } from '../debugger/get-state-request.js';
+import { GetStateResponse, GetStateResponseT } from '../debugger/get-state-response.js';
+import { PauseRequest, PauseRequestT } from '../debugger/pause-request.js';
+import { RunRequest, RunRequestT } from '../debugger/run-request.js';
 
 
 export class DebugEvent implements flatbuffers.IUnpackableObject<DebugEventT> {
@@ -94,7 +96,7 @@ unpackTo(_o: DebugEventT): void {
 export class DebugEventT implements flatbuffers.IGeneratedObject {
 constructor(
   public eventType: Event = Event.NONE,
-  public event: PauseEventT|RunEventT|null = null
+  public event: GetStateRequestT|GetStateResponseT|PauseRequestT|RunRequestT|null = null
 ){}
 
 

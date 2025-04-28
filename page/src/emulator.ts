@@ -112,6 +112,24 @@ export class Emulator {
     });
   }
 
+  pause() {
+    this.sendEvent(
+      new fbDebugger.DebugEventT(
+        fbDebugger.Event.PauseRequest,
+        new fbDebugger.PauseRequestT(),
+      ),
+    );
+  }
+
+  resume() {
+    this.sendEvent(
+      new fbDebugger.DebugEventT(
+        fbDebugger.Event.RunRequest,
+        new fbDebugger.RunRequestT(),
+      ),
+    );
+  }
+
   _onMessage(event: MessageEvent) {
     if (event.data.message == "log") {
       this.logHandler(event.data.data);

@@ -15,47 +15,94 @@ static_assert(FLATBUFFERS_VERSION_MAJOR == 25 &&
 
 namespace Debugger {
 
-struct PauseEvent;
-struct PauseEventBuilder;
-struct PauseEventT;
+struct GetStateRequest;
+struct GetStateRequestBuilder;
+struct GetStateRequestT;
 
-struct RunEvent;
-struct RunEventBuilder;
-struct RunEventT;
+struct GetStateResponse;
+struct GetStateResponseBuilder;
+struct GetStateResponseT;
+
+struct PauseRequest;
+struct PauseRequestBuilder;
+struct PauseRequestT;
+
+struct RunRequest;
+struct RunRequestBuilder;
+struct RunRequestT;
 
 struct DebugEvent;
 struct DebugEventBuilder;
 struct DebugEventT;
 
-enum Event : uint8_t {
-  Event_NONE = 0,
-  Event_PauseEvent = 1,
-  Event_RunEvent = 2,
-  Event_MIN = Event_NONE,
-  Event_MAX = Event_RunEvent
+enum State : uint32_t {
+  State_None = 0,
+  State_Running = 1,
+  State_Paused = 2,
+  State_MIN = State_None,
+  State_MAX = State_Paused
 };
 
-inline const Event (&EnumValuesEvent())[3] {
+inline const State (&EnumValuesState())[3] {
+  static const State values[] = {
+    State_None,
+    State_Running,
+    State_Paused
+  };
+  return values;
+}
+
+inline const char * const *EnumNamesState() {
+  static const char * const names[4] = {
+    "None",
+    "Running",
+    "Paused",
+    nullptr
+  };
+  return names;
+}
+
+inline const char *EnumNameState(State e) {
+  if (::flatbuffers::IsOutRange(e, State_None, State_Paused)) return "";
+  const size_t index = static_cast<size_t>(e);
+  return EnumNamesState()[index];
+}
+
+enum Event : uint8_t {
+  Event_NONE = 0,
+  Event_PauseRequest = 1,
+  Event_RunRequest = 2,
+  Event_GetStateRequest = 3,
+  Event_GetStateResponse = 4,
+  Event_MIN = Event_NONE,
+  Event_MAX = Event_GetStateResponse
+};
+
+inline const Event (&EnumValuesEvent())[5] {
   static const Event values[] = {
     Event_NONE,
-    Event_PauseEvent,
-    Event_RunEvent
+    Event_PauseRequest,
+    Event_RunRequest,
+    Event_GetStateRequest,
+    Event_GetStateResponse
   };
   return values;
 }
 
 inline const char * const *EnumNamesEvent() {
-  static const char * const names[4] = {
+  static const char * const names[6] = {
     "NONE",
-    "PauseEvent",
-    "RunEvent",
+    "PauseRequest",
+    "RunRequest",
+    "GetStateRequest",
+    "GetStateResponse",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameEvent(Event e) {
-  if (::flatbuffers::IsOutRange(e, Event_NONE, Event_RunEvent)) return "";
+  if (::flatbuffers::IsOutRange(e, Event_NONE, Event_GetStateResponse)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesEvent()[index];
 }
@@ -64,24 +111,40 @@ template<typename T> struct EventTraits {
   static const Event enum_value = Event_NONE;
 };
 
-template<> struct EventTraits<Debugger::PauseEvent> {
-  static const Event enum_value = Event_PauseEvent;
+template<> struct EventTraits<Debugger::PauseRequest> {
+  static const Event enum_value = Event_PauseRequest;
 };
 
-template<> struct EventTraits<Debugger::RunEvent> {
-  static const Event enum_value = Event_RunEvent;
+template<> struct EventTraits<Debugger::RunRequest> {
+  static const Event enum_value = Event_RunRequest;
+};
+
+template<> struct EventTraits<Debugger::GetStateRequest> {
+  static const Event enum_value = Event_GetStateRequest;
+};
+
+template<> struct EventTraits<Debugger::GetStateResponse> {
+  static const Event enum_value = Event_GetStateResponse;
 };
 
 template<typename T> struct EventUnionTraits {
   static const Event enum_value = Event_NONE;
 };
 
-template<> struct EventUnionTraits<Debugger::PauseEventT> {
-  static const Event enum_value = Event_PauseEvent;
+template<> struct EventUnionTraits<Debugger::PauseRequestT> {
+  static const Event enum_value = Event_PauseRequest;
 };
 
-template<> struct EventUnionTraits<Debugger::RunEventT> {
-  static const Event enum_value = Event_RunEvent;
+template<> struct EventUnionTraits<Debugger::RunRequestT> {
+  static const Event enum_value = Event_RunRequest;
+};
+
+template<> struct EventUnionTraits<Debugger::GetStateRequestT> {
+  static const Event enum_value = Event_GetStateRequest;
+};
+
+template<> struct EventUnionTraits<Debugger::GetStateResponseT> {
+  static const Event enum_value = Event_GetStateResponse;
 };
 
 struct EventUnion {
@@ -114,74 +177,184 @@ struct EventUnion {
   static void *UnPack(const void *obj, Event type, const ::flatbuffers::resolver_function_t *resolver);
   ::flatbuffers::Offset<void> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr) const;
 
-  Debugger::PauseEventT *AsPauseEvent() {
-    return type == Event_PauseEvent ?
-      reinterpret_cast<Debugger::PauseEventT *>(value) : nullptr;
+  Debugger::PauseRequestT *AsPauseRequest() {
+    return type == Event_PauseRequest ?
+      reinterpret_cast<Debugger::PauseRequestT *>(value) : nullptr;
   }
-  const Debugger::PauseEventT *AsPauseEvent() const {
-    return type == Event_PauseEvent ?
-      reinterpret_cast<const Debugger::PauseEventT *>(value) : nullptr;
+  const Debugger::PauseRequestT *AsPauseRequest() const {
+    return type == Event_PauseRequest ?
+      reinterpret_cast<const Debugger::PauseRequestT *>(value) : nullptr;
   }
-  Debugger::RunEventT *AsRunEvent() {
-    return type == Event_RunEvent ?
-      reinterpret_cast<Debugger::RunEventT *>(value) : nullptr;
+  Debugger::RunRequestT *AsRunRequest() {
+    return type == Event_RunRequest ?
+      reinterpret_cast<Debugger::RunRequestT *>(value) : nullptr;
   }
-  const Debugger::RunEventT *AsRunEvent() const {
-    return type == Event_RunEvent ?
-      reinterpret_cast<const Debugger::RunEventT *>(value) : nullptr;
+  const Debugger::RunRequestT *AsRunRequest() const {
+    return type == Event_RunRequest ?
+      reinterpret_cast<const Debugger::RunRequestT *>(value) : nullptr;
+  }
+  Debugger::GetStateRequestT *AsGetStateRequest() {
+    return type == Event_GetStateRequest ?
+      reinterpret_cast<Debugger::GetStateRequestT *>(value) : nullptr;
+  }
+  const Debugger::GetStateRequestT *AsGetStateRequest() const {
+    return type == Event_GetStateRequest ?
+      reinterpret_cast<const Debugger::GetStateRequestT *>(value) : nullptr;
+  }
+  Debugger::GetStateResponseT *AsGetStateResponse() {
+    return type == Event_GetStateResponse ?
+      reinterpret_cast<Debugger::GetStateResponseT *>(value) : nullptr;
+  }
+  const Debugger::GetStateResponseT *AsGetStateResponse() const {
+    return type == Event_GetStateResponse ?
+      reinterpret_cast<const Debugger::GetStateResponseT *>(value) : nullptr;
   }
 };
 
 bool VerifyEvent(::flatbuffers::Verifier &verifier, const void *obj, Event type);
 bool VerifyEventVector(::flatbuffers::Verifier &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<uint8_t> *types);
 
-struct PauseEventT : public ::flatbuffers::NativeTable {
-  typedef PauseEvent TableType;
+struct GetStateRequestT : public ::flatbuffers::NativeTable {
+  typedef GetStateRequest TableType;
 };
 
-struct PauseEvent FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
-  typedef PauseEventT NativeTableType;
-  typedef PauseEventBuilder Builder;
+struct GetStateRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef GetStateRequestT NativeTableType;
+  typedef GetStateRequestBuilder Builder;
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
-  PauseEventT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  void UnPackTo(PauseEventT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  static ::flatbuffers::Offset<PauseEvent> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const PauseEventT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+  GetStateRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(GetStateRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<GetStateRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const GetStateRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 };
 
-struct PauseEventBuilder {
-  typedef PauseEvent Table;
+struct GetStateRequestBuilder {
+  typedef GetStateRequest Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
-  explicit PauseEventBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+  explicit GetStateRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  ::flatbuffers::Offset<PauseEvent> Finish() {
+  ::flatbuffers::Offset<GetStateRequest> Finish() {
     const auto end = fbb_.EndTable(start_);
-    auto o = ::flatbuffers::Offset<PauseEvent>(end);
+    auto o = ::flatbuffers::Offset<GetStateRequest>(end);
     return o;
   }
 };
 
-inline ::flatbuffers::Offset<PauseEvent> CreatePauseEvent(
+inline ::flatbuffers::Offset<GetStateRequest> CreateGetStateRequest(
     ::flatbuffers::FlatBufferBuilder &_fbb) {
-  PauseEventBuilder builder_(_fbb);
+  GetStateRequestBuilder builder_(_fbb);
   return builder_.Finish();
 }
 
-::flatbuffers::Offset<PauseEvent> CreatePauseEvent(::flatbuffers::FlatBufferBuilder &_fbb, const PauseEventT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+::flatbuffers::Offset<GetStateRequest> CreateGetStateRequest(::flatbuffers::FlatBufferBuilder &_fbb, const GetStateRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
-struct RunEventT : public ::flatbuffers::NativeTable {
-  typedef RunEvent TableType;
+struct GetStateResponseT : public ::flatbuffers::NativeTable {
+  typedef GetStateResponse TableType;
+  Debugger::State state = Debugger::State_None;
+};
+
+struct GetStateResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef GetStateResponseT NativeTableType;
+  typedef GetStateResponseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_STATE = 4
+  };
+  Debugger::State state() const {
+    return static_cast<Debugger::State>(GetField<uint32_t>(VT_STATE, 0));
+  }
+  bool mutate_state(Debugger::State _state = static_cast<Debugger::State>(0)) {
+    return SetField<uint32_t>(VT_STATE, static_cast<uint32_t>(_state), 0);
+  }
+  bool Verify(::flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_STATE, 4) &&
+           verifier.EndTable();
+  }
+  GetStateResponseT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(GetStateResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<GetStateResponse> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const GetStateResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct GetStateResponseBuilder {
+  typedef GetStateResponse Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_state(Debugger::State state) {
+    fbb_.AddElement<uint32_t>(GetStateResponse::VT_STATE, static_cast<uint32_t>(state), 0);
+  }
+  explicit GetStateResponseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<GetStateResponse> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<GetStateResponse>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<GetStateResponse> CreateGetStateResponse(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    Debugger::State state = Debugger::State_None) {
+  GetStateResponseBuilder builder_(_fbb);
+  builder_.add_state(state);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<GetStateResponse> CreateGetStateResponse(::flatbuffers::FlatBufferBuilder &_fbb, const GetStateResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct PauseRequestT : public ::flatbuffers::NativeTable {
+  typedef PauseRequest TableType;
+};
+
+struct PauseRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef PauseRequestT NativeTableType;
+  typedef PauseRequestBuilder Builder;
+  bool Verify(::flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           verifier.EndTable();
+  }
+  PauseRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(PauseRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<PauseRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const PauseRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct PauseRequestBuilder {
+  typedef PauseRequest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  explicit PauseRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<PauseRequest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<PauseRequest>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<PauseRequest> CreatePauseRequest(
+    ::flatbuffers::FlatBufferBuilder &_fbb) {
+  PauseRequestBuilder builder_(_fbb);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<PauseRequest> CreatePauseRequest(::flatbuffers::FlatBufferBuilder &_fbb, const PauseRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct RunRequestT : public ::flatbuffers::NativeTable {
+  typedef RunRequest TableType;
   bool single_step = false;
 };
 
-struct RunEvent FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
-  typedef RunEventT NativeTableType;
-  typedef RunEventBuilder Builder;
+struct RunRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef RunRequestT NativeTableType;
+  typedef RunRequestBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_SINGLE_STEP = 4
   };
@@ -196,38 +369,38 @@ struct RunEvent FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint8_t>(verifier, VT_SINGLE_STEP, 1) &&
            verifier.EndTable();
   }
-  RunEventT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  void UnPackTo(RunEventT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  static ::flatbuffers::Offset<RunEvent> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RunEventT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+  RunRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(RunRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<RunRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RunRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 };
 
-struct RunEventBuilder {
-  typedef RunEvent Table;
+struct RunRequestBuilder {
+  typedef RunRequest Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
   void add_single_step(bool single_step) {
-    fbb_.AddElement<uint8_t>(RunEvent::VT_SINGLE_STEP, static_cast<uint8_t>(single_step), 0);
+    fbb_.AddElement<uint8_t>(RunRequest::VT_SINGLE_STEP, static_cast<uint8_t>(single_step), 0);
   }
-  explicit RunEventBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+  explicit RunRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  ::flatbuffers::Offset<RunEvent> Finish() {
+  ::flatbuffers::Offset<RunRequest> Finish() {
     const auto end = fbb_.EndTable(start_);
-    auto o = ::flatbuffers::Offset<RunEvent>(end);
+    auto o = ::flatbuffers::Offset<RunRequest>(end);
     return o;
   }
 };
 
-inline ::flatbuffers::Offset<RunEvent> CreateRunEvent(
+inline ::flatbuffers::Offset<RunRequest> CreateRunRequest(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     bool single_step = false) {
-  RunEventBuilder builder_(_fbb);
+  RunRequestBuilder builder_(_fbb);
   builder_.add_single_step(single_step);
   return builder_.Finish();
 }
 
-::flatbuffers::Offset<RunEvent> CreateRunEvent(::flatbuffers::FlatBufferBuilder &_fbb, const RunEventT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+::flatbuffers::Offset<RunRequest> CreateRunRequest(::flatbuffers::FlatBufferBuilder &_fbb, const RunRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
 struct DebugEventT : public ::flatbuffers::NativeTable {
   typedef DebugEvent TableType;
@@ -248,11 +421,17 @@ struct DebugEvent FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return GetPointer<const void *>(VT_EVENT);
   }
   template<typename T> const T *event_as() const;
-  const Debugger::PauseEvent *event_as_PauseEvent() const {
-    return event_type() == Debugger::Event_PauseEvent ? static_cast<const Debugger::PauseEvent *>(event()) : nullptr;
+  const Debugger::PauseRequest *event_as_PauseRequest() const {
+    return event_type() == Debugger::Event_PauseRequest ? static_cast<const Debugger::PauseRequest *>(event()) : nullptr;
   }
-  const Debugger::RunEvent *event_as_RunEvent() const {
-    return event_type() == Debugger::Event_RunEvent ? static_cast<const Debugger::RunEvent *>(event()) : nullptr;
+  const Debugger::RunRequest *event_as_RunRequest() const {
+    return event_type() == Debugger::Event_RunRequest ? static_cast<const Debugger::RunRequest *>(event()) : nullptr;
+  }
+  const Debugger::GetStateRequest *event_as_GetStateRequest() const {
+    return event_type() == Debugger::Event_GetStateRequest ? static_cast<const Debugger::GetStateRequest *>(event()) : nullptr;
+  }
+  const Debugger::GetStateResponse *event_as_GetStateResponse() const {
+    return event_type() == Debugger::Event_GetStateResponse ? static_cast<const Debugger::GetStateResponse *>(event()) : nullptr;
   }
   void *mutable_event() {
     return GetPointer<void *>(VT_EVENT);
@@ -269,12 +448,20 @@ struct DebugEvent FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   static ::flatbuffers::Offset<DebugEvent> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DebugEventT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 };
 
-template<> inline const Debugger::PauseEvent *DebugEvent::event_as<Debugger::PauseEvent>() const {
-  return event_as_PauseEvent();
+template<> inline const Debugger::PauseRequest *DebugEvent::event_as<Debugger::PauseRequest>() const {
+  return event_as_PauseRequest();
 }
 
-template<> inline const Debugger::RunEvent *DebugEvent::event_as<Debugger::RunEvent>() const {
-  return event_as_RunEvent();
+template<> inline const Debugger::RunRequest *DebugEvent::event_as<Debugger::RunRequest>() const {
+  return event_as_RunRequest();
+}
+
+template<> inline const Debugger::GetStateRequest *DebugEvent::event_as<Debugger::GetStateRequest>() const {
+  return event_as_GetStateRequest();
+}
+
+template<> inline const Debugger::GetStateResponse *DebugEvent::event_as<Debugger::GetStateResponse>() const {
+  return event_as_GetStateResponse();
 }
 
 struct DebugEventBuilder {
@@ -310,51 +497,100 @@ inline ::flatbuffers::Offset<DebugEvent> CreateDebugEvent(
 
 ::flatbuffers::Offset<DebugEvent> CreateDebugEvent(::flatbuffers::FlatBufferBuilder &_fbb, const DebugEventT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
-inline PauseEventT *PauseEvent::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
-  auto _o = std::unique_ptr<PauseEventT>(new PauseEventT());
+inline GetStateRequestT *GetStateRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<GetStateRequestT>(new GetStateRequestT());
   UnPackTo(_o.get(), _resolver);
   return _o.release();
 }
 
-inline void PauseEvent::UnPackTo(PauseEventT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+inline void GetStateRequest::UnPackTo(GetStateRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
   (void)_o;
   (void)_resolver;
 }
 
-inline ::flatbuffers::Offset<PauseEvent> PauseEvent::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const PauseEventT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
-  return CreatePauseEvent(_fbb, _o, _rehasher);
+inline ::flatbuffers::Offset<GetStateRequest> GetStateRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const GetStateRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return CreateGetStateRequest(_fbb, _o, _rehasher);
 }
 
-inline ::flatbuffers::Offset<PauseEvent> CreatePauseEvent(::flatbuffers::FlatBufferBuilder &_fbb, const PauseEventT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+inline ::flatbuffers::Offset<GetStateRequest> CreateGetStateRequest(::flatbuffers::FlatBufferBuilder &_fbb, const GetStateRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
   (void)_rehasher;
   (void)_o;
-  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const PauseEventT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
-  return Debugger::CreatePauseEvent(
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const GetStateRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  return Debugger::CreateGetStateRequest(
       _fbb);
 }
 
-inline RunEventT *RunEvent::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
-  auto _o = std::unique_ptr<RunEventT>(new RunEventT());
+inline GetStateResponseT *GetStateResponse::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<GetStateResponseT>(new GetStateResponseT());
   UnPackTo(_o.get(), _resolver);
   return _o.release();
 }
 
-inline void RunEvent::UnPackTo(RunEventT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+inline void GetStateResponse::UnPackTo(GetStateResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = state(); _o->state = _e; }
+}
+
+inline ::flatbuffers::Offset<GetStateResponse> GetStateResponse::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const GetStateResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return CreateGetStateResponse(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<GetStateResponse> CreateGetStateResponse(::flatbuffers::FlatBufferBuilder &_fbb, const GetStateResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const GetStateResponseT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _state = _o->state;
+  return Debugger::CreateGetStateResponse(
+      _fbb,
+      _state);
+}
+
+inline PauseRequestT *PauseRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<PauseRequestT>(new PauseRequestT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void PauseRequest::UnPackTo(PauseRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+}
+
+inline ::flatbuffers::Offset<PauseRequest> PauseRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const PauseRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return CreatePauseRequest(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<PauseRequest> CreatePauseRequest(::flatbuffers::FlatBufferBuilder &_fbb, const PauseRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const PauseRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  return Debugger::CreatePauseRequest(
+      _fbb);
+}
+
+inline RunRequestT *RunRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<RunRequestT>(new RunRequestT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void RunRequest::UnPackTo(RunRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
   (void)_o;
   (void)_resolver;
   { auto _e = single_step(); _o->single_step = _e; }
 }
 
-inline ::flatbuffers::Offset<RunEvent> RunEvent::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RunEventT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
-  return CreateRunEvent(_fbb, _o, _rehasher);
+inline ::flatbuffers::Offset<RunRequest> RunRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RunRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return CreateRunRequest(_fbb, _o, _rehasher);
 }
 
-inline ::flatbuffers::Offset<RunEvent> CreateRunEvent(::flatbuffers::FlatBufferBuilder &_fbb, const RunEventT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+inline ::flatbuffers::Offset<RunRequest> CreateRunRequest(::flatbuffers::FlatBufferBuilder &_fbb, const RunRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
   (void)_rehasher;
   (void)_o;
-  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RunEventT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RunRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _single_step = _o->single_step;
-  return Debugger::CreateRunEvent(
+  return Debugger::CreateRunRequest(
       _fbb,
       _single_step);
 }
@@ -393,12 +629,20 @@ inline bool VerifyEvent(::flatbuffers::Verifier &verifier, const void *obj, Even
     case Event_NONE: {
       return true;
     }
-    case Event_PauseEvent: {
-      auto ptr = reinterpret_cast<const Debugger::PauseEvent *>(obj);
+    case Event_PauseRequest: {
+      auto ptr = reinterpret_cast<const Debugger::PauseRequest *>(obj);
       return verifier.VerifyTable(ptr);
     }
-    case Event_RunEvent: {
-      auto ptr = reinterpret_cast<const Debugger::RunEvent *>(obj);
+    case Event_RunRequest: {
+      auto ptr = reinterpret_cast<const Debugger::RunRequest *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case Event_GetStateRequest: {
+      auto ptr = reinterpret_cast<const Debugger::GetStateRequest *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case Event_GetStateResponse: {
+      auto ptr = reinterpret_cast<const Debugger::GetStateResponse *>(obj);
       return verifier.VerifyTable(ptr);
     }
     default: return true;
@@ -420,12 +664,20 @@ inline bool VerifyEventVector(::flatbuffers::Verifier &verifier, const ::flatbuf
 inline void *EventUnion::UnPack(const void *obj, Event type, const ::flatbuffers::resolver_function_t *resolver) {
   (void)resolver;
   switch (type) {
-    case Event_PauseEvent: {
-      auto ptr = reinterpret_cast<const Debugger::PauseEvent *>(obj);
+    case Event_PauseRequest: {
+      auto ptr = reinterpret_cast<const Debugger::PauseRequest *>(obj);
       return ptr->UnPack(resolver);
     }
-    case Event_RunEvent: {
-      auto ptr = reinterpret_cast<const Debugger::RunEvent *>(obj);
+    case Event_RunRequest: {
+      auto ptr = reinterpret_cast<const Debugger::RunRequest *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case Event_GetStateRequest: {
+      auto ptr = reinterpret_cast<const Debugger::GetStateRequest *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case Event_GetStateResponse: {
+      auto ptr = reinterpret_cast<const Debugger::GetStateResponse *>(obj);
       return ptr->UnPack(resolver);
     }
     default: return nullptr;
@@ -435,13 +687,21 @@ inline void *EventUnion::UnPack(const void *obj, Event type, const ::flatbuffers
 inline ::flatbuffers::Offset<void> EventUnion::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ::flatbuffers::rehasher_function_t *_rehasher) const {
   (void)_rehasher;
   switch (type) {
-    case Event_PauseEvent: {
-      auto ptr = reinterpret_cast<const Debugger::PauseEventT *>(value);
-      return CreatePauseEvent(_fbb, ptr, _rehasher).Union();
+    case Event_PauseRequest: {
+      auto ptr = reinterpret_cast<const Debugger::PauseRequestT *>(value);
+      return CreatePauseRequest(_fbb, ptr, _rehasher).Union();
     }
-    case Event_RunEvent: {
-      auto ptr = reinterpret_cast<const Debugger::RunEventT *>(value);
-      return CreateRunEvent(_fbb, ptr, _rehasher).Union();
+    case Event_RunRequest: {
+      auto ptr = reinterpret_cast<const Debugger::RunRequestT *>(value);
+      return CreateRunRequest(_fbb, ptr, _rehasher).Union();
+    }
+    case Event_GetStateRequest: {
+      auto ptr = reinterpret_cast<const Debugger::GetStateRequestT *>(value);
+      return CreateGetStateRequest(_fbb, ptr, _rehasher).Union();
+    }
+    case Event_GetStateResponse: {
+      auto ptr = reinterpret_cast<const Debugger::GetStateResponseT *>(value);
+      return CreateGetStateResponse(_fbb, ptr, _rehasher).Union();
     }
     default: return 0;
   }
@@ -449,12 +709,20 @@ inline ::flatbuffers::Offset<void> EventUnion::Pack(::flatbuffers::FlatBufferBui
 
 inline EventUnion::EventUnion(const EventUnion &u) : type(u.type), value(nullptr) {
   switch (type) {
-    case Event_PauseEvent: {
-      value = new Debugger::PauseEventT(*reinterpret_cast<Debugger::PauseEventT *>(u.value));
+    case Event_PauseRequest: {
+      value = new Debugger::PauseRequestT(*reinterpret_cast<Debugger::PauseRequestT *>(u.value));
       break;
     }
-    case Event_RunEvent: {
-      value = new Debugger::RunEventT(*reinterpret_cast<Debugger::RunEventT *>(u.value));
+    case Event_RunRequest: {
+      value = new Debugger::RunRequestT(*reinterpret_cast<Debugger::RunRequestT *>(u.value));
+      break;
+    }
+    case Event_GetStateRequest: {
+      value = new Debugger::GetStateRequestT(*reinterpret_cast<Debugger::GetStateRequestT *>(u.value));
+      break;
+    }
+    case Event_GetStateResponse: {
+      value = new Debugger::GetStateResponseT(*reinterpret_cast<Debugger::GetStateResponseT *>(u.value));
       break;
     }
     default:
@@ -464,13 +732,23 @@ inline EventUnion::EventUnion(const EventUnion &u) : type(u.type), value(nullptr
 
 inline void EventUnion::Reset() {
   switch (type) {
-    case Event_PauseEvent: {
-      auto ptr = reinterpret_cast<Debugger::PauseEventT *>(value);
+    case Event_PauseRequest: {
+      auto ptr = reinterpret_cast<Debugger::PauseRequestT *>(value);
       delete ptr;
       break;
     }
-    case Event_RunEvent: {
-      auto ptr = reinterpret_cast<Debugger::RunEventT *>(value);
+    case Event_RunRequest: {
+      auto ptr = reinterpret_cast<Debugger::RunRequestT *>(value);
+      delete ptr;
+      break;
+    }
+    case Event_GetStateRequest: {
+      auto ptr = reinterpret_cast<Debugger::GetStateRequestT *>(value);
+      delete ptr;
+      break;
+    }
+    case Event_GetStateResponse: {
+      auto ptr = reinterpret_cast<Debugger::GetStateResponseT *>(value);
       delete ptr;
       break;
     }

@@ -40,16 +40,64 @@ namespace debugger
             return {std::move(e)};
         }
 
+        void send_event(const Debugger::DebugEventT& event)
+        {
+            flatbuffers::FlatBufferBuilder fbb{};
+            fbb.Finish(Debugger::DebugEvent::Pack(fbb, &event));
+
+            const std::string_view buffer(reinterpret_cast<const char*>(fbb.GetBufferPointer()), fbb.GetSize());
+            const auto message = base64::to_base64(buffer);
+
+            send_message(message);
+        }
+
+        template <typename T>
+            requires(!std::is_same_v<std::remove_cvref_t<T>, Debugger::DebugEventT>)
+        void send_event(T event)
+        {
+            Debugger::DebugEventT e{};
+            e.event.Set(std::move(event));
+            send_event(e);
+        }
+
+        Debugger::State translate_state(const emulation_state state)
+        {
+            switch (state)
+            {
+            case emulation_state::paused:
+                return Debugger::State_Paused;
+
+            case emulation_state::none:
+            case emulation_state::running:
+                return Debugger::State_Running;
+
+            default:
+                return Debugger::State_None;
+            }
+        }
+
+        void handle_get_state_request(const event_context& c)
+        {
+            Debugger::GetStateResponseT stateResponse{};
+            stateResponse.state = translate_state(c.state);
+
+            send_event(stateResponse);
+        }
+
         void handle_event(event_context& c, const Debugger::DebugEventT& e)
         {
             switch (e.event.type)
             {
-            case Debugger::Event_PauseEvent:
-                c.win_emu.emu().stop();
+            case Debugger::Event_PauseRequest:
+                c.state = emulation_state::paused;
                 break;
 
-            case Debugger::Event_RunEvent:
-                c.resume = true;
+            case Debugger::Event_RunRequest:
+                c.state = emulation_state::running;
+                break;
+
+            case Debugger::Event_GetStateRequest:
+                handle_get_state_request(c);
                 break;
 
             default:
@@ -58,7 +106,7 @@ namespace debugger
         }
     }
 
-    void handle_events(event_context& c)
+    void handle_events_once(event_context& c)
     {
         while (true)
         {
@@ -71,6 +119,21 @@ namespace debugger
             }
 
             handle_event(c, *e);
+        }
+    }
+
+    void handle_events(event_context& c)
+    {
+        while (true)
+        {
+            handle_events_once(c);
+
+            if (c.state != emulation_state::paused)
+            {
+                break;
+            }
+
+            suspend_execution(2ms);
         }
     }
 }

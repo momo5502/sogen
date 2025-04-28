@@ -1,14 +1,28 @@
 namespace Debugger;
 
-table PauseEvent {}
+table GetStateRequest {}
 
-table RunEvent {
+enum State : uint32 {
+    None = 0,
+    Running,
+    Paused,
+}
+
+table GetStateResponse {
+    state: State;
+}
+
+table PauseRequest {}
+
+table RunRequest {
     single_step: bool;
 }
 
 union Event { 
-    PauseEvent, 
-    RunEvent,
+    PauseRequest, 
+    RunRequest,
+    GetStateRequest,
+    GetStateResponse,
 }
 
 table DebugEvent {

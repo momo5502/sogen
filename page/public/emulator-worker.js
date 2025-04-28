@@ -1,11 +1,16 @@
 var logLines = [];
 var lastFlush = new Date().getTime();
 
+var msgQueue = [];
+
 onmessage = async (event) => {
   const data = event.data;
   if (data.message == "run") {
     const payload = data.data;
     runEmulation(payload.filesystem, payload.file, payload.options);
+  } else if (data.message == "event") {
+    const payload = data.data;
+    msgQueue.push(payload);
   }
 };
 
@@ -32,14 +37,8 @@ function notifyExit(code) {
   self.close();
 }
 
-var msgQueue = [];
-
-setInterval(() => {
-  msgQueue.push("OI YEAH BABY :D");
-}, 2100);
-
 function handleMessage(message) {
-  console.log("MSG from C++: " + message);
+  postMessage({ message: "event", data: message });
 }
 
 function getMessageFromQueue() {
@@ -52,9 +51,9 @@ function getMessageFromQueue() {
 
 function runEmulation(filesystem, file, options) {
   globalThis.Module = {
-    arguments: [...options, "-e", "./root", file],
+    arguments: ["./root", file],
     onRuntimeInitialized: function () {
-      /*filesystem.forEach((e) => {
+      filesystem.forEach((e) => {
         if (e.name.endsWith("/")) {
           FS.mkdir(e.name.slice(0, -1));
         } else {
@@ -66,7 +65,7 @@ function runEmulation(filesystem, file, options) {
           }
           FS.createDataFile("/" + dirs.join("/"), file, buffer, true, true);
         }
-      });*/
+      });
     },
     print: logLine,
     printErr: logLine,

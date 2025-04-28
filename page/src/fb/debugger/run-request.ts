@@ -6,22 +6,22 @@ import * as flatbuffers from 'flatbuffers';
 
 
 
-export class RunEvent implements flatbuffers.IUnpackableObject<RunEventT> {
+export class RunRequest implements flatbuffers.IUnpackableObject<RunRequestT> {
   bb: flatbuffers.ByteBuffer|null = null;
   bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):RunEvent {
+  __init(i:number, bb:flatbuffers.ByteBuffer):RunRequest {
   this.bb_pos = i;
   this.bb = bb;
   return this;
 }
 
-static getRootAsRunEvent(bb:flatbuffers.ByteBuffer, obj?:RunEvent):RunEvent {
-  return (obj || new RunEvent()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+static getRootAsRunRequest(bb:flatbuffers.ByteBuffer, obj?:RunRequest):RunRequest {
+  return (obj || new RunRequest()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
 }
 
-static getSizePrefixedRootAsRunEvent(bb:flatbuffers.ByteBuffer, obj?:RunEvent):RunEvent {
+static getSizePrefixedRootAsRunRequest(bb:flatbuffers.ByteBuffer, obj?:RunRequest):RunRequest {
   bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new RunEvent()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+  return (obj || new RunRequest()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
 }
 
 singleStep():boolean {
@@ -40,7 +40,7 @@ mutate_single_step(value:boolean):boolean {
   return true;
 }
 
-static startRunEvent(builder:flatbuffers.Builder) {
+static startRunRequest(builder:flatbuffers.Builder) {
   builder.startObject(1);
 }
 
@@ -48,37 +48,37 @@ static addSingleStep(builder:flatbuffers.Builder, singleStep:boolean) {
   builder.addFieldInt8(0, +singleStep, +false);
 }
 
-static endRunEvent(builder:flatbuffers.Builder):flatbuffers.Offset {
+static endRunRequest(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createRunEvent(builder:flatbuffers.Builder, singleStep:boolean):flatbuffers.Offset {
-  RunEvent.startRunEvent(builder);
-  RunEvent.addSingleStep(builder, singleStep);
-  return RunEvent.endRunEvent(builder);
+static createRunRequest(builder:flatbuffers.Builder, singleStep:boolean):flatbuffers.Offset {
+  RunRequest.startRunRequest(builder);
+  RunRequest.addSingleStep(builder, singleStep);
+  return RunRequest.endRunRequest(builder);
 }
 
-unpack(): RunEventT {
-  return new RunEventT(
+unpack(): RunRequestT {
+  return new RunRequestT(
     this.singleStep()
   );
 }
 
 
-unpackTo(_o: RunEventT): void {
+unpackTo(_o: RunRequestT): void {
   _o.singleStep = this.singleStep();
 }
 }
 
-export class RunEventT implements flatbuffers.IGeneratedObject {
+export class RunRequestT implements flatbuffers.IGeneratedObject {
 constructor(
   public singleStep: boolean = false
 ){}
 
 
 pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  return RunEvent.createRunEvent(builder,
+  return RunRequest.createRunRequest(builder,
     this.singleStep
   );
 }

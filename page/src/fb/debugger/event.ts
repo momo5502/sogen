@@ -2,37 +2,45 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import { PauseEvent, PauseEventT } from '../debugger/pause-event.js';
-import { RunEvent, RunEventT } from '../debugger/run-event.js';
+import { GetStateRequest, GetStateRequestT } from '../debugger/get-state-request.js';
+import { GetStateResponse, GetStateResponseT } from '../debugger/get-state-response.js';
+import { PauseRequest, PauseRequestT } from '../debugger/pause-request.js';
+import { RunRequest, RunRequestT } from '../debugger/run-request.js';
 
 
 export enum Event {
   NONE = 0,
-  PauseEvent = 1,
-  RunEvent = 2
+  PauseRequest = 1,
+  RunRequest = 2,
+  GetStateRequest = 3,
+  GetStateResponse = 4
 }
 
 export function unionToEvent(
   type: Event,
-  accessor: (obj:PauseEvent|RunEvent) => PauseEvent|RunEvent|null
-): PauseEvent|RunEvent|null {
+  accessor: (obj:GetStateRequest|GetStateResponse|PauseRequest|RunRequest) => GetStateRequest|GetStateResponse|PauseRequest|RunRequest|null
+): GetStateRequest|GetStateResponse|PauseRequest|RunRequest|null {
   switch(Event[type]) {
     case 'NONE': return null; 
-    case 'PauseEvent': return accessor(new PauseEvent())! as PauseEvent;
-    case 'RunEvent': return accessor(new RunEvent())! as RunEvent;
+    case 'PauseRequest': return accessor(new PauseRequest())! as PauseRequest;
+    case 'RunRequest': return accessor(new RunRequest())! as RunRequest;
+    case 'GetStateRequest': return accessor(new GetStateRequest())! as GetStateRequest;
+    case 'GetStateResponse': return accessor(new GetStateResponse())! as GetStateResponse;
     default: return null;
   }
 }
 
 export function unionListToEvent(
   type: Event, 
-  accessor: (index: number, obj:PauseEvent|RunEvent) => PauseEvent|RunEvent|null, 
+  accessor: (index: number, obj:GetStateRequest|GetStateResponse|PauseRequest|RunRequest) => GetStateRequest|GetStateResponse|PauseRequest|RunRequest|null, 
   index: number
-): PauseEvent|RunEvent|null {
+): GetStateRequest|GetStateResponse|PauseRequest|RunRequest|null {
   switch(Event[type]) {
     case 'NONE': return null; 
-    case 'PauseEvent': return accessor(index, new PauseEvent())! as PauseEvent;
-    case 'RunEvent': return accessor(index, new RunEvent())! as RunEvent;
+    case 'PauseRequest': return accessor(index, new PauseRequest())! as PauseRequest;
+    case 'RunRequest': return accessor(index, new RunRequest())! as RunRequest;
+    case 'GetStateRequest': return accessor(index, new GetStateRequest())! as GetStateRequest;
+    case 'GetStateResponse': return accessor(index, new GetStateResponse())! as GetStateResponse;
     default: return null;
   }
 }
