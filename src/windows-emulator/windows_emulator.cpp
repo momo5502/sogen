@@ -515,6 +515,7 @@ void windows_emulator::setup_hooks()
 
     this->emu().hook_interrupt([&](const int interrupt) {
         const auto rip = this->emu().read_instruction_pointer();
+        const auto eflags = this->emu().reg<uint32_t>(x86_register::eflags);
 
         switch (interrupt)
         {
@@ -522,7 +523,15 @@ void windows_emulator::setup_hooks()
             dispatch_integer_division_by_zero(this->emu(), this->process);
             return;
         case 1:
-            this->log.print(color::pink, "Singlestep: 0x%" PRIx64 "\n", rip);
+            if ((eflags & 0x100) != 0)
+            {
+                this->log.print(color::pink, "Singlestep (Trap Flag): 0x%" PRIx64 "\n", rip);
+                this->emu().reg(x86_register::eflags, eflags & ~0x100);
+            }
+            else
+            {
+                this->log.print(color::pink, "Singlestep: 0x%" PRIx64 "\n", rip);
+            }
             dispatch_single_step(this->emu(), this->process);
             return;
         case 3:
@@ -531,6 +540,10 @@ void windows_emulator::setup_hooks()
             return;
         case 6:
             dispatch_illegal_instruction_violation(this->emu(), this->process);
+            return;
+        case 45:
+            this->log.print(color::pink, "DbgPrint: 0x%" PRIx64 "\n", rip);
+            dispatch_breakpoint(this->emu(), this->process);
             return;
         default:
             break;

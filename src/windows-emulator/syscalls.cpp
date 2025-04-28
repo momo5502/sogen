@@ -215,6 +215,7 @@ namespace syscalls
                                               emulator_object<uint32_t> return_length);
     NTSTATUS handle_NtSetInformationProcess(const syscall_context& c, handle process_handle, uint32_t info_class,
                                             uint64_t process_information, uint32_t process_information_length);
+    NTSTATUS handle_NtOpenProcess();
     NTSTATUS handle_NtOpenProcessToken(const syscall_context&, handle process_handle, ACCESS_MASK /*desired_access*/,
                                        emulator_object<handle> token_handle);
     NTSTATUS handle_NtOpenProcessTokenEx(const syscall_context& c, handle process_handle, ACCESS_MASK desired_access,
@@ -769,6 +770,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtCreateFile);
     add_handler(NtDeviceIoControlFile);
     add_handler(NtQueryWnfStateData);
+    add_handler(NtOpenProcess);
     add_handler(NtOpenProcessToken);
     add_handler(NtOpenProcessTokenEx);
     add_handler(NtQuerySecurityAttributesToken);
