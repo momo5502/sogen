@@ -25,6 +25,109 @@ namespace
         emu.write_memory<uint64_t>(GDT_ADDR + 5 * (sizeof(uint64_t)), 0xEFF6000000FFFF);
         emu.reg<uint16_t>(x86_register::ss, 0x2B);
     }
+
+    std::u16string expand_environment_string(const std::u16string& input,
+                                             const utils::unordered_insensitive_u16string_map<std::u16string>& env_map)
+    {
+        std::u16string result;
+        result.reserve(input.length());
+        size_t pos = 0;
+
+        while (pos < input.length())
+        {
+            size_t start = input.find(u'%', pos);
+            if (start == std::u16string::npos)
+            {
+                result.append(input.substr(pos));
+                break;
+            }
+
+            result.append(input.substr(pos, start - pos));
+
+            size_t end = input.find(u'%', start + 1);
+            if (end == std::u16string::npos)
+            {
+                result.append(input.substr(start));
+                break;
+            }
+
+            std::u16string var_name = input.substr(start + 1, end - start - 1);
+
+            if (var_name.empty())
+            {
+                result.append(u"%%");
+            }
+            else
+            {
+                auto it = env_map.find(var_name);
+                result.append(it != env_map.end() ? it->second : input.substr(start, end - start + 1));
+            }
+
+            pos = end + 1;
+        }
+        return result;
+    }
+
+    utils::unordered_insensitive_u16string_map<std::u16string> get_environment_variables(registry_manager& registry)
+    {
+        utils::unordered_insensitive_u16string_map<std::u16string> env_map;
+        std::unordered_set<std::u16string_view> keys_to_expand;
+
+        const auto env_key =
+            registry.get_key({R"(\Registry\Machine\System\CurrentControlSet\Control\Session Manager\Environment)"});
+        if (env_key)
+        {
+            for (size_t i = 0; const auto value_opt = registry.get_value(*env_key, i); i++)
+            {
+                const auto& value = *value_opt;
+
+                if (value.type != REG_SZ && value.type != REG_EXPAND_SZ)
+                {
+                    continue;
+                }
+
+                if (value.data.empty() || value.data.size() % 2 != 0)
+                {
+                    continue;
+                }
+
+                const auto char_count = value.data.size() / sizeof(char16_t);
+                const auto* data_ptr = reinterpret_cast<const char16_t*>(value.data.data());
+                if (data_ptr[char_count - 1] != u'\0')
+                {
+                    continue;
+                }
+
+                const auto [it, inserted] =
+                    env_map.emplace(u8_to_u16(value.name), std::u16string(data_ptr, char_count - 1));
+                if (inserted && value.type == REG_EXPAND_SZ)
+                {
+                    keys_to_expand.insert(it->first);
+                }
+            }
+        }
+
+        env_map[u"EMULATOR"] = u"1";
+        env_map[u"COMPUTERNAME"] = u"momo";
+        env_map[u"USERNAME"] = u"momo";
+        env_map[u"SystemDrive"] = u"C:";
+        env_map[u"SystemRoot"] = u"C:\\WINDOWS";
+
+        for (const auto& key : keys_to_expand)
+        {
+            auto it = env_map.find(key);
+            if (it != env_map.end())
+            {
+                std::u16string expanded = expand_environment_string(it->second, env_map);
+                if (expanded != it->second)
+                {
+                    it->second = expanded;
+                }
+            }
+        }
+
+        return env_map;
+    }
 }
 
 void process_context::setup(x86_64_emulator& emu, memory_manager& memory, registry_manager& registry,
@@ -67,28 +170,16 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
 
         proc_params.Environment = allocator.copy_string(u"=::=::\\");
 
-        const auto env_key =
-            registry.get_key({R"(\Registry\Machine\System\CurrentControlSet\Control\Session Manager\Environment)"});
-        if (env_key)
+        const auto env_map = get_environment_variables(registry);
+        for (const auto& [name, value] : env_map)
         {
-            size_t i = 0;
-            while (const auto value = registry.get_value(*env_key, ++i))
-            {
-                if ((value->type != REG_SZ && value->type != REG_EXPAND_SZ) || value->data.empty() ||
-                    value->data.size() % 2 != 0)
-                    continue;
-
-                std::u16string entry =
-                    u8_to_u16(value->name) + u"=" + reinterpret_cast<const char16_t*>(value->data.data());
-                allocator.copy_string(entry);
-            }
+            std::u16string entry;
+            entry += name;
+            entry += u"=";
+            entry += value;
+            allocator.copy_string(entry);
         }
 
-        allocator.copy_string(u"EMULATOR=1");
-        allocator.copy_string(u"COMPUTERNAME=momo");
-        allocator.copy_string(u"USERNAME=momo");
-        allocator.copy_string(u"SystemDrive=C:");
-        allocator.copy_string(u"SystemRoot=C:\\WINDOWS");
         allocator.copy_string(u"");
 
         const auto application_str = app_settings.application.u16string();
