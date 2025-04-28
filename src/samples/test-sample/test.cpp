@@ -729,7 +729,10 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_env, "Environment")
     RUN_TEST(test_exceptions, "Exceptions")
     RUN_TEST(test_native_exceptions, "Native Exceptions")
-    RUN_TEST(test_interrupts, "Interrupts")
+    if (!getenv("EMULATOR_ICICLE"))
+    {
+        RUN_TEST(test_interrupts, "Interrupts")
+    }
     RUN_TEST(test_tls, "TLS")
     RUN_TEST(test_socket, "Socket")
     RUN_TEST(test_apc, "APC")

@@ -108,6 +108,13 @@ namespace
         }
 
         env_map[u"EMULATOR"] = u"1";
+
+        const auto* env = getenv("EMULATOR_ICICLE");
+        if (env && (env == "1"sv || env == "true"sv))
+        {
+            env_map[u"EMULATOR_ICICLE"] = u"1";
+        }
+
         env_map[u"COMPUTERNAME"] = u"momo";
         env_map[u"USERNAME"] = u"momo";
         env_map[u"SystemDrive"] = u"C:";
