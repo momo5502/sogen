@@ -3,7 +3,7 @@ namespace Debugger;
 table PauseEvent {}
 
 table RunEvent {
-    singleStep: bool;
+    single_step: bool;
 }
 
 union Event { 

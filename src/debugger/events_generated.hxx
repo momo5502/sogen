@@ -176,24 +176,24 @@ inline ::flatbuffers::Offset<PauseEvent> CreatePauseEvent(
 
 struct RunEventT : public ::flatbuffers::NativeTable {
   typedef RunEvent TableType;
-  bool singleStep = false;
+  bool single_step = false;
 };
 
 struct RunEvent FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef RunEventT NativeTableType;
   typedef RunEventBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_SINGLESTEP = 4
+    VT_SINGLE_STEP = 4
   };
-  bool singleStep() const {
-    return GetField<uint8_t>(VT_SINGLESTEP, 0) != 0;
+  bool single_step() const {
+    return GetField<uint8_t>(VT_SINGLE_STEP, 0) != 0;
   }
-  bool mutate_singleStep(bool _singleStep = 0) {
-    return SetField<uint8_t>(VT_SINGLESTEP, static_cast<uint8_t>(_singleStep), 0);
+  bool mutate_single_step(bool _single_step = 0) {
+    return SetField<uint8_t>(VT_SINGLE_STEP, static_cast<uint8_t>(_single_step), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<uint8_t>(verifier, VT_SINGLESTEP, 1) &&
+           VerifyField<uint8_t>(verifier, VT_SINGLE_STEP, 1) &&
            verifier.EndTable();
   }
   RunEventT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -205,8 +205,8 @@ struct RunEventBuilder {
   typedef RunEvent Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
-  void add_singleStep(bool singleStep) {
-    fbb_.AddElement<uint8_t>(RunEvent::VT_SINGLESTEP, static_cast<uint8_t>(singleStep), 0);
+  void add_single_step(bool single_step) {
+    fbb_.AddElement<uint8_t>(RunEvent::VT_SINGLE_STEP, static_cast<uint8_t>(single_step), 0);
   }
   explicit RunEventBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
@@ -221,9 +221,9 @@ struct RunEventBuilder {
 
 inline ::flatbuffers::Offset<RunEvent> CreateRunEvent(
     ::flatbuffers::FlatBufferBuilder &_fbb,
-    bool singleStep = false) {
+    bool single_step = false) {
   RunEventBuilder builder_(_fbb);
-  builder_.add_singleStep(singleStep);
+  builder_.add_single_step(single_step);
   return builder_.Finish();
 }
 
@@ -342,7 +342,7 @@ inline RunEventT *RunEvent::UnPack(const ::flatbuffers::resolver_function_t *_re
 inline void RunEvent::UnPackTo(RunEventT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
   (void)_o;
   (void)_resolver;
-  { auto _e = singleStep(); _o->singleStep = _e; }
+  { auto _e = single_step(); _o->single_step = _e; }
 }
 
 inline ::flatbuffers::Offset<RunEvent> RunEvent::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RunEventT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -353,10 +353,10 @@ inline ::flatbuffers::Offset<RunEvent> CreateRunEvent(::flatbuffers::FlatBufferB
   (void)_rehasher;
   (void)_o;
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RunEventT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
-  auto _singleStep = _o->singleStep;
+  auto _single_step = _o->single_step;
   return Debugger::CreateRunEvent(
       _fbb,
-      _singleStep);
+      _single_step);
 }
 
 inline DebugEventT *DebugEvent::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {

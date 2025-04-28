@@ -12,6 +12,10 @@ option(FLATBUFFERS_BUILD_TESTS "" OFF)
 option(FLATBUFFERS_INSTALL "" OFF)
 add_subdirectory(flatbuffers)
 
+if(MSVC)
+target_compile_options(flatc PRIVATE /MD)
+endif()
+
 ##########################################
 
 add_library(reflect INTERFACE)

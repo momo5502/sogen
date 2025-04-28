@@ -1,11 +1,44 @@
 import { createDefaultSettings, Settings, translateSettings } from "./settings";
 import { FileEntry } from "./zip-file";
 
+import * as flatbuffers from "flatbuffers";
+import * as fbDebugger from "@/fb/debugger";
+import * as fbDebuggerEvent from "@/fb/debugger/event";
+
 type LogHandler = (lines: string[]) => void;
 
 export interface UserFile {
   name: string;
   data: ArrayBuffer;
+}
+
+function base64Encode(uint8Array: Uint8Array): string {
+  let binaryString = "";
+  for (let i = 0; i < uint8Array.byteLength; i++) {
+    binaryString += String.fromCharCode(uint8Array[i]);
+  }
+
+  return btoa(binaryString);
+}
+
+function base64Decode(data: string) {
+  const binaryString = atob(data);
+
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+
+  return bytes;
+}
+
+function decodeEvent(data: string) {
+  const array = base64Decode(data);
+  const buffer = new flatbuffers.ByteBuffer(array);
+  const event = fbDebugger.DebugEvent.getRootAsDebugEvent(buffer);
+  return event.unpack();
 }
 
 export class Emulator {
@@ -30,13 +63,7 @@ export class Emulator {
       /*new URL('./emulator-worker.js', import.meta.url)*/ "./emulator-worker.js",
     );
 
-    this.worker.onmessage = (event: MessageEvent) => {
-      if (event.data.message == "log") {
-        this.logHandler(event.data.data);
-      } else if (event.data.message == "end") {
-        this.terminateResolve(0);
-      }
-    };
+    this.worker.onmessage = this._onMessage.bind(this);
   }
 
   start(
@@ -71,5 +98,31 @@ export class Emulator {
 
   onTerminate() {
     return this.terminatePromise;
+  }
+
+  sendEvent(event: fbDebugger.DebugEventT) {
+    const builder = new flatbuffers.Builder(1024);
+    fbDebugger.DebugEvent.finishDebugEventBuffer(builder, event.pack(builder));
+
+    const message = base64Encode(builder.asUint8Array());
+
+    this.worker.postMessage({
+      message: "event",
+      data: message,
+    });
+  }
+
+  _onMessage(event: MessageEvent) {
+    if (event.data.message == "log") {
+      this.logHandler(event.data.data);
+    } else if (event.data.message == "event") {
+      this._onEvent(decodeEvent(event.data.data));
+    } else if (event.data.message == "end") {
+      this.terminateResolve(0);
+    }
+  }
+
+  _onEvent(event: fbDebugger.DebugEventT) {
+    console.log(event);
   }
 }

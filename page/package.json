@@ -24,6 +24,7 @@
     "@types/react-window": "^1.8.8",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "flatbuffers": "^25.2.10",
     "jszip": "^3.10.1",
     "lucide-react": "^0.503.0",
     "react": "^19.0.0",

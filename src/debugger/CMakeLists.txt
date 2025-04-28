@@ -25,7 +25,7 @@ set_property(GLOBAL PROPERTY VS_STARTUP_PROJECT debugger)
 momo_strip_target(debugger)
 
 add_custom_target(gen_fbs
+  DEPENDS flatc
   COMMAND "$<TARGET_FILE:flatc>" --gen-mutable --gen-object-api --filename-ext hxx --cpp -o "${CMAKE_CURRENT_LIST_DIR}" "${CMAKE_CURRENT_LIST_DIR}/events.fbs"
+  COMMAND "$<TARGET_FILE:flatc>" --gen-mutable --gen-object-api --ts -o "${PROJECT_SOURCE_DIR}/page/src/fb" "${CMAKE_CURRENT_LIST_DIR}/events.fbs"
 )
-
-add_dependencies(gen_fbs flatc)
