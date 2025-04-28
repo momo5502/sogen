@@ -31,6 +31,7 @@
     "react-bootstrap-icons": "^1.11.5",
     "react-dom": "^19.0.0",
     "react-helmet": "^6.1.0",
+    "react-resizable-panels": "^2.1.9",
     "react-router-dom": "^7.5.2",
     "react-window": "^1.8.11",
     "tailwind-merge": "^3.2.0",
