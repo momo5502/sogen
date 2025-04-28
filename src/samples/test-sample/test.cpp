@@ -11,6 +11,7 @@
 
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
+#include <intrin.h>
 #include <Windows.h>
 #include <WinSock2.h>
 #include <WS2tcpip.h>
@@ -641,6 +642,36 @@ namespace
         return test_access_violation_exception() && test_illegal_instruction_exception();
     }
 
+    bool trap_flag_cleared = false;
+    constexpr DWORD TRAP_FLAG_MASK = 0x100;
+
+    LONG NTAPI single_step_handler(PEXCEPTION_POINTERS exception_info)
+    {
+        if (exception_info->ExceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP)
+        {
+            PCONTEXT context = exception_info->ContextRecord;
+            trap_flag_cleared = (context->EFlags & TRAP_FLAG_MASK) == 0;
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
+
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    bool test_interrupts()
+    {
+        PVOID veh_handle = AddVectoredExceptionHandler(1, single_step_handler);
+        if (!veh_handle)
+            return false;
+
+        __writeeflags(__readeflags() | TRAP_FLAG_MASK);
+
+        __nop();
+
+        RemoveVectoredExceptionHandler(veh_handle);
+
+        return trap_flag_cleared;
+    }
+
     void print_time()
     {
         const auto epoch_time = std::chrono::system_clock::now().time_since_epoch();
@@ -698,6 +729,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_env, "Environment")
     RUN_TEST(test_exceptions, "Exceptions")
     RUN_TEST(test_native_exceptions, "Native Exceptions")
+    RUN_TEST(test_interrupts, "Interrupts")
     RUN_TEST(test_tls, "TLS")
     RUN_TEST(test_socket, "Socket")
     RUN_TEST(test_apc, "APC")
