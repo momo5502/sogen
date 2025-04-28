@@ -39,6 +39,26 @@ table ReadMemoryResponse {
     data: [ubyte];
 }
 
+table WriteRegisterRequest {
+    register: uint32;
+    data: [ubyte];
+}
+
+table WriteRegisterResponse {
+    register: uint32;
+    size: uint32;
+    success: bool;
+}
+
+table ReadRegisterRequest {
+    register: uint32;
+}
+
+table ReadRegisterResponse {
+    register: uint32;
+    data: [ubyte];
+}
+
 union Event { 
     PauseRequest, 
     RunRequest,
@@ -48,6 +68,10 @@ union Event {
     WriteMemoryResponse,
     ReadMemoryRequest,
     ReadMemoryResponse,
+    WriteRegisterRequest,
+    WriteRegisterResponse,
+    ReadRegisterRequest,
+    ReadRegisterResponse,
 }
 
 table DebugEvent {

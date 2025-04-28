@@ -7,9 +7,13 @@ import { GetStateResponse, GetStateResponseT } from '../debugger/get-state-respo
 import { PauseRequest, PauseRequestT } from '../debugger/pause-request.js';
 import { ReadMemoryRequest, ReadMemoryRequestT } from '../debugger/read-memory-request.js';
 import { ReadMemoryResponse, ReadMemoryResponseT } from '../debugger/read-memory-response.js';
+import { ReadRegisterRequest, ReadRegisterRequestT } from '../debugger/read-register-request.js';
+import { ReadRegisterResponse, ReadRegisterResponseT } from '../debugger/read-register-response.js';
 import { RunRequest, RunRequestT } from '../debugger/run-request.js';
 import { WriteMemoryRequest, WriteMemoryRequestT } from '../debugger/write-memory-request.js';
 import { WriteMemoryResponse, WriteMemoryResponseT } from '../debugger/write-memory-response.js';
+import { WriteRegisterRequest, WriteRegisterRequestT } from '../debugger/write-register-request.js';
+import { WriteRegisterResponse, WriteRegisterResponseT } from '../debugger/write-register-response.js';
 
 
 export enum Event {
@@ -21,13 +25,17 @@ export enum Event {
   WriteMemoryRequest = 5,
   WriteMemoryResponse = 6,
   ReadMemoryRequest = 7,
-  ReadMemoryResponse = 8
+  ReadMemoryResponse = 8,
+  WriteRegisterRequest = 9,
+  WriteRegisterResponse = 10,
+  ReadRegisterRequest = 11,
+  ReadRegisterResponse = 12
 }
 
 export function unionToEvent(
   type: Event,
-  accessor: (obj:GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse) => GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|null
-): GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|null {
+  accessor: (obj:GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse) => GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null
+): GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null {
   switch(Event[type]) {
     case 'NONE': return null; 
     case 'PauseRequest': return accessor(new PauseRequest())! as PauseRequest;
@@ -38,15 +46,19 @@ export function unionToEvent(
     case 'WriteMemoryResponse': return accessor(new WriteMemoryResponse())! as WriteMemoryResponse;
     case 'ReadMemoryRequest': return accessor(new ReadMemoryRequest())! as ReadMemoryRequest;
     case 'ReadMemoryResponse': return accessor(new ReadMemoryResponse())! as ReadMemoryResponse;
+    case 'WriteRegisterRequest': return accessor(new WriteRegisterRequest())! as WriteRegisterRequest;
+    case 'WriteRegisterResponse': return accessor(new WriteRegisterResponse())! as WriteRegisterResponse;
+    case 'ReadRegisterRequest': return accessor(new ReadRegisterRequest())! as ReadRegisterRequest;
+    case 'ReadRegisterResponse': return accessor(new ReadRegisterResponse())! as ReadRegisterResponse;
     default: return null;
   }
 }
 
 export function unionListToEvent(
   type: Event, 
-  accessor: (index: number, obj:GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse) => GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|null, 
+  accessor: (index: number, obj:GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse) => GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null, 
   index: number
-): GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|null {
+): GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null {
   switch(Event[type]) {
     case 'NONE': return null; 
     case 'PauseRequest': return accessor(index, new PauseRequest())! as PauseRequest;
@@ -57,6 +69,10 @@ export function unionListToEvent(
     case 'WriteMemoryResponse': return accessor(index, new WriteMemoryResponse())! as WriteMemoryResponse;
     case 'ReadMemoryRequest': return accessor(index, new ReadMemoryRequest())! as ReadMemoryRequest;
     case 'ReadMemoryResponse': return accessor(index, new ReadMemoryResponse())! as ReadMemoryResponse;
+    case 'WriteRegisterRequest': return accessor(index, new WriteRegisterRequest())! as WriteRegisterRequest;
+    case 'WriteRegisterResponse': return accessor(index, new WriteRegisterResponse())! as WriteRegisterResponse;
+    case 'ReadRegisterRequest': return accessor(index, new ReadRegisterRequest())! as ReadRegisterRequest;
+    case 'ReadRegisterResponse': return accessor(index, new ReadRegisterResponse())! as ReadRegisterResponse;
     default: return null;
   }
 }

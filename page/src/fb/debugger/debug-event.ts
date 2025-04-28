@@ -10,9 +10,13 @@ import { GetStateResponse, GetStateResponseT } from '../debugger/get-state-respo
 import { PauseRequest, PauseRequestT } from '../debugger/pause-request.js';
 import { ReadMemoryRequest, ReadMemoryRequestT } from '../debugger/read-memory-request.js';
 import { ReadMemoryResponse, ReadMemoryResponseT } from '../debugger/read-memory-response.js';
+import { ReadRegisterRequest, ReadRegisterRequestT } from '../debugger/read-register-request.js';
+import { ReadRegisterResponse, ReadRegisterResponseT } from '../debugger/read-register-response.js';
 import { RunRequest, RunRequestT } from '../debugger/run-request.js';
 import { WriteMemoryRequest, WriteMemoryRequestT } from '../debugger/write-memory-request.js';
 import { WriteMemoryResponse, WriteMemoryResponseT } from '../debugger/write-memory-response.js';
+import { WriteRegisterRequest, WriteRegisterRequestT } from '../debugger/write-register-request.js';
+import { WriteRegisterResponse, WriteRegisterResponseT } from '../debugger/write-register-response.js';
 
 
 export class DebugEvent implements flatbuffers.IUnpackableObject<DebugEventT> {
@@ -100,7 +104,7 @@ unpackTo(_o: DebugEventT): void {
 export class DebugEventT implements flatbuffers.IGeneratedObject {
 constructor(
   public eventType: Event = Event.NONE,
-  public event: GetStateRequestT|GetStateResponseT|PauseRequestT|ReadMemoryRequestT|ReadMemoryResponseT|RunRequestT|WriteMemoryRequestT|WriteMemoryResponseT|null = null
+  public event: GetStateRequestT|GetStateResponseT|PauseRequestT|ReadMemoryRequestT|ReadMemoryResponseT|ReadRegisterRequestT|ReadRegisterResponseT|RunRequestT|WriteMemoryRequestT|WriteMemoryResponseT|WriteRegisterRequestT|WriteRegisterResponseT|null = null
 ){}
 
 

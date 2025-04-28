@@ -9,7 +9,11 @@ export { GetStateResponse, GetStateResponseT } from './debugger/get-state-respon
 export { PauseRequest, PauseRequestT } from './debugger/pause-request.js';
 export { ReadMemoryRequest, ReadMemoryRequestT } from './debugger/read-memory-request.js';
 export { ReadMemoryResponse, ReadMemoryResponseT } from './debugger/read-memory-response.js';
+export { ReadRegisterRequest, ReadRegisterRequestT } from './debugger/read-register-request.js';
+export { ReadRegisterResponse, ReadRegisterResponseT } from './debugger/read-register-response.js';
 export { RunRequest, RunRequestT } from './debugger/run-request.js';
 export { State } from './debugger/state.js';
 export { WriteMemoryRequest, WriteMemoryRequestT } from './debugger/write-memory-request.js';
 export { WriteMemoryResponse, WriteMemoryResponseT } from './debugger/write-memory-response.js';
+export { WriteRegisterRequest, WriteRegisterRequestT } from './debugger/write-register-request.js';
+export { WriteRegisterResponse, WriteRegisterResponseT } from './debugger/write-register-response.js';

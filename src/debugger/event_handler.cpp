@@ -123,6 +123,45 @@ namespace debugger
             send_event(response);
         }
 
+        void handle_read_register(const event_context& c, const Debugger::ReadRegisterRequestT& request)
+        {
+            uint8_t buffer[512]{};
+            const auto res =
+                c.win_emu.emu().read_register(static_cast<x86_register>(request.register_), buffer, sizeof(buffer));
+
+            const auto size = std::min(sizeof(buffer), res);
+
+            Debugger::ReadRegisterResponseT response{};
+            response.register_ = request.register_;
+            response.data.assign(buffer, buffer + size);
+
+            send_event(std::move(response));
+        }
+
+        void handle_write_register(const event_context& c, const Debugger::WriteRegisterRequestT& request)
+        {
+            bool success{};
+            size_t size = request.data.size();
+
+            try
+            {
+                size = c.win_emu.emu().write_register(static_cast<x86_register>(request.register_), request.data.data(),
+                                                      request.data.size());
+                success = true;
+            }
+            catch (...)
+            {
+                success = false;
+            }
+
+            Debugger::WriteRegisterResponseT response{};
+            response.register_ = request.register_;
+            response.size = static_cast<uint32_t>(size);
+            response.success = success;
+
+            send_event(response);
+        }
+
         void handle_event(event_context& c, const Debugger::DebugEventT& e)
         {
             switch (e.event.type)
@@ -145,6 +184,14 @@ namespace debugger
 
             case Debugger::Event_WriteMemoryRequest:
                 handle_write_memory(c, *e.event.AsWriteMemoryRequest());
+                break;
+
+            case Debugger::Event_ReadRegisterRequest:
+                handle_read_register(c, *e.event.AsReadRegisterRequest());
+                break;
+
+            case Debugger::Event_WriteRegisterRequest:
+                handle_write_register(c, *e.event.AsWriteRegisterRequest());
                 break;
 
             default:
