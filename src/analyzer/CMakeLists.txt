@@ -16,6 +16,7 @@ endif()
 
 target_link_libraries(analyzer PRIVATE
   reflect
+  debugger
   windows-emulator
   windows-gdb-stub
 )

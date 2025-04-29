@@ -51,7 +51,7 @@ function getMessageFromQueue() {
 
 function runEmulation(filesystem, file, options) {
   globalThis.Module = {
-    arguments: ["./root", file],
+    arguments: [...options, "-e", "./root", file],
     onRuntimeInitialized: function () {
       filesystem.forEach((e) => {
         if (e.name.endsWith("/")) {
@@ -74,5 +74,5 @@ function runEmulation(filesystem, file, options) {
     postRun: flushLines,
   };
 
-  importScripts("./debugger.js");
+  importScripts("./analyzer.js");
 }
