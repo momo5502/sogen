@@ -169,6 +169,7 @@ namespace
         }
 
         thread.apc_alertable = false;
+        win_emu.callbacks.on_thread_switch();
         return true;
     }
 

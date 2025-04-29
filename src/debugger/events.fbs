@@ -1,0 +1,81 @@
+namespace Debugger;
+
+table GetStateRequest {}
+
+enum State : uint32 {
+    None = 0,
+    Running,
+    Paused,
+}
+
+table GetStateResponse {
+    state: State;
+}
+
+table PauseRequest {}
+
+table RunRequest {
+    single_step: bool;
+}
+
+table WriteMemoryRequest {
+    address: uint64;
+    data: [ubyte];
+}
+
+table WriteMemoryResponse {
+    address: uint64;
+    size: uint32;
+    success: bool;
+}
+
+table ReadMemoryRequest {
+    address: uint64;
+    size: uint32;
+}
+
+table ReadMemoryResponse {
+    address: uint64;
+    data: [ubyte];
+}
+
+table WriteRegisterRequest {
+    register: uint32;
+    data: [ubyte];
+}
+
+table WriteRegisterResponse {
+    register: uint32;
+    size: uint32;
+    success: bool;
+}
+
+table ReadRegisterRequest {
+    register: uint32;
+}
+
+table ReadRegisterResponse {
+    register: uint32;
+    data: [ubyte];
+}
+
+union Event { 
+    PauseRequest, 
+    RunRequest,
+    GetStateRequest,
+    GetStateResponse,
+    WriteMemoryRequest,
+    WriteMemoryResponse,
+    ReadMemoryRequest,
+    ReadMemoryResponse,
+    WriteRegisterRequest,
+    WriteRegisterResponse,
+    ReadRegisterRequest,
+    ReadRegisterResponse,
+}
+
+table DebugEvent {
+    event: Event;
+}
+
+root_type DebugEvent;

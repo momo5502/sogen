@@ -5,23 +5,28 @@ html {
 @media (pointer: fine) {
   ::-webkit-scrollbar {
     width: 20px;
+    height: 20px;
   }
 
   ::-webkit-scrollbar-track {
-    background-color: transparent;
+    background: transparent;
   }
 
   ::-webkit-scrollbar-thumb {
     background-color: rgba(97, 97, 97, 0.7);
     border-radius: 20px;
-    min-height: 50px;
     border: 6px solid transparent;
     background-clip: content-box;
     transition: all 0.1s linear;
+    min-height: 50px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
     background-color: rgba(97, 97, 97, 0.9);
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
   }
 }
 
@@ -29,8 +34,45 @@ button {
   cursor: pointer;
 }
 
+button.fancy-primary,
+button.fancy-secondary {
+  transition: all 0.2s ease;
+}
+
+button.fancy-primary {
+  background: linear-gradient(
+    180deg,
+    rgba(38, 144, 255, 1) 0%,
+    rgba(0, 123, 255, 1) 100%
+  );
+  border: 1px solid rgb(18, 101, 236);
+  text-shadow: rgba(0, 0, 0, 0.2) 0px 1px;
+}
+
+button.fancy-primary:hover {
+  background: linear-gradient(
+    180deg,
+    rgba(46, 151, 255, 1) 0%,
+    rgba(8, 130, 255, 1) 100%
+  );
+  border: 1px solid rgb(33, 33, 34);
+}
+
+button.fancy-secondary {
+  background: linear-gradient(180deg, rgb(38, 38, 39) 0%, rgb(34, 34, 35) 100%);
+  border: 1px solid rgb(42, 42, 44);
+}
+
+button.fancy-secondary:hover {
+  background: linear-gradient(180deg, rgb(42, 42, 43) 0%, rgb(38, 38, 39) 100%);
+  border: 1px solid rgb(33, 33, 34);
+}
+
+.terminal-output span {
+  padding: 0px 16px;
+}
+
 .terminal-output {
-  line-height: 1.5;
   font-weight: 600;
   font-size: 1.05em;
   font-family: monospace;

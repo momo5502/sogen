@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useReducer } from "react";
 import { Output } from "@/components/output";
 
 import { AppSidebar } from "@/components/app-sidebar";
@@ -8,9 +8,9 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { Button } from "./components/ui/button";
+import { Button } from "@/components/ui/button";
 
-import { Emulator, UserFile } from "./emulator";
+import { Emulator, UserFile, EmulationState } from "./emulator";
 import { getFilesystem } from "./filesystem";
 
 import "./App.css";
@@ -18,14 +18,36 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "./components/ui/popover";
+} from "@/components/ui/popover";
 
 import { createDefaultSettings } from "./settings";
-import { SettingsMenu } from "./components/settings-menu";
+import { SettingsMenu } from "@/components/settings-menu";
 
-import { PlayFill, StopFill, GearFill } from "react-bootstrap-icons";
-import { StatusIndicator } from "./components/status-indicator";
+import {
+  PlayFill,
+  StopFill,
+  GearFill,
+  PauseFill,
+  FileEarmarkCheckFill,
+  ImageFill,
+} from "react-bootstrap-icons";
+import { StatusIndicator } from "@/components/status-indicator";
 import { Header } from "./Header";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  DropdownMenuGroup,
+} from "@/components/ui/dropdown-menu";
 
 function selectAndReadFile(): Promise<UserFile> {
   return new Promise((resolve, reject) => {
@@ -64,6 +86,7 @@ export function Playground() {
   const output = useRef<Output>(null);
   const [settings, setSettings] = useState(createDefaultSettings());
   const [emulator, setEmulator] = useState<Emulator | null>(null);
+  const [, forceUpdate] = useReducer((x) => x + 1, 0);
 
   function logLine(line: string) {
     output.current?.logLine(line);
@@ -71,6 +94,18 @@ export function Playground() {
 
   function logLines(lines: string[]) {
     output.current?.logLines(lines);
+  }
+
+  function isEmulatorPaused() {
+    return emulator && emulator.getState() == EmulationState.Paused;
+  }
+
+  function toggleEmulatorState() {
+    if (isEmulatorPaused()) {
+      emulator?.resume();
+    } else {
+      emulator?.pause();
+    }
   }
 
   async function createEmulator(userFile: UserFile | null = null) {
@@ -83,7 +118,7 @@ export function Playground() {
       logLine(`Processing filesystem (${current}/${total}): ${file}`);
     });
 
-    const new_emulator = new Emulator(fs, logLines);
+    const new_emulator = new Emulator(fs, logLines, (_) => forceUpdate());
     new_emulator.onTerminate().then(() => setEmulator(null));
     setEmulator(new_emulator);
 
@@ -104,22 +139,62 @@ export function Playground() {
       <SidebarProvider defaultOpen={false}>
         <AppSidebar />
         <SidebarInset className="h-[100dvh]">
-          <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4 overflow-y-auto">
-            <SidebarTrigger className="-ml-1" />
-            <Separator orientation="vertical" className="mr-2 h-4" />
-            <Button onClick={() => createEmulator()}>
-              <PlayFill /> Run Sample
+          <header className="flex shrink-0 items-center gap-2 border-b p-2 overflow-y-auto">
+            <SidebarTrigger />
+            <Separator orientation="vertical" className="h-4" />
+
+            {/* RUN */}
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm">
+                  <PlayFill /> Run
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-56">
+                <DropdownMenuLabel>Run Application</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  <DropdownMenuItem onClick={() => createEmulator()}>
+                    <ImageFill className="mr-2" />
+                    <span>Select Sample</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => loadAndRunUserFile()}>
+                    <FileEarmarkCheckFill className="mr-2" />
+                    <span>Seelct your .exe</span>
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <Button
+              disabled={!emulator}
+              size="sm"
+              variant="secondary"
+              onClick={() => emulator?.stop()}
+            >
+              <StopFill /> Stop
             </Button>
-            <Button onClick={() => loadAndRunUserFile()}>
-              <PlayFill /> Run your .exe
-            </Button>
-            <Button variant="secondary" onClick={() => emulator?.stop()}>
-              <StopFill /> Stop Emulation
+            <Button
+              size="sm"
+              disabled={!emulator}
+              variant="secondary"
+              onClick={toggleEmulatorState}
+            >
+              {isEmulatorPaused() ? (
+                <>
+                  <PlayFill /> Resume
+                </>
+              ) : (
+                <>
+                  <PauseFill /> Pause
+                </>
+              )}
             </Button>
 
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="secondary">
+                <Button size="sm" variant="secondary">
                   <GearFill /> Settings
                 </Button>
               </PopoverTrigger>
@@ -128,10 +203,12 @@ export function Playground() {
               </PopoverContent>
             </Popover>
             <div className="text-right flex-1">
-              <StatusIndicator running={!!emulator} />
+              <StatusIndicator
+                state={emulator ? emulator.getState() : EmulationState.Stopped}
+              />
             </div>
           </header>
-          <div className="flex flex-1 flex-col gap-4 p-4 overflow-auto">
+          <div className="flex flex-1 flex-col overflow-auto pt-4">
             <Output ref={output} />
           </div>
         </SidebarInset>

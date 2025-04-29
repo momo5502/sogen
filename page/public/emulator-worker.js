@@ -1,11 +1,16 @@
 var logLines = [];
 var lastFlush = new Date().getTime();
 
+var msgQueue = [];
+
 onmessage = async (event) => {
   const data = event.data;
   if (data.message == "run") {
     const payload = data.data;
     runEmulation(payload.filesystem, payload.file, payload.options);
+  } else if (data.message == "event") {
+    const payload = data.data;
+    msgQueue.push(payload);
   }
 };
 
@@ -30,6 +35,18 @@ function notifyExit(code) {
   flushLines();
   postMessage({ message: "end", data: code });
   self.close();
+}
+
+function handleMessage(message) {
+  postMessage({ message: "event", data: message });
+}
+
+function getMessageFromQueue() {
+  if (msgQueue.length == 0) {
+    return "";
+  }
+
+  return msgQueue.shift();
 }
 
 function runEmulation(filesystem, file, options) {

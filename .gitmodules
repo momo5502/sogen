@@ -18,3 +18,9 @@
 [submodule "deps/gtest-parallel"]
 	path = deps/gtest-parallel
 	url = https://github.com/google/gtest-parallel.git
+[submodule "deps/flatbuffers"]
+	path = deps/flatbuffers
+	url = https://github.com/google/flatbuffers.git
+[submodule "deps/base64"]
+	path = deps/base64
+	url = https://github.com/tobiaslocker/base64.git

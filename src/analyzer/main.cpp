@@ -6,6 +6,10 @@
 #include "object_watching.hpp"
 #include "snapshot.hpp"
 
+#ifdef OS_EMSCRIPTEN
+#include <event_handler.hpp>
+#endif
+
 #include <utils/interupt_handler.hpp>
 
 #include <cstdio>
@@ -249,6 +253,14 @@ namespace
     bool run(const analysis_options& options, const std::span<const std::string_view> args)
     {
         const auto win_emu = setup_emulator(options, args);
+
+#ifdef OS_EMSCRIPTEN
+        win_emu->callbacks.on_thread_switch = [&] {
+            debugger::event_context c{.win_emu = *win_emu};
+            debugger::handle_events(c); //
+        };
+#endif
+
         win_emu->log.log("Using emulator: %s\n", win_emu->emu().get_name().c_str());
 
         (void)&watch_system_objects;
