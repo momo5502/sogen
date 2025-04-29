@@ -68,9 +68,9 @@ button.fancy.bg-secondary:hover {
   border: 1px solid rgb(33, 33, 34);
 }
 
-.terminal-output span {
+/*.terminal-output span {
   padding: 0px 16px;
-}
+}*/
 
 .terminal-output {
   font-weight: 600;

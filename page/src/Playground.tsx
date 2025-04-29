@@ -210,7 +210,7 @@ export function Playground() {
               />
             </div>
           </header>
-          <div className="flex flex-1 flex-col overflow-auto pt-4">
+          <div className="flex flex-1 flex-col gap-4 p-4 overflow-auto">
             <Output ref={output} />
           </div>
         </SidebarInset>
