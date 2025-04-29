@@ -4,7 +4,7 @@ import { Output } from "@/components/output";
 import { Separator } from "@/components/ui/separator";
 
 import { Emulator, UserFile, EmulationState } from "./emulator";
-import { setupFilesystem } from "./filesystem";
+import { Filesystem, setupFilesystem } from "./filesystem";
 
 import "./App.css";
 import {
@@ -37,6 +37,18 @@ import {
   DropdownMenuGroup,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+
+import {
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerTrigger,
+} from "@/components/ui/drawer";
+import { FilesystemExplorer } from "./FilesystemExplorer";
 
 function selectAndReadFile(): Promise<UserFile> {
   return new Promise((resolve, reject) => {
@@ -75,7 +87,22 @@ export function Playground() {
   const output = useRef<Output>(null);
   const [settings, setSettings] = useState(createDefaultSettings());
   const [emulator, setEmulator] = useState<Emulator | null>(null);
+  const [filesystem, setFilesystem] = useState<Filesystem | null>(null);
+  const [filesystemPromise, setFilesystemPromise] =
+    useState<Promise<Filesystem> | null>(null);
   const [, forceUpdate] = useReducer((x) => x + 1, 0);
+
+  if (!filesystemPromise) {
+    const promise = new Promise<Filesystem>((resolve) => {
+      setupFilesystem((current, total, file) => {
+        logLine(`Processing filesystem (${current}/${total}): ${file}`);
+      }).then(resolve);
+    });
+
+    promise.then(setFilesystem);
+
+    setFilesystemPromise(promise);
+  }
 
   function logLine(line: string) {
     output.current?.logLine(line);
@@ -103,7 +130,7 @@ export function Playground() {
 
     logLine("Starting emulation...");
 
-    await setupFilesystem((current, total, file) => {
+    const fs = await setupFilesystem((current, total, file) => {
       logLine(`Processing filesystem (${current}/${total}): ${file}`);
     });
 
@@ -111,7 +138,7 @@ export function Playground() {
     new_emulator.onTerminate().then(() => setEmulator(null));
     setEmulator(new_emulator);
 
-    new_emulator.start(settings, userFile);
+    new_emulator.start(settings, userFile, fs);
   }
 
   async function loadAndRunUserFile() {
@@ -186,6 +213,31 @@ export function Playground() {
               <SettingsMenu settings={settings} onChange={setSettings} />
             </PopoverContent>
           </Popover>
+
+          {!filesystem ? (
+            <></>
+          ) : (
+            <Drawer>
+              <DrawerTrigger asChild>
+                <Button size="sm" variant="secondary" className="fancy">
+                  <GearFill /> Filesystem
+                </Button>
+              </DrawerTrigger>
+              <DrawerContent>
+                <DrawerHeader>
+                  {/*<DrawerTitle>Filesystem Explorer</DrawerTitle>
+                  <DrawerDescription>Description</DrawerDescription>
+                  <DrawerClose asChild>
+                    <Button variant="outline">Close</Button>
+                  </DrawerClose>*/}
+                </DrawerHeader>
+                <DrawerFooter>
+                  <FilesystemExplorer filesystem={filesystem} />
+                </DrawerFooter>
+              </DrawerContent>
+            </Drawer>
+          )}
+
           <div className="text-right flex-1">
             <StatusIndicator
               state={emulator ? emulator.getState() : EmulationState.Stopped}

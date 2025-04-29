@@ -1,64 +1,5 @@
-import { parseZipFile, FileEntry, ProgressHandler } from "./zip-file";
+import { parseZipFile, ProgressHandler } from "./zip-file";
 import idbfsModule, { MainModule } from "@irori/idbfs";
-
-function openDatabase(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open("cacheDB", 1);
-
-    request.onerror = (event: Event) => {
-      reject(event);
-    };
-
-    request.onsuccess = (event: Event) => {
-      resolve((event as any).target.result as IDBDatabase);
-    };
-
-    request.onupgradeneeded = (event: Event) => {
-      const db = (event as any).target.result as IDBDatabase;
-      if (!db.objectStoreNames.contains("cacheStore")) {
-        db.createObjectStore("cacheStore", { keyPath: "id" });
-      }
-    };
-  });
-}
-
-async function saveData(id: string, data: any) {
-  const db = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(["cacheStore"], "readwrite");
-    const objectStore = transaction.objectStore("cacheStore");
-    const request = objectStore.put({ id: id, data: data });
-
-    request.onsuccess = () => {
-      resolve("Data saved successfully");
-    };
-
-    request.onerror = (event) => {
-      reject("Save error: " + (event as any).target.errorCode);
-    };
-  });
-}
-
-async function getData(id: string) {
-  const db = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(["cacheStore"], "readonly");
-    const objectStore = transaction.objectStore("cacheStore");
-    const request = objectStore.get(id);
-
-    request.onsuccess = (event) => {
-      if ((event as any).target.result) {
-        resolve((event as any).target.result.data);
-      } else {
-        resolve(null);
-      }
-    };
-
-    request.onerror = (event) => {
-      reject("Retrieve error: " + (event as any).target.errorCode);
-    };
-  });
-}
 
 function fetchFilesystemZip() {
   return fetch("./root.zip?1", {
@@ -97,11 +38,42 @@ async function initializeIDBFS() {
   return idbfs;
 }
 
+export class Filesystem {
+  private idbfs: MainModule;
+
+  constructor(idbfs: MainModule) {
+    this.idbfs = idbfs;
+  }
+
+  async storeFile(file: string, data: ArrayBuffer) {
+    const buffer = new Uint8Array(data);
+    this.idbfs.FS.writeFile(file, buffer);
+    await this.sync();
+  }
+
+  async sync() {
+    await synchronizeIDBFS(this.idbfs, false);
+  }
+
+  readDir(dir: string): string[] {
+    return this.idbfs.FS.readdir(dir);
+  }
+
+  stat(file: string) {
+    return this.idbfs.FS.stat(file, false);
+  }
+
+  isFolder(file: string) {
+    return (this.stat(file).mode & 0x4000) != 0;
+  }
+}
+
 export async function setupFilesystem(progressHandler: ProgressHandler) {
   const idbfs = await initializeIDBFS();
+  const fs = new Filesystem(idbfs);
 
   if (idbfs.FS.analyzePath("/root/api-set.bin", false).exists) {
-    return;
+    return fs;
   }
 
   const filesystem = await fetchFilesystem(progressHandler);
@@ -119,12 +91,7 @@ export async function setupFilesystem(progressHandler: ProgressHandler) {
     }
   });
 
-  await synchronizeIDBFS(idbfs, false);
-}
+  await fs.sync();
 
-export async function storeFile(file: string, data: ArrayBuffer) {
-  const idbfs = await initializeIDBFS();
-  const buffer = new Uint8Array(data);
-  idbfs.FS.writeFile(file, buffer);
-  await synchronizeIDBFS(idbfs, false);
+  return fs;
 }

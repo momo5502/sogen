@@ -5,7 +5,7 @@ import * as flatbuffers from "flatbuffers";
 import * as fbDebugger from "@/fb/debugger";
 import * as fbDebuggerEvent from "@/fb/debugger/event";
 
-import { storeFile } from "./filesystem";
+import { Filesystem } from "./filesystem";
 
 type LogHandler = (lines: string[]) => void;
 
@@ -80,6 +80,7 @@ export class Emulator {
   async start(
     settings: Settings = createDefaultSettings(),
     userFile: UserFile | null = null,
+    fs: Filesystem,
   ) {
     var file = "c:/test-sample.exe";
     if (userFile) {
@@ -87,7 +88,7 @@ export class Emulator {
       const canonicalName = filename?.toLowerCase();
       file = "c:/" + canonicalName;
 
-      await storeFile("root/filesys/c/" + canonicalName, userFile.data);
+      await fs.storeFile("root/filesys/c/" + canonicalName, userFile.data);
     }
 
     this._setState(EmulationState.Running);
