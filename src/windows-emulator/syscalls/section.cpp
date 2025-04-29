@@ -171,6 +171,9 @@ namespace syscalls
 
             c.emu.write_memory(obj_address + 0x9C8, 0xFFFFFFFF); // TIME_ZONE_ID_INVALID
 
+            // Windows 2019 offset!
+            c.emu.write_memory(obj_address + 0xA70, 0xFFFFFFFF); // TIME_ZONE_ID_INVALID
+
             if (view_size)
             {
                 view_size.write(shared_section_size);

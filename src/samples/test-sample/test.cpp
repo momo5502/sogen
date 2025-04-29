@@ -11,6 +11,7 @@
 
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
+#include <intrin.h>
 #include <Windows.h>
 #include <WinSock2.h>
 #include <WS2tcpip.h>
@@ -458,6 +459,48 @@ namespace
         return true;
     }
 
+    bool test_time_zone()
+    {
+        DYNAMIC_TIME_ZONE_INFORMATION current_dtzi = {};
+        DWORD result = GetDynamicTimeZoneInformation(&current_dtzi);
+
+        if (result == TIME_ZONE_ID_INVALID)
+        {
+            return false;
+        }
+
+        if (current_dtzi.Bias != -60 || current_dtzi.StandardBias != 0 || current_dtzi.DaylightBias != -60 ||
+            current_dtzi.DynamicDaylightTimeDisabled != FALSE)
+        {
+            return false;
+        }
+
+        if (wcscmp(current_dtzi.StandardName, L"W. Europe Standard Time") != 0 ||
+            wcscmp(current_dtzi.DaylightName, L"W. Europe Daylight Time") != 0 ||
+            wcscmp(current_dtzi.TimeZoneKeyName, L"W. Europe Standard Time") != 0)
+        {
+            return false;
+        }
+
+        if (current_dtzi.StandardDate.wYear != 0 || current_dtzi.StandardDate.wMonth != 10 ||
+            current_dtzi.StandardDate.wDayOfWeek != 0 || current_dtzi.StandardDate.wDay != 5 ||
+            current_dtzi.StandardDate.wHour != 3 || current_dtzi.StandardDate.wMinute != 0 ||
+            current_dtzi.StandardDate.wSecond != 0 || current_dtzi.StandardDate.wMilliseconds != 0)
+        {
+            return false;
+        }
+
+        if (current_dtzi.DaylightDate.wYear != 0 || current_dtzi.DaylightDate.wMonth != 3 ||
+            current_dtzi.DaylightDate.wDayOfWeek != 0 || current_dtzi.DaylightDate.wDay != 5 ||
+            current_dtzi.DaylightDate.wHour != 2 || current_dtzi.DaylightDate.wMinute != 0 ||
+            current_dtzi.DaylightDate.wSecond != 0 || current_dtzi.DaylightDate.wMilliseconds != 0)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
     void throw_exception()
     {
         if (do_the_task)
@@ -599,6 +642,36 @@ namespace
         return test_access_violation_exception() && test_illegal_instruction_exception();
     }
 
+    bool trap_flag_cleared = false;
+    constexpr DWORD TRAP_FLAG_MASK = 0x100;
+
+    LONG NTAPI single_step_handler(PEXCEPTION_POINTERS exception_info)
+    {
+        if (exception_info->ExceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP)
+        {
+            PCONTEXT context = exception_info->ContextRecord;
+            trap_flag_cleared = (context->EFlags & TRAP_FLAG_MASK) == 0;
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
+
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    bool test_interrupts()
+    {
+        PVOID veh_handle = AddVectoredExceptionHandler(1, single_step_handler);
+        if (!veh_handle)
+            return false;
+
+        __writeeflags(__readeflags() | TRAP_FLAG_MASK);
+
+        __nop();
+
+        RemoveVectoredExceptionHandler(veh_handle);
+
+        return trap_flag_cleared;
+    }
+
     void print_time()
     {
         const auto epoch_time = std::chrono::system_clock::now().time_since_epoch();
@@ -651,10 +724,15 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_working_directory, "Working Directory")
     RUN_TEST(test_registry, "Registry")
     RUN_TEST(test_system_info, "System Info")
+    RUN_TEST(test_time_zone, "Time Zone")
     RUN_TEST(test_threads, "Threads")
     RUN_TEST(test_env, "Environment")
     RUN_TEST(test_exceptions, "Exceptions")
     RUN_TEST(test_native_exceptions, "Native Exceptions")
+    if (!getenv("EMULATOR_ICICLE"))
+    {
+        RUN_TEST(test_interrupts, "Interrupts")
+    }
     RUN_TEST(test_tls, "TLS")
     RUN_TEST(test_socket, "Socket")
     RUN_TEST(test_apc, "APC")

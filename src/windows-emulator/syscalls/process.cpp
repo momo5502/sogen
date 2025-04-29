@@ -348,6 +348,11 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
+    NTSTATUS handle_NtOpenProcess()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
     NTSTATUS handle_NtOpenProcessToken(const syscall_context&, const handle process_handle,
                                        const ACCESS_MASK /*desired_access*/, const emulator_object<handle> token_handle)
     {

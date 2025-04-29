@@ -140,9 +140,20 @@ namespace syscalls
     {
         if (!f->enumeration_state || query_flags & SL_RESTART_SCAN)
         {
+            const auto mask = file_mask ? read_unicode_string(c.emu, file_mask) : u"";
+
+            if (!mask.empty())
+            {
+                c.win_emu.log.print(color::dark_gray, "--> Enumerating directory: %s (Mask: \"%s\")\n",
+                                    u16_to_u8(f->name).c_str(), u16_to_u8(mask).c_str());
+            }
+            else
+            {
+                c.win_emu.log.print(color::dark_gray, "--> Enumerating directory: %s\n", u16_to_u8(f->name).c_str());
+            }
+
             f->enumeration_state.emplace(file_enumeration_state{});
-            f->enumeration_state->files = scan_directory(c.win_emu.file_sys.translate(f->name),
-                                                         file_mask ? read_unicode_string(c.emu, file_mask) : u"");
+            f->enumeration_state->files = scan_directory(c.win_emu.file_sys.translate(f->name), mask);
         }
 
         auto& enum_state = *f->enumeration_state;
@@ -154,6 +165,10 @@ namespace syscalls
 
         if (current_index >= enum_state.files.size())
         {
+            IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+            block.Information = 0;
+            io_status_block.write(block);
+
             return STATUS_NO_MORE_FILES;
         }
 
@@ -191,11 +206,7 @@ namespace syscalls
             T info{};
             info.NextEntryOffset = 0;
             info.FileIndex = static_cast<ULONG>(current_index);
-            info.FileAttributes = FILE_ATTRIBUTE_NORMAL;
-            if (current_file.is_directory)
-            {
-                info.FileAttributes |= FILE_ATTRIBUTE_DIRECTORY;
-            }
+            info.FileAttributes = current_file.is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
             info.FileNameLength = static_cast<ULONG>(file_name.size() * 2);
             info.EndOfFile.QuadPart = current_file.file_size;
 
@@ -722,8 +733,20 @@ namespace syscalls
             return STATUS_INVALID_PARAMETER;
         }
 
-        const auto filename = read_unicode_string(
+        auto filename = read_unicode_string(
             c.emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, attributes.ObjectName});
+
+        if (attributes.RootDirectory)
+        {
+            const auto* root = c.proc.files.get(attributes.RootDirectory);
+            if (!root)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            const auto has_separator = root->name.ends_with(u"\\") || root->name.ends_with(u"/");
+            filename = root->name + (has_separator ? u"" : u"\\") + filename;
+        }
 
         c.win_emu.log.print(color::dark_gray, "--> Querying file attributes: %s\n", u16_to_u8(filename).c_str());
 
