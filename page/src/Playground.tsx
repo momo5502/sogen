@@ -147,7 +147,7 @@ export function Playground() {
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button size="sm">
+                <Button size="sm" className="fancy">
                   <PlayFill /> Run
                 </Button>
               </DropdownMenuTrigger>
@@ -161,7 +161,7 @@ export function Playground() {
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => loadAndRunUserFile()}>
                     <FileEarmarkCheckFill className="mr-2" />
-                    <span>Seelct your .exe</span>
+                    <span>Select your .exe</span>
                   </DropdownMenuItem>
                 </DropdownMenuGroup>
               </DropdownMenuContent>
@@ -171,6 +171,7 @@ export function Playground() {
               disabled={!emulator}
               size="sm"
               variant="secondary"
+              className="fancy"
               onClick={() => emulator?.stop()}
             >
               <StopFill /> Stop
@@ -179,6 +180,7 @@ export function Playground() {
               size="sm"
               disabled={!emulator}
               variant="secondary"
+              className="fancy"
               onClick={toggleEmulatorState}
             >
               {isEmulatorPaused() ? (
@@ -194,7 +196,7 @@ export function Playground() {
 
             <Popover>
               <PopoverTrigger asChild>
-                <Button size="sm" variant="secondary">
+                <Button size="sm" variant="secondary" className="fancy">
                   <GearFill /> Settings
                 </Button>
               </PopoverTrigger>
