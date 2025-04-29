@@ -1,14 +1,7 @@
 import { useState, useRef, useReducer } from "react";
 import { Output } from "@/components/output";
 
-import { AppSidebar } from "@/components/app-sidebar";
 import { Separator } from "@/components/ui/separator";
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@/components/ui/sidebar";
-import { Button } from "@/components/ui/button";
 
 import { Emulator, UserFile, EmulationState } from "./emulator";
 import { getFilesystem } from "./filesystem";
@@ -33,11 +26,6 @@ import {
 } from "react-bootstrap-icons";
 import { StatusIndicator } from "@/components/status-indicator";
 import { Header } from "./Header";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
 
 import {
   DropdownMenu,
@@ -48,6 +36,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuGroup,
 } from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
 
 function selectAndReadFile(): Promise<UserFile> {
   return new Promise((resolve, reject) => {
@@ -136,85 +125,77 @@ export function Playground() {
         title="Playground - Sogen"
         description="Playground to test and run Sogen, the Windows user space emulator, right in your browser."
       />
-      <SidebarProvider defaultOpen={false}>
-        <AppSidebar />
-        <SidebarInset className="h-[100dvh]">
-          <header className="flex shrink-0 items-center gap-2 border-b p-2 overflow-y-auto">
-            <SidebarTrigger />
-            <Separator orientation="vertical" className="h-4" />
+      <div className="h-[100dvh] flex flex-col">
+        <header className="flex shrink-0 items-center gap-2 border-b p-2 overflow-y-auto">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" className="fancy">
+                <PlayFill /> Run
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-56">
+              <DropdownMenuLabel>Run Application</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuItem onClick={() => createEmulator()}>
+                  <ImageFill className="mr-2" />
+                  <span>Select Sample</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => loadAndRunUserFile()}>
+                  <FileEarmarkCheckFill className="mr-2" />
+                  <span>Select your .exe</span>
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-            {/* RUN */}
+          <Button
+            disabled={!emulator}
+            size="sm"
+            variant="secondary"
+            className="fancy"
+            onClick={() => emulator?.stop()}
+          >
+            <StopFill /> Stop
+          </Button>
+          <Button
+            size="sm"
+            disabled={!emulator}
+            variant="secondary"
+            className="fancy"
+            onClick={toggleEmulatorState}
+          >
+            {isEmulatorPaused() ? (
+              <>
+                <PlayFill /> Resume
+              </>
+            ) : (
+              <>
+                <PauseFill /> Pause
+              </>
+            )}
+          </Button>
 
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button size="sm" className="fancy">
-                  <PlayFill /> Run
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-56">
-                <DropdownMenuLabel>Run Application</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuGroup>
-                  <DropdownMenuItem onClick={() => createEmulator()}>
-                    <ImageFill className="mr-2" />
-                    <span>Select Sample</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => loadAndRunUserFile()}>
-                    <FileEarmarkCheckFill className="mr-2" />
-                    <span>Select your .exe</span>
-                  </DropdownMenuItem>
-                </DropdownMenuGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            <Button
-              disabled={!emulator}
-              size="sm"
-              variant="secondary"
-              className="fancy"
-              onClick={() => emulator?.stop()}
-            >
-              <StopFill /> Stop
-            </Button>
-            <Button
-              size="sm"
-              disabled={!emulator}
-              variant="secondary"
-              className="fancy"
-              onClick={toggleEmulatorState}
-            >
-              {isEmulatorPaused() ? (
-                <>
-                  <PlayFill /> Resume
-                </>
-              ) : (
-                <>
-                  <PauseFill /> Pause
-                </>
-              )}
-            </Button>
-
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button size="sm" variant="secondary" className="fancy">
-                  <GearFill /> Settings
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent>
-                <SettingsMenu settings={settings} onChange={setSettings} />
-              </PopoverContent>
-            </Popover>
-            <div className="text-right flex-1">
-              <StatusIndicator
-                state={emulator ? emulator.getState() : EmulationState.Stopped}
-              />
-            </div>
-          </header>
-          <div className="flex flex-1 flex-col gap-4 p-4 overflow-auto">
-            <Output ref={output} />
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button size="sm" variant="secondary" className="fancy">
+                <GearFill /> Settings
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent>
+              <SettingsMenu settings={settings} onChange={setSettings} />
+            </PopoverContent>
+          </Popover>
+          <div className="text-right flex-1">
+            <StatusIndicator
+              state={emulator ? emulator.getState() : EmulationState.Stopped}
+            />
           </div>
-        </SidebarInset>
-      </SidebarProvider>
+        </header>
+        <div className="flex flex-1 flex-col gap-2 p-2 overflow-auto">
+          <Output ref={output} />
+        </div>
+      </div>
     </>
   );
 }
