@@ -5,6 +5,8 @@ import * as flatbuffers from "flatbuffers";
 import * as fbDebugger from "@/fb/debugger";
 import * as fbDebuggerEvent from "@/fb/debugger/event";
 
+import { storeFile } from "./filesystem";
+
 type LogHandler = (lines: string[]) => void;
 
 export interface UserFile {
@@ -50,7 +52,6 @@ function decodeEvent(data: string) {
 type StateChangeHandler = (state: EmulationState) => void;
 
 export class Emulator {
-  filesystem: FileEntry[];
   logHandler: LogHandler;
   stateChangeHandler: StateChangeHandler;
   terminatePromise: Promise<number | null>;
@@ -59,12 +60,7 @@ export class Emulator {
   worker: Worker;
   state: EmulationState = EmulationState.Stopped;
 
-  constructor(
-    filesystem: FileEntry[],
-    logHandler: LogHandler,
-    stateChangeHandler: StateChangeHandler,
-  ) {
-    this.filesystem = filesystem;
+  constructor(logHandler: LogHandler, stateChangeHandler: StateChangeHandler) {
     this.logHandler = logHandler;
     this.stateChangeHandler = stateChangeHandler;
     this.terminateResolve = () => {};
@@ -81,7 +77,7 @@ export class Emulator {
     this.worker.onmessage = this._onMessage.bind(this);
   }
 
-  start(
+  async start(
     settings: Settings = createDefaultSettings(),
     userFile: UserFile | null = null,
   ) {
@@ -90,17 +86,14 @@ export class Emulator {
       const filename = userFile.name.split("/").pop()?.split("\\").pop();
       const canonicalName = filename?.toLowerCase();
       file = "c:/" + canonicalName;
-      this.filesystem.push({
-        name: "root/filesys/c/" + canonicalName,
-        data: userFile.data,
-      });
+
+      await storeFile("root/filesys/c/" + canonicalName, userFile.data);
     }
 
     this._setState(EmulationState.Running);
     this.worker.postMessage({
       message: "run",
       data: {
-        filesystem: this.filesystem,
         file,
         options: translateSettings(settings),
       },

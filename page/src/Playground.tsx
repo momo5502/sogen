@@ -4,7 +4,7 @@ import { Output } from "@/components/output";
 import { Separator } from "@/components/ui/separator";
 
 import { Emulator, UserFile, EmulationState } from "./emulator";
-import { getFilesystem } from "./filesystem";
+import { setupFilesystem } from "./filesystem";
 
 import "./App.css";
 import {
@@ -103,11 +103,11 @@ export function Playground() {
 
     logLine("Starting emulation...");
 
-    const fs = await getFilesystem((current, total, file) => {
+    await setupFilesystem((current, total, file) => {
       logLine(`Processing filesystem (${current}/${total}): ${file}`);
     });
 
-    const new_emulator = new Emulator(fs, logLines, (_) => forceUpdate());
+    const new_emulator = new Emulator(logLines, (_) => forceUpdate());
     new_emulator.onTerminate().then(() => setEmulator(null));
     setEmulator(new_emulator);
 

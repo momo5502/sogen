@@ -1,4 +1,5 @@
 import { parseZipFile, FileEntry, ProgressHandler } from "./zip-file";
+import idbfsModule, { MainModule } from "@irori/idbfs";
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -59,23 +60,6 @@ async function getData(id: string) {
   });
 }
 
-async function cacheAndUseData(
-  id: string,
-  asyncFunction: () => Promise<FileEntry[]>,
-) {
-  try {
-    let data = (await getData(id)) as FileEntry[];
-    if (!data) {
-      data = await asyncFunction();
-      await saveData(id, data);
-    }
-    return data;
-  } catch (error) {
-    console.error("Error:", error);
-    throw error;
-  }
-}
-
 function fetchFilesystemZip() {
   return fetch("./root.zip?1", {
     method: "GET",
@@ -90,8 +74,57 @@ async function fetchFilesystem(progressHandler: ProgressHandler) {
   return await parseZipFile(filesys, progressHandler);
 }
 
-export function getFilesystem(progressHandler: ProgressHandler) {
-  return cacheAndUseData("emulator-filesystem-2", () =>
-    fetchFilesystem(progressHandler),
-  );
+function synchronizeIDBFS(idbfs: MainModule, populate: boolean) {
+  return new Promise<void>((resolve, reject) => {
+    idbfs.FS.syncfs(populate, function (err: any) {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
+async function initializeIDBFS() {
+  const idbfs = await idbfsModule();
+
+  idbfs.FS.mkdir("/root");
+  idbfs.FS.mount(idbfs.IDBFS, {}, "/root");
+
+  await synchronizeIDBFS(idbfs, true);
+
+  return idbfs;
+}
+
+export async function setupFilesystem(progressHandler: ProgressHandler) {
+  const idbfs = await initializeIDBFS();
+
+  if (idbfs.FS.analyzePath("/root/api-set.bin", false).exists) {
+    return;
+  }
+
+  const filesystem = await fetchFilesystem(progressHandler);
+
+  filesystem.forEach((e) => {
+    if (idbfs.FS.analyzePath("/" + e.name, false).exists) {
+      return;
+    }
+
+    if (e.name.endsWith("/")) {
+      idbfs.FS.mkdir("/" + e.name.slice(0, -1));
+    } else {
+      const buffer = new Uint8Array(e.data);
+      idbfs.FS.writeFile("/" + e.name, buffer);
+    }
+  });
+
+  await synchronizeIDBFS(idbfs, false);
+}
+
+export async function storeFile(file: string, data: ArrayBuffer) {
+  const idbfs = await initializeIDBFS();
+  const buffer = new Uint8Array(data);
+  idbfs.FS.writeFile(file, buffer);
+  await synchronizeIDBFS(idbfs, false);
 }

@@ -7,7 +7,7 @@ onmessage = async (event) => {
   const data = event.data;
   if (data.message == "run") {
     const payload = data.data;
-    runEmulation(payload.filesystem, payload.file, payload.options);
+    runEmulation(payload.file, payload.options);
   } else if (data.message == "event") {
     const payload = data.data;
     msgQueue.push(payload);
@@ -49,22 +49,17 @@ function getMessageFromQueue() {
   return msgQueue.shift();
 }
 
-function runEmulation(filesystem, file, options) {
+function runEmulation(file, options) {
+  const mainArguments = [...options, "-e", "./root", file];
+
   globalThis.Module = {
-    arguments: [...options, "-e", "./root", file],
+    arguments: mainArguments,
+    noInitialRun: true,
     onRuntimeInitialized: function () {
-      filesystem.forEach((e) => {
-        if (e.name.endsWith("/")) {
-          FS.mkdir(e.name.slice(0, -1));
-        } else {
-          const dirs = e.name.split("/");
-          const file = dirs.pop();
-          const buffer = new Uint8Array(e.data);
-          if (FS.analyzePath(e.name).exists) {
-            FS.unlink(e.name);
-          }
-          FS.createDataFile("/" + dirs.join("/"), file, buffer, true, true);
-        }
+      FS.mkdir("/root");
+      FS.mount(IDBFS, {}, "/root");
+      FS.syncfs(true, function (err) {
+        Module.callMain(mainArguments);
       });
     },
     print: logLine,
