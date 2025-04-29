@@ -23,7 +23,14 @@ import {
 import { createDefaultSettings } from "./settings";
 import { SettingsMenu } from "@/components/settings-menu";
 
-import { PlayFill, StopFill, GearFill, PauseFill } from "react-bootstrap-icons";
+import {
+  PlayFill,
+  StopFill,
+  GearFill,
+  PauseFill,
+  FileEarmarkCheckFill,
+  ImageFill,
+} from "react-bootstrap-icons";
 import { StatusIndicator } from "@/components/status-indicator";
 import { Header } from "./Header";
 import {
@@ -31,6 +38,16 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
+
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  DropdownMenuGroup,
+} from "@/components/ui/dropdown-menu";
 
 function selectAndReadFile(): Promise<UserFile> {
   return new Promise((resolve, reject) => {
@@ -125,23 +142,52 @@ export function Playground() {
           <header className="flex shrink-0 items-center gap-2 border-b p-2 overflow-y-auto">
             <SidebarTrigger />
             <Separator orientation="vertical" className="h-4" />
-            <Button size="sm" onClick={() => createEmulator()}>
-              <PlayFill /> Run Sample
+
+            {/* RUN */}
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm">
+                  <PlayFill /> Run
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-56">
+                <DropdownMenuLabel>Run Application</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  <DropdownMenuItem onClick={() => createEmulator()}>
+                    <ImageFill className="mr-2" />
+                    <span>Select Sample</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => loadAndRunUserFile()}>
+                    <FileEarmarkCheckFill className="mr-2" />
+                    <span>Seelct your .exe</span>
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <Button
+              disabled={!emulator}
+              size="sm"
+              variant="secondary"
+              onClick={() => emulator?.stop()}
+            >
+              <StopFill /> Stop
             </Button>
-            <Button size="sm" onClick={() => loadAndRunUserFile()}>
-              <PlayFill /> Run your .exe
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => emulator?.stop()}>
-              <StopFill /> Stop Emulation
-            </Button>
-            <Button size="sm" variant="secondary" onClick={toggleEmulatorState}>
+            <Button
+              size="sm"
+              disabled={!emulator}
+              variant="secondary"
+              onClick={toggleEmulatorState}
+            >
               {isEmulatorPaused() ? (
                 <>
-                  <PlayFill /> Resume Emulation
+                  <PlayFill /> Resume
                 </>
               ) : (
                 <>
-                  <PauseFill /> Pause Emulation
+                  <PauseFill /> Pause
                 </>
               )}
             </Button>
@@ -162,35 +208,8 @@ export function Playground() {
               />
             </div>
           </header>
-          <div className="flex flex-1 flex-col overflow-auto">
-            <ResizablePanelGroup direction="horizontal" autoSaveId="debugger-panel-group">
-              {/* Left */}
-              <ResizablePanel className="resizable-cell">Disassembly</ResizablePanel>
-              <ResizableHandle />
-              {/* Middle */}
-              <ResizablePanel>
-                <ResizablePanelGroup direction="vertical" autoSaveId="debugger-panel-middle-group">
-                  {/* Middle - Top */}
-                  <ResizablePanel>
-                    <Output ref={output} />
-                  </ResizablePanel>
-                  <ResizableHandle />
-                  {/* Middle - Bottom */}
-                  <ResizablePanel className="resizable-cell">Memory</ResizablePanel>
-                </ResizablePanelGroup>
-              </ResizablePanel>
-              <ResizableHandle />
-              {/* Right */}
-              <ResizablePanel>
-                <ResizablePanelGroup direction="vertical" autoSaveId="debugger-panel-right-group">
-                  {/* Right - Top */}
-                  <ResizablePanel className="resizable-cell">Registers</ResizablePanel>
-                  <ResizableHandle />
-                  {/* Right - Bottom */}
-                  <ResizablePanel className="resizable-cell">Stack</ResizablePanel>
-                </ResizablePanelGroup>
-              </ResizablePanel>
-            </ResizablePanelGroup>
+          <div className="flex flex-1 flex-col overflow-auto pt-4">
+            <Output ref={output} />
           </div>
         </SidebarInset>
       </SidebarProvider>
