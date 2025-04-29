@@ -115,7 +115,10 @@ if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
     )
   else() 
     add_link_options(
+      -lidbfs.js
       -sENVIRONMENT=worker
+      -sINVOKE_RUN=0
+      -sEXPORTED_RUNTIME_METHODS=['callMain']
     )
   endif()
 endif()
