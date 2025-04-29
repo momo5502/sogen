@@ -2,6 +2,8 @@ import {
   FolderFill,
   FolderSymlinkFill,
   FileEarmark,
+  FiletypeExe,
+  FileEarmarkBinary,
 } from "react-bootstrap-icons";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -9,7 +11,15 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
+  ContextMenuSeparator,
+  ContextMenuLabel,
 } from "@/components/ui/context-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 export enum FolderElementType {
   Folder = 0,
@@ -38,10 +48,15 @@ function elementComparator(e1: FolderElement, e2: FolderElement) {
   return e1.name.localeCompare(e2.name);
 }
 
-function renderIcon(element: FolderElement) {
-  let className = "w-10 h-10";
+function getIcon(element: FolderElement, className: string = "") {
   switch (element.type) {
     case FolderElementType.File:
+      if (element.name.endsWith(".dll")) {
+        return <FileEarmarkBinary className={className} />;
+      }
+      if (element.name.endsWith(".exe")) {
+        return <FiletypeExe className={className} />;
+      }
       return <FileEarmark className={className} />;
     case FolderElementType.Folder:
       return element.name == ".." ? (
@@ -52,6 +67,11 @@ function renderIcon(element: FolderElement) {
     default:
       return <></>;
   }
+}
+
+function renderIcon(element: FolderElement) {
+  let className = "w-10 h-10";
+  return getIcon(element, className);
 }
 
 function renderElement(element: FolderElement, clickHandler: ClickHandler) {
@@ -80,9 +100,18 @@ function renderElementWithContext(
   return (
     <ContextMenu>
       <ContextMenuTrigger>
-        {renderElement(element, clickHandler)}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            {renderElement(element, clickHandler)}
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{element.name}</p>
+          </TooltipContent>
+        </Tooltip>
       </ContextMenuTrigger>
       <ContextMenuContent>
+        <ContextMenuLabel inset>{element.name}</ContextMenuLabel>
+        <ContextMenuSeparator />
         <ContextMenuItem>Rename</ContextMenuItem>
         <ContextMenuItem>Delete</ContextMenuItem>
       </ContextMenuContent>
@@ -93,18 +122,20 @@ function renderElementWithContext(
 export function Folder(props: FolderProps) {
   return (
     <ScrollArea className="h-[50dvh]">
-      <ContextMenu>
-        <ContextMenuTrigger>
-          <div className="folder flex flex-wrap">
-            {props.elements
-              .sort(elementComparator)
-              .map((e) => renderElementWithContext(e, props.clickHandler))}
-          </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem>Create new folder</ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
+      <TooltipProvider delayDuration={700}>
+        <ContextMenu>
+          <ContextMenuTrigger>
+            <div className="folder flex flex-wrap">
+              {props.elements
+                .sort(elementComparator)
+                .map((e) => renderElementWithContext(e, props.clickHandler))}
+            </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem>Create new folder</ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+      </TooltipProvider>
     </ScrollArea>
   );
 }
