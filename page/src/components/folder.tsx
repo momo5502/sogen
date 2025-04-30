@@ -33,13 +33,15 @@ export interface FolderElement {
 
 type ClickHandler = (element: FolderElement) => void;
 type CreateFolderHandler = () => void;
+type RemoveElementHandler = (element: FolderElement) => void;
+type RenameElementHandler = (element: FolderElement) => void;
 
 export interface FolderProps {
   elements: FolderElement[];
   clickHandler: ClickHandler;
   createFolderHandler: CreateFolderHandler;
-  //deleteHandler: (element: FolderElement) => void;
-  //renameHandler: (element: FolderElement, name: string) => void;
+  removeElementHandler: RemoveElementHandler;
+  renameElementHandler: RenameElementHandler;
 }
 
 function elementComparator(e1: FolderElement, e2: FolderElement) {
@@ -90,12 +92,9 @@ function renderElement(element: FolderElement, clickHandler: ClickHandler) {
   );
 }
 
-function renderElementWithContext(
-  element: FolderElement,
-  clickHandler: ClickHandler,
-) {
+function renderElementWithContext(element: FolderElement, props: FolderProps) {
   if (element.name == "..") {
-    return renderElement(element, clickHandler);
+    return renderElement(element, props.clickHandler);
   }
 
   return (
@@ -103,7 +102,7 @@ function renderElementWithContext(
       <ContextMenuTrigger>
         <Tooltip>
           <TooltipTrigger asChild>
-            {renderElement(element, clickHandler)}
+            {renderElement(element, props.clickHandler)}
           </TooltipTrigger>
           <TooltipContent>
             <p>{element.name}</p>
@@ -113,18 +112,23 @@ function renderElementWithContext(
       <ContextMenuContent>
         <ContextMenuLabel inset>{element.name}</ContextMenuLabel>
         <ContextMenuSeparator />
-        <ContextMenuItem>Rename</ContextMenuItem>
-        <ContextMenuItem>Delete</ContextMenuItem>
+        <ContextMenuItem onClick={() => props.renameElementHandler(element)}>
+          Rename
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => props.removeElementHandler(element)}>
+          Delete
+        </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
   );
 }
 
-function renderElementWrapper(  element: FolderElement,
-    clickHandler: ClickHandler,) {
-    return <div key={`folder-element-${element.name}`}>
-        {renderElementWithContext(element, clickHandler)}
+function renderElementWrapper(element: FolderElement, props: FolderProps) {
+  return (
+    <div key={`folder-element-${element.name}`}>
+      {renderElementWithContext(element, props)}
     </div>
+  );
 }
 
 function renderFolderCreator(createFolderHandler: CreateFolderHandler) {
@@ -144,7 +148,7 @@ export function Folder(props: FolderProps) {
             <div className="folder flex flex-wrap">
               {props.elements
                 .sort(elementComparator)
-                .map((e) => renderElementWrapper(e, props.clickHandler))}
+                .map((e) => renderElementWrapper(e, props))}
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent>

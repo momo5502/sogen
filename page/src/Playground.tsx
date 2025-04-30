@@ -225,11 +225,12 @@ export function Playground() {
               </DrawerTrigger>
               <DrawerContent>
                 <DrawerHeader>
-                  {/*<DrawerTitle>Filesystem Explorer</DrawerTitle>
-                  <DrawerDescription>Description</DrawerDescription>
-                  <DrawerClose asChild>
-                    <Button variant="outline">Close</Button>
-                  </DrawerClose>*/}
+                  <DrawerTitle className="hidden">
+                    Filesystem Explorer
+                  </DrawerTitle>
+                  <DrawerDescription className="hidden">
+                    Filesystem Explorer
+                  </DrawerDescription>
                 </DrawerHeader>
                 <DrawerFooter>
                   <FilesystemExplorer filesystem={filesystem} />

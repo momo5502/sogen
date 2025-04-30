@@ -51,6 +51,31 @@ export class Filesystem {
     await this.sync();
   }
 
+  _unlinkRecursive(element: string) {
+    if (!this.isFolder(element)) {
+      this.idbfs.FS.unlink(element);
+      return;
+    }
+
+    this.readDir(element) //
+      .filter((e) => e != "." && e != "..")
+      .forEach((e) => {
+        this._unlinkRecursive(`${element}/${e}`);
+      });
+
+    this.idbfs.FS.rmdir(element);
+  }
+
+  async rename(oldFile: string, newFile: string) {
+    this.idbfs.FS.rename(oldFile, newFile);
+    await this.sync();
+  }
+
+  async unlink(file: string) {
+    this._unlinkRecursive(file);
+    await this.sync();
+  }
+
   async createFolder(folder: string) {
     this.idbfs.FS.mkdir(folder, 777);
     await this.sync();
