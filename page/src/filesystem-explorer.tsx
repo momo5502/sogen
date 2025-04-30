@@ -188,6 +188,36 @@ interface BreadcrumbElement {
   targetPath: string[];
 }
 
+function isGoodPath(path: any) {
+  return typeof path === "string" && path.length > 0;
+}
+
+function trimLeadingSlash(path: string) {
+  if (path.startsWith("/")) {
+    return path.substring(1);
+  }
+
+  return path;
+}
+
+function getFileName(file: File) {
+  const fileObj = file as any;
+  const properties = ["relativePath", "webkitRelativePath", "name"];
+
+  for (let i = 0; i < properties.length; ++i) {
+    const prop = properties[i];
+
+    if (prop in fileObj) {
+      const relativePath = fileObj[prop];
+      if (isGoodPath(relativePath)) {
+        return trimLeadingSlash(relativePath);
+      }
+    }
+  }
+
+  return file.name;
+}
+
 function generateBreadcrumbElements(path: string[]): BreadcrumbElement[] {
   const elements = path.map((p, index) => {
     const e: BreadcrumbElement = {
@@ -309,8 +339,9 @@ export class FilesystemExplorer extends React.Component<
     }
 
     const fileData = (await readFiles(files)).map((f) => {
+      const name = getFileName(f.file);
       return {
-        name: makeFullPathWithState(this.state, f.file.name.toLowerCase()),
+        name: makeFullPathWithState(this.state, name.toLowerCase()),
         data: f.data,
       };
     });
@@ -439,9 +470,7 @@ export class FilesystemExplorer extends React.Component<
           </DialogHeader>
           <div className="py-4">
             Are you sure you want to delete{" "}
-            <b>
-              {makeWindowsPathWithState(this.state, this.state.removeFile)}
-            </b>
+            <b>{makeWindowsPathWithState(this.state, this.state.removeFile)}</b>
           </div>
           <DialogFooter>
             <Button
