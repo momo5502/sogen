@@ -216,7 +216,7 @@ export class Playground extends React.Component<
                 open={this.state.drawerOpen}
                 onOpenChange={(o) => this.setState({ drawerOpen: o })}
               >
-                <DrawerContent>
+                <DrawerContent className="!will-change-auto">
                   <DrawerHeader>
                     <DrawerTitle className="hidden">
                       Filesystem Explorer
