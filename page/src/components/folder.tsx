@@ -36,9 +36,11 @@ type CreateFolderHandler = () => void;
 type RemoveElementHandler = (element: FolderElement) => void;
 type RenameElementHandler = (element: FolderElement) => void;
 type AddFilesHandler = () => void;
+type IconReader = (element: FolderElement) => string | null;
 
 export interface FolderProps {
   elements: FolderElement[];
+  iconReader: IconReader;
   clickHandler: ClickHandler;
   createFolderHandler: CreateFolderHandler;
   removeElementHandler: RemoveElementHandler;
@@ -54,7 +56,22 @@ function elementComparator(e1: FolderElement, e2: FolderElement) {
   return e1.name.localeCompare(e2.name);
 }
 
-function getIcon(element: FolderElement, className: string = "") {
+function getIcon(
+  element: FolderElement,
+  iconReader: IconReader,
+  className: string = "",
+) {
+  const icon = iconReader(element);
+  if (icon) {
+    return (
+      <div className={className}>
+        <div className="w-full h-full flex items-center">
+          <img className="rounded-sm" src={icon} />
+        </div>
+      </div>
+    );
+  }
+
   switch (element.type) {
     case FolderElementType.File:
       if (element.name.endsWith(".dll")) {
@@ -75,18 +92,18 @@ function getIcon(element: FolderElement, className: string = "") {
   }
 }
 
-function renderIcon(element: FolderElement) {
+function renderIcon(element: FolderElement, iconReader: IconReader) {
   let className = "w-6 h-6 flex-1";
-  return getIcon(element, className);
+  return getIcon(element, iconReader, className);
 }
 
-function renderElement(element: FolderElement, clickHandler: ClickHandler) {
+function renderElement(element: FolderElement, props: FolderProps) {
   return (
     <div
-      onClick={() => clickHandler(element)}
+      onClick={() => props.clickHandler(element)}
       className="folder-element select-none flex flex-col gap-2 items-center text-center text-xs p-2 m-2 w-25 h-18 rounded-lg border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50"
     >
-      {renderIcon(element)}
+      {renderIcon(element, props.iconReader)}
       <span className="whitespace-nowrap text-ellipsis overflow-hidden w-20">
         {element.name}
       </span>
@@ -96,7 +113,7 @@ function renderElement(element: FolderElement, clickHandler: ClickHandler) {
 
 function renderElementWithContext(element: FolderElement, props: FolderProps) {
   if (element.name == "..") {
-    return renderElement(element, props.clickHandler);
+    return renderElement(element, props);
   }
 
   return (
@@ -104,7 +121,7 @@ function renderElementWithContext(element: FolderElement, props: FolderProps) {
       <ContextMenuTrigger>
         <Tooltip delayDuration={700}>
           <TooltipTrigger asChild>
-            {renderElement(element, props.clickHandler)}
+            {renderElement(element, props)}
           </TooltipTrigger>
           <TooltipContent>
             <p>{element.name}</p>

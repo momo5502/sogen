@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/breadcrumb";
 
 import { HouseFill } from "react-bootstrap-icons";
+import { parsePeIcon } from "./pe-icon-parser";
 
 export interface FilesystemExplorerProps {
   filesystem: Filesystem;
@@ -156,6 +157,32 @@ function selectFiles(): Promise<FileList> {
   });
 }
 
+interface IconCache {
+  get: (file: string) => string | null;
+  set: (file: string, data: string | null) => void;
+}
+
+function getPeIcon(
+  filesystem: Filesystem,
+  file: string,
+  cache: Map<string, string | null>,
+) {
+  if (!file || !file.endsWith(".exe")) {
+    return null;
+  }
+
+  const cachedValue = cache.get(file);
+  if (cachedValue) {
+    return cachedValue;
+  }
+
+  const data = filesystem.readFile(file);
+  const icon = parsePeIcon(data);
+  cache.set(file, icon);
+
+  return icon;
+}
+
 interface BreadcrumbElement {
   node: React.ReactNode;
   targetPath: string[];
@@ -182,12 +209,16 @@ export class FilesystemExplorer extends React.Component<
   FilesystemExplorerProps,
   FilesystemExplorerState
 > {
+  private iconCache: Map<string, string | null>;
+
   constructor(props: FilesystemExplorerProps) {
     super(props);
 
     this._onAddFiles = this._onAddFiles.bind(this);
     this._uploadFiles = this._uploadFiles.bind(this);
     this._onElementSelect = this._onElementSelect.bind(this);
+
+    this.iconCache = new Map();
 
     this.state = {
       path: this.props.path,
@@ -556,6 +587,13 @@ export class FilesystemExplorer extends React.Component<
                   this.setState({ renameFile: e.name })
                 }
                 addFilesHandler={this._onAddFiles}
+                iconReader={(e) =>
+                  getPeIcon(
+                    this.props.filesystem,
+                    makeFullPathWithState(this.state, e.name),
+                    this.iconCache,
+                  )
+                }
               />
             </div>
           )}

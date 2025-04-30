@@ -82,6 +82,10 @@ export class Filesystem {
     this.idbfs.FS.writeFile(file.name, buffer);
   }
 
+  readFile(file: string): Uint8Array {
+    return this.idbfs.FS.readFile(file);
+  }
+
   async storeFiles(files: FileWithData[]) {
     files.forEach((f) => {
       this._storeFile(f);
