@@ -1,8 +1,8 @@
 import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { HashRouter, Route, Routes, Navigate } from "react-router-dom";
-import { Playground } from "./Playground";
-import { LandingPage } from "./LandingPage";
+import { Playground } from "./playground";
+import { LandingPage } from "./landing-page";
 
 import "@fontsource/inter/100.css";
 import "@fontsource/inter/200.css";

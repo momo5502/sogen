@@ -1,7 +1,6 @@
-import { useState, useRef, useReducer } from "react";
-import { Output } from "@/components/output";
+import React from "react";
 
-import { Separator } from "@/components/ui/separator";
+import { Output } from "@/components/output";
 
 import { Emulator, EmulationState } from "./emulator";
 import { Filesystem, setupFilesystem } from "./filesystem";
@@ -13,7 +12,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 
-import { createDefaultSettings } from "./settings";
+import { createDefaultSettings, Settings } from "./settings";
 import { SettingsMenu } from "@/components/settings-menu";
 
 import { PlayFill, StopFill, GearFill, PauseFill } from "react-bootstrap-icons";
@@ -30,176 +29,229 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "@/components/ui/drawer";
-import { FilesystemExplorer } from "./FilesystemExplorer";
+import { FilesystemExplorer } from "./filesystem-explorer";
 
-export function Playground() {
-  const output = useRef<Output>(null);
-  const [settings, setSettings] = useState(createDefaultSettings());
-  const [emulator, setEmulator] = useState<Emulator | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
-  const [filesystem, setFilesystem] = useState<Filesystem | null>(null);
-  const [filesystemPromise, setFilesystemPromise] =
-    useState<Promise<Filesystem> | null>(null);
-  const [, forceUpdate] = useReducer((x) => x + 1, 0);
+interface PlaygroundProps {}
+interface PlaygroundState {
+  settings: Settings;
+  filesystemPromise: Promise<Filesystem> | null;
+  filesystem: Filesystem | null;
+  emulator: Emulator | null;
+  drawerOpen: boolean;
+}
 
-  async function resetFilesys() {
-    const fs = await initFilesys();
-    await fs.delete();
+export class Playground extends React.Component<
+  PlaygroundProps,
+  PlaygroundState
+> {
+  private output: React.RefObject<Output | null>;
 
-    setFilesystemPromise(null);
-    setFilesystem(null);
-    setDrawerOpen(false);
+  constructor(props: PlaygroundProps) {
+    super(props);
 
-    output.current?.clear();
+    this.output = React.createRef();
+
+    this.start = this.start.bind(this);
+    this.resetFilesys = this.resetFilesys.bind(this);
+    this.createEmulator = this.createEmulator.bind(this);
+    this.toggleEmulatorState = this.toggleEmulatorState.bind(this);
+
+    this.state = {
+      settings: createDefaultSettings(),
+      filesystemPromise: null,
+      filesystem: null,
+      emulator: null,
+      drawerOpen: false,
+    };
   }
 
-  function initFilesys() {
-    if (filesystemPromise) {
-      return filesystemPromise;
+  async resetFilesys() {
+    if (!this.state.filesystem) {
+      return;
+    }
+
+    await this.state.filesystem.delete();
+
+    this.setState({
+      filesystemPromise: null,
+      filesystem: null,
+      drawerOpen: false,
+    });
+
+    this.output.current?.clear();
+  }
+
+  initFilesys() {
+    if (this.state.filesystemPromise) {
+      return this.state.filesystemPromise;
     }
 
     const promise = new Promise<Filesystem>((resolve) => {
-      logLine("Loading filesystem...");
+      this.logLine("Loading filesystem...");
       setupFilesystem((current, total, file) => {
-        logLine(`Processing filesystem (${current}/${total}): ${file}`);
+        this.logLine(`Processing filesystem (${current}/${total}): ${file}`);
       }).then(resolve);
     });
 
-    promise.then(setFilesystem);
-    setFilesystemPromise(promise);
+    promise.then((filesystem) => this.setState({ filesystem }));
+    this.setState({ filesystemPromise: promise });
 
     return promise;
   }
 
-  async function start() {
-    await initFilesys();
-    setDrawerOpen(true);
+  setDrawerOpen(drawerOpen: boolean) {
+    this.setState({ drawerOpen });
   }
 
-  function logLine(line: string) {
-    output.current?.logLine(line);
+  async start() {
+    await this.initFilesys();
+    this.setDrawerOpen(true);
   }
 
-  function logLines(lines: string[]) {
-    output.current?.logLines(lines);
+  logLine(line: string) {
+    this.output.current?.logLine(line);
   }
 
-  function isEmulatorPaused() {
-    return emulator && emulator.getState() == EmulationState.Paused;
+  logLines(lines: string[]) {
+    this.output.current?.logLines(lines);
   }
 
-  function toggleEmulatorState() {
-    if (isEmulatorPaused()) {
-      emulator?.resume();
+  isEmulatorPaused() {
+    return (
+      this.state.emulator &&
+      this.state.emulator.getState() == EmulationState.Paused
+    );
+  }
+
+  toggleEmulatorState() {
+    if (this.isEmulatorPaused()) {
+      this.state.emulator?.resume();
     } else {
-      emulator?.pause();
+      this.state.emulator?.pause();
     }
   }
 
-  async function createEmulator(userFile: string) {
-    emulator?.stop();
-    output.current?.clear();
+  async createEmulator(userFile: string) {
+    this.state.emulator?.stop();
+    this.output.current?.clear();
 
-    setDrawerOpen(false);
+    this.setDrawerOpen(false);
 
-    logLine("Starting emulation...");
+    this.logLine("Starting emulation...");
 
-    if (filesystemPromise) {
-      await filesystemPromise;
+    if (this.state.filesystemPromise) {
+      await this.state.filesystemPromise;
     }
 
-    const new_emulator = new Emulator(logLines, (_) => forceUpdate());
-    new_emulator.onTerminate().then(() => setEmulator(null));
-    setEmulator(new_emulator);
+    const new_emulator = new Emulator(
+      (l) => this.logLines(l),
+      (_) => this.forceUpdate(),
+    );
+    new_emulator.onTerminate().then(() => this.setState({ emulator: null }));
 
-    new_emulator.start(settings, userFile);
+    this.setState({ emulator: new_emulator });
+
+    new_emulator.start(this.state.settings, userFile);
   }
 
-  return (
-    <>
-      <Header
-        title="Playground - Sogen"
-        description="Playground to test and run Sogen, the Windows user space emulator, right in your browser."
-      />
-      <div className="h-[100dvh] flex flex-col">
-        <header className="flex shrink-0 items-center gap-2 border-b p-2 overflow-y-auto">
-          <Button size="sm" className="fancy" onClick={start}>
-            <PlayFill /> <span>Start</span>
-          </Button>
+  render() {
+    return (
+      <>
+        <Header
+          title="Playground - Sogen"
+          description="Playground to test and run Sogen, the Windows user space emulator, right in your browser."
+        />
+        <div className="h-[100dvh] flex flex-col">
+          <header className="flex shrink-0 items-center gap-2 border-b p-2 overflow-y-auto">
+            <Button size="sm" className="fancy" onClick={this.start}>
+              <PlayFill /> <span>Start</span>
+            </Button>
 
-          <Button
-            disabled={!emulator}
-            size="sm"
-            variant="secondary"
-            className="fancy"
-            onClick={() => emulator?.stop()}
-          >
-            <StopFill /> <span className="hidden sm:inline">Stop</span>
-          </Button>
-          <Button
-            size="sm"
-            disabled={!emulator}
-            variant="secondary"
-            className="fancy"
-            onClick={toggleEmulatorState}
-          >
-            {isEmulatorPaused() ? (
-              <>
-                <PlayFill /> <span className="hidden sm:inline">Resume</span>
-              </>
+            <Button
+              disabled={!this.state.emulator}
+              size="sm"
+              variant="secondary"
+              className="fancy"
+              onClick={() => this.state.emulator?.stop()}
+            >
+              <StopFill /> <span className="hidden sm:inline">Stop</span>
+            </Button>
+            <Button
+              size="sm"
+              disabled={!this.state.emulator}
+              variant="secondary"
+              className="fancy"
+              onClick={this.toggleEmulatorState}
+            >
+              {this.isEmulatorPaused() ? (
+                <>
+                  <PlayFill /> <span className="hidden sm:inline">Resume</span>
+                </>
+              ) : (
+                <>
+                  <PauseFill /> <span className="hidden sm:inline">Pause</span>
+                </>
+              )}
+            </Button>
+
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button size="sm" variant="secondary" className="fancy">
+                  <GearFill />{" "}
+                  <span className="hidden sm:inline">Settings</span>
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent>
+                <SettingsMenu
+                  settings={this.state.settings}
+                  onChange={(s) => this.setState({ settings: s })}
+                />
+              </PopoverContent>
+            </Popover>
+
+            {!this.state.filesystem ? (
+              <></>
             ) : (
-              <>
-                <PauseFill /> <span className="hidden sm:inline">Pause</span>
-              </>
+              <Drawer
+                open={this.state.drawerOpen}
+                onOpenChange={(o) => this.setState({ drawerOpen: o })}
+              >
+                <DrawerContent>
+                  <DrawerHeader>
+                    <DrawerTitle className="hidden">
+                      Filesystem Explorer
+                    </DrawerTitle>
+                    <DrawerDescription className="hidden">
+                      Filesystem Explorer
+                    </DrawerDescription>
+                  </DrawerHeader>
+                  <DrawerFooter>
+                    <FilesystemExplorer
+                      filesystem={this.state.filesystem}
+                      runFile={this.createEmulator}
+                      resetFilesys={this.resetFilesys}
+                      path={["c"]}
+                    />
+                  </DrawerFooter>
+                </DrawerContent>
+              </Drawer>
             )}
-          </Button>
 
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button size="sm" variant="secondary" className="fancy">
-                <GearFill /> <span className="hidden sm:inline">Settings</span>
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent>
-              <SettingsMenu settings={settings} onChange={setSettings} />
-            </PopoverContent>
-          </Popover>
-
-          {!filesystem ? (
-            <></>
-          ) : (
-            <Drawer open={drawerOpen} onOpenChange={setDrawerOpen}>
-              <DrawerContent>
-                <DrawerHeader>
-                  <DrawerTitle className="hidden">
-                    Filesystem Explorer
-                  </DrawerTitle>
-                  <DrawerDescription className="hidden">
-                    Filesystem Explorer
-                  </DrawerDescription>
-                </DrawerHeader>
-                <DrawerFooter>
-                  <FilesystemExplorer
-                    filesystem={filesystem}
-                    runFile={createEmulator}
-                    resetFilesys={resetFilesys}
-                    path={["c"]}
-                  />
-                </DrawerFooter>
-              </DrawerContent>
-            </Drawer>
-          )}
-
-          <div className="text-right flex-1">
-            <StatusIndicator
-              state={emulator ? emulator.getState() : EmulationState.Stopped}
-            />
+            <div className="text-right flex-1">
+              <StatusIndicator
+                state={
+                  this.state.emulator
+                    ? this.state.emulator.getState()
+                    : EmulationState.Stopped
+                }
+              />
+            </div>
+          </header>
+          <div className="flex flex-1 flex-col gap-2 p-2 overflow-auto">
+            <Output ref={this.output} />
           </div>
-        </header>
-        <div className="flex flex-1 flex-col gap-2 p-2 overflow-auto">
-          <Output ref={output} />
         </div>
-      </div>
-    </>
-  );
+      </>
+    );
+  }
 }

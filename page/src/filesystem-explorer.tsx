@@ -485,7 +485,7 @@ export class FilesystemExplorer extends React.Component<
   _renderBreadcrumbElements() {
     const elements = generateBreadcrumbElements(this.state.path);
 
-    return elements.map((e, index) => {
+    const nodes = elements.map((e, index) => {
       if (index == this.state.path.length) {
         return (
           <BreadcrumbItem key={`breadcrumb-item-${index}`}>
@@ -498,16 +498,20 @@ export class FilesystemExplorer extends React.Component<
 
       const navigate = () => this.setState({ path: e.targetPath });
       return (
-        <>
-          <BreadcrumbItem key={`breadcrumb-item-${index}`}>
-            <BreadcrumbLink key={`breadcrumb-link-${index}`} onClick={navigate}>
-              {e.node}
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator key={`breadcrumb-separator-${index}`} />
-        </>
+        <BreadcrumbItem key={`breadcrumb-item-${index}`}>
+          <BreadcrumbLink key={`breadcrumb-link-${index}`} onClick={navigate}>
+            {e.node}
+          </BreadcrumbLink>
+        </BreadcrumbItem>
       );
     });
+
+    return [
+      ...nodes.map((n, index) => [
+        n,
+        <BreadcrumbSeparator key={`breadcrumb-separator-${index}`} />,
+      ]),
+    ].slice(0, -1);
   }
 
   _renderBreadCrumb() {

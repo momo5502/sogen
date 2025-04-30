@@ -1,3 +1,3 @@
-Module['preRun'] = () => {
-    ENV = process.env;
+Module["preRun"] = () => {
+  ENV = process.env;
 };
