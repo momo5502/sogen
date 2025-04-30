@@ -118,6 +118,7 @@ CALL :collect wintypes.dll
 CALL :collect slwga.dll
 CALL :collect sppc.dll
 CALL :collect kernel.appcore.dll
+CALL :collect windows.storage.dll
 CALL :collect winnlsres.dll
 CALL :collect nlsbres.dll
 CALL :collect netutils.dll
@@ -127,6 +128,7 @@ CALL :collect d3d10core.dll
 CALL :collect cabinet.dll
 CALL :collect msacm32.dll
 CALL :collect coloradapterclient.dll
+CALL :collect netmsg.dll
 
 CALL :collect locale.nls
 CALL :collect c_1252.nls
