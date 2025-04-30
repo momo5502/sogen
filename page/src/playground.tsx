@@ -79,6 +79,8 @@ export class Playground extends React.Component<
     });
 
     this.output.current?.clear();
+
+    location.reload();
   }
 
   initFilesys() {
