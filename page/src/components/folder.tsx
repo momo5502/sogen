@@ -14,10 +14,10 @@ import {
   ContextMenuSeparator,
   ContextMenuLabel,
 } from "@/components/ui/context-menu";
+
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
@@ -35,6 +35,7 @@ type ClickHandler = (element: FolderElement) => void;
 type CreateFolderHandler = () => void;
 type RemoveElementHandler = (element: FolderElement) => void;
 type RenameElementHandler = (element: FolderElement) => void;
+type AddFilesHandler = () => void;
 
 export interface FolderProps {
   elements: FolderElement[];
@@ -42,6 +43,7 @@ export interface FolderProps {
   createFolderHandler: CreateFolderHandler;
   removeElementHandler: RemoveElementHandler;
   renameElementHandler: RenameElementHandler;
+  addFilesHandler: AddFilesHandler;
 }
 
 function elementComparator(e1: FolderElement, e2: FolderElement) {
@@ -100,7 +102,7 @@ function renderElementWithContext(element: FolderElement, props: FolderProps) {
   return (
     <ContextMenu>
       <ContextMenuTrigger>
-        <Tooltip>
+        <Tooltip delayDuration={700}>
           <TooltipTrigger asChild>
             {renderElement(element, props.clickHandler)}
           </TooltipTrigger>
@@ -131,31 +133,26 @@ function renderElementWrapper(element: FolderElement, props: FolderProps) {
   );
 }
 
-function renderFolderCreator(createFolderHandler: CreateFolderHandler) {
-  return (
-    <ContextMenuItem onClick={createFolderHandler}>
-      Create new Folder
-    </ContextMenuItem>
-  );
-}
-
 export function Folder(props: FolderProps) {
   return (
-    <ScrollArea className="h-[50dvh]">
-      <TooltipProvider delayDuration={700}>
-        <ContextMenu>
-          <ContextMenuTrigger>
-            <div className="folder flex flex-wrap">
-              {props.elements
-                .sort(elementComparator)
-                .map((e) => renderElementWrapper(e, props))}
-            </div>
-          </ContextMenuTrigger>
-          <ContextMenuContent>
-            {renderFolderCreator(props.createFolderHandler)}
-          </ContextMenuContent>
-        </ContextMenu>
-      </TooltipProvider>
-    </ScrollArea>
+    <ContextMenu>
+      <ContextMenuTrigger>
+        <ScrollArea className="h-[50dvh]">
+          <div className="folder flex flex-wrap h-full">
+            {props.elements
+              .sort(elementComparator)
+              .map((e) => renderElementWrapper(e, props))}
+          </div>
+        </ScrollArea>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onClick={props.createFolderHandler}>
+          Create new Folder
+        </ContextMenuItem>
+        <ContextMenuItem onClick={props.addFilesHandler}>
+          Add Files
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }

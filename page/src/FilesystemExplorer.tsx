@@ -15,10 +15,22 @@ import { Input } from "./components/ui/input";
 import { DialogDescription } from "@radix-ui/react-dialog";
 
 import Dropzone from "react-dropzone";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
+
+import { HouseFill } from "react-bootstrap-icons";
 
 export interface FilesystemExplorerProps {
   filesystem: Filesystem;
   runFile: (file: string) => void;
+  resetFilesys: () => void;
+  path: string[];
 }
 export interface FilesystemExplorerState {
   path: string[];
@@ -128,6 +140,43 @@ async function readFiles(files: FileList | File[]): Promise<FileWithData[]> {
   return Promise.all(promises);
 }
 
+function selectFiles(): Promise<FileList> {
+  return new Promise((resolve) => {
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = ".exe";
+
+    fileInput.addEventListener("change", function (event) {
+      const files = (event as any).target.files as FileList;
+      resolve(files);
+    });
+
+    fileInput.click();
+  });
+}
+
+interface BreadcrumbElement {
+  node: React.ReactNode;
+  targetPath: string[];
+}
+
+function generateBreadcrumbElements(path: string[]): BreadcrumbElement[] {
+  const elements = path.map((p, index) => {
+    const e: BreadcrumbElement = {
+      node: p,
+      targetPath: path.slice(0, index + 1),
+    };
+
+    return e;
+  });
+  elements.unshift({
+    node: <HouseFill />,
+    targetPath: [],
+  });
+
+  return elements;
+}
+
 export class FilesystemExplorer extends React.Component<
   FilesystemExplorerProps,
   FilesystemExplorerState
@@ -135,11 +184,12 @@ export class FilesystemExplorer extends React.Component<
   constructor(props: FilesystemExplorerProps) {
     super(props);
 
-    this._onFileDrop = this._onFileDrop.bind(this);
+    this._onAddFiles = this._onAddFiles.bind(this);
+    this._uploadFiles = this._uploadFiles.bind(this);
     this._onElementSelect = this._onElementSelect.bind(this);
 
     this.state = {
-      path: [],
+      path: this.props.path,
       createFolder: false,
       errorText: "",
       removeFile: "",
@@ -186,6 +236,11 @@ export class FilesystemExplorer extends React.Component<
     this.forceUpdate();
   }
 
+  async _onAddFiles() {
+    const files = await selectFiles();
+    await this._uploadFiles(files);
+  }
+
   async _onFolderCreate(name: string) {
     this.setState({ createFolder: false });
 
@@ -210,7 +265,16 @@ export class FilesystemExplorer extends React.Component<
     this.forceUpdate();
   }
 
-  async _onFileDrop(files: FileList | File[]) {
+  async _uploadFiles(files: FileList | File[]) {
+    if (files.length == 0) {
+      return;
+    }
+
+    if (this.state.path.length == 0) {
+      this._showError("Files must be within a drive");
+      return;
+    }
+
     const fileData = (await readFiles(files)).map((f) => {
       return {
         name: makeFullPathWithState(this.state, f.file.name.toLowerCase()),
@@ -249,6 +313,11 @@ export class FilesystemExplorer extends React.Component<
               <Button type="submit" className="fancy rounded-lg">
                 Create
               </Button>
+              <DialogClose asChild>
+                <Button variant="secondary" className="fancy rounded-lg">
+                  Cancel
+                </Button>
+              </DialogClose>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -371,6 +440,38 @@ export class FilesystemExplorer extends React.Component<
     );
   }
 
+  _renderBreadcrumbElements() {
+    const elements = generateBreadcrumbElements(this.state.path);
+
+    return elements.map((e, index) => {
+      if (index == this.state.path.length) {
+        return (
+          <BreadcrumbItem key={`breadcrumb-page-${index}`}>
+            <BreadcrumbPage>{e.node}</BreadcrumbPage>
+          </BreadcrumbItem>
+        );
+      }
+
+      const navigate = () => this.setState({ path: e.targetPath });
+      return (
+        <>
+          <BreadcrumbItem key={`breadcrumb-${index}`}>
+            <BreadcrumbLink onClick={navigate}>{e.node}</BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator key={`breadcrumb-separator-${index}`} />
+        </>
+      );
+    });
+  }
+
+  _renderBreadCrumb() {
+    return (
+      <Breadcrumb>
+        <BreadcrumbList>{this._renderBreadcrumbElements()}</BreadcrumbList>
+      </Breadcrumb>
+    );
+  }
+
   render() {
     const elements = getFolderElements(this.props.filesystem, this.state.path);
 
@@ -381,7 +482,9 @@ export class FilesystemExplorer extends React.Component<
         {this._renderErrorDialog()}
         {this._renderRemoveDialog()}
 
-        <Dropzone onDrop={this._onFileDrop} noClick={true}>
+        {this._renderBreadCrumb()}
+
+        <Dropzone onDrop={this._uploadFiles} noClick={true}>
           {({ getRootProps, getInputProps }) => (
             <div {...getRootProps()}>
               <input {...getInputProps()} />
@@ -397,6 +500,7 @@ export class FilesystemExplorer extends React.Component<
                 renameElementHandler={(e) =>
                   this.setState({ renameFile: e.name })
                 }
+                addFilesHandler={this._onAddFiles}
               />
             </div>
           )}

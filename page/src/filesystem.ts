@@ -43,6 +43,24 @@ export interface FileWithData {
   data: ArrayBuffer;
 }
 
+function deleteDatabase(dbName: string) {
+  return new Promise<void>((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(dbName);
+
+    request.onsuccess = () => {
+      resolve();
+    };
+
+    request.onerror = () => {
+      reject(new Error(`Error deleting database ${dbName}.`));
+    };
+
+    request.onblocked = () => {
+      reject(new Error(`Deletion of database ${dbName} blocked.`));
+    };
+  });
+}
+
 export class Filesystem {
   private idbfs: MainModule;
 
@@ -116,6 +134,10 @@ export class Filesystem {
 
   isFolder(file: string) {
     return (this.stat(file).mode & 0x4000) != 0;
+  }
+
+  delete() {
+    return deleteDatabase("/root");
   }
 }
 
