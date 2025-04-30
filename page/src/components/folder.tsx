@@ -155,7 +155,7 @@ export function Folder(props: FolderProps) {
     <ContextMenu>
       <ContextMenuTrigger>
         <ScrollArea className="h-[50dvh]">
-          <div className="folder flex flex-wrap h-full">
+          <div className="folder flex flex-wrap h-full text-neutral-300">
             {props.elements
               .sort(elementComparator)
               .map((e) => renderElementWrapper(e, props))}

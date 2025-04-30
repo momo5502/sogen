@@ -440,7 +440,7 @@ export class FilesystemExplorer extends React.Component<
           <div className="py-4">
             Are you sure you want to delete{" "}
             <b>
-              {makeRelativePathWithState(this.state, this.state.removeFile)}
+              {makeWindowsPathWithState(this.state, this.state.removeFile)}
             </b>
           </div>
           <DialogFooter>
