@@ -35,6 +35,7 @@ export interface FilesystemExplorerProps {
 export interface FilesystemExplorerState {
   path: string[];
   createFolder: boolean;
+  resetFilesys: boolean;
   errorText: string;
   removeFile: string;
   renameFile: string;
@@ -191,6 +192,7 @@ export class FilesystemExplorer extends React.Component<
     this.state = {
       path: this.props.path,
       createFolder: false,
+      resetFilesys: false,
       errorText: "",
       removeFile: "",
       renameFile: "",
@@ -440,14 +442,56 @@ export class FilesystemExplorer extends React.Component<
     );
   }
 
+  _renderResetDialog() {
+    return (
+      <Dialog
+        open={this.state.resetFilesys}
+        onOpenChange={(open) => this.setState({ resetFilesys: open })}
+      >
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Reset filesystem</DialogTitle>
+            <DialogDescription className="hidden">
+              Reset filesystem
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            Are you sure you want to reset the filesystem?
+          </div>
+          <DialogFooter>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                this.setState({ resetFilesys: false });
+                this.props.resetFilesys();
+              }}
+            >
+              Ok
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                this.setState({ resetFilesys: false });
+              }}
+            >
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   _renderBreadcrumbElements() {
     const elements = generateBreadcrumbElements(this.state.path);
 
     return elements.map((e, index) => {
       if (index == this.state.path.length) {
         return (
-          <BreadcrumbItem key={`breadcrumb-page-${index}`}>
-            <BreadcrumbPage>{e.node}</BreadcrumbPage>
+          <BreadcrumbItem key={`breadcrumb-item-${index}`}>
+            <BreadcrumbPage key={`breadcrumb-page-${index}`}>
+              {e.node}
+            </BreadcrumbPage>
           </BreadcrumbItem>
         );
       }
@@ -455,8 +499,10 @@ export class FilesystemExplorer extends React.Component<
       const navigate = () => this.setState({ path: e.targetPath });
       return (
         <>
-          <BreadcrumbItem key={`breadcrumb-${index}`}>
-            <BreadcrumbLink onClick={navigate}>{e.node}</BreadcrumbLink>
+          <BreadcrumbItem key={`breadcrumb-item-${index}`}>
+            <BreadcrumbLink key={`breadcrumb-link-${index}`} onClick={navigate}>
+              {e.node}
+            </BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator key={`breadcrumb-separator-${index}`} />
         </>
@@ -481,8 +527,19 @@ export class FilesystemExplorer extends React.Component<
         {this._renderRenameDialog()}
         {this._renderErrorDialog()}
         {this._renderRemoveDialog()}
+        {this._renderResetDialog()}
 
-        {this._renderBreadCrumb()}
+        <div className="flex flex-row w-full items-center gap-3">
+          <div className="whitespace-nowrap">{this._renderBreadCrumb()}</div>
+          <div className="flex-1 text-right">
+            <Button
+              onClick={() => this.setState({ resetFilesys: true })}
+              variant="destructive"
+            >
+              Reset
+            </Button>
+          </div>
+        </div>
 
         <Dropzone onDrop={this._uploadFiles} noClick={true}>
           {({ getRootProps, getInputProps }) => (

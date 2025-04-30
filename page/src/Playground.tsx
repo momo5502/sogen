@@ -46,9 +46,11 @@ export function Playground() {
     const fs = await initFilesys();
     await fs.delete();
 
-    setFilesystem(null);
     setFilesystemPromise(null);
+    setFilesystem(null);
     setDrawerOpen(false);
+
+    output.current?.clear();
   }
 
   function initFilesys() {
@@ -122,7 +124,7 @@ export function Playground() {
       <div className="h-[100dvh] flex flex-col">
         <header className="flex shrink-0 items-center gap-2 border-b p-2 overflow-y-auto">
           <Button size="sm" className="fancy" onClick={start}>
-            <PlayFill /> Start
+            <PlayFill /> <span>Start</span>
           </Button>
 
           <Button
@@ -132,7 +134,7 @@ export function Playground() {
             className="fancy"
             onClick={() => emulator?.stop()}
           >
-            <StopFill /> Stop
+            <StopFill /> <span className="hidden sm:inline">Stop</span>
           </Button>
           <Button
             size="sm"
@@ -143,11 +145,11 @@ export function Playground() {
           >
             {isEmulatorPaused() ? (
               <>
-                <PlayFill /> Resume
+                <PlayFill /> <span className="hidden sm:inline">Resume</span>
               </>
             ) : (
               <>
-                <PauseFill /> Pause
+                <PauseFill /> <span className="hidden sm:inline">Pause</span>
               </>
             )}
           </Button>
@@ -155,7 +157,7 @@ export function Playground() {
           <Popover>
             <PopoverTrigger asChild>
               <Button size="sm" variant="secondary" className="fancy">
-                <GearFill /> Settings
+                <GearFill /> <span className="hidden sm:inline">Settings</span>
               </Button>
             </PopoverTrigger>
             <PopoverContent>

@@ -61,6 +61,10 @@ function deleteDatabase(dbName: string) {
   });
 }
 
+function filterPseudoDir(e: string) {
+  return e != "." && e != "..";
+}
+
 export class Filesystem {
   private idbfs: MainModule;
 
@@ -93,7 +97,7 @@ export class Filesystem {
     }
 
     this.readDir(element) //
-      .filter((e) => e != "." && e != "..")
+      .filter(filterPseudoDir)
       .forEach((e) => {
         this._unlinkRecursive(`${element}/${e}`);
       });
@@ -136,8 +140,20 @@ export class Filesystem {
     return (this.stat(file).mode & 0x4000) != 0;
   }
 
-  delete() {
-    return deleteDatabase("/root");
+  async delete() {
+    this.readDir("/root") //
+      .filter(filterPseudoDir) //
+      .forEach((e) => {
+        try {
+          this._unlinkRecursive(e);
+        } catch (_) {}
+      });
+
+    await this.sync();
+
+    try {
+      await deleteDatabase("/root");
+    } catch (e) {}
   }
 }
 
