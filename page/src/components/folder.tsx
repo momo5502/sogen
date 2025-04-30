@@ -32,10 +32,12 @@ export interface FolderElement {
 }
 
 type ClickHandler = (element: FolderElement) => void;
+type CreateFolderHandler = () => void;
 
 export interface FolderProps {
   elements: FolderElement[];
   clickHandler: ClickHandler;
+  createFolderHandler: CreateFolderHandler;
   //deleteHandler: (element: FolderElement) => void;
   //renameHandler: (element: FolderElement, name: string) => void;
 }
@@ -70,19 +72,18 @@ function getIcon(element: FolderElement, className: string = "") {
 }
 
 function renderIcon(element: FolderElement) {
-  let className = "w-10 h-10";
+  let className = "w-6 h-6 flex-1";
   return getIcon(element, className);
 }
 
 function renderElement(element: FolderElement, clickHandler: ClickHandler) {
   return (
     <div
-      key={`folder-element-${element.name}`}
       onClick={() => clickHandler(element)}
-      className="folder-element select-none flex flex-col gap-4 items-center text-center p-4 m-4 w-30 h-25 rounded-lg border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50"
+      className="folder-element select-none flex flex-col gap-2 items-center text-center text-xs p-2 m-2 w-25 h-18 rounded-lg border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50"
     >
       {renderIcon(element)}
-      <span className="whitespace-nowrap text-ellipsis overflow-hidden w-24">
+      <span className="whitespace-nowrap text-ellipsis overflow-hidden w-20">
         {element.name}
       </span>
     </div>
@@ -119,6 +120,21 @@ function renderElementWithContext(
   );
 }
 
+function renderElementWrapper(  element: FolderElement,
+    clickHandler: ClickHandler,) {
+    return <div key={`folder-element-${element.name}`}>
+        {renderElementWithContext(element, clickHandler)}
+    </div>
+}
+
+function renderFolderCreator(createFolderHandler: CreateFolderHandler) {
+  return (
+    <ContextMenuItem onClick={createFolderHandler}>
+      Create new Folder
+    </ContextMenuItem>
+  );
+}
+
 export function Folder(props: FolderProps) {
   return (
     <ScrollArea className="h-[50dvh]">
@@ -128,11 +144,11 @@ export function Folder(props: FolderProps) {
             <div className="folder flex flex-wrap">
               {props.elements
                 .sort(elementComparator)
-                .map((e) => renderElementWithContext(e, props.clickHandler))}
+                .map((e) => renderElementWrapper(e, props.clickHandler))}
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent>
-            <ContextMenuItem>Create new folder</ContextMenuItem>
+            {renderFolderCreator(props.createFolderHandler)}
           </ContextMenuContent>
         </ContextMenu>
       </TooltipProvider>

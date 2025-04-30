@@ -45,9 +45,14 @@ export class Filesystem {
     this.idbfs = idbfs;
   }
 
-  async storeFile(file: string, data: ArrayBuffer) {
+  async storeFiles(file: string, data: ArrayBuffer) {
     const buffer = new Uint8Array(data);
     this.idbfs.FS.writeFile(file, buffer);
+    await this.sync();
+  }
+
+  async createFolder(folder: string) {
+    this.idbfs.FS.mkdir(folder, 777);
     await this.sync();
   }
 
