@@ -33,6 +33,7 @@
     "react": "^19.0.0",
     "react-bootstrap-icons": "^1.11.5",
     "react-dom": "^19.0.0",
+    "react-dropzone": "^14.3.8",
     "react-helmet": "^6.1.0",
     "react-resizable-panels": "^2.1.9",
     "react-router-dom": "^7.5.3",

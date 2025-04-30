@@ -9,11 +9,6 @@ import { Filesystem } from "./filesystem";
 
 type LogHandler = (lines: string[]) => void;
 
-export interface UserFile {
-  name: string;
-  data: ArrayBuffer;
-}
-
 export enum EmulationState {
   Stopped,
   Paused,
@@ -77,20 +72,7 @@ export class Emulator {
     this.worker.onmessage = this._onMessage.bind(this);
   }
 
-  async start(
-    settings: Settings = createDefaultSettings(),
-    userFile: UserFile | null = null,
-    fs: Filesystem,
-  ) {
-    var file = "c:/test-sample.exe";
-    if (userFile) {
-      const filename = userFile.name.split("/").pop()?.split("\\").pop();
-      const canonicalName = filename?.toLowerCase();
-      file = "c:/" + canonicalName;
-
-      await fs.storeFile("root/filesys/c/" + canonicalName, userFile.data);
-    }
-
+  async start(settings: Settings = createDefaultSettings(), file: string) {
     this._setState(EmulationState.Running);
     this.worker.postMessage({
       message: "run",

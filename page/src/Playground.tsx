@@ -3,7 +3,7 @@ import { Output } from "@/components/output";
 
 import { Separator } from "@/components/ui/separator";
 
-import { Emulator, UserFile, EmulationState } from "./emulator";
+import { Emulator, EmulationState } from "./emulator";
 import { Filesystem, setupFilesystem } from "./filesystem";
 
 import "./App.css";
@@ -50,7 +50,7 @@ import {
 } from "@/components/ui/drawer";
 import { FilesystemExplorer } from "./FilesystemExplorer";
 
-function selectAndReadFile(): Promise<UserFile> {
+/*function selectAndReadFile(): Promise<UserFile> {
   return new Promise((resolve, reject) => {
     const fileInput = document.createElement("input");
     fileInput.type = "file";
@@ -81,7 +81,7 @@ function selectAndReadFile(): Promise<UserFile> {
 
     fileInput.click();
   });
-}
+}*/
 
 export function Playground() {
   const output = useRef<Output>(null);
@@ -124,26 +124,26 @@ export function Playground() {
     }
   }
 
-  async function createEmulator(userFile: UserFile | null = null) {
+  async function createEmulator(userFile: string) {
     emulator?.stop();
     output.current?.clear();
 
     logLine("Starting emulation...");
 
-    const fs = await setupFilesystem((current, total, file) => {
-      logLine(`Processing filesystem (${current}/${total}): ${file}`);
-    });
+    if (filesystemPromise) {
+      await filesystemPromise;
+    }
 
     const new_emulator = new Emulator(logLines, (_) => forceUpdate());
     new_emulator.onTerminate().then(() => setEmulator(null));
     setEmulator(new_emulator);
 
-    new_emulator.start(settings, userFile, fs);
+    new_emulator.start(settings, userFile);
   }
 
   async function loadAndRunUserFile() {
-    const fileBuffer = await selectAndReadFile();
-    await createEmulator(fileBuffer);
+    //const fileBuffer = await selectAndReadFile();
+    //await createEmulator(fileBuffer);
   }
 
   return (
@@ -164,7 +164,9 @@ export function Playground() {
               <DropdownMenuLabel>Run Application</DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
-                <DropdownMenuItem onClick={() => createEmulator()}>
+                <DropdownMenuItem
+                  onClick={() => createEmulator("c:/test-sample.exe")}
+                >
                   <ImageFill className="mr-2" />
                   <span>Select Sample</span>
                 </DropdownMenuItem>
@@ -233,7 +235,10 @@ export function Playground() {
                   </DrawerDescription>
                 </DrawerHeader>
                 <DrawerFooter>
-                  <FilesystemExplorer filesystem={filesystem} />
+                  <FilesystemExplorer
+                    filesystem={filesystem}
+                    runFile={createEmulator}
+                  />
                 </DrawerFooter>
               </DrawerContent>
             </Drawer>

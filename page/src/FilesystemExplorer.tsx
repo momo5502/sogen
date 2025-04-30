@@ -14,8 +14,11 @@ import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { DialogDescription } from "@radix-ui/react-dialog";
 
+import Dropzone from "react-dropzone";
+
 export interface FilesystemExplorerProps {
   filesystem: Filesystem;
+  runFile: (file: string) => void;
 }
 export interface FilesystemExplorerState {
   path: string[];
@@ -40,11 +43,30 @@ function makeFullPathWithState(
   return makeFullPathAndJoin(state.path, element);
 }
 
+function relativePathToWindowsPath(fullPath: string) {
+  if (fullPath.length == 0) {
+    return fullPath;
+  }
+
+  const drive = fullPath.substring(0, 1);
+  const rest = fullPath.substring(1);
+
+  return `${drive}:${rest}`;
+}
+
 function makeRelativePathWithState(
   state: FilesystemExplorerState,
   element: string,
 ) {
   return [...state.path, element].join("/");
+}
+
+function makeWindowsPathWithState(
+  state: FilesystemExplorerState,
+  element: string,
+) {
+  const fullPath = makeRelativePathWithState(state, element);
+  return relativePathToWindowsPath(fullPath);
 }
 
 function getFolderElements(filesystem: Filesystem, path: string[]) {
@@ -75,6 +97,37 @@ function getFolderElements(filesystem: Filesystem, path: string[]) {
     });
 }
 
+interface FileWithData {
+  file: File;
+  data: ArrayBuffer;
+}
+
+function readFile(file: File): Promise<FileWithData> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (reader.readyState === FileReader.DONE) {
+        resolve({
+          file,
+          data: reader.result as ArrayBuffer,
+        });
+      }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+async function readFiles(files: FileList | File[]): Promise<FileWithData[]> {
+  const promises = [];
+
+  for (let i = 0; i < files.length; i++) {
+    promises.push(readFile(files[i]));
+  }
+
+  return Promise.all(promises);
+}
+
 export class FilesystemExplorer extends React.Component<
   FilesystemExplorerProps,
   FilesystemExplorerState
@@ -82,6 +135,7 @@ export class FilesystemExplorer extends React.Component<
   constructor(props: FilesystemExplorerProps) {
     super(props);
 
+    this._onFileDrop = this._onFileDrop.bind(this);
     this._onElementSelect = this._onElementSelect.bind(this);
 
     this.state = {
@@ -99,6 +153,11 @@ export class FilesystemExplorer extends React.Component<
 
   _onElementSelect(element: FolderElement) {
     if (element.type != FolderElementType.Folder) {
+      if (element.name.endsWith(".exe")) {
+        const file = makeWindowsPathWithState(this.state, element.name);
+        this.props.runFile(file);
+      }
+
       return;
     }
 
@@ -148,6 +207,18 @@ export class FilesystemExplorer extends React.Component<
 
     const fullPath = makeFullPathWithState(this.state, name);
     await this.props.filesystem.createFolder(fullPath);
+    this.forceUpdate();
+  }
+
+  async _onFileDrop(files: FileList | File[]) {
+    const fileData = (await readFiles(files)).map((f) => {
+      return {
+        name: makeFullPathWithState(this.state, f.file.name.toLowerCase()),
+        data: f.data,
+      };
+    });
+
+    await this.props.filesystem.storeFiles(fileData);
     this.forceUpdate();
   }
 
@@ -310,13 +381,26 @@ export class FilesystemExplorer extends React.Component<
         {this._renderErrorDialog()}
         {this._renderRemoveDialog()}
 
-        <Folder
-          elements={elements}
-          clickHandler={this._onElementSelect}
-          createFolderHandler={() => this.setState({ createFolder: true })}
-          removeElementHandler={(e) => this.setState({ removeFile: e.name })}
-          renameElementHandler={(e) => this.setState({ renameFile: e.name })}
-        />
+        <Dropzone onDrop={this._onFileDrop} noClick={true}>
+          {({ getRootProps, getInputProps }) => (
+            <div {...getRootProps()}>
+              <input {...getInputProps()} />
+              <Folder
+                elements={elements}
+                clickHandler={this._onElementSelect}
+                createFolderHandler={() =>
+                  this.setState({ createFolder: true })
+                }
+                removeElementHandler={(e) =>
+                  this.setState({ removeFile: e.name })
+                }
+                renameElementHandler={(e) =>
+                  this.setState({ renameFile: e.name })
+                }
+              />
+            </div>
+          )}
+        </Dropzone>
       </>
     );
   }

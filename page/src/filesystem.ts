@@ -38,6 +38,11 @@ async function initializeIDBFS() {
   return idbfs;
 }
 
+export interface FileWithData {
+  name: string;
+  data: ArrayBuffer;
+}
+
 export class Filesystem {
   private idbfs: MainModule;
 
@@ -45,9 +50,21 @@ export class Filesystem {
     this.idbfs = idbfs;
   }
 
-  async storeFiles(file: string, data: ArrayBuffer) {
-    const buffer = new Uint8Array(data);
-    this.idbfs.FS.writeFile(file, buffer);
+  _storeFile(file: FileWithData) {
+    if (file.name.includes("/")) {
+      const folder = file.name.split("/").slice(0, -1).join("/");
+      this._createFolder(folder);
+    }
+
+    const buffer = new Uint8Array(file.data);
+    this.idbfs.FS.writeFile(file.name, buffer);
+  }
+
+  async storeFiles(files: FileWithData[]) {
+    files.forEach((f) => {
+      this._storeFile(f);
+    });
+
     await this.sync();
   }
 
@@ -76,8 +93,12 @@ export class Filesystem {
     await this.sync();
   }
 
+  _createFolder(folder: string) {
+    this.idbfs.FS.mkdirTree(folder, 0o777);
+  }
+
   async createFolder(folder: string) {
-    this.idbfs.FS.mkdir(folder, 777);
+    this._createFolder(folder);
     await this.sync();
   }
 
