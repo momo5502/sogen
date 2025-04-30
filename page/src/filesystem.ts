@@ -1,64 +1,5 @@
-import { parseZipFile, FileEntry, ProgressHandler } from "./zip-file";
+import { parseZipFile, ProgressHandler } from "./zip-file";
 import idbfsModule, { MainModule } from "@irori/idbfs";
-
-function openDatabase(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open("cacheDB", 1);
-
-    request.onerror = (event: Event) => {
-      reject(event);
-    };
-
-    request.onsuccess = (event: Event) => {
-      resolve((event as any).target.result as IDBDatabase);
-    };
-
-    request.onupgradeneeded = (event: Event) => {
-      const db = (event as any).target.result as IDBDatabase;
-      if (!db.objectStoreNames.contains("cacheStore")) {
-        db.createObjectStore("cacheStore", { keyPath: "id" });
-      }
-    };
-  });
-}
-
-async function saveData(id: string, data: any) {
-  const db = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(["cacheStore"], "readwrite");
-    const objectStore = transaction.objectStore("cacheStore");
-    const request = objectStore.put({ id: id, data: data });
-
-    request.onsuccess = () => {
-      resolve("Data saved successfully");
-    };
-
-    request.onerror = (event) => {
-      reject("Save error: " + (event as any).target.errorCode);
-    };
-  });
-}
-
-async function getData(id: string) {
-  const db = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(["cacheStore"], "readonly");
-    const objectStore = transaction.objectStore("cacheStore");
-    const request = objectStore.get(id);
-
-    request.onsuccess = (event) => {
-      if ((event as any).target.result) {
-        resolve((event as any).target.result.data);
-      } else {
-        resolve(null);
-      }
-    };
-
-    request.onerror = (event) => {
-      reject("Retrieve error: " + (event as any).target.errorCode);
-    };
-  });
-}
 
 function fetchFilesystemZip() {
   return fetch("./root.zip?1", {
@@ -97,11 +38,131 @@ async function initializeIDBFS() {
   return idbfs;
 }
 
+export interface FileWithData {
+  name: string;
+  data: ArrayBuffer;
+}
+
+function deleteDatabase(dbName: string) {
+  return new Promise<void>((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(dbName);
+
+    request.onsuccess = () => {
+      resolve();
+    };
+
+    request.onerror = () => {
+      reject(new Error(`Error deleting database ${dbName}.`));
+    };
+
+    request.onblocked = () => {
+      reject(new Error(`Deletion of database ${dbName} blocked.`));
+    };
+  });
+}
+
+function filterPseudoDir(e: string) {
+  return e != "." && e != "..";
+}
+
+export class Filesystem {
+  private idbfs: MainModule;
+
+  constructor(idbfs: MainModule) {
+    this.idbfs = idbfs;
+  }
+
+  _storeFile(file: FileWithData) {
+    if (file.name.includes("/")) {
+      const folder = file.name.split("/").slice(0, -1).join("/");
+      this._createFolder(folder);
+    }
+
+    const buffer = new Uint8Array(file.data);
+    this.idbfs.FS.writeFile(file.name, buffer);
+  }
+
+  async storeFiles(files: FileWithData[]) {
+    files.forEach((f) => {
+      this._storeFile(f);
+    });
+
+    await this.sync();
+  }
+
+  _unlinkRecursive(element: string) {
+    if (!this.isFolder(element)) {
+      this.idbfs.FS.unlink(element);
+      return;
+    }
+
+    this.readDir(element) //
+      .filter(filterPseudoDir)
+      .forEach((e) => {
+        this._unlinkRecursive(`${element}/${e}`);
+      });
+
+    this.idbfs.FS.rmdir(element);
+  }
+
+  async rename(oldFile: string, newFile: string) {
+    this.idbfs.FS.rename(oldFile, newFile);
+    await this.sync();
+  }
+
+  async unlink(file: string) {
+    this._unlinkRecursive(file);
+    await this.sync();
+  }
+
+  _createFolder(folder: string) {
+    this.idbfs.FS.mkdirTree(folder, 0o777);
+  }
+
+  async createFolder(folder: string) {
+    this._createFolder(folder);
+    await this.sync();
+  }
+
+  async sync() {
+    await synchronizeIDBFS(this.idbfs, false);
+  }
+
+  readDir(dir: string): string[] {
+    return this.idbfs.FS.readdir(dir);
+  }
+
+  stat(file: string) {
+    return this.idbfs.FS.stat(file, false);
+  }
+
+  isFolder(file: string) {
+    return (this.stat(file).mode & 0x4000) != 0;
+  }
+
+  async delete() {
+    this.readDir("/root") //
+      .filter(filterPseudoDir) //
+      .forEach((e) => {
+        try {
+          this._unlinkRecursive(e);
+        } catch (_) {}
+      });
+
+    await this.sync();
+
+    try {
+      await deleteDatabase("/root");
+    } catch (e) {}
+  }
+}
+
 export async function setupFilesystem(progressHandler: ProgressHandler) {
   const idbfs = await initializeIDBFS();
+  const fs = new Filesystem(idbfs);
 
   if (idbfs.FS.analyzePath("/root/api-set.bin", false).exists) {
-    return;
+    return fs;
   }
 
   const filesystem = await fetchFilesystem(progressHandler);
@@ -119,12 +180,7 @@ export async function setupFilesystem(progressHandler: ProgressHandler) {
     }
   });
 
-  await synchronizeIDBFS(idbfs, false);
-}
+  await fs.sync();
 
-export async function storeFile(file: string, data: ArrayBuffer) {
-  const idbfs = await initializeIDBFS();
-  const buffer = new Uint8Array(data);
-  idbfs.FS.writeFile(file, buffer);
-  await synchronizeIDBFS(idbfs, false);
+  return fs;
 }

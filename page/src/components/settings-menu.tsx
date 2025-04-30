@@ -24,8 +24,10 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
     this.setState(() => settings);
   }
 
-  componentDidUpdate() {
-    this.props.onChange(this.state);
+  componentDidUpdate(_: SettingsMenuProps, oldSettings: Settings) {
+    if (JSON.stringify(oldSettings) !== JSON.stringify(this.state)) {
+      this.props.onChange(this.state);
+    }
   }
 
   render() {
