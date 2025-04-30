@@ -93,7 +93,7 @@ function getIcon(
 }
 
 function renderIcon(element: FolderElement, iconReader: IconReader) {
-  let className = "w-6 h-6 flex-1";
+  let className = "w-11 h-11 flex-1";
   return getIcon(element, iconReader, className);
 }
 
@@ -101,7 +101,7 @@ function renderElement(element: FolderElement, props: FolderProps) {
   return (
     <div
       onClick={() => props.clickHandler(element)}
-      className="folder-element select-none flex flex-col gap-2 items-center text-center text-xs p-2 m-2 w-25 h-18 rounded-lg border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50"
+      className="folder-element select-none flex flex-col gap-2 items-center text-center text-xs p-2 m-2 w-27 h-25 rounded-lg border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50"
     >
       {renderIcon(element, props.iconReader)}
       <span className="whitespace-nowrap text-ellipsis overflow-hidden w-20">
