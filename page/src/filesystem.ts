@@ -1,17 +1,64 @@
 import { parseZipFile, ProgressHandler } from "./zip-file";
 import idbfsModule, { MainModule } from "@irori/idbfs";
 
-function fetchFilesystemZip() {
-  return fetch("./root.zip?1", {
+type DownloadProgressHandler = (
+  receivedBytes: number,
+  totalBytes: number,
+) => void;
+
+function fetchFilesystemZip(progressCallback: DownloadProgressHandler) {
+  return fetch("./root.zip", {
     method: "GET",
     headers: {
       "Content-Type": "application/octet-stream",
     },
-  }).then((r) => r.arrayBuffer());
+  }).then((response) => {
+    const maybeReader = response.body?.getReader();
+    if (!maybeReader) {
+      throw new Error("Bad reader");
+    }
+
+    const reader = maybeReader;
+
+    const contentLength = parseInt(
+      response.headers?.get("Content-Length") || "0",
+    );
+
+    let receivedLength = 0;
+    let chunks: Uint8Array<ArrayBufferLike>[] = [];
+
+    function processData(
+      res: ReadableStreamReadResult<Uint8Array<ArrayBufferLike>>,
+    ): Promise<ArrayBuffer> {
+      if (res.value) {
+        chunks.push(res.value);
+        receivedLength += res.value.length;
+      }
+
+      progressCallback(receivedLength, contentLength);
+
+      if (!res.done) {
+        return reader.read().then(processData);
+      }
+      const chunksAll = new Uint8Array(receivedLength);
+      let position = 0;
+      for (const chunk of chunks) {
+        chunksAll.set(new Uint8Array(chunk), position);
+        position += chunk.length;
+      }
+
+      return Promise.resolve(chunksAll.buffer);
+    }
+
+    return reader.read().then(processData);
+  });
 }
 
-async function fetchFilesystem(progressHandler: ProgressHandler) {
-  const filesys = await fetchFilesystemZip();
+async function fetchFilesystem(
+  progressHandler: ProgressHandler,
+  downloadProgressHandler: DownloadProgressHandler,
+) {
+  const filesys = await fetchFilesystemZip(downloadProgressHandler);
   return await parseZipFile(filesys, progressHandler);
 }
 
@@ -161,7 +208,10 @@ export class Filesystem {
   }
 }
 
-export async function setupFilesystem(progressHandler: ProgressHandler) {
+export async function setupFilesystem(
+  progressHandler: ProgressHandler,
+  downloadProgressHandler: DownloadProgressHandler,
+) {
   const idbfs = await initializeIDBFS();
   const fs = new Filesystem(idbfs);
 
@@ -169,7 +219,10 @@ export async function setupFilesystem(progressHandler: ProgressHandler) {
     return fs;
   }
 
-  const filesystem = await fetchFilesystem(progressHandler);
+  const filesystem = await fetchFilesystem(
+    progressHandler,
+    downloadProgressHandler,
+  );
 
   filesystem.forEach((e) => {
     if (idbfs.FS.analyzePath("/" + e.name, false).exists) {

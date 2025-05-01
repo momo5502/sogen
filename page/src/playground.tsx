@@ -40,6 +40,28 @@ interface PlaygroundState {
   drawerOpen: boolean;
 }
 
+function makePercentHandler(
+  handler: (percent: number) => void,
+): (current: number, total: number) => void {
+  const progress = {
+    tracked: 0,
+  };
+
+  return (current, total) => {
+    if (total == 0) {
+      return;
+    }
+
+    const percent = Math.floor((current * 100) / total);
+    const sanePercent = Math.max(Math.min(percent, 100), 0);
+
+    if (sanePercent + 1 > progress.tracked) {
+      progress.tracked = sanePercent + 1;
+      handler(sanePercent);
+    }
+  };
+}
+
 export class Playground extends React.Component<
   PlaygroundProps,
   PlaygroundState
@@ -90,9 +112,14 @@ export class Playground extends React.Component<
 
     const promise = new Promise<Filesystem>((resolve) => {
       this.logLine("Loading filesystem...");
-      setupFilesystem((current, total, file) => {
-        this.logLine(`Processing filesystem (${current}/${total}): ${file}`);
-      }).then(resolve);
+      setupFilesystem(
+        (current, total, file) => {
+          this.logLine(`Processing filesystem (${current}/${total}): ${file}`);
+        },
+        makePercentHandler((percent) => {
+          this.logLine(`Downloading filesystem: ${percent}%`);
+        }),
+      ).then(resolve);
     });
 
     promise.then((filesystem) => this.setState({ filesystem }));
