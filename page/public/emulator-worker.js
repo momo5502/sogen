@@ -5,20 +5,27 @@ var msgQueue = [];
 
 onmessage = async (event) => {
   const data = event.data;
-  if (data.message == "run") {
-    const payload = data.data;
-    runEmulation(payload.file, payload.options);
-  } else if (data.message == "event") {
-    const payload = data.data;
-    msgQueue.push(payload);
+  const payload = data.data;
+
+  switch (data.message) {
+    case "run":
+      runEmulation(payload.file, payload.options);
+      break;
+    case "event":
+      msgQueue.push(payload);
+      break;
   }
 };
+
+function sendMessage(message, data) {
+  postMessage({ message, data });
+}
 
 function flushLines() {
   const lines = logLines;
   logLines = [];
   lastFlush = new Date().getTime();
-  postMessage({ message: "log", data: lines });
+  sendMessage("log", lines);
 }
 
 function logLine(text) {
@@ -33,12 +40,12 @@ function logLine(text) {
 
 function notifyExit(code) {
   flushLines();
-  postMessage({ message: "end", data: code });
+  sendMessage("end", code);
   self.close();
 }
 
 function handleMessage(message) {
-  postMessage({ message: "event", data: message });
+  sendMessage("event", message);
 }
 
 function getMessageFromQueue() {
@@ -58,7 +65,7 @@ function runEmulation(file, options) {
     onRuntimeInitialized: function () {
       FS.mkdir("/root");
       FS.mount(IDBFS, {}, "/root");
-      FS.syncfs(true, function (err) {
+      FS.syncfs(true, function (_) {
         Module.callMain(mainArguments);
       });
     },
