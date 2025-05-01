@@ -1,11 +1,7 @@
 import { createDefaultSettings, Settings, translateSettings } from "./settings";
-import { FileEntry } from "./zip-file";
 
 import * as flatbuffers from "flatbuffers";
 import * as fbDebugger from "@/fb/debugger";
-import * as fbDebuggerEvent from "@/fb/debugger/event";
-
-import { Filesystem } from "./filesystem";
 
 type LogHandler = (lines: string[]) => void;
 

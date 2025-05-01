@@ -157,11 +157,6 @@ function selectFiles(): Promise<FileList> {
   });
 }
 
-interface IconCache {
-  get: (file: string) => string | null;
-  set: (file: string, data: string | null) => void;
-}
-
 function getPeIcon(
   filesystem: Filesystem,
   file: string,
