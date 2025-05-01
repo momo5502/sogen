@@ -445,6 +445,7 @@ export class FilesystemExplorer extends React.Component<
           <DialogFooter>
             <Button
               variant="destructive"
+              className="fancy rounded-lg"
               onClick={() => this.setState({ errorText: "" })}
             >
               Ok
@@ -475,6 +476,7 @@ export class FilesystemExplorer extends React.Component<
           <DialogFooter>
             <Button
               variant="destructive"
+              className="fancy rounded-lg"
               onClick={() => {
                 const file = makeFullPathWithState(
                   this.state,
@@ -486,10 +488,11 @@ export class FilesystemExplorer extends React.Component<
                   .then(() => this.forceUpdate());
               }}
             >
-              Ok
+              Delete
             </Button>
             <Button
               variant="secondary"
+              className="fancy rounded-lg"
               onClick={() => {
                 this.setState({ removeFile: "" });
               }}
@@ -521,15 +524,17 @@ export class FilesystemExplorer extends React.Component<
           <DialogFooter>
             <Button
               variant="destructive"
+              className="fancy rounded-lg"
               onClick={() => {
                 this.setState({ resetFilesys: false });
                 this.props.resetFilesys();
               }}
             >
-              Ok
+              Reset
             </Button>
             <Button
               variant="secondary"
+              className="fancy rounded-lg"
               onClick={() => {
                 this.setState({ resetFilesys: false });
               }}
@@ -593,6 +598,8 @@ export class FilesystemExplorer extends React.Component<
             <Button
               onClick={() => this.setState({ resetFilesys: true })}
               variant="destructive"
+              size="sm"
+              className="fancy rounded-lg"
             >
               Reset
             </Button>
