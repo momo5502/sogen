@@ -498,6 +498,18 @@ void windows_emulator::setup_hooks()
         return instruction_hook_continuation::skip_instruction;
     });
 
+    this->emu().hook_instruction(x86_hookable_instructions::rdtscp, [&] {
+        const auto ticks = this->clock_->timestamp_counter();
+        this->emu().reg(x86_register::rax, ticks & 0xFFFFFFFF);
+        this->emu().reg(x86_register::rdx, (ticks >> 32) & 0xFFFFFFFF);
+
+        // Return the IA32_TSC_AUX value in RCX (low 32 bits)
+        auto tsc_aux = 0; // Need to replace this with proper CPUID later
+        this->emu().reg(x86_register::rcx, tsc_aux);
+
+        return instruction_hook_continuation::skip_instruction;
+    });
+
     this->emu().hook_instruction(x86_hookable_instructions::rdtsc, [&] {
         const auto ticks = this->clock_->timestamp_counter();
         this->emu().reg(x86_register::rax, ticks & 0xFFFFFFFF);
