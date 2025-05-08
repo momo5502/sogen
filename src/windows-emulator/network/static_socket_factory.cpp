@@ -71,6 +71,16 @@ namespace network
                     return true;
                 }
 
+                bool listen(int) override
+                {
+                    throw std::runtime_error("Not implemented");
+                }
+
+                std::unique_ptr<i_socket> accept(address&) override
+                {
+                    throw std::runtime_error("Not implemented");
+                }
+
                 sent_size send(std::span<const std::byte>) override
                 {
                     throw std::runtime_error("Not implemented");
