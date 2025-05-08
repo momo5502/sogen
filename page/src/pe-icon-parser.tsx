@@ -206,7 +206,7 @@ function getIconDataUrl(iconEntry: IconEntry, iconData: ArrayBuffer) {
   return generateDataURL(new Uint8Array(iconData), contentType);
 }
 
-export function parsePeIcon(data: Uint8Array) {
+function tryParsePeIcon(data: Uint8Array) {
   const res = getPeResources(data);
   const icons = res.entries.filter((e) => e.type == 3);
   const iconGroups = res.entries.filter((e) => e.type == 14);
@@ -229,4 +229,13 @@ export function parsePeIcon(data: Uint8Array) {
   }
 
   return getIconDataUrl(iconEntry, icon.bin);
+}
+
+export function parsePeIcon(data: Uint8Array) {
+  try {
+    return tryParsePeIcon(data);
+  } catch (e) {
+    console.error(e);
+    return null;
+  }
 }
