@@ -235,7 +235,7 @@ export function parsePeIcon(data: Uint8Array) {
   try {
     return tryParsePeIcon(data);
   } catch (e) {
-    console.error(e);
+    // console.error(e);
     return null;
   }
 }
