@@ -66,7 +66,10 @@ namespace syscalls
                 return STATUS_BUFFER_OVERFLOW;
             }
 
-            const auto* mod = c.win_emu.mod_manager.find_by_address(base_address);
+            const auto* mod = base_address == 0 //
+                                  ? c.win_emu.mod_manager.executable
+                                  : c.win_emu.mod_manager.find_by_address(base_address);
+
             if (!mod)
             {
                 c.win_emu.log.error("Bad address for memory image request: 0x%" PRIx64 "\n", base_address);
