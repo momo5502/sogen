@@ -13,7 +13,7 @@ option(FLATBUFFERS_INSTALL "" OFF)
 add_subdirectory(flatbuffers)
 
 if(MSVC)
-target_compile_options(flatc PRIVATE /MD)
+target_compile_options(flatc PRIVATE /MD$<$<CONFIG:Debug>:d>)
 endif()
 
 ##########################################
