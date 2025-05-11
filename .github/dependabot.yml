@@ -4,22 +4,22 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
-    open-pull-requests-limit: 20
+    open-pull-requests-limit: 40
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: weekly
-    open-pull-requests-limit: 20
+    open-pull-requests-limit: 40
 
   - package-ecosystem: "npm"
     directory: "/page"
     schedule:
       interval: weekly
-    open-pull-requests-limit: 20
+    open-pull-requests-limit: 40
 
   - package-ecosystem: "cargo"
     directory: "/src/backends/icicle-emulator/icicle-bridge/"
     schedule:
       interval: weekly
-    open-pull-requests-limit: 20
+    open-pull-requests-limit: 40
