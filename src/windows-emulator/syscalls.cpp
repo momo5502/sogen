@@ -803,6 +803,47 @@ namespace syscalls
 
         return FALSE;
     }
+
+    template <size_t Size>
+    static void copy_string(char16_t (&array)[Size], const std::u16string_view str)
+    {
+        if constexpr (Size == 0)
+        {
+            return;
+        }
+
+        const auto size = std::min(Size, str.size());
+        memcpy(array, str.data(), size * 2);
+        array[std::min(Size - 1, size)] = 0;
+    }
+
+    NTSTATUS handle_NtUserEnumDisplayDevices(const syscall_context& /*c*/,
+                                             const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> str_device,
+                                             const DWORD dev_num,
+                                             const emulator_object<EMU_DISPLAY_DEVICEW> display_device,
+                                             const DWORD /*flags*/)
+    {
+        if (str_device && dev_num != 0)
+        {
+            return STATUS_UNSUCCESSFUL;
+        }
+
+        if (dev_num > 0)
+        {
+            return STATUS_UNSUCCESSFUL;
+        }
+
+        display_device.access([&](EMU_DISPLAY_DEVICEW& dev) {
+            dev.StateFlags = 0;
+            copy_string(dev.DeviceName, u"\\\\.\\DISPLAY1");
+            copy_string(dev.DeviceID, u"PCI\\VEN_10DE&DEV_0000&SUBSYS_00000000&REV_A1");
+            copy_string(dev.DeviceString, u"Emulator Display");
+            copy_string(dev.DeviceKey, u"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Video\\{00000001-"
+                                       u"0002-0003-0004-000000000005}\\0001");
+        });
+
+        return STATUS_SUCCESS;
+    }
 }
 
 void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& handler_mapping)
@@ -973,6 +1014,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserSetProcessDpiAwarenessContext);
     add_handler(NtUserGetRawInputDeviceList);
     add_handler(NtUserGetKeyboardType);
+    add_handler(NtUserEnumDisplayDevices);
 
 #undef add_handler
 }
