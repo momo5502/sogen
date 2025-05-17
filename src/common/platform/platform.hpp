@@ -25,6 +25,7 @@
 #include "registry.hpp"
 #include "network.hpp"
 #include "threading.hpp"
+#include "window.hpp"
 
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop

@@ -718,18 +718,51 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtUserCreateWindowEx()
+    hwnd handle_NtUserCreateWindowEx(const syscall_context& c, const DWORD ex_style,
+                                     const emulator_object<LARGE_STRING> class_name,
+                                     const emulator_object<LARGE_STRING> cls_version,
+                                     const emulator_object<LARGE_STRING> window_name, const DWORD style, const int x,
+                                     const int y, const int width, const int height, const hwnd parent,
+                                     const hmenu menu, const hinstance instance, const pointer l_param,
+                                     const DWORD flags, const pointer acbi_buffer)
     {
+        (void)c;
+        (void)ex_style;
+        (void)class_name;
+        (void)cls_version;
+        (void)window_name;
+        (void)style;
+        (void)x;
+        (void)y;
+        (void)width;
+        (void)height;
+        (void)parent;
+        (void)menu;
+        (void)instance;
+        (void)l_param;
+        (void)flags;
+        (void)acbi_buffer;
+
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtUserShowWindow()
+    NTSTATUS handle_NtUserShowWindow(const syscall_context& c, const hwnd hwnd, const LONG cmd_show)
     {
+        (void)c;
+        (void)hwnd;
+        (void)cmd_show;
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtUserGetMessage()
+    NTSTATUS handle_NtUserGetMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
+                                     const UINT msg_filter_min, const UINT msg_filter_max)
     {
+        (void)c;
+        (void)message;
+        (void)hwnd;
+        (void)msg_filter_min;
+        (void)msg_filter_max;
+
         return STATUS_NOT_SUPPORTED;
     }
 }
