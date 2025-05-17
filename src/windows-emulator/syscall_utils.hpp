@@ -153,7 +153,8 @@ inline void write_syscall_result(const syscall_context& c, const uint64_t result
     }
 }
 
-inline void forward_syscall(const syscall_context& c, NTSTATUS (*handler)())
+template <typename Result>
+void forward_syscall(const syscall_context& c, Result (*handler)())
 {
     const auto ip = c.emu.read_instruction_pointer();
 

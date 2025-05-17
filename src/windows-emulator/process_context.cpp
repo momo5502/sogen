@@ -363,20 +363,20 @@ handle process_context::create_thread(memory_manager& memory, const uint64_t sta
 
 uint16_t process_context::add_or_find_atom(std::u16string name)
 {
-    uint16_t index = 0;
-    if (!atoms.empty())
+    uint16_t index = 1;
+    if (!this->atoms.empty())
     {
-        auto i = atoms.end();
+        auto i = this->atoms.end();
         --i;
         index = i->first + 1;
     }
 
     std::optional<uint16_t> last_entry{};
-    for (auto& entry : atoms)
+    for (auto& entry : this->atoms)
     {
         if (entry.second.name == name)
         {
-            entry.second.ref_count++;
+            ++entry.second.ref_count;
             return entry.first;
         }
 
@@ -384,7 +384,7 @@ uint16_t process_context::add_or_find_atom(std::u16string name)
         {
             if (!last_entry)
             {
-                index = 0;
+                index = 1;
             }
             else
             {
@@ -421,7 +421,7 @@ bool process_context::delete_atom(const std::u16string& name)
     return false;
 }
 
-bool process_context::delete_atom(uint16_t atom_id)
+bool process_context::delete_atom(const uint16_t atom_id)
 {
     const auto it = atoms.find(atom_id);
     if (it == atoms.end())
@@ -437,7 +437,7 @@ bool process_context::delete_atom(uint16_t atom_id)
     return true;
 }
 
-const std::u16string* process_context::get_atom_name(uint16_t atom_id) const
+const std::u16string* process_context::get_atom_name(const uint16_t atom_id) const
 {
     const auto it = atoms.find(atom_id);
     if (it == atoms.end())
