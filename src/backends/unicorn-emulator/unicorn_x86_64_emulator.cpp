@@ -176,17 +176,6 @@ namespace unicorn
             size_t size_{};
         };
 
-        basic_block map_block(const uc_tb& translation_block)
-        {
-            basic_block block{};
-
-            block.address = translation_block.pc;
-            block.instruction_count = translation_block.icount;
-            block.size = translation_block.size;
-
-            return block;
-        }
-
         void assert_64bit_limit(const size_t size)
         {
             if (size > sizeof(uint64_t))
@@ -447,29 +436,6 @@ namespace unicorn
                 auto container = std::make_unique<hook_container>();
 
                 uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_BLOCK, wrapper.get_function(),
-                                wrapper.get_user_data(), 0, std::numeric_limits<pointer_type>::max()));
-
-                container->add(std::move(wrapper), std::move(hook));
-
-                auto* result = container->as_opaque_hook();
-                this->hooks_.push_back(std::move(container));
-                return result;
-            }
-
-            emulator_hook* hook_edge_generation(edge_generation_hook_callback callback) override
-            {
-                function_wrapper<void, uc_engine*, uc_tb*, uc_tb*> wrapper(
-                    [c = std::move(callback)](uc_engine*, const uc_tb* cur_tb, const uc_tb* prev_tb) {
-                        const auto current_block = map_block(*cur_tb);
-                        const auto previous_block = map_block(*prev_tb);
-
-                        c(current_block, previous_block);
-                    });
-
-                unicorn_hook hook{*this};
-                auto container = std::make_unique<hook_container>();
-
-                uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_EDGE_GENERATED, wrapper.get_function(),
                                 wrapper.get_user_data(), 0, std::numeric_limits<pointer_type>::max()));
 
                 container->add(std::move(wrapper), std::move(hook));

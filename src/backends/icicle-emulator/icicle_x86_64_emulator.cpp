@@ -253,13 +253,6 @@ namespace icicle
             throw std::runtime_error("Not implemented");
         }
 
-        emulator_hook* hook_edge_generation(edge_generation_hook_callback callback) override
-        {
-            // TODO
-            (void)callback;
-            throw std::runtime_error("Not implemented");
-        }
-
         emulator_hook* hook_interrupt(interrupt_hook_callback callback) override
         {
             auto obj = make_function_object(std::move(callback));

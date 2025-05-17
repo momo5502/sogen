@@ -63,7 +63,6 @@ class hook_interface
     virtual emulator_hook* hook_interrupt(interrupt_hook_callback callback) = 0;
     virtual emulator_hook* hook_memory_violation(memory_violation_hook_callback callback) = 0;
 
-    virtual emulator_hook* hook_edge_generation(edge_generation_hook_callback callback) = 0;
     virtual emulator_hook* hook_basic_block(basic_block_hook_callback callback) = 0;
 
     virtual void delete_hook(emulator_hook* hook) = 0;
