@@ -12,6 +12,7 @@ extern "C"
 
     using raw_func = void(void*);
     using ptr_func = void(void*, uint64_t);
+    using block_func = void(void*, uint64_t, uint64_t);
     using interrupt_func = void(void*, int32_t);
     using violation_func = int32_t(void*, uint64_t address, uint8_t operation, int32_t unmapped);
     using data_accessor_func = void(void* user, const void* data, size_t length);
@@ -29,6 +30,7 @@ extern "C"
     void icicle_restore_registers(icicle_emulator*, const void* data, size_t length);
     uint32_t icicle_add_syscall_hook(icicle_emulator*, raw_func* callback, void* data);
     uint32_t icicle_add_interrupt_hook(icicle_emulator*, interrupt_func* callback, void* data);
+    uint32_t icicle_add_block_hook(icicle_emulator*, block_func* callback, void* data);
     uint32_t icicle_add_execution_hook(icicle_emulator*, uint64_t address, ptr_func* callback, void* data);
     uint32_t icicle_add_generic_execution_hook(icicle_emulator*, ptr_func* callback, void* data);
     uint32_t icicle_add_violation_hook(icicle_emulator*, violation_func* callback, void* data);
@@ -248,9 +250,21 @@ namespace icicle
 
         emulator_hook* hook_basic_block(basic_block_hook_callback callback) override
         {
-            // TODO
-            (void)callback;
-            throw std::runtime_error("Not implemented");
+            auto object = make_function_object(std::move(callback));
+            auto* ptr = object.get();
+            auto* wrapper = +[](void* user, const uint64_t addr, const uint64_t instructions) {
+                basic_block block{};
+                block.address = addr;
+                block.instruction_count = static_cast<size_t>(instructions);
+
+                const auto& func = *static_cast<decltype(ptr)>(user);
+                (func)(block);
+            };
+
+            const auto id = icicle_add_block_hook(this->emu_, wrapper, ptr);
+            this->hooks_[id] = std::move(object);
+
+            return wrap_hook(id);
         }
 
         emulator_hook* hook_interrupt(interrupt_hook_callback callback) override

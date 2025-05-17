@@ -50,6 +50,7 @@ enum HookType {
     ExecuteSpecific,
     Violation,
     Interrupt,
+    Block,
     Unknown,
 }
 
@@ -101,7 +102,18 @@ impl<Func: ?Sized> HookContainer<Func> {
 }
 
 struct InstructionHookInjector {
-    hook: pcode::HookId,
+    inst_hook: pcode::HookId,
+    block_hook: pcode::HookId,
+}
+
+fn count_instructions(block: &icicle_cpu::lifter::Block) -> u64 {
+    return block.pcode.instructions.iter().fold(0u64, |count, &stmt| {
+        if let pcode::Op::InstructionMarker = stmt.op {
+            return count + 1;
+        }
+
+        return count;
+    });
 }
 
 impl icicle_vm::CodeInjector for InstructionHookInjector {
@@ -117,10 +129,19 @@ impl icicle_vm::CodeInjector for InstructionHookInjector {
             let mut tmp_block = pcode::Block::new();
             tmp_block.next_tmp = block.pcode.next_tmp;
 
+            let mut is_first_inst = true;
+            let inst_count = count_instructions(&block);
+
             for stmt in block.pcode.instructions.drain(..) {
                 tmp_block.push(stmt);
                 if let pcode::Op::InstructionMarker = stmt.op {
-                    tmp_block.push(pcode::Op::Hook(self.hook));
+                    if is_first_inst {
+                        is_first_inst = false;
+                        tmp_block.push((pcode::Op::Arg(0), pcode::Inputs::one(inst_count)));
+                        tmp_block.push(pcode::Op::Hook(self.block_hook));
+                    }
+
+                    tmp_block.push(pcode::Op::Hook(self.inst_hook));
                     code.modified.insert(id);
                 }
             }
@@ -134,6 +155,7 @@ struct ExecutionHooks {
     stop: Rc<RefCell<bool>>,
     generic_hooks: HookContainer<dyn Fn(u64)>,
     specific_hooks: HookContainer<dyn Fn(u64)>,
+    block_hooks: HookContainer<dyn Fn(u64, u64)>,
     address_mapping: HashMap<u64, Vec<u32>>,
 }
 
@@ -143,6 +165,7 @@ impl ExecutionHooks {
             stop: stop_value,
             generic_hooks: HookContainer::new(),
             specific_hooks: HookContainer::new(),
+            block_hooks: HookContainer::new(),
             address_mapping: HashMap::new(),
         }
     }
@@ -165,6 +188,12 @@ impl ExecutionHooks {
         }
     }
 
+    pub fn on_block(&mut self, address: u64, instructions: u64) {
+        for (_key, func) in self.block_hooks.get_hooks() {
+            func(address, instructions);
+        }
+    }
+
     pub fn execute(&mut self, cpu: &mut icicle_cpu::Cpu, address: u64) {
         self.run_hooks(address);
 
@@ -172,6 +201,14 @@ impl ExecutionHooks {
             cpu.exception.code = ExceptionCode::InstructionLimit as u32;
             cpu.exception.value = address;
         }
+    }
+
+    pub fn add_block_hook(&mut self, callback: Box<dyn Fn(u64, u64)>) -> u32 {
+        self.block_hooks.add_hook(callback)
+    }
+
+    pub fn remove_block_hook(&mut self, id: u32) {
+        self.block_hooks.remove_hook(id);
     }
 
     pub fn add_generic_hook(&mut self, callback: Box<dyn Fn(u64)>) -> u32 {
@@ -263,14 +300,25 @@ impl IcicleEmulator {
         let stop_value = Rc::new(RefCell::new(false));
         let exec_hooks = Rc::new(RefCell::new(ExecutionHooks::new(stop_value.clone())));
 
-        let exec_hooks_clone = Rc::clone(&exec_hooks);
+        let inst_exec_hooks = Rc::clone(&exec_hooks);
 
-        let hook = icicle_cpu::InstHook::new(move |cpu: &mut icicle_cpu::Cpu, addr: u64| {
-            exec_hooks_clone.borrow_mut().execute(cpu, addr);
+        let inst_hook = icicle_cpu::InstHook::new(move |cpu: &mut icicle_cpu::Cpu, addr: u64| {
+            inst_exec_hooks.borrow_mut().execute(cpu, addr);
         });
 
-        let hook = virtual_machine.cpu.add_hook(hook);
-        virtual_machine.add_injector(InstructionHookInjector { hook });
+        let block_exec_hooks = Rc::clone(&exec_hooks);
+
+        let block_hook = icicle_cpu::InstHook::new(move |cpu: &mut icicle_cpu::Cpu, addr: u64| {
+            let instructions = cpu.args[0] as u64;
+            block_exec_hooks.borrow_mut().on_block(addr, instructions);
+        });
+
+        let inst_hook_id = virtual_machine.cpu.add_hook(inst_hook);
+        let block_hook_id = virtual_machine.cpu.add_hook(block_hook);
+        virtual_machine.add_injector(InstructionHookInjector {
+            inst_hook: inst_hook_id,
+            block_hook: block_hook_id,
+        });
 
         Self {
             stop: stop_value,
@@ -378,6 +426,11 @@ impl IcicleEmulator {
         }
     }
 
+    pub fn add_block_hook(&mut self, callback: Box<dyn Fn(u64, u64)>) -> u32 {
+        let hook_id = self.execution_hooks.borrow_mut().add_block_hook(callback);
+        return qualify_hook_id(hook_id, HookType::Block);
+    }
+
     pub fn add_violation_hook(&mut self, callback: Box<dyn Fn(u64, u8, bool) -> bool>) -> u32 {
         let hook_id = self.violation_hooks.add_hook(callback);
         return qualify_hook_id(hook_id, HookType::Violation);
@@ -453,6 +506,7 @@ impl IcicleEmulator {
                 .execution_hooks
                 .borrow_mut()
                 .remove_specific_hook(hook_id),
+            HookType::Block => self.execution_hooks.borrow_mut().remove_block_hook(hook_id),
             HookType::Read => {
                 self.get_mem().remove_read_after_hook(hook_id);
                 ()
