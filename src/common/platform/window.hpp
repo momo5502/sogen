@@ -7,7 +7,7 @@ typedef struct tagPOINT
 {
     LONG x;
     LONG y;
-} POINT, *PPOINT, NEAR *NPPOINT, FAR *LPPOINT;
+} POINT;
 #endif
 
 using wparam = pointer;
@@ -28,7 +28,7 @@ using hinstance = pointer;
 
 struct msg
 {
-    hwnd hwnd;
+    hwnd window;
     UINT message;
     wparam wParam;
     lparam lParam;
