@@ -804,19 +804,6 @@ namespace syscalls
         return FALSE;
     }
 
-    template <size_t Size>
-    static void copy_string(char16_t (&array)[Size], const std::u16string_view str)
-    {
-        if constexpr (Size == 0)
-        {
-            return;
-        }
-
-        const auto size = std::min(Size, str.size());
-        memcpy(array, str.data(), size * 2);
-        array[std::min(Size - 1, size)] = 0;
-    }
-
     NTSTATUS handle_NtUserEnumDisplayDevices(const syscall_context& /*c*/,
                                              const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> str_device,
                                              const DWORD dev_num,
@@ -835,11 +822,12 @@ namespace syscalls
 
         display_device.access([&](EMU_DISPLAY_DEVICEW& dev) {
             dev.StateFlags = 0;
-            copy_string(dev.DeviceName, u"\\\\.\\DISPLAY1");
-            copy_string(dev.DeviceID, u"PCI\\VEN_10DE&DEV_0000&SUBSYS_00000000&REV_A1");
-            copy_string(dev.DeviceString, u"Emulator Display");
-            copy_string(dev.DeviceKey, u"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Video\\{00000001-"
-                                       u"0002-0003-0004-000000000005}\\0001");
+            utils::string::copy(dev.DeviceName, u"\\\\.\\DISPLAY1");
+            utils::string::copy(dev.DeviceID, u"PCI\\VEN_10DE&DEV_0000&SUBSYS_00000000&REV_A1");
+            utils::string::copy(dev.DeviceString, u"Emulator Display");
+            utils::string::copy(dev.DeviceKey,
+                                u"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Video\\{00000001-"
+                                u"0002-0003-0004-000000000005}\\0001");
         });
 
         return STATUS_SUCCESS;
