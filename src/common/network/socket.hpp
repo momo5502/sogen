@@ -47,6 +47,8 @@ namespace network
         bool is_valid() const;
 
         bool bind(const address& target);
+        bool listen(int backlog);
+        SOCKET accept(address& address);
 
         bool set_blocking(bool blocking);
         static bool set_blocking(SOCKET s, bool blocking);
