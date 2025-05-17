@@ -718,6 +718,21 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
+    NTSTATUS handle_NtUserMapVirtualKeyEx()
+    {
+        return 0;
+    }
+
+    NTSTATUS handle_NtUserToUnicodeEx()
+    {
+        return 0;
+    }
+
+    NTSTATUS handle_NtUserSetProcessDpiAwarenessContext()
+    {
+        return 0;
+    }
+
     hwnd handle_NtUserCreateWindowEx(const syscall_context& c, const DWORD ex_style,
                                      const emulator_object<LARGE_STRING> class_name,
                                      const emulator_object<LARGE_STRING> cls_version,
@@ -743,19 +758,29 @@ namespace syscalls
         (void)flags;
         (void)acbi_buffer;
 
-        return STATUS_NOT_SUPPORTED;
+        return 1;
     }
 
-    NTSTATUS handle_NtUserShowWindow(const syscall_context& c, const hwnd hwnd, const LONG cmd_show)
+    ULONG handle_NtUserGetRawInputDeviceList()
+    {
+        return 0;
+    }
+
+    ULONG handle_NtUserGetKeyboardType()
+    {
+        return 0;
+    }
+
+    BOOL handle_NtUserShowWindow(const syscall_context& c, const hwnd hwnd, const LONG cmd_show)
     {
         (void)c;
         (void)hwnd;
         (void)cmd_show;
-        return STATUS_NOT_SUPPORTED;
+        return TRUE;
     }
 
-    NTSTATUS handle_NtUserGetMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
-                                     const UINT msg_filter_min, const UINT msg_filter_max)
+    BOOL handle_NtUserGetMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
+                                 const UINT msg_filter_min, const UINT msg_filter_max)
     {
         (void)c;
         (void)message;
@@ -763,7 +788,49 @@ namespace syscalls
         (void)msg_filter_min;
         (void)msg_filter_max;
 
-        return STATUS_NOT_SUPPORTED;
+        return TRUE;
+    }
+
+    BOOL handle_NtUserPeekMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
+                                  const UINT msg_filter_min, const UINT msg_filter_max, const UINT remove_message)
+    {
+        (void)c;
+        (void)message;
+        (void)hwnd;
+        (void)msg_filter_min;
+        (void)msg_filter_max;
+        (void)remove_message;
+
+        return FALSE;
+    }
+
+    NTSTATUS handle_NtUserEnumDisplayDevices(const syscall_context& /*c*/,
+                                             const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> str_device,
+                                             const DWORD dev_num,
+                                             const emulator_object<EMU_DISPLAY_DEVICEW> display_device,
+                                             const DWORD /*flags*/)
+    {
+        if (str_device && dev_num != 0)
+        {
+            return STATUS_UNSUCCESSFUL;
+        }
+
+        if (dev_num > 0)
+        {
+            return STATUS_UNSUCCESSFUL;
+        }
+
+        display_device.access([&](EMU_DISPLAY_DEVICEW& dev) {
+            dev.StateFlags = 0;
+            utils::string::copy(dev.DeviceName, u"\\\\.\\DISPLAY1");
+            utils::string::copy(dev.DeviceID, u"PCI\\VEN_10DE&DEV_0000&SUBSYS_00000000&REV_A1");
+            utils::string::copy(dev.DeviceString, u"Emulator Display");
+            utils::string::copy(dev.DeviceKey,
+                                u"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Video\\{00000001-"
+                                u"0002-0003-0004-000000000005}\\0001");
+        });
+
+        return STATUS_SUCCESS;
     }
 }
 
@@ -929,6 +996,13 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserCreateWindowEx);
     add_handler(NtUserShowWindow);
     add_handler(NtUserGetMessage);
+    add_handler(NtUserPeekMessage);
+    add_handler(NtUserMapVirtualKeyEx);
+    add_handler(NtUserToUnicodeEx);
+    add_handler(NtUserSetProcessDpiAwarenessContext);
+    add_handler(NtUserGetRawInputDeviceList);
+    add_handler(NtUserGetKeyboardType);
+    add_handler(NtUserEnumDisplayDevices);
 
 #undef add_handler
 }

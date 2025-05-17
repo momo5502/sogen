@@ -23,6 +23,7 @@ using DWORD64 = std::uint64_t;
 using ULONGLONG = DWORD64;
 using LONGLONG = std::int64_t;
 using UINT = std::uint32_t;
+using BOOL = std::int32_t;
 
 typedef union _ULARGE_INTEGER
 {
