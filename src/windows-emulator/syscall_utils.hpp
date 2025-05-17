@@ -139,11 +139,11 @@ T resolve_indexed_argument(x86_64_emulator& emu, size_t& index)
     return resolve_argument<T>(emu, index++);
 }
 
-inline void write_syscall_status(const syscall_context& c, const NTSTATUS status, const uint64_t initial_ip)
+inline void write_syscall_result(const syscall_context& c, const uint64_t result, const uint64_t initial_ip)
 {
     if (c.write_status && !c.retrigger_syscall)
     {
-        c.emu.reg<uint64_t>(x86_register::rax, static_cast<uint64_t>(status));
+        c.emu.reg<uint64_t>(x86_register::rax, result);
     }
 
     const auto new_ip = c.emu.read_instruction_pointer();
@@ -158,11 +158,11 @@ inline void forward_syscall(const syscall_context& c, NTSTATUS (*handler)())
     const auto ip = c.emu.read_instruction_pointer();
 
     const auto ret = handler();
-    write_syscall_status(c, ret, ip);
+    write_syscall_result(c, static_cast<uint64_t>(ret), ip);
 }
 
-template <typename... Args>
-void forward_syscall(const syscall_context& c, NTSTATUS (*handler)(const syscall_context&, Args...))
+template <typename Result, typename... Args>
+void forward_syscall(const syscall_context& c, Result (*handler)(const syscall_context&, Args...))
 {
     const auto ip = c.emu.read_instruction_pointer();
 
@@ -173,7 +173,7 @@ void forward_syscall(const syscall_context& c, NTSTATUS (*handler)(const syscall
     (void)index;
 
     const auto ret = std::apply(handler, std::move(func_args));
-    write_syscall_status(c, ret, ip);
+    write_syscall_result(c, ret, ip);
 }
 
 template <auto Handler>
