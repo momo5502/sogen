@@ -722,6 +722,16 @@ namespace syscalls
     {
         return STATUS_NOT_SUPPORTED;
     }
+
+    NTSTATUS handle_NtUserShowWindow()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtUserGetMessage()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
 }
 
 void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& handler_mapping)
@@ -884,6 +894,8 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserSetWindowsHookEx);
     add_handler(NtUserUnhookWindowsHookEx);
     add_handler(NtUserCreateWindowEx);
+    add_handler(NtUserShowWindow);
+    add_handler(NtUserGetMessage);
 
 #undef add_handler
 }
