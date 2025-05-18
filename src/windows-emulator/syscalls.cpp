@@ -797,7 +797,7 @@ namespace syscalls
     BOOL handle_NtUserSetProp(const syscall_context& c, const hwnd window, const uint16_t atom, const uint64_t data)
     {
         auto* win = c.proc.windows.get(window);
-        auto* prop = c.proc.get_atom_name(atom);
+        const auto* prop = c.proc.get_atom_name(atom);
 
         if (!win || !prop)
         {
