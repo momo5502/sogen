@@ -42,7 +42,7 @@ struct process_context
         std::u16string name;
         uint32_t ref_count = 0;
 
-        atom_entry(std::u16string n, uint32_t count)
+        atom_entry(std::u16string n, const uint32_t count)
             : name(std::move(n)),
               ref_count(count)
         {

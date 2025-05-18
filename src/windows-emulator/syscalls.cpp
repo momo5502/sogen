@@ -770,6 +770,36 @@ namespace syscalls
         return c.proc.windows.store(std::move(win)).bits;
     }
 
+    BOOL handle_NtUserSetProp(const syscall_context& c, const hwnd window, const uint16_t atom, const uint64_t data)
+    {
+        auto* win = c.proc.windows.get(window);
+        auto* prop = c.proc.get_atom_name(atom);
+
+        if (!win || !prop)
+        {
+            return FALSE;
+        }
+
+        win->props[*prop] = data;
+
+        return TRUE;
+    }
+
+    BOOL handle_NtUserSetProp2(const syscall_context& c, const hwnd window,
+                               const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> str, const uint64_t data)
+    {
+        auto* win = c.proc.windows.get(window);
+        if (!win || !str)
+        {
+            return FALSE;
+        }
+
+        auto prop = read_unicode_string(c.emu, str);
+        win->props[std::move(prop)] = data;
+
+        return TRUE;
+    }
+
     ULONG handle_NtUserGetRawInputDeviceList()
     {
         return 0;
@@ -1012,6 +1042,8 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserGetRawInputDeviceList);
     add_handler(NtUserGetKeyboardType);
     add_handler(NtUserEnumDisplayDevices);
+    add_handler(NtUserSetProp);
+    add_handler(NtUserSetProp2);
 
 #undef add_handler
 }

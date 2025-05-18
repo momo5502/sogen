@@ -48,6 +48,7 @@ struct window : ref_counted_object
     int32_t height;
     int32_t x;
     int32_t y;
+    std::unordered_map<std::u16string, uint64_t> props;
 
     void serialize_object(utils::buffer_serializer& buffer) const override
     {
@@ -58,6 +59,7 @@ struct window : ref_counted_object
         buffer.write(this->height);
         buffer.write(this->x);
         buffer.write(this->y);
+        buffer.write_map(this->props);
     }
 
     void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -69,6 +71,7 @@ struct window : ref_counted_object
         buffer.read(this->height);
         buffer.read(this->x);
         buffer.read(this->y);
+        buffer.read_map(this->props);
     }
 };
 
