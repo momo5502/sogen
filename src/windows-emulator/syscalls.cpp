@@ -574,6 +574,24 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
+    NTSTATUS handle_NtFindAtom(const syscall_context& c, const uint64_t atom_name, const ULONG length,
+                               const emulator_object<uint16_t> atom)
+    {
+        const auto name = read_string<char16_t>(c.emu, atom_name, length / 2);
+        const auto index = c.proc.find_atom(name);
+        if (!index)
+        {
+            return STATUS_OBJECT_NAME_NOT_FOUND;
+        }
+
+        if (atom)
+        {
+            atom.write(*index);
+        }
+
+        return STATUS_SUCCESS;
+    }
+
     NTSTATUS handle_NtUserGetAtomName(const syscall_context& c, const RTL_ATOM atom,
                                       const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> atom_name)
     {
@@ -611,14 +629,15 @@ namespace syscalls
         return 96;
     }
 
-    NTSTATUS handle_NtUserGetDCEx()
+    hdc handle_NtUserGetDCEx(const syscall_context& /*c*/, const hwnd window, const uint64_t /*clip_region*/,
+                             const ULONG /*flags*/)
     {
-        return 1;
+        return window;
     }
 
-    NTSTATUS handle_NtUserGetDC()
+    hdc handle_NtUserGetDC(const syscall_context& c, const hwnd window)
     {
-        return handle_NtUserGetDCEx();
+        return handle_NtUserGetDCEx(c, window, 0, 0);
     }
 
     NTSTATUS handle_NtUserGetWindowDC()
@@ -733,32 +752,76 @@ namespace syscalls
         return 0;
     }
 
-    hwnd handle_NtUserCreateWindowEx(const syscall_context& c, const DWORD ex_style,
-                                     const emulator_object<LARGE_STRING> class_name,
-                                     const emulator_object<LARGE_STRING> cls_version,
-                                     const emulator_object<LARGE_STRING> window_name, const DWORD style, const int x,
-                                     const int y, const int width, const int height, const hwnd parent,
-                                     const hmenu menu, const hinstance instance, const pointer l_param,
-                                     const DWORD flags, const pointer acbi_buffer)
+    std::u16string read_large_string(const emulator_object<LARGE_STRING> str_obj)
     {
-        (void)c;
-        (void)ex_style;
-        (void)class_name;
-        (void)cls_version;
-        (void)window_name;
-        (void)style;
-        (void)x;
-        (void)y;
-        (void)width;
-        (void)height;
-        (void)parent;
-        (void)menu;
-        (void)instance;
-        (void)l_param;
-        (void)flags;
-        (void)acbi_buffer;
+        if (!str_obj)
+        {
+            return {};
+        }
 
-        return 1;
+        const auto str = str_obj.read();
+        if (!str.bAnsi)
+        {
+            return read_string<char16_t>(*str_obj.get_memory_interface(), str.Buffer, str.Length / 2);
+        }
+
+        const auto ansi_string = read_string<char>(*str_obj.get_memory_interface(), str.Buffer, str.Length);
+        return u8_to_u16(ansi_string);
+    }
+
+    hwnd handle_NtUserCreateWindowEx(const syscall_context& c, const DWORD /*ex_style*/,
+                                     const emulator_object<LARGE_STRING> class_name,
+                                     const emulator_object<LARGE_STRING> /*cls_version*/,
+                                     const emulator_object<LARGE_STRING> window_name, const DWORD /*style*/,
+                                     const int x, const int y, const int width, const int height, const hwnd /*parent*/,
+                                     const hmenu /*menu*/, const hinstance /*instance*/, const pointer /*l_param*/,
+                                     const DWORD /*flags*/, const pointer /*acbi_buffer*/)
+    {
+        window win{};
+        win.x = x;
+        win.y = y;
+        win.width = width;
+        win.height = height;
+        win.thread_id = c.win_emu.current_thread().id;
+        win.class_name = read_large_string(class_name);
+        win.name = read_large_string(window_name);
+
+        return c.proc.windows.store(std::move(win)).bits;
+    }
+
+    BOOL handle_NtUserDestroyWindow(const syscall_context& c, const hwnd window)
+    {
+        return c.proc.windows.erase(window);
+    }
+
+    BOOL handle_NtUserSetProp(const syscall_context& c, const hwnd window, const uint16_t atom, const uint64_t data)
+    {
+        auto* win = c.proc.windows.get(window);
+        const auto* prop = c.proc.get_atom_name(atom);
+
+        if (!win || !prop)
+        {
+            return FALSE;
+        }
+
+        win->props[*prop] = data;
+
+        return TRUE;
+    }
+
+    BOOL handle_NtUserSetProp2(const syscall_context& c, const hwnd window,
+                               const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> str, const uint64_t data)
+    {
+        auto* win = c.proc.windows.get(window);
+        if (!win || !str)
+        {
+            return FALSE;
+        }
+
+        auto prop = read_unicode_string(c.emu, str);
+        win->props[std::move(prop)] = data;
+
+        return TRUE;
     }
 
     ULONG handle_NtUserGetRawInputDeviceList()
@@ -767,6 +830,11 @@ namespace syscalls
     }
 
     ULONG handle_NtUserGetKeyboardType()
+    {
+        return 0;
+    }
+
+    uint64_t handle_NtUserChangeWindowMessageFilterEx()
     {
         return 0;
     }
@@ -898,6 +966,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtDxgkIsFeatureEnabled);
     add_handler(NtAddAtomEx);
     add_handler(NtAddAtom);
+    add_handler(NtFindAtom);
     add_handler(NtDeleteAtom);
     add_handler(NtUserGetAtomName);
     add_handler(NtInitializeNlsFiles);
@@ -1003,6 +1072,10 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserGetRawInputDeviceList);
     add_handler(NtUserGetKeyboardType);
     add_handler(NtUserEnumDisplayDevices);
+    add_handler(NtUserSetProp);
+    add_handler(NtUserSetProp2);
+    add_handler(NtUserChangeWindowMessageFilterEx);
+    add_handler(NtUserDestroyWindow);
 
 #undef add_handler
 }

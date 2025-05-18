@@ -161,6 +161,11 @@ class emulator_object
         return emulator_object<T>(*this->memory_, this->address_ + offset);
     }
 
+    memory_interface* get_memory_interface() const
+    {
+        return this->memory_;
+    }
+
   private:
     memory_interface* memory_{};
     uint64_t address_{};
@@ -310,16 +315,22 @@ class emulator_allocator
 };
 
 template <typename Element>
-std::basic_string<Element> read_string(memory_manager& mem, const uint64_t address)
+std::basic_string<Element> read_string(memory_interface& mem, const uint64_t address,
+                                       const std::optional<size_t> size = {})
 {
     std::basic_string<Element> result{};
 
     for (size_t i = 0;; ++i)
     {
+        if (size && i >= *size)
+        {
+            break;
+        }
+
         Element element{};
         mem.read_memory(address + (i * sizeof(element)), &element, sizeof(element));
 
-        if (!element)
+        if (!size && !element)
         {
             break;
         }

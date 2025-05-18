@@ -42,7 +42,7 @@ struct process_context
         std::u16string name;
         uint32_t ref_count = 0;
 
-        atom_entry(std::u16string n, uint32_t count)
+        atom_entry(std::u16string n, const uint32_t count)
             : name(std::move(n)),
               ref_count(count)
         {
@@ -67,6 +67,7 @@ struct process_context
     handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size,
                          bool suspended);
 
+    std::optional<uint16_t> find_atom(std::u16string_view name);
     uint16_t add_or_find_atom(std::u16string name);
     bool delete_atom(const std::u16string& name);
     bool delete_atom(uint16_t atom_id);
@@ -109,6 +110,7 @@ struct process_context
     handle_store<handle_types::semaphore, semaphore> semaphores{};
     handle_store<handle_types::port, port> ports{};
     handle_store<handle_types::mutant, mutant> mutants{};
+    handle_store<handle_types::window, window> windows{};
     handle_store<handle_types::registry, registry_key, 2> registry_keys{};
     std::map<uint16_t, atom_entry> atoms{};
 

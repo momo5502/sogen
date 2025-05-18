@@ -271,6 +271,7 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
     buffer.write(this->semaphores);
     buffer.write(this->ports);
     buffer.write(this->mutants);
+    buffer.write(this->windows);
     buffer.write(this->registry_keys);
     buffer.write_map(this->atoms);
 
@@ -309,6 +310,7 @@ void process_context::deserialize(utils::buffer_deserializer& buffer)
     buffer.read(this->semaphores);
     buffer.read(this->ports);
     buffer.read(this->mutants);
+    buffer.read(this->windows);
     buffer.read(this->registry_keys);
     buffer.read_map(this->atoms);
 
@@ -359,6 +361,20 @@ handle process_context::create_thread(memory_manager& memory, const uint64_t sta
     auto [h, thr] = this->threads.store_and_get(std::move(t));
     this->callbacks_->on_create_thread(h, *thr);
     return h;
+}
+
+std::optional<uint16_t> process_context::find_atom(const std::u16string_view name)
+{
+    for (auto& entry : this->atoms)
+    {
+        if (entry.second.name == name)
+        {
+            ++entry.second.ref_count;
+            return entry.first;
+        }
+    }
+
+    return {};
 }
 
 uint16_t process_context::add_or_find_atom(std::u16string name)
