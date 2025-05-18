@@ -733,32 +733,41 @@ namespace syscalls
         return 0;
     }
 
-    hwnd handle_NtUserCreateWindowEx(const syscall_context& c, const DWORD ex_style,
-                                     const emulator_object<LARGE_STRING> class_name,
-                                     const emulator_object<LARGE_STRING> cls_version,
-                                     const emulator_object<LARGE_STRING> window_name, const DWORD style, const int x,
-                                     const int y, const int width, const int height, const hwnd parent,
-                                     const hmenu menu, const hinstance instance, const pointer l_param,
-                                     const DWORD flags, const pointer acbi_buffer)
+    std::u16string read_large_string(const emulator_object<LARGE_STRING> str_obj)
     {
-        (void)c;
-        (void)ex_style;
-        (void)class_name;
-        (void)cls_version;
-        (void)window_name;
-        (void)style;
-        (void)x;
-        (void)y;
-        (void)width;
-        (void)height;
-        (void)parent;
-        (void)menu;
-        (void)instance;
-        (void)l_param;
-        (void)flags;
-        (void)acbi_buffer;
+        if (!str_obj)
+        {
+            return {};
+        }
 
-        return 1;
+        const auto str = str_obj.read();
+        if (!str.bAnsi)
+        {
+            return read_string<char16_t>(*str_obj.get_memory_interface(), str.Buffer, str.Length / 2);
+        }
+
+        const auto ansi_string = read_string<char>(*str_obj.get_memory_interface(), str.Buffer, str.Length);
+        return u8_to_u16(ansi_string);
+    }
+
+    hwnd handle_NtUserCreateWindowEx(const syscall_context& c, const DWORD /*ex_style*/,
+                                     const emulator_object<LARGE_STRING> class_name,
+                                     const emulator_object<LARGE_STRING> /*cls_version*/,
+                                     const emulator_object<LARGE_STRING> window_name, const DWORD /*style*/,
+                                     const int x, const int y, const int width, const int height, const hwnd /*parent*/,
+                                     const hmenu /*menu*/, const hinstance /*instance*/, const pointer /*l_param*/,
+                                     const DWORD /*flags*/, const pointer /*acbi_buffer*/)
+    {
+        window win{};
+        win.x = x;
+        win.y = y;
+        win.width = width;
+        win.height = height;
+        win.thread_id = c.win_emu.current_thread().id;
+        win.class_name = read_large_string(class_name);
+        win.name = read_large_string(window_name);
+
+        return c.proc.windows.store(std::move(win)).bits;
     }
 
     ULONG handle_NtUserGetRawInputDeviceList()

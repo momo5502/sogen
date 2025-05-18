@@ -271,6 +271,7 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
     buffer.write(this->semaphores);
     buffer.write(this->ports);
     buffer.write(this->mutants);
+    buffer.write(this->windows);
     buffer.write(this->registry_keys);
     buffer.write_map(this->atoms);
 
@@ -309,6 +310,7 @@ void process_context::deserialize(utils::buffer_deserializer& buffer)
     buffer.read(this->semaphores);
     buffer.read(this->ports);
     buffer.read(this->mutants);
+    buffer.read(this->windows);
     buffer.read(this->registry_keys);
     buffer.read_map(this->atoms);
 
