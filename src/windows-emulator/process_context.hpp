@@ -39,16 +39,20 @@ struct process_context
 
     struct atom_entry
     {
-        std::u16string name;
+        std::u16string name{};
         uint32_t ref_count = 0;
 
-        atom_entry(std::u16string n, const uint32_t count)
-            : name(std::move(n)),
-              ref_count(count)
+        void serialize(utils::buffer_serializer& buffer) const
         {
+            buffer.write(this->name);
+            buffer.write(this->ref_count);
         }
 
-        atom_entry() = default;
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->name);
+            buffer.read(this->ref_count);
+        }
     };
 
     process_context(x86_64_emulator& emu, memory_manager& memory, utils::clock& clock, callbacks& cb)

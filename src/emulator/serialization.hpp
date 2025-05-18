@@ -122,7 +122,7 @@ namespace utils
             }
             else
             {
-                static_assert(!is_trivially_copyable, "Key must be trivially copyable or implement serializable!");
+                static_assert(is_trivially_copyable, "Key must be trivially copyable or implement serializable!");
                 std::abort();
             }
         }
