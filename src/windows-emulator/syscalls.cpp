@@ -810,6 +810,11 @@ namespace syscalls
         return 0;
     }
 
+    uint64_t handle_NtUserChangeWindowMessageFilterEx()
+    {
+        return 0;
+    }
+
     BOOL handle_NtUserShowWindow(const syscall_context& c, const hwnd hwnd, const LONG cmd_show)
     {
         (void)c;
@@ -1044,6 +1049,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserEnumDisplayDevices);
     add_handler(NtUserSetProp);
     add_handler(NtUserSetProp2);
+    add_handler(NtUserChangeWindowMessageFilterEx);
 
 #undef add_handler
 }
