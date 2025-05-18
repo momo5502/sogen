@@ -279,6 +279,19 @@ namespace syscalls
 
         thread->exit_status = exit_status;
         c.win_emu.callbacks.on_thread_terminated(thread_handle, *thread);
+
+        for (auto i = c.proc.windows.begin(); i != c.proc.windows.end();)
+        {
+            if (i->second.thread_id != thread->id)
+            {
+                ++i;
+                continue;
+            }
+
+            i->second.ref_count = 1;
+            i = c.proc.windows.erase(i).first;
+        }
+
         if (thread == c.proc.active_thread)
         {
             c.win_emu.yield_thread();

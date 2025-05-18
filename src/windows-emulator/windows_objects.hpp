@@ -39,6 +39,39 @@ struct event : ref_counted_object
     }
 };
 
+struct window : ref_counted_object
+{
+    uint32_t thread_id{};
+    std::u16string name{};
+    std::u16string class_name{};
+    uint32_t width;
+    uint32_t height;
+    uint32_t x;
+    uint32_t y;
+
+    void serialize_object(utils::buffer_serializer& buffer) const override
+    {
+        buffer.write(this->thread_id);
+        buffer.write(this->name);
+        buffer.write(this->class_name);
+        buffer.write(this->width);
+        buffer.write(this->height);
+        buffer.write(this->x);
+        buffer.write(this->y);
+    }
+
+    void deserialize_object(utils::buffer_deserializer& buffer) override
+    {
+        buffer.read(this->thread_id);
+        buffer.read(this->name);
+        buffer.read(this->class_name);
+        buffer.read(this->width);
+        buffer.read(this->height);
+        buffer.read(this->x);
+        buffer.read(this->y);
+    }
+};
+
 struct mutant : ref_counted_object
 {
     uint32_t locked_count{0};

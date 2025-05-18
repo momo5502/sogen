@@ -19,6 +19,7 @@ struct handle_types
         registry,
         mutant,
         token,
+        window,
     };
 };
 
@@ -238,7 +239,7 @@ class handle_store : public generic_handle_store
         return h;
     }
 
-    bool erase(const typename value_map::iterator& entry)
+    std::pair<typename value_map::iterator, bool> erase(const typename value_map::iterator& entry)
     {
         if (this->block_mutation_)
         {
@@ -247,25 +248,25 @@ class handle_store : public generic_handle_store
 
         if (entry == this->store_.end())
         {
-            return false;
+            return {entry, false};
         }
 
         if constexpr (handle_detail::has_deleter_function<T>())
         {
             if (!T::deleter(entry->second))
             {
-                return true;
+                return {entry, true};
             }
         }
 
-        this->store_.erase(entry);
-        return true;
+        auto new_iter = this->store_.erase(entry);
+        return {new_iter, true};
     }
 
     bool erase(const handle_value h)
     {
         const auto entry = this->get_iterator(h);
-        return this->erase(entry);
+        return this->erase(entry).second;
     }
 
     bool erase(const handle h) override
