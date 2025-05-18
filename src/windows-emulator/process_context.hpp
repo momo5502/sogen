@@ -67,6 +67,7 @@ struct process_context
     handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size,
                          bool suspended);
 
+    std::optional<uint16_t> find_atom(std::u16string_view name);
     uint16_t add_or_find_atom(std::u16string name);
     bool delete_atom(const std::u16string& name);
     bool delete_atom(uint16_t atom_id);

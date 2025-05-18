@@ -574,6 +574,24 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
+    NTSTATUS handle_NtFindAtom(const syscall_context& c, const uint64_t atom_name, const ULONG length,
+                               const emulator_object<uint16_t> atom)
+    {
+        const auto name = read_string<char16_t>(c.emu, atom_name, length / 2);
+        const auto index = c.proc.find_atom(name);
+        if (!index)
+        {
+            return STATUS_OBJECT_NAME_NOT_FOUND;
+        }
+
+        if (atom)
+        {
+            atom.write(*index);
+        }
+
+        return STATUS_SUCCESS;
+    }
+
     NTSTATUS handle_NtUserGetAtomName(const syscall_context& c, const RTL_ATOM atom,
                                       const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> atom_name)
     {
@@ -611,14 +629,15 @@ namespace syscalls
         return 96;
     }
 
-    NTSTATUS handle_NtUserGetDCEx()
+    hdc handle_NtUserGetDCEx(const syscall_context& /*c*/, const hwnd window, const uint64_t /*clip_region*/,
+                             const ULONG /*flags*/)
     {
-        return 1;
+        return window;
     }
 
-    NTSTATUS handle_NtUserGetDC()
+    hdc handle_NtUserGetDC(const syscall_context& c, const hwnd window)
     {
-        return handle_NtUserGetDCEx();
+        return handle_NtUserGetDCEx(c, window, 0, 0);
     }
 
     NTSTATUS handle_NtUserGetWindowDC()
@@ -768,6 +787,11 @@ namespace syscalls
         win.name = read_large_string(window_name);
 
         return c.proc.windows.store(std::move(win)).bits;
+    }
+
+    BOOL handle_NtUserDestroyWindow(const syscall_context& c, const hwnd window)
+    {
+        return c.proc.windows.erase(window);
     }
 
     BOOL handle_NtUserSetProp(const syscall_context& c, const hwnd window, const uint16_t atom, const uint64_t data)
@@ -942,6 +966,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtDxgkIsFeatureEnabled);
     add_handler(NtAddAtomEx);
     add_handler(NtAddAtom);
+    add_handler(NtFindAtom);
     add_handler(NtDeleteAtom);
     add_handler(NtUserGetAtomName);
     add_handler(NtInitializeNlsFiles);
@@ -1050,6 +1075,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserSetProp);
     add_handler(NtUserSetProp2);
     add_handler(NtUserChangeWindowMessageFilterEx);
+    add_handler(NtUserDestroyWindow);
 
 #undef add_handler
 }

@@ -24,6 +24,7 @@ typedef struct _LARGE_STRING
     pointer Buffer;
 } LARGE_STRING;
 
+using hdc = pointer;
 using hwnd = pointer;
 using hmenu = pointer;
 using hinstance = pointer;

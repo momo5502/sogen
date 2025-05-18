@@ -363,6 +363,20 @@ handle process_context::create_thread(memory_manager& memory, const uint64_t sta
     return h;
 }
 
+std::optional<uint16_t> process_context::find_atom(const std::u16string_view name)
+{
+    for (auto& entry : this->atoms)
+    {
+        if (entry.second.name == name)
+        {
+            ++entry.second.ref_count;
+            return entry.first;
+        }
+    }
+
+    return {};
+}
+
 uint16_t process_context::add_or_find_atom(std::u16string name)
 {
     uint16_t index = 1;
