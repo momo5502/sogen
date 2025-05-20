@@ -76,6 +76,12 @@ namespace network
                     return true;
                 }
 
+                bool connect(const address& addr) override
+                {
+                    this->a = addr;
+                    return true;
+                }
+
                 bool listen(int) override
                 {
                     throw std::runtime_error("Not implemented");

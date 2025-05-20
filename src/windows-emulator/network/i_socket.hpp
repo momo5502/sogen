@@ -17,6 +17,7 @@ namespace network
         virtual bool is_listening() = 0;
 
         virtual bool bind(const address& addr) = 0;
+        virtual bool connect(const address& addr) = 0;
         virtual bool listen(int backlog) = 0;
         virtual std::unique_ptr<i_socket> accept(address& address) = 0;
 

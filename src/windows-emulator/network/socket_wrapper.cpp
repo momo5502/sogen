@@ -38,6 +38,11 @@ namespace network
         return this->socket_.bind(addr);
     }
 
+    bool socket_wrapper::connect(const address& addr)
+    {
+        return this->socket_.connect(addr);
+    }
+
     bool socket_wrapper::listen(int backlog)
     {
         return this->socket_.listen(backlog);

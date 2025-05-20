@@ -19,6 +19,7 @@ namespace network
         bool is_listening() override;
 
         bool bind(const address& addr) override;
+        bool connect(const address& addr) override;
         bool listen(int backlog) override;
         std::unique_ptr<i_socket> accept(address& address) override;
 

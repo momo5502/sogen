@@ -47,6 +47,7 @@ namespace network
         bool is_valid() const;
 
         bool bind(const address& target);
+        bool connect(const address& target);
         bool listen(int backlog);
         SOCKET accept(address& address);
 
@@ -72,11 +73,11 @@ namespace network
                                         std::chrono::high_resolution_clock::time_point time_point, bool in_poll);
 
         static bool is_socket_ready(SOCKET s, bool in_poll);
+        static bool is_socket_listening(SOCKET s);
 
         void close();
 
       private:
         SOCKET socket_ = INVALID_SOCKET;
-        bool listening_{};
     };
 }

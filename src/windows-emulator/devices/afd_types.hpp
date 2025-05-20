@@ -199,5 +199,11 @@ struct AFD_POLL_INFO64
 #define AFD_NO_OPERATION                39
 #define AFD_VALIDATE_GROUP              40
 #define AFD_GET_UNACCEPTED_CONNECT_DATA 41
+#define AFD_ROUTING_INTERFACE_QUERY     42
+#define AFD_ROUTING_INTERFACE_CHANGE    43
+#define AFD_ADDRESS_LIST_QUERY          44
+#define AFD_ADDRESS_LIST_CHANGE         45
+#define AFD_JOIN_LEAF                   46
+#define AFD_TRANSPORT_IOCTL             47
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
