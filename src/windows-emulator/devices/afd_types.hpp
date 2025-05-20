@@ -6,6 +6,32 @@
 
 typedef LONG TDI_STATUS;
 
+struct win_sockaddr
+{
+    USHORT sa_family;
+    CHAR sa_data[14];
+};
+
+struct AFD_LISTEN_INFO
+{
+    BOOLEAN SanActive;
+    ULONG MaximumConnectionQueue;
+    BOOLEAN UseDelayedAcceptance;
+};
+
+struct AFD_LISTEN_RESPONSE_INFO
+{
+    LONG Sequence;
+    win_sockaddr RemoteAddress;
+};
+
+struct AFD_ACCEPT_INFO
+{
+    BOOLEAN SanActive;
+    LONG Sequence;
+    handle AcceptHandle;
+};
+
 template <typename Traits>
 struct TDI_CONNECTION_INFORMATION
 {

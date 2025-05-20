@@ -78,6 +78,33 @@ namespace network
     }
 
     // NOLINTNEXTLINE(readability-make-member-function-const)
+    bool socket::listen(int backlog)
+    {
+        int result = ::listen(this->socket_, backlog);
+        if (result == 0)
+        {
+            listening_ = true;
+            return true;
+        }
+        return false;
+    }
+
+    // NOLINTNEXTLINE(readability-make-member-function-const)
+    SOCKET socket::accept(address& address)
+    {
+        sockaddr addr{};
+        int addrlen = sizeof(sockaddr);
+        const auto s = ::accept(this->socket_, &addr, &addrlen);
+
+        if (s != INVALID_SOCKET)
+        {
+            address.set_address(&addr, addrlen);
+        }
+
+        return s;
+    }
+
+    // NOLINTNEXTLINE(readability-make-member-function-const)
     bool socket::set_blocking(const bool blocking)
     {
         return socket::set_blocking(this->socket_, blocking);
@@ -156,6 +183,11 @@ namespace network
     bool socket::is_ready(const bool in_poll) const
     {
         return this->is_valid() && is_socket_ready(this->socket_, in_poll);
+    }
+
+    bool socket::is_listening() const
+    {
+        return this->is_valid() && listening_;
     }
 
     bool socket::sleep_sockets(const std::span<const socket*>& sockets, const std::chrono::milliseconds timeout,
