@@ -65,10 +65,31 @@ namespace network
                     return true;
                 }
 
+                bool is_listening() override
+                {
+                    return false;
+                }
+
                 bool bind(const address& addr) override
                 {
                     this->a = addr;
                     return true;
+                }
+
+                bool connect(const address& addr) override
+                {
+                    this->a = addr;
+                    return true;
+                }
+
+                bool listen(int) override
+                {
+                    throw std::runtime_error("Not implemented");
+                }
+
+                std::unique_ptr<i_socket> accept(address&) override
+                {
+                    throw std::runtime_error("Not implemented");
                 }
 
                 sent_size send(std::span<const std::byte>) override
