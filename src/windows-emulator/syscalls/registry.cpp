@@ -227,9 +227,21 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtCreateKey()
+    NTSTATUS handle_NtCreateKey(const syscall_context& c, const emulator_object<handle> key_handle,
+                                const ACCESS_MASK desired_access,
+                                const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                const ULONG /*title_index*/,
+                                const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*class*/,
+                                const ULONG /*create_options*/, const emulator_object<ULONG> /*disposition*/)
     {
-        return STATUS_NOT_SUPPORTED;
+        const auto result = handle_NtOpenKey(c, key_handle, desired_access, object_attributes);
+
+        if (result == STATUS_OBJECT_NAME_NOT_FOUND)
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        return result;
     }
 
     NTSTATUS handle_NtNotifyChangeKey()

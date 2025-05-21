@@ -9,6 +9,12 @@
 
 #include <sys/stat.h>
 
+#if defined(OS_WINDOWS)
+#define fstat64 _fstat64
+#elif defined(OS_MAC)
+#define fstat64 fstat
+#endif
+
 namespace syscalls
 {
     NTSTATUS handle_NtSetInformationFile(const syscall_context& c, const handle file_handle,
@@ -115,7 +121,8 @@ namespace syscalls
             files.emplace_back(file_entry{.file_path = "..", .is_directory = true});
         }
 
-        for (const auto& file : std::filesystem::directory_iterator(dir))
+        std::error_code ec{};
+        for (const auto& file : std::filesystem::directory_iterator(dir, ec))
         {
             if (!file_mask.empty() && !utils::wildcard::match_filename(file.path().filename().u16string(), file_mask))
             {
@@ -363,6 +370,35 @@ namespace syscalls
             return ret(STATUS_SUCCESS);
         }
 
+        if (info_class == FileBasicInformation)
+        {
+            block.Information = sizeof(FILE_BASIC_INFORMATION);
+
+            if (length < block.Information)
+            {
+                return ret(STATUS_BUFFER_OVERFLOW);
+            }
+
+            struct _stat64 file_stat{};
+            if (fstat64(f->handle, &file_stat) != 0)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            const emulator_object<FILE_BASIC_INFORMATION> info{c.emu, file_information};
+            FILE_BASIC_INFORMATION i{};
+
+            i.CreationTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
+            i.LastAccessTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
+            i.LastWriteTime = utils::convert_unix_to_windows_time(file_stat.st_mtime);
+            i.ChangeTime = i.LastWriteTime;
+            i.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+
+            info.write(i);
+
+            return ret(STATUS_SUCCESS);
+        }
+
         if (info_class == FilePositionInformation)
         {
             if (!f->handle)
@@ -409,6 +445,11 @@ namespace syscalls
             info.write(i);
 
             return ret(STATUS_SUCCESS);
+        }
+
+        if (info_class == FileAllInformation)
+        {
+            return ret(STATUS_NOT_SUPPORTED);
         }
 
         c.win_emu.log.error("Unsupported query file info class: %X\n", info_class);
@@ -654,8 +695,10 @@ namespace syscalls
 
         printer.cancel();
 
+        std::error_code ec{};
+
         const windows_path path = f.name;
-        const bool is_directory = std::filesystem::is_directory(c.win_emu.file_sys.translate(path));
+        const bool is_directory = std::filesystem::is_directory(c.win_emu.file_sys.translate(path), ec);
 
         if (is_directory || create_options & FILE_DIRECTORY_FILE)
         {
@@ -663,7 +706,6 @@ namespace syscalls
 
             if (create_disposition & FILE_CREATE)
             {
-                std::error_code ec{};
                 create_directory(c.win_emu.file_sys.translate(path), ec);
 
                 if (ec)
@@ -750,10 +792,10 @@ namespace syscalls
 
         c.win_emu.log.print(color::dark_gray, "--> Querying file attributes: %s\n", u16_to_u8(filename).c_str());
 
-        const auto local_filename = c.win_emu.file_sys.translate(filename).string();
+        const auto local_filename = c.win_emu.file_sys.translate(filename).u8string();
 
         struct _stat64 file_stat{};
-        if (_stat64(local_filename.c_str(), &file_stat) != 0)
+        if (_stat64(reinterpret_cast<const char*>(local_filename.c_str()), &file_stat) != 0)
         {
             return STATUS_OBJECT_NAME_NOT_FOUND;
         }
@@ -765,7 +807,7 @@ namespace syscalls
             info.AllocationSize.QuadPart = file_stat.st_size;
             info.EndOfFile.QuadPart = file_stat.st_size;
             info.ChangeTime = info.LastWriteTime;
-            info.FileAttributes = FILE_ATTRIBUTE_NORMAL;
+            info.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
         });
 
         return STATUS_SUCCESS;
@@ -791,10 +833,10 @@ namespace syscalls
 
         c.win_emu.log.print(color::dark_gray, "--> Querying file attributes: %s\n", u16_to_u8(filename).c_str());
 
-        const auto local_filename = c.win_emu.file_sys.translate(filename).string();
+        const auto local_filename = c.win_emu.file_sys.translate(filename).u8string();
 
         struct _stat64 file_stat{};
-        if (_stat64(local_filename.c_str(), &file_stat) != 0)
+        if (_stat64(reinterpret_cast<const char*>(local_filename.c_str()), &file_stat) != 0)
         {
             return STATUS_OBJECT_NAME_NOT_FOUND;
         }
@@ -804,7 +846,7 @@ namespace syscalls
             info.LastAccessTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
             info.LastWriteTime = utils::convert_unix_to_windows_time(file_stat.st_mtime);
             info.ChangeTime = info.LastWriteTime;
-            info.FileAttributes = FILE_ATTRIBUTE_NORMAL;
+            info.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
         });
 
         return STATUS_SUCCESS;
