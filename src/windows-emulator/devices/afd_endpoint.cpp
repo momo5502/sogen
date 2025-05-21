@@ -365,7 +365,6 @@ namespace
         if (c.io_status_block)
         {
             IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-            block.Status = STATUS_SUCCESS;
             block.Information = info_size + sizeof(AFD_POLL_HANDLE_INFO64) * current_index;
             c.io_status_block.write(block);
         }
@@ -590,14 +589,6 @@ namespace
                 return STATUS_UNSUCCESSFUL;
             }
 
-            if (c.io_status_block)
-            {
-                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                block.Status = STATUS_SUCCESS;
-                block.Information = 0;
-                c.io_status_block.write(block);
-            }
-
             return STATUS_SUCCESS;
         }
 
@@ -624,14 +615,6 @@ namespace
                 return STATUS_ADDRESS_ALREADY_ASSOCIATED;
             }
 
-            if (c.io_status_block)
-            {
-                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                block.Status = STATUS_SUCCESS;
-                block.Information = 0;
-                c.io_status_block.write(block);
-            }
-
             return STATUS_SUCCESS;
         }
 
@@ -652,14 +635,6 @@ namespace
             if (!this->s_->listen(static_cast<int>(listen_info.MaximumConnectionQueue)))
             {
                 return STATUS_INVALID_PARAMETER;
-            }
-
-            if (c.io_status_block)
-            {
-                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                block.Status = STATUS_SUCCESS;
-                block.Information = 0;
-                c.io_status_block.write(block);
             }
 
             return STATUS_SUCCESS;
@@ -714,7 +689,6 @@ namespace
             if (c.io_status_block)
             {
                 IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                block.Status = STATUS_SUCCESS;
                 block.Information = sizeof(AFD_LISTEN_RESPONSE_INFO);
                 c.io_status_block.write(block);
             }
@@ -759,14 +733,6 @@ namespace
             target_endpoint->s_ = std::move(accepted_socket);
 
             pending_connections_.erase(it);
-
-            if (c.io_status_block)
-            {
-                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                block.Status = STATUS_SUCCESS;
-                block.Information = 0;
-                c.io_status_block.write(block);
-            }
 
             return STATUS_SUCCESS;
         }
@@ -831,7 +797,6 @@ namespace
             if (c.io_status_block)
             {
                 IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                block.Status = STATUS_SUCCESS;
                 block.Information = static_cast<uint32_t>(bytes_received);
                 c.io_status_block.write(block);
             }
@@ -899,7 +864,6 @@ namespace
             if (c.io_status_block)
             {
                 IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                block.Status = STATUS_SUCCESS;
                 block.Information = static_cast<uint32_t>(bytes_sent);
                 c.io_status_block.write(block);
             }
