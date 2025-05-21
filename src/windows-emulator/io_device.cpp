@@ -32,6 +32,11 @@ std::unique_ptr<io_device> create_device(const std::u16string_view device)
         return create_afd_endpoint();
     }
 
+    if (device == u"Afd\\AsyncConnectHlp")
+    {
+        return create_afd_async_connect_hlp();
+    }
+
     if (device == u"MountPointManager")
     {
         return create_mount_point_manager();

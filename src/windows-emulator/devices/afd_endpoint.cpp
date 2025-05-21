@@ -569,7 +569,7 @@ namespace
 
             auto data = win_emu.emu().read_memory(c.input_buffer, c.input_buffer_length);
 
-            constexpr auto address_offset = 12;
+            constexpr auto address_offset = 24;
 
             if (data.size() < address_offset)
             {
@@ -583,9 +583,15 @@ namespace
                 const auto error = this->s_->get_last_error();
                 if (error == SERR(EWOULDBLOCK))
                 {
-                    this->delay_ioctrl(c, true);
+                    this->delay_ioctrl(c, false);
                     return STATUS_PENDING;
                 }
+
+                if (this->executing_delayed_ioctl_ && error == SERR(EISCONN))
+                {
+                    return STATUS_SUCCESS;
+                }
+
                 return STATUS_UNSUCCESSFUL;
             }
 
@@ -663,6 +669,7 @@ namespace
                     this->delay_ioctrl(c, true);
                     return STATUS_PENDING;
                 }
+
                 return STATUS_UNSUCCESSFUL;
             }
 
@@ -1044,9 +1051,46 @@ namespace
             return STATUS_SUCCESS;
         }
     };
+
+    struct afd_async_connect_hlp : stateless_device
+    {
+        NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
+        {
+            if (c.io_control_code != 0x12007)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            if (c.input_buffer_length < 40)
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            const auto target_handle = win_emu.emu().read_memory<handle>(c.input_buffer + 16);
+
+            auto* target_device = win_emu.process.devices.get(target_handle);
+            if (!target_device)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            auto* target_endpoint = target_device->get_internal_device<afd_endpoint>();
+            if (!target_endpoint)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            return target_endpoint->execute_ioctl(win_emu, c);
+        }
+    };
 }
 
 std::unique_ptr<io_device> create_afd_endpoint()
 {
     return std::make_unique<afd_endpoint>();
+}
+
+std::unique_ptr<io_device> create_afd_async_connect_hlp()
+{
+    return std::make_unique<afd_async_connect_hlp>();
 }

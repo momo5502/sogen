@@ -415,6 +415,11 @@ namespace syscalls
         return handle_NtCreateEvent(c, event_handle, desired_access, object_attributes, NotificationEvent, FALSE);
     }
 
+    NTSTATUS handle_NtSetIoCompletion()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
     NTSTATUS handle_NtCreateWaitCompletionPacket(
         const syscall_context& c, const emulator_object<handle> event_handle, const ACCESS_MASK desired_access,
         const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
@@ -940,6 +945,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtTraceEvent);
     add_handler(NtAllocateVirtualMemoryEx);
     add_handler(NtCreateIoCompletion);
+    add_handler(NtSetIoCompletion);
     add_handler(NtCreateWaitCompletionPacket);
     add_handler(NtCreateWorkerFactory);
     add_handler(NtManageHotPatch);

@@ -25,6 +25,12 @@ namespace syscalls
         const auto* f = c.proc.files.get(file_handle);
         if (!f)
         {
+            if (c.proc.devices.get(file_handle))
+            {
+                c.win_emu.log.error("Unsupported set device info class: %X\n", info_class);
+                return STATUS_SUCCESS;
+            }
+
             return STATUS_INVALID_HANDLE;
         }
 
