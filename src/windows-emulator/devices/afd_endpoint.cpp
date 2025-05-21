@@ -254,7 +254,7 @@ namespace
     {
         int16_t socket_events{};
 
-        if (poll_events & (AFD_POLL_ACCEPT | AFD_POLL_RECEIVE))
+        if (poll_events & (AFD_POLL_DISCONNECT | AFD_POLL_ACCEPT | AFD_POLL_RECEIVE))
         {
             socket_events |= POLLRDNORM;
         }

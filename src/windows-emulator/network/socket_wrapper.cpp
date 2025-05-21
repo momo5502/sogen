@@ -30,7 +30,17 @@ namespace network
 
     bool socket_wrapper::is_listening()
     {
-        return this->socket_.is_listening();
+        if (!this->socket_.is_valid())
+        {
+            return false;
+        }
+
+        int val{};
+        socklen_t len = sizeof(val);
+        const auto res =
+            getsockopt(this->socket_.get_socket(), SOL_SOCKET, SO_ACCEPTCONN, reinterpret_cast<char*>(&val), &len);
+
+        return res != SOCKET_ERROR && val == 1;
     }
 
     bool socket_wrapper::bind(const address& addr)
@@ -40,21 +50,26 @@ namespace network
 
     bool socket_wrapper::connect(const address& addr)
     {
-        return this->socket_.connect(addr);
+        return ::connect(this->socket_.get_socket(), &addr.get_addr(), addr.get_size()) == 0;
     }
 
     bool socket_wrapper::listen(int backlog)
     {
-        return this->socket_.listen(backlog);
+        return ::listen(this->socket_.get_socket(), backlog) == 0;
     }
 
     std::unique_ptr<i_socket> socket_wrapper::accept(address& address)
     {
-        const auto s = this->socket_.accept(address);
+        sockaddr addr{};
+        socklen_t addrlen = sizeof(sockaddr);
+        const auto s = ::accept(this->socket_.get_socket(), &addr, &addrlen);
+
         if (s == INVALID_SOCKET)
         {
             return nullptr;
         }
+
+        address.set_address(&addr, addrlen);
 
         return std::make_unique<socket_wrapper>(s);
     }

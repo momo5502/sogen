@@ -47,9 +47,6 @@ namespace network
         bool is_valid() const;
 
         bool bind(const address& target);
-        bool connect(const address& target);
-        bool listen(int backlog);
-        SOCKET accept(address& address);
 
         bool set_blocking(bool blocking);
         static bool set_blocking(SOCKET s, bool blocking);
@@ -65,7 +62,6 @@ namespace network
         int get_address_family() const;
 
         bool is_ready(bool in_poll) const;
-        bool is_listening() const;
 
         static bool sleep_sockets(const std::span<const socket*>& sockets, std::chrono::milliseconds timeout,
                                   bool in_poll);
@@ -73,7 +69,6 @@ namespace network
                                         std::chrono::high_resolution_clock::time_point time_point, bool in_poll);
 
         static bool is_socket_ready(SOCKET s, bool in_poll);
-        static bool is_socket_listening(SOCKET s);
 
         void close();
 

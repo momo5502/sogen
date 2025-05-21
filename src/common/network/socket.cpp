@@ -78,33 +78,6 @@ namespace network
     }
 
     // NOLINTNEXTLINE(readability-make-member-function-const)
-    bool socket::connect(const address& target)
-    {
-        return ::connect(this->socket_, &target.get_addr(), target.get_size()) == 0;
-    }
-
-    // NOLINTNEXTLINE(readability-make-member-function-const)
-    bool socket::listen(int backlog)
-    {
-        return ::listen(this->socket_, backlog) == 0;
-    }
-
-    // NOLINTNEXTLINE(readability-make-member-function-const)
-    SOCKET socket::accept(address& address)
-    {
-        sockaddr addr{};
-        socklen_t addrlen = sizeof(sockaddr);
-        const auto s = ::accept(this->socket_, &addr, &addrlen);
-
-        if (s != INVALID_SOCKET)
-        {
-            address.set_address(&addr, addrlen);
-        }
-
-        return s;
-    }
-
-    // NOLINTNEXTLINE(readability-make-member-function-const)
     bool socket::set_blocking(const bool blocking)
     {
         return socket::set_blocking(this->socket_, blocking);
@@ -185,11 +158,6 @@ namespace network
         return this->is_valid() && is_socket_ready(this->socket_, in_poll);
     }
 
-    bool socket::is_listening() const
-    {
-        return this->is_valid() && is_socket_listening(this->socket_);
-    }
-
     bool socket::sleep_sockets(const std::span<const socket*>& sockets, const std::chrono::milliseconds timeout,
                                const bool in_poll)
     {
@@ -244,14 +212,6 @@ namespace network
         }
 
         return !socket_is_ready;
-    }
-
-    bool socket::is_socket_listening(SOCKET s)
-    {
-        int val{};
-        socklen_t len = sizeof(val);
-        return getsockopt(s, SOL_SOCKET, SO_ACCEPTCONN, reinterpret_cast<char*>(&val), &len) != SOCKET_ERROR &&
-               val == 1;
     }
 
     bool socket::sleep_sockets_until(const std::span<const socket*>& sockets,
