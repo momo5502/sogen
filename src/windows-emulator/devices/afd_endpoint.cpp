@@ -923,7 +923,7 @@ namespace
                     timeout = utils::convert_delay_interval_to_time_point(win_emu.clock(), info.Timeout);
                 }
 
-                this->delay_ioctrl(c, {}, timeout, [&](const io_device_context& dc) {
+                this->delay_ioctrl(c, {}, timeout, [&win_emu](const io_device_context& dc) {
                     const emulator_object<AFD_POLL_INFO64> info_obj{win_emu.emu(), dc.input_buffer};
                     info_obj.access([&](AFD_POLL_INFO64& info) {
                         info.NumberOfHandles = 0; //
