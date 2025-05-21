@@ -9,6 +9,12 @@
 
 #include <sys/stat.h>
 
+#if defined(OS_WINDOWS)
+#define fstat64 _fstat64
+#elif defined(OS_MAC)
+#define fstat64 fstat
+#endif
+
 namespace syscalls
 {
     NTSTATUS handle_NtSetInformationFile(const syscall_context& c, const handle file_handle,
@@ -374,7 +380,7 @@ namespace syscalls
             }
 
             struct _stat64 file_stat{};
-            if (_fstat64(f->handle, &file_stat) != 0)
+            if (fstat64(f->handle, &file_stat) != 0)
             {
                 return STATUS_INVALID_HANDLE;
             }
@@ -386,7 +392,7 @@ namespace syscalls
             i.LastAccessTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
             i.LastWriteTime = utils::convert_unix_to_windows_time(file_stat.st_mtime);
             i.ChangeTime = i.LastWriteTime;
-            i.FileAttributes = (file_stat.st_mode & _S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+            i.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
 
             info.write(i);
 
@@ -801,7 +807,7 @@ namespace syscalls
             info.AllocationSize.QuadPart = file_stat.st_size;
             info.EndOfFile.QuadPart = file_stat.st_size;
             info.ChangeTime = info.LastWriteTime;
-            info.FileAttributes = (file_stat.st_mode & _S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+            info.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
         });
 
         return STATUS_SUCCESS;
@@ -840,7 +846,7 @@ namespace syscalls
             info.LastAccessTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
             info.LastWriteTime = utils::convert_unix_to_windows_time(file_stat.st_mtime);
             info.ChangeTime = info.LastWriteTime;
-            info.FileAttributes = (file_stat.st_mode & _S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+            info.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
         });
 
         return STATUS_SUCCESS;
