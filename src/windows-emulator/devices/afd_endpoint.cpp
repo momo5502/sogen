@@ -523,14 +523,6 @@ namespace
                 return STATUS_NOT_SUPPORTED;
             }
 
-            if (this->delayed_ioctl_)
-            {
-                if (auto* e = win_emu.process.events.get(c.event))
-                {
-                    e->signaled = false;
-                }
-            }
-
             const auto request = _AFD_REQUEST(c.io_control_code);
 
             win_emu.log.print(color::dark_gray, "--> AFD IOCTL: 0x%X (%d)\n", c.io_control_code, request);

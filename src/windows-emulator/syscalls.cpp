@@ -441,6 +441,11 @@ namespace syscalls
             return STATUS_INVALID_HANDLE;
         }
 
+        if (auto* e = c.win_emu.process.events.get(event))
+        {
+            e->signaled = false;
+        }
+
         io_device_context context{c.emu};
         context.event = event;
         context.apc_routine = apc_routine;
