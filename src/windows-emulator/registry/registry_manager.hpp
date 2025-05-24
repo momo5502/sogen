@@ -76,7 +76,7 @@ class registry_manager
     hive_map hives_{};
     std::unordered_map<utils::path_key, utils::path_key> path_mapping_{};
 
-    utils::path_key normalize_path(const utils::path_key& path) const;
+    utils::path_key normalize_path(utils::path_key path) const;
     void add_path_mapping(const utils::path_key& key, const utils::path_key& value);
 
     hive_map::iterator find_hive(const utils::path_key& key);

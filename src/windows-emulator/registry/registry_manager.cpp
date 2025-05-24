@@ -28,6 +28,25 @@ namespace
     {
         hives[key] = std::make_unique<hive_parser>(file);
     }
+
+    std::pair<utils::path_key, bool> perform_path_substitution(
+        const std::unordered_map<utils::path_key, utils::path_key>& path_mapping, utils::path_key path)
+    {
+        for (const auto& mapping : path_mapping)
+        {
+            if (path == mapping.first)
+            {
+                return {mapping.second, true};
+            }
+
+            if (is_subpath(mapping.first.get(), path.get()))
+            {
+                return {mapping.second.get() / path.get().lexically_relative(mapping.first.get()), true};
+            }
+        }
+
+        return {std::move(path), false};
+    }
 }
 
 registry_manager::registry_manager() = default;
@@ -59,15 +78,20 @@ void registry_manager::setup()
     register_hive(this->hives_, root / "user", this->hive_path_ / "NTUSER.DAT");
 
     this->add_path_mapping(machine / "system" / "CurrentControlSet", machine / "system" / "ControlSet001");
+    this->add_path_mapping(machine / "system" / "ControlSet001" / "Control" / "ComputerName" / "ActiveComputerName",
+                           machine / "system" / "ControlSet001" / "Control" / "ComputerName" / "ComputerName");
 }
 
-utils::path_key registry_manager::normalize_path(const utils::path_key& path) const
+utils::path_key registry_manager::normalize_path(utils::path_key path) const
 {
-    for (const auto& mapping : this->path_mapping_)
+    for (size_t i = 0; i < 10; ++i)
     {
-        if (is_subpath(mapping.first.get(), path.get()))
+        auto [new_path, changed] = perform_path_substitution(this->path_mapping_, std::move(path));
+        path = std::move(new_path);
+
+        if (!changed)
         {
-            return mapping.second.get() / path.get().lexically_relative(mapping.first.get());
+            break;
         }
     }
 
