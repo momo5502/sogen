@@ -107,6 +107,12 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
+        if (name == u"Global\\SvcctrlStartEvent_A3752DX")
+        {
+            event_handle.write(SVCCTRL_START_EVENT.bits);
+            return STATUS_SUCCESS;
+        }
+
         if (name == u"DBWIN_DATA_READY")
         {
             event_handle.write(DBWIN_DATA_READY.bits);
