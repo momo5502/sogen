@@ -129,6 +129,8 @@ namespace syscalls
         }
 
         const auto query_name = read_unicode_string(c.emu, value_name);
+        c.win_emu.log.print(color::dark_gray, "--> Query value key: %s (%s\\%s)\n", u16_to_u8(query_name).c_str(),
+                            key->hive.get().string().c_str(), key->path.get().string().c_str());
 
         const auto value = c.win_emu.registry.get_value(*key, u16_to_u8(query_name));
         if (!value)

@@ -678,6 +678,13 @@ namespace
         printf("Time: %lld\n", std::chrono::duration_cast<std::chrono::nanoseconds>(epoch_time).count());
     }
 
+    bool test_apis()
+    {
+        wchar_t buffer[0x100];
+        DWORD size = sizeof(buffer) / 2;
+        return GetComputerNameExW(ComputerNameNetBIOS, buffer, &size);
+    }
+
     bool test_apc()
     {
         int executions = 0;
@@ -721,6 +728,7 @@ int main(const int argc, const char* argv[])
 
     RUN_TEST(test_io, "I/O")
     RUN_TEST(test_dir_io, "Dir I/O")
+    RUN_TEST(test_apis, "APIs")
     RUN_TEST(test_working_directory, "Working Directory")
     RUN_TEST(test_registry, "Registry")
     RUN_TEST(test_system_info, "System Info")
