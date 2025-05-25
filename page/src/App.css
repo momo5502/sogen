@@ -34,6 +34,7 @@ button {
   cursor: pointer;
 }
 
+/*
 button.fancy.bg-primary,
 button.fancy.bg-secondary,
 button.fancy.bg-destructive {
@@ -87,6 +88,7 @@ button.fancy.bg-secondary:hover {
   background: linear-gradient(180deg, rgb(42, 42, 43) 0%, rgb(38, 38, 39) 100%);
   border: 1px solid rgb(33, 33, 34);
 }
+*/
 
 /*.terminal-output span {
   padding: 0px 16px;
