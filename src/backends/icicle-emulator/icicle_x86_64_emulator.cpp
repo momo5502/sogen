@@ -28,6 +28,8 @@ extern "C"
     int32_t icicle_write_memory(icicle_emulator*, uint64_t address, const void* data, size_t length);
     void icicle_save_registers(icicle_emulator*, data_accessor_func* accessor, void* accessor_data);
     void icicle_restore_registers(icicle_emulator*, const void* data, size_t length);
+    uint32_t icicle_create_snapshot(icicle_emulator*);
+    void icicle_restore_snapshot(icicle_emulator*, uint32_t id);
     uint32_t icicle_add_syscall_hook(icicle_emulator*, raw_func* callback, void* data);
     uint32_t icicle_add_interrupt_hook(icicle_emulator*, interrupt_func* callback, void* data);
     uint32_t icicle_add_block_hook(icicle_emulator*, block_func* callback, void* data);
@@ -382,21 +384,27 @@ namespace icicle
         {
             if (is_snapshot)
             {
-                throw std::runtime_error("Not implemented");
+                const auto snapshot = icicle_create_snapshot(this->emu_);
+                buffer.write<uint32_t>(snapshot);
             }
-
-            buffer.write_vector(this->save_registers());
+            else
+            {
+                buffer.write_vector(this->save_registers());
+            }
         }
 
         void deserialize_state(utils::buffer_deserializer& buffer, const bool is_snapshot) override
         {
             if (is_snapshot)
             {
-                throw std::runtime_error("Not implemented");
+                const auto snapshot = buffer.read<uint32_t>();
+                icicle_restore_snapshot(this->emu_, snapshot);
             }
-
-            const auto data = buffer.read_vector<std::byte>();
-            this->restore_registers(data);
+            else
+            {
+                const auto data = buffer.read_vector<std::byte>();
+                this->restore_registers(data);
+            }
         }
 
         std::vector<std::byte> save_registers() const override

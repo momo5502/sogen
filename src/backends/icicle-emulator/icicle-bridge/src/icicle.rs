@@ -247,6 +247,7 @@ pub struct IcicleEmulator {
     violation_hooks: HookContainer<dyn Fn(u64, u8, bool) -> bool>,
     execution_hooks: Rc<RefCell<ExecutionHooks>>,
     stop: Rc<RefCell<bool>>,
+    snapshots: Vec<Box<icicle_vm::Snapshot>>,
 }
 
 struct MemoryHook {
@@ -329,6 +330,7 @@ impl IcicleEmulator {
             interrupt_hooks: HookContainer::new(),
             violation_hooks: HookContainer::new(),
             execution_hooks: exec_hooks,
+            snapshots: Vec::new(),
         }
     }
 
@@ -641,6 +643,20 @@ impl IcicleEmulator {
             registers::X86Register::Flags => self.read_flags::<u16>(data),
             _ => self.read_generic_register(reg, data),
         }
+    }
+
+    pub fn create_snapshot(&mut self) -> u32 {
+        let snap = self.vm.snapshot();
+
+        let id = self.snapshots.len() as u32;
+        self.snapshots.push(Box::new(snap));
+
+        return id;
+    }
+
+    pub fn restore_snapshot(&mut self, id: u32) {
+        let snap = self.snapshots[id as usize].as_ref();
+        self.vm.restore(&snap);
     }
 
     fn write_flags<T>(&mut self, data: &[u8]) -> usize {

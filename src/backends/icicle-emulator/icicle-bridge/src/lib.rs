@@ -150,6 +150,22 @@ pub fn icicle_restore_registers(ptr: *mut c_void, data: *const c_void, size: usi
 }
 
 #[unsafe(no_mangle)]
+pub fn icicle_create_snapshot(ptr: *mut c_void) -> u32 {
+    unsafe {
+        let emulator = &mut *(ptr as *mut IcicleEmulator);
+        return emulator.create_snapshot();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub fn icicle_restore_snapshot(ptr: *mut c_void, id: u32) {
+    unsafe {
+        let emulator = &mut *(ptr as *mut IcicleEmulator);
+        emulator.restore_snapshot(id);
+    }
+}
+
+#[unsafe(no_mangle)]
 pub fn icicle_read_memory(ptr: *mut c_void, address: u64, data: *mut c_void, size: usize) -> i32 {
     if size == 0 {
         return 1;
