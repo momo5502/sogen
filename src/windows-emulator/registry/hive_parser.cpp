@@ -159,7 +159,7 @@ const hive_value* hive_key::get_value(std::ifstream& file, const std::string_vie
     return &value;
 }
 
-const hive_value* hive_key::get_value(std::ifstream& file, size_t index)
+const hive_value* hive_key::get_value(std::ifstream& file, const size_t index)
 {
     this->parse(file);
 

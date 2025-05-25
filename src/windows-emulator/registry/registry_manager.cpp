@@ -4,7 +4,6 @@
 #include <serialization_helper.hpp>
 
 #include "hive_parser.hpp"
-#include <utils/string.hpp>
 
 namespace
 {
@@ -153,7 +152,7 @@ std::optional<registry_key> registry_manager::get_key(const utils::path_key& key
     return {std::move(reg_key)};
 }
 
-std::optional<registry_value> registry_manager::get_value(const registry_key& key, std::string_view name)
+std::optional<registry_value> registry_manager::get_value(const registry_key& key, const std::string_view name)
 {
     const auto iterator = this->hives_.find(key.hive);
     if (iterator == this->hives_.end())
@@ -175,7 +174,7 @@ std::optional<registry_value> registry_manager::get_value(const registry_key& ke
     return v;
 }
 
-std::optional<registry_value> registry_manager::get_value(const registry_key& key, size_t index)
+std::optional<registry_value> registry_manager::get_value(const registry_key& key, const size_t index)
 {
     const auto iterator = this->hives_.find(key.hive);
     if (iterator == this->hives_.end())
@@ -210,7 +209,7 @@ registry_manager::hive_map::iterator registry_manager::find_hive(const utils::pa
     return this->hives_.end();
 }
 
-std::optional<std::string_view> registry_manager::get_sub_key_name(const registry_key& key, size_t index)
+std::optional<std::string_view> registry_manager::get_sub_key_name(const registry_key& key, const size_t index)
 {
     const auto iterator = this->hives_.find(key.hive);
     if (iterator == this->hives_.end())

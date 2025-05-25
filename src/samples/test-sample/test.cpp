@@ -689,7 +689,7 @@ namespace
     {
         int executions = 0;
 
-        auto* apc_func = +[](ULONG_PTR param) {
+        auto* apc_func = +[](const ULONG_PTR param) {
             *reinterpret_cast<int*>(param) += 1; //
         };
 
