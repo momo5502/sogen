@@ -75,7 +75,7 @@ namespace
             emu.restore_snapshot();
         }
 
-        fuzzer::execution_result execute(std::span<const uint8_t> data,
+        fuzzer::execution_result execute(const std::span<const uint8_t> data,
                                          const std::function<fuzzer::coverage_functor>& coverage_handler) override
         {
             // printf("Input size: %zd\n", data.size());

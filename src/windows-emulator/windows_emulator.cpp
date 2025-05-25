@@ -696,11 +696,9 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
     this->dispatcher.deserialize(buffer);
 }
 
-// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 void windows_emulator::save_snapshot()
 {
-    throw std::runtime_error("Not supported");
-    /*utils::buffer_serializer serializer{};
+    utils::buffer_serializer serializer{};
     this->emu().serialize_state(serializer, true);
     this->memory.serialize_memory_state(serializer, true);
     this->mod_manager.serialize(serializer);
@@ -709,14 +707,12 @@ void windows_emulator::save_snapshot()
     this->process_snapshot_ = serializer.move_buffer();
 
     // TODO: Make process copyable
-    // this->process_snapshot_ = this->process;*/
+    // this->process_snapshot_ = this->process;
 }
 
-// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 void windows_emulator::restore_snapshot()
 {
-    throw std::runtime_error("Not supported");
-    /*if (this->process_snapshot_.empty())
+    if (this->process_snapshot_.empty())
     {
         assert(false);
         return;
@@ -727,5 +723,5 @@ void windows_emulator::restore_snapshot()
     this->memory.deserialize_memory_state(deserializer, true);
     this->mod_manager.deserialize(deserializer);
     this->process.deserialize(deserializer);
-    // this->process = *this->process_snapshot_;*/
+    // this->process = *this->process_snapshot_;
 }
