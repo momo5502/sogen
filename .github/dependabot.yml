@@ -3,23 +3,23 @@ updates:
   - package-ecosystem: gitsubmodule
     directory: "/"
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 40
+      interval: monthly
+    open-pull-requests-limit: 100
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 40
+      interval: monthly
+    open-pull-requests-limit: 100
 
   - package-ecosystem: "npm"
     directory: "/page"
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 40
+      interval: monthly
+    open-pull-requests-limit: 100
 
   - package-ecosystem: "cargo"
     directory: "/src/backends/icicle-emulator/icicle-bridge/"
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 40
+      interval: monthly
+    open-pull-requests-limit: 100
