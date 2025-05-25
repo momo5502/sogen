@@ -50,7 +50,7 @@
     "@types/react": "^19.1.4",
     "@types/react-dom": "^19.1.5",
     "@types/react-helmet": "^6.1.11",
-    "@vitejs/plugin-react": "^4.4.1",
+    "@vitejs/plugin-react": "^4.5.0",
     "eslint": "^9.27.0",
     "eslint-plugin-react-hooks": "^6.0.0",
     "eslint-plugin-react-refresh": "^0.4.20",
