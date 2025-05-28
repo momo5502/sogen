@@ -132,7 +132,7 @@ namespace
 
     void run_fuzzer(const windows_emulator& base_emulator)
     {
-        const auto concurrency = std::thread::hardware_concurrency() + 2;
+        const auto concurrency = std::thread::hardware_concurrency() + 4;
 
         utils::buffer_serializer serializer{};
         base_emulator.serialize(serializer);
