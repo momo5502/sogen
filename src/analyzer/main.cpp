@@ -348,6 +348,27 @@ namespace
         return args;
     }
 
+    void print_help()
+    {
+        printf("Usage: analyzer [options] [application] [args...]\n\n");
+        printf("Options:\n");
+        printf("  -h, --help                Show this help message\n");
+        printf("  -d, --debug               Enable GDB debugging mode\n");
+        printf("  -s, --silent              Silent mode\n");
+        printf("  -v, --verbose             Verbose logging\n");
+        printf("  -b, --buffer              Buffer stdout\n");
+        printf("  -c, --concise             Concise logging\n");
+        printf("  -m, --module <module>     Specify module to track\n");
+        printf("  -e, --emulation <path>    Set emulation root path\n");
+        printf("  -a, --snapshot <path>     Load snapshot dump from path\n");
+        printf("  -i, --ignore <funcs>      Comma-separated list of functions to ignore\n");
+        printf("  -p, --path <src> <dst>    Map Windows path to host path\n");
+        printf("  -r, --registry <path>     Set registry path (default: ./registry)\n\n");
+        printf("Examples:\n");
+        printf("  analyzer -v -e path/to/root myapp.exe\n");
+        printf("  analyzer -e path/to/root -p c:/analysis-sample.exe /path/to/sample.exe c:/analysis-sample.exe\n");
+    }
+
     analysis_options parse_options(std::vector<std::string_view>& args)
     {
         analysis_options options{};
@@ -357,68 +378,73 @@ namespace
             auto arg_it = args.begin();
             const auto& arg = *arg_it;
 
-            if (arg == "-d")
+            if (arg == "-h" || arg == "--help")
+            {
+                print_help();
+                std::exit(0);
+            }
+            else if (arg == "-d" || arg == "--debug")
             {
                 options.use_gdb = true;
             }
-            else if (arg == "-s")
+            else if (arg == "-s" || arg == "--silent")
             {
                 options.silent = true;
             }
-            else if (arg == "-v")
+            else if (arg == "-v" || arg == "--verbose")
             {
                 options.verbose_logging = true;
             }
-            else if (arg == "-b")
+            else if (arg == "-b" || arg == "--buffer")
             {
                 options.buffer_stdout = true;
             }
-            else if (arg == "-c")
+            else if (arg == "-c" || arg == "--concise")
             {
                 options.concise_logging = true;
             }
-            else if (arg == "-m")
+            else if (arg == "-m" || arg == "--module")
             {
                 if (args.size() < 2)
                 {
-                    throw std::runtime_error("No module provided after -m");
+                    throw std::runtime_error("No module provided after -m/--module");
                 }
 
                 arg_it = args.erase(arg_it);
                 options.modules.insert(std::string(args[0]));
             }
-            else if (arg == "-e")
+            else if (arg == "-e" || arg == "--emulation")
             {
                 if (args.size() < 2)
                 {
-                    throw std::runtime_error("No emulation root path provided after -e");
+                    throw std::runtime_error("No emulation root path provided after -e/--emulation");
                 }
                 arg_it = args.erase(arg_it);
                 options.emulation_root = args[0];
             }
-            else if (arg == "-a")
+            else if (arg == "-a" || arg == "--snapshot")
             {
                 if (args.size() < 2)
                 {
-                    throw std::runtime_error("No dump path provided after -a");
+                    throw std::runtime_error("No dump path provided after -a/--snapshot");
                 }
                 arg_it = args.erase(arg_it);
                 options.dump = args[0];
             }
-            else if (arg == "-i")
+            else if (arg == "-i" || arg == "--ignore")
             {
                 if (args.size() < 2)
                 {
-                    throw std::runtime_error("No ignored function(s) provided after -i");
+                    throw std::runtime_error("No ignored function(s) provided after -i/--ignore");
                 }
                 arg_it = args.erase(arg_it);
                 split_and_insert(options.ignored_functions, args[0]);
             }
-            else if (arg == "-p")
+            else if (arg == "-p" || arg == "--path")
             {
                 if (args.size() < 3)
                 {
-                    throw std::runtime_error("No path mapping provided after -p");
+                    throw std::runtime_error("No path mapping provided after -p/--path");
                 }
                 arg_it = args.erase(arg_it);
                 windows_path source = args[0];
@@ -427,11 +453,11 @@ namespace
 
                 options.path_mappings[std::move(source)] = std::move(target);
             }
-            else if (arg == "-r")
+            else if (arg == "-r" || arg == "--registry")
             {
                 if (args.size() < 2)
                 {
-                    throw std::runtime_error("No registry path provided after -r");
+                    throw std::runtime_error("No registry path provided after -r/--registry");
                 }
                 arg_it = args.erase(arg_it);
                 options.registry_path = args[0];
@@ -453,12 +479,13 @@ int main(const int argc, char** argv)
     try
     {
         auto args = bundle_arguments(argc, argv);
-        const auto options = parse_options(args);
-
-        if (args.empty() && options.dump.empty())
+        if (args.empty())
         {
-            throw std::runtime_error("Application not specified!");
+            print_help();
+            return 1;
         }
+
+        const auto options = parse_options(args);
 
         bool result{};
 
