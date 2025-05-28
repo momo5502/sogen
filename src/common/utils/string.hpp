@@ -1,6 +1,7 @@
 #pragma once
 #include <span>
 #include <string>
+#include <vector>
 #include <cstddef>
 #include <cwctype>
 #include <algorithm>
@@ -8,6 +9,12 @@
 
 namespace utils::string
 {
+#ifdef __clang__
+    __attribute__((__format__(__printf__, 1, 2)))
+#endif
+    const char*
+    va(const char* format, ...);
+
     template <typename T, size_t Size>
         requires(std::is_trivially_copyable_v<T>)
     // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
