@@ -479,13 +479,13 @@ int main(const int argc, char** argv)
     try
     {
         auto args = bundle_arguments(argc, argv);
-        const auto options = parse_options(args);
-
-        if (args.empty() && options.dump.empty())
+        if (args.empty())
         {
             print_help();
             return 1;
         }
+
+        const auto options = parse_options(args);
 
         bool result{};
 
