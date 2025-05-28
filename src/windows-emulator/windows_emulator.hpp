@@ -202,4 +202,6 @@ class windows_emulator
     void setup_hooks();
     void setup_process(const application_settings& app_settings);
     void on_instruction_execution(uint64_t address);
+
+    void register_factories(utils::buffer_deserializer& buffer);
 };

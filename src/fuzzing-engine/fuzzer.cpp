@@ -50,7 +50,9 @@ namespace fuzzer
             ++context.executions;
             context.generator.access_input([&](const std::span<const uint8_t> input) {
                 uint64_t score{0};
-                const auto result = executer.execute(input, [&](uint64_t) { ++score; });
+                const auto result = executer.execute(input, [&](uint64_t) {
+                    ++score; //
+                });
 
                 if (result == execution_result::error)
                 {
@@ -84,7 +86,9 @@ namespace fuzzer
 
                 for (size_t i = 0; i < concurrency; ++i)
                 {
-                    this->workers_.emplace_back([&context] { worker(context); });
+                    this->workers_.emplace_back([&context] {
+                        worker(context); //
+                    });
                 }
             }
 

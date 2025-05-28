@@ -638,19 +638,7 @@ void windows_emulator::start(size_t count)
     }
 }
 
-void windows_emulator::serialize(utils::buffer_serializer& buffer) const
-{
-    buffer.write(this->executed_instructions_);
-    buffer.write(this->switch_thread_);
-    buffer.write(this->use_relative_time_);
-    this->emu().serialize_state(buffer, false);
-    this->memory.serialize_memory_state(buffer, false);
-    this->mod_manager.serialize(buffer);
-    this->process.serialize(buffer);
-    this->dispatcher.serialize(buffer);
-}
-
-void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
+void windows_emulator::register_factories(utils::buffer_deserializer& buffer)
 {
     buffer.register_factory<memory_manager_wrapper>([this] {
         return memory_manager_wrapper{this->memory}; //
@@ -675,6 +663,23 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
     buffer.register_factory<socket_factory_wrapper>([this] {
         return socket_factory_wrapper{this->socket_factory()}; //
     });
+}
+
+void windows_emulator::serialize(utils::buffer_serializer& buffer) const
+{
+    buffer.write(this->executed_instructions_);
+    buffer.write(this->switch_thread_);
+    buffer.write(this->use_relative_time_);
+    this->emu().serialize_state(buffer, false);
+    this->memory.serialize_memory_state(buffer, false);
+    this->mod_manager.serialize(buffer);
+    this->process.serialize(buffer);
+    this->dispatcher.serialize(buffer);
+}
+
+void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
+{
+    this->register_factories(buffer);
 
     buffer.read(this->executed_instructions_);
     buffer.read(this->switch_thread_);
@@ -719,6 +724,9 @@ void windows_emulator::restore_snapshot()
     }
 
     utils::buffer_deserializer deserializer{this->process_snapshot_};
+
+    this->register_factories(deserializer);
+
     this->emu().deserialize_state(deserializer, true);
     this->memory.deserialize_memory_state(deserializer, true);
     this->mod_manager.deserialize(deserializer);

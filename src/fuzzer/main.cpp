@@ -47,7 +47,7 @@ namespace
 
     struct fuzzer_executer : fuzzer::executer
     {
-        windows_emulator emu{{.emulation_root = "./"}}; // TODO: Fix root directory
+        windows_emulator emu{}; // TODO: Fix root directory
         std::span<const std::byte> emulator_data{};
         std::unordered_set<uint64_t> visited_blocks{};
         const std::function<fuzzer::coverage_functor>* handler{nullptr};
@@ -66,6 +66,11 @@ namespace
             utils::buffer_deserializer deserializer{emulator_data};
             emu.deserialize(deserializer);
             emu.save_snapshot();
+
+            const auto return_address = emu.emu().read_stack(0);
+            emu.emu().hook_memory_execution(return_address, [&](const uint64_t) {
+                emu.emu().stop(); //
+            });
         }
 
         void restore_emulator()
