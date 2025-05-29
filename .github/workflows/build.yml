@@ -21,6 +21,10 @@ on:
           - "true"
           - "false"
 
+permissions:
+  contents: read
+  actions: write
+
 concurrency:
   group: ${{ github.ref }}
   cancel-in-progress: true
@@ -117,6 +121,19 @@ jobs:
           working-directory: build/release/artifacts/
           path: "*"
           retention-days: 1
+
+
+      - name: Remove old cache
+        uses: actions/github-script@v7.0.1
+        continue-on-error: true
+        with:
+          script: |
+            github.rest.actions.deleteActionsCacheByKey({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              key: "sccache dumper ${{ github.head_ref || github.ref_name }}",
+            }).catch(e => {})
+
 
   create-emulation-root:
     name: Create Emulation Root
@@ -321,6 +338,17 @@ jobs:
           name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
           path: "build/${{matrix.preset}}/**/CTestTestfile.cmake"
           retention-days: 1
+
+      - name: Remove old cache
+        uses: actions/github-script@v7.0.1
+        continue-on-error: true
+        with:
+          script: |
+            github.rest.actions.deleteActionsCacheByKey({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              key: "sccache ${{matrix.platform}} ${{matrix.configuration}} ${{ github.head_ref || github.ref_name }}",
+            }).catch(e => {})
 
   test:
     name: Test
