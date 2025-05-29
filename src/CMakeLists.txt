@@ -3,6 +3,7 @@ add_subdirectory(emulator)
 add_subdirectory(gdb-stub)
 add_subdirectory(windows-emulator)
 add_subdirectory(windows-gdb-stub)
+add_subdirectory(backend-selection)
 
 momo_add_subdirectory_and_get_targets("backends" BACKEND_TARGETS)
 momo_targets_set_folder("backends" ${BACKEND_TARGETS})

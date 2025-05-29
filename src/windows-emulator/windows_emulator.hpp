@@ -13,8 +13,6 @@
 #include "module/module_manager.hpp"
 #include "network/socket_factory.hpp"
 
-std::unique_ptr<x86_64_emulator> create_default_x86_64_emulator();
-
 struct emulator_callbacks : module_manager::callbacks, process_context::callbacks
 {
     utils::optional_function<instruction_hook_continuation(uint32_t syscall_id, x86_64_emulator::pointer_type address,
@@ -72,12 +70,11 @@ class windows_emulator
     process_context process;
     syscall_dispatcher dispatcher;
 
-    windows_emulator(const emulator_settings& settings = {}, emulator_callbacks callbacks = {},
-                     emulator_interfaces interfaces = {},
-                     std::unique_ptr<x86_64_emulator> emu = create_default_x86_64_emulator());
-    windows_emulator(application_settings app_settings, const emulator_settings& settings = {},
-                     emulator_callbacks callbacks = {}, emulator_interfaces interfaces = {},
-                     std::unique_ptr<x86_64_emulator> emu = create_default_x86_64_emulator());
+    windows_emulator(std::unique_ptr<x86_64_emulator> emu, const emulator_settings& settings = {},
+                     emulator_callbacks callbacks = {}, emulator_interfaces interfaces = {});
+    windows_emulator(std::unique_ptr<x86_64_emulator> emu, application_settings app_settings,
+                     const emulator_settings& settings = {}, emulator_callbacks callbacks = {},
+                     emulator_interfaces interfaces = {});
 
     windows_emulator(windows_emulator&&) = delete;
     windows_emulator(const windows_emulator&) = delete;
