@@ -145,10 +145,6 @@ if(MSVC)
     /INCREMENTAL:NO
   )
 
-  momo_add_c_and_cxx_release_compile_options(
-    /Ob2
-  )
-
   add_compile_definitions(
     _CRT_SECURE_NO_WARNINGS
     _CRT_NONSTDC_NO_WARNINGS
@@ -196,24 +192,6 @@ if(MSVC)
     $<$<NOT:$<STREQUAL:${CMAKE_MSVC_RUNTIME_LIBRARY},MultiThreadedDebugDLL>>:/NODEFAULTLIB:msvcrtd.lib>
   )
 endif()
-
-##########################################
-
-set(OPT_DEBUG "-O0 -g")
-set(OPT_RELEASE "-O3 -g")
-
-if(MSVC)
-  set(OPT_DEBUG "/Od /Ob0 /Zi")
-  set(OPT_RELEASE "/O2 /Ob2 /Zi")
-
-  add_link_options(/DEBUG)
-endif()
-
-set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} ${OPT_DEBUG}")
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} ${OPT_DEBUG}")
-
-set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} ${OPT_RELEASE}")
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} ${OPT_RELEASE}")
 
 ##########################################
 
