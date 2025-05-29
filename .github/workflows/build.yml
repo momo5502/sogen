@@ -255,29 +255,22 @@ jobs:
           ndk-version: r26d
           add-to-path: false
 
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-
       - name: Initialize sccache environnement
         shell: bash
         run: |
-          echo SCCACHE_CACHE=$(sccache --show-stats | grep Local | cut -d '"' -f2) >> $GITHUB_ENV
-          echo SCCACHE_CACHE_SIZE=1G >> $GITHUB_ENV
-          sccache --stop-server || true
+          echo SCCACHE_DIR=${{github.workspace}}/sccache >> $GITHUB_ENV
+          echo SCCACHE_CACHE_SIZE=500M >> $GITHUB_ENV
 
       - name: Recover sccache cache
         uses: actions/cache@v3
         with:
-          path: ${{env.SCCACHE_CACHE}}
+          path: ${{env.SCCACHE_DIR}}
           key: sccache ${{matrix.platform}} ${{matrix.configuration}} ${{ github.head_ref || github.ref_name }}
           restore-keys: |
             sccache ${{matrix.platform}} ${{matrix.configuration}} ${{ github.event.repository.default_branch }}
-            sccache-cache-${{runner.os}}-${{matrix.platform}}-${{matrix.configuration}}
 
-      - name: Start sccache
-        shell: bash
-        working-directory: ${{github.workspace}}
-        run: sccache --start-server
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Setup Android Environment Variables
         shell: bash
@@ -303,11 +296,6 @@ jobs:
           name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
           path: "build/${{matrix.preset}}/**/CTestTestfile.cmake"
           retention-days: 1
-
-      - name: Cleanup sccache
-        working-directory: ${{github.workspace}}
-        shell: bash
-        run: sccache -s && sccache --stop-server
 
   test:
     name: Test
