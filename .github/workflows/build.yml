@@ -102,9 +102,9 @@ jobs:
         uses: actions/cache/restore@v3
         with:
           path: ${{env.SCCACHE_DIR}}
-          key: sccache-dumper-${{ github.head_ref || github.ref_name }}-
+          key: sccache-${{github.job}}-${{ github.head_ref || github.ref_name }}-
           restore-keys: |
-            sccache-dumper-${{ github.event.repository.default_branch }}-
+            sccache-${{github.job}}-${{ github.event.repository.default_branch }}-
 
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
@@ -118,7 +118,7 @@ jobs:
         uses: actions/cache/save@v3
         with:
           path: ${{env.SCCACHE_DIR}}
-          key: sccache-dumper-${{ github.head_ref || github.ref_name }}-${{github.run_id}}-${{github.run_attempt}}
+          key: sccache-${{github.job}}-${{ github.head_ref || github.ref_name }}-${{github.run_id}}-${{github.run_attempt}}
 
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v4
@@ -298,9 +298,9 @@ jobs:
         uses: actions/cache/restore@v3
         with:
           path: ${{env.SCCACHE_DIR}}
-          key: sccache-${{matrix.platform}}-${{matrix.configuration}}-${{ github.head_ref || github.ref_name }}-
+          key: sccache-${{github.job}}-${{matrix.platform}}-${{matrix.configuration}}-${{ github.head_ref || github.ref_name }}-
           restore-keys: |
-            sccache-${{matrix.platform}}-${{matrix.configuration}}-${{ github.event.repository.default_branch }}-
+            sccache-${{github.job}}-${{matrix.platform}}-${{matrix.configuration}}-${{ github.event.repository.default_branch }}-
 
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
@@ -321,7 +321,7 @@ jobs:
         uses: actions/cache/save@v3
         with:
           path: ${{env.SCCACHE_DIR}}
-          key: sccache-${{matrix.platform}}-${{matrix.configuration}}-${{ github.head_ref || github.ref_name }}-${{github.run_id}}-${{github.run_attempt}}
+          key: sccache-${{github.job}}-${{matrix.platform}}-${{matrix.configuration}}-${{ github.head_ref || github.ref_name }}-${{github.run_id}}-${{github.run_attempt}}
 
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v4
