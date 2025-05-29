@@ -268,7 +268,7 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ${{env.SCCACHE_CACHE}}
-          key: sccache-cache-${{runner.os}}
+          key: sccache-cache-${{runner.os}}-${{matrix.platform}}-${{matrix.configuration}}
 
       - name: Start sccache
         shell: bash
@@ -303,7 +303,7 @@ jobs:
       - name: Cleanup sccache
         working-directory: ${{github.workspace}}
         shell: bash
-        run: sccache --stop-server
+        run: sccache -s && sccache --stop-server
 
   test:
     name: Test
