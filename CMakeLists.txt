@@ -29,6 +29,9 @@ endif()
 # It doesn't support it, even if it thinks it does...
 set(ENV{ARCHFLAGS} "nope")
 
+##########################################
+
+include(cmake/sccache.cmake)
 
 ##########################################
 

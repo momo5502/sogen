@@ -86,6 +86,14 @@ jobs:
       - name: Enable Developer Command Prompt
         uses: ilammy/msvc-dev-cmd@v1.13.0
 
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
+      - name: Setup Environment Variables
+        shell: bash
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+
       - name: CMake Build
         run: cmake --preset=release && cmake --build --preset=release -t dump-apiset
 
@@ -255,7 +263,15 @@ jobs:
           ndk-version: r26d
           add-to-path: false
 
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
       - name: Setup Environment Variables
+        shell: bash
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+
+      - name: Setup Android Environment Variables
         shell: bash
         if: ${{ startsWith(matrix.platform, 'Android') }}
         run: |
