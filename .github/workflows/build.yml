@@ -99,12 +99,13 @@ jobs:
           echo "SCCACHE_CACHE_SIZE=300M" >> $GITHUB_ENV
 
       - name: Recover sccache
-        uses: actions/cache@v3
+        uses: actions/cache/restore@v3
         with:
           path: ${{env.SCCACHE_DIR}}
-          key: sccache dumper ${{ github.head_ref || github.ref_name }}
+          key: sccache-dumper-${{ github.head_ref || github.ref_name }}-
           restore-keys: |
-            sccache dumper ${{ github.event.repository.default_branch }}
+            sccache-dumper-${{ github.event.repository.default_branch }}-
+            sccache dumper ${{ github.head_ref || github.ref_name }}-
 
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
@@ -114,6 +115,12 @@ jobs:
       - name: CMake Build
         run: cmake --preset=release && cmake --build --preset=release -t dump-apiset
 
+      - name: Save sccache
+        uses: actions/cache/save@v3
+        with:
+          path: ${{env.SCCACHE_DIR}}
+          key: sccache-dumper-${{ github.head_ref || github.ref_name }}-${{github.run_id}}-${{github.run_attempt}}
+
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v4
         with:
@@ -121,19 +128,6 @@ jobs:
           working-directory: build/release/artifacts/
           path: "*"
           retention-days: 1
-
-
-      - name: Remove old cache
-        uses: actions/github-script@v7.0.1
-        continue-on-error: true
-        with:
-          script: |
-            github.rest.actions.deleteActionsCacheByKey({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              key: "sccache dumper ${{ github.head_ref || github.ref_name }}",
-            }).catch(e => {})
-
 
   create-emulation-root:
     name: Create Emulation Root
@@ -302,12 +296,13 @@ jobs:
           echo "SCCACHE_CACHE_SIZE=300M" >> $GITHUB_ENV
 
       - name: Recover sccache
-        uses: actions/cache@v3
+        uses: actions/cache/restore@v3
         with:
           path: ${{env.SCCACHE_DIR}}
-          key: sccache ${{matrix.platform}} ${{matrix.configuration}} ${{ github.head_ref || github.ref_name }}
+          key: sccache-${{matrix.platform}}-${{matrix.configuration}}-${{ github.head_ref || github.ref_name }}-
           restore-keys: |
-            sccache ${{matrix.platform}} ${{matrix.configuration}} ${{ github.event.repository.default_branch }}
+            sccache-${{matrix.platform}}-${{matrix.configuration}}-${{ github.event.repository.default_branch }}-
+            sccache ${{matrix.platform}} ${{matrix.configuration}} ${{ github.head_ref || github.ref_name }}-
 
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
@@ -324,6 +319,12 @@ jobs:
       - name: CMake Build
         run: cmake --preset=${{matrix.preset}} ${{matrix.cmake-options}} && cmake --build --preset=${{matrix.preset}}
 
+      - name: Save sccache
+        uses: actions/cache/save@v3
+        with:
+          path: ${{env.SCCACHE_DIR}}
+          key: sccache ${{matrix.platform}} ${{matrix.configuration}} ${{ github.head_ref || github.ref_name }}-${{github.run_id}}-${{github.run_attempt}}
+
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v4
         with:
@@ -338,17 +339,6 @@ jobs:
           name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
           path: "build/${{matrix.preset}}/**/CTestTestfile.cmake"
           retention-days: 1
-
-      - name: Remove old cache
-        uses: actions/github-script@v7.0.1
-        continue-on-error: true
-        with:
-          script: |
-            github.rest.actions.deleteActionsCacheByKey({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              key: "sccache ${{matrix.platform}} ${{matrix.configuration}} ${{ github.head_ref || github.ref_name }}",
-            }).catch(e => {})
 
   test:
     name: Test
