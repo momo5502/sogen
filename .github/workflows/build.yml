@@ -89,8 +89,10 @@ jobs:
       - name: Setup sccache environement
         shell: bash
         run: |
-          echo SCCACHE_DIR=${{github.workspace}}/sccache >> $GITHUB_ENV
-          echo SCCACHE_CACHE_SIZE=300M >> $GITHUB_ENV
+          WORKSPACE_PATH="${{github.workspace}}"
+          WORKSPACE_PATH="${WORKSPACE_PATH//\\//}"
+          echo "SCCACHE_DIR=${WORKSPACE_PATH}/sccache" >> $GITHUB_ENV
+          echo "SCCACHE_CACHE_SIZE=300M" >> $GITHUB_ENV
 
       - name: Recover sccache
         uses: actions/cache@v3
@@ -277,8 +279,10 @@ jobs:
       - name: Setup sccache environement
         shell: bash
         run: |
-          echo SCCACHE_DIR=${{github.workspace}}/sccache >> $GITHUB_ENV
-          echo SCCACHE_CACHE_SIZE=300M >> $GITHUB_ENV
+          WORKSPACE_PATH="${{github.workspace}}"
+          WORKSPACE_PATH="${WORKSPACE_PATH//\\//}"
+          echo "SCCACHE_DIR=${WORKSPACE_PATH}/sccache" >> $GITHUB_ENV
+          echo "SCCACHE_CACHE_SIZE=300M" >> $GITHUB_ENV
 
       - name: Recover sccache
         uses: actions/cache@v3
