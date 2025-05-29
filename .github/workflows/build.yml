@@ -53,7 +53,7 @@ jobs:
             sudo update-alternatives --set c++ /usr/bin/clang++-${{ env.LLVM_VERSION }}
 
         - name: Run sccache-cache
-          uses: mozilla-actions/sccache-action@v0.0.8
+          uses: mozilla-actions/sccache-action@v0.0.9
 
         - name: Setup Environment Variables
           shell: bash
@@ -95,7 +95,7 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1.13.0
 
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.8
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Setup Environment Variables
         shell: bash
@@ -272,7 +272,7 @@ jobs:
           add-to-path: false
 
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.8
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Setup Environment Variables
         shell: bash
