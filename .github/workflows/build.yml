@@ -21,6 +21,10 @@ on:
           - "true"
           - "false"
 
+permissions:
+  contents: read
+  actions: write
+
 concurrency:
   group: ${{ github.ref }}
   cancel-in-progress: true
@@ -51,14 +55,6 @@ jobs:
             sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${{ env.LLVM_VERSION }} 100
             sudo update-alternatives --set cc /usr/bin/clang-${{ env.LLVM_VERSION }}
             sudo update-alternatives --set c++ /usr/bin/clang++-${{ env.LLVM_VERSION }}
-
-        - name: Run sccache-cache
-          uses: mozilla-actions/sccache-action@v0.0.9
-
-        - name: Setup Environment Variables
-          shell: bash
-          run: |
-            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
 
         - name: CMake Build
           run: cmake --preset=release -DMOMO_ENABLE_CLANG_TIDY=On && cmake --build --preset=release
@@ -94,16 +90,35 @@ jobs:
       - name: Enable Developer Command Prompt
         uses: ilammy/msvc-dev-cmd@v1.13.0
 
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Setup Environment Variables
+      - name: Setup sccache environment
         shell: bash
         run: |
-          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          WORKSPACE_PATH="${{github.workspace}}"
+          WORKSPACE_PATH="${WORKSPACE_PATH//\\//}"
+          echo "SCCACHE_DIR=${WORKSPACE_PATH}/sccache" >> $GITHUB_ENV
+          echo "SCCACHE_CACHE_SIZE=300M" >> $GITHUB_ENV
+
+      - name: Recover sccache
+        uses: actions/cache/restore@v3
+        with:
+          path: ${{env.SCCACHE_DIR}}
+          key: sccache-${{github.job}}-${{ github.head_ref || github.ref_name }}-
+          restore-keys: |
+            sccache-${{github.job}}-${{ github.event.repository.default_branch }}-
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+        with:
+          disable_annotations: true
 
       - name: CMake Build
         run: cmake --preset=release && cmake --build --preset=release -t dump-apiset
+
+      - name: Save sccache
+        uses: actions/cache/save@v3
+        with:
+          path: ${{env.SCCACHE_DIR}}
+          key: sccache-${{github.job}}-${{ github.head_ref || github.ref_name }}-${{github.run_id}}-${{github.run_attempt}}
 
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v4
@@ -271,13 +286,26 @@ jobs:
           ndk-version: r26d
           add-to-path: false
 
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Setup Environment Variables
+      - name: Setup sccache environment
         shell: bash
         run: |
-          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          WORKSPACE_PATH="${{github.workspace}}"
+          WORKSPACE_PATH="${WORKSPACE_PATH//\\//}"
+          echo "SCCACHE_DIR=${WORKSPACE_PATH}/sccache" >> $GITHUB_ENV
+          echo "SCCACHE_CACHE_SIZE=300M" >> $GITHUB_ENV
+
+      - name: Recover sccache
+        uses: actions/cache/restore@v3
+        with:
+          path: ${{env.SCCACHE_DIR}}
+          key: sccache-${{github.job}}-${{matrix.platform}}-${{matrix.configuration}}-${{ github.head_ref || github.ref_name }}-
+          restore-keys: |
+            sccache-${{github.job}}-${{matrix.platform}}-${{matrix.configuration}}-${{ github.event.repository.default_branch }}-
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+        with:
+          disable_annotations: true
 
       - name: Setup Android Environment Variables
         shell: bash
@@ -288,6 +316,12 @@ jobs:
 
       - name: CMake Build
         run: cmake --preset=${{matrix.preset}} ${{matrix.cmake-options}} && cmake --build --preset=${{matrix.preset}}
+
+      - name: Save sccache
+        uses: actions/cache/save@v3
+        with:
+          path: ${{env.SCCACHE_DIR}}
+          key: sccache-${{github.job}}-${{matrix.platform}}-${{matrix.configuration}}-${{ github.head_ref || github.ref_name }}-${{github.run_id}}-${{github.run_attempt}}
 
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v4
