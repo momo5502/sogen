@@ -606,11 +606,13 @@ void windows_emulator::setup_hooks()
 
 void windows_emulator::start(size_t count)
 {
+    this->should_stop = false;
+
     const auto use_count = count > 0;
     const auto start_instructions = this->executed_instructions_;
     const auto target_instructions = start_instructions + count;
 
-    while (true)
+    while (!this->should_stop)
     {
         if (this->switch_thread_ || !this->current_thread().is_thread_ready(this->process, this->clock()))
         {
@@ -636,6 +638,12 @@ void windows_emulator::start(size_t count)
             count = static_cast<size_t>(target_instructions - current_instructions);
         }
     }
+}
+
+void windows_emulator::stop()
+{
+    this->should_stop = true;
+    this->emu().stop();
 }
 
 void windows_emulator::register_factories(utils::buffer_deserializer& buffer)

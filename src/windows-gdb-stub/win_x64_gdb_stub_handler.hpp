@@ -14,6 +14,11 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
     {
     }
 
+    void on_interrupt() override
+    {
+        this->win_emu_->stop();
+    }
+
     bool should_stop() override
     {
         return this->should_stop_();

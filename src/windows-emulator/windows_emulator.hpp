@@ -132,6 +132,7 @@ class windows_emulator
     }
 
     void start(size_t count = 0);
+    void stop();
 
     void serialize(utils::buffer_serializer& buffer) const;
     void deserialize(utils::buffer_deserializer& buffer);
@@ -191,6 +192,7 @@ class windows_emulator
     bool switch_thread_{false};
     bool use_relative_time_{false};
     bool silent_until_main_{false};
+    std::atomic_bool should_stop{false};
 
     std::unordered_map<uint16_t, uint16_t> port_mappings_{};
 
