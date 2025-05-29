@@ -262,13 +262,17 @@ jobs:
         shell: bash
         run: |
           echo SCCACHE_CACHE=$(sccache --show-stats | grep Local | cut -d '"' -f2) >> $GITHUB_ENV
+          echo SCCACHE_CACHE_SIZE=1G >> $GITHUB_ENV
           sccache --stop-server || true
 
       - name: Recover sccache cache
         uses: actions/cache@v3
         with:
           path: ${{env.SCCACHE_CACHE}}
-          key: sccache-cache-${{runner.os}}-${{matrix.platform}}-${{matrix.configuration}}
+          key: sccache ${{matrix.platform}} ${{matrix.configuration}} ${{ github.head_ref || github.ref_name }}
+          restore-keys: |
+            sccache ${{matrix.platform}} ${{matrix.configuration}} ${{ github.event.repository.default_branch }}
+            sccache-cache-${{runner.os}}-${{matrix.platform}}-${{matrix.configuration}}
 
       - name: Start sccache
         shell: bash
