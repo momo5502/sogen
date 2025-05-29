@@ -25,7 +25,11 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 ##########################################
 
-if(NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
+# MinGW LTO will cause errors in compile stage
+# We just disable it
+if(CMAKE_C_COMPILER MATCHES "/.*/x86_64-w64-mingw32-gcc$")
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
+elseif(NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
 endif()
 

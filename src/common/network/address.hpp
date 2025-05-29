@@ -2,8 +2,14 @@
 
 #if _WIN32
 #include "../utils/win.hpp"
+#ifdef __MINGW64__
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <stdint.h>
+#else
 #include <WinSock2.h>
 #include <WS2tcpip.h>
+#endif
 #else
 
 #include <sys/types.h>

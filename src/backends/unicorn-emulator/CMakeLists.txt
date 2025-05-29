@@ -14,6 +14,10 @@ endif()
 
 target_include_directories(unicorn-emulator INTERFACE "${CMAKE_CURRENT_LIST_DIR}")
 
+if(CMAKE_C_COMPILER MATCHES "/.*/x86_64-w64-mingw32-gcc$")
+  target_link_options(unicorn-emulator PRIVATE -static-libstdc++ -static -lwinpthread)
+endif()
+
 target_link_libraries(unicorn-emulator PUBLIC emulator)
 target_link_libraries(unicorn-emulator PRIVATE unicorn emulator-common)
 

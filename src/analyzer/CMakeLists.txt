@@ -14,6 +14,10 @@ if(NOT MOMO_ENABLE_CLANG_TIDY)
   target_precompile_headers(analyzer PRIVATE std_include.hpp)
 endif()
 
+if(CMAKE_C_COMPILER MATCHES "/.*/x86_64-w64-mingw32-gcc$")
+  target_link_options(analyzer PRIVATE -static-libstdc++ -static -lwinpthread)
+endif()
+
 target_link_libraries(analyzer PRIVATE
   reflect
   debugger
