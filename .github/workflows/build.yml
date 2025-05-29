@@ -52,6 +52,14 @@ jobs:
             sudo update-alternatives --set cc /usr/bin/clang-${{ env.LLVM_VERSION }}
             sudo update-alternatives --set c++ /usr/bin/clang++-${{ env.LLVM_VERSION }}
 
+        - name: Run sccache-cache
+          uses: mozilla-actions/sccache-action@v0.0.8
+
+        - name: Setup Environment Variables
+          shell: bash
+          run: |
+            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+
         - name: CMake Build
           run: cmake --preset=release -DMOMO_ENABLE_CLANG_TIDY=On && cmake --build --preset=release
 

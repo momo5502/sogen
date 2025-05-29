@@ -203,8 +203,8 @@ set(OPT_DEBUG "-O0 -g")
 set(OPT_RELEASE "-O3 -g")
 
 if(MSVC)
-  set(OPT_DEBUG "/Od /Ob0 /Zi")
-  set(OPT_RELEASE "/O2 /Ob2 /Zi")
+  set(OPT_DEBUG "/Od /Ob0 /Z7")
+  set(OPT_RELEASE "/O2 /Ob2 /Z7")
 
   add_link_options(/DEBUG)
 endif()
