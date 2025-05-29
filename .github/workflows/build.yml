@@ -86,6 +86,25 @@ jobs:
       - name: Enable Developer Command Prompt
         uses: ilammy/msvc-dev-cmd@v1.13.0
 
+      - name: Setup sccache environement
+        shell: bash
+        run: |
+          echo SCCACHE_DIR=${{github.workspace}}/sccache >> $GITHUB_ENV
+          echo SCCACHE_CACHE_SIZE=300M >> $GITHUB_ENV
+
+      - name: Recover sccache
+        uses: actions/cache@v3
+        with:
+          path: ${{env.SCCACHE_DIR}}
+          key: sccache dumper ${{ github.head_ref || github.ref_name }}
+          restore-keys: |
+            sccache dumper ${{ github.event.repository.default_branch }}
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+        with:
+          disable_annotations: true
+
       - name: CMake Build
         run: cmake --preset=release && cmake --build --preset=release -t dump-apiset
 
@@ -259,7 +278,7 @@ jobs:
         shell: bash
         run: |
           echo SCCACHE_DIR=${{github.workspace}}/sccache >> $GITHUB_ENV
-          echo SCCACHE_CACHE_SIZE=500M >> $GITHUB_ENV
+          echo SCCACHE_CACHE_SIZE=300M >> $GITHUB_ENV
 
       - name: Recover sccache
         uses: actions/cache@v3
@@ -271,6 +290,8 @@ jobs:
 
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+        with:
+          disable_annotations: true
 
       - name: Setup Android Environment Variables
         shell: bash
