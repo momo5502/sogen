@@ -105,7 +105,6 @@ jobs:
           key: sccache-dumper-${{ github.head_ref || github.ref_name }}-
           restore-keys: |
             sccache-dumper-${{ github.event.repository.default_branch }}-
-            sccache dumper ${{ github.head_ref || github.ref_name }}-
 
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
@@ -302,7 +301,6 @@ jobs:
           key: sccache-${{matrix.platform}}-${{matrix.configuration}}-${{ github.head_ref || github.ref_name }}-
           restore-keys: |
             sccache-${{matrix.platform}}-${{matrix.configuration}}-${{ github.event.repository.default_branch }}-
-            sccache ${{matrix.platform}} ${{matrix.configuration}} ${{ github.head_ref || github.ref_name }}-
 
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
@@ -323,7 +321,7 @@ jobs:
         uses: actions/cache/save@v3
         with:
           path: ${{env.SCCACHE_DIR}}
-          key: sccache ${{matrix.platform}} ${{matrix.configuration}} ${{ github.head_ref || github.ref_name }}-${{github.run_id}}-${{github.run_attempt}}
+          key: sccache-${{matrix.platform}}-${{matrix.configuration}}-${{ github.head_ref || github.ref_name }}-${{github.run_id}}-${{github.run_attempt}}
 
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v4
