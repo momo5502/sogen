@@ -90,7 +90,7 @@ jobs:
       - name: Enable Developer Command Prompt
         uses: ilammy/msvc-dev-cmd@v1.13.0
 
-      - name: Setup sccache environement
+      - name: Setup sccache environment
         shell: bash
         run: |
           WORKSPACE_PATH="${{github.workspace}}"
@@ -286,7 +286,7 @@ jobs:
           ndk-version: r26d
           add-to-path: false
 
-      - name: Setup sccache environement
+      - name: Setup sccache environment
         shell: bash
         run: |
           WORKSPACE_PATH="${{github.workspace}}"
