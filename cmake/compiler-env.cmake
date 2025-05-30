@@ -25,20 +25,19 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 ##########################################
 
-# MinGW LTO will cause errors in compile stage
-# We just disable it
 if(MINGW)
-  set(MINGW_WARNING_SHOWED FALSE)
-  if (NOT ${MINGW_WARNING_SHOWED})
-    set(MINGW_WARNING_SHOWED TRUE)
-    message(STATUS "!!!!!!!!!!!!!!!!!      WARNING      !!!!!!!!!!!!!!!!!")
-    message(STATUS "!!! Cross compile with MinGW is not fully tested  !!!")
-    message(STATUS "!!! Compile will continue after 10 seconds        !!!")
-    message(STATUS "!!! <CTRL-C> to stop compile.                     !!!")
-    message(STATUS "!!! USE AT YOUR OWN RISK, YOU HAVE BEEN WARNED    !!!")
-    message(STATUS "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-    execute_process(COMMAND ${CMAKE_COMMAND} -E sleep 10)
+  # Minimum version check for MinGW compiler
+  set(MINGW_C_COMPILER_MIN_VERSION "14.0.0")
+  set(MINGW_CXX_COMPILER_MIN_VERSION "14.0.0")
+
+  if (${CMAKE_C_COMPILER_VERSION} VERSION_LESS_EQUAL ${MINGW_C_COMPILER_MIN_VERSION})
+      message(FATAL_ERROR "${CMAKE_C_COMPILER} version should >= ${MINGW_C_COMPILER_MIN_VERSION}")
   endif()
+  if (${CMAKE_CXX_COMPILER_VERSION} VERSION_LESS_EQUAL ${MINGW_CXX_COMPILER_MIN_VERSION})
+      message(FATAL_ERROR "${CMAKE_C_COMPILER} version should >= ${MINGW_CXX_COMPILER_MIN_VERSION}")
+  endif()
+
+  # MinGW LTO will cause errors in compile stage, We just disable it
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
 elseif(NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
