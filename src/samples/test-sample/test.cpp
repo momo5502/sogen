@@ -12,9 +12,16 @@
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <intrin.h>
+
+#ifdef __MINGW64__
+#include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <Windows.h>
 #include <WinSock2.h>
 #include <WS2tcpip.h>
+#endif
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -594,6 +601,7 @@ namespace
         }
     }
 
+#ifndef __MINGW64__
     bool test_access_violation_exception()
     {
         __try
@@ -641,6 +649,7 @@ namespace
     {
         return test_access_violation_exception() && test_illegal_instruction_exception();
     }
+#endif
 
     bool trap_flag_cleared = false;
     constexpr DWORD TRAP_FLAG_MASK = 0x100;
@@ -665,7 +674,11 @@ namespace
 
         __writeeflags(__readeflags() | TRAP_FLAG_MASK);
 
+#ifdef __MINGW64__
+        asm("nop");
+#else
         __nop();
+#endif
 
         RemoveVectoredExceptionHandler(veh_handle);
 
@@ -736,7 +749,9 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_threads, "Threads")
     RUN_TEST(test_env, "Environment")
     RUN_TEST(test_exceptions, "Exceptions")
+#ifndef __MINGW64__
     RUN_TEST(test_native_exceptions, "Native Exceptions")
+#endif
     if (!getenv("EMULATOR_ICICLE"))
     {
         RUN_TEST(test_interrupts, "Interrupts")

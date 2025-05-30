@@ -1,5 +1,9 @@
 #pragma once
 
+#ifdef __MINGW64__
+#include <unistd.h>
+#endif
+
 #include <cstdlib>
 #include <gtest/gtest.h>
 #include <windows_emulator.hpp>
