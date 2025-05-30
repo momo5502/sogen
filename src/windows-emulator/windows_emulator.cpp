@@ -3,12 +3,6 @@
 
 #include "cpu_context.hpp"
 
-#include <unicorn_x86_64_emulator.hpp>
-
-#if MOMO_ENABLE_RUST_CODE
-#include <icicle_x86_64_emulator.hpp>
-#endif
-
 #include <utils/io.hpp>
 #include <utils/finally.hpp>
 #include <utils/lazy_object.hpp>
@@ -268,30 +262,17 @@ namespace
     }
 }
 
-std::unique_ptr<x86_64_emulator> create_default_x86_64_emulator()
-{
-#if MOMO_ENABLE_RUST_CODE
-    const auto* env = getenv("EMULATOR_ICICLE");
-    if (env && (env == "1"sv || env == "true"sv))
-    {
-        return icicle::create_x86_64_emulator();
-    }
-#endif
-
-    return unicorn::create_x86_64_emulator();
-}
-
-windows_emulator::windows_emulator(application_settings app_settings, const emulator_settings& settings,
-                                   emulator_callbacks callbacks, emulator_interfaces interfaces,
-                                   std::unique_ptr<x86_64_emulator> emu)
-    : windows_emulator(settings, std::move(callbacks), std::move(interfaces), std::move(emu))
+windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, application_settings app_settings,
+                                   const emulator_settings& settings, emulator_callbacks callbacks,
+                                   emulator_interfaces interfaces)
+    : windows_emulator(std::move(emu), settings, std::move(callbacks), std::move(interfaces))
 {
     fixup_application_settings(app_settings);
     this->setup_process(app_settings);
 }
 
-windows_emulator::windows_emulator(const emulator_settings& settings, emulator_callbacks callbacks,
-                                   emulator_interfaces interfaces, std::unique_ptr<x86_64_emulator> emu)
+windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, const emulator_settings& settings,
+                                   emulator_callbacks callbacks, emulator_interfaces interfaces)
     : emu_(std::move(emu)),
       clock_(get_clock(interfaces, this->executed_instructions_, settings.use_relative_time)),
       socket_factory_(get_socket_factory(interfaces)),

@@ -3,7 +3,11 @@
 #include <windows_emulator.hpp>
 #include <fuzzer.hpp>
 
-#include "utils/finally.hpp"
+#include <utils/finally.hpp>
+
+#if MOMO_ENABLE_RUST_CODE
+#include <icicle_x86_64_emulator.hpp>
+#endif
 
 #ifdef _MSC_VER
 #pragma warning(disable : 4702)
@@ -13,6 +17,15 @@ bool use_gdb = false;
 
 namespace
 {
+    std::unique_ptr<x86_64_emulator> create_emulator_backend()
+    {
+#if MOMO_ENABLE_RUST_CODE
+        return icicle::create_x86_64_emulator();
+#else
+        throw std::runtime_error("Fuzzer requires rust code to be enabled");
+#endif
+    }
+
     void run_emulation(windows_emulator& win_emu)
     {
         try
@@ -47,7 +60,7 @@ namespace
 
     struct fuzzer_executer : fuzzer::executer
     {
-        windows_emulator emu{}; // TODO: Fix root directory
+        windows_emulator emu{create_emulator_backend()};
         std::span<const std::byte> emulator_data{};
         std::unordered_set<uint64_t> visited_blocks{};
         const std::function<fuzzer::coverage_functor>* handler{nullptr};
@@ -148,7 +161,7 @@ namespace
             .application = application,
         };
 
-        windows_emulator win_emu{std::move(settings)};
+        windows_emulator win_emu{create_emulator_backend(), std::move(settings)};
 
         forward_emulator(win_emu);
         run_fuzzer(win_emu);

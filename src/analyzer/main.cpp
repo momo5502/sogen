@@ -1,6 +1,7 @@
 #include "std_include.hpp"
 
 #include <windows_emulator.hpp>
+#include <backend_selection.hpp>
 #include <win_x64_gdb_stub_handler.hpp>
 
 #include "object_watching.hpp"
@@ -217,7 +218,7 @@ namespace
     std::unique_ptr<windows_emulator> create_empty_emulator(const analysis_options& options)
     {
         const auto settings = create_emulator_settings(options);
-        return std::make_unique<windows_emulator>(settings);
+        return std::make_unique<windows_emulator>(create_x86_64_emulator(), settings);
     }
 
     std::unique_ptr<windows_emulator> create_application_emulator(const analysis_options& options,
@@ -234,7 +235,7 @@ namespace
         };
 
         const auto settings = create_emulator_settings(options);
-        return std::make_unique<windows_emulator>(std::move(app_settings), settings);
+        return std::make_unique<windows_emulator>(create_x86_64_emulator(), std::move(app_settings), settings);
     }
 
     std::unique_ptr<windows_emulator> setup_emulator(const analysis_options& options,

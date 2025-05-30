@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <gtest/gtest.h>
 #include <windows_emulator.hpp>
+#include <backend_selection.hpp>
 
 #include <network/static_socket_factory.hpp>
 
@@ -72,6 +73,7 @@ namespace test
             std::filesystem::temp_directory_path() / ("emulator-test-file-" + std::to_string(getpid()) + ".txt");
 
         return windows_emulator{
+            create_x86_64_emulator(),
             settings,
             std::move(callbacks),
             emulator_interfaces{
@@ -97,6 +99,7 @@ namespace test
             std::filesystem::temp_directory_path() / ("emulator-test-file-" + std::to_string(getpid()) + ".txt");
 
         return windows_emulator{
+            create_x86_64_emulator(),
             get_sample_app_settings(config),
             settings,
             std::move(callbacks),
