@@ -2,7 +2,7 @@
 	path = deps/unicorn
 	url = https://github.com/momo5502/unicorn.git
 	shallow = true
-	branch = a19ae94
+	branch = wasm
 [submodule "deps/reflect"]
 	path = deps/reflect
 	url = https://github.com/qlibs/reflect.git

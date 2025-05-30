@@ -10,14 +10,6 @@ add_executable(windows-emulator-test ${SRC_FILES})
 
 momo_assign_source_group(${SRC_FILES})
 
-if(CMAKE_C_COMPILER MATCHES "/.*/x86_64-w64-mingw32-gcc$")
-  target_link_options(windows-emulator-test PRIVATE -static-libstdc++ -static -lwinpthread)
-endif()
-
-if(CMAKE_C_COMPILER MATCHES "/.*/x86_64-w64-mingw32-gcc$")
-  target_link_options(windows-emulator-test PRIVATE -static-libstdc++ -static -lwinpthread)
-endif()
-
 target_link_libraries(windows-emulator-test PRIVATE
   gtest
   gtest_main
