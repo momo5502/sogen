@@ -63,6 +63,14 @@ endif()
 
 ##########################################
 
+if(MINGW)
+  momo_add_c_and_cxx_compile_options(
+    -Wno-array-bounds
+  )
+endif()
+
+##########################################
+
 if(LINUX)
   add_link_options(
     -Wl,--no-undefined

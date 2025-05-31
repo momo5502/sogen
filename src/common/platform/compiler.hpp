@@ -20,11 +20,13 @@
 #endif
 
 #ifdef OS_WINDOWS
-#define EXPORT_SYMBOL     __declspec(dllexport)
-#define IMPORT_SYMBOL     __declspec(dllimport)
-#define NO_INLINE         __declspec(noinline)
+#define EXPORT_SYMBOL __declspec(dllexport)
+#define IMPORT_SYMBOL __declspec(dllimport)
+#define NO_INLINE     __declspec(noinline)
 
+#ifndef DECLSPEC_ALIGN
 #define DECLSPEC_ALIGN(n) __declspec(align(n))
+#endif
 
 #define RESTRICTED_POINTER
 

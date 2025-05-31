@@ -8,7 +8,7 @@ list(SORT SRC_FILES)
 
 add_executable(test-sample ${SRC_FILES})
 
-if(MINGW)
+if(WIN)
   target_link_libraries(test-sample PRIVATE ws2_32)
 endif()
 

@@ -591,7 +591,11 @@ using NEON128 = struct _NEON128
     LONGLONG High;
 };
 
-typedef struct DECLSPEC_ALIGN(16) _CONTEXT64
+typedef struct
+#if !defined(__MINGW64__)
+    DECLSPEC_ALIGN(16)
+#endif
+        _CONTEXT64
 {
     DWORD64 P1Home;
     DWORD64 P2Home;
