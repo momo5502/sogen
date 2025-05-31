@@ -25,21 +25,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 ##########################################
 
-if(MINGW)
-  # Minimum version check for MinGW compiler
-  set(MINGW_C_COMPILER_MIN_VERSION "14.0.0")
-  set(MINGW_CXX_COMPILER_MIN_VERSION "14.0.0")
-
-  if (${CMAKE_C_COMPILER_VERSION} VERSION_LESS_EQUAL ${MINGW_C_COMPILER_MIN_VERSION})
-      message(FATAL_ERROR "${CMAKE_C_COMPILER} version should >= ${MINGW_C_COMPILER_MIN_VERSION}")
-  endif()
-  if (${CMAKE_CXX_COMPILER_VERSION} VERSION_LESS_EQUAL ${MINGW_CXX_COMPILER_MIN_VERSION})
-      message(FATAL_ERROR "${CMAKE_C_COMPILER} version should >= ${MINGW_CXX_COMPILER_MIN_VERSION}")
-  endif()
-
-  # MinGW LTO will cause errors in compile stage, We just disable it
-  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
-elseif(NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
+if(NOT MINGW AND NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
 endif()
 
@@ -53,7 +39,14 @@ endif()
 
 ##########################################
 
-if(MOMO_ENABLE_RUST_CODE)
+set(MOMO_ENABLE_RUST OFF)
+if(MOMO_ENABLE_RUST_CODE AND NOT MINGW AND NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
+  set(MOMO_ENABLE_RUST ON)
+endif()
+
+##########################################
+
+if(MOMO_ENABLE_RUST)
   add_compile_definitions(MOMO_ENABLE_RUST_CODE=1)
 else()
   add_compile_definitions(MOMO_ENABLE_RUST_CODE=0)
@@ -65,6 +58,21 @@ if(UNIX)
   momo_add_c_and_cxx_compile_options(
     -fvisibility=hidden
     -ftrivial-auto-var-init=zero
+  )
+endif()
+
+##########################################
+
+if(MINGW)
+  add_link_options(
+    -static-libstdc++
+    -static-libgcc
+    -static
+    -lwinpthread
+  )
+
+  momo_add_c_and_cxx_compile_options(
+    -Wno-array-bounds
   )
 endif()
 

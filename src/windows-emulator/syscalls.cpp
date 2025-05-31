@@ -66,6 +66,10 @@ namespace syscalls
     NTSTATUS handle_NtQueryInformationFile(const syscall_context& c, handle file_handle,
                                            emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                            uint64_t file_information, uint32_t length, uint32_t info_class);
+    NTSTATUS handle_NtQueryInformationByName(
+        const syscall_context& c, emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+        emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, uint64_t file_information,
+        uint32_t length, uint32_t info_class);
     NTSTATUS handle_NtReadFile(const syscall_context& c, handle file_handle, uint64_t /*event*/,
                                uint64_t /*apc_routine*/, uint64_t /*apc_context*/,
                                emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, uint64_t buffer,
@@ -1091,6 +1095,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserSetProp2);
     add_handler(NtUserChangeWindowMessageFilterEx);
     add_handler(NtUserDestroyWindow);
+    add_handler(NtQueryInformationByName);
 
 #undef add_handler
 }

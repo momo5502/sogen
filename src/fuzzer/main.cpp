@@ -166,46 +166,51 @@ namespace
         forward_emulator(win_emu);
         run_fuzzer(win_emu);
     }
+
+    int run_main(const int argc, char** argv)
+    {
+        if (argc <= 1)
+        {
+            puts("Application not specified!");
+            return 1;
+        }
+
+        // setvbuf(stdout, nullptr, _IOFBF, 0x10000);
+        if (argc > 2 && argv[1] == "-d"s)
+        {
+            use_gdb = true;
+        }
+
+        try
+        {
+            do
+            {
+                run(argv[use_gdb ? 2 : 1]);
+            } while (use_gdb);
+
+            return 0;
+        }
+        catch (std::exception& e)
+        {
+            puts(e.what());
+
+#if defined(_WIN32) && 0
+            MessageBoxA(nullptr, e.what(), "ERROR", MB_ICONERROR);
+#endif
+        }
+
+        return 1;
+    }
 }
 
 int main(const int argc, char** argv)
 {
-    if (argc <= 1)
-    {
-        puts("Application not specified!");
-        return 1;
-    }
-
-    // setvbuf(stdout, nullptr, _IOFBF, 0x10000);
-    if (argc > 2 && argv[1] == "-d"s)
-    {
-        use_gdb = true;
-    }
-
-    try
-    {
-        do
-        {
-            run(argv[use_gdb ? 2 : 1]);
-        } while (use_gdb);
-
-        return 0;
-    }
-    catch (std::exception& e)
-    {
-        puts(e.what());
-
-#if defined(_WIN32) && 0
-        MessageBoxA(nullptr, e.what(), "ERROR", MB_ICONERROR);
-#endif
-    }
-
-    return 1;
+    return run_main(argc, argv);
 }
 
 #ifdef _WIN32
 int WINAPI WinMain(HINSTANCE, HINSTANCE, PSTR, int)
 {
-    return main(__argc, __argv);
+    return run_main(__argc, __argv);
 }
 #endif

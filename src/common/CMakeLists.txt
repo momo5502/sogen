@@ -17,7 +17,7 @@ target_link_libraries(emulator-common PUBLIC
   zlibstatic
 )
 
-if(MINGW)
+if(WIN)
   target_link_libraries(emulator-common PUBLIC
     ws2_32
   )

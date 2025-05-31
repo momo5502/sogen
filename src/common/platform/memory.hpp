@@ -2,23 +2,24 @@
 
 // NOLINTBEGIN(modernize-use-using)
 
-#define PAGE_EXECUTE                0x10
-#define PAGE_EXECUTE_READ           0x20
-#define PAGE_EXECUTE_READWRITE      0x40
-#define PAGE_EXECUTE_WRITECOPY      0x80
+#define PAGE_EXECUTE           0x10
+#define PAGE_EXECUTE_READ      0x20
+#define PAGE_EXECUTE_READWRITE 0x40
+#define PAGE_EXECUTE_WRITECOPY 0x80
 
-#define PAGE_NOACCESS               0x01
-#define PAGE_READONLY               0x02
-#define PAGE_READWRITE              0x04
-#define PAGE_WRITECOPY              0x08
+#define PAGE_NOACCESS          0x01
+#define PAGE_READONLY          0x02
+#define PAGE_READWRITE         0x04
+#define PAGE_WRITECOPY         0x08
 
-#define PAGE_TARGETS_INVALID        0x40000000
-#define PAGE_TARGETS_NO_UPDATE      0x40000000
+#define PAGE_TARGETS_INVALID   0x40000000
+#define PAGE_TARGETS_NO_UPDATE 0x40000000
 
-#define PAGE_GUARD                  0x100
-#define PAGE_NOCACHE                0x200
-#define PAGE_WRITECOMBINE           0x400
+#define PAGE_GUARD             0x100
+#define PAGE_NOCACHE           0x200
+#define PAGE_WRITECOMBINE      0x400
 
+#ifndef MEM_64K_PAGES
 #define MEM_COMMIT                  0x00001000
 #define MEM_RESERVE                 0x00002000
 #define MEM_DECOMMIT                0x00004000
@@ -37,6 +38,7 @@
 #define MEM_DOS_LIM                 0x40000000
 #define MEM_4MB_PAGES               0x80000000
 #define MEM_64K_PAGES               (MEM_LARGE_PAGES | MEM_PHYSICAL)
+#endif
 
 typedef enum _MEMORY_INFORMATION_CLASS
 {
@@ -64,7 +66,11 @@ typedef enum _SECTION_INHERIT
     ViewUnmap = 2
 } SECTION_INHERIT;
 
-typedef struct DECLSPEC_ALIGN(16) _EMU_MEMORY_BASIC_INFORMATION64
+typedef struct
+#ifndef __MINGW64__
+    DECLSPEC_ALIGN(16)
+#endif
+        _EMU_MEMORY_BASIC_INFORMATION64
 {
     uint64_t BaseAddress;
     uint64_t AllocationBase;

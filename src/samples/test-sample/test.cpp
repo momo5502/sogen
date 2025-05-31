@@ -9,7 +9,9 @@
 #include <filesystem>
 #include <string_view>
 
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #define WIN32_LEAN_AND_MEAN
 #include <intrin.h>
 
@@ -22,8 +24,6 @@
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 #endif
-
-#pragma comment(lib, "ws2_32.lib")
 
 using namespace std::literals;
 
@@ -570,8 +570,10 @@ namespace
             return false;
         }
 
-        if (sendto(sender, send_data.data(), static_cast<int>(send_data.size()), 0,
-                   reinterpret_cast<sockaddr*>(&destination), sizeof(destination)) != send_data.size())
+        const auto sent_bytes = sendto(sender, send_data.data(), static_cast<int>(send_data.size()), 0,
+                                       reinterpret_cast<sockaddr*>(&destination), sizeof(destination));
+
+        if (static_cast<size_t>(sent_bytes) != send_data.size())
         {
             puts("Failed to send data!");
             return false;
@@ -593,6 +595,7 @@ namespace
         return send_data == std::string_view(buffer, len);
     }
 
+#ifndef __MINGW64__
     void throw_access_violation()
     {
         if (do_the_task)
@@ -601,7 +604,6 @@ namespace
         }
     }
 
-#ifndef __MINGW64__
     bool test_access_violation_exception()
     {
         __try

@@ -72,8 +72,10 @@
 #define SL_RETURN_SINGLE_ENTRY         0x02
 #define SL_NO_CURSOR_UPDATE            0x10
 
-#define SEC_IMAGE                      0x01000000
-#define SEC_RESERVE                    0x04000000
+#ifndef SEC_IMAGE
+#define SEC_IMAGE   0x01000000
+#define SEC_RESERVE 0x04000000
+#endif
 
 typedef enum _FSINFOCLASS
 {
@@ -395,6 +397,11 @@ typedef struct _FILE_BOTH_DIR_INFORMATION
 } FILE_BOTH_DIR_INFORMATION, *PFILE_BOTH_DIR_INFORMATION;
 
 #ifndef OS_WINDOWS
+typedef struct _FILE_ID_128
+{
+    BYTE Identifier[16];
+} FILE_ID_128, *PFILE_ID_128;
+
 typedef BOOLEAN SECURITY_CONTEXT_TRACKING_MODE, *PSECURITY_CONTEXT_TRACKING_MODE;
 typedef struct _SECURITY_QUALITY_OF_SERVICE
 {
@@ -404,6 +411,27 @@ typedef struct _SECURITY_QUALITY_OF_SERVICE
     BOOLEAN EffectiveOnly;
 } SECURITY_QUALITY_OF_SERVICE, *P_SECURITY_QUALITY_OF_SERVICE;
 
+#endif
+
+#ifndef _MSC_VER
+typedef struct _FILE_STAT_BASIC_INFORMATION
+{
+    LARGE_INTEGER FileId;
+    LARGE_INTEGER CreationTime;
+    LARGE_INTEGER LastAccessTime;
+    LARGE_INTEGER LastWriteTime;
+    LARGE_INTEGER ChangeTime;
+    LARGE_INTEGER AllocationSize;
+    LARGE_INTEGER EndOfFile;
+    ULONG FileAttributes;
+    ULONG ReparseTag;
+    ULONG NumberOfLinks;
+    ULONG DeviceType;
+    ULONG DeviceCharacteristics;
+    ULONG Reserved;
+    LARGE_INTEGER VolumeSerialNumber;
+    FILE_ID_128 FileId128;
+} FILE_STAT_BASIC_INFORMATION, *PFILE_STAT_BASIC_INFORMATION;
 #endif
 
 typedef struct _PORT_VIEW64
@@ -422,5 +450,11 @@ typedef struct _REMOTE_PORT_VIEW64
     EMULATOR_CAST(std::int64_t, SIZE_T) ViewSize;
     EmulatorTraits<Emu64>::PVOID ViewBase;
 } REMOTE_PORT_VIEW64, *PREMOTE_PORT_VIEW64;
+
+typedef struct _OBJECT_HANDLE_FLAG_INFORMATION
+{
+    BOOLEAN Inherit;
+    BOOLEAN ProtectFromClose;
+} OBJECT_HANDLE_FLAG_INFORMATION, *POBJECT_HANDLE_FLAG_INFORMATION;
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)

@@ -34,7 +34,6 @@
 
 #ifdef _WIN32
 using socklen_t = int;
-#pragma comment(lib, "ws2_32.lib")
 #endif
 
 namespace network

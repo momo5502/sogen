@@ -473,45 +473,50 @@ namespace
 
         return options;
     }
+
+    int run_main(const int argc, char** argv)
+    {
+        try
+        {
+            auto args = bundle_arguments(argc, argv);
+            if (args.empty())
+            {
+                print_help();
+                return 1;
+            }
+
+            const auto options = parse_options(args);
+
+            bool result{};
+
+            do
+            {
+                result = run(options, args);
+            } while (options.use_gdb);
+
+            return result ? 0 : 1;
+        }
+        catch (std::exception& e)
+        {
+            puts(e.what());
+
+#if defined(_WIN32) && 0
+            MessageBoxA(nullptr, e.what(), "ERROR", MB_ICONERROR);
+#endif
+        }
+
+        return 1;
+    }
 }
 
 int main(const int argc, char** argv)
 {
-    try
-    {
-        auto args = bundle_arguments(argc, argv);
-        if (args.empty())
-        {
-            print_help();
-            return 1;
-        }
-
-        const auto options = parse_options(args);
-
-        bool result{};
-
-        do
-        {
-            result = run(options, args);
-        } while (options.use_gdb);
-
-        return result ? 0 : 1;
-    }
-    catch (std::exception& e)
-    {
-        puts(e.what());
-
-#if defined(_WIN32) && 0
-        MessageBoxA(nullptr, e.what(), "ERROR", MB_ICONERROR);
-#endif
-    }
-
-    return 1;
+    return run_main(argc, argv);
 }
 
 #ifdef _WIN32
 int WINAPI WinMain(HINSTANCE, HINSTANCE, PSTR, int)
 {
-    return main(__argc, __argv);
+    return run_main(__argc, __argv);
 }
 #endif

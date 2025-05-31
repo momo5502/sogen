@@ -166,6 +166,7 @@ jobs:
         platform:
           - Windows x86
           - Windows x86_64
+          - MinGW x86_64
           - Linux x86_64 GCC
           - Linux x86_64 GCC Sanitizer
           - Linux x86_64 Clang
@@ -190,6 +191,10 @@ jobs:
           - platform: Windows x86_64
             runner: windows-latest
             devcmd_arch: x64
+          - platform: MinGW x86_64
+            runner: ubuntu-24.04
+            rust-target: x86_64-pc-windows-gnu
+            cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/mingw-w64.cmake"
           - platform: Linux x86_64 GCC Sanitizer
             runner: ubuntu-24.04
             cmake-options: "-DMOMO_ENABLE_SANITIZER=On"
@@ -250,6 +255,12 @@ jobs:
           sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${{ matrix.clang-version }} 100
           sudo update-alternatives --set cc /usr/bin/clang-${{ matrix.clang-version }}
           sudo update-alternatives --set c++ /usr/bin/clang++-${{ matrix.clang-version }}
+
+      - name: Set up MinGW
+        uses: egor-tensin/setup-mingw@v2
+        if: "${{ startsWith(matrix.platform, 'MinGW') }}"
+        with:
+          platform: x64
 
       - name: Enable Developer Command Prompt
         uses: ilammy/msvc-dev-cmd@v1.13.0
@@ -473,11 +484,6 @@ jobs:
     runs-on: ubuntu-24.04
     needs: [create-emulation-root, build]
     steps:
-      - name: Checkout Source
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
       - name: Download Artifacts
         uses: pyTooling/download-artifact@v4
         with:
@@ -501,6 +507,32 @@ jobs:
 
       - name: CMake Test
         run: cd build/release/artifacts && node ./windows-emulator-test.js
+        env:
+          EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
+          EMULATOR_VERBOSE: ${{ github.event.inputs.verbose }}
+
+  smoke-test-mingw:
+    name: Smoke Test MinGW x86_64
+    runs-on: windows-latest
+    needs: [create-emulation-root, build]
+    steps:
+      - name: Download Artifacts
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: MinGW x86_64 Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Emulation Root
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: Windows 2022 Emulation Root
+          path: build/release/artifacts/root
+
+      - name: Copy Test Sample
+        run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
+
+      - name: CMake Test
+        run: cd build/release/artifacts && ./windows-emulator-test.exe && ./analyzer.exe -e root c:/test-sample.exe
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ github.event.inputs.verbose }}
@@ -652,7 +684,7 @@ jobs:
   summary:
     name: Pipeline Summary
     runs-on: ubuntu-24.04
-    needs: [build-page, clang-tidy, build-apiset-dumper, smoke-test-node, smoke-test-android, create-emulation-root, build, test, win-test, verify-formatting]
+    needs: [build-page, clang-tidy, build-apiset-dumper, smoke-test-node, smoke-test-mingw, smoke-test-android, create-emulation-root, build, test, win-test, verify-formatting]
     if: always()
     steps:
       - uses: geekyeggo/delete-artifact@v5

@@ -10,7 +10,9 @@
 #pragma GCC diagnostic ignored "-Wunused-function"
 #endif
 
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <unicorn/unicorn.h>
 
 #ifdef __clang__
