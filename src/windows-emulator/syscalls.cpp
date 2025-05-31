@@ -165,6 +165,9 @@ namespace syscalls
     // syscalls/mutant.cpp:
     NTSTATUS handle_NtReleaseMutant(const syscall_context& c, handle mutant_handle,
                                     emulator_object<LONG> previous_count);
+    NTSTATUS handle_NtOpenMutant(const syscall_context& c, const emulator_object<handle> mutant_handle,
+                                 const ACCESS_MASK /*desired_access*/,
+                                 const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes);
     NTSTATUS handle_NtCreateMutant(const syscall_context& c, emulator_object<handle> mutant_handle,
                                    ACCESS_MASK /*desired_access*/,
                                    emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
@@ -678,6 +681,11 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
+    NTSTATUS handle_NtUserSetCursor()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
     NTSTATUS handle_NtUserFindExistingCursorIcon()
     {
         return STATUS_NOT_SUPPORTED;
@@ -1096,6 +1104,8 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserChangeWindowMessageFilterEx);
     add_handler(NtUserDestroyWindow);
     add_handler(NtQueryInformationByName);
+    add_handler(NtUserSetCursor);
+    add_handler(NtOpenMutant);
 
 #undef add_handler
 }

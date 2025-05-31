@@ -77,12 +77,19 @@ namespace syscalls
 
         // TODO: Fix this. This is broken and wrong.
 
-        const emulator_object<PORT_DATA_ENTRY<EmulatorTraits<Emu64>>> data{c.emu, receive_message.value() + 0x48};
-        const auto dest = data.read();
-        const auto base = dest.Base;
+        try
+        {
+            const emulator_object<PORT_DATA_ENTRY<EmulatorTraits<Emu64>>> data{c.emu, receive_message.value() + 0x48};
+            const auto dest = data.read();
+            const auto base = dest.Base;
 
-        const auto value = base + 0x10;
-        c.emu.write_memory(base + 8, &value, sizeof(value));
+            const auto value = base + 0x10;
+            c.emu.write_memory(base + 8, &value, sizeof(value));
+        }
+        catch (...)
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
 
         return STATUS_SUCCESS;
     }

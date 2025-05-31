@@ -396,6 +396,14 @@ typedef struct _FILE_BOTH_DIR_INFORMATION
     char16_t FileName[1];
 } FILE_BOTH_DIR_INFORMATION, *PFILE_BOTH_DIR_INFORMATION;
 
+typedef struct _FILE_RENAME_INFORMATION
+{
+    BOOLEAN ReplaceIfExists;
+    EMULATOR_CAST(uint64_t, HANDLE) RootDirectory;
+    ULONG FileNameLength;
+    char16_t FileName[1];
+} FILE_RENAME_INFORMATION, *PFILE_RENAME_INFORMATION;
+
 #ifndef OS_WINDOWS
 typedef struct _FILE_ID_128
 {

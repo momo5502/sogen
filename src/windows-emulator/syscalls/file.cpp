@@ -63,6 +63,35 @@ namespace syscalls
             return STATUS_INVALID_HANDLE;
         }
 
+        if (info_class == FileRenameInformation)
+        {
+            if (length < sizeof(FILE_RENAME_INFORMATION))
+            {
+                return STATUS_BUFFER_OVERFLOW;
+            }
+
+            const auto info = c.emu.read_memory<FILE_RENAME_INFORMATION>(file_information);
+            auto new_name = read_string<char16_t>(c.emu, file_information + offsetof(FILE_RENAME_INFORMATION, FileName),
+                                                  info.FileNameLength / 2);
+
+            if (info.RootDirectory)
+            {
+                const auto* root = c.proc.files.get(info.RootDirectory);
+                if (!root)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+
+                const auto has_separator = root->name.ends_with(u"\\") || root->name.ends_with(u"/");
+                new_name = root->name + (has_separator ? u"" : u"\\") + new_name;
+            }
+
+            c.win_emu.log.warn("--> File rename requested: %s --> %s\n", u16_to_u8(f->name).c_str(),
+                               u16_to_u8(new_name).c_str());
+
+            return STATUS_ACCESS_DENIED;
+        }
+
         if (info_class == FileBasicInformation)
         {
             return STATUS_NOT_SUPPORTED;
