@@ -166,6 +166,7 @@ jobs:
         platform:
           - Windows x86
           - Windows x86_64
+          - MinGW x86_64
           - Linux x86_64 GCC
           - Linux x86_64 GCC Sanitizer
           - Linux x86_64 Clang
@@ -190,6 +191,10 @@ jobs:
           - platform: Windows x86_64
             runner: windows-latest
             devcmd_arch: x64
+          - platform: MinGW x86_64
+            runner: ubuntu-24.04
+            rust-target: x86_64-pc-windows-gnu
+            cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/mingw-w64.cmake"
           - platform: Linux x86_64 GCC Sanitizer
             runner: ubuntu-24.04
             cmake-options: "-DMOMO_ENABLE_SANITIZER=On"
@@ -250,6 +255,12 @@ jobs:
           sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${{ matrix.clang-version }} 100
           sudo update-alternatives --set cc /usr/bin/clang-${{ matrix.clang-version }}
           sudo update-alternatives --set c++ /usr/bin/clang++-${{ matrix.clang-version }}
+
+      - name: Set up MinGW
+        uses: egor-tensin/setup-mingw@v2
+        if: "${{ startsWith(matrix.platform, 'MinGW') }}"
+        with:
+          platform: x64
 
       - name: Enable Developer Command Prompt
         uses: ilammy/msvc-dev-cmd@v1.13.0
@@ -329,6 +340,7 @@ jobs:
         platform:
           - Windows x86
           - Windows x86_64
+          - MinGW x86_64
           - Linux x86_64 GCC
           - Linux x86_64 GCC Sanitizer
           - Linux x86_64 Clang
@@ -352,6 +364,8 @@ jobs:
           - platform: Windows x86
             runner: windows-latest
           - platform: Windows x86_64
+            runner: windows-latest
+          - platform: MinGW x86_64
             runner: windows-latest
           - platform: Linux x86_64 GCC
             runner: ubuntu-24.04
@@ -390,7 +404,7 @@ jobs:
 
       - name: Download Windows Artifacts
         uses: pyTooling/download-artifact@v4
-        if: "${{ matrix.platform != 'Windows x86_64' }}"
+        if: "${{ matrix.platform != 'Windows x86_64' && matrix.platform != 'MinGW x86_64' }}"
         with:
           name: Windows x86_64 Release Artifacts
           path: build/${{matrix.preset}}/artifacts
@@ -405,7 +419,7 @@ jobs:
         run: cp build/${{matrix.preset}}/artifacts/test-sample.exe build/${{matrix.preset}}/artifacts/root/filesys/c/
 
       - name: CMake Test
-        if: ${{ matrix.emulator != 'Icicle' || matrix.platform != 'Windows x86' }}
+        if: ${{ matrix.emulator != 'Icicle' || (matrix.platform != 'Windows x86' && matrix.platform != 'MinGW x86_64') }}
         run: cd build/${{matrix.preset}} && ctest --verbose -j
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/root

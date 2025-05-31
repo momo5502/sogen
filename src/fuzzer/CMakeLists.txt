@@ -19,7 +19,7 @@ target_link_libraries(fuzzer PRIVATE
   windows-emulator
 )
 
-if (MOMO_ENABLE_RUST_CODE)
+if (MOMO_ENABLE_RUST)
   target_link_libraries(fuzzer PRIVATE
     icicle-emulator
   )

@@ -16,7 +16,7 @@ target_link_libraries(backend-selection PRIVATE
   unicorn-emulator
 )
 
-if (MOMO_ENABLE_RUST_CODE)
+if (MOMO_ENABLE_RUST)
   target_link_libraries(backend-selection PRIVATE
     icicle-emulator
   )
