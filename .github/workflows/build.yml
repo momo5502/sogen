@@ -528,6 +528,9 @@ jobs:
           name: Windows 2022 Emulation Root
           path: build/release/artifacts/root
 
+      - name: Copy Test Sample
+        run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
+
       - name: CMake Test
         run: cd build/release/artifacts && ./windows-emulator-test.exe
         env:

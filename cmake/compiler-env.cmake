@@ -64,6 +64,13 @@ endif()
 ##########################################
 
 if(MINGW)
+  add_link_options(
+    -static-libstdc++
+    -static-libgcc
+    -static
+    -lwinpthread
+  )
+
   momo_add_c_and_cxx_compile_options(
     -Wno-array-bounds
   )
