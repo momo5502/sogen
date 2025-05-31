@@ -532,7 +532,7 @@ jobs:
         run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
 
       - name: CMake Test
-        run: cd build/release/artifacts && ./windows-emulator-test.exe
+        run: cd build/release/artifacts && ./analyzer.exe -e root c:/test-sample.exe && ./windows-emulator-test.exe
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ github.event.inputs.verbose }}
