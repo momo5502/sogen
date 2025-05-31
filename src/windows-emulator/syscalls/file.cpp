@@ -17,6 +17,35 @@
 
 namespace syscalls
 {
+    namespace
+    {
+        std::pair<utils::file_handle, NTSTATUS> open_file(const file_system& file_sys, const windows_path& path,
+                                                          const std::u16string& mode)
+        {
+            FILE* file{};
+            const auto error = open_unicode(&file, file_sys.translate(path), mode);
+
+            if (file)
+            {
+                return {file, STATUS_SUCCESS};
+            }
+
+            using fh = utils::file_handle;
+
+            switch (error)
+            {
+            case ENOENT:
+                return {fh{}, STATUS_OBJECT_NAME_NOT_FOUND};
+            case EACCES:
+                return {fh{}, STATUS_ACCESS_DENIED};
+            case EISDIR:
+                return {fh{}, STATUS_FILE_IS_A_DIRECTORY};
+            default:
+                return {fh{}, STATUS_NOT_SUPPORTED};
+            }
+        }
+    }
+
     NTSTATUS handle_NtSetInformationFile(const syscall_context& c, const handle file_handle,
                                          const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                          const uint64_t file_information, const ULONG length,
@@ -117,9 +146,12 @@ namespace syscalls
         }
     }
 
-    std::vector<file_entry> scan_directory(const std::filesystem::path& dir, const std::u16string_view file_mask)
+    std::vector<file_entry> scan_directory(const file_system& file_sys, const windows_path& win_path,
+                                           const std::u16string_view file_mask)
     {
         std::vector<file_entry> files{};
+
+        const auto dir = file_sys.translate(win_path);
 
         if (file_mask.empty() || file_mask == u"*")
         {
@@ -141,6 +173,27 @@ namespace syscalls
                 .is_directory = file.is_directory(),
             });
         }
+
+        file_sys.access_mapped_entries(win_path, [&](const std::pair<windows_path, std::filesystem::path>& entry) {
+            const auto filename = entry.first.leaf();
+
+            if (!file_mask.empty() && !utils::wildcard::match_filename(filename, file_mask))
+            {
+                return;
+            }
+
+            const std::filesystem::directory_entry dir_entry(entry.second, ec);
+            if (ec || !dir_entry.exists())
+            {
+                return;
+            }
+
+            files.emplace_back(file_entry{
+                .file_path = filename,
+                .file_size = dir_entry.file_size(),
+                .is_directory = dir_entry.is_directory(),
+            });
+        });
 
         return files;
     }
@@ -166,7 +219,7 @@ namespace syscalls
             }
 
             f->enumeration_state.emplace(file_enumeration_state{});
-            f->enumeration_state->files = scan_directory(c.win_emu.file_sys.translate(f->name), mask);
+            f->enumeration_state->files = scan_directory(c.win_emu.file_sys, f->name, mask);
         }
 
         auto& enum_state = *f->enumeration_state;
@@ -462,32 +515,6 @@ namespace syscalls
         c.emu.stop();
 
         return ret(STATUS_NOT_SUPPORTED);
-    }
-
-    static std::pair<utils::file_handle, NTSTATUS> open_file(const file_system& file_sys, const windows_path& path,
-                                                             const std::u16string& mode)
-    {
-        FILE* file{};
-        const auto error = open_unicode(&file, file_sys.translate(path), mode);
-
-        if (file)
-        {
-            return {file, STATUS_SUCCESS};
-        }
-
-        using fh = utils::file_handle;
-
-        switch (error)
-        {
-        case ENOENT:
-            return {fh{}, STATUS_OBJECT_NAME_NOT_FOUND};
-        case EACCES:
-            return {fh{}, STATUS_ACCESS_DENIED};
-        case EISDIR:
-            return {fh{}, STATUS_FILE_IS_A_DIRECTORY};
-        default:
-            return {fh{}, STATUS_NOT_SUPPORTED};
-        }
     }
 
     NTSTATUS handle_NtQueryInformationByName(

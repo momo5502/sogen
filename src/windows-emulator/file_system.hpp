@@ -56,6 +56,19 @@ class file_system
         return root;
     }
 
+    template <typename F>
+    void access_mapped_entries(const windows_path& win_path, const F& accessor) const
+    {
+        for (const auto& mapping : this->mappings_)
+        {
+            const auto& mapped_path = mapping.first;
+            if (!mapped_path.empty() && mapped_path.parent() == win_path)
+            {
+                accessor(mapping);
+            }
+        }
+    }
+
     windows_path local_to_windows_path(const std::filesystem::path& local_path) const
     {
         const auto absolute_local_path = weakly_canonical(absolute(local_path));

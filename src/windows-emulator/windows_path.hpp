@@ -224,6 +224,16 @@ class windows_path
         return {this->drive_, std::move(folders)};
     }
 
+    std::u16string leaf() const
+    {
+        if (this->folders_.empty())
+        {
+            return {};
+        }
+
+        return this->folders_.back();
+    }
+
     void serialize(utils::buffer_serializer& buffer) const
     {
         buffer.write_optional(this->drive_);
