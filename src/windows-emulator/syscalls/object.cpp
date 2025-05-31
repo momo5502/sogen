@@ -99,6 +99,16 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
+        if (object_information_class == ObjectHandleFlagInformation)
+        {
+            return handle_query<OBJECT_HANDLE_FLAG_INFORMATION>(c.emu, object_information, object_information_length,
+                                                                return_length,
+                                                                [&](OBJECT_HANDLE_FLAG_INFORMATION& info) {
+                                                                    info.Inherit = 0;
+                                                                    info.ProtectFromClose = 0;
+                                                                });
+        }
+
         c.win_emu.log.error("Unsupported object info class: %X\n", object_information_class);
         c.emu.stop();
         return STATUS_NOT_SUPPORTED;

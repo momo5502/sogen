@@ -464,6 +464,98 @@ namespace syscalls
         return ret(STATUS_NOT_SUPPORTED);
     }
 
+    static std::pair<utils::file_handle, NTSTATUS> open_file(const file_system& file_sys, const windows_path& path,
+                                                             const std::u16string& mode)
+    {
+        FILE* file{};
+        const auto error = open_unicode(&file, file_sys.translate(path), mode);
+
+        if (file)
+        {
+            return {file, STATUS_SUCCESS};
+        }
+
+        using fh = utils::file_handle;
+
+        switch (error)
+        {
+        case ENOENT:
+            return {fh{}, STATUS_OBJECT_NAME_NOT_FOUND};
+        case EACCES:
+            return {fh{}, STATUS_ACCESS_DENIED};
+        case EISDIR:
+            return {fh{}, STATUS_FILE_IS_A_DIRECTORY};
+        default:
+            return {fh{}, STATUS_NOT_SUPPORTED};
+        }
+    }
+
+    NTSTATUS handle_NtQueryInformationByName(
+        const syscall_context& c, const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const uint64_t file_information,
+        const uint32_t length, const uint32_t info_class)
+    {
+        IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+        block.Status = STATUS_SUCCESS;
+        block.Information = 0;
+
+        const auto _ = utils::finally([&] {
+            if (io_status_block)
+            {
+                io_status_block.write(block);
+            }
+        });
+
+        const auto attributes = object_attributes.read();
+        auto filename = read_unicode_string(c.emu, attributes.ObjectName);
+
+        c.win_emu.log.print(color::dark_gray, "--> Query file info: %s\n", u16_to_u8(filename).c_str()); //
+
+        const auto ret = [&](const NTSTATUS status) {
+            block.Status = status;
+            return status;
+        };
+
+        if (info_class == FileStatBasicInformation)
+        {
+            block.Information = sizeof(FILE_STAT_BASIC_INFORMATION);
+
+            if (length < block.Information)
+            {
+                return ret(STATUS_BUFFER_OVERFLOW);
+            }
+
+            auto [native_file_handle, status] = open_file(c.win_emu.file_sys, filename, u"r");
+            if (status != STATUS_SUCCESS)
+            {
+                return ret(status);
+            }
+
+            struct _stat64 file_stat{};
+            if (fstat64(native_file_handle, &file_stat) != 0)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            FILE_STAT_BASIC_INFORMATION i{};
+
+            i.CreationTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
+            i.LastAccessTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
+            i.LastWriteTime = utils::convert_unix_to_windows_time(file_stat.st_mtime);
+            i.ChangeTime = i.LastWriteTime;
+            i.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+
+            c.emu.write_memory(file_information, i);
+
+            return ret(STATUS_SUCCESS);
+        }
+
+        c.win_emu.log.error("Unsupported query name info class: %X\n", info_class);
+        c.emu.stop();
+
+        return ret(STATUS_NOT_SUPPORTED);
+    }
+
     void commit_file_data(const std::string_view data, emulator& emu,
                           const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                           const uint64_t buffer)
@@ -739,26 +831,13 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
         }
 
-        FILE* file{};
-
-        const auto error = open_unicode(&file, c.win_emu.file_sys.translate(path), mode);
-
-        if (!file)
+        auto [native_file_handle, status] = open_file(c.win_emu.file_sys, path, mode);
+        if (status != STATUS_SUCCESS)
         {
-            switch (error)
-            {
-            case ENOENT:
-                return STATUS_OBJECT_NAME_NOT_FOUND;
-            case EACCES:
-                return STATUS_ACCESS_DENIED;
-            case EISDIR:
-                return STATUS_FILE_IS_A_DIRECTORY;
-            default:
-                return STATUS_NOT_SUPPORTED;
-            }
+            return status;
         }
 
-        f.handle = file;
+        f.handle = std::move(native_file_handle);
 
         const auto handle = c.proc.files.store(std::move(f));
         file_handle.write(handle);

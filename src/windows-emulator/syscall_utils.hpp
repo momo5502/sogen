@@ -217,14 +217,15 @@ NTSTATUS handle_query_internal(x86_64_emulator& emu, const uint64_t buffer, cons
     return STATUS_SUCCESS;
 }
 
-template <typename ResponseType, typename Action>
+template <typename ResponseType, typename Action, typename LengthType>
+    requires(std::is_integral_v<LengthType>)
 NTSTATUS handle_query(x86_64_emulator& emu, const uint64_t buffer, const uint32_t length,
-                      const emulator_object<uint32_t> return_length, const Action& action)
+                      const emulator_object<LengthType> return_length, const Action& action)
 {
-    const auto length_setter = [&](const uint32_t required_size) {
+    const auto length_setter = [&](const size_t required_size) {
         if (return_length)
         {
-            return_length.write(required_size);
+            return_length.write(static_cast<LengthType>(required_size));
         }
     };
 
