@@ -52,3 +52,22 @@ inline memory_permission& operator^=(memory_permission& x, const memory_permissi
     x = x ^ y;
     return x;
 }
+
+/*****************************************************************************
+ *
+ ****************************************************************************/
+
+inline bool is_executable(const memory_permission permission)
+{
+    return (permission & memory_permission::exec) != memory_permission::none;
+}
+
+inline bool is_readable(const memory_permission permission)
+{
+    return (permission & memory_permission::read) != memory_permission::none;
+}
+
+inline bool is_writable(const memory_permission permission)
+{
+    return (permission & memory_permission::write) != memory_permission::none;
+}

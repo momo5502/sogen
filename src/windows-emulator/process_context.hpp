@@ -115,6 +115,7 @@ struct process_context
     handle_store<handle_types::port, port> ports{};
     handle_store<handle_types::mutant, mutant> mutants{};
     handle_store<handle_types::window, window> windows{};
+    handle_store<handle_types::timer, timer> timers{};
     handle_store<handle_types::registry, registry_key, 2> registry_keys{};
     std::map<uint16_t, atom_entry> atoms{};
 

@@ -346,8 +346,10 @@ void windows_emulator::yield_thread(const bool alertable)
     this->emu().stop();
 }
 
-void windows_emulator::perform_thread_switch()
+bool windows_emulator::perform_thread_switch()
 {
+    const auto needed_switch = std::exchange(this->switch_thread_, false);
+
     this->switch_thread_ = false;
     while (!switch_to_next_thread(*this))
     {
@@ -359,7 +361,15 @@ void windows_emulator::perform_thread_switch()
         {
             std::this_thread::sleep_for(1ms);
         }
+
+        if (this->should_stop)
+        {
+            this->switch_thread_ = needed_switch;
+            return false;
+        }
     }
+
+    return true;
 }
 
 bool windows_emulator::activate_thread(const uint32_t id)
@@ -597,7 +607,10 @@ void windows_emulator::start(size_t count)
     {
         if (this->switch_thread_ || !this->current_thread().is_thread_ready(this->process, this->clock()))
         {
-            this->perform_thread_switch();
+            if (!this->perform_thread_switch())
+            {
+                break;
+            }
         }
 
         this->emu().start(count);

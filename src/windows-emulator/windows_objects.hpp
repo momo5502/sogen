@@ -6,6 +6,21 @@
 #include <utils/file_handle.hpp>
 #include <platform/synchronisation.hpp>
 
+struct timer : ref_counted_object
+{
+    std::u16string name{};
+
+    void serialize_object(utils::buffer_serializer& buffer) const override
+    {
+        buffer.write(this->name);
+    }
+
+    void deserialize_object(utils::buffer_deserializer& buffer) override
+    {
+        buffer.read(this->name);
+    }
+};
+
 struct event : ref_counted_object
 {
     bool signaled{};

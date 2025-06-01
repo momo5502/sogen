@@ -63,6 +63,7 @@ namespace syscalls
             if (attributes.ObjectName)
             {
                 name = read_unicode_string(c.emu, attributes.ObjectName);
+                c.win_emu.log.print(color::dark_gray, "--> Event name: %s\n", u16_to_u8(name).c_str());
             }
         }
 

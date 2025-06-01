@@ -210,14 +210,16 @@ namespace syscalls
         if (commit && !reserve &&
             c.win_emu.memory.commit_memory(potential_base, static_cast<size_t>(allocation_bytes), protection))
         {
-            c.win_emu.log.print(color::dark_gray, "--> Committed 0x%" PRIx64 " - 0x%" PRIx64 "\n", potential_base,
-                                potential_base + allocation_bytes);
+            c.win_emu.log.print(is_executable(protection) ? color::gray : color::dark_gray,
+                                "--> Committed 0x%" PRIx64 " - 0x%" PRIx64 " (%s)\n", potential_base,
+                                potential_base + allocation_bytes, get_permission_string(protection).c_str());
 
             return STATUS_SUCCESS;
         }
 
-        c.win_emu.log.print(color::dark_gray, "--> Allocated 0x%" PRIx64 " - 0x%" PRIx64 "\n", potential_base,
-                            potential_base + allocation_bytes);
+        c.win_emu.log.print(is_executable(protection) ? color::gray : color::dark_gray,
+                            "--> Allocated 0x%" PRIx64 " - 0x%" PRIx64 " (%s)\n", potential_base,
+                            potential_base + allocation_bytes, get_permission_string(protection).c_str());
 
         return c.win_emu.memory.allocate_memory(potential_base, static_cast<size_t>(allocation_bytes), protection,
                                                 !commit)

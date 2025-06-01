@@ -77,8 +77,7 @@ namespace syscalls
             const auto attributes = object_attributes.read();
             if (attributes.ObjectName)
             {
-                name = read_unicode_string(
-                    c.emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, attributes.ObjectName});
+                name = read_unicode_string(c.emu, attributes.ObjectName);
                 c.win_emu.log.print(color::dark_gray, "--> Mutant name: %s\n", u16_to_u8(name).c_str());
             }
         }

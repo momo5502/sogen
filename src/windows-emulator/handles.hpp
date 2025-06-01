@@ -20,6 +20,7 @@ struct handle_types
         mutant,
         token,
         window,
+        timer,
     };
 };
 

@@ -358,14 +358,16 @@ namespace syscalls
                                            emulator_object<ULONG> minimum_time, emulator_object<ULONG> current_time);
     NTSTATUS handle_NtSetTimerResolution(const syscall_context&, ULONG /*desired_resolution*/, BOOLEAN set_resolution,
                                          emulator_object<ULONG> current_resolution);
+    NTSTATUS handle_NtCreateTimer2(const syscall_context& c, emulator_object<handle> timer_handle, uint64_t reserved,
+                                   emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                   ULONG attributes, ACCESS_MASK desired_access);
 
     // syscalls/token.cpp:
-    NTSTATUS handle_NtDuplicateToken(const syscall_context&, handle existing_token_handle,
-                                     ACCESS_MASK /*desired_access*/,
-                                     emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>>
-                                     /*object_attributes*/,
-                                     BOOLEAN /*effective_only*/, TOKEN_TYPE type,
-                                     emulator_object<handle> new_token_handle);
+    NTSTATUS
+    handle_NtDuplicateToken(const syscall_context&, handle existing_token_handle, ACCESS_MASK /*desired_access*/,
+                            emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>>
+                            /*object_attributes*/,
+                            BOOLEAN /*effective_only*/, TOKEN_TYPE type, emulator_object<handle> new_token_handle);
     NTSTATUS handle_NtQueryInformationToken(const syscall_context& c, handle token_handle,
                                             TOKEN_INFORMATION_CLASS token_information_class, uint64_t token_information,
                                             ULONG token_information_length, emulator_object<ULONG> return_length);
@@ -754,11 +756,6 @@ namespace syscalls
     }
 
     NTSTATUS handle_NtUserUnhookWindowsHookEx()
-    {
-        return STATUS_NOT_SUPPORTED;
-    }
-
-    NTSTATUS handle_NtCreateTimer2()
     {
         return STATUS_NOT_SUPPORTED;
     }
