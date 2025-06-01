@@ -70,20 +70,34 @@ namespace syscalls
     {
         if (object_information_class == ObjectNameInformation)
         {
-            if (handle.value.type != handle_types::file)
+            std::u16string device_path;
+            switch (handle.value.type)
             {
+            case handle_types::file: {
+                const auto* file = c.proc.files.get(handle);
+                if (!file)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+
+                device_path = windows_path(file->name).to_device_path();
+                break;
+            }
+            case handle_types::device: {
+                const auto* device = c.proc.devices.get(handle);
+                if (!device)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+
+                device_path = device->get_device_path();
+                break;
+            }
+            default:
                 c.win_emu.log.error("Unsupported handle type for name information query: %X\n", handle.value.type);
                 c.emu.stop();
                 return STATUS_NOT_SUPPORTED;
             }
-
-            const auto* file = c.proc.files.get(handle);
-            if (!file)
-            {
-                return STATUS_INVALID_HANDLE;
-            }
-
-            const auto device_path = windows_path(file->name).to_device_path();
 
             const auto required_size = sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>) + (device_path.size() + 1) * 2;
             return_length.write(static_cast<ULONG>(required_size));

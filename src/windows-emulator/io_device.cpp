@@ -2,6 +2,7 @@
 #include "io_device.hpp"
 #include "devices/afd_endpoint.hpp"
 #include "devices/mount_point_manager.hpp"
+#include "devices/security_support_provider.hpp"
 
 namespace
 {
@@ -19,7 +20,6 @@ std::unique_ptr<io_device> create_device(const std::u16string_view device)
     if (device == u"CNG"                 //
         || device == u"Nsi"              //
         || device == u"RasAcd"           //
-        || device == u"KsecDD"           //
         || device == u"PcwDrv"           //
         || device == u"DeviceApi\\CMApi" //
         || device == u"ConDrv\\Server")
@@ -40,6 +40,11 @@ std::unique_ptr<io_device> create_device(const std::u16string_view device)
     if (device == u"MountPointManager")
     {
         return create_mount_point_manager();
+    }
+
+    if (device == u"KsecDD")
+    {
+        return create_security_support_provider();
     }
 
     throw std::runtime_error("Unsupported device: " + u16_to_u8(device));
