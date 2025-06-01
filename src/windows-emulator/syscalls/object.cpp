@@ -214,13 +214,16 @@ namespace syscalls
         }
 
         // Owner SID: S-1-5-32-544 (Administrators)
+        // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
         const uint8_t owner_sid[] = {0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05,
                                      0x20, 0x00, 0x00, 0x00, 0x20, 0x02, 0x00, 0x00};
 
         // Group SID: S-1-5-18 (Local System)
+        // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
         const uint8_t group_sid[] = {0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x12, 0x00, 0x00, 0x00};
 
         // DACL structure
+        // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
         const uint8_t dacl_data[] = {
             0x02, 0x00, 0x9C, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14, 0x00, 0x0F, 0x00, 0x02, 0x00, 0x01, 0x01,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14, 0x00, 0x0F, 0x00, 0x02, 0x00,
@@ -233,23 +236,32 @@ namespace syscalls
             0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00};
 
         // SACL structure
-        const uint8_t sacl_data[] = {0x02, 0x00, 0x1C, 0x00, 0x01, 0x00, 0x00, 0x00, // ACL header
-                                     0x11, 0x00, 0x14, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x01,
-                                     0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x10, 0x00, 0x00};
+        // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+        const uint8_t sacl_data[] = {0x02, 0x00, 0x1C, 0x00, 0x01, 0x00, 0x00, 0x00, 0x11, 0x00,
+                                     0x14, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00,
+                                     0x00, 0x00, 0x00, 0x10, 0x00, 0x10, 0x00, 0x00};
 
         ULONG total_size = sizeof(SECURITY_DESCRIPTOR_RELATIVE);
 
         if (security_information & OWNER_SECURITY_INFORMATION)
+        {
             total_size += sizeof(owner_sid);
+        }
 
         if (security_information & GROUP_SECURITY_INFORMATION)
+        {
             total_size += sizeof(group_sid);
+        }
 
         if (security_information & DACL_SECURITY_INFORMATION)
+        {
             total_size += sizeof(dacl_data);
+        }
 
         if (security_information & LABEL_SECURITY_INFORMATION)
+        {
             total_size += sizeof(sacl_data);
+        }
 
         length_needed.write(total_size);
 
@@ -267,8 +279,7 @@ namespace syscalls
         sd.Revision = SECURITY_DESCRIPTOR_REVISION;
         sd.Control = SE_SELF_RELATIVE;
 
-        constexpr ULONG header_size = sizeof(SECURITY_DESCRIPTOR_RELATIVE);
-        ULONG current_offset = header_size;
+        ULONG current_offset = sizeof(sd);
 
         if (security_information & OWNER_SECURITY_INFORMATION)
         {

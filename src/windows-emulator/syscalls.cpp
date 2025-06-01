@@ -449,7 +449,7 @@ namespace syscalls
     }
 
     NTSTATUS handle_NtRemoveIoCompletion(
-        const syscall_context& c, const emulator_object<handle> /*io_completion__handle*/,
+        const syscall_context&, const emulator_object<handle> /*io_completion__handle*/,
         const emulator_object<int64_t> key_context, const emulator_pointer /*apc_context*/,
         const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> /*io_status_block*/,
         const emulator_object<LARGE_INTEGER> timeout)

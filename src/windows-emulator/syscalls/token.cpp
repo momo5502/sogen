@@ -149,7 +149,7 @@ namespace syscalls
 
             const auto acl_offset = token_information + sizeof(TOKEN_DEFAULT_DACL64);
             ACL acl{};
-            acl.AclRevision = ACL_REVISION;
+            acl.AclRevision = 2; // ACL_REVISION
             acl.Sbz1 = 0;
             acl.AclSize = static_cast<USHORT>(acl_size);
             acl.AceCount = 1;
@@ -159,7 +159,7 @@ namespace syscalls
 
             const auto ace_offset = acl_offset + sizeof(ACL);
             ACCESS_ALLOWED_ACE ace{};
-            ace.Header.AceType = ACCESS_ALLOWED_ACE_TYPE;
+            ace.Header.AceType = 0; // ACCESS_ALLOWED_ACE_TYPE
             ace.Header.AceFlags = 0;
             ace.Header.AceSize = static_cast<USHORT>(sizeof(ACCESS_ALLOWED_ACE) + sizeof(sid) - sizeof(ULONG));
             ace.Mask = GENERIC_ALL;
@@ -305,7 +305,7 @@ namespace syscalls
             // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
             const uint8_t medium_integrity_sid[] = {
                 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x20,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             };
 
             constexpr auto required_size = sizeof(medium_integrity_sid) + sizeof(TOKEN_MANDATORY_LABEL64);
@@ -328,7 +328,7 @@ namespace syscalls
 
         if (token_information_class == TokenProcessTrustLevel)
         {
-            constexpr auto required_size = sizeof(TOKEN_PROCESS_TRUST_LEVEL);
+            constexpr auto required_size = sizeof(TOKEN_PROCESS_TRUST_LEVEL64);
             return_length.write(required_size);
 
             if (required_size > token_information_length)
@@ -336,7 +336,7 @@ namespace syscalls
                 return STATUS_BUFFER_TOO_SMALL;
             }
 
-            c.emu.write_memory(token_information, TOKEN_PROCESS_TRUST_LEVEL{
+            c.emu.write_memory(token_information, TOKEN_PROCESS_TRUST_LEVEL64{
                                                       .TrustLevelSid = 0,
                                                   });
 
