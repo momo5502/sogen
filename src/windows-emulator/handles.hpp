@@ -136,6 +136,11 @@ class ref_counted_object
 
     static bool deleter(ref_counted_object& e)
     {
+        if (e.ref_count == 0)
+        {
+            return true;
+        }
+
         return --e.ref_count == 0;
     }
 
