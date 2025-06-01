@@ -58,6 +58,10 @@ namespace
             return !e || e->try_lock(current_thread_id);
         }
 
+        case handle_types::timer: {
+            return true; // TODO
+        }
+
         case handle_types::semaphore: {
             auto* s = c.semaphores.get(h);
             if (s)

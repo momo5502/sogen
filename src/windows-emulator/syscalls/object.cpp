@@ -119,6 +119,7 @@ namespace syscalls
         return h.value.type == handle_types::thread       //
                || h.value.type == handle_types::mutant    //
                || h.value.type == handle_types::semaphore //
+               || h.value.type == handle_types::timer     //
                || h.value.type == handle_types::event;
     }
 
