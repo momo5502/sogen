@@ -50,6 +50,27 @@ namespace
 
     void perform_context_switch_work(windows_emulator& win_emu)
     {
+        auto& threads = win_emu.process.threads;
+
+        for (auto it = threads.begin(); it != threads.end();)
+        {
+            if (!it->second.is_terminated() || it->second.ref_count > 0)
+            {
+                ++it;
+                continue;
+            }
+
+            const auto [new_it, deleted] = threads.erase(it);
+            if (!deleted)
+            {
+                ++it;
+            }
+            else
+            {
+                it = new_it;
+            }
+        }
+
         auto& devices = win_emu.process.devices;
 
         // Crappy mechanism to prevent mutation while iterating.

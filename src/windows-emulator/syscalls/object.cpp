@@ -15,7 +15,7 @@ namespace syscalls
         if (h.value.type == handle_types::thread)
         {
             const auto* t = c.proc.threads.get(h);
-            if (t == c.proc.active_thread && t->ref_count == 1)
+            if (t && t->ref_count == 1)
             {
                 // TODO: Better handle ref counting
                 return STATUS_SUCCESS;
@@ -119,6 +119,7 @@ namespace syscalls
         return h.value.type == handle_types::thread       //
                || h.value.type == handle_types::mutant    //
                || h.value.type == handle_types::semaphore //
+               || h.value.type == handle_types::timer     //
                || h.value.type == handle_types::event;
     }
 

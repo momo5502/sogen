@@ -361,6 +361,8 @@ namespace syscalls
     NTSTATUS handle_NtCreateTimer2(const syscall_context& c, emulator_object<handle> timer_handle, uint64_t reserved,
                                    emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                    ULONG attributes, ACCESS_MASK desired_access);
+    NTSTATUS handle_NtSetTimerEx(const syscall_context& c, handle timer_handle, uint32_t timer_set_info_class,
+                                 uint64_t timer_set_information, ULONG timer_set_information_length);
 
     // syscalls/token.cpp:
     NTSTATUS
@@ -1104,6 +1106,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserSetCursor);
     add_handler(NtOpenMutant);
     add_handler(NtCreateTimer2);
+    add_handler(NtSetTimerEx);
 
 #undef add_handler
 }

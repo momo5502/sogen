@@ -69,4 +69,10 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
+    NTSTATUS handle_NtSetTimerEx(const syscall_context& /*c*/, handle /*timer_handle*/,
+                                 uint32_t /*timer_set_info_class*/, uint64_t /*timer_set_information*/,
+                                 ULONG /*timer_set_information_length*/)
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
 }

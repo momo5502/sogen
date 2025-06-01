@@ -210,6 +210,11 @@ class emulator_thread : public ref_counted_object
         this->marker.mark_as_moved();
     }
 
+    static bool deleter(emulator_thread& t)
+    {
+        return ref_counted_object::deleter(t) && t.is_terminated();
+    }
+
   private:
     void setup_registers(x86_64_emulator& emu, const process_context& context) const;
 
