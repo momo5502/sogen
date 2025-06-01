@@ -77,6 +77,15 @@
 #define SEC_RESERVE 0x04000000
 #endif
 
+#define CTL_CODE(DeviceType, Function, Method, Access) \
+    (((DeviceType) << 16) | ((Access) << 14) | ((Function) << 2) | (Method))
+
+#define METHOD_BUFFERED   0
+
+#define FILE_ANY_ACCESS   0
+#define FILE_READ_ACCESS  (0x0001) // file & pipe
+#define FILE_WRITE_ACCESS (0x0002) // file & pipe
+
 typedef enum _FSINFOCLASS
 {
     FileFsVolumeInformation = 1, // q: FILE_FS_VOLUME_INFORMATION
