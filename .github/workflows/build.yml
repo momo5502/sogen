@@ -90,11 +90,6 @@ jobs:
       - name: Enable Developer Command Prompt
         uses: ilammy/msvc-dev-cmd@v1.13.0
 
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
-        with:
-          disable_annotations: true
-
       - name: CMake Build
         run: cmake --preset=release && cmake --build --preset=release -t dump-apiset
 
@@ -275,27 +270,6 @@ jobs:
           ndk-version: r26d
           add-to-path: false
 
-      - name: Setup sccache environment
-        shell: bash
-        run: |
-          WORKSPACE_PATH="${{github.workspace}}"
-          WORKSPACE_PATH="${WORKSPACE_PATH//\\//}"
-          echo "SCCACHE_DIR=${WORKSPACE_PATH}/sccache" >> $GITHUB_ENV
-          echo "SCCACHE_CACHE_SIZE=200M" >> $GITHUB_ENV
-
-      - name: Recover sccache
-        uses: actions/cache/restore@v3
-        with:
-          path: ${{env.SCCACHE_DIR}}
-          key: sccache-${{github.job}}-${{matrix.platform}}-${{matrix.configuration}}-${{ github.head_ref || github.ref_name }}-
-          restore-keys: |
-            sccache-${{github.job}}-${{matrix.platform}}-${{matrix.configuration}}-${{ github.event.repository.default_branch }}-
-
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
-        with:
-          disable_annotations: true
-
       - name: Setup Android Environment Variables
         shell: bash
         if: ${{ startsWith(matrix.platform, 'Android') }}
@@ -320,15 +294,6 @@ jobs:
           name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
           path: "build/${{matrix.preset}}/**/CTestTestfile.cmake"
           retention-days: 1
-
-      - name: Print sccache stats
-        run: sccache -s && sccache --stop-server
-
-      - name: Save sccache
-        uses: actions/cache/save@v3
-        with:
-          path: ${{env.SCCACHE_DIR}}
-          key: sccache-${{github.job}}-${{matrix.platform}}-${{matrix.configuration}}-${{ github.head_ref || github.ref_name }}-${{github.run_id}}-${{github.run_attempt}}
 
   test:
     name: Test

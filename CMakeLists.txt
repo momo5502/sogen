@@ -31,10 +31,6 @@ set(ENV{ARCHFLAGS} "nope")
 
 ##########################################
 
-include(cmake/sccache.cmake)
-
-##########################################
-
 project(emulator LANGUAGES C CXX)
 enable_testing()
 
