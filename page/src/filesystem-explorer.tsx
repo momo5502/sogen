@@ -1,5 +1,10 @@
 import React from "react";
-import { Folder, FolderElement, FolderElementType } from "./components/folder";
+import {
+  Folder,
+  FolderElement,
+  FolderElementType,
+  trimFilename,
+} from "./components/folder";
 import { Filesystem } from "./filesystem";
 
 import {
@@ -399,7 +404,9 @@ export class FilesystemExplorer extends React.Component<
             }}
           >
             <DialogHeader>
-              <DialogTitle>Rename {this.state.renameFile}</DialogTitle>
+              <DialogTitle>
+                Rename {trimFilename(this.state.renameFile)}
+              </DialogTitle>
               <DialogDescription className="hidden">
                 Rename {this.state.renameFile}
               </DialogDescription>
@@ -459,14 +466,18 @@ export class FilesystemExplorer extends React.Component<
       >
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
-            <DialogTitle>Delete {this.state.removeFile}?</DialogTitle>
+            <DialogTitle>
+              Delete {trimFilename(this.state.removeFile)}?
+            </DialogTitle>
             <DialogDescription className="hidden">
               Delete {this.state.removeFile}
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
             Are you sure you want to delete{" "}
-            <b>{makeWindowsPathWithState(this.state, this.state.removeFile)}</b>
+            <b className="break-all">
+              {makeWindowsPathWithState(this.state, this.state.removeFile)}
+            </b>
           </div>
           <DialogFooter>
             <Button

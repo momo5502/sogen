@@ -111,6 +111,18 @@ function renderElement(element: FolderElement, props: FolderProps) {
   );
 }
 
+export function trimFilename(filename: string, limit = 25) {
+  if (limit < 4) {
+    limit = 4;
+  }
+
+  if (filename.length < limit) {
+    return filename;
+  }
+
+  return filename.substring(0, limit - 3) + "...";
+}
+
 function renderElementWithContext(element: FolderElement, props: FolderProps) {
   if (element.name == "..") {
     return renderElement(element, props);
@@ -129,7 +141,7 @@ function renderElementWithContext(element: FolderElement, props: FolderProps) {
         </Tooltip>
       </ContextMenuTrigger>
       <ContextMenuContent>
-        <ContextMenuLabel inset>{element.name}</ContextMenuLabel>
+        <ContextMenuLabel>{trimFilename(element.name)}</ContextMenuLabel>
         <ContextMenuSeparator />
         <ContextMenuItem onClick={() => props.renameElementHandler(element)}>
           Rename
