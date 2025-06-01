@@ -58,7 +58,7 @@ namespace syscalls
 
         if (token_information_class == TokenUser)
         {
-            constexpr auto required_size = sizeof(sid) + 0x10;
+            constexpr auto required_size = sizeof(TOKEN_USER64) + sizeof(sid);
             return_length.write(required_size);
 
             if (required_size > token_information_length)
@@ -68,10 +68,10 @@ namespace syscalls
 
             TOKEN_USER64 user{};
             user.User.Attributes = 0;
-            user.User.Sid = token_information + 0x10;
+            user.User.Sid = token_information + sizeof(TOKEN_USER64);
 
             emulator_object<TOKEN_USER64>{c.emu, token_information}.write(user);
-            c.emu.write_memory(token_information + 0x10, sid, sizeof(sid));
+            c.emu.write_memory(token_information + sizeof(TOKEN_USER64), sid, sizeof(sid));
             return STATUS_SUCCESS;
         }
 
@@ -110,6 +110,65 @@ namespace syscalls
 
             emulator_object<TOKEN_OWNER64>{c.emu, token_information}.write(owner);
             c.emu.write_memory(token_information + sizeof(TOKEN_OWNER64), sid, sizeof(sid));
+            return STATUS_SUCCESS;
+        }
+
+        if (token_information_class == TokenPrimaryGroup)
+        {
+            constexpr auto required_size = sizeof(sid) + sizeof(TOKEN_PRIMARY_GROUP64);
+            return_length.write(required_size);
+
+            if (required_size > token_information_length)
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            TOKEN_PRIMARY_GROUP64 primary_group{};
+            primary_group.PrimaryGroup = token_information + sizeof(TOKEN_PRIMARY_GROUP64);
+
+            emulator_object<TOKEN_PRIMARY_GROUP64>{c.emu, token_information}.write(primary_group);
+            c.emu.write_memory(token_information + sizeof(TOKEN_PRIMARY_GROUP64), sid, sizeof(sid));
+            return STATUS_SUCCESS;
+        }
+
+        if (token_information_class == TokenDefaultDacl)
+        {
+            constexpr auto acl_size = sizeof(ACL) + sizeof(ACCESS_ALLOWED_ACE) + sizeof(sid) - sizeof(ULONG);
+            constexpr auto required_size = sizeof(TOKEN_DEFAULT_DACL64) + acl_size;
+            return_length.write(required_size);
+
+            if (required_size > token_information_length)
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            TOKEN_DEFAULT_DACL64 default_dacl{};
+            default_dacl.DefaultDacl = token_information + sizeof(TOKEN_DEFAULT_DACL64);
+
+            emulator_object<TOKEN_DEFAULT_DACL64>{c.emu, token_information}.write(default_dacl);
+
+            const auto acl_offset = token_information + sizeof(TOKEN_DEFAULT_DACL64);
+            ACL acl{};
+            acl.AclRevision = ACL_REVISION;
+            acl.Sbz1 = 0;
+            acl.AclSize = static_cast<USHORT>(acl_size);
+            acl.AceCount = 1;
+            acl.Sbz2 = 0;
+
+            c.emu.write_memory(acl_offset, acl);
+
+            const auto ace_offset = acl_offset + sizeof(ACL);
+            ACCESS_ALLOWED_ACE ace{};
+            ace.Header.AceType = ACCESS_ALLOWED_ACE_TYPE;
+            ace.Header.AceFlags = 0;
+            ace.Header.AceSize = static_cast<USHORT>(sizeof(ACCESS_ALLOWED_ACE) + sizeof(sid) - sizeof(ULONG));
+            ace.Mask = GENERIC_ALL;
+
+            c.emu.write_memory(ace_offset, ace);
+
+            const auto sid_offset = ace_offset + sizeof(ACCESS_ALLOWED_ACE) - sizeof(ULONG);
+            c.emu.write_memory(sid_offset, sid, sizeof(sid));
+
             return STATUS_SUCCESS;
         }
 
@@ -209,7 +268,14 @@ namespace syscalls
                 return STATUS_BUFFER_TOO_SMALL;
             }
 
-            c.emu.write_memory(token_information, TOKEN_STATISTICS{});
+            TOKEN_STATISTICS stats{};
+            stats.TokenType = get_token_type(token_handle);
+            stats.ImpersonationLevel =
+                stats.TokenType == TokenImpersonation ? SecurityImpersonation : SecurityAnonymous;
+            stats.GroupCount = 1;
+            stats.PrivilegeCount = 0;
+
+            c.emu.write_memory(token_information, stats);
 
             return STATUS_SUCCESS;
         }
@@ -236,7 +302,13 @@ namespace syscalls
 
         if (token_information_class == TokenIntegrityLevel)
         {
-            constexpr auto required_size = sizeof(sid) + sizeof(TOKEN_MANDATORY_LABEL64);
+            // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+            const uint8_t medium_integrity_sid[] = {
+                0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x20,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+            };
+
+            constexpr auto required_size = sizeof(medium_integrity_sid) + sizeof(TOKEN_MANDATORY_LABEL64);
             return_length.write(required_size);
 
             if (required_size > token_information_length)
@@ -245,11 +317,29 @@ namespace syscalls
             }
 
             TOKEN_MANDATORY_LABEL64 label{};
-            label.Label.Attributes = 0;
+            label.Label.Attributes = 0x60;
             label.Label.Sid = token_information + sizeof(TOKEN_MANDATORY_LABEL64);
 
             emulator_object<TOKEN_MANDATORY_LABEL64>{c.emu, token_information}.write(label);
-            c.emu.write_memory(token_information + sizeof(TOKEN_MANDATORY_LABEL64), sid, sizeof(sid));
+            c.emu.write_memory(token_information + sizeof(TOKEN_MANDATORY_LABEL64), medium_integrity_sid,
+                               sizeof(medium_integrity_sid));
+            return STATUS_SUCCESS;
+        }
+
+        if (token_information_class == TokenProcessTrustLevel)
+        {
+            constexpr auto required_size = sizeof(TOKEN_PROCESS_TRUST_LEVEL);
+            return_length.write(required_size);
+
+            if (required_size > token_information_length)
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            c.emu.write_memory(token_information, TOKEN_PROCESS_TRUST_LEVEL{
+                                                      .TrustLevelSid = 0,
+                                                  });
+
             return STATUS_SUCCESS;
         }
 

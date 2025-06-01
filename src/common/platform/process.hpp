@@ -785,6 +785,27 @@ struct TOKEN_OWNER64
     EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, PSID) Owner;
 };
 
+struct TOKEN_PRIMARY_GROUP64
+{
+    EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, PSID) PrimaryGroup;
+};
+
+#ifndef OS_WINDOWS
+struct ACL
+{
+    BYTE AclRevision;
+    BYTE Sbz1;
+    WORD AclSize;
+    WORD AceCount;
+    WORD Sbz2;
+};
+#endif
+
+struct TOKEN_DEFAULT_DACL64
+{
+    EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, PACL) DefaultDacl;
+};
+
 struct TOKEN_BNO_ISOLATION_INFORMATION64
 {
     EmulatorTraits<Emu64>::PVOID IsolationPrefix;
@@ -794,6 +815,11 @@ struct TOKEN_BNO_ISOLATION_INFORMATION64
 struct TOKEN_MANDATORY_LABEL64
 {
     SID_AND_ATTRIBUTES64 Label;
+};
+
+struct TOKEN_PROCESS_TRUST_LEVEL
+{
+    EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, PSID) TrustLevelSid;
 };
 
 #ifndef OS_WINDOWS
