@@ -201,4 +201,109 @@ namespace syscalls
     {
         return STATUS_NOT_SUPPORTED;
     }
+
+    NTSTATUS handle_NtQuerySecurityObject(const syscall_context& c, const handle /*h*/,
+                                          const SECURITY_INFORMATION security_information,
+                                          const emulator_pointer security_descriptor, const ULONG length,
+                                          const emulator_object<ULONG> length_needed)
+    {
+        if ((security_information & (OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
+                                     DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION)) == 0)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        // Owner SID: S-1-5-32-544 (Administrators)
+        const uint8_t owner_sid[] = {0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05,
+                                     0x20, 0x00, 0x00, 0x00, 0x20, 0x02, 0x00, 0x00};
+
+        // Group SID: S-1-5-18 (Local System)
+        const uint8_t group_sid[] = {0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x12, 0x00, 0x00, 0x00};
+
+        // DACL structure
+        const uint8_t dacl_data[] = {
+            0x02, 0x00, 0x9C, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14, 0x00, 0x0F, 0x00, 0x02, 0x00, 0x01, 0x01,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14, 0x00, 0x0F, 0x00, 0x02, 0x00,
+            0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x00, 0x0F, 0x00,
+            0x0F, 0x00, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x20, 0x00, 0x00, 0x00, 0x20, 0x02, 0x00, 0x00,
+            0x00, 0x0B, 0x14, 0x00, 0x00, 0x00, 0x00, 0xE0, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x0B, 0x14, 0x00, 0x00, 0x00, 0x00, 0xE0, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05,
+            0x0C, 0x00, 0x00, 0x00, 0x00, 0x0B, 0x18, 0x00, 0x00, 0x00, 0x00, 0x10, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x05, 0x20, 0x00, 0x00, 0x00, 0x20, 0x02, 0x00, 0x00, 0x00, 0x0B, 0x14, 0x00, 0x00, 0x00, 0x00, 0x10,
+            0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00};
+
+        // SACL structure
+        const uint8_t sacl_data[] = {0x02, 0x00, 0x1C, 0x00, 0x01, 0x00, 0x00, 0x00, // ACL header
+                                     0x11, 0x00, 0x14, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x01,
+                                     0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x10, 0x00, 0x00};
+
+        ULONG total_size = sizeof(SECURITY_DESCRIPTOR_RELATIVE);
+
+        if (security_information & OWNER_SECURITY_INFORMATION)
+            total_size += sizeof(owner_sid);
+
+        if (security_information & GROUP_SECURITY_INFORMATION)
+            total_size += sizeof(group_sid);
+
+        if (security_information & DACL_SECURITY_INFORMATION)
+            total_size += sizeof(dacl_data);
+
+        if (security_information & LABEL_SECURITY_INFORMATION)
+            total_size += sizeof(sacl_data);
+
+        length_needed.write(total_size);
+
+        if (length < total_size)
+        {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        if (!security_descriptor)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        SECURITY_DESCRIPTOR_RELATIVE sd = {};
+        sd.Revision = SECURITY_DESCRIPTOR_REVISION;
+        sd.Control = SE_SELF_RELATIVE;
+
+        constexpr ULONG header_size = sizeof(SECURITY_DESCRIPTOR_RELATIVE);
+        ULONG current_offset = header_size;
+
+        if (security_information & OWNER_SECURITY_INFORMATION)
+        {
+            sd.Owner = current_offset;
+            c.emu.write_memory(security_descriptor + current_offset, owner_sid);
+            current_offset += sizeof(owner_sid);
+        }
+
+        if (security_information & GROUP_SECURITY_INFORMATION)
+        {
+            sd.Group = current_offset;
+            c.emu.write_memory(security_descriptor + current_offset, group_sid);
+            current_offset += sizeof(group_sid);
+        }
+
+        if (security_information & DACL_SECURITY_INFORMATION)
+        {
+            sd.Control |= SE_DACL_PRESENT;
+            sd.Dacl = current_offset;
+            c.emu.write_memory(security_descriptor + current_offset, dacl_data);
+            current_offset += sizeof(dacl_data);
+        }
+
+        if (security_information & LABEL_SECURITY_INFORMATION)
+        {
+            sd.Control |= SE_SACL_PRESENT | SE_SACL_AUTO_INHERITED;
+            sd.Sacl = current_offset;
+            c.emu.write_memory(security_descriptor + current_offset, sacl_data);
+            current_offset += sizeof(sacl_data);
+        }
+
+        assert(current_offset == total_size);
+
+        c.emu.write_memory(security_descriptor, sd);
+
+        return STATUS_SUCCESS;
+    }
 }
