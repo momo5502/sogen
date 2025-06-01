@@ -123,7 +123,7 @@ namespace
                 _Exit(1);
             }
 
-            win_emu.emu().stop();
+            win_emu.stop();
         }};
 
         try

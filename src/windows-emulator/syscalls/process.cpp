@@ -265,10 +265,13 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
         }
 
-        if (info_class == ProcessSchedulerSharedData || info_class == ProcessConsoleHostProcess ||
-            info_class == ProcessFaultInformation || info_class == ProcessDefaultHardErrorMode ||
-            info_class == ProcessRaiseUMExceptionOnInvalidHandleClose ||
-            info_class == ProcessDynamicFunctionTableInformation)
+        if (info_class == ProcessSchedulerSharedData                     //
+            || info_class == ProcessConsoleHostProcess                   //
+            || info_class == ProcessFaultInformation                     //
+            || info_class == ProcessDefaultHardErrorMode                 //
+            || info_class == ProcessRaiseUMExceptionOnInvalidHandleClose //
+            || info_class == ProcessDynamicFunctionTableInformation      //
+            || info_class == ProcessPriorityBoost)
         {
             return STATUS_SUCCESS;
         }

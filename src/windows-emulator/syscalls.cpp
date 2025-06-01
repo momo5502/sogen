@@ -758,6 +758,11 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
+    NTSTATUS handle_NtCreateTimer2()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
     NTSTATUS handle_NtUserMapVirtualKeyEx()
     {
         return 0;
@@ -1101,6 +1106,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtQueryInformationByName);
     add_handler(NtUserSetCursor);
     add_handler(NtOpenMutant);
+    add_handler(NtCreateTimer2);
 
 #undef add_handler
 }
