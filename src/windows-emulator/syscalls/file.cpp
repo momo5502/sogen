@@ -1022,6 +1022,12 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
+        if (object_name == u"\\RPC Control")
+        {
+            directory_handle.write(RPC_CONTROL_DIRECTORY);
+            return STATUS_SUCCESS;
+        }
+
         return STATUS_NOT_SUPPORTED;
     }
 
