@@ -41,7 +41,7 @@
     "react-window": "^1.8.11",
     "tailwind-merge": "^3.3.0",
     "tailwindcss": "^4.1.5",
-    "tw-animate-css": "^1.3.0",
+    "tw-animate-css": "^1.3.3",
     "vaul": "^1.1.2"
   },
   "devDependencies": {
