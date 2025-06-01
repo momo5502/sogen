@@ -328,7 +328,7 @@ namespace syscalls
 
     NTSTATUS handle_NtQueryDirectoryFileEx(
         const syscall_context& c, const handle file_handle, const handle /*event_handle*/,
-        const emulator_pointer /*PIO_APC_ROUTINE*/ /*apc_routine*/, const emulator_pointer /*apc_context*/,
+        const EMULATOR_CAST(emulator_pointer, PIO_APC_ROUTINE) /*apc_routine*/, const emulator_pointer /*apc_context*/,
         const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const uint64_t file_information,
         const uint32_t length, const uint32_t info_class, const ULONG query_flags,
         const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> file_name)
@@ -364,7 +364,7 @@ namespace syscalls
     }
 
     NTSTATUS handle_NtQueryDirectoryFile(const syscall_context& c, const handle file_handle, const handle event_handle,
-                                         const emulator_pointer /*PIO_APC_ROUTINE*/ apc_routine,
+                                         const EMULATOR_CAST(emulator_pointer, PIO_APC_ROUTINE) apc_routine,
                                          const emulator_pointer apc_context,
                                          const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                          const uint64_t file_information, const uint32_t length,

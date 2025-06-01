@@ -5,15 +5,11 @@
 #include "syscall_utils.hpp"
 
 #include <numeric>
-#include <ranges>
 #include <cwctype>
 #include <algorithm>
-#include <utils/io.hpp>
 #include <utils/string.hpp>
 #include <utils/time.hpp>
 #include <utils/finally.hpp>
-
-#include <sys/stat.h>
 
 namespace syscalls
 {
@@ -22,23 +18,21 @@ namespace syscalls
     NTSTATUS handle_NtTraceEvent();
     NTSTATUS handle_NtClearEvent(const syscall_context& c, handle event_handle);
     NTSTATUS handle_NtCreateEvent(const syscall_context& c, emulator_object<handle> event_handle,
-                                  ACCESS_MASK /*desired_access*/,
+                                  ACCESS_MASK desired_access,
                                   emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                   EVENT_TYPE event_type, BOOLEAN initial_state);
     NTSTATUS handle_NtOpenEvent(const syscall_context& c, emulator_object<uint64_t> event_handle,
-                                ACCESS_MASK /*desired_access*/,
+                                ACCESS_MASK desired_access,
                                 emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes);
 
     // syscalls/exception.cpp
-    NTSTATUS handle_NtRaiseHardError(const syscall_context& c, NTSTATUS error_status, ULONG /*number_of_parameters*/,
-                                     emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>
-                                     /*unicode_string_parameter_mask*/,
-                                     emulator_object<DWORD> /*parameters*/,
-                                     HARDERROR_RESPONSE_OPTION /*valid_response_option*/,
-                                     emulator_object<HARDERROR_RESPONSE> response);
+    NTSTATUS handle_NtRaiseHardError(
+        const syscall_context& c, NTSTATUS error_status, ULONG number_of_parameters,
+        emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> unicode_string_parameter_mask,
+        emulator_object<DWORD> parameters, HARDERROR_RESPONSE_OPTION valid_response_option,
+        emulator_object<HARDERROR_RESPONSE> response);
     NTSTATUS handle_NtRaiseException(const syscall_context& c,
-                                     emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>>
-                                     /*exception_record*/,
+                                     emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>> exception_record,
                                      emulator_object<CONTEXT64> thread_context, BOOLEAN handle_exception);
 
     // syscalls/file.cpp
@@ -49,15 +43,16 @@ namespace syscalls
         const syscall_context& c, handle file_handle,
         emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, uint64_t fs_information, ULONG length,
         FS_INFORMATION_CLASS fs_information_class);
-    NTSTATUS handle_NtQueryDirectoryFileEx(const syscall_context& c, handle file_handle, handle /*event_handle*/,
-                                           emulator_pointer /*PIO_APC_ROUTINE*/ /*apc_routine*/,
-                                           emulator_pointer /*apc_context*/,
+    NTSTATUS handle_NtQueryDirectoryFileEx(const syscall_context& c, handle file_handle, handle event_handle,
+                                           EMULATOR_CAST(emulator_pointer, PIO_APC_ROUTINE) apc_routine,
+                                           emulator_pointer apc_context,
                                            emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                            uint64_t file_information, uint32_t length, uint32_t info_class,
                                            ULONG query_flags,
                                            emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> file_name);
     NTSTATUS handle_NtQueryDirectoryFile(const syscall_context& c, handle file_handle, handle event_handle,
-                                         emulator_pointer /*PIO_APC_ROUTINE*/ apc_routine, emulator_pointer apc_context,
+                                         EMULATOR_CAST(emulator_pointer, PIO_APC_ROUTINE) apc_routine,
+                                         emulator_pointer apc_context,
                                          emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                          uint64_t file_information, uint32_t length, uint32_t info_class,
                                          BOOLEAN return_single_entry,
@@ -151,7 +146,7 @@ namespace syscalls
                                               emulator_object<uint64_t> bytes_to_allocate, uint32_t allocation_type,
                                               uint32_t page_protection);
     NTSTATUS handle_NtAllocateVirtualMemory(const syscall_context& c, handle process_handle,
-                                            emulator_object<uint64_t> base_address, uint64_t /*zero_bits*/,
+                                            emulator_object<uint64_t> base_address, uint64_t zero_bits,
                                             emulator_object<uint64_t> bytes_to_allocate, uint32_t allocation_type,
                                             uint32_t page_protection);
     NTSTATUS handle_NtFreeVirtualMemory(const syscall_context& c, handle process_handle,
@@ -165,11 +160,11 @@ namespace syscalls
     // syscalls/mutant.cpp:
     NTSTATUS handle_NtReleaseMutant(const syscall_context& c, handle mutant_handle,
                                     emulator_object<LONG> previous_count);
-    NTSTATUS handle_NtOpenMutant(const syscall_context& c, const emulator_object<handle> mutant_handle,
-                                 const ACCESS_MASK /*desired_access*/,
-                                 const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes);
+    NTSTATUS handle_NtOpenMutant(const syscall_context& c, emulator_object<handle> mutant_handle,
+                                 ACCESS_MASK desired_access,
+                                 emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes);
     NTSTATUS handle_NtCreateMutant(const syscall_context& c, emulator_object<handle> mutant_handle,
-                                   ACCESS_MASK /*desired_access*/,
+                                   ACCESS_MASK desired_access,
                                    emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                    BOOLEAN initial_owner);
 
@@ -177,7 +172,7 @@ namespace syscalls
     NTSTATUS handle_NtClose(const syscall_context& c, handle h);
     NTSTATUS handle_NtDuplicateObject(const syscall_context& c, handle source_process_handle, handle source_handle,
                                       handle target_process_handle, emulator_object<handle> target_handle,
-                                      ACCESS_MASK /*desired_access*/, ULONG /*handle_attributes*/, ULONG /*options*/);
+                                      ACCESS_MASK desired_access, ULONG handle_attributes, ULONG options);
     NTSTATUS handle_NtQueryObject(const syscall_context& c, handle handle,
                                   OBJECT_INFORMATION_CLASS object_information_class,
                                   emulator_pointer object_information, ULONG object_information_length,
