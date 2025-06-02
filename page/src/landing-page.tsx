@@ -60,8 +60,8 @@ export function LandingPage() {
       />
       <div className="flex flex-col min-h-screen">
         {/* Hero Section */}
-        <header className="bg-gradient-to-r from-blue-600 to-cyan-500 py-16 md:py-24">
-          <div className="container mx-auto px-4 md:px-6">
+        <header className="bg-gradient-to-r from-blue-600 to-cyan-500 py-16 md:py-24 rounded-b-3xl">
+          <div className="container mx-auto px-8 md:px-16">
             <div className="flex flex-col md:flex-row items-center justify-between">
               <div className="w-full md:w-1/2 space-y-6 text-center md:text-left text-white">
                 <h1 className="text-4xl md:text-6xl font-bold tracking-tight">
