@@ -454,7 +454,7 @@ namespace syscalls
         const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> /*io_status_block*/,
         const emulator_object<LARGE_INTEGER> timeout)
     {
-        if (timeout.value() && timeout.read().QuadPart == 0)
+        if (timeout && timeout.read().QuadPart == 0)
         {
             return STATUS_TIMEOUT;
         }
