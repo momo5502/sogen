@@ -69,10 +69,33 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
+    NTSTATUS handle_NtCreateTimer(const syscall_context& c, const emulator_object<handle> timer_handle,
+                                  ACCESS_MASK desired_access,
+                                  const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                  ULONG timer_type)
+    {
+        return handle_NtCreateTimer2(c, timer_handle, 0, object_attributes, timer_type, desired_access);
+    }
+
+    NTSTATUS handle_NtSetTimer()
+    {
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS handle_NtSetTimer2()
+    {
+        return STATUS_SUCCESS;
+    }
+
     NTSTATUS handle_NtSetTimerEx(const syscall_context& /*c*/, handle /*timer_handle*/,
                                  uint32_t /*timer_set_info_class*/, uint64_t /*timer_set_information*/,
                                  ULONG /*timer_set_information_length*/)
     {
         return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtCancelTimer()
+    {
+        return STATUS_SUCCESS;
     }
 }

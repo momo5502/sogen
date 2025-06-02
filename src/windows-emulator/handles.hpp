@@ -408,6 +408,7 @@ constexpr auto NULL_HANDLE = make_handle(0ULL);
 
 constexpr auto KNOWN_DLLS_DIRECTORY = make_pseudo_handle(0x1, handle_types::directory);
 constexpr auto BASE_NAMED_OBJECTS_DIRECTORY = make_pseudo_handle(0x2, handle_types::directory);
+constexpr auto RPC_CONTROL_DIRECTORY = make_pseudo_handle(0x3, handle_types::directory);
 
 constexpr auto KNOWN_DLLS_SYMLINK = make_pseudo_handle(0x1, handle_types::symlink);
 constexpr auto SHARED_SECTION = make_pseudo_handle(0x1, handle_types::section);
@@ -417,6 +418,7 @@ constexpr auto WER_PORT_READY = make_pseudo_handle(0x1, handle_types::event);
 constexpr auto DBWIN_DATA_READY = make_pseudo_handle(0x2, handle_types::event);
 constexpr auto DBWIN_BUFFER_READY = make_pseudo_handle(0x3, handle_types::event);
 constexpr auto SVCCTRL_START_EVENT = make_pseudo_handle(0x4, handle_types::event);
+constexpr auto LSA_AUTHENTICATION_INITIALIZED = make_pseudo_handle(0x5, handle_types::event);
 
 constexpr auto CONSOLE_HANDLE = make_pseudo_handle(0x1, handle_types::file);
 constexpr auto STDOUT_HANDLE = make_pseudo_handle(0x2, handle_types::file);

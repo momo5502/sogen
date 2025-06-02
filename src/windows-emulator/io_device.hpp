@@ -175,11 +175,23 @@ class io_device_container : public io_device
 
     template <typename T = io_device>
         requires(std::is_base_of_v<io_device, T> || std::is_same_v<io_device, T>)
-    T* get_internal_device()
+    T* get_internal_device() const
     {
         this->assert_validity();
         auto* value = this->device_.get();
         return dynamic_cast<T*>(value);
+    }
+
+    std::u16string_view get_device_name() const
+    {
+        this->assert_validity();
+        return this->device_name_;
+    }
+
+    std::u16string get_device_path() const
+    {
+        this->assert_validity();
+        return u"\\Device\\" + this->device_name_;
     }
 
   private:

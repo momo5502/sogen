@@ -584,6 +584,11 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
+    ULONG handle_NtGetCurrentProcessorNumber()
+    {
+        return 0;
+    }
+
     NTSTATUS handle_NtQueueApcThreadEx2(const syscall_context& c, const handle thread_handle,
                                         const handle /*reserve_handle*/, const uint32_t apc_flags,
                                         const uint64_t apc_routine, const uint64_t apc_argument1,

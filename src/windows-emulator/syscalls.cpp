@@ -183,6 +183,10 @@ namespace syscalls
     NTSTATUS handle_NtWaitForSingleObject(const syscall_context& c, handle h, BOOLEAN alertable,
                                           emulator_object<LARGE_INTEGER> timeout);
     NTSTATUS handle_NtSetInformationObject();
+    NTSTATUS handle_NtQuerySecurityObject(const syscall_context& c, handle /*h*/,
+                                          SECURITY_INFORMATION /*security_information*/,
+                                          emulator_pointer security_descriptor, ULONG length,
+                                          emulator_object<ULONG> length_needed);
 
     // syscalls/port.cpp:
     NTSTATUS handle_NtConnectPort(const syscall_context& c, emulator_object<handle> client_port_handle,
@@ -344,6 +348,7 @@ namespace syscalls
                                      emulator_object<PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>> attribute_list);
     NTSTATUS handle_NtGetCurrentProcessorNumberEx(const syscall_context&,
                                                   emulator_object<PROCESSOR_NUMBER> processor_number);
+    ULONG handle_NtGetCurrentProcessorNumber();
     NTSTATUS handle_NtQueueApcThreadEx2(const syscall_context& c, handle thread_handle, handle reserve_handle,
                                         uint32_t apc_flags, uint64_t apc_routine, uint64_t apc_argument1,
                                         uint64_t apc_argument2, uint64_t apc_argument3);
@@ -361,8 +366,15 @@ namespace syscalls
     NTSTATUS handle_NtCreateTimer2(const syscall_context& c, emulator_object<handle> timer_handle, uint64_t reserved,
                                    emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                    ULONG attributes, ACCESS_MASK desired_access);
+    NTSTATUS handle_NtCreateTimer(const syscall_context& c, emulator_object<handle> timer_handle,
+                                  ACCESS_MASK desired_access,
+                                  emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                  ULONG timer_type);
+    NTSTATUS handle_NtSetTimer();
+    NTSTATUS handle_NtSetTimer2();
     NTSTATUS handle_NtSetTimerEx(const syscall_context& c, handle timer_handle, uint32_t timer_set_info_class,
                                  uint64_t timer_set_information, ULONG timer_set_information_length);
+    NTSTATUS handle_NtCancelTimer();
 
     // syscalls/token.cpp:
     NTSTATUS
@@ -410,7 +422,17 @@ namespace syscalls
 
     NTSTATUS handle_NtCreateWorkerFactory()
     {
-        return STATUS_NOT_SUPPORTED;
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS handle_NtSetInformationWorkerFactory()
+    {
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS handle_NtShutdownWorkerFactory()
+    {
+        return STATUS_SUCCESS;
     }
 
     NTSTATUS handle_NtCreateIoCompletion(
@@ -424,6 +446,21 @@ namespace syscalls
     NTSTATUS handle_NtSetIoCompletion()
     {
         return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtRemoveIoCompletion(
+        const syscall_context&, const emulator_object<handle> /*io_completion__handle*/,
+        const emulator_object<int64_t> key_context, const emulator_pointer /*apc_context*/,
+        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> /*io_status_block*/,
+        const emulator_object<LARGE_INTEGER> timeout)
+    {
+        if (timeout && timeout.read().QuadPart == 0)
+        {
+            return STATUS_TIMEOUT;
+        }
+
+        key_context.write_if_valid(-1);
+        return STATUS_SUCCESS;
     }
 
     NTSTATUS handle_NtCreateWaitCompletionPacket(
@@ -925,6 +962,21 @@ namespace syscalls
 
         return STATUS_SUCCESS;
     }
+
+    NTSTATUS handle_NtAssociateWaitCompletionPacket()
+    {
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS handle_NtCancelWaitCompletionPacket()
+    {
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS handle_NtSetWnfProcessNotificationEvent()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
 }
 
 void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& handler_mapping)
@@ -957,8 +1009,11 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtAllocateVirtualMemoryEx);
     add_handler(NtCreateIoCompletion);
     add_handler(NtSetIoCompletion);
+    add_handler(NtRemoveIoCompletion);
     add_handler(NtCreateWaitCompletionPacket);
     add_handler(NtCreateWorkerFactory);
+    add_handler(NtSetInformationWorkerFactory);
+    add_handler(NtShutdownWorkerFactory);
     add_handler(NtManageHotPatch);
     add_handler(NtOpenSection);
     add_handler(NtMapViewOfSection);
@@ -1035,6 +1090,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtCreateKey);
     add_handler(NtNotifyChangeKey);
     add_handler(NtGetCurrentProcessorNumberEx);
+    add_handler(NtGetCurrentProcessorNumber);
     add_handler(NtQueryObject);
     add_handler(NtQueryAttributesFile);
     add_handler(NtWaitForMultipleObjects);
@@ -1105,8 +1161,16 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtQueryInformationByName);
     add_handler(NtUserSetCursor);
     add_handler(NtOpenMutant);
+    add_handler(NtCreateTimer);
     add_handler(NtCreateTimer2);
+    add_handler(NtSetTimer);
+    add_handler(NtSetTimer2);
     add_handler(NtSetTimerEx);
+    add_handler(NtCancelTimer);
+    add_handler(NtAssociateWaitCompletionPacket);
+    add_handler(NtCancelWaitCompletionPacket);
+    add_handler(NtSetWnfProcessNotificationEvent);
+    add_handler(NtQuerySecurityObject);
 
 #undef add_handler
 }

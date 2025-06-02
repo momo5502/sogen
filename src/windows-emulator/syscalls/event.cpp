@@ -114,6 +114,12 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
+        if (name == u"\\SECURITY\\LSA_AUTHENTICATION_INITIALIZED")
+        {
+            event_handle.write(LSA_AUTHENTICATION_INITIALIZED.bits);
+            return STATUS_SUCCESS;
+        }
+
         if (name == u"DBWIN_DATA_READY")
         {
             event_handle.write(DBWIN_DATA_READY.bits);
