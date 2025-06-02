@@ -119,31 +119,37 @@ struct AFD_POLL_INFO64
     AFD_POLL_HANDLE_INFO64 Handles[1];
 };
 
-#define AFD_POLL_RECEIVE_BIT            0
-#define AFD_POLL_RECEIVE                (1 << AFD_POLL_RECEIVE_BIT)
-#define AFD_POLL_RECEIVE_EXPEDITED_BIT  1
-#define AFD_POLL_RECEIVE_EXPEDITED      (1 << AFD_POLL_RECEIVE_EXPEDITED_BIT)
-#define AFD_POLL_SEND_BIT               2
-#define AFD_POLL_SEND                   (1 << AFD_POLL_SEND_BIT)
-#define AFD_POLL_DISCONNECT_BIT         3
-#define AFD_POLL_DISCONNECT             (1 << AFD_POLL_DISCONNECT_BIT)
-#define AFD_POLL_ABORT_BIT              4
-#define AFD_POLL_ABORT                  (1 << AFD_POLL_ABORT_BIT)
-#define AFD_POLL_LOCAL_CLOSE_BIT        5
-#define AFD_POLL_LOCAL_CLOSE            (1 << AFD_POLL_LOCAL_CLOSE_BIT)
-#define AFD_POLL_CONNECT_BIT            6
-#define AFD_POLL_CONNECT                (1 << AFD_POLL_CONNECT_BIT)
-#define AFD_POLL_ACCEPT_BIT             7
-#define AFD_POLL_ACCEPT                 (1 << AFD_POLL_ACCEPT_BIT)
-#define AFD_POLL_CONNECT_FAIL_BIT       8
-#define AFD_POLL_CONNECT_FAIL           (1 << AFD_POLL_CONNECT_FAIL_BIT)
-#define AFD_POLL_QOS_BIT                9
-#define AFD_POLL_QOS                    (1 << AFD_POLL_QOS_BIT)
-#define AFD_POLL_GROUP_QOS_BIT          10
-#define AFD_POLL_GROUP_QOS              (1 << AFD_POLL_GROUP_QOS_BIT)
+#define AFD_POLL_RECEIVE_BIT           0
+#define AFD_POLL_RECEIVE               (1 << AFD_POLL_RECEIVE_BIT)
+#define AFD_POLL_RECEIVE_EXPEDITED_BIT 1
+#define AFD_POLL_RECEIVE_EXPEDITED     (1 << AFD_POLL_RECEIVE_EXPEDITED_BIT)
+#define AFD_POLL_SEND_BIT              2
+#define AFD_POLL_SEND                  (1 << AFD_POLL_SEND_BIT)
+#define AFD_POLL_DISCONNECT_BIT        3
+#define AFD_POLL_DISCONNECT            (1 << AFD_POLL_DISCONNECT_BIT)
+#define AFD_POLL_ABORT_BIT             4
+#define AFD_POLL_ABORT                 (1 << AFD_POLL_ABORT_BIT)
+#define AFD_POLL_LOCAL_CLOSE_BIT       5
+#define AFD_POLL_LOCAL_CLOSE           (1 << AFD_POLL_LOCAL_CLOSE_BIT)
+#define AFD_POLL_CONNECT_BIT           6
+#define AFD_POLL_CONNECT               (1 << AFD_POLL_CONNECT_BIT)
+#define AFD_POLL_ACCEPT_BIT            7
+#define AFD_POLL_ACCEPT                (1 << AFD_POLL_ACCEPT_BIT)
+#define AFD_POLL_CONNECT_FAIL_BIT      8
+#define AFD_POLL_CONNECT_FAIL          (1 << AFD_POLL_CONNECT_FAIL_BIT)
+#define AFD_POLL_QOS_BIT               9
+#define AFD_POLL_QOS                   (1 << AFD_POLL_QOS_BIT)
+#define AFD_POLL_GROUP_QOS_BIT         10
+#define AFD_POLL_GROUP_QOS             (1 << AFD_POLL_GROUP_QOS_BIT)
 
-#define AFD_NUM_POLL_EVENTS             11
-#define AFD_POLL_ALL                    ((1 << AFD_NUM_POLL_EVENTS) - 1)
+#define AFD_NUM_POLL_EVENTS            11
+#define AFD_POLL_ALL                   ((1 << AFD_NUM_POLL_EVENTS) - 1)
+
+struct AFD_EVENT_SELECT_INFO
+{
+    handle Event;
+    ULONG PollEvents;
+};
 
 #define _AFD_REQUEST(ioctl)             ((((ULONG)(ioctl)) >> 2) & 0x03FF)
 #define _AFD_BASE(ioctl)                ((((ULONG)(ioctl)) >> 12) & 0xFFFFF)

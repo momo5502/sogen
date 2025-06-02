@@ -16,6 +16,8 @@ namespace network
         virtual bool is_ready(bool in_poll) = 0;
         virtual bool is_listening() = 0;
 
+        virtual std::optional<address> get_local_address() = 0;
+
         virtual bool bind(const address& addr) = 0;
         virtual bool connect(const address& addr) = 0;
         virtual bool listen(int backlog) = 0;

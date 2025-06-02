@@ -70,6 +70,11 @@ namespace network
                     return false;
                 }
 
+                std::optional<address> get_local_address() override
+                {
+                    return this->a;
+                }
+
                 bool bind(const address& addr) override
                 {
                     this->a = addr;

@@ -43,6 +43,22 @@ namespace network
         return res != SOCKET_ERROR && val == 1;
     }
 
+    std::optional<address> socket_wrapper::get_local_address()
+    {
+        sockaddr addr{};
+        socklen_t addrlen = sizeof(sockaddr);
+        const auto res = ::getsockname(this->socket_.get_socket(), &addr, &addrlen);
+
+        if (res != 0)
+        {
+            return {};
+        }
+
+        address address{};
+        address.set_address(&addr, addrlen);
+        return address;
+    }
+
     bool socket_wrapper::bind(const address& addr)
     {
         return this->socket_.bind(addr);
