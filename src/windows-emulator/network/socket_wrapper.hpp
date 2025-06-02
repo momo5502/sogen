@@ -18,6 +18,8 @@ namespace network
         bool is_ready(bool in_poll) override;
         bool is_listening() override;
 
+        std::optional<address> get_local_address() override;
+
         bool bind(const address& addr) override;
         bool connect(const address& addr) override;
         bool listen(int backlog) override;
