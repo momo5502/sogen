@@ -574,7 +574,7 @@ namespace syscalls
 
         if (info_class == FileStatBasicInformation)
         {
-            block.Information = sizeof(FILE_STAT_BASIC_INFORMATION);
+            block.Information = sizeof(EMU_FILE_STAT_BASIC_INFORMATION);
 
             if (length < block.Information)
             {
@@ -593,7 +593,7 @@ namespace syscalls
                 return STATUS_INVALID_HANDLE;
             }
 
-            FILE_STAT_BASIC_INFORMATION i{};
+            EMU_FILE_STAT_BASIC_INFORMATION i{};
 
             i.CreationTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
             i.LastAccessTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
