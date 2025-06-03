@@ -430,8 +430,7 @@ typedef struct _SECURITY_QUALITY_OF_SERVICE
 
 #endif
 
-#ifndef _MSC_VER
-typedef struct _FILE_STAT_BASIC_INFORMATION
+struct EMU_FILE_STAT_BASIC_INFORMATION
 {
     LARGE_INTEGER FileId;
     LARGE_INTEGER CreationTime;
@@ -448,8 +447,7 @@ typedef struct _FILE_STAT_BASIC_INFORMATION
     ULONG Reserved;
     LARGE_INTEGER VolumeSerialNumber;
     FILE_ID_128 FileId128;
-} FILE_STAT_BASIC_INFORMATION, *PFILE_STAT_BASIC_INFORMATION;
-#endif
+};
 
 typedef struct _PORT_VIEW64
 {
