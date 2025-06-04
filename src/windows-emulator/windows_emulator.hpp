@@ -19,6 +19,7 @@ struct emulator_callbacks : module_manager::callbacks, process_context::callback
 
     utils::optional_function<continuation(uint32_t syscall_id, std::string_view syscall_name)> on_syscall{};
     utils::optional_function<void(std::string_view data)> on_stdout{};
+    utils::optional_function<void(std::string_view description)> on_suspicious_activity{};
 };
 
 struct application_settings

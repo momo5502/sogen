@@ -550,24 +550,24 @@ void windows_emulator::setup_hooks()
         case 1:
             if ((eflags & 0x100) != 0)
             {
-                this->log.print(color::pink, "Singlestep (Trap Flag): 0x%" PRIx64 "\n", rip);
+                this->callbacks.on_suspicious_activity("Singlestep (Trap Flag)");
                 this->emu().reg(x86_register::eflags, eflags & ~0x100);
             }
             else
             {
-                this->log.print(color::pink, "Singlestep: 0x%" PRIx64 "\n", rip);
+                this->callbacks.on_suspicious_activity("Singlestep");
             }
             dispatch_single_step(this->emu(), this->process);
             return;
         case 3:
-            this->log.print(color::pink, "Breakpoint: 0x%" PRIx64 "\n", rip);
+            this->callbacks.on_suspicious_activity("Breakpoint");
             dispatch_breakpoint(this->emu(), this->process);
             return;
         case 6:
             dispatch_illegal_instruction_violation(this->emu(), this->process);
             return;
         case 45:
-            this->log.print(color::pink, "DbgPrint: 0x%" PRIx64 "\n", rip);
+            this->callbacks.on_suspicious_activity("DbgPrint");
             dispatch_breakpoint(this->emu(), this->process);
             return;
         default:

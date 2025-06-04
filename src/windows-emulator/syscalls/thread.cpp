@@ -26,7 +26,7 @@ namespace syscalls
 
         if (info_class == ThreadHideFromDebugger)
         {
-            c.win_emu.log.print(color::pink, "--> Hiding thread %X from debugger!\n", thread->id);
+            c.win_emu.callbacks.on_suspicious_activity("Hiding thread from debugger");
             return STATUS_SUCCESS;
         }
 
@@ -470,7 +470,7 @@ namespace syscalls
         thread_context.access([&](CONTEXT64& context) {
             if ((context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64) == CONTEXT_DEBUG_REGISTERS_64)
             {
-                c.win_emu.log.print(color::pink, "--> Reading debug registers!\n");
+                c.win_emu.callbacks.on_suspicious_activity("Reading debug registers");
             }
 
             cpu_context::save(c.emu, context);
@@ -509,7 +509,7 @@ namespace syscalls
 
         if ((context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64) == CONTEXT_DEBUG_REGISTERS_64)
         {
-            c.win_emu.log.print(color::pink, "--> Setting debug registers!\n");
+            c.win_emu.callbacks.on_suspicious_activity("Setting debug registers");
         }
 
         return STATUS_SUCCESS;
