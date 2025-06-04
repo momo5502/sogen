@@ -329,7 +329,7 @@ namespace syscalls
     {
         if (lock.value())
         {
-            c.win_emu.log.print(color::gray, "NtAlertThreadByThreadIdEx with lock not supported yet!");
+            c.win_emu.log.warn("NtAlertThreadByThreadIdEx with lock not supported yet!");
             // c.emu.stop();
             // return STATUS_NOT_SUPPORTED;
         }

@@ -158,8 +158,7 @@ namespace syscalls
 
             if (!is_awaitable_object_type(h))
             {
-                c.win_emu.log.print(color::gray, "Unsupported handle type for NtWaitForMultipleObjects: %d!\n",
-                                    h.value.type);
+                c.win_emu.log.warn("Unsupported handle type for NtWaitForMultipleObjects: %d!\n", h.value.type);
                 return STATUS_NOT_SUPPORTED;
             }
 
@@ -180,7 +179,7 @@ namespace syscalls
     {
         if (!is_awaitable_object_type(h))
         {
-            c.win_emu.log.print(color::gray, "Unsupported handle type for NtWaitForSingleObject: %d!\n", h.value.type);
+            c.win_emu.log.warn("Unsupported handle type for NtWaitForSingleObject: %d!\n", h.value.type);
             return STATUS_NOT_SUPPORTED;
         }
 

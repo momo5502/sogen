@@ -111,7 +111,7 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
-        c.win_emu.log.print(color::gray, "Unsupported registry class: %X\n", key_information_class);
+        c.win_emu.log.warn("Unsupported registry class: %X\n", key_information_class);
         c.emu.stop();
         return STATUS_NOT_SUPPORTED;
     }
@@ -224,7 +224,7 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
-        c.win_emu.log.print(color::gray, "Unsupported registry value class: %X\n", key_value_information_class);
+        c.win_emu.log.warn("Unsupported registry value class: %X\n", key_value_information_class);
         c.emu.stop();
         return STATUS_NOT_SUPPORTED;
     }
@@ -332,7 +332,7 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
-        c.win_emu.log.print(color::gray, "Unsupported registry enumeration class: %X\n", key_information_class);
+        c.win_emu.log.warn("Unsupported registry enumeration class: %X\n", key_information_class);
         return STATUS_NOT_SUPPORTED;
     }
 
@@ -443,8 +443,7 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
-        c.win_emu.log.print(color::gray, "Unsupported registry value enumeration class: %X\n",
-                            key_value_information_class);
+        c.win_emu.log.warn("Unsupported registry value enumeration class: %X\n", key_value_information_class);
         return STATUS_NOT_SUPPORTED;
     }
 }
