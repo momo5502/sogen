@@ -2,82 +2,98 @@
 #include "logger.hpp"
 
 struct mapped_module;
-struct windows_emulator;
+class windows_emulator;
 
-enum class event_type
+enum class emulation_event_type
 {
     syscall,
     function_call,
 };
 
-struct event : utils::object
+struct emulation_event : utils::object
 {
-    event() = default;
+    emulation_event() = default;
 
-    event(event&&) = delete;
-    event& operator=(event&&) = delete;
-    event(const event&) = delete;
-    event& operator=(const event&) = delete;
+    emulation_event(emulation_event&&) = delete;
+    emulation_event& operator=(emulation_event&&) = delete;
+    emulation_event(const emulation_event&) = delete;
+    emulation_event& operator=(const emulation_event&) = delete;
 
-    virtual event_type get_type() const = 0;
+    virtual emulation_event_type get_type() const = 0;
 
-    virtual void print(const generic_logger& log) const
+    virtual void print(generic_logger& log) const
     {
         (void)log;
     }
 };
 
-template <event_type Type>
-struct typed_event : event
+template <emulation_event_type Type>
+struct typed_event : emulation_event
 {
-    using event::event;
+    using emulation_event::emulation_event;
 
-    event_type get_type() const override
+    emulation_event_type get_type() const override
     {
         return Type;
     }
 };
 
-template <event_type Type, typename Data>
-class rich_event : typed_event<Type>
+struct empty_data
+{
+};
+
+template <emulation_event_type Type, typename Input = empty_data, typename Output = empty_data>
+class rich_event : public typed_event<Type>
 {
   public:
-    rich_event(windows_emulator& win_emu, Data data)
+    rich_event(windows_emulator& win_emu, Input input = {}, Output output = {})
         : win_emu(&win_emu),
-          data(std::move(data))
+          in(std::move(input))
     {
     }
 
-    const Data& get_data() const
+    const Input& get_input() const
     {
-        return this->data;
+        return this->in;
+    }
+
+    Output& get_output()
+    {
+        return this->out;
+    }
+
+    const Output& get_output() const
+    {
+        return this->out;
     }
 
   protected:
     windows_emulator* win_emu{};
-    Data data{};
+    Input in{};
+    Output out{};
 };
 
-struct syscall_data
+struct syscall_input
 {
     uint32_t id{};
     std::string_view name{};
 };
 
-struct syscall_event : rich_event<event_type::syscall, syscall_data>
+struct syscall_output
 {
-    struct extended_info
-    {
-        uint64_t address{};
-        mapped_module* origin{};
-    };
+    bool skip{false};
+};
 
-    extended_info get_extended_info() const;
+struct syscall_event : rich_event<emulation_event_type::syscall, syscall_input, syscall_output>
+{
+    using rich_event::rich_event;
+
+    void print(generic_logger& log) const override;
 };
 
 struct event_manager : utils::object
 {
-    virtual void handle(const event& e);
+    virtual void handle(emulation_event& e);
 };
 
 class printing_event_manager : public event_manager
@@ -88,7 +104,7 @@ class printing_event_manager : public event_manager
     {
     }
 
-    void handle(const event& e) override
+    void handle(emulation_event& e) override
     {
         e.print(*this->logger_);
     }
