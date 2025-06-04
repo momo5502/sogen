@@ -66,4 +66,8 @@ using USHORT = WORD;
 #define FALSE 0
 #endif
 
+static_assert(sizeof(DWORD) == 4);
+static_assert(sizeof(ULONG) == 4);
+static_assert(sizeof(int) == 4);
+
 // NOLINTEND(modernize-use-using)

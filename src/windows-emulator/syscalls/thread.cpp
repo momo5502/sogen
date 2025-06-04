@@ -425,7 +425,7 @@ namespace syscalls
 
         if (flags != 0)
         {
-            c.win_emu.log.error("NtGetNextThread flags %X not supported\n", flags);
+            c.win_emu.log.error("NtGetNextThread flags %X not supported\n", static_cast<uint32_t>(flags));
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
         }

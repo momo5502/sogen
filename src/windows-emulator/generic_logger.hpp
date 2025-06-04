@@ -1,7 +1,7 @@
 #pragma once
 #include <utils/object.hpp>
 
-#if defined(__clang__) || defined(__GNUC__)
+#if (defined(__clang__) || defined(__GNUC__)) && !defined(__MINGW64__)
 #define FORMAT_ATTRIBUTE(fmt_pos, var_pos) __attribute__((format(printf, fmt_pos, var_pos)))
 #else
 #define FORMAT_ATTRIBUTE(fmt_pos, var_pos)
