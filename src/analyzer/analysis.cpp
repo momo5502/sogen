@@ -17,7 +17,7 @@ namespace
     void handle_suspicious_activity(windows_emulator& win_emu, const std::string_view details)
     {
         const auto rip = win_emu.emu().read_instruction_pointer();
-        win_emu.log.print(color::pink, "Suspicious: %.*s (0x" PRIX64 ")\n", STR_VIEW_VA(details), rip);
+        win_emu.log.print(color::pink, "Suspicious: %.*s (0x%" PRIX64 ")\n", STR_VIEW_VA(details), rip);
     }
 
     emulator_callbacks::continuation handle_syscall(windows_emulator& win_emu, const uint32_t syscall_id,
