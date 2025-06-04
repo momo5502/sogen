@@ -20,6 +20,7 @@ struct emulator_callbacks : module_manager::callbacks, process_context::callback
     utils::optional_function<continuation(uint32_t syscall_id, std::string_view syscall_name)> on_syscall{};
     utils::optional_function<void(std::string_view data)> on_stdout{};
     utils::optional_function<void(std::string_view description)> on_suspicious_activity{};
+    utils::optional_function<void(uint64_t address)> on_instruction{};
 };
 
 struct application_settings
@@ -176,25 +177,28 @@ class windows_emulator
         }
     }
 
-    bool verbose{false};
-    bool verbose_calls{false};
-    bool buffer_stdout{false};
+    // TODO: Remove
     bool fuzzing{false};
 
     void yield_thread(bool alertable = false);
     bool perform_thread_switch();
     bool activate_thread(uint32_t id);
 
+    // TODO: Move to analyzer
+    bool verbose{false};
+    bool verbose_calls{false};
+    bool buffer_stdout{false};
+    bool silent_until_main_{false};
+    std::set<std::string, std::less<>> modules_{};
+    std::set<std::string, std::less<>> ignored_functions_{};
+
   private:
     bool switch_thread_{false};
     bool use_relative_time_{false};
-    bool silent_until_main_{false};
     std::atomic_bool should_stop{false};
 
     std::unordered_map<uint16_t, uint16_t> port_mappings_{};
 
-    std::set<std::string, std::less<>> modules_{};
-    std::set<std::string, std::less<>> ignored_functions_{};
     std::vector<std::byte> process_snapshot_{};
     // std::optional<process_context> process_snapshot_{};
 
