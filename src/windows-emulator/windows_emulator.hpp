@@ -5,7 +5,6 @@
 
 #include <utils/function.hpp>
 
-#include "event_manager.hpp"
 #include "syscall_dispatcher.hpp"
 #include "process_context.hpp"
 #include "logger.hpp"
@@ -16,7 +15,10 @@
 
 struct emulator_callbacks : module_manager::callbacks, process_context::callbacks
 {
-    utils::optional_function<void(std::string_view)> on_stdout{};
+    using continuation = instruction_hook_continuation;
+
+    utils::optional_function<continuation(uint32_t syscall_id, std::string_view syscall_name)> on_syscall{};
+    utils::optional_function<void(std::string_view data)> on_stdout{};
 };
 
 struct application_settings
@@ -55,7 +57,6 @@ class windows_emulator
     std::unique_ptr<x86_64_emulator> emu_{};
     std::unique_ptr<utils::clock> clock_{};
     std::unique_ptr<network::socket_factory> socket_factory_{};
-    std::unique_ptr<event_manager> event_manager_{};
 
   public:
     std::filesystem::path emulation_root{};
@@ -89,16 +90,6 @@ class windows_emulator
     const x86_64_emulator& emu() const
     {
         return *this->emu_;
-    }
-
-    event_manager& manager()
-    {
-        return *this->event_manager_;
-    }
-
-    event_manager& manager() const
-    {
-        return *this->event_manager_;
     }
 
     utils::clock& clock()

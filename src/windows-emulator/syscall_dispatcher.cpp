@@ -76,8 +76,6 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
 
     try
     {
-        const auto* mod = win_emu.mod_manager.find_by_address(address);
-
         const auto entry = this->handlers_.find(syscall_id);
         if (entry == this->handlers_.end())
         {
@@ -87,14 +85,8 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
             return;
         }
 
-        syscall_event e(c.win_emu, {
-                                       .id = syscall_id,
-                                       .name = entry->second.name,
-                                   });
-
-        c.win_emu.manager().handle(e);
-
-        if (e.get_output().skip)
+        const auto res = win_emu.callbacks.on_syscall(syscall_id, entry->second.name);
+        if (res == instruction_hook_continuation::skip_instruction)
         {
             return;
         }
