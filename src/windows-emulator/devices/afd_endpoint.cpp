@@ -519,13 +519,14 @@ namespace
         {
             if (_AFD_BASE(c.io_control_code) != FSCTL_AFD_BASE)
             {
-                win_emu.log.print(color::cyan, "Bad AFD IOCTL: 0x%X\n", c.io_control_code);
+                win_emu.log.error("Bad AFD IOCTL: 0x%X\n", static_cast<uint32_t>(c.io_control_code));
                 return STATUS_NOT_SUPPORTED;
             }
 
             const auto request = _AFD_REQUEST(c.io_control_code);
 
-            win_emu.log.print(color::dark_gray, "--> AFD IOCTL: 0x%X (%d)\n", c.io_control_code, request);
+            win_emu.log.print(color::dark_gray, "--> AFD IOCTL: 0x%X (%u)\n", static_cast<uint32_t>(c.io_control_code),
+                              static_cast<uint32_t>(request));
 
             switch (request)
             {
@@ -562,7 +563,8 @@ namespace
             case AFD_TRANSPORT_IOCTL:
                 return STATUS_SUCCESS;
             default:
-                win_emu.log.print(color::gray, "Unsupported AFD IOCTL: 0x%X (%d)\n", c.io_control_code, request);
+                win_emu.log.error("Unsupported AFD IOCTL: 0x%X (%u)\n", static_cast<uint32_t>(c.io_control_code),
+                                  static_cast<uint32_t>(request));
                 return STATUS_NOT_SUPPORTED;
             }
         }
@@ -995,8 +997,8 @@ namespace
             {
                 const auto timeout_callback = [](windows_emulator& win_emu, const io_device_context& c) {
                     const emulator_object<AFD_POLL_INFO64> info_obj{win_emu.emu(), c.input_buffer};
-                    info_obj.access([&](AFD_POLL_INFO64& info) {
-                        info.NumberOfHandles = 0; //
+                    info_obj.access([&](AFD_POLL_INFO64& poll_info) {
+                        poll_info.NumberOfHandles = 0; //
                     });
                 };
 
