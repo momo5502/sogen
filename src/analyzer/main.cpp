@@ -104,8 +104,19 @@ namespace
         }
     }
 
-    bool run_emulation(windows_emulator& win_emu, const analysis_options& options)
+    void do_post_emulation_work(const analysis_context& c)
     {
+        if (c.settings->buffer_stdout)
+        {
+            c.win_emu->log.info("%.*s%s", static_cast<int>(c.output.size()), c.output.data(),
+                                c.output.ends_with("\n") ? "" : "\n");
+        }
+    }
+
+    bool run_emulation(const analysis_context& c, const analysis_options& options)
+    {
+        auto& win_emu = *c.win_emu;
+
         std::atomic_uint32_t signals_received{0};
         utils::interupt_handler _{[&] {
             const auto value = signals_received++;
@@ -153,12 +164,14 @@ namespace
         }
         catch (const std::exception& e)
         {
+            do_post_emulation_work(c);
             win_emu.log.error("Emulation failed at: 0x%" PRIx64 " - %s\n", win_emu.emu().read_instruction_pointer(),
                               e.what());
             throw;
         }
         catch (...)
         {
+            do_post_emulation_work(c);
             win_emu.log.error("Emulation failed at: 0x%" PRIx64 "\n", win_emu.emu().read_instruction_pointer());
             throw;
         }
@@ -166,6 +179,7 @@ namespace
         const auto exit_status = win_emu.process.exit_status;
         if (!exit_status.has_value())
         {
+            do_post_emulation_work(c);
             win_emu.log.error("Emulation terminated without status!\n");
             return false;
         }
@@ -174,6 +188,7 @@ namespace
 
         if (!options.silent)
         {
+            do_post_emulation_work(c);
             win_emu.log.disable_output(false);
             win_emu.log.print(success ? color::green : color::red, "Emulation terminated with status: %X\n",
                               *exit_status);
@@ -325,7 +340,7 @@ namespace
             win_emu->emu().hook_memory_write(section.region.start, section.region.length, std::move(write_handler));
         }
 
-        return run_emulation(*win_emu, options);
+        return run_emulation(context, options);
     }
 
     std::vector<std::string_view> bundle_arguments(const int argc, char** argv)
