@@ -28,10 +28,25 @@ struct application_settings
     windows_path application{};
     windows_path working_directory{};
     std::vector<std::u16string> arguments{};
+
+    void serialize(utils::buffer_serializer& buffer) const
+    {
+        buffer.write(this->application);
+        buffer.write(this->working_directory);
+        buffer.write_vector(this->arguments);
+    }
+
+    void deserialize(utils::buffer_deserializer& buffer)
+    {
+        buffer.read(this->application);
+        buffer.read(this->working_directory);
+        buffer.read_vector(this->arguments);
+    }
 };
 
 struct emulator_settings
 {
+    bool disable_logging{false};
     bool use_relative_time{false};
 
     std::filesystem::path emulation_root{};
@@ -50,6 +65,7 @@ struct emulator_interfaces
 class windows_emulator
 {
     uint64_t executed_instructions_{0};
+    std::optional<application_settings> application_settings_{};
 
     std::unique_ptr<x86_64_emulator> emu_{};
     std::unique_ptr<utils::clock> clock_{};
@@ -124,6 +140,8 @@ class windows_emulator
         return this->executed_instructions_;
     }
 
+    void setup_process_if_necessary();
+
     void start(size_t count = 0);
     void stop();
 
@@ -181,7 +199,7 @@ class windows_emulator
 
   private:
     bool switch_thread_{false};
-    bool use_relative_time_{false};
+    bool use_relative_time_{false}; // TODO: Get rid of that
     std::atomic_bool should_stop{false};
 
     std::unordered_map<uint16_t, uint16_t> port_mappings_{};

@@ -289,7 +289,7 @@ windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, applica
     : windows_emulator(std::move(emu), settings, std::move(callbacks), std::move(interfaces))
 {
     fixup_application_settings(app_settings);
-    this->setup_process(app_settings);
+    this->application_settings_ = std::move(app_settings);
 }
 
 windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, const emulator_settings& settings,
@@ -327,6 +327,19 @@ windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, const e
 }
 
 windows_emulator::~windows_emulator() = default;
+
+void windows_emulator::setup_process_if_necessary()
+{
+    if (!this->application_settings_)
+    {
+        return;
+    }
+
+    auto app_settings = std::move(*this->application_settings_);
+    this->application_settings_ = {};
+
+    this->setup_process(app_settings);
+}
 
 void windows_emulator::setup_process(const application_settings& app_settings)
 {
@@ -531,6 +544,7 @@ void windows_emulator::setup_hooks()
 void windows_emulator::start(size_t count)
 {
     this->should_stop = false;
+    this->setup_process_if_necessary();
 
     const auto use_count = count > 0;
     const auto start_instructions = this->executed_instructions_;
@@ -602,9 +616,11 @@ void windows_emulator::register_factories(utils::buffer_deserializer& buffer)
 
 void windows_emulator::serialize(utils::buffer_serializer& buffer) const
 {
+    buffer.write_optional(this->application_settings_);
     buffer.write(this->executed_instructions_);
     buffer.write(this->switch_thread_);
     buffer.write(this->use_relative_time_);
+
     this->emu().serialize_state(buffer, false);
     this->memory.serialize_memory_state(buffer, false);
     this->mod_manager.serialize(buffer);
@@ -616,6 +632,7 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
 {
     this->register_factories(buffer);
 
+    buffer.read_optional(this->application_settings_);
     buffer.read(this->executed_instructions_);
     buffer.read(this->switch_thread_);
 
@@ -638,13 +655,18 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
 
 void windows_emulator::save_snapshot()
 {
-    utils::buffer_serializer serializer{};
-    this->emu().serialize_state(serializer, true);
-    this->memory.serialize_memory_state(serializer, true);
-    this->mod_manager.serialize(serializer);
-    this->process.serialize(serializer);
+    utils::buffer_serializer buffer{};
 
-    this->process_snapshot_ = serializer.move_buffer();
+    buffer.write_optional(this->application_settings_);
+    buffer.write(this->executed_instructions_);
+    buffer.write(this->switch_thread_);
+
+    this->emu().serialize_state(buffer, true);
+    this->memory.serialize_memory_state(buffer, true);
+    this->mod_manager.serialize(buffer);
+    this->process.serialize(buffer);
+
+    this->process_snapshot_ = buffer.move_buffer();
 
     // TODO: Make process copyable
     // this->process_snapshot_ = this->process;
@@ -658,13 +680,17 @@ void windows_emulator::restore_snapshot()
         return;
     }
 
-    utils::buffer_deserializer deserializer{this->process_snapshot_};
+    utils::buffer_deserializer buffer{this->process_snapshot_};
 
-    this->register_factories(deserializer);
+    this->register_factories(buffer);
 
-    this->emu().deserialize_state(deserializer, true);
-    this->memory.deserialize_memory_state(deserializer, true);
-    this->mod_manager.deserialize(deserializer);
-    this->process.deserialize(deserializer);
+    buffer.read_optional(this->application_settings_);
+    buffer.read(this->executed_instructions_);
+    buffer.read(this->switch_thread_);
+
+    this->emu().deserialize_state(buffer, true);
+    this->memory.deserialize_memory_state(buffer, true);
+    this->mod_manager.deserialize(buffer);
+    this->process.deserialize(buffer);
     // this->process = *this->process_snapshot_;
 }

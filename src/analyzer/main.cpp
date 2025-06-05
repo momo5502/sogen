@@ -56,6 +56,8 @@ namespace
     void watch_system_objects(windows_emulator& win_emu, const std::set<std::string, std::less<>>& modules,
                               const bool verbose)
     {
+        win_emu.setup_process_if_necessary();
+
         (void)win_emu;
         (void)modules;
         (void)verbose;
@@ -264,7 +266,6 @@ namespace
 
         const auto win_emu = setup_emulator(options, args);
         win_emu->log.disable_output(options.concise_logging || options.silent);
-
         context.win_emu = win_emu.get();
 
         // TODO: Move to analysis
@@ -277,10 +278,8 @@ namespace
 
         win_emu->log.log("Using emulator: %s\n", win_emu->emu().get_name().c_str());
 
-        (void)&watch_system_objects;
-        watch_system_objects(*win_emu, options.modules, options.verbose_logging);
-
         register_analysis_callbacks(context);
+        watch_system_objects(*win_emu, options.modules, options.verbose_logging);
 
         const auto& exe = *win_emu->mod_manager.executable;
 
