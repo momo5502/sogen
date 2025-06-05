@@ -1,3 +1,5 @@
+#include "std_include.hpp"
+
 #include "analysis.hpp"
 #include "windows_emulator.hpp"
 #include "utils/lazy_object.hpp"
