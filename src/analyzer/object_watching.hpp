@@ -6,23 +6,23 @@
 
 template <typename T>
 emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, std::less<>>& modules,
-                            emulator_object<T> object, const bool cache_logging = false)
+                            emulator_object<T> object, const auto verbose)
 {
     const reflect_type_info<T> info{};
 
     return emu.emu().hook_memory_read(
         object.value(), static_cast<size_t>(object.size()),
-        [i = std::move(info), object, &emu, cache_logging, modules](const uint64_t address, const void*, size_t) {
+        [i = std::move(info), object, &emu, verbose, modules](const uint64_t address, const void*, size_t) {
             const auto rip = emu.emu().read_instruction_pointer();
             const auto* mod = emu.mod_manager.find_by_address(rip);
             const auto is_main_access = mod == emu.mod_manager.executable || modules.contains(mod->name);
 
-            if (!emu.verbose_calls && !is_main_access)
+            if (!verbose && !is_main_access)
             {
                 return;
             }
 
-            if (cache_logging)
+            if (!verbose)
             {
                 static std::unordered_set<uint64_t> logged_addresses{};
                 if (is_main_access && !logged_addresses.insert(address).second)

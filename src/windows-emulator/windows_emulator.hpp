@@ -32,18 +32,13 @@ struct application_settings
 
 struct emulator_settings
 {
+    bool use_relative_time{false};
+
     std::filesystem::path emulation_root{};
     std::filesystem::path registry_directory{"./registry"};
 
-    bool verbose_calls{false};
-    bool disable_logging{false};
-    bool silent_until_main{false};
-    bool use_relative_time{false};
-
     std::unordered_map<uint16_t, uint16_t> port_mappings{};
     std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
-    std::set<std::string, std::less<>> modules{};
-    std::set<std::string, std::less<>> ignored_functions{};
 };
 
 struct emulator_interfaces
@@ -183,14 +178,6 @@ class windows_emulator
     void yield_thread(bool alertable = false);
     bool perform_thread_switch();
     bool activate_thread(uint32_t id);
-
-    // TODO: Move to analyzer
-    bool verbose{false};
-    bool verbose_calls{false};
-    bool buffer_stdout{false};
-    bool silent_until_main_{false};
-    std::set<std::string, std::less<>> modules_{};
-    std::set<std::string, std::less<>> ignored_functions_{};
 
   private:
     bool switch_thread_{false};

@@ -6,6 +6,7 @@
 
 #include "object_watching.hpp"
 #include "snapshot.hpp"
+#include "analysis.hpp"
 
 #ifdef OS_EMSCRIPTEN
 #include <event_handler.hpp>
@@ -17,18 +18,12 @@
 
 namespace
 {
-    struct analysis_options
+    struct analysis_options : analysis_settings
     {
         mutable bool use_gdb{false};
-        bool concise_logging{false};
-        bool verbose_logging{false};
-        bool silent{false};
-        bool buffer_stdout{false};
         std::filesystem::path dump{};
         std::string registry_path{"./registry"};
         std::string emulation_root{};
-        std::set<std::string, std::less<>> modules{};
-        std::set<std::string, std::less<>> ignored_functions{};
         std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
     };
 
@@ -59,23 +54,23 @@ namespace
     }
 
     void watch_system_objects(windows_emulator& win_emu, const std::set<std::string, std::less<>>& modules,
-                              const bool cache_logging)
+                              const bool verbose)
     {
         (void)win_emu;
         (void)modules;
-        (void)cache_logging;
+        (void)verbose;
 
 #if !defined(__GNUC__) || defined(__clang__)
-        watch_object(win_emu, modules, *win_emu.current_thread().teb, cache_logging);
-        watch_object(win_emu, modules, win_emu.process.peb, cache_logging);
+        watch_object(win_emu, modules, *win_emu.current_thread().teb, verbose);
+        watch_object(win_emu, modules, win_emu.process.peb, verbose);
         watch_object(win_emu, modules, emulator_object<KUSER_SHARED_DATA64>{win_emu.emu(), kusd_mmio::address()},
-                     cache_logging);
+                     verbose);
 
-        auto* params_hook = watch_object(win_emu, modules, win_emu.process.process_params, cache_logging);
+        auto* params_hook = watch_object(win_emu, modules, win_emu.process.process_params, verbose);
 
         win_emu.emu().hook_memory_write(
             win_emu.process.peb.value() + offsetof(PEB64, ProcessParameters), 0x8,
-            [&win_emu, cache_logging, params_hook, modules](const uint64_t address, const void*, size_t) mutable {
+            [&win_emu, verbose, params_hook, modules](const uint64_t address, const void*, size_t) mutable {
                 const auto target_address = win_emu.process.peb.value() + offsetof(PEB64, ProcessParameters);
 
                 if (address == target_address)
@@ -86,7 +81,7 @@ namespace
                     };
 
                     win_emu.emu().delete_hook(params_hook);
-                    params_hook = watch_object(win_emu, modules, obj, cache_logging);
+                    params_hook = watch_object(win_emu, modules, obj, verbose);
                 }
             });
 #endif
@@ -206,12 +201,7 @@ namespace
         return {
             .emulation_root = options.emulation_root,
             .registry_directory = options.registry_path,
-            .verbose_calls = options.verbose_logging,
-            .disable_logging = options.silent,
-            .silent_until_main = options.concise_logging,
             .path_mappings = options.path_mappings,
-            .modules = options.modules,
-            .ignored_functions = options.ignored_functions,
         };
     }
 
@@ -253,8 +243,16 @@ namespace
 
     bool run(const analysis_options& options, const std::span<const std::string_view> args)
     {
-        const auto win_emu = setup_emulator(options, args);
+        analysis_context context{
+            .settings = &options,
+        };
 
+        const auto win_emu = setup_emulator(options, args);
+        win_emu->log.disable_output(options.concise_logging || options.silent);
+
+        context.win_emu = win_emu.get();
+
+        // TODO: Move to analysis
 #ifdef OS_EMSCRIPTEN
         win_emu->callbacks.on_thread_switch = [&] {
             debugger::event_context c{.win_emu = *win_emu};
@@ -265,16 +263,9 @@ namespace
         win_emu->log.log("Using emulator: %s\n", win_emu->emu().get_name().c_str());
 
         (void)&watch_system_objects;
-        watch_system_objects(*win_emu, options.modules, !options.verbose_logging);
-        win_emu->buffer_stdout = options.buffer_stdout;
+        watch_system_objects(*win_emu, options.modules, options.verbose_logging);
 
-        if (options.silent)
-        {
-            win_emu->buffer_stdout = false;
-            win_emu->callbacks.on_stdout = [](const std::string_view data) {
-                (void)fwrite(data.data(), 1, data.size(), stdout);
-            };
-        }
+        register_analysis_callbacks(context);
 
         const auto& exe = *win_emu->mod_manager.executable;
 

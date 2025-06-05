@@ -304,8 +304,7 @@ windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, const e
       registry(emulation_root.empty() ? settings.registry_directory : emulation_root / "registry"),
       mod_manager(memory, file_sys, this->callbacks),
       process(*this->emu_, memory, *this->clock_, this->callbacks),
-      modules_(settings.modules),
-      ignored_functions_(settings.ignored_functions)
+      use_relative_time_(settings.use_relative_time)
 {
 #ifndef OS_WINDOWS
     if (this->emulation_root.empty())
@@ -323,11 +322,6 @@ windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, const e
     {
         this->map_port(mapping.first, mapping.second);
     }
-
-    this->verbose_calls = settings.verbose_calls;
-    this->silent_until_main_ = settings.silent_until_main && !settings.disable_logging;
-    this->use_relative_time_ = settings.use_relative_time;
-    this->log.disable_output(settings.disable_logging || this->silent_until_main_);
 
     this->setup_hooks();
 }

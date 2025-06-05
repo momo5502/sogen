@@ -141,19 +141,19 @@ namespace syscalls
         switch (fs_information_class)
         {
         case FileFsDeviceInformation:
-            return handle_query<FILE_FS_DEVICE_INFORMATION>(
-                c.emu, fs_information, length, io_status_block, [&](FILE_FS_DEVICE_INFORMATION& info) {
-                    if (file_handle == STDOUT_HANDLE && !c.win_emu.buffer_stdout)
-                    {
-                        info.DeviceType = FILE_DEVICE_CONSOLE;
-                        info.Characteristics = 0x20000;
-                    }
-                    else
-                    {
-                        info.DeviceType = FILE_DEVICE_DISK;
-                        info.Characteristics = 0x20020;
-                    }
-                });
+            return handle_query<FILE_FS_DEVICE_INFORMATION>(c.emu, fs_information, length, io_status_block,
+                                                            [&](FILE_FS_DEVICE_INFORMATION& info) {
+                                                                if (file_handle == STDOUT_HANDLE)
+                                                                {
+                                                                    info.DeviceType = FILE_DEVICE_CONSOLE;
+                                                                    info.Characteristics = 0x20000;
+                                                                }
+                                                                else
+                                                                {
+                                                                    info.DeviceType = FILE_DEVICE_DISK;
+                                                                    info.Characteristics = 0x20020;
+                                                                }
+                                                            });
 
         case FileFsSizeInformation:
             return handle_query<FILE_FS_SIZE_INFORMATION>(c.emu, fs_information, length, io_status_block,
@@ -688,13 +688,6 @@ namespace syscalls
             }
 
             c.win_emu.callbacks.on_stdout(temp_buffer);
-
-            if (!temp_buffer.ends_with("\n"))
-            {
-                temp_buffer.push_back('\n');
-            }
-
-            c.win_emu.log.info("%.*s", static_cast<int>(temp_buffer.size()), temp_buffer.data());
 
             return STATUS_SUCCESS;
         }
