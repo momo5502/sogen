@@ -145,9 +145,9 @@ void module_manager::serialize(utils::buffer_serializer& buffer) const
 {
     buffer.write_map(this->modules_);
 
-    buffer.write(this->executable->image_base);
-    buffer.write(this->ntdll->image_base);
-    buffer.write(this->win32u->image_base);
+    buffer.write(this->executable ? this->executable->image_base : 0);
+    buffer.write(this->ntdll ? this->ntdll->image_base : 0);
+    buffer.write(this->win32u ? this->win32u->image_base : 0);
 }
 
 void module_manager::deserialize(utils::buffer_deserializer& buffer)
@@ -158,9 +158,9 @@ void module_manager::deserialize(utils::buffer_deserializer& buffer)
     const auto ntdll_base = buffer.read<uint64_t>();
     const auto win32u_base = buffer.read<uint64_t>();
 
-    this->executable = this->find_by_address(executable_base);
-    this->ntdll = this->find_by_address(ntdll_base);
-    this->win32u = this->find_by_address(win32u_base);
+    this->executable = executable_base ? this->find_by_address(executable_base) : nullptr;
+    this->ntdll = ntdll_base ? this->find_by_address(ntdll_base) : nullptr;
+    this->win32u = win32u_base ? this->find_by_address(win32u_base) : nullptr;
 }
 
 bool module_manager::unmap(const uint64_t address, const logger& logger)
