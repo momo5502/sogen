@@ -192,8 +192,6 @@ namespace syscalls
 
         if (!potential_base)
         {
-            c.win_emu.log.print(color::dark_gray, "--> Not allocated\n");
-
             return STATUS_MEMORY_NOT_ALLOCATED;
         }
 

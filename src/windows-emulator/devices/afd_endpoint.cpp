@@ -525,9 +525,6 @@ namespace
 
             const auto request = _AFD_REQUEST(c.io_control_code);
 
-            win_emu.log.print(color::dark_gray, "--> AFD IOCTL: 0x%X (%u)\n", static_cast<uint32_t>(c.io_control_code),
-                              static_cast<uint32_t>(request));
-
             switch (request)
             {
             case AFD_BIND:

@@ -107,7 +107,7 @@ namespace
             return;
         }
 
-        win_emu.log.print(color::dark_gray, "Dispatching APC...\n");
+        win_emu.callbacks.on_generic_activity("APC Dispatch");
 
         const auto next_apx = apcs.front();
         apcs.erase(apcs.begin());
@@ -165,8 +165,7 @@ namespace
         {
             if (active_thread)
             {
-                win_emu.log.print(color::dark_gray, "Performing thread switch: %X -> %X\n", active_thread->id,
-                                  thread.id);
+                win_emu.callbacks.on_thread_switch(*active_thread, thread);
                 active_thread->save(emu);
             }
 
@@ -184,7 +183,6 @@ namespace
         }
 
         thread.apc_alertable = false;
-        win_emu.callbacks.on_thread_switch();
         return true;
     }
 

@@ -236,16 +236,7 @@ namespace syscalls
         if (!f->enumeration_state || query_flags & SL_RESTART_SCAN)
         {
             const auto mask = file_mask ? read_unicode_string(c.emu, file_mask) : u"";
-
-            if (!mask.empty())
-            {
-                c.win_emu.log.print(color::dark_gray, "--> Enumerating directory: %s (Mask: \"%s\")\n",
-                                    u16_to_u8(f->name).c_str(), u16_to_u8(mask).c_str());
-            }
-            else
-            {
-                c.win_emu.log.print(color::dark_gray, "--> Enumerating directory: %s\n", u16_to_u8(f->name).c_str());
-            }
+            c.win_emu.callbacks.on_generic_access("Enumerating directory", f->name);
 
             f->enumeration_state.emplace(file_enumeration_state{});
             f->enumeration_state->files = scan_directory(c.win_emu.file_sys, f->name, mask);
@@ -565,7 +556,7 @@ namespace syscalls
         const auto attributes = object_attributes.read();
         auto filename = read_unicode_string(c.emu, attributes.ObjectName);
 
-        c.win_emu.log.print(color::dark_gray, "--> Query file info: %s\n", u16_to_u8(filename).c_str()); //
+        c.win_emu.callbacks.on_generic_access("Query file info", filename);
 
         const auto ret = [&](const NTSTATUS status) {
             block.Status = status;
@@ -798,7 +789,7 @@ namespace syscalls
         auto filename = read_unicode_string(c.emu, attributes.ObjectName);
 
         auto printer = utils::finally([&] {
-            c.win_emu.log.print(color::dark_gray, "--> Opening file: %s\n", u16_to_u8(filename).c_str()); //
+            c.win_emu.callbacks.on_generic_access("Opening file", filename); //
         });
 
         const auto io_device_name = get_io_device_name(filename);
@@ -849,7 +840,7 @@ namespace syscalls
 
         if (is_directory || create_options & FILE_DIRECTORY_FILE)
         {
-            c.win_emu.log.print(color::dark_gray, "--> Opening folder: %s\n", u16_to_u8(f.name).c_str());
+            c.win_emu.callbacks.on_generic_access("Opening folder", f.name);
 
             if (create_disposition & FILE_CREATE)
             {
@@ -871,7 +862,7 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
-        c.win_emu.log.print(color::dark_gray, "--> Opening file: %s\n", u16_to_u8(f.name).c_str());
+        c.win_emu.callbacks.on_generic_access("Opening file", f.name);
 
         std::u16string mode = map_mode(desired_access, create_disposition);
 
@@ -924,7 +915,7 @@ namespace syscalls
             filename = root->name + (has_separator ? u"" : u"\\") + filename;
         }
 
-        c.win_emu.log.print(color::dark_gray, "--> Querying file attributes: %s\n", u16_to_u8(filename).c_str());
+        c.win_emu.callbacks.on_generic_access("Querying file attributes", filename);
 
         const auto local_filename = c.win_emu.file_sys.translate(filename).u8string();
 
@@ -965,7 +956,7 @@ namespace syscalls
         const auto filename = read_unicode_string(
             c.emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, attributes.ObjectName});
 
-        c.win_emu.log.print(color::dark_gray, "--> Querying file attributes: %s\n", u16_to_u8(filename).c_str());
+        c.win_emu.callbacks.on_generic_access("Querying file attributes", filename);
 
         const auto local_filename = c.win_emu.file_sys.translate(filename).u8string();
 

@@ -146,32 +146,11 @@ class io_device_container : public io_device
         this->device_->create(win_emu, data);
     }
 
-    NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
-    {
-        this->assert_validity();
-        return this->device_->io_control(win_emu, context);
-    }
+    void work(windows_emulator& win_emu) override;
+    NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override;
 
-    void work(windows_emulator& win_emu) override
-    {
-        this->assert_validity();
-        this->device_->work(win_emu);
-    }
-
-    void serialize_object(utils::buffer_serializer& buffer) const override
-    {
-        this->assert_validity();
-
-        buffer.write_string(this->device_name_);
-        this->device_->serialize(buffer);
-    }
-
-    void deserialize_object(utils::buffer_deserializer& buffer) override
-    {
-        buffer.read_string(this->device_name_);
-        this->setup();
-        this->device_->deserialize(buffer);
-    }
+    void serialize_object(utils::buffer_serializer& buffer) const override;
+    void deserialize_object(utils::buffer_deserializer& buffer) override;
 
     template <typename T = io_device>
         requires(std::is_base_of_v<io_device, T> || std::is_same_v<io_device, T>)

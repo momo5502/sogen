@@ -34,7 +34,7 @@ struct process_context
     {
         utils::optional_function<void(handle h, emulator_thread& thr)> on_create_thread{};
         utils::optional_function<void(handle h, emulator_thread& thr)> on_thread_terminated{};
-        utils::optional_function<void()> on_thread_switch{};
+        utils::optional_function<void(emulator_thread& current_thread, emulator_thread& new_thread)> on_thread_switch{};
     };
 
     struct atom_entry

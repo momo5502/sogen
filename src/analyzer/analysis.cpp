@@ -2,7 +2,11 @@
 
 #include "analysis.hpp"
 #include "windows_emulator.hpp"
-#include "utils/lazy_object.hpp"
+#include <utils/lazy_object.hpp>
+
+#ifdef OS_EMSCRIPTEN
+#include <event_handler.hpp>
+#endif
 
 #define STR_VIEW_VA(str) static_cast<int>((str).size()), (str).data()
 
@@ -31,6 +35,34 @@ namespace
         c.win_emu->log.print(color::pink, "Suspicious: %.*s (0x%" PRIx64 ")\n", STR_VIEW_VA(details), rip);
     }
 
+    void handle_generic_activity(const analysis_context& c, const std::string_view details)
+    {
+        c.win_emu->log.print(color::dark_gray, "%.*s\n", STR_VIEW_VA(details));
+    }
+
+    void handle_generic_access(const analysis_context& c, const std::string_view type, const std::u16string_view name)
+    {
+        c.win_emu->log.print(color::dark_gray, "--> %.*s: %s\n", STR_VIEW_VA(type), u16_to_u8(name).c_str()); //
+    }
+
+    void handle_ioctrl(const analysis_context& c, const io_device&, const std::u16string_view device_name,
+                       const ULONG code)
+    {
+        c.win_emu->log.print(color::dark_gray, "--> %s: 0x%X\n", u16_to_u8(device_name).c_str(),
+                             static_cast<uint32_t>(code));
+    }
+
+    void handle_thread_switch(const analysis_context& c, const emulator_thread& current_thread,
+                              const emulator_thread& new_thread)
+    {
+        c.win_emu->log.print(color::dark_gray, "Performing thread switch: %X -> %X\n", current_thread.id,
+                             new_thread.id);
+
+#ifdef OS_EMSCRIPTEN
+        debugger::event_context ec{.win_emu = *c.win_emu};
+        debugger::handle_events(ec);
+#endif
+    }
     void handle_instruction(analysis_context& c, const uint64_t address)
     {
         auto& win_emu = *c.win_emu;
@@ -167,6 +199,10 @@ void register_analysis_callbacks(analysis_context& c)
 
     cb.on_stdout = make_callback(c, handle_stdout);
     cb.on_syscall = make_callback(c, handle_syscall);
+    cb.on_ioctrl = make_callback(c, handle_ioctrl);
     cb.on_instruction = make_callback(c, handle_instruction);
+    cb.on_thread_switch = make_callback(c, handle_thread_switch);
+    cb.on_generic_access = make_callback(c, handle_generic_access);
+    cb.on_generic_activity = make_callback(c, handle_generic_activity);
     cb.on_suspicious_activity = make_callback(c, handle_suspicious_activity);
 }

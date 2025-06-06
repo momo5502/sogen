@@ -13,14 +13,19 @@
 #include "module/module_manager.hpp"
 #include "network/socket_factory.hpp"
 
+struct io_device;
+
 struct emulator_callbacks : module_manager::callbacks, process_context::callbacks
 {
     using continuation = instruction_hook_continuation;
 
     utils::optional_function<continuation(uint32_t syscall_id, std::string_view syscall_name)> on_syscall{};
     utils::optional_function<void(std::string_view data)> on_stdout{};
+    utils::optional_function<void(std::string_view type, std::u16string_view name)> on_generic_access{};
+    utils::optional_function<void(std::string_view description)> on_generic_activity{};
     utils::optional_function<void(std::string_view description)> on_suspicious_activity{};
     utils::optional_function<void(uint64_t address)> on_instruction{};
+    utils::optional_function<void(io_device& device, std::u16string_view device_name, ULONG code)> on_ioctrl{};
 };
 
 struct application_settings
