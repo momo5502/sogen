@@ -63,6 +63,27 @@ namespace
                              address, address + length, get_permission_string(permission).c_str());
     }
 
+    void handle_memory_violate(const analysis_context& c, const uint64_t address, const uint64_t size,
+                               const memory_operation operation, const memory_violation_type type)
+    {
+        const auto permission = get_permission_string(operation);
+        const auto ip = c.win_emu->emu().read_instruction_pointer();
+        const char* name = c.win_emu->mod_manager.find_name(ip);
+
+        if (type == memory_violation_type::protection)
+        {
+            c.win_emu->log.print(color::gray,
+                                 "Protection violation: 0x%" PRIx64 " (%" PRIx64 ") - %s at 0x%" PRIx64 " (%s)\n",
+                                 address, size, permission.c_str(), ip, name);
+        }
+        else if (type == memory_violation_type::unmapped)
+        {
+            c.win_emu->log.print(color::gray,
+                                 "Mapping violation: 0x%" PRIx64 " (%" PRIx64 ") - %s at 0x%" PRIx64 " (%s)\n", address,
+                                 size, permission.c_str(), ip, name);
+        }
+    }
+
     void handle_ioctrl(const analysis_context& c, const io_device&, const std::u16string_view device_name,
                        const ULONG code)
     {
@@ -236,6 +257,7 @@ void register_analysis_callbacks(analysis_context& c)
     cb.on_ioctrl = make_callback(c, handle_ioctrl);
 
     cb.on_memory_protect = make_callback(c, handle_memory_protect);
+    cb.on_memory_violate = make_callback(c, handle_memory_violate);
     cb.on_memory_allocate = make_callback(c, handle_memory_allocate);
 
     cb.on_module_load = make_callback(c, handle_module_load);

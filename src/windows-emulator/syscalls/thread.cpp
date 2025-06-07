@@ -324,14 +324,15 @@ namespace syscalls
     }
 
     NTSTATUS handle_NtAlertThreadByThreadIdEx(const syscall_context& c, const uint64_t thread_id,
-                                              const emulator_object<EMU_RTL_SRWLOCK<EmulatorTraits<Emu64>>> lock)
+                                              const emulator_object<EMU_RTL_SRWLOCK<EmulatorTraits<Emu64>>> /*lock*/)
     {
-        if (lock.value())
+        // TODO: Support lock
+        /*if (lock.value())
         {
-            c.win_emu.log.warn("NtAlertThreadByThreadIdEx with lock not supported yet!\n");
-            // c.emu.stop();
-            // return STATUS_NOT_SUPPORTED;
-        }
+             c.win_emu.log.warn("NtAlertThreadByThreadIdEx with lock not supported yet!\n");
+            //  c.emu.stop();
+            //  return STATUS_NOT_SUPPORTED;
+        }*/
 
         return handle_NtAlertThreadByThreadId(c, thread_id);
     }

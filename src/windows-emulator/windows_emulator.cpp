@@ -499,21 +499,7 @@ void windows_emulator::setup_hooks()
 
     this->emu().hook_memory_violation([&](const uint64_t address, const size_t size, const memory_operation operation,
                                           const memory_violation_type type) {
-        const auto permission = get_permission_string(operation);
-        const auto ip = this->emu().read_instruction_pointer();
-        const char* name = this->mod_manager.find_name(ip);
-
-        if (type == memory_violation_type::protection)
-        {
-            this->log.print(color::gray, "Protection violation: 0x%" PRIx64 " (%zX) - %s at 0x%" PRIx64 " (%s)\n",
-                            address, size, permission.c_str(), ip, name);
-        }
-        else if (type == memory_violation_type::unmapped)
-        {
-            this->log.print(color::gray, "Mapping violation: 0x%" PRIx64 " (%zX) - %s at 0x%" PRIx64 " (%s)\n", address,
-                            size, permission.c_str(), ip, name);
-        }
-
+        this->callbacks.on_memory_violate(address, size, operation, type);
         dispatch_access_violation(this->emu(), this->process, address, operation);
         return memory_violation_continuation::resume;
     });
