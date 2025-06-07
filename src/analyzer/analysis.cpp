@@ -45,11 +45,33 @@ namespace
         c.win_emu->log.print(color::dark_gray, "--> %.*s: %s\n", STR_VIEW_VA(type), u16_to_u8(name).c_str()); //
     }
 
+    void handle_memory_allocate(const analysis_context& c, const uint64_t address, const uint64_t length,
+                                const memory_permission permission, const bool commit)
+    {
+        const auto* action = commit ? "Committed" : "Allocated";
+
+        c.win_emu->log.print(is_executable(permission) ? color::gray : color::dark_gray,
+                             "--> %s 0x%" PRIx64 " - 0x%" PRIx64 " (%s)\n", action, address, address + length,
+                             get_permission_string(permission).c_str());
+    }
+
+    void handle_memory_protect(const analysis_context& c, const uint64_t address, const uint64_t length,
+                               const memory_permission permission)
+    {
+        c.win_emu->log.print(color::dark_gray, "--> Changing protection at 0x%" PRIx64 "-0x%" PRIx64 " to %s\n",
+                             address, address + length, get_permission_string(permission).c_str());
+    }
+
     void handle_ioctrl(const analysis_context& c, const io_device&, const std::u16string_view device_name,
                        const ULONG code)
     {
         c.win_emu->log.print(color::dark_gray, "--> %s: 0x%X\n", u16_to_u8(device_name).c_str(),
                              static_cast<uint32_t>(code));
+    }
+
+    void handle_thread_set_name(const analysis_context& c, const emulator_thread& t)
+    {
+        c.win_emu->log.print(color::blue, "Setting thread (%d) name: %s\n", t.id, u16_to_u8(t.name).c_str());
     }
 
     void handle_thread_switch(const analysis_context& c, const emulator_thread& current_thread,
@@ -211,10 +233,17 @@ void register_analysis_callbacks(analysis_context& c)
     cb.on_stdout = make_callback(c, handle_stdout);
     cb.on_syscall = make_callback(c, handle_syscall);
     cb.on_ioctrl = make_callback(c, handle_ioctrl);
+
+    cb.on_memory_protect = make_callback(c, handle_memory_protect);
+    cb.on_memory_allocate = make_callback(c, handle_memory_allocate);
+
     cb.on_module_load = make_callback(c, handle_module_load);
     cb.on_module_unload = make_callback(c, handle_module_unload);
-    cb.on_instruction = make_callback(c, handle_instruction);
+
     cb.on_thread_switch = make_callback(c, handle_thread_switch);
+    cb.on_thread_set_name = make_callback(c, handle_thread_set_name);
+
+    cb.on_instruction = make_callback(c, handle_instruction);
     cb.on_generic_access = make_callback(c, handle_generic_access);
     cb.on_generic_activity = make_callback(c, handle_generic_activity);
     cb.on_suspicious_activity = make_callback(c, handle_suspicious_activity);

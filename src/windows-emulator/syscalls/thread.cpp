@@ -41,8 +41,7 @@ namespace syscalls
             const auto i = info.read();
             thread->name = read_unicode_string(c.emu, i.ThreadName);
 
-            c.win_emu.log.print(color::blue, "Setting thread (%d) name: %s\n", thread->id,
-                                u16_to_u8(thread->name).c_str());
+            c.win_emu.callbacks.on_thread_set_name(*thread);
 
             return STATUS_SUCCESS;
         }

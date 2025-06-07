@@ -361,7 +361,7 @@ handle process_context::create_thread(memory_manager& memory, const uint64_t sta
 {
     emulator_thread t{memory, *this, start_address, argument, stack_size, suspended, ++this->spawned_thread_count};
     auto [h, thr] = this->threads.store_and_get(std::move(t));
-    this->callbacks_->on_create_thread(h, *thr);
+    this->callbacks_->on_thread_create(h, *thr);
     return h;
 }
 

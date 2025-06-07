@@ -15,17 +15,22 @@
 
 struct io_device;
 
+#define opt_func utils::optional_function
+
 struct emulator_callbacks : module_manager::callbacks, process_context::callbacks
 {
     using continuation = instruction_hook_continuation;
 
-    utils::optional_function<continuation(uint32_t syscall_id, std::string_view syscall_name)> on_syscall{};
-    utils::optional_function<void(std::string_view data)> on_stdout{};
-    utils::optional_function<void(std::string_view type, std::u16string_view name)> on_generic_access{};
-    utils::optional_function<void(std::string_view description)> on_generic_activity{};
-    utils::optional_function<void(std::string_view description)> on_suspicious_activity{};
-    utils::optional_function<void(uint64_t address)> on_instruction{};
-    utils::optional_function<void(io_device& device, std::u16string_view device_name, ULONG code)> on_ioctrl{};
+    opt_func<void(uint64_t address, uint64_t length, memory_permission)> on_memory_protect{};
+    opt_func<void(uint64_t address, uint64_t length, memory_permission, bool commit)> on_memory_allocate{};
+
+    opt_func<continuation(uint32_t syscall_id, std::string_view syscall_name)> on_syscall{};
+    opt_func<void(std::string_view data)> on_stdout{};
+    opt_func<void(std::string_view type, std::u16string_view name)> on_generic_access{};
+    opt_func<void(std::string_view description)> on_generic_activity{};
+    opt_func<void(std::string_view description)> on_suspicious_activity{};
+    opt_func<void(uint64_t address)> on_instruction{};
+    opt_func<void(io_device& device, std::u16string_view device_name, ULONG code)> on_ioctrl{};
 };
 
 struct application_settings

@@ -146,9 +146,7 @@ namespace syscalls
 
         const auto requested_protection = map_nt_to_emulator_protection(protection);
 
-        c.win_emu.log.print(color::dark_gray, "--> Changing protection at 0x%" PRIx64 "-0x%" PRIx64 " to %s\n",
-                            aligned_start, aligned_start + aligned_length,
-                            get_permission_string(requested_protection).c_str());
+        c.win_emu.callbacks.on_memory_protect(aligned_start, aligned_length, requested_protection);
 
         memory_permission old_protection_value{};
 
@@ -208,16 +206,11 @@ namespace syscalls
         if (commit && !reserve &&
             c.win_emu.memory.commit_memory(potential_base, static_cast<size_t>(allocation_bytes), protection))
         {
-            c.win_emu.log.print(is_executable(protection) ? color::gray : color::dark_gray,
-                                "--> Committed 0x%" PRIx64 " - 0x%" PRIx64 " (%s)\n", potential_base,
-                                potential_base + allocation_bytes, get_permission_string(protection).c_str());
-
+            c.win_emu.callbacks.on_memory_allocate(potential_base, allocation_bytes, protection, true);
             return STATUS_SUCCESS;
         }
 
-        c.win_emu.log.print(is_executable(protection) ? color::gray : color::dark_gray,
-                            "--> Allocated 0x%" PRIx64 " - 0x%" PRIx64 " (%s)\n", potential_base,
-                            potential_base + allocation_bytes, get_permission_string(protection).c_str());
+        c.win_emu.callbacks.on_memory_allocate(potential_base, allocation_bytes, protection, false);
 
         return c.win_emu.memory.allocate_memory(potential_base, static_cast<size_t>(allocation_bytes), protection,
                                                 !commit)
