@@ -26,8 +26,6 @@ namespace
 
         NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
         {
-            win_emu.log.print(color::dark_gray, "--> KSEC IOCTL: 0x%X\n", c.io_control_code);
-
             if (c.io_control_code != 0x390400)
             {
                 return STATUS_NOT_SUPPORTED;

@@ -68,7 +68,9 @@ namespace test
 
         if (is_verbose)
         {
-            settings.disable_logging = false;
+            callbacks.on_stdout = [](const std::string_view data) {
+                std::cout << data; //
+            };
         }
 
         settings.emulation_root = get_emulator_root();
@@ -93,8 +95,9 @@ namespace test
 
         if (is_verbose)
         {
-            settings.disable_logging = false;
-            // settings.verbose_calls = true;
+            callbacks.on_stdout = [](const std::string_view data) {
+                std::cout << data; //
+            };
         }
 
         settings.emulation_root = get_emulator_root();
@@ -116,7 +119,6 @@ namespace test
     inline windows_emulator create_sample_emulator(const sample_configuration& config = {})
     {
         emulator_settings settings{
-            .disable_logging = true,
             .use_relative_time = true,
         };
 
@@ -126,7 +128,6 @@ namespace test
     inline windows_emulator create_empty_emulator()
     {
         emulator_settings settings{
-            .disable_logging = true,
             .use_relative_time = true,
         };
 

@@ -107,7 +107,7 @@ namespace
             return;
         }
 
-        win_emu.log.print(color::dark_gray, "Dispatching APC...\n");
+        win_emu.callbacks.on_generic_activity("APC Dispatch");
 
         const auto next_apx = apcs.front();
         apcs.erase(apcs.begin());
@@ -165,8 +165,7 @@ namespace
         {
             if (active_thread)
             {
-                win_emu.log.print(color::dark_gray, "Performing thread switch: %X -> %X\n", active_thread->id,
-                                  thread.id);
+                win_emu.callbacks.on_thread_switch(*active_thread, thread);
                 active_thread->save(emu);
             }
 
@@ -184,7 +183,6 @@ namespace
         }
 
         thread.apc_alertable = false;
-        win_emu.callbacks.on_thread_switch();
         return true;
     }
 
@@ -289,7 +287,7 @@ windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, applica
     : windows_emulator(std::move(emu), settings, std::move(callbacks), std::move(interfaces))
 {
     fixup_application_settings(app_settings);
-    this->setup_process(app_settings);
+    this->application_settings_ = std::move(app_settings);
 }
 
 windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, const emulator_settings& settings,
@@ -304,8 +302,7 @@ windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, const e
       registry(emulation_root.empty() ? settings.registry_directory : emulation_root / "registry"),
       mod_manager(memory, file_sys, this->callbacks),
       process(*this->emu_, memory, *this->clock_, this->callbacks),
-      modules_(settings.modules),
-      ignored_functions_(settings.ignored_functions)
+      use_relative_time_(settings.use_relative_time)
 {
 #ifndef OS_WINDOWS
     if (this->emulation_root.empty())
@@ -324,15 +321,23 @@ windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, const e
         this->map_port(mapping.first, mapping.second);
     }
 
-    this->verbose_calls = settings.verbose_calls;
-    this->silent_until_main_ = settings.silent_until_main && !settings.disable_logging;
-    this->use_relative_time_ = settings.use_relative_time;
-    this->log.disable_output(settings.disable_logging || this->silent_until_main_);
-
     this->setup_hooks();
 }
 
 windows_emulator::~windows_emulator() = default;
+
+void windows_emulator::setup_process_if_necessary()
+{
+    if (!this->application_settings_)
+    {
+        return;
+    }
+
+    auto app_settings = std::move(*this->application_settings_);
+    this->application_settings_ = {};
+
+    this->setup_process(app_settings);
+}
 
 void windows_emulator::setup_process(const application_settings& app_settings)
 {
@@ -418,89 +423,7 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
     this->process.previous_ip = this->process.current_ip;
     this->process.current_ip = this->emu().read_instruction_pointer();
 
-    const auto is_main_exe = this->mod_manager.executable->is_within(address);
-    const auto is_previous_main_exe = this->mod_manager.executable->is_within(this->process.previous_ip);
-
-    const auto binary = utils::make_lazy([&] {
-        if (is_main_exe)
-        {
-            return this->mod_manager.executable;
-        }
-
-        return this->mod_manager.find_by_address(address); //
-    });
-
-    const auto previous_binary = utils::make_lazy([&] {
-        if (is_previous_main_exe)
-        {
-            return this->mod_manager.executable;
-        }
-
-        return this->mod_manager.find_by_address(this->process.previous_ip); //
-    });
-
-    const auto is_in_interesting_module = [&] {
-        if (this->modules_.empty())
-        {
-            return false;
-        }
-
-        return (binary && this->modules_.contains(binary->name)) ||
-               (previous_binary && this->modules_.contains(previous_binary->name));
-    };
-
-    const auto is_interesting_call = is_previous_main_exe //
-                                     || is_main_exe       //
-                                     || is_in_interesting_module();
-
-    if (this->silent_until_main_ && is_main_exe)
-    {
-        this->silent_until_main_ = false;
-        this->log.disable_output(false);
-    }
-
-    if (!this->verbose && !this->verbose_calls && !is_interesting_call)
-    {
-        return;
-    }
-
-    if (binary)
-    {
-        const auto export_entry = binary->address_names.find(address);
-        if (export_entry != binary->address_names.end() && !this->ignored_functions_.contains(export_entry->second))
-        {
-            const auto rsp = this->emu().read_stack_pointer();
-
-            uint64_t return_address{};
-            this->emu().try_read_memory(rsp, &return_address, sizeof(return_address));
-
-            const auto* mod_name = this->mod_manager.find_name(return_address);
-
-            log.print(is_interesting_call ? color::yellow : color::dark_gray,
-                      "Executing function: %s - %s (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n", binary->name.c_str(),
-                      export_entry->second.c_str(), address, return_address, mod_name);
-        }
-        else if (address == binary->entry_point)
-        {
-            log.print(is_interesting_call ? color::yellow : color::gray, "Executing entry point: %s (0x%" PRIx64 ")\n",
-                      binary->name.c_str(), address);
-        }
-    }
-
-    if (!this->verbose)
-    {
-        return;
-    }
-
-    auto& emu = this->emu();
-
-    // TODO: Remove or cleanup
-    log.print(color::gray,
-              "Inst: %16" PRIx64 " - RAX: %16" PRIx64 " - RBX: %16" PRIx64 " - RCX: %16" PRIx64 " - RDX: %16" PRIx64
-              " - R8: %16" PRIx64 " - R9: %16" PRIx64 " - RDI: %16" PRIx64 " - RSI: %16" PRIx64 " - %s\n",
-              address, emu.reg(x86_register::rax), emu.reg(x86_register::rbx), emu.reg(x86_register::rcx),
-              emu.reg(x86_register::rdx), emu.reg(x86_register::r8), emu.reg(x86_register::r9),
-              emu.reg(x86_register::rdi), emu.reg(x86_register::rsi), binary ? binary->name.c_str() : "<N/A>");
+    this->callbacks.on_instruction(address);
 }
 
 void windows_emulator::setup_hooks()
@@ -529,17 +452,13 @@ void windows_emulator::setup_hooks()
         return instruction_hook_continuation::skip_instruction;
     });
 
+    // TODO: Unicorn needs this - This should be handled in the backend
     this->emu().hook_instruction(x86_hookable_instructions::invalid, [&] {
-        const auto ip = this->emu().read_instruction_pointer();
-
-        this->log.print(color::gray, "Invalid instruction at: 0x%" PRIx64 " (via 0x%" PRIx64 ")\n", ip,
-                        this->process.previous_ip);
-
-        return instruction_hook_continuation::skip_instruction;
+        return instruction_hook_continuation::skip_instruction; //
     });
 
     this->emu().hook_interrupt([&](const int interrupt) {
-        const auto rip = this->emu().read_instruction_pointer();
+        this->callbacks.on_exception();
         const auto eflags = this->emu().reg<uint32_t>(x86_register::eflags);
 
         switch (interrupt)
@@ -550,63 +469,37 @@ void windows_emulator::setup_hooks()
         case 1:
             if ((eflags & 0x100) != 0)
             {
-                this->log.print(color::pink, "Singlestep (Trap Flag): 0x%" PRIx64 "\n", rip);
                 this->emu().reg(x86_register::eflags, eflags & ~0x100);
             }
-            else
-            {
-                this->log.print(color::pink, "Singlestep: 0x%" PRIx64 "\n", rip);
-            }
+
+            this->callbacks.on_suspicious_activity("Singlestep");
             dispatch_single_step(this->emu(), this->process);
             return;
         case 3:
-            this->log.print(color::pink, "Breakpoint: 0x%" PRIx64 "\n", rip);
+            this->callbacks.on_suspicious_activity("Breakpoint");
             dispatch_breakpoint(this->emu(), this->process);
             return;
         case 6:
+            this->callbacks.on_suspicious_activity("Illegal instruction");
             dispatch_illegal_instruction_violation(this->emu(), this->process);
             return;
         case 45:
-            this->log.print(color::pink, "DbgPrint: 0x%" PRIx64 "\n", rip);
+            this->callbacks.on_suspicious_activity("DbgPrint");
             dispatch_breakpoint(this->emu(), this->process);
             return;
         default:
+            if (this->callbacks.on_generic_activity)
+            {
+                this->callbacks.on_generic_activity("Interrupt " + std::to_string(interrupt));
+            }
+
             break;
-        }
-
-        this->log.print(color::gray, "Interrupt: %i 0x%" PRIx64 "\n", interrupt, rip);
-
-        if (this->fuzzing || true) // TODO: Fix
-        {
-            this->process.exception_rip = rip;
-            this->emu().stop();
         }
     });
 
     this->emu().hook_memory_violation([&](const uint64_t address, const size_t size, const memory_operation operation,
                                           const memory_violation_type type) {
-        const auto permission = get_permission_string(operation);
-        const auto ip = this->emu().read_instruction_pointer();
-        const char* name = this->mod_manager.find_name(ip);
-
-        if (type == memory_violation_type::protection)
-        {
-            this->log.print(color::gray, "Protection violation: 0x%" PRIx64 " (%zX) - %s at 0x%" PRIx64 " (%s)\n",
-                            address, size, permission.c_str(), ip, name);
-        }
-        else if (type == memory_violation_type::unmapped)
-        {
-            this->log.print(color::gray, "Mapping violation: 0x%" PRIx64 " (%zX) - %s at 0x%" PRIx64 " (%s)\n", address,
-                            size, permission.c_str(), ip, name);
-        }
-
-        if (this->fuzzing)
-        {
-            this->process.exception_rip = ip;
-            this->emu().stop();
-            return memory_violation_continuation::stop;
-        }
-
+        this->callbacks.on_memory_violate(address, size, operation, type);
         dispatch_access_violation(this->emu(), this->process, address, operation);
         return memory_violation_continuation::resume;
     });
@@ -619,6 +512,7 @@ void windows_emulator::setup_hooks()
 void windows_emulator::start(size_t count)
 {
     this->should_stop = false;
+    this->setup_process_if_necessary();
 
     const auto use_count = count > 0;
     const auto start_instructions = this->executed_instructions_;
@@ -690,9 +584,11 @@ void windows_emulator::register_factories(utils::buffer_deserializer& buffer)
 
 void windows_emulator::serialize(utils::buffer_serializer& buffer) const
 {
+    buffer.write_optional(this->application_settings_);
     buffer.write(this->executed_instructions_);
     buffer.write(this->switch_thread_);
     buffer.write(this->use_relative_time_);
+
     this->emu().serialize_state(buffer, false);
     this->memory.serialize_memory_state(buffer, false);
     this->mod_manager.serialize(buffer);
@@ -704,6 +600,7 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
 {
     this->register_factories(buffer);
 
+    buffer.read_optional(this->application_settings_);
     buffer.read(this->executed_instructions_);
     buffer.read(this->switch_thread_);
 
@@ -726,13 +623,18 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
 
 void windows_emulator::save_snapshot()
 {
-    utils::buffer_serializer serializer{};
-    this->emu().serialize_state(serializer, true);
-    this->memory.serialize_memory_state(serializer, true);
-    this->mod_manager.serialize(serializer);
-    this->process.serialize(serializer);
+    utils::buffer_serializer buffer{};
 
-    this->process_snapshot_ = serializer.move_buffer();
+    buffer.write_optional(this->application_settings_);
+    buffer.write(this->executed_instructions_);
+    buffer.write(this->switch_thread_);
+
+    this->emu().serialize_state(buffer, true);
+    this->memory.serialize_memory_state(buffer, true);
+    this->mod_manager.serialize(buffer);
+    this->process.serialize(buffer);
+
+    this->process_snapshot_ = buffer.move_buffer();
 
     // TODO: Make process copyable
     // this->process_snapshot_ = this->process;
@@ -746,13 +648,17 @@ void windows_emulator::restore_snapshot()
         return;
     }
 
-    utils::buffer_deserializer deserializer{this->process_snapshot_};
+    utils::buffer_deserializer buffer{this->process_snapshot_};
 
-    this->register_factories(deserializer);
+    this->register_factories(buffer);
 
-    this->emu().deserialize_state(deserializer, true);
-    this->memory.deserialize_memory_state(deserializer, true);
-    this->mod_manager.deserialize(deserializer);
-    this->process.deserialize(deserializer);
+    buffer.read_optional(this->application_settings_);
+    buffer.read(this->executed_instructions_);
+    buffer.read(this->switch_thread_);
+
+    this->emu().deserialize_state(buffer, true);
+    this->memory.deserialize_memory_state(buffer, true);
+    this->mod_manager.deserialize(buffer);
+    this->process.deserialize(buffer);
     // this->process = *this->process_snapshot_;
 }

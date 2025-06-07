@@ -14,7 +14,7 @@ namespace syscalls
                                   const emulator_object<ULONG> connection_info_length)
     {
         auto port_name = read_unicode_string(c.emu, server_port_name);
-        c.win_emu.log.print(color::dark_gray, "NtConnectPort: %s\n", u16_to_u8(port_name).c_str());
+        c.win_emu.callbacks.on_generic_access("Connecting port", port_name);
 
         port p{};
         p.name = std::move(port_name);

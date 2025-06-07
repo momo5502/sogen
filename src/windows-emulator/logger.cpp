@@ -116,8 +116,13 @@ void logger::print_message(const color c, const std::string_view message, const 
     print_colored(message, get_color_type(c));
 }
 
+void logger::print(const color c, const std::string_view message)
+{
+    this->print_message(c, message);
+}
+
 // NOLINTNEXTLINE(cert-dcl50-cpp)
-void logger::print(const color c, const char* message, ...) const
+void logger::print(const color c, const char* message, ...)
 {
     format_to_string(message, data);
     this->print_message(c, data);

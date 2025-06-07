@@ -40,6 +40,11 @@ struct registry_key : ref_counted_object
         buffer.read(this->hive);
         buffer.read(this->path);
     }
+
+    std::u16string to_string() const
+    {
+        return this->hive.get().u16string() + u"\\" + this->path.get().u16string();
+    }
 };
 
 struct registry_value

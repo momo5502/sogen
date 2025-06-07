@@ -51,7 +51,7 @@ class module_manager
     void serialize(utils::buffer_serializer& buffer) const;
     void deserialize(utils::buffer_deserializer& buffer);
 
-    bool unmap(uint64_t address, const logger& logger);
+    bool unmap(uint64_t address);
     const module_map& modules() const
     {
         return modules_;

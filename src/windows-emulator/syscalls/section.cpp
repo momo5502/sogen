@@ -20,7 +20,7 @@ namespace syscalls
         const auto* file = c.proc.files.get(file_handle);
         if (file)
         {
-            c.win_emu.log.print(color::dark_gray, "--> Section for file %s\n", u16_to_u8(file->name).c_str());
+            c.win_emu.callbacks.on_generic_access("Section for file", file->name);
             s.file_name = file->name;
         }
 
@@ -30,7 +30,7 @@ namespace syscalls
             if (attributes.ObjectName)
             {
                 auto name = read_unicode_string(c.emu, attributes.ObjectName);
-                c.win_emu.log.print(color::dark_gray, "--> Section with name %s\n", u16_to_u8(name).c_str());
+                c.win_emu.callbacks.on_generic_access("Section with name", name);
                 s.name = std::move(name);
             }
         }
@@ -60,7 +60,7 @@ namespace syscalls
         const auto attributes = object_attributes.read();
 
         auto filename = read_unicode_string(c.emu, attributes.ObjectName);
-        c.win_emu.log.print(color::dark_gray, "--> Opening section: %s\n", u16_to_u8(filename).c_str());
+        c.win_emu.callbacks.on_generic_access("Opening section", filename);
 
         if (filename == u"\\Windows\\SharedSection")
         {
@@ -287,7 +287,7 @@ namespace syscalls
         const auto* mod = c.win_emu.mod_manager.find_by_address(base_address);
         if (mod != nullptr)
         {
-            if (c.win_emu.mod_manager.unmap(base_address, c.win_emu.log))
+            if (c.win_emu.mod_manager.unmap(base_address))
             {
                 return STATUS_SUCCESS;
             }

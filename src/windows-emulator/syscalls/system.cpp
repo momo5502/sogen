@@ -109,7 +109,7 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
 
         case SystemControlFlowTransition:
-            c.win_emu.log.print(color::pink, "Warbird control flow transition!\n");
+            c.win_emu.callbacks.on_suspicious_activity("Warbird control flow transition");
             return STATUS_NOT_SUPPORTED;
 
         case SystemTimeOfDayInformation:

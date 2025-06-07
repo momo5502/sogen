@@ -122,8 +122,6 @@ mapped_module* module_manager::map_local_module(const std::filesystem::path& fil
         auto mod = map_module_from_file(*this->memory_, std::move(local_file));
         mod.is_static = is_static;
 
-        logger.log("Mapped %s at 0x%" PRIx64 "\n", mod.path.generic_string().c_str(), mod.image_base);
-
         const auto image_base = mod.image_base;
         const auto entry = this->modules_.try_emplace(image_base, std::move(mod));
         this->callbacks_->on_module_load(entry.first->second);
@@ -145,9 +143,9 @@ void module_manager::serialize(utils::buffer_serializer& buffer) const
 {
     buffer.write_map(this->modules_);
 
-    buffer.write(this->executable->image_base);
-    buffer.write(this->ntdll->image_base);
-    buffer.write(this->win32u->image_base);
+    buffer.write(this->executable ? this->executable->image_base : 0);
+    buffer.write(this->ntdll ? this->ntdll->image_base : 0);
+    buffer.write(this->win32u ? this->win32u->image_base : 0);
 }
 
 void module_manager::deserialize(utils::buffer_deserializer& buffer)
@@ -158,12 +156,12 @@ void module_manager::deserialize(utils::buffer_deserializer& buffer)
     const auto ntdll_base = buffer.read<uint64_t>();
     const auto win32u_base = buffer.read<uint64_t>();
 
-    this->executable = this->find_by_address(executable_base);
-    this->ntdll = this->find_by_address(ntdll_base);
-    this->win32u = this->find_by_address(win32u_base);
+    this->executable = executable_base ? this->find_by_address(executable_base) : nullptr;
+    this->ntdll = ntdll_base ? this->find_by_address(ntdll_base) : nullptr;
+    this->win32u = win32u_base ? this->find_by_address(win32u_base) : nullptr;
 }
 
-bool module_manager::unmap(const uint64_t address, const logger& logger)
+bool module_manager::unmap(const uint64_t address)
 {
     const auto mod = this->modules_.find(address);
     if (mod == this->modules_.end())
@@ -175,8 +173,6 @@ bool module_manager::unmap(const uint64_t address, const logger& logger)
     {
         return true;
     }
-
-    logger.log("Unmapping %s (0x%" PRIx64 ")\n", mod->second.path.generic_string().c_str(), mod->second.image_base);
 
     this->callbacks_->on_module_unload(mod->second);
     unmap_module(*this->memory_, mod->second);

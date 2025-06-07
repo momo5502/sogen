@@ -26,7 +26,7 @@ namespace syscalls
 
         if (info_class == ThreadHideFromDebugger)
         {
-            c.win_emu.log.print(color::pink, "--> Hiding thread %X from debugger!\n", thread->id);
+            c.win_emu.callbacks.on_suspicious_activity("Hiding thread from debugger");
             return STATUS_SUCCESS;
         }
 
@@ -41,8 +41,7 @@ namespace syscalls
             const auto i = info.read();
             thread->name = read_unicode_string(c.emu, i.ThreadName);
 
-            c.win_emu.log.print(color::blue, "Setting thread (%d) name: %s\n", thread->id,
-                                u16_to_u8(thread->name).c_str());
+            c.win_emu.callbacks.on_thread_set_name(*thread);
 
             return STATUS_SUCCESS;
         }
@@ -325,14 +324,15 @@ namespace syscalls
     }
 
     NTSTATUS handle_NtAlertThreadByThreadIdEx(const syscall_context& c, const uint64_t thread_id,
-                                              const emulator_object<EMU_RTL_SRWLOCK<EmulatorTraits<Emu64>>> lock)
+                                              const emulator_object<EMU_RTL_SRWLOCK<EmulatorTraits<Emu64>>> /*lock*/)
     {
-        if (lock.value())
+        // TODO: Support lock
+        /*if (lock.value())
         {
-            c.win_emu.log.print(color::gray, "NtAlertThreadByThreadIdEx with lock not supported yet!");
-            // c.emu.stop();
-            // return STATUS_NOT_SUPPORTED;
-        }
+             c.win_emu.log.warn("NtAlertThreadByThreadIdEx with lock not supported yet!\n");
+            //  c.emu.stop();
+            //  return STATUS_NOT_SUPPORTED;
+        }*/
 
         return handle_NtAlertThreadByThreadId(c, thread_id);
     }
@@ -425,7 +425,7 @@ namespace syscalls
 
         if (flags != 0)
         {
-            c.win_emu.log.error("NtGetNextThread flags %X not supported\n", flags);
+            c.win_emu.log.error("NtGetNextThread flags %X not supported\n", static_cast<uint32_t>(flags));
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
         }
@@ -470,7 +470,7 @@ namespace syscalls
         thread_context.access([&](CONTEXT64& context) {
             if ((context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64) == CONTEXT_DEBUG_REGISTERS_64)
             {
-                c.win_emu.log.print(color::pink, "--> Reading debug registers!\n");
+                c.win_emu.callbacks.on_suspicious_activity("Reading debug registers");
             }
 
             cpu_context::save(c.emu, context);
@@ -509,7 +509,7 @@ namespace syscalls
 
         if ((context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64) == CONTEXT_DEBUG_REGISTERS_64)
         {
-            c.win_emu.log.print(color::pink, "--> Setting debug registers!\n");
+            c.win_emu.callbacks.on_suspicious_activity("Setting debug registers");
         }
 
         return STATUS_SUCCESS;

@@ -34,14 +34,13 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtGetNlsSectionPtr(const syscall_context& c, ULONG section_type, ULONG section_data,
-                                       emulator_pointer /*context_data*/, emulator_object<uint64_t> section_pointer,
-                                       emulator_object<ULONG> section_size)
+    NTSTATUS handle_NtGetNlsSectionPtr(const syscall_context& c, const ULONG section_type, const ULONG section_data,
+                                       emulator_pointer /*context_data*/,
+                                       const emulator_object<uint64_t> section_pointer,
+                                       const emulator_object<ULONG> section_size)
     {
         if (section_type == 11)
         {
-            c.win_emu.log.print(color::dark_gray, "--> Code Page: %d\n", section_data);
-
             const auto file_path = R"(C:\Windows\System32\C_)" + std::to_string(section_data) + ".NLS";
             const auto locale_file = utils::io::read_file(c.win_emu.file_sys.translate(file_path));
             if (locale_file.empty())
@@ -59,7 +58,7 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
-        c.win_emu.log.print(color::gray, "Unsupported section type: %X\n", section_type);
+        c.win_emu.log.warn("Unsupported section type: %X\n", static_cast<uint32_t>(section_type));
         return STATUS_NOT_SUPPORTED;
     }
 
@@ -78,13 +77,13 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtQueryDefaultUILanguage(const syscall_context&, emulator_object<LANGID> language_id)
+    NTSTATUS handle_NtQueryDefaultUILanguage(const syscall_context&, const emulator_object<LANGID> language_id)
     {
         language_id.write(0x407);
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtQueryInstallUILanguage(const syscall_context&, emulator_object<LANGID> language_id)
+    NTSTATUS handle_NtQueryInstallUILanguage(const syscall_context&, const emulator_object<LANGID> language_id)
     {
         language_id.write(0x407);
         return STATUS_SUCCESS;

@@ -24,8 +24,8 @@ void syscall_dispatcher::deserialize(utils::buffer_deserializer& buffer)
     this->add_handlers();
 }
 
-void syscall_dispatcher::setup(const exported_symbols& ntdll_exports, std::span<const std::byte> ntdll_data,
-                               const exported_symbols& win32u_exports, std::span<const std::byte> win32u_data)
+void syscall_dispatcher::setup(const exported_symbols& ntdll_exports, const std::span<const std::byte> ntdll_data,
+                               const exported_symbols& win32u_exports, const std::span<const std::byte> win32u_data)
 {
     this->handlers_ = {};
 
@@ -76,8 +76,6 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
 
     try
     {
-        const auto* mod = win_emu.mod_manager.find_by_address(address);
-
         const auto entry = this->handlers_.find(syscall_id);
         if (entry == this->handlers_.end())
         {
@@ -87,8 +85,7 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
             return;
         }
 
-        const std::string_view mod_name = mod ? mod->name : std::string_view{};
-        const auto res = win_emu.callbacks.on_syscall(syscall_id, address, mod_name, entry->second.name);
+        const auto res = win_emu.callbacks.on_syscall(syscall_id, entry->second.name);
         if (res == instruction_hook_continuation::skip_instruction)
         {
             return;
@@ -100,38 +97,6 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
             c.emu.reg<uint64_t>(x86_register::rax, STATUS_NOT_SUPPORTED);
             c.emu.stop();
             return;
-        }
-
-        if (mod != win_emu.mod_manager.ntdll && mod != win_emu.mod_manager.win32u)
-        {
-            win_emu.log.print(color::blue, "Executing inline syscall: %s (0x%X) at 0x%" PRIx64 " (%s)\n",
-                              entry->second.name.c_str(), syscall_id, address, mod ? mod->name.c_str() : "<N/A>");
-        }
-        else
-        {
-            if (mod->is_within(context.previous_ip))
-            {
-                const auto rsp = c.emu.read_stack_pointer();
-
-                uint64_t return_address{};
-                c.emu.try_read_memory(rsp, &return_address, sizeof(return_address));
-
-                const auto* caller_mod_name = win_emu.mod_manager.find_name(return_address);
-
-                win_emu.log.print(color::dark_gray,
-                                  "Executing syscall: %s (0x%X) at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n",
-                                  entry->second.name.c_str(), syscall_id, address, return_address, caller_mod_name);
-            }
-            else
-            {
-                const auto* previous_mod = win_emu.mod_manager.find_by_address(context.previous_ip);
-
-                win_emu.log.print(color::blue,
-                                  "Crafted out-of-line syscall: %s (0x%X) at 0x%" PRIx64 " (%s) via 0x%" PRIx64
-                                  " (%s)\n",
-                                  entry->second.name.c_str(), syscall_id, address, mod ? mod->name.c_str() : "<N/A>",
-                                  context.previous_ip, previous_mod ? previous_mod->name.c_str() : "<N/A>");
-            }
         }
 
         entry->second.handler(c);
@@ -150,8 +115,10 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
     }
 }
 
-syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports, std::span<const std::byte> ntdll_data,
-                                       const exported_symbols& win32u_exports, std::span<const std::byte> win32u_data)
+syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports,
+                                       const std::span<const std::byte> ntdll_data,
+                                       const exported_symbols& win32u_exports,
+                                       const std::span<const std::byte> win32u_data)
 {
     this->setup(ntdll_exports, ntdll_data, win32u_exports, win32u_data);
 }
