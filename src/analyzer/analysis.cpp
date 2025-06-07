@@ -118,7 +118,7 @@ namespace
         auto& win_emu = *c.win_emu;
 
 #ifdef OS_EMSCRIPTEN
-        if ((win_emu.get_executed_instructions() % 0x20000 == 0)
+        if ((win_emu.get_executed_instructions() % 0x20000) == 0)
         {
             debugger::event_context ec{.win_emu = win_emu};
             debugger::handle_events(ec);
