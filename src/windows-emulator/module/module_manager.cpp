@@ -122,8 +122,6 @@ mapped_module* module_manager::map_local_module(const std::filesystem::path& fil
         auto mod = map_module_from_file(*this->memory_, std::move(local_file));
         mod.is_static = is_static;
 
-        logger.log("Mapped %s at 0x%" PRIx64 "\n", mod.path.generic_string().c_str(), mod.image_base);
-
         const auto image_base = mod.image_base;
         const auto entry = this->modules_.try_emplace(image_base, std::move(mod));
         this->callbacks_->on_module_load(entry.first->second);
@@ -163,7 +161,7 @@ void module_manager::deserialize(utils::buffer_deserializer& buffer)
     this->win32u = win32u_base ? this->find_by_address(win32u_base) : nullptr;
 }
 
-bool module_manager::unmap(const uint64_t address, const logger& logger)
+bool module_manager::unmap(const uint64_t address)
 {
     const auto mod = this->modules_.find(address);
     if (mod == this->modules_.end())
@@ -175,8 +173,6 @@ bool module_manager::unmap(const uint64_t address, const logger& logger)
     {
         return true;
     }
-
-    logger.log("Unmapping %s (0x%" PRIx64 ")\n", mod->second.path.generic_string().c_str(), mod->second.image_base);
 
     this->callbacks_->on_module_unload(mod->second);
     unmap_module(*this->memory_, mod->second);

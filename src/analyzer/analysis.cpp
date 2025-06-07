@@ -63,6 +63,17 @@ namespace
         debugger::handle_events(ec);
 #endif
     }
+
+    void handle_module_load(const analysis_context& c, const mapped_module& mod)
+    {
+        c.win_emu->log.log("Mapped %s at 0x%" PRIx64 "\n", mod.path.generic_string().c_str(), mod.image_base);
+    }
+
+    void handle_module_unload(const analysis_context& c, const mapped_module& mod)
+    {
+        c.win_emu->log.log("Unmapping %s (0x%" PRIx64 ")\n", mod.path.generic_string().c_str(), mod.image_base);
+    }
+
     void handle_instruction(analysis_context& c, const uint64_t address)
     {
         auto& win_emu = *c.win_emu;
@@ -200,6 +211,8 @@ void register_analysis_callbacks(analysis_context& c)
     cb.on_stdout = make_callback(c, handle_stdout);
     cb.on_syscall = make_callback(c, handle_syscall);
     cb.on_ioctrl = make_callback(c, handle_ioctrl);
+    cb.on_module_load = make_callback(c, handle_module_load);
+    cb.on_module_unload = make_callback(c, handle_module_unload);
     cb.on_instruction = make_callback(c, handle_instruction);
     cb.on_thread_switch = make_callback(c, handle_thread_switch);
     cb.on_generic_access = make_callback(c, handle_generic_access);

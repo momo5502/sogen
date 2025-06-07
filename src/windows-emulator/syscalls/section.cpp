@@ -287,7 +287,7 @@ namespace syscalls
         const auto* mod = c.win_emu.mod_manager.find_by_address(base_address);
         if (mod != nullptr)
         {
-            if (c.win_emu.mod_manager.unmap(base_address, c.win_emu.log))
+            if (c.win_emu.mod_manager.unmap(base_address))
             {
                 return STATUS_SUCCESS;
             }
