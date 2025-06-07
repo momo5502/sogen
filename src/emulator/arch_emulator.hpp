@@ -45,7 +45,7 @@ struct arm_emulator : arch_emulator<Traits>
 
 enum class x86_hookable_instructions
 {
-    invalid,
+    invalid, // TODO: Get rid of that
     syscall,
     cpuid,
     rdtsc,

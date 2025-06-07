@@ -21,6 +21,8 @@ struct emulator_callbacks : module_manager::callbacks, process_context::callback
 {
     using continuation = instruction_hook_continuation;
 
+    opt_func<void()> on_exception{};
+
     opt_func<void(uint64_t address, uint64_t length, memory_permission)> on_memory_protect{};
     opt_func<void(uint64_t address, uint64_t length, memory_permission, bool commit)> on_memory_allocate{};
 
@@ -199,9 +201,6 @@ class windows_emulator
             this->port_mappings_.erase(entry);
         }
     }
-
-    // TODO: Remove
-    bool fuzzing{false};
 
     void yield_thread(bool alertable = false);
     bool perform_thread_switch();

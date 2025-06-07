@@ -32,7 +32,8 @@ namespace
     void handle_suspicious_activity(const analysis_context& c, const std::string_view details)
     {
         const auto rip = c.win_emu->emu().read_instruction_pointer();
-        c.win_emu->log.print(color::pink, "Suspicious: %.*s (0x%" PRIx64 ")\n", STR_VIEW_VA(details), rip);
+        c.win_emu->log.print(color::pink, "Suspicious: %.*s at 0x%" PRIx64 " (via 0x%" PRIx64 ")\n",
+                             STR_VIEW_VA(details), rip, c.win_emu->process.previous_ip);
     }
 
     void handle_generic_activity(const analysis_context& c, const std::string_view details)

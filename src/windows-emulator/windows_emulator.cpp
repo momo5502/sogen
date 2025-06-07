@@ -452,17 +452,13 @@ void windows_emulator::setup_hooks()
         return instruction_hook_continuation::skip_instruction;
     });
 
+    // TODO: Unicorn needs this - This should be handled in the backend
     this->emu().hook_instruction(x86_hookable_instructions::invalid, [&] {
-        const auto ip = this->emu().read_instruction_pointer();
-
-        this->log.print(color::gray, "Invalid instruction at: 0x%" PRIx64 " (via 0x%" PRIx64 ")\n", ip,
-                        this->process.previous_ip);
-
-        return instruction_hook_continuation::skip_instruction;
+        return instruction_hook_continuation::skip_instruction; //
     });
 
     this->emu().hook_interrupt([&](const int interrupt) {
-        const auto rip = this->emu().read_instruction_pointer();
+        this->callbacks.on_exception();
         const auto eflags = this->emu().reg<uint32_t>(x86_register::eflags);
 
         switch (interrupt)
@@ -473,13 +469,10 @@ void windows_emulator::setup_hooks()
         case 1:
             if ((eflags & 0x100) != 0)
             {
-                this->callbacks.on_suspicious_activity("Singlestep (Trap Flag)");
                 this->emu().reg(x86_register::eflags, eflags & ~0x100);
             }
-            else
-            {
-                this->callbacks.on_suspicious_activity("Singlestep");
-            }
+
+            this->callbacks.on_suspicious_activity("Singlestep");
             dispatch_single_step(this->emu(), this->process);
             return;
         case 3:
@@ -487,6 +480,7 @@ void windows_emulator::setup_hooks()
             dispatch_breakpoint(this->emu(), this->process);
             return;
         case 6:
+            this->callbacks.on_suspicious_activity("Illegal instruction");
             dispatch_illegal_instruction_violation(this->emu(), this->process);
             return;
         case 45:
@@ -494,15 +488,12 @@ void windows_emulator::setup_hooks()
             dispatch_breakpoint(this->emu(), this->process);
             return;
         default:
+            if (this->callbacks.on_generic_activity)
+            {
+                this->callbacks.on_generic_activity("Interrupt " + std::to_string(interrupt));
+            }
+
             break;
-        }
-
-        this->log.print(color::gray, "Interrupt: %i 0x%" PRIx64 "\n", interrupt, rip);
-
-        if (this->fuzzing || true) // TODO: Fix
-        {
-            this->process.exception_rip = rip;
-            this->emu().stop();
         }
     });
 
@@ -521,13 +512,6 @@ void windows_emulator::setup_hooks()
         {
             this->log.print(color::gray, "Mapping violation: 0x%" PRIx64 " (%zX) - %s at 0x%" PRIx64 " (%s)\n", address,
                             size, permission.c_str(), ip, name);
-        }
-
-        if (this->fuzzing)
-        {
-            this->process.exception_rip = ip;
-            this->emu().stop();
-            return memory_violation_continuation::stop;
         }
 
         dispatch_access_violation(this->emu(), this->process, address, operation);

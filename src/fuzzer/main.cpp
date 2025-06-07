@@ -28,12 +28,22 @@ namespace
 
     void run_emulation(windows_emulator& win_emu)
     {
+        bool has_exception = false;
+        const auto _ = utils::finally([&] {
+            win_emu.callbacks.on_exception = {}; //
+        });
+
         try
         {
+            win_emu.callbacks.on_exception = [&] {
+                has_exception = true;
+                win_emu.stop();
+            };
+
             win_emu.log.disable_output(true);
             win_emu.start();
 
-            if (win_emu.process.exception_rip.has_value())
+            if (has_exception)
             {
                 throw std::runtime_error("Exception!");
             }
@@ -68,7 +78,6 @@ namespace
         fuzzer_executer(const std::span<const std::byte> data)
             : emulator_data(data)
         {
-            emu.fuzzing = true;
             emu.emu().hook_basic_block([&](const basic_block& block) {
                 if (this->handler && visited_blocks.emplace(block.address).second)
                 {

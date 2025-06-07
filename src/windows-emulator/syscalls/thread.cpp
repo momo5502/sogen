@@ -328,7 +328,7 @@ namespace syscalls
     {
         if (lock.value())
         {
-            c.win_emu.log.warn("NtAlertThreadByThreadIdEx with lock not supported yet!");
+            c.win_emu.log.warn("NtAlertThreadByThreadIdEx with lock not supported yet!\n");
             // c.emu.stop();
             // return STATUS_NOT_SUPPORTED;
         }

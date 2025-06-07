@@ -18,7 +18,7 @@ namespace syscalls
         }
 
         c.proc.exit_status = error_status;
-        c.proc.exception_rip = c.emu.read_instruction_pointer();
+        c.win_emu.callbacks.on_exception();
         c.emu.stop();
 
         return STATUS_SUCCESS;
@@ -27,7 +27,7 @@ namespace syscalls
     NTSTATUS handle_NtRaiseException(
         const syscall_context& c,
         const emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>> /*exception_record*/,
-        const emulator_object<CONTEXT64> thread_context, const BOOLEAN handle_exception)
+        const emulator_object<CONTEXT64> /*thread_context*/, const BOOLEAN handle_exception)
     {
         if (handle_exception)
         {
@@ -36,7 +36,7 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
         }
 
-        c.proc.exception_rip = thread_context.read().Rip;
+        c.win_emu.callbacks.on_exception();
         c.emu.stop();
 
         return STATUS_SUCCESS;
