@@ -12,7 +12,7 @@
 
 #include "network/static_socket_factory.hpp"
 
-constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 100000;
+constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 0x20000;
 
 namespace
 {

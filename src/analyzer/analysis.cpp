@@ -101,11 +101,6 @@ namespace
     {
         c.win_emu->log.print(color::dark_gray, "Performing thread switch: %X -> %X\n", current_thread.id,
                              new_thread.id);
-
-#ifdef OS_EMSCRIPTEN
-        debugger::event_context ec{.win_emu = *c.win_emu};
-        debugger::handle_events(ec);
-#endif
     }
 
     void handle_module_load(const analysis_context& c, const mapped_module& mod)
@@ -121,6 +116,14 @@ namespace
     void handle_instruction(analysis_context& c, const uint64_t address)
     {
         auto& win_emu = *c.win_emu;
+
+#ifdef OS_EMSCRIPTEN
+        if ((win_emu.get_executed_instructions() % 0x20000 == 0)
+        {
+            debugger::event_context ec{.win_emu = win_emu};
+            debugger::handle_events(ec);
+        }
+#endif
 
         const auto is_main_exe = win_emu.mod_manager.executable->is_within(address);
         const auto is_previous_main_exe = win_emu.mod_manager.executable->is_within(c.win_emu->process.previous_ip);
