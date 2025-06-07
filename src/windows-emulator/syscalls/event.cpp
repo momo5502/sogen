@@ -39,6 +39,11 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
+    NTSTATUS handle_NtQueryEvent()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
     NTSTATUS handle_NtClearEvent(const syscall_context& c, const handle event_handle)
     {
         auto* e = c.proc.events.get(event_handle);

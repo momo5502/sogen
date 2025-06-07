@@ -16,6 +16,7 @@ namespace syscalls
     // syscalls/event.cpp:
     NTSTATUS handle_NtSetEvent(const syscall_context& c, uint64_t handle, emulator_object<LONG> previous_state);
     NTSTATUS handle_NtTraceEvent();
+    NTSTATUS handle_NtQueryEvent();
     NTSTATUS handle_NtClearEvent(const syscall_context& c, handle event_handle);
     NTSTATUS handle_NtCreateEvent(const syscall_context& c, emulator_object<handle> event_handle,
                                   ACCESS_MASK desired_access,
@@ -1171,6 +1172,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtCancelWaitCompletionPacket);
     add_handler(NtSetWnfProcessNotificationEvent);
     add_handler(NtQuerySecurityObject);
+    add_handler(NtQueryEvent);
 
 #undef add_handler
 }
