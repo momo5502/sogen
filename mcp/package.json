@@ -1,0 +1,17 @@
+{
+  "name": "sogen-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for sogen userspace emulator",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.5.0"
+  },
+  "keywords": ["mcp", "server"],
+  "author": "",
+  "license": "MIT"
+}
