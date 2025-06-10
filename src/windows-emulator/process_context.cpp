@@ -119,6 +119,10 @@ namespace
         env_map[u"USERNAME"] = u"momo";
         env_map[u"SystemDrive"] = u"C:";
         env_map[u"SystemRoot"] = u"C:\\WINDOWS";
+        env_map[u"SystemTemp"] = u"C:\\Windows\\SystemTemp";
+        env_map[u"TMP"] = u"C:\\Users\\momo\\AppData\\Temp";
+        env_map[u"TEMP"] = u"C:\\Users\\momo\\AppData\\Temp";
+        env_map[u"USERPROFILE"] = u"C:\\Users\\momo";
 
         for (const auto& key : keys_to_expand)
         {
