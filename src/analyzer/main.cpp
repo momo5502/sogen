@@ -18,6 +18,7 @@ namespace
     {
         mutable bool use_gdb{false};
         std::filesystem::path dump{};
+        std::filesystem::path minidump_path{};
         std::string registry_path{"./registry"};
         std::string emulation_root{};
         std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
@@ -142,6 +143,12 @@ namespace
                 win_x64_gdb_stub_handler handler{win_emu, should_stop};
                 gdb_stub::run_gdb_stub(network::address{"0.0.0.0:28960", AF_INET}, handler);
             }
+            else if (!options.minidump_path.empty())
+            {
+                // For minidumps, don't start execution automatically; just report ready state
+                win_emu.log.print(color::green, "Minidump loaded successfully. Process state ready for analysis.\n");
+                return true; // Return success without starting emulation
+            }
             else
             {
                 win_emu.start();
@@ -244,14 +251,23 @@ namespace
     std::unique_ptr<windows_emulator> setup_emulator(const analysis_options& options,
                                                      const std::span<const std::string_view> args)
     {
-        if (options.dump.empty())
+        if (!options.dump.empty())
         {
-            return create_application_emulator(options, args);
+            // load snapshot
+            auto win_emu = create_empty_emulator(options);
+            snapshot::load_emulator_snapshot(*win_emu, options.dump);
+            return win_emu;
+        }
+        if (!options.minidump_path.empty())
+        {
+            // load minidump
+            auto win_emu = create_empty_emulator(options);
+            win_emu->load_minidump(options.minidump_path);
+            return win_emu;
         }
 
-        auto win_emu = create_empty_emulator(options);
-        snapshot::load_emulator_snapshot(*win_emu, options.dump);
-        return win_emu;
+        // default: load application
+        return create_application_emulator(options, args);
     }
 
     bool run(const analysis_options& options, const std::span<const std::string_view> args)
@@ -355,6 +371,7 @@ namespace
         printf("  -m, --module <module>     Specify module to track\n");
         printf("  -e, --emulation <path>    Set emulation root path\n");
         printf("  -a, --snapshot <path>     Load snapshot dump from path\n");
+        printf("  --minidump <path>         Load minidump from path\n");
         printf("  -i, --ignore <funcs>      Comma-separated list of functions to ignore\n");
         printf("  -p, --path <src> <dst>    Map Windows path to host path\n");
         printf("  -r, --registry <path>     Set registry path (default: ./registry)\n\n");
@@ -424,6 +441,15 @@ namespace
                 }
                 arg_it = args.erase(arg_it);
                 options.dump = args[0];
+            }
+            else if (arg == "--minidump")
+            {
+                if (args.size() < 2)
+                {
+                    throw std::runtime_error("No minidump path provided after --minidump");
+                }
+                arg_it = args.erase(arg_it);
+                options.minidump_path = args[0];
             }
             else if (arg == "-i" || arg == "--ignore")
             {

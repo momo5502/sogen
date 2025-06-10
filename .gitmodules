@@ -29,3 +29,6 @@
 	path = deps/base64
 	url = https://github.com/tobiaslocker/base64.git
 	shallow = true
+[submodule "deps/minidump_cpp"]
+	path = deps/minidump_cpp
+	url = https://github.com/redthing1/minidump_cpp

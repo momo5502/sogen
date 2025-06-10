@@ -25,5 +25,9 @@ target_include_directories(reflect INTERFACE
 
 ##########################################
 
+add_subdirectory(minidump_cpp)
+
+##########################################
+
 include(googletest.cmake)
 include(zlib.cmake)
