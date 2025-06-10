@@ -106,7 +106,7 @@ namespace
         win_emu.log.info("Minidump signature: 0x%08X (valid)\n", header.signature);
         win_emu.log.info("Version: %u.%u\n", header.version, header.implementation_version);
         win_emu.log.info("Number of streams: %u\n", header.number_of_streams);
-        win_emu.log.info("Flags: 0x%016llX\n", header.flags);
+        win_emu.log.info("Flags: 0x%016" PRIx64 "\n", header.flags);
 
         const auto* sys_info = dump_file->get_system_info();
         if (sys_info)
