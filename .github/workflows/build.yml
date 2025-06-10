@@ -2,7 +2,7 @@ name: Build
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: "0 0 * * *"
   push:
     branches:
       - "**"
@@ -31,33 +31,33 @@ concurrency:
 
 jobs:
   clang-tidy:
-      name: Run Clang Tidy
-      runs-on: ubuntu-24.04
-      env:
-        LLVM_VERSION: 20
-      steps:
-        - name: Checkout Source
-          uses: actions/checkout@v4
-          with:
-            submodules: recursive
+    name: Run Clang Tidy
+    runs-on: ubuntu-24.04
+    env:
+      LLVM_VERSION: 20
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-        - name: Install Ninja
-          uses: seanmiddleditch/gha-setup-ninja@v6
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v6
 
-        - name: Install Clang
-          run: |
-            wget https://apt.llvm.org/llvm.sh
-            chmod +x llvm.sh
-            sudo ./llvm.sh ${{ env.LLVM_VERSION }}
-            sudo apt install -y clang-tidy-${{ env.LLVM_VERSION }}
-            sudo apt install -y clang-${{ env.LLVM_VERSION }} lld-${{ env.LLVM_VERSION }}
-            sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang-${{ env.LLVM_VERSION }} 100
-            sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${{ env.LLVM_VERSION }} 100
-            sudo update-alternatives --set cc /usr/bin/clang-${{ env.LLVM_VERSION }}
-            sudo update-alternatives --set c++ /usr/bin/clang++-${{ env.LLVM_VERSION }}
+      - name: Install Clang
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh ${{ env.LLVM_VERSION }}
+          sudo apt install -y clang-tidy-${{ env.LLVM_VERSION }}
+          sudo apt install -y clang-${{ env.LLVM_VERSION }} lld-${{ env.LLVM_VERSION }}
+          sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang-${{ env.LLVM_VERSION }} 100
+          sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${{ env.LLVM_VERSION }} 100
+          sudo update-alternatives --set cc /usr/bin/clang-${{ env.LLVM_VERSION }}
+          sudo update-alternatives --set c++ /usr/bin/clang++-${{ env.LLVM_VERSION }}
 
-        - name: CMake Build
-          run: cmake --preset=release -DMOMO_ENABLE_CLANG_TIDY=On && cmake --build --preset=release
+      - name: CMake Build
+        run: cmake --preset=release -DMOMO_ENABLE_CLANG_TIDY=On && cmake --build --preset=release
 
   verify-formatting:
     name: Verify Formatting
@@ -69,9 +69,9 @@ jobs:
       - name: Verify Formatting
         uses: jidicula/clang-format-action@v4.15.0
         with:
-          clang-format-version: '20'
-          check-path: 'src'
-      
+          clang-format-version: "20"
+          check-path: "src"
+
       - name: Verify Page Formatting
         run: cd page && npx --yes prettier . --check
 
@@ -127,7 +127,7 @@ jobs:
         run: curl --connect-timeout 20 --max-time 200 --retry 5 --retry-delay 2 --retry-max-time 200 -L -o directx_Jun2010_redist.exe https://download.microsoft.com/download/8/4/A/84A35BF1-DAFE-4AE8-82AF-AD2AE20B6B14/directx_Jun2010_redist.exe
 
       - name: Extract DirectX Runtime
-        run: "cmd /c \"start /wait directx_Jun2010_redist.exe /Q /T:${{github.workspace}}/dxrt\""
+        run: 'cmd /c "start /wait directx_Jun2010_redist.exe /Q /T:${{github.workspace}}/dxrt"'
 
       - name: Install DirectX Runtime
         run: "cmd /c \"start /wait .\\dxrt\\dxsetup.exe /silent\""
@@ -370,7 +370,7 @@ jobs:
         with:
           name: Windows x86_64 Release Artifacts
           path: build/${{matrix.preset}}/artifacts
-  
+
       - name: Download Emulation Root
         uses: pyTooling/download-artifact@v4
         with:
@@ -443,7 +443,6 @@ jobs:
           EMULATOR_VERBOSE: ${{ github.event.inputs.verbose }}
           ANALYSIS_SAMPLE: ${{github.workspace}}/build/release/artifacts/test-sample.exe
 
-
   smoke-test-node:
     name: Smoke Test Node.js
     runs-on: ubuntu-24.04
@@ -460,7 +459,7 @@ jobs:
         with:
           name: Windows x86_64 Release Artifacts
           path: build/release/artifacts
-  
+
       - name: Download Emulation Root
         uses: pyTooling/download-artifact@v4
         with:
@@ -501,7 +500,6 @@ jobs:
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ github.event.inputs.verbose }}
-
 
   smoke-test-android:
     name: Smoke Test Android
@@ -551,7 +549,7 @@ jobs:
         with:
           name: Windows x86_64 Release Artifacts
           path: build/${{matrix.preset}}/artifacts
-  
+
       - name: Download Emulation Root
         uses: pyTooling/download-artifact@v4
         with:
@@ -566,7 +564,7 @@ jobs:
         with:
           api-level: 29
           arch: ${{matrix.architecture}}
-          script: "adb push build/${{matrix.preset}}/artifacts/* /data/local/tmp && adb shell \"cd /data/local/tmp && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }} ./analyzer -e ./root c:/test-sample.exe\""
+          script: 'adb push build/${{matrix.preset}}/artifacts/* /data/local/tmp && adb shell "cd /data/local/tmp && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && EMULATOR_ICICLE=${{ matrix.emulator == ''Icicle'' }} ./analyzer -e ./root c:/test-sample.exe"'
 
   build-page:
     name: Build Page
@@ -583,19 +581,19 @@ jobs:
         with:
           name: Emscripten Web Release Artifacts
           path: build/release/artifacts
-  
+
       - name: Download Windows Artifacts
         uses: pyTooling/download-artifact@v4
         with:
           name: Windows x86_64 Release Artifacts
           path: build/release/artifacts
-    
+
       - name: Download Emulation Root
         uses: pyTooling/download-artifact@v4
         with:
           name: Windows 2022 Emulation Root
           path: build/release/artifacts/root
-        
+
       - name: Copy Sample
         run: cp ./build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
 
@@ -609,7 +607,7 @@ jobs:
 
       - name: Build Page
         run: cd ./page && npm i && npm run build
- 
+
       - name: Upload Page Artifacts
         uses: pyTooling/upload-artifact@v4
         with:
@@ -633,7 +631,7 @@ jobs:
         with:
           name: Page Artifacts
           path: ./page/dist/
-        
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
@@ -649,12 +647,25 @@ jobs:
   summary:
     name: Pipeline Summary
     runs-on: ubuntu-24.04
-    needs: [build-page, clang-tidy, build-apiset-dumper, smoke-test-node, smoke-test-mingw, smoke-test-android, create-emulation-root, build, test, win-test, verify-formatting]
+    needs:
+      [
+        build-page,
+        clang-tidy,
+        build-apiset-dumper,
+        smoke-test-node,
+        smoke-test-mingw,
+        smoke-test-android,
+        create-emulation-root,
+        build,
+        test,
+        win-test,
+        verify-formatting,
+      ]
     if: always()
     steps:
       - uses: geekyeggo/delete-artifact@v5
         with:
-          name: 'Temp *'
+          name: "Temp *"
 
       - name: Pipeline failed
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
