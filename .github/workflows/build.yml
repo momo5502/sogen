@@ -111,14 +111,14 @@ jobs:
         platform:
           - Windows 2025
           - Windows 2022
-          - Windows 2019
+          #- Windows 2019
         include:
           - platform: Windows 2025
             runner: windows-2025
           - platform: Windows 2022
             runner: windows-2022
-          - platform: Windows 2019
-            runner: windows-2019
+          #- platform: Windows 2019
+          #  runner: windows-2019
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
@@ -401,7 +401,7 @@ jobs:
         emulation-root:
           - Windows 2025
           - Windows 2022
-          - Windows 2019
+          #- Windows 2019
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
