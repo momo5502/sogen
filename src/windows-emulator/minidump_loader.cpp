@@ -60,7 +60,7 @@ namespace
         }
 
         const auto file_size = std::filesystem::file_size(minidump_path);
-        win_emu.log.info("File size: %zu bytes\n", file_size);
+        win_emu.log.info("File size: %ju bytes\n", file_size);
 
         auto parsed_file = minidump::minidump_file::parse(minidump_path.string());
         if (!parsed_file)
