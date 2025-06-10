@@ -162,13 +162,13 @@ mapped_module* module_manager::map_memory_module(uint64_t base_address, uint64_t
     }
     catch (const std::exception& e)
     {
-        logger.error("Failed to map module from memory %s at 0x%016llX: %s\n", module_name.c_str(), base_address,
+        logger.error("Failed to map module from memory %s at 0x%016" PRIx64 ": %s\n", module_name.c_str(), base_address,
                      e.what());
         return nullptr;
     }
     catch (...)
     {
-        logger.error("Failed to map module from memory %s at 0x%016llX: Unknown error\n", module_name.c_str(),
+        logger.error("Failed to map module from memory %s at 0x%016" PRIx64 ": Unknown error\n", module_name.c_str(),
                      base_address);
         return nullptr;
     }
