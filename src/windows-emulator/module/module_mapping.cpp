@@ -287,7 +287,7 @@ mapped_module map_module_from_memory(memory_manager& memory, uint64_t base_addre
         binary.entry_point = binary.image_base + optional_header.AddressOfEntryPoint;
 
         const auto section_offset = get_first_section_offset(nt_headers, nt_headers_offset);
-        const auto sections = buffer.as<IMAGE_SECTION_HEADER>(section_offset);
+        const auto sections = buffer.as<IMAGE_SECTION_HEADER>(static_cast<size_t>(section_offset));
 
         for (size_t i = 0; i < nt_headers.FileHeader.NumberOfSections; ++i)
         {

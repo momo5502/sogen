@@ -181,15 +181,20 @@ namespace
 
         // Process memory info
         const auto& memory_regions = dump_file->memory_regions();
-        uint64_t total_reserved = 0, total_committed = 0;
+        uint64_t total_reserved = 0;
+        uint64_t total_committed = 0;
         size_t guard_pages = 0;
         for (const auto& region : memory_regions)
         {
             total_reserved += region.region_size;
             if (region.state & MEM_COMMIT)
+            {
                 total_committed += region.region_size;
+            }
             if (region.protect & PAGE_GUARD)
+            {
                 guard_pages++;
+            }
         }
         win_emu.log.info("Memory: %zu regions, %" PRIu64 " bytes reserved, %" PRIu64
                          " bytes committed, %zu guard pages\n",
@@ -197,7 +202,8 @@ namespace
 
         // Process memory content
         const auto& memory_segments = dump_file->memory_segments();
-        uint64_t min_addr = UINT64_MAX, max_addr = 0;
+        uint64_t min_addr = UINT64_MAX;
+        uint64_t max_addr = 0;
         for (const auto& segment : memory_segments)
         {
             min_addr = std::min(min_addr, segment.start_virtual_address);
@@ -232,7 +238,9 @@ namespace
         {
             std::map<std::string, size_t> handle_type_counts;
             for (const auto& handle : handles)
+            {
                 handle_type_counts[handle.type_name]++;
+            }
             win_emu.log.info("Handles: %zu total\n", handles.size());
             for (const auto& [type, count] : handle_type_counts)
             {
@@ -274,7 +282,9 @@ namespace
             const bool is_free = (region.state & MEM_FREE) != 0;
 
             if (is_free)
+            {
                 continue;
+            }
 
             memory_permission perms = memory_permission::none;
 
@@ -690,9 +700,9 @@ namespace
     }
 }
 
-minidump_loader::minidump_loader(windows_emulator& win_emu, const std::filesystem::path& minidump_path)
+minidump_loader::minidump_loader(windows_emulator& win_emu, std::filesystem::path minidump_path)
     : win_emu_(win_emu),
-      minidump_path_(minidump_path)
+      minidump_path_(std::move(minidump_path))
 {
 }
 
