@@ -318,7 +318,8 @@ namespace
             {
                 if (is_committed)
                 {
-                    if (win_emu.memory.allocate_memory(region.base_address, region.region_size, perms, false))
+                    if (win_emu.memory.allocate_memory(region.base_address, static_cast<size_t>(region.region_size),
+                                                       perms, false))
                     {
                         committed_count++;
                         win_emu.log.info("  Allocated committed 0x%" PRIx64 ": size=%" PRIu64
@@ -334,7 +335,8 @@ namespace
                 }
                 else if (is_reserved)
                 {
-                    if (win_emu.memory.allocate_memory(region.base_address, region.region_size, perms, true))
+                    if (win_emu.memory.allocate_memory(region.base_address, static_cast<size_t>(region.region_size),
+                                                       perms, true))
                     {
                         reserved_count++;
                         win_emu.log.info("  Reserved 0x%" PRIx64 ": size=%" PRIu64 ", state=0x%08X, protect=0x%08X\n",
@@ -365,8 +367,10 @@ namespace
         {
             try
             {
-                auto memory_data = dump_reader->read_memory(segment.start_virtual_address, segment.size);
-                win_emu.memory.write_memory(segment.start_virtual_address, memory_data.data(), memory_data.size());
+                auto memory_data =
+                    dump_reader->read_memory(segment.start_virtual_address, static_cast<size_t>(segment.size));
+                win_emu.memory.write_memory(segment.start_virtual_address, memory_data.data(),
+                                            static_cast<size_t>(memory_data.size()));
                 written_count++;
                 total_bytes_written += memory_data.size();
                 win_emu.log.info("  Written segment 0x%" PRIx64 ": %zu bytes\n", segment.start_virtual_address,
