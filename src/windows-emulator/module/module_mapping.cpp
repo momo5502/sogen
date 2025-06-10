@@ -300,11 +300,17 @@ mapped_module map_module_from_memory(memory_manager& memory, uint64_t base_addre
 
             auto permissions = memory_permission::none;
             if (section.Characteristics & IMAGE_SCN_MEM_EXECUTE)
+            {
                 permissions |= memory_permission::exec;
+            }
             if (section.Characteristics & IMAGE_SCN_MEM_READ)
+            {
                 permissions |= memory_permission::read;
+            }
             if (section.Characteristics & IMAGE_SCN_MEM_WRITE)
+            {
                 permissions |= memory_permission::write;
+            }
 
             section_info.region.permissions = permissions;
 
