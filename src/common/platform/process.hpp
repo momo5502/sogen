@@ -852,6 +852,12 @@ typedef struct _TOKEN_ELEVATION
     DWORD TokenIsElevated;
 } TOKEN_ELEVATION, *PTOKEN_ELEVATION;
 
+typedef enum _TOKEN_ELEVATION_TYPE {
+    TokenElevationTypeDefault = 1,
+    TokenElevationTypeFull,
+    TokenElevationTypeLimited
+} TOKEN_ELEVATION_TYPE, *PTOKEN_ELEVATION_TYPE;
+
 typedef enum _SECURITY_IMPERSONATION_LEVEL
 {
     SecurityAnonymous,
