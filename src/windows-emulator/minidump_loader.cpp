@@ -3,6 +3,9 @@
 #include "windows_emulator.hpp"
 #include "windows_objects.hpp"
 #include "emulator_thread.hpp"
+#include "common/platform/unicode.hpp"
+#include "common/platform/kernel_mapped.hpp"
+#include "memory_utils.hpp"
 
 #include <minidump/minidump.hpp>
 
@@ -217,10 +220,10 @@ namespace
 
         // Process modules
         const auto& modules = dump_file->modules();
-        for (const auto& module : modules)
+        for (const auto& mod : modules)
         {
-            win_emu.log.info("Module: %s at 0x%" PRIx64 " (%u bytes)\n", module.module_name.c_str(),
-                             module.base_of_image, module.size_of_image);
+            win_emu.log.info("Module: %s at 0x%" PRIx64 " (%u bytes)\n", mod.module_name.c_str(), mod.base_of_image,
+                             mod.size_of_image);
         }
 
         // Process threads
@@ -277,6 +280,10 @@ namespace
 
         for (const auto& region : memory_regions)
         {
+            // Log the memory region details
+            win_emu.log.info("Region: 0x%" PRIx64 ", size=%" PRIu64 ", state=0x%08X, protect=0x%08X\n",
+                             region.base_address, region.region_size, region.state, region.protect);
+
             const bool is_reserved = (region.state & MEM_RESERVE) != 0;
             const bool is_committed = (region.state & MEM_COMMIT) != 0;
             const bool is_free = (region.state & MEM_FREE) != 0;
@@ -286,33 +293,7 @@ namespace
                 continue;
             }
 
-            memory_permission perms = memory_permission::none;
-
-            // Strip modifier flags like PAGE_GUARD, PAGE_NOCACHE, etc.
-            const uint32_t base_protect = region.protect & 0xFF;
-
-            switch (base_protect)
-            {
-            case PAGE_READWRITE:
-                perms = memory_permission::read_write;
-                break;
-            case PAGE_READONLY:
-                perms = memory_permission::read;
-                break;
-            case PAGE_EXECUTE_READ:
-                perms = memory_permission::read | memory_permission::exec;
-                break;
-            case PAGE_EXECUTE_READWRITE:
-                perms = memory_permission::all;
-                break;
-            case PAGE_NOACCESS:
-                perms = memory_permission::none;
-                break;
-            default:
-                // For any other protection, default to read-only as safest fallback
-                perms = memory_permission::read;
-                break;
-            }
+            memory_permission perms = map_nt_to_emulator_protection(region.protect);
 
             try
             {
@@ -388,21 +369,21 @@ namespace
                          total_bytes_written, write_failed_count);
     }
 
-    bool is_main_executable(const minidump::module_info& module)
+    bool is_main_executable(const minidump::module_info& mod)
     {
-        const auto name = module.module_name;
+        const auto name = mod.module_name;
         return name.find(".exe") != std::string::npos;
     }
 
-    bool is_ntdll(const minidump::module_info& module)
+    bool is_ntdll(const minidump::module_info& mod)
     {
-        const auto name = module.module_name;
+        const auto name = mod.module_name;
         return name == "ntdll.dll" || name == "NTDLL.DLL";
     }
 
-    bool is_win32u(const minidump::module_info& module)
+    bool is_win32u(const minidump::module_info& mod)
     {
-        const auto name = module.module_name;
+        const auto name = mod.module_name;
         return name == "win32u.dll" || name == "WIN32U.DLL";
     }
 
@@ -421,33 +402,33 @@ namespace
         size_t failed_count = 0;
         size_t identified_count = 0;
 
-        for (const auto& module : modules)
+        for (const auto& mod : modules)
         {
             try
             {
-                auto* mapped_module = win_emu.mod_manager.map_memory_module(module.base_of_image, module.size_of_image,
-                                                                            module.module_name, win_emu.log);
+                auto* mapped_module = win_emu.mod_manager.map_memory_module(mod.base_of_image, mod.size_of_image,
+                                                                            mod.module_name, win_emu.log);
 
                 if (mapped_module)
                 {
                     mapped_count++;
                     win_emu.log.info("  Mapped %s at 0x%" PRIx64 " (%u bytes, %zu sections, %zu exports)\n",
-                                     module.module_name.c_str(), module.base_of_image, module.size_of_image,
+                                     mod.module_name.c_str(), mod.base_of_image, mod.size_of_image,
                                      mapped_module->sections.size(), mapped_module->exports.size());
 
-                    if (is_main_executable(module))
+                    if (is_main_executable(mod))
                     {
                         win_emu.mod_manager.executable = mapped_module;
                         identified_count++;
                         win_emu.log.info("    Identified as main executable\n");
                     }
-                    else if (is_ntdll(module))
+                    else if (is_ntdll(mod))
                     {
                         win_emu.mod_manager.ntdll = mapped_module;
                         identified_count++;
                         win_emu.log.info("    Identified as ntdll\n");
                     }
-                    else if (is_win32u(module))
+                    else if (is_win32u(mod))
                     {
                         win_emu.mod_manager.win32u = mapped_module;
                         identified_count++;
@@ -457,14 +438,14 @@ namespace
                 else
                 {
                     failed_count++;
-                    win_emu.log.warn("  Failed to map %s at 0x%" PRIx64 "\n", module.module_name.c_str(),
-                                     module.base_of_image);
+                    win_emu.log.warn("  Failed to map %s at 0x%" PRIx64 "\n", mod.module_name.c_str(),
+                                     mod.base_of_image);
                 }
             }
             catch (const std::exception& e)
             {
                 failed_count++;
-                win_emu.log.error("  Exception mapping %s: %s\n", module.module_name.c_str(), e.what());
+                win_emu.log.error("  Exception mapping %s: %s\n", mod.module_name.c_str(), e.what());
             }
         }
 
@@ -599,8 +580,7 @@ namespace
 
         try
         {
-            // Read PEB address from TEB+0x60 (standard x64 TEB layout)
-            constexpr uint64_t teb_peb_offset = 0x60;
+            constexpr uint64_t teb_peb_offset = offsetof(TEB64, ProcessEnvironmentBlock);
             uint64_t peb_address = 0;
 
             win_emu.memory.read_memory(first_thread.teb + teb_peb_offset, &peb_address, sizeof(peb_address));
@@ -618,17 +598,6 @@ namespace
         {
             win_emu.log.error("Failed to read PEB from TEB: %s\n", e.what());
         }
-    }
-
-    std::u16string utf8_to_utf16(const std::string& str)
-    {
-        std::u16string result;
-        result.reserve(str.size());
-        for (const char c : str)
-        {
-            result.push_back(static_cast<char16_t>(static_cast<unsigned char>(c)));
-        }
-        return result;
     }
 
     void reconstruct_handle_table(windows_emulator& win_emu, const minidump::minidump_file* dump_file)
@@ -653,21 +622,21 @@ namespace
                 if (handle_info.type_name == "Event")
                 {
                     event evt{};
-                    evt.name = utf8_to_utf16(handle_info.object_name);
+                    evt.name = u8_to_u16(handle_info.object_name);
                     win_emu.process.events.store(std::move(evt));
                     created_count++;
                 }
                 else if (handle_info.type_name == "File")
                 {
                     file f{};
-                    f.name = utf8_to_utf16(handle_info.object_name);
+                    f.name = u8_to_u16(handle_info.object_name);
                     win_emu.process.files.store(std::move(f));
                     created_count++;
                 }
                 else if (handle_info.type_name == "Mutant")
                 {
                     mutant m{};
-                    m.name = utf8_to_utf16(handle_info.object_name);
+                    m.name = u8_to_u16(handle_info.object_name);
                     win_emu.process.mutants.store(std::move(m));
                     created_count++;
                 }
@@ -702,57 +671,49 @@ namespace
                          exception_info->exception_record.exception_address,
                          exception_info->exception_record.exception_code, exception_info->thread_id);
     }
-}
+} // namespace
 
-minidump_loader::minidump_loader(windows_emulator& win_emu, std::filesystem::path minidump_path)
-    : win_emu_(win_emu),
-      minidump_path_(std::move(minidump_path))
+void load_minidump_into_emulator(windows_emulator& win_emu, std::filesystem::path minidump_path)
 {
-}
-
-minidump_loader::~minidump_loader() = default;
-
-void minidump_loader::load_into_emulator()
-{
-    win_emu_.log.info("Starting minidump loading process\n");
-    win_emu_.log.info("Minidump file: %s\n", minidump_path_.string().c_str());
+    win_emu.log.info("Starting minidump loading process\n");
+    win_emu.log.info("Minidump file: %s\n", minidump_path.string().c_str());
 
     try
     {
         std::unique_ptr<minidump::minidump_file> dump_file;
         std::unique_ptr<minidump::minidump_reader> dump_reader;
 
-        if (!parse_minidump_file(win_emu_, minidump_path_, dump_file, dump_reader))
+        if (!parse_minidump_file(win_emu, minidump_path, dump_file, dump_reader))
         {
             throw std::runtime_error("Failed to parse minidump file");
         }
 
-        if (!validate_dump_compatibility(win_emu_, dump_file.get()))
+        if (!validate_dump_compatibility(win_emu, dump_file.get()))
         {
             throw std::runtime_error("Minidump compatibility validation failed");
         }
 
-        setup_kusd_from_dump(win_emu_, dump_file.get());
+        setup_kusd_from_dump(win_emu, dump_file.get());
 
         dump_statistics stats;
-        log_dump_summary(win_emu_, dump_file.get(), stats);
-        process_streams(win_emu_, dump_file.get());
+        log_dump_summary(win_emu, dump_file.get(), stats);
+        process_streams(win_emu, dump_file.get());
 
         // Existing phases
-        reconstruct_memory_state(win_emu_, dump_file.get(), dump_reader.get());
-        reconstruct_module_state(win_emu_, dump_file.get());
+        reconstruct_memory_state(win_emu, dump_file.get(), dump_reader.get());
+        reconstruct_module_state(win_emu, dump_file.get());
 
         // Process state reconstruction phases
-        setup_peb_from_teb(win_emu_, dump_file.get());
-        reconstruct_threads(win_emu_, dump_file.get(), minidump_path_);
-        reconstruct_handle_table(win_emu_, dump_file.get());
-        setup_exception_context(win_emu_, dump_file.get());
+        setup_peb_from_teb(win_emu, dump_file.get());
+        reconstruct_threads(win_emu, dump_file.get(), minidump_path);
+        reconstruct_handle_table(win_emu, dump_file.get());
+        setup_exception_context(win_emu, dump_file.get());
 
-        win_emu_.log.info("Process state reconstruction completed\n");
+        win_emu.log.info("Process state reconstruction completed\n");
     }
     catch (const std::exception& e)
     {
-        win_emu_.log.error("Minidump loading failed: %s\n", e.what());
+        win_emu.log.error("Minidump loading failed: %s\n", e.what());
         throw;
     }
 }

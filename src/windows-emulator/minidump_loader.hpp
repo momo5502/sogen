@@ -3,15 +3,4 @@
 
 class windows_emulator;
 
-class minidump_loader
-{
-  public:
-    minidump_loader(windows_emulator& win_emu, std::filesystem::path minidump_path);
-    ~minidump_loader();
-
-    void load_into_emulator();
-
-  private:
-    windows_emulator& win_emu_;
-    std::filesystem::path minidump_path_;
-};
+void load_minidump_into_emulator(windows_emulator& win_emu, std::filesystem::path minidump_path);

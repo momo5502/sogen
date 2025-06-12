@@ -667,6 +667,5 @@ void windows_emulator::restore_snapshot()
 
 void windows_emulator::load_minidump(const std::filesystem::path& minidump_path)
 {
-    minidump_loader mdmp_loader(*this, minidump_path);
-    mdmp_loader.load_into_emulator();
+    load_minidump_into_emulator(*this, minidump_path);
 }
