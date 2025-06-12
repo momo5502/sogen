@@ -3,6 +3,7 @@
 #include <windows_emulator.hpp>
 #include <backend_selection.hpp>
 #include <win_x64_gdb_stub_handler.hpp>
+#include <minidump_loader.hpp>
 
 #include "object_watching.hpp"
 #include "snapshot.hpp"
@@ -262,7 +263,7 @@ namespace
         {
             // load minidump
             auto win_emu = create_empty_emulator(options);
-            win_emu->load_minidump(options.minidump_path);
+            minidump_loader::load_minidump_into_emulator(*win_emu, options.minidump_path);
             return win_emu;
         }
 

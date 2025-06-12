@@ -12,8 +12,6 @@
 
 #include "network/static_socket_factory.hpp"
 
-#include "minidump_loader.hpp"
-
 constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 0x20000;
 
 namespace
@@ -663,9 +661,4 @@ void windows_emulator::restore_snapshot()
     this->mod_manager.deserialize(buffer);
     this->process.deserialize(buffer);
     // this->process = *this->process_snapshot_;
-}
-
-void windows_emulator::load_minidump(const std::filesystem::path& minidump_path)
-{
-    load_minidump_into_emulator(*this, minidump_path);
 }

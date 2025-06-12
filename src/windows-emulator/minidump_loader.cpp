@@ -9,7 +9,7 @@
 
 #include <minidump/minidump.hpp>
 
-namespace
+namespace minidump_loader
 {
     struct dump_statistics
     {
@@ -679,49 +679,49 @@ namespace
                          exception_info->exception_record.exception_address,
                          exception_info->exception_record.exception_code, exception_info->thread_id);
     }
-} // namespace
 
-void load_minidump_into_emulator(windows_emulator& win_emu, std::filesystem::path minidump_path)
-{
-    win_emu.log.info("Starting minidump loading process\n");
-    win_emu.log.info("Minidump file: %s\n", minidump_path.string().c_str());
-
-    try
+    void load_minidump_into_emulator(windows_emulator& win_emu, std::filesystem::path minidump_path)
     {
-        std::unique_ptr<minidump::minidump_file> dump_file;
-        std::unique_ptr<minidump::minidump_reader> dump_reader;
+        win_emu.log.info("Starting minidump loading process\n");
+        win_emu.log.info("Minidump file: %s\n", minidump_path.string().c_str());
 
-        if (!parse_minidump_file(win_emu, minidump_path, dump_file, dump_reader))
+        try
         {
-            throw std::runtime_error("Failed to parse minidump file");
-        }
+            std::unique_ptr<minidump::minidump_file> dump_file;
+            std::unique_ptr<minidump::minidump_reader> dump_reader;
 
-        if (!validate_dump_compatibility(win_emu, dump_file.get()))
+            if (!parse_minidump_file(win_emu, minidump_path, dump_file, dump_reader))
+            {
+                throw std::runtime_error("Failed to parse minidump file");
+            }
+
+            if (!validate_dump_compatibility(win_emu, dump_file.get()))
+            {
+                throw std::runtime_error("Minidump compatibility validation failed");
+            }
+
+            setup_kusd_from_dump(win_emu, dump_file.get());
+
+            dump_statistics stats;
+            log_dump_summary(win_emu, dump_file.get(), stats);
+            process_streams(win_emu, dump_file.get());
+
+            // Existing phases
+            reconstruct_memory_state(win_emu, dump_file.get(), dump_reader.get());
+            reconstruct_module_state(win_emu, dump_file.get());
+
+            // Process state reconstruction phases
+            setup_peb_from_teb(win_emu, dump_file.get());
+            reconstruct_threads(win_emu, dump_file.get(), minidump_path);
+            reconstruct_handle_table(win_emu, dump_file.get());
+            setup_exception_context(win_emu, dump_file.get());
+
+            win_emu.log.info("Process state reconstruction completed\n");
+        }
+        catch (const std::exception& e)
         {
-            throw std::runtime_error("Minidump compatibility validation failed");
+            win_emu.log.error("Minidump loading failed: %s\n", e.what());
+            throw;
         }
-
-        setup_kusd_from_dump(win_emu, dump_file.get());
-
-        dump_statistics stats;
-        log_dump_summary(win_emu, dump_file.get(), stats);
-        process_streams(win_emu, dump_file.get());
-
-        // Existing phases
-        reconstruct_memory_state(win_emu, dump_file.get(), dump_reader.get());
-        reconstruct_module_state(win_emu, dump_file.get());
-
-        // Process state reconstruction phases
-        setup_peb_from_teb(win_emu, dump_file.get());
-        reconstruct_threads(win_emu, dump_file.get(), minidump_path);
-        reconstruct_handle_table(win_emu, dump_file.get());
-        setup_exception_context(win_emu, dump_file.get());
-
-        win_emu.log.info("Process state reconstruction completed\n");
     }
-    catch (const std::exception& e)
-    {
-        win_emu.log.error("Minidump loading failed: %s\n", e.what());
-        throw;
-    }
-}
+} // namespace minidump_loader
