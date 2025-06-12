@@ -680,7 +680,7 @@ namespace minidump_loader
                          exception_info->exception_record.exception_code, exception_info->thread_id);
     }
 
-    void load_minidump_into_emulator(windows_emulator& win_emu, std::filesystem::path minidump_path)
+    void load_minidump_into_emulator(windows_emulator& win_emu, const std::filesystem::path& minidump_path)
     {
         win_emu.log.info("Starting minidump loading process\n");
         win_emu.log.info("Minidump file: %s\n", minidump_path.string().c_str());
