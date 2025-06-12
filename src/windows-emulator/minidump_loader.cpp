@@ -293,7 +293,15 @@ namespace
                 continue;
             }
 
-            memory_permission perms = map_nt_to_emulator_protection(region.protect);
+            auto protect_value = region.protect;
+            if (protect_value == 0)
+            {
+                protect_value = PAGE_READONLY;
+                win_emu.log.warn("  Region 0x%" PRIx64 " has zero protection, using PAGE_READONLY\n",
+                                 region.base_address);
+            }
+
+            memory_permission perms = map_nt_to_emulator_protection(protect_value);
 
             try
             {
