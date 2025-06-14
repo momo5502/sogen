@@ -32,3 +32,5 @@
 [submodule "deps/minidump_cpp"]
 	path = deps/minidump_cpp
 	url = https://github.com/redthing1/minidump_cpp
+	shallow = true
+
