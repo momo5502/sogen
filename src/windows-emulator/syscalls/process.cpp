@@ -158,11 +158,6 @@ namespace syscalls
 
         if (info_class == ProcessDebugObjectHandle)
         {
-            if (return_length)
-            {
-                return_length.write(sizeof(handle));
-            }
-
             if (process_information_length != sizeof(handle))
             {
                 return STATUS_BUFFER_OVERFLOW;
@@ -171,7 +166,12 @@ namespace syscalls
             const emulator_object<handle> info{c.emu, process_information};
             info.write(NULL_HANDLE);
 
-            return STATUS_SUCCESS;
+            if (return_length)
+            {
+                return_length.write(sizeof(handle));
+            }
+
+            return STATUS_PORT_NOT_SET;
         }
 
         if (info_class == ProcessEnclaveInformation || info_class == ProcessMitigationPolicy ||
