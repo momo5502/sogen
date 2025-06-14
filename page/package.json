@@ -39,7 +39,7 @@
     "react-resizable-panels": "^3.0.2",
     "react-router-dom": "^7.6.1",
     "react-window": "^1.8.11",
-    "tailwind-merge": "^3.3.0",
+    "tailwind-merge": "^3.3.1",
     "tailwindcss": "^4.1.5",
     "tw-animate-css": "^1.3.3",
     "vaul": "^1.1.2"
