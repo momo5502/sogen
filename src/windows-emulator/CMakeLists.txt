@@ -14,7 +14,7 @@ if(NOT MOMO_ENABLE_CLANG_TIDY)
   target_precompile_headers(windows-emulator PRIVATE std_include.hpp)
 endif()
 
-target_link_libraries(windows-emulator PUBLIC emulator)
+target_link_libraries(windows-emulator PUBLIC emulator minidump)
 
 target_include_directories(windows-emulator INTERFACE "${CMAKE_CURRENT_LIST_DIR}")
 

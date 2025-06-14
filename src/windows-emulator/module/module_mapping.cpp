@@ -265,6 +265,75 @@ mapped_module map_module_from_file(memory_manager& memory, std::filesystem::path
     return map_module_from_data(memory, data, std::move(file));
 }
 
+mapped_module map_module_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
+                                     const std::string& module_name)
+{
+    mapped_module binary{};
+    binary.name = module_name;
+    binary.path = module_name;
+    binary.image_base = base_address;
+    binary.size_of_image = image_size;
+
+    auto mapped_memory = read_mapped_memory(memory, binary);
+    utils::safe_buffer_accessor<const std::byte> buffer{mapped_memory};
+
+    try
+    {
+        const auto dos_header = buffer.as<PEDosHeader_t>(0).get();
+        const auto nt_headers_offset = dos_header.e_lfanew;
+        const auto nt_headers = buffer.as<PENTHeaders_t<std::uint64_t>>(nt_headers_offset).get();
+        const auto& optional_header = nt_headers.OptionalHeader;
+
+        binary.entry_point = binary.image_base + optional_header.AddressOfEntryPoint;
+
+        const auto section_offset = get_first_section_offset(nt_headers, nt_headers_offset);
+        const auto sections = buffer.as<IMAGE_SECTION_HEADER>(static_cast<size_t>(section_offset));
+
+        for (size_t i = 0; i < nt_headers.FileHeader.NumberOfSections; ++i)
+        {
+            const auto section = sections.get(i);
+
+            mapped_section section_info{};
+            section_info.region.start = binary.image_base + section.VirtualAddress;
+            section_info.region.length =
+                static_cast<size_t>(page_align_up(std::max(section.SizeOfRawData, section.Misc.VirtualSize)));
+
+            auto permissions = memory_permission::none;
+            if (section.Characteristics & IMAGE_SCN_MEM_EXECUTE)
+            {
+                permissions |= memory_permission::exec;
+            }
+            if (section.Characteristics & IMAGE_SCN_MEM_READ)
+            {
+                permissions |= memory_permission::read;
+            }
+            if (section.Characteristics & IMAGE_SCN_MEM_WRITE)
+            {
+                permissions |= memory_permission::write;
+            }
+
+            section_info.region.permissions = permissions;
+
+            for (size_t j = 0; j < sizeof(section.Name) && section.Name[j]; ++j)
+            {
+                section_info.name.push_back(static_cast<char>(section.Name[j]));
+            }
+
+            binary.sections.push_back(std::move(section_info));
+        }
+
+        collect_exports(binary, buffer, optional_header);
+    }
+    catch (const std::exception&)
+    {
+        // bad!
+        throw std::runtime_error("Failed to map module from memory at " + std::to_string(base_address) + " with size " +
+                                 std::to_string(image_size) + " for module " + module_name);
+    }
+
+    return binary;
+}
+
 bool unmap_module(memory_manager& memory, const mapped_module& mod)
 {
     return memory.release_memory(mod.image_base, static_cast<size_t>(mod.size_of_image));
