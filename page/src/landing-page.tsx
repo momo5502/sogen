@@ -139,7 +139,7 @@ export function LandingPage() {
                     className="bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 text-white border-0 px-8 py-6 text-lg font-semibold group transition-all duration-300 transform hover:scale-105"
                   >
                     <Play className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
-                    Try Live Demo
+                    Try Online
                     <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
                   </Button>
                 </a>
@@ -150,7 +150,7 @@ export function LandingPage() {
                     className="border-gray-600 text-gray-300 hover:bg-gray-800/50 px-8 py-6 text-lg font-semibold group transition-all duration-300"
                   >
                     <Github className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
-                    View on GitHub
+                    View Source
                     <ExternalLink className="ml-2 h-4 w-4" />
                   </Button>
                 </a>
