@@ -69,5 +69,6 @@ using USHORT = WORD;
 static_assert(sizeof(DWORD) == 4);
 static_assert(sizeof(ULONG) == 4);
 static_assert(sizeof(int) == 4);
+static_assert(sizeof(BOOLEAN) == 1);
 
 // NOLINTEND(modernize-use-using)

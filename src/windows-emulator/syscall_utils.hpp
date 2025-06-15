@@ -210,11 +210,22 @@ NTSTATUS handle_query_internal(x86_64_emulator& emu, const uint64_t buffer, cons
     }
 
     ResponseType obj{};
-    action(obj);
+    NTSTATUS result = STATUS_SUCCESS;
+
+    using action_result = std::invoke_result_t<Action, ResponseType&>;
+
+    if constexpr (std::is_same_v<NTSTATUS, action_result>)
+    {
+        result = action(obj);
+    }
+    else
+    {
+        action(obj);
+    }
 
     emu.write_memory(buffer, obj);
 
-    return STATUS_SUCCESS;
+    return result;
 }
 
 template <typename ResponseType, typename Action, typename LengthType>
