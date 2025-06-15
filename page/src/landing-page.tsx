@@ -323,7 +323,7 @@ export function LandingPage() {
                   >
                     momo5502
                   </a>{" "}
-                  with lots of help from{" "}
+                  with lots of help of{" "}
                   <a
                     href="https://github.com/momo5502/sogen/graphs/contributors"
                     className="underline"
