@@ -63,6 +63,43 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
+    std::u16string get_type_name(const handle_types::type type)
+    {
+        switch (type)
+        {
+        case handle_types::file:
+            return u"File";
+        case handle_types::device:
+            return u"Device";
+        case handle_types::event:
+            return u"Event";
+        case handle_types::section:
+            return u"Section";
+        case handle_types::symlink:
+            return u"Symlink";
+        case handle_types::directory:
+            return u"Directory";
+        case handle_types::semaphore:
+            return u"Semaphore";
+        case handle_types::port:
+            return u"Port";
+        case handle_types::thread:
+            return u"Thread";
+        case handle_types::registry:
+            return u"Registry";
+        case handle_types::mutant:
+            return u"Mutant";
+        case handle_types::token:
+            return u"Token";
+        case handle_types::window:
+            return u"Window";
+        case handle_types::timer:
+            return u"Timer";
+        default:
+            return u"";
+        }
+    }
+
     NTSTATUS handle_NtQueryObject(const syscall_context& c, const handle handle,
                                   const OBJECT_INFORMATION_CLASS object_information_class,
                                   const emulator_pointer object_information, const ULONG object_information_length,
@@ -100,7 +137,7 @@ namespace syscalls
             }
 
             const auto required_size = sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>) + (device_path.size() + 1) * 2;
-            return_length.write(static_cast<ULONG>(required_size));
+            return_length.write_if_valid(static_cast<ULONG>(required_size));
 
             if (required_size > object_information_length)
             {
@@ -109,6 +146,27 @@ namespace syscalls
 
             emulator_allocator allocator(c.emu, object_information, object_information_length);
             allocator.make_unicode_string(device_path);
+
+            return STATUS_SUCCESS;
+        }
+
+        if (object_information_class == ObjectTypeInformation)
+        {
+            const auto name = get_type_name(static_cast<handle_types::type>(handle.value.type));
+
+            const auto required_size = sizeof(OBJECT_TYPE_INFORMATION) + (name.size() + 1) * 2;
+            return_length.write_if_valid(static_cast<ULONG>(required_size));
+
+            if (required_size > object_information_length)
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            emulator_allocator allocator(c.emu, object_information, object_information_length);
+            const auto info = allocator.reserve<OBJECT_TYPE_INFORMATION>();
+            info.access([&](OBJECT_TYPE_INFORMATION& i) {
+                allocator.make_unicode_string(i.TypeName, name); //
+            });
 
             return STATUS_SUCCESS;
         }

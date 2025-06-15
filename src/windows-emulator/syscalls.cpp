@@ -611,6 +611,11 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
+    NTSTATUS handle_NtCreateDebugObject()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
     NTSTATUS handle_NtAddAtomEx(const syscall_context& c, const uint64_t atom_name, const ULONG length,
                                 const emulator_object<RTL_ATOM> atom, const ULONG /*flags*/)
     {
@@ -1179,6 +1184,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtQuerySecurityObject);
     add_handler(NtQueryEvent);
     add_handler(NtRemoveIoCompletionEx);
+    add_handler(NtCreateDebugObject);
 
 #undef add_handler
 }
