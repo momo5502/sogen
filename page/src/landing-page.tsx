@@ -111,12 +111,6 @@ export function LandingPage() {
 
           <div className="relative container mx-auto px-6 py-24 md:py-32">
             <div className="text-center space-y-8 max-w-4xl mx-auto">
-              {/* Badge */}
-              <div className="inline-flex items-center gap-2 bg-blue-500/20 border border-blue-500/30 rounded-full px-4 py-2 text-blue-300 text-sm font-medium">
-                <Zap className="h-4 w-4" />
-                High-Performance Windows Emulation
-              </div>
-
               {/* Main Headline */}
               <h1 className="text-5xl md:text-7xl font-bold bg-gradient-to-r from-white via-blue-100 to-cyan-200 bg-clip-text text-transparent leading-tight">
                 Sogen
