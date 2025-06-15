@@ -223,7 +223,10 @@ NTSTATUS handle_query_internal(x86_64_emulator& emu, const uint64_t buffer, cons
         action(obj);
     }
 
-    emu.write_memory(buffer, obj);
+    if (result == STATUS_SUCCESS)
+    {
+        emu.write_memory(buffer, obj);
+    }
 
     return result;
 }
