@@ -83,6 +83,17 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
           />
           <Label htmlFor="settings-buffer">Buffer stdout</Label>
         </div>
+
+        <div className="flex gap-6">
+          <Checkbox
+            id="settings-persist"
+            checked={this.state.persist}
+            onCheckedChange={(checked: boolean) => {
+              this.setState({ persist: checked });
+            }}
+          />
+          <Label htmlFor="settings-persist">Persist filesystem</Label>
+        </div>
       </div>
     );
   }

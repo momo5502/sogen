@@ -3,6 +3,7 @@ export interface Settings {
   concise: boolean;
   silent: boolean;
   bufferStdout: boolean;
+  persist: boolean;
 }
 
 export function createDefaultSettings(): Settings {
@@ -11,6 +12,7 @@ export function createDefaultSettings(): Settings {
     concise: false,
     silent: false,
     bufferStdout: true,
+    persist: false,
   };
 }
 

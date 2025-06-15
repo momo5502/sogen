@@ -75,6 +75,7 @@ export class Emulator {
       data: {
         file,
         options: translateSettings(settings),
+        persist: settings.persist,
       },
     });
   }

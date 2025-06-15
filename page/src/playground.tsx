@@ -105,13 +105,25 @@ export class Playground extends React.Component<
     location.reload();
   }
 
-  initFilesys() {
-    if (this.state.filesystemPromise) {
+  _onEmulatorStateChanged(s: EmulationState, persistFs: boolean) {
+    if (s == EmulationState.Stopped && persistFs) {
+      this.setState({ filesystemPromise: null, filesystem: null });
+      this.initFilesys(true);
+    } else {
+      this.forceUpdate();
+    }
+  }
+
+  initFilesys(force: boolean = false) {
+    if (!force && this.state.filesystemPromise) {
       return this.state.filesystemPromise;
     }
 
     const promise = new Promise<Filesystem>((resolve) => {
-      this.logLine("Loading filesystem...");
+      if (!force) {
+        this.logLine("Loading filesystem...");
+      }
+
       setupFilesystem(
         (current, total, file) => {
           this.logLine(`Processing filesystem (${current}/${total}): ${file}`);
@@ -172,9 +184,11 @@ export class Playground extends React.Component<
       await this.state.filesystemPromise;
     }
 
+    const persistFs = this.state.settings.persist;
+
     const new_emulator = new Emulator(
       (l) => this.logLines(l),
-      (_) => this.forceUpdate(),
+      (s) => this._onEmulatorStateChanged(s, persistFs),
     );
     new_emulator.onTerminate().then(() => this.setState({ emulator: null }));
 
