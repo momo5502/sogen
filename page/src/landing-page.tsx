@@ -322,9 +322,22 @@ export function LandingPage() {
                 </p>
                 <p className="mt-1 text-gray-500 text-sm">
                   Built by{" "}
-                  <a href="https://momo5502.com" target="_blank">
+                  <a
+                    href="https://momo5502.com"
+                    className="underline"
+                    target="_blank"
+                  >
                     momo5502
+                  </a>{" "}
+                  with lots of help from{" "}
+                  <a
+                    href="https://github.com/momo5502/sogen/graphs/contributors"
+                    className="underline"
+                    target="_blank"
+                  >
+                    the community
                   </a>
+                  .
                 </p>
               </div>
               <div className="flex items-center space-x-6">
