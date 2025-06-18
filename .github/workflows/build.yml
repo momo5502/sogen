@@ -70,7 +70,6 @@ jobs:
         uses: jidicula/clang-format-action@v4.15.0
         with:
           clang-format-version: "20"
-          check-path: "src"
 
       - name: Verify Page Formatting
         run: cd page && npx --yes prettier . --check
