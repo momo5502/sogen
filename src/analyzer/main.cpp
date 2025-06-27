@@ -290,6 +290,16 @@ namespace
 
         const auto concise_logging = !options.verbose_logging;
 
+        win_emu->emu().hook_instruction(x86_hookable_instructions::cpuid, [&] {
+            const auto rip = win_emu->emu().read_instruction_pointer();
+            if (win_emu->mod_manager.executable->is_within(rip))
+            {
+                win_emu->log.print(color::blue, "Executing CPUID instruction at 0x%" PRIx64 "\n", rip);
+            }
+
+            return instruction_hook_continuation::run_instruction;
+        });
+
         for (const auto& section : exe.sections)
         {
             if ((section.region.permissions & memory_permission::exec) != memory_permission::exec)
