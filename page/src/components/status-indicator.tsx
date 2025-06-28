@@ -28,11 +28,38 @@ function getStateColor(state: State) {
   }
 }
 
+function getStateEmoji(state: State) {
+  switch (state) {
+    case State.Stopped:
+      return "🔴";
+    case State.Paused:
+      return "🟡";
+    case State.Running:
+      return "🟢";
+    default:
+      return "";
+  }
+}
+
+function getFilename(path: string) {
+  const lastSlash = path.lastIndexOf("/");
+  if (lastSlash == -1) {
+    return path;
+  }
+
+  return path.substring(lastSlash + 1);
+}
+
 export interface StatusIndicatorProps {
   state: State;
+  application: string | undefined;
 }
 
 export function StatusIndicator(props: StatusIndicatorProps) {
+  if (props.application && props.application.length > 0) {
+    document.title = `${getStateEmoji(props.state)} ${getFilename(props.application)} | Sogen`;
+  }
+
   return (
     <Badge variant="outline">
       <CircleFill

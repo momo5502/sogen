@@ -37,6 +37,7 @@ interface PlaygroundState {
   filesystemPromise: Promise<Filesystem> | null;
   filesystem: Filesystem | null;
   emulator: Emulator | null;
+  application: string | undefined;
   drawerOpen: boolean;
 }
 
@@ -84,6 +85,7 @@ export class Playground extends React.Component<
       filesystem: null,
       emulator: null,
       drawerOpen: false,
+      application: undefined,
     };
   }
 
@@ -192,7 +194,7 @@ export class Playground extends React.Component<
     );
     new_emulator.onTerminate().then(() => this.setState({ emulator: null }));
 
-    this.setState({ emulator: new_emulator });
+    this.setState({ emulator: new_emulator, application: userFile });
 
     new_emulator.start(this.state.settings, userFile);
   }
@@ -201,7 +203,7 @@ export class Playground extends React.Component<
     return (
       <>
         <Header
-          title="Playground - Sogen"
+          title="Sogen - Playground"
           description="Playground to test and run Sogen, the Windows user space emulator, right in your browser."
         />
         <div className="h-[100dvh] flex flex-col">
@@ -285,6 +287,7 @@ export class Playground extends React.Component<
 
             <div className="text-right flex-1">
               <StatusIndicator
+                application={this.state.application}
                 state={
                   this.state.emulator
                     ? this.state.emulator.getState()
