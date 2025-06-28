@@ -16,6 +16,32 @@ export function createDefaultSettings(): Settings {
   };
 }
 
+export function loadSettings(): Settings {
+  const defaultSettings = createDefaultSettings();
+
+  const settingsStr = localStorage.getItem("settings");
+  if (!settingsStr) {
+    return defaultSettings;
+  }
+
+  try {
+    const userSettings = JSON.parse(settingsStr);
+    const keys = Object.keys(defaultSettings);
+
+    keys.forEach((k) => {
+      if (k in userSettings) {
+        (defaultSettings as any)[k] = userSettings[k];
+      }
+    });
+  } catch (e) {}
+
+  return defaultSettings;
+}
+
+export function saveSettings(settings: Settings) {
+  localStorage.setItem("settings", JSON.stringify(settings));
+}
+
 export function translateSettings(settings: Settings): string[] {
   const switches: string[] = [];
 

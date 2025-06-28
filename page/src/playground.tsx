@@ -12,7 +12,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 
-import { createDefaultSettings, Settings } from "./settings";
+import { Settings, loadSettings, saveSettings } from "./settings";
 import { SettingsMenu } from "@/components/settings-menu";
 
 import { PlayFill, StopFill, GearFill, PauseFill } from "react-bootstrap-icons";
@@ -79,7 +79,7 @@ export class Playground extends React.Component<
     this.toggleEmulatorState = this.toggleEmulatorState.bind(this);
 
     this.state = {
-      settings: createDefaultSettings(),
+      settings: loadSettings(),
       filesystemPromise: null,
       filesystem: null,
       emulator: null,
@@ -247,7 +247,10 @@ export class Playground extends React.Component<
               <PopoverContent>
                 <SettingsMenu
                   settings={this.state.settings}
-                  onChange={(s) => this.setState({ settings: s })}
+                  onChange={(s) => {
+                    saveSettings(s);
+                    this.setState({ settings: s });
+                  }}
                 />
               </PopoverContent>
             </Popover>
