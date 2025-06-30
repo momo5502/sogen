@@ -9,6 +9,20 @@ export enum EmulationState {
   Stopped,
   Paused,
   Running,
+  Success,
+  Failed,
+}
+
+export function isFinalState(state: EmulationState) {
+  switch (state) {
+    case EmulationState.Stopped:
+    case EmulationState.Success:
+    case EmulationState.Failed:
+      return true;
+
+    default:
+      return false;
+  }
 }
 
 function base64Encode(uint8Array: Uint8Array): string {
@@ -50,6 +64,7 @@ export class Emulator {
   terminateReject: (reason?: any) => void;
   worker: Worker;
   state: EmulationState = EmulationState.Stopped;
+  exit_status: number | null = null;
 
   constructor(logHandler: LogHandler, stateChangeHandler: StateChangeHandler) {
     this.logHandler = logHandler;
@@ -142,8 +157,10 @@ export class Emulator {
     } else if (event.data.message == "event") {
       this._onEvent(decodeEvent(event.data.data));
     } else if (event.data.message == "end") {
-      this._setState(EmulationState.Stopped);
-      this.terminateResolve(0);
+      this._setState(
+        this.exit_status === 0 ? EmulationState.Success : EmulationState.Failed,
+      );
+      this.terminateResolve(this.exit_status);
     }
   }
 
@@ -154,12 +171,21 @@ export class Emulator {
           event.event as fbDebugger.GetStateResponseT,
         );
         break;
+      case fbDebugger.Event.ApplicationExit:
+        this._handle_application_exit(
+          event.event as fbDebugger.ApplicationExitT,
+        );
+        break;
     }
   }
 
   _setState(state: EmulationState) {
     this.state = state;
     this.stateChangeHandler(this.state);
+  }
+
+  _handle_application_exit(info: fbDebugger.ApplicationExitT) {
+    this.exit_status = info.exitStatus;
   }
 
   _handle_state_response(response: fbDebugger.GetStateResponseT) {

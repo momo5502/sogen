@@ -59,6 +59,10 @@ table ReadRegisterResponse {
     data: [ubyte];
 }
 
+table ApplicationExit {
+    exit_status: uint32 = null;
+}
+
 union Event { 
     PauseRequest, 
     RunRequest,
@@ -72,6 +76,7 @@ union Event {
     WriteRegisterResponse,
     ReadRegisterRequest,
     ReadRegisterResponse,
+    ApplicationExit,
 }
 
 table DebugEvent {

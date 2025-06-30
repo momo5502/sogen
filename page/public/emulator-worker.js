@@ -75,7 +75,9 @@ function runEmulation(file, options, persist) {
       FS.mkdir("/root");
       FS.mount(IDBFS, {}, "/root");
       FS.syncfs(true, function (_) {
-        Module.callMain(mainArguments);
+        setTimeout(() => {
+          Module.callMain(mainArguments);
+        }, 0);
       });
     },
     print: logLine,

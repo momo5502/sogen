@@ -2,6 +2,7 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
+import { ApplicationExit, ApplicationExitT } from '../debugger/application-exit.js';
 import { GetStateRequest, GetStateRequestT } from '../debugger/get-state-request.js';
 import { GetStateResponse, GetStateResponseT } from '../debugger/get-state-response.js';
 import { PauseRequest, PauseRequestT } from '../debugger/pause-request.js';
@@ -29,13 +30,14 @@ export enum Event {
   WriteRegisterRequest = 9,
   WriteRegisterResponse = 10,
   ReadRegisterRequest = 11,
-  ReadRegisterResponse = 12
+  ReadRegisterResponse = 12,
+  ApplicationExit = 13
 }
 
 export function unionToEvent(
   type: Event,
-  accessor: (obj:GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse) => GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null
-): GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null {
+  accessor: (obj:ApplicationExit|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse) => ApplicationExit|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null
+): ApplicationExit|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null {
   switch(Event[type]) {
     case 'NONE': return null; 
     case 'PauseRequest': return accessor(new PauseRequest())! as PauseRequest;
@@ -50,15 +52,16 @@ export function unionToEvent(
     case 'WriteRegisterResponse': return accessor(new WriteRegisterResponse())! as WriteRegisterResponse;
     case 'ReadRegisterRequest': return accessor(new ReadRegisterRequest())! as ReadRegisterRequest;
     case 'ReadRegisterResponse': return accessor(new ReadRegisterResponse())! as ReadRegisterResponse;
+    case 'ApplicationExit': return accessor(new ApplicationExit())! as ApplicationExit;
     default: return null;
   }
 }
 
 export function unionListToEvent(
   type: Event, 
-  accessor: (index: number, obj:GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse) => GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null, 
+  accessor: (index: number, obj:ApplicationExit|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse) => ApplicationExit|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null, 
   index: number
-): GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null {
+): ApplicationExit|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null {
   switch(Event[type]) {
     case 'NONE': return null; 
     case 'PauseRequest': return accessor(index, new PauseRequest())! as PauseRequest;
@@ -73,6 +76,7 @@ export function unionListToEvent(
     case 'WriteRegisterResponse': return accessor(index, new WriteRegisterResponse())! as WriteRegisterResponse;
     case 'ReadRegisterRequest': return accessor(index, new ReadRegisterRequest())! as ReadRegisterRequest;
     case 'ReadRegisterResponse': return accessor(index, new ReadRegisterResponse())! as ReadRegisterResponse;
+    case 'ApplicationExit': return accessor(index, new ApplicationExit())! as ApplicationExit;
     default: return null;
   }
 }

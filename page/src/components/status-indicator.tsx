@@ -10,6 +10,10 @@ function getStateName(state: State) {
       return "Paused";
     case State.Running:
       return "Running";
+    case State.Failed:
+      return "Failed";
+    case State.Success:
+      return "Success";
     default:
       return "";
   }
@@ -17,12 +21,16 @@ function getStateName(state: State) {
 
 function getStateColor(state: State) {
   switch (state) {
-    case State.Stopped:
+    case State.Failed:
       return "bg-orange-600";
     case State.Paused:
       return "bg-amber-500";
-    case State.Running:
+    case State.Success:
       return "bg-lime-600";
+    case State.Stopped:
+      return "bg-yellow-800";
+    case State.Running:
+      return "bg-sky-500";
     default:
       return "";
   }
@@ -31,10 +39,14 @@ function getStateColor(state: State) {
 function getStateEmoji(state: State) {
   switch (state) {
     case State.Stopped:
-      return "🔴";
+      return "🟤";
     case State.Paused:
       return "🟡";
     case State.Running:
+      return "🔵";
+    case State.Failed:
+      return "🔴";
+    case State.Success:
       return "🟢";
     default:
       return "";

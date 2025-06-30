@@ -9,9 +9,14 @@
 #include "snapshot.hpp"
 #include "analysis.hpp"
 
+#include <utils/finally.hpp>
 #include <utils/interupt_handler.hpp>
 
 #include <cstdio>
+
+#ifdef OS_EMSCRIPTEN
+#include <event_handler.hpp>
+#endif
 
 namespace
 {
@@ -132,6 +137,13 @@ namespace
             win_emu.stop();
         }};
 
+        std::optional<NTSTATUS> exit_status{};
+#ifdef OS_EMSCRIPTEN
+        const auto _1 = utils::finally([&] {
+            debugger::handle_exit(exit_status); //
+        });
+#endif
+
         try
         {
             if (options.use_gdb)
@@ -182,7 +194,7 @@ namespace
             throw;
         }
 
-        const auto exit_status = win_emu.process.exit_status;
+        exit_status = win_emu.process.exit_status;
         if (!exit_status.has_value())
         {
             do_post_emulation_work(c);

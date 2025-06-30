@@ -230,4 +230,11 @@ namespace debugger
             suspend_execution(2ms);
         }
     }
+
+    void handle_exit(std::optional<NTSTATUS> exit_status)
+    {
+        Debugger::ApplicationExitT response{};
+        response.exit_status = exit_status;
+        send_event(response);
+    }
 }

@@ -2,6 +2,7 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
+export { ApplicationExit, ApplicationExitT } from './debugger/application-exit.js';
 export { DebugEvent, DebugEventT } from './debugger/debug-event.js';
 export { Event } from './debugger/event.js';
 export { GetStateRequest, GetStateRequestT } from './debugger/get-state-request.js';

@@ -18,4 +18,5 @@ namespace debugger
     };
 
     void handle_events(event_context& c);
+    void handle_exit(std::optional<NTSTATUS> exit_status);
 }

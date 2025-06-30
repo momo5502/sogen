@@ -2,7 +2,7 @@ import React from "react";
 
 import { Output } from "@/components/output";
 
-import { Emulator, EmulationState } from "./emulator";
+import { Emulator, EmulationState, isFinalState } from "./emulator";
 import { Filesystem, setupFilesystem } from "./filesystem";
 
 import "./App.css";
@@ -108,7 +108,7 @@ export class Playground extends React.Component<
   }
 
   _onEmulatorStateChanged(s: EmulationState, persistFs: boolean) {
-    if (s == EmulationState.Stopped && persistFs) {
+    if (isFinalState(s) && persistFs) {
       this.setState({ filesystemPromise: null, filesystem: null });
       this.initFilesys(true);
     } else {
@@ -192,7 +192,7 @@ export class Playground extends React.Component<
       (l) => this.logLines(l),
       (s) => this._onEmulatorStateChanged(s, persistFs),
     );
-    new_emulator.onTerminate().then(() => this.setState({ emulator: null }));
+    //new_emulator.onTerminate().then(() => this.setState({ emulator: null }));
 
     this.setState({ emulator: new_emulator, application: userFile });
 
@@ -213,7 +213,10 @@ export class Playground extends React.Component<
             </Button>
 
             <Button
-              disabled={!this.state.emulator}
+              disabled={
+                !this.state.emulator ||
+                isFinalState(this.state.emulator.getState())
+              }
               size="sm"
               variant="secondary"
               className="fancy"
@@ -223,7 +226,10 @@ export class Playground extends React.Component<
             </Button>
             <Button
               size="sm"
-              disabled={!this.state.emulator}
+              disabled={
+                !this.state.emulator ||
+                isFinalState(this.state.emulator.getState())
+              }
               variant="secondary"
               className="fancy"
               onClick={this.toggleEmulatorState}
