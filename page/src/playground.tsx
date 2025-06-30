@@ -68,6 +68,7 @@ export class Playground extends React.Component<
   PlaygroundState
 > {
   private output: React.RefObject<Output | null>;
+  private iconCache: Map<string, string | null> = new Map();
 
   constructor(props: PlaygroundProps) {
     super(props);
@@ -282,6 +283,7 @@ export class Playground extends React.Component<
                   <DrawerFooter>
                     <FilesystemExplorer
                       filesystem={this.state.filesystem}
+                      iconCache={this.iconCache}
                       runFile={this.createEmulator}
                       resetFilesys={this.resetFilesys}
                       path={["c"]}

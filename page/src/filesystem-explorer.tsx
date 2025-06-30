@@ -37,6 +37,7 @@ export interface FilesystemExplorerProps {
   runFile: (file: string) => void;
   resetFilesys: () => void;
   path: string[];
+  iconCache: Map<string, string | null>;
 }
 export interface FilesystemExplorerState {
   path: string[];
@@ -239,16 +240,12 @@ export class FilesystemExplorer extends React.Component<
   FilesystemExplorerProps,
   FilesystemExplorerState
 > {
-  private iconCache: Map<string, string | null>;
-
   constructor(props: FilesystemExplorerProps) {
     super(props);
 
     this._onAddFiles = this._onAddFiles.bind(this);
     this._uploadFiles = this._uploadFiles.bind(this);
     this._onElementSelect = this._onElementSelect.bind(this);
-
-    this.iconCache = new Map();
 
     this.state = {
       path: this.props.path,
@@ -294,6 +291,9 @@ export class FilesystemExplorer extends React.Component<
     const newPath = makeFullPathWithState(this.state, newFile);
 
     this.setState({ renameFile: "" });
+
+    this._removeFromCache(file);
+    this._removeFromCache(newFile);
 
     await this.props.filesystem.rename(oldPath, newPath);
     this.forceUpdate();
@@ -344,6 +344,10 @@ export class FilesystemExplorer extends React.Component<
         name: makeFullPathWithState(this.state, name.toLowerCase()),
         data: f.data,
       };
+    });
+
+    fileData.forEach((d) => {
+      this._removeFromCache(d.name);
     });
 
     await this.props.filesystem.storeFiles(fileData);
@@ -489,6 +493,7 @@ export class FilesystemExplorer extends React.Component<
                   this.state.removeFile,
                 );
                 this.setState({ removeFile: "" });
+                this._removeFromCache(file);
                 this.props.filesystem
                   .unlink(file)
                   .then(() => this.forceUpdate());
@@ -533,6 +538,7 @@ export class FilesystemExplorer extends React.Component<
               className="fancy rounded-lg"
               onClick={() => {
                 this.setState({ resetFilesys: false });
+                this.props.iconCache.clear();
                 this.props.resetFilesys();
               }}
             >
@@ -587,6 +593,10 @@ export class FilesystemExplorer extends React.Component<
     );
   }
 
+  _removeFromCache(file: string) {
+    this.props.iconCache.delete(file);
+  }
+
   render() {
     const elements = getFolderElements(this.props.filesystem, this.state.path);
 
@@ -633,7 +643,7 @@ export class FilesystemExplorer extends React.Component<
                   getPeIcon(
                     this.props.filesystem,
                     makeFullPathWithState(this.state, e.name),
-                    this.iconCache,
+                    this.props.iconCache,
                   )
                 }
               />
