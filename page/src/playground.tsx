@@ -304,7 +304,7 @@ export class Playground extends React.Component<
               />
             </div>
           </header>
-          <div className="flex flex-1 flex-col gap-2 p-2 overflow-auto">
+          <div className="flex flex-1 flex-col pl-1 overflow-auto">
             <Output ref={this.output} />
           </div>
         </div>
