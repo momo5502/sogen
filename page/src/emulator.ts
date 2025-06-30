@@ -110,6 +110,7 @@ export class Emulator {
 
   stop() {
     this.worker.terminate();
+    this._setState(EmulationState.Stopped);
     this.terminateResolve(null);
   }
 
