@@ -4,6 +4,7 @@ export interface Settings {
   silent: boolean;
   bufferStdout: boolean;
   persist: boolean;
+  execAccess: boolean;
 }
 
 export function createDefaultSettings(): Settings {
@@ -13,6 +14,7 @@ export function createDefaultSettings(): Settings {
     silent: false,
     bufferStdout: true,
     persist: false,
+    execAccess: true,
   };
 }
 
@@ -59,6 +61,10 @@ export function translateSettings(settings: Settings): string[] {
 
   if (settings.bufferStdout) {
     switches.push("-b");
+  }
+
+  if (settings.execAccess) {
+    switches.push("-x");
   }
 
   return switches;

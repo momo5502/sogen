@@ -23,6 +23,7 @@ namespace
     struct analysis_options : analysis_settings
     {
         mutable bool use_gdb{false};
+        bool log_executable_access{false};
         std::filesystem::path dump{};
         std::filesystem::path minidump_path{};
         std::string registry_path{"./registry"};
@@ -312,58 +313,62 @@ namespace
             return instruction_hook_continuation::run_instruction;
         });
 
-        for (const auto& section : exe.sections)
+        if (options.log_executable_access)
         {
-            if ((section.region.permissions & memory_permission::exec) != memory_permission::exec)
+            for (const auto& section : exe.sections)
             {
-                continue;
+                if ((section.region.permissions & memory_permission::exec) != memory_permission::exec)
+                {
+                    continue;
+                }
+
+                auto read_handler = [&, section, concise_logging](const uint64_t address, const void*, size_t) {
+                    const auto rip = win_emu->emu().read_instruction_pointer();
+                    if (!win_emu->mod_manager.executable->is_within(rip))
+                    {
+                        return;
+                    }
+
+                    if (concise_logging)
+                    {
+                        static uint64_t count{0};
+                        ++count;
+                        if (count > 100 && count % 100000 != 0)
+                        {
+                            return;
+                        }
+                    }
+
+                    win_emu->log.print(color::green,
+                                       "Reading from executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
+                                       section.name.c_str(), address, rip);
+                };
+
+                const auto write_handler = [&, section, concise_logging](const uint64_t address, const void*, size_t) {
+                    const auto rip = win_emu->emu().read_instruction_pointer();
+                    if (!win_emu->mod_manager.executable->is_within(rip))
+                    {
+                        return;
+                    }
+
+                    if (concise_logging)
+                    {
+                        static uint64_t count{0};
+                        ++count;
+                        if (count > 100 && count % 100000 != 0)
+                        {
+                            return;
+                        }
+                    }
+
+                    win_emu->log.print(color::blue,
+                                       "Writing to executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
+                                       section.name.c_str(), address, rip);
+                };
+
+                win_emu->emu().hook_memory_read(section.region.start, section.region.length, std::move(read_handler));
+                win_emu->emu().hook_memory_write(section.region.start, section.region.length, std::move(write_handler));
             }
-
-            auto read_handler = [&, section, concise_logging](const uint64_t address, const void*, size_t) {
-                const auto rip = win_emu->emu().read_instruction_pointer();
-                if (!win_emu->mod_manager.executable->is_within(rip))
-                {
-                    return;
-                }
-
-                if (concise_logging)
-                {
-                    static uint64_t count{0};
-                    ++count;
-                    if (count > 100 && count % 100000 != 0)
-                    {
-                        return;
-                    }
-                }
-
-                win_emu->log.print(color::green,
-                                   "Reading from executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
-                                   section.name.c_str(), address, rip);
-            };
-
-            const auto write_handler = [&, section, concise_logging](const uint64_t address, const void*, size_t) {
-                const auto rip = win_emu->emu().read_instruction_pointer();
-                if (!win_emu->mod_manager.executable->is_within(rip))
-                {
-                    return;
-                }
-
-                if (concise_logging)
-                {
-                    static uint64_t count{0};
-                    ++count;
-                    if (count > 100 && count % 100000 != 0)
-                    {
-                        return;
-                    }
-                }
-
-                win_emu->log.print(color::blue, "Writing to executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
-                                   section.name.c_str(), address, rip);
-            };
-
-            win_emu->emu().hook_memory_read(section.region.start, section.region.length, std::move(read_handler));
-            win_emu->emu().hook_memory_write(section.region.start, section.region.length, std::move(write_handler));
         }
 
         return run_emulation(context, options);
@@ -391,6 +396,7 @@ namespace
         printf("  -v, --verbose             Verbose logging\n");
         printf("  -b, --buffer              Buffer stdout\n");
         printf("  -c, --concise             Concise logging\n");
+        printf("  -x, --exec                Log r/w access to executable memory\n");
         printf("  -m, --module <module>     Specify module to track\n");
         printf("  -e, --emulation <path>    Set emulation root path\n");
         printf("  -a, --snapshot <path>     Load snapshot dump from path\n");

@@ -86,6 +86,17 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
 
         <div className="flex gap-6">
           <Checkbox
+            id="settings-exec"
+            checked={this.state.execAccess}
+            onCheckedChange={(checked: boolean) => {
+              this.setState({ execAccess: checked });
+            }}
+          />
+          <Label htmlFor="settings-exec">Log exec Memory Access</Label>
+        </div>
+
+        <div className="flex gap-6">
+          <Checkbox
             id="settings-persist"
             checked={this.state.persist}
             onCheckedChange={(checked: boolean) => {
