@@ -439,6 +439,10 @@ namespace
             {
                 options.buffer_stdout = true;
             }
+            else if (arg == "-x" || arg == "--exec")
+            {
+                options.log_executable_access = true;
+            }
             else if (arg == "-c" || arg == "--concise")
             {
                 options.concise_logging = true;
