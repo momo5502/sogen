@@ -370,7 +370,7 @@ dependencies = [
 [[package]]
 name = "icicle-cpu"
 version = "0.1.0"
-source = "git+https://github.com/icicle-emu/icicle-emu#2cdcf4bdbc4a8edc0b65010d64940c762d1f4d51"
+source = "git+https://github.com/icicle-emu/icicle-emu#e80282d3e1f53177b3f5a82fc48ac7538826a7d9"
 dependencies = [
  "addr2line",
  "ahash",
@@ -390,7 +390,7 @@ dependencies = [
 [[package]]
 name = "icicle-jit"
 version = "0.2.0"
-source = "git+https://github.com/icicle-emu/icicle-emu#2cdcf4bdbc4a8edc0b65010d64940c762d1f4d51"
+source = "git+https://github.com/icicle-emu/icicle-emu#e80282d3e1f53177b3f5a82fc48ac7538826a7d9"
 dependencies = [
  "cranelift",
  "cranelift-codegen",
@@ -408,7 +408,7 @@ dependencies = [
 [[package]]
 name = "icicle-linux"
 version = "0.1.0"
-source = "git+https://github.com/icicle-emu/icicle-emu#2cdcf4bdbc4a8edc0b65010d64940c762d1f4d51"
+source = "git+https://github.com/icicle-emu/icicle-emu#e80282d3e1f53177b3f5a82fc48ac7538826a7d9"
 dependencies = [
  "bitflags 2.9.0",
  "bstr",
@@ -424,7 +424,7 @@ dependencies = [
 [[package]]
 name = "icicle-mem"
 version = "0.3.0"
-source = "git+https://github.com/icicle-emu/icicle-emu#2cdcf4bdbc4a8edc0b65010d64940c762d1f4d51"
+source = "git+https://github.com/icicle-emu/icicle-emu#e80282d3e1f53177b3f5a82fc48ac7538826a7d9"
 dependencies = [
  "ahash",
  "tracing",
@@ -433,7 +433,7 @@ dependencies = [
 [[package]]
 name = "icicle-vm"
 version = "0.2.0"
-source = "git+https://github.com/icicle-emu/icicle-emu#2cdcf4bdbc4a8edc0b65010d64940c762d1f4d51"
+source = "git+https://github.com/icicle-emu/icicle-emu#e80282d3e1f53177b3f5a82fc48ac7538826a7d9"
 dependencies = [
  "anyhow",
  "icicle-cpu",
@@ -550,7 +550,7 @@ checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 [[package]]
 name = "pcode"
 version = "0.2.0"
-source = "git+https://github.com/icicle-emu/icicle-emu#2cdcf4bdbc4a8edc0b65010d64940c762d1f4d51"
+source = "git+https://github.com/icicle-emu/icicle-emu#e80282d3e1f53177b3f5a82fc48ac7538826a7d9"
 
 [[package]]
 name = "pin-project-lite"
@@ -682,7 +682,7 @@ dependencies = [
 [[package]]
 name = "sleigh-compile"
 version = "0.3.0"
-source = "git+https://github.com/icicle-emu/icicle-emu#2cdcf4bdbc4a8edc0b65010d64940c762d1f4d51"
+source = "git+https://github.com/icicle-emu/icicle-emu#e80282d3e1f53177b3f5a82fc48ac7538826a7d9"
 dependencies = [
  "pcode",
  "serde",
@@ -695,12 +695,12 @@ dependencies = [
 [[package]]
 name = "sleigh-parse"
 version = "0.3.0"
-source = "git+https://github.com/icicle-emu/icicle-emu#2cdcf4bdbc4a8edc0b65010d64940c762d1f4d51"
+source = "git+https://github.com/icicle-emu/icicle-emu#e80282d3e1f53177b3f5a82fc48ac7538826a7d9"
 
 [[package]]
 name = "sleigh-runtime"
 version = "0.1.0"
-source = "git+https://github.com/icicle-emu/icicle-emu#2cdcf4bdbc4a8edc0b65010d64940c762d1f4d51"
+source = "git+https://github.com/icicle-emu/icicle-emu#e80282d3e1f53177b3f5a82fc48ac7538826a7d9"
 dependencies = [
  "pcode",
  "sleigh-parse",
