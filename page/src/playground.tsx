@@ -206,6 +206,7 @@ export class Playground extends React.Component<
         <Header
           title="Sogen - Playground"
           description="Playground to test and run Sogen, the Windows user space emulator, right in your browser."
+          preload={["./emulator-worker.js", "./analyzer.js", "./analyzer.wasm"]}
         />
         <div className="h-[100dvh] flex flex-col">
           <header className="flex shrink-0 items-center gap-2 border-b p-2 overflow-y-auto">
