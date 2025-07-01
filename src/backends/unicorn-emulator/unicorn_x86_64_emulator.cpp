@@ -335,9 +335,9 @@ namespace unicorn
                 this->mmio_[address] = std::move(cb);
             }
 
-            void map_memory(const uint64_t address, const size_t size, memory_permission permissions) override
+            void map_memory(const uint64_t address, const size_t size, nt_memory_permission permissions) override
             {
-                uce(uc_mem_map(*this, address, size, static_cast<uint32_t>(permissions)));
+                uce(uc_mem_map(*this, address, size, static_cast<uint32_t>(permissions.common)));
             }
 
             void unmap_memory(const uint64_t address, const size_t size) override
@@ -367,9 +367,9 @@ namespace unicorn
             }
 
             void apply_memory_protection(const uint64_t address, const size_t size,
-                                         memory_permission permissions) override
+                                         nt_memory_permission permissions) override
             {
-                uce(uc_mem_protect(*this, address, size, static_cast<uint32_t>(permissions)));
+                uce(uc_mem_protect(*this, address, size, static_cast<uint32_t>(permissions.common)));
             }
 
             emulator_hook* hook_instruction(const int instruction_type, instruction_hook_callback callback) override

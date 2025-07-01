@@ -1,8 +1,10 @@
+#include "memory_permission.hpp"
 #include "std_include.hpp"
 #include "memory_manager.hpp"
 
 #include "memory_region.hpp"
 #include "address_utils.hpp"
+#include "windows-emulator/memory_permission_ext.hpp"
 
 #include <vector>
 #include <optional>
@@ -73,7 +75,7 @@ namespace utils
     static void deserialize(buffer_deserializer& buffer, memory_manager::committed_region& region)
     {
         region.length = static_cast<size_t>(buffer.read<uint64_t>());
-        region.permissions = buffer.read<memory_permission>();
+        region.permissions = buffer.read<nt_memory_permission>();
     }
 
     static void serialize(buffer_serializer& buffer, const memory_manager::reserved_region& region)
@@ -170,8 +172,8 @@ void memory_manager::deserialize_memory_state(utils::buffer_deserializer& buffer
     }
 }
 
-bool memory_manager::protect_memory(const uint64_t address, const size_t size, const memory_permission permissions,
-                                    memory_permission* old_permissions)
+bool memory_manager::protect_memory(const uint64_t address, const size_t size, const nt_memory_permission permissions,
+                                    nt_memory_permission* old_permissions)
 {
     const auto entry = this->find_reserved_region(address);
     if (entry == this->reserved_regions_.end())
@@ -249,7 +251,7 @@ bool memory_manager::allocate_mmio(const uint64_t address, const size_t size, mm
     return true;
 }
 
-bool memory_manager::allocate_memory(const uint64_t address, const size_t size, const memory_permission permissions,
+bool memory_manager::allocate_memory(const uint64_t address, const size_t size, const nt_memory_permission permissions,
                                      const bool reserve_only)
 {
     if (this->overlaps_reserved_region(address, size))
@@ -268,7 +270,13 @@ bool memory_manager::allocate_memory(const uint64_t address, const size_t size, 
     if (!reserve_only)
     {
         this->map_memory(address, size, permissions);
-        entry->second.committed_regions[address] = committed_region{size, memory_permission::read_write};
+
+        auto common = memory_permission::read_write;
+        auto extended = permissions.is_guarded() 
+            ? memory_permission_ext::guard
+            : memory_permission_ext::none;
+        
+        entry->second.committed_regions[address] = committed_region{size, nt_memory_permission{common, extended}};
     }
 
     this->update_layout_version();
@@ -276,7 +284,7 @@ bool memory_manager::allocate_memory(const uint64_t address, const size_t size, 
     return true;
 }
 
-bool memory_manager::commit_memory(const uint64_t address, const size_t size, const memory_permission permissions)
+bool memory_manager::commit_memory(const uint64_t address, const size_t size, const nt_memory_permission permissions)
 {
     const auto entry = this->find_reserved_region(address);
     if (entry == this->reserved_regions_.end())
@@ -454,7 +462,7 @@ void memory_manager::unmap_all_memory()
     this->reserved_regions_.clear();
 }
 
-uint64_t memory_manager::allocate_memory(const size_t size, const memory_permission permissions,
+uint64_t memory_manager::allocate_memory(const size_t size, const nt_memory_permission permissions,
                                          const bool reserve_only)
 {
     const auto allocation_base = this->find_free_allocation_base(size);
@@ -500,8 +508,8 @@ region_info memory_manager::get_region_info(const uint64_t address)
     region_info result{};
     result.start = MIN_ALLOCATION_ADDRESS;
     result.length = static_cast<size_t>(MAX_ALLOCATION_ADDRESS - result.start);
-    result.permissions = memory_permission::none;
-    result.initial_permissions = memory_permission::none;
+    result.permissions = nt_memory_permission();
+    result.initial_permissions = nt_memory_permission();
     result.allocation_base = {};
     result.allocation_length = result.length;
     result.is_committed = false;
@@ -624,9 +632,13 @@ void memory_manager::map_mmio(const uint64_t address, const size_t size, mmio_re
     this->memory_->map_mmio(address, size, std::move(read_cb), std::move(write_cb));
 }
 
-void memory_manager::map_memory(const uint64_t address, const size_t size, const memory_permission permissions)
+void memory_manager::map_memory(const uint64_t address, const size_t size, const nt_memory_permission permissions)
 {
-    this->memory_->map_memory(address, size, permissions);
+    auto perms = permissions.is_guarded() 
+        ? nt_memory_permission(memory_permission::none) 
+        : permissions;
+    
+    this->memory_->map_memory(address, size, perms);
 }
 
 void memory_manager::unmap_memory(const uint64_t address, const size_t size)
@@ -635,7 +647,7 @@ void memory_manager::unmap_memory(const uint64_t address, const size_t size)
 }
 
 void memory_manager::apply_memory_protection(const uint64_t address, const size_t size,
-                                             const memory_permission permissions)
+                                             const nt_memory_permission permissions)
 {
     this->memory_->apply_memory_protection(address, size, permissions);
 }

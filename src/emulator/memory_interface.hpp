@@ -22,10 +22,10 @@ class memory_interface
 
   private:
     virtual void map_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) = 0;
-    virtual void map_memory(uint64_t address, size_t size, memory_permission permissions) = 0;
+    virtual void map_memory(uint64_t address, size_t size, nt_memory_permission permissions) = 0;
     virtual void unmap_memory(uint64_t address, size_t size) = 0;
 
-    virtual void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) = 0;
+    virtual void apply_memory_protection(uint64_t address, size_t size, nt_memory_permission permissions) = 0;
 
   public:
     template <typename T>
