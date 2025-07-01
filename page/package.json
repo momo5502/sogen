@@ -36,7 +36,7 @@
     "react-dom": "^19.0.0",
     "react-dropzone": "^14.3.8",
     "react-helmet": "^6.1.0",
-    "react-resizable-panels": "^3.0.2",
+    "react-resizable-panels": "^3.0.3",
     "react-router-dom": "^7.6.3",
     "react-window": "^1.8.11",
     "tailwind-merge": "^3.3.1",
