@@ -317,7 +317,7 @@ namespace
         {
             for (const auto& section : exe.sections)
             {
-                if ((section.region.permissions & memory_permission::exec) != memory_permission::exec)
+                if ((section.region.permissions.common & memory_permission::exec) != memory_permission::exec)
                 {
                     continue;
                 }
