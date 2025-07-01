@@ -2,6 +2,7 @@
 #include "exception_dispatch.hpp"
 #include "process_context.hpp"
 #include "cpu_context.hpp"
+#include <winnt.h>
 
 namespace
 {
@@ -176,6 +177,16 @@ void dispatch_access_violation(x86_64_emulator& emu, const process_context& proc
                                const memory_operation operation)
 {
     dispatch_exception(emu, proc, STATUS_ACCESS_VIOLATION,
+                       {
+                           map_violation_operation_to_parameter(operation),
+                           address,
+                       });
+}
+
+void dispatch_guard_page_violation(x86_64_emulator& emu, const process_context& proc, const uint64_t address,
+                               const memory_operation operation)
+{
+    dispatch_exception(emu, proc, STATUS_GUARD_PAGE_VIOLATION,
                        {
                            map_violation_operation_to_parameter(operation),
                            address,
