@@ -503,8 +503,9 @@ void windows_emulator::setup_hooks()
         auto region = this->memory.get_region_info(address);
         if (region.permissions.is_guarded())
         {
-            // Unset the GUARD_PAGE flag and dispatch a STATUS_GUARD_PAGE_VIOLATION  
-            this->memory.protect_memory(region.allocation_base, region.length, region.permissions & ~memory_permission_ext::guard);
+            // Unset the GUARD_PAGE flag and dispatch a STATUS_GUARD_PAGE_VIOLATION
+            this->memory.protect_memory(region.allocation_base, region.length,
+                                        region.permissions & ~memory_permission_ext::guard);
             dispatch_guard_page_violation(this->emu(), this->process, address, operation);
         }
         else
@@ -512,7 +513,7 @@ void windows_emulator::setup_hooks()
             this->callbacks.on_memory_violate(address, size, operation, type);
             dispatch_access_violation(this->emu(), this->process, address, operation);
         }
-        
+
         return memory_violation_continuation::resume;
     });
 

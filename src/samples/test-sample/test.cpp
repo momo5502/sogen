@@ -646,26 +646,26 @@ namespace
 
         return res;
     }
-    
-    INT32 test_guard_page_seh_filter(LPVOID address, DWORD code, struct _EXCEPTION_POINTERS* ep) 
+
+    INT32 test_guard_page_seh_filter(LPVOID address, DWORD code, struct _EXCEPTION_POINTERS* ep)
     {
         // We are only looking for guard page exceptions.
-        if (code != STATUS_GUARD_PAGE_VIOLATION) 
+        if (code != STATUS_GUARD_PAGE_VIOLATION)
         {
             return EXCEPTION_CONTINUE_SEARCH;
         }
 
         // The number of defined elements in the ExceptionInformation array for
         // a guard page violation should be 2.
-        if (ep->ExceptionRecord->NumberParameters != 2) 
+        if (ep->ExceptionRecord->NumberParameters != 2)
         {
             return EXCEPTION_CONTINUE_SEARCH;
         }
 
         // The ExceptionInformation array specifies additional arguments that
         // describe the exception.
-        auto *exception_information = ep->ExceptionRecord->ExceptionInformation;
-        
+        auto* exception_information = ep->ExceptionRecord->ExceptionInformation;
+
         // If this value is zero, the thread attempted to read the inaccessible
         // data. If this value is 1, the thread attempted to write to an
         // inaccessible address.
@@ -673,14 +673,14 @@ namespace
         {
             return EXCEPTION_CONTINUE_SEARCH;
         }
-        
+
         // The second array element specifies the virtual address of the
         // inaccessible data.
         if (exception_information[1] != (ULONG_PTR)address)
         {
             return EXCEPTION_CONTINUE_SEARCH;
         }
-        
+
         return EXCEPTION_EXECUTE_HANDLER;
     }
 
@@ -691,12 +691,8 @@ namespace
 
         // Allocate a guarded memory region with the length of the system page
         // size.
-        auto *addr = static_cast<LPBYTE>(VirtualAlloc(
-            nullptr, 
-            sys_info.dwPageSize, 
-            MEM_RESERVE | MEM_COMMIT, 
-            PAGE_READWRITE | PAGE_GUARD
-        ));
+        auto* addr = static_cast<LPBYTE>(
+            VirtualAlloc(nullptr, sys_info.dwPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE | PAGE_GUARD));
         if (addr == nullptr)
         {
             puts("Failed to allocate guard page");
@@ -704,12 +700,12 @@ namespace
         }
 
         bool success = false;
-        
+
         // We want to access some arbitrary offset into the guarded page, to
         // ensure that ExceptionInformation correctly contains the virtual
         // address of the inaccessible data, not the base address of the region.
         constexpr size_t offset = 10;
-        
+
         // Trigger a guard page violation
         __try
         {
@@ -717,28 +713,27 @@ namespace
         }
         // If the filter function returns EXCEPTION_CONTINUE_SEARCH, the
         // exception contains all of the correct information.
-        __except(test_guard_page_seh_filter(
-            addr + offset, 
-            GetExceptionCode(), 
-            GetExceptionInformation()))
+        __except (test_guard_page_seh_filter(addr + offset, GetExceptionCode(), GetExceptionInformation()))
         {
             success = true;
         }
 
         // The page guard should be lifted, so no exception should be raised.
-        __try {
+        __try
+        {
             // The previous write should not have went through, this is probably
             // superflous.
-            if (addr[offset] == 255) {
+            if (addr[offset] == 255)
+            {
                 success = false;
             }
         }
-        __except(EXCEPTION_EXECUTE_HANDLER)
+        __except (EXCEPTION_EXECUTE_HANDLER)
         {
             puts("Failed to read from page after guard exception!");
             success = false;
         }
-        
+
         return success;
     }
 

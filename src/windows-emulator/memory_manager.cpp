@@ -272,10 +272,8 @@ bool memory_manager::allocate_memory(const uint64_t address, const size_t size, 
         this->map_memory(address, size, permissions);
 
         auto common = memory_permission::read_write;
-        auto extended = permissions.is_guarded() 
-            ? memory_permission_ext::guard
-            : memory_permission_ext::none;
-        
+        auto extended = permissions.is_guarded() ? memory_permission_ext::guard : memory_permission_ext::none;
+
         entry->second.committed_regions[address] = committed_region{size, nt_memory_permission{common, extended}};
     }
 
@@ -634,10 +632,8 @@ void memory_manager::map_mmio(const uint64_t address, const size_t size, mmio_re
 
 void memory_manager::map_memory(const uint64_t address, const size_t size, const nt_memory_permission permissions)
 {
-    auto perms = permissions.is_guarded() 
-        ? nt_memory_permission(memory_permission::none) 
-        : permissions;
-    
+    auto perms = permissions.is_guarded() ? nt_memory_permission(memory_permission::none) : permissions;
+
     this->memory_->map_memory(address, size, perms);
 }
 

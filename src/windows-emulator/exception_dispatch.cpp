@@ -183,7 +183,7 @@ void dispatch_access_violation(x86_64_emulator& emu, const process_context& proc
 }
 
 void dispatch_guard_page_violation(x86_64_emulator& emu, const process_context& proc, const uint64_t address,
-                               const memory_operation operation)
+                                   const memory_operation operation)
 {
     dispatch_exception(emu, proc, STATUS_GUARD_PAGE_VIOLATION,
                        {
