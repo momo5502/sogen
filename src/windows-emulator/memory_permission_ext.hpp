@@ -75,7 +75,8 @@ struct nt_memory_permission
         return *this;
     }
 
-    constexpr bool is_guarded() const {
+    constexpr bool is_guarded() const 
+    {
         return (this->extended & memory_permission_ext::guard) == memory_permission_ext::guard;
     }
 };
