@@ -2,7 +2,6 @@
 #include "exception_dispatch.hpp"
 #include "process_context.hpp"
 #include "cpu_context.hpp"
-#include <winnt.h>
 
 namespace
 {
