@@ -15,7 +15,13 @@ import {
 import { Settings, loadSettings, saveSettings } from "./settings";
 import { SettingsMenu } from "@/components/settings-menu";
 
-import { PlayFill, StopFill, GearFill, PauseFill } from "react-bootstrap-icons";
+import {
+  PlayFill,
+  StopFill,
+  GearFill,
+  PauseFill,
+  HouseFill,
+} from "react-bootstrap-icons";
 import { StatusIndicator } from "@/components/status-indicator";
 import { Header } from "./Header";
 
@@ -214,6 +220,11 @@ export class Playground extends React.Component<
         />
         <div className="h-[100dvh] flex flex-col">
           <header className="flex shrink-0 items-center gap-2 border-b p-2 overflow-y-auto">
+            <a href="#/">
+              <Button size="sm" variant="secondary" className="fancy">
+                <HouseFill />
+              </Button>
+            </a>
             <Button size="sm" className="fancy" onClick={this.start}>
               <PlayFill /> <span>Start</span>
             </Button>
