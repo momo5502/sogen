@@ -113,6 +113,19 @@ namespace
         c.win_emu->log.log("Unmapping %s (0x%" PRIx64 ")\n", mod.path.generic_string().c_str(), mod.image_base);
     }
 
+    void handle_function_details(analysis_context& c, const std::string_view function)
+    {
+        if (function == "GetEnvironmentVariableA")
+        {
+            const auto var_ptr = c.win_emu->emu().reg(x86_register::rcx);
+            if (var_ptr)
+            {
+                const auto variable = read_string<char>(c.win_emu->memory, var_ptr);
+                c.win_emu->log.print(color::dark_gray, "--> %s\n", variable.c_str());
+            }
+        }
+    }
+
     void handle_instruction(analysis_context& c, const uint64_t address)
     {
         auto& win_emu = *c.win_emu;
@@ -185,6 +198,11 @@ namespace
             win_emu.log.print(is_interesting_call ? color::yellow : color::dark_gray,
                               "Executing function: %s - %s (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n",
                               binary->name.c_str(), export_entry->second.c_str(), address, return_address, mod_name);
+
+            if (is_interesting_call)
+            {
+                handle_function_details(c, export_entry->second);
+            }
         }
         else if (address == binary->entry_point)
         {
