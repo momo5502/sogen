@@ -217,8 +217,8 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
     }
 
     this.setState({
-      width: this.outputRef.current.offsetWidth,
-      height: this.outputRef.current.offsetHeight,
+      width: this.outputRef.current.offsetWidth - 1,
+      height: this.outputRef.current.offsetHeight - 1,
     });
   }
 
