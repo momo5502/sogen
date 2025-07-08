@@ -115,7 +115,7 @@ namespace
 
     void handle_function_details(analysis_context& c, const std::string_view function)
     {
-        if (function == "GetEnvironmentVariableA")
+        if (function == "GetEnvironmentVariableA" || function == "ExpandEnvironmentStringsA")
         {
             const auto var_ptr = c.win_emu->emu().reg(x86_register::rcx);
             if (var_ptr)
