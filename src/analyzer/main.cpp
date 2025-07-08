@@ -307,7 +307,9 @@ namespace
             const auto rip = win_emu->emu().read_instruction_pointer();
             if (win_emu->mod_manager.executable->is_within(rip))
             {
-                win_emu->log.print(color::blue, "Executing CPUID instruction at 0x%" PRIx64 "\n", rip);
+                const auto leaf = win_emu->emu().reg<uint32_t>(x86_register::eax);
+                win_emu->log.print(color::blue, "Executing CPUID instruction at 0x%" PRIx64 " with leaf: 0x%X\n", rip,
+                                   leaf);
             }
 
             return instruction_hook_continuation::run_instruction;
