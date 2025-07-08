@@ -663,6 +663,7 @@ jobs:
     if: always()
     steps:
       - uses: geekyeggo/delete-artifact@v5
+        continue-on-error: true
         with:
           name: "Temp *"
 
