@@ -14,6 +14,7 @@ onmessage = async (event) => {
         payload.options,
         payload.persist,
         payload.wasm64,
+        payload.cacheBuster,
       );
       break;
     case "event":
@@ -70,12 +71,19 @@ function getMessageFromQueue() {
   return msgQueue.shift();
 }
 
-function runEmulation(file, options, persist, wasm64) {
+function runEmulation(file, options, persist, wasm64, cacheBuster) {
   const mainArguments = [...options, "-e", "./root", file];
 
   globalThis.Module = {
     arguments: mainArguments,
     noInitialRun: true,
+    locateFile: (path, scriptDirectory) => {
+      console.log(path);
+      console.log(scriptDirectory);
+
+      const bitness = wasm64 ? "64" : "32";
+      return `${scriptDirectory}${bitness}/${path}?${cacheBuster}`;
+    },
     onRuntimeInitialized: function () {
       FS.mkdir("/root");
       FS.mount(IDBFS, {}, "/root");
@@ -93,8 +101,8 @@ function runEmulation(file, options, persist, wasm64) {
   };
 
   if (wasm64) {
-    importScripts("./64/analyzer.js");
+    importScripts("./64/analyzer.js?" + cacheBuster);
   } else {
-    importScripts("./32/analyzer.js");
+    importScripts("./32/analyzer.js?" + cacheBuster);
   }
 }

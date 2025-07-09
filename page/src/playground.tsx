@@ -98,7 +98,9 @@ export class Playground extends React.Component<
       application: undefined,
       allowWasm64: false,
     };
+  }
 
+  componentDidMount(): void {
     memory64().then((allowWasm64) => {
       this.setState({ allowWasm64 });
     });

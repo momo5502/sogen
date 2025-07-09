@@ -76,8 +76,11 @@ export class Emulator {
       this.terminateReject = reject;
     });
 
+    const cacheBuster = import.meta.env.VITE_BUILD_TIME || Date.now();
+
     this.worker = new Worker(
-      /*new URL('./emulator-worker.js', import.meta.url)*/ "./emulator-worker.js",
+      /*new URL('./emulator-worker.js', import.meta.url)*/ "./emulator-worker.js?" +
+        cacheBuster,
     );
 
     this.worker.onerror = this._onError.bind(this);
@@ -93,6 +96,7 @@ export class Emulator {
         options: translateSettings(settings),
         persist: settings.persist,
         wasm64: settings.wasm64,
+        cacheBuster: import.meta.env.VITE_BUILD_TIME || Date.now(),
       },
     });
   }
