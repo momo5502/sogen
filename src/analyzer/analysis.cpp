@@ -113,16 +113,42 @@ namespace
         c.win_emu->log.log("Unmapping %s (0x%" PRIx64 ")\n", mod.path.generic_string().c_str(), mod.image_base);
     }
 
+    void print_string(logger& log, const std::string_view str)
+    {
+        log.print(color::dark_gray, "--> %.*s\n", STR_VIEW_VA(str));
+    }
+
+    void print_string(logger& log, const std::u16string_view str)
+    {
+        print_string(log, u16_to_u8(str));
+    }
+
+    template <typename CharType = char>
+    void print_arg_as_string(windows_emulator& win_emu, size_t index)
+    {
+        const auto var_ptr = get_function_argument(win_emu.emu(), index);
+        if (var_ptr)
+        {
+            const auto str = read_string<CharType>(win_emu.memory, var_ptr);
+            print_string(win_emu.log, str);
+        }
+    }
+
     void handle_function_details(analysis_context& c, const std::string_view function)
     {
         if (function == "GetEnvironmentVariableA" || function == "ExpandEnvironmentStringsA")
         {
-            const auto var_ptr = c.win_emu->emu().reg(x86_register::rcx);
-            if (var_ptr)
-            {
-                const auto variable = read_string<char>(c.win_emu->memory, var_ptr);
-                c.win_emu->log.print(color::dark_gray, "--> %s\n", variable.c_str());
-            }
+            print_arg_as_string(*c.win_emu, 0);
+        }
+        else if (function == "MessageBoxA")
+        {
+            print_arg_as_string(*c.win_emu, 2);
+            print_arg_as_string(*c.win_emu, 1);
+        }
+        else if (function == "MessageBoxW")
+        {
+            print_arg_as_string<char16_t>(*c.win_emu, 2);
+            print_arg_as_string<char16_t>(*c.win_emu, 1);
         }
     }
 

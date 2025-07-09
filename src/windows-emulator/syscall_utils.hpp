@@ -15,19 +15,7 @@ struct syscall_context
 
 inline uint64_t get_syscall_argument(x86_64_emulator& emu, const size_t index)
 {
-    switch (index)
-    {
-    case 0:
-        return emu.reg(x86_register::r10);
-    case 1:
-        return emu.reg(x86_register::rdx);
-    case 2:
-        return emu.reg(x86_register::r8);
-    case 3:
-        return emu.reg(x86_register::r9);
-    default:
-        return emu.read_stack(index + 1);
-    }
+    return get_function_argument(emu, index, true);
 }
 
 inline bool is_uppercase(const char character)
