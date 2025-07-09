@@ -298,8 +298,11 @@ jobs:
           path: "build/${{matrix.preset}}/**/CTestTestfile.cmake"
           retention-days: 1
 
-  build-debug:
-    name: Build Debug
+  # Release is the same as Release from build step
+  # However, that way the win tests can start without
+  # waiting for other platforms
+  build-isolate:
+    name: Build Isolate
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -308,9 +311,12 @@ jobs:
           - Windows x86_64
         configuration:
           - Debug
+          - Release
         include:
           - configuration: Debug
             preset: debug
+          - configuration: Release
+            preset: release
           - platform: Windows x86_64
             runner: windows-latest
             devcmd_arch: x64
@@ -335,7 +341,7 @@ jobs:
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v4
         with:
-          name: ${{ matrix.platform }} ${{matrix.configuration}} Artifacts
+          name: Temp Isolate ${{ matrix.platform }} ${{matrix.configuration}} Artifacts
           working-directory: build/${{matrix.preset}}/artifacts/
           path: "*"
           retention-days: 1
@@ -343,7 +349,7 @@ jobs:
       - name: Upload Test Configuration
         uses: actions/upload-artifact@v4.6.2
         with:
-          name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
+          name: Temp Isolate ${{ matrix.platform }} ${{matrix.configuration}} Test Config
           path: "build/${{matrix.preset}}/**/CTestTestfile.cmake"
           retention-days: 1
 
@@ -443,7 +449,7 @@ jobs:
   win-test:
     name: Windows Test
     runs-on: windows-latest
-    needs: [create-emulation-root, build, build-debug]
+    needs: [create-emulation-root, build, build-isolate]
     strategy:
       fail-fast: false
       matrix:
@@ -478,13 +484,13 @@ jobs:
       - name: Download Test Configuration
         uses: actions/download-artifact@v4.3.0
         with:
-          name: Temp Windows x86_64 ${{ matrix.configuration}} Test Config
+          name: Temp Isolate Windows x86_64 ${{ matrix.configuration}} Test Config
           path: build/${{ matrix.preset }}
 
       - name: Download Artifacts
         uses: pyTooling/download-artifact@v4
         with:
-          name: Windows x86_64 ${{ matrix.configuration}} Artifacts
+          name: Temp Isolate Windows x86_64 ${{ matrix.configuration}} Artifacts
           path: build/${{ matrix.preset }}/artifacts
 
       - name: Download Emulation Root
@@ -579,11 +585,11 @@ jobs:
           - Windows 2022
           #- Windows 2019
         configuration:
-          - Debug
+          #- Debug
           - Release
         include:
-          - configuration: Debug
-            preset: debug
+          #- configuration: Debug
+          #  preset: debug
           - configuration: Release
             preset: release
           - architecture: x86_64
@@ -727,7 +733,7 @@ jobs:
         smoke-test-android,
         create-emulation-root,
         build,
-        build-debug,
+        build-isolate,
         test,
         win-test,
         verify-formatting,
