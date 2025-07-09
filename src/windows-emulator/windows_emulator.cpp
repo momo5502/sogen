@@ -11,7 +11,7 @@
 #include "apiset/apiset.hpp"
 
 #include "network/static_socket_factory.hpp"
-#include "windows-emulator/memory_permission_ext.hpp"
+#include "memory_permission_ext.hpp"
 
 constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 0x20000;
 

@@ -3,7 +3,7 @@
 
 #include "memory_region.hpp"
 #include "address_utils.hpp"
-#include "windows-emulator/memory_permission_ext.hpp"
+#include "memory_permission_ext.hpp"
 
 #include <vector>
 #include <optional>
