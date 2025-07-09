@@ -80,6 +80,7 @@ export class Emulator {
       /*new URL('./emulator-worker.js', import.meta.url)*/ "./emulator-worker.js",
     );
 
+    this.worker.onerror = this._onError.bind(this);
     this.worker.onmessage = this._onMessage.bind(this);
   }
 
@@ -150,6 +151,20 @@ export class Emulator {
     );
 
     this.updateState();
+  }
+
+  logError(message: string) {
+    this.logHandler([`<span class="terminal-red">${message}</span>`]);
+  }
+
+  _onError(ev: ErrorEvent) {
+    try {
+      this.worker.terminate();
+    } catch (e) {}
+
+    this.logError(`Emulator encountered fatal error: ${ev.message}`);
+    this._setState(EmulationState.Failed);
+    this.terminateResolve(-1);
   }
 
   _onMessage(event: MessageEvent) {
