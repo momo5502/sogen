@@ -123,11 +123,25 @@ if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
     $<$<CONFIG:Debug>:-sASSERTIONS>
     -sWASM_BIGINT
     -sUSE_OFFSET_CONVERTER
-    -sMAXIMUM_MEMORY=4gb
     #-sEXCEPTION_CATCHING_ALLOWED=[..]
     -sEXIT_RUNTIME
     -sASYNCIFY
   )
+
+  if(MOMO_EMSCRIPTEN_MEMORY64)
+    momo_add_c_and_cxx_compile_options(
+      -sMEMORY64
+    )
+
+    add_link_options(
+      -sMAXIMUM_MEMORY=8gb
+      -sMEMORY64
+    )
+  else()
+    add_link_options(
+      -sMAXIMUM_MEMORY=4gb
+    )
+  endif()
 
   if(MOMO_EMSCRIPTEN_SUPPORT_NODEJS)
     add_link_options(
