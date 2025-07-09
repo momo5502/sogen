@@ -170,6 +170,7 @@ jobs:
           - Android x86_64
           - Android arm64-v8a
           - Emscripten Web
+          - Emscripten Web Memory 64
           - Emscripten Node.js
         configuration:
           - Debug
@@ -218,6 +219,9 @@ jobs:
           - platform: Emscripten Web
             runner: ubuntu-24.04
             cmake-options: "-DMOMO_ENABLE_RUST_CODE=Off -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
+          - platform: Emscripten Web Memory 64
+            runner: ubuntu-24.04
+            cmake-options: "-DMOMO_ENABLE_RUST_CODE=Off -DMOMO_EMSCRIPTEN_MEMORY64=On -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
           - platform: Emscripten Node.js
             runner: ubuntu-24.04
             cmake-options: "-DMOMO_EMSCRIPTEN_SUPPORT_NODEJS=On -DMOMO_ENABLE_RUST_CODE=Off -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
@@ -579,7 +583,13 @@ jobs:
         uses: pyTooling/download-artifact@v4
         with:
           name: Emscripten Web Release Artifacts
-          path: build/release/artifacts
+          path: build/release/artifacts/32
+
+      - name: Download Emscripten Web Memory 64 Artifacts
+        uses: pyTooling/download-artifact@v4
+        with:
+          name: Emscripten Web Memory 64 Release Artifacts
+          path: build/release/artifacts/64
 
       - name: Download Windows Artifacts
         uses: pyTooling/download-artifact@v4
@@ -601,8 +611,12 @@ jobs:
 
       - name: Copy Files
         run: |
-          cp ./build/release/artifacts/analyzer.js ./page/public/
-          cp ./build/release/artifacts/analyzer.wasm ./page/public/
+          mkdir -p ./page/public/32/
+          mkdir -p ./page/public/64/
+          cp ./build/release/artifacts/32/analyzer.js ./page/public/32/
+          cp ./build/release/artifacts/32/analyzer.wasm ./page/public/32/
+          cp ./build/release/artifacts/64/analyzer.js ./page/public/64/
+          cp ./build/release/artifacts/64/analyzer.wasm ./page/public/64/
 
       - name: Build Page
         run: cd ./page && npm i && npm run build

@@ -9,7 +9,12 @@ onmessage = async (event) => {
 
   switch (data.message) {
     case "run":
-      runEmulation(payload.file, payload.options, payload.persist);
+      runEmulation(
+        payload.file,
+        payload.options,
+        payload.persist,
+        payload.wasm64,
+      );
       break;
     case "event":
       msgQueue.push(payload);
@@ -65,7 +70,7 @@ function getMessageFromQueue() {
   return msgQueue.shift();
 }
 
-function runEmulation(file, options, persist) {
+function runEmulation(file, options, persist, wasm64) {
   const mainArguments = [...options, "-e", "./root", file];
 
   globalThis.Module = {
@@ -87,5 +92,9 @@ function runEmulation(file, options, persist) {
     postRun: flushLines,
   };
 
-  importScripts("./analyzer.js");
+  if (wasm64) {
+    importScripts("./64/analyzer.js");
+  } else {
+    importScripts("./32/analyzer.js");
+  }
 }

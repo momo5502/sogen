@@ -5,6 +5,8 @@ import { Output } from "@/components/output";
 import { Emulator, EmulationState, isFinalState } from "./emulator";
 import { Filesystem, setupFilesystem } from "./filesystem";
 
+import { memory64 } from "wasm-feature-detect";
+
 import "./App.css";
 import {
   Popover,
@@ -45,6 +47,7 @@ interface PlaygroundState {
   emulator: Emulator | null;
   application: string | undefined;
   drawerOpen: boolean;
+  allowWasm64: boolean;
 }
 
 function makePercentHandler(
@@ -93,7 +96,12 @@ export class Playground extends React.Component<
       emulator: null,
       drawerOpen: false,
       application: undefined,
+      allowWasm64: false,
     };
+
+    memory64().then((allowWasm64) => {
+      this.setState({ allowWasm64 });
+    });
   }
 
   async resetFilesys() {
@@ -272,6 +280,7 @@ export class Playground extends React.Component<
               <PopoverContent>
                 <SettingsMenu
                   settings={this.state.settings}
+                  allowWasm64={this.state.allowWasm64}
                   onChange={(s) => {
                     saveSettings(s);
                     this.setState({ settings: s });

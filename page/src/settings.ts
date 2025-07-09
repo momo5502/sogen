@@ -5,6 +5,7 @@ export interface Settings {
   bufferStdout: boolean;
   persist: boolean;
   execAccess: boolean;
+  wasm64: boolean;
 }
 
 export function createDefaultSettings(): Settings {
@@ -15,6 +16,7 @@ export function createDefaultSettings(): Settings {
     bufferStdout: true,
     persist: false,
     execAccess: true,
+    wasm64: false,
   };
 }
 

@@ -6,6 +6,7 @@ import { Settings } from "@/settings";
 
 interface SettingsMenuProps {
   settings: Settings;
+  allowWasm64: boolean;
   onChange: (settings: Settings) => void;
 }
 
@@ -104,6 +105,18 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
             }}
           />
           <Label htmlFor="settings-persist">Persist filesystem</Label>
+        </div>
+
+        <div className="flex gap-6">
+          <Checkbox
+            id="settings-mem64"
+            disabled={!this.props.allowWasm64}
+            checked={this.state.wasm64}
+            onCheckedChange={(checked: boolean) => {
+              this.setState({ wasm64: checked });
+            }}
+          />
+          <Label htmlFor="settings-mem64">64-Bit WebAssembly</Label>
         </div>
       </div>
     );

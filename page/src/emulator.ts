@@ -1,4 +1,4 @@
-import { createDefaultSettings, Settings, translateSettings } from "./settings";
+import { Settings, translateSettings } from "./settings";
 
 import * as flatbuffers from "flatbuffers";
 import * as fbDebugger from "@/fb/debugger";
@@ -84,7 +84,7 @@ export class Emulator {
     this.worker.onmessage = this._onMessage.bind(this);
   }
 
-  async start(settings: Settings = createDefaultSettings(), file: string) {
+  async start(settings: Settings, file: string) {
     this._setState(EmulationState.Running);
     this.worker.postMessage({
       message: "run",
@@ -92,6 +92,7 @@ export class Emulator {
         file,
         options: translateSettings(settings),
         persist: settings.persist,
+        wasm64: settings.wasm64,
       },
     });
   }
