@@ -173,11 +173,11 @@ jobs:
           - Emscripten Web Memory 64
           - Emscripten Node.js
         configuration:
-          - Debug
+          #- Debug
           - Release
         include:
-          - configuration: Debug
-            preset: debug
+          #- configuration: Debug
+          #  preset: debug
           - configuration: Release
             preset: release
           - platform: Windows x86
@@ -298,6 +298,61 @@ jobs:
           path: "build/${{matrix.preset}}/**/CTestTestfile.cmake"
           retention-days: 1
 
+  # Release is the same as Release from build step
+  # However, that way the win tests can start without
+  # waiting for other platforms
+  build-isolate:
+    name: Build Isolate
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - Windows x86_64
+        configuration:
+          - Debug
+          - Release
+        include:
+          - configuration: Debug
+            preset: debug
+          - configuration: Release
+            preset: release
+          - platform: Windows x86_64
+            runner: windows-latest
+            devcmd_arch: x64
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v6
+
+      - name: Enable Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        if: ${{ startsWith(matrix.platform, 'Windows') }}
+        with:
+          arch: ${{ matrix.devcmd_arch }}
+
+      - name: CMake Build
+        run: cmake --preset=${{matrix.preset}} ${{matrix.cmake-options}} && cmake --build --preset=${{matrix.preset}}
+
+      - name: Upload Artifacts
+        uses: pyTooling/upload-artifact@v4
+        with:
+          name: Temp Isolate ${{ matrix.platform }} ${{matrix.configuration}} Artifacts
+          working-directory: build/${{matrix.preset}}/artifacts/
+          path: "*"
+          retention-days: 1
+
+      - name: Upload Test Configuration
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: Temp Isolate ${{ matrix.platform }} ${{matrix.configuration}} Test Config
+          path: "build/${{matrix.preset}}/**/CTestTestfile.cmake"
+          retention-days: 1
+
   test:
     name: Test
     runs-on: ${{ matrix.runner }}
@@ -321,11 +376,11 @@ jobs:
           - Windows 2022
           #- Windows 2019
         configuration:
-          - Debug
+          #- Debug
           - Release
         include:
-          - configuration: Debug
-            preset: debug
+          #- configuration: Debug
+          #  preset: debug
           - configuration: Release
             preset: release
           - platform: Windows x86
@@ -394,10 +449,13 @@ jobs:
   win-test:
     name: Windows Test
     runs-on: windows-latest
-    needs: [create-emulation-root, build]
+    needs: [create-emulation-root, build, build-isolate]
     strategy:
       fail-fast: false
       matrix:
+        configuration:
+          - Debug
+          - Release
         emulator:
           - Unicorn
           - Icicle
@@ -405,6 +463,11 @@ jobs:
           - Windows 2025
           - Windows 2022
           #- Windows 2019
+        include:
+          - configuration: Debug
+            preset: debug
+          - configuration: Release
+            preset: release
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
@@ -421,30 +484,30 @@ jobs:
       - name: Download Test Configuration
         uses: actions/download-artifact@v4.3.0
         with:
-          name: Temp Windows x86_64 Release Test Config
-          path: build/release
+          name: Temp Isolate Windows x86_64 ${{ matrix.configuration}} Test Config
+          path: build/${{ matrix.preset }}
 
       - name: Download Artifacts
         uses: pyTooling/download-artifact@v4
         with:
-          name: Windows x86_64 Release Artifacts
-          path: build/release/artifacts
+          name: Temp Isolate Windows x86_64 ${{ matrix.configuration}} Artifacts
+          path: build/${{ matrix.preset }}/artifacts
 
       - name: Download Emulation Root
         uses: pyTooling/download-artifact@v4
         with:
           name: ${{ matrix.emulation-root }} Emulation Root
-          path: build/release/artifacts/root
+          path: build/${{ matrix.preset }}/artifacts/root
 
       - name: Copy Test Sample
-        run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
+        run: cp build/${{ matrix.preset }}/artifacts/test-sample.exe build/${{ matrix.preset }}/artifacts/root/filesys/c/
 
       - name: CMake Test
-        run: cd build/release && ctest --verbose -j
+        run: cd build/${{ matrix.preset }} && ctest --verbose -j
         env:
-          EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
+          EMULATOR_ROOT: ${{github.workspace}}/build/${{ matrix.preset }}/artifacts/root
           EMULATOR_VERBOSE: ${{ github.event.inputs.verbose }}
-          ANALYSIS_SAMPLE: ${{github.workspace}}/build/release/artifacts/test-sample.exe
+          ANALYSIS_SAMPLE: ${{github.workspace}}/build/${{ matrix.preset }}/artifacts/test-sample.exe
 
   smoke-test-node:
     name: Smoke Test Node.js
@@ -522,11 +585,11 @@ jobs:
           - Windows 2022
           #- Windows 2019
         configuration:
-          - Debug
+          #- Debug
           - Release
         include:
-          - configuration: Debug
-            preset: debug
+          #- configuration: Debug
+          #  preset: debug
           - configuration: Release
             preset: release
           - architecture: x86_64
@@ -670,6 +733,7 @@ jobs:
         smoke-test-android,
         create-emulation-root,
         build,
+        build-isolate,
         test,
         win-test,
         verify-formatting,
