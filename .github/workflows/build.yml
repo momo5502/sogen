@@ -449,7 +449,7 @@ jobs:
   win-test:
     name: Windows Test
     runs-on: windows-latest
-    needs: [create-emulation-root, build, build-isolate]
+    needs: [create-emulation-root, build-isolate]
     strategy:
       fail-fast: false
       matrix:
