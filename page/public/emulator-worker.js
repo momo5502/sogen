@@ -78,9 +78,6 @@ function runEmulation(file, options, persist, wasm64, cacheBuster) {
     arguments: mainArguments,
     noInitialRun: true,
     locateFile: (path, scriptDirectory) => {
-      console.log(path);
-      console.log(scriptDirectory);
-
       const bitness = wasm64 ? "64" : "32";
       return `${scriptDirectory}${bitness}/${path}?${cacheBuster}`;
     },
