@@ -193,9 +193,9 @@ namespace icicle
             icicle_map_mmio(this->emu_, address, size, read_wrapper, ptr, write_wrapper, ptr);
         }
 
-        void map_memory(const uint64_t address, const size_t size, nt_memory_permission permissions) override
+        void map_memory(const uint64_t address, const size_t size, memory_permission permissions) override
         {
-            const auto res = icicle_map_memory(this->emu_, address, size, static_cast<uint8_t>(permissions.common));
+            const auto res = icicle_map_memory(this->emu_, address, size, static_cast<uint8_t>(permissions));
             ice(res, "Failed to map memory");
         }
 
@@ -222,10 +222,9 @@ namespace icicle
             ice(res, "Failed to write memory");
         }
 
-        void apply_memory_protection(const uint64_t address, const size_t size,
-                                     nt_memory_permission permissions) override
+        void apply_memory_protection(const uint64_t address, const size_t size, memory_permission permissions) override
         {
-            const auto res = icicle_protect_memory(this->emu_, address, size, static_cast<uint8_t>(permissions.common));
+            const auto res = icicle_protect_memory(this->emu_, address, size, static_cast<uint8_t>(permissions));
             ice(res, "Failed to apply permissions");
         }
 

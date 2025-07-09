@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <string>
 #include <emulator.hpp>
+#include "memory_permission_ext.hpp"
 
 inline std::string get_permission_string(const memory_permission permission)
 {

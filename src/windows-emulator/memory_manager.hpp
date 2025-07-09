@@ -3,7 +3,7 @@
 #include <atomic>
 #include <cstdint>
 
-#include "memory_region.hpp"
+#include "memory_permission_ext.hpp"
 #include "serialization.hpp"
 
 #include <memory_interface.hpp>
@@ -12,7 +12,16 @@ constexpr auto ALLOCATION_GRANULARITY = 0x0000000000010000ULL;
 constexpr auto MIN_ALLOCATION_ADDRESS = 0x0000000000010000ULL;
 constexpr auto MAX_ALLOCATION_ADDRESS = 0x00007ffffffeffffULL;
 
-struct region_info : basic_memory_region
+// This maps to the `basic_memory_region` struct defined in
+// emulator\memory_region.hpp
+struct nt_basic_memory_region
+{
+    uint64_t start{};
+    size_t length{};
+    nt_memory_permission permissions{};
+};
+
+struct region_info : nt_basic_memory_region
 {
     uint64_t allocation_base{};
     size_t allocation_length{};
@@ -96,9 +105,9 @@ class memory_manager : public memory_interface
     std::atomic<std::uint64_t> layout_version_{0};
 
     void map_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) final;
-    void map_memory(uint64_t address, size_t size, nt_memory_permission permissions) final;
+    void map_memory(uint64_t address, size_t size, memory_permission permissions) final;
     void unmap_memory(uint64_t address, size_t size) final;
-    void apply_memory_protection(uint64_t address, size_t size, nt_memory_permission permissions) final;
+    void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) final;
 
     void update_layout_version();
 };
