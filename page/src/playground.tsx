@@ -23,6 +23,8 @@ import {
   GearFill,
   PauseFill,
   HouseFill,
+  BarChartSteps,
+  CpuFill,
 } from "react-bootstrap-icons";
 import { StatusIndicator } from "@/components/status-indicator";
 import { Header } from "./Header";
@@ -38,6 +40,7 @@ import {
   DrawerTitle,
 } from "@/components/ui/drawer";
 import { FilesystemExplorer } from "./filesystem-explorer";
+import { EmulationStatus } from "./emulator";
 
 interface PlaygroundProps {}
 interface PlaygroundState {
@@ -45,6 +48,7 @@ interface PlaygroundState {
   filesystemPromise: Promise<Filesystem> | null;
   filesystem: Filesystem | null;
   emulator: Emulator | null;
+  emulationStatus: EmulationStatus | null;
   application: string | undefined;
   drawerOpen: boolean;
   allowWasm64: boolean;
@@ -94,6 +98,10 @@ export class Playground extends React.Component<
       filesystemPromise: null,
       filesystem: null,
       emulator: null,
+      emulationStatus: {
+        activeThreads: 5,
+        executedInstructions: BigInt(1233252643),
+      },
       drawerOpen: false,
       application: undefined,
       allowWasm64: false,
@@ -122,6 +130,10 @@ export class Playground extends React.Component<
     this.output.current?.clear();
 
     location.reload();
+  }
+
+  _onEmulatorStatusChanged(s: EmulationStatus) {
+    this.setState({ emulationStatus: s });
   }
 
   _onEmulatorStateChanged(s: EmulationState, persistFs: boolean) {
@@ -208,6 +220,7 @@ export class Playground extends React.Component<
     const new_emulator = new Emulator(
       (l) => this.logLines(l),
       (s) => this._onEmulatorStateChanged(s, persistFs),
+      (s) => this._onEmulatorStatusChanged(s),
     );
     //new_emulator.onTerminate().then(() => this.setState({ emulator: null }));
 
@@ -320,7 +333,9 @@ export class Playground extends React.Component<
               </Drawer>
             )}
 
-            <div className="text-right flex-1">
+            <div className="flex-1"></div>
+
+            <div className="text-right items-center">
               <StatusIndicator
                 application={this.state.application}
                 state={
@@ -331,8 +346,23 @@ export class Playground extends React.Component<
               />
             </div>
           </header>
-          <div className="flex flex-1 flex-col pl-1 overflow-auto">
-            <Output ref={this.output} />
+          <div className="flex flex-1">
+            <div className="items-center absolute z-100 right-0 rounded-bl-lg min-w-[140px] p-2 bg-[var(--background)] pointer-events-none font-medium text-right text-xs whitespace-nowrap leading-6">
+              {!this.state.emulationStatus ? (
+                <></>
+              ) : (
+                <>
+                  {this.state.emulationStatus.activeThreads}
+                  <BarChartSteps className="inline ml-3" />
+                  <br />
+                  {this.state.emulationStatus.executedInstructions.toLocaleString()}
+                  <CpuFill className="inline ml-3" />
+                </>
+              )}
+            </div>
+            <div className="flex flex-1 flex-col pl-1 overflow-auto">
+              <Output ref={this.output} />
+            </div>
           </div>
         </div>
       </>

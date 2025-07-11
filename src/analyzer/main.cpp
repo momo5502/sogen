@@ -141,7 +141,7 @@ namespace
         std::optional<NTSTATUS> exit_status{};
 #ifdef OS_EMSCRIPTEN
         const auto _1 = utils::finally([&] {
-            debugger::handle_exit(exit_status); //
+            debugger::handle_exit(win_emu, exit_status); //
         });
 #endif
 

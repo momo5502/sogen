@@ -63,6 +63,11 @@ table ApplicationExit {
     exit_status: uint32 = null;
 }
 
+table EmulationStatus {
+    executed_instructions: uint64;
+    active_threads: uint32;
+}
+
 union Event { 
     PauseRequest, 
     RunRequest,
@@ -77,6 +82,7 @@ union Event {
     ReadRegisterRequest,
     ReadRegisterResponse,
     ApplicationExit,
+    EmulationStatus,
 }
 
 table DebugEvent {

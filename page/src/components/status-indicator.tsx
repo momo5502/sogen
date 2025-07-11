@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { CircleFill } from "react-bootstrap-icons";
-import { EmulationState as State } from "@/emulator";
+import { EmulationStatus, EmulationState as State } from "@/emulator";
 
 function getStateName(state: State) {
   switch (state) {

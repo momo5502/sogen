@@ -13,6 +13,18 @@ export enum EmulationState {
   Failed,
 }
 
+export interface EmulationStatus {
+  executedInstructions: BigInt;
+  activeThreads: number;
+}
+
+function createDefaultEmulationStatus(): EmulationStatus {
+  return {
+    executedInstructions: BigInt(0),
+    activeThreads: 0,
+  };
+}
+
 export function isFinalState(state: EmulationState) {
   switch (state) {
     case EmulationState.Stopped:
@@ -55,10 +67,12 @@ function decodeEvent(data: string) {
 }
 
 type StateChangeHandler = (state: EmulationState) => void;
+type StatusUpdateHandler = (status: EmulationStatus) => void;
 
 export class Emulator {
   logHandler: LogHandler;
   stateChangeHandler: StateChangeHandler;
+  stautsUpdateHandler: StatusUpdateHandler;
   terminatePromise: Promise<number | null>;
   terminateResolve: (value: number | null) => void;
   terminateReject: (reason?: any) => void;
@@ -66,9 +80,14 @@ export class Emulator {
   state: EmulationState = EmulationState.Stopped;
   exit_status: number | null = null;
 
-  constructor(logHandler: LogHandler, stateChangeHandler: StateChangeHandler) {
+  constructor(
+    logHandler: LogHandler,
+    stateChangeHandler: StateChangeHandler,
+    stautsUpdateHandler: StatusUpdateHandler,
+  ) {
     this.logHandler = logHandler;
     this.stateChangeHandler = stateChangeHandler;
+    this.stautsUpdateHandler = stautsUpdateHandler;
     this.terminateResolve = () => {};
     this.terminateReject = () => {};
     this.terminatePromise = new Promise((resolve, reject) => {
@@ -84,11 +103,13 @@ export class Emulator {
     );
 
     this.worker.onerror = this._onError.bind(this);
-    this.worker.onmessage = this._onMessage.bind(this);
+    this.worker.onmessage = (e) => queueMicrotask(() => this._onMessage(e));
   }
 
   async start(settings: Settings, file: string) {
     this._setState(EmulationState.Running);
+    this.stautsUpdateHandler(createDefaultEmulationStatus());
+
     this.worker.postMessage({
       message: "run",
       data: {
@@ -197,6 +218,11 @@ export class Emulator {
           event.event as fbDebugger.ApplicationExitT,
         );
         break;
+      case fbDebugger.Event.EmulationStatus:
+        this._handle_emulation_status(
+          event.event as fbDebugger.EmulationStatusT,
+        );
+        break;
     }
   }
 
@@ -207,6 +233,13 @@ export class Emulator {
 
   _handle_application_exit(info: fbDebugger.ApplicationExitT) {
     this.exit_status = info.exitStatus;
+  }
+
+  _handle_emulation_status(info: fbDebugger.EmulationStatusT) {
+    this.stautsUpdateHandler({
+      activeThreads: info.activeThreads,
+      executedInstructions: info.executedInstructions,
+    });
   }
 
   _handle_state_response(response: fbDebugger.GetStateResponseT) {
