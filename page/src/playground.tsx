@@ -344,7 +344,7 @@ export class Playground extends React.Component<
             </div>
           </header>
           <div className="flex flex-1">
-            <div className="items-center absolute z-49 right-0 rounded-bl-lg min-w-[140px] p-2 bg-[var(--background)] pointer-events-none font-medium text-right text-xs whitespace-nowrap leading-6">
+            <div className="items-center absolute z-49 right-0 rounded-bl-lg min-w-[140px] p-2 bg-[var(--background)] pointer-events-none font-medium text-right text-xs whitespace-nowrap leading-6 font-mono">
               {!this.state.emulationStatus ? (
                 <></>
               ) : (
