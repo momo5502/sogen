@@ -98,10 +98,7 @@ export class Playground extends React.Component<
       filesystemPromise: null,
       filesystem: null,
       emulator: null,
-      emulationStatus: {
-        activeThreads: 5,
-        executedInstructions: BigInt(1233252643),
-      },
+      emulationStatus: null,
       drawerOpen: false,
       application: undefined,
       allowWasm64: false,
