@@ -14,12 +14,7 @@ import {
   ContextMenuSeparator,
   ContextMenuLabel,
 } from "@/components/ui/context-menu";
-
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { TextTooltip } from "./text-tooltip";
 
 export enum FolderElementType {
   Folder = 0,
@@ -131,14 +126,9 @@ function renderElementWithContext(element: FolderElement, props: FolderProps) {
   return (
     <ContextMenu>
       <ContextMenuTrigger>
-        <Tooltip delayDuration={700}>
-          <TooltipTrigger asChild>
-            {renderElement(element, props)}
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>{element.name}</p>
-          </TooltipContent>
-        </Tooltip>
+        <TextTooltip tooltip={element.name}>
+          {renderElement(element, props)}
+        </TextTooltip>
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuLabel>{trimFilename(element.name)}</ContextMenuLabel>

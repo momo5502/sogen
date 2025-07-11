@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/drawer";
 import { FilesystemExplorer } from "./filesystem-explorer";
 import { EmulationStatus } from "./emulator";
+import { TextTooltip } from "./components/text-tooltip";
 
 interface PlaygroundProps {}
 interface PlaygroundState {
@@ -344,16 +345,20 @@ export class Playground extends React.Component<
             </div>
           </header>
           <div className="flex flex-1">
-            <div className="items-center absolute z-49 right-0 rounded-bl-lg min-w-[140px] p-2 bg-[var(--background)] pointer-events-none font-medium text-right text-xs whitespace-nowrap leading-6 font-mono">
+            <div className="items-center absolute z-49 right-0 rounded-bl-lg min-w-[140px] p-2 bg-[var(--background)] cursor-default font-medium text-right text-xs whitespace-nowrap leading-6 font-mono">
               {!this.state.emulationStatus ? (
                 <></>
               ) : (
                 <>
-                  {this.state.emulationStatus.activeThreads}
-                  <BarChartSteps className="inline ml-3" />
+                  <TextTooltip tooltip={"Active threads"}>
+                    {this.state.emulationStatus.activeThreads}
+                    <BarChartSteps className="inline ml-3" />
+                  </TextTooltip>
                   <br />
-                  {this.state.emulationStatus.executedInstructions.toLocaleString()}
-                  <CpuFill className="inline ml-3" />
+                  <TextTooltip tooltip={"Executed instructions"}>
+                    {this.state.emulationStatus.executedInstructions.toLocaleString()}
+                    <CpuFill className="inline ml-3" />
+                  </TextTooltip>
                 </>
               )}
             </div>
