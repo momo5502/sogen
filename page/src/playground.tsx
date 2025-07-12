@@ -23,8 +23,6 @@ import {
   GearFill,
   PauseFill,
   HouseFill,
-  BarChartSteps,
-  CpuFill,
 } from "react-bootstrap-icons";
 import { StatusIndicator } from "@/components/status-indicator";
 import { Header } from "./Header";
@@ -42,15 +40,16 @@ import {
 import { FilesystemExplorer } from "./filesystem-explorer";
 import { EmulationStatus } from "./emulator";
 import { TextTooltip } from "./components/text-tooltip";
+import { EmulationSummary } from "./components/emulation-summary";
 
 interface PlaygroundProps {}
 interface PlaygroundState {
   settings: Settings;
-  filesystemPromise: Promise<Filesystem> | null;
-  filesystem: Filesystem | null;
-  emulator: Emulator | null;
-  emulationStatus: EmulationStatus | null;
-  application: string | undefined;
+  filesystemPromise?: Promise<Filesystem>;
+  filesystem?: Filesystem;
+  emulator?: Emulator;
+  emulationStatus?: EmulationStatus;
+  application?: string;
   drawerOpen: boolean;
   allowWasm64: boolean;
 }
@@ -96,12 +95,7 @@ export class Playground extends React.Component<
 
     this.state = {
       settings: loadSettings(),
-      filesystemPromise: null,
-      filesystem: null,
-      emulator: null,
-      emulationStatus: null,
       drawerOpen: false,
-      application: undefined,
       allowWasm64: false,
     };
   }
@@ -120,8 +114,8 @@ export class Playground extends React.Component<
     await this.state.filesystem.delete();
 
     this.setState({
-      filesystemPromise: null,
-      filesystem: null,
+      filesystemPromise: undefined,
+      filesystem: undefined,
       drawerOpen: false,
     });
 
@@ -136,7 +130,7 @@ export class Playground extends React.Component<
 
   _onEmulatorStateChanged(s: EmulationState, persistFs: boolean) {
     if (isFinalState(s) && persistFs) {
-      this.setState({ filesystemPromise: null, filesystem: null });
+      this.setState({ filesystemPromise: undefined, filesystem: undefined });
       this.initFilesys(true);
     } else {
       this.forceUpdate();
@@ -331,6 +325,7 @@ export class Playground extends React.Component<
               </Drawer>
             )}
 
+            {/* Separator */}
             <div className="flex-1"></div>
 
             <div className="text-right items-center">
@@ -345,23 +340,7 @@ export class Playground extends React.Component<
             </div>
           </header>
           <div className="flex flex-1">
-            <div className="items-center absolute z-49 right-0 rounded-bl-lg min-w-[140px] p-2 bg-[var(--background)] cursor-default font-medium text-right text-xs whitespace-nowrap leading-6 font-mono">
-              {!this.state.emulationStatus ? (
-                <></>
-              ) : (
-                <>
-                  <TextTooltip tooltip={"Active threads"}>
-                    {this.state.emulationStatus.activeThreads}
-                    <BarChartSteps className="inline ml-3" />
-                  </TextTooltip>
-                  <br />
-                  <TextTooltip tooltip={"Executed instructions"}>
-                    {this.state.emulationStatus.executedInstructions.toLocaleString()}
-                    <CpuFill className="inline ml-3" />
-                  </TextTooltip>
-                </>
-              )}
-            </div>
+            <EmulationSummary status={this.state.emulationStatus} />
             <div className="flex flex-1 flex-col pl-1 overflow-auto">
               <Output ref={this.output} />
             </div>
