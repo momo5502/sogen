@@ -11,10 +11,16 @@ interface OutputState extends ColorState {
   lines: LogLine[];
 }
 
+enum SizeState {
+  Final,
+  Updating,
+}
+
 interface FullOutputState extends OutputState {
   grouper: OutputGrouper;
   height: number;
   width: number;
+  state: SizeState;
 }
 
 interface LogLine {
@@ -173,6 +179,7 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
       grouper: new OutputGrouper(),
       height: 10,
       width: 10,
+      state: SizeState.Final,
     };
 
     this.state.grouper.handler = (lines: string[]) => {
@@ -216,9 +223,29 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
       return;
     }
 
-    this.setState({
-      width: this.outputRef.current.offsetWidth - 1,
-      height: this.outputRef.current.offsetHeight - 1,
+    if (this.state.state == SizeState.Updating) {
+      this.setState({
+        width: this.outputRef.current.offsetWidth - 1,
+        height: this.outputRef.current.offsetHeight - 1,
+        state: SizeState.Final,
+      });
+
+      return;
+    }
+
+    this.setState(
+      {
+        width: 0,
+        height: 0,
+        state: SizeState.Updating,
+      },
+      this.triggerDimensionUpdate.bind(this),
+    );
+  }
+
+  triggerDimensionUpdate() {
+    requestAnimationFrame(() => {
+      this.updateDimensions();
     });
   }
 
