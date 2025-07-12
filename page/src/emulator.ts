@@ -14,14 +14,18 @@ export enum EmulationState {
 }
 
 export interface EmulationStatus {
-  executedInstructions: BigInt;
   activeThreads: number;
+  reservedMemory: BigInt;
+  committedMemory: BigInt;
+  executedInstructions: BigInt;
 }
 
 function createDefaultEmulationStatus(): EmulationStatus {
   return {
     executedInstructions: BigInt(0),
     activeThreads: 0,
+    reservedMemory: BigInt(0),
+    committedMemory: BigInt(0),
   };
 }
 
@@ -239,6 +243,8 @@ export class Emulator {
     this.stautsUpdateHandler({
       activeThreads: info.activeThreads,
       executedInstructions: info.executedInstructions,
+      reservedMemory: info.reservedMemory,
+      committedMemory: info.committedMemory,
     });
   }
 

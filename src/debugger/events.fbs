@@ -64,8 +64,10 @@ table ApplicationExit {
 }
 
 table EmulationStatus {
-    executed_instructions: uint64;
     active_threads: uint32;
+    reserved_memory: uint64;
+    committed_memory: uint64;
+    executed_instructions: uint64;
 }
 
 union Event { 

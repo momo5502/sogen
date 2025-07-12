@@ -1303,33 +1303,51 @@ inline ::flatbuffers::Offset<ApplicationExit> CreateApplicationExit(
 
 struct EmulationStatusT : public ::flatbuffers::NativeTable {
   typedef EmulationStatus TableType;
-  uint64_t executed_instructions = 0;
   uint32_t active_threads = 0;
+  uint64_t reserved_memory = 0;
+  uint64_t committed_memory = 0;
+  uint64_t executed_instructions = 0;
 };
 
 struct EmulationStatus FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef EmulationStatusT NativeTableType;
   typedef EmulationStatusBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_EXECUTED_INSTRUCTIONS = 4,
-    VT_ACTIVE_THREADS = 6
+    VT_ACTIVE_THREADS = 4,
+    VT_RESERVED_MEMORY = 6,
+    VT_COMMITTED_MEMORY = 8,
+    VT_EXECUTED_INSTRUCTIONS = 10
   };
-  uint64_t executed_instructions() const {
-    return GetField<uint64_t>(VT_EXECUTED_INSTRUCTIONS, 0);
-  }
-  bool mutate_executed_instructions(uint64_t _executed_instructions = 0) {
-    return SetField<uint64_t>(VT_EXECUTED_INSTRUCTIONS, _executed_instructions, 0);
-  }
   uint32_t active_threads() const {
     return GetField<uint32_t>(VT_ACTIVE_THREADS, 0);
   }
   bool mutate_active_threads(uint32_t _active_threads = 0) {
     return SetField<uint32_t>(VT_ACTIVE_THREADS, _active_threads, 0);
   }
+  uint64_t reserved_memory() const {
+    return GetField<uint64_t>(VT_RESERVED_MEMORY, 0);
+  }
+  bool mutate_reserved_memory(uint64_t _reserved_memory = 0) {
+    return SetField<uint64_t>(VT_RESERVED_MEMORY, _reserved_memory, 0);
+  }
+  uint64_t committed_memory() const {
+    return GetField<uint64_t>(VT_COMMITTED_MEMORY, 0);
+  }
+  bool mutate_committed_memory(uint64_t _committed_memory = 0) {
+    return SetField<uint64_t>(VT_COMMITTED_MEMORY, _committed_memory, 0);
+  }
+  uint64_t executed_instructions() const {
+    return GetField<uint64_t>(VT_EXECUTED_INSTRUCTIONS, 0);
+  }
+  bool mutate_executed_instructions(uint64_t _executed_instructions = 0) {
+    return SetField<uint64_t>(VT_EXECUTED_INSTRUCTIONS, _executed_instructions, 0);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<uint64_t>(verifier, VT_EXECUTED_INSTRUCTIONS, 8) &&
            VerifyField<uint32_t>(verifier, VT_ACTIVE_THREADS, 4) &&
+           VerifyField<uint64_t>(verifier, VT_RESERVED_MEMORY, 8) &&
+           VerifyField<uint64_t>(verifier, VT_COMMITTED_MEMORY, 8) &&
+           VerifyField<uint64_t>(verifier, VT_EXECUTED_INSTRUCTIONS, 8) &&
            verifier.EndTable();
   }
   EmulationStatusT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -1341,11 +1359,17 @@ struct EmulationStatusBuilder {
   typedef EmulationStatus Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
-  void add_executed_instructions(uint64_t executed_instructions) {
-    fbb_.AddElement<uint64_t>(EmulationStatus::VT_EXECUTED_INSTRUCTIONS, executed_instructions, 0);
-  }
   void add_active_threads(uint32_t active_threads) {
     fbb_.AddElement<uint32_t>(EmulationStatus::VT_ACTIVE_THREADS, active_threads, 0);
+  }
+  void add_reserved_memory(uint64_t reserved_memory) {
+    fbb_.AddElement<uint64_t>(EmulationStatus::VT_RESERVED_MEMORY, reserved_memory, 0);
+  }
+  void add_committed_memory(uint64_t committed_memory) {
+    fbb_.AddElement<uint64_t>(EmulationStatus::VT_COMMITTED_MEMORY, committed_memory, 0);
+  }
+  void add_executed_instructions(uint64_t executed_instructions) {
+    fbb_.AddElement<uint64_t>(EmulationStatus::VT_EXECUTED_INSTRUCTIONS, executed_instructions, 0);
   }
   explicit EmulationStatusBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
@@ -1360,10 +1384,14 @@ struct EmulationStatusBuilder {
 
 inline ::flatbuffers::Offset<EmulationStatus> CreateEmulationStatus(
     ::flatbuffers::FlatBufferBuilder &_fbb,
-    uint64_t executed_instructions = 0,
-    uint32_t active_threads = 0) {
+    uint32_t active_threads = 0,
+    uint64_t reserved_memory = 0,
+    uint64_t committed_memory = 0,
+    uint64_t executed_instructions = 0) {
   EmulationStatusBuilder builder_(_fbb);
   builder_.add_executed_instructions(executed_instructions);
+  builder_.add_committed_memory(committed_memory);
+  builder_.add_reserved_memory(reserved_memory);
   builder_.add_active_threads(active_threads);
   return builder_.Finish();
 }
@@ -1903,8 +1931,10 @@ inline EmulationStatusT *EmulationStatus::UnPack(const ::flatbuffers::resolver_f
 inline void EmulationStatus::UnPackTo(EmulationStatusT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
   (void)_o;
   (void)_resolver;
-  { auto _e = executed_instructions(); _o->executed_instructions = _e; }
   { auto _e = active_threads(); _o->active_threads = _e; }
+  { auto _e = reserved_memory(); _o->reserved_memory = _e; }
+  { auto _e = committed_memory(); _o->committed_memory = _e; }
+  { auto _e = executed_instructions(); _o->executed_instructions = _e; }
 }
 
 inline ::flatbuffers::Offset<EmulationStatus> EmulationStatus::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const EmulationStatusT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -1915,12 +1945,16 @@ inline ::flatbuffers::Offset<EmulationStatus> CreateEmulationStatus(::flatbuffer
   (void)_rehasher;
   (void)_o;
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const EmulationStatusT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
-  auto _executed_instructions = _o->executed_instructions;
   auto _active_threads = _o->active_threads;
+  auto _reserved_memory = _o->reserved_memory;
+  auto _committed_memory = _o->committed_memory;
+  auto _executed_instructions = _o->executed_instructions;
   return Debugger::CreateEmulationStatus(
       _fbb,
-      _executed_instructions,
-      _active_threads);
+      _active_threads,
+      _reserved_memory,
+      _committed_memory,
+      _executed_instructions);
 }
 
 inline DebugEventT *DebugEvent::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {

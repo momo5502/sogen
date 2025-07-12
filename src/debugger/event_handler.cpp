@@ -236,7 +236,11 @@ namespace debugger
 
     void update_emulation_status(const windows_emulator& win_emu)
     {
+        const auto memory_status = win_emu.memory.compute_memory_stats();
+
         Debugger::EmulationStatusT status{};
+        status.reserved_memory = memory_status.reserved_memory;
+        status.committed_memory = memory_status.committed_memory;
         status.executed_instructions = win_emu.get_executed_instructions();
         status.active_threads = static_cast<uint32_t>(win_emu.process.threads.size());
         send_event(status);

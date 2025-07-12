@@ -24,29 +24,13 @@ static getSizePrefixedRootAsEmulationStatus(bb:flatbuffers.ByteBuffer, obj?:Emul
   return (obj || new EmulationStatus()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
 }
 
-executedInstructions():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
-}
-
-mutate_executed_instructions(value:bigint):boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-
-  if (offset === 0) {
-    return false;
-  }
-
-  this.bb!.writeUint64(this.bb_pos + offset, value);
-  return true;
-}
-
 activeThreads():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
+  const offset = this.bb!.__offset(this.bb_pos, 4);
   return offset ? this.bb!.readUint32(this.bb_pos + offset) : 0;
 }
 
 mutate_active_threads(value:number):boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
+  const offset = this.bb!.__offset(this.bb_pos, 4);
 
   if (offset === 0) {
     return false;
@@ -56,16 +40,72 @@ mutate_active_threads(value:number):boolean {
   return true;
 }
 
-static startEmulationStatus(builder:flatbuffers.Builder) {
-  builder.startObject(2);
+reservedMemory():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 6);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
 }
 
-static addExecutedInstructions(builder:flatbuffers.Builder, executedInstructions:bigint) {
-  builder.addFieldInt64(0, executedInstructions, BigInt('0'));
+mutate_reserved_memory(value:bigint):boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 6);
+
+  if (offset === 0) {
+    return false;
+  }
+
+  this.bb!.writeUint64(this.bb_pos + offset, value);
+  return true;
+}
+
+committedMemory():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 8);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
+
+mutate_committed_memory(value:bigint):boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 8);
+
+  if (offset === 0) {
+    return false;
+  }
+
+  this.bb!.writeUint64(this.bb_pos + offset, value);
+  return true;
+}
+
+executedInstructions():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 10);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
+
+mutate_executed_instructions(value:bigint):boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 10);
+
+  if (offset === 0) {
+    return false;
+  }
+
+  this.bb!.writeUint64(this.bb_pos + offset, value);
+  return true;
+}
+
+static startEmulationStatus(builder:flatbuffers.Builder) {
+  builder.startObject(4);
 }
 
 static addActiveThreads(builder:flatbuffers.Builder, activeThreads:number) {
-  builder.addFieldInt32(1, activeThreads, 0);
+  builder.addFieldInt32(0, activeThreads, 0);
+}
+
+static addReservedMemory(builder:flatbuffers.Builder, reservedMemory:bigint) {
+  builder.addFieldInt64(1, reservedMemory, BigInt('0'));
+}
+
+static addCommittedMemory(builder:flatbuffers.Builder, committedMemory:bigint) {
+  builder.addFieldInt64(2, committedMemory, BigInt('0'));
+}
+
+static addExecutedInstructions(builder:flatbuffers.Builder, executedInstructions:bigint) {
+  builder.addFieldInt64(3, executedInstructions, BigInt('0'));
 }
 
 static endEmulationStatus(builder:flatbuffers.Builder):flatbuffers.Offset {
@@ -73,38 +113,48 @@ static endEmulationStatus(builder:flatbuffers.Builder):flatbuffers.Offset {
   return offset;
 }
 
-static createEmulationStatus(builder:flatbuffers.Builder, executedInstructions:bigint, activeThreads:number):flatbuffers.Offset {
+static createEmulationStatus(builder:flatbuffers.Builder, activeThreads:number, reservedMemory:bigint, committedMemory:bigint, executedInstructions:bigint):flatbuffers.Offset {
   EmulationStatus.startEmulationStatus(builder);
-  EmulationStatus.addExecutedInstructions(builder, executedInstructions);
   EmulationStatus.addActiveThreads(builder, activeThreads);
+  EmulationStatus.addReservedMemory(builder, reservedMemory);
+  EmulationStatus.addCommittedMemory(builder, committedMemory);
+  EmulationStatus.addExecutedInstructions(builder, executedInstructions);
   return EmulationStatus.endEmulationStatus(builder);
 }
 
 unpack(): EmulationStatusT {
   return new EmulationStatusT(
-    this.executedInstructions(),
-    this.activeThreads()
+    this.activeThreads(),
+    this.reservedMemory(),
+    this.committedMemory(),
+    this.executedInstructions()
   );
 }
 
 
 unpackTo(_o: EmulationStatusT): void {
-  _o.executedInstructions = this.executedInstructions();
   _o.activeThreads = this.activeThreads();
+  _o.reservedMemory = this.reservedMemory();
+  _o.committedMemory = this.committedMemory();
+  _o.executedInstructions = this.executedInstructions();
 }
 }
 
 export class EmulationStatusT implements flatbuffers.IGeneratedObject {
 constructor(
-  public executedInstructions: bigint = BigInt('0'),
-  public activeThreads: number = 0
+  public activeThreads: number = 0,
+  public reservedMemory: bigint = BigInt('0'),
+  public committedMemory: bigint = BigInt('0'),
+  public executedInstructions: bigint = BigInt('0')
 ){}
 
 
 pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   return EmulationStatus.createEmulationStatus(builder,
-    this.executedInstructions,
-    this.activeThreads
+    this.activeThreads,
+    this.reservedMemory,
+    this.committedMemory,
+    this.executedInstructions
   );
 }
 }
