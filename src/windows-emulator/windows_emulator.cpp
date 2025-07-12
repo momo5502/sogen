@@ -11,6 +11,7 @@
 #include "apiset/apiset.hpp"
 
 #include "network/static_socket_factory.hpp"
+#include "memory_permission_ext.hpp"
 
 constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 0x20000;
 
@@ -501,8 +502,20 @@ void windows_emulator::setup_hooks()
 
     this->emu().hook_memory_violation([&](const uint64_t address, const size_t size, const memory_operation operation,
                                           const memory_violation_type type) {
-        this->callbacks.on_memory_violate(address, size, operation, type);
-        dispatch_access_violation(this->emu(), this->process, address, operation);
+        auto region = this->memory.get_region_info(address);
+        if (region.permissions.is_guarded())
+        {
+            // Unset the GUARD_PAGE flag and dispatch a STATUS_GUARD_PAGE_VIOLATION
+            this->memory.protect_memory(region.allocation_base, region.length,
+                                        region.permissions & ~memory_permission_ext::guard);
+            dispatch_guard_page_violation(this->emu(), this->process, address, operation);
+        }
+        else
+        {
+            this->callbacks.on_memory_violate(address, size, operation, type);
+            dispatch_access_violation(this->emu(), this->process, address, operation);
+        }
+
         return memory_violation_continuation::resume;
     });
 
