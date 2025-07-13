@@ -383,22 +383,8 @@ namespace unicorn
 
                 if (inst_type == x86_hookable_instructions::invalid)
                 {
-                    function_wrapper<int, uc_engine*> wrapper([this, c = std::move(callback)](uc_engine*) {
-                        const auto ip = this->read_instruction_pointer();
-                        const auto skip = c() == instruction_hook_continuation::skip_instruction;
-                        const auto new_ip = this->read_instruction_pointer();
-                        const auto has_ip_changed = ip != new_ip;
-
-                        if (skip && has_ip_changed)
-                        {
-                            // this->violation_ip_ = new_ip;
-                        }
-                        else
-                        {
-                            this->violation_ip_ = std::nullopt;
-                        }
-
-                        return skip ? 1 : 0;
+                    function_wrapper<int, uc_engine*> wrapper([c = std::move(callback)](uc_engine*) {
+                        return (c() == instruction_hook_continuation::skip_instruction) ? 1 : 0;
                     });
 
                     uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_INSN_INVALID, wrapper.get_function(),
