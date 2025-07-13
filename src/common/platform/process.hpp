@@ -25,7 +25,7 @@
     (CONTEXT_CONTROL_64 | CONTEXT_INTEGER_64 | CONTEXT_SEGMENTS_64 | CONTEXT_FLOATING_POINT_64 | \
      CONTEXT_DEBUG_REGISTERS_64)
 
-typedef enum _SYSTEM_INFORMATION_CLASS
+using SYSTEM_INFORMATION_CLASS = enum _SYSTEM_INFORMATION_CLASS
 {
     SystemBasicInformation,                // q: SYSTEM_BASIC_INFORMATION
     SystemProcessorInformation,            // q: SYSTEM_PROCESSOR_INFORMATION
@@ -323,7 +323,7 @@ typedef enum _SYSTEM_INFORMATION_CLASS
     SystemBreakOnContextUnwindFailureInformation, // ULONG (requires SeDebugPrivilege)
     SystemOslRamdiskInformation,                  // SYSTEM_OSL_RAMDISK_INFORMATION
     MaxSystemInfoClass
-} SYSTEM_INFORMATION_CLASS;
+};
 
 #ifndef OS_WINDOWS
 typedef enum _TOKEN_INFORMATION_CLASS
@@ -383,7 +383,7 @@ typedef enum _TOKEN_INFORMATION_CLASS
 
 #endif
 
-typedef enum _PROCESSINFOCLASS
+using PROCESSINFOCLASS = enum _PROCESSINFOCLASS
 {
     ProcessBasicInformation,          // q: PROCESS_BASIC_INFORMATION, PROCESS_EXTENDED_BASIC_INFORMATION
     ProcessQuotaLimits,               // qs: QUOTA_LIMITS, QUOTA_LIMITS_EX
@@ -502,9 +502,9 @@ typedef enum _PROCESSINFOCLASS
     ProcessNetworkIoCounters,         // q: PROCESS_NETWORK_COUNTERS
     ProcessFindFirstThreadByTebValue, // PROCESS_TEB_VALUE_INFORMATION
     MaxProcessInfoClass
-} PROCESSINFOCLASS;
+};
 
-typedef enum _PS_ATTRIBUTE_NUM
+using PS_ATTRIBUTE_NUM = enum _PS_ATTRIBUTE_NUM
 {
     PsAttributeParentProcess,      // in HANDLE
     PsAttributeDebugObject,        // in HANDLE
@@ -542,7 +542,7 @@ typedef enum _PS_ATTRIBUTE_NUM
     PsAttributeSupportedMachines,            // since 24H2
     PsAttributeSveVectorLength,              // PPS_PROCESS_CREATION_SVE_VECTOR_LENGTH
     PsAttributeMax
-} PS_ATTRIBUTE_NUM;
+};
 
 struct SYSTEM_PROCESSOR_INFORMATION64
 {
@@ -553,13 +553,15 @@ struct SYSTEM_PROCESSOR_INFORMATION64
     ULONG ProcessorFeatureBits;
 };
 
-#ifndef OS_WINDOWS
+#if !defined(OS_WINDOWS) || !defined(_WIN64)
 
+#if !defined(OS_WINDOWS)
 typedef struct _M128A
 {
     ULONGLONG Low;
     LONGLONG High;
 } M128A, *PM128A;
+#endif
 
 typedef struct _XMM_SAVE_AREA32
 {
@@ -583,13 +585,17 @@ typedef struct _XMM_SAVE_AREA32
 
 #endif
 
-typedef struct _NEON128
+using NEON128 = struct _NEON128
 {
     ULONGLONG Low;
     LONGLONG High;
-} NEON128;
+};
 
-typedef struct DECLSPEC_ALIGN(16) _CONTEXT64
+typedef struct
+#if !defined(__MINGW64__)
+    DECLSPEC_ALIGN(16)
+#endif
+        _CONTEXT64
 {
     DWORD64 P1Home;
     DWORD64 P2Home;
@@ -768,6 +774,54 @@ struct TOKEN_USER64
     SID_AND_ATTRIBUTES64 User;
 };
 
+struct TOKEN_GROUPS64
+{
+    ULONG GroupCount;
+    SID_AND_ATTRIBUTES64 Groups[1];
+};
+
+struct TOKEN_OWNER64
+{
+    EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, PSID) Owner;
+};
+
+struct TOKEN_PRIMARY_GROUP64
+{
+    EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, PSID) PrimaryGroup;
+};
+
+#ifndef OS_WINDOWS
+struct ACL
+{
+    BYTE AclRevision;
+    BYTE Sbz1;
+    WORD AclSize;
+    WORD AceCount;
+    WORD Sbz2;
+};
+
+struct ACE_HEADER
+{
+    BYTE AceType;
+    BYTE AceFlags;
+    WORD AceSize;
+};
+
+typedef DWORD ACCESS_MASK;
+
+struct ACCESS_ALLOWED_ACE
+{
+    ACE_HEADER Header;
+    ACCESS_MASK Mask;
+    DWORD SidStart;
+};
+#endif
+
+struct TOKEN_DEFAULT_DACL64
+{
+    EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, PACL) DefaultDacl;
+};
+
 struct TOKEN_BNO_ISOLATION_INFORMATION64
 {
     EmulatorTraits<Emu64>::PVOID IsolationPrefix;
@@ -777,6 +831,11 @@ struct TOKEN_BNO_ISOLATION_INFORMATION64
 struct TOKEN_MANDATORY_LABEL64
 {
     SID_AND_ATTRIBUTES64 Label;
+};
+
+struct TOKEN_PROCESS_TRUST_LEVEL64
+{
+    EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, PSID) TrustLevelSid;
 };
 
 #ifndef OS_WINDOWS
@@ -834,6 +893,52 @@ typedef struct _TOKEN_SECURITY_ATTRIBUTES_INFORMATION
         EmulatorTraits<Emu64>::PVOID pAttributeV1;
     } Attribute;
 } TOKEN_SECURITY_ATTRIBUTES_INFORMATION, *PTOKEN_SECURITY_ATTRIBUTES_INFORMATION;
+
+#ifndef OS_WINDOWS
+#define SECURITY_DESCRIPTOR_REVISION  1
+#define SECURITY_DESCRIPTOR_REVISION1 1
+
+typedef WORD SECURITY_DESCRIPTOR_CONTROL, *PSECURITY_DESCRIPTOR_CONTROL;
+
+#define SE_OWNER_DEFAULTED       0x0001
+#define SE_GROUP_DEFAULTED       0x0002
+#define SE_DACL_PRESENT          0x0004
+#define SE_DACL_DEFAULTED        0x0008
+#define SE_SACL_PRESENT          0x0010
+#define SE_SACL_DEFAULTED        0x0020
+#define SE_DACL_AUTO_INHERIT_REQ 0x0100
+#define SE_SACL_AUTO_INHERIT_REQ 0x0200
+#define SE_DACL_AUTO_INHERITED   0x0400
+#define SE_SACL_AUTO_INHERITED   0x0800
+#define SE_DACL_PROTECTED        0x1000
+#define SE_SACL_PROTECTED        0x2000
+#define SE_RM_CONTROL_VALID      0x4000
+#define SE_SELF_RELATIVE         0x8000
+
+struct SECURITY_DESCRIPTOR_RELATIVE
+{
+    BYTE Revision;
+    BYTE Sbz1;
+    SECURITY_DESCRIPTOR_CONTROL Control;
+    DWORD Owner;
+    DWORD Group;
+    DWORD Sacl;
+    DWORD Dacl;
+};
+
+typedef DWORD SECURITY_INFORMATION, *PSECURITY_INFORMATION;
+
+#define OWNER_SECURITY_INFORMATION               0x00000001L
+#define GROUP_SECURITY_INFORMATION               0x00000002L
+#define DACL_SECURITY_INFORMATION                0x00000004L
+#define SACL_SECURITY_INFORMATION                0x00000008L
+#define LABEL_SECURITY_INFORMATION               0x00000010L
+#define ATTRIBUTE_SECURITY_INFORMATION           0x00000020L
+#define SCOPE_SECURITY_INFORMATION               0x00000040L
+#define PROCESS_TRUST_LABEL_SECURITY_INFORMATION 0x00000080L
+#define ACCESS_FILTER_SECURITY_INFORMATION       0x00000100L
+#define BACKUP_SECURITY_INFORMATION              0x00010000L
+#endif
 
 struct GDI_HANDLE_ENTRY64
 {

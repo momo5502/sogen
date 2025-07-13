@@ -122,7 +122,7 @@ namespace utils
             }
             else
             {
-                static_assert(!is_trivially_copyable, "Key must be trivially copyable or implement serializable!");
+                static_assert(is_trivially_copyable, "Key must be trivially copyable or implement serializable!");
                 std::abort();
             }
         }
@@ -378,7 +378,7 @@ namespace utils
         {
             const auto size = this->read<uint64_t>();
             result.clear();
-            result.reserve(size);
+            result.reserve(static_cast<size_t>(size));
 
             for (uint64_t i = 0; i < size; ++i)
             {
@@ -447,7 +447,7 @@ namespace utils
             const auto size = this->read<uint64_t>();
 
             result.clear();
-            result.reserve(size);
+            result.reserve(static_cast<size_t>(size));
 
             for (uint64_t i = 0; i < size; ++i)
             {

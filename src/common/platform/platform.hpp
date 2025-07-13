@@ -1,6 +1,6 @@
 #pragma once
 
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(__MINGW64__)
 #pragma warning(push)
 #pragma warning(disable : 4201) // nameless struct/union
 #pragma warning(disable : 4702) // unreachable code
@@ -25,11 +25,12 @@
 #include "registry.hpp"
 #include "network.hpp"
 #include "threading.hpp"
+#include "window.hpp"
 
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
 
-#ifdef OS_WINDOWS
+#if defined(_WIN32) && !defined(__MINGW64__)
 #pragma warning(pop)
 #endif

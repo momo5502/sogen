@@ -5,7 +5,7 @@
 
 #include "../emulator_utils.hpp"
 
-#include <x64_emulator.hpp>
+#include <arch_emulator.hpp>
 
 #include <utils/io.hpp>
 #include <utils/compression.hpp>
@@ -14,7 +14,7 @@ namespace apiset
 {
     namespace
     {
-        uint64_t copy_string(x64_emulator& emu, emulator_allocator& allocator, const void* base_ptr,
+        uint64_t copy_string(x86_64_emulator& emu, emulator_allocator& allocator, const void* base_ptr,
                              const uint64_t offset, const size_t length)
         {
             if (!length)
@@ -29,7 +29,7 @@ namespace apiset
             return str_obj;
         }
 
-        ULONG copy_string_as_relative(x64_emulator& emu, emulator_allocator& allocator, const uint64_t result_base,
+        ULONG copy_string_as_relative(x86_64_emulator& emu, emulator_allocator& allocator, const uint64_t result_base,
                                       const void* base_ptr, const uint64_t offset, const size_t length)
         {
             const auto address = copy_string(emu, allocator, base_ptr, offset, length);
@@ -57,12 +57,13 @@ namespace apiset
         {
             switch (location)
             {
-#ifdef OS_WINDOWS
+#ifdef OS_WINDOWS_64
             case location::host: {
-                const auto apiSetMap =
-                    reinterpret_cast<const API_SET_NAMESPACE*>(NtCurrentTeb64()->ProcessEnvironmentBlock->ApiSetMap);
-                const auto* dataPtr = reinterpret_cast<const std::byte*>(apiSetMap);
-                return {dataPtr, dataPtr + apiSetMap->Size};
+                const auto* teb = NtCurrentTeb64();
+                const auto* peb = reinterpret_cast<PEB64*>(teb->ProcessEnvironmentBlock);
+                const auto* api_set_map = reinterpret_cast<const API_SET_NAMESPACE*>(peb->ApiSetMap);
+                const auto* data_ptr = reinterpret_cast<const std::byte*>(api_set_map);
+                return {data_ptr, data_ptr + api_set_map->Size};
             }
 #else
             case location::host:
@@ -114,13 +115,13 @@ namespace apiset
         return obtain(apiset_loc, root);
     }
 
-    emulator_object<API_SET_NAMESPACE> clone(x64_emulator& emu, emulator_allocator& allocator,
+    emulator_object<API_SET_NAMESPACE> clone(x86_64_emulator& emu, emulator_allocator& allocator,
                                              const container& container)
     {
         return clone(emu, allocator, container.get());
     }
 
-    emulator_object<API_SET_NAMESPACE> clone(x64_emulator& emu, emulator_allocator& allocator,
+    emulator_object<API_SET_NAMESPACE> clone(x86_64_emulator& emu, emulator_allocator& allocator,
                                              const API_SET_NAMESPACE& orig_api_set_map)
     {
         const auto api_set_map_obj = allocator.reserve<API_SET_NAMESPACE>();

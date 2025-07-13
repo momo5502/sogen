@@ -4,7 +4,6 @@
 #include <serialization_helper.hpp>
 
 #include "hive_parser.hpp"
-#include <utils/string.hpp>
 
 namespace
 {
@@ -27,6 +26,25 @@ namespace
     void register_hive(registry_manager::hive_map& hives, const utils::path_key& key, const std::filesystem::path& file)
     {
         hives[key] = std::make_unique<hive_parser>(file);
+    }
+
+    std::pair<utils::path_key, bool> perform_path_substitution(
+        const std::unordered_map<utils::path_key, utils::path_key>& path_mapping, utils::path_key path)
+    {
+        for (const auto& mapping : path_mapping)
+        {
+            if (path == mapping.first)
+            {
+                return {mapping.second, true};
+            }
+
+            if (is_subpath(mapping.first.get(), path.get()))
+            {
+                return {mapping.second.get() / path.get().lexically_relative(mapping.first.get()), true};
+            }
+        }
+
+        return {std::move(path), false};
     }
 }
 
@@ -59,15 +77,20 @@ void registry_manager::setup()
     register_hive(this->hives_, root / "user", this->hive_path_ / "NTUSER.DAT");
 
     this->add_path_mapping(machine / "system" / "CurrentControlSet", machine / "system" / "ControlSet001");
+    this->add_path_mapping(machine / "system" / "ControlSet001" / "Control" / "ComputerName" / "ActiveComputerName",
+                           machine / "system" / "ControlSet001" / "Control" / "ComputerName" / "ComputerName");
 }
 
-utils::path_key registry_manager::normalize_path(const utils::path_key& path) const
+utils::path_key registry_manager::normalize_path(utils::path_key path) const
 {
-    for (const auto& mapping : this->path_mapping_)
+    for (size_t i = 0; i < 10; ++i)
     {
-        if (is_subpath(mapping.first.get(), path.get()))
+        auto [new_path, changed] = perform_path_substitution(this->path_mapping_, std::move(path));
+        path = std::move(new_path);
+
+        if (!changed)
         {
-            return mapping.second.get() / path.get().lexically_relative(mapping.first.get());
+            break;
         }
     }
 
@@ -105,7 +128,22 @@ std::optional<registry_key> registry_manager::get_key(const utils::path_key& key
         return {std::move(reg_key)};
     }
 
-    const auto* entry = iterator->second->get_sub_key(reg_key.path.get());
+    auto path = reg_key.path.get();
+    const auto* entry = iterator->second->get_sub_key(path);
+
+    if (!entry)
+    {
+        constexpr std::wstring_view wowPrefix = L"wow6432node";
+
+        const auto pathStr = path.wstring();
+        if (pathStr.starts_with(wowPrefix))
+        {
+            path = pathStr.substr(wowPrefix.size() + 1);
+            reg_key.path = path;
+            entry = iterator->second->get_sub_key(path);
+        }
+    }
+
     if (!entry)
     {
         return std::nullopt;
@@ -114,10 +152,8 @@ std::optional<registry_key> registry_manager::get_key(const utils::path_key& key
     return {std::move(reg_key)};
 }
 
-std::optional<registry_value> registry_manager::get_value(const registry_key& key, std::string name)
+std::optional<registry_value> registry_manager::get_value(const registry_key& key, const std::string_view name)
 {
-    utils::string::to_lower_inplace(name);
-
     const auto iterator = this->hives_.find(key.hive);
     if (iterator == this->hives_.end())
     {
@@ -125,6 +161,28 @@ std::optional<registry_value> registry_manager::get_value(const registry_key& ke
     }
 
     const auto* entry = iterator->second->get_value(key.path.get(), name);
+    if (!entry)
+    {
+        return std::nullopt;
+    }
+
+    registry_value v{};
+    v.type = entry->type;
+    v.name = entry->name;
+    v.data = entry->data;
+
+    return v;
+}
+
+std::optional<registry_value> registry_manager::get_value(const registry_key& key, const size_t index)
+{
+    const auto iterator = this->hives_.find(key.hive);
+    if (iterator == this->hives_.end())
+    {
+        return std::nullopt;
+    }
+
+    const auto* entry = iterator->second->get_value(key.path.get(), index);
     if (!entry)
     {
         return std::nullopt;
@@ -149,4 +207,21 @@ registry_manager::hive_map::iterator registry_manager::find_hive(const utils::pa
     }
 
     return this->hives_.end();
+}
+
+std::optional<std::string_view> registry_manager::get_sub_key_name(const registry_key& key, const size_t index)
+{
+    const auto iterator = this->hives_.find(key.hive);
+    if (iterator == this->hives_.end())
+    {
+        return std::nullopt;
+    }
+
+    const auto* name = iterator->second->get_sub_key_name(key.path.get(), index);
+    if (!name)
+    {
+        return std::nullopt;
+    }
+
+    return *name;
 }

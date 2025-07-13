@@ -22,7 +22,12 @@ cmake_policy(SET CMP0069 NEW)
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+
+##########################################
+
+if(NOT MINGW AND NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+endif()
 
 ##########################################
 
@@ -34,7 +39,14 @@ endif()
 
 ##########################################
 
-if(MOMO_ENABLE_RUST_CODE)
+set(MOMO_ENABLE_RUST OFF)
+if(MOMO_ENABLE_RUST_CODE AND NOT MINGW AND NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
+  set(MOMO_ENABLE_RUST ON)
+endif()
+
+##########################################
+
+if(MOMO_ENABLE_RUST)
   add_compile_definitions(MOMO_ENABLE_RUST_CODE=1)
 else()
   add_compile_definitions(MOMO_ENABLE_RUST_CODE=0)
@@ -46,6 +58,21 @@ if(UNIX)
   momo_add_c_and_cxx_compile_options(
     -fvisibility=hidden
     -ftrivial-auto-var-init=zero
+  )
+endif()
+
+##########################################
+
+if(MINGW)
+  add_link_options(
+    -static-libstdc++
+    -static-libgcc
+    -static
+    -lwinpthread
+  )
+
+  momo_add_c_and_cxx_compile_options(
+    -Wno-array-bounds
   )
 endif()
 
@@ -83,6 +110,57 @@ endif()
 
 ##########################################
 
+if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
+  momo_add_c_and_cxx_compile_options(
+    -fexceptions
+    -ftrivial-auto-var-init=zero
+    -Wno-dollar-in-identifier-extension
+  )
+
+  add_link_options(
+    -fexceptions
+    -sALLOW_MEMORY_GROWTH=1
+    $<$<CONFIG:Debug>:-sASSERTIONS>
+    -sWASM_BIGINT
+    -sUSE_OFFSET_CONVERTER
+    #-sEXCEPTION_CATCHING_ALLOWED=[..]
+    -sEXIT_RUNTIME
+    -sASYNCIFY
+  )
+
+  if(MOMO_EMSCRIPTEN_MEMORY64)
+    momo_add_c_and_cxx_compile_options(
+      -sMEMORY64
+    )
+
+    add_link_options(
+      -sMAXIMUM_MEMORY=8gb
+      -sMEMORY64
+    )
+  else()
+    add_link_options(
+      -sMAXIMUM_MEMORY=4gb
+    )
+  endif()
+
+  if(MOMO_EMSCRIPTEN_SUPPORT_NODEJS)
+    add_link_options(
+      -lnodefs.js -sNODERAWFS=1
+      -sENVIRONMENT=node
+      --pre-js ${CMAKE_CURRENT_LIST_DIR}/misc/node-pre-script.js
+    )
+  else() 
+    add_link_options(
+      -lidbfs.js
+      -sENVIRONMENT=worker
+      -sINVOKE_RUN=0
+      -sEXPORTED_RUNTIME_METHODS=['callMain']
+    )
+  endif()
+endif()
+
+##########################################
+
 if(MSVC)
   string(REPLACE "/EHsc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
   string(REPLACE "/EHs" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
@@ -101,10 +179,6 @@ if(MSVC)
 
   add_link_options(
     /INCREMENTAL:NO
-  )
-
-  momo_add_c_and_cxx_release_compile_options(
-    /Ob2
   )
 
   add_compile_definitions(
@@ -154,24 +228,6 @@ if(MSVC)
     $<$<NOT:$<STREQUAL:${CMAKE_MSVC_RUNTIME_LIBRARY},MultiThreadedDebugDLL>>:/NODEFAULTLIB:msvcrtd.lib>
   )
 endif()
-
-##########################################
-
-set(OPT_DEBUG "-O0 -g")
-set(OPT_RELEASE "-O3 -g")
-
-if(MSVC)
-  set(OPT_DEBUG "/Od /Ob0 /Zi")
-  set(OPT_RELEASE "/O2 /Ob2 /Zi")
-
-  add_link_options(/DEBUG)
-endif()
-
-set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} ${OPT_DEBUG}")
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} ${OPT_DEBUG}")
-
-set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} ${OPT_RELEASE}")
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} ${OPT_RELEASE}")
 
 ##########################################
 

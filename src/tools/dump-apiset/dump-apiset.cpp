@@ -22,16 +22,16 @@ int main()
     printf("------------\n\n");
 
     const auto peb = static_cast<PPEB64>(GetCurrentProcessPeb());
-    const auto api_set_map = peb->ApiSetMap;
+    const auto api_set_map = reinterpret_cast<API_SET_NAMESPACE*>(peb->ApiSetMap);
 
-    printf("APISET: 0x%p\n", api_set_map);
-    printf("Version: %d\n", api_set_map->Version);
-    printf("Size: %08X\n", api_set_map->Size);
-    printf("Flags: %08X\n", api_set_map->Flags);
-    printf("Count: %d\n", api_set_map->Count);
-    printf("EntryOffset: %08X\n", api_set_map->EntryOffset);
-    printf("HashOffset: %08X\n", api_set_map->HashOffset);
-    printf("HashFactor: %08X\n", api_set_map->HashFactor);
+    printf("APISET: 0x%p\n", static_cast<void*>(api_set_map));
+    printf("Version: %lu\n", api_set_map->Version);
+    printf("Size: %08lX\n", api_set_map->Size);
+    printf("Flags: %08lX\n", api_set_map->Flags);
+    printf("Count: %lu\n", api_set_map->Count);
+    printf("EntryOffset: %08lX\n", api_set_map->EntryOffset);
+    printf("HashOffset: %08lX\n", api_set_map->HashOffset);
+    printf("HashFactor: %08lX\n", api_set_map->HashFactor);
     // print_apiset(apiSetMap);
 
     // Compress the API-SET binary blob
@@ -68,7 +68,7 @@ void print_apiset(PAPI_SET_NAMESPACE api_set_map)
 
         std::wstring name(reinterpret_cast<wchar_t*>(reinterpret_cast<ULONG_PTR>(api_set_map) + entry->NameOffset),
                           entry->NameLength / sizeof(wchar_t));
-        printf("-----------\n[%05d]: Contract Name: %ls\n", i, name.data());
+        printf("-----------\n[%05lu]: Contract Name: %ls\n", i, name.data());
 
         for (ULONG x = 0; x < entry->ValueCount; x++)
         {

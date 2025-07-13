@@ -2,8 +2,6 @@
 #include "std_include.hpp"
 #include "windows_path.hpp"
 
-#include <platform/compiler.hpp>
-
 class file_system
 {
   public:
@@ -21,6 +19,41 @@ class file_system
     {
         const auto relative_path = relative(normal_target, normal_root);
         return !is_escaping_relative_path(relative_path);
+    }
+
+    std::set<char> list_drives() const
+    {
+        std::set<char> drives{};
+
+#ifdef OS_WINDOWS
+        if (this->root_.empty())
+        {
+            const auto drive_bits = GetLogicalDrives();
+
+            for (char drive = 'a'; drive <= 'z'; ++drive)
+            {
+                const auto drive_index = drive - 'a';
+                if (drive_bits & (1 << drive_index))
+                {
+                    drives.insert(drive);
+                }
+            }
+
+            return drives;
+        }
+#endif
+
+        std::error_code ec{};
+        for (const auto& file : std::filesystem::directory_iterator(this->root_, ec))
+        {
+            const auto filename = file.path().filename().string();
+            if (filename.size() == 1)
+            {
+                drives.insert(utils::string::char_to_lower(filename.front()));
+            }
+        }
+
+        return drives;
     }
 
     std::filesystem::path translate(const windows_path& win_path) const
@@ -54,6 +87,19 @@ class file_system
         }
 
         return root;
+    }
+
+    template <typename F>
+    void access_mapped_entries(const windows_path& win_path, const F& accessor) const
+    {
+        for (const auto& mapping : this->mappings_)
+        {
+            const auto& mapped_path = mapping.first;
+            if (!mapped_path.empty() && mapped_path.parent() == win_path)
+            {
+                accessor(mapping);
+            }
+        }
     }
 
     windows_path local_to_windows_path(const std::filesystem::path& local_path) const

@@ -13,7 +13,13 @@ endif()
 set(CARGO_TRIPLE)
 set(CARGO_OPTIONS)
 
-if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+if (MINGW)
+  set(CARGO_TRIPLE "x86_64-pc-windows-gnu")
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+  set(CARGO_TRIPLE "wasm32-unknown-emscripten")
+elseif(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+  set(CARGO_TRIPLE "i686-pc-windows-msvc")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   set(CARGO_TRIPLE "aarch64-apple-ios")
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Android")
   if(CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
@@ -37,7 +43,7 @@ ExternalProject_Add(
     SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}
     BINARY_DIR ${CMAKE_CURRENT_LIST_DIR}
     CONFIGURE_COMMAND ""
-    BUILD_COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${ICICLE_BUILD_DIR}" cargo build ${CARGO_OPTIONS} --lib --profile $<IF:$<CONFIG:Debug>,dev,release>
+    BUILD_COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${ICICLE_BUILD_DIR}" -- cargo build ${CARGO_OPTIONS} --lib --profile $<IF:$<CONFIG:Debug>,dev,release>
     INSTALL_COMMAND ""
     USES_TERMINAL_CONFIGURE 1
     USES_TERMINAL_BUILD 1

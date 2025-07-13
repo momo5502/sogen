@@ -2,20 +2,31 @@
 
 #if defined(_WIN32) || defined(_WIN64)
 #define OS_WINDOWS
+
+#if defined(_WIN64)
+#define OS_WINDOWS_64
+#else
+#define OS_WINDOWS_32
+#endif
+
 #elif defined(__APPLE__) || defined(__MACH__)
 #define OS_MAC
 #elif defined(__linux__)
 #define OS_LINUX
+#elif defined(__EMSCRIPTEN__)
+#define OS_EMSCRIPTEN
 #else
 #error "Unsupported platform"
 #endif
 
 #ifdef OS_WINDOWS
-#define EXPORT_SYMBOL     __declspec(dllexport)
-#define IMPORT_SYMBOL     __declspec(dllimport)
-#define NO_INLINE         __declspec(noinline)
+#define EXPORT_SYMBOL __declspec(dllexport)
+#define IMPORT_SYMBOL __declspec(dllimport)
+#define NO_INLINE     __declspec(noinline)
 
+#ifndef DECLSPEC_ALIGN
 #define DECLSPEC_ALIGN(n) __declspec(align(n))
+#endif
 
 #define RESTRICTED_POINTER
 

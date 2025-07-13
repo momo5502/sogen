@@ -1,10 +1,11 @@
 #pragma once
 
-#include <x64_emulator.hpp>
+#include <arch_emulator.hpp>
 
 #include "memory_manager.hpp"
 #include "memory_utils.hpp"
 #include "address_utils.hpp"
+#include "x86_register.hpp"
 
 #include <utils/time.hpp>
 
@@ -51,7 +52,7 @@ class module_manager;
 struct process_context;
 
 using clock_wrapper = object_wrapper<utils::clock>;
-using x64_emulator_wrapper = object_wrapper<x64_emulator>;
+using x64_emulator_wrapper = object_wrapper<x86_64_emulator>;
 using memory_manager_wrapper = object_wrapper<memory_manager>;
 using module_manager_wrapper = object_wrapper<module_manager>;
 using process_context_wrapper = object_wrapper<process_context>;
@@ -93,11 +94,6 @@ class emulator_object
     uint64_t end() const
     {
         return this->value() + this->size();
-    }
-
-    T* ptr() const
-    {
-        return reinterpret_cast<T*>(this->address_);
     }
 
     explicit operator bool() const
@@ -166,6 +162,11 @@ class emulator_object
         return emulator_object<T>(*this->memory_, this->address_ + offset);
     }
 
+    memory_interface* get_memory_interface() const
+    {
+        return this->memory_;
+    }
+
   private:
     memory_interface* memory_{};
     uint64_t address_{};
@@ -221,11 +222,11 @@ class emulator_allocator
         return emulator_object<T>(*this->memory_, potential_start);
     }
 
-    char16_t* copy_string(const std::u16string_view str)
+    uint64_t copy_string(const std::u16string_view str)
     {
         UNICODE_STRING<EmulatorTraits<Emu64>> uc_str{};
         this->make_unicode_string(uc_str, str);
-        return reinterpret_cast<char16_t*>(uc_str.Buffer);
+        return uc_str.Buffer;
     }
 
     void make_unicode_string(UNICODE_STRING<EmulatorTraits<Emu64>>& result, const std::u16string_view str,
@@ -300,7 +301,8 @@ class emulator_allocator
     {
         if (this->address_ && this->size_)
         {
-            manager.release_memory(this->address_, this->size_);
+            // TODO: Make all sizes uint64_t
+            manager.release_memory(this->address_, static_cast<size_t>(this->size_));
             this->address_ = 0;
             this->size_ = 0;
         }
@@ -314,16 +316,22 @@ class emulator_allocator
 };
 
 template <typename Element>
-std::basic_string<Element> read_string(memory_manager& mem, const uint64_t address)
+std::basic_string<Element> read_string(memory_interface& mem, const uint64_t address,
+                                       const std::optional<size_t> size = {})
 {
     std::basic_string<Element> result{};
 
     for (size_t i = 0;; ++i)
     {
+        if (size && i >= *size)
+        {
+            break;
+        }
+
         Element element{};
         mem.read_memory(address + (i * sizeof(element)), &element, sizeof(element));
 
-        if (!element)
+        if (!size && !element)
         {
             break;
         }
@@ -356,7 +364,24 @@ inline std::u16string read_unicode_string(const emulator& emu,
     return read_unicode_string(emu, ucs);
 }
 
-inline std::u16string read_unicode_string(emulator& emu, const UNICODE_STRING<EmulatorTraits<Emu64>>* uc_string)
+inline std::u16string read_unicode_string(emulator& emu, const uint64_t uc_string)
 {
     return read_unicode_string(emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{emu, uc_string});
+}
+
+inline uint64_t get_function_argument(x86_64_emulator& emu, const size_t index, bool is_syscall = false)
+{
+    switch (index)
+    {
+    case 0:
+        return emu.reg(is_syscall ? x86_register::r10 : x86_register::rcx);
+    case 1:
+        return emu.reg(x86_register::rdx);
+    case 2:
+        return emu.reg(x86_register::r8);
+    case 3:
+        return emu.reg(x86_register::r9);
+    default:
+        return emu.read_stack(index + 1);
+    }
 }

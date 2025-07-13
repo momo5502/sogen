@@ -72,7 +72,19 @@
 #define SL_RETURN_SINGLE_ENTRY         0x02
 #define SL_NO_CURSOR_UPDATE            0x10
 
-#define SEC_IMAGE                      0x01000000
+#ifndef SEC_IMAGE
+#define SEC_IMAGE   0x01000000
+#define SEC_RESERVE 0x04000000
+#endif
+
+#define CTL_CODE(DeviceType, Function, Method, Access) \
+    (((DeviceType) << 16) | ((Access) << 14) | ((Function) << 2) | (Method))
+
+#define METHOD_BUFFERED   0
+
+#define FILE_ANY_ACCESS   0
+#define FILE_READ_ACCESS  (0x0001) // file & pipe
+#define FILE_WRITE_ACCESS (0x0002) // file & pipe
 
 typedef enum _FSINFOCLASS
 {
@@ -97,7 +109,7 @@ typedef enum _FSINFOCLASS
     FileFsMaximumInformation
 } FSINFOCLASS, *PFSINFOCLASS;
 
-typedef enum _FSINFOCLASS FS_INFORMATION_CLASS;
+using FS_INFORMATION_CLASS = enum _FSINFOCLASS;
 
 typedef enum _FILE_INFORMATION_CLASS
 {
@@ -210,7 +222,7 @@ typedef enum _FILE_INFORMATION_CLASS
     FileMaximumInformation
 } FILE_INFORMATION_CLASS, *PFILE_INFORMATION_CLASS;
 
-typedef enum _OBJECT_INFORMATION_CLASS
+using OBJECT_INFORMATION_CLASS = enum _OBJECT_INFORMATION_CLASS
 {
     ObjectBasicInformation,         // q: OBJECT_BASIC_INFORMATION
     ObjectNameInformation,          // q: OBJECT_NAME_INFORMATION
@@ -220,9 +232,9 @@ typedef enum _OBJECT_INFORMATION_CLASS
     ObjectSessionInformation,       // s: void // change object session // (requires SeTcbPrivilege)
     ObjectSessionObjectInformation, // s: void // change object session // (requires SeTcbPrivilege)
     MaxObjectInfoClass
-} OBJECT_INFORMATION_CLASS;
+};
 
-typedef enum _HARDERROR_RESPONSE_OPTION
+using HARDERROR_RESPONSE_OPTION = enum _HARDERROR_RESPONSE_OPTION
 {
     OptionAbortRetryIgnore,
     OptionOk,
@@ -233,9 +245,9 @@ typedef enum _HARDERROR_RESPONSE_OPTION
     OptionShutdownSystem,
     OptionOkNoWait,
     OptionCancelTryContinue
-} HARDERROR_RESPONSE_OPTION;
+};
 
-typedef enum _HARDERROR_RESPONSE
+using HARDERROR_RESPONSE = enum _HARDERROR_RESPONSE
 {
     ResponseReturnToCaller,
     ResponseNotHandled,
@@ -248,9 +260,9 @@ typedef enum _HARDERROR_RESPONSE
     ResponseYes,
     ResponseTryAgain,
     ResponseContinue
-} HARDERROR_RESPONSE;
+};
 
-typedef USHORT RTL_ATOM;
+using RTL_ATOM = USHORT;
 
 template <typename Traits>
 struct IO_STATUS_BLOCK
@@ -333,6 +345,17 @@ typedef struct _FILE_BASIC_INFORMATION
     ULONG FileAttributes;         // Specifies one or more FILE_ATTRIBUTE_XXX flags.
 } FILE_BASIC_INFORMATION, *PFILE_BASIC_INFORMATION;
 
+typedef struct _FILE_NETWORK_OPEN_INFORMATION
+{
+    LARGE_INTEGER CreationTime;
+    LARGE_INTEGER LastAccessTime;
+    LARGE_INTEGER LastWriteTime;
+    LARGE_INTEGER ChangeTime;
+    LARGE_INTEGER AllocationSize;
+    LARGE_INTEGER EndOfFile;
+    ULONG FileAttributes;
+} FILE_NETWORK_OPEN_INFORMATION, *PFILE_NETWORK_OPEN_INFORMATION;
+
 typedef struct _FILE_DIRECTORY_INFORMATION
 {
     ULONG NextEntryOffset;
@@ -382,7 +405,20 @@ typedef struct _FILE_BOTH_DIR_INFORMATION
     char16_t FileName[1];
 } FILE_BOTH_DIR_INFORMATION, *PFILE_BOTH_DIR_INFORMATION;
 
+typedef struct _FILE_RENAME_INFORMATION
+{
+    BOOLEAN ReplaceIfExists;
+    EMULATOR_CAST(uint64_t, HANDLE) RootDirectory;
+    ULONG FileNameLength;
+    char16_t FileName[1];
+} FILE_RENAME_INFORMATION, *PFILE_RENAME_INFORMATION;
+
 #ifndef OS_WINDOWS
+typedef struct _FILE_ID_128
+{
+    BYTE Identifier[16];
+} FILE_ID_128, *PFILE_ID_128;
+
 typedef BOOLEAN SECURITY_CONTEXT_TRACKING_MODE, *PSECURITY_CONTEXT_TRACKING_MODE;
 typedef struct _SECURITY_QUALITY_OF_SERVICE
 {
@@ -393,6 +429,25 @@ typedef struct _SECURITY_QUALITY_OF_SERVICE
 } SECURITY_QUALITY_OF_SERVICE, *P_SECURITY_QUALITY_OF_SERVICE;
 
 #endif
+
+struct EMU_FILE_STAT_BASIC_INFORMATION
+{
+    LARGE_INTEGER FileId;
+    LARGE_INTEGER CreationTime;
+    LARGE_INTEGER LastAccessTime;
+    LARGE_INTEGER LastWriteTime;
+    LARGE_INTEGER ChangeTime;
+    LARGE_INTEGER AllocationSize;
+    LARGE_INTEGER EndOfFile;
+    ULONG FileAttributes;
+    ULONG ReparseTag;
+    ULONG NumberOfLinks;
+    ULONG DeviceType;
+    ULONG DeviceCharacteristics;
+    ULONG Reserved;
+    LARGE_INTEGER VolumeSerialNumber;
+    FILE_ID_128 FileId128;
+};
 
 typedef struct _PORT_VIEW64
 {
@@ -410,5 +465,11 @@ typedef struct _REMOTE_PORT_VIEW64
     EMULATOR_CAST(std::int64_t, SIZE_T) ViewSize;
     EmulatorTraits<Emu64>::PVOID ViewBase;
 } REMOTE_PORT_VIEW64, *PREMOTE_PORT_VIEW64;
+
+typedef struct _OBJECT_HANDLE_FLAG_INFORMATION
+{
+    BOOLEAN Inherit;
+    BOOLEAN ProtectFromClose;
+} OBJECT_HANDLE_FLAG_INFORMATION, *POBJECT_HANDLE_FLAG_INFORMATION;
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)

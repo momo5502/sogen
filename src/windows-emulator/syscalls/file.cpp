@@ -1,14 +1,51 @@
 #include "../std_include.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
+#include "utils/io.hpp"
 
 #include <iostream>
 #include <utils/finally.hpp>
+#include <utils/wildcard.hpp>
 
 #include <sys/stat.h>
 
+#if defined(OS_WINDOWS)
+#define fstat64 _fstat64
+#elif defined(OS_MAC)
+#define fstat64 fstat
+#endif
+
 namespace syscalls
 {
+    namespace
+    {
+        std::pair<utils::file_handle, NTSTATUS> open_file(const file_system& file_sys, const windows_path& path,
+                                                          const std::u16string& mode)
+        {
+            FILE* file{};
+            const auto error = open_unicode(&file, file_sys.translate(path), mode);
+
+            if (file)
+            {
+                return {file, STATUS_SUCCESS};
+            }
+
+            using fh = utils::file_handle;
+
+            switch (error)
+            {
+            case ENOENT:
+                return {fh{}, STATUS_OBJECT_NAME_NOT_FOUND};
+            case EACCES:
+                return {fh{}, STATUS_ACCESS_DENIED};
+            case EISDIR:
+                return {fh{}, STATUS_FILE_IS_A_DIRECTORY};
+            default:
+                return {fh{}, STATUS_NOT_SUPPORTED};
+            }
+        }
+    }
+
     NTSTATUS handle_NtSetInformationFile(const syscall_context& c, const handle file_handle,
                                          const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                          const uint64_t file_information, const ULONG length,
@@ -17,7 +54,47 @@ namespace syscalls
         const auto* f = c.proc.files.get(file_handle);
         if (!f)
         {
+            if (c.proc.devices.get(file_handle))
+            {
+                c.win_emu.log.error("Unsupported set device info class: %X\n", info_class);
+                return STATUS_SUCCESS;
+            }
+
             return STATUS_INVALID_HANDLE;
+        }
+
+        if (info_class == FileRenameInformation)
+        {
+            if (length < sizeof(FILE_RENAME_INFORMATION))
+            {
+                return STATUS_BUFFER_OVERFLOW;
+            }
+
+            const auto info = c.emu.read_memory<FILE_RENAME_INFORMATION>(file_information);
+            auto new_name = read_string<char16_t>(c.emu, file_information + offsetof(FILE_RENAME_INFORMATION, FileName),
+                                                  info.FileNameLength / 2);
+
+            if (info.RootDirectory)
+            {
+                const auto* root = c.proc.files.get(info.RootDirectory);
+                if (!root)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+
+                const auto has_separator = root->name.ends_with(u"\\") || root->name.ends_with(u"/");
+                new_name = root->name + (has_separator ? u"" : u"\\") + new_name;
+            }
+
+            c.win_emu.log.warn("--> File rename requested: %s --> %s\n", u16_to_u8(f->name).c_str(),
+                               u16_to_u8(new_name).c_str());
+
+            return STATUS_ACCESS_DENIED;
+        }
+
+        if (info_class == FileBasicInformation)
+        {
+            return STATUS_NOT_SUPPORTED;
         }
 
         if (info_class == FilePositionInformation)
@@ -64,19 +141,19 @@ namespace syscalls
         switch (fs_information_class)
         {
         case FileFsDeviceInformation:
-            return handle_query<FILE_FS_DEVICE_INFORMATION>(
-                c.emu, fs_information, length, io_status_block, [&](FILE_FS_DEVICE_INFORMATION& info) {
-                    if (file_handle == STDOUT_HANDLE && !c.win_emu.buffer_stdout)
-                    {
-                        info.DeviceType = FILE_DEVICE_CONSOLE;
-                        info.Characteristics = 0x20000;
-                    }
-                    else
-                    {
-                        info.DeviceType = FILE_DEVICE_DISK;
-                        info.Characteristics = 0x20020;
-                    }
-                });
+            return handle_query<FILE_FS_DEVICE_INFORMATION>(c.emu, fs_information, length, io_status_block,
+                                                            [&](FILE_FS_DEVICE_INFORMATION& info) {
+                                                                if (file_handle == STDOUT_HANDLE)
+                                                                {
+                                                                    info.DeviceType = FILE_DEVICE_CONSOLE;
+                                                                    info.Characteristics = 0x20000;
+                                                                }
+                                                                else
+                                                                {
+                                                                    info.DeviceType = FILE_DEVICE_DISK;
+                                                                    info.Characteristics = 0x20020;
+                                                                }
+                                                            });
 
         case FileFsSizeInformation:
             return handle_query<FILE_FS_SIZE_INFORMATION>(c.emu, fs_information, length, io_status_block,
@@ -98,19 +175,54 @@ namespace syscalls
         }
     }
 
-    std::vector<file_entry> scan_directory(const std::filesystem::path& dir)
+    std::vector<file_entry> scan_directory(const file_system& file_sys, const windows_path& win_path,
+                                           const std::u16string_view file_mask)
     {
-        std::vector<file_entry> files{
-            {"."},
-            {".."},
-        };
+        std::vector<file_entry> files{};
 
-        for (const auto& file : std::filesystem::directory_iterator(dir))
+        const auto dir = file_sys.translate(win_path);
+
+        if (file_mask.empty() || file_mask == u"*")
         {
+            files.emplace_back(file_entry{.file_path = ".", .is_directory = true});
+            files.emplace_back(file_entry{.file_path = "..", .is_directory = true});
+        }
+
+        std::error_code ec{};
+        for (const auto& file : std::filesystem::directory_iterator(dir, ec))
+        {
+            if (!file_mask.empty() && !utils::wildcard::match_filename(file.path().filename().u16string(), file_mask))
+            {
+                continue;
+            }
+
             files.emplace_back(file_entry{
                 .file_path = file.path().filename(),
+                .file_size = file.file_size(),
+                .is_directory = file.is_directory(),
             });
         }
+
+        file_sys.access_mapped_entries(win_path, [&](const std::pair<windows_path, std::filesystem::path>& entry) {
+            const auto filename = entry.first.leaf();
+
+            if (!file_mask.empty() && !utils::wildcard::match_filename(filename, file_mask))
+            {
+                return;
+            }
+
+            const std::filesystem::directory_entry dir_entry(entry.second, ec);
+            if (ec || !dir_entry.exists())
+            {
+                return;
+            }
+
+            files.emplace_back(file_entry{
+                .file_path = filename,
+                .file_size = dir_entry.file_size(),
+                .is_directory = dir_entry.is_directory(),
+            });
+        });
 
         return files;
     }
@@ -119,28 +231,35 @@ namespace syscalls
     NTSTATUS handle_file_enumeration(const syscall_context& c,
                                      const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                      const uint64_t file_information, const uint32_t length, const ULONG query_flags,
-                                     file* f)
+                                     const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> file_mask, file* f)
     {
         if (!f->enumeration_state || query_flags & SL_RESTART_SCAN)
         {
+            const auto mask = file_mask ? read_unicode_string(c.emu, file_mask) : u"";
+            c.win_emu.callbacks.on_generic_access("Enumerating directory", f->name);
+
             f->enumeration_state.emplace(file_enumeration_state{});
-            f->enumeration_state->files = scan_directory(c.win_emu.file_sys.translate(f->name));
+            f->enumeration_state->files = scan_directory(c.win_emu.file_sys, f->name, mask);
         }
 
         auto& enum_state = *f->enumeration_state;
 
-        size_t current_offset{0};
+        uint64_t current_offset{0};
         emulator_object<T> object{c.emu};
 
         size_t current_index = enum_state.current_index;
 
+        if (current_index >= enum_state.files.size())
+        {
+            IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+            block.Information = 0;
+            io_status_block.write(block);
+
+            return STATUS_NO_MORE_FILES;
+        }
+
         do
         {
-            if (current_index >= enum_state.files.size())
-            {
-                break;
-            }
-
             const auto new_offset = align_up(current_offset, 8);
             const auto& current_file = enum_state.files[current_index];
             const auto file_name = current_file.file_path.u16string();
@@ -173,8 +292,9 @@ namespace syscalls
             T info{};
             info.NextEntryOffset = 0;
             info.FileIndex = static_cast<ULONG>(current_index);
-            info.FileAttributes = FILE_ATTRIBUTE_NORMAL;
+            info.FileAttributes = current_file.is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
             info.FileNameLength = static_cast<ULONG>(file_name.size() * 2);
+            info.EndOfFile.QuadPart = current_file.file_size;
 
             object.set_address(file_information + new_offset);
             object.write(info);
@@ -183,7 +303,7 @@ namespace syscalls
 
             ++current_index;
             current_offset = end_offset;
-        } while ((query_flags & SL_RETURN_SINGLE_ENTRY) == 0);
+        } while ((query_flags & SL_RETURN_SINGLE_ENTRY) == 0 && current_index < enum_state.files.size());
 
         if ((query_flags & SL_NO_CURSOR_UPDATE) == 0)
         {
@@ -194,15 +314,15 @@ namespace syscalls
         block.Information = current_offset;
         io_status_block.write(block);
 
-        return current_index < enum_state.files.size() ? STATUS_SUCCESS : STATUS_NO_MORE_FILES;
+        return current_index <= enum_state.files.size() ? STATUS_SUCCESS : STATUS_NO_MORE_FILES;
     }
 
     NTSTATUS handle_NtQueryDirectoryFileEx(
         const syscall_context& c, const handle file_handle, const handle /*event_handle*/,
-        const emulator_pointer /*PIO_APC_ROUTINE*/ /*apc_routine*/, const emulator_pointer /*apc_context*/,
+        const EMULATOR_CAST(emulator_pointer, PIO_APC_ROUTINE) /*apc_routine*/, const emulator_pointer /*apc_context*/,
         const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const uint64_t file_information,
         const uint32_t length, const uint32_t info_class, const ULONG query_flags,
-        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*file_name*/)
+        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> file_name)
     {
         auto* f = c.proc.files.get(file_handle);
         if (!f || !f->is_directory())
@@ -213,25 +333,47 @@ namespace syscalls
         if (info_class == FileDirectoryInformation)
         {
             return handle_file_enumeration<FILE_DIRECTORY_INFORMATION>(c, io_status_block, file_information, length,
-                                                                       query_flags, f);
+                                                                       query_flags, file_name, f);
         }
 
         if (info_class == FileFullDirectoryInformation)
         {
             return handle_file_enumeration<FILE_FULL_DIR_INFORMATION>(c, io_status_block, file_information, length,
-                                                                      query_flags, f);
+                                                                      query_flags, file_name, f);
         }
 
         if (info_class == FileBothDirectoryInformation)
         {
             return handle_file_enumeration<FILE_BOTH_DIR_INFORMATION>(c, io_status_block, file_information, length,
-                                                                      query_flags, f);
+                                                                      query_flags, file_name, f);
         }
 
         c.win_emu.log.error("Unsupported query directory file info class: %X\n", info_class);
         c.emu.stop();
 
         return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtQueryDirectoryFile(const syscall_context& c, const handle file_handle, const handle event_handle,
+                                         const EMULATOR_CAST(emulator_pointer, PIO_APC_ROUTINE) apc_routine,
+                                         const emulator_pointer apc_context,
+                                         const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                                         const uint64_t file_information, const uint32_t length,
+                                         const uint32_t info_class, const BOOLEAN return_single_entry,
+                                         const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> file_name,
+                                         const BOOLEAN restart_scan)
+    {
+        ULONG query_flags = 0;
+        if (return_single_entry)
+        {
+            query_flags |= SL_RETURN_SINGLE_ENTRY;
+        }
+        if (restart_scan)
+        {
+            query_flags |= SL_RESTART_SCAN;
+        }
+        return handle_NtQueryDirectoryFileEx(c, file_handle, event_handle, apc_routine, apc_context, io_status_block,
+                                             file_information, length, info_class, query_flags, file_name);
     }
 
     NTSTATUS handle_NtQueryInformationFile(
@@ -307,6 +449,35 @@ namespace syscalls
             return ret(STATUS_SUCCESS);
         }
 
+        if (info_class == FileBasicInformation)
+        {
+            block.Information = sizeof(FILE_BASIC_INFORMATION);
+
+            if (length < block.Information)
+            {
+                return ret(STATUS_BUFFER_OVERFLOW);
+            }
+
+            struct _stat64 file_stat{};
+            if (fstat64(f->handle, &file_stat) != 0)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            const emulator_object<FILE_BASIC_INFORMATION> info{c.emu, file_information};
+            FILE_BASIC_INFORMATION i{};
+
+            i.CreationTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
+            i.LastAccessTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
+            i.LastWriteTime = utils::convert_unix_to_windows_time(file_stat.st_mtime);
+            i.ChangeTime = i.LastWriteTime;
+            i.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+
+            info.write(i);
+
+            return ret(STATUS_SUCCESS);
+        }
+
         if (info_class == FilePositionInformation)
         {
             if (!f->handle)
@@ -355,7 +526,78 @@ namespace syscalls
             return ret(STATUS_SUCCESS);
         }
 
+        if (info_class == FileAllInformation)
+        {
+            return ret(STATUS_NOT_SUPPORTED);
+        }
+
         c.win_emu.log.error("Unsupported query file info class: %X\n", info_class);
+        c.emu.stop();
+
+        return ret(STATUS_NOT_SUPPORTED);
+    }
+
+    NTSTATUS handle_NtQueryInformationByName(
+        const syscall_context& c, const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const uint64_t file_information,
+        const uint32_t length, const uint32_t info_class)
+    {
+        IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+        block.Status = STATUS_SUCCESS;
+        block.Information = 0;
+
+        const auto _ = utils::finally([&] {
+            if (io_status_block)
+            {
+                io_status_block.write(block);
+            }
+        });
+
+        const auto attributes = object_attributes.read();
+        auto filename = read_unicode_string(c.emu, attributes.ObjectName);
+
+        c.win_emu.callbacks.on_generic_access("Query file info", filename);
+
+        const auto ret = [&](const NTSTATUS status) {
+            block.Status = status;
+            return status;
+        };
+
+        if (info_class == FileStatBasicInformation)
+        {
+            block.Information = sizeof(EMU_FILE_STAT_BASIC_INFORMATION);
+
+            if (length < block.Information)
+            {
+                return ret(STATUS_BUFFER_OVERFLOW);
+            }
+
+            auto [native_file_handle, status] = open_file(c.win_emu.file_sys, filename, u"r");
+            if (status != STATUS_SUCCESS)
+            {
+                return ret(status);
+            }
+
+            struct _stat64 file_stat{};
+            if (fstat64(native_file_handle, &file_stat) != 0)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            EMU_FILE_STAT_BASIC_INFORMATION i{};
+
+            i.CreationTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
+            i.LastAccessTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
+            i.LastWriteTime = utils::convert_unix_to_windows_time(file_stat.st_mtime);
+            i.ChangeTime = i.LastWriteTime;
+            i.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+
+            c.emu.write_memory(file_information, i);
+
+            return ret(STATUS_SUCCESS);
+        }
+
+        c.win_emu.log.error("Unsupported query name info class: %X\n", info_class);
         c.emu.stop();
 
         return ret(STATUS_NOT_SUPPORTED);
@@ -399,7 +641,8 @@ namespace syscalls
                 std::cin.readsome(temp_buffer.data(), static_cast<std::streamsize>(temp_buffer.size()));
             const auto count = std::max(read_count, static_cast<std::streamsize>(0));
 
-            commit_file_data(std::string_view(temp_buffer.data(), count), c.emu, io_status_block, buffer);
+            commit_file_data(std::string_view(temp_buffer.data(), static_cast<size_t>(count)), c.emu, io_status_block,
+                             buffer);
             return STATUS_SUCCESS;
         }
 
@@ -436,13 +679,6 @@ namespace syscalls
             }
 
             c.win_emu.callbacks.on_stdout(temp_buffer);
-
-            if (!temp_buffer.ends_with("\n"))
-            {
-                temp_buffer.push_back('\n');
-            }
-
-            c.win_emu.log.info("%.*s", static_cast<int>(temp_buffer.size()), temp_buffer.data());
 
             return STATUS_SUCCESS;
         }
@@ -550,11 +786,10 @@ namespace syscalls
                                  uint64_t ea_buffer, ULONG ea_length)
     {
         const auto attributes = object_attributes.read();
-        auto filename =
-            read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
+        auto filename = read_unicode_string(c.emu, attributes.ObjectName);
 
         auto printer = utils::finally([&] {
-            c.win_emu.log.print(color::dark_gray, "--> Opening file: %s\n", u16_to_u8(filename).c_str()); //
+            c.win_emu.callbacks.on_generic_access("Opening file", filename); //
         });
 
         const auto io_device_name = get_io_device_name(filename);
@@ -598,21 +833,25 @@ namespace syscalls
 
         printer.cancel();
 
-        if (f.name.ends_with(u"\\") || create_options & FILE_DIRECTORY_FILE)
+        std::error_code ec{};
+
+        const windows_path path = f.name;
+        const bool is_directory = std::filesystem::is_directory(c.win_emu.file_sys.translate(path), ec);
+
+        if (is_directory || create_options & FILE_DIRECTORY_FILE)
         {
-            c.win_emu.log.print(color::dark_gray, "--> Opening folder: %s\n", u16_to_u8(f.name).c_str());
+            c.win_emu.callbacks.on_generic_access("Opening folder", f.name);
 
             if (create_disposition & FILE_CREATE)
             {
-                std::error_code ec{};
-                create_directory(c.win_emu.file_sys.translate(f.name), ec);
+                create_directory(c.win_emu.file_sys.translate(path), ec);
 
                 if (ec)
                 {
                     return STATUS_ACCESS_DENIED;
                 }
             }
-            else if (!is_directory(c.win_emu.file_sys.translate(f.name)))
+            else if (!is_directory)
             {
                 return STATUS_OBJECT_NAME_NOT_FOUND;
             }
@@ -623,9 +862,8 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
-        c.win_emu.log.print(color::dark_gray, "--> Opening file: %s\n", u16_to_u8(f.name).c_str());
+        c.win_emu.callbacks.on_generic_access("Opening file", f.name);
 
-        const windows_path path = f.name;
         std::u16string mode = map_mode(desired_access, create_disposition);
 
         if (mode.empty() || path.is_relative())
@@ -633,29 +871,69 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
         }
 
-        FILE* file{};
-
-        const auto error = open_unicode(&file, c.win_emu.file_sys.translate(path), mode);
-
-        if (!file)
+        auto [native_file_handle, status] = open_file(c.win_emu.file_sys, path, mode);
+        if (status != STATUS_SUCCESS)
         {
-            switch (error)
-            {
-            case ENOENT:
-                return STATUS_OBJECT_NAME_NOT_FOUND;
-            case EACCES:
-                return STATUS_ACCESS_DENIED;
-            case EISDIR:
-                return STATUS_FILE_IS_A_DIRECTORY;
-            default:
-                return STATUS_NOT_SUPPORTED;
-            }
+            return status;
         }
 
-        f.handle = file;
+        f.handle = std::move(native_file_handle);
 
         const auto handle = c.proc.files.store(std::move(f));
         file_handle.write(handle);
+
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS handle_NtQueryFullAttributesFile(
+        const syscall_context& c, const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+        const emulator_object<FILE_NETWORK_OPEN_INFORMATION> file_information)
+    {
+        if (!object_attributes)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const auto attributes = object_attributes.read();
+        if (!attributes.ObjectName)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        auto filename = read_unicode_string(
+            c.emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, attributes.ObjectName});
+
+        if (attributes.RootDirectory)
+        {
+            const auto* root = c.proc.files.get(attributes.RootDirectory);
+            if (!root)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            const auto has_separator = root->name.ends_with(u"\\") || root->name.ends_with(u"/");
+            filename = root->name + (has_separator ? u"" : u"\\") + filename;
+        }
+
+        c.win_emu.callbacks.on_generic_access("Querying file attributes", filename);
+
+        const auto local_filename = c.win_emu.file_sys.translate(filename).u8string();
+
+        struct _stat64 file_stat{};
+        if (_stat64(reinterpret_cast<const char*>(local_filename.c_str()), &file_stat) != 0)
+        {
+            return STATUS_OBJECT_NAME_NOT_FOUND;
+        }
+
+        file_information.access([&](FILE_NETWORK_OPEN_INFORMATION& info) {
+            info.CreationTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
+            info.LastAccessTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
+            info.LastWriteTime = utils::convert_unix_to_windows_time(file_stat.st_mtime);
+            info.AllocationSize.QuadPart = file_stat.st_size;
+            info.EndOfFile.QuadPart = file_stat.st_size;
+            info.ChangeTime = info.LastWriteTime;
+            info.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+        });
 
         return STATUS_SUCCESS;
     }
@@ -678,12 +956,18 @@ namespace syscalls
         const auto filename = read_unicode_string(
             c.emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, attributes.ObjectName});
 
-        c.win_emu.log.print(color::dark_gray, "--> Querying file attributes: %s\n", u16_to_u8(filename).c_str());
+        c.win_emu.callbacks.on_generic_access("Querying file attributes", filename);
 
-        const auto local_filename = c.win_emu.file_sys.translate(filename).string();
+        windows_path filepath(filename);
+        if (filepath.is_relative())
+        {
+            return STATUS_OBJECT_NAME_NOT_FOUND;
+        }
+
+        const auto local_filename = c.win_emu.file_sys.translate(filepath).u8string();
 
         struct _stat64 file_stat{};
-        if (_stat64(local_filename.c_str(), &file_stat) != 0)
+        if (_stat64(reinterpret_cast<const char*>(local_filename.c_str()), &file_stat) != 0)
         {
             return STATUS_OBJECT_NAME_NOT_FOUND;
         }
@@ -693,7 +977,7 @@ namespace syscalls
             info.LastAccessTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
             info.LastWriteTime = utils::convert_unix_to_windows_time(file_stat.st_mtime);
             info.ChangeTime = info.LastWriteTime;
-            info.FileAttributes = FILE_ATTRIBUTE_NORMAL;
+            info.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
         });
 
         return STATUS_SUCCESS;
@@ -714,8 +998,7 @@ namespace syscalls
         const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
     {
         const auto attributes = object_attributes.read();
-        const auto object_name =
-            read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
+        const auto object_name = read_unicode_string(c.emu, attributes.ObjectName);
 
         if (object_name == u"\\KnownDlls")
         {
@@ -729,6 +1012,12 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
+        if (object_name == u"\\RPC Control")
+        {
+            directory_handle.write(RPC_CONTROL_DIRECTORY);
+            return STATUS_SUCCESS;
+        }
+
         return STATUS_NOT_SUPPORTED;
     }
 
@@ -737,8 +1026,7 @@ namespace syscalls
         const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
     {
         const auto attributes = object_attributes.read();
-        const auto object_name =
-            read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
+        const auto object_name = read_unicode_string(c.emu, attributes.ObjectName);
 
         if (object_name == u"KnownDllPath")
         {
@@ -777,5 +1065,52 @@ namespace syscalls
         }
 
         return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtCreateNamedPipeFile(
+        const syscall_context& c, const emulator_object<handle> /*file_handle*/, const ULONG /*desired_access*/,
+        const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
+        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> /*io_status_block*/, const ULONG /*share_access*/,
+        const ULONG /*create_disposition*/, const ULONG /*create_options*/, const ULONG /*named_pipe_type*/,
+        const ULONG /*read_mode*/, const ULONG /*completion_mode*/, const ULONG /*maximum_instances*/,
+        const ULONG /*inbound_quota*/, const ULONG /*outbound_quota*/,
+        const emulator_object<LARGE_INTEGER> /*default_timeout*/)
+    {
+        c.win_emu.log.error("Unimplemented syscall NtCreateNamedPipeFile!");
+        c.emu.stop();
+
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtFsControlFile(const syscall_context& c, const handle /*event_handle*/,
+                                    const uint64_t /*apc_routine*/, const uint64_t /*app_context*/,
+                                    const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> /*io_status_block*/,
+                                    const ULONG /*fs_control_code*/, const uint64_t /*input_buffer*/,
+                                    const ULONG /*input_buffer_length*/, const uint64_t /*output_buffer*/,
+                                    const ULONG /*output_buffer_length*/)
+    {
+        c.win_emu.log.error("Unimplemented syscall NtFsControlFile!");
+        c.emu.stop();
+
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtFlushBuffersFile(
+        const syscall_context& c, const handle file_handle,
+        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> /*io_status_block*/)
+    {
+        if (file_handle == STDOUT_HANDLE)
+        {
+            return STATUS_SUCCESS;
+        }
+
+        const auto* f = c.proc.files.get(file_handle);
+        if (!f)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        (void)fflush(f->handle);
+        return STATUS_SUCCESS;
     }
 }

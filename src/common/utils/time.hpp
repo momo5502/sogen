@@ -75,6 +75,11 @@ namespace utils
             return this->now(this->steady_start_);
         }
 
+        uint64_t timestamp_counter() override
+        {
+            return this->ticks();
+        }
+
         virtual uint64_t ticks() = 0;
 
         uint64_t get_frequency() const

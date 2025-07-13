@@ -33,7 +33,7 @@ namespace
             }
 
             record_obj.access([&](exception_record& r) {
-                r.ExceptionRecord = reinterpret_cast<EmulatorTraits<Emu64>::PVOID>(nested_record_obj.ptr());
+                r.ExceptionRecord = nested_record_obj.value(); //
             });
         }
 
@@ -89,7 +89,7 @@ namespace
         uint64_t ss;
     };
 
-    void dispatch_exception_pointers(x64_emulator& emu, const uint64_t dispatcher,
+    void dispatch_exception_pointers(x86_64_emulator& emu, const uint64_t dispatcher,
                                      const EMU_EXCEPTION_POINTERS<EmulatorTraits<Emu64>> pointers)
     {
         constexpr auto mach_frame_size = 0x40;
@@ -102,19 +102,19 @@ namespace
 
         const auto allocation_size = combined_size + mach_frame_size;
 
-        const auto initial_sp = emu.reg(x64_register::rsp);
+        const auto initial_sp = emu.reg(x86_register::rsp);
         const auto new_sp = align_down(initial_sp - allocation_size, 0x100);
 
         const auto total_size = initial_sp - new_sp;
         assert(total_size >= allocation_size);
 
         std::vector<uint8_t> zero_memory{};
-        zero_memory.resize(total_size, 0);
+        zero_memory.resize(static_cast<size_t>(total_size), 0);
 
         emu.write_memory(new_sp, zero_memory.data(), zero_memory.size());
 
-        emu.reg(x64_register::rsp, new_sp);
-        emu.reg(x64_register::rip, dispatcher);
+        emu.reg(x86_register::rsp, new_sp);
+        emu.reg(x86_register::rip, dispatcher);
 
         const emulator_object<CONTEXT64> context_record_obj{emu, new_sp};
         context_record_obj.write(*reinterpret_cast<CONTEXT64*>(pointers.ContextRecord));
@@ -140,7 +140,7 @@ namespace
     }
 }
 
-void dispatch_exception(x64_emulator& emu, const process_context& proc, const DWORD status,
+void dispatch_exception(x86_64_emulator& emu, const process_context& proc, const DWORD status,
                         const std::vector<EmulatorTraits<Emu64>::ULONG_PTR>& parameters)
 {
     CONTEXT64 ctx{};
@@ -172,7 +172,7 @@ void dispatch_exception(x64_emulator& emu, const process_context& proc, const DW
     dispatch_exception_pointers(emu, proc.ki_user_exception_dispatcher, pointers);
 }
 
-void dispatch_access_violation(x64_emulator& emu, const process_context& proc, const uint64_t address,
+void dispatch_access_violation(x86_64_emulator& emu, const process_context& proc, const uint64_t address,
                                const memory_operation operation)
 {
     dispatch_exception(emu, proc, STATUS_ACCESS_VIOLATION,
@@ -182,22 +182,22 @@ void dispatch_access_violation(x64_emulator& emu, const process_context& proc, c
                        });
 }
 
-void dispatch_illegal_instruction_violation(x64_emulator& emu, const process_context& proc)
+void dispatch_illegal_instruction_violation(x86_64_emulator& emu, const process_context& proc)
 {
     dispatch_exception(emu, proc, STATUS_ILLEGAL_INSTRUCTION, {});
 }
 
-void dispatch_integer_division_by_zero(x64_emulator& emu, const process_context& proc)
+void dispatch_integer_division_by_zero(x86_64_emulator& emu, const process_context& proc)
 {
     dispatch_exception(emu, proc, STATUS_INTEGER_DIVIDE_BY_ZERO, {});
 }
 
-void dispatch_single_step(x64_emulator& emu, const process_context& proc)
+void dispatch_single_step(x86_64_emulator& emu, const process_context& proc)
 {
     dispatch_exception(emu, proc, STATUS_SINGLE_STEP, {});
 }
 
-void dispatch_breakpoint(x64_emulator& emu, const process_context& proc)
+void dispatch_breakpoint(x86_64_emulator& emu, const process_context& proc)
 {
     dispatch_exception(emu, proc, STATUS_BREAKPOINT, {});
 }

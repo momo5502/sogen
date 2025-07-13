@@ -76,7 +76,7 @@ struct THREAD_NAME_INFORMATION
 typedef struct _THREAD_BASIC_INFORMATION64
 {
     NTSTATUS ExitStatus;
-    PTEB64 TebBaseAddress;
+    EMULATOR_CAST(uint64_t, PTEB64) TebBaseAddress;
     CLIENT_ID64 ClientId;
     EMULATOR_CAST(std::uint64_t, KAFFINITY) AffinityMask;
     EMULATOR_CAST(std::uint32_t, KPRIORITY) Priority;

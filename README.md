@@ -1,18 +1,21 @@
 <img src="./docs/images/cover.png" />
 <h1 align="center">
-	Windows User Space Emulator
+	Sogen
 	<br>
-	<a href="https://github.com/momo5502/emulator?tab=GPL-2.0-1-ov-file"><img src="https://img.shields.io/github/license/momo5502/emulator?color=00B0F8"/></a>
-	<a href="https://github.com/momo5502/emulator/actions"><img src="https://img.shields.io/github/actions/workflow/status/momo5502/emulator/build.yml?branch=main&label=build"/></a>
-	<a href="https://github.com/momo5502/emulator/issues"><img src="https://img.shields.io/github/issues/momo5502/emulator?color=F8B000"/></a>
-	<img src="https://img.shields.io/github/commit-activity/m/momo5502/emulator?color=FF3131"/>
+	<a href="https://github.com/momo5502/sogen?tab=GPL-2.0-1-ov-file"><img src="https://img.shields.io/github/license/momo5502/sogen?color=00B0F8"/></a>
+	<a href="https://github.com/momo5502/sogen/actions"><img src="https://img.shields.io/github/actions/workflow/status/momo5502/sogen/build.yml?branch=main&label=build"/></a>
+	<a href="https://github.com/momo5502/sogen/issues"><img src="https://img.shields.io/github/issues/momo5502/sogen?color=F8B000"/></a>
+	<img src="https://img.shields.io/github/commit-activity/m/momo5502/sogen?color=FF3131"/>  
+	<a href="https://deepwiki.com/momo5502/sogen"><img src="https://deepwiki.com/badge.svg"/></a>
 </h1>
 
-A high-performance Windows process emulator that operates at syscall level, providing full control over process execution through comprehensive hooking capabilities.
+Sogen is a high-performance Windows user space emulator that operates at syscall level, providing full control over process execution through comprehensive hooking capabilities.
 
 Perfect for security research, malware analysis, and DRM research where fine-grained control over process execution is required.
 
 Built in C++ and powered by the [Unicorn Engine](https://github.com/unicorn-engine/unicorn) (or the [icicle-emu](https://github.com/icicle-emu/icicle-emu) 🆕).
+
+Try it out: <a href="https://sogen.dev">sogen.dev</a>
 
 ## Key Features
 
@@ -48,12 +51,12 @@ Click <a href="https://docs.google.com/presentation/d/1pha4tFfDMpVzJ_ehJJ21SA_HA
 ## Quick Start (Windows + Visual Studio)
 
 > [!TIP]  
-> Checkout the [Wiki](https://github.com/momo5502/emulator/wiki) for more details on how to build & run the emulator on Windows, Linux, macOS, ...
+> Checkout the [Wiki](https://github.com/momo5502/sogen/wiki) for more details on how to build & run the emulator on Windows, Linux, macOS, ...
 
 1\. Checkout the code:
 
 ```bash
-git clone --recurse-submodules https://github.com/momo5502/emulator.git
+git clone --recurse-submodules https://github.com/momo5502/sogen.git
 ```
 
 2\. Run the following command in an x64 Development Command Prompt in the cloned directory:
@@ -64,7 +67,7 @@ cmake --preset=vs2022
 
 3\. Build the solution that was generated at `build/vs2022/emulator.sln`
 
-4\. Create a registry dump by running the [grab-registry.bat](https://github.com/momo5502/emulator/blob/main/src/tools/grab-registry.bat) as administrator and place it in the artifacts folder next to the `analyzer.exe`
+4\. Create a registry dump by running the [grab-registry.bat](https://github.com/momo5502/sogen/blob/main/src/tools/grab-registry.bat) as administrator and place it in the artifacts folder next to the `analyzer.exe`
 
 5\. Run the program of your choice:
 

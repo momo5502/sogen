@@ -9,13 +9,21 @@
 #include <filesystem>
 #include <string_view>
 
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #define WIN32_LEAN_AND_MEAN
+#include <intrin.h>
+
+#ifdef __MINGW64__
+#include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <Windows.h>
 #include <WinSock2.h>
 #include <WS2tcpip.h>
-
-#pragma comment(lib, "ws2_32.lib")
+#endif
 
 using namespace std::literals;
 
@@ -273,16 +281,231 @@ namespace
         return {std::string(data, std::min(static_cast<size_t>(length - 1), sizeof(data)))};
     }
 
+    std::optional<std::vector<std::string>> get_all_registry_keys(const HKEY root, const char* path)
+    {
+        HKEY key{};
+        if (RegOpenKeyExA(root, path, 0, KEY_READ | KEY_ENUMERATE_SUB_KEYS | KEY_QUERY_VALUE, &key) != ERROR_SUCCESS)
+        {
+            return std::nullopt;
+        }
+
+        std::vector<std::string> keys;
+        std::vector<char> name_buffer(MAX_PATH + 1);
+
+        for (DWORD i = 0;; ++i)
+        {
+            auto name_buffer_len = static_cast<DWORD>(name_buffer.size());
+            const LSTATUS status =
+                RegEnumKeyExA(key, i, name_buffer.data(), &name_buffer_len, nullptr, nullptr, nullptr, nullptr);
+            if (status == ERROR_SUCCESS)
+            {
+                keys.emplace_back(name_buffer.data(), name_buffer_len);
+            }
+            else if (status == ERROR_NO_MORE_ITEMS)
+            {
+                break;
+            }
+            else
+            {
+                keys.clear();
+                break;
+            }
+        }
+
+        if (keys.empty())
+        {
+            RegCloseKey(key);
+            return std::nullopt;
+        }
+
+        if (RegCloseKey(key) != ERROR_SUCCESS)
+        {
+            return std::nullopt;
+        }
+
+        return keys;
+    }
+
+    std::optional<std::vector<std::string>> get_all_registry_values(const HKEY root, const char* path)
+    {
+        HKEY key{};
+        if (RegOpenKeyExA(root, path, 0, KEY_READ | KEY_ENUMERATE_SUB_KEYS | KEY_QUERY_VALUE, &key) != ERROR_SUCCESS)
+        {
+            return std::nullopt;
+        }
+
+        std::vector<std::string> values;
+        std::vector<char> name_buffer(MAX_PATH + 1);
+
+        for (DWORD i = 0;; ++i)
+        {
+            auto name_buffer_len = static_cast<DWORD>(name_buffer.size());
+            const auto status =
+                RegEnumValueA(key, i, name_buffer.data(), &name_buffer_len, nullptr, nullptr, nullptr, nullptr);
+            if (status == ERROR_SUCCESS)
+            {
+                values.emplace_back(name_buffer.data(), name_buffer_len);
+            }
+            else if (status == ERROR_NO_MORE_ITEMS)
+            {
+                break;
+            }
+            else
+            {
+                values.clear();
+                break;
+            }
+        }
+
+        if (values.empty())
+        {
+            RegCloseKey(key);
+            return std::nullopt;
+        }
+
+        if (RegCloseKey(key) != ERROR_SUCCESS)
+        {
+            return std::nullopt;
+        }
+
+        return values;
+    }
+
     bool test_registry()
     {
-        const auto val =
+        // Basic Reading Test
+        const auto prog_files_dir =
             read_registry_string(HKEY_LOCAL_MACHINE, R"(SOFTWARE\Microsoft\Windows\CurrentVersion)", "ProgramFilesDir");
-        if (!val)
+        if (!prog_files_dir || *prog_files_dir != "C:\\Program Files")
         {
             return false;
         }
 
-        return *val == "C:\\Program Files";
+        // WOW64 Redirection Test
+        const auto pst_display = read_registry_string(
+            HKEY_LOCAL_MACHINE,
+            R"(SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\Time Zones\Pacific Standard Time)", "Display");
+        if (!pst_display || pst_display->empty())
+        {
+            return false;
+        }
+
+        // Key Sub-keys Enumeration Test
+        const auto subkeys_opt =
+            get_all_registry_keys(HKEY_LOCAL_MACHINE, R"(SOFTWARE\Microsoft\Windows NT\CurrentVersion)");
+        if (!subkeys_opt)
+        {
+            return false;
+        }
+
+        bool found_fonts = false;
+        for (const auto& key_name : *subkeys_opt)
+        {
+            if (key_name == "Fonts")
+            {
+                found_fonts = true;
+                break;
+            }
+        }
+        if (!found_fonts)
+        {
+            return false;
+        }
+
+        // Key Values Enumeration Test
+        const auto values_opt =
+            get_all_registry_values(HKEY_LOCAL_MACHINE, R"(SOFTWARE\Microsoft\Windows NT\CurrentVersion)");
+        if (!values_opt)
+        {
+            return false;
+        }
+
+        bool found_product_name = false;
+        for (const auto& val_name : *values_opt)
+        {
+            if (val_name == "ProductName")
+            {
+                found_product_name = true;
+                break;
+            }
+        }
+        if (!found_product_name)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    bool test_system_info()
+    {
+        char sys_dir[MAX_PATH];
+        if (GetSystemDirectoryA(sys_dir, sizeof(sys_dir)) == 0)
+        {
+            return false;
+        }
+        if (strlen(sys_dir) != 19)
+        {
+            return false;
+        }
+
+        // TODO: This currently doesn't work.
+        /*
+        char username[256];
+        DWORD username_len = sizeof(username);
+        if (!GetUserNameA(username, &username_len))
+        {
+            return false;
+        }
+        if (username_len <= 1)
+        {
+            return false;
+        }
+        */
+
+        return true;
+    }
+
+    bool test_time_zone()
+    {
+        DYNAMIC_TIME_ZONE_INFORMATION current_dtzi = {};
+        DWORD result = GetDynamicTimeZoneInformation(&current_dtzi);
+
+        if (result == TIME_ZONE_ID_INVALID)
+        {
+            return false;
+        }
+
+        if (current_dtzi.Bias != -60 || current_dtzi.StandardBias != 0 || current_dtzi.DaylightBias != -60 ||
+            current_dtzi.DynamicDaylightTimeDisabled != FALSE)
+        {
+            return false;
+        }
+
+        if (wcscmp(current_dtzi.StandardName, L"W. Europe Standard Time") != 0 ||
+            wcscmp(current_dtzi.DaylightName, L"W. Europe Daylight Time") != 0 ||
+            wcscmp(current_dtzi.TimeZoneKeyName, L"W. Europe Standard Time") != 0)
+        {
+            return false;
+        }
+
+        if (current_dtzi.StandardDate.wYear != 0 || current_dtzi.StandardDate.wMonth != 10 ||
+            current_dtzi.StandardDate.wDayOfWeek != 0 || current_dtzi.StandardDate.wDay != 5 ||
+            current_dtzi.StandardDate.wHour != 3 || current_dtzi.StandardDate.wMinute != 0 ||
+            current_dtzi.StandardDate.wSecond != 0 || current_dtzi.StandardDate.wMilliseconds != 0)
+        {
+            return false;
+        }
+
+        if (current_dtzi.DaylightDate.wYear != 0 || current_dtzi.DaylightDate.wMonth != 3 ||
+            current_dtzi.DaylightDate.wDayOfWeek != 0 || current_dtzi.DaylightDate.wDay != 5 ||
+            current_dtzi.DaylightDate.wHour != 2 || current_dtzi.DaylightDate.wMinute != 0 ||
+            current_dtzi.DaylightDate.wSecond != 0 || current_dtzi.DaylightDate.wMilliseconds != 0)
+        {
+            return false;
+        }
+
+        return true;
     }
 
     void throw_exception()
@@ -347,8 +570,10 @@ namespace
             return false;
         }
 
-        if (sendto(sender, send_data.data(), static_cast<int>(send_data.size()), 0,
-                   reinterpret_cast<sockaddr*>(&destination), sizeof(destination)) != send_data.size())
+        const auto sent_bytes = sendto(sender, send_data.data(), static_cast<int>(send_data.size()), 0,
+                                       reinterpret_cast<sockaddr*>(&destination), sizeof(destination));
+
+        if (static_cast<size_t>(sent_bytes) != send_data.size())
         {
             puts("Failed to send data!");
             return false;
@@ -370,6 +595,7 @@ namespace
         return send_data == std::string_view(buffer, len);
     }
 
+#ifndef __MINGW64__
     void throw_access_violation()
     {
         if (do_the_task)
@@ -444,6 +670,41 @@ namespace
                && test_illegal_instruction_exception() //
                && test_unhandled_exception();
     }
+#endif
+
+    bool trap_flag_cleared = false;
+    constexpr DWORD TRAP_FLAG_MASK = 0x100;
+
+    LONG NTAPI single_step_handler(PEXCEPTION_POINTERS exception_info)
+    {
+        if (exception_info->ExceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP)
+        {
+            PCONTEXT context = exception_info->ContextRecord;
+            trap_flag_cleared = (context->EFlags & TRAP_FLAG_MASK) == 0;
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
+
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    bool test_interrupts()
+    {
+        PVOID veh_handle = AddVectoredExceptionHandler(1, single_step_handler);
+        if (!veh_handle)
+            return false;
+
+        __writeeflags(__readeflags() | TRAP_FLAG_MASK);
+
+#ifdef __MINGW64__
+        asm("nop");
+#else
+        __nop();
+#endif
+
+        RemoveVectoredExceptionHandler(veh_handle);
+
+        return trap_flag_cleared;
+    }
 
     void print_time()
     {
@@ -451,11 +712,18 @@ namespace
         printf("Time: %lld\n", std::chrono::duration_cast<std::chrono::nanoseconds>(epoch_time).count());
     }
 
+    bool test_apis()
+    {
+        wchar_t buffer[0x100];
+        DWORD size = sizeof(buffer) / 2;
+        return GetComputerNameExW(ComputerNameNetBIOS, buffer, &size);
+    }
+
     bool test_apc()
     {
         int executions = 0;
 
-        auto* apc_func = +[](ULONG_PTR param) {
+        auto* apc_func = +[](const ULONG_PTR param) {
             *reinterpret_cast<int*>(param) += 1; //
         };
 
@@ -494,12 +762,21 @@ int main(const int argc, const char* argv[])
 
     RUN_TEST(test_io, "I/O")
     RUN_TEST(test_dir_io, "Dir I/O")
+    RUN_TEST(test_apis, "APIs")
     RUN_TEST(test_working_directory, "Working Directory")
     RUN_TEST(test_registry, "Registry")
+    RUN_TEST(test_system_info, "System Info")
+    RUN_TEST(test_time_zone, "Time Zone")
     RUN_TEST(test_threads, "Threads")
     RUN_TEST(test_env, "Environment")
     RUN_TEST(test_exceptions, "Exceptions")
+#ifndef __MINGW64__
     RUN_TEST(test_native_exceptions, "Native Exceptions")
+#endif
+    if (!getenv("EMULATOR_ICICLE"))
+    {
+        RUN_TEST(test_interrupts, "Interrupts")
+    }
     RUN_TEST(test_tls, "TLS")
     RUN_TEST(test_socket, "Socket")
     RUN_TEST(test_apc, "APC")

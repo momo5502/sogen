@@ -1,7 +1,7 @@
 #pragma once
 #include "std_include.hpp"
 
-#include <x64_emulator.hpp>
+#include <arch_emulator.hpp>
 
 #include <utils/function.hpp>
 
@@ -13,15 +13,27 @@
 #include "module/module_manager.hpp"
 #include "network/socket_factory.hpp"
 
-std::unique_ptr<x64_emulator> create_default_x64_emulator();
+struct io_device;
+
+#define opt_func utils::optional_function
 
 struct emulator_callbacks : module_manager::callbacks, process_context::callbacks
 {
-    utils::optional_function<instruction_hook_continuation(uint32_t syscall_id, x64_emulator::pointer_type address,
-                                                           std::string_view mod_name, std::string_view syscall_name)>
-        on_syscall{};
+    using continuation = instruction_hook_continuation;
 
-    utils::optional_function<void(std::string_view)> on_stdout{};
+    opt_func<void()> on_exception{};
+
+    opt_func<void(uint64_t address, uint64_t length, memory_permission)> on_memory_protect{};
+    opt_func<void(uint64_t address, uint64_t length, memory_permission, bool commit)> on_memory_allocate{};
+    opt_func<void(uint64_t address, uint64_t length, memory_operation, memory_violation_type type)> on_memory_violate{};
+
+    opt_func<continuation(uint32_t syscall_id, std::string_view syscall_name)> on_syscall{};
+    opt_func<void(std::string_view data)> on_stdout{};
+    opt_func<void(std::string_view type, std::u16string_view name)> on_generic_access{};
+    opt_func<void(std::string_view description)> on_generic_activity{};
+    opt_func<void(std::string_view description)> on_suspicious_activity{};
+    opt_func<void(uint64_t address)> on_instruction{};
+    opt_func<void(io_device& device, std::u16string_view device_name, ULONG code)> on_ioctrl{};
 };
 
 struct application_settings
@@ -29,22 +41,32 @@ struct application_settings
     windows_path application{};
     windows_path working_directory{};
     std::vector<std::u16string> arguments{};
+
+    void serialize(utils::buffer_serializer& buffer) const
+    {
+        buffer.write(this->application);
+        buffer.write(this->working_directory);
+        buffer.write_vector(this->arguments);
+    }
+
+    void deserialize(utils::buffer_deserializer& buffer)
+    {
+        buffer.read(this->application);
+        buffer.read(this->working_directory);
+        buffer.read_vector(this->arguments);
+    }
 };
 
 struct emulator_settings
 {
+    bool disable_logging{false};
+    bool use_relative_time{false};
+
     std::filesystem::path emulation_root{};
     std::filesystem::path registry_directory{"./registry"};
 
-    bool verbose_calls{false};
-    bool disable_logging{false};
-    bool silent_until_main{false};
-    bool use_relative_time{false};
-
     std::unordered_map<uint16_t, uint16_t> port_mappings{};
     std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
-    std::set<std::string, std::less<>> modules{};
-    std::set<std::string, std::less<>> ignored_functions{};
 };
 
 struct emulator_interfaces
@@ -56,8 +78,9 @@ struct emulator_interfaces
 class windows_emulator
 {
     uint64_t executed_instructions_{0};
+    std::optional<application_settings> application_settings_{};
 
-    std::unique_ptr<x64_emulator> emu_{};
+    std::unique_ptr<x86_64_emulator> emu_{};
     std::unique_ptr<utils::clock> clock_{};
     std::unique_ptr<network::socket_factory> socket_factory_{};
 
@@ -72,12 +95,11 @@ class windows_emulator
     process_context process;
     syscall_dispatcher dispatcher;
 
-    windows_emulator(const emulator_settings& settings = {}, emulator_callbacks callbacks = {},
-                     emulator_interfaces interfaces = {},
-                     std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
-    windows_emulator(application_settings app_settings, const emulator_settings& settings = {},
-                     emulator_callbacks callbacks = {}, emulator_interfaces interfaces = {},
-                     std::unique_ptr<x64_emulator> emu = create_default_x64_emulator());
+    windows_emulator(std::unique_ptr<x86_64_emulator> emu, const emulator_settings& settings = {},
+                     emulator_callbacks callbacks = {}, emulator_interfaces interfaces = {});
+    windows_emulator(std::unique_ptr<x86_64_emulator> emu, application_settings app_settings,
+                     const emulator_settings& settings = {}, emulator_callbacks callbacks = {},
+                     emulator_interfaces interfaces = {});
 
     windows_emulator(windows_emulator&&) = delete;
     windows_emulator(const windows_emulator&) = delete;
@@ -86,12 +108,12 @@ class windows_emulator
 
     ~windows_emulator();
 
-    x64_emulator& emu()
+    x86_64_emulator& emu()
     {
         return *this->emu_;
     }
 
-    const x64_emulator& emu() const
+    const x86_64_emulator& emu() const
     {
         return *this->emu_;
     }
@@ -131,7 +153,10 @@ class windows_emulator
         return this->executed_instructions_;
     }
 
+    void setup_process_if_necessary();
+
     void start(size_t count = 0);
+    void stop();
 
     void serialize(utils::buffer_serializer& buffer) const;
     void deserialize(utils::buffer_deserializer& buffer);
@@ -178,28 +203,23 @@ class windows_emulator
         }
     }
 
-    bool verbose{false};
-    bool verbose_calls{false};
-    bool buffer_stdout{false};
-    bool fuzzing{false};
-
     void yield_thread(bool alertable = false);
-    void perform_thread_switch();
+    bool perform_thread_switch();
     bool activate_thread(uint32_t id);
 
   private:
     bool switch_thread_{false};
-    bool use_relative_time_{false};
-    bool silent_until_main_{false};
+    bool use_relative_time_{false}; // TODO: Get rid of that
+    std::atomic_bool should_stop{false};
 
     std::unordered_map<uint16_t, uint16_t> port_mappings_{};
 
-    std::set<std::string, std::less<>> modules_{};
-    std::set<std::string, std::less<>> ignored_functions_{};
     std::vector<std::byte> process_snapshot_{};
     // std::optional<process_context> process_snapshot_{};
 
     void setup_hooks();
     void setup_process(const application_settings& app_settings);
     void on_instruction_execution(uint64_t address);
+
+    void register_factories(utils::buffer_deserializer& buffer);
 };

@@ -7,25 +7,26 @@
 namespace
 {
     template <typename T>
-    emulator_object<T> allocate_object_on_stack(x64_emulator& emu)
+    emulator_object<T> allocate_object_on_stack(x86_64_emulator& emu)
     {
-        const auto old_sp = emu.reg(x64_register::rsp);
-        const auto new_sp = align_down(old_sp - sizeof(T), std::max(alignof(T), alignof(x64_emulator::pointer_type)));
-        emu.reg(x64_register::rsp, new_sp);
+        const auto old_sp = emu.reg(x86_register::rsp);
+        const auto new_sp =
+            align_down(old_sp - sizeof(T), std::max(alignof(T), alignof(x86_64_emulator::pointer_type)));
+        emu.reg(x86_register::rsp, new_sp);
         return {emu, new_sp};
     }
 
-    void unalign_stack(x64_emulator& emu)
+    void unalign_stack(x86_64_emulator& emu)
     {
-        auto sp = emu.reg(x64_register::rsp);
+        auto sp = emu.reg(x86_register::rsp);
         sp = align_down(sp - 0x10, 0x10) + 8;
-        emu.reg(x64_register::rsp, sp);
+        emu.reg(x86_register::rsp, sp);
     }
 
-    void setup_stack(x64_emulator& emu, const uint64_t stack_base, const size_t stack_size)
+    void setup_stack(x86_64_emulator& emu, const uint64_t stack_base, const size_t stack_size)
     {
         const uint64_t stack_end = stack_base + stack_size;
-        emu.reg(x64_register::rsp, stack_end);
+        emu.reg(x86_register::rsp, stack_end);
     }
 
     bool is_object_signaled(process_context& c, const handle h, const uint32_t current_thread_id)
@@ -55,6 +56,10 @@ namespace
         case handle_types::mutant: {
             auto* e = c.mutants.get(h);
             return !e || e->try_lock(current_thread_id);
+        }
+
+        case handle_types::timer: {
+            return true; // TODO
         }
 
         case handle_types::semaphore: {
@@ -93,7 +98,7 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
       suspended(suspended),
       last_registers(context.default_register_set)
 {
-    this->stack_base = memory.allocate_memory(this->stack_size, memory_permission::read_write);
+    this->stack_base = memory.allocate_memory(static_cast<size_t>(this->stack_size), memory_permission::read_write);
 
     this->gs_segment = emulator_allocator{
         memory,
@@ -111,10 +116,10 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
 
         teb_obj.ClientId.UniqueProcess = 1ul;
         teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
-        teb_obj.NtTib.StackLimit = reinterpret_cast<std::uint64_t*>(this->stack_base);
-        teb_obj.NtTib.StackBase = reinterpret_cast<std::uint64_t*>(this->stack_base + this->stack_size);
-        teb_obj.NtTib.Self = &this->teb->ptr()->NtTib;
-        teb_obj.ProcessEnvironmentBlock = context.peb.ptr();
+        teb_obj.NtTib.StackLimit = this->stack_base;
+        teb_obj.NtTib.StackBase = this->stack_base + this->stack_size;
+        teb_obj.NtTib.Self = this->teb->value();
+        teb_obj.ProcessEnvironmentBlock = context.peb.value();
     });
 }
 
@@ -207,15 +212,15 @@ bool emulator_thread::is_thread_ready(process_context& process, utils::clock& cl
     return true;
 }
 
-void emulator_thread::setup_registers(x64_emulator& emu, const process_context& context) const
+void emulator_thread::setup_registers(x86_64_emulator& emu, const process_context& context) const
 {
     if (!this->gs_segment)
     {
         throw std::runtime_error("Missing GS segment");
     }
 
-    setup_stack(emu, this->stack_base, this->stack_size);
-    emu.set_segment_base(x64_register::gs, this->gs_segment->get_base());
+    setup_stack(emu, this->stack_base, static_cast<size_t>(this->stack_size));
+    emu.set_segment_base(x86_register::gs, this->gs_segment->get_base());
 
     CONTEXT64 ctx{};
     ctx.ContextFlags = CONTEXT64_ALL;
@@ -232,7 +237,7 @@ void emulator_thread::setup_registers(x64_emulator& emu, const process_context& 
 
     unalign_stack(emu);
 
-    emu.reg(x64_register::rcx, ctx_obj.value());
-    emu.reg(x64_register::rdx, context.ntdll_image_base);
-    emu.reg(x64_register::rip, context.ldr_initialize_thunk);
+    emu.reg(x86_register::rcx, ctx_obj.value());
+    emu.reg(x86_register::rdx, context.ntdll_image_base);
+    emu.reg(x86_register::rip, context.ldr_initialize_thunk);
 }

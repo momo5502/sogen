@@ -22,6 +22,8 @@ using ULONG = DWORD;
 using DWORD64 = std::uint64_t;
 using ULONGLONG = DWORD64;
 using LONGLONG = std::int64_t;
+using UINT = std::uint32_t;
+using BOOL = std::int32_t;
 
 typedef union _ULARGE_INTEGER
 {
@@ -63,5 +65,10 @@ using USHORT = WORD;
 #define TRUE  1
 #define FALSE 0
 #endif
+
+static_assert(sizeof(DWORD) == 4);
+static_assert(sizeof(ULONG) == 4);
+static_assert(sizeof(int) == 4);
+static_assert(sizeof(BOOLEAN) == 1);
 
 // NOLINTEND(modernize-use-using)

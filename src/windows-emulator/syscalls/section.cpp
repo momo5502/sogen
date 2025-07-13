@@ -20,7 +20,7 @@ namespace syscalls
         const auto* file = c.proc.files.get(file_handle);
         if (file)
         {
-            c.win_emu.log.print(color::dark_gray, "--> Section for file %s\n", u16_to_u8(file->name).c_str());
+            c.win_emu.callbacks.on_generic_access("Section for file", file->name);
             s.file_name = file->name;
         }
 
@@ -29,9 +29,8 @@ namespace syscalls
             const auto attributes = object_attributes.read();
             if (attributes.ObjectName)
             {
-                auto name = read_unicode_string(
-                    c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
-                c.win_emu.log.print(color::dark_gray, "--> Section with name %s\n", u16_to_u8(name).c_str());
+                auto name = read_unicode_string(c.emu, attributes.ObjectName);
+                c.win_emu.callbacks.on_generic_access("Section with name", name);
                 s.name = std::move(name);
             }
         }
@@ -60,18 +59,31 @@ namespace syscalls
     {
         const auto attributes = object_attributes.read();
 
-        auto filename =
-            read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
-        c.win_emu.log.print(color::dark_gray, "--> Opening section: %s\n", u16_to_u8(filename).c_str());
+        auto filename = read_unicode_string(c.emu, attributes.ObjectName);
+        c.win_emu.callbacks.on_generic_access("Opening section", filename);
 
         if (filename == u"\\Windows\\SharedSection")
         {
+            constexpr auto shared_section_size = 0x10000;
+
+            const auto address = c.win_emu.memory.find_free_allocation_base(shared_section_size);
+            c.win_emu.memory.allocate_memory(address, shared_section_size, memory_permission::read_write);
+            c.proc.shared_section_address = address;
+            c.proc.shared_section_size = shared_section_size;
+
             section_handle.write(SHARED_SECTION);
             return STATUS_SUCCESS;
         }
 
         if (filename == u"DBWIN_BUFFER")
         {
+            constexpr auto dbwin_buffer_section_size = 0x1000;
+
+            const auto address = c.win_emu.memory.find_free_allocation_base(dbwin_buffer_section_size);
+            c.win_emu.memory.allocate_memory(address, dbwin_buffer_section_size, memory_permission::read_write);
+            c.proc.dbwin_buffer = address;
+            c.proc.dbwin_buffer_size = dbwin_buffer_section_size;
+
             section_handle.write(DBWIN_BUFFER);
             return STATUS_SUCCESS;
         }
@@ -84,7 +96,8 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
         }
 
-        if (attributes.RootDirectory != KNOWN_DLLS_DIRECTORY)
+        if (attributes.RootDirectory != KNOWN_DLLS_DIRECTORY &&
+            attributes.RootDirectory != BASE_NAMED_OBJECTS_DIRECTORY)
         {
             c.win_emu.log.error("Unsupported section\n");
             c.emu.stop();
@@ -121,10 +134,8 @@ namespace syscalls
 
         if (section_handle == SHARED_SECTION)
         {
-            constexpr auto shared_section_size = 0x10000;
-
-            const auto address = c.win_emu.memory.find_free_allocation_base(shared_section_size);
-            c.win_emu.memory.allocate_memory(address, shared_section_size, memory_permission::read_write);
+            const auto shared_section_size = c.proc.shared_section_size;
+            const auto address = c.proc.shared_section_address;
 
             const std::u16string_view windows_dir = c.proc.kusd.get().NtSystemRoot.arr;
             const auto windows_dir_size = windows_dir.size() * 2;
@@ -132,6 +143,7 @@ namespace syscalls
             constexpr auto windows_dir_offset = 0x10;
             c.emu.write_memory(address + 8, windows_dir_offset);
 
+            // aka. BaseStaticServerData (BASE_STATIC_SERVER_DATA)
             const auto obj_address = address + windows_dir_offset;
 
             const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> windir_obj{c.emu, obj_address};
@@ -157,6 +169,11 @@ namespace syscalls
                 ucs.Buffer = ucs.Buffer - obj_address;
             });
 
+            c.emu.write_memory(obj_address + 0x9C8, 0xFFFFFFFF); // TIME_ZONE_ID_INVALID
+
+            // Windows 2019 offset!
+            c.emu.write_memory(obj_address + 0xA70, 0xFFFFFFFF); // TIME_ZONE_ID_INVALID
+
             if (view_size)
             {
                 view_size.write(shared_section_size);
@@ -169,11 +186,8 @@ namespace syscalls
 
         if (section_handle == DBWIN_BUFFER)
         {
-            constexpr auto dbwin_buffer_section_size = 0x1000;
-
-            const auto address = c.win_emu.memory.find_free_allocation_base(dbwin_buffer_section_size);
-            c.win_emu.memory.allocate_memory(address, dbwin_buffer_section_size, memory_permission::read_write);
-            c.proc.dbwin_buffer = address;
+            const auto dbwin_buffer_section_size = c.proc.dbwin_buffer_size;
+            const auto address = c.proc.dbwin_buffer;
 
             if (view_size)
             {
@@ -225,10 +239,11 @@ namespace syscalls
             size = page_align_up(file_data.size());
         }
 
+        const auto reserve_only = section_entry->allocation_attributes == SEC_RESERVE;
         const auto protection = map_nt_to_emulator_protection(section_entry->section_page_protection);
-        const auto address = c.win_emu.memory.allocate_memory(size, protection);
+        const auto address = c.win_emu.memory.allocate_memory(static_cast<size_t>(size), protection, reserve_only);
 
-        if (!file_data.empty())
+        if (!reserve_only && !file_data.empty())
         {
             c.emu.write_memory(address, file_data.data(), file_data.size());
         }
@@ -255,32 +270,49 @@ namespace syscalls
             return STATUS_INVALID_PARAMETER;
         }
 
+        if (base_address == c.proc.shared_section_address)
+        {
+            c.proc.shared_section_address = 0;
+            c.win_emu.memory.release_memory(base_address, static_cast<size_t>(c.proc.shared_section_size));
+            return STATUS_SUCCESS;
+        }
+
         if (base_address == c.proc.dbwin_buffer)
         {
             c.proc.dbwin_buffer = 0;
-            c.win_emu.memory.release_memory(base_address, 0x1000);
+            c.win_emu.memory.release_memory(base_address, static_cast<size_t>(c.proc.dbwin_buffer_size));
             return STATUS_SUCCESS;
         }
 
         const auto* mod = c.win_emu.mod_manager.find_by_address(base_address);
-        if (!mod)
+        if (mod != nullptr)
         {
-            c.win_emu.log.error("Unmapping non-module section not supported!\n");
-            c.emu.stop();
-            return STATUS_NOT_SUPPORTED;
+            if (c.win_emu.mod_manager.unmap(base_address))
+            {
+                return STATUS_SUCCESS;
+            }
+
+            return STATUS_INVALID_PARAMETER;
         }
 
-        if (c.win_emu.mod_manager.unmap(base_address, c.win_emu.log))
+        if (c.win_emu.memory.release_memory(base_address, 0))
         {
             return STATUS_SUCCESS;
         }
 
-        return STATUS_INVALID_PARAMETER;
+        c.win_emu.log.error("Unmapping non-module/non-memory section not supported!\n");
+        c.emu.stop();
+        return STATUS_NOT_SUPPORTED;
     }
 
     NTSTATUS handle_NtUnmapViewOfSectionEx(const syscall_context& c, const handle process_handle,
                                            const uint64_t base_address, const ULONG /*flags*/)
     {
         return handle_NtUnmapViewOfSection(c, process_handle, base_address);
+    }
+
+    NTSTATUS handle_NtAreMappedFilesTheSame()
+    {
+        return STATUS_NOT_SUPPORTED;
     }
 }

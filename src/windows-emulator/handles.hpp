@@ -19,6 +19,8 @@ struct handle_types
         registry,
         mutant,
         token,
+        window,
+        timer,
     };
 };
 
@@ -134,6 +136,11 @@ class ref_counted_object
 
     static bool deleter(ref_counted_object& e)
     {
+        if (e.ref_count == 0)
+        {
+            return true;
+        }
+
         return --e.ref_count == 0;
     }
 
@@ -238,7 +245,7 @@ class handle_store : public generic_handle_store
         return h;
     }
 
-    bool erase(const typename value_map::iterator& entry)
+    std::pair<typename value_map::iterator, bool> erase(const typename value_map::iterator& entry)
     {
         if (this->block_mutation_)
         {
@@ -247,25 +254,25 @@ class handle_store : public generic_handle_store
 
         if (entry == this->store_.end())
         {
-            return false;
+            return {entry, false};
         }
 
         if constexpr (handle_detail::has_deleter_function<T>())
         {
             if (!T::deleter(entry->second))
             {
-                return true;
+                return {entry, true};
             }
         }
 
-        this->store_.erase(entry);
-        return true;
+        auto new_iter = this->store_.erase(entry);
+        return {new_iter, true};
     }
 
     bool erase(const handle_value h)
     {
         const auto entry = this->get_iterator(h);
-        return this->erase(entry);
+        return this->erase(entry).second;
     }
 
     bool erase(const handle h) override
@@ -401,6 +408,7 @@ constexpr auto NULL_HANDLE = make_handle(0ULL);
 
 constexpr auto KNOWN_DLLS_DIRECTORY = make_pseudo_handle(0x1, handle_types::directory);
 constexpr auto BASE_NAMED_OBJECTS_DIRECTORY = make_pseudo_handle(0x2, handle_types::directory);
+constexpr auto RPC_CONTROL_DIRECTORY = make_pseudo_handle(0x3, handle_types::directory);
 
 constexpr auto KNOWN_DLLS_SYMLINK = make_pseudo_handle(0x1, handle_types::symlink);
 constexpr auto SHARED_SECTION = make_pseudo_handle(0x1, handle_types::section);
@@ -409,6 +417,8 @@ constexpr auto DBWIN_BUFFER = make_pseudo_handle(0x2, handle_types::section);
 constexpr auto WER_PORT_READY = make_pseudo_handle(0x1, handle_types::event);
 constexpr auto DBWIN_DATA_READY = make_pseudo_handle(0x2, handle_types::event);
 constexpr auto DBWIN_BUFFER_READY = make_pseudo_handle(0x3, handle_types::event);
+constexpr auto SVCCTRL_START_EVENT = make_pseudo_handle(0x4, handle_types::event);
+constexpr auto LSA_AUTHENTICATION_INITIALIZED = make_pseudo_handle(0x5, handle_types::event);
 
 constexpr auto CONSOLE_HANDLE = make_pseudo_handle(0x1, handle_types::file);
 constexpr auto STDOUT_HANDLE = make_pseudo_handle(0x2, handle_types::file);

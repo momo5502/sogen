@@ -225,7 +225,7 @@ namespace
                                                                                   const io_device_context& c)
     {
         constexpr auto info_size = offsetof(AFD_POLL_INFO64, Handles);
-        if (!c.input_buffer || c.input_buffer_length < info_size)
+        if (!c.input_buffer || c.input_buffer_length < info_size || c.input_buffer != c.output_buffer)
         {
             throw std::runtime_error("Bad AFD poll data");
         }
@@ -254,12 +254,7 @@ namespace
     {
         int16_t socket_events{};
 
-        if (poll_events & (AFD_POLL_ACCEPT | AFD_POLL_RECEIVE))
-        {
-            socket_events |= POLLRDNORM;
-        }
-
-        if (poll_events & AFD_POLL_RECEIVE_EXPEDITED)
+        if (poll_events & (AFD_POLL_DISCONNECT | AFD_POLL_ACCEPT | AFD_POLL_RECEIVE))
         {
             socket_events |= POLLRDNORM;
         }
@@ -269,7 +264,7 @@ namespace
             socket_events |= POLLRDBAND;
         }
 
-        if (poll_events & (AFD_POLL_CONNECT_FAIL | AFD_POLL_SEND))
+        if (poll_events & (AFD_POLL_CONNECT | AFD_POLL_CONNECT_FAIL | AFD_POLL_SEND))
         {
             socket_events |= POLLWRNORM;
         }
@@ -277,35 +272,51 @@ namespace
         return socket_events;
     }
 
-    ULONG map_socket_response_events_to_afd(const int16_t socket_events)
+    ULONG map_socket_response_events_to_afd(const int16_t socket_events, const ULONG afd_poll_events,
+                                            const bool is_listening, const bool is_connecting)
     {
         ULONG afd_events = 0;
 
         if (socket_events & POLLRDNORM)
         {
-            afd_events |= (AFD_POLL_ACCEPT | AFD_POLL_RECEIVE);
+            if (!is_listening && afd_poll_events & AFD_POLL_RECEIVE)
+            {
+                afd_events |= AFD_POLL_RECEIVE;
+            }
+            else if (is_listening && afd_poll_events & AFD_POLL_ACCEPT)
+            {
+                afd_events |= AFD_POLL_ACCEPT;
+            }
         }
 
-        if (socket_events & POLLRDBAND)
+        if (socket_events & POLLRDBAND && afd_poll_events & AFD_POLL_RECEIVE_EXPEDITED)
         {
             afd_events |= AFD_POLL_RECEIVE_EXPEDITED;
         }
 
         if (socket_events & POLLWRNORM)
         {
-            afd_events |= (AFD_POLL_CONNECT_FAIL | AFD_POLL_SEND);
+            if (!is_connecting && afd_poll_events & AFD_POLL_SEND)
+            {
+                afd_events |= AFD_POLL_SEND;
+            }
+            else if (is_connecting && afd_poll_events & AFD_POLL_CONNECT)
+            {
+                afd_events |= AFD_POLL_CONNECT;
+            }
         }
 
-        if ((socket_events & (POLLHUP | POLLERR)) == (POLLHUP | POLLERR))
+        if ((socket_events & (POLLHUP | POLLERR)) == (POLLHUP | POLLERR) &&
+            afd_poll_events & (AFD_POLL_CONNECT_FAIL | AFD_POLL_ABORT))
         {
             afd_events |= (AFD_POLL_CONNECT_FAIL | AFD_POLL_ABORT);
         }
-        else if (socket_events & POLLHUP)
+        else if (socket_events & POLLHUP && afd_poll_events & AFD_POLL_DISCONNECT)
         {
             afd_events |= AFD_POLL_DISCONNECT;
         }
 
-        if (socket_events & POLLNVAL)
+        if (socket_events & POLLNVAL && afd_poll_events & AFD_POLL_LOCAL_CLOSE)
         {
             afd_events |= AFD_POLL_LOCAL_CLOSE;
         }
@@ -313,62 +324,14 @@ namespace
         return afd_events;
     }
 
-    NTSTATUS perform_poll(windows_emulator& win_emu, const io_device_context& c,
-                          const std::span<network::i_socket* const> endpoints,
-                          const std::span<const AFD_POLL_HANDLE_INFO64> handles)
-    {
-        std::vector<network::poll_entry> poll_data{};
-        poll_data.resize(endpoints.size());
-
-        for (size_t i = 0; i < endpoints.size() && i < handles.size(); ++i)
-        {
-            auto& pfd = poll_data.at(i);
-            const auto& handle = handles[i];
-
-            pfd.s = endpoints[i];
-            pfd.events = map_afd_request_events_to_socket(handle.PollEvents);
-            pfd.revents = pfd.events;
-        }
-
-        const auto count = win_emu.socket_factory().poll_sockets(poll_data);
-        if (count <= 0)
-        {
-            return STATUS_PENDING;
-        }
-
-        constexpr auto info_size = offsetof(AFD_POLL_INFO64, Handles);
-        const emulator_object<AFD_POLL_HANDLE_INFO64> handle_info_obj{win_emu.emu(), c.input_buffer + info_size};
-
-        size_t current_index = 0;
-
-        for (size_t i = 0; i < endpoints.size(); ++i)
-        {
-            const auto& pfd = poll_data.at(i);
-            if (pfd.revents == 0)
-            {
-                continue;
-            }
-
-            auto entry = handle_info_obj.read(i);
-            entry.PollEvents = map_socket_response_events_to_afd(pfd.revents);
-            entry.Status = STATUS_SUCCESS;
-
-            handle_info_obj.write(entry, current_index++);
-            break;
-        }
-
-        assert(current_index == static_cast<size_t>(count));
-
-        const emulator_object<AFD_POLL_INFO64> info_obj{win_emu.emu(), c.input_buffer};
-        info_obj.access([&](AFD_POLL_INFO64& info) {
-            info.NumberOfHandles = static_cast<ULONG>(current_index); //
-        });
-
-        return STATUS_SUCCESS;
-    }
-
     struct afd_endpoint : io_device
     {
+        struct pending_connection
+        {
+            network::address remote_address;
+            std::unique_ptr<network::i_socket> accepted_socket;
+        };
+
         std::unique_ptr<network::i_socket> s_{};
 
         bool executing_delayed_ioctl_{};
@@ -376,6 +339,14 @@ namespace
         std::optional<bool> require_poll_{};
         std::optional<io_device_context> delayed_ioctl_{};
         std::optional<std::chrono::steady_clock::time_point> timeout_{};
+        std::optional<std::function<void(windows_emulator&, const io_device_context&)>> timeout_callback_{};
+
+        std::unordered_map<LONG, pending_connection> pending_connections_{};
+        LONG next_sequence_{0};
+
+        std::optional<handle> event_select_event_{};
+        ULONG event_select_mask_{0};
+        ULONG triggered_events_{0};
 
         afd_endpoint()
         {
@@ -415,15 +386,17 @@ namespace
             this->s_->set_blocking(false);
         }
 
-        void delay_ioctrl(const io_device_context& c,
+        void delay_ioctrl(const io_device_context& c, const std::optional<bool> require_poll = {},
                           const std::optional<std::chrono::steady_clock::time_point> timeout = {},
-                          const std::optional<bool> require_poll = {})
+                          const std::optional<std::function<void(windows_emulator&, const io_device_context&)>>&
+                              timeout_callback = {})
         {
             if (this->executing_delayed_ioctl_)
             {
                 return;
             }
 
+            this->timeout_callback_ = timeout_callback;
             this->timeout_ = timeout;
             this->require_poll_ = require_poll;
             this->delayed_ioctl_ = c;
@@ -431,6 +404,7 @@ namespace
 
         void clear_pending_state()
         {
+            this->timeout_callback_ = {};
             this->timeout_ = {};
             this->require_poll_ = {};
             this->delayed_ioctl_ = {};
@@ -438,41 +412,89 @@ namespace
 
         void work(windows_emulator& win_emu) override
         {
-            if (!this->delayed_ioctl_ || !this->s_)
+            if (!this->s_ || (!this->delayed_ioctl_ && !this->event_select_mask_))
             {
                 return;
             }
 
-            this->executing_delayed_ioctl_ = true;
-            const auto _ = utils::finally([&] { this->executing_delayed_ioctl_ = false; });
+            network::poll_entry pfd{};
+            pfd.s = this->s_.get();
 
-            if (this->require_poll_.has_value())
+            if (this->delayed_ioctl_ && this->require_poll_.has_value())
             {
-                const auto is_ready = this->s_->is_ready(*this->require_poll_);
-                if (!is_ready)
+                pfd.events |= *this->require_poll_ ? POLLIN : POLLOUT;
+            }
+            if (this->event_select_mask_)
+            {
+                pfd.events =
+                    static_cast<int16_t>(pfd.events | map_afd_request_events_to_socket(this->event_select_mask_));
+            }
+            pfd.revents = pfd.events;
+
+            if (pfd.events != 0)
+            {
+                win_emu.socket_factory().poll_sockets(std::span{&pfd, 1});
+            }
+
+            const auto socket_events = pfd.revents;
+
+            if (socket_events && this->event_select_mask_)
+            {
+                const bool is_connecting =
+                    this->delayed_ioctl_ && _AFD_REQUEST(this->delayed_ioctl_->io_control_code) == AFD_CONNECT;
+                ULONG current_events = map_socket_response_events_to_afd(socket_events, this->event_select_mask_,
+                                                                         pfd.s->is_listening(), is_connecting);
+
+                if ((current_events & ~this->triggered_events_) != 0)
                 {
-                    return;
+                    this->triggered_events_ |= current_events;
+
+                    if (auto* event = win_emu.process.events.get(*this->event_select_event_))
+                    {
+                        event->signaled = true;
+                    }
                 }
             }
 
-            const auto status = this->execute_ioctl(win_emu, *this->delayed_ioctl_);
-            if (status == STATUS_PENDING)
+            if (this->delayed_ioctl_)
             {
-                if (!this->timeout_ || this->timeout_ > win_emu.clock().steady_now())
+                this->executing_delayed_ioctl_ = true;
+                const auto _ = utils::finally([&] { this->executing_delayed_ioctl_ = false; });
+
+                if (this->require_poll_.has_value())
                 {
-                    return;
+                    const auto is_ready =
+                        socket_events & ((*this->require_poll_ ? POLLIN : POLLOUT) | POLLHUP | POLLERR);
+                    if (!is_ready)
+                    {
+                        return;
+                    }
                 }
 
-                write_io_status(this->delayed_ioctl_->io_status_block, STATUS_TIMEOUT);
-            }
+                const auto status = this->execute_ioctl(win_emu, *this->delayed_ioctl_);
+                if (status == STATUS_PENDING)
+                {
+                    if (!this->timeout_ || this->timeout_ > win_emu.clock().steady_now())
+                    {
+                        return;
+                    }
 
-            auto* e = win_emu.process.events.get(this->delayed_ioctl_->event);
-            if (e)
-            {
-                e->signaled = true;
-            }
+                    write_io_status(this->delayed_ioctl_->io_status_block, STATUS_TIMEOUT);
 
-            this->clear_pending_state();
+                    if (this->timeout_callback_)
+                    {
+                        (*this->timeout_callback_)(win_emu, *this->delayed_ioctl_);
+                    }
+                }
+
+                auto* e = win_emu.process.events.get(this->delayed_ioctl_->event);
+                if (e)
+                {
+                    e->signaled = true;
+                }
+
+                this->clear_pending_state();
+            }
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -497,11 +519,9 @@ namespace
         {
             if (_AFD_BASE(c.io_control_code) != FSCTL_AFD_BASE)
             {
-                win_emu.log.print(color::cyan, "Bad AFD IOCTL: %X\n", c.io_control_code);
+                win_emu.log.error("Bad AFD IOCTL: 0x%X\n", static_cast<uint32_t>(c.io_control_code));
                 return STATUS_NOT_SUPPORTED;
             }
-
-            win_emu.log.print(color::dark_gray, "--> AFD IOCTL: %X\n", c.io_control_code);
 
             const auto request = _AFD_REQUEST(c.io_control_code);
 
@@ -509,19 +529,79 @@ namespace
             {
             case AFD_BIND:
                 return this->ioctl_bind(win_emu, c);
+            case AFD_CONNECT:
+                return this->ioctl_connect(win_emu, c);
+            case AFD_START_LISTEN:
+                return this->ioctl_listen(win_emu, c);
+            case AFD_WAIT_FOR_LISTEN:
+                return this->ioctl_wait_for_listen(win_emu, c);
+            case AFD_ACCEPT:
+                return this->ioctl_accept(win_emu, c);
+            case AFD_SEND:
+                return this->ioctl_send(win_emu, c);
+            case AFD_RECEIVE:
+                return this->ioctl_receive(win_emu, c);
             case AFD_SEND_DATAGRAM:
                 return this->ioctl_send_datagram(win_emu, c);
             case AFD_RECEIVE_DATAGRAM:
                 return this->ioctl_receive_datagram(win_emu, c);
             case AFD_POLL:
                 return this->ioctl_poll(win_emu, c);
+            case AFD_GET_ADDRESS:
+                return this->ioctl_get_address(win_emu, c);
+            case AFD_EVENT_SELECT:
+                return this->ioctl_event_select(win_emu, c);
+            case AFD_ENUM_NETWORK_EVENTS:
+                return this->ioctl_enum_network_events(win_emu, c);
             case AFD_SET_CONTEXT:
             case AFD_GET_INFORMATION:
+            case AFD_SET_INFORMATION:
+            case AFD_QUERY_HANDLES:
+            case AFD_TRANSPORT_IOCTL:
                 return STATUS_SUCCESS;
             default:
-                win_emu.log.print(color::gray, "Unsupported AFD IOCTL: %X\n", c.io_control_code);
+                win_emu.log.error("Unsupported AFD IOCTL: 0x%X (%u)\n", static_cast<uint32_t>(c.io_control_code),
+                                  static_cast<uint32_t>(request));
                 return STATUS_NOT_SUPPORTED;
             }
+        }
+
+        NTSTATUS ioctl_connect(windows_emulator& win_emu, const io_device_context& c)
+        {
+            if (!this->s_)
+            {
+                throw std::runtime_error("Invalid AFD endpoint socket!");
+            }
+
+            auto data = win_emu.emu().read_memory(c.input_buffer, c.input_buffer_length);
+
+            constexpr auto address_offset = 24;
+
+            if (data.size() < address_offset)
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            const auto addr = convert_to_host_address(win_emu, std::span(data).subspan(address_offset));
+
+            if (!this->s_->connect(addr))
+            {
+                const auto error = this->s_->get_last_error();
+                if (error == SERR(EWOULDBLOCK))
+                {
+                    this->delay_ioctrl(c, false);
+                    return STATUS_PENDING;
+                }
+
+                if (this->executing_delayed_ioctl_ && error == SERR(EISCONN))
+                {
+                    return STATUS_SUCCESS;
+                }
+
+                return STATUS_UNSUCCESSFUL;
+            }
+
+            return STATUS_SUCCESS;
         }
 
         NTSTATUS ioctl_bind(windows_emulator& win_emu, const io_device_context& c) const
@@ -550,12 +630,266 @@ namespace
             return STATUS_SUCCESS;
         }
 
-        static std::vector<network::i_socket*> resolve_endpoints(windows_emulator& win_emu,
-                                                                 const std::span<const AFD_POLL_HANDLE_INFO64> handles)
+        NTSTATUS ioctl_listen(windows_emulator& win_emu, const io_device_context& c) const
+        {
+            if (!this->s_)
+            {
+                throw std::runtime_error("Invalid AFD endpoint socket!");
+            }
+
+            if (c.input_buffer_length < sizeof(AFD_LISTEN_INFO))
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            const auto listen_info = win_emu.emu().read_memory<AFD_LISTEN_INFO>(c.input_buffer);
+
+            if (!this->s_->listen(static_cast<int>(listen_info.MaximumConnectionQueue)))
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS ioctl_wait_for_listen(windows_emulator& win_emu, const io_device_context& c)
+        {
+            if (!this->s_)
+            {
+                throw std::runtime_error("Invalid AFD endpoint socket!");
+            }
+
+            if (c.output_buffer_length < sizeof(AFD_LISTEN_RESPONSE_INFO))
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            network::address remote_address{};
+            auto accepted_socket_ptr = this->s_->accept(remote_address);
+
+            if (!accepted_socket_ptr)
+            {
+                const auto error = this->s_->get_last_error();
+                if (error == SERR(EWOULDBLOCK))
+                {
+                    this->delay_ioctrl(c, true);
+                    return STATUS_PENDING;
+                }
+
+                return STATUS_UNSUCCESSFUL;
+            }
+
+            if (!remote_address.is_ipv4())
+            {
+                throw std::runtime_error("Unsupported address family");
+            }
+
+            pending_connection pending{};
+            pending.remote_address = remote_address;
+            pending.accepted_socket = std::move(accepted_socket_ptr);
+
+            LONG sequence = next_sequence_++;
+            pending_connections_.try_emplace(sequence, std::move(pending));
+
+            AFD_LISTEN_RESPONSE_INFO response{};
+            response.Sequence = sequence;
+
+            auto transport_buffer = convert_to_win_address(win_emu, remote_address);
+            memcpy(&response.RemoteAddress, transport_buffer.data(), sizeof(win_sockaddr));
+
+            win_emu.emu().write_memory<AFD_LISTEN_RESPONSE_INFO>(c.output_buffer, response);
+
+            if (c.io_status_block)
+            {
+                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                block.Information = sizeof(AFD_LISTEN_RESPONSE_INFO);
+                c.io_status_block.write(block);
+            }
+
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS ioctl_accept(windows_emulator& win_emu, const io_device_context& c)
+        {
+            if (!this->s_)
+            {
+                throw std::runtime_error("Invalid AFD endpoint socket!");
+            }
+
+            if (c.input_buffer_length < sizeof(AFD_ACCEPT_INFO))
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            const auto accept_info = win_emu.emu().read_memory<AFD_ACCEPT_INFO>(c.input_buffer);
+
+            const auto it = pending_connections_.find(accept_info.Sequence);
+            if (it == pending_connections_.end())
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            auto& accepted_socket = it->second.accepted_socket;
+
+            auto* target_device = win_emu.process.devices.get(accept_info.AcceptHandle);
+            if (!target_device)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            auto* target_endpoint = target_device->get_internal_device<afd_endpoint>();
+            if (!target_endpoint)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            target_endpoint->s_ = std::move(accepted_socket);
+
+            pending_connections_.erase(it);
+
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS ioctl_receive(windows_emulator& win_emu, const io_device_context& c)
+        {
+            if (!this->s_)
+            {
+                throw std::runtime_error("Invalid AFD endpoint socket!");
+            }
+
+            auto& emu = win_emu.emu();
+
+            if (c.input_buffer_length < sizeof(AFD_RECV_INFO<EmulatorTraits<Emu64>>))
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            const auto receive_info = emu.read_memory<AFD_RECV_INFO<EmulatorTraits<Emu64>>>(c.input_buffer);
+
+            if (!receive_info.BufferArray || receive_info.BufferCount == 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            if (receive_info.BufferCount > 1)
+            {
+                // TODO: Scatter/Gather
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            const auto wsabuf = emu.read_memory<EMU_WSABUF<EmulatorTraits<Emu64>>>(receive_info.BufferArray);
+            if (!wsabuf.buf || wsabuf.len == 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            std::vector<std::byte> host_buffer;
+            host_buffer.resize(wsabuf.len);
+
+            const auto bytes_received = this->s_->recv(host_buffer);
+
+            if (bytes_received < 0)
+            {
+                const auto error = this->s_->get_last_error();
+                if (error == SERR(EWOULDBLOCK))
+                {
+                    this->delay_ioctrl(c, true);
+                    return STATUS_PENDING;
+                }
+
+                if (error == SERR(ECONNRESET))
+                {
+                    return STATUS_CONNECTION_RESET;
+                }
+
+                return STATUS_UNSUCCESSFUL;
+            }
+
+            emu.write_memory(wsabuf.buf, host_buffer.data(), static_cast<size_t>(bytes_received));
+
+            if (c.io_status_block)
+            {
+                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                block.Information = static_cast<uint32_t>(bytes_received);
+                c.io_status_block.write(block);
+            }
+
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS ioctl_send(windows_emulator& win_emu, const io_device_context& c)
+        {
+            if (!this->s_)
+            {
+                throw std::runtime_error("Invalid AFD endpoint socket!");
+            }
+
+            auto& emu = win_emu.emu();
+
+            if (c.input_buffer_length < sizeof(AFD_SEND_INFO<EmulatorTraits<Emu64>>))
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            const auto send_info = emu.read_memory<AFD_SEND_INFO<EmulatorTraits<Emu64>>>(c.input_buffer);
+
+            if (!send_info.BufferArray || send_info.BufferCount == 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            if (send_info.BufferCount > 1)
+            {
+                // TODO: Scatter/Gather
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            const auto wsabuf = emu.read_memory<EMU_WSABUF<EmulatorTraits<Emu64>>>(send_info.BufferArray);
+            if (!wsabuf.buf || wsabuf.len == 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            std::vector<std::byte> host_buffer;
+            host_buffer.resize(wsabuf.len);
+
+            emu.read_memory(wsabuf.buf, host_buffer.data(), host_buffer.size());
+
+            const auto bytes_sent = this->s_->send(host_buffer);
+
+            if (bytes_sent < 0)
+            {
+                const auto error = this->s_->get_last_error();
+                if (error == SERR(EWOULDBLOCK))
+                {
+                    this->delay_ioctrl(c, false);
+                    return STATUS_PENDING;
+                }
+
+                if (error == SERR(ECONNRESET))
+                {
+                    return STATUS_CONNECTION_RESET;
+                }
+
+                return STATUS_UNSUCCESSFUL;
+            }
+
+            if (c.io_status_block)
+            {
+                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                block.Information = static_cast<uint32_t>(bytes_sent);
+                c.io_status_block.write(block);
+            }
+
+            return STATUS_SUCCESS;
+        }
+
+        static std::vector<const afd_endpoint*> resolve_endpoints(windows_emulator& win_emu,
+                                                                  const std::span<const AFD_POLL_HANDLE_INFO64> handles)
         {
             auto& proc = win_emu.process;
 
-            std::vector<network::i_socket*> endpoints{};
+            std::vector<const afd_endpoint*> endpoints{};
             endpoints.reserve(handles.size());
 
             for (const auto& handle : handles)
@@ -572,10 +906,77 @@ namespace
                     throw std::runtime_error("Invalid AFD endpoint!");
                 }
 
-                endpoints.push_back(endpoint->s_.get());
+                endpoints.push_back(endpoint);
             }
 
             return endpoints;
+        }
+
+        static NTSTATUS perform_poll(windows_emulator& win_emu, const io_device_context& c,
+                                     const std::span<const afd_endpoint* const> endpoints,
+                                     const std::span<const AFD_POLL_HANDLE_INFO64> handles)
+        {
+            std::vector<network::poll_entry> poll_data{};
+            poll_data.resize(endpoints.size());
+
+            for (size_t i = 0; i < endpoints.size() && i < handles.size(); ++i)
+            {
+                auto& pfd = poll_data.at(i);
+                const auto& handle = handles[i];
+
+                pfd.s = endpoints[i]->s_.get();
+                pfd.events = map_afd_request_events_to_socket(handle.PollEvents);
+                pfd.revents = pfd.events;
+            }
+
+            const auto count = win_emu.socket_factory().poll_sockets(poll_data);
+            if (count <= 0)
+            {
+                return STATUS_PENDING;
+            }
+
+            constexpr auto info_size = offsetof(AFD_POLL_INFO64, Handles);
+            const emulator_object<AFD_POLL_HANDLE_INFO64> handle_info_obj{win_emu.emu(), c.input_buffer + info_size};
+
+            size_t current_index = 0;
+
+            for (size_t i = 0; i < endpoints.size(); ++i)
+            {
+                const auto& pfd = poll_data.at(i);
+                if (pfd.revents == 0)
+                {
+                    continue;
+                }
+
+                const auto& handle = handles[i];
+                const auto& endpoint = endpoints[i];
+
+                const bool is_connecting =
+                    endpoint->delayed_ioctl_ && _AFD_REQUEST(endpoint->delayed_ioctl_->io_control_code) == AFD_CONNECT;
+
+                auto entry = handle_info_obj.read(i);
+                entry.PollEvents = map_socket_response_events_to_afd(pfd.revents, handle.PollEvents,
+                                                                     pfd.s->is_listening(), is_connecting);
+                entry.Status = STATUS_SUCCESS;
+
+                handle_info_obj.write(entry, current_index++);
+            }
+
+            assert(current_index == static_cast<size_t>(count));
+
+            const emulator_object<AFD_POLL_INFO64> info_obj{win_emu.emu(), c.input_buffer};
+            info_obj.access([&](AFD_POLL_INFO64& info) {
+                info.NumberOfHandles = static_cast<ULONG>(current_index); //
+            });
+
+            if (c.io_status_block)
+            {
+                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                block.Information = info_size + sizeof(AFD_POLL_HANDLE_INFO64) * current_index;
+                c.io_status_block.write(block);
+            }
+
+            return STATUS_SUCCESS;
         }
 
         NTSTATUS ioctl_poll(windows_emulator& win_emu, const io_device_context& c)
@@ -591,9 +992,21 @@ namespace
 
             if (!this->executing_delayed_ioctl_)
             {
+                const auto timeout_callback = [](windows_emulator& win_emu, const io_device_context& c) {
+                    const emulator_object<AFD_POLL_INFO64> info_obj{win_emu.emu(), c.input_buffer};
+                    info_obj.access([&](AFD_POLL_INFO64& poll_info) {
+                        poll_info.NumberOfHandles = 0; //
+                    });
+                };
+
                 if (!info.Timeout.QuadPart)
                 {
-                    return status;
+                    if (status == STATUS_PENDING)
+                    {
+                        timeout_callback(win_emu, c);
+                        return STATUS_TIMEOUT;
+                    }
+                    return STATUS_SUCCESS;
                 }
 
                 std::optional<std::chrono::steady_clock::time_point> timeout{};
@@ -602,7 +1015,7 @@ namespace
                     timeout = utils::convert_delay_interval_to_time_point(win_emu.clock(), info.Timeout);
                 }
 
-                this->delay_ioctrl(c, timeout);
+                this->delay_ioctrl(c, {}, timeout, timeout_callback);
             }
 
             return STATUS_PENDING;
@@ -641,7 +1054,7 @@ namespace
                 const auto error = this->s_->get_last_error();
                 if (error == SERR(EWOULDBLOCK))
                 {
-                    this->delay_ioctrl(c, {}, true);
+                    this->delay_ioctrl(c, true);
                     return STATUS_PENDING;
                 }
 
@@ -701,7 +1114,7 @@ namespace
                 const auto error = this->s_->get_last_error();
                 if (error == SERR(EWOULDBLOCK))
                 {
-                    this->delay_ioctrl(c, {}, false);
+                    this->delay_ioctrl(c, false);
                     return STATUS_PENDING;
                 }
 
@@ -717,10 +1130,148 @@ namespace
 
             return STATUS_SUCCESS;
         }
+
+        NTSTATUS ioctl_get_address(windows_emulator& win_emu, const io_device_context& c) const
+        {
+            if (!this->s_)
+            {
+                throw std::runtime_error("Invalid AFD endpoint socket!");
+            }
+
+            const auto local_address = this->s_->get_local_address();
+            if (!local_address)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            std::vector<std::byte> win_addr_bytes = convert_to_win_address(win_emu, *local_address);
+
+            if (c.output_buffer_length < win_addr_bytes.size())
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            win_emu.emu().write_memory(c.output_buffer, win_addr_bytes.data(), win_addr_bytes.size());
+
+            if (c.io_status_block)
+            {
+                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                block.Information = static_cast<ULONG>(win_addr_bytes.size());
+                c.io_status_block.write(block);
+            }
+
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS ioctl_event_select(windows_emulator& win_emu, const io_device_context& c)
+        {
+            if (!this->s_)
+            {
+                throw std::runtime_error("Invalid AFD endpoint socket!");
+            }
+
+            if (c.input_buffer_length < sizeof(AFD_EVENT_SELECT_INFO))
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            const auto select_info = win_emu.emu().read_memory<AFD_EVENT_SELECT_INFO>(c.input_buffer);
+
+            this->event_select_event_ = select_info.Event;
+            this->event_select_mask_ = select_info.PollEvents;
+            this->triggered_events_ = 0;
+
+            if (auto* event = win_emu.process.events.get(select_info.Event))
+            {
+                event->signaled = false;
+            }
+
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS ioctl_enum_network_events(windows_emulator& win_emu, const io_device_context& c)
+        {
+            if (!this->s_)
+            {
+                throw std::runtime_error("Invalid AFD endpoint socket!");
+            }
+
+            if (c.output_buffer_length < 56)
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            if (c.input_buffer)
+            {
+                if (c.input_buffer_length == 0)
+                {
+                    handle h{};
+                    h.bits = c.input_buffer;
+
+                    if (auto* event = win_emu.process.events.get(h))
+                    {
+                        event->signaled = false;
+                    }
+                }
+                else
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+            }
+
+            win_emu.emu().write_memory(c.output_buffer, this->triggered_events_);
+            this->triggered_events_ = 0;
+
+            if (c.io_status_block)
+            {
+                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                block.Information = 56;
+                c.io_status_block.write(block);
+            }
+
+            return STATUS_SUCCESS;
+        }
+    };
+
+    struct afd_async_connect_hlp : stateless_device
+    {
+        NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
+        {
+            if (c.io_control_code != 0x12007)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            if (c.input_buffer_length < 40)
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            const auto target_handle = win_emu.emu().read_memory<handle>(c.input_buffer + 16);
+
+            auto* target_device = win_emu.process.devices.get(target_handle);
+            if (!target_device)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            auto* target_endpoint = target_device->get_internal_device<afd_endpoint>();
+            if (!target_endpoint)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            return target_endpoint->execute_ioctl(win_emu, c);
+        }
     };
 }
 
 std::unique_ptr<io_device> create_afd_endpoint()
 {
     return std::make_unique<afd_endpoint>();
+}
+
+std::unique_ptr<io_device> create_afd_async_connect_hlp()
+{
+    return std::make_unique<afd_async_connect_hlp>();
 }

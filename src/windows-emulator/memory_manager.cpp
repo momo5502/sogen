@@ -22,9 +22,10 @@ namespace
                     const auto first_length = split_point - i->first;
                     const auto second_length = i->second.length - first_length;
 
-                    i->second.length = first_length;
+                    i->second.length = static_cast<size_t>(first_length);
 
-                    regions[split_point] = memory_manager::committed_region{second_length, i->second.permissions};
+                    regions[split_point] =
+                        memory_manager::committed_region{static_cast<size_t>(second_length), i->second.permissions};
                 }
             }
         }
@@ -97,6 +98,25 @@ void memory_manager::update_layout_version()
 #if MOMO_REFLECTION_LEVEL > 0
     this->layout_version_.fetch_add(1, std::memory_order_relaxed);
 #endif
+}
+
+memory_stats memory_manager::compute_memory_stats() const
+{
+    memory_stats stats{};
+    stats.reserved_memory = 0;
+    stats.committed_memory = 0;
+
+    for (const auto& reserved_region : this->reserved_regions_ | std::views::values)
+    {
+        stats.reserved_memory += reserved_region.length;
+
+        for (const auto& committed_region : reserved_region.committed_regions | std::views::values)
+        {
+            stats.committed_memory += committed_region.length;
+        }
+    }
+
+    return stats;
 }
 
 void memory_manager::serialize_memory_state(utils::buffer_serializer& buffer, const bool is_snapshot) const
@@ -312,8 +332,8 @@ bool memory_manager::commit_memory(const uint64_t address, const size_t size, co
 
             if (map_length > 0)
             {
-                this->map_memory(map_start, map_length, permissions);
-                committed_regions[map_start] = committed_region{map_length, permissions};
+                this->map_memory(map_start, static_cast<size_t>(map_length), permissions);
+                committed_regions[map_start] = committed_region{static_cast<size_t>(map_length), permissions};
             }
 
             last_region_start = sub_region.first;
@@ -326,8 +346,8 @@ bool memory_manager::commit_memory(const uint64_t address, const size_t size, co
         const auto map_start = last_region ? (last_region_start + last_region->length) : address;
         const auto map_length = end - map_start;
 
-        this->map_memory(map_start, map_length, permissions);
-        committed_regions[map_start] = committed_region{map_length, permissions};
+        this->map_memory(map_start, static_cast<size_t>(map_length), permissions);
+        committed_regions[map_start] = committed_region{static_cast<size_t>(map_length), permissions};
     }
 
     merge_regions(committed_regions);
@@ -398,7 +418,7 @@ bool memory_manager::release_memory(const uint64_t address, size_t size)
         size = entry->second.length;
     }
 
-    size = page_align_up(size);
+    size = static_cast<size_t>(page_align_up(size));
 
     if (size > entry->second.length)
     {
@@ -498,7 +518,7 @@ region_info memory_manager::get_region_info(const uint64_t address)
 {
     region_info result{};
     result.start = MIN_ALLOCATION_ADDRESS;
-    result.length = MAX_ALLOCATION_ADDRESS - result.start;
+    result.length = static_cast<size_t>(MAX_ALLOCATION_ADDRESS - result.start);
     result.permissions = memory_permission::none;
     result.initial_permissions = memory_permission::none;
     result.allocation_base = {};
@@ -514,7 +534,7 @@ region_info memory_manager::get_region_info(const uint64_t address)
     auto upper_bound = this->reserved_regions_.upper_bound(address);
     if (upper_bound == this->reserved_regions_.begin())
     {
-        result.length = upper_bound->first - result.start;
+        result.length = static_cast<size_t>(upper_bound->first - result.start);
         return result;
     }
 
@@ -523,7 +543,7 @@ region_info memory_manager::get_region_info(const uint64_t address)
     if (lower_end <= address)
     {
         result.start = lower_end;
-        result.length = MAX_ALLOCATION_ADDRESS - result.start;
+        result.length = static_cast<size_t>(MAX_ALLOCATION_ADDRESS - result.start);
         return result;
     }
 
@@ -546,7 +566,7 @@ region_info memory_manager::get_region_info(const uint64_t address)
     auto committed_bound = committed_regions.upper_bound(address);
     if (committed_bound == committed_regions.begin())
     {
-        result.length = committed_bound->first - result.start;
+        result.length = static_cast<size_t>(committed_bound->first - result.start);
         return result;
     }
 
@@ -555,7 +575,7 @@ region_info memory_manager::get_region_info(const uint64_t address)
     if (committed_lower_end <= address)
     {
         result.start = committed_lower_end;
-        result.length = lower_end - result.start;
+        result.length = static_cast<size_t>(lower_end - result.start);
         return result;
     }
 

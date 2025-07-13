@@ -25,6 +25,8 @@ class module_manager
 
     mapped_module* map_module(const windows_path& file, const logger& logger, bool is_static = false);
     mapped_module* map_local_module(const std::filesystem::path& file, const logger& logger, bool is_static = false);
+    mapped_module* map_memory_module(uint64_t base_address, uint64_t image_size, const std::string& module_name,
+                                     const logger& logger, bool is_static = false);
 
     mapped_module* find_by_address(const uint64_t address)
     {
@@ -51,7 +53,7 @@ class module_manager
     void serialize(utils::buffer_serializer& buffer) const;
     void deserialize(utils::buffer_deserializer& buffer);
 
-    bool unmap(uint64_t address, const logger& logger);
+    bool unmap(uint64_t address);
     const module_map& modules() const
     {
         return modules_;

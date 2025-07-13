@@ -7,27 +7,15 @@
 struct syscall_context
 {
     windows_emulator& win_emu;
-    x64_emulator& emu;
+    x86_64_emulator& emu;
     process_context& proc;
     mutable bool write_status{true};
     mutable bool retrigger_syscall{false};
 };
 
-inline uint64_t get_syscall_argument(x64_emulator& emu, const size_t index)
+inline uint64_t get_syscall_argument(x86_64_emulator& emu, const size_t index)
 {
-    switch (index)
-    {
-    case 0:
-        return emu.reg(x64_register::r10);
-    case 1:
-        return emu.reg(x64_register::rdx);
-    case 2:
-        return emu.reg(x64_register::r8);
-    case 3:
-        return emu.reg(x64_register::r9);
-    default:
-        return emu.read_stack(index + 1);
-    }
+    return get_function_argument(emu, index, true);
 }
 
 inline bool is_uppercase(const char character)
@@ -54,7 +42,8 @@ inline std::optional<uint32_t> extract_syscall_id(const exported_symbol& symbol,
 
     const auto instruction_rva = symbol.rva + instruction_offset;
 
-    if (data.size() < (instruction_rva + instruction_size) || data[instruction_rva] != instruction_opcode)
+    if (data.size() < (instruction_rva + instruction_size) ||
+        data[static_cast<size_t>(instruction_rva)] != instruction_opcode)
     {
         return std::nullopt;
     }
@@ -109,7 +98,7 @@ inline void map_syscalls(std::map<uint64_t, syscall_handler_entry>& handlers, st
 
 template <typename T>
     requires(std::is_integral_v<T> || std::is_enum_v<T>)
-T resolve_argument(x64_emulator& emu, const size_t index)
+T resolve_argument(x86_64_emulator& emu, const size_t index)
 {
     const auto arg = get_syscall_argument(emu, index);
     return static_cast<T>(arg);
@@ -117,7 +106,7 @@ T resolve_argument(x64_emulator& emu, const size_t index)
 
 template <typename T>
     requires(std::is_same_v<std::remove_cvref_t<T>, handle>)
-handle resolve_argument(x64_emulator& emu, const size_t index)
+handle resolve_argument(x86_64_emulator& emu, const size_t index)
 {
     handle h{};
     h.bits = resolve_argument<uint64_t>(emu, index);
@@ -126,42 +115,43 @@ handle resolve_argument(x64_emulator& emu, const size_t index)
 
 template <typename T>
     requires(std::is_same_v<T, emulator_object<typename T::value_type>>)
-T resolve_argument(x64_emulator& emu, const size_t index)
+T resolve_argument(x86_64_emulator& emu, const size_t index)
 {
     const auto arg = get_syscall_argument(emu, index);
     return T(emu, arg);
 }
 
 template <typename T>
-T resolve_indexed_argument(x64_emulator& emu, size_t& index)
+T resolve_indexed_argument(x86_64_emulator& emu, size_t& index)
 {
     return resolve_argument<T>(emu, index++);
 }
 
-inline void write_syscall_status(const syscall_context& c, const NTSTATUS status, const uint64_t initial_ip)
+inline void write_syscall_result(const syscall_context& c, const uint64_t result, const uint64_t initial_ip)
 {
     if (c.write_status && !c.retrigger_syscall)
     {
-        c.emu.reg<uint64_t>(x64_register::rax, static_cast<uint64_t>(status));
+        c.emu.reg<uint64_t>(x86_register::rax, result);
     }
 
     const auto new_ip = c.emu.read_instruction_pointer();
     if (initial_ip != new_ip || c.retrigger_syscall)
     {
-        c.emu.reg(x64_register::rip, new_ip - 2);
+        c.emu.reg(x86_register::rip, new_ip - 2);
     }
 }
 
-inline void forward_syscall(const syscall_context& c, NTSTATUS (*handler)())
+template <typename Result>
+void forward_syscall(const syscall_context& c, Result (*handler)())
 {
     const auto ip = c.emu.read_instruction_pointer();
 
     const auto ret = handler();
-    write_syscall_status(c, ret, ip);
+    write_syscall_result(c, static_cast<uint64_t>(ret), ip);
 }
 
-template <typename... Args>
-void forward_syscall(const syscall_context& c, NTSTATUS (*handler)(const syscall_context&, Args...))
+template <typename Result, typename... Args>
+void forward_syscall(const syscall_context& c, Result (*handler)(const syscall_context&, Args...))
 {
     const auto ip = c.emu.read_instruction_pointer();
 
@@ -172,7 +162,7 @@ void forward_syscall(const syscall_context& c, NTSTATUS (*handler)(const syscall
     (void)index;
 
     const auto ret = std::apply(handler, std::move(func_args));
-    write_syscall_status(c, ret, ip);
+    write_syscall_result(c, ret, ip);
 }
 
 template <auto Handler>
@@ -196,7 +186,7 @@ void write_attribute(emulator& emu, const PS_ATTRIBUTE<Traits>& attribute, const
 }
 
 template <typename ResponseType, typename Action, typename ReturnLengthSetter>
-NTSTATUS handle_query_internal(x64_emulator& emu, const uint64_t buffer, const uint32_t length,
+NTSTATUS handle_query_internal(x86_64_emulator& emu, const uint64_t buffer, const uint32_t length,
                                const ReturnLengthSetter& return_length_setter, const Action& action)
 {
     constexpr auto required_size = sizeof(ResponseType);
@@ -208,21 +198,36 @@ NTSTATUS handle_query_internal(x64_emulator& emu, const uint64_t buffer, const u
     }
 
     ResponseType obj{};
-    action(obj);
+    NTSTATUS result = STATUS_SUCCESS;
 
-    emu.write_memory(buffer, obj);
+    using action_result = std::invoke_result_t<Action, ResponseType&>;
 
-    return STATUS_SUCCESS;
+    if constexpr (std::is_same_v<NTSTATUS, action_result>)
+    {
+        result = action(obj);
+    }
+    else
+    {
+        action(obj);
+    }
+
+    if (result == STATUS_SUCCESS)
+    {
+        emu.write_memory(buffer, obj);
+    }
+
+    return result;
 }
 
-template <typename ResponseType, typename Action>
-NTSTATUS handle_query(x64_emulator& emu, const uint64_t buffer, const uint32_t length,
-                      const emulator_object<uint32_t> return_length, const Action& action)
+template <typename ResponseType, typename Action, typename LengthType>
+    requires(std::is_integral_v<LengthType>)
+NTSTATUS handle_query(x86_64_emulator& emu, const uint64_t buffer, const uint32_t length,
+                      const emulator_object<LengthType> return_length, const Action& action)
 {
-    const auto length_setter = [&](const uint32_t required_size) {
+    const auto length_setter = [&](const size_t required_size) {
         if (return_length)
         {
-            return_length.write(required_size);
+            return_length.write(static_cast<LengthType>(required_size));
         }
     };
 
@@ -230,7 +235,7 @@ NTSTATUS handle_query(x64_emulator& emu, const uint64_t buffer, const uint32_t l
 }
 
 template <typename ResponseType, typename Action>
-NTSTATUS handle_query(x64_emulator& emu, const uint64_t buffer, const uint32_t length,
+NTSTATUS handle_query(x86_64_emulator& emu, const uint64_t buffer, const uint32_t length,
                       const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                       const Action& action)
 {

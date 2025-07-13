@@ -6,6 +6,21 @@
 #include <utils/file_handle.hpp>
 #include <platform/synchronisation.hpp>
 
+struct timer : ref_counted_object
+{
+    std::u16string name{};
+
+    void serialize_object(utils::buffer_serializer& buffer) const override
+    {
+        buffer.write(this->name);
+    }
+
+    void deserialize_object(utils::buffer_deserializer& buffer) override
+    {
+        buffer.read(this->name);
+    }
+};
+
 struct event : ref_counted_object
 {
     bool signaled{};
@@ -36,6 +51,42 @@ struct event : ref_counted_object
         buffer.read(this->signaled);
         buffer.read(this->type);
         buffer.read(this->name);
+    }
+};
+
+struct window : ref_counted_object
+{
+    uint32_t thread_id{};
+    std::u16string name{};
+    std::u16string class_name{};
+    int32_t width;
+    int32_t height;
+    int32_t x;
+    int32_t y;
+    std::unordered_map<std::u16string, uint64_t> props;
+
+    void serialize_object(utils::buffer_serializer& buffer) const override
+    {
+        buffer.write(this->thread_id);
+        buffer.write(this->name);
+        buffer.write(this->class_name);
+        buffer.write(this->width);
+        buffer.write(this->height);
+        buffer.write(this->x);
+        buffer.write(this->y);
+        buffer.write_map(this->props);
+    }
+
+    void deserialize_object(utils::buffer_deserializer& buffer) override
+    {
+        buffer.read(this->thread_id);
+        buffer.read(this->name);
+        buffer.read(this->class_name);
+        buffer.read(this->width);
+        buffer.read(this->height);
+        buffer.read(this->x);
+        buffer.read(this->y);
+        buffer.read_map(this->props);
     }
 };
 
@@ -94,15 +145,21 @@ struct mutant : ref_counted_object
 struct file_entry
 {
     std::filesystem::path file_path{};
+    uint64_t file_size{};
+    bool is_directory{};
 
     void serialize(utils::buffer_serializer& buffer) const
     {
         buffer.write(this->file_path);
+        buffer.write(this->file_size);
+        buffer.write(this->is_directory);
     }
 
     void deserialize(utils::buffer_deserializer& buffer)
     {
         buffer.read(this->file_path);
+        buffer.read(this->file_size);
+        buffer.read(this->is_directory);
     }
 };
 

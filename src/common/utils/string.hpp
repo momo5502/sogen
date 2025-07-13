@@ -1,30 +1,59 @@
 #pragma once
 #include <span>
 #include <string>
+#include <vector>
 #include <cstddef>
+#include <cstdint>
 #include <cwctype>
 #include <algorithm>
+#include <string_view>
 
 namespace utils::string
 {
+#ifdef __clang__
+    __attribute__((__format__(__printf__, 1, 2)))
+#endif
+    const char*
+    va(const char* format, ...);
+
+    template <typename T, size_t Size>
+        requires(std::is_trivially_copyable_v<T>)
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+    void copy(T (&array)[Size], const std::basic_string_view<T> str)
+    {
+        if constexpr (Size == 0)
+        {
+            return;
+        }
+
+        const auto size = std::min(Size, str.size());
+        memcpy(array, str.data(), size * sizeof(T));
+        array[std::min(Size - 1, size)] = {};
+    }
+
+    template <typename T, size_t Size>
+        requires(std::is_trivially_copyable_v<T>)
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+    void copy(T (&array)[Size], const T* str)
+    {
+        copy<T, Size>(array, std::basic_string_view<T>(str));
+    }
+
     inline char char_to_lower(const char val)
     {
         return static_cast<char>(std::tolower(static_cast<unsigned char>(val)));
     }
 
-    inline char16_t char_to_lower(const char16_t val)
-    {
-        if (val >= u'A' && val <= u'Z')
-        {
-            return val + 32;
-        }
-
-        return val;
-    }
-
     inline wchar_t char_to_lower(const wchar_t val)
     {
         return static_cast<wchar_t>(std::towlower(val));
+    }
+
+    inline char16_t char_to_lower(const char16_t val)
+    {
+        static_assert(sizeof(char16_t) <= sizeof(wchar_t));
+        static_assert(sizeof(char16_t) == sizeof(uint16_t));
+        return static_cast<char16_t>(char_to_lower(static_cast<wchar_t>(static_cast<uint16_t>(val))));
     }
 
     template <class Elem, class Traits, class Alloc>
@@ -148,5 +177,21 @@ namespace utils::string
         }
 
         return data;
+    }
+
+    template <class Elem, class Traits, class Alloc>
+    bool equals_ignore_case(const std::basic_string<Elem, Traits, Alloc>& lhs,
+                            const std::basic_string<Elem, Traits, Alloc>& rhs)
+    {
+        return std::ranges::equal(lhs, rhs,
+                                  [](const auto c1, const auto c2) { return char_to_lower(c1) == char_to_lower(c2); });
+    }
+
+    template <class Elem, class Traits>
+    bool equals_ignore_case(const std::basic_string_view<Elem, Traits>& lhs,
+                            const std::basic_string_view<Elem, Traits>& rhs)
+    {
+        return std::ranges::equal(lhs, rhs,
+                                  [](const auto c1, const auto c2) { return char_to_lower(c1) == char_to_lower(c2); });
     }
 }

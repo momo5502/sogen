@@ -8,8 +8,8 @@ namespace syscalls
 {
     NTSTATUS handle_NtQueryVirtualMemory(const syscall_context& c, const handle process_handle,
                                          const uint64_t base_address, const uint32_t info_class,
-                                         const uint64_t memory_information, const uint32_t memory_information_length,
-                                         const emulator_object<uint32_t> return_length)
+                                         const uint64_t memory_information, const uint64_t memory_information_length,
+                                         const emulator_object<uint64_t> return_length)
     {
         if (process_handle != CURRENT_PROCESS)
         {
@@ -28,9 +28,9 @@ namespace syscalls
                 return_length.write(sizeof(EMU_MEMORY_BASIC_INFORMATION64));
             }
 
-            if (memory_information_length != sizeof(EMU_MEMORY_BASIC_INFORMATION64))
+            if (memory_information_length < sizeof(EMU_MEMORY_BASIC_INFORMATION64))
             {
-                return STATUS_BUFFER_OVERFLOW;
+                return STATUS_BUFFER_TOO_SMALL;
             }
 
             const emulator_object<EMU_MEMORY_BASIC_INFORMATION64> info{c.emu, memory_information};
@@ -41,8 +41,8 @@ namespace syscalls
                 assert(!region_info.is_committed || region_info.is_reserved);
                 const auto state = region_info.is_reserved ? MEM_RESERVE : MEM_FREE;
                 image_info.State = region_info.is_committed ? MEM_COMMIT : state;
-                image_info.BaseAddress = reinterpret_cast<void*>(region_info.start);
-                image_info.AllocationBase = reinterpret_cast<void*>(region_info.allocation_base);
+                image_info.BaseAddress = region_info.start;
+                image_info.AllocationBase = region_info.allocation_base;
                 image_info.PartitionId = 0;
                 image_info.RegionSize = static_cast<int64_t>(region_info.length);
 
@@ -66,7 +66,10 @@ namespace syscalls
                 return STATUS_BUFFER_OVERFLOW;
             }
 
-            const auto* mod = c.win_emu.mod_manager.find_by_address(base_address);
+            const auto* mod = base_address == 0 //
+                                  ? c.win_emu.mod_manager.executable
+                                  : c.win_emu.mod_manager.find_by_address(base_address);
+
             if (!mod)
             {
                 c.win_emu.log.error("Bad address for memory image request: 0x%" PRIx64 "\n", base_address);
@@ -76,7 +79,7 @@ namespace syscalls
             const emulator_object<MEMORY_IMAGE_INFORMATION64> info{c.emu, memory_information};
 
             info.access([&](MEMORY_IMAGE_INFORMATION64& image_info) {
-                image_info.ImageBase = reinterpret_cast<void*>(mod->image_base);
+                image_info.ImageBase = mod->image_base;
                 image_info.SizeOfImage = static_cast<int64_t>(mod->size_of_image);
                 image_info.ImageFlags = 0;
             });
@@ -107,7 +110,7 @@ namespace syscalls
             info.access([&](MEMORY_REGION_INFORMATION64& image_info) {
                 memset(&image_info, 0, sizeof(image_info));
 
-                image_info.AllocationBase = reinterpret_cast<void*>(region_info.allocation_base);
+                image_info.AllocationBase = region_info.allocation_base;
                 image_info.AllocationProtect = map_emulator_to_nt_protection(region_info.initial_permissions);
                 // image_info.PartitionId = 0;
                 image_info.RegionSize = static_cast<int64_t>(region_info.allocation_length);
@@ -143,15 +146,14 @@ namespace syscalls
 
         const auto requested_protection = map_nt_to_emulator_protection(protection);
 
-        c.win_emu.log.print(color::dark_gray, "--> Changing protection at 0x%" PRIx64 "-0x%" PRIx64 " to %s\n",
-                            aligned_start, aligned_start + aligned_length,
-                            get_permission_string(requested_protection).c_str());
+        c.win_emu.callbacks.on_memory_protect(aligned_start, aligned_length, requested_protection);
 
         memory_permission old_protection_value{};
 
         try
         {
-            c.win_emu.memory.protect_memory(aligned_start, aligned_length, requested_protection, &old_protection_value);
+            c.win_emu.memory.protect_memory(aligned_start, static_cast<size_t>(aligned_length), requested_protection,
+                                            &old_protection_value);
         }
         catch (...)
         {
@@ -183,13 +185,11 @@ namespace syscalls
         auto potential_base = base_address.read();
         if (!potential_base)
         {
-            potential_base = c.win_emu.memory.find_free_allocation_base(allocation_bytes);
+            potential_base = c.win_emu.memory.find_free_allocation_base(static_cast<size_t>(allocation_bytes));
         }
 
         if (!potential_base)
         {
-            c.win_emu.log.print(color::dark_gray, "--> Not allocated\n");
-
             return STATUS_MEMORY_NOT_ALLOCATED;
         }
 
@@ -198,23 +198,22 @@ namespace syscalls
         const bool reserve = allocation_type & MEM_RESERVE;
         const bool commit = allocation_type & MEM_COMMIT;
 
-        if ((allocation_type & ~(MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN)) || (!commit && !reserve))
+        if ((allocation_type & ~(MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN | MEM_WRITE_WATCH)) || (!commit && !reserve))
         {
             throw std::runtime_error("Unsupported allocation type!");
         }
 
-        if (commit && !reserve && c.win_emu.memory.commit_memory(potential_base, allocation_bytes, protection))
+        if (commit && !reserve &&
+            c.win_emu.memory.commit_memory(potential_base, static_cast<size_t>(allocation_bytes), protection))
         {
-            c.win_emu.log.print(color::dark_gray, "--> Committed 0x%" PRIx64 " - 0x%" PRIx64 "\n", potential_base,
-                                potential_base + allocation_bytes);
-
+            c.win_emu.callbacks.on_memory_allocate(potential_base, allocation_bytes, protection, true);
             return STATUS_SUCCESS;
         }
 
-        c.win_emu.log.print(color::dark_gray, "--> Allocated 0x%" PRIx64 " - 0x%" PRIx64 "\n", potential_base,
-                            potential_base + allocation_bytes);
+        c.win_emu.callbacks.on_memory_allocate(potential_base, allocation_bytes, protection, false);
 
-        return c.win_emu.memory.allocate_memory(potential_base, allocation_bytes, protection, !commit)
+        return c.win_emu.memory.allocate_memory(potential_base, static_cast<size_t>(allocation_bytes), protection,
+                                                !commit)
                    ? STATUS_SUCCESS
                    : STATUS_MEMORY_NOT_ALLOCATED;
     }
@@ -242,14 +241,16 @@ namespace syscalls
 
         if (free_type & MEM_RELEASE)
         {
-            return c.win_emu.memory.release_memory(allocation_base, allocation_size) ? STATUS_SUCCESS
-                                                                                     : STATUS_MEMORY_NOT_ALLOCATED;
+            return c.win_emu.memory.release_memory(allocation_base, static_cast<size_t>(allocation_size))
+                       ? STATUS_SUCCESS
+                       : STATUS_MEMORY_NOT_ALLOCATED;
         }
 
         if (free_type & MEM_DECOMMIT)
         {
-            return c.win_emu.memory.decommit_memory(allocation_base, allocation_size) ? STATUS_SUCCESS
-                                                                                      : STATUS_MEMORY_NOT_ALLOCATED;
+            return c.win_emu.memory.decommit_memory(allocation_base, static_cast<size_t>(allocation_size))
+                       ? STATUS_SUCCESS
+                       : STATUS_MEMORY_NOT_ALLOCATED;
         }
 
         throw std::runtime_error("Bad free type");

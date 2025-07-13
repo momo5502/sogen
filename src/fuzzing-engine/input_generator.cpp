@@ -71,6 +71,11 @@ namespace fuzzer
     {
         std::unique_lock lock{this->mutex_};
 
+        if (this->top_scorer_.empty())
+        {
+            return 0.0;
+        }
+
         double score{0.0};
         for (const auto& e : this->top_scorer_)
         {

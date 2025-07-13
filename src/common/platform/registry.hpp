@@ -34,6 +34,24 @@ struct KEY_NAME_INFORMATION
     char16_t Name[1];
 };
 
+typedef struct _KEY_BASIC_INFORMATION
+{
+    LARGE_INTEGER LastWriteTime;
+    ULONG TitleIndex;
+    ULONG NameLength;
+    char16_t Name[1];
+} KEY_BASIC_INFORMATION, *PKEY_BASIC_INFORMATION;
+
+typedef struct _KEY_NODE_INFORMATION
+{
+    LARGE_INTEGER LastWriteTime;
+    ULONG TitleIndex;
+    ULONG ClassOffset;
+    ULONG ClassLength;
+    ULONG NameLength;
+    char16_t Name[1];
+} KEY_NODE_INFORMATION, *PKEY_NODE_INFORMATION;
+
 typedef struct _KEY_FULL_INFORMATION
 {
     LARGE_INTEGER LastWriteTime;

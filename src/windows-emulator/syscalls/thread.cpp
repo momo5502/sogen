@@ -18,14 +18,15 @@ namespace syscalls
             return STATUS_INVALID_HANDLE;
         }
 
-        if (info_class == ThreadSchedulerSharedDataSlot || info_class == ThreadBasePriority)
+        if (info_class == ThreadSchedulerSharedDataSlot || info_class == ThreadBasePriority ||
+            info_class == ThreadAffinityMask)
         {
             return STATUS_SUCCESS;
         }
 
         if (info_class == ThreadHideFromDebugger)
         {
-            c.win_emu.log.print(color::pink, "--> Hiding thread %X from debugger!\n", thread->id);
+            c.win_emu.callbacks.on_suspicious_activity("Hiding thread from debugger");
             return STATUS_SUCCESS;
         }
 
@@ -40,8 +41,7 @@ namespace syscalls
             const auto i = info.read();
             thread->name = read_unicode_string(c.emu, i.ThreadName);
 
-            c.win_emu.log.print(color::blue, "Setting thread (%d) name: %s\n", thread->id,
-                                u16_to_u8(thread->name).c_str());
+            c.win_emu.callbacks.on_thread_set_name(*thread);
 
             return STATUS_SUCCESS;
         }
@@ -73,7 +73,7 @@ namespace syscalls
                 t.teb->access([&](TEB64& teb) {
                     if (tls_cell < TLS_MINIMUM_AVAILABLE)
                     {
-                        teb.TlsSlots.arr[tls_cell] = nullptr;
+                        teb.TlsSlots.arr[tls_cell] = 0;
                     }
                     else if (teb.TlsExpansionSlots)
                     {
@@ -136,7 +136,7 @@ namespace syscalls
 
             const emulator_object<THREAD_BASIC_INFORMATION64> info{c.emu, thread_information};
             info.access([&](THREAD_BASIC_INFORMATION64& i) {
-                i.TebBaseAddress = thread->teb->ptr();
+                i.TebBaseAddress = thread->teb->value();
                 i.ClientId = thread->teb->read().ClientId;
             });
 
@@ -239,6 +239,13 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
+    NTSTATUS handle_NtOpenThread(const syscall_context&, handle /*thread_handle*/, ACCESS_MASK /*desired_access*/,
+                                 emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
+                                 emulator_pointer /*client_id*/)
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
     NTSTATUS handle_NtOpenThreadToken(const syscall_context&, const handle thread_handle,
                                       const ACCESS_MASK /*desired_access*/, const BOOLEAN /*open_as_self*/,
                                       const emulator_object<handle> token_handle)
@@ -260,6 +267,21 @@ namespace syscalls
         return handle_NtOpenThreadToken(c, thread_handle, desired_access, open_as_self, token_handle);
     }
 
+    static void delete_thread_windows(const syscall_context& c, const uint32_t thread_id)
+    {
+        for (auto i = c.proc.windows.begin(); i != c.proc.windows.end();)
+        {
+            if (i->second.thread_id != thread_id)
+            {
+                ++i;
+                continue;
+            }
+
+            i->second.ref_count = 1;
+            i = c.proc.windows.erase(i).first;
+        }
+    }
+
     NTSTATUS handle_NtTerminateThread(const syscall_context& c, const handle thread_handle, const NTSTATUS exit_status)
     {
         auto* thread = !thread_handle.bits ? c.proc.active_thread : c.proc.threads.get(thread_handle);
@@ -271,6 +293,9 @@ namespace syscalls
 
         thread->exit_status = exit_status;
         c.win_emu.callbacks.on_thread_terminated(thread_handle, *thread);
+
+        delete_thread_windows(c, thread->id);
+
         if (thread == c.proc.active_thread)
         {
             c.win_emu.yield_thread();
@@ -304,14 +329,15 @@ namespace syscalls
     }
 
     NTSTATUS handle_NtAlertThreadByThreadIdEx(const syscall_context& c, const uint64_t thread_id,
-                                              const emulator_object<EMU_RTL_SRWLOCK<EmulatorTraits<Emu64>>> lock)
+                                              const emulator_object<EMU_RTL_SRWLOCK<EmulatorTraits<Emu64>>> /*lock*/)
     {
-        if (lock.value())
+        // TODO: Support lock
+        /*if (lock.value())
         {
-            c.win_emu.log.print(color::gray, "NtAlertThreadByThreadIdEx with lock not supported yet!");
-            // c.emu.stop();
-            // return STATUS_NOT_SUPPORTED;
-        }
+             c.win_emu.log.warn("NtAlertThreadByThreadIdEx with lock not supported yet!\n");
+            //  c.emu.stop();
+            //  return STATUS_NOT_SUPPORTED;
+        }*/
 
         return handle_NtAlertThreadByThreadId(c, thread_id);
     }
@@ -404,7 +430,7 @@ namespace syscalls
 
         if (flags != 0)
         {
-            c.win_emu.log.error("NtGetNextThread flags %X not supported\n", flags);
+            c.win_emu.log.error("NtGetNextThread flags %X not supported\n", static_cast<uint32_t>(flags));
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
         }
@@ -449,7 +475,7 @@ namespace syscalls
         thread_context.access([&](CONTEXT64& context) {
             if ((context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64) == CONTEXT_DEBUG_REGISTERS_64)
             {
-                c.win_emu.log.print(color::pink, "--> Reading debug registers!\n");
+                c.win_emu.callbacks.on_suspicious_activity("Reading debug registers");
             }
 
             cpu_context::save(c.emu, context);
@@ -488,7 +514,7 @@ namespace syscalls
 
         if ((context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64) == CONTEXT_DEBUG_REGISTERS_64)
         {
-            c.win_emu.log.print(color::pink, "--> Setting debug registers!\n");
+            c.win_emu.callbacks.on_suspicious_activity("Setting debug registers");
         }
 
         return STATUS_SUCCESS;
@@ -542,7 +568,7 @@ namespace syscalls
                     }
                     else if (type == PsAttributeTebAddress)
                     {
-                        write_attribute(c.emu, attribute, thread->teb->ptr());
+                        write_attribute(c.emu, attribute, thread->teb->value());
                     }
                     else
                     {
@@ -563,6 +589,11 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
+    ULONG handle_NtGetCurrentProcessorNumber()
+    {
+        return 0;
+    }
+
     NTSTATUS handle_NtQueueApcThreadEx2(const syscall_context& c, const handle thread_handle,
                                         const handle /*reserve_handle*/, const uint32_t apc_flags,
                                         const uint64_t apc_routine, const uint64_t apc_argument1,
@@ -577,9 +608,9 @@ namespace syscalls
 
         if (apc_flags)
         {
-            c.win_emu.log.error("Unsupported APC flags: %X\n", apc_flags);
-            c.emu.stop();
-            return STATUS_NOT_SUPPORTED;
+            c.win_emu.log.warn("Unsupported APC flags: %X\n", apc_flags);
+            // c.emu.stop();
+            // return STATUS_NOT_SUPPORTED;
         }
 
         thread->pending_apcs.push_back({
@@ -590,7 +621,7 @@ namespace syscalls
             .apc_argument3 = apc_argument3,
         });
 
-        return STATUS_NOT_SUPPORTED;
+        return STATUS_SUCCESS;
     }
 
     NTSTATUS handle_NtQueueApcThreadEx(const syscall_context& c, const handle thread_handle,

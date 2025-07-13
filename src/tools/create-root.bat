@@ -111,8 +111,33 @@ CALL :collect shcore.dll
 CALL :collect diagnosticdatasettings.dll
 CALL :collect mswsock.dll
 CALL :collect umpdc.dll
+CALL :collect pdh.dll
+CALL :collect dxva2.dll
+CALL :collect propsys.dll
+CALL :collect wintypes.dll
+CALL :collect slwga.dll
+CALL :collect sppc.dll
+CALL :collect kernel.appcore.dll
+CALL :collect windows.storage.dll
+CALL :collect winnlsres.dll
+CALL :collect nlsbres.dll
+CALL :collect netutils.dll
+CALL :collect dinput8.dll
+CALL :collect d3d10.dll
+CALL :collect d3d10core.dll
+CALL :collect cabinet.dll
+CALL :collect msacm32.dll
+CALL :collect coloradapterclient.dll
+CALL :collect netmsg.dll
+CALL :collect rstrtmgr.dll
+CALL :collect ncrypt.dll
+CALL :collect ntasn1.dll
+CALL :collect srvcli.dll
 
 CALL :collect locale.nls
+CALL :collect c_1252.nls
+CALL :collect c_850.nls
+CALL :collect c_437.nls
 
 EXIT /B 0
 

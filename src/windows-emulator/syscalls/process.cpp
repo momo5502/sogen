@@ -16,211 +16,96 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
         }
 
-        if (info_class == ProcessImageInformation)
+        switch (info_class)
         {
-            if (return_length)
-            {
-                return_length.write(sizeof(SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>>));
-            }
-
-            if (process_information_length != sizeof(SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>>))
-            {
-                return STATUS_BUFFER_OVERFLOW;
-            }
-
-            const emulator_object<SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>>> info{c.emu, process_information};
-            info.access([&](SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>>& i) {
-                const auto& mod = *c.win_emu.mod_manager.executable;
-
-                const emulator_object<PEDosHeader_t> dos_header_obj{c.emu, mod.image_base};
-                const auto dos_header = dos_header_obj.read();
-
-                const emulator_object<PENTHeaders_t<uint64_t>> nt_headers_obj{c.emu,
-                                                                              mod.image_base + dos_header.e_lfanew};
-                const auto nt_headers = nt_headers_obj.read();
-
-                const auto& file_header = nt_headers.FileHeader;
-                const auto& optional_header = nt_headers.OptionalHeader;
-
-                i.TransferAddress = 0;
-                i.MaximumStackSize = optional_header.SizeOfStackReserve;
-                i.CommittedStackSize = optional_header.SizeOfStackCommit;
-                i.SubSystemType = optional_header.Subsystem;
-                i.SubSystemMajorVersion = optional_header.MajorSubsystemVersion;
-                i.SubSystemMinorVersion = optional_header.MinorSubsystemVersion;
-                i.MajorOperatingSystemVersion = optional_header.MajorOperatingSystemVersion;
-                i.MinorOperatingSystemVersion = optional_header.MinorOperatingSystemVersion;
-                i.ImageCharacteristics = file_header.Characteristics;
-                i.DllCharacteristics = optional_header.DllCharacteristics;
-                i.Machine = file_header.Machine;
-                i.ImageContainsCode = TRUE;
-                i.ImageFlags = 0; // TODO
-                i.ImageFileSize = optional_header.SizeOfImage;
-                i.LoaderFlags = optional_header.LoaderFlags;
-                i.CheckSum = optional_header.CheckSum;
-            });
-
-            return STATUS_SUCCESS;
-        }
-
-        if (info_class == ProcessCookie)
-        {
-            if (return_length)
-            {
-                return_length.write(sizeof(uint32_t));
-            }
-
-            if (process_information_length != sizeof(uint32_t))
-            {
-                return STATUS_BUFFER_OVERFLOW;
-            }
-
-            const emulator_object<uint32_t> info{c.emu, process_information};
-            info.write(0x01234567);
-
-            return STATUS_SUCCESS;
-        }
-
-        if (info_class == ProcessDebugPort)
-        {
-            if (return_length)
-            {
-                return_length.write(sizeof(EmulatorTraits<Emu64>::PVOID));
-            }
-
-            if (process_information_length != sizeof(EmulatorTraits<Emu64>::PVOID))
-            {
-                return STATUS_BUFFER_OVERFLOW;
-            }
-
-            const emulator_object<EmulatorTraits<Emu64>::PVOID> info{c.emu, process_information};
-            info.write(0);
-
-            return STATUS_SUCCESS;
-        }
-
-        if (info_class == ProcessDefaultHardErrorMode || info_class == ProcessWx86Information ||
-            info_class == ProcessDebugFlags)
-        {
-            if (return_length)
-            {
-                return_length.write(sizeof(ULONG));
-            }
-
-            if (process_information_length != sizeof(ULONG))
-            {
-                return STATUS_BUFFER_OVERFLOW;
-            }
-
-            const emulator_object<ULONG> info{c.emu, process_information};
-            info.write(info_class == ProcessDebugFlags ? 1 : 0);
-
-            return STATUS_SUCCESS;
-        }
-
-        if (info_class == ProcessDeviceMap)
-        {
-            c.win_emu.log.info("Handling ProcessDeviceMap request.\n");
-
-            if (return_length)
-            {
-                return_length.write(sizeof(EmulatorTraits<Emu64>::PVOID));
-            }
-
-            if (process_information_length != sizeof(EmulatorTraits<Emu64>::PVOID))
-            {
-                return STATUS_BUFFER_OVERFLOW;
-            }
-
-            const emulator_object<EmulatorTraits<Emu64>::PVOID> info{c.emu, process_information};
-            info.write(0); // NULL pointer
-
-            return STATUS_SUCCESS;
-        }
-
-        if (info_class == ProcessEnableAlignmentFaultFixup)
-        {
-            if (return_length)
-            {
-                return_length.write(sizeof(BOOLEAN));
-            }
-
-            if (process_information_length != sizeof(BOOLEAN))
-            {
-                return STATUS_BUFFER_OVERFLOW;
-            }
-
-            const emulator_object<BOOLEAN> info{c.emu, process_information};
-            info.write(FALSE); // Alignment fault fixup is disabled
-
-            return STATUS_SUCCESS;
-        }
-
-        if (info_class == ProcessDebugObjectHandle)
-        {
-            if (return_length)
-            {
-                return_length.write(sizeof(handle));
-            }
-
-            if (process_information_length != sizeof(handle))
-            {
-                return STATUS_BUFFER_OVERFLOW;
-            }
-
-            const emulator_object<handle> info{c.emu, process_information};
-            info.write(NULL_HANDLE);
-
-            return STATUS_SUCCESS;
-        }
-
-        if (info_class == ProcessEnclaveInformation || info_class == ProcessMitigationPolicy ||
-            info_class == ProcessGroupInformation)
-        {
+        case ProcessGroupInformation:
+        case ProcessMitigationPolicy:
+        case ProcessEnclaveInformation:
             return STATUS_NOT_SUPPORTED;
-        }
 
-        if (info_class == ProcessTimes)
-        {
-            if (return_length)
-            {
-                return_length.write(sizeof(KERNEL_USER_TIMES));
-            }
+        case ProcessTimes:
+            return handle_query<KERNEL_USER_TIMES>(c.emu, process_information, process_information_length,
+                                                   return_length, [](KERNEL_USER_TIMES& t) {
+                                                       t = {}; //
+                                                   });
 
-            if (process_information_length != sizeof(KERNEL_USER_TIMES))
-            {
-                return STATUS_BUFFER_OVERFLOW;
-            }
+        case ProcessCookie:
+            return handle_query<uint32_t>(c.emu, process_information, process_information_length, return_length,
+                                          [](uint32_t& cookie) {
+                                              cookie = 0x01234567; //
+                                          });
 
-            const emulator_object<KERNEL_USER_TIMES> info{c.emu, process_information};
-            info.write(KERNEL_USER_TIMES{});
+        case ProcessDebugObjectHandle:
+            return handle_query<handle>(c.emu, process_information, process_information_length, return_length,
+                                        [](handle& h) {
+                                            h = NULL_HANDLE;
+                                            return STATUS_PORT_NOT_SET;
+                                        });
 
-            return STATUS_SUCCESS;
-        }
+        case ProcessDebugFlags:
+        case ProcessWx86Information:
+        case ProcessDefaultHardErrorMode:
+            return handle_query<ULONG>(c.emu, process_information, process_information_length, return_length,
+                                       [&](ULONG& res) {
+                                           res = (info_class == ProcessDebugFlags ? 1 : 0); //
+                                       });
 
-        if (info_class == ProcessBasicInformation)
-        {
-            if (return_length)
-            {
-                return_length.write(sizeof(PROCESS_BASIC_INFORMATION64));
-            }
+        case ProcessDebugPort:
+        case ProcessDeviceMap:
+            return handle_query<EmulatorTraits<Emu64>::PVOID>(c.emu, process_information, process_information_length,
+                                                              return_length, [](EmulatorTraits<Emu64>::PVOID& ptr) {
+                                                                  ptr = 0; //
+                                                              });
 
-            if (process_information_length != sizeof(PROCESS_BASIC_INFORMATION64))
-            {
-                return STATUS_BUFFER_OVERFLOW;
-            }
+        case ProcessEnableAlignmentFaultFixup:
+            return handle_query<BOOLEAN>(c.emu, process_information, process_information_length, return_length,
+                                         [](BOOLEAN& b) {
+                                             b = FALSE; //
+                                         });
 
-            const emulator_object<PROCESS_BASIC_INFORMATION64> info{c.emu, process_information};
-            info.access([&](PROCESS_BASIC_INFORMATION64& basic_info) {
-                basic_info.PebBaseAddress = c.proc.peb.ptr();
-                basic_info.UniqueProcessId = 1;
-            });
+        case ProcessBasicInformation:
+            return handle_query<PROCESS_BASIC_INFORMATION64>(c.emu, process_information, process_information_length,
+                                                             return_length,
+                                                             [&](PROCESS_BASIC_INFORMATION64& basic_info) {
+                                                                 basic_info.PebBaseAddress = c.proc.peb.value();
+                                                                 basic_info.UniqueProcessId = 1;
+                                                             });
 
-            return STATUS_SUCCESS;
-        }
+        case ProcessImageInformation:
+            return handle_query<SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>>>(
+                c.emu, process_information, process_information_length, return_length,
+                [&](SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>>& i) {
+                    const auto& mod = *c.win_emu.mod_manager.executable;
 
-        if (info_class == ProcessImageFileNameWin32)
-        {
+                    const emulator_object<PEDosHeader_t> dos_header_obj{c.emu, mod.image_base};
+                    const auto dos_header = dos_header_obj.read();
+
+                    const emulator_object<PENTHeaders_t<uint64_t>> nt_headers_obj{c.emu,
+                                                                                  mod.image_base + dos_header.e_lfanew};
+                    const auto nt_headers = nt_headers_obj.read();
+
+                    const auto& file_header = nt_headers.FileHeader;
+                    const auto& optional_header = nt_headers.OptionalHeader;
+
+                    i.TransferAddress = 0;
+                    i.MaximumStackSize = optional_header.SizeOfStackReserve;
+                    i.CommittedStackSize = optional_header.SizeOfStackCommit;
+                    i.SubSystemType = optional_header.Subsystem;
+                    i.SubSystemMajorVersion = optional_header.MajorSubsystemVersion;
+                    i.SubSystemMinorVersion = optional_header.MinorSubsystemVersion;
+                    i.MajorOperatingSystemVersion = optional_header.MajorOperatingSystemVersion;
+                    i.MinorOperatingSystemVersion = optional_header.MinorOperatingSystemVersion;
+                    i.ImageCharacteristics = file_header.Characteristics;
+                    i.DllCharacteristics = optional_header.DllCharacteristics;
+                    i.Machine = file_header.Machine;
+                    i.ImageContainsCode = TRUE;
+                    i.ImageFlags = 0; // TODO
+                    i.ImageFileSize = optional_header.SizeOfImage;
+                    i.LoaderFlags = optional_header.LoaderFlags;
+                    i.CheckSum = optional_header.CheckSum;
+                });
+
+        case ProcessImageFileNameWin32: {
             const auto peb = c.proc.peb.read();
             emulator_object<RTL_USER_PROCESS_PARAMETERS64> proc_params{c.emu, peb.ProcessParameters};
             const auto params = proc_params.read();
@@ -250,10 +135,12 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
-        c.win_emu.log.error("Unsupported process info class: %X\n", info_class);
-        c.emu.stop();
+        default:
+            c.win_emu.log.error("Unsupported process info class: %X\n", info_class);
+            c.emu.stop();
 
-        return STATUS_NOT_SUPPORTED;
+            return STATUS_NOT_SUPPORTED;
+        }
     }
 
     NTSTATUS handle_NtSetInformationProcess(const syscall_context& c, const handle process_handle,
@@ -265,10 +152,13 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
         }
 
-        if (info_class == ProcessSchedulerSharedData || info_class == ProcessConsoleHostProcess ||
-            info_class == ProcessFaultInformation || info_class == ProcessDefaultHardErrorMode ||
-            info_class == ProcessRaiseUMExceptionOnInvalidHandleClose ||
-            info_class == ProcessDynamicFunctionTableInformation)
+        if (info_class == ProcessSchedulerSharedData                     //
+            || info_class == ProcessConsoleHostProcess                   //
+            || info_class == ProcessFaultInformation                     //
+            || info_class == ProcessDefaultHardErrorMode                 //
+            || info_class == ProcessRaiseUMExceptionOnInvalidHandleClose //
+            || info_class == ProcessDynamicFunctionTableInformation      //
+            || info_class == ProcessPriorityBoost)
         {
             return STATUS_SUCCESS;
         }
@@ -306,11 +196,17 @@ namespace syscalls
                 thread_iterator->second.teb->access([&](TEB64& teb) {
                     entry.ThreadId = teb.ClientId.UniqueThread;
 
-                    auto* tls_vector = teb.ThreadLocalStoragePointer;
+                    const auto tls_vector = teb.ThreadLocalStoragePointer;
+                    constexpr auto ptr_size = sizeof(EmulatorTraits<Emu64>::PVOID);
+
+                    if (!tls_vector)
+                    {
+                        return;
+                    }
 
                     if (tls_info.TlsRequest == ProcessTlsReplaceIndex)
                     {
-                        auto* tls_entry_ptr = tls_vector + tls_info.TlsIndex;
+                        const auto tls_entry_ptr = tls_vector + (tls_info.TlsIndex * ptr_size);
 
                         const auto old_entry = c.emu.read_memory<EmulatorTraits<Emu64>::PVOID>(tls_entry_ptr);
                         c.emu.write_memory<EmulatorTraits<Emu64>::PVOID>(tls_entry_ptr, entry.TlsModulePointer);
@@ -319,12 +215,12 @@ namespace syscalls
                     }
                     else if (tls_info.TlsRequest == ProcessTlsReplaceVector)
                     {
-                        auto* new_tls_vector = entry.TlsVector;
+                        const auto new_tls_vector = entry.TlsVector;
 
                         for (uint32_t index = 0; index < tls_info.TlsVectorLength; ++index)
                         {
-                            auto* old_entry = c.emu.read_memory<void*>(tls_vector + index);
-                            c.emu.write_memory<void*>(new_tls_vector + index, old_entry);
+                            const auto old_entry = c.emu.read_memory<uint64_t>(tls_vector + index * ptr_size);
+                            c.emu.write_memory(new_tls_vector + index * ptr_size, old_entry);
                         }
 
                         teb.ThreadLocalStoragePointer = new_tls_vector;
@@ -339,6 +235,11 @@ namespace syscalls
         c.win_emu.log.error("Unsupported info process class: %X\n", info_class);
         c.emu.stop();
 
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS handle_NtOpenProcess()
+    {
         return STATUS_NOT_SUPPORTED;
     }
 

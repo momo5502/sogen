@@ -2,18 +2,17 @@
 
 #include "emulator.hpp"
 
-template <typename PointerType, typename Register, Register InstructionPointer, Register StackPointer,
-          typename HookableInstructions>
+template <typename Traits>
 class typed_emulator : public emulator
 {
   public:
-    using registers = Register;
-    using pointer_type = PointerType;
-    using hookable_instructions = HookableInstructions;
+    using registers = typename Traits::register_type;
+    using pointer_type = typename Traits::pointer_type;
+    using hookable_instructions = typename Traits::hookable_instructions;
 
     static constexpr size_t pointer_size = sizeof(pointer_type);
-    static constexpr registers stack_pointer = StackPointer;
-    static constexpr registers instruction_pointer = InstructionPointer;
+    static constexpr registers stack_pointer = Traits::stack_pointer;
+    static constexpr registers instruction_pointer = Traits::instruction_pointer;
 
     size_t write_register(registers reg, const void* value, const size_t size)
     {

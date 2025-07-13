@@ -1,0 +1,138 @@
+html {
+  font-family: "Inter", sans-serif;
+}
+
+@media (pointer: fine) {
+  ::-webkit-scrollbar {
+    width: 20px;
+    height: 20px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: rgba(97, 97, 97, 0.7);
+    border-radius: 20px;
+    border: 6px solid transparent;
+    background-clip: content-box;
+    transition: all 0.1s linear;
+    min-height: 50px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(97, 97, 97, 0.9);
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+button {
+  cursor: pointer;
+}
+
+/*
+button.fancy.bg-primary,
+button.fancy.bg-secondary,
+button.fancy.bg-destructive {
+  transition: all 0.2s ease;
+}
+
+button.fancy.bg-primary {
+  background: linear-gradient(
+    180deg,
+    rgba(38, 144, 255, 1) 0%,
+    rgba(0, 123, 255, 1) 100%
+  );
+  border: 1px solid rgb(18, 101, 236);
+  text-shadow: rgba(0, 0, 0, 0.2) 0px 1px;
+}
+
+button.fancy.bg-primary:hover {
+  background: linear-gradient(
+    180deg,
+    rgba(46, 151, 255, 1) 0%,
+    rgba(8, 130, 255, 1) 100%
+  );
+  border: 1px solid rgb(33, 33, 34);
+}
+
+button.fancy.bg-destructive {
+  background: linear-gradient(
+    180deg,
+    rgb(202, 23, 23) 0%,
+    rgb(176, 40, 9) 100%
+  );
+  border: 1px solid rgb(134, 30, 6);
+  text-shadow: rgba(0, 0, 0, 0.2) 0px 1px;
+}
+
+button.fancy.bg-destructive:hover {
+  background: linear-gradient(
+    180deg,
+    rgb(210, 30, 29) 0%,
+    rgb(184, 47, 15) 100%
+  );
+  border: 1px solid rgb(33, 33, 34);
+}
+
+button.fancy.bg-secondary {
+  background: linear-gradient(180deg, rgb(38, 38, 39) 0%, rgb(34, 34, 35) 100%);
+  border: 1px solid rgb(42, 42, 44);
+}
+
+button.fancy.bg-secondary:hover {
+  background: linear-gradient(180deg, rgb(42, 42, 43) 0%, rgb(38, 38, 39) 100%);
+  border: 1px solid rgb(33, 33, 34);
+}
+*/
+
+/*.terminal-output span {
+  padding: 0px 16px;
+}*/
+
+.terminal-output {
+  font-weight: 600;
+  font-size: 1.05em;
+  font-family: monospace;
+  height: 100%;
+}
+
+.terminal-black {
+  color: #0c0c0c;
+}
+
+.terminal-red {
+  color: #ff3131;
+}
+
+.terminal-green {
+  color: #86c000;
+}
+
+.terminal-yellow {
+  color: #ffb940;
+}
+
+.terminal-blue {
+  color: #3a96dd;
+}
+
+.terminal-cyan {
+  color: #00adf7;
+}
+
+.terminal-pink {
+  color: #9750dd;
+}
+
+.terminal-white {
+  color: #ececec;
+}
+
+.terminal-dark-gray {
+  color: rgb(81, 81, 81);
+}

@@ -6,6 +6,8 @@ option(MOMO_ENABLE_AVX2 "Enable AVX2 support" ON)
 option(MOMO_ENABLE_SANITIZER "Enable sanitizer" OFF)
 option(MOMO_ENABLE_CLANG_TIDY "Enable clang-tidy checks" OFF)
 option(MOMO_ENABLE_RUST_CODE "Enable code parts written in rust" ON)
+option(MOMO_EMSCRIPTEN_MEMORY64 "Enable memory 64 support for emscripten builds" OFF)
+option(MOMO_EMSCRIPTEN_SUPPORT_NODEJS "Enable Node.js filesystem for emscripten compilation" OFF)
 option(MOMO_BUILD_AS_LIBRARY "Configure and Build the emulator as a shared library (without the samples and tests)" OFF)
 
 set(MOMO_REFLECTION_LEVEL "0" CACHE STRING "Reflection level for the build")
@@ -27,7 +29,6 @@ endif()
 # Prevent unicorn from generating universal binaries on macOS
 # It doesn't support it, even if it thinks it does...
 set(ENV{ARCHFLAGS} "nope")
-
 
 ##########################################
 

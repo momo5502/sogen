@@ -16,8 +16,10 @@ endif()
 
 target_link_libraries(analyzer PRIVATE
   reflect
+  debugger
   windows-emulator
   windows-gdb-stub
+  backend-selection
 )
 
 set_property(GLOBAL PROPERTY VS_STARTUP_PROJECT analyzer)

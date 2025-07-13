@@ -75,7 +75,8 @@ class windows_path
 
     template <typename T>
         requires(!std::is_same_v<std::remove_cvref_t<T>, windows_path> &&
-                 !std::is_same_v<std::remove_cvref_t<T>, std::filesystem::path>)
+                 !std::is_same_v<std::remove_cvref_t<T>, std::filesystem::path> &&
+                 !std::is_same_v<std::remove_cvref_t<T>, utils::buffer_deserializer>)
     windows_path(T&& path_like)
         : windows_path(std::filesystem::path(std::forward<T>(path_like)))
     {
@@ -115,6 +116,11 @@ class windows_path
             }
 
             path.append(folder);
+        }
+
+        if (this->is_absolute() && this->folders_.empty())
+        {
+            path.push_back(u'\\');
         }
 
         return path;
@@ -217,6 +223,16 @@ class windows_path
         }
 
         return {this->drive_, std::move(folders)};
+    }
+
+    std::u16string leaf() const
+    {
+        if (this->folders_.empty())
+        {
+            return {};
+        }
+
+        return this->folders_.back();
     }
 
     void serialize(utils::buffer_serializer& buffer) const

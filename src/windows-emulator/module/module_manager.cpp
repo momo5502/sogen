@@ -107,7 +107,7 @@ mapped_module* module_manager::map_module(const windows_path& file, const logger
 mapped_module* module_manager::map_local_module(const std::filesystem::path& file, const logger& logger,
                                                 const bool is_static)
 {
-    auto local_file = canonical(absolute(file));
+    auto local_file = weakly_canonical(absolute(file));
 
     for (auto& mod : this->modules_ | std::views::values)
     {
@@ -121,8 +121,6 @@ mapped_module* module_manager::map_local_module(const std::filesystem::path& fil
     {
         auto mod = map_module_from_file(*this->memory_, std::move(local_file));
         mod.is_static = is_static;
-
-        logger.log("Mapped %s at 0x%" PRIx64 "\n", mod.path.generic_string().c_str(), mod.image_base);
 
         const auto image_base = mod.image_base;
         const auto entry = this->modules_.try_emplace(image_base, std::move(mod));
@@ -141,13 +139,48 @@ mapped_module* module_manager::map_local_module(const std::filesystem::path& fil
     }
 }
 
+mapped_module* module_manager::map_memory_module(uint64_t base_address, uint64_t image_size,
+                                                 const std::string& module_name, const logger& logger, bool is_static)
+{
+    for (auto& mod : this->modules_ | std::views::values)
+    {
+        if (mod.image_base == base_address)
+        {
+            return &mod;
+        }
+    }
+
+    try
+    {
+        auto mod = ::map_module_from_memory(*this->memory_, base_address, image_size, module_name);
+        mod.is_static = is_static;
+
+        const auto image_base = mod.image_base;
+        const auto entry = this->modules_.try_emplace(image_base, std::move(mod));
+        this->callbacks_->on_module_load(entry.first->second);
+        return &entry.first->second;
+    }
+    catch (const std::exception& e)
+    {
+        logger.error("Failed to map module from memory %s at 0x%016" PRIx64 ": %s\n", module_name.c_str(), base_address,
+                     e.what());
+        return nullptr;
+    }
+    catch (...)
+    {
+        logger.error("Failed to map module from memory %s at 0x%016" PRIx64 ": Unknown error\n", module_name.c_str(),
+                     base_address);
+        return nullptr;
+    }
+}
+
 void module_manager::serialize(utils::buffer_serializer& buffer) const
 {
     buffer.write_map(this->modules_);
 
-    buffer.write(this->executable->image_base);
-    buffer.write(this->ntdll->image_base);
-    buffer.write(this->win32u->image_base);
+    buffer.write(this->executable ? this->executable->image_base : 0);
+    buffer.write(this->ntdll ? this->ntdll->image_base : 0);
+    buffer.write(this->win32u ? this->win32u->image_base : 0);
 }
 
 void module_manager::deserialize(utils::buffer_deserializer& buffer)
@@ -158,12 +191,12 @@ void module_manager::deserialize(utils::buffer_deserializer& buffer)
     const auto ntdll_base = buffer.read<uint64_t>();
     const auto win32u_base = buffer.read<uint64_t>();
 
-    this->executable = this->find_by_address(executable_base);
-    this->ntdll = this->find_by_address(ntdll_base);
-    this->win32u = this->find_by_address(win32u_base);
+    this->executable = executable_base ? this->find_by_address(executable_base) : nullptr;
+    this->ntdll = ntdll_base ? this->find_by_address(ntdll_base) : nullptr;
+    this->win32u = win32u_base ? this->find_by_address(win32u_base) : nullptr;
 }
 
-bool module_manager::unmap(const uint64_t address, const logger& logger)
+bool module_manager::unmap(const uint64_t address)
 {
     const auto mod = this->modules_.find(address);
     if (mod == this->modules_.end())
@@ -175,8 +208,6 @@ bool module_manager::unmap(const uint64_t address, const logger& logger)
     {
         return true;
     }
-
-    logger.log("Unmapping %s (0x%" PRIx64 ")\n", mod->second.path.generic_string().c_str(), mod->second.image_base);
 
     this->callbacks_->on_module_unload(mod->second);
     unmap_module(*this->memory_, mod->second);

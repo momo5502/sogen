@@ -1,7 +1,7 @@
 #pragma once
 #include <gdb_stub.hpp>
 #include <scoped_hook.hpp>
-#include <x64_emulator.hpp>
+#include <arch_emulator.hpp>
 
 #include <utils/concurrency.hpp>
 
@@ -10,7 +10,7 @@
 
 struct breakpoint_key
 {
-    size_t addr{};
+    uint64_t addr{};
     size_t size{};
     gdb_stub::breakpoint_type type{};
 
@@ -25,7 +25,7 @@ struct std::hash<breakpoint_key>
 {
     std::size_t operator()(const breakpoint_key& k) const noexcept
     {
-        return ((std::hash<size_t>()(k.addr) ^ (std::hash<size_t>()(k.size) << 1)) >> 1) ^
+        return ((std::hash<uint64_t>()(k.addr) ^ (std::hash<size_t>()(k.size) << 1)) >> 1) ^
                (std::hash<size_t>()(static_cast<size_t>(k.type)) << 1);
     }
 };
@@ -33,7 +33,7 @@ struct std::hash<breakpoint_key>
 class x64_gdb_stub_handler : public gdb_stub::debugging_handler
 {
   public:
-    x64_gdb_stub_handler(x64_emulator& emu)
+    x64_gdb_stub_handler(x86_64_emulator& emu)
         : emu_(&emu)
     {
     }
@@ -238,7 +238,7 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
     }
 
   private:
-    x64_emulator* emu_{};
+    x86_64_emulator* emu_{};
 
     using hook_map = std::unordered_map<breakpoint_key, scoped_hook>;
     utils::concurrency::container<hook_map> hooks_{};

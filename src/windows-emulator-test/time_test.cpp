@@ -12,7 +12,6 @@ namespace test
         };
 
         const emulator_settings settings{
-            .disable_logging = true,
             .use_relative_time = false,
         };
 
