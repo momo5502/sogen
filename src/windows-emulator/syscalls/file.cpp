@@ -958,7 +958,13 @@ namespace syscalls
 
         c.win_emu.callbacks.on_generic_access("Querying file attributes", filename);
 
-        const auto local_filename = c.win_emu.file_sys.translate(filename).u8string();
+        windows_path filepath(filename);
+        if (filepath.is_relative())
+        {
+            return STATUS_OBJECT_NAME_NOT_FOUND;
+        }
+
+        const auto local_filename = c.win_emu.file_sys.translate(filepath).u8string();
 
         struct _stat64 file_stat{};
         if (_stat64(reinterpret_cast<const char*>(local_filename.c_str()), &file_stat) != 0)

@@ -1,5 +1,6 @@
 #include "event_handler.hpp"
 #include "message_transmitter.hpp"
+#include "windows_emulator.hpp"
 
 #include <base64.hpp>
 
@@ -218,6 +219,8 @@ namespace debugger
 
     void handle_events(event_context& c)
     {
+        update_emulation_status(c.win_emu);
+
         while (true)
         {
             handle_events_once(c);
@@ -229,5 +232,26 @@ namespace debugger
 
             suspend_execution(2ms);
         }
+    }
+
+    void update_emulation_status(const windows_emulator& win_emu)
+    {
+        const auto memory_status = win_emu.memory.compute_memory_stats();
+
+        Debugger::EmulationStatusT status{};
+        status.reserved_memory = memory_status.reserved_memory;
+        status.committed_memory = memory_status.committed_memory;
+        status.executed_instructions = win_emu.get_executed_instructions();
+        status.active_threads = static_cast<uint32_t>(win_emu.process.threads.size());
+        send_event(status);
+    }
+
+    void handle_exit(const windows_emulator& win_emu, std::optional<NTSTATUS> exit_status)
+    {
+        update_emulation_status(win_emu);
+
+        Debugger::ApplicationExitT response{};
+        response.exit_status = exit_status;
+        send_event(response);
     }
 }

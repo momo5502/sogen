@@ -3,10 +3,26 @@ import { Checkbox } from "./ui/checkbox";
 import { Label } from "./ui/label";
 
 import { Settings } from "@/settings";
+import { TextTooltip } from "./text-tooltip";
 
 interface SettingsMenuProps {
   settings: Settings;
+  allowWasm64: boolean;
   onChange: (settings: Settings) => void;
+}
+
+interface SettingsLabelProps {
+  htmlFor?: string | undefined;
+  text: React.ReactNode;
+  tooltip: React.ReactNode;
+}
+
+function SettingsLabel(props: SettingsLabelProps) {
+  return (
+    <Label htmlFor={props.htmlFor}>
+      <TextTooltip tooltip={props.tooltip}>{props.text}</TextTooltip>
+    </Label>
+  );
 }
 
 export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
@@ -48,7 +64,11 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
               this.setState({ verbose: checked });
             }}
           />
-          <Label htmlFor="settings-verbose">Verbose Logging</Label>
+          <SettingsLabel
+            htmlFor="settings-verbose"
+            text={"Verbose Logging"}
+            tooltip={"Very detailed logging of all function call and accesses"}
+          />
         </div>
 
         <div className="flex gap-6">
@@ -59,7 +79,11 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
               this.setState({ concise: checked });
             }}
           />
-          <Label htmlFor="settings-concise">Concise Logging</Label>
+          <SettingsLabel
+            htmlFor="settings-concise"
+            text={"Concise Logging"}
+            tooltip={"Suppress logging until the application code runs"}
+          />
         </div>
 
         <div className="flex gap-6">
@@ -70,7 +94,11 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
               this.setState({ silent: checked });
             }}
           />
-          <Label htmlFor="settings-silent">Silent Logging</Label>
+          <SettingsLabel
+            htmlFor="settings-silent"
+            text={"Silent Logging"}
+            tooltip={"Suppress all logging except for stdout"}
+          />
         </div>
 
         <div className="flex gap-6">
@@ -81,7 +109,63 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
               this.setState({ bufferStdout: checked });
             }}
           />
-          <Label htmlFor="settings-buffer">Buffer stdout</Label>
+          <SettingsLabel
+            htmlFor="settings-buffer"
+            text={"Buffer stdout"}
+            tooltip={
+              "Group stdout and print everything when the emulation ends"
+            }
+          />
+        </div>
+
+        <div className="flex gap-6">
+          <Checkbox
+            id="settings-exec"
+            checked={this.state.execAccess}
+            onCheckedChange={(checked: boolean) => {
+              this.setState({ execAccess: checked });
+            }}
+          />
+          <SettingsLabel
+            htmlFor="settings-exec"
+            text={"Log exec Memory Access"}
+            tooltip={"Log when the application reads/writes executable memory"}
+          />
+        </div>
+
+        <div className="flex gap-6">
+          <Checkbox
+            id="settings-persist"
+            checked={this.state.persist}
+            onCheckedChange={(checked: boolean) => {
+              this.setState({ persist: checked });
+            }}
+          />
+          <SettingsLabel
+            htmlFor="settings-persist"
+            text={"Persist filesystem"}
+            tooltip={
+              "Persist files and folders that were created, modified or deleted during the emulation"
+            }
+          />
+        </div>
+
+        <div className="flex gap-6">
+          <Checkbox
+            id="settings-mem64"
+            disabled={!this.props.allowWasm64}
+            checked={this.state.wasm64}
+            onCheckedChange={(checked: boolean) => {
+              this.setState({ wasm64: checked });
+            }}
+          />
+          <SettingsLabel
+            htmlFor="settings-mem64"
+            text={"64-Bit WebAssembly"}
+            tooltip={
+              "Use 64-bit WebAssembly which supports emulating applications that require more than 2gb of memory"
+            }
+          />
         </div>
       </div>
     );

@@ -139,6 +139,41 @@ mapped_module* module_manager::map_local_module(const std::filesystem::path& fil
     }
 }
 
+mapped_module* module_manager::map_memory_module(uint64_t base_address, uint64_t image_size,
+                                                 const std::string& module_name, const logger& logger, bool is_static)
+{
+    for (auto& mod : this->modules_ | std::views::values)
+    {
+        if (mod.image_base == base_address)
+        {
+            return &mod;
+        }
+    }
+
+    try
+    {
+        auto mod = ::map_module_from_memory(*this->memory_, base_address, image_size, module_name);
+        mod.is_static = is_static;
+
+        const auto image_base = mod.image_base;
+        const auto entry = this->modules_.try_emplace(image_base, std::move(mod));
+        this->callbacks_->on_module_load(entry.first->second);
+        return &entry.first->second;
+    }
+    catch (const std::exception& e)
+    {
+        logger.error("Failed to map module from memory %s at 0x%016" PRIx64 ": %s\n", module_name.c_str(), base_address,
+                     e.what());
+        return nullptr;
+    }
+    catch (...)
+    {
+        logger.error("Failed to map module from memory %s at 0x%016" PRIx64 ": Unknown error\n", module_name.c_str(),
+                     base_address);
+        return nullptr;
+    }
+}
+
 void module_manager::serialize(utils::buffer_serializer& buffer) const
 {
     buffer.write_map(this->modules_);

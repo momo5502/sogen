@@ -100,6 +100,25 @@ void memory_manager::update_layout_version()
 #endif
 }
 
+memory_stats memory_manager::compute_memory_stats() const
+{
+    memory_stats stats{};
+    stats.reserved_memory = 0;
+    stats.committed_memory = 0;
+
+    for (const auto& reserved_region : this->reserved_regions_ | std::views::values)
+    {
+        stats.reserved_memory += reserved_region.length;
+
+        for (const auto& committed_region : reserved_region.committed_regions | std::views::values)
+        {
+            stats.committed_memory += committed_region.length;
+        }
+    }
+
+    return stats;
+}
+
 void memory_manager::serialize_memory_state(utils::buffer_serializer& buffer, const bool is_snapshot) const
 {
     buffer.write_atomic(this->layout_version_);

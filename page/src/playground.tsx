@@ -2,8 +2,10 @@ import React from "react";
 
 import { Output } from "@/components/output";
 
-import { Emulator, EmulationState } from "./emulator";
+import { Emulator, EmulationState, isFinalState } from "./emulator";
 import { Filesystem, setupFilesystem } from "./filesystem";
+
+import { memory64 } from "wasm-feature-detect";
 
 import "./App.css";
 import {
@@ -12,10 +14,16 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 
-import { createDefaultSettings, Settings } from "./settings";
+import { Settings, loadSettings, saveSettings } from "./settings";
 import { SettingsMenu } from "@/components/settings-menu";
 
-import { PlayFill, StopFill, GearFill, PauseFill } from "react-bootstrap-icons";
+import {
+  PlayFill,
+  StopFill,
+  GearFill,
+  PauseFill,
+  HouseFill,
+} from "react-bootstrap-icons";
 import { StatusIndicator } from "@/components/status-indicator";
 import { Header } from "./Header";
 
@@ -30,14 +38,20 @@ import {
   DrawerTitle,
 } from "@/components/ui/drawer";
 import { FilesystemExplorer } from "./filesystem-explorer";
+import { EmulationStatus } from "./emulator";
+import { TextTooltip } from "./components/text-tooltip";
+import { EmulationSummary } from "./components/emulation-summary";
 
 interface PlaygroundProps {}
 interface PlaygroundState {
   settings: Settings;
-  filesystemPromise: Promise<Filesystem> | null;
-  filesystem: Filesystem | null;
-  emulator: Emulator | null;
+  filesystemPromise?: Promise<Filesystem>;
+  filesystem?: Filesystem;
+  emulator?: Emulator;
+  emulationStatus?: EmulationStatus;
+  application?: string;
   drawerOpen: boolean;
+  allowWasm64: boolean;
 }
 
 function makePercentHandler(
@@ -67,6 +81,7 @@ export class Playground extends React.Component<
   PlaygroundState
 > {
   private output: React.RefObject<Output | null>;
+  private iconCache: Map<string, string | null> = new Map();
 
   constructor(props: PlaygroundProps) {
     super(props);
@@ -79,12 +94,16 @@ export class Playground extends React.Component<
     this.toggleEmulatorState = this.toggleEmulatorState.bind(this);
 
     this.state = {
-      settings: createDefaultSettings(),
-      filesystemPromise: null,
-      filesystem: null,
-      emulator: null,
+      settings: loadSettings(),
       drawerOpen: false,
+      allowWasm64: false,
     };
+  }
+
+  componentDidMount(): void {
+    memory64().then((allowWasm64) => {
+      this.setState({ allowWasm64 });
+    });
   }
 
   async resetFilesys() {
@@ -95,8 +114,8 @@ export class Playground extends React.Component<
     await this.state.filesystem.delete();
 
     this.setState({
-      filesystemPromise: null,
-      filesystem: null,
+      filesystemPromise: undefined,
+      filesystem: undefined,
       drawerOpen: false,
     });
 
@@ -105,13 +124,29 @@ export class Playground extends React.Component<
     location.reload();
   }
 
-  initFilesys() {
-    if (this.state.filesystemPromise) {
+  _onEmulatorStatusChanged(s: EmulationStatus) {
+    this.setState({ emulationStatus: s });
+  }
+
+  _onEmulatorStateChanged(s: EmulationState, persistFs: boolean) {
+    if (isFinalState(s) && persistFs) {
+      this.setState({ filesystemPromise: undefined, filesystem: undefined });
+      this.initFilesys(true);
+    } else {
+      this.forceUpdate();
+    }
+  }
+
+  initFilesys(force: boolean = false) {
+    if (!force && this.state.filesystemPromise) {
       return this.state.filesystemPromise;
     }
 
     const promise = new Promise<Filesystem>((resolve) => {
-      this.logLine("Loading filesystem...");
+      if (!force) {
+        this.logLine("Loading filesystem...");
+      }
+
       setupFilesystem(
         (current, total, file) => {
           this.logLine(`Processing filesystem (${current}/${total}): ${file}`);
@@ -172,13 +207,16 @@ export class Playground extends React.Component<
       await this.state.filesystemPromise;
     }
 
+    const persistFs = this.state.settings.persist;
+
     const new_emulator = new Emulator(
       (l) => this.logLines(l),
-      (_) => this.forceUpdate(),
+      (s) => this._onEmulatorStateChanged(s, persistFs),
+      (s) => this._onEmulatorStatusChanged(s),
     );
-    new_emulator.onTerminate().then(() => this.setState({ emulator: null }));
+    //new_emulator.onTerminate().then(() => this.setState({ emulator: null }));
 
-    this.setState({ emulator: new_emulator });
+    this.setState({ emulator: new_emulator, application: userFile });
 
     new_emulator.start(this.state.settings, userFile);
   }
@@ -187,17 +225,30 @@ export class Playground extends React.Component<
     return (
       <>
         <Header
-          title="Playground - Sogen"
+          title="Sogen - Playground"
           description="Playground to test and run Sogen, the Windows user space emulator, right in your browser."
+          preload={
+            [
+              /*"./emulator-worker.js", "./analyzer.js", "./analyzer.wasm"*/
+            ]
+          }
         />
         <div className="h-[100dvh] flex flex-col">
           <header className="flex shrink-0 items-center gap-2 border-b p-2 overflow-y-auto">
+            <a href="#/">
+              <Button size="sm" variant="secondary" className="fancy">
+                <HouseFill />
+              </Button>
+            </a>
             <Button size="sm" className="fancy" onClick={this.start}>
               <PlayFill /> <span>Start</span>
             </Button>
 
             <Button
-              disabled={!this.state.emulator}
+              disabled={
+                !this.state.emulator ||
+                isFinalState(this.state.emulator.getState())
+              }
               size="sm"
               variant="secondary"
               className="fancy"
@@ -207,7 +258,10 @@ export class Playground extends React.Component<
             </Button>
             <Button
               size="sm"
-              disabled={!this.state.emulator}
+              disabled={
+                !this.state.emulator ||
+                isFinalState(this.state.emulator.getState())
+              }
               variant="secondary"
               className="fancy"
               onClick={this.toggleEmulatorState}
@@ -233,7 +287,11 @@ export class Playground extends React.Component<
               <PopoverContent>
                 <SettingsMenu
                   settings={this.state.settings}
-                  onChange={(s) => this.setState({ settings: s })}
+                  allowWasm64={this.state.allowWasm64}
+                  onChange={(s) => {
+                    saveSettings(s);
+                    this.setState({ settings: s });
+                  }}
                 />
               </PopoverContent>
             </Popover>
@@ -257,6 +315,7 @@ export class Playground extends React.Component<
                   <DrawerFooter>
                     <FilesystemExplorer
                       filesystem={this.state.filesystem}
+                      iconCache={this.iconCache}
                       runFile={this.createEmulator}
                       resetFilesys={this.resetFilesys}
                       path={["c"]}
@@ -266,8 +325,12 @@ export class Playground extends React.Component<
               </Drawer>
             )}
 
-            <div className="text-right flex-1">
+            {/* Separator */}
+            <div className="flex-1"></div>
+
+            <div className="text-right items-center">
               <StatusIndicator
+                application={this.state.application}
                 state={
                   this.state.emulator
                     ? this.state.emulator.getState()
@@ -276,8 +339,11 @@ export class Playground extends React.Component<
               />
             </div>
           </header>
-          <div className="flex flex-1 flex-col gap-2 p-2 overflow-auto">
-            <Output ref={this.output} />
+          <div className="flex flex-1">
+            <EmulationSummary status={this.state.emulationStatus} />
+            <div className="flex flex-1 flex-col pl-1 overflow-auto">
+              <Output ref={this.output} />
+            </div>
           </div>
         </div>
       </>

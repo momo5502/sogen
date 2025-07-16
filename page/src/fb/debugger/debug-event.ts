@@ -4,6 +4,8 @@
 
 import * as flatbuffers from 'flatbuffers';
 
+import { ApplicationExit, ApplicationExitT } from '../debugger/application-exit.js';
+import { EmulationStatus, EmulationStatusT } from '../debugger/emulation-status.js';
 import { Event, unionToEvent, unionListToEvent } from '../debugger/event.js';
 import { GetStateRequest, GetStateRequestT } from '../debugger/get-state-request.js';
 import { GetStateResponse, GetStateResponseT } from '../debugger/get-state-response.js';
@@ -104,7 +106,7 @@ unpackTo(_o: DebugEventT): void {
 export class DebugEventT implements flatbuffers.IGeneratedObject {
 constructor(
   public eventType: Event = Event.NONE,
-  public event: GetStateRequestT|GetStateResponseT|PauseRequestT|ReadMemoryRequestT|ReadMemoryResponseT|ReadRegisterRequestT|ReadRegisterResponseT|RunRequestT|WriteMemoryRequestT|WriteMemoryResponseT|WriteRegisterRequestT|WriteRegisterResponseT|null = null
+  public event: ApplicationExitT|EmulationStatusT|GetStateRequestT|GetStateResponseT|PauseRequestT|ReadMemoryRequestT|ReadMemoryResponseT|ReadRegisterRequestT|ReadRegisterResponseT|RunRequestT|WriteMemoryRequestT|WriteMemoryResponseT|WriteRegisterRequestT|WriteRegisterResponseT|null = null
 ){}
 
 

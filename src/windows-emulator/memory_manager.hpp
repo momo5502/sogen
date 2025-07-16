@@ -24,6 +24,12 @@ struct region_info : basic_memory_region
 using mmio_read_callback = std::function<void(uint64_t addr, void* data, size_t size)>;
 using mmio_write_callback = std::function<void(uint64_t addr, const void* data, size_t size)>;
 
+struct memory_stats
+{
+    uint64_t reserved_memory = 0;
+    uint64_t committed_memory = 0;
+};
+
 class memory_manager : public memory_interface
 {
   public:
@@ -89,6 +95,8 @@ class memory_manager : public memory_interface
 
     void serialize_memory_state(utils::buffer_serializer& buffer, bool is_snapshot) const;
     void deserialize_memory_state(utils::buffer_deserializer& buffer, bool is_snapshot);
+
+    memory_stats compute_memory_stats() const;
 
   private:
     memory_interface* memory_{};

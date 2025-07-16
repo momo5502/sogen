@@ -3,21 +3,29 @@
 #include <windows_emulator.hpp>
 #include <backend_selection.hpp>
 #include <win_x64_gdb_stub_handler.hpp>
+#include <minidump_loader.hpp>
 
 #include "object_watching.hpp"
 #include "snapshot.hpp"
 #include "analysis.hpp"
 
+#include <utils/finally.hpp>
 #include <utils/interupt_handler.hpp>
 
 #include <cstdio>
+
+#ifdef OS_EMSCRIPTEN
+#include <event_handler.hpp>
+#endif
 
 namespace
 {
     struct analysis_options : analysis_settings
     {
         mutable bool use_gdb{false};
+        bool log_executable_access{false};
         std::filesystem::path dump{};
+        std::filesystem::path minidump_path{};
         std::string registry_path{"./registry"};
         std::string emulation_root{};
         std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
@@ -130,6 +138,13 @@ namespace
             win_emu.stop();
         }};
 
+        std::optional<NTSTATUS> exit_status{};
+#ifdef OS_EMSCRIPTEN
+        const auto _1 = utils::finally([&] {
+            debugger::handle_exit(win_emu, exit_status); //
+        });
+#endif
+
         try
         {
             if (options.use_gdb)
@@ -141,6 +156,12 @@ namespace
 
                 win_x64_gdb_stub_handler handler{win_emu, should_stop};
                 gdb_stub::run_gdb_stub(network::address{"0.0.0.0:28960", AF_INET}, handler);
+            }
+            else if (!options.minidump_path.empty())
+            {
+                // For minidumps, don't start execution automatically; just report ready state
+                win_emu.log.print(color::green, "Minidump loaded successfully. Process state ready for analysis.\n");
+                return true; // Return success without starting emulation
             }
             else
             {
@@ -174,7 +195,7 @@ namespace
             throw;
         }
 
-        const auto exit_status = win_emu.process.exit_status;
+        exit_status = win_emu.process.exit_status;
         if (!exit_status.has_value())
         {
             do_post_emulation_work(c);
@@ -244,14 +265,23 @@ namespace
     std::unique_ptr<windows_emulator> setup_emulator(const analysis_options& options,
                                                      const std::span<const std::string_view> args)
     {
-        if (options.dump.empty())
+        if (!options.dump.empty())
         {
-            return create_application_emulator(options, args);
+            // load snapshot
+            auto win_emu = create_empty_emulator(options);
+            snapshot::load_emulator_snapshot(*win_emu, options.dump);
+            return win_emu;
+        }
+        if (!options.minidump_path.empty())
+        {
+            // load minidump
+            auto win_emu = create_empty_emulator(options);
+            minidump_loader::load_minidump_into_emulator(*win_emu, options.minidump_path);
+            return win_emu;
         }
 
-        auto win_emu = create_empty_emulator(options);
-        snapshot::load_emulator_snapshot(*win_emu, options.dump);
-        return win_emu;
+        // default: load application
+        return create_application_emulator(options, args);
     }
 
     bool run(const analysis_options& options, const std::span<const std::string_view> args)
@@ -273,58 +303,76 @@ namespace
 
         const auto concise_logging = !options.verbose_logging;
 
-        for (const auto& section : exe.sections)
-        {
-            if ((section.region.permissions & memory_permission::exec) != memory_permission::exec)
+        win_emu->emu().hook_instruction(x86_hookable_instructions::cpuid, [&] {
+            const auto rip = win_emu->emu().read_instruction_pointer();
+            auto* mod = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
+
+            if (mod)
             {
-                continue;
+                const auto leaf = win_emu->emu().reg<uint32_t>(x86_register::eax);
+                win_emu->log.print(color::blue, "Executing CPUID instruction with leaf 0x%X at 0x%" PRIx64 " (%s)\n",
+                                   leaf, rip, mod->name.c_str());
             }
 
-            auto read_handler = [&, section, concise_logging](const uint64_t address, const void*, size_t) {
-                const auto rip = win_emu->emu().read_instruction_pointer();
-                if (!win_emu->mod_manager.executable->is_within(rip))
+            return instruction_hook_continuation::run_instruction;
+        });
+
+        if (options.log_executable_access)
+        {
+            for (const auto& section : exe.sections)
+            {
+                if ((section.region.permissions & memory_permission::exec) != memory_permission::exec)
                 {
-                    return;
+                    continue;
                 }
 
-                if (concise_logging)
-                {
-                    static uint64_t count{0};
-                    ++count;
-                    if (count > 100 && count % 100000 != 0)
+                auto read_handler = [&, section, concise_logging](const uint64_t address, const void*, size_t) {
+                    const auto rip = win_emu->emu().read_instruction_pointer();
+                    if (!win_emu->mod_manager.executable->is_within(rip))
                     {
                         return;
                     }
-                }
 
-                win_emu->log.print(color::green,
-                                   "Reading from executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
-                                   section.name.c_str(), address, rip);
-            };
+                    if (concise_logging)
+                    {
+                        static uint64_t count{0};
+                        ++count;
+                        if (count > 100 && count % 100000 != 0)
+                        {
+                            return;
+                        }
+                    }
 
-            const auto write_handler = [&, section, concise_logging](const uint64_t address, const void*, size_t) {
-                const auto rip = win_emu->emu().read_instruction_pointer();
-                if (!win_emu->mod_manager.executable->is_within(rip))
-                {
-                    return;
-                }
+                    win_emu->log.print(color::green,
+                                       "Reading from executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
+                                       section.name.c_str(), address, rip);
+                };
 
-                if (concise_logging)
-                {
-                    static uint64_t count{0};
-                    ++count;
-                    if (count > 100 && count % 100000 != 0)
+                const auto write_handler = [&, section, concise_logging](const uint64_t address, const void*, size_t) {
+                    const auto rip = win_emu->emu().read_instruction_pointer();
+                    if (!win_emu->mod_manager.executable->is_within(rip))
                     {
                         return;
                     }
-                }
 
-                win_emu->log.print(color::blue, "Writing to executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
-                                   section.name.c_str(), address, rip);
-            };
+                    if (concise_logging)
+                    {
+                        static uint64_t count{0};
+                        ++count;
+                        if (count > 100 && count % 100000 != 0)
+                        {
+                            return;
+                        }
+                    }
 
-            win_emu->emu().hook_memory_read(section.region.start, section.region.length, std::move(read_handler));
-            win_emu->emu().hook_memory_write(section.region.start, section.region.length, std::move(write_handler));
+                    win_emu->log.print(color::blue,
+                                       "Writing to executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
+                                       section.name.c_str(), address, rip);
+                };
+
+                win_emu->emu().hook_memory_read(section.region.start, section.region.length, std::move(read_handler));
+                win_emu->emu().hook_memory_write(section.region.start, section.region.length, std::move(write_handler));
+            }
         }
 
         return run_emulation(context, options);
@@ -352,9 +400,11 @@ namespace
         printf("  -v, --verbose             Verbose logging\n");
         printf("  -b, --buffer              Buffer stdout\n");
         printf("  -c, --concise             Concise logging\n");
+        printf("  -x, --exec                Log r/w access to executable memory\n");
         printf("  -m, --module <module>     Specify module to track\n");
         printf("  -e, --emulation <path>    Set emulation root path\n");
         printf("  -a, --snapshot <path>     Load snapshot dump from path\n");
+        printf("  --minidump <path>         Load minidump from path\n");
         printf("  -i, --ignore <funcs>      Comma-separated list of functions to ignore\n");
         printf("  -p, --path <src> <dst>    Map Windows path to host path\n");
         printf("  -r, --registry <path>     Set registry path (default: ./registry)\n\n");
@@ -393,6 +443,10 @@ namespace
             {
                 options.buffer_stdout = true;
             }
+            else if (arg == "-x" || arg == "--exec")
+            {
+                options.log_executable_access = true;
+            }
             else if (arg == "-c" || arg == "--concise")
             {
                 options.concise_logging = true;
@@ -424,6 +478,15 @@ namespace
                 }
                 arg_it = args.erase(arg_it);
                 options.dump = args[0];
+            }
+            else if (arg == "--minidump")
+            {
+                if (args.size() < 2)
+                {
+                    throw std::runtime_error("No minidump path provided after --minidump");
+                }
+                arg_it = args.erase(arg_it);
+                options.minidump_path = args[0];
             }
             else if (arg == "-i" || arg == "--ignore")
             {

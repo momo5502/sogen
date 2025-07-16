@@ -155,3 +155,7 @@ page/public/analyzer.wasm
 page/public/debugger.js
 page/public/debugger.wasm
 page/public/root.zip
+page/public/32/analyzer.js
+page/public/32/analyzer.wasm
+page/public/64/analyzer.js
+page/public/64/analyzer.wasm

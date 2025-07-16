@@ -63,6 +63,14 @@ struct ReadRegisterResponse;
 struct ReadRegisterResponseBuilder;
 struct ReadRegisterResponseT;
 
+struct ApplicationExit;
+struct ApplicationExitBuilder;
+struct ApplicationExitT;
+
+struct EmulationStatus;
+struct EmulationStatusBuilder;
+struct EmulationStatusT;
+
 struct DebugEvent;
 struct DebugEventBuilder;
 struct DebugEventT;
@@ -114,11 +122,13 @@ enum Event : uint8_t {
   Event_WriteRegisterResponse = 10,
   Event_ReadRegisterRequest = 11,
   Event_ReadRegisterResponse = 12,
+  Event_ApplicationExit = 13,
+  Event_EmulationStatus = 14,
   Event_MIN = Event_NONE,
-  Event_MAX = Event_ReadRegisterResponse
+  Event_MAX = Event_EmulationStatus
 };
 
-inline const Event (&EnumValuesEvent())[13] {
+inline const Event (&EnumValuesEvent())[15] {
   static const Event values[] = {
     Event_NONE,
     Event_PauseRequest,
@@ -132,13 +142,15 @@ inline const Event (&EnumValuesEvent())[13] {
     Event_WriteRegisterRequest,
     Event_WriteRegisterResponse,
     Event_ReadRegisterRequest,
-    Event_ReadRegisterResponse
+    Event_ReadRegisterResponse,
+    Event_ApplicationExit,
+    Event_EmulationStatus
   };
   return values;
 }
 
 inline const char * const *EnumNamesEvent() {
-  static const char * const names[14] = {
+  static const char * const names[16] = {
     "NONE",
     "PauseRequest",
     "RunRequest",
@@ -152,13 +164,15 @@ inline const char * const *EnumNamesEvent() {
     "WriteRegisterResponse",
     "ReadRegisterRequest",
     "ReadRegisterResponse",
+    "ApplicationExit",
+    "EmulationStatus",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameEvent(Event e) {
-  if (::flatbuffers::IsOutRange(e, Event_NONE, Event_ReadRegisterResponse)) return "";
+  if (::flatbuffers::IsOutRange(e, Event_NONE, Event_EmulationStatus)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesEvent()[index];
 }
@@ -215,6 +229,14 @@ template<> struct EventTraits<Debugger::ReadRegisterResponse> {
   static const Event enum_value = Event_ReadRegisterResponse;
 };
 
+template<> struct EventTraits<Debugger::ApplicationExit> {
+  static const Event enum_value = Event_ApplicationExit;
+};
+
+template<> struct EventTraits<Debugger::EmulationStatus> {
+  static const Event enum_value = Event_EmulationStatus;
+};
+
 template<typename T> struct EventUnionTraits {
   static const Event enum_value = Event_NONE;
 };
@@ -265,6 +287,14 @@ template<> struct EventUnionTraits<Debugger::ReadRegisterRequestT> {
 
 template<> struct EventUnionTraits<Debugger::ReadRegisterResponseT> {
   static const Event enum_value = Event_ReadRegisterResponse;
+};
+
+template<> struct EventUnionTraits<Debugger::ApplicationExitT> {
+  static const Event enum_value = Event_ApplicationExit;
+};
+
+template<> struct EventUnionTraits<Debugger::EmulationStatusT> {
+  static const Event enum_value = Event_EmulationStatus;
 };
 
 struct EventUnion {
@@ -392,6 +422,22 @@ struct EventUnion {
   const Debugger::ReadRegisterResponseT *AsReadRegisterResponse() const {
     return type == Event_ReadRegisterResponse ?
       reinterpret_cast<const Debugger::ReadRegisterResponseT *>(value) : nullptr;
+  }
+  Debugger::ApplicationExitT *AsApplicationExit() {
+    return type == Event_ApplicationExit ?
+      reinterpret_cast<Debugger::ApplicationExitT *>(value) : nullptr;
+  }
+  const Debugger::ApplicationExitT *AsApplicationExit() const {
+    return type == Event_ApplicationExit ?
+      reinterpret_cast<const Debugger::ApplicationExitT *>(value) : nullptr;
+  }
+  Debugger::EmulationStatusT *AsEmulationStatus() {
+    return type == Event_EmulationStatus ?
+      reinterpret_cast<Debugger::EmulationStatusT *>(value) : nullptr;
+  }
+  const Debugger::EmulationStatusT *AsEmulationStatus() const {
+    return type == Event_EmulationStatus ?
+      reinterpret_cast<const Debugger::EmulationStatusT *>(value) : nullptr;
   }
 };
 
@@ -1200,6 +1246,158 @@ inline ::flatbuffers::Offset<ReadRegisterResponse> CreateReadRegisterResponseDir
 
 ::flatbuffers::Offset<ReadRegisterResponse> CreateReadRegisterResponse(::flatbuffers::FlatBufferBuilder &_fbb, const ReadRegisterResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct ApplicationExitT : public ::flatbuffers::NativeTable {
+  typedef ApplicationExit TableType;
+  ::flatbuffers::Optional<uint32_t> exit_status = ::flatbuffers::nullopt;
+};
+
+struct ApplicationExit FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef ApplicationExitT NativeTableType;
+  typedef ApplicationExitBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_EXIT_STATUS = 4
+  };
+  ::flatbuffers::Optional<uint32_t> exit_status() const {
+    return GetOptional<uint32_t, uint32_t>(VT_EXIT_STATUS);
+  }
+  bool mutate_exit_status(uint32_t _exit_status) {
+    return SetField<uint32_t>(VT_EXIT_STATUS, _exit_status);
+  }
+  bool Verify(::flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_EXIT_STATUS, 4) &&
+           verifier.EndTable();
+  }
+  ApplicationExitT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(ApplicationExitT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<ApplicationExit> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ApplicationExitT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct ApplicationExitBuilder {
+  typedef ApplicationExit Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_exit_status(uint32_t exit_status) {
+    fbb_.AddElement<uint32_t>(ApplicationExit::VT_EXIT_STATUS, exit_status);
+  }
+  explicit ApplicationExitBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<ApplicationExit> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<ApplicationExit>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<ApplicationExit> CreateApplicationExit(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Optional<uint32_t> exit_status = ::flatbuffers::nullopt) {
+  ApplicationExitBuilder builder_(_fbb);
+  if(exit_status) { builder_.add_exit_status(*exit_status); }
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<ApplicationExit> CreateApplicationExit(::flatbuffers::FlatBufferBuilder &_fbb, const ApplicationExitT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct EmulationStatusT : public ::flatbuffers::NativeTable {
+  typedef EmulationStatus TableType;
+  uint32_t active_threads = 0;
+  uint64_t reserved_memory = 0;
+  uint64_t committed_memory = 0;
+  uint64_t executed_instructions = 0;
+};
+
+struct EmulationStatus FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef EmulationStatusT NativeTableType;
+  typedef EmulationStatusBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ACTIVE_THREADS = 4,
+    VT_RESERVED_MEMORY = 6,
+    VT_COMMITTED_MEMORY = 8,
+    VT_EXECUTED_INSTRUCTIONS = 10
+  };
+  uint32_t active_threads() const {
+    return GetField<uint32_t>(VT_ACTIVE_THREADS, 0);
+  }
+  bool mutate_active_threads(uint32_t _active_threads = 0) {
+    return SetField<uint32_t>(VT_ACTIVE_THREADS, _active_threads, 0);
+  }
+  uint64_t reserved_memory() const {
+    return GetField<uint64_t>(VT_RESERVED_MEMORY, 0);
+  }
+  bool mutate_reserved_memory(uint64_t _reserved_memory = 0) {
+    return SetField<uint64_t>(VT_RESERVED_MEMORY, _reserved_memory, 0);
+  }
+  uint64_t committed_memory() const {
+    return GetField<uint64_t>(VT_COMMITTED_MEMORY, 0);
+  }
+  bool mutate_committed_memory(uint64_t _committed_memory = 0) {
+    return SetField<uint64_t>(VT_COMMITTED_MEMORY, _committed_memory, 0);
+  }
+  uint64_t executed_instructions() const {
+    return GetField<uint64_t>(VT_EXECUTED_INSTRUCTIONS, 0);
+  }
+  bool mutate_executed_instructions(uint64_t _executed_instructions = 0) {
+    return SetField<uint64_t>(VT_EXECUTED_INSTRUCTIONS, _executed_instructions, 0);
+  }
+  bool Verify(::flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_ACTIVE_THREADS, 4) &&
+           VerifyField<uint64_t>(verifier, VT_RESERVED_MEMORY, 8) &&
+           VerifyField<uint64_t>(verifier, VT_COMMITTED_MEMORY, 8) &&
+           VerifyField<uint64_t>(verifier, VT_EXECUTED_INSTRUCTIONS, 8) &&
+           verifier.EndTable();
+  }
+  EmulationStatusT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(EmulationStatusT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<EmulationStatus> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const EmulationStatusT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct EmulationStatusBuilder {
+  typedef EmulationStatus Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_active_threads(uint32_t active_threads) {
+    fbb_.AddElement<uint32_t>(EmulationStatus::VT_ACTIVE_THREADS, active_threads, 0);
+  }
+  void add_reserved_memory(uint64_t reserved_memory) {
+    fbb_.AddElement<uint64_t>(EmulationStatus::VT_RESERVED_MEMORY, reserved_memory, 0);
+  }
+  void add_committed_memory(uint64_t committed_memory) {
+    fbb_.AddElement<uint64_t>(EmulationStatus::VT_COMMITTED_MEMORY, committed_memory, 0);
+  }
+  void add_executed_instructions(uint64_t executed_instructions) {
+    fbb_.AddElement<uint64_t>(EmulationStatus::VT_EXECUTED_INSTRUCTIONS, executed_instructions, 0);
+  }
+  explicit EmulationStatusBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<EmulationStatus> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<EmulationStatus>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<EmulationStatus> CreateEmulationStatus(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t active_threads = 0,
+    uint64_t reserved_memory = 0,
+    uint64_t committed_memory = 0,
+    uint64_t executed_instructions = 0) {
+  EmulationStatusBuilder builder_(_fbb);
+  builder_.add_executed_instructions(executed_instructions);
+  builder_.add_committed_memory(committed_memory);
+  builder_.add_reserved_memory(reserved_memory);
+  builder_.add_active_threads(active_threads);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<EmulationStatus> CreateEmulationStatus(::flatbuffers::FlatBufferBuilder &_fbb, const EmulationStatusT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct DebugEventT : public ::flatbuffers::NativeTable {
   typedef DebugEvent TableType;
   Debugger::EventUnion event{};
@@ -1254,6 +1452,12 @@ struct DebugEvent FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   const Debugger::ReadRegisterResponse *event_as_ReadRegisterResponse() const {
     return event_type() == Debugger::Event_ReadRegisterResponse ? static_cast<const Debugger::ReadRegisterResponse *>(event()) : nullptr;
+  }
+  const Debugger::ApplicationExit *event_as_ApplicationExit() const {
+    return event_type() == Debugger::Event_ApplicationExit ? static_cast<const Debugger::ApplicationExit *>(event()) : nullptr;
+  }
+  const Debugger::EmulationStatus *event_as_EmulationStatus() const {
+    return event_type() == Debugger::Event_EmulationStatus ? static_cast<const Debugger::EmulationStatus *>(event()) : nullptr;
   }
   void *mutable_event() {
     return GetPointer<void *>(VT_EVENT);
@@ -1316,6 +1520,14 @@ template<> inline const Debugger::ReadRegisterRequest *DebugEvent::event_as<Debu
 
 template<> inline const Debugger::ReadRegisterResponse *DebugEvent::event_as<Debugger::ReadRegisterResponse>() const {
   return event_as_ReadRegisterResponse();
+}
+
+template<> inline const Debugger::ApplicationExit *DebugEvent::event_as<Debugger::ApplicationExit>() const {
+  return event_as_ApplicationExit();
+}
+
+template<> inline const Debugger::EmulationStatus *DebugEvent::event_as<Debugger::EmulationStatus>() const {
+  return event_as_EmulationStatus();
 }
 
 struct DebugEventBuilder {
@@ -1684,6 +1896,67 @@ inline ::flatbuffers::Offset<ReadRegisterResponse> CreateReadRegisterResponse(::
       _data);
 }
 
+inline ApplicationExitT *ApplicationExit::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<ApplicationExitT>(new ApplicationExitT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void ApplicationExit::UnPackTo(ApplicationExitT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = exit_status(); _o->exit_status = _e; }
+}
+
+inline ::flatbuffers::Offset<ApplicationExit> ApplicationExit::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ApplicationExitT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return CreateApplicationExit(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<ApplicationExit> CreateApplicationExit(::flatbuffers::FlatBufferBuilder &_fbb, const ApplicationExitT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const ApplicationExitT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _exit_status = _o->exit_status;
+  return Debugger::CreateApplicationExit(
+      _fbb,
+      _exit_status);
+}
+
+inline EmulationStatusT *EmulationStatus::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<EmulationStatusT>(new EmulationStatusT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void EmulationStatus::UnPackTo(EmulationStatusT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = active_threads(); _o->active_threads = _e; }
+  { auto _e = reserved_memory(); _o->reserved_memory = _e; }
+  { auto _e = committed_memory(); _o->committed_memory = _e; }
+  { auto _e = executed_instructions(); _o->executed_instructions = _e; }
+}
+
+inline ::flatbuffers::Offset<EmulationStatus> EmulationStatus::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const EmulationStatusT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return CreateEmulationStatus(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<EmulationStatus> CreateEmulationStatus(::flatbuffers::FlatBufferBuilder &_fbb, const EmulationStatusT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const EmulationStatusT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _active_threads = _o->active_threads;
+  auto _reserved_memory = _o->reserved_memory;
+  auto _committed_memory = _o->committed_memory;
+  auto _executed_instructions = _o->executed_instructions;
+  return Debugger::CreateEmulationStatus(
+      _fbb,
+      _active_threads,
+      _reserved_memory,
+      _committed_memory,
+      _executed_instructions);
+}
+
 inline DebugEventT *DebugEvent::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
   auto _o = std::unique_ptr<DebugEventT>(new DebugEventT());
   UnPackTo(_o.get(), _resolver);
@@ -1766,6 +2039,14 @@ inline bool VerifyEvent(::flatbuffers::Verifier &verifier, const void *obj, Even
       auto ptr = reinterpret_cast<const Debugger::ReadRegisterResponse *>(obj);
       return verifier.VerifyTable(ptr);
     }
+    case Event_ApplicationExit: {
+      auto ptr = reinterpret_cast<const Debugger::ApplicationExit *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case Event_EmulationStatus: {
+      auto ptr = reinterpret_cast<const Debugger::EmulationStatus *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
     default: return true;
   }
 }
@@ -1833,6 +2114,14 @@ inline void *EventUnion::UnPack(const void *obj, Event type, const ::flatbuffers
       auto ptr = reinterpret_cast<const Debugger::ReadRegisterResponse *>(obj);
       return ptr->UnPack(resolver);
     }
+    case Event_ApplicationExit: {
+      auto ptr = reinterpret_cast<const Debugger::ApplicationExit *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case Event_EmulationStatus: {
+      auto ptr = reinterpret_cast<const Debugger::EmulationStatus *>(obj);
+      return ptr->UnPack(resolver);
+    }
     default: return nullptr;
   }
 }
@@ -1888,6 +2177,14 @@ inline ::flatbuffers::Offset<void> EventUnion::Pack(::flatbuffers::FlatBufferBui
       auto ptr = reinterpret_cast<const Debugger::ReadRegisterResponseT *>(value);
       return CreateReadRegisterResponse(_fbb, ptr, _rehasher).Union();
     }
+    case Event_ApplicationExit: {
+      auto ptr = reinterpret_cast<const Debugger::ApplicationExitT *>(value);
+      return CreateApplicationExit(_fbb, ptr, _rehasher).Union();
+    }
+    case Event_EmulationStatus: {
+      auto ptr = reinterpret_cast<const Debugger::EmulationStatusT *>(value);
+      return CreateEmulationStatus(_fbb, ptr, _rehasher).Union();
+    }
     default: return 0;
   }
 }
@@ -1940,6 +2237,14 @@ inline EventUnion::EventUnion(const EventUnion &u) : type(u.type), value(nullptr
     }
     case Event_ReadRegisterResponse: {
       value = new Debugger::ReadRegisterResponseT(*reinterpret_cast<Debugger::ReadRegisterResponseT *>(u.value));
+      break;
+    }
+    case Event_ApplicationExit: {
+      value = new Debugger::ApplicationExitT(*reinterpret_cast<Debugger::ApplicationExitT *>(u.value));
+      break;
+    }
+    case Event_EmulationStatus: {
+      value = new Debugger::EmulationStatusT(*reinterpret_cast<Debugger::EmulationStatusT *>(u.value));
       break;
     }
     default:
@@ -2006,6 +2311,16 @@ inline void EventUnion::Reset() {
     }
     case Event_ReadRegisterResponse: {
       auto ptr = reinterpret_cast<Debugger::ReadRegisterResponseT *>(value);
+      delete ptr;
+      break;
+    }
+    case Event_ApplicationExit: {
+      auto ptr = reinterpret_cast<Debugger::ApplicationExitT *>(value);
+      delete ptr;
+      break;
+    }
+    case Event_EmulationStatus: {
+      auto ptr = reinterpret_cast<Debugger::EmulationStatusT *>(value);
       delete ptr;
       break;
     }
