@@ -5,6 +5,7 @@
 #include "memory_manager.hpp"
 #include "memory_utils.hpp"
 #include "address_utils.hpp"
+#include "x86_register.hpp"
 
 #include <utils/time.hpp>
 
@@ -366,4 +367,21 @@ inline std::u16string read_unicode_string(const emulator& emu,
 inline std::u16string read_unicode_string(emulator& emu, const uint64_t uc_string)
 {
     return read_unicode_string(emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{emu, uc_string});
+}
+
+inline uint64_t get_function_argument(x86_64_emulator& emu, const size_t index, bool is_syscall = false)
+{
+    switch (index)
+    {
+    case 0:
+        return emu.reg(is_syscall ? x86_register::r10 : x86_register::rcx);
+    case 1:
+        return emu.reg(x86_register::rdx);
+    case 2:
+        return emu.reg(x86_register::r8);
+    case 3:
+        return emu.reg(x86_register::r9);
+    default:
+        return emu.read_stack(index + 1);
+    }
 }

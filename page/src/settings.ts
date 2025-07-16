@@ -3,6 +3,9 @@ export interface Settings {
   concise: boolean;
   silent: boolean;
   bufferStdout: boolean;
+  persist: boolean;
+  execAccess: boolean;
+  wasm64: boolean;
 }
 
 export function createDefaultSettings(): Settings {
@@ -11,7 +14,36 @@ export function createDefaultSettings(): Settings {
     concise: false,
     silent: false,
     bufferStdout: true,
+    persist: false,
+    execAccess: true,
+    wasm64: false,
   };
+}
+
+export function loadSettings(): Settings {
+  const defaultSettings = createDefaultSettings();
+
+  const settingsStr = localStorage.getItem("settings");
+  if (!settingsStr) {
+    return defaultSettings;
+  }
+
+  try {
+    const userSettings = JSON.parse(settingsStr);
+    const keys = Object.keys(defaultSettings);
+
+    keys.forEach((k) => {
+      if (k in userSettings) {
+        (defaultSettings as any)[k] = userSettings[k];
+      }
+    });
+  } catch (e) {}
+
+  return defaultSettings;
+}
+
+export function saveSettings(settings: Settings) {
+  localStorage.setItem("settings", JSON.stringify(settings));
 }
 
 export function translateSettings(settings: Settings): string[] {
@@ -31,6 +63,10 @@ export function translateSettings(settings: Settings): string[] {
 
   if (settings.bufferStdout) {
     switches.push("-b");
+  }
+
+  if (settings.execAccess) {
+    switches.push("-x");
   }
 
   return switches;

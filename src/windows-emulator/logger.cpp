@@ -44,7 +44,7 @@ namespace
         case white:
             return COLOR(0xF, "\033[0;97m", "<span class=\"terminal-white\">");
         case dark_gray:
-            return COLOR(0x8, "\033[0;97m", "<span class=\"terminal-dark-gray\">");
+            return COLOR(0x8, "\033[0;90m", "<span class=\"terminal-dark-gray\">");
         case gray:
         default:
             return get_reset_color();

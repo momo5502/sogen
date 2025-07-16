@@ -3,6 +3,7 @@ import { Helmet } from "react-helmet";
 export interface HeaderProps {
   title: string;
   description: string;
+  preload?: string[];
 }
 
 const image =
@@ -23,6 +24,16 @@ export function Header(props: HeaderProps) {
       <meta name="twitter:title" content={props.title} />
       <meta name="twitter:description" content={props.description} />
       <meta name="twitter:image" content={image} />
+
+      {props.preload?.map((l) => (
+        <link
+          key={`link-${l}`}
+          rel="preload"
+          as={l.endsWith(".js") ? "script" : "fetch"}
+          crossOrigin=""
+          href={`${l}${l.indexOf("?") == -1 ? "?" : "&"}cb=${import.meta.env.VITE_BUILD_TIME}`}
+        />
+      ))}
     </Helmet>
   );
 }

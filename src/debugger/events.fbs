@@ -59,6 +59,17 @@ table ReadRegisterResponse {
     data: [ubyte];
 }
 
+table ApplicationExit {
+    exit_status: uint32 = null;
+}
+
+table EmulationStatus {
+    active_threads: uint32;
+    reserved_memory: uint64;
+    committed_memory: uint64;
+    executed_instructions: uint64;
+}
+
 union Event { 
     PauseRequest, 
     RunRequest,
@@ -72,6 +83,8 @@ union Event {
     WriteRegisterResponse,
     ReadRegisterRequest,
     ReadRegisterResponse,
+    ApplicationExit,
+    EmulationStatus,
 }
 
 table DebugEvent {

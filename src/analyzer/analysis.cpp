@@ -113,6 +113,45 @@ namespace
         c.win_emu->log.log("Unmapping %s (0x%" PRIx64 ")\n", mod.path.generic_string().c_str(), mod.image_base);
     }
 
+    void print_string(logger& log, const std::string_view str)
+    {
+        log.print(color::dark_gray, "--> %.*s\n", STR_VIEW_VA(str));
+    }
+
+    void print_string(logger& log, const std::u16string_view str)
+    {
+        print_string(log, u16_to_u8(str));
+    }
+
+    template <typename CharType = char>
+    void print_arg_as_string(windows_emulator& win_emu, size_t index)
+    {
+        const auto var_ptr = get_function_argument(win_emu.emu(), index);
+        if (var_ptr)
+        {
+            const auto str = read_string<CharType>(win_emu.memory, var_ptr);
+            print_string(win_emu.log, str);
+        }
+    }
+
+    void handle_function_details(analysis_context& c, const std::string_view function)
+    {
+        if (function == "GetEnvironmentVariableA" || function == "ExpandEnvironmentStringsA")
+        {
+            print_arg_as_string(*c.win_emu, 0);
+        }
+        else if (function == "MessageBoxA")
+        {
+            print_arg_as_string(*c.win_emu, 2);
+            print_arg_as_string(*c.win_emu, 1);
+        }
+        else if (function == "MessageBoxW")
+        {
+            print_arg_as_string<char16_t>(*c.win_emu, 2);
+            print_arg_as_string<char16_t>(*c.win_emu, 1);
+        }
+    }
+
     void handle_instruction(analysis_context& c, const uint64_t address)
     {
         auto& win_emu = *c.win_emu;
@@ -185,6 +224,11 @@ namespace
             win_emu.log.print(is_interesting_call ? color::yellow : color::dark_gray,
                               "Executing function: %s - %s (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n",
                               binary->name.c_str(), export_entry->second.c_str(), address, return_address, mod_name);
+
+            if (is_interesting_call)
+            {
+                handle_function_details(c, export_entry->second);
+            }
         }
         else if (address == binary->entry_point)
         {
@@ -273,4 +317,25 @@ void register_analysis_callbacks(analysis_context& c)
     cb.on_generic_access = make_callback(c, handle_generic_access);
     cb.on_generic_activity = make_callback(c, handle_generic_activity);
     cb.on_suspicious_activity = make_callback(c, handle_suspicious_activity);
+}
+
+mapped_module* get_module_if_interesting(module_manager& manager, const string_set& modules, uint64_t address)
+{
+    if (manager.executable->is_within(address))
+    {
+        return manager.executable;
+    }
+
+    if (modules.empty())
+    {
+        return nullptr;
+    }
+
+    auto* mod = manager.find_by_address(address);
+    if (mod && modules.contains(mod->name))
+    {
+        return mod;
+    }
+
+    return nullptr;
 }

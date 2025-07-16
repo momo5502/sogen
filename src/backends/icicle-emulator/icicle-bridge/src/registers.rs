@@ -476,7 +476,7 @@ pub(crate) struct X86RegisterNodes {
 
 impl X86RegisterNodes {
     pub fn new(arch: &icicle_cpu::Arch) -> Self {
-        let r = |name: &str| arch.sleigh.get_reg(name).unwrap().var;
+        let r = |name: &str| arch.sleigh.get_reg(name).unwrap().get_raw_var();
         let nodes = [
             "CF", "F1", "PF", "F3", "AF", "F5", "ZF", "SF", "TF", "IF", "DF", "OF", "IOPL", "NT",
             "F15", "RF", "VM", "AC", "VIF", "VIP", "ID",

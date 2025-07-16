@@ -3,7 +3,11 @@
 #include <set>
 #include <string>
 
+struct mapped_module;
+class module_manager;
 class windows_emulator;
+
+using string_set = std::set<std::string, std::less<>>;
 
 struct analysis_settings
 {
@@ -12,8 +16,8 @@ struct analysis_settings
     bool silent{false};
     bool buffer_stdout{false};
 
-    std::set<std::string, std::less<>> modules{};
-    std::set<std::string, std::less<>> ignored_functions{};
+    string_set modules{};
+    string_set ignored_functions{};
 };
 
 struct analysis_context
@@ -26,3 +30,4 @@ struct analysis_context
 };
 
 void register_analysis_callbacks(analysis_context& c);
+mapped_module* get_module_if_interesting(module_manager& manager, const string_set& modules, uint64_t address);

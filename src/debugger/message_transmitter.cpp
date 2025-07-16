@@ -33,7 +33,7 @@ namespace debugger
             var message = getMessageFromQueue();
             if (!message || message.length == 0)
             {
-                return null;
+                return 0;
             }
 
             const length = lengthBytesUTF8(message) + 1;

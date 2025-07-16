@@ -18,4 +18,6 @@ namespace debugger
     };
 
     void handle_events(event_context& c);
+    void handle_exit(const windows_emulator& win_emu, std::optional<NTSTATUS> exit_status);
+    void update_emulation_status(const windows_emulator& win_emu);
 }

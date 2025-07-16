@@ -15,6 +15,7 @@ find_package(Threads REQUIRED)
 target_link_libraries(emulator-common PUBLIC
   Threads::Threads
   zlibstatic
+  minidump::minidump
 )
 
 if(WIN)

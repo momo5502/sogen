@@ -267,6 +267,21 @@ namespace syscalls
         return handle_NtOpenThreadToken(c, thread_handle, desired_access, open_as_self, token_handle);
     }
 
+    static void delete_thread_windows(const syscall_context& c, const uint32_t thread_id)
+    {
+        for (auto i = c.proc.windows.begin(); i != c.proc.windows.end();)
+        {
+            if (i->second.thread_id != thread_id)
+            {
+                ++i;
+                continue;
+            }
+
+            i->second.ref_count = 1;
+            i = c.proc.windows.erase(i).first;
+        }
+    }
+
     NTSTATUS handle_NtTerminateThread(const syscall_context& c, const handle thread_handle, const NTSTATUS exit_status)
     {
         auto* thread = !thread_handle.bits ? c.proc.active_thread : c.proc.threads.get(thread_handle);
@@ -279,17 +294,7 @@ namespace syscalls
         thread->exit_status = exit_status;
         c.win_emu.callbacks.on_thread_terminated(thread_handle, *thread);
 
-        for (auto i = c.proc.windows.begin(); i != c.proc.windows.end();)
-        {
-            if (i->second.thread_id != thread->id)
-            {
-                ++i;
-                continue;
-            }
-
-            i->second.ref_count = 1;
-            i = c.proc.windows.erase(i).first;
-        }
+        delete_thread_windows(c, thread->id);
 
         if (thread == c.proc.active_thread)
         {

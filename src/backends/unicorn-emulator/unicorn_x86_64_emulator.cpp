@@ -190,7 +190,7 @@ namespace unicorn
             unicorn_x86_64_emulator()
             {
                 uce(uc_open(UC_ARCH_X86, UC_MODE_64, &this->uc_));
-                uce(uc_ctl_set_cpu_model(this->uc_, UC_CPU_X86_EPYC_ROME));
+                // uce(uc_ctl_set_cpu_model(this->uc_, UC_CPU_X86_EPYC_ROME));
 
 #ifndef OS_WINDOWS
 #pragma GCC diagnostic push
