@@ -1,3 +1,4 @@
+#include "platform/status.hpp"
 #include "std_include.hpp"
 #include "syscall_dispatcher.hpp"
 #include "cpu_context.hpp"
@@ -377,6 +378,12 @@ namespace syscalls
                                  uint64_t timer_set_information, ULONG timer_set_information_length);
     NTSTATUS handle_NtCancelTimer();
 
+    // syscalls/window.cpp:
+    NTSTATUS handle_NtUserBuildHwndList(const syscall_context& c, const handle desktop_handle,
+                                            const handle parent_handle,
+                                            const BOOLEAN is_children, const ULONG thread_id,
+                                            const ULONG hwnd, handle hwnd_list, ULONG hwnd_needed);
+
     // syscalls/token.cpp:
     NTSTATUS
     handle_NtDuplicateToken(const syscall_context&, handle existing_token_handle, ACCESS_MASK /*desired_access*/,
@@ -387,6 +394,11 @@ namespace syscalls
                                             TOKEN_INFORMATION_CLASS token_information_class, uint64_t token_information,
                                             ULONG token_information_length, emulator_object<ULONG> return_length);
     NTSTATUS handle_NtQuerySecurityAttributesToken();
+
+    NTSTATUS handle_NtReleaseWorkerFactoryWorker(const syscall_context& c, handle token_handle)
+    {
+        return STATUS_SUCCESS;
+    }
 
     NTSTATUS handle_NtQueryPerformanceCounter(const syscall_context& c,
                                               const emulator_object<LARGE_INTEGER> performance_counter,
@@ -1173,6 +1185,8 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtSetWnfProcessNotificationEvent);
     add_handler(NtQuerySecurityObject);
     add_handler(NtQueryEvent);
+    add_handler(NtUserBuildHwndList);
+    add_handler(NtReleaseWorkerFactoryWorker);
 
 #undef add_handler
 }
