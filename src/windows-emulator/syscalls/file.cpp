@@ -219,7 +219,7 @@ namespace syscalls
 
             files.emplace_back(file_entry{
                 .file_path = filename,
-                .file_size = dir_entry.file_size(),
+                .file_size = dir_entry.is_directory() ? 0 : dir_entry.file_size(),
                 .is_directory = dir_entry.is_directory(),
             });
         });
