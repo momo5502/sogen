@@ -8,11 +8,10 @@
 #include "object_watching.hpp"
 #include "snapshot.hpp"
 #include "analysis.hpp"
+#include "tenet_tracer.hpp"
 
 #include <utils/finally.hpp>
 #include <utils/interupt_handler.hpp>
-
-#include <cstdio>
 
 #ifdef OS_EMSCRIPTEN
 #include <event_handler.hpp>
@@ -24,6 +23,7 @@ namespace
     {
         mutable bool use_gdb{false};
         bool log_executable_access{false};
+        bool tenet_trace{false};
         std::filesystem::path dump{};
         std::filesystem::path minidump_path{};
         std::string registry_path{"./registry"};
@@ -296,6 +296,13 @@ namespace
 
         win_emu->log.log("Using emulator: %s\n", win_emu->emu().get_name().c_str());
 
+        std::optional<tenet_tracer> tenet_tracer{};
+        if (options.tenet_trace)
+        {
+            win_emu->log.log("Tenet Tracer enabled. Output: tenet_trace.log\n");
+            tenet_tracer.emplace(*win_emu, "tenet_trace.log");
+        }
+
         register_analysis_callbacks(context);
         watch_system_objects(*win_emu, options.modules, options.verbose_logging);
 
@@ -405,6 +412,7 @@ namespace
         printf("  -e, --emulation <path>    Set emulation root path\n");
         printf("  -a, --snapshot <path>     Load snapshot dump from path\n");
         printf("  --minidump <path>         Load minidump from path\n");
+        printf("  -t, --tenet-trace         Enable Tenet tracer\n");
         printf("  -i, --ignore <funcs>      Comma-separated list of functions to ignore\n");
         printf("  -p, --path <src> <dst>    Map Windows path to host path\n");
         printf("  -r, --registry <path>     Set registry path (default: ./registry)\n\n");
@@ -450,6 +458,10 @@ namespace
             else if (arg == "-c" || arg == "--concise")
             {
                 options.concise_logging = true;
+            }
+            else if (arg == "-t" || arg == "--tenet-trace")
+            {
+                options.tenet_trace = true;
             }
             else if (arg == "-m" || arg == "--module")
             {
