@@ -807,7 +807,9 @@ struct ACE_HEADER
     WORD AceSize;
 };
 
+#ifndef ACCESS_MASK
 typedef DWORD ACCESS_MASK;
+#endif
 
 struct ACCESS_ALLOWED_ACE
 {
@@ -851,6 +853,12 @@ typedef struct _TOKEN_ELEVATION
 {
     DWORD TokenIsElevated;
 } TOKEN_ELEVATION, *PTOKEN_ELEVATION;
+
+typedef enum _TOKEN_ELEVATION_TYPE {
+    TokenElevationTypeDefault = 1,
+    TokenElevationTypeFull,
+    TokenElevationTypeLimited
+} TOKEN_ELEVATION_TYPE, *PTOKEN_ELEVATION_TYPE;
 
 typedef enum _SECURITY_IMPERSONATION_LEVEL
 {
@@ -1053,15 +1061,15 @@ typedef enum _PROCESSOR_CACHE_TYPE
 
 typedef enum _LOGICAL_PROCESSOR_RELATIONSHIP
 {
-    RelationProcessorCore,
-    RelationNumaNode,
-    RelationCache,
-    RelationProcessorPackage,
-    RelationGroup,
-    RelationProcessorDie,
-    RelationNumaNodeEx,
-    RelationProcessorModule,
-    RelationAll = 0xffff
+    RelationProcessorCore       = 0,
+    RelationNumaNode            = 1,
+    RelationCache               = 2,
+    RelationProcessorPackage    = 3,
+    RelationGroup               = 4,
+    RelationProcessorDie        = 5,
+    RelationNumaNodeEx          = 6,
+    RelationProcessorModule     = 7,
+    RelationAll                 = 0xffff
 } LOGICAL_PROCESSOR_RELATIONSHIP;
 #endif
 
