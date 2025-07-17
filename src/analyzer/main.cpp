@@ -8,11 +8,15 @@
 #include "object_watching.hpp"
 #include "snapshot.hpp"
 #include "analysis.hpp"
+#include "tenet_tracer.hpp"
 
 #include <utils/finally.hpp>
 #include <utils/interupt_handler.hpp>
 
 #include <cstdio>
+
+#include <fstream>
+#include <memory>
 
 #ifdef OS_EMSCRIPTEN
 #include <event_handler.hpp>
@@ -24,6 +28,7 @@ namespace
     {
         mutable bool use_gdb{false};
         bool log_executable_access{false};
+        bool tenet_trace{false};
         std::filesystem::path dump{};
         std::filesystem::path minidump_path{};
         std::string registry_path{"./registry"};
@@ -284,22 +289,38 @@ namespace
         return create_application_emulator(options, args);
     }
 
-    bool run(const analysis_options& options, const std::span<const std::string_view> args)
+bool run(const analysis_options& options, const std::span<const std::string_view> args)
+{
+    analysis_context context{
+        .settings = &options,
+    };
+
+    const auto win_emu = setup_emulator(options, args);
+    win_emu->log.disable_output(options.concise_logging || options.silent);
+    context.win_emu = win_emu.get();
+
+    win_emu->log.log("Using emulator: %s\n", win_emu->emu().get_name().c_str());
+
+    // Enable TenetTracer and assign it to the context.
+    std::unique_ptr<TenetTracer> tenet_tracer;
+    if (options.tenet_trace)
     {
-        analysis_context context{
-            .settings = &options,
-        };
+        win_emu->log.log("Tenet Tracer enabled. Output: tenet_trace.log\n");
+        tenet_tracer = std::make_unique<TenetTracer>(*win_emu, "tenet_trace.log");
 
-        const auto win_emu = setup_emulator(options, args);
-        win_emu->log.disable_output(options.concise_logging || options.silent);
-        context.win_emu = win_emu.get();
+        // Set up the hook to call the tracer for each instruction.
+        win_emu->emu().hook_memory_execution([&](uint64_t address) {
+            if (tenet_tracer)
+            {
+                tenet_tracer->process_instruction(address);
+            }
+        });
+    }
 
-        win_emu->log.log("Using emulator: %s\n", win_emu->emu().get_name().c_str());
+    register_analysis_callbacks(context);
+    watch_system_objects(*win_emu, options.modules, options.verbose_logging);
 
-        register_analysis_callbacks(context);
-        watch_system_objects(*win_emu, options.modules, options.verbose_logging);
-
-        const auto& exe = *win_emu->mod_manager.executable;
+    const auto& exe = *win_emu->mod_manager.executable;
 
         const auto concise_logging = !options.verbose_logging;
 
@@ -405,6 +426,7 @@ namespace
         printf("  -e, --emulation <path>    Set emulation root path\n");
         printf("  -a, --snapshot <path>     Load snapshot dump from path\n");
         printf("  --minidump <path>         Load minidump from path\n");
+        printf("  -t, --tenet-trace         Enable Tenet tracer\n");
         printf("  -i, --ignore <funcs>      Comma-separated list of functions to ignore\n");
         printf("  -p, --path <src> <dst>    Map Windows path to host path\n");
         printf("  -r, --registry <path>     Set registry path (default: ./registry)\n\n");
@@ -412,6 +434,7 @@ namespace
         printf("  analyzer -v -e path/to/root myapp.exe\n");
         printf("  analyzer -e path/to/root -p c:/analysis-sample.exe /path/to/sample.exe c:/analysis-sample.exe\n");
     }
+ 
 
     analysis_options parse_options(std::vector<std::string_view>& args)
     {
@@ -450,6 +473,10 @@ namespace
             else if (arg == "-c" || arg == "--concise")
             {
                 options.concise_logging = true;
+            }
+            else if (arg == "-t" || arg == "--tenet-trace")
+            {
+                options.tenet_trace = true;
             }
             else if (arg == "-m" || arg == "--module")
             {
