@@ -6,11 +6,11 @@
 #include <array>
 #include <deque>
 #include <queue>
+#include <mutex>
 #include <thread>
 #include <ranges>
 #include <atomic>
 #include <vector>
-#include <mutex>
 #include <string>
 #include <chrono>
 #include <memory>
@@ -23,6 +23,7 @@
 #include <unordered_set>
 #include <condition_variable>
 
+#include <cstdio>
 #include <cassert>
 
 #include <platform/platform.hpp>

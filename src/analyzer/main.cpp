@@ -13,11 +13,6 @@
 #include <utils/finally.hpp>
 #include <utils/interupt_handler.hpp>
 
-#include <cstdio>
-
-#include <fstream>
-#include <memory>
-
 #ifdef OS_EMSCRIPTEN
 #include <event_handler.hpp>
 #endif
@@ -301,20 +296,11 @@ namespace
 
         win_emu->log.log("Using emulator: %s\n", win_emu->emu().get_name().c_str());
 
-        // Enable TenetTracer and assign it to the context.
-        std::unique_ptr<TenetTracer> tenet_tracer;
+        std::optional<tenet_tracer> tenet_tracer{};
         if (options.tenet_trace)
         {
             win_emu->log.log("Tenet Tracer enabled. Output: tenet_trace.log\n");
-            tenet_tracer = std::make_unique<TenetTracer>(*win_emu, "tenet_trace.log");
-
-            // Set up the hook to call the tracer for each instruction.
-            win_emu->emu().hook_memory_execution([&](uint64_t address) {
-                if (tenet_tracer)
-                {
-                    tenet_tracer->process_instruction(address);
-                }
-            });
+            tenet_tracer.emplace(*win_emu, "tenet_trace.log");
         }
 
         register_analysis_callbacks(context);

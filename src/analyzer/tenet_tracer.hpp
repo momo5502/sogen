@@ -3,14 +3,7 @@
 #include <windows_emulator.hpp>
 #include <emulator/x86_register.hpp>
 #include <emulator/scoped_hook.hpp>
-#include <fstream>
-#include <string>
-#include <vector>
-#include <array>
-#include <sstream>
-#include <string_view>
 
-// List of registers to trace for the x64 architecture.
 constexpr std::array<std::pair<x86_register, std::string_view>, 16> GPRs_TO_TRACE = {
     {
         {x86_register::rax, "rax"},
@@ -32,39 +25,34 @@ constexpr std::array<std::pair<x86_register, std::string_view>, 16> GPRs_TO_TRAC
     },
 };
 
-class TenetTracer
+class tenet_tracer
 {
   public:
-    TenetTracer(windows_emulator& win_emu, const std::string& log_filename);
-    ~TenetTracer();
+    tenet_tracer(windows_emulator& win_emu, const std::filesystem::path& log_filename);
+    ~tenet_tracer();
 
-    TenetTracer(TenetTracer&) = delete;
-    TenetTracer(const TenetTracer&) = delete;
-    TenetTracer& operator=(TenetTracer&) = delete;
-    TenetTracer& operator=(const TenetTracer&) = delete;
-
-    void process_instruction(uint64_t address);
+    tenet_tracer(tenet_tracer&) = delete;
+    tenet_tracer(const tenet_tracer&) = delete;
+    tenet_tracer& operator=(tenet_tracer&) = delete;
+    tenet_tracer& operator=(const tenet_tracer&) = delete;
 
   private:
     void filter_and_write_buffer();
     void log_memory_read(uint64_t address, const void* data, size_t size);
     void log_memory_write(uint64_t address, const void* data, size_t size);
+    void process_instruction(uint64_t address);
 
-    windows_emulator& m_win_emu;
-    std::ofstream m_log_file;
+    windows_emulator& win_emu_;
+    std::ofstream log_file_;
 
-    // In-memory buffering for performance.
-    std::vector<std::string> m_raw_log_buffer;
+    std::vector<std::string> raw_log_buffer_;
+    std::array<uint64_t, GPRs_TO_TRACE.size()> previous_registers_{};
+    bool is_first_instruction_ = true;
 
-    // Use an array instead of a map to store the register state of the previous instruction.
-    std::array<uint64_t, GPRs_TO_TRACE.size()> m_previous_regs{};
-    bool m_is_first_instruction = true;
+    std::stringstream mem_read_log_;
+    std::stringstream mem_write_log_;
 
-    // To temporarily store memory operations.
-    std::stringstream m_mem_read_log;
-    std::stringstream m_mem_write_log;
-
-    // To manage memory hooks.
-    scoped_hook m_read_hook;
-    scoped_hook m_write_hook;
+    scoped_hook read_hook_;
+    scoped_hook write_hook_;
+    scoped_hook execute_hook_;
 };

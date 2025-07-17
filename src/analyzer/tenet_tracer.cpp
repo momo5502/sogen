@@ -1,7 +1,8 @@
+#include "std_include.hpp"
 #include "tenet_tracer.hpp"
-#include "scoped_hook.hpp"
+#include <utils/finally.hpp>
+
 #include <iomanip>
-#include <map>
 
 namespace
 {
@@ -47,68 +48,72 @@ namespace
     }
 }
 
-TenetTracer::TenetTracer(windows_emulator& win_emu, const std::string& log_filename)
-    : m_win_emu(win_emu),
-      m_log_file(log_filename)
+tenet_tracer::tenet_tracer(windows_emulator& win_emu, const std::filesystem::path& log_filename)
+    : win_emu_(win_emu),
+      log_file_(log_filename)
 {
-    if (!m_log_file)
+    if (!log_file_)
     {
-        throw std::runtime_error("TenetTracer: Failed to open log file -> " + log_filename);
+        throw std::runtime_error("TenetTracer: Failed to open log file -> " + log_filename.string());
     }
 
-    auto& emu = m_win_emu.emu();
+    auto& emu = win_emu_.emu();
+
     auto* read_hook = emu.hook_memory_read(0, 0xFFFFFFFFFFFFFFFF, [this](uint64_t a, const void* d, size_t s) {
         this->log_memory_read(a, d, s); //
     });
-
-    m_read_hook = scoped_hook(emu, read_hook);
+    read_hook_ = scoped_hook(emu, read_hook);
 
     auto* write_hook = emu.hook_memory_write(0, 0xFFFFFFFFFFFFFFFF, [this](uint64_t a, const void* d, size_t s) {
         this->log_memory_write(a, d, s); //
     });
+    write_hook_ = scoped_hook(emu, write_hook);
 
-    m_write_hook = scoped_hook(emu, write_hook);
+    auto* execute_hook = emu.hook_memory_execution([&](uint64_t address) {
+        this->process_instruction(address); //
+    });
+    execute_hook_ = scoped_hook(emu, execute_hook);
 }
 
-TenetTracer::~TenetTracer()
+tenet_tracer::~tenet_tracer()
 {
     filter_and_write_buffer();
 
-    if (m_log_file.is_open())
+    if (log_file_.is_open())
     {
-        m_log_file.close();
+        log_file_.close();
     }
 }
 
-void TenetTracer::filter_and_write_buffer()
+void tenet_tracer::filter_and_write_buffer()
 {
-    if (m_raw_log_buffer.empty())
+    if (raw_log_buffer_.empty())
     {
         return;
     }
 
-    const auto* exe_module = m_win_emu.mod_manager.executable;
+    const auto* exe_module = win_emu_.mod_manager.executable;
     if (!exe_module)
     {
-        for (const auto& line : m_raw_log_buffer)
+        for (const auto& line : raw_log_buffer_)
         {
-            m_log_file << line << '\n';
+            log_file_ << line << '\n';
         }
 
         return;
     }
 
-    if (!m_raw_log_buffer.empty())
+    if (!raw_log_buffer_.empty())
     {
-        m_log_file << m_raw_log_buffer.front() << '\n';
+        log_file_ << raw_log_buffer_.front() << '\n';
     }
 
     bool currently_outside = false;
     std::map<std::string, std::string> accumulated_changes;
 
-    for (size_t i = 1; i < m_raw_log_buffer.size(); ++i)
+    for (size_t i = 1; i < raw_log_buffer_.size(); ++i)
     {
-        const auto& line = m_raw_log_buffer[i];
+        const auto& line = raw_log_buffer_[i];
 
         size_t rip_pos = line.find("rip=0x");
         if (rip_pos == std::string::npos)
@@ -120,92 +125,85 @@ void TenetTracer::filter_and_write_buffer()
         uint64_t address = std::strtoull(line.c_str() + rip_pos + 6, &end_ptr, 16);
 
         bool is_line_inside = exe_module->is_within(address);
+        const auto _1 = utils::finally([&] {
+            currently_outside = !is_line_inside; //
+        });
 
-        if (is_line_inside)
+        if (!is_line_inside)
         {
-            // We are inside the main module.
-            if (currently_outside)
-            {
-                // JUST ENTERED FROM OUTSIDE (moment of return from API)
-                // 1. Create a synthetic log line from the accumulated changes.
-                if (!accumulated_changes.empty())
-                {
-                    std::stringstream summary_line;
-                    bool first = true;
-
-                    // Separate rip from the map as it will be added at the end.
-                    auto rip_it = accumulated_changes.find("rip");
-                    std::string last_rip;
-                    if (rip_it != accumulated_changes.end())
-                    {
-                        last_rip = rip_it->second;
-                        accumulated_changes.erase(rip_it);
-                    }
-
-                    for (const auto& pair : accumulated_changes)
-                    {
-                        if (!first)
-                        {
-                            summary_line << ",";
-                        }
-                        summary_line << pair.first << "=" << pair.second;
-                        first = false;
-                    }
-
-                    // Add the last known rip at the end.
-                    if (!last_rip.empty())
-                    {
-                        if (!first)
-                        {
-                            summary_line << ",";
-                        }
-                        summary_line << "rip=" << last_rip;
-                    }
-
-                    m_log_file << summary_line.str() << '\n';
-                }
-                accumulated_changes.clear();
-            }
-
-            // 2. Write the current line within the main module.
-            m_log_file << line << '\n';
-            currently_outside = false;
-        }
-        else
-        {
-            // We are outside the main module.
-            // 1. Accumulate the changes.
             parse_and_accumulate_changes(line, accumulated_changes);
-            currently_outside = true;
+            continue;
         }
+
+        const auto _2 = utils::finally([&] {
+            log_file_ << line << '\n'; //
+        });
+
+        if (!currently_outside || accumulated_changes.empty())
+        {
+            continue;
+        }
+
+        std::stringstream summary_line;
+        bool first = true;
+
+        auto rip_it = accumulated_changes.find("rip");
+        std::string last_rip;
+        if (rip_it != accumulated_changes.end())
+        {
+            last_rip = rip_it->second;
+            accumulated_changes.erase(rip_it);
+        }
+
+        for (const auto& pair : accumulated_changes)
+        {
+            if (!first)
+            {
+                summary_line << ",";
+            }
+            summary_line << pair.first << "=" << pair.second;
+            first = false;
+        }
+
+        if (!last_rip.empty())
+        {
+            if (!first)
+            {
+                summary_line << ",";
+            }
+            summary_line << "rip=" << last_rip;
+        }
+
+        log_file_ << summary_line.str() << '\n';
+        accumulated_changes.clear();
     }
 
-    m_raw_log_buffer.clear();
+    raw_log_buffer_.clear();
 }
 
-void TenetTracer::log_memory_read(uint64_t address, const void* data, size_t size)
+void tenet_tracer::log_memory_read(uint64_t address, const void* data, size_t size)
 {
-    if (!m_mem_read_log.str().empty())
+    if (!mem_read_log_.str().empty())
     {
-        m_mem_read_log << ";";
+        mem_read_log_ << ";";
     }
 
-    m_mem_read_log << format_hex(address) << ":" << format_byte_array(static_cast<const uint8_t*>(data), size);
+    mem_read_log_ << format_hex(address) << ":" << format_byte_array(static_cast<const uint8_t*>(data), size);
 }
 
-void TenetTracer::log_memory_write(uint64_t address, const void* data, size_t size)
+void tenet_tracer::log_memory_write(uint64_t address, const void* data, size_t size)
 {
-    if (!m_mem_write_log.str().empty())
+    if (!mem_write_log_.str().empty())
     {
-        m_mem_write_log << ";";
+        mem_write_log_ << ";";
     }
 
-    m_mem_write_log << format_hex(address) << ":" << format_byte_array(static_cast<const uint8_t*>(data), size);
+    mem_write_log_ << format_hex(address) << ":" << format_byte_array(static_cast<const uint8_t*>(data), size);
 }
 
-void TenetTracer::process_instruction(uint64_t address)
+void tenet_tracer::process_instruction(uint64_t address)
 {
-    auto& emu = m_win_emu.emu();
+    auto& emu = win_emu_.emu();
     std::stringstream trace_line;
 
     std::array<uint64_t, GPRs_TO_TRACE.size()> current_regs;
@@ -215,7 +213,7 @@ void TenetTracer::process_instruction(uint64_t address)
     }
 
     bool first_entry = true;
-    auto append_separator = [&]() {
+    auto append_separator = [&] {
         if (!first_entry)
         {
             trace_line << ",";
@@ -223,20 +221,20 @@ void TenetTracer::process_instruction(uint64_t address)
         first_entry = false;
     };
 
-    if (m_is_first_instruction)
+    if (is_first_instruction_)
     {
         for (size_t i = 0; i < GPRs_TO_TRACE.size(); ++i)
         {
             append_separator();
             trace_line << GPRs_TO_TRACE[i].second << "=" << format_hex(current_regs[i]);
         }
-        m_is_first_instruction = false;
+        is_first_instruction_ = false;
     }
     else
     {
         for (size_t i = 0; i < GPRs_TO_TRACE.size(); ++i)
         {
-            if (m_previous_regs[i] != current_regs[i])
+            if (previous_registers_[i] != current_regs[i])
             {
                 append_separator();
                 trace_line << GPRs_TO_TRACE[i].second << "=" << format_hex(current_regs[i]);
@@ -247,26 +245,25 @@ void TenetTracer::process_instruction(uint64_t address)
     append_separator();
     trace_line << "rip=" << format_hex(address);
 
-    std::string mem_reads = m_mem_read_log.str();
+    const auto mem_reads = mem_read_log_.str();
     if (!mem_reads.empty())
     {
         append_separator();
         trace_line << "mr=" << mem_reads;
     }
-    std::string mem_writes = m_mem_write_log.str();
+
+    const auto mem_writes = mem_write_log_.str();
     if (!mem_writes.empty())
     {
         append_separator();
         trace_line << "mw=" << mem_writes;
     }
 
-    // Add the data to the buffer instead of writing directly to the file.
-    m_raw_log_buffer.push_back(trace_line.str());
+    raw_log_buffer_.push_back(trace_line.str());
+    previous_registers_ = current_regs;
 
-    m_previous_regs = current_regs;
-
-    m_mem_read_log.str("");
-    m_mem_read_log.clear();
-    m_mem_write_log.str("");
-    m_mem_write_log.clear();
+    mem_read_log_.str("");
+    mem_read_log_.clear();
+    mem_write_log_.str("");
+    mem_write_log_.clear();
 }
