@@ -5,10 +5,6 @@ add_subdirectory(windows-emulator)
 add_subdirectory(windows-gdb-stub)
 add_subdirectory(backend-selection)
 
-if (MINGW)
-  add_link_options(-static-libstdc++ -static -lwinpthread)
-endif()
-
 momo_add_subdirectory_and_get_targets("backends" BACKEND_TARGETS)
 momo_targets_set_folder("backends" ${BACKEND_TARGETS})
 
