@@ -3,7 +3,8 @@
 #include <map>
 
 TenetTracer::TenetTracer(windows_emulator& win_emu, const std::string& log_filename)
-    : m_win_emu(win_emu), m_log_file(log_filename)
+    : m_win_emu(win_emu),
+      m_log_file(log_filename)
 {
     if (!m_log_file.is_open())
     {
@@ -11,19 +12,19 @@ TenetTracer::TenetTracer(windows_emulator& win_emu, const std::string& log_filen
     }
     // Set up memory hooks.
     auto& emu = m_win_emu.emu();
-    m_read_hook = emu.hook_memory_read(0, 0xFFFFFFFFFFFFFFFF, [this](uint64_t a, const void* d, size_t s) {
-        this->log_memory_read(a, d, s);
-    });
-    m_write_hook = emu.hook_memory_write(0, 0xFFFFFFFFFFFFFFFF, [this](uint64_t a, const void* d, size_t s) {
-        this->log_memory_write(a, d, s);
-    });
+    m_read_hook = emu.hook_memory_read(0, 0xFFFFFFFFFFFFFFFF,
+                                       [this](uint64_t a, const void* d, size_t s) { this->log_memory_read(a, d, s); });
+    m_write_hook = emu.hook_memory_write(
+        0, 0xFFFFFFFFFFFFFFFF, [this](uint64_t a, const void* d, size_t s) { this->log_memory_write(a, d, s); });
 }
 
 TenetTracer::~TenetTracer()
 {
     auto& emu = m_win_emu.emu();
-    if (m_read_hook) emu.delete_hook(m_read_hook);
-    if (m_write_hook) emu.delete_hook(m_write_hook);
+    if (m_read_hook)
+        emu.delete_hook(m_read_hook);
+    if (m_write_hook)
+        emu.delete_hook(m_write_hook);
 
     // Filter and write the buffer when the program ends.
     filter_and_write_buffer();
@@ -89,9 +90,10 @@ void TenetTracer::filter_and_write_buffer()
     for (size_t i = 1; i < m_raw_log_buffer.size(); ++i)
     {
         const auto& line = m_raw_log_buffer[i];
-        
+
         size_t rip_pos = line.find("rip=0x");
-        if (rip_pos == std::string::npos) continue;
+        if (rip_pos == std::string::npos)
+            continue;
 
         char* end_ptr;
         uint64_t address = std::strtoull(line.c_str() + rip_pos + 6, &end_ptr, 16);
@@ -121,15 +123,17 @@ void TenetTracer::filter_and_write_buffer()
 
                     for (const auto& pair : accumulated_changes)
                     {
-                        if (!first) summary_line << ",";
+                        if (!first)
+                            summary_line << ",";
                         summary_line << pair.first << "=" << pair.second;
                         first = false;
                     }
-                    
+
                     // Add the last known rip at the end.
                     if (!last_rip.empty())
                     {
-                        if (!first) summary_line << ",";
+                        if (!first)
+                            summary_line << ",";
                         summary_line << "rip=" << last_rip;
                     }
 
@@ -153,7 +157,6 @@ void TenetTracer::filter_and_write_buffer()
 
     m_raw_log_buffer.clear();
 }
-
 
 std::string TenetTracer::format_hex(uint64_t value)
 {
@@ -203,7 +206,8 @@ void TenetTracer::process_instruction(uint64_t address)
 
     bool first_entry = true;
     auto append_separator = [&]() {
-        if (!first_entry) {
+        if (!first_entry)
+        {
             trace_line << ",";
         }
         first_entry = false;
@@ -234,16 +238,18 @@ void TenetTracer::process_instruction(uint64_t address)
     trace_line << "rip=" << format_hex(address);
 
     std::string mem_reads = m_mem_read_log.str();
-    if (!mem_reads.empty()) {
+    if (!mem_reads.empty())
+    {
         append_separator();
         trace_line << "mr=" << mem_reads;
     }
     std::string mem_writes = m_mem_write_log.str();
-    if (!mem_writes.empty()) {
+    if (!mem_writes.empty())
+    {
         append_separator();
         trace_line << "mw=" << mem_writes;
     }
-    
+
     // Add the data to the buffer instead of writing directly to the file.
     m_raw_log_buffer.push_back(trace_line.str());
 
