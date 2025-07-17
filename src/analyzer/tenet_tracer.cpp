@@ -2,6 +2,26 @@
 #include <iomanip>
 #include <map>
 
+namespace
+{
+    std::string format_hex(uint64_t value)
+    {
+        std::stringstream ss;
+        ss << "0x" << std::hex << value;
+        return ss.str();
+    }
+
+    std::string format_byte_array(const uint8_t* data, size_t size)
+    {
+        std::stringstream ss;
+        for (size_t i = 0; i < size; ++i)
+        {
+            ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(data[i]);
+        }
+        return ss.str();
+    }
+}
+
 TenetTracer::TenetTracer(windows_emulator& win_emu, const std::string& log_filename)
     : m_win_emu(win_emu),
       m_log_file(log_filename)
@@ -22,9 +42,13 @@ TenetTracer::~TenetTracer()
 {
     auto& emu = m_win_emu.emu();
     if (m_read_hook)
+    {
         emu.delete_hook(m_read_hook);
+    }
     if (m_write_hook)
+    {
         emu.delete_hook(m_write_hook);
+    }
 
     // Filter and write the buffer when the program ends.
     filter_and_write_buffer();
@@ -93,9 +117,11 @@ void TenetTracer::filter_and_write_buffer()
 
         size_t rip_pos = line.find("rip=0x");
         if (rip_pos == std::string::npos)
+        {
             continue;
+        }
 
-        char* end_ptr;
+        char* end_ptr = nullptr;
         uint64_t address = std::strtoull(line.c_str() + rip_pos + 6, &end_ptr, 16);
 
         bool is_line_inside = exe_module->is_within(address);
@@ -124,7 +150,9 @@ void TenetTracer::filter_and_write_buffer()
                     for (const auto& pair : accumulated_changes)
                     {
                         if (!first)
+                        {
                             summary_line << ",";
+                        }
                         summary_line << pair.first << "=" << pair.second;
                         first = false;
                     }
@@ -133,7 +161,9 @@ void TenetTracer::filter_and_write_buffer()
                     if (!last_rip.empty())
                     {
                         if (!first)
+                        {
                             summary_line << ",";
+                        }
                         summary_line << "rip=" << last_rip;
                     }
 
@@ -156,23 +186,6 @@ void TenetTracer::filter_and_write_buffer()
     }
 
     m_raw_log_buffer.clear();
-}
-
-std::string TenetTracer::format_hex(uint64_t value)
-{
-    std::stringstream ss;
-    ss << "0x" << std::hex << value;
-    return ss.str();
-}
-
-std::string TenetTracer::format_byte_array(const uint8_t* data, size_t size)
-{
-    std::stringstream ss;
-    for (size_t i = 0; i < size; ++i)
-    {
-        ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(data[i]);
-    }
-    return ss.str();
 }
 
 void TenetTracer::log_memory_read(uint64_t address, const void* data, size_t size)

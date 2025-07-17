@@ -49,9 +49,6 @@ class TenetTracer
     void log_memory_read(uint64_t address, const void* data, size_t size);
     void log_memory_write(uint64_t address, const void* data, size_t size);
 
-    std::string format_hex(uint64_t value);
-    std::string format_byte_array(const uint8_t* data, size_t size);
-
     windows_emulator& m_win_emu;
     std::ofstream m_log_file;
 
