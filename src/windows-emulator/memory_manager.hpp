@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "memory_permission_ext.hpp"
+#include "memory_region.hpp"
 #include "serialization.hpp"
 
 #include <memory_interface.hpp>
@@ -14,14 +15,7 @@ constexpr auto MAX_ALLOCATION_ADDRESS = 0x00007ffffffeffffULL;
 
 // This maps to the `basic_memory_region` struct defined in
 // emulator\memory_region.hpp
-struct nt_basic_memory_region
-{
-    uint64_t start{};
-    size_t length{};
-    nt_memory_permission permissions{};
-};
-
-struct region_info : nt_basic_memory_region
+struct region_info : basic_memory_region<nt_memory_permission>
 {
     uint64_t allocation_base{};
     size_t allocation_length{};
