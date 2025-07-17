@@ -148,7 +148,7 @@ namespace syscalls
 
         c.win_emu.callbacks.on_memory_protect(aligned_start, aligned_length, requested_protection);
 
-        memory_permission old_protection_value{};
+        nt_memory_permission old_protection_value{};
 
         try
         {

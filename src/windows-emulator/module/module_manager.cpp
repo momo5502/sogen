@@ -23,14 +23,14 @@ namespace utils
         buffer.read(sym.address);
     }
 
-    static void serialize(buffer_serializer& buffer, const basic_memory_region& region)
+    static void serialize(buffer_serializer& buffer, const basic_memory_region<>& region)
     {
         buffer.write(region.start);
         buffer.write<uint64_t>(region.length);
         buffer.write(region.permissions);
     }
 
-    static void deserialize(buffer_deserializer& buffer, basic_memory_region& region)
+    static void deserialize(buffer_deserializer& buffer, basic_memory_region<>& region)
     {
         buffer.read(region.start);
         region.length = static_cast<size_t>(buffer.read<uint64_t>());
