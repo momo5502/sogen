@@ -15,6 +15,7 @@
 #include <chrono>
 #include <memory>
 #include <fstream>
+#include <sstream>
 #include <functional>
 #include <filesystem>
 #include <optional>
