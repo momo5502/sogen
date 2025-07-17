@@ -21,17 +21,41 @@ namespace
         }
         return ss.str();
     }
+
+    void parse_and_accumulate_changes(const std::string& line, std::map<std::string, std::string>& changes)
+    {
+        size_t start = 0;
+        while (start < line.length())
+        {
+            size_t end = line.find(',', start);
+            if (end == std::string::npos)
+            {
+                end = line.length();
+            }
+
+            std::string pair_str = line.substr(start, end - start);
+            size_t equals_pos = pair_str.find('=');
+            if (equals_pos != std::string::npos)
+            {
+                std::string key = pair_str.substr(0, equals_pos);
+                std::string value = pair_str.substr(equals_pos + 1);
+                changes[key] = value;
+            }
+
+            start = end + 1;
+        }
+    }
 }
 
 TenetTracer::TenetTracer(windows_emulator& win_emu, const std::string& log_filename)
     : m_win_emu(win_emu),
       m_log_file(log_filename)
 {
-    if (!m_log_file.is_open())
+    if (!m_log_file)
     {
         throw std::runtime_error("TenetTracer: Failed to open log file -> " + log_filename);
     }
-    // Set up memory hooks.
+
     auto& emu = m_win_emu.emu();
     auto* read_hook = emu.hook_memory_read(0, 0xFFFFFFFFFFFFFFFF, [this](uint64_t a, const void* d, size_t s) {
         this->log_memory_read(a, d, s); //
@@ -48,37 +72,11 @@ TenetTracer::TenetTracer(windows_emulator& win_emu, const std::string& log_filen
 
 TenetTracer::~TenetTracer()
 {
-    // Filter and write the buffer when the program ends.
     filter_and_write_buffer();
 
     if (m_log_file.is_open())
     {
         m_log_file.close();
-    }
-}
-
-// Helper function: Parses a log line and adds register changes to the map.
-static void parse_and_accumulate_changes(const std::string& line, std::map<std::string, std::string>& changes)
-{
-    size_t start = 0;
-    while (start < line.length())
-    {
-        size_t end = line.find(',', start);
-        if (end == std::string::npos)
-        {
-            end = line.length();
-        }
-
-        std::string pair_str = line.substr(start, end - start);
-        size_t equals_pos = pair_str.find('=');
-        if (equals_pos != std::string::npos)
-        {
-            std::string key = pair_str.substr(0, equals_pos);
-            std::string value = pair_str.substr(equals_pos + 1);
-            changes[key] = value; // Updates existing or adds a new one.
-        }
-
-        start = end + 1;
     }
 }
 

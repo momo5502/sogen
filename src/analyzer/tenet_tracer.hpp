@@ -38,6 +38,11 @@ class TenetTracer
     TenetTracer(windows_emulator& win_emu, const std::string& log_filename);
     ~TenetTracer();
 
+    TenetTracer(TenetTracer&) = delete;
+    TenetTracer(const TenetTracer&) = delete;
+    TenetTracer& operator=(TenetTracer&) = delete;
+    TenetTracer& operator=(const TenetTracer&) = delete;
+
     void process_instruction(uint64_t address);
 
   private:
