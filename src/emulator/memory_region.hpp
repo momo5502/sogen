@@ -2,7 +2,7 @@
 #include "memory_permission.hpp"
 #include <cstddef>
 
-template<typename PermissionType = memory_permission>
+template <typename PermissionType = memory_permission>
 struct basic_memory_region
 {
     uint64_t start{};
