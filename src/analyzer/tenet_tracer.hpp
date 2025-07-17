@@ -2,6 +2,7 @@
 
 #include <windows_emulator.hpp>
 #include <emulator/x86_register.hpp>
+#include <emulator/scoped_hook.hpp>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -37,12 +38,7 @@ class TenetTracer
     TenetTracer(windows_emulator& win_emu, const std::string& log_filename);
     ~TenetTracer();
 
-    // A new public method to call TenetTracer for each instruction.
     void process_instruction(uint64_t address);
-
-    // Disable copy and move operations.
-    TenetTracer(const TenetTracer&) = delete;
-    TenetTracer& operator=(const TenetTracer&) = delete;
 
   private:
     void filter_and_write_buffer();
@@ -64,6 +60,6 @@ class TenetTracer
     std::stringstream m_mem_write_log;
 
     // To manage memory hooks.
-    emulator_hook* m_read_hook = nullptr;
-    emulator_hook* m_write_hook = nullptr;
+    scoped_hook m_read_hook;
+    scoped_hook m_write_hook;
 };

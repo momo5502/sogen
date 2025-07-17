@@ -1,4 +1,5 @@
 #include "tenet_tracer.hpp"
+#include "scoped_hook.hpp"
 #include <iomanip>
 #include <map>
 
@@ -32,24 +33,21 @@ TenetTracer::TenetTracer(windows_emulator& win_emu, const std::string& log_filen
     }
     // Set up memory hooks.
     auto& emu = m_win_emu.emu();
-    m_read_hook = emu.hook_memory_read(0, 0xFFFFFFFFFFFFFFFF,
-                                       [this](uint64_t a, const void* d, size_t s) { this->log_memory_read(a, d, s); });
-    m_write_hook = emu.hook_memory_write(
-        0, 0xFFFFFFFFFFFFFFFF, [this](uint64_t a, const void* d, size_t s) { this->log_memory_write(a, d, s); });
+    auto* read_hook = emu.hook_memory_read(0, 0xFFFFFFFFFFFFFFFF, [this](uint64_t a, const void* d, size_t s) {
+        this->log_memory_read(a, d, s); //
+    });
+
+    m_read_hook = scoped_hook(emu, read_hook);
+
+    auto* write_hook = emu.hook_memory_write(0, 0xFFFFFFFFFFFFFFFF, [this](uint64_t a, const void* d, size_t s) {
+        this->log_memory_write(a, d, s); //
+    });
+
+    m_write_hook = scoped_hook(emu, write_hook);
 }
 
 TenetTracer::~TenetTracer()
 {
-    auto& emu = m_win_emu.emu();
-    if (m_read_hook)
-    {
-        emu.delete_hook(m_read_hook);
-    }
-    if (m_write_hook)
-    {
-        emu.delete_hook(m_write_hook);
-    }
-
     // Filter and write the buffer when the program ends.
     filter_and_write_buffer();
 
@@ -94,15 +92,14 @@ void TenetTracer::filter_and_write_buffer()
     const auto* exe_module = m_win_emu.mod_manager.executable;
     if (!exe_module)
     {
-        // If there is no main module, write the raw data and exit.
         for (const auto& line : m_raw_log_buffer)
         {
             m_log_file << line << '\n';
         }
+
         return;
     }
 
-    // Always write the first line (initial registers).
     if (!m_raw_log_buffer.empty())
     {
         m_log_file << m_raw_log_buffer.front() << '\n';
@@ -194,6 +191,7 @@ void TenetTracer::log_memory_read(uint64_t address, const void* data, size_t siz
     {
         m_mem_read_log << ";";
     }
+
     m_mem_read_log << format_hex(address) << ":" << format_byte_array(static_cast<const uint8_t*>(data), size);
 }
 
@@ -203,6 +201,7 @@ void TenetTracer::log_memory_write(uint64_t address, const void* data, size_t si
     {
         m_mem_write_log << ";";
     }
+
     m_mem_write_log << format_hex(address) << ":" << format_byte_array(static_cast<const uint8_t*>(data), size);
 }
 
