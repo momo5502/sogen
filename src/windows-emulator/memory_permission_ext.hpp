@@ -90,6 +90,7 @@ struct nt_memory_permission
     nt_memory_permission& operator=(memory_permission const& y)
     {
         this->common = y;
+        this->extended = memory_permission_ext::none;
         return *this;
     }
 
