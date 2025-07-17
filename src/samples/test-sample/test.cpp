@@ -734,6 +734,13 @@ namespace
             success = false;
         }
 
+        // Free the allocated memory
+        if (!VirtualFree(addr, 0, MEM_RELEASE))
+        {
+            puts("Failed to free allocated region");
+            success = false;
+        }
+
         return success;
     }
 
