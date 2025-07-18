@@ -764,17 +764,14 @@ namespace syscalls
 
         const auto path = filename.substr(unc_prefix.size());
 
-        const std::set<std::u16string, std::less<>> devices{
-            u"Nsi",
-            u"MountPointManager",
-        };
-
-        if (devices.contains(path))
+        // If the path after the prefix contains a drive letter (e.g., C:), it's a regular file path, not a device.
+        if (path.size() > 2 && path[1] == ':' && std::isalpha(static_cast<unsigned char>(path[0])))
         {
-            return path;
+            return std::nullopt;
         }
 
-        return std::nullopt;
+        // Otherwise, treat it as a device name.
+        return path;
     }
 
     NTSTATUS handle_NtCreateFile(const syscall_context& c, const emulator_object<handle> file_handle,
