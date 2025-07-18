@@ -48,9 +48,11 @@ namespace
     }
 }
 
-tenet_tracer::tenet_tracer(windows_emulator& win_emu, const std::filesystem::path& log_filename)
+tenet_tracer::tenet_tracer(windows_emulator& win_emu, const std::filesystem::path& log_filename,
+                           const std::set<std::string, std::less<>>& modules)
     : win_emu_(win_emu),
-      log_file_(log_filename)
+      log_file_(log_filename),
+      traced_modules_(modules)
 {
     if (!log_file_)
     {
@@ -125,6 +127,14 @@ void tenet_tracer::filter_and_write_buffer()
         uint64_t address = std::strtoull(line.c_str() + rip_pos + 6, &end_ptr, 16);
 
         bool is_line_inside = exe_module->is_within(address);
+        if (!is_line_inside && !traced_modules_.empty())
+        {
+            const auto* mod = win_emu_.mod_manager.find_by_address(address);
+            if (mod && traced_modules_.contains(mod->name))
+            {
+                is_line_inside = true;
+            }
+        }
         const auto _1 = utils::finally([&] {
             currently_outside = !is_line_inside; //
         });

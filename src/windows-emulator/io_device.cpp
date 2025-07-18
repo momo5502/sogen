@@ -49,7 +49,9 @@ std::unique_ptr<io_device> create_device(const std::u16string_view device)
         return create_security_support_provider();
     }
 
-    throw std::runtime_error("Unsupported device: " + u16_to_u8(device));
+    // For any other unhandled device, return a generic dummy device
+    // to prevent the emulator from crashing and allow the program to continue.
+    return std::make_unique<dummy_device>();
 }
 
 NTSTATUS io_device_container::io_control(windows_emulator& win_emu, const io_device_context& context)
