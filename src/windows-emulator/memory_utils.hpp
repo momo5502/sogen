@@ -20,7 +20,7 @@ inline std::string get_permission_string(const memory_permission permission)
     return res;
 }
 
-inline nt_memory_permission map_nt_to_emulator_protection(uint32_t nt_protection)
+inline std::optional<nt_memory_permission> try_map_nt_to_emulator_protection(uint32_t nt_protection)
 {
     memory_permission_ext ext = memory_permission_ext::none;
     // TODO: Check for invalid combinations
@@ -51,12 +51,24 @@ inline nt_memory_permission map_nt_to_emulator_protection(uint32_t nt_protection
     case PAGE_EXECUTE_READWRITE:
         common = memory_permission::all;
         break;
+    case 0:
     case PAGE_EXECUTE_WRITECOPY:
     default:
-        throw std::runtime_error("Failed to map protection");
+        return std::nullopt;
     }
 
     return nt_memory_permission{common, ext};
+}
+
+inline nt_memory_permission map_nt_to_emulator_protection(uint32_t nt_protection)
+{
+    const auto protection = try_map_nt_to_emulator_protection(nt_protection);
+    if (protection.has_value())
+    {
+        return *protection;
+    }
+
+    throw std::runtime_error("Failed to map protection: " + std::to_string(nt_protection));
 }
 
 inline uint32_t map_emulator_to_nt_protection(const memory_permission permission)

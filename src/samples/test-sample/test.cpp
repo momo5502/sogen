@@ -792,6 +792,11 @@ namespace
 
     bool test_apis()
     {
+        if (VirtualProtect(nullptr, 0, 0, nullptr))
+        {
+            return false;
+        }
+
         wchar_t buffer[0x100];
         DWORD size = sizeof(buffer) / 2;
         return GetComputerNameExW(ComputerNameNetBIOS, buffer, &size);

@@ -144,15 +144,19 @@ namespace syscalls
         base_address.write(aligned_start);
         bytes_to_protect.write(static_cast<uint32_t>(aligned_length));
 
-        const auto requested_protection = map_nt_to_emulator_protection(protection);
+        const auto requested_protection = try_map_nt_to_emulator_protection(protection);
+        if (!requested_protection.has_value())
+        {
+            return STATUS_INVALID_PAGE_PROTECTION;
+        }
 
-        c.win_emu.callbacks.on_memory_protect(aligned_start, aligned_length, requested_protection);
+        c.win_emu.callbacks.on_memory_protect(aligned_start, aligned_length, *requested_protection);
 
         nt_memory_permission old_protection_value{};
 
         try
         {
-            c.win_emu.memory.protect_memory(aligned_start, static_cast<size_t>(aligned_length), requested_protection,
+            c.win_emu.memory.protect_memory(aligned_start, static_cast<size_t>(aligned_length), *requested_protection,
                                             &old_protection_value);
         }
         catch (...)
@@ -180,7 +184,11 @@ namespace syscalls
         allocation_bytes = page_align_up(allocation_bytes);
         bytes_to_allocate.write(allocation_bytes);
 
-        const auto protection = map_nt_to_emulator_protection(page_protection);
+        const auto protection = try_map_nt_to_emulator_protection(page_protection);
+        if (!protection.has_value())
+        {
+            return STATUS_INVALID_PAGE_PROTECTION;
+        }
 
         auto potential_base = base_address.read();
         if (!potential_base)
@@ -204,15 +212,15 @@ namespace syscalls
         }
 
         if (commit && !reserve &&
-            c.win_emu.memory.commit_memory(potential_base, static_cast<size_t>(allocation_bytes), protection))
+            c.win_emu.memory.commit_memory(potential_base, static_cast<size_t>(allocation_bytes), *protection))
         {
-            c.win_emu.callbacks.on_memory_allocate(potential_base, allocation_bytes, protection, true);
+            c.win_emu.callbacks.on_memory_allocate(potential_base, allocation_bytes, *protection, true);
             return STATUS_SUCCESS;
         }
 
-        c.win_emu.callbacks.on_memory_allocate(potential_base, allocation_bytes, protection, false);
+        c.win_emu.callbacks.on_memory_allocate(potential_base, allocation_bytes, *protection, false);
 
-        return c.win_emu.memory.allocate_memory(potential_base, static_cast<size_t>(allocation_bytes), protection,
+        return c.win_emu.memory.allocate_memory(potential_base, static_cast<size_t>(allocation_bytes), *protection,
                                                 !commit)
                    ? STATUS_SUCCESS
                    : STATUS_MEMORY_NOT_ALLOCATED;
