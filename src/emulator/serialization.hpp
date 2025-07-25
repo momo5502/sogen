@@ -10,6 +10,7 @@
 #include <optional>
 #include <functional>
 #include <typeindex>
+#include <atomic>
 
 namespace utils
 {
