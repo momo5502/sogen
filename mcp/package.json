@@ -9,7 +9,7 @@
     "dev": "node --watch server.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.13.3"
+    "@modelcontextprotocol/sdk": "^1.17.0"
   },
   "keywords": ["mcp", "server"],
   "author": "",
