@@ -28,7 +28,8 @@ constexpr std::array<std::pair<x86_register, std::string_view>, 16> GPRs_TO_TRAC
 class tenet_tracer
 {
   public:
-    tenet_tracer(windows_emulator& win_emu, const std::filesystem::path& log_filename);
+    tenet_tracer(windows_emulator& win_emu, const std::filesystem::path& log_filename,
+                 const std::set<std::string, std::less<>>& modules);
     ~tenet_tracer();
 
     tenet_tracer(tenet_tracer&) = delete;
@@ -44,6 +45,7 @@ class tenet_tracer
 
     windows_emulator& win_emu_;
     std::ofstream log_file_;
+    const std::set<std::string, std::less<>>& traced_modules_;
 
     std::vector<std::string> raw_log_buffer_;
     std::array<uint64_t, GPRs_TO_TRACE.size()> previous_registers_{};
