@@ -1,5 +1,5 @@
 <h1 align="center">
-	<img src="https://momo5502.com/emulator/banner.png" />
+	<img src="https://momo5502.com/emulator/banner.png" height="200" />
 	<br>
 	<a href="https://github.com/momo5502/sogen?tab=GPL-2.0-1-ov-file"><img src="https://img.shields.io/github/license/momo5502/sogen?color=00B0F8"/></a>
 	<a href="https://github.com/momo5502/sogen/actions"><img src="https://img.shields.io/github/actions/workflow/status/momo5502/sogen/build.yml?branch=main&label=build"/></a>
