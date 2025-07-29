@@ -799,6 +799,11 @@ namespace syscalls
 
             io_device_container container{std::u16string(*io_device_name), c.win_emu, data};
 
+            if (!container)
+            {
+                return STATUS_OBJECT_NAME_NOT_FOUND;
+            }
+
             const auto handle = c.proc.devices.store(std::move(container));
             file_handle.write(handle);
 
