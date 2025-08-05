@@ -1086,6 +1086,7 @@ namespace syscalls
 
         std::u16string file_name;
 
+        // Get file name
         object_attributes.access([&](const auto& attrs) {
             emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> unicode_string(
                 c.emu, static_cast<uint64_t>(attrs.ObjectName));
@@ -1101,6 +1102,7 @@ namespace syscalls
             });
         });
 
+        //Build IO device
         io_device_creation_data data{};
        
         io_device_container container{u"NamedPipe", c.win_emu, data};
@@ -1118,7 +1120,7 @@ namespace syscalls
         pipe_device->max_instances = maximum_instances;
         pipe_device->inbound_quota = inbound_quota;
         pipe_device->outbound_quota = outbound_quota;
-        pipe_device->default_timeout = default_timeout.read(); // <--- FIXED
+        pipe_device->default_timeout = default_timeout.read();
 
         // Store in device handle table
         handle pipe_handle = c.proc.devices.store(std::move(container));
@@ -1128,7 +1130,7 @@ namespace syscalls
         IO_STATUS_BLOCK<EmulatorTraits<Emu64>> iosb{};
         iosb.Status = STATUS_SUCCESS;
         iosb.Information = 0;
-        io_status_block.write(iosb); // <--- FIXED
+        io_status_block.write(iosb);
 
         return STATUS_SUCCESS;
     }
