@@ -1078,11 +1078,11 @@ namespace syscalls
                                           ULONG maximum_instances, ULONG inbound_quota, ULONG outbound_quota,
                                           emulator_object<LARGE_INTEGER> default_timeout)
     {
-        UNREFERENCED_PARAMETER(desired_access);
-        UNREFERENCED_PARAMETER(share_access);
-        UNREFERENCED_PARAMETER(create_disposition);
-        UNREFERENCED_PARAMETER(create_options);
-        UNREFERENCED_PARAMETER(object_attributes);
+        (void)desired_access;
+        (void)share_access;
+        (void)create_disposition;
+        (void)create_options;
+        (void)object_attributes;
 
         std::u16string file_name;
 
