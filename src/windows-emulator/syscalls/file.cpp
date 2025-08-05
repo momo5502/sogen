@@ -1094,7 +1094,7 @@ namespace syscalls
             unicode_string.access([&](const auto& unicode) {
                 if (unicode.Length > 0 && unicode.Buffer != 0)
                 {
-                    const uint64_t buffer_addr = static_cast<uint64_t>(unicode.Buffer);
+                    auto buffer_addr = static_cast<uint64_t>(unicode.Buffer);
                     std::vector<char16_t> buffer(unicode.Length / sizeof(char16_t));
                     c.emu.read_memory(buffer_addr, buffer.data(), unicode.Length);
                     file_name.assign(buffer.begin(), buffer.end());
