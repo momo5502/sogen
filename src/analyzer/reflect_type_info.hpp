@@ -13,8 +13,8 @@
 
 #ifdef _MSC_VER
 #pragma warning(push)
+#pragma warning(disable : 4189)
 #pragma warning(disable : 4308)
-#pragma warning(disable : 4819)
 #endif
 
 #include "reflect_extension.hpp"
