@@ -436,6 +436,11 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
+    NTSTATUS handle_NtReleaseWorkerFactoryWorker()
+    {
+        return STATUS_SUCCESS;
+    }
+
     NTSTATUS handle_NtCreateIoCompletion(
         const syscall_context& c, const emulator_object<handle> event_handle, const ACCESS_MASK desired_access,
         const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
@@ -1185,6 +1190,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtQueryEvent);
     add_handler(NtRemoveIoCompletionEx);
     add_handler(NtCreateDebugObject);
+    add_handler(NtReleaseWorkerFactoryWorker);
 
 #undef add_handler
 }

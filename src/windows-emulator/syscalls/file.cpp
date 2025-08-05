@@ -9,6 +9,8 @@
 
 #include <sys/stat.h>
 
+#include "../devices/named_pipe.hpp"
+
 #if defined(OS_WINDOWS)
 #define fstat64 _fstat64
 #elif defined(OS_MAC)
@@ -1067,20 +1069,71 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtCreateNamedPipeFile(
-        const syscall_context& c, const emulator_object<handle> /*file_handle*/, const ULONG /*desired_access*/,
-        const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
-        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> /*io_status_block*/, const ULONG /*share_access*/,
-        const ULONG /*create_disposition*/, const ULONG /*create_options*/, const ULONG /*named_pipe_type*/,
-        const ULONG /*read_mode*/, const ULONG /*completion_mode*/, const ULONG /*maximum_instances*/,
-        const ULONG /*inbound_quota*/, const ULONG /*outbound_quota*/,
-        const emulator_object<LARGE_INTEGER> /*default_timeout*/)
+    NTSTATUS handle_NtCreateNamedPipeFile(const syscall_context& c, emulator_object<handle> file_handle,
+                                          ULONG desired_access,
+                                          emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                          emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                                          ULONG share_access, ULONG create_disposition, ULONG create_options,
+                                          ULONG named_pipe_type, ULONG read_mode, ULONG completion_mode,
+                                          ULONG maximum_instances, ULONG inbound_quota, ULONG outbound_quota,
+                                          emulator_object<LARGE_INTEGER> default_timeout)
     {
-        c.win_emu.log.error("Unimplemented syscall NtCreateNamedPipeFile!");
-        c.emu.stop();
+        UNREFERENCED_PARAMETER(desired_access);
+        UNREFERENCED_PARAMETER(share_access);
+        UNREFERENCED_PARAMETER(create_disposition);
+        UNREFERENCED_PARAMETER(create_options);
+        UNREFERENCED_PARAMETER(object_attributes);
 
-        return STATUS_NOT_SUPPORTED;
+        std::u16string file_name;
+
+        object_attributes.access([&](const auto& attrs) {
+            emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> unicode_string(
+                c.emu, static_cast<uint64_t>(attrs.ObjectName));
+
+            unicode_string.access([&](const auto& unicode) {
+                if (unicode.Length > 0 && unicode.Buffer != 0)
+                {
+                    const uint64_t buffer_addr = static_cast<uint64_t>(unicode.Buffer);
+                    std::vector<char16_t> buffer(unicode.Length / sizeof(char16_t));
+                    c.emu.read_memory(buffer_addr, buffer.data(), unicode.Length);
+                    file_name.assign(buffer.begin(), buffer.end());
+                }
+            });
+        });
+
+        io_device_creation_data data{};
+       
+        io_device_container container{u"NamedPipe", c.win_emu, data};
+        if (auto* pipe_device = container.get_internal_device<named_pipe>())
+        {
+            pipe_device->name = file_name;
+        }
+
+        // Create pipe and fill details
+        auto* pipe_device = container.get_internal_device<named_pipe>();
+        pipe_device->name = u"StubPipe";
+        pipe_device->pipe_type = named_pipe_type;
+        pipe_device->read_mode = read_mode;
+        pipe_device->completion_mode = completion_mode;
+        pipe_device->max_instances = maximum_instances;
+        pipe_device->inbound_quota = inbound_quota;
+        pipe_device->outbound_quota = outbound_quota;
+        pipe_device->default_timeout = default_timeout.read(); // <--- FIXED
+
+        // Store in device handle table
+        handle pipe_handle = c.proc.devices.store(std::move(container));
+        file_handle.write(pipe_handle);
+            
+        // Return status via IOSB
+        IO_STATUS_BLOCK<EmulatorTraits<Emu64>> iosb{};
+        iosb.Status = STATUS_SUCCESS;
+        iosb.Information = 0;
+        io_status_block.write(iosb); // <--- FIXED
+
+        return STATUS_SUCCESS;
     }
+
+
 
     NTSTATUS handle_NtFsControlFile(const syscall_context& c, const handle /*event_handle*/,
                                     const uint64_t /*apc_routine*/, const uint64_t /*app_context*/,
