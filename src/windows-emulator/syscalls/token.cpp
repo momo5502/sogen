@@ -200,6 +200,20 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
+        if (token_information_class == TokenElevationType)
+        {
+            constexpr auto required_size = sizeof(TOKEN_ELEVATION_TYPE);
+            return_length.write(required_size);
+
+            if (required_size > token_information_length)
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            emulator_object<ULONG>{c.emu, token_information}.write(1);
+            return STATUS_SUCCESS;
+        }
+
         if (token_information_class == TokenPrivateNameSpace)
         {
             constexpr auto required_size = sizeof(ULONG);
