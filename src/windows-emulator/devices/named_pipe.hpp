@@ -4,6 +4,8 @@
 class named_pipe : public io_device_container {
 public:
     std::u16string name;
+    std::deque<std::string> write_queue;
+    ACCESS_MASK access = 0; 
     ULONG pipe_type;
     ULONG read_mode;
     ULONG completion_mode;

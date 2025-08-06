@@ -648,6 +648,34 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
+        const auto* container = c.proc.devices.get(file_handle);
+        if (container)
+        {
+            if (auto* pipe = container->get_internal_device<named_pipe>())
+            {
+                if (!pipe->write_queue.empty())
+                {
+                    std::string_view data = pipe->write_queue.front();
+                    const size_t to_copy = std::min<size_t>(data.size(), length);
+
+                    commit_file_data(data.substr(0, to_copy), c.emu, io_status_block, buffer);
+
+                    if (to_copy == data.size())
+                    {
+                        pipe->write_queue.pop_front();
+                    }
+                    else
+                    {
+                        pipe->write_queue.front().erase(0, to_copy);
+                    }
+
+                    return STATUS_SUCCESS;
+                }
+
+                return STATUS_PIPE_EMPTY;
+            }
+        }
+
         const auto* f = c.proc.files.get(file_handle);
         if (!f)
         {
@@ -683,6 +711,26 @@ namespace syscalls
             c.win_emu.callbacks.on_stdout(temp_buffer);
 
             return STATUS_SUCCESS;
+        }
+
+        const auto* container = c.proc.devices.get(file_handle);
+        if (container)
+        {
+            if (auto* pipe = container->get_internal_device<named_pipe>())
+            {                
+                // TODO c.win_emu.callbacks.on_named_pipe_write(pipe->name, temp_buffer);
+                                
+                // TODO pipe->write_queue.push_back(temp_buffer);
+
+                if (io_status_block)
+                {
+                    IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                    block.Information = static_cast<ULONG>(temp_buffer.size());
+                    io_status_block.write(block);
+                }
+
+                return STATUS_SUCCESS;
+            }
         }
 
         const auto* f = c.proc.files.get(file_handle);
@@ -779,6 +827,33 @@ namespace syscalls
         return std::nullopt;
     }
 
+    NTSTATUS handle_named_pipe_create(const syscall_context& c, const emulator_object<handle>& out_handle,
+                                      const std::u16string_view filename,
+                                      const OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>& attributes,
+                                      ACCESS_MASK desired_access)
+    {
+        (void)attributes; // This isn't being consumed atm, suppressing errors
+
+        c.win_emu.callbacks.on_generic_access("Creating/opening named pipe", filename);
+
+        io_device_creation_data data{};
+
+        std::u16string device_name = u"NamedPipe";
+
+        io_device_container container{device_name, c.win_emu, data};
+
+        if (auto* pipe_device = container.get_internal_device<named_pipe>())
+        {
+            pipe_device->name = std::u16string(filename);
+            pipe_device->access = desired_access;
+        }
+
+        const auto handle = c.proc.devices.store(std::move(container));
+        out_handle.write(handle);
+
+        return STATUS_SUCCESS;
+    }
+
     NTSTATUS handle_NtCreateFile(const syscall_context& c, const emulator_object<handle> file_handle,
                                  ACCESS_MASK desired_access,
                                  const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
@@ -789,6 +864,11 @@ namespace syscalls
     {
         const auto attributes = object_attributes.read();
         auto filename = read_unicode_string(c.emu, attributes.ObjectName);
+
+        if (is_named_pipe_path(filename))
+        {
+            return handle_named_pipe_create(c, file_handle, filename, attributes, desired_access);
+        }
 
         auto printer = utils::finally([&] {
             c.win_emu.callbacks.on_generic_access("Opening file", filename); //
@@ -1082,51 +1162,37 @@ namespace syscalls
         (void)share_access;
         (void)create_disposition;
         (void)create_options;
-        (void)object_attributes;
 
-        std::u16string file_name;
+        const auto attributes = object_attributes.read();
+        const auto filename = read_unicode_string(c.emu, attributes.ObjectName);
 
-        // Get file name
-        object_attributes.access([&](const auto& attrs) {
-            emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> unicode_string(
-                c.emu, static_cast<uint64_t>(attrs.ObjectName));
+        if (!filename.starts_with(u"\\Device\\NamedPipe"))
+            return STATUS_NOT_SUPPORTED;
+                
+        c.win_emu.callbacks.on_generic_access("Creating named pipe", filename);
 
-            unicode_string.access([&](const auto& unicode) {
-                if (unicode.Length > 0 && unicode.Buffer != 0)
-                {
-                    auto buffer_addr = static_cast<uint64_t>(unicode.Buffer);
-                    std::vector<char16_t> buffer(unicode.Length / sizeof(char16_t));
-                    c.emu.read_memory(buffer_addr, buffer.data(), unicode.Length);
-                    file_name.assign(buffer.begin(), buffer.end());
-                }
-            });
-        });
-
-        //Build IO device
         io_device_creation_data data{};
-       
         io_device_container container{u"NamedPipe", c.win_emu, data};
+
         if (auto* pipe_device = container.get_internal_device<named_pipe>())
         {
-            pipe_device->name = file_name;
+            pipe_device->name = filename;
+            pipe_device->pipe_type = named_pipe_type;
+            pipe_device->read_mode = read_mode;
+            pipe_device->completion_mode = completion_mode;
+            pipe_device->max_instances = maximum_instances;
+            pipe_device->inbound_quota = inbound_quota;
+            pipe_device->outbound_quota = outbound_quota;
+            pipe_device->default_timeout = default_timeout.read();
+        }
+        else
+        {
+            return STATUS_NOT_SUPPORTED;
         }
 
-        // Create pipe and fill details
-        auto* pipe_device = container.get_internal_device<named_pipe>();
-        pipe_device->name = u"StubPipe";
-        pipe_device->pipe_type = named_pipe_type;
-        pipe_device->read_mode = read_mode;
-        pipe_device->completion_mode = completion_mode;
-        pipe_device->max_instances = maximum_instances;
-        pipe_device->inbound_quota = inbound_quota;
-        pipe_device->outbound_quota = outbound_quota;
-        pipe_device->default_timeout = default_timeout.read();
-
-        // Store in device handle table
         handle pipe_handle = c.proc.devices.store(std::move(container));
         file_handle.write(pipe_handle);
-            
-        // Return status via IOSB
+
         IO_STATUS_BLOCK<EmulatorTraits<Emu64>> iosb{};
         iosb.Status = STATUS_SUCCESS;
         iosb.Information = 0;
@@ -1134,8 +1200,6 @@ namespace syscalls
 
         return STATUS_SUCCESS;
     }
-
-
 
     NTSTATUS handle_NtFsControlFile(const syscall_context& c, const handle /*event_handle*/,
                                     const uint64_t /*apc_routine*/, const uint64_t /*app_context*/,

@@ -3,6 +3,7 @@
 #include "windows_emulator.hpp"
 #include <ctime>
 #include <platform/primitives.hpp>
+#include "windows-emulator/devices/named_pipe.hpp"
 
 struct syscall_context
 {
@@ -26,6 +27,11 @@ inline bool is_uppercase(const char character)
 inline bool is_syscall(const std::string_view name)
 {
     return name.starts_with("Nt") && name.size() > 3 && is_uppercase(name[2]);
+}
+
+inline bool is_named_pipe_path(const std::u16string_view& filename)
+{
+    return filename == u"\\Device\\NamedPipe\\" || filename.starts_with(u"\\Device\\NamedPipe\\");
 }
 
 inline std::optional<uint32_t> extract_syscall_id(const exported_symbol& symbol, std::span<const std::byte> data)
