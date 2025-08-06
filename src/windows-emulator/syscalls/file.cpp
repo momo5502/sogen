@@ -1167,8 +1167,10 @@ namespace syscalls
         const auto filename = read_unicode_string(c.emu, attributes.ObjectName);
 
         if (!filename.starts_with(u"\\Device\\NamedPipe"))
+        {
             return STATUS_NOT_SUPPORTED;
-                
+        }
+
         c.win_emu.callbacks.on_generic_access("Creating named pipe", filename);
 
         io_device_creation_data data{};
