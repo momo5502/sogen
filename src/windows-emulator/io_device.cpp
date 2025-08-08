@@ -4,6 +4,8 @@
 #include "devices/afd_endpoint.hpp"
 #include "devices/mount_point_manager.hpp"
 #include "devices/security_support_provider.hpp"
+#include "devices/named_pipe.hpp"
+#include <iostream>
 
 namespace
 {
@@ -47,6 +49,11 @@ std::unique_ptr<io_device> create_device(const std::u16string_view device)
     if (device == u"KsecDD")
     {
         return create_security_support_provider();
+    }
+
+    if (device == u"NamedPipe")
+    {
+        return std::make_unique<named_pipe>();
     }
 
     throw std::runtime_error("Unsupported device: " + u16_to_u8(device));
