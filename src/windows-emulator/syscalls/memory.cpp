@@ -181,6 +181,12 @@ namespace syscalls
         }
 
         auto allocation_bytes = bytes_to_allocate.read();
+
+        if (allocation_bytes == 0)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
         allocation_bytes = page_align_up(allocation_bytes);
         bytes_to_allocate.write(allocation_bytes);
 
@@ -242,6 +248,11 @@ namespace syscalls
         if (process_handle != CURRENT_PROCESS)
         {
             return STATUS_NOT_SUPPORTED;
+        }
+
+        if (free_type == 0)
+        {
+            return STATUS_INVALID_PARAMETER;
         }
 
         const auto allocation_base = base_address.read();
