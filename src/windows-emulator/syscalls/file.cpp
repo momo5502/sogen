@@ -717,10 +717,10 @@ namespace syscalls
         if (container)
         {
             if (auto* pipe = container->get_internal_device<named_pipe>())
-            {   
+            {
                 (void)pipe; // For future use: suppressing compiler issues
                 // TODO c.win_emu.callbacks.on_named_pipe_write(pipe->name, temp_buffer);
-                                
+
                 // TODO pipe->write_queue.push_back(temp_buffer);
 
                 if (io_status_block)
