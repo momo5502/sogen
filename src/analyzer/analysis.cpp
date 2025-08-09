@@ -172,19 +172,19 @@ namespace
             return;
         }
 
-        auto entry = c.accessed_imports.find(address);
-        if (entry != c.accessed_imports.end())
-        {
-            c.accessed_imports.erase(entry);
-        }
-
         const auto& t = c.win_emu->current_thread();
-        for (entry = c.accessed_imports.begin(); entry != c.accessed_imports.end();)
+        for (auto entry = c.accessed_imports.begin(); entry != c.accessed_imports.end();)
         {
-            auto& a = entry->second;
+            auto& a = *entry;
+            const auto is_same_thread = t.id == a.thread_id;
+
+            if (is_same_thread && address == a.address)
+            {
+                entry = c.accessed_imports.erase(entry);
+                continue;
+            }
 
             constexpr auto inst_delay = 100u;
-            const auto is_same_thread = t.id == a.thread_id;
             const auto execution_delay_reached =
                 is_same_thread && a.access_inst_count + inst_delay <= t.executed_instructions;
 
@@ -273,8 +273,8 @@ namespace
             const auto* mod_name = win_emu.mod_manager.find_name(return_address);
 
             win_emu.log.print(is_interesting_call ? color::yellow : color::dark_gray,
-                              "Executing function: %s - %s (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n",
-                              binary->name.c_str(), export_entry->second.c_str(), address, return_address, mod_name);
+                              "Executing function: %s (%s) (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n",
+                              export_entry->second.c_str(), binary->name.c_str(), address, return_address, mod_name);
 
             if (is_interesting_call)
             {
@@ -385,9 +385,10 @@ namespace
                         continue;
                     }
 
-                    const auto function_address = c.win_emu->emu().read_memory<uint64_t>(address);
+                    accessed_import access{};
 
-                    auto& access = c.accessed_imports[function_address];
+                    access.address = c.win_emu->emu().read_memory<uint64_t>(address);
+
                     access.access_rip = c.win_emu->emu().read_instruction_pointer();
                     access.accessor_module = c.win_emu->mod_manager.find_name(access.access_rip);
 
@@ -397,6 +398,8 @@ namespace
                     const auto& t = c.win_emu->current_thread();
                     access.thread_id = t.id;
                     access.access_inst_count = t.executed_instructions;
+
+                    c.accessed_imports.push_back(std::move(access));
 
                     return;
                 }
