@@ -134,6 +134,16 @@ namespace
         }
     }
 
+    void print_module_name(windows_emulator& win_emu, const size_t index)
+    {
+        const auto var_ptr = get_function_argument(win_emu.emu(), index);
+        if (var_ptr)
+        {
+            const auto* module_name = win_emu.mod_manager.find_name(var_ptr);
+            print_string(win_emu.log, module_name);
+        }
+    }
+
     void handle_function_details(analysis_context& c, const std::string_view function)
     {
         if (function == "GetEnvironmentVariableA" || function == "ExpandEnvironmentStringsA")
@@ -149,6 +159,11 @@ namespace
         {
             print_arg_as_string<char16_t>(*c.win_emu, 2);
             print_arg_as_string<char16_t>(*c.win_emu, 1);
+        }
+        else if (function == "GetProcAddress")
+        {
+            print_module_name(*c.win_emu, 0);
+            print_arg_as_string(*c.win_emu, 1);
         }
     }
 
