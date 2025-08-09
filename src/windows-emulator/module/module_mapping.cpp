@@ -52,7 +52,6 @@ namespace
             auto& imports = binary.imports[module_name];
 
             auto original_thunk_data = buffer.as<IMAGE_THUNK_DATA64>(descriptor.FirstThunk);
-
             if (descriptor.OriginalFirstThunk)
             {
                 original_thunk_data = buffer.as<IMAGE_THUNK_DATA64>(descriptor.OriginalFirstThunk);
@@ -79,7 +78,8 @@ namespace
                 }
                 else
                 {
-                    sym.name = buffer.as_string(original_thunk.u1.AddressOfData + offsetof(IMAGE_IMPORT_BY_NAME, Name));
+                    sym.name = buffer.as_string(
+                        static_cast<size_t>(original_thunk.u1.AddressOfData + offsetof(IMAGE_IMPORT_BY_NAME, Name)));
                 }
 
                 imports.push_back(std::move(sym));

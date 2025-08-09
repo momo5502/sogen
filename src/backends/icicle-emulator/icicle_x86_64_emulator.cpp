@@ -103,6 +103,9 @@ namespace icicle
 
         ~icicle_x86_64_emulator() override
         {
+            reset_object_with_delayed_destruction(this->hooks_);
+            reset_object_with_delayed_destruction(this->storage_);
+
             if (this->emu_)
             {
                 icicle_destroy_emulator(this->emu_);

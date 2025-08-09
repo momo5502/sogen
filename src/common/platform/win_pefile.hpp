@@ -298,11 +298,11 @@ typedef struct _IMAGE_IMPORT_BY_NAME
 
 typedef struct _IMAGE_IMPORT_DESCRIPTOR
 {
-    union
-    {
-        DWORD Characteristics;    // 0 for terminating null import descriptor
-        DWORD OriginalFirstThunk; // RVA to original unbound IAT (PIMAGE_THUNK_DATA)
-    } DUMMYUNIONNAME;
+    // union
+    //{
+    //     DWORD Characteristics;    // 0 for terminating null import descriptor
+    DWORD OriginalFirstThunk; // RVA to original unbound IAT (PIMAGE_THUNK_DATA)
+    //} DUMMYUNIONNAME;
     DWORD TimeDateStamp; // 0 if not bound,
                          // -1 if bound, and real date\time stamp
                          //     in IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT (new BIND)

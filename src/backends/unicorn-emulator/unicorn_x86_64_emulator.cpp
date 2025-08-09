@@ -206,7 +206,7 @@ namespace unicorn
 
             ~unicorn_x86_64_emulator() override
             {
-                this->hooks_.clear();
+                reset_object_with_delayed_destruction(this->hooks_);
                 uc_close(this->uc_);
             }
 
