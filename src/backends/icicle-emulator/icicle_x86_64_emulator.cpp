@@ -526,8 +526,8 @@ namespace icicle
 
         void perform_pending_actions()
         {
+            auto hooks_to_install = std::move(this->hooks_to_install_);
             const auto hooks_to_delete = std::move(this->hooks_to_delete_);
-            const auto hooks_to_install = std::move(this->hooks_to_install_);
 
             this->hooks_to_delete_ = {};
             this->hooks_to_install_ = {};
