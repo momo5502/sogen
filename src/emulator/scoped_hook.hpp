@@ -6,6 +6,11 @@ class scoped_hook
   public:
     scoped_hook() = default;
 
+    scoped_hook(emulator& emu)
+        : emu_(&emu)
+    {
+    }
+
     scoped_hook(emulator& emu, emulator_hook* hook)
         : scoped_hook(emu, std::vector{hook})
     {
@@ -42,6 +47,23 @@ class scoped_hook
         }
 
         return *this;
+    }
+
+    scoped_hook& operator=(emulator_hook* hook)
+    {
+        this->replace({hook});
+        return *this;
+    }
+
+    void replace(std::vector<emulator_hook*> hooks)
+    {
+        if (!this->emu_)
+        {
+            throw std::runtime_error("Invalid scoped hook");
+        }
+
+        this->remove();
+        this->hooks_ = std::move(hooks);
     }
 
     void remove()
