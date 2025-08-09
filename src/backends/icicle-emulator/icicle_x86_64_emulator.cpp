@@ -377,7 +377,9 @@ namespace icicle
             }
 
             icicle_remove_hook(this->emu_, id);
+            const auto obj = std::move(entry->second);
             this->hooks_.erase(entry);
+            (void)obj;
         }
 
         void serialize_state(utils::buffer_serializer& buffer, const bool is_snapshot) const override

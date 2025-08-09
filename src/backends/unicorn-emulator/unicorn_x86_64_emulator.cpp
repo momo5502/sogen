@@ -605,7 +605,9 @@ namespace unicorn
 
                 if (entry != this->hooks_.end())
                 {
+                    const auto obj = std::move(*entry);
                     this->hooks_.erase(entry);
+                    (void)obj;
                 }
             }
 
