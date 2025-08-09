@@ -20,6 +20,16 @@ struct analysis_settings
     string_set ignored_functions{};
 };
 
+struct accessed_import
+{
+    uint32_t thread_id{};
+    uint64_t access_rip{};
+    uint64_t access_inst_count{};
+    std::string accessor_module{};
+    std::string import_name{};
+    std::string import_module{};
+};
+
 struct analysis_context
 {
     const analysis_settings* settings{};
@@ -27,6 +37,8 @@ struct analysis_context
 
     std::string output{};
     bool has_reached_main{false};
+
+    std::map<uint64_t, accessed_import> accessed_imports{};
 };
 
 void register_analysis_callbacks(analysis_context& c);

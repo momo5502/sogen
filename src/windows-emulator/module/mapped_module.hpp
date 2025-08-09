@@ -9,7 +9,14 @@ struct exported_symbol
     uint64_t address{};
 };
 
+struct imported_symbol
+{
+    std::string name{};
+    uint64_t address{};
+};
+
 using exported_symbols = std::vector<exported_symbol>;
+using imported_symbols = std::map<std::string, std::vector<imported_symbol>>;
 using address_name_mapping = std::map<uint64_t, std::string>;
 
 struct mapped_section
@@ -28,6 +35,7 @@ struct mapped_module
     uint64_t entry_point{};
 
     exported_symbols exports{};
+    imported_symbols imports{};
     address_name_mapping address_names{};
 
     std::vector<mapped_section> sections{};

@@ -29,6 +29,64 @@ namespace
         return mem;
     }
 
+    void collect_imports(mapped_module& binary, const utils::safe_buffer_accessor<const std::byte> buffer,
+                         const PEOptionalHeader_t<std::uint64_t>& optional_header)
+    {
+        const auto& import_directory_entry = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+        if (import_directory_entry.VirtualAddress == 0 || import_directory_entry.Size == 0)
+        {
+            return;
+        }
+
+        const auto import_descriptors = buffer.as<IMAGE_IMPORT_DESCRIPTOR>(import_directory_entry.VirtualAddress);
+
+        for (size_t i = 0;; ++i)
+        {
+            const auto descriptor = import_descriptors.get(i);
+            if (!descriptor.Name)
+            {
+                break;
+            }
+
+            const auto module_name = buffer.as_string(descriptor.Name);
+            auto& imports = binary.imports[module_name];
+
+            auto original_thunk_data = buffer.as<IMAGE_THUNK_DATA>(descriptor.FirstThunk);
+
+            if (descriptor.OriginalFirstThunk)
+            {
+                original_thunk_data = buffer.as<IMAGE_THUNK_DATA>(descriptor.OriginalFirstThunk);
+            }
+
+            for (size_t j = 0;; ++j)
+            {
+                const auto original_thunk = original_thunk_data.get(j);
+                if (!original_thunk.u1.AddressOfData)
+                {
+                    break;
+                }
+
+                imported_symbol sym{};
+
+                const auto thunk_rva = descriptor.FirstThunk          //
+                                       + sizeof(IMAGE_THUNK_DATA) * j //
+                                       + offsetof(IMAGE_THUNK_DATA, u1.Function);
+                sym.address = thunk_rva + binary.image_base;
+
+                if (IMAGE_SNAP_BY_ORDINAL(original_thunk.u1.Ordinal))
+                {
+                    sym.name = "#" + std::to_string(original_thunk.u1.Ordinal);
+                }
+                else
+                {
+                    sym.name = buffer.as_string(original_thunk.u1.AddressOfData + offsetof(IMAGE_IMPORT_BY_NAME, Name));
+                }
+
+                imports.push_back(std::move(sym));
+            }
+        }
+    }
+
     void collect_exports(mapped_module& binary, const utils::safe_buffer_accessor<const std::byte> buffer,
                          const PEOptionalHeader_t<std::uint64_t>& optional_header)
     {
@@ -248,6 +306,7 @@ mapped_module map_module_from_data(memory_manager& memory, const std::span<const
 
     apply_relocations(binary, mapped_buffer, optional_header);
     collect_exports(binary, mapped_buffer, optional_header);
+    collect_imports(binary, mapped_buffer, optional_header);
 
     memory.write_memory(binary.image_base, mapped_memory.data(), mapped_memory.size());
 

@@ -124,7 +124,7 @@ namespace
     }
 
     template <typename CharType = char>
-    void print_arg_as_string(windows_emulator& win_emu, size_t index)
+    void print_arg_as_string(windows_emulator& win_emu, const size_t index)
     {
         const auto var_ptr = get_function_argument(win_emu.emu(), index);
         if (var_ptr)
@@ -152,9 +152,60 @@ namespace
         }
     }
 
+    bool is_thread_alive(const analysis_context& c, const uint32_t thread_id)
+    {
+        for (const auto& t : c.win_emu->process.threads | std::views::values)
+        {
+            if (t.id == thread_id)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    void update_import_access(analysis_context& c, const uint64_t address)
+    {
+        if (c.accessed_imports.empty())
+        {
+            return;
+        }
+
+        auto entry = c.accessed_imports.find(address);
+        if (entry != c.accessed_imports.end())
+        {
+            c.accessed_imports.erase(entry);
+        }
+
+        const auto& t = c.win_emu->current_thread();
+        for (entry = c.accessed_imports.begin(); entry != c.accessed_imports.end();)
+        {
+            auto& a = entry->second;
+
+            constexpr auto inst_delay = 100u;
+            const auto is_same_thread = t.id == a.thread_id;
+            const auto execution_delay_reached =
+                is_same_thread && a.access_inst_count + inst_delay <= t.executed_instructions;
+
+            if (!execution_delay_reached && is_thread_alive(c, a.thread_id))
+            {
+                ++entry;
+                continue;
+            }
+
+            c.win_emu->log.print(color::green, "Import read access without execution: %s (%s) at 0x%" PRIx64 " (%s)\n",
+                                 a.import_name.c_str(), a.import_module.c_str(), a.access_rip,
+                                 a.accessor_module.c_str());
+
+            entry = c.accessed_imports.erase(entry);
+        }
+    }
+
     void handle_instruction(analysis_context& c, const uint64_t address)
     {
         auto& win_emu = *c.win_emu;
+        update_import_access(c, address);
 
 #ifdef OS_EMSCRIPTEN
         if ((win_emu.get_executed_instructions() % 0x20000) == 0)
@@ -293,6 +344,65 @@ namespace
             c.win_emu->log.info("%.*s%s", static_cast<int>(data.size()), data.data(), data.ends_with("\n") ? "" : "\n");
         }
     }
+
+    void watch_import_table(analysis_context& c)
+    {
+        c.win_emu->setup_process_if_necessary();
+
+        const auto& import_list = c.win_emu->mod_manager.executable->imports;
+        if (import_list.empty())
+        {
+            return;
+        }
+
+        auto min = std::numeric_limits<uint64_t>::max();
+        auto max = std::numeric_limits<uint64_t>::min();
+
+        for (const auto& imports : import_list | std::views::values)
+        {
+            for (const auto& import : imports)
+            {
+                min = std::min(import.address, min);
+                max = std::max(import.address, max);
+            }
+        }
+
+        c.win_emu->emu().hook_memory_read(min, max - min, [&c](const uint64_t address, const void*, size_t) {
+            const auto& import_list = c.win_emu->mod_manager.executable->imports;
+
+            const auto rip = c.win_emu->emu().read_instruction_pointer();
+            if (!c.win_emu->mod_manager.executable->is_within(rip))
+            {
+                return;
+            }
+
+            for (const auto& [module_name, imports] : import_list)
+            {
+                for (const auto& import : imports)
+                {
+                    if (address != import.address)
+                    {
+                        continue;
+                    }
+
+                    const auto function_address = c.win_emu->emu().read_memory<uint64_t>(address);
+
+                    auto& access = c.accessed_imports[function_address];
+                    access.access_rip = c.win_emu->emu().read_instruction_pointer();
+                    access.accessor_module = c.win_emu->mod_manager.find_name(access.access_rip);
+
+                    access.import_name = import.name;
+                    access.import_module = module_name;
+
+                    const auto& t = c.win_emu->current_thread();
+                    access.thread_id = t.id;
+                    access.access_inst_count = t.executed_instructions;
+
+                    return;
+                }
+            }
+        });
+    }
 }
 
 void register_analysis_callbacks(analysis_context& c)
@@ -317,9 +427,11 @@ void register_analysis_callbacks(analysis_context& c)
     cb.on_generic_access = make_callback(c, handle_generic_access);
     cb.on_generic_activity = make_callback(c, handle_generic_activity);
     cb.on_suspicious_activity = make_callback(c, handle_suspicious_activity);
+
+    watch_import_table(c);
 }
 
-mapped_module* get_module_if_interesting(module_manager& manager, const string_set& modules, uint64_t address)
+mapped_module* get_module_if_interesting(module_manager& manager, const string_set& modules, const uint64_t address)
 {
     if (manager.executable->is_within(address))
     {
