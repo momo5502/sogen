@@ -67,9 +67,8 @@ namespace
 
                 imported_symbol sym{};
 
-                const auto thunk_rva = descriptor.FirstThunk            //
-                                       + sizeof(IMAGE_THUNK_DATA64) * j //
-                                       + offsetof(IMAGE_THUNK_DATA64, u1.Function);
+                static_assert(sizeof(IMAGE_THUNK_DATA64) == sizeof(uint64_t));
+                const auto thunk_rva = descriptor.FirstThunk + sizeof(IMAGE_THUNK_DATA64) * j;
                 sym.address = thunk_rva + binary.image_base;
 
                 if (IMAGE_SNAP_BY_ORDINAL64(original_thunk.u1.Ordinal))
