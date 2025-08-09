@@ -51,11 +51,11 @@ namespace
             const auto module_name = buffer.as_string(descriptor.Name);
             auto& imports = binary.imports[module_name];
 
-            auto original_thunk_data = buffer.as<IMAGE_THUNK_DATA>(descriptor.FirstThunk);
+            auto original_thunk_data = buffer.as<IMAGE_THUNK_DATA64>(descriptor.FirstThunk);
 
             if (descriptor.OriginalFirstThunk)
             {
-                original_thunk_data = buffer.as<IMAGE_THUNK_DATA>(descriptor.OriginalFirstThunk);
+                original_thunk_data = buffer.as<IMAGE_THUNK_DATA64>(descriptor.OriginalFirstThunk);
             }
 
             for (size_t j = 0;; ++j)
@@ -68,12 +68,12 @@ namespace
 
                 imported_symbol sym{};
 
-                const auto thunk_rva = descriptor.FirstThunk          //
-                                       + sizeof(IMAGE_THUNK_DATA) * j //
-                                       + offsetof(IMAGE_THUNK_DATA, u1.Function);
+                const auto thunk_rva = descriptor.FirstThunk            //
+                                       + sizeof(IMAGE_THUNK_DATA64) * j //
+                                       + offsetof(IMAGE_THUNK_DATA64, u1.Function);
                 sym.address = thunk_rva + binary.image_base;
 
-                if (IMAGE_SNAP_BY_ORDINAL(original_thunk.u1.Ordinal))
+                if (IMAGE_SNAP_BY_ORDINAL64(original_thunk.u1.Ordinal))
                 {
                     sym.name = "#" + std::to_string(original_thunk.u1.Ordinal);
                 }
