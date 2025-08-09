@@ -180,3 +180,8 @@ void logger::log(const char* message, ...) const
     format_to_string(message, data);
     this->print_message(color::gray, data);
 }
+
+void logger::newline()
+{
+    this->print(color::gray, "\n");
+}

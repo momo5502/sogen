@@ -149,26 +149,63 @@ namespace
         }
     }
 
-    void handle_function_details(analysis_context& c, const std::string_view function)
+    template <typename CharType = char>
+    void print_arg_labelled(windows_emulator& win_emu, size_t index)
     {
-        if (function == "GetEnvironmentVariableA" || function == "ExpandEnvironmentStringsA")
+        constexpr size_t max_display_length = 16;
+        const uint64_t var_ptr = get_function_argument(win_emu.emu(), index);
+
+        if (var_ptr == 0)
         {
-            print_arg_as_string(*c.win_emu, 0);
+            win_emu.log.print(color::gray, "arg%zu: <null>  ", index);
+            return;
         }
-        else if (function == "MessageBoxA")
+
+        std::string str;
+
+        if constexpr (std::is_same_v<CharType, char16_t>)
         {
-            print_arg_as_string(*c.win_emu, 2);
-            print_arg_as_string(*c.win_emu, 1);
+            str = u16_to_u8(read_string<char16_t>(win_emu.memory, var_ptr));
         }
-        else if (function == "MessageBoxW")
+        else
         {
-            print_arg_as_string<char16_t>(*c.win_emu, 2);
-            print_arg_as_string<char16_t>(*c.win_emu, 1);
+            str = read_string<char>(win_emu.memory, var_ptr);
         }
-        else if (function == "GetProcAddress")
+
+        const auto is_printable = [](const std::string& s) -> bool {
+            size_t count = 0;
+            for (unsigned char ch : s)
+            {
+                if (std::isprint(ch))
+                    ++count;
+            }
+            return !s.empty() && (count * 1.0 / s.size()) > 0.85;
+        };
+
+        if (str.length() > max_display_length)
         {
-            print_module_name(*c.win_emu, 0);
-            print_arg_as_string(*c.win_emu, 1);
+            str = str.substr(0, max_display_length) + "...";
+        }
+
+        if (is_printable(str))
+        {
+            win_emu.log.print(color::gray, "arg%zu: (0x%016llX) \"%s\"  ", index, var_ptr, str.c_str());
+        }
+        else
+        {
+            std::array<std::byte, sizeof(CharType) * max_display_length> raw{};
+            win_emu.memory.read_memory(var_ptr, raw.data(), raw.size());
+
+            std::ostringstream hex;
+            for (size_t i = 0; i < raw.size(); ++i)
+            {
+                if (i > 0 && i % 8 == 0)
+                    hex << ' ';
+                hex << std::hex << std::setw(2) << std::setfill('0')
+                    << static_cast<int>(static_cast<unsigned char>(raw[i]));
+            }
+
+            win_emu.log.print(color::gray, "arg%zu: (0x%016llX) [hex] %s  ", index, var_ptr, hex.str().c_str());
         }
         else if (function == "lstrcmp" || function == "lstrcmpi")
         {
@@ -177,6 +214,22 @@ namespace
         }
     }
 
+    void handle_function_details(analysis_context& c, const std::string_view function)
+    {
+        if (const auto it = function_argument_count.find(function); it != function_argument_count.end())
+        {
+            const bool is_unicode = is_unicode_function(function);
+            for (size_t i = 0; i < it->second; ++i)
+            {
+                if (is_unicode)
+                    print_arg_labelled<char16_t>(*c.win_emu, i);
+                else
+                    print_arg_labelled<char>(*c.win_emu, i);
+            }
+            c.win_emu->log.newline();
+        }
+    }
+    
     bool is_thread_alive(const analysis_context& c, const uint32_t thread_id)
     {
         for (const auto& t : c.win_emu->process.threads | std::views::values)

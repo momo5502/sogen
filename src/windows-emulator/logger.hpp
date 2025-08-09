@@ -11,6 +11,7 @@ class logger : public generic_logger
     void error(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);
     void success(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);
     void log(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);
+    void newline();
 
     void disable_output(const bool value)
     {
