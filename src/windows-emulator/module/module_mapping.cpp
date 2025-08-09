@@ -73,7 +73,7 @@ namespace
 
                 if (IMAGE_SNAP_BY_ORDINAL64(original_thunk.u1.Ordinal))
                 {
-                    sym.name = "#" + std::to_string(original_thunk.u1.Ordinal);
+                    sym.name = "#" + std::to_string(IMAGE_ORDINAL64(original_thunk.u1.Ordinal));
                 }
                 else
                 {
