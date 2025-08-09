@@ -4,6 +4,7 @@
 #include <backend_selection.hpp>
 #include <win_x64_gdb_stub_handler.hpp>
 #include <minidump_loader.hpp>
+#include <scoped_hook.hpp>
 
 #include "object_watching.hpp"
 #include "snapshot.hpp"
@@ -57,6 +58,113 @@ namespace
         }
     }
 
+#if !defined(__GNUC__) || defined(__clang__)
+    struct analysis_state
+    {
+        windows_emulator& win_emu_;
+        scoped_hook env_data_hook_;
+        scoped_hook env_ptr_hook_;
+        scoped_hook params_hook_;
+        std::set<std::string, std::less<>> modules_;
+        bool verbose_;
+
+        analysis_state(windows_emulator& win_emu, std::set<std::string, std::less<>> modules, const bool verbose)
+            : win_emu_(win_emu),
+              env_data_hook_(win_emu.emu()),
+              env_ptr_hook_(win_emu.emu()),
+              params_hook_(win_emu.emu()),
+              modules_(std::move(modules)),
+              verbose_(verbose)
+        {
+        }
+    };
+
+    emulator_object<RTL_USER_PROCESS_PARAMETERS64> get_process_params(windows_emulator& win_emu)
+    {
+        const auto peb = win_emu.process.peb.read();
+        return {win_emu.emu(), peb.ProcessParameters};
+    }
+
+    uint64_t get_environment_ptr(windows_emulator& win_emu)
+    {
+        const auto process_params = get_process_params(win_emu);
+        return process_params.read().Environment;
+    }
+
+    size_t get_environment_size(const x86_64_emulator& emu, const uint64_t env)
+    {
+        std::array<uint8_t, 4> data{};
+        std::array<uint8_t, 4> empty{};
+
+        for (size_t i = 0; i < 0x100000; ++i)
+        {
+            if (!emu.try_read_memory(env + i, data.data(), data.size()))
+            {
+                return i;
+            }
+
+            if (data == empty)
+            {
+                return i + data.size();
+            }
+        }
+
+        return 0;
+    }
+
+    emulator_hook* install_env_hook(const std::shared_ptr<analysis_state>& state)
+    {
+        const auto process_params = get_process_params(state->win_emu_);
+
+        auto install_env_access_hook = [state] {
+            const auto env_ptr = get_environment_ptr(state->win_emu_);
+            const auto env_size = get_environment_size(state->win_emu_.emu(), env_ptr);
+            if (!env_size)
+            {
+                state->env_data_hook_.remove();
+                return;
+            }
+
+            auto hook_handler = [state, env_ptr](const uint64_t address, const void*, const size_t size) {
+                const auto rip = state->win_emu_.emu().read_instruction_pointer();
+                const auto* mod = state->win_emu_.mod_manager.find_by_address(rip);
+                const auto is_main_access =
+                    mod == state->win_emu_.mod_manager.executable || state->modules_.contains(mod->name);
+
+                if (!is_main_access && !state->verbose_)
+                {
+                    return;
+                }
+
+                const auto offset = address - env_ptr;
+                const auto* mod_name = mod ? mod->name.c_str() : "<N/A>";
+                state->win_emu_.log.print(is_main_access ? color::green : color::dark_gray,
+                                          "Environment access: 0x%" PRIx64 " (0x%zX) at 0x%" PRIx64 " (%s)\n", offset,
+                                          size, rip, mod_name);
+            };
+
+            state->env_data_hook_ = state->win_emu_.emu().hook_memory_read(env_ptr, env_size, std::move(hook_handler));
+        };
+
+        install_env_access_hook();
+
+        auto& win_emu = state->win_emu_;
+        return state->win_emu_.emu().hook_memory_write(
+            process_params.value() + offsetof(RTL_USER_PROCESS_PARAMETERS64, Environment), 0x8,
+            [&win_emu, install = std::move(install_env_access_hook)](const uint64_t address, const void*, size_t) {
+                const auto new_process_params = get_process_params(win_emu);
+
+                const auto target_address =
+                    new_process_params.value() + offsetof(RTL_USER_PROCESS_PARAMETERS64, Environment);
+
+                if (address == target_address)
+                {
+                    install();
+                }
+            });
+    }
+#endif
+
     void watch_system_objects(windows_emulator& win_emu, const std::set<std::string, std::less<>>& modules,
                               const bool verbose)
     {
@@ -72,23 +180,33 @@ namespace
         watch_object(win_emu, modules, emulator_object<KUSER_SHARED_DATA64>{win_emu.emu(), kusd_mmio::address()},
                      verbose);
 
-        auto* params_hook = watch_object(win_emu, modules, win_emu.process.process_params, verbose);
+        auto state = std::make_shared<analysis_state>(win_emu, modules, verbose);
+
+        state->params_hook_ = watch_object(win_emu, modules, win_emu.process.process_params, verbose);
+
+        const auto update_env_hook = [state] {
+            state->env_ptr_hook_ = install_env_hook(state); //
+        };
+
+        update_env_hook();
 
         win_emu.emu().hook_memory_write(
             win_emu.process.peb.value() + offsetof(PEB64, ProcessParameters), 0x8,
-            [&win_emu, verbose, params_hook, modules](const uint64_t address, const void*, size_t) mutable {
-                const auto target_address = win_emu.process.peb.value() + offsetof(PEB64, ProcessParameters);
+            [state, update_env = std::move(update_env_hook)](const uint64_t address, const void*, size_t) {
+                const auto target_address = state->win_emu_.process.peb.value() + offsetof(PEB64, ProcessParameters);
 
-                if (address == target_address)
+                if (address != target_address)
                 {
-                    const emulator_object<RTL_USER_PROCESS_PARAMETERS64> obj{
-                        win_emu.emu(),
-                        win_emu.emu().read_memory<uint64_t>(address),
-                    };
-
-                    win_emu.emu().delete_hook(params_hook);
-                    params_hook = watch_object(win_emu, modules, obj, verbose);
+                    return;
                 }
+
+                const emulator_object<RTL_USER_PROCESS_PARAMETERS64> obj{
+                    state->win_emu_.emu(),
+                    state->win_emu_.emu().read_memory<uint64_t>(address),
+                };
+
+                state->params_hook_ = watch_object(state->win_emu_, state->modules_, obj, state->verbose_);
+                update_env();
             });
 #endif
     }
