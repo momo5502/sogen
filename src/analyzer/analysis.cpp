@@ -149,10 +149,34 @@ namespace
         }
     }
 
+    template <typename CharT>
+    static bool read_c_string_bounded(memory_manager& mem, uint64_t addr, std::basic_string<CharT>& out,
+                                      size_t max_chars = 128)
+    {
+        out.clear();
+        if (!addr)
+            return false;
+
+        for (size_t i = 0; i < max_chars; ++i)
+        {
+            CharT ch{};
+            if (!mem.try_read_memory(addr + i * sizeof(CharT), &ch, sizeof(ch)))
+                return false;
+
+            if (ch == 0)
+                return true;
+
+            out.push_back(ch);
+        }
+        return true;
+    }
+
     template <typename CharType = char>
     void print_arg_labelled(windows_emulator& win_emu, size_t index)
     {
-        constexpr size_t max_display_length = 16;
+        constexpr size_t max_display_chars = 64;
+        constexpr size_t hex_preview_bytes = 32;
+
         const uint64_t var_ptr = get_function_argument(win_emu.emu(), index);
 
         if (var_ptr == 0)
@@ -160,71 +184,82 @@ namespace
             win_emu.log.print(color::dark_gray, "arg%zu: <null>  ", index);
             return;
         }
-
-        std::string str;
+             
+        bool have_string = false;
+        std::string utf8;
 
         if constexpr (std::is_same_v<CharType, char16_t>)
         {
-            str = u16_to_u8(read_string<char16_t>(win_emu.memory, var_ptr));
+            std::u16string u16;
+            have_string = read_c_string_bounded<char16_t>(win_emu.memory, var_ptr, u16, max_display_chars + 1);
+            if (have_string)
+                utf8 = u16_to_u8(u16);
         }
         else
         {
-            str = read_string<char>(win_emu.memory, var_ptr);
+            std::string s;
+            have_string = read_c_string_bounded<char>(win_emu.memory, var_ptr, s, max_display_chars + 1);
+            if (have_string)
+                utf8 = std::move(s);
         }
 
-        const auto is_printable = [](const std::string& s) -> bool {
-            size_t count = 0;
+        auto is_mostly_printable = [](const std::string& s) -> bool {
+            if (s.empty())
+                return false;
+            size_t printable = 0;
             for (unsigned char ch : s)
-            {
                 if (std::isprint(ch))
-                    ++count;
-            }
-            return !s.empty() && (count * 1.0 / s.size()) > 0.85;
+                    ++printable;
+            return (printable * 1.0 / s.size()) > 0.85;
         };
 
-        if (str.length() > max_display_length)
+        if (have_string && is_mostly_printable(utf8))
         {
-            str = str.substr(0, max_display_length) + "...";
+            if (utf8.size() > max_display_chars)
+                utf8 = utf8.substr(0, max_display_chars) + "...";
+
+            win_emu.log.print(color::gray, "arg%zu: (0x%016llX) \"%s\"  ", index, var_ptr, utf8.c_str());
+            return;
+        }
+                
+        std::array<std::byte, hex_preview_bytes> raw{};
+        size_t got = 0;
+        for (; got < raw.size(); ++got)
+        {
+            if (!win_emu.memory.try_read_memory(var_ptr + got, raw.data() + got, 1))
+                break;
         }
 
-        if (is_printable(str))
+        std::ostringstream hex;
+        for (size_t i = 0; i < got; ++i)
         {
-            win_emu.log.print(color::gray, "arg%zu: (0x%016llX) \"%s\"  ", index, var_ptr, str.c_str());
+            if (i && (i % 8 == 0))
+                hex << ' ';
+            hex << std::hex << std::setw(2) << std::setfill('0')
+                << static_cast<int>(static_cast<unsigned char>(raw[i]));
         }
-        else
-        {
-            std::array<std::byte, sizeof(CharType) * max_display_length> raw{};
-            win_emu.memory.read_memory(var_ptr, raw.data(), raw.size());
+        if (got == 0)
+            hex << "??"; // totally unreadable
 
-            std::ostringstream hex;
-            for (size_t i = 0; i < raw.size(); ++i)
-            {
-                if (i > 0 && i % 8 == 0)
-                    hex << ' ';
-                hex << std::hex << std::setw(2) << std::setfill('0')
-                    << static_cast<int>(static_cast<unsigned char>(raw[i]));
-            }
-
-            win_emu.log.print(color::gray, "arg%zu: (0x%016llX) [hex] %s  ", index, var_ptr, hex.str().c_str());
-        }
-        else if (function == "lstrcmp" || function == "lstrcmpi")
-        {
-            print_arg_as_string(*c.win_emu, 0);
-            print_arg_as_string(*c.win_emu, 1);
-        }
+        win_emu.log.print(color::gray, "arg%zu: (0x%016llX) [hex] %s  ", index, var_ptr, hex.str().c_str());
     }
 
     void handle_function_details(analysis_context& c, const std::string_view function)
-    {
+    {        
         if (const auto it = function_argument_count.find(function); it != function_argument_count.end())
         {
-            const bool is_unicode = is_unicode_function(function);
+            const bool unicode_candidate = !is_native_api(function) && is_unicode_function(function);
+
             for (size_t i = 0; i < it->second; ++i)
             {
-                if (is_unicode)
+                if (unicode_candidate)
+                {
                     print_arg_labelled<char16_t>(*c.win_emu, i);
+                }
                 else
+                {
                     print_arg_labelled<char>(*c.win_emu, i);
+                }
             }
             c.win_emu->log.newline();
         }
@@ -324,7 +359,9 @@ namespace
                    (previous_binary && c.settings->modules.contains(previous_binary->name));
         };
 
-        const auto is_interesting_call = is_in_interesting_module(); // Save refactoring and for any future use
+        const auto is_interesting_call = is_previous_main_exe //
+                                         || is_main_exe       //
+                                         || is_in_interesting_module();
 
         if ((!c.settings->verbose_logging && !is_interesting_call) || !binary)
         {
@@ -352,17 +389,12 @@ namespace
                               "Executing function: %s (%s) (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n",
                               export_entry->second.c_str(), binary->name.c_str(), address, return_address, mod_name);
 
-            if (is_interesting_call)
-            {
-                const uint64_t caller_ip = c.win_emu->process.previous_ip;
-                const char* caller_mod = win_emu.mod_manager.find_name(caller_ip);
-                const bool caller_is_os = caller_mod && kOsMods.contains(caller_mod);
-                                
-                    if (!caller_is_os)
-                    {
-                        handle_function_details(c, export_entry->second);
-                    }
-            }
+            const bool caller_is_os = mod_name && kOsMods.contains(mod_name);
+                
+                if (!caller_is_os)
+                {
+                    handle_function_details(c, export_entry->second);
+                }
         }
         else if (address == binary->entry_point)
         {

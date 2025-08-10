@@ -136,19 +136,29 @@ inline const std::unordered_set<std::string_view> ansi_only_functions = {
 
 inline bool is_unicode_function(std::string_view name)
 {
-    if (ansi_only_functions.contains(name))
-        return false;
-    if (name.ends_with("W") || name.ends_with("ExW"))
+    if (name.ends_with("ExW") || name.ends_with("W"))
         return true;
-    if (name.ends_with("A") || name.ends_with("ExA"))
+    if (name.ends_with("ExA") || name.ends_with("A"))
         return false;
-    if (is_ambiguous_string_function(name))
+    
+    static const std::unordered_set<std::string_view> unicode_only = {
+        "RtlInitUnicodeString", // arg1 is PWSTR buffer
+        "LdrLoadDll"            // last arg is UNICODE_STRING*
+    };
+
+    if (unicode_only.contains(name))
         return true;
-    return true; // default: Windows prefers Unicode
+        
+    return false;
+}
+
+inline bool is_native_api(std::string_view s)
+{
+    return s.rfind("Nt", 0) == 0 || s.rfind("Zw", 0) == 0;
 }
 
 inline const std::unordered_set<std::string> kOsMods = {
-    "ntdll.dll",        "kernel32.dll",       "kernelbase.dll", "user32.dll",   "gdi32.dll",     "advapi32.dll",
+    "ntdll.dll",        "kernel32.dll",       "KernelBase.dll", "user32.dll",   "gdi32.dll",     "advapi32.dll",
     "ws2_32.dll",       "wininet.dll",        "winhttp.dll",    "iphlpapi.dll", "rpcrt4.dll",    "sechost.dll",
     "bcrypt.dll",       "crypt32.dll",        "combase.dll",    "ole32.dll",    "oleaut32.dll",  "shell32.dll",
     "shlwapi.dll",      "psapi.dll",          "version.dll",    "dbghelp.dll",  "msvcp_win.dll", "ucrtbase.dll",
