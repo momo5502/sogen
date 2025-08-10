@@ -157,7 +157,7 @@ namespace
 
         if (var_ptr == 0)
         {
-            win_emu.log.print(color::gray, "arg%zu: <null>  ", index);
+            win_emu.log.print(color::dark_gray, "arg%zu: <null>  ", index);
             return;
         }
 
