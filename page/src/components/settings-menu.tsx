@@ -4,6 +4,14 @@ import { Label } from "./ui/label";
 
 import { Settings } from "@/settings";
 import { TextTooltip } from "./text-tooltip";
+import { ItemList } from "./item-list";
+
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { ChevronDown } from "react-bootstrap-icons";
 
 interface SettingsMenuProps {
   settings: Settings;
@@ -167,6 +175,46 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
             }
           />
         </div>
+
+        <Popover>
+          <PopoverTrigger>
+            <TextTooltip tooltip="Don't log executions of listed functions">
+              <div className="flex items-center">
+                <Label className="flex-1 text-left cursor-pointer">
+                  Ignored Functions
+                </Label>
+                <ChevronDown />
+              </div>
+            </TextTooltip>
+          </PopoverTrigger>
+          <PopoverContent className="shadow-2xl">
+            <ItemList
+              title="Ignored Functions"
+              items={this.state.ignoredFunctions}
+              onChange={(items) => this.setState({ ignoredFunctions: items })}
+            />
+          </PopoverContent>
+        </Popover>
+
+        <Popover>
+          <PopoverTrigger>
+            <TextTooltip tooltip="Log interactions of additional modules">
+              <div className="flex items-center">
+                <Label className="flex-1 text-left cursor-pointer">
+                  Interesting Modules
+                </Label>
+                <ChevronDown />
+              </div>
+            </TextTooltip>
+          </PopoverTrigger>
+          <PopoverContent className="shadow-2xl">
+            <ItemList
+              title="Interesting Modules"
+              items={this.state.interestingModules}
+              onChange={(items) => this.setState({ interestingModules: items })}
+            />
+          </PopoverContent>
+        </Popover>
       </div>
     );
   }
