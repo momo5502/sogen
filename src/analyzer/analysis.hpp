@@ -147,5 +147,12 @@ inline bool is_unicode_function(std::string_view name)
     return true; // default: Windows prefers Unicode
 }
 
+inline const std::unordered_set<std::string> kOsMods = {
+    "ntdll.dll",        "kernel32.dll",       "kernelbase.dll", "user32.dll",   "gdi32.dll",     "advapi32.dll",
+    "ws2_32.dll",       "wininet.dll",        "winhttp.dll",    "iphlpapi.dll", "rpcrt4.dll",    "sechost.dll",
+    "bcrypt.dll",       "crypt32.dll",        "combase.dll",    "ole32.dll",    "oleaut32.dll",  "shell32.dll",
+    "shlwapi.dll",      "psapi.dll",          "version.dll",    "dbghelp.dll",  "msvcp_win.dll", "ucrtbase.dll",
+    "vcruntime140.dll", "vcruntime140_1.dll", "msvcrt.dll",     "win32u.dll"};
+
 void register_analysis_callbacks(analysis_context& c);
 mapped_module* get_module_if_interesting(module_manager& manager, const string_set& modules, uint64_t address);

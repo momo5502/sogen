@@ -356,7 +356,14 @@ namespace
 
             if (is_interesting_call)
             {
-                handle_function_details(c, export_entry->second);
+                const uint64_t caller_ip = c.win_emu->process.previous_ip;
+                const char* caller_mod = win_emu.mod_manager.find_name(caller_ip);
+                const bool caller_is_os = caller_mod && kOsMods.contains(caller_mod);
+                                
+                    if (!caller_is_os)
+                    {
+                        handle_function_details(c, export_entry->second);
+                    }
             }
         }
         else if (address == binary->entry_point)
