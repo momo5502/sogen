@@ -685,10 +685,10 @@ namespace
         catch (std::exception& e)
         {
             puts(e.what());
-
-#if defined(_WIN32) && 0
-            MessageBoxA(nullptr, e.what(), "ERROR", MB_ICONERROR);
-#endif
+        }
+        catch (...)
+        {
+            puts("An unknown exception occured");
         }
 
         return 1;
