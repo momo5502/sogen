@@ -6,6 +6,8 @@ export interface Settings {
   persist: boolean;
   execAccess: boolean;
   wasm64: boolean;
+  ignoredFunctions: string[];
+  interestingModules: string[];
 }
 
 export function createDefaultSettings(): Settings {
@@ -17,6 +19,8 @@ export function createDefaultSettings(): Settings {
     persist: false,
     execAccess: true,
     wasm64: false,
+    ignoredFunctions: [],
+    interestingModules: [],
   };
 }
 
@@ -68,6 +72,16 @@ export function translateSettings(settings: Settings): string[] {
   if (settings.execAccess) {
     switches.push("-x");
   }
+
+  settings.ignoredFunctions.forEach((f) => {
+    switches.push("-i");
+    switches.push(f);
+  });
+
+  settings.interestingModules.forEach((m) => {
+    switches.push("-m");
+    switches.push(m);
+  });
 
   return switches;
 }
