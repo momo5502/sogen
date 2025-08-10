@@ -324,21 +324,19 @@ namespace
                    (previous_binary && c.settings->modules.contains(previous_binary->name));
         };
 
-        const auto is_interesting_call = is_previous_main_exe //
-                                         || is_main_exe       //
-                                         || is_in_interesting_module();
-
-        if (!c.has_reached_main && c.settings->concise_logging && !c.settings->silent && is_main_exe)
-        {
-            c.has_reached_main = true;
-            win_emu.log.disable_output(false);
-        }
+        const auto is_interesting_call = is_in_interesting_module(); // Save refactoring and for any future use
 
         if ((!c.settings->verbose_logging && !is_interesting_call) || !binary)
         {
             return;
         }
 
+        if (!c.has_reached_main && c.settings->concise_logging && !c.settings->silent && is_main_exe)
+        {
+            c.has_reached_main = true;
+            win_emu.log.disable_output(false);
+        }
+                
         const auto export_entry = binary->address_names.find(address);
         if (export_entry != binary->address_names.end() &&
             !c.settings->ignored_functions.contains(export_entry->second))
