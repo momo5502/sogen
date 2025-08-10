@@ -54,7 +54,7 @@ namespace
     void handle_memory_allocate(const analysis_context& c, const uint64_t address, const uint64_t length,
                                 const memory_permission permission, const bool commit)
     {
-        const auto* action = commit ? "Committed" : "Allocated";
+        const auto* action = commit ? "Committed" : "Allocating";
 
         c.win_emu->log.print(is_executable(permission) ? color::gray : color::dark_gray,
                              "--> %s 0x%" PRIx64 " - 0x%" PRIx64 " (%s)\n", action, address, address + length,
@@ -168,6 +168,11 @@ namespace
         else if (function == "GetProcAddress")
         {
             print_module_name(*c.win_emu, 0);
+            print_arg_as_string(*c.win_emu, 1);
+        }
+        else if (function == "lstrcmpi")
+        {
+            print_arg_as_string(*c.win_emu, 0);
             print_arg_as_string(*c.win_emu, 1);
         }
     }
