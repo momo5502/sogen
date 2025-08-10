@@ -34,14 +34,16 @@ export function ItemList(props: ItemListProps) {
         </p>*/}
       </div>
 
-      <div className="grid gap-2 overflow-auto max-h-40 mt-2 mb-2">
+      <div className="grid gap-2 overflow-auto overflow-x-hidden max-h-45 mt-2 mb-2">
         {props.items.map((item, index) => {
           return (
             <div
               key={`item-list-item-${index}-${item}`}
-              className="flex gap-3 items-center"
+              className="flex gap-3 items-center min-w-0"
             >
-              <Label className="flex-1 text-left">{item}</Label>
+              <Label className="flex-1 text-left truncate min-w-0">
+                {item}
+              </Label>
               <Button
                 onClick={() => removeItem(index)}
                 variant="ghost"
