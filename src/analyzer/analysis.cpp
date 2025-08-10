@@ -170,7 +170,7 @@ namespace
             print_module_name(*c.win_emu, 0);
             print_arg_as_string(*c.win_emu, 1);
         }
-        else if (function == "lstrcmpi")
+        else if (function == "lstrcmp" || function == "lstrcmpi")
         {
             print_arg_as_string(*c.win_emu, 0);
             print_arg_as_string(*c.win_emu, 1);
