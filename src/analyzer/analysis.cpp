@@ -1,4 +1,5 @@
 #include "std_include.hpp"
+#include <inttypes.h>
 
 #include "analysis.hpp"
 #include "windows_emulator.hpp"
@@ -213,7 +214,7 @@ namespace
             if (utf8.size() > max_display_chars)
                 utf8 = utf8.substr(0, max_display_chars) + "...";
 
-            win_emu.log.print(color::gray, "arg%zu: (0x%016llX) \"%s\"  ", index, var_ptr, utf8.c_str());
+            win_emu.log.print(color::gray, "arg%zu: (0x%016" PRIX64 ") \"%s\"  ", index, var_ptr, utf8.c_str());
             return;
         }
 
@@ -236,7 +237,7 @@ namespace
         if (got == 0)
             hex << "??"; // totally unreadable
 
-        win_emu.log.print(color::gray, "arg%zu: (0x%016llX) [hex] %s  ", index, var_ptr, hex.str().c_str());
+        win_emu.log.print(color::gray, "arg%zu: (0x%016" PRIX64 ") [hex] \"%s\"  ", index, var_ptr, hex.str().c_str());
     }
 
     void handle_function_details(analysis_context& c, const std::string_view function)
