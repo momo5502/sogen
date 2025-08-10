@@ -36,6 +36,11 @@ namespace
                              STR_VIEW_VA(details), rip, c.win_emu->process.previous_ip);
     }
 
+    void handle_debug_string(const analysis_context& c, const std::string_view details)
+    {
+        c.win_emu->log.info("--> Debug string: %.*s\n", STR_VIEW_VA(details));
+    }
+
     void handle_generic_activity(const analysis_context& c, const std::string_view details)
     {
         c.win_emu->log.print(color::dark_gray, "%.*s\n", STR_VIEW_VA(details));
@@ -442,6 +447,7 @@ void register_analysis_callbacks(analysis_context& c)
     cb.on_thread_set_name = make_callback(c, handle_thread_set_name);
 
     cb.on_instruction = make_callback(c, handle_instruction);
+    cb.on_debug_string = make_callback(c, handle_debug_string);
     cb.on_generic_access = make_callback(c, handle_generic_access);
     cb.on_generic_activity = make_callback(c, handle_generic_activity);
     cb.on_suspicious_activity = make_callback(c, handle_suspicious_activity);
