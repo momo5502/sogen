@@ -123,11 +123,6 @@ namespace
         log.print(color::dark_gray, "--> %.*s\n", STR_VIEW_VA(str));
     }
 
-    void print_string(logger& log, const std::u16string_view str)
-    {
-        print_string(log, u16_to_u8(str));
-    }
-
     template <typename CharType = char>
     void print_arg_as_string(windows_emulator& win_emu, const size_t index)
     {
@@ -139,7 +134,7 @@ namespace
         }
     }
 
-    void print_module_name(windows_emulator& win_emu, const size_t index)
+    [[maybe_unused]] void print_module_name(windows_emulator& win_emu, const size_t index)
     {
         const auto var_ptr = get_function_argument(win_emu.emu(), index);
         if (var_ptr)
