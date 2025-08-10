@@ -184,7 +184,7 @@ namespace
             win_emu.log.print(color::dark_gray, "arg%zu: <null>  ", index);
             return;
         }
-             
+
         bool have_string = false;
         std::string utf8;
 
@@ -221,7 +221,7 @@ namespace
             win_emu.log.print(color::gray, "arg%zu: (0x%016llX) \"%s\"  ", index, var_ptr, utf8.c_str());
             return;
         }
-                
+
         std::array<std::byte, hex_preview_bytes> raw{};
         size_t got = 0;
         for (; got < raw.size(); ++got)
@@ -245,7 +245,7 @@ namespace
     }
 
     void handle_function_details(analysis_context& c, const std::string_view function)
-    {        
+    {
         if (const auto it = function_argument_count.find(function); it != function_argument_count.end())
         {
             const bool unicode_candidate = !is_native_api(function) && is_unicode_function(function);
@@ -264,7 +264,7 @@ namespace
             c.win_emu->log.newline();
         }
     }
-    
+
     bool is_thread_alive(const analysis_context& c, const uint32_t thread_id)
     {
         for (const auto& t : c.win_emu->process.threads | std::views::values)
@@ -373,7 +373,7 @@ namespace
             c.has_reached_main = true;
             win_emu.log.disable_output(false);
         }
-                
+
         const auto export_entry = binary->address_names.find(address);
         if (export_entry != binary->address_names.end() &&
             !c.settings->ignored_functions.contains(export_entry->second))
@@ -390,11 +390,11 @@ namespace
                               export_entry->second.c_str(), binary->name.c_str(), address, return_address, mod_name);
 
             const bool caller_is_os = mod_name && kOsMods.contains(mod_name);
-                
-                if (!caller_is_os)
-                {
-                    handle_function_details(c, export_entry->second);
-                }
+
+            if (!caller_is_os)
+            {
+                handle_function_details(c, export_entry->second);
+            }
         }
         else if (address == binary->entry_point)
         {

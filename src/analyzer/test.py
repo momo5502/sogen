@@ -1,26 +1,15 @@
-import os
-import subprocess
+import os import subprocess
 
-emulator_root = os.getenv('EMULATOR_ROOT')
-analysis_sample = os.getenv('ANALYSIS_SAMPLE')
-virtual_sample = 'C:/analysis-sample.exe'
+    emulator_root = os.getenv('EMULATOR_ROOT') analysis_sample = os.getenv('ANALYSIS_SAMPLE') virtual_sample = 'C:/analysis-sample.exe'
 
-application = 'analyzer'
+                              application = 'analyzer'
 
-def make_app(app):
-    if os.name == 'nt':
-        return app + ".exe"
+                              def make_app(app) : if os.name == 'nt' : return app + ".exe"
 
-    return app
+                                           return app
 
-command = [
-    os.path.join(os.getcwd(), make_app(application)),
-    '-c',
-    '-e', emulator_root,
-    '-p', virtual_sample, analysis_sample,
-    virtual_sample
-]
+                                           command =[os.path.join(os.getcwd(), make_app(application)), '-c', '-e', emulator_root, '-p', virtual_sample, analysis_sample, virtual_sample]
 
-result = subprocess.run(command, cwd=os.getcwd())
+                                                                            result = subprocess.run(command, cwd = os.getcwd())
 
-exit(result.returncode)
+                                                                                                                 exit(result.returncode)

@@ -78,8 +78,8 @@ inline std::unordered_map<std::string_view, size_t> function_argument_count = []
                              {"CreateDirectoryExA", "CreateDirectoryExW", "CreateDirectoryEx", "NtProtectVirtualMemory",
                               "NtQueryInformationProcess"});
 
-    add_functions_with_arity(map, 6, 
-                             {"CreateProcessAsUserA", "CreateProcessAsUserW", "CreateProcessAsUser", "NtQueryValueKey"});
+    add_functions_with_arity(
+        map, 6, {"CreateProcessAsUserA", "CreateProcessAsUserW", "CreateProcessAsUser", "NtQueryValueKey"});
 
     add_functions_with_arity(map, 11, {"NtCreateUserProcess"});
 
@@ -114,7 +114,7 @@ inline bool is_ambiguous_string_function(std::string_view name)
         "GetFullPathName"
         // Add more as needed
     };
-        
+
     if (name.ends_with("Ex"))
     {
         name.remove_suffix(2);
@@ -140,7 +140,7 @@ inline bool is_unicode_function(std::string_view name)
         return true;
     if (name.ends_with("ExA") || name.ends_with("A"))
         return false;
-    
+
     static const std::unordered_set<std::string_view> unicode_only = {
         "RtlInitUnicodeString", // arg1 is PWSTR buffer
         "LdrLoadDll"            // last arg is UNICODE_STRING*
@@ -148,7 +148,7 @@ inline bool is_unicode_function(std::string_view name)
 
     if (unicode_only.contains(name))
         return true;
-        
+
     return false;
 }
 
