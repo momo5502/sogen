@@ -12,6 +12,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { ChevronDown } from "react-bootstrap-icons";
+import { Input } from "./ui/input";
 
 interface SettingsMenuProps {
   settings: Settings;
@@ -54,6 +55,10 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
     }
   }
 
+  updateArgv(commandLine: string) {
+    this.setState({ commandLine });
+  }
+
   render() {
     return (
       <div className="grid gap-4">
@@ -62,6 +67,15 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
           <p className="text-sm text-muted-foreground">
             Set the settings for the emulation.
           </p>
+        </div>
+
+        <div className="flex gap-6">
+          <Input
+            id="settings-argv"
+            placeholder="Command-Line Arguments"
+            value={this.state.commandLine}
+            onChange={(e) => this.updateArgv(e.target.value)}
+          />
         </div>
 
         <div className="flex gap-6">

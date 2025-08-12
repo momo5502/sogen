@@ -1,3 +1,5 @@
+import { parse } from "shell-quote";
+
 export interface Settings {
   verbose: boolean;
   concise: boolean;
@@ -8,6 +10,7 @@ export interface Settings {
   wasm64: boolean;
   ignoredFunctions: string[];
   interestingModules: string[];
+  commandLine: string;
 }
 
 export function createDefaultSettings(): Settings {
@@ -21,6 +24,7 @@ export function createDefaultSettings(): Settings {
     wasm64: false,
     ignoredFunctions: [],
     interestingModules: [],
+    commandLine: "",
   };
 }
 
@@ -82,6 +86,13 @@ export function translateSettings(settings: Settings): string[] {
     switches.push("-m");
     switches.push(m);
   });
+
+  try {
+    const argv = parse(settings.commandLine) as string[];
+    switches.push(...argv);
+  } catch (e) {
+    console.log(e);
+  }
 
   return switches;
 }
