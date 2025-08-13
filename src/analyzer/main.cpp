@@ -430,13 +430,13 @@ namespace
 
         win_emu->emu().hook_instruction(x86_hookable_instructions::cpuid, [&] {
             const auto rip = win_emu->emu().read_instruction_pointer();
-            auto* mod = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
+            const auto mod = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
 
-            if (mod)
+            if (mod.has_value())
             {
                 const auto leaf = win_emu->emu().reg<uint32_t>(x86_register::eax);
                 win_emu->log.print(color::blue, "Executing CPUID instruction with leaf 0x%X at 0x%" PRIx64 " (%s)\n",
-                                   leaf, rip, mod->name.c_str());
+                                   leaf, rip, (*mod) ? (*mod)->name.c_str() : "<N/A>");
             }
 
             return instruction_hook_continuation::run_instruction;

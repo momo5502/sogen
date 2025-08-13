@@ -468,23 +468,25 @@ void register_analysis_callbacks(analysis_context& c)
     watch_import_table(c);
 }
 
-mapped_module* get_module_if_interesting(module_manager& manager, const string_set& modules, const uint64_t address)
+std::optional<mapped_module*> get_module_if_interesting(module_manager& manager, const string_set& modules,
+                                                        const uint64_t address)
 {
     if (manager.executable->is_within(address))
     {
         return manager.executable;
     }
 
-    if (modules.empty())
+    auto* mod = manager.find_by_address(address);
+    if (!mod)
     {
+        // Not being part of any module is interesting
         return nullptr;
     }
 
-    auto* mod = manager.find_by_address(address);
-    if (mod && modules.contains(mod->name))
+    if (modules.contains(mod->name))
     {
         return mod;
     }
 
-    return nullptr;
+    return std::nullopt;
 }
