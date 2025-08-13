@@ -170,6 +170,13 @@ namespace
             print_module_name(*c.win_emu, 0);
             print_arg_as_string(*c.win_emu, 1);
         }
+        else if (function == "WinVerifyTrust")
+        {
+            auto& emu = c.win_emu->emu();
+            emu.reg(x86_register::rip, emu.read_stack(0));
+            emu.reg(x86_register::rsp, emu.reg(x86_register::rsp) + 8);
+            emu.reg(x86_register::rax, 1);
+        }
         else if (function == "lstrcmp" || function == "lstrcmpi")
         {
             print_arg_as_string(*c.win_emu, 0);
