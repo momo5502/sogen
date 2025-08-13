@@ -12,7 +12,7 @@ emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, s
 
     return emu.emu().hook_memory_read(
         object.value(), static_cast<size_t>(object.size()),
-        [i = std::move(info), object, &emu, verbose, modules](const uint64_t address, const void*, size_t) {
+        [i = std::move(info), object, &emu, verbose, modules](const uint64_t address, const void*, const size_t size) {
             const auto rip = emu.emu().read_instruction_pointer();
             const auto* mod = emu.mod_manager.find_by_address(rip);
             const auto is_main_access = !mod || (mod == emu.mod_manager.executable || modules.contains(mod->name));
@@ -37,7 +37,7 @@ emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, s
             const auto member_name = i.get_member_name(static_cast<size_t>(offset));
 
             emu.log.print(is_main_access ? color::green : color::dark_gray,
-                          "Object access: %s - 0x%" PRIx64 " (%s) at 0x%" PRIx64 " (%s)\n", type_name.c_str(), offset,
-                          member_name.c_str(), rip, mod_name);
+                          "Object access: %s - 0x%" PRIx64 " 0x%zx (%s) at 0x%" PRIx64 " (%s)\n", type_name.c_str(),
+                          offset, size, member_name.c_str(), rip, mod_name);
         });
 }
