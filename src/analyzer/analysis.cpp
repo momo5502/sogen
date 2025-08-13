@@ -280,6 +280,7 @@ namespace
 
         const auto is_interesting_call = is_previous_main_exe //
                                          || is_main_exe       //
+                                         || !previous_binary  //
                                          || is_in_interesting_module();
 
         if (!c.has_reached_main && c.settings->concise_logging && !c.settings->silent && is_main_exe)

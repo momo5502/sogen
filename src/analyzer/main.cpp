@@ -129,7 +129,7 @@ namespace
                 const auto rip = state->win_emu_.emu().read_instruction_pointer();
                 const auto* mod = state->win_emu_.mod_manager.find_by_address(rip);
                 const auto is_main_access =
-                    mod && (mod == state->win_emu_.mod_manager.executable || state->modules_.contains(mod->name));
+                    !mod || (mod == state->win_emu_.mod_manager.executable || state->modules_.contains(mod->name));
 
                 if (!is_main_access && !state->verbose_)
                 {
