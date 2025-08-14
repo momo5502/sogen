@@ -157,6 +157,23 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
 
         <div className="flex gap-6">
           <Checkbox
+            id="settings-foreign"
+            checked={this.state.foreignAccess}
+            onCheckedChange={(checked: boolean) => {
+              this.setState({ foreignAccess: checked });
+            }}
+          />
+          <SettingsLabel
+            htmlFor="settings-foreign"
+            text={"Log Foreign Access"}
+            tooltip={
+              "Log when the application reads/writes memory of other modules"
+            }
+          />
+        </div>
+
+        <div className="flex gap-6">
+          <Checkbox
             id="settings-persist"
             checked={this.state.persist}
             onCheckedChange={(checked: boolean) => {
@@ -165,7 +182,7 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
           />
           <SettingsLabel
             htmlFor="settings-persist"
-            text={"Persist filesystem"}
+            text={"Persist Filesystem"}
             tooltip={
               "Persist files and folders that were created, modified or deleted during the emulation"
             }

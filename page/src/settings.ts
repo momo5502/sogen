@@ -7,6 +7,7 @@ export interface Settings {
   bufferStdout: boolean;
   persist: boolean;
   execAccess: boolean;
+  foreignAccess: boolean;
   wasm64: boolean;
   ignoredFunctions: string[];
   interestingModules: string[];
@@ -21,6 +22,7 @@ export function createDefaultSettings(): Settings {
     bufferStdout: true,
     persist: false,
     execAccess: true,
+    foreignAccess: true, // maybe false?
     wasm64: false,
     ignoredFunctions: [],
     interestingModules: [],
@@ -75,6 +77,10 @@ export function translateSettings(settings: Settings): string[] {
 
   if (settings.execAccess) {
     switches.push("-x");
+  }
+
+  if (settings.foreignAccess) {
+    switches.push("-f");
   }
 
   settings.ignoredFunctions.forEach((f) => {

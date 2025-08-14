@@ -24,6 +24,7 @@ namespace
     {
         mutable bool use_gdb{false};
         bool log_executable_access{false};
+        bool log_foreign_module_access{false};
         bool tenet_trace{false};
         std::filesystem::path dump{};
         std::filesystem::path minidump_path{};
@@ -402,6 +403,33 @@ namespace
         return create_application_emulator(options, args);
     }
 
+    const char* get_module_memory_region_name(const mapped_module& mod, const uint64_t address)
+    {
+        if (!mod.is_within(address))
+        {
+            return "outside???";
+        }
+
+        uint64_t first_section = mod.image_base + mod.size_of_image;
+
+        for (const auto& section : mod.sections)
+        {
+            first_section = std::min(first_section, section.region.start);
+
+            if (is_within_start_and_length(address, section.region.start, section.region.length))
+            {
+                return section.name.c_str();
+            }
+        }
+
+        if (address < first_section)
+        {
+            return "header";
+        }
+
+        return "?";
+    }
+
     bool run(const analysis_options& options, const std::span<const std::string_view> args)
     {
         analysis_context context{
@@ -441,6 +469,33 @@ namespace
 
             return instruction_hook_continuation::run_instruction;
         });
+
+        if (options.log_foreign_module_access)
+        {
+            win_emu->emu().hook_memory_read(
+                0, std::numeric_limits<uint64_t>::max(), [&](const uint64_t address, const void*, size_t) {
+                    const auto rip = win_emu->emu().read_instruction_pointer();
+                    const auto accessor = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
+
+                    if (!accessor.has_value())
+                    {
+                        return;
+                    }
+
+                    const auto* mod = win_emu->mod_manager.find_by_address(address);
+                    if (!mod || mod == *accessor)
+                    {
+                        return;
+                    }
+
+                    const auto* region_name = get_module_memory_region_name(*mod, address);
+
+                    win_emu->log.print(color::pink,
+                                       "Reading from module %s at 0x%" PRIx64 " (%s) via 0x%" PRIx64 " (%s)\n",
+                                       mod->name.c_str(), address, region_name, rip,
+                                       (*accessor) ? (*accessor)->name.c_str() : "<N/A>");
+                });
+        }
 
         if (options.log_executable_access)
         {
@@ -572,6 +627,10 @@ namespace
             else if (arg == "-x" || arg == "--exec")
             {
                 options.log_executable_access = true;
+            }
+            else if (arg == "-f" || arg == "--foreign")
+            {
+                options.log_foreign_module_access = true;
             }
             else if (arg == "-c" || arg == "--concise")
             {
