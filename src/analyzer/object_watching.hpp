@@ -41,3 +41,10 @@ emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, s
                           offset, size, member_name.c_str(), rip, mod_name);
         });
 }
+
+template <typename T>
+emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, std::less<>>& modules,
+                            const uint64_t address, const auto verbose)
+{
+    return watch_object<T>(emu, modules, emulator_object<T>{emu.emu(), address}, verbose);
+}

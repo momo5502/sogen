@@ -66,6 +66,7 @@ namespace
         scoped_hook env_data_hook_;
         scoped_hook env_ptr_hook_;
         scoped_hook params_hook_;
+        scoped_hook ldr_hook_;
         std::set<std::string, std::less<>> modules_;
         bool verbose_;
 
@@ -74,6 +75,7 @@ namespace
               env_data_hook_(win_emu.emu()),
               env_ptr_hook_(win_emu.emu()),
               params_hook_(win_emu.emu()),
+              ldr_hook_(win_emu.emu()),
               modules_(std::move(modules)),
               verbose_(verbose)
         {
@@ -178,12 +180,12 @@ namespace
 #if !defined(__GNUC__) || defined(__clang__)
         watch_object(win_emu, modules, *win_emu.current_thread().teb, verbose);
         watch_object(win_emu, modules, win_emu.process.peb, verbose);
-        watch_object(win_emu, modules, emulator_object<KUSER_SHARED_DATA64>{win_emu.emu(), kusd_mmio::address()},
-                     verbose);
+        watch_object<KUSER_SHARED_DATA64>(win_emu, modules, kusd_mmio::address(), verbose);
 
         auto state = std::make_shared<analysis_state>(win_emu, modules, verbose);
 
         state->params_hook_ = watch_object(win_emu, modules, win_emu.process.process_params, verbose);
+        state->ldr_hook_ = watch_object<PEB_LDR_DATA64>(win_emu, modules, win_emu.process.peb.read().Ldr, verbose);
 
         const auto update_env_hook = [state] {
             state->env_ptr_hook_ = install_env_hook(state); //
@@ -193,21 +195,18 @@ namespace
 
         win_emu.emu().hook_memory_write(
             win_emu.process.peb.value() + offsetof(PEB64, ProcessParameters), 0x8,
-            [state, update_env = std::move(update_env_hook)](const uint64_t address, const void*, size_t) {
-                const auto target_address = state->win_emu_.process.peb.value() + offsetof(PEB64, ProcessParameters);
-
-                if (address != target_address)
-                {
-                    return;
-                }
-
-                const emulator_object<RTL_USER_PROCESS_PARAMETERS64> obj{
-                    state->win_emu_.emu(),
-                    state->win_emu_.emu().read_memory<uint64_t>(address),
-                };
-
-                state->params_hook_ = watch_object(state->win_emu_, state->modules_, obj, state->verbose_);
+            [state, update_env = std::move(update_env_hook)](const uint64_t, const void*, size_t) {
+                const auto new_ptr = state->win_emu_.process.peb.read().ProcessParameters;
+                state->params_hook_ = watch_object<RTL_USER_PROCESS_PARAMETERS64>(state->win_emu_, state->modules_,
+                                                                                  new_ptr, state->verbose_);
                 update_env();
+            });
+
+        win_emu.emu().hook_memory_write(
+            win_emu.process.peb.value() + offsetof(PEB64, Ldr), 0x8, [state](const uint64_t, const void*, size_t) {
+                const auto new_ptr = state->win_emu_.process.peb.read().Ldr;
+                state->ldr_hook_ =
+                    watch_object<PEB_LDR_DATA64>(state->win_emu_, state->modules_, new_ptr, state->verbose_);
             });
 #endif
     }
