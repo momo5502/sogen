@@ -22,7 +22,7 @@ export function createDefaultSettings(): Settings {
     bufferStdout: true,
     persist: false,
     execAccess: true,
-    foreignAccess: true, // maybe false?
+    foreignAccess: false,
     wasm64: false,
     ignoredFunctions: [],
     interestingModules: [],
