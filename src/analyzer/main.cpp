@@ -471,8 +471,10 @@ namespace
 
         if (options.log_foreign_module_access)
         {
+            auto module_cache = std::make_shared<std::map<std::string, uint64_t>>();
             win_emu->emu().hook_memory_read(
-                0, std::numeric_limits<uint64_t>::max(), [&](const uint64_t address, const void*, size_t) {
+                0, std::numeric_limits<uint64_t>::max(),
+                [&, module_cache](const uint64_t address, const void*, size_t) {
                     const auto rip = win_emu->emu().read_instruction_pointer();
                     const auto accessor = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
 
@@ -485,6 +487,15 @@ namespace
                     if (!mod || mod == *accessor)
                     {
                         return;
+                    }
+
+                    if (concise_logging)
+                    {
+                        const auto count = ++(*module_cache)[mod->name];
+                        if (count > 100 && count % 100000 != 0)
+                        {
+                            return;
+                        }
                     }
 
                     const auto* region_name = get_module_memory_region_name(*mod, address);
@@ -516,7 +527,7 @@ namespace
                     {
                         static uint64_t count{0};
                         ++count;
-                        if (count > 100 && count % 100000 != 0)
+                        if (count > 20 && count % 100000 != 0)
                         {
                             return;
                         }
