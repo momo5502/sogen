@@ -236,6 +236,26 @@ function generateBreadcrumbElements(path: string[]): BreadcrumbElement[] {
   return elements;
 }
 
+function downloadData(
+  data: Uint8Array,
+  filename: string,
+  mimeType: string = "application/octet-stream",
+) {
+  const buffer = data.buffer.slice(
+    data.byteOffset,
+    data.byteOffset + data.byteLength,
+  ) as ArrayBuffer;
+  const blob = new Blob([buffer], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+
+  URL.revokeObjectURL(url);
+}
+
 export class FilesystemExplorer extends React.Component<
   FilesystemExplorerProps,
   FilesystemExplorerState
@@ -597,6 +617,12 @@ export class FilesystemExplorer extends React.Component<
     this.props.iconCache.delete(file);
   }
 
+  _downloadFile(file: string) {
+    const fullPath = makeFullPathWithState(this.state, file);
+    const data = this.props.filesystem.readFile(fullPath);
+    downloadData(data, file);
+  }
+
   render() {
     const elements = getFolderElements(this.props.filesystem, this.state.path);
 
@@ -638,6 +664,7 @@ export class FilesystemExplorer extends React.Component<
                 renameElementHandler={(e) =>
                   this.setState({ renameFile: e.name })
                 }
+                downloadElementHandler={(e) => this._downloadFile(e.name)}
                 addFilesHandler={this._onAddFiles}
                 iconReader={(e) =>
                   getPeIcon(
