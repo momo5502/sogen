@@ -33,10 +33,6 @@ Try it out: <a href="https://sogen.dev">sogen.dev</a>
 * 💻 __Debugging Interface__
 	* Implements GDB serial protocol for integration with common debugging tools (IDA Pro, GDB, LLDB, VS Code, ...)
 
-##
-> [!NOTE]  
-> The project is still in a very early, prototypical state. The code still needs a lot of cleanup and many features and syscalls need to be implemented. However, constant progress is being made :)
-
 ## Preview
 
 ![Preview](./docs/images/preview.jpg)
