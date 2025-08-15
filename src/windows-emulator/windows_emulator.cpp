@@ -437,6 +437,8 @@ void windows_emulator::setup_hooks()
     });
 
     this->emu().hook_instruction(x86_hookable_instructions::rdtscp, [&] {
+        this->callbacks.on_rdtscp();
+
         const auto ticks = this->clock_->timestamp_counter();
         this->emu().reg(x86_register::rax, ticks & 0xFFFFFFFF);
         this->emu().reg(x86_register::rdx, (ticks >> 32) & 0xFFFFFFFF);
@@ -449,6 +451,8 @@ void windows_emulator::setup_hooks()
     });
 
     this->emu().hook_instruction(x86_hookable_instructions::rdtsc, [&] {
+        this->callbacks.on_rdtsc();
+
         const auto ticks = this->clock_->timestamp_counter();
         this->emu().reg(x86_register::rax, ticks & 0xFFFFFFFF);
         this->emu().reg(x86_register::rdx, (ticks >> 32) & 0xFFFFFFFF);

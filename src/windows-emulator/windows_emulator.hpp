@@ -27,6 +27,8 @@ struct emulator_callbacks : module_manager::callbacks, process_context::callback
     opt_func<void(uint64_t address, uint64_t length, memory_permission, bool commit)> on_memory_allocate{};
     opt_func<void(uint64_t address, uint64_t length, memory_operation, memory_violation_type type)> on_memory_violate{};
 
+    opt_func<void()> on_rdtsc{};
+    opt_func<void()> on_rdtscp{};
     opt_func<continuation(uint32_t syscall_id, std::string_view syscall_name)> on_syscall{};
     opt_func<void(std::string_view data)> on_stdout{};
     opt_func<void(std::string_view type, std::u16string_view name)> on_generic_access{};

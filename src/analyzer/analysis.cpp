@@ -321,6 +321,40 @@ namespace
         }
     }
 
+    void handle_rdtsc(const analysis_context& c)
+    {
+        auto& win_emu = *c.win_emu;
+        auto& emu = win_emu.emu();
+
+        const auto rip = emu.read_instruction_pointer();
+        const auto mod = get_module_if_interesting(win_emu.mod_manager, c.settings->modules, rip);
+
+        if (!mod.has_value())
+        {
+            return;
+        }
+
+        win_emu.log.print(color::blue, "Executing RDTSC instruction at 0x%" PRIx64 " (%s)\n", rip,
+                          (*mod) ? (*mod)->name.c_str() : "<N/A>");
+    }
+
+    void handle_rdtscp(const analysis_context& c)
+    {
+        auto& win_emu = *c.win_emu;
+        auto& emu = win_emu.emu();
+
+        const auto rip = emu.read_instruction_pointer();
+        const auto mod = get_module_if_interesting(win_emu.mod_manager, c.settings->modules, rip);
+
+        if (!mod.has_value())
+        {
+            return;
+        }
+
+        win_emu.log.print(color::blue, "Executing RDTSCP instruction at 0x%" PRIx64 " (%s)\n", rip,
+                          (*mod) ? (*mod)->name.c_str() : "<N/A>");
+    }
+
     emulator_callbacks::continuation handle_syscall(const analysis_context& c, const uint32_t syscall_id,
                                                     const std::string_view syscall_name)
     {
@@ -447,6 +481,8 @@ void register_analysis_callbacks(analysis_context& c)
 
     cb.on_stdout = make_callback(c, handle_stdout);
     cb.on_syscall = make_callback(c, handle_syscall);
+    cb.on_rdtsc = make_callback(c, handle_rdtsc);
+    cb.on_rdtscp = make_callback(c, handle_rdtscp);
     cb.on_ioctrl = make_callback(c, handle_ioctrl);
 
     cb.on_memory_protect = make_callback(c, handle_memory_protect);
