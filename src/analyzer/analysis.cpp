@@ -298,16 +298,10 @@ namespace
         if (export_entry != binary->address_names.end() &&
             !c.settings->ignored_functions.contains(export_entry->second))
         {
-            const auto rsp = win_emu.emu().read_stack_pointer();
-
-            uint64_t return_address{};
-            win_emu.emu().try_read_memory(rsp, &return_address, sizeof(return_address));
-
-            const auto* mod_name = win_emu.mod_manager.find_name(return_address);
-
             win_emu.log.print(is_interesting_call ? color::yellow : color::dark_gray,
                               "Executing function: %s (%s) (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n",
-                              export_entry->second.c_str(), binary->name.c_str(), address, return_address, mod_name);
+                              export_entry->second.c_str(), binary->name.c_str(), address, win_emu.process.previous_ip,
+                              previous_binary ? previous_binary->name.c_str() : "<N/A>");
 
             if (is_interesting_call)
             {
@@ -318,6 +312,22 @@ namespace
         {
             win_emu.log.print(is_interesting_call ? color::yellow : color::gray,
                               "Executing entry point: %s (0x%" PRIx64 ")\n", binary->name.c_str(), address);
+        }
+        else if (is_previous_main_exe && binary != previous_binary)
+        {
+            auto nearest_entry = binary->address_names.upper_bound(address);
+            if (nearest_entry == binary->address_names.begin())
+            {
+                return;
+            }
+
+            --nearest_entry;
+
+            win_emu.log.print(
+                is_interesting_call ? color::yellow : color::dark_gray,
+                "Transition to foreign code: %s+0x%" PRIx64 " (%s) (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n",
+                nearest_entry->second.c_str(), address - nearest_entry->first, binary->name.c_str(), address,
+                win_emu.process.previous_ip, previous_binary ? previous_binary->name.c_str() : "<N/A>");
         }
     }
 
