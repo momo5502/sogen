@@ -286,8 +286,7 @@ bool memory_manager::allocate_memory(const uint64_t address, const size_t size, 
     if (!reserve_only)
     {
         this->map_memory(address, size, permissions.is_guarded() ? memory_permission::none : permissions.common);
-        entry->second.committed_regions[address] =
-            committed_region{size, nt_memory_permission{memory_permission::read_write, permissions.extended}};
+        entry->second.committed_regions[address] = committed_region{size, permissions};
     }
 
     this->update_layout_version();
