@@ -17,6 +17,7 @@ endif()
 target_link_libraries(analyzer PRIVATE
   reflect
   debugger
+  capstone
   windows-emulator
   windows-gdb-stub
   backend-selection
