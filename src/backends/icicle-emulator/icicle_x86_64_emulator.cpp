@@ -23,8 +23,8 @@ extern "C"
     icicle_emulator* icicle_create_emulator();
     int32_t icicle_protect_memory(icicle_emulator*, uint64_t address, uint64_t length, uint8_t permissions);
     int32_t icicle_map_memory(icicle_emulator*, uint64_t address, uint64_t length, uint8_t permissions);
-    int32_t icicle_map_mmio(icicle_emulator*, uint64_t address, uint64_t length, icicle_mmio_read_func* read_callback,
-                            void* read_data, icicle_mmio_write_func* write_callback, void* write_data);
+    int32_t icicle_map_mmio(icicle_emulator*, uint64_t address, uint64_t length, icicle_mmio_read_func* read_callback, void* read_data,
+                            icicle_mmio_write_func* write_callback, void* write_data);
     int32_t icicle_unmap_memory(icicle_emulator*, uint64_t address, uint64_t length);
     int32_t icicle_read_memory(icicle_emulator*, uint64_t address, void* data, size_t length);
     int32_t icicle_write_memory(icicle_emulator*, uint64_t address, const void* data, size_t length);
@@ -188,8 +188,7 @@ namespace icicle
             return icicle_read_register(this->emu_, reg, value, size);
         }
 
-        void map_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb,
-                      mmio_write_callback write_cb) override
+        void map_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) override
         {
             struct mmio_wrapper : utils::object
             {
@@ -314,8 +313,7 @@ namespace icicle
         {
             auto obj = make_function_object(std::move(callback), this->is_in_hook_);
             auto* ptr = obj.get();
-            auto* wrapper =
-                +[](void* user, const uint64_t address, const uint8_t operation, const int32_t unmapped) -> int32_t {
+            auto* wrapper = +[](void* user, const uint64_t address, const uint8_t operation, const int32_t unmapped) -> int32_t {
                 const auto violation_type = unmapped //
                                                 ? memory_violation_type::unmapped
                                                 : memory_violation_type::protection;
@@ -361,8 +359,7 @@ namespace icicle
             return wrap_hook(id);
         }
 
-        emulator_hook* hook_memory_read(const uint64_t address, const uint64_t size,
-                                        memory_access_hook_callback callback) override
+        emulator_hook* hook_memory_read(const uint64_t address, const uint64_t size, memory_access_hook_callback callback) override
         {
             return this->try_install_memory_access_hook(memory_access_hook{
                 .address = address,
@@ -372,8 +369,7 @@ namespace icicle
             });
         }
 
-        emulator_hook* hook_memory_write(const uint64_t address, const uint64_t size,
-                                         memory_access_hook_callback callback) override
+        emulator_hook* hook_memory_write(const uint64_t address, const uint64_t size, memory_access_hook_callback callback) override
         {
             return this->try_install_memory_access_hook(memory_access_hook{
                 .address = address,

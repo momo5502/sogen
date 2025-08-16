@@ -10,8 +10,7 @@ namespace syscalls
                                          const emulator_object<LCID> default_locale_id,
                                          const emulator_object<LARGE_INTEGER> /*default_casing_table_size*/)
     {
-        const auto locale_file =
-            utils::io::read_file(c.win_emu.file_sys.translate(R"(C:\Windows\System32\locale.nls)"));
+        const auto locale_file = utils::io::read_file(c.win_emu.file_sys.translate(R"(C:\Windows\System32\locale.nls)"));
         if (locale_file.empty())
         {
             return STATUS_FILE_INVALID;
@@ -27,16 +26,14 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtQueryDefaultLocale(const syscall_context&, BOOLEAN /*user_profile*/,
-                                         const emulator_object<LCID> default_locale_id)
+    NTSTATUS handle_NtQueryDefaultLocale(const syscall_context&, BOOLEAN /*user_profile*/, const emulator_object<LCID> default_locale_id)
     {
         default_locale_id.write(0x407);
         return STATUS_SUCCESS;
     }
 
     NTSTATUS handle_NtGetNlsSectionPtr(const syscall_context& c, const ULONG section_type, const ULONG section_data,
-                                       emulator_pointer /*context_data*/,
-                                       const emulator_object<uint64_t> section_pointer,
+                                       emulator_pointer /*context_data*/, const emulator_object<uint64_t> section_pointer,
                                        const emulator_object<ULONG> section_size)
     {
         if (section_type == 11)

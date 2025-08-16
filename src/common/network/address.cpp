@@ -89,8 +89,7 @@ namespace network
 
         if (this->is_ipv6())
         {
-            return !memcmp(this->address6_.sin6_addr.s6_addr, obj.address6_.sin6_addr.s6_addr,
-                           sizeof(obj.address6_.sin6_addr.s6_addr));
+            return !memcmp(this->address6_.sin6_addr.s6_addr, obj.address6_.sin6_addr.s6_addr, sizeof(obj.address6_.sin6_addr.s6_addr));
         }
 
         return false;
@@ -369,9 +368,8 @@ std::size_t std::hash<network::address>::operator()(const network::address& a) c
         hash ^= std::hash<decltype(a.get_in_addr().sin_addr.s_addr)>{}(a.get_in_addr().sin_addr.s_addr);
         break;
     case AF_INET6:
-        hash ^= std::hash<std::string_view>{}(
-            std::string_view{reinterpret_cast<const char*>(a.get_in6_addr().sin6_addr.s6_addr),
-                             sizeof(a.get_in6_addr().sin6_addr.s6_addr)});
+        hash ^= std::hash<std::string_view>{}(std::string_view{reinterpret_cast<const char*>(a.get_in6_addr().sin6_addr.s6_addr),
+                                                               sizeof(a.get_in6_addr().sin6_addr.s6_addr)});
         break;
     default:
         break;

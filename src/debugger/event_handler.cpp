@@ -127,8 +127,7 @@ namespace debugger
         void handle_read_register(const event_context& c, const Debugger::ReadRegisterRequestT& request)
         {
             std::array<uint8_t, 512> buffer{};
-            const auto res = c.win_emu.emu().read_register(static_cast<x86_register>(request.register_), buffer.data(),
-                                                           buffer.size());
+            const auto res = c.win_emu.emu().read_register(static_cast<x86_register>(request.register_), buffer.data(), buffer.size());
 
             const auto size = std::min(buffer.size(), res);
 
@@ -146,8 +145,8 @@ namespace debugger
 
             try
             {
-                size = c.win_emu.emu().write_register(static_cast<x86_register>(request.register_), request.data.data(),
-                                                      request.data.size());
+                size =
+                    c.win_emu.emu().write_register(static_cast<x86_register>(request.register_), request.data.data(), request.data.size());
                 success = true;
             }
             catch (...)

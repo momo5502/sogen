@@ -8,8 +8,7 @@ namespace
     using exception_record = EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>;
     using exception_record_map = std::unordered_map<const exception_record*, emulator_object<exception_record>>;
 
-    emulator_object<exception_record> save_exception_record(emulator_allocator& allocator,
-                                                            const exception_record& record,
+    emulator_object<exception_record> save_exception_record(emulator_allocator& allocator, const exception_record& record,
                                                             exception_record_map& record_mapping)
     {
         const auto record_obj = allocator.reserve<exception_record>();
@@ -28,8 +27,8 @@ namespace
             }
             else
             {
-                nested_record_obj = save_exception_record(
-                    allocator, *reinterpret_cast<exception_record*>(record.ExceptionRecord), record_mapping);
+                nested_record_obj =
+                    save_exception_record(allocator, *reinterpret_cast<exception_record*>(record.ExceptionRecord), record_mapping);
             }
 
             record_obj.access([&](exception_record& r) {
@@ -40,8 +39,7 @@ namespace
         return record_obj;
     }
 
-    emulator_object<exception_record> save_exception_record(emulator_allocator& allocator,
-                                                            const exception_record& record)
+    emulator_object<exception_record> save_exception_record(emulator_allocator& allocator, const exception_record& record)
     {
         exception_record_map record_mapping{};
         return save_exception_record(allocator, record, record_mapping);
@@ -94,8 +92,7 @@ namespace
     {
         constexpr auto mach_frame_size = 0x40;
         constexpr auto context_record_size = 0x4F0;
-        const auto exception_record_size =
-            calculate_exception_record_size(*reinterpret_cast<exception_record*>(pointers.ExceptionRecord));
+        const auto exception_record_size = calculate_exception_record_size(*reinterpret_cast<exception_record*>(pointers.ExceptionRecord));
         const auto combined_size = align_up(exception_record_size + context_record_size, 0x10);
 
         assert(combined_size == 0x590);
@@ -120,8 +117,7 @@ namespace
         context_record_obj.write(*reinterpret_cast<CONTEXT64*>(pointers.ContextRecord));
 
         emulator_allocator allocator{emu, new_sp + context_record_size, exception_record_size};
-        const auto exception_record_obj =
-            save_exception_record(allocator, *reinterpret_cast<exception_record*>(pointers.ExceptionRecord));
+        const auto exception_record_obj = save_exception_record(allocator, *reinterpret_cast<exception_record*>(pointers.ExceptionRecord));
 
         if (exception_record_obj.value() != allocator.get_base())
         {
@@ -172,8 +168,7 @@ void dispatch_exception(x86_64_emulator& emu, const process_context& proc, const
     dispatch_exception_pointers(emu, proc.ki_user_exception_dispatcher, pointers);
 }
 
-void dispatch_access_violation(x86_64_emulator& emu, const process_context& proc, const uint64_t address,
-                               const memory_operation operation)
+void dispatch_access_violation(x86_64_emulator& emu, const process_context& proc, const uint64_t address, const memory_operation operation)
 {
     dispatch_exception(emu, proc, STATUS_ACCESS_VIOLATION,
                        {

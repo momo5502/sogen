@@ -63,10 +63,9 @@ namespace network
 
         bool is_ready(bool in_poll) const;
 
-        static bool sleep_sockets(const std::span<const socket*>& sockets, std::chrono::milliseconds timeout,
-                                  bool in_poll);
-        static bool sleep_sockets_until(const std::span<const socket*>& sockets,
-                                        std::chrono::high_resolution_clock::time_point time_point, bool in_poll);
+        static bool sleep_sockets(const std::span<const socket*>& sockets, std::chrono::milliseconds timeout, bool in_poll);
+        static bool sleep_sockets_until(const std::span<const socket*>& sockets, std::chrono::high_resolution_clock::time_point time_point,
+                                        bool in_poll);
 
         static bool is_socket_ready(SOCKET s, bool in_poll);
 

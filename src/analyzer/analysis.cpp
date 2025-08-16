@@ -22,8 +22,7 @@ namespace
     }
 
     template <typename Return, typename... Args>
-    std::function<Return(Args...)> make_callback(analysis_context& c,
-                                                 Return (*callback)(const analysis_context&, Args...))
+    std::function<Return(Args...)> make_callback(analysis_context& c, Return (*callback)(const analysis_context&, Args...))
     {
         return [&c, callback](Args... args) {
             return callback(c, std::forward<Args>(args)...); //
@@ -33,8 +32,8 @@ namespace
     void handle_suspicious_activity(const analysis_context& c, const std::string_view details)
     {
         const auto rip = c.win_emu->emu().read_instruction_pointer();
-        c.win_emu->log.print(color::pink, "Suspicious: %.*s at 0x%" PRIx64 " (via 0x%" PRIx64 ")\n",
-                             STR_VIEW_VA(details), rip, c.win_emu->process.previous_ip);
+        c.win_emu->log.print(color::pink, "Suspicious: %.*s at 0x%" PRIx64 " (via 0x%" PRIx64 ")\n", STR_VIEW_VA(details), rip,
+                             c.win_emu->process.previous_ip);
     }
 
     void handle_debug_string(const analysis_context& c, const std::string_view details)
@@ -57,20 +56,18 @@ namespace
     {
         const auto* action = commit ? "Committed" : "Allocating";
 
-        c.win_emu->log.print(is_executable(permission) ? color::gray : color::dark_gray,
-                             "--> %s 0x%" PRIx64 " - 0x%" PRIx64 " (%s)\n", action, address, address + length,
+        c.win_emu->log.print(is_executable(permission) ? color::gray : color::dark_gray, "--> %s 0x%" PRIx64 " - 0x%" PRIx64 " (%s)\n",
+                             action, address, address + length, get_permission_string(permission).c_str());
+    }
+
+    void handle_memory_protect(const analysis_context& c, const uint64_t address, const uint64_t length, const memory_permission permission)
+    {
+        c.win_emu->log.print(color::dark_gray, "--> Changing protection at 0x%" PRIx64 "-0x%" PRIx64 " to %s\n", address, address + length,
                              get_permission_string(permission).c_str());
     }
 
-    void handle_memory_protect(const analysis_context& c, const uint64_t address, const uint64_t length,
-                               const memory_permission permission)
-    {
-        c.win_emu->log.print(color::dark_gray, "--> Changing protection at 0x%" PRIx64 "-0x%" PRIx64 " to %s\n",
-                             address, address + length, get_permission_string(permission).c_str());
-    }
-
-    void handle_memory_violate(const analysis_context& c, const uint64_t address, const uint64_t size,
-                               const memory_operation operation, const memory_violation_type type)
+    void handle_memory_violate(const analysis_context& c, const uint64_t address, const uint64_t size, const memory_operation operation,
+                               const memory_violation_type type)
     {
         const auto permission = get_permission_string(operation);
         const auto ip = c.win_emu->emu().read_instruction_pointer();
@@ -78,23 +75,19 @@ namespace
 
         if (type == memory_violation_type::protection)
         {
-            c.win_emu->log.print(color::gray,
-                                 "Protection violation: 0x%" PRIx64 " (%" PRIx64 ") - %s at 0x%" PRIx64 " (%s)\n",
-                                 address, size, permission.c_str(), ip, name);
+            c.win_emu->log.print(color::gray, "Protection violation: 0x%" PRIx64 " (%" PRIx64 ") - %s at 0x%" PRIx64 " (%s)\n", address,
+                                 size, permission.c_str(), ip, name);
         }
         else if (type == memory_violation_type::unmapped)
         {
-            c.win_emu->log.print(color::gray,
-                                 "Mapping violation: 0x%" PRIx64 " (%" PRIx64 ") - %s at 0x%" PRIx64 " (%s)\n", address,
-                                 size, permission.c_str(), ip, name);
+            c.win_emu->log.print(color::gray, "Mapping violation: 0x%" PRIx64 " (%" PRIx64 ") - %s at 0x%" PRIx64 " (%s)\n", address, size,
+                                 permission.c_str(), ip, name);
         }
     }
 
-    void handle_ioctrl(const analysis_context& c, const io_device&, const std::u16string_view device_name,
-                       const ULONG code)
+    void handle_ioctrl(const analysis_context& c, const io_device&, const std::u16string_view device_name, const ULONG code)
     {
-        c.win_emu->log.print(color::dark_gray, "--> %s: 0x%X\n", u16_to_u8(device_name).c_str(),
-                             static_cast<uint32_t>(code));
+        c.win_emu->log.print(color::dark_gray, "--> %s: 0x%X\n", u16_to_u8(device_name).c_str(), static_cast<uint32_t>(code));
     }
 
     void handle_thread_set_name(const analysis_context& c, const emulator_thread& t)
@@ -102,11 +95,9 @@ namespace
         c.win_emu->log.print(color::blue, "Setting thread (%u) name: %s\n", t.id, u16_to_u8(t.name).c_str());
     }
 
-    void handle_thread_switch(const analysis_context& c, const emulator_thread& current_thread,
-                              const emulator_thread& new_thread)
+    void handle_thread_switch(const analysis_context& c, const emulator_thread& current_thread, const emulator_thread& new_thread)
     {
-        c.win_emu->log.print(color::dark_gray, "Performing thread switch: %X -> %X\n", current_thread.id,
-                             new_thread.id);
+        c.win_emu->log.print(color::dark_gray, "Performing thread switch: %X -> %X\n", current_thread.id, new_thread.id);
     }
 
     void handle_module_load(const analysis_context& c, const mapped_module& mod)
@@ -218,8 +209,7 @@ namespace
             }
 
             constexpr auto inst_delay = 100u;
-            const auto execution_delay_reached =
-                is_same_thread && a.access_inst_count + inst_delay <= t.executed_instructions;
+            const auto execution_delay_reached = is_same_thread && a.access_inst_count + inst_delay <= t.executed_instructions;
 
             if (!execution_delay_reached && is_thread_alive(c, a.thread_id))
             {
@@ -228,8 +218,7 @@ namespace
             }
 
             c.win_emu->log.print(color::green, "Import read access without execution: %s (%s) at 0x%" PRIx64 " (%s)\n",
-                                 a.import_name.c_str(), a.import_module.c_str(), a.access_rip,
-                                 a.accessor_module.c_str());
+                                 a.import_name.c_str(), a.import_module.c_str(), a.access_rip, a.accessor_module.c_str());
 
             entry = c.accessed_imports.erase(entry);
         }
@@ -320,9 +309,8 @@ namespace
             if (!c.settings->ignored_functions.contains(export_entry->second))
             {
                 win_emu.log.print(is_interesting_call ? color::yellow : color::dark_gray,
-                                  "Executing function: %s (%s) (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n",
-                                  export_entry->second.c_str(), binary->name.c_str(), address,
-                                  win_emu.process.previous_ip,
+                                  "Executing function: %s (%s) (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n", export_entry->second.c_str(),
+                                  binary->name.c_str(), address, win_emu.process.previous_ip,
                                   previous_binary ? previous_binary->name.c_str() : "<N/A>");
 
                 if (is_interesting_call)
@@ -333,11 +321,10 @@ namespace
         }
         else if (address == binary->entry_point)
         {
-            win_emu.log.print(is_interesting_call ? color::yellow : color::gray,
-                              "Executing entry point: %s (0x%" PRIx64 ")\n", binary->name.c_str(), address);
+            win_emu.log.print(is_interesting_call ? color::yellow : color::gray, "Executing entry point: %s (0x%" PRIx64 ")\n",
+                              binary->name.c_str(), address);
         }
-        else if (is_previous_main_exe && binary != previous_binary &&
-                 !is_return(c.win_emu->emu(), win_emu.process.previous_ip))
+        else if (is_previous_main_exe && binary != previous_binary && !is_return(c.win_emu->emu(), win_emu.process.previous_ip))
         {
             auto nearest_entry = binary->address_names.upper_bound(address);
             if (nearest_entry == binary->address_names.begin())
@@ -347,11 +334,10 @@ namespace
 
             --nearest_entry;
 
-            win_emu.log.print(
-                is_interesting_call ? color::yellow : color::dark_gray,
-                "Transition to foreign code: %s+0x%" PRIx64 " (%s) (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n",
-                nearest_entry->second.c_str(), address - nearest_entry->first, binary->name.c_str(), address,
-                win_emu.process.previous_ip, previous_binary ? previous_binary->name.c_str() : "<N/A>");
+            win_emu.log.print(is_interesting_call ? color::yellow : color::dark_gray,
+                              "Transition to foreign code: %s+0x%" PRIx64 " (%s) (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n",
+                              nearest_entry->second.c_str(), address - nearest_entry->first, binary->name.c_str(), address,
+                              win_emu.process.previous_ip, previous_binary ? previous_binary->name.c_str() : "<N/A>");
         }
     }
 
@@ -368,8 +354,7 @@ namespace
             return;
         }
 
-        win_emu.log.print(color::blue, "Executing RDTSC instruction at 0x%" PRIx64 " (%s)\n", rip,
-                          (*mod) ? (*mod)->name.c_str() : "<N/A>");
+        win_emu.log.print(color::blue, "Executing RDTSC instruction at 0x%" PRIx64 " (%s)\n", rip, (*mod) ? (*mod)->name.c_str() : "<N/A>");
     }
 
     void handle_rdtscp(const analysis_context& c)
@@ -401,8 +386,8 @@ namespace
 
         if (is_sus_module)
         {
-            win_emu.log.print(color::blue, "Executing inline syscall: %.*s (0x%X) at 0x%" PRIx64 " (%s)\n",
-                              STR_VIEW_VA(syscall_name), syscall_id, address, mod ? mod->name.c_str() : "<N/A>");
+            win_emu.log.print(color::blue, "Executing inline syscall: %.*s (0x%X) at 0x%" PRIx64 " (%s)\n", STR_VIEW_VA(syscall_name),
+                              syscall_id, address, mod ? mod->name.c_str() : "<N/A>");
         }
         else if (mod->is_within(win_emu.process.previous_ip))
         {
@@ -413,16 +398,14 @@ namespace
 
             const auto* caller_mod_name = win_emu.mod_manager.find_name(return_address);
 
-            win_emu.log.print(color::dark_gray,
-                              "Executing syscall: %.*s (0x%X) at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n",
+            win_emu.log.print(color::dark_gray, "Executing syscall: %.*s (0x%X) at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n",
                               STR_VIEW_VA(syscall_name), syscall_id, address, return_address, caller_mod_name);
         }
         else
         {
             const auto* previous_mod = win_emu.mod_manager.find_by_address(win_emu.process.previous_ip);
 
-            win_emu.log.print(color::blue,
-                              "Crafted out-of-line syscall: %.*s (0x%X) at 0x%" PRIx64 " (%s) via 0x%" PRIx64 " (%s)\n",
+            win_emu.log.print(color::blue, "Crafted out-of-line syscall: %.*s (0x%X) at 0x%" PRIx64 " (%s) via 0x%" PRIx64 " (%s)\n",
                               STR_VIEW_VA(syscall_name), syscall_id, address, mod ? mod->name.c_str() : "<N/A>",
                               win_emu.process.previous_ip, previous_mod ? previous_mod->name.c_str() : "<N/A>");
         }
@@ -538,8 +521,7 @@ void register_analysis_callbacks(analysis_context& c)
     watch_import_table(c);
 }
 
-std::optional<mapped_module*> get_module_if_interesting(module_manager& manager, const string_set& modules,
-                                                        const uint64_t address)
+std::optional<mapped_module*> get_module_if_interesting(module_manager& manager, const string_set& modules, const uint64_t address)
 {
     if (manager.executable->is_within(address))
     {

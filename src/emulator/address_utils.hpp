@@ -28,8 +28,7 @@ constexpr bool regions_intersect(const uint64_t start1, const uint64_t end1, con
     return start1 < end2 && start2 < end1;
 }
 
-constexpr bool regions_with_length_intersect(const uint64_t start1, const uint64_t length1, const uint64_t start2,
-                                             const uint64_t length2)
+constexpr bool regions_with_length_intersect(const uint64_t start1, const uint64_t length1, const uint64_t start2, const uint64_t length2)
 {
     return regions_intersect(start1, start1 + length1, start2, start2 + length2);
 }

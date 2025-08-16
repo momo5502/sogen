@@ -98,11 +98,10 @@ class windows_emulator
     process_context process;
     syscall_dispatcher dispatcher;
 
-    windows_emulator(std::unique_ptr<x86_64_emulator> emu, const emulator_settings& settings = {},
-                     emulator_callbacks callbacks = {}, emulator_interfaces interfaces = {});
-    windows_emulator(std::unique_ptr<x86_64_emulator> emu, application_settings app_settings,
-                     const emulator_settings& settings = {}, emulator_callbacks callbacks = {},
+    windows_emulator(std::unique_ptr<x86_64_emulator> emu, const emulator_settings& settings = {}, emulator_callbacks callbacks = {},
                      emulator_interfaces interfaces = {});
+    windows_emulator(std::unique_ptr<x86_64_emulator> emu, application_settings app_settings, const emulator_settings& settings = {},
+                     emulator_callbacks callbacks = {}, emulator_interfaces interfaces = {});
 
     windows_emulator(windows_emulator&&) = delete;
     windows_emulator(const windows_emulator&) = delete;

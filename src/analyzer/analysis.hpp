@@ -43,5 +43,4 @@ struct analysis_context
 };
 
 void register_analysis_callbacks(analysis_context& c);
-std::optional<mapped_module*> get_module_if_interesting(module_manager& manager, const string_set& modules,
-                                                        uint64_t address);
+std::optional<mapped_module*> get_module_if_interesting(module_manager& manager, const string_set& modules, uint64_t address);

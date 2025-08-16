@@ -48,8 +48,8 @@ class emulator_thread : public ref_counted_object
     {
     }
 
-    emulator_thread(memory_manager& memory, const process_context& context, uint64_t start_address, uint64_t argument,
-                    uint64_t stack_size, bool suspended, uint32_t id);
+    emulator_thread(memory_manager& memory, const process_context& context, uint64_t start_address, uint64_t argument, uint64_t stack_size,
+                    bool suspended, uint32_t id);
 
     emulator_thread(const emulator_thread&) = delete;
     emulator_thread& operator=(const emulator_thread&) = delete;

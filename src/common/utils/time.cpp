@@ -3,16 +3,14 @@
 
 namespace utils
 {
-    std::chrono::steady_clock::time_point convert_delay_interval_to_time_point(clock& c,
-                                                                               const LARGE_INTEGER delay_interval)
+    std::chrono::steady_clock::time_point convert_delay_interval_to_time_point(clock& c, const LARGE_INTEGER delay_interval)
     {
         if (delay_interval.QuadPart <= 0)
         {
             const auto relative_time = -delay_interval.QuadPart;
             const auto relative_ticks_in_ms = relative_time / 10;
             const auto relative_fraction_ns = (relative_time % 10) * 100;
-            const auto relative_duration =
-                std::chrono::microseconds(relative_ticks_in_ms) + std::chrono::nanoseconds(relative_fraction_ns);
+            const auto relative_duration = std::chrono::microseconds(relative_ticks_in_ms) + std::chrono::nanoseconds(relative_fraction_ns);
 
             return c.steady_now() + relative_duration;
         }
@@ -22,13 +20,12 @@ namespace utils
 
         const auto delay_seconds_since_1970 = delay_seconds_since_1601 - EPOCH_DIFFERENCE_1601_TO_1970_SECONDS;
 
-        const auto target_time = std::chrono::system_clock::from_time_t(delay_seconds_since_1970) +
-                                 std::chrono::nanoseconds(delay_fraction_ns);
+        const auto target_time =
+            std::chrono::system_clock::from_time_t(delay_seconds_since_1970) + std::chrono::nanoseconds(delay_fraction_ns);
 
         const auto now_system = c.system_now();
 
-        const auto duration_until_target =
-            std::chrono::duration_cast<std::chrono::microseconds>(target_time - now_system);
+        const auto duration_until_target = std::chrono::duration_cast<std::chrono::microseconds>(target_time - now_system);
 
         return c.steady_now() + duration_until_target;
     }

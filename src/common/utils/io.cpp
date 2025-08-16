@@ -28,8 +28,7 @@ namespace utils::io
             io::create_directory(file.parent_path());
         }
 
-        std::ofstream stream(file, std::ios::binary | std::ofstream::out |
-                                       (append ? std::ofstream::app : std::ofstream::out));
+        std::ofstream stream(file, std::ios::binary | std::ofstream::out | (append ? std::ofstream::app : std::ofstream::out));
 
         if (stream.is_open())
         {
@@ -114,9 +113,8 @@ namespace utils::io
     void copy_folder(const std::filesystem::path& src, const std::filesystem::path& target)
     {
         std::error_code ec{};
-        std::filesystem::copy(
-            src, target, std::filesystem::copy_options::overwrite_existing | std::filesystem::copy_options::recursive,
-            ec);
+        std::filesystem::copy(src, target, std::filesystem::copy_options::overwrite_existing | std::filesystem::copy_options::recursive,
+                              ec);
     }
 
     std::vector<std::filesystem::path> list_files(const std::filesystem::path& directory, const bool recursive)

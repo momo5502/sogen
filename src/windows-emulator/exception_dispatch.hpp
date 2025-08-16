@@ -17,10 +17,8 @@ void dispatch_exception(x86_64_emulator& emu, const process_context& proc, const
     dispatch_exception(emu, proc, static_cast<DWORD>(status), parameters);
 }
 
-void dispatch_access_violation(x86_64_emulator& emu, const process_context& proc, uint64_t address,
-                               memory_operation operation);
-void dispatch_guard_page_violation(x86_64_emulator& emu, const process_context& proc, uint64_t address,
-                                   memory_operation operation);
+void dispatch_access_violation(x86_64_emulator& emu, const process_context& proc, uint64_t address, memory_operation operation);
+void dispatch_guard_page_violation(x86_64_emulator& emu, const process_context& proc, uint64_t address, memory_operation operation);
 void dispatch_illegal_instruction_violation(x86_64_emulator& emu, const process_context& proc);
 void dispatch_integer_division_by_zero(x86_64_emulator& emu, const process_context& proc);
 void dispatch_single_step(x86_64_emulator& emu, const process_context& proc);

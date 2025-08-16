@@ -14,8 +14,8 @@ namespace apiset
 {
     namespace
     {
-        uint64_t copy_string(x86_64_emulator& emu, emulator_allocator& allocator, const void* base_ptr,
-                             const uint64_t offset, const size_t length)
+        uint64_t copy_string(x86_64_emulator& emu, emulator_allocator& allocator, const void* base_ptr, const uint64_t offset,
+                             const size_t length)
         {
             if (!length)
             {
@@ -29,8 +29,8 @@ namespace apiset
             return str_obj;
         }
 
-        ULONG copy_string_as_relative(x86_64_emulator& emu, emulator_allocator& allocator, const uint64_t result_base,
-                                      const void* base_ptr, const uint64_t offset, const size_t length)
+        ULONG copy_string_as_relative(x86_64_emulator& emu, emulator_allocator& allocator, const uint64_t result_base, const void* base_ptr,
+                                      const uint64_t offset, const size_t length)
         {
             const auto address = copy_string(emu, allocator, base_ptr, offset, length);
             if (!address)
@@ -115,14 +115,12 @@ namespace apiset
         return obtain(apiset_loc, root);
     }
 
-    emulator_object<API_SET_NAMESPACE> clone(x86_64_emulator& emu, emulator_allocator& allocator,
-                                             const container& container)
+    emulator_object<API_SET_NAMESPACE> clone(x86_64_emulator& emu, emulator_allocator& allocator, const container& container)
     {
         return clone(emu, allocator, container.get());
     }
 
-    emulator_object<API_SET_NAMESPACE> clone(x86_64_emulator& emu, emulator_allocator& allocator,
-                                             const API_SET_NAMESPACE& orig_api_set_map)
+    emulator_object<API_SET_NAMESPACE> clone(x86_64_emulator& emu, emulator_allocator& allocator, const API_SET_NAMESPACE& orig_api_set_map)
     {
         const auto api_set_map_obj = allocator.reserve<API_SET_NAMESPACE>();
         const auto ns_entries_obj = allocator.reserve<API_SET_NAMESPACE_ENTRY>(orig_api_set_map.Count);
@@ -134,18 +132,16 @@ namespace apiset
             api_set.HashOffset = static_cast<ULONG>(hash_entries_obj.value() - api_set_map_obj.value());
         });
 
-        const auto* orig_ns_entries =
-            offset_pointer<API_SET_NAMESPACE_ENTRY>(&orig_api_set_map, orig_api_set_map.EntryOffset);
-        const auto* orig_hash_entries =
-            offset_pointer<API_SET_HASH_ENTRY>(&orig_api_set_map, orig_api_set_map.HashOffset);
+        const auto* orig_ns_entries = offset_pointer<API_SET_NAMESPACE_ENTRY>(&orig_api_set_map, orig_api_set_map.EntryOffset);
+        const auto* orig_hash_entries = offset_pointer<API_SET_HASH_ENTRY>(&orig_api_set_map, orig_api_set_map.HashOffset);
 
         for (ULONG i = 0; i < orig_api_set_map.Count; ++i)
         {
             auto ns_entry = orig_ns_entries[i];
             const auto hash_entry = orig_hash_entries[i];
 
-            ns_entry.NameOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(), &orig_api_set_map,
-                                                          ns_entry.NameOffset, ns_entry.NameLength);
+            ns_entry.NameOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(), &orig_api_set_map, ns_entry.NameOffset,
+                                                          ns_entry.NameLength);
 
             if (!ns_entry.ValueCount)
             {
@@ -161,13 +157,13 @@ namespace apiset
             {
                 auto value = orig_values[j];
 
-                value.ValueOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(), &orig_api_set_map,
-                                                            value.ValueOffset, value.ValueLength);
+                value.ValueOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(), &orig_api_set_map, value.ValueOffset,
+                                                            value.ValueLength);
 
                 if (value.NameLength)
                 {
-                    value.NameOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(),
-                                                               &orig_api_set_map, value.NameOffset, value.NameLength);
+                    value.NameOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(), &orig_api_set_map, value.NameOffset,
+                                                               value.NameLength);
                 }
 
                 values_obj.write(value, j);

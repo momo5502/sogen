@@ -17,8 +17,8 @@ namespace network
     {
         while (true)
         {
-            const auto res = sendto(this->get_socket(), data.data(), static_cast<send_size>(data.size()), 0,
-                                    &target.get_addr(), target.get_size());
+            const auto res =
+                sendto(this->get_socket(), data.data(), static_cast<send_size>(data.size()), 0, &target.get_addr(), target.get_size());
 
             if (res < 0 && GET_SOCKET_ERROR() == SERR(EWOULDBLOCK))
             {
@@ -36,8 +36,7 @@ namespace network
         address source{};
         auto len = source.get_max_size();
 
-        const auto result =
-            recvfrom(this->get_socket(), buffer.data(), static_cast<int>(buffer.size()), 0, &source.get_addr(), &len);
+        const auto result = recvfrom(this->get_socket(), buffer.data(), static_cast<int>(buffer.size()), 0, &source.get_addr(), &len);
         if (result == SOCKET_ERROR)
         {
             return std::nullopt;

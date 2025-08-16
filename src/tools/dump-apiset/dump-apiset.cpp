@@ -56,8 +56,8 @@ void print_apiset(PAPI_SET_NAMESPACE api_set_map)
 {
     for (ULONG i = 0; i < api_set_map->Count; i++)
     {
-        const auto entry = reinterpret_cast<PAPI_SET_NAMESPACE_ENTRY>(
-            reinterpret_cast<ULONG_PTR>(api_set_map) + api_set_map->EntryOffset + i * sizeof(API_SET_NAMESPACE_ENTRY));
+        const auto entry = reinterpret_cast<PAPI_SET_NAMESPACE_ENTRY>(reinterpret_cast<ULONG_PTR>(api_set_map) + api_set_map->EntryOffset +
+                                                                      i * sizeof(API_SET_NAMESPACE_ENTRY));
 
         // printf("  Flags: %08X\n", entry->Flags);
         // printf("  NameOffset: %08X\n", entry->NameOffset);
@@ -72,8 +72,8 @@ void print_apiset(PAPI_SET_NAMESPACE api_set_map)
 
         for (ULONG x = 0; x < entry->ValueCount; x++)
         {
-            const auto value = reinterpret_cast<PAPI_SET_VALUE_ENTRY>(
-                reinterpret_cast<ULONG_PTR>(api_set_map) + entry->ValueOffset + x * sizeof(API_SET_VALUE_ENTRY));
+            const auto value = reinterpret_cast<PAPI_SET_VALUE_ENTRY>(reinterpret_cast<ULONG_PTR>(api_set_map) + entry->ValueOffset +
+                                                                      x * sizeof(API_SET_VALUE_ENTRY));
             // printf("  Value %d\n", x);
             // printf("    Flags: %08X\n", value->Flags);
             // printf("    NameOffset: %08X\n", value->NameOffset);
@@ -81,12 +81,10 @@ void print_apiset(PAPI_SET_NAMESPACE api_set_map)
             // printf("    ValueOffset: %08X\n", value->ValueOffset);
             // printf("    ValueLength: %08X\n", value->ValueLength);
 
-            std::wstring hostName(
-                reinterpret_cast<wchar_t*>(reinterpret_cast<ULONG_PTR>(api_set_map) + value->NameOffset),
-                value->NameLength / sizeof(wchar_t));
-            std::wstring altName(
-                reinterpret_cast<wchar_t*>(reinterpret_cast<ULONG_PTR>(api_set_map) + value->ValueOffset),
-                value->ValueLength / sizeof(wchar_t));
+            std::wstring hostName(reinterpret_cast<wchar_t*>(reinterpret_cast<ULONG_PTR>(api_set_map) + value->NameOffset),
+                                  value->NameLength / sizeof(wchar_t));
+            std::wstring altName(reinterpret_cast<wchar_t*>(reinterpret_cast<ULONG_PTR>(api_set_map) + value->ValueOffset),
+                                 value->ValueLength / sizeof(wchar_t));
             printf("    HostName: %ls - AltName: %ls\n", hostName.empty() ? L"<none>" : hostName.data(),
                    altName.empty() ? L"<none>" : altName.data());
         }

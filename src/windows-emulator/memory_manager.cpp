@@ -25,8 +25,7 @@ namespace
 
                     i->second.length = static_cast<size_t>(first_length);
 
-                    regions[split_point] =
-                        memory_manager::committed_region{static_cast<size_t>(second_length), i->second.permissions};
+                    regions[split_point] = memory_manager::committed_region{static_cast<size_t>(second_length), i->second.permissions};
                 }
             }
         }
@@ -244,8 +243,7 @@ bool memory_manager::protect_memory(const uint64_t address, const size_t size, c
     return true;
 }
 
-bool memory_manager::allocate_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb,
-                                   mmio_write_callback write_cb)
+bool memory_manager::allocate_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb)
 {
     if (this->overlaps_reserved_region(address, size))
     {
@@ -475,8 +473,7 @@ void memory_manager::unmap_all_memory()
     this->reserved_regions_.clear();
 }
 
-uint64_t memory_manager::allocate_memory(const size_t size, const nt_memory_permission permissions,
-                                         const bool reserve_only)
+uint64_t memory_manager::allocate_memory(const size_t size, const nt_memory_permission permissions, const bool reserve_only)
 {
     const auto allocation_base = this->find_free_allocation_base(size);
     if (!allocate_memory(allocation_base, size, permissions, reserve_only))
@@ -639,8 +636,7 @@ void memory_manager::write_memory(const uint64_t address, const void* data, cons
     this->memory_->write_memory(address, data, size);
 }
 
-void memory_manager::map_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb,
-                              mmio_write_callback write_cb)
+void memory_manager::map_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb)
 {
     this->memory_->map_mmio(address, size, std::move(read_cb), std::move(write_cb));
 }
@@ -655,8 +651,7 @@ void memory_manager::unmap_memory(const uint64_t address, const size_t size)
     this->memory_->unmap_memory(address, size);
 }
 
-void memory_manager::apply_memory_protection(const uint64_t address, const size_t size,
-                                             const memory_permission permissions)
+void memory_manager::apply_memory_protection(const uint64_t address, const size_t size, const memory_permission permissions)
 {
     this->memory_->apply_memory_protection(address, size, permissions);
 }

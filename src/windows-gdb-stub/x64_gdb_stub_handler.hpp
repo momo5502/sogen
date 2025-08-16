@@ -278,8 +278,7 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
         return {hook};
     }
 
-    std::vector<emulator_hook*> create_hook(const gdb_stub::breakpoint_type type, const uint64_t addr,
-                                            const size_t size)
+    std::vector<emulator_hook*> create_hook(const gdb_stub::breakpoint_type type, const uint64_t addr, const size_t size)
     {
         using enum gdb_stub::breakpoint_type;
 

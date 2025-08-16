@@ -4,8 +4,7 @@
 
 namespace syscalls
 {
-    NTSTATUS handle_NtSetEvent(const syscall_context& c, const uint64_t handle,
-                               const emulator_object<LONG> previous_state)
+    NTSTATUS handle_NtSetEvent(const syscall_context& c, const uint64_t handle, const emulator_object<LONG> previous_state)
     {
         if (handle == DBWIN_DATA_READY)
         {

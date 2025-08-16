@@ -91,8 +91,8 @@ module_manager::module_manager(memory_manager& memory, file_system& file_sys, ca
 {
 }
 
-void module_manager::map_main_modules(const windows_path& executable_path, const windows_path& ntdll_path,
-                                      const windows_path& win32u_path, const logger& logger)
+void module_manager::map_main_modules(const windows_path& executable_path, const windows_path& ntdll_path, const windows_path& win32u_path,
+                                      const logger& logger)
 {
     this->executable = this->map_module(executable_path, logger, true);
     this->ntdll = this->map_module(ntdll_path, logger, true);
@@ -104,8 +104,7 @@ mapped_module* module_manager::map_module(const windows_path& file, const logger
     return this->map_local_module(this->file_sys_->translate(file), logger, is_static);
 }
 
-mapped_module* module_manager::map_local_module(const std::filesystem::path& file, const logger& logger,
-                                                const bool is_static)
+mapped_module* module_manager::map_local_module(const std::filesystem::path& file, const logger& logger, const bool is_static)
 {
     auto local_file = weakly_canonical(absolute(file));
 
@@ -139,8 +138,8 @@ mapped_module* module_manager::map_local_module(const std::filesystem::path& fil
     }
 }
 
-mapped_module* module_manager::map_memory_module(uint64_t base_address, uint64_t image_size,
-                                                 const std::string& module_name, const logger& logger, bool is_static)
+mapped_module* module_manager::map_memory_module(uint64_t base_address, uint64_t image_size, const std::string& module_name,
+                                                 const logger& logger, bool is_static)
 {
     for (auto& mod : this->modules_ | std::views::values)
     {
@@ -162,14 +161,12 @@ mapped_module* module_manager::map_memory_module(uint64_t base_address, uint64_t
     }
     catch (const std::exception& e)
     {
-        logger.error("Failed to map module from memory %s at 0x%016" PRIx64 ": %s\n", module_name.c_str(), base_address,
-                     e.what());
+        logger.error("Failed to map module from memory %s at 0x%016" PRIx64 ": %s\n", module_name.c_str(), base_address, e.what());
         return nullptr;
     }
     catch (...)
     {
-        logger.error("Failed to map module from memory %s at 0x%016" PRIx64 ": Unknown error\n", module_name.c_str(),
-                     base_address);
+        logger.error("Failed to map module from memory %s at 0x%016" PRIx64 ": Unknown error\n", module_name.c_str(), base_address);
         return nullptr;
     }
 }

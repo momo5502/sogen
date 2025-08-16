@@ -5,8 +5,8 @@
 #include <cinttypes>
 
 template <typename T>
-emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, std::less<>>& modules,
-                            emulator_object<T> object, const auto verbose)
+emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, std::less<>>& modules, emulator_object<T> object,
+                            const auto verbose)
 {
     const reflect_type_info<T> info{};
 
@@ -37,14 +37,14 @@ emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, s
             const auto member_name = i.get_member_name(static_cast<size_t>(offset));
 
             emu.log.print(is_main_access ? color::green : color::dark_gray,
-                          "Object access: %s - 0x%" PRIx64 " 0x%zx (%s) at 0x%" PRIx64 " (%s)\n", type_name.c_str(),
-                          offset, size, member_name.c_str(), rip, mod_name);
+                          "Object access: %s - 0x%" PRIx64 " 0x%zx (%s) at 0x%" PRIx64 " (%s)\n", type_name.c_str(), offset, size,
+                          member_name.c_str(), rip, mod_name);
         });
 }
 
 template <typename T>
-emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, std::less<>>& modules,
-                            const uint64_t address, const auto verbose)
+emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, std::less<>>& modules, const uint64_t address,
+                            const auto verbose)
 {
     return watch_object<T>(emu, modules, emulator_object<T>{emu.emu(), address}, verbose);
 }

@@ -14,6 +14,7 @@ SortIncludes: false
 AlignEscapedNewlines: Left
 PackConstructorInitializers: Never
 IndentPPDirectives: None
+ColumnLimit: 140
 AlignConsecutiveMacros:
   Enabled: true
   AcrossEmptyLines: true

@@ -33,8 +33,7 @@ namespace
         std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
     };
 
-    void split_and_insert(std::set<std::string, std::less<>>& container, const std::string_view str,
-                          const char splitter = ',')
+    void split_and_insert(std::set<std::string, std::less<>>& container, const std::string_view str, const char splitter = ',')
     {
         size_t current_start = 0;
         for (size_t i = 0; i < str.size(); ++i)
@@ -131,8 +130,7 @@ namespace
             auto hook_handler = [state, env_ptr](const uint64_t address, const void*, const size_t size) {
                 const auto rip = state->win_emu_.emu().read_instruction_pointer();
                 const auto* mod = state->win_emu_.mod_manager.find_by_address(rip);
-                const auto is_main_access =
-                    !mod || (mod == state->win_emu_.mod_manager.executable || state->modules_.contains(mod->name));
+                const auto is_main_access = !mod || (mod == state->win_emu_.mod_manager.executable || state->modules_.contains(mod->name));
 
                 if (!is_main_access && !state->verbose_)
                 {
@@ -142,8 +140,7 @@ namespace
                 const auto offset = address - env_ptr;
                 const auto* mod_name = mod ? mod->name.c_str() : "<N/A>";
                 state->win_emu_.log.print(is_main_access ? color::green : color::dark_gray,
-                                          "Environment access: 0x%" PRIx64 " (0x%zX) at 0x%" PRIx64 " (%s)\n", offset,
-                                          size, rip, mod_name);
+                                          "Environment access: 0x%" PRIx64 " (0x%zX) at 0x%" PRIx64 " (%s)\n", offset, size, rip, mod_name);
             };
 
             state->env_data_hook_ = state->win_emu_.emu().hook_memory_read(env_ptr, env_size, std::move(hook_handler));
@@ -157,8 +154,7 @@ namespace
             [&win_emu, install = std::move(install_env_access_hook)](const uint64_t address, const void*, size_t) {
                 const auto new_process_params = get_process_params(win_emu);
 
-                const auto target_address =
-                    new_process_params.value() + offsetof(RTL_USER_PROCESS_PARAMETERS64, Environment);
+                const auto target_address = new_process_params.value() + offsetof(RTL_USER_PROCESS_PARAMETERS64, Environment);
 
                 if (address == target_address)
                 {
@@ -168,8 +164,7 @@ namespace
     }
 #endif
 
-    void watch_system_objects(windows_emulator& win_emu, const std::set<std::string, std::less<>>& modules,
-                              const bool verbose)
+    void watch_system_objects(windows_emulator& win_emu, const std::set<std::string, std::less<>>& modules, const bool verbose)
     {
         win_emu.setup_process_if_necessary();
 
@@ -193,20 +188,18 @@ namespace
 
         update_env_hook();
 
-        win_emu.emu().hook_memory_write(
-            win_emu.process.peb.value() + offsetof(PEB64, ProcessParameters), 0x8,
-            [state, update_env = std::move(update_env_hook)](const uint64_t, const void*, size_t) {
-                const auto new_ptr = state->win_emu_.process.peb.read().ProcessParameters;
-                state->params_hook_ = watch_object<RTL_USER_PROCESS_PARAMETERS64>(state->win_emu_, state->modules_,
-                                                                                  new_ptr, state->verbose_);
-                update_env();
-            });
+        win_emu.emu().hook_memory_write(win_emu.process.peb.value() + offsetof(PEB64, ProcessParameters), 0x8,
+                                        [state, update_env = std::move(update_env_hook)](const uint64_t, const void*, size_t) {
+                                            const auto new_ptr = state->win_emu_.process.peb.read().ProcessParameters;
+                                            state->params_hook_ = watch_object<RTL_USER_PROCESS_PARAMETERS64>(
+                                                state->win_emu_, state->modules_, new_ptr, state->verbose_);
+                                            update_env();
+                                        });
 
         win_emu.emu().hook_memory_write(
             win_emu.process.peb.value() + offsetof(PEB64, Ldr), 0x8, [state](const uint64_t, const void*, size_t) {
                 const auto new_ptr = state->win_emu_.process.peb.read().Ldr;
-                state->ldr_hook_ =
-                    watch_object<PEB_LDR_DATA64>(state->win_emu_, state->modules_, new_ptr, state->verbose_);
+                state->ldr_hook_ = watch_object<PEB_LDR_DATA64>(state->win_emu_, state->modules_, new_ptr, state->verbose_);
             });
 #endif
     }
@@ -232,8 +225,7 @@ namespace
     {
         if (c.settings->buffer_stdout)
         {
-            c.win_emu->log.info("%.*s%s", static_cast<int>(c.output.size()), c.output.data(),
-                                c.output.ends_with("\n") ? "" : "\n");
+            c.win_emu->log.info("%.*s%s", static_cast<int>(c.output.size()), c.output.data(), c.output.ends_with("\n") ? "" : "\n");
         }
     }
 
@@ -302,8 +294,7 @@ namespace
         catch (const std::exception& e)
         {
             do_post_emulation_work(c);
-            win_emu.log.error("Emulation failed at: 0x%" PRIx64 " - %s\n", win_emu.emu().read_instruction_pointer(),
-                              e.what());
+            win_emu.log.error("Emulation failed at: 0x%" PRIx64 " - %s\n", win_emu.emu().read_instruction_pointer(), e.what());
             throw;
         }
         catch (...)
@@ -327,8 +318,7 @@ namespace
         {
             do_post_emulation_work(c);
             win_emu.log.disable_output(false);
-            win_emu.log.print(success ? color::green : color::red, "Emulation terminated with status: %X\n",
-                              *exit_status);
+            win_emu.log.print(success ? color::green : color::red, "Emulation terminated with status: %X\n", *exit_status);
         }
 
         return success;
@@ -380,8 +370,7 @@ namespace
         return std::make_unique<windows_emulator>(create_x86_64_emulator(), std::move(app_settings), settings);
     }
 
-    std::unique_ptr<windows_emulator> setup_emulator(const analysis_options& options,
-                                                     const std::span<const std::string_view> args)
+    std::unique_ptr<windows_emulator> setup_emulator(const analysis_options& options, const std::span<const std::string_view> args)
     {
         if (!options.dump.empty())
         {
@@ -462,8 +451,8 @@ namespace
             if (mod.has_value())
             {
                 const auto leaf = win_emu->emu().reg<uint32_t>(x86_register::eax);
-                win_emu->log.print(color::blue, "Executing CPUID instruction with leaf 0x%X at 0x%" PRIx64 " (%s)\n",
-                                   leaf, rip, (*mod) ? (*mod)->name.c_str() : "<N/A>");
+                win_emu->log.print(color::blue, "Executing CPUID instruction with leaf 0x%X at 0x%" PRIx64 " (%s)\n", leaf, rip,
+                                   (*mod) ? (*mod)->name.c_str() : "<N/A>");
             }
 
             return instruction_hook_continuation::run_instruction;
@@ -473,8 +462,7 @@ namespace
         {
             auto module_cache = std::make_shared<std::map<std::string, uint64_t>>();
             win_emu->emu().hook_memory_read(
-                0, std::numeric_limits<uint64_t>::max(),
-                [&, module_cache](const uint64_t address, const void*, size_t) {
+                0, std::numeric_limits<uint64_t>::max(), [&, module_cache](const uint64_t address, const void*, size_t) {
                     const auto rip = win_emu->emu().read_instruction_pointer();
                     const auto accessor = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
 
@@ -500,10 +488,8 @@ namespace
 
                     const auto* region_name = get_module_memory_region_name(*mod, address);
 
-                    win_emu->log.print(color::pink,
-                                       "Reading from module %s at 0x%" PRIx64 " (%s) via 0x%" PRIx64 " (%s)\n",
-                                       mod->name.c_str(), address, region_name, rip,
-                                       (*accessor) ? (*accessor)->name.c_str() : "<N/A>");
+                    win_emu->log.print(color::pink, "Reading from module %s at 0x%" PRIx64 " (%s) via 0x%" PRIx64 " (%s)\n",
+                                       mod->name.c_str(), address, region_name, rip, (*accessor) ? (*accessor)->name.c_str() : "<N/A>");
                 });
         }
 
@@ -533,8 +519,7 @@ namespace
                         }
                     }
 
-                    win_emu->log.print(color::green,
-                                       "Reading from executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
+                    win_emu->log.print(color::green, "Reading from executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
                                        section.name.c_str(), address, rip);
                 };
 
@@ -555,8 +540,7 @@ namespace
                         }
                     }
 
-                    win_emu->log.print(color::blue,
-                                       "Writing to executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
+                    win_emu->log.print(color::blue, "Writing to executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
                                        section.name.c_str(), address, rip);
                 };
 

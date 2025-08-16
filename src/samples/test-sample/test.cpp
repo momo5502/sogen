@@ -295,8 +295,7 @@ namespace
         for (DWORD i = 0;; ++i)
         {
             auto name_buffer_len = static_cast<DWORD>(name_buffer.size());
-            const LSTATUS status =
-                RegEnumKeyExA(key, i, name_buffer.data(), &name_buffer_len, nullptr, nullptr, nullptr, nullptr);
+            const LSTATUS status = RegEnumKeyExA(key, i, name_buffer.data(), &name_buffer_len, nullptr, nullptr, nullptr, nullptr);
             if (status == ERROR_SUCCESS)
             {
                 keys.emplace_back(name_buffer.data(), name_buffer_len);
@@ -340,8 +339,7 @@ namespace
         for (DWORD i = 0;; ++i)
         {
             auto name_buffer_len = static_cast<DWORD>(name_buffer.size());
-            const auto status =
-                RegEnumValueA(key, i, name_buffer.data(), &name_buffer_len, nullptr, nullptr, nullptr, nullptr);
+            const auto status = RegEnumValueA(key, i, name_buffer.data(), &name_buffer_len, nullptr, nullptr, nullptr, nullptr);
             if (status == ERROR_SUCCESS)
             {
                 values.emplace_back(name_buffer.data(), name_buffer_len);
@@ -383,16 +381,14 @@ namespace
 
         // WOW64 Redirection Test
         const auto pst_display = read_registry_string(
-            HKEY_LOCAL_MACHINE,
-            R"(SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\Time Zones\Pacific Standard Time)", "Display");
+            HKEY_LOCAL_MACHINE, R"(SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\Time Zones\Pacific Standard Time)", "Display");
         if (!pst_display || pst_display->empty())
         {
             return false;
         }
 
         // Key Sub-keys Enumeration Test
-        const auto subkeys_opt =
-            get_all_registry_keys(HKEY_LOCAL_MACHINE, R"(SOFTWARE\Microsoft\Windows NT\CurrentVersion)");
+        const auto subkeys_opt = get_all_registry_keys(HKEY_LOCAL_MACHINE, R"(SOFTWARE\Microsoft\Windows NT\CurrentVersion)");
         if (!subkeys_opt)
         {
             return false;
@@ -413,8 +409,7 @@ namespace
         }
 
         // Key Values Enumeration Test
-        const auto values_opt =
-            get_all_registry_values(HKEY_LOCAL_MACHINE, R"(SOFTWARE\Microsoft\Windows NT\CurrentVersion)");
+        const auto values_opt = get_all_registry_values(HKEY_LOCAL_MACHINE, R"(SOFTWARE\Microsoft\Windows NT\CurrentVersion)");
         if (!values_opt)
         {
             return false;
@@ -489,17 +484,15 @@ namespace
             return false;
         }
 
-        if (current_dtzi.StandardDate.wYear != 0 || current_dtzi.StandardDate.wMonth != 10 ||
-            current_dtzi.StandardDate.wDayOfWeek != 0 || current_dtzi.StandardDate.wDay != 5 ||
-            current_dtzi.StandardDate.wHour != 3 || current_dtzi.StandardDate.wMinute != 0 ||
+        if (current_dtzi.StandardDate.wYear != 0 || current_dtzi.StandardDate.wMonth != 10 || current_dtzi.StandardDate.wDayOfWeek != 0 ||
+            current_dtzi.StandardDate.wDay != 5 || current_dtzi.StandardDate.wHour != 3 || current_dtzi.StandardDate.wMinute != 0 ||
             current_dtzi.StandardDate.wSecond != 0 || current_dtzi.StandardDate.wMilliseconds != 0)
         {
             return false;
         }
 
-        if (current_dtzi.DaylightDate.wYear != 0 || current_dtzi.DaylightDate.wMonth != 3 ||
-            current_dtzi.DaylightDate.wDayOfWeek != 0 || current_dtzi.DaylightDate.wDay != 5 ||
-            current_dtzi.DaylightDate.wHour != 2 || current_dtzi.DaylightDate.wMinute != 0 ||
+        if (current_dtzi.DaylightDate.wYear != 0 || current_dtzi.DaylightDate.wMonth != 3 || current_dtzi.DaylightDate.wDayOfWeek != 0 ||
+            current_dtzi.DaylightDate.wDay != 5 || current_dtzi.DaylightDate.wHour != 2 || current_dtzi.DaylightDate.wMinute != 0 ||
             current_dtzi.DaylightDate.wSecond != 0 || current_dtzi.DaylightDate.wMilliseconds != 0)
         {
             return false;
@@ -583,8 +576,7 @@ namespace
         sockaddr_in sender_addr{};
         int sender_length = sizeof(sender_addr);
 
-        const auto len =
-            recvfrom(receiver, buffer, sizeof(buffer), 0, reinterpret_cast<sockaddr*>(&sender_addr), &sender_length);
+        const auto len = recvfrom(receiver, buffer, sizeof(buffer), 0, reinterpret_cast<sockaddr*>(&sender_addr), &sender_length);
 
         if (len != send_data.size())
         {
@@ -691,8 +683,7 @@ namespace
 
         // Allocate a guarded memory region with the length of the system page
         // size.
-        auto* addr = static_cast<LPBYTE>(
-            VirtualAlloc(nullptr, sys_info.dwPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE | PAGE_GUARD));
+        auto* addr = static_cast<LPBYTE>(VirtualAlloc(nullptr, sys_info.dwPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE | PAGE_GUARD));
         if (addr == nullptr)
         {
             puts("Failed to allocate guard page");

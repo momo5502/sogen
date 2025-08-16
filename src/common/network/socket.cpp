@@ -20,13 +20,11 @@ namespace network
         if (af == AF_INET6)
         {
             int i = 1;
-            setsockopt(this->socket_, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<char*>(&i),
-                       static_cast<int>(sizeof(i)));
+            setsockopt(this->socket_, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<char*>(&i), static_cast<int>(sizeof(i)));
         }
 
         int optval = 1;
-        setsockopt(this->socket_, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<char*>(&optval),
-                   static_cast<int>(sizeof(optval)));
+        setsockopt(this->socket_, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<char*>(&optval), static_cast<int>(sizeof(optval)));
     }
 
     socket::~socket()
@@ -158,8 +156,7 @@ namespace network
         return this->is_valid() && is_socket_ready(this->socket_, in_poll);
     }
 
-    bool socket::sleep_sockets(const std::span<const socket*>& sockets, const std::chrono::milliseconds timeout,
-                               const bool in_poll)
+    bool socket::sleep_sockets(const std::span<const socket*>& sockets, const std::chrono::milliseconds timeout, const bool in_poll)
     {
         std::vector<pollfd> pfds{};
         pfds.resize(sockets.size());
@@ -215,8 +212,7 @@ namespace network
     }
 
     bool socket::sleep_sockets_until(const std::span<const socket*>& sockets,
-                                     const std::chrono::high_resolution_clock::time_point time_point,
-                                     const bool in_poll)
+                                     const std::chrono::high_resolution_clock::time_point time_point, const bool in_poll)
     {
         const auto duration = time_point - std::chrono::high_resolution_clock::now();
         return sleep_sockets(sockets, std::chrono::duration_cast<std::chrono::milliseconds>(duration), in_poll);

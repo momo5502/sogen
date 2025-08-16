@@ -106,8 +106,7 @@ namespace fuzzer
         }
 
         const auto insert_at_random = this->rng.get(10) == 0;
-        const auto index =
-            insert_at_random ? (this->rng.get<size_t>() % this->top_scorer_.size()) : this->lowest_scorer;
+        const auto index = insert_at_random ? (this->rng.get<size_t>() % this->top_scorer_.size()) : this->lowest_scorer;
 
         this->top_scorer_[index] = std::move(entry);
 

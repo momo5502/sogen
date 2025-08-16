@@ -37,8 +37,7 @@ namespace network
 
         int val{};
         socklen_t len = sizeof(val);
-        const auto res =
-            getsockopt(this->socket_.get_socket(), SOL_SOCKET, SO_ACCEPTCONN, reinterpret_cast<char*>(&val), &len);
+        const auto res = getsockopt(this->socket_.get_socket(), SOL_SOCKET, SO_ACCEPTCONN, reinterpret_cast<char*>(&val), &len);
 
         return res != SOCKET_ERROR && val == 1;
     }
@@ -92,27 +91,25 @@ namespace network
 
     sent_size socket_wrapper::send(const std::span<const std::byte> data)
     {
-        return ::send(this->socket_.get_socket(), reinterpret_cast<const char*>(data.data()),
-                      static_cast<send_size>(data.size()), 0);
+        return ::send(this->socket_.get_socket(), reinterpret_cast<const char*>(data.data()), static_cast<send_size>(data.size()), 0);
     }
 
     sent_size socket_wrapper::sendto(const address& destination, const std::span<const std::byte> data)
     {
-        return ::sendto(this->socket_.get_socket(), reinterpret_cast<const char*>(data.data()),
-                        static_cast<send_size>(data.size()), 0, &destination.get_addr(), destination.get_size());
+        return ::sendto(this->socket_.get_socket(), reinterpret_cast<const char*>(data.data()), static_cast<send_size>(data.size()), 0,
+                        &destination.get_addr(), destination.get_size());
     }
 
     sent_size socket_wrapper::recv(std::span<std::byte> data)
     {
-        return ::recv(this->socket_.get_socket(), reinterpret_cast<char*>(data.data()),
-                      static_cast<send_size>(data.size()), 0);
+        return ::recv(this->socket_.get_socket(), reinterpret_cast<char*>(data.data()), static_cast<send_size>(data.size()), 0);
     }
 
     sent_size socket_wrapper::recvfrom(address& source, std::span<std::byte> data)
     {
         auto source_length = source.get_max_size();
-        const auto res = ::recvfrom(this->socket_.get_socket(), reinterpret_cast<char*>(data.data()),
-                                    static_cast<send_size>(data.size()), 0, &source.get_addr(), &source_length);
+        const auto res = ::recvfrom(this->socket_.get_socket(), reinterpret_cast<char*>(data.data()), static_cast<send_size>(data.size()),
+                                    0, &source.get_addr(), &source_length);
 
         assert(source.get_size() == source_length);
 

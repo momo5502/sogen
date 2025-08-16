@@ -21,9 +21,8 @@
 #define CONTEXT_XSTATE_32          (CONTEXT_X86_MAIN | 0x20L)
 #define CONTEXT_XSTATE_64          (CONTEXT_AMD64_MAIN | 0x20L)
 
-#define CONTEXT64_ALL                                                                            \
-    (CONTEXT_CONTROL_64 | CONTEXT_INTEGER_64 | CONTEXT_SEGMENTS_64 | CONTEXT_FLOATING_POINT_64 | \
-     CONTEXT_DEBUG_REGISTERS_64)
+#define CONTEXT64_ALL \
+    (CONTEXT_CONTROL_64 | CONTEXT_INTEGER_64 | CONTEXT_SEGMENTS_64 | CONTEXT_FLOATING_POINT_64 | CONTEXT_DEBUG_REGISTERS_64)
 
 using SYSTEM_INFORMATION_CLASS = enum _SYSTEM_INFORMATION_CLASS
 {
@@ -62,16 +61,16 @@ using SYSTEM_INFORMATION_CLASS = enum _SYSTEM_INFORMATION_CLASS
     SystemSummaryMemoryInformation, // not implemented // SYSTEM_MEMORY_USAGE_INFORMATION
     SystemMirrorMemoryInformation,
     // s (requires license value "Kernel-MemoryMirroringSupported") (requires SeShutdownPrivilege) // 30
-    SystemPerformanceTraceInformation,   // q; s: (type depends on EVENT_TRACE_INFORMATION_CLASS)
-    SystemObsolete0,                     // not implemented
-    SystemExceptionInformation,          // q: SYSTEM_EXCEPTION_INFORMATION
-    SystemCrashDumpStateInformation,     // s: SYSTEM_CRASH_DUMP_STATE_INFORMATION (requires SeDebugPrivilege)
-    SystemKernelDebuggerInformation,     // q: SYSTEM_KERNEL_DEBUGGER_INFORMATION
-    SystemContextSwitchInformation,      // q: SYSTEM_CONTEXT_SWITCH_INFORMATION
-    SystemRegistryQuotaInformation,      // q: SYSTEM_REGISTRY_QUOTA_INFORMATION; s (requires SeIncreaseQuotaPrivilege)
-    SystemExtendServiceTableInformation, // s (requires SeLoadDriverPrivilege) // loads win32k only
-    SystemPrioritySeperation,            // s (requires SeTcbPrivilege)
-    SystemVerifierAddDriverInformation,  // s (requires SeDebugPrivilege) // 40
+    SystemPerformanceTraceInformation,     // q; s: (type depends on EVENT_TRACE_INFORMATION_CLASS)
+    SystemObsolete0,                       // not implemented
+    SystemExceptionInformation,            // q: SYSTEM_EXCEPTION_INFORMATION
+    SystemCrashDumpStateInformation,       // s: SYSTEM_CRASH_DUMP_STATE_INFORMATION (requires SeDebugPrivilege)
+    SystemKernelDebuggerInformation,       // q: SYSTEM_KERNEL_DEBUGGER_INFORMATION
+    SystemContextSwitchInformation,        // q: SYSTEM_CONTEXT_SWITCH_INFORMATION
+    SystemRegistryQuotaInformation,        // q: SYSTEM_REGISTRY_QUOTA_INFORMATION; s (requires SeIncreaseQuotaPrivilege)
+    SystemExtendServiceTableInformation,   // s (requires SeLoadDriverPrivilege) // loads win32k only
+    SystemPrioritySeperation,              // s (requires SeTcbPrivilege)
+    SystemVerifierAddDriverInformation,    // s (requires SeDebugPrivilege) // 40
     SystemVerifierRemoveDriverInformation, // s (requires SeDebugPrivilege)
     SystemProcessorIdleInformation,        // q: SYSTEM_PROCESSOR_IDLE_INFORMATION (EX in: USHORT ProcessorGroup)
     SystemLegacyDriverInformation,         // q: SYSTEM_LEGACY_DRIVER_INFORMATION
@@ -87,26 +86,26 @@ using SYSTEM_INFORMATION_CLASS = enum _SYSTEM_INFORMATION_CLASS
     SystemSessionProcessInformation,       // q: SYSTEM_SESSION_PROCESS_INFORMATION
     SystemLoadGdiDriverInSystemSpace,
     // s: SYSTEM_GDI_DRIVER_INFORMATION (kernel-mode only) (same as SystemLoadGdiDriverInformation)
-    SystemNumaProcessorMap,               // q: SYSTEM_NUMA_INFORMATION
-    SystemPrefetcherInformation,          // q; s: PREFETCHER_INFORMATION // PfSnQueryPrefetcherInformation
-    SystemExtendedProcessInformation,     // q: SYSTEM_PROCESS_INFORMATION
-    SystemRecommendedSharedDataAlignment, // q: ULONG // KeGetRecommendedSharedDataAlignment
-    SystemComPlusPackage,                 // q; s: ULONG
-    SystemNumaAvailableMemory,            // q: SYSTEM_NUMA_INFORMATION // 60
-    SystemProcessorPowerInformation,      // q: SYSTEM_PROCESSOR_POWER_INFORMATION (EX in: USHORT ProcessorGroup)
-    SystemEmulationBasicInformation,      // q: SYSTEM_BASIC_INFORMATION
-    SystemEmulationProcessorInformation,  // q: SYSTEM_PROCESSOR_INFORMATION
-    SystemExtendedHandleInformation,      // q: SYSTEM_HANDLE_INFORMATION_EX
-    SystemLostDelayedWriteInformation,    // q: ULONG
-    SystemBigPoolInformation,             // q: SYSTEM_BIGPOOL_INFORMATION
-    SystemSessionPoolTagInformation,      // q: SYSTEM_SESSION_POOLTAG_INFORMATION
-    SystemSessionMappedViewInformation,   // q: SYSTEM_SESSION_MAPPED_VIEW_INFORMATION
-    SystemHotpatchInformation,            // q; s: SYSTEM_HOTPATCH_CODE_INFORMATION
-    SystemObjectSecurityMode,             // q: ULONG // 70
-    SystemWatchdogTimerHandler,           // s: SYSTEM_WATCHDOG_HANDLER_INFORMATION // (kernel-mode only)
-    SystemWatchdogTimerInformation,       // q: SYSTEM_WATCHDOG_TIMER_INFORMATION // (kernel-mode only)
-    SystemLogicalProcessorInformation,    // q: SYSTEM_LOGICAL_PROCESSOR_INFORMATION (EX in: USHORT ProcessorGroup)
-    SystemWow64SharedInformationObsolete, // not implemented
+    SystemNumaProcessorMap,                        // q: SYSTEM_NUMA_INFORMATION
+    SystemPrefetcherInformation,                   // q; s: PREFETCHER_INFORMATION // PfSnQueryPrefetcherInformation
+    SystemExtendedProcessInformation,              // q: SYSTEM_PROCESS_INFORMATION
+    SystemRecommendedSharedDataAlignment,          // q: ULONG // KeGetRecommendedSharedDataAlignment
+    SystemComPlusPackage,                          // q; s: ULONG
+    SystemNumaAvailableMemory,                     // q: SYSTEM_NUMA_INFORMATION // 60
+    SystemProcessorPowerInformation,               // q: SYSTEM_PROCESSOR_POWER_INFORMATION (EX in: USHORT ProcessorGroup)
+    SystemEmulationBasicInformation,               // q: SYSTEM_BASIC_INFORMATION
+    SystemEmulationProcessorInformation,           // q: SYSTEM_PROCESSOR_INFORMATION
+    SystemExtendedHandleInformation,               // q: SYSTEM_HANDLE_INFORMATION_EX
+    SystemLostDelayedWriteInformation,             // q: ULONG
+    SystemBigPoolInformation,                      // q: SYSTEM_BIGPOOL_INFORMATION
+    SystemSessionPoolTagInformation,               // q: SYSTEM_SESSION_POOLTAG_INFORMATION
+    SystemSessionMappedViewInformation,            // q: SYSTEM_SESSION_MAPPED_VIEW_INFORMATION
+    SystemHotpatchInformation,                     // q; s: SYSTEM_HOTPATCH_CODE_INFORMATION
+    SystemObjectSecurityMode,                      // q: ULONG // 70
+    SystemWatchdogTimerHandler,                    // s: SYSTEM_WATCHDOG_HANDLER_INFORMATION // (kernel-mode only)
+    SystemWatchdogTimerInformation,                // q: SYSTEM_WATCHDOG_TIMER_INFORMATION // (kernel-mode only)
+    SystemLogicalProcessorInformation,             // q: SYSTEM_LOGICAL_PROCESSOR_INFORMATION (EX in: USHORT ProcessorGroup)
+    SystemWow64SharedInformationObsolete,          // not implemented
     SystemRegisterFirmwareTableInformationHandler, // s: SYSTEM_FIRMWARE_TABLE_HANDLER // (kernel-mode only)
     SystemFirmwareTableInformation,                // SYSTEM_FIRMWARE_TABLE_INFORMATION
     SystemModuleInformationEx,                     // q: RTL_PROCESS_MODULE_INFORMATION_EX
@@ -147,7 +146,7 @@ using SYSTEM_INFORMATION_CLASS = enum _SYSTEM_INFORMATION_CLASS
     SystemDynamicTimeZoneInformation,          // q; s: RTL_DYNAMIC_TIME_ZONE_INFORMATION (requires SeTimeZonePrivilege)
     SystemCodeIntegrityInformation,            // q: SYSTEM_CODEINTEGRITY_INFORMATION // SeCodeIntegrityQueryInformation
     SystemProcessorMicrocodeUpdateInformation, // s: SYSTEM_PROCESSOR_MICROCODE_UPDATE_INFORMATION
-    SystemProcessorBrandString, // q: CHAR[] // HaliQuerySystemInformation -> HalpGetProcessorBrandString, info class 23
+    SystemProcessorBrandString,                // q: CHAR[] // HaliQuerySystemInformation -> HalpGetProcessorBrandString, info class 23
     SystemVirtualAddressInformation,
     // q: SYSTEM_VA_LIST_INFORMATION[]; s: SYSTEM_VA_LIST_INFORMATION[] (requires SeIncreaseQuotaPrivilege) //
     // MmQuerySystemVaInformation
@@ -223,9 +222,9 @@ using SYSTEM_INFORMATION_CLASS = enum _SYSTEM_INFORMATION_CLASS
     SystemCodeIntegrityPolicyInformation,   // q; s: SYSTEM_CODEINTEGRITYPOLICY_INFORMATION
     SystemIsolatedUserModeInformation,      // q: SYSTEM_ISOLATED_USER_MODE_INFORMATION
     SystemHardwareSecurityTestInterfaceResultsInformation,
-    SystemSingleModuleInformation,   // q: SYSTEM_SINGLE_MODULE_INFORMATION
-    SystemAllowedCpuSetsInformation, // s: SYSTEM_WORKLOAD_ALLOWED_CPU_SET_INFORMATION
-    SystemVsmProtectionInformation,  // q: SYSTEM_VSM_PROTECTION_INFORMATION (previously SystemDmaProtectionInformation)
+    SystemSingleModuleInformation,         // q: SYSTEM_SINGLE_MODULE_INFORMATION
+    SystemAllowedCpuSetsInformation,       // s: SYSTEM_WORKLOAD_ALLOWED_CPU_SET_INFORMATION
+    SystemVsmProtectionInformation,        // q: SYSTEM_VSM_PROTECTION_INFORMATION (previously SystemDmaProtectionInformation)
     SystemInterruptCpuSetsInformation,     // q: SYSTEM_INTERRUPT_CPU_SET_INFORMATION // 170
     SystemSecureBootPolicyFullInformation, // q: SYSTEM_SECUREBOOT_POLICY_FULL_INFORMATION
     SystemCodeIntegrityPolicyFullInformation,
@@ -366,18 +365,18 @@ typedef enum _TOKEN_INFORMATION_CLASS
     TokenRestrictedDeviceClaimAttributes, // q: CLAIM_SECURITY_ATTRIBUTES_INFORMATION
     TokenDeviceGroups,                    // q: TOKEN_GROUPS
     TokenRestrictedDeviceGroups,          // q: TOKEN_GROUPS
-    TokenSecurityAttributes,  // q; s: TOKEN_SECURITY_ATTRIBUTES_[AND_OPERATION_]INFORMATION (requires SeTcbPrivilege)
-    TokenIsRestricted,        // q: ULONG // 40
-    TokenProcessTrustLevel,   // q: TOKEN_PROCESS_TRUST_LEVEL // since WINBLUE
-    TokenPrivateNameSpace,    // q; s: ULONG  (requires SeTcbPrivilege) // since THRESHOLD
-    TokenSingletonAttributes, // q: TOKEN_SECURITY_ATTRIBUTES_INFORMATION // since REDSTONE
-    TokenBnoIsolation,        // q: TOKEN_BNO_ISOLATION_INFORMATION // since REDSTONE2
-    TokenChildProcessFlags,   // s: ULONG  (requires SeTcbPrivilege) // since REDSTONE3
-    TokenIsLessPrivilegedAppContainer, // q: ULONG // since REDSTONE5
-    TokenIsSandboxed,                  // q: ULONG // since 19H1
-    TokenIsAppSilo,          // q: ULONG // since WIN11 22H2 // previously TokenOriginatingProcessTrustLevel // q:
-                             // TOKEN_PROCESS_TRUST_LEVEL
-    TokenLoggingInformation, // TOKEN_LOGGING_INFORMATION // since 24H2
+    TokenSecurityAttributes,              // q; s: TOKEN_SECURITY_ATTRIBUTES_[AND_OPERATION_]INFORMATION (requires SeTcbPrivilege)
+    TokenIsRestricted,                    // q: ULONG // 40
+    TokenProcessTrustLevel,               // q: TOKEN_PROCESS_TRUST_LEVEL // since WINBLUE
+    TokenPrivateNameSpace,                // q; s: ULONG  (requires SeTcbPrivilege) // since THRESHOLD
+    TokenSingletonAttributes,             // q: TOKEN_SECURITY_ATTRIBUTES_INFORMATION // since REDSTONE
+    TokenBnoIsolation,                    // q: TOKEN_BNO_ISOLATION_INFORMATION // since REDSTONE2
+    TokenChildProcessFlags,               // s: ULONG  (requires SeTcbPrivilege) // since REDSTONE3
+    TokenIsLessPrivilegedAppContainer,    // q: ULONG // since REDSTONE5
+    TokenIsSandboxed,                     // q: ULONG // since 19H1
+    TokenIsAppSilo,                       // q: ULONG // since WIN11 22H2 // previously TokenOriginatingProcessTrustLevel // q:
+                                          // TOKEN_PROCESS_TRUST_LEVEL
+    TokenLoggingInformation,              // TOKEN_LOGGING_INFORMATION // since 24H2
     MaxTokenInfoClass
 } TOKEN_INFORMATION_CLASS, *PTOKEN_INFORMATION_CLASS;
 
@@ -385,54 +384,54 @@ typedef enum _TOKEN_INFORMATION_CLASS
 
 using PROCESSINFOCLASS = enum _PROCESSINFOCLASS
 {
-    ProcessBasicInformation,          // q: PROCESS_BASIC_INFORMATION, PROCESS_EXTENDED_BASIC_INFORMATION
-    ProcessQuotaLimits,               // qs: QUOTA_LIMITS, QUOTA_LIMITS_EX
-    ProcessIoCounters,                // q: IO_COUNTERS
-    ProcessVmCounters,                // q: VM_COUNTERS, VM_COUNTERS_EX, VM_COUNTERS_EX2
-    ProcessTimes,                     // q: KERNEL_USER_TIMES
-    ProcessBasePriority,              // s: KPRIORITY
-    ProcessRaisePriority,             // s: ULONG
-    ProcessDebugPort,                 // q: HANDLE
-    ProcessExceptionPort,             // s: PROCESS_EXCEPTION_PORT (requires SeTcbPrivilege)
-    ProcessAccessToken,               // s: PROCESS_ACCESS_TOKEN
-    ProcessLdtInformation,            // qs: PROCESS_LDT_INFORMATION // 10
-    ProcessLdtSize,                   // s: PROCESS_LDT_SIZE
-    ProcessDefaultHardErrorMode,      // qs: ULONG
-    ProcessIoPortHandlers,            // (kernel-mode only) // s: PROCESS_IO_PORT_HANDLER_INFORMATION
-    ProcessPooledUsageAndLimits,      // q: POOLED_USAGE_AND_LIMITS
-    ProcessWorkingSetWatch,           // q: PROCESS_WS_WATCH_INFORMATION[]; s: void
-    ProcessUserModeIOPL,              // qs: ULONG (requires SeTcbPrivilege)
-    ProcessEnableAlignmentFaultFixup, // s: BOOLEAN
-    ProcessPriorityClass,             // qs: PROCESS_PRIORITY_CLASS
-    ProcessWx86Information,           // qs: ULONG (requires SeTcbPrivilege) (VdmAllowed)
-    ProcessHandleCount,               // q: ULONG, PROCESS_HANDLE_INFORMATION // 20
-    ProcessAffinityMask,              // (q >WIN7)s: KAFFINITY, qs: GROUP_AFFINITY
-    ProcessPriorityBoost,             // qs: ULONG
-    ProcessDeviceMap,                 // qs: PROCESS_DEVICEMAP_INFORMATION, PROCESS_DEVICEMAP_INFORMATION_EX
-    ProcessSessionInformation,        // q: PROCESS_SESSION_INFORMATION
-    ProcessForegroundInformation,     // s: PROCESS_FOREGROUND_BACKGROUND
-    ProcessWow64Information,          // q: ULONG_PTR
-    ProcessImageFileName,             // q: UNICODE_STRING
-    ProcessLUIDDeviceMapsEnabled,     // q: ULONG
-    ProcessBreakOnTermination,        // qs: ULONG
-    ProcessDebugObjectHandle,         // q: HANDLE // 30
-    ProcessDebugFlags,                // qs: ULONG
-    ProcessHandleTracing,  // q: PROCESS_HANDLE_TRACING_QUERY; s: PROCESS_HANDLE_TRACING_ENABLE[_EX] or void to disable
-    ProcessIoPriority,     // qs: IO_PRIORITY_HINT
-    ProcessExecuteFlags,   // qs: ULONG (MEM_EXECUTE_OPTION_*)
-    ProcessTlsInformation, // PROCESS_TLS_INFORMATION // ProcessResourceManagement
-    ProcessCookie,         // q: ULONG
-    ProcessImageInformation,        // q: SECTION_IMAGE_INFORMATION
-    ProcessCycleTime,               // q: PROCESS_CYCLE_TIME_INFORMATION // since VISTA
-    ProcessPagePriority,            // qs: PAGE_PRIORITY_INFORMATION
-    ProcessInstrumentationCallback, // s: PVOID or PROCESS_INSTRUMENTATION_CALLBACK_INFORMATION // 40
-    ProcessThreadStackAllocation,   // s: PROCESS_STACK_ALLOCATION_INFORMATION, PROCESS_STACK_ALLOCATION_INFORMATION_EX
-    ProcessWorkingSetWatchEx,       // q: PROCESS_WS_WATCH_INFORMATION_EX[]; s: void
-    ProcessImageFileNameWin32,      // q: UNICODE_STRING
-    ProcessImageFileMapping,        // q: HANDLE (input)
-    ProcessAffinityUpdateMode,      // qs: PROCESS_AFFINITY_UPDATE_MODE
-    ProcessMemoryAllocationMode,    // qs: PROCESS_MEMORY_ALLOCATION_MODE
-    ProcessGroupInformation,        // q: USHORT[]
+    ProcessBasicInformation,                // q: PROCESS_BASIC_INFORMATION, PROCESS_EXTENDED_BASIC_INFORMATION
+    ProcessQuotaLimits,                     // qs: QUOTA_LIMITS, QUOTA_LIMITS_EX
+    ProcessIoCounters,                      // q: IO_COUNTERS
+    ProcessVmCounters,                      // q: VM_COUNTERS, VM_COUNTERS_EX, VM_COUNTERS_EX2
+    ProcessTimes,                           // q: KERNEL_USER_TIMES
+    ProcessBasePriority,                    // s: KPRIORITY
+    ProcessRaisePriority,                   // s: ULONG
+    ProcessDebugPort,                       // q: HANDLE
+    ProcessExceptionPort,                   // s: PROCESS_EXCEPTION_PORT (requires SeTcbPrivilege)
+    ProcessAccessToken,                     // s: PROCESS_ACCESS_TOKEN
+    ProcessLdtInformation,                  // qs: PROCESS_LDT_INFORMATION // 10
+    ProcessLdtSize,                         // s: PROCESS_LDT_SIZE
+    ProcessDefaultHardErrorMode,            // qs: ULONG
+    ProcessIoPortHandlers,                  // (kernel-mode only) // s: PROCESS_IO_PORT_HANDLER_INFORMATION
+    ProcessPooledUsageAndLimits,            // q: POOLED_USAGE_AND_LIMITS
+    ProcessWorkingSetWatch,                 // q: PROCESS_WS_WATCH_INFORMATION[]; s: void
+    ProcessUserModeIOPL,                    // qs: ULONG (requires SeTcbPrivilege)
+    ProcessEnableAlignmentFaultFixup,       // s: BOOLEAN
+    ProcessPriorityClass,                   // qs: PROCESS_PRIORITY_CLASS
+    ProcessWx86Information,                 // qs: ULONG (requires SeTcbPrivilege) (VdmAllowed)
+    ProcessHandleCount,                     // q: ULONG, PROCESS_HANDLE_INFORMATION // 20
+    ProcessAffinityMask,                    // (q >WIN7)s: KAFFINITY, qs: GROUP_AFFINITY
+    ProcessPriorityBoost,                   // qs: ULONG
+    ProcessDeviceMap,                       // qs: PROCESS_DEVICEMAP_INFORMATION, PROCESS_DEVICEMAP_INFORMATION_EX
+    ProcessSessionInformation,              // q: PROCESS_SESSION_INFORMATION
+    ProcessForegroundInformation,           // s: PROCESS_FOREGROUND_BACKGROUND
+    ProcessWow64Information,                // q: ULONG_PTR
+    ProcessImageFileName,                   // q: UNICODE_STRING
+    ProcessLUIDDeviceMapsEnabled,           // q: ULONG
+    ProcessBreakOnTermination,              // qs: ULONG
+    ProcessDebugObjectHandle,               // q: HANDLE // 30
+    ProcessDebugFlags,                      // qs: ULONG
+    ProcessHandleTracing,                   // q: PROCESS_HANDLE_TRACING_QUERY; s: PROCESS_HANDLE_TRACING_ENABLE[_EX] or void to disable
+    ProcessIoPriority,                      // qs: IO_PRIORITY_HINT
+    ProcessExecuteFlags,                    // qs: ULONG (MEM_EXECUTE_OPTION_*)
+    ProcessTlsInformation,                  // PROCESS_TLS_INFORMATION // ProcessResourceManagement
+    ProcessCookie,                          // q: ULONG
+    ProcessImageInformation,                // q: SECTION_IMAGE_INFORMATION
+    ProcessCycleTime,                       // q: PROCESS_CYCLE_TIME_INFORMATION // since VISTA
+    ProcessPagePriority,                    // qs: PAGE_PRIORITY_INFORMATION
+    ProcessInstrumentationCallback,         // s: PVOID or PROCESS_INSTRUMENTATION_CALLBACK_INFORMATION // 40
+    ProcessThreadStackAllocation,           // s: PROCESS_STACK_ALLOCATION_INFORMATION, PROCESS_STACK_ALLOCATION_INFORMATION_EX
+    ProcessWorkingSetWatchEx,               // q: PROCESS_WS_WATCH_INFORMATION_EX[]; s: void
+    ProcessImageFileNameWin32,              // q: UNICODE_STRING
+    ProcessImageFileMapping,                // q: HANDLE (input)
+    ProcessAffinityUpdateMode,              // qs: PROCESS_AFFINITY_UPDATE_MODE
+    ProcessMemoryAllocationMode,            // qs: PROCESS_MEMORY_ALLOCATION_MODE
+    ProcessGroupInformation,                // q: USHORT[]
     ProcessTokenVirtualizationEnabled,      // s: ULONG
     ProcessConsoleHostProcess,              // qs: ULONG_PTR // ProcessOwnerInformation
     ProcessWindowInformation,               // q: PROCESS_WINDOW_INFORMATION // 50

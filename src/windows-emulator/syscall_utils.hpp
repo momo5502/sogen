@@ -48,8 +48,7 @@ inline std::optional<uint32_t> extract_syscall_id(const exported_symbol& symbol,
 
     const auto instruction_rva = symbol.rva + instruction_offset;
 
-    if (data.size() < (instruction_rva + instruction_size) ||
-        data[static_cast<size_t>(instruction_rva)] != instruction_opcode)
+    if (data.size() < (instruction_rva + instruction_size) || data[static_cast<size_t>(instruction_rva)] != instruction_opcode)
     {
         return std::nullopt;
     }
@@ -74,8 +73,8 @@ inline std::map<uint64_t, std::string> find_syscalls(const exported_symbols& exp
 
             if (!entry.empty())
             {
-                throw std::runtime_error("Syscall with id " + std::to_string(*id) + ", which is mapping to " +
-                                         symbol.name + ", was already mapped to " + entry);
+                throw std::runtime_error("Syscall with id " + std::to_string(*id) + ", which is mapping to " + symbol.name +
+                                         ", was already mapped to " + entry);
             }
 
             entry = symbol.name;
@@ -227,8 +226,8 @@ NTSTATUS handle_query_internal(x86_64_emulator& emu, const uint64_t buffer, cons
 
 template <typename ResponseType, typename Action, typename LengthType>
     requires(std::is_integral_v<LengthType>)
-NTSTATUS handle_query(x86_64_emulator& emu, const uint64_t buffer, const uint32_t length,
-                      const emulator_object<LengthType> return_length, const Action& action)
+NTSTATUS handle_query(x86_64_emulator& emu, const uint64_t buffer, const uint32_t length, const emulator_object<LengthType> return_length,
+                      const Action& action)
 {
     const auto length_setter = [&](const size_t required_size) {
         if (return_length)
@@ -242,8 +241,7 @@ NTSTATUS handle_query(x86_64_emulator& emu, const uint64_t buffer, const uint32_
 
 template <typename ResponseType, typename Action>
 NTSTATUS handle_query(x86_64_emulator& emu, const uint64_t buffer, const uint32_t length,
-                      const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
-                      const Action& action)
+                      const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const Action& action)
 {
     IO_STATUS_BLOCK<EmulatorTraits<Emu64>> status_block{};
 

@@ -63,8 +63,7 @@ class memory_manager : public memory_interface
     bool try_read_memory(uint64_t address, void* data, size_t size) const final;
     void write_memory(uint64_t address, const void* data, size_t size) final;
 
-    bool protect_memory(uint64_t address, size_t size, nt_memory_permission permissions,
-                        nt_memory_permission* old_permissions = nullptr);
+    bool protect_memory(uint64_t address, size_t size, nt_memory_permission permissions, nt_memory_permission* old_permissions = nullptr);
 
     bool allocate_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb);
     bool allocate_memory(uint64_t address, size_t size, nt_memory_permission permissions, bool reserve_only = false);

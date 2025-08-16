@@ -77,14 +77,13 @@
 #define SEC_RESERVE 0x04000000
 #endif
 
-#define CTL_CODE(DeviceType, Function, Method, Access) \
-    (((DeviceType) << 16) | ((Access) << 14) | ((Function) << 2) | (Method))
+#define CTL_CODE(DeviceType, Function, Method, Access) (((DeviceType) << 16) | ((Access) << 14) | ((Function) << 2) | (Method))
 
-#define METHOD_BUFFERED   0
+#define METHOD_BUFFERED                                0
 
-#define FILE_ANY_ACCESS   0
-#define FILE_READ_ACCESS  (0x0001) // file & pipe
-#define FILE_WRITE_ACCESS (0x0002) // file & pipe
+#define FILE_ANY_ACCESS                                0
+#define FILE_READ_ACCESS                               (0x0001) // file & pipe
+#define FILE_WRITE_ACCESS                              (0x0002) // file & pipe
 
 typedef enum _FSINFOCLASS
 {
@@ -147,10 +146,10 @@ typedef enum _FILE_INFORMATION_CLASS
     FileMailslotQueryInformation, // q: FILE_MAILSLOT_QUERY_INFORMATION
     FileMailslotSetInformation,   // s: FILE_MAILSLOT_SET_INFORMATION
     FileCompressionInformation,   // q: FILE_COMPRESSION_INFORMATION
-    FileObjectIdInformation,   // q: FILE_OBJECTID_INFORMATION (requires FILE_LIST_DIRECTORY) (NtQueryDirectoryFile[Ex])
-    FileCompletionInformation, // s: FILE_COMPLETION_INFORMATION // 30
-    FileMoveClusterInformation, // s: FILE_MOVE_CLUSTER_INFORMATION (requires FILE_WRITE_DATA)
-    FileQuotaInformation,       // q: FILE_QUOTA_INFORMATION (requires FILE_LIST_DIRECTORY) (NtQueryDirectoryFile[Ex])
+    FileObjectIdInformation,      // q: FILE_OBJECTID_INFORMATION (requires FILE_LIST_DIRECTORY) (NtQueryDirectoryFile[Ex])
+    FileCompletionInformation,    // s: FILE_COMPLETION_INFORMATION // 30
+    FileMoveClusterInformation,   // s: FILE_MOVE_CLUSTER_INFORMATION (requires FILE_WRITE_DATA)
+    FileQuotaInformation,         // q: FILE_QUOTA_INFORMATION (requires FILE_LIST_DIRECTORY) (NtQueryDirectoryFile[Ex])
     FileReparsePointInformation,
     // q: FILE_REPARSE_POINT_INFORMATION (requires FILE_LIST_DIRECTORY) (NtQueryDirectoryFile[Ex])
     FileNetworkOpenInformation,  // q: FILE_NETWORK_OPEN_INFORMATION (requires FILE_READ_ATTRIBUTES)

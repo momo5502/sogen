@@ -73,8 +73,7 @@ namespace
         utils::unordered_insensitive_u16string_map<std::u16string> env_map;
         std::unordered_set<std::u16string_view> keys_to_expand;
 
-        const auto env_key =
-            registry.get_key({R"(\Registry\Machine\System\CurrentControlSet\Control\Session Manager\Environment)"});
+        const auto env_key = registry.get_key({R"(\Registry\Machine\System\CurrentControlSet\Control\Session Manager\Environment)"});
         if (env_key)
         {
             for (size_t i = 0; const auto value_opt = registry.get_value(*env_key, i); i++)
@@ -98,8 +97,7 @@ namespace
                     continue;
                 }
 
-                const auto [it, inserted] =
-                    env_map.emplace(u8_to_u16(value.name), std::u16string(data_ptr, char_count - 1));
+                const auto [it, inserted] = env_map.emplace(u8_to_u16(value.name), std::u16string(data_ptr, char_count - 1));
                 if (inserted && value.type == REG_EXPAND_SZ)
                 {
                     keys_to_expand.insert(it->first);
@@ -142,8 +140,8 @@ namespace
 }
 
 void process_context::setup(x86_64_emulator& emu, memory_manager& memory, registry_manager& registry,
-                            const application_settings& app_settings, const mapped_module& executable,
-                            const mapped_module& ntdll, const apiset::container& apiset_container)
+                            const application_settings& app_settings, const mapped_module& executable, const mapped_module& ntdll,
+                            const apiset::container& apiset_container)
 {
     setup_gdt(emu, memory);
 
@@ -204,8 +202,7 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
         }
 
         allocator.make_unicode_string(proc_params.CommandLine, command_line);
-        allocator.make_unicode_string(proc_params.CurrentDirectory.DosPath,
-                                      app_settings.working_directory.u16string() + u"\\", 1024);
+        allocator.make_unicode_string(proc_params.CurrentDirectory.DosPath, app_settings.working_directory.u16string() + u"\\", 1024);
         allocator.make_unicode_string(proc_params.ImagePathName, application_str);
 
         const auto total_length = allocator.get_next_address() - this->process_params.value();

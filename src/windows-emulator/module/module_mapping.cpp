@@ -77,8 +77,8 @@ namespace
                 }
                 else
                 {
-                    sym.name = buffer.as_string(
-                        static_cast<size_t>(original_thunk.u1.AddressOfData + offsetof(IMAGE_IMPORT_BY_NAME, Name)));
+                    sym.name =
+                        buffer.as_string(static_cast<size_t>(original_thunk.u1.AddressOfData + offsetof(IMAGE_IMPORT_BY_NAME, Name)));
                 }
 
                 imports.push_back(std::move(sym));
@@ -127,8 +127,7 @@ namespace
 
     template <typename T>
         requires(std::is_integral_v<T>)
-    void apply_relocation(const utils::safe_buffer_accessor<std::byte> buffer, const uint64_t offset,
-                          const uint64_t delta)
+    void apply_relocation(const utils::safe_buffer_accessor<std::byte> buffer, const uint64_t offset, const uint64_t delta)
     {
         const auto obj = buffer.as<T>(static_cast<size_t>(offset));
         const auto value = obj.get();
@@ -198,8 +197,7 @@ namespace
         }
     }
 
-    void map_sections(memory_manager& memory, mapped_module& binary,
-                      const utils::safe_buffer_accessor<const std::byte> buffer,
+    void map_sections(memory_manager& memory, mapped_module& binary, const utils::safe_buffer_accessor<const std::byte> buffer,
                       const PENTHeaders_t<std::uint64_t>& nt_headers, const uint64_t nt_headers_offset)
     {
         const auto first_section_offset = get_first_section_offset(nt_headers, nt_headers_offset);
@@ -253,8 +251,7 @@ namespace
     }
 }
 
-mapped_module map_module_from_data(memory_manager& memory, const std::span<const std::byte> data,
-                                   std::filesystem::path file)
+mapped_module map_module_from_data(memory_manager& memory, const std::span<const std::byte> data, std::filesystem::path file)
 {
     mapped_module binary{};
     binary.path = std::move(file);
@@ -283,8 +280,8 @@ mapped_module map_module_from_data(memory_manager& memory, const std::span<const
         const auto has_dynamic_base = optional_header.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
         const auto is_relocatable = is_dll || has_dynamic_base;
 
-        if (!is_relocatable || !memory.allocate_memory(binary.image_base, static_cast<size_t>(binary.size_of_image),
-                                                       memory_permission::all))
+        if (!is_relocatable ||
+            !memory.allocate_memory(binary.image_base, static_cast<size_t>(binary.size_of_image), memory_permission::all))
         {
             throw std::runtime_error("Memory range not allocatable");
         }
@@ -323,8 +320,7 @@ mapped_module map_module_from_file(memory_manager& memory, std::filesystem::path
     return map_module_from_data(memory, data, std::move(file));
 }
 
-mapped_module map_module_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
-                                     const std::string& module_name)
+mapped_module map_module_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size, const std::string& module_name)
 {
     mapped_module binary{};
     binary.name = module_name;
@@ -353,8 +349,7 @@ mapped_module map_module_from_memory(memory_manager& memory, uint64_t base_addre
 
             mapped_section section_info{};
             section_info.region.start = binary.image_base + section.VirtualAddress;
-            section_info.region.length =
-                static_cast<size_t>(page_align_up(std::max(section.SizeOfRawData, section.Misc.VirtualSize)));
+            section_info.region.length = static_cast<size_t>(page_align_up(std::max(section.SizeOfRawData, section.Misc.VirtualSize)));
 
             auto permissions = memory_permission::none;
             if (section.Characteristics & IMAGE_SCN_MEM_EXECUTE)
