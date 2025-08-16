@@ -315,17 +315,20 @@ namespace
         }
 
         const auto export_entry = binary->address_names.find(address);
-        if (export_entry != binary->address_names.end() &&
-            !c.settings->ignored_functions.contains(export_entry->second))
+        if (export_entry != binary->address_names.end())
         {
-            win_emu.log.print(is_interesting_call ? color::yellow : color::dark_gray,
-                              "Executing function: %s (%s) (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n",
-                              export_entry->second.c_str(), binary->name.c_str(), address, win_emu.process.previous_ip,
-                              previous_binary ? previous_binary->name.c_str() : "<N/A>");
-
-            if (is_interesting_call)
+            if (!c.settings->ignored_functions.contains(export_entry->second))
             {
-                handle_function_details(c, export_entry->second);
+                win_emu.log.print(is_interesting_call ? color::yellow : color::dark_gray,
+                                  "Executing function: %s (%s) (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n",
+                                  export_entry->second.c_str(), binary->name.c_str(), address,
+                                  win_emu.process.previous_ip,
+                                  previous_binary ? previous_binary->name.c_str() : "<N/A>");
+
+                if (is_interesting_call)
+                {
+                    handle_function_details(c, export_entry->second);
+                }
             }
         }
         else if (address == binary->entry_point)
