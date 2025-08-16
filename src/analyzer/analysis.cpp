@@ -1,6 +1,7 @@
 #include "std_include.hpp"
 
 #include "analysis.hpp"
+#include "disassembler.hpp"
 #include "windows_emulator.hpp"
 #include <utils/lazy_object.hpp>
 
@@ -98,7 +99,7 @@ namespace
 
     void handle_thread_set_name(const analysis_context& c, const emulator_thread& t)
     {
-        c.win_emu->log.print(color::blue, "Setting thread (%d) name: %s\n", t.id, u16_to_u8(t.name).c_str());
+        c.win_emu->log.print(color::blue, "Setting thread (%u) name: %s\n", t.id, u16_to_u8(t.name).c_str());
     }
 
     void handle_thread_switch(const analysis_context& c, const emulator_thread& current_thread,
@@ -149,7 +150,7 @@ namespace
         }
     }
 
-    void handle_function_details(analysis_context& c, const std::string_view function)
+    void handle_function_details(const analysis_context& c, const std::string_view function)
     {
         if (function == "GetEnvironmentVariableA" || function == "ExpandEnvironmentStringsA")
         {
@@ -234,6 +235,25 @@ namespace
         }
     }
 
+    bool is_return(const emulator& emu, const uint64_t address)
+    {
+        std::vector<uint8_t> instruction_bytes(15, 0);
+        const auto result = emu.try_read_memory(address, instruction_bytes.data(), instruction_bytes.size());
+        if (!result)
+        {
+            return false;
+        }
+
+        disassembler disasm{};
+        const auto instructions = disasm.disassemble(instruction_bytes, 1);
+        if (instructions.empty())
+        {
+            return false;
+        }
+
+        return cs_insn_group(disasm.get_handle(), &instructions[0], CS_GRP_RET);
+    }
+
     void handle_instruction(analysis_context& c, const uint64_t address)
     {
         auto& win_emu = *c.win_emu;
@@ -313,7 +333,8 @@ namespace
             win_emu.log.print(is_interesting_call ? color::yellow : color::gray,
                               "Executing entry point: %s (0x%" PRIx64 ")\n", binary->name.c_str(), address);
         }
-        else if (is_previous_main_exe && binary != previous_binary)
+        else if (is_previous_main_exe && binary != previous_binary &&
+                 !is_return(c.win_emu->emu(), win_emu.process.previous_ip))
         {
             auto nearest_entry = binary->address_names.upper_bound(address);
             if (nearest_entry == binary->address_names.begin())
