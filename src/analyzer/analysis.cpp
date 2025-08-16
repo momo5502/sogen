@@ -251,7 +251,7 @@ namespace
             return false;
         }
 
-        return cs_insn_group(disasm.get_handle(), &instructions[0], CS_GRP_RET);
+        return cs_insn_group(disasm.get_handle(), instructions.data(), CS_GRP_RET);
     }
 
     void handle_instruction(analysis_context& c, const uint64_t address)

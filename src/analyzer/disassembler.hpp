@@ -1,7 +1,6 @@
 #pragma once
 
 #include <capstone/capstone.h>
-#include <utils/finally.hpp>
 
 class instructions
 {

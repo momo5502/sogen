@@ -1,14 +1,26 @@
 #include "std_include.hpp"
-
 #include "disassembler.hpp"
+#include <utils/finally.hpp>
+
+namespace
+{
+    void cse(const cs_err error)
+    {
+        if (error != CS_ERR_OK)
+        {
+            throw std::runtime_error(cs_strerror(error));
+        }
+    }
+}
 
 disassembler::disassembler()
 {
-    const auto res = cs_open(CS_ARCH_X86, CS_MODE_64, &this->handle_);
-    if (res != CS_ERR_OK)
-    {
-        throw std::runtime_error("Failed to initialize capstone");
-    }
+    auto deleter = utils::finally([&] { this->release(); });
+
+    cse(cs_open(CS_ARCH_X86, CS_MODE_64, &this->handle_));
+    cse(cs_option(this->handle_, CS_OPT_DETAIL, CS_OPT_ON));
+
+    deleter.cancel();
 }
 
 disassembler::~disassembler()
