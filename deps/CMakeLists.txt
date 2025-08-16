@@ -29,6 +29,8 @@ add_subdirectory(minidump_cpp)
 
 ##########################################
 
+
+option(CAPSTONE_BUILD_MACOS_THIN "" ON)
 option(CAPSTONE_X86_SUPPORT "" ON)
 option(CAPSTONE_X86_ATT_DISABLE "" ON)
 option(CAPSTONE_ARCHITECTURE_DEFAULT "" OFF)
