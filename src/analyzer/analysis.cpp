@@ -99,7 +99,7 @@ namespace
 
     void handle_thread_set_name(const analysis_context& c, const emulator_thread& t)
     {
-        c.win_emu->log.print(color::blue, "Setting thread (%d) name: %s\n", t.id, u16_to_u8(t.name).c_str());
+        c.win_emu->log.print(color::blue, "Setting thread (%u) name: %s\n", t.id, u16_to_u8(t.name).c_str());
     }
 
     void handle_thread_switch(const analysis_context& c, const emulator_thread& current_thread,
