@@ -22,7 +22,7 @@ if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
 endif()
 
 add_test(NAME windows-emulator-test
-         COMMAND "${PYTHON3_EXE}" "${PROJECT_SOURCE_DIR}/deps/gtest-parallel/gtest_parallel.py" ./windows-emulator-test
+         COMMAND ${CMAKE_COMMAND} -E env "LD_LIBRARY_PATH=." -- "${PYTHON3_EXE}" "${PROJECT_SOURCE_DIR}/deps/gtest-parallel/gtest_parallel.py" ./windows-emulator-test
          WORKING_DIRECTORY "$<TARGET_FILE_DIR:windows-emulator-test>")
 
 momo_targets_set_folder("tests" windows-emulator-test)
