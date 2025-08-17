@@ -45,8 +45,7 @@ namespace
             return {};
         }
 
-        auto& inst = instructions[0];
-
+        const auto& inst = instructions[0];
         return std::string(inst.mnemonic) + (strlen(inst.op_str) ? " "s + inst.op_str : "");
     }
 
