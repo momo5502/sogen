@@ -225,6 +225,8 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
         p.HeapDeCommitFreeBlockThreshold = 0x0000000000001000;
         p.NumberOfHeaps = 0x00000000;
         p.MaximumNumberOfHeaps = 0x00000010;
+        p.NumberOfProcessors = 4;
+        p.ImageSubsystemMajorVersion = 6;
 
         p.OSPlatformId = 2;
         p.OSMajorVersion = 0x0000000a;
@@ -246,8 +248,6 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
 
 void process_context::serialize(utils::buffer_serializer& buffer) const
 {
-    buffer.write(this->current_ip);
-    buffer.write(this->previous_ip);
     buffer.write(this->shared_section_address);
     buffer.write(this->shared_section_size);
     buffer.write(this->dbwin_buffer);
@@ -285,8 +285,6 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
 
 void process_context::deserialize(utils::buffer_deserializer& buffer)
 {
-    buffer.read(this->current_ip);
-    buffer.read(this->previous_ip);
     buffer.read(this->shared_section_address);
     buffer.read(this->shared_section_size);
     buffer.read(this->dbwin_buffer);

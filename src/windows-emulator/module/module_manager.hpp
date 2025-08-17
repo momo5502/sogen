@@ -39,6 +39,19 @@ class module_manager
         return nullptr;
     }
 
+    mapped_module* find_by_name(const std::string_view name)
+    {
+        for (auto& mod : this->modules_ | std::views::values)
+        {
+            if (mod.name == name)
+            {
+                return &mod;
+            }
+        }
+
+        return nullptr;
+    }
+
     const char* find_name(const uint64_t address)
     {
         const auto* mod = this->find_by_address(address);

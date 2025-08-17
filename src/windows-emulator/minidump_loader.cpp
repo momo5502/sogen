@@ -654,7 +654,6 @@ namespace minidump_loader
             return;
         }
 
-        win_emu.process.current_ip = exception_info->exception_record.exception_address;
         win_emu.log.info("Exception context: address=0x%" PRIx64 ", code=0x%08X, thread=%u\n",
                          exception_info->exception_record.exception_address, exception_info->exception_record.exception_code,
                          exception_info->thread_id);

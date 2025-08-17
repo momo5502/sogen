@@ -94,4 +94,9 @@ namespace syscalls
     {
         return STATUS_NOT_SUPPORTED;
     }
+
+    NTSTATUS handle_NtAlpcConnectPortEx()
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
 }

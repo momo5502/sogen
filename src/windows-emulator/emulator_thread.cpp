@@ -117,6 +117,7 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
         teb_obj.NtTib.StackLimit = this->stack_base;
         teb_obj.NtTib.StackBase = this->stack_base + this->stack_size;
         teb_obj.NtTib.Self = this->teb->value();
+        teb_obj.CurrentLocale = 0x409;
         teb_obj.ProcessEnvironmentBlock = context.peb.value();
     });
 }

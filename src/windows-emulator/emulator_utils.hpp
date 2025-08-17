@@ -367,7 +367,7 @@ inline std::u16string read_unicode_string(emulator& emu, const uint64_t uc_strin
     return read_unicode_string(emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{emu, uc_string});
 }
 
-inline uint64_t get_function_argument(x86_64_emulator& emu, const size_t index, bool is_syscall = false)
+inline uint64_t get_function_argument(x86_64_emulator& emu, const size_t index, const bool is_syscall = false)
 {
     switch (index)
     {
