@@ -225,6 +225,8 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
         p.HeapDeCommitFreeBlockThreshold = 0x0000000000001000;
         p.NumberOfHeaps = 0x00000000;
         p.MaximumNumberOfHeaps = 0x00000010;
+        p.NumberOfProcessors = 4;
+        p.ImageSubsystemMajorVersion = 6;
 
         p.OSPlatformId = 2;
         p.OSMajorVersion = 0x0000000a;

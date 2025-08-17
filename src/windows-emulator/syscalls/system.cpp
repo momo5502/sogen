@@ -267,8 +267,8 @@ namespace syscalls
                                                                 basic_info.AllocationGranularity = ALLOCATION_GRANULARITY;
                                                                 basic_info.MinimumUserModeAddress = MIN_ALLOCATION_ADDRESS;
                                                                 basic_info.MaximumUserModeAddress = MAX_ALLOCATION_ADDRESS;
-                                                                basic_info.ActiveProcessorsAffinityMask = 0x0000000000000fff;
-                                                                basic_info.NumberOfProcessors = 1;
+                                                                basic_info.ActiveProcessorsAffinityMask = 0x0000000000000f;
+                                                                basic_info.NumberOfProcessors = 4;
                                                             });
 
         default:
