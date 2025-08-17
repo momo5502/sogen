@@ -83,9 +83,6 @@ struct process_context
 
     callbacks* callbacks_{};
 
-    uint64_t current_ip{0};
-    uint64_t previous_ip{0};
-
     uint64_t shared_section_address{0};
     uint64_t shared_section_size{0};
     uint64_t dbwin_buffer{0};

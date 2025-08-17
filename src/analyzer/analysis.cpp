@@ -66,7 +66,7 @@ namespace
         }
 
         c.win_emu->log.print(color::pink, "Suspicious: %.*s%.*s at 0x%" PRIx64 " (via 0x%" PRIx64 ")\n", STR_VIEW_VA(details),
-                             STR_VIEW_VA(addition), rip, c.win_emu->process.previous_ip);
+                             STR_VIEW_VA(addition), rip, c.win_emu->current_thread().previous_ip);
     }
 
     void handle_debug_string(const analysis_context& c, const std::string_view details)
@@ -289,8 +289,9 @@ namespace
         }
 #endif
 
+        const auto previous_ip = c.win_emu->current_thread().previous_ip;
         const auto is_main_exe = win_emu.mod_manager.executable->is_within(address);
-        const auto is_previous_main_exe = win_emu.mod_manager.executable->is_within(c.win_emu->process.previous_ip);
+        const auto is_previous_main_exe = win_emu.mod_manager.executable->is_within(previous_ip);
 
         const auto binary = utils::make_lazy([&] {
             if (is_main_exe)
@@ -307,7 +308,7 @@ namespace
                 return win_emu.mod_manager.executable;
             }
 
-            return win_emu.mod_manager.find_by_address(win_emu.process.previous_ip); //
+            return win_emu.mod_manager.find_by_address(previous_ip); //
         });
 
         const auto is_in_interesting_module = [&] {
@@ -343,8 +344,7 @@ namespace
             {
                 win_emu.log.print(is_interesting_call ? color::yellow : color::dark_gray,
                                   "Executing function: %s (%s) (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n", export_entry->second.c_str(),
-                                  binary->name.c_str(), address, win_emu.process.previous_ip,
-                                  previous_binary ? previous_binary->name.c_str() : "<N/A>");
+                                  binary->name.c_str(), address, previous_ip, previous_binary ? previous_binary->name.c_str() : "<N/A>");
 
                 if (is_interesting_call)
                 {
@@ -357,7 +357,7 @@ namespace
             win_emu.log.print(is_interesting_call ? color::yellow : color::gray, "Executing entry point: %s (0x%" PRIx64 ")\n",
                               binary->name.c_str(), address);
         }
-        else if (is_previous_main_exe && binary != previous_binary && !is_return(c.win_emu->emu(), win_emu.process.previous_ip))
+        else if (is_previous_main_exe && binary != previous_binary && !is_return(c.win_emu->emu(), previous_ip))
         {
             auto nearest_entry = binary->address_names.upper_bound(address);
             if (nearest_entry == binary->address_names.begin())
@@ -369,8 +369,8 @@ namespace
 
             win_emu.log.print(is_interesting_call ? color::yellow : color::dark_gray,
                               "Transition to foreign code: %s+0x%" PRIx64 " (%s) (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n",
-                              nearest_entry->second.c_str(), address - nearest_entry->first, binary->name.c_str(), address,
-                              win_emu.process.previous_ip, previous_binary ? previous_binary->name.c_str() : "<N/A>");
+                              nearest_entry->second.c_str(), address - nearest_entry->first, binary->name.c_str(), address, previous_ip,
+                              previous_binary ? previous_binary->name.c_str() : "<N/A>");
         }
     }
 
@@ -416,13 +416,14 @@ namespace
         const auto address = emu.read_instruction_pointer();
         const auto* mod = win_emu.mod_manager.find_by_address(address);
         const auto is_sus_module = mod != win_emu.mod_manager.ntdll && mod != win_emu.mod_manager.win32u;
+        const auto previous_ip = win_emu.current_thread().previous_ip;
 
         if (is_sus_module)
         {
             win_emu.log.print(color::blue, "Executing inline syscall: %.*s (0x%X) at 0x%" PRIx64 " (%s)\n", STR_VIEW_VA(syscall_name),
                               syscall_id, address, mod ? mod->name.c_str() : "<N/A>");
         }
-        else if (mod->is_within(win_emu.process.previous_ip))
+        else if (mod->is_within(previous_ip))
         {
             const auto rsp = emu.read_stack_pointer();
 
@@ -436,11 +437,11 @@ namespace
         }
         else
         {
-            const auto* previous_mod = win_emu.mod_manager.find_by_address(win_emu.process.previous_ip);
+            const auto* previous_mod = win_emu.mod_manager.find_by_address(previous_ip);
 
             win_emu.log.print(color::blue, "Crafted out-of-line syscall: %.*s (0x%X) at 0x%" PRIx64 " (%s) via 0x%" PRIx64 " (%s)\n",
-                              STR_VIEW_VA(syscall_name), syscall_id, address, mod ? mod->name.c_str() : "<N/A>",
-                              win_emu.process.previous_ip, previous_mod ? previous_mod->name.c_str() : "<N/A>");
+                              STR_VIEW_VA(syscall_name), syscall_id, address, mod ? mod->name.c_str() : "<N/A>", previous_ip,
+                              previous_mod ? previous_mod->name.c_str() : "<N/A>");
         }
 
         return instruction_hook_continuation::run_instruction;

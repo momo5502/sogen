@@ -420,8 +420,8 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
         this->yield_thread();
     }
 
-    this->process.previous_ip = this->process.current_ip;
-    this->process.current_ip = this->emu().read_instruction_pointer();
+    thread.previous_ip = thread.current_ip;
+    thread.current_ip = this->emu().read_instruction_pointer();
 
     this->callbacks.on_instruction(address);
 }

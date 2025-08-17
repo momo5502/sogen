@@ -74,6 +74,9 @@ class emulator_thread : public ref_counted_object
 
     uint32_t id{};
 
+    uint64_t current_ip{0};
+    uint64_t previous_ip{0};
+
     std::u16string name{};
 
     std::optional<NTSTATUS> exit_status{};
@@ -144,6 +147,8 @@ class emulator_thread : public ref_counted_object
         buffer.write(this->argument);
         buffer.write(this->executed_instructions);
         buffer.write(this->id);
+        buffer.write(this->current_ip);
+        buffer.write(this->previous_ip);
 
         buffer.write_string(this->name);
 
@@ -182,6 +187,8 @@ class emulator_thread : public ref_counted_object
         buffer.read(this->argument);
         buffer.read(this->executed_instructions);
         buffer.read(this->id);
+        buffer.read(this->current_ip);
+        buffer.read(this->previous_ip);
 
         buffer.read_string(this->name);
 
