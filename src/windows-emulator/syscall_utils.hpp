@@ -3,7 +3,7 @@
 #include "windows_emulator.hpp"
 #include <ctime>
 #include <platform/primitives.hpp>
-#include "windows-emulator/devices/named_pipe.hpp"
+#include "devices/named_pipe.hpp"
 
 struct syscall_context
 {

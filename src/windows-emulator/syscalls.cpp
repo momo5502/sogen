@@ -180,6 +180,7 @@ namespace syscalls
                                               /*receive_message_attributes*/,
                                               emulator_object<LARGE_INTEGER> /*timeout*/);
     NTSTATUS handle_NtAlpcConnectPort();
+    NTSTATUS handle_NtAlpcConnectPortEx();
 
     // syscalls/process.cpp:
     NTSTATUS handle_NtQueryInformationProcess(const syscall_context& c, handle process_handle, uint32_t info_class,
@@ -1050,6 +1051,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtEnumerateKey);
     add_handler(NtEnumerateValueKey);
     add_handler(NtAlpcConnectPort);
+    add_handler(NtAlpcConnectPortEx);
     add_handler(NtGetNextThread);
     add_handler(NtSetInformationObject);
     add_handler(NtUserGetCursorPos);

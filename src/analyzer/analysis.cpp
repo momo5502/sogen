@@ -29,11 +29,44 @@ namespace
         };
     }
 
+    std::string get_instruction_string(const emulator& emu, const uint64_t address)
+    {
+        std::vector<uint8_t> instruction_bytes(15, 0);
+        const auto result = emu.try_read_memory(address, instruction_bytes.data(), instruction_bytes.size());
+        if (!result)
+        {
+            return {};
+        }
+
+        disassembler disasm{};
+        const auto instructions = disasm.disassemble(instruction_bytes, 1);
+        if (instructions.empty())
+        {
+            return {};
+        }
+
+        auto& inst = instructions[0];
+
+        return std::string(inst.mnemonic) + (strlen(inst.op_str) ? " "s + inst.op_str : "");
+    }
+
     void handle_suspicious_activity(const analysis_context& c, const std::string_view details)
     {
+        std::string addition{};
         const auto rip = c.win_emu->emu().read_instruction_pointer();
-        c.win_emu->log.print(color::pink, "Suspicious: %.*s at 0x%" PRIx64 " (via 0x%" PRIx64 ")\n", STR_VIEW_VA(details), rip,
-                             c.win_emu->process.previous_ip);
+
+        // TODO: Pass enum?
+        if (details == "Illegal instruction")
+        {
+            const auto inst = get_instruction_string(c.win_emu->emu(), rip);
+            if (!inst.empty())
+            {
+                addition = " (" + inst + ")";
+            }
+        }
+
+        c.win_emu->log.print(color::pink, "Suspicious: %.*s%.*s at 0x%" PRIx64 " (via 0x%" PRIx64 ")\n", STR_VIEW_VA(details),
+                             STR_VIEW_VA(addition), rip, c.win_emu->process.previous_ip);
     }
 
     void handle_debug_string(const analysis_context& c, const std::string_view details)
