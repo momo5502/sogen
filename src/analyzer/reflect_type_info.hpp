@@ -43,34 +43,61 @@ class reflect_type_info
         reflect::for_each<T>([this](auto I) {
             const auto member_name = reflect::member_name<I, T>();
             const auto member_offset = reflect::offset_of<I, T>();
+            const auto member_size = reflect::size_of<I, T>();
 
-            this->members_[member_offset] = member_name;
+            this->members_[member_offset] = std::make_pair(std::string(member_name), member_size);
         });
     }
 
     std::string get_member_name(const size_t offset) const
     {
-        size_t last_offset{};
-        std::string_view last_member{};
-
-        for (const auto& member : this->members_)
+        const auto info = this->get_member_info(offset);
+        if (!info.has_value())
         {
-            if (offset == member.first)
-            {
-                return member.second;
-            }
-
-            if (offset < member.first)
-            {
-                const auto diff = offset - last_offset;
-                return std::string(last_member) + "+" + std::to_string(diff);
-            }
-
-            last_offset = member.first;
-            last_member = member.second;
+            return "<N/A>";
         }
 
-        return "<N/A>";
+        return info->get_diff_name(offset);
+    }
+
+    struct member_info
+    {
+        std::string name{};
+        size_t offset{};
+        size_t size{};
+
+        std::string get_diff_name(const size_t access) const
+        {
+            const auto diff = access - this->offset;
+            if (diff == 0)
+            {
+                return this->name;
+            }
+
+            return this->name + "+" + std::to_string(diff);
+        }
+    };
+
+    std::optional<member_info> get_member_info(const size_t offset) const
+    {
+        auto entry = this->members_.upper_bound(offset);
+        if (entry == this->members_.begin())
+        {
+            return std::nullopt;
+        }
+
+        --entry;
+
+        if (entry->first + entry->second.second <= offset)
+        {
+            return std::nullopt;
+        }
+
+        return member_info{
+            .name = entry->second.first,
+            .offset = entry->first,
+            .size = entry->second.second,
+        };
     }
 
     const std::string& get_type_name() const
@@ -80,5 +107,5 @@ class reflect_type_info
 
   private:
     std::string type_name_{};
-    std::map<size_t, std::string> members_{};
+    std::map<size_t, std::pair<std::string, size_t>> members_{};
 };
