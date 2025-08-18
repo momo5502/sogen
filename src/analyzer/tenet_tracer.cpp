@@ -201,12 +201,12 @@ void tenet_tracer::log_memory_write(uint64_t address, const void* data, size_t s
     mem_write_log_ << format_hex(address) << ":" << format_byte_array(static_cast<const uint8_t*>(data), size);
 }
 
-void tenet_tracer::process_instruction(uint64_t address)
+void tenet_tracer::process_instruction(const uint64_t address)
 {
     auto& emu = win_emu_.emu();
     std::stringstream trace_line;
 
-    std::array<uint64_t, GPRs_TO_TRACE.size()> current_regs;
+    std::array<uint64_t, GPRs_TO_TRACE.size()> current_regs{};
     for (size_t i = 0; i < GPRs_TO_TRACE.size(); ++i)
     {
         current_regs[i] = emu.reg<uint64_t>(GPRs_TO_TRACE[i].first);
