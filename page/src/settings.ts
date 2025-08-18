@@ -9,6 +9,7 @@ export interface Settings {
   execAccess: boolean;
   foreignAccess: boolean;
   wasm64: boolean;
+  instructionSummary: boolean;
   ignoredFunctions: string[];
   interestingModules: string[];
   commandLine: string;
@@ -24,6 +25,7 @@ export function createDefaultSettings(): Settings {
     execAccess: true,
     foreignAccess: false,
     wasm64: false,
+    instructionSummary: false,
     ignoredFunctions: [],
     interestingModules: [],
     commandLine: "",
@@ -81,6 +83,10 @@ export function translateSettings(settings: Settings): string[] {
 
   if (settings.foreignAccess) {
     switches.push("-f");
+  }
+
+  if (settings.instructionSummary) {
+    switches.push("-is");
   }
 
   settings.ignoredFunctions.forEach((f) => {

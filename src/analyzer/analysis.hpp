@@ -2,6 +2,7 @@
 
 #include <set>
 #include <string>
+#include "disassembler.hpp"
 
 struct mapped_module;
 class module_manager;
@@ -15,6 +16,7 @@ struct analysis_settings
     bool verbose_logging{false};
     bool silent{false};
     bool buffer_stdout{false};
+    bool instruction_summary{false};
 
     string_set modules{};
     string_set ignored_functions{};
@@ -39,6 +41,8 @@ struct analysis_context
     std::string output{};
     bool has_reached_main{false};
 
+    disassembler d{};
+    std::unordered_map<uint32_t, uint64_t> instructions{};
     std::vector<accessed_import> accessed_imports{};
 };
 

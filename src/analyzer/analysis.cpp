@@ -31,7 +31,7 @@ namespace
         };
     }
 
-    std::string get_instruction_string(const emulator& emu, const uint64_t address)
+    std::string get_instruction_string(const disassembler& d, const emulator& emu, const uint64_t address)
     {
         std::array<uint8_t, MAX_INSTRUCTION_BYTES> instruction_bytes{};
         const auto result = emu.try_read_memory(address, instruction_bytes.data(), instruction_bytes.size());
@@ -40,8 +40,7 @@ namespace
             return {};
         }
 
-        disassembler disasm{};
-        const auto instructions = disasm.disassemble(instruction_bytes, 1);
+        const auto instructions = d.disassemble(instruction_bytes, 1);
         if (instructions.empty())
         {
             return {};
@@ -59,7 +58,7 @@ namespace
         // TODO: Pass enum?
         if (details == "Illegal instruction")
         {
-            const auto inst = get_instruction_string(c.win_emu->emu(), rip);
+            const auto inst = get_instruction_string(c.d, c.win_emu->emu(), rip);
             if (!inst.empty())
             {
                 addition = " (" + inst + ")";
@@ -258,7 +257,7 @@ namespace
         }
     }
 
-    bool is_return(const emulator& emu, const uint64_t address)
+    bool is_return(const disassembler& d, const emulator& emu, const uint64_t address)
     {
         std::array<uint8_t, MAX_INSTRUCTION_BYTES> instruction_bytes{};
         const auto result = emu.try_read_memory(address, instruction_bytes.data(), instruction_bytes.size());
@@ -267,14 +266,32 @@ namespace
             return false;
         }
 
-        disassembler disasm{};
-        const auto instructions = disasm.disassemble(instruction_bytes, 1);
+        const auto instructions = d.disassemble(instruction_bytes, 1);
         if (instructions.empty())
         {
             return false;
         }
 
-        return cs_insn_group(disasm.get_handle(), instructions.data(), CS_GRP_RET);
+        return cs_insn_group(d.get_handle(), instructions.data(), CS_GRP_RET);
+    }
+
+    void record_instruction(analysis_context& c, const uint64_t address)
+    {
+        std::array<uint8_t, MAX_INSTRUCTION_BYTES> instruction_bytes{};
+        const auto result = c.win_emu->emu().try_read_memory(address, instruction_bytes.data(), instruction_bytes.size());
+        if (!result)
+        {
+            return;
+        }
+
+        disassembler disasm{};
+        const auto instructions = disasm.disassemble(instruction_bytes, 1);
+        if (instructions.empty())
+        {
+            return;
+        }
+
+        ++c.instructions[instructions[0].id];
     }
 
     void handle_instruction(analysis_context& c, const uint64_t address)
@@ -312,18 +329,25 @@ namespace
             return win_emu.mod_manager.find_by_address(previous_ip); //
         });
 
+        const auto is_current_binary_interesting = utils::make_lazy([&] {
+            return is_main_exe || (binary && c.settings->modules.contains(binary->name)); //
+        });
+
         const auto is_in_interesting_module = [&] {
             if (c.settings->modules.empty())
             {
                 return false;
             }
 
-            return (binary && c.settings->modules.contains(binary->name)) ||
-                   (previous_binary && c.settings->modules.contains(previous_binary->name));
+            return is_current_binary_interesting || (previous_binary && c.settings->modules.contains(previous_binary->name));
         };
 
+        if (c.settings->instruction_summary && (is_current_binary_interesting || !binary))
+        {
+            record_instruction(c, address);
+        }
+
         const auto is_interesting_call = is_previous_main_exe //
-                                         || is_main_exe       //
                                          || !previous_binary  //
                                          || is_in_interesting_module();
 
@@ -358,7 +382,7 @@ namespace
             win_emu.log.print(is_interesting_call ? color::yellow : color::gray, "Executing entry point: %s (0x%" PRIx64 ")\n",
                               binary->name.c_str(), address);
         }
-        else if (is_previous_main_exe && binary != previous_binary && !is_return(c.win_emu->emu(), previous_ip))
+        else if (is_previous_main_exe && binary != previous_binary && !is_return(c.d, c.win_emu->emu(), previous_ip))
         {
             auto nearest_entry = binary->address_names.upper_bound(address);
             if (nearest_entry == binary->address_names.begin())
