@@ -31,7 +31,7 @@ namespace
         };
     }
 
-    std::string get_instruction_string(const emulator& emu, const uint64_t address)
+    std::string get_instruction_string(const disassembler& d, const emulator& emu, const uint64_t address)
     {
         std::array<uint8_t, MAX_INSTRUCTION_BYTES> instruction_bytes{};
         const auto result = emu.try_read_memory(address, instruction_bytes.data(), instruction_bytes.size());
@@ -40,8 +40,7 @@ namespace
             return {};
         }
 
-        disassembler disasm{};
-        const auto instructions = disasm.disassemble(instruction_bytes, 1);
+        const auto instructions = d.disassemble(instruction_bytes, 1);
         if (instructions.empty())
         {
             return {};
@@ -59,7 +58,7 @@ namespace
         // TODO: Pass enum?
         if (details == "Illegal instruction")
         {
-            const auto inst = get_instruction_string(c.win_emu->emu(), rip);
+            const auto inst = get_instruction_string(c.d, c.win_emu->emu(), rip);
             if (!inst.empty())
             {
                 addition = " (" + inst + ")";
@@ -258,7 +257,7 @@ namespace
         }
     }
 
-    bool is_return(const emulator& emu, const uint64_t address)
+    bool is_return(const disassembler& d, const emulator& emu, const uint64_t address)
     {
         std::array<uint8_t, MAX_INSTRUCTION_BYTES> instruction_bytes{};
         const auto result = emu.try_read_memory(address, instruction_bytes.data(), instruction_bytes.size());
@@ -267,14 +266,13 @@ namespace
             return false;
         }
 
-        disassembler disasm{};
-        const auto instructions = disasm.disassemble(instruction_bytes, 1);
+        const auto instructions = d.disassemble(instruction_bytes, 1);
         if (instructions.empty())
         {
             return false;
         }
 
-        return cs_insn_group(disasm.get_handle(), instructions.data(), CS_GRP_RET);
+        return cs_insn_group(d.get_handle(), instructions.data(), CS_GRP_RET);
     }
 
     void record_instruction(analysis_context& c, const uint64_t address)
@@ -293,7 +291,7 @@ namespace
             return;
         }
 
-        ++c.instructions[instructions[0].mnemonic];
+        ++c.instructions[instructions[0].id];
     }
 
     void handle_instruction(analysis_context& c, const uint64_t address)
@@ -384,7 +382,7 @@ namespace
             win_emu.log.print(is_interesting_call ? color::yellow : color::gray, "Executing entry point: %s (0x%" PRIx64 ")\n",
                               binary->name.c_str(), address);
         }
-        else if (is_previous_main_exe && binary != previous_binary && !is_return(c.win_emu->emu(), previous_ip))
+        else if (is_previous_main_exe && binary != previous_binary && !is_return(c.d, c.win_emu->emu(), previous_ip))
         {
             auto nearest_entry = binary->address_names.upper_bound(address);
             if (nearest_entry == binary->address_names.begin())

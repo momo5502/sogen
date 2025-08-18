@@ -2,6 +2,7 @@
 
 #include <set>
 #include <string>
+#include "disassembler.hpp"
 
 struct mapped_module;
 class module_manager;
@@ -40,7 +41,8 @@ struct analysis_context
     std::string output{};
     bool has_reached_main{false};
 
-    std::map<std::string, uint64_t> instructions{};
+    disassembler d{};
+    std::unordered_map<uint32_t, uint64_t> instructions{};
     std::vector<accessed_import> accessed_imports{};
 };
 

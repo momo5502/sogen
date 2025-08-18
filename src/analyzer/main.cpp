@@ -223,20 +223,21 @@ namespace
 
     void print_instruction_summary(const analysis_context& c)
     {
-        std::map<uint64_t, std::vector<std::string>> instruction_counts{};
+        std::map<uint64_t, std::vector<uint32_t>> instruction_counts{};
 
-        for (const auto& [mnemonic, count] : c.instructions)
+        for (const auto& [instruction, count] : c.instructions)
         {
-            instruction_counts[count].push_back(mnemonic);
+            instruction_counts[count].push_back(instruction);
         }
 
         c.win_emu->log.print(color::white, "Instruction summary:\n");
 
-        for (const auto& [count, mnemonics] : instruction_counts)
+        for (const auto& [count, instructions] : instruction_counts)
         {
-            for (const auto& mnemonic : mnemonics)
+            for (const auto& instruction : instructions)
             {
-                c.win_emu->log.print(color::white, "%s: %" PRIx64 "\n", mnemonic.c_str(), count);
+                const auto* mnemonic = cs_insn_name(c.d.get_handle(), instruction);
+                c.win_emu->log.print(color::white, "%s: %" PRIx64 "\n", mnemonic, count);
             }
         }
     }
