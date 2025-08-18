@@ -13,6 +13,8 @@
 
 namespace
 {
+    constexpr size_t MAX_INSTRUCTION_BYTES = 15;
+
     template <typename Return, typename... Args>
     std::function<Return(Args...)> make_callback(analysis_context& c, Return (*callback)(analysis_context&, Args...))
     {
@@ -31,7 +33,7 @@ namespace
 
     std::string get_instruction_string(const emulator& emu, const uint64_t address)
     {
-        std::vector<uint8_t> instruction_bytes(15, 0);
+        std::array<uint8_t, MAX_INSTRUCTION_BYTES> instruction_bytes{};
         const auto result = emu.try_read_memory(address, instruction_bytes.data(), instruction_bytes.size());
         if (!result)
         {
@@ -258,7 +260,7 @@ namespace
 
     bool is_return(const emulator& emu, const uint64_t address)
     {
-        std::vector<uint8_t> instruction_bytes(15, 0);
+        std::array<uint8_t, MAX_INSTRUCTION_BYTES> instruction_bytes{};
         const auto result = emu.try_read_memory(address, instruction_bytes.data(), instruction_bytes.size());
         if (!result)
         {
