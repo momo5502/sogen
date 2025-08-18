@@ -38,7 +38,8 @@ struct basic_block
 using edge_generation_hook_callback = std::function<void(const basic_block& current_block, const basic_block& previous_block)>;
 using basic_block_hook_callback = std::function<void(const basic_block& block)>;
 
-using instruction_hook_callback = std::function<instruction_hook_continuation()>;
+using simple_instruction_hook_callback = std::function<instruction_hook_continuation()>;
+using instruction_hook_callback = std::function<instruction_hook_continuation(uint64_t data)>;
 using interrupt_hook_callback = std::function<void(int interrupt)>;
 
 using memory_access_hook_callback = std::function<void(uint64_t address, const void* data, size_t size)>;
