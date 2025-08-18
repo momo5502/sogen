@@ -15,6 +15,7 @@ struct analysis_settings
     bool verbose_logging{false};
     bool silent{false};
     bool buffer_stdout{false};
+    bool instruction_summary{false};
 
     string_set modules{};
     string_set ignored_functions{};
@@ -39,6 +40,7 @@ struct analysis_context
     std::string output{};
     bool has_reached_main{false};
 
+    std::map<std::string, uint64_t> instructions{};
     std::vector<accessed_import> accessed_imports{};
 };
 

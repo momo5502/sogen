@@ -174,6 +174,21 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
 
         <div className="flex gap-6">
           <Checkbox
+            id="settings-summary"
+            checked={this.state.instructionSummary}
+            onCheckedChange={(checked: boolean) => {
+              this.setState({ instructionSummary: checked });
+            }}
+          />
+          <SettingsLabel
+            htmlFor="settings-summary"
+            text={"Print Instruction Summary"}
+            tooltip={"Print summary of executed instructions"}
+          />
+        </div>
+
+        <div className="flex gap-6">
+          <Checkbox
             id="settings-persist"
             checked={this.state.persist}
             onCheckedChange={(checked: boolean) => {

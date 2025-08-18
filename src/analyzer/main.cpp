@@ -221,8 +221,33 @@ namespace
         }
     }
 
+    void print_instruction_summary(const analysis_context& c)
+    {
+        std::map<uint64_t, std::vector<std::string>> instruction_counts{};
+
+        for (const auto& [mnemonic, count] : c.instructions)
+        {
+            instruction_counts[count].push_back(mnemonic);
+        }
+
+        c.win_emu->log.print(color::white, "Instruction summary:\n");
+
+        for (const auto& [count, mnemonics] : instruction_counts)
+        {
+            for (const auto& mnemonic : mnemonics)
+            {
+                c.win_emu->log.print(color::white, "%s: %" PRIx64 "\n", mnemonic.c_str(), count);
+            }
+        }
+    }
+
     void do_post_emulation_work(const analysis_context& c)
     {
+        if (c.settings->instruction_summary)
+        {
+            print_instruction_summary(c);
+        }
+
         if (c.settings->buffer_stdout)
         {
             c.win_emu->log.info("%.*s%s", static_cast<int>(c.output.size()), c.output.data(), c.output.ends_with("\n") ? "" : "\n");
@@ -646,6 +671,10 @@ namespace
             else if (arg == "-t" || arg == "--tenet-trace")
             {
                 options.tenet_trace = true;
+            }
+            else if (arg == "-is" || arg == "--instruction-summary")
+            {
+                options.instruction_summary = true;
             }
             else if (arg == "-m" || arg == "--module")
             {
