@@ -16,7 +16,7 @@ namespace
 
     void setup_gdt(x86_64_emulator& emu, memory_manager& memory)
     {
-        memory.allocate_memory(GDT_ADDR, GDT_LIMIT, memory_permission::read);
+        memory.allocate_memory(GDT_ADDR, page_align_up(GDT_LIMIT), memory_permission::none);
         emu.load_gdt(GDT_ADDR, GDT_LIMIT);
 
         emu.write_memory<uint64_t>(GDT_ADDR + 6 * (sizeof(uint64_t)), 0xEFFE000000FFFF);
