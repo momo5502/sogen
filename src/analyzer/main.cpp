@@ -238,7 +238,7 @@ namespace
             const auto value = signals_received++;
             if (value == 1)
             {
-                win_emu.log.log("Exit already requested. Press CTRL+C again to force kill!");
+                win_emu.log.log("Exit already requested. Press CTRL+C again to force kill!\n");
             }
             else if (value >= 2)
             {
