@@ -266,7 +266,7 @@ namespace icicle
 
             const auto invoker = +[](void* cb) {
                 const auto& func = *static_cast<decltype(ptr)>(cb);
-                (void)func(); //
+                (void)func(0); //
             };
 
             const auto id = icicle_add_syscall_hook(this->emu_, invoker, ptr);

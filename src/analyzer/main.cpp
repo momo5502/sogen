@@ -444,6 +444,19 @@ namespace
 
         const auto concise_logging = !options.verbose_logging;
 
+        win_emu->emu().hook_instruction(x86_hookable_instructions::sgdt, [&](const uint64_t) {
+            const auto rip = win_emu->emu().read_instruction_pointer();
+            const auto mod = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
+
+            if (mod.has_value())
+            {
+                win_emu->log.print(color::blue, "Executing SGDT instruction at 0x%" PRIx64 " (%s)\n", rip,
+                                   (*mod) ? (*mod)->name.c_str() : "<N/A>");
+            }
+
+            return instruction_hook_continuation::run_instruction;
+        });
+
         win_emu->emu().hook_instruction(x86_hookable_instructions::cpuid, [&] {
             const auto rip = win_emu->emu().read_instruction_pointer();
             const auto mod = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
