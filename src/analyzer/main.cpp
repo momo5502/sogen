@@ -611,6 +611,7 @@ namespace
         printf("  -s, --silent              Silent mode\n");
         printf("  -v, --verbose             Verbose logging\n");
         printf("  -b, --buffer              Buffer stdout\n");
+        printf("  -f, --foreign             Log read access to foreign modules\n");
         printf("  -c, --concise             Concise logging\n");
         printf("  -x, --exec                Log r/w access to executable memory\n");
         printf("  -m, --module <module>     Specify module to track\n");
@@ -621,6 +622,7 @@ namespace
         printf("  -i, --ignore <funcs>      Comma-separated list of functions to ignore\n");
         printf("  -p, --path <src> <dst>    Map Windows path to host path\n");
         printf("  -r, --registry <path>     Set registry path (default: ./registry)\n\n");
+        printf("  -is, --inst-summary       Print a summary of executed instructions of the analyzed modules\n");
         printf("Examples:\n");
         printf("  analyzer -v -e path/to/root myapp.exe\n");
         printf("  analyzer -e path/to/root -p c:/analysis-sample.exe /path/to/sample.exe c:/analysis-sample.exe\n");
@@ -640,7 +642,8 @@ namespace
                 print_help();
                 std::exit(0);
             }
-            else if (arg == "-d" || arg == "--debug")
+
+            if (arg == "-d" || arg == "--debug")
             {
                 options.use_gdb = true;
             }
@@ -672,7 +675,7 @@ namespace
             {
                 options.tenet_trace = true;
             }
-            else if (arg == "-is" || arg == "--instruction-summary")
+            else if (arg == "-is" || arg == "--inst-summary")
             {
                 options.instruction_summary = true;
             }
