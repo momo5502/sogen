@@ -376,6 +376,15 @@ impl icicle_cpu::mem::IoMemory for MmioHandler {
 impl IcicleEmulator {
     pub fn new() -> Self {
         let mut virtual_machine = create_x64_vm();
+        let capacity_400mb = 50_000;
+
+        let mut capacity = 8 * 2 * capacity_400mb; // ~8gb
+        if cfg!(target_pointer_width = "32") {
+            capacity = 2 * capacity_400mb; // ~1gb
+        }
+
+        virtual_machine.cpu.mem.set_capacity(capacity);
+
         let stop_value = Rc::new(RefCell::new(false));
         let exec_hooks = Rc::new(RefCell::new(ExecutionHooks::new(stop_value.clone())));
 
