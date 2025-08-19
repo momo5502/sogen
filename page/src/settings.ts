@@ -15,6 +15,11 @@ export interface Settings {
   commandLine: string;
 }
 
+export interface TranslatedSettings {
+  emulatorOptions: string[];
+  applicationOptions: string[];
+}
+
 export function createDefaultSettings(): Settings {
   return {
     verbose: false,
@@ -58,8 +63,9 @@ export function saveSettings(settings: Settings) {
   localStorage.setItem("settings", JSON.stringify(settings));
 }
 
-export function translateSettings(settings: Settings): string[] {
+export function translateSettings(settings: Settings): TranslatedSettings {
   const switches: string[] = [];
+  const options: string[] = [];
 
   if (settings.verbose) {
     switches.push("-v");
@@ -101,10 +107,13 @@ export function translateSettings(settings: Settings): string[] {
 
   try {
     const argv = parse(settings.commandLine) as string[];
-    switches.push(...argv);
+    options.push(...argv);
   } catch (e) {
     console.log(e);
   }
 
-  return switches;
+  return {
+    applicationOptions: options,
+    emulatorOptions: switches,
+  };
 }
