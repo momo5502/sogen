@@ -411,7 +411,7 @@ jobs:
           echo "EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }}" >> $GITHUB_ENV
 
       - name: Download Test Configuration
-        uses: actions/download-artifact@v4.3.0
+        uses: actions/download-artifact@v5.0.0
         with:
           name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
           path: build/${{matrix.preset}}
@@ -482,7 +482,7 @@ jobs:
           echo "EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }}" >> $GITHUB_ENV
 
       - name: Download Test Configuration
-        uses: actions/download-artifact@v4.3.0
+        uses: actions/download-artifact@v5.0.0
         with:
           name: Temp Isolate Windows x86_64 ${{ matrix.configuration}} Test Config
           path: build/${{ matrix.preset }}
