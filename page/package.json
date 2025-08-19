@@ -48,7 +48,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.30.0",
-    "@types/node": "^24.1.0",
+    "@types/node": "^24.3.0",
     "@types/react": "^19.1.9",
     "@types/react-dom": "^19.1.7",
     "@types/react-helmet": "^6.1.11",
