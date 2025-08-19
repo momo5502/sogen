@@ -614,14 +614,7 @@ impl IcicleEmulator {
             value: 0x0,
         };
 
-        let layout = icicle_vm::cpu::mem::AllocLayout {
-            addr: Some(address),
-            size: length,
-            align: 0x1000,
-        };
-
-        let res = self.get_mem().alloc_memory(layout, mapping);
-        return res.is_ok();
+        return self.get_mem().map_memory_len(address, length, mapping);
     }
 
     pub fn map_mmio(
@@ -636,14 +629,7 @@ impl IcicleEmulator {
         let handler = MmioHandler::new(read_function, write_function);
         let handler_id = mem.register_io_handler(handler);
 
-        let layout = icicle_vm::cpu::mem::AllocLayout {
-            addr: Some(address),
-            size: length,
-            align: 0x1000,
-        };
-
-        let res = mem.alloc_memory(layout, handler_id);
-        return res.is_ok();
+        return self.get_mem().map_memory_len(address, length, handler_id);
     }
 
     pub fn unmap_memory(&mut self, address: u64, length: u64) -> bool {
