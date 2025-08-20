@@ -25,7 +25,14 @@ emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, s
             if (!verbose)
             {
                 static std::unordered_set<uint64_t> logged_addresses{};
-                if (is_main_access && !logged_addresses.insert(address).second)
+
+                bool is_new = false;
+                for (size_t j = 0; j < size; ++j)
+                {
+                    is_new |= logged_addresses.insert(address + j).second;
+                }
+
+                if (!is_new)
                 {
                     return;
                 }
