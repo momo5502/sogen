@@ -52,6 +52,7 @@ namespace
     void perform_context_switch_work(windows_emulator& win_emu)
     {
         auto& threads = win_emu.process.threads;
+        auto*& active = win_emu.process.active_thread;
 
         for (auto it = threads.begin(); it != threads.end();)
         {
@@ -59,6 +60,11 @@ namespace
             {
                 ++it;
                 continue;
+            }
+
+            if (active == &it->second)
+            {
+                active = nullptr;
             }
 
             const auto [new_it, deleted] = threads.erase(it);
