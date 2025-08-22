@@ -166,7 +166,7 @@ export function LandingPage() {
                     <div
                       className={`w-16 h-16 rounded-xl bg-gradient-to-br ${feature.accent} p-4 mb-4 transition-transform duration-200`}
                     >
-                      <div className="text-white">{feature.icon}</div>
+                      <div className="text-neutral-900">{feature.icon}</div>
                     </div>
                     <CardTitle className="text-white text-xl font-semibold transition-colors">
                       {feature.title}
