@@ -2,19 +2,18 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Shield,
-  FileCode,
-  Layers,
   Cpu,
-  Database,
   Terminal,
   ExternalLink,
   Github,
   Play,
   ArrowRight,
-  Code,
-  Target,
   BookOpen,
   Download,
+  Lock,
+  Bug,
+  Split,
+  Layers,
 } from "lucide-react";
 import { Header } from "./Header";
 
@@ -22,44 +21,31 @@ export function LandingPage() {
   const features = [
     {
       icon: <Cpu className="h-8 w-8" />,
-      title: "Syscall-Level Emulation",
+      title: "Syscall Emulation",
       description:
         "Operates at syscall level, leveraging existing system DLLs instead of reimplementing Windows APIs",
-      accent: "from-cyan-500 to-blue-500",
+      accent: "from-[#fb5b3c] to-[#b00101]",
     },
     {
-      icon: <Database className="h-8 w-8" />,
-      title: "Advanced Memory Management",
+      icon: <Split className="h-8 w-8" />,
+      title: "Hooking Capabilities",
       description:
-        "Supports Windows-specific memory types including reserved, committed, built on top of Unicorn's memory management",
-      accent: "from-purple-500 to-pink-500",
-    },
-    {
-      icon: <FileCode className="h-8 w-8" />,
-      title: "Complete PE Loading",
-      description:
-        "Handles executable and DLL loading with proper memory mapping, relocations, and TLS",
-      accent: "from-lime-400 to-green-500",
-    },
-    {
-      icon: <Shield className="h-8 w-8" />,
-      title: "Exception Handling",
-      description:
-        "Implements Windows structured exception handling (SEH) with proper exception dispatcher and unwinding support",
-      accent: "from-orange-400 to-red-500",
-    },
-    {
-      icon: <Layers className="h-8 w-8" />,
-      title: "Threading Support",
-      description: "Provides a scheduled (round-robin) threading model",
-      accent: "from-teal-500 to-blue-500",
+        "Provides flexible hooking interfaces to intercept memory access, code execution and much more",
+      accent: "from-[#ffcb00] to-[#da6000]",
     },
     {
       icon: <Terminal className="h-8 w-8" />,
       title: "Debugging Interface",
       description:
         "Implements GDB serial protocol for integration with common debugging tools",
-      accent: "from-purple-500 to-indigo-500",
+      accent: "from-[#00c4e9] to-[#005ff6]",
+    },
+    {
+      icon: <Layers className="h-8 w-8" />,
+      title: "State Management",
+      description:
+        "Saves and restores the entire state of the emulator to quickly resume your work exactly where you left off.",
+      accent: "from-[#aee703] to-[#5f7001]",
     },
   ];
 
@@ -71,13 +57,13 @@ export function LandingPage() {
         "Analyze malware and security vulnerabilities in a controlled environment",
     },
     {
-      icon: <Code className="h-6 w-6" />,
+      icon: <Lock className="h-6 w-6" />,
       title: "DRM Research",
       description:
         "Study digital rights management systems and protection mechanisms",
     },
     {
-      icon: <Target className="h-6 w-6" />,
+      icon: <Bug className="h-6 w-6" />,
       title: "Malware Analysis",
       description:
         "Reverse engineer malicious software with full process control",
@@ -86,9 +72,9 @@ export function LandingPage() {
 
   const stats = [
     { value: "100%", label: "Open Source" },
-    { value: "C++", label: "High Performance" },
-    { value: "GDB", label: "Debug Protocol" },
-    { value: "64 bit", label: "Native PE Loading" },
+    { value: "14", label: "Platforms" },
+    { value: "2", label: "Backends" },
+    { value: "100%", label: "Deterministic" },
   ];
 
   return (
@@ -102,9 +88,9 @@ export function LandingPage() {
         <section className="relative overflow-hidden">
           {/* Animated Background Elements */}
           <div className="absolute inset-0">
-            <div className="absolute top-20 left-10 w-72 h-72 bg-blue-500/10 rounded-full blur-3xl animate-pulse"></div>
-            <div className="absolute top-40 right-20 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl animate-pulse delay-2000"></div>
-            <div className="absolute bottom-20 left-1/3 w-80 h-80 bg-cyan-500/10 rounded-full blur-3xl animate-pulse delay-2000"></div>
+            <div className="absolute top-20 left-10 w-72 h-72 bg-blue-500/10 rounded-full blur-3xl"></div>
+            <div className="absolute top-40 right-20 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl"></div>
+            <div className="absolute bottom-20 left-1/3 w-80 h-80 bg-cyan-500/10 rounded-full blur-3xl"></div>
           </div>
 
           <div className="relative container mx-auto min-h-[100dvh] p-4 flex items-center xl:min-h-0 xl:px-6 xl:py-32">
@@ -166,12 +152,11 @@ export function LandingPage() {
                 Powerful Features
               </h2>
               <p className="text-xl text-neutral-400 max-w-2xl mx-auto">
-                Built from the ground up for performance and accuracy in Windows
-                process emulation
+                Built from the ground up for performance and accuracy.
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-8 lg:m-32">
               {features.map((feature, index) => (
                 <Card
                   key={index}
@@ -207,7 +192,7 @@ export function LandingPage() {
               </h2>
               <p className="text-xl text-neutral-400">
                 Designed for researchers who need precise control over Windows
-                process execution
+                process execution.
               </p>
             </div>
 
@@ -269,8 +254,7 @@ export function LandingPage() {
               Ready to Start Emulating?
             </h2>
             <p className="text-xl text-neutral-300 mb-8 max-w-2xl mx-auto">
-              Join researchers worldwide who trust Sogen for their Windows
-              emulation needs.
+              Try Sogen directly in your browser or explore the source code.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <a href="#/playground">
@@ -289,7 +273,7 @@ export function LandingPage() {
                   className="border-white text-white hover:bg-white/10 px-8 py-6 text-lg font-semibold"
                 >
                   <Download className="mr-2 h-5 w-5" />
-                  Download Source
+                  View Source
                 </Button>
               </a>
             </div>
