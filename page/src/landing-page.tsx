@@ -273,7 +273,7 @@ export function LandingPage() {
                   className="border-white text-white hover:bg-white/10 px-8 py-6 text-lg font-semibold"
                 >
                   <Download className="mr-2 h-5 w-5" />
-                  View Source
+                  Get Source
                 </Button>
               </a>
             </div>
