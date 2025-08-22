@@ -88,8 +88,8 @@ export function LandingPage() {
         <section className="relative overflow-hidden">
           {/* Animated Background Elements */}
           <div className="absolute inset-0">
-            <div className="absolute top-20 left-10 w-72 h-72 bg-blue-500/10 rounded-full blur-3xl"></div>
-            <div className="absolute top-40 right-20 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl"></div>
+            <div className="absolute top-20 left-10 w-72 h-72 bg-yellow-500/10 rounded-full blur-3xl"></div>
+            <div className="absolute top-40 right-20 w-96 h-96 bg-lime-500/10 rounded-full blur-3xl"></div>
             <div className="absolute bottom-20 left-1/3 w-80 h-80 bg-cyan-500/10 rounded-full blur-3xl"></div>
           </div>
 
@@ -228,7 +228,7 @@ export function LandingPage() {
               </p>
             </div>
 
-            <div className="max-w-5xl mx-auto">
+            <div className="max-w-3xl mx-auto">
               <div className="relative group">
                 <div className="absolute -inset-4 bg-gradient-to-r from-neutral-500/10 to-neutral-500/10 rounded-3xl blur-xl group-hover:blur-2xl transition-all duration-300"></div>
                 <div className="relative aspect-video rounded-2xl overflow-hidden border border-neutral-700">
