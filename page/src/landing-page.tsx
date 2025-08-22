@@ -12,9 +12,7 @@ import {
   Play,
   ArrowRight,
   Code,
-  Zap,
   Target,
-  Users,
   BookOpen,
   Download,
 } from "lucide-react";
@@ -105,7 +103,7 @@ export function LandingPage() {
           {/* Animated Background Elements */}
           <div className="absolute inset-0">
             <div className="absolute top-20 left-10 w-72 h-72 bg-blue-500/10 rounded-full blur-3xl animate-pulse"></div>
-            <div className="absolute top-40 right-20 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl animate-pulse delay-1000"></div>
+            <div className="absolute top-40 right-20 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl animate-pulse delay-2000"></div>
             <div className="absolute bottom-20 left-1/3 w-80 h-80 bg-cyan-500/10 rounded-full blur-3xl animate-pulse delay-2000"></div>
           </div>
 
@@ -117,12 +115,7 @@ export function LandingPage() {
               </h1>
 
               <p className="text-xl md:text-2xl text-neutral-300 font-light leading-relaxed">
-                Revolutionary Windows user space emulator.
-                <br />
-                <span className="text-blue-400">
-                  Perfect for security research, malware analysis, and DRM
-                  research.
-                </span>
+                A high-performance Windows user space emulator.
               </p>
 
               {/* CTA Buttons */}
@@ -141,7 +134,7 @@ export function LandingPage() {
                   <Button
                     size="lg"
                     variant="outline"
-                    className="border-gray-600 text-gray-300 hover:bg-gray-800/50 px-8 py-6 text-lg font-semibold group transition-all duration-300"
+                    className="border-neutral-600 text-neutral-300 hover:bg-neutral-800/50 px-8 py-6 text-lg font-semibold group transition-all duration-300"
                   >
                     <Github className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
                     View Source
@@ -157,7 +150,7 @@ export function LandingPage() {
                     <div className="text-2xl font-bold text-white">
                       {stat.value}
                     </div>
-                    <div className="text-sm text-gray-400">{stat.label}</div>
+                    <div className="text-sm text-neutral-400">{stat.label}</div>
                   </div>
                 ))}
               </div>
@@ -172,7 +165,7 @@ export function LandingPage() {
               <h2 className="text-4xl md:text-5xl font-bold text-white mb-6">
                 Powerful Features
               </h2>
-              <p className="text-xl text-gray-400 max-w-2xl mx-auto">
+              <p className="text-xl text-neutral-400 max-w-2xl mx-auto">
                 Built from the ground up for performance and accuracy in Windows
                 process emulation
               </p>
@@ -182,7 +175,7 @@ export function LandingPage() {
               {features.map((feature, index) => (
                 <Card
                   key={index}
-                  className="bg-gray-800/50 border-gray-700 hover:bg-gray-800/80 transition-all duration-200 group hover:shadow-2xl"
+                  className="bg-neutral-800/50 border-neutral-700 hover:bg-neutral-800/80 transition-all duration-200 group hover:shadow-2xl"
                 >
                   <CardHeader className="pb-4">
                     <div
@@ -190,12 +183,12 @@ export function LandingPage() {
                     >
                       <div className="text-white">{feature.icon}</div>
                     </div>
-                    <CardTitle className="text-white text-xl font-semibold group-hover:text-blue-300 transition-colors">
+                    <CardTitle className="text-white text-xl font-semibold transition-colors">
                       {feature.title}
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <p className="text-gray-300 leading-relaxed">
+                    <p className="text-neutral-300 leading-relaxed">
                       {feature.description}
                     </p>
                   </CardContent>
@@ -206,13 +199,13 @@ export function LandingPage() {
         </section>
 
         {/* Use Cases */}
-        <section className="py-24 bg-gray-900/50">
+        <section className="py-24 bg-neutral-800/40">
           <div className="container mx-auto px-6">
             <div className="text-center mb-16">
               <h2 className="text-4xl font-bold text-white mb-6">
                 Perfect For Your Research
               </h2>
-              <p className="text-xl text-gray-400">
+              <p className="text-xl text-neutral-400">
                 Designed for researchers who need precise control over Windows
                 process execution
               </p>
@@ -222,7 +215,7 @@ export function LandingPage() {
               {useCases.map((useCase, index) => (
                 <div
                   key={index}
-                  className="text-center p-8 rounded-2xl bg-gray-800/50 border border-gray-700 hover:border-blue-500/50 transition-all duration-300 group"
+                  className="text-center p-8 rounded-2xl bg-neutral-800/50 border border-neutral-700 hover:border-blue-500/50 transition-all duration-300 group"
                 >
                   <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 p-3 group-hover:scale-110 transition-transform">
                     <div className="text-white">{useCase.icon}</div>
@@ -230,7 +223,7 @@ export function LandingPage() {
                   <h3 className="text-xl font-semibold text-white mb-3">
                     {useCase.title}
                   </h3>
-                  <p className="text-gray-400">{useCase.description}</p>
+                  <p className="text-neutral-400">{useCase.description}</p>
                 </div>
               ))}
             </div>
@@ -244,7 +237,7 @@ export function LandingPage() {
               <h2 className="text-4xl font-bold text-white mb-6">
                 See Sogen in Action
               </h2>
-              <p className="text-xl text-gray-400 max-w-3xl mx-auto">
+              <p className="text-xl text-neutral-400 max-w-3xl mx-auto">
                 Watch a comprehensive overview of the emulator's capabilities
                 and discover how it can accelerate your research workflow.
               </p>
@@ -253,7 +246,7 @@ export function LandingPage() {
             <div className="max-w-5xl mx-auto">
               <div className="relative group">
                 <div className="absolute -inset-4 bg-gradient-to-r from-neutral-500/10 to-neutral-500/10 rounded-3xl blur-xl group-hover:blur-2xl transition-all duration-300"></div>
-                <div className="relative aspect-video rounded-2xl overflow-hidden border border-gray-700">
+                <div className="relative aspect-video rounded-2xl overflow-hidden border border-neutral-700">
                   <iframe
                     className="w-full h-full"
                     src="https://www.youtube.com/embed/wY9Q0DhodOQ?si=Lm_anpeBU6Txl5AW"
@@ -270,12 +263,12 @@ export function LandingPage() {
         </section>
 
         {/* CTA Section */}
-        <section className="py-24 bg-gradient-to-r from-gray-900 to-zinc-900">
+        <section className="py-24 bg-gradient-to-r from-neutral-900 to-zinc-900">
           <div className="container mx-auto px-6 text-center">
             <h2 className="text-4xl font-bold text-white mb-6">
               Ready to Start Emulating?
             </h2>
-            <p className="text-xl text-gray-300 mb-8 max-w-2xl mx-auto">
+            <p className="text-xl text-neutral-300 mb-8 max-w-2xl mx-auto">
               Join researchers worldwide who trust Sogen for their Windows
               emulation needs.
             </p>
@@ -283,7 +276,7 @@ export function LandingPage() {
               <a href="#/playground">
                 <Button
                   size="lg"
-                  className="bg-white text-blue-900 hover:bg-blue-50 px-8 py-6 text-lg font-semibold"
+                  className="bg-white text-neutral-900 hover:bg-neutral-100 px-8 py-6 text-lg font-semibold"
                 >
                   <Play className="mr-2 h-5 w-5" />
                   Launch Playground
@@ -304,17 +297,17 @@ export function LandingPage() {
         </section>
 
         {/* Footer */}
-        <footer className="py-16 border-t border-gray-800">
+        <footer className="py-16 border-t border-neutral-800">
           <div className="container mx-auto px-6">
             <div className="flex flex-col md:flex-row justify-between items-center">
               <div className="mb-8 md:mb-0 text-center md:text-left">
                 <h2 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
                   Sogen
                 </h2>
-                <p className="mt-2 text-gray-400 text-lg">
+                <p className="mt-2 text-neutral-400 text-lg">
                   Windows User Space Emulator
                 </p>
-                <p className="mt-1 text-gray-500 text-sm">
+                <p className="mt-1 text-neutral-500 text-sm">
                   Built by{" "}
                   <a
                     href="https://momo5502.com"
@@ -338,20 +331,20 @@ export function LandingPage() {
                 <a
                   href="https://github.com/momo5502/sogen"
                   target="_blank"
-                  className="text-gray-400 hover:text-blue-400 transition-colors p-2 rounded-lg hover:bg-gray-800/50"
+                  className="text-neutral-400 hover:text-blue-400 transition-colors p-2 rounded-lg hover:bg-neutral-800/50"
                 >
                   <Github className="h-6 w-6" />
                 </a>
                 <a
                   href="#/playground"
-                  className="text-gray-400 hover:text-blue-400 transition-colors p-2 rounded-lg hover:bg-gray-800/50"
+                  className="text-neutral-400 hover:text-blue-400 transition-colors p-2 rounded-lg hover:bg-neutral-800/50"
                 >
                   <Play className="h-6 w-6" />
                 </a>
                 <a
                   href="https://github.com/momo5502/sogen/wiki"
                   target="_blank"
-                  className="text-gray-400 hover:text-blue-400 transition-colors p-2 rounded-lg hover:bg-gray-800/50"
+                  className="text-neutral-400 hover:text-blue-400 transition-colors p-2 rounded-lg hover:bg-neutral-800/50"
                 >
                   <BookOpen className="h-6 w-6" />
                 </a>
