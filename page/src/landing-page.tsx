@@ -109,7 +109,7 @@ export function LandingPage() {
                 <a href="#/playground">
                   <Button
                     size="lg"
-                    className="bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 text-white border-0 px-8 py-6 text-lg font-semibold group transition-all duration-300 transform hover:scale-105"
+                    className="bg-gradient-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100 transform hover:scale-105"
                   >
                     <Play className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
                     Try Online
@@ -260,7 +260,7 @@ export function LandingPage() {
               <a href="#/playground">
                 <Button
                   size="lg"
-                  className="bg-white text-neutral-900 hover:bg-neutral-100 px-8 py-6 text-lg font-semibold"
+                  className="bg-gradient-to-br from-white to-neutral-300 text-neutral-900  px-8 py-6 text-lg font-semibold transition-all duration-100"
                 >
                   <Play className="mr-2 h-5 w-5" />
                   Launch Playground
