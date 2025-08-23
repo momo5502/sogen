@@ -85,9 +85,9 @@ export function LandingPage() {
       />
       <div className="flex flex-col min-h-screen bg-gradient-to-br from-zinc-900 via-neutral-900 to-black">
         {/* Hero Section with Animated Background */}
-        <section className="relative overflow-hidden">
+        <section className="relative overflow-visible">
           {/* Animated Background Elements */}
-          <div className="absolute inset-0">
+          <div className="absolute inset-0 container mx-auto ">
             <div className="absolute top-20 left-10 w-72 h-72 bg-yellow-500/10 rounded-full blur-3xl"></div>
             <div className="absolute top-40 right-20 w-96 h-96 bg-lime-500/10 rounded-full blur-3xl"></div>
             <div className="absolute bottom-20 left-1/3 w-80 h-80 bg-cyan-500/10 rounded-full blur-3xl"></div>
