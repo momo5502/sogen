@@ -19,7 +19,7 @@ export function Header(props: HeaderProps) {
       <meta property="og:locale" content="en-us" />
       <meta property="og:type" content="website" />
       <meta name="og:image" content={image} />
-      <meta name="twitter:card" content="summary" />
+      <meta name="twitter:card" content="summary_large_image" />
       <meta name="twitter:title" content={props.title} />
       <meta name="twitter:description" content={props.description} />
       <meta name="twitter:image" content={image} />

@@ -80,8 +80,8 @@ export function LandingPage() {
   return (
     <>
       <Header
-        title="Sogen - Windows User Space Emulator"
-        description="Sogen is a high-performance Windows user space emulator that can emulate windows processes. It is ideal for security-, DRM- or malware research."
+        title="Sogen"
+        description="A high-performance Windows user space emulator."
       />
       <div className="flex flex-col min-h-screen bg-gradient-to-br from-zinc-900 via-neutral-900 to-black">
         {/* Hero Section with Animated Background */}
