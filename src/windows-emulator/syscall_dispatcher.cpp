@@ -115,10 +115,8 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
     }
 }
 
-syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports,
-                                       const std::span<const std::byte> ntdll_data,
-                                       const exported_symbols& win32u_exports,
-                                       const std::span<const std::byte> win32u_data)
+syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports, const std::span<const std::byte> ntdll_data,
+                                       const exported_symbols& win32u_exports, const std::span<const std::byte> win32u_data)
 {
     this->setup(ntdll_exports, ntdll_data, win32u_exports, win32u_data);
 }

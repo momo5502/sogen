@@ -9,9 +9,8 @@ namespace syscalls
     NTSTATUS handle_NtCreateSection(const syscall_context& c, const emulator_object<handle> section_handle,
                                     const ACCESS_MASK /*desired_access*/,
                                     const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
-                                    const emulator_object<ULARGE_INTEGER> maximum_size,
-                                    const ULONG section_page_protection, const ULONG allocation_attributes,
-                                    const handle file_handle)
+                                    const emulator_object<ULARGE_INTEGER> maximum_size, const ULONG section_page_protection,
+                                    const ULONG allocation_attributes, const handle file_handle)
     {
         section s{};
         s.section_page_protection = section_page_protection;
@@ -96,8 +95,7 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
         }
 
-        if (attributes.RootDirectory != KNOWN_DLLS_DIRECTORY &&
-            attributes.RootDirectory != BASE_NAMED_OBJECTS_DIRECTORY)
+        if (attributes.RootDirectory != KNOWN_DLLS_DIRECTORY && attributes.RootDirectory != BASE_NAMED_OBJECTS_DIRECTORY)
         {
             c.win_emu.log.error("Unsupported section\n");
             c.emu.stop();
@@ -118,14 +116,14 @@ namespace syscalls
         return STATUS_OBJECT_NAME_NOT_FOUND;
     }
 
-    NTSTATUS handle_NtMapViewOfSection(
-        const syscall_context& c, const handle section_handle, const handle process_handle,
-        const emulator_object<uint64_t> base_address,
-        const EMULATOR_CAST(EmulatorTraits<Emu64>::ULONG_PTR, ULONG_PTR) /*zero_bits*/,
-        const EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T) /*commit_size*/,
-        const emulator_object<LARGE_INTEGER> /*section_offset*/,
-        const emulator_object<EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T)> view_size,
-        const SECTION_INHERIT /*inherit_disposition*/, const ULONG /*allocation_type*/, const ULONG /*win32_protect*/)
+    NTSTATUS handle_NtMapViewOfSection(const syscall_context& c, const handle section_handle, const handle process_handle,
+                                       const emulator_object<uint64_t> base_address,
+                                       const EMULATOR_CAST(EmulatorTraits<Emu64>::ULONG_PTR, ULONG_PTR) /*zero_bits*/,
+                                       const EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T) /*commit_size*/,
+                                       const emulator_object<LARGE_INTEGER> /*section_offset*/,
+                                       const emulator_object<EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T)> view_size,
+                                       const SECTION_INHERIT /*inherit_disposition*/, const ULONG /*allocation_type*/,
+                                       const ULONG /*win32_protect*/)
     {
         if (process_handle != CURRENT_PROCESS)
         {
@@ -155,15 +153,13 @@ namespace syscalls
                 ucs.MaximumLength = ucs.Length;
             });
 
-            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> sysdir_obj{c.emu, windir_obj.value() +
-                                                                                               windir_obj.size()};
+            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> sysdir_obj{c.emu, windir_obj.value() + windir_obj.size()};
             sysdir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs) {
                 c.proc.base_allocator.make_unicode_string(ucs, u"C:\\WINDOWS\\System32");
                 ucs.Buffer = ucs.Buffer - obj_address;
             });
 
-            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> base_dir_obj{c.emu, sysdir_obj.value() +
-                                                                                                 sysdir_obj.size()};
+            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> base_dir_obj{c.emu, sysdir_obj.value() + sysdir_obj.size()};
             base_dir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs) {
                 c.proc.base_allocator.make_unicode_string(ucs, u"\\Sessions\\1\\BaseNamedObjects");
                 ucs.Buffer = ucs.Buffer - obj_address;
@@ -257,8 +253,7 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtUnmapViewOfSection(const syscall_context& c, const handle process_handle,
-                                         const uint64_t base_address)
+    NTSTATUS handle_NtUnmapViewOfSection(const syscall_context& c, const handle process_handle, const uint64_t base_address)
     {
         if (process_handle != CURRENT_PROCESS)
         {
@@ -305,8 +300,8 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtUnmapViewOfSectionEx(const syscall_context& c, const handle process_handle,
-                                           const uint64_t base_address, const ULONG /*flags*/)
+    NTSTATUS handle_NtUnmapViewOfSectionEx(const syscall_context& c, const handle process_handle, const uint64_t base_address,
+                                           const ULONG /*flags*/)
     {
         return handle_NtUnmapViewOfSection(c, process_handle, base_address);
     }

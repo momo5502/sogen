@@ -30,6 +30,7 @@ type ClickHandler = (element: FolderElement) => void;
 type CreateFolderHandler = () => void;
 type RemoveElementHandler = (element: FolderElement) => void;
 type RenameElementHandler = (element: FolderElement) => void;
+type DownloadElementHandler = (element: FolderElement) => void;
 type AddFilesHandler = () => void;
 type IconReader = (element: FolderElement) => string | null;
 
@@ -40,6 +41,7 @@ export interface FolderProps {
   createFolderHandler: CreateFolderHandler;
   removeElementHandler: RemoveElementHandler;
   renameElementHandler: RenameElementHandler;
+  downloadElementHandler: DownloadElementHandler;
   addFilesHandler: AddFilesHandler;
 }
 
@@ -133,6 +135,15 @@ function renderElementWithContext(element: FolderElement, props: FolderProps) {
       <ContextMenuContent>
         <ContextMenuLabel>{trimFilename(element.name)}</ContextMenuLabel>
         <ContextMenuSeparator />
+        {element.type != FolderElementType.File ? (
+          <></>
+        ) : (
+          <ContextMenuItem
+            onClick={() => props.downloadElementHandler(element)}
+          >
+            Download
+          </ContextMenuItem>
+        )}
         <ContextMenuItem onClick={() => props.renameElementHandler(element)}>
           Rename
         </ContextMenuItem>

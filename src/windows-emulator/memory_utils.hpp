@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <string>
 #include <emulator.hpp>
+#include "memory_permission_ext.hpp"
 
 inline std::string get_permission_string(const memory_permission permission)
 {
@@ -19,28 +20,55 @@ inline std::string get_permission_string(const memory_permission permission)
     return res;
 }
 
-inline memory_permission map_nt_to_emulator_protection(uint32_t nt_protection)
+inline std::optional<nt_memory_permission> try_map_nt_to_emulator_protection(uint32_t nt_protection)
 {
-    nt_protection &= ~static_cast<uint32_t>(PAGE_GUARD); // TODO: Implement that
+    memory_permission_ext ext = memory_permission_ext::none;
+    // TODO: Check for invalid combinations
+    if (nt_protection & PAGE_GUARD)
+    {
+        // Unset the guard flag so the following switch statement will still work
+        nt_protection &= ~static_cast<uint32_t>(PAGE_GUARD);
+        ext = memory_permission_ext::guard;
+    }
 
+    memory_permission common = memory_permission::none;
     switch (nt_protection)
     {
     case PAGE_NOACCESS:
-        return memory_permission::none;
+        common = memory_permission::none;
+        break;
     case PAGE_READONLY:
-        return memory_permission::read;
+        common = memory_permission::read;
+        break;
     case PAGE_READWRITE:
     case PAGE_WRITECOPY:
-        return memory_permission::read | memory_permission::write;
+        common = memory_permission::read | memory_permission::write;
+        break;
     case PAGE_EXECUTE:
     case PAGE_EXECUTE_READ:
-        return memory_permission::read | memory_permission::exec;
+        common = memory_permission::read | memory_permission::exec;
+        break;
     case PAGE_EXECUTE_READWRITE:
-        return memory_permission::all;
+        common = memory_permission::all;
+        break;
+    case 0:
     case PAGE_EXECUTE_WRITECOPY:
     default:
-        throw std::runtime_error("Failed to map protection");
+        return std::nullopt;
     }
+
+    return nt_memory_permission{common, ext};
+}
+
+inline nt_memory_permission map_nt_to_emulator_protection(uint32_t nt_protection)
+{
+    const auto protection = try_map_nt_to_emulator_protection(nt_protection);
+    if (protection.has_value())
+    {
+        return *protection;
+    }
+
+    throw std::runtime_error("Failed to map protection: " + std::to_string(nt_protection));
 }
 
 inline uint32_t map_emulator_to_nt_protection(const memory_permission permission)

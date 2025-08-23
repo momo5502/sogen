@@ -23,8 +23,7 @@ namespace gdb_stub
         }
     }
 
-    connection_handler::connection_handler(network::tcp_client_socket& client,
-                                           utils::optional_function<bool()> should_stop)
+    connection_handler::connection_handler(network::tcp_client_socket& client, utils::optional_function<bool()> should_stop)
         : should_stop_(std::move(should_stop)),
           client_(client)
     {

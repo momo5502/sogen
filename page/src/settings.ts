@@ -1,3 +1,5 @@
+import { parse } from "shell-quote";
+
 export interface Settings {
   verbose: boolean;
   concise: boolean;
@@ -5,7 +7,17 @@ export interface Settings {
   bufferStdout: boolean;
   persist: boolean;
   execAccess: boolean;
+  foreignAccess: boolean;
   wasm64: boolean;
+  instructionSummary: boolean;
+  ignoredFunctions: string[];
+  interestingModules: string[];
+  commandLine: string;
+}
+
+export interface TranslatedSettings {
+  emulatorOptions: string[];
+  applicationOptions: string[];
 }
 
 export function createDefaultSettings(): Settings {
@@ -16,7 +28,12 @@ export function createDefaultSettings(): Settings {
     bufferStdout: true,
     persist: false,
     execAccess: true,
+    foreignAccess: false,
     wasm64: false,
+    instructionSummary: false,
+    ignoredFunctions: [],
+    interestingModules: [],
+    commandLine: "",
   };
 }
 
@@ -46,8 +63,9 @@ export function saveSettings(settings: Settings) {
   localStorage.setItem("settings", JSON.stringify(settings));
 }
 
-export function translateSettings(settings: Settings): string[] {
+export function translateSettings(settings: Settings): TranslatedSettings {
   const switches: string[] = [];
+  const options: string[] = [];
 
   if (settings.verbose) {
     switches.push("-v");
@@ -69,5 +87,33 @@ export function translateSettings(settings: Settings): string[] {
     switches.push("-x");
   }
 
-  return switches;
+  if (settings.foreignAccess) {
+    switches.push("-f");
+  }
+
+  if (settings.instructionSummary) {
+    switches.push("-is");
+  }
+
+  settings.ignoredFunctions.forEach((f) => {
+    switches.push("-i");
+    switches.push(f);
+  });
+
+  settings.interestingModules.forEach((m) => {
+    switches.push("-m");
+    switches.push(m);
+  });
+
+  try {
+    const argv = parse(settings.commandLine) as string[];
+    options.push(...argv);
+  } catch (e) {
+    console.log(e);
+  }
+
+  return {
+    applicationOptions: options,
+    emulatorOptions: switches,
+  };
 }

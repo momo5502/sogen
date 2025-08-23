@@ -114,11 +114,14 @@ export class Emulator {
     this._setState(EmulationState.Running);
     this.stautsUpdateHandler(createDefaultEmulationStatus());
 
+    const options = translateSettings(settings);
+
     this.worker.postMessage({
       message: "run",
       data: {
         file,
-        options: translateSettings(settings),
+        options: options.emulatorOptions,
+        arguments: options.applicationOptions,
         persist: settings.persist,
         wasm64: settings.wasm64,
         cacheBuster: import.meta.env.VITE_BUILD_TIME || Date.now(),

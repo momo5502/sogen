@@ -190,7 +190,6 @@ namespace test
 
         const auto rip = emu.emu().read_instruction_pointer();
 
-        printf("Diff detected after 0x%" PRIx64 " instructions at 0x%" PRIx64 " (%s)\n", lower_bound, rip,
-               emu.mod_manager.find_name(rip));
+        printf("Diff detected after 0x%" PRIx64 " instructions at 0x%" PRIx64 " (%s)\n", lower_bound, rip, emu.mod_manager.find_name(rip));
     }
 }

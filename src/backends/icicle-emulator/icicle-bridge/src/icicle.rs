@@ -1,5 +1,6 @@
 use icicle_cpu::ExceptionCode;
 use icicle_cpu::ValueSource;
+use std::collections::HashSet;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::registers;
@@ -73,31 +74,96 @@ fn qualify_hook_id(hook_id: u32, hook_type: HookType) -> u32 {
 
 pub struct HookContainer<Func: ?Sized> {
     hook_id: u32,
+    is_iterating: bool,
     hooks: HashMap<u32, Box<Func>>,
+    hooks_to_add: HashMap<u32, Box<Func>>,
+    hooks_to_remove: HashSet<u32>,
 }
 
 impl<Func: ?Sized> HookContainer<Func> {
     pub fn new() -> Self {
         Self {
             hook_id: 0,
+            is_iterating: false,
             hooks: HashMap::new(),
+            hooks_to_add: HashMap::new(),
+            hooks_to_remove: HashSet::new(),
         }
     }
 
     pub fn add_hook(&mut self, callback: Box<Func>) -> u32 {
         self.hook_id += 1;
         let id = self.hook_id;
-        self.hooks.insert(id, callback);
+
+        if self.is_iterating {
+            self.hooks_to_add.insert(id, callback);
+        } else {
+            self.hooks.insert(id, callback);
+        }
 
         return id;
     }
 
-    pub fn get_hooks(&self) -> &HashMap<u32, Box<Func>> {
-        return &self.hooks;
+    pub fn for_each_hook<F>(&mut self, mut callback: F)
+    where
+        F: FnMut(&Func),
+    {
+        let was_iterating = self.do_pre_access_work();
+
+        for (_, func) in &self.hooks {
+            callback(func.as_ref());
+        }
+
+        self.do_post_access_work(was_iterating);
+    }
+
+    pub fn access_hook<F>(&mut self, id: u32, mut callback: F)
+    where
+        F: FnMut(&Func),
+    {
+        let was_iterating = self.do_pre_access_work();
+
+        let hook = self.hooks.get(&id);
+        if hook.is_some() {
+            callback(hook.unwrap().as_ref());
+        }
+
+        self.do_post_access_work(was_iterating);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        return self.hooks.is_empty();
     }
 
     pub fn remove_hook(&mut self, id: u32) {
-        self.hooks.remove(&id);
+        if self.is_iterating {
+            self.hooks_to_remove.insert(id);
+        } else {
+            self.hooks.remove(&id);
+        }
+    }
+
+    fn do_pre_access_work(&mut self) -> bool {
+        let was_iterating = self.is_iterating;
+        self.is_iterating = true;
+        return was_iterating;
+    }
+
+    fn do_post_access_work(&mut self, was_iterating: bool) {
+        self.is_iterating = was_iterating;
+        if self.is_iterating {
+            return;
+        }
+
+        let to_remove = std::mem::take(&mut self.hooks_to_remove);
+        for id in &to_remove {
+            self.hooks.remove(&id);
+        }
+
+        let to_add = std::mem::take(&mut self.hooks_to_add);
+        for (id, func) in to_add {
+            self.hooks.insert(id, func);
+        }
     }
 }
 
@@ -157,6 +223,7 @@ struct ExecutionHooks {
     specific_hooks: HookContainer<dyn Fn(u64)>,
     block_hooks: HookContainer<dyn Fn(u64, u64)>,
     address_mapping: HashMap<u64, Vec<u32>>,
+    one_time_callbacks: Vec<Box<dyn Fn()>>,
 }
 
 impl ExecutionHooks {
@@ -167,13 +234,21 @@ impl ExecutionHooks {
             specific_hooks: HookContainer::new(),
             block_hooks: HookContainer::new(),
             address_mapping: HashMap::new(),
+            one_time_callbacks: Vec::new(),
         }
     }
 
-    fn run_hooks(&self, address: u64) {
-        for (_key, func) in self.generic_hooks.get_hooks() {
-            func(address);
+    fn run_hooks(&mut self, address: u64) {
+        if !self.one_time_callbacks.is_empty() {
+            let callbacks = std::mem::take(&mut self.one_time_callbacks);
+            for cb in callbacks {
+                cb.as_ref()();
+            }
         }
+
+        self.generic_hooks.for_each_hook(|func| {
+            func(address);
+        });
 
         let mapping = self.address_mapping.get(&address);
         if mapping.is_none() {
@@ -181,17 +256,16 @@ impl ExecutionHooks {
         }
 
         for id in mapping.unwrap() {
-            let func = self.specific_hooks.get_hooks().get(&id);
-            if func.is_some() {
-                func.unwrap()(address);
-            }
+            self.specific_hooks.access_hook(*id, |func| {
+                func(address);
+            });
         }
     }
 
     pub fn on_block(&mut self, address: u64, instructions: u64) {
-        for (_key, func) in self.block_hooks.get_hooks() {
+        self.block_hooks.for_each_hook(|func| {
             func(address, instructions);
-        }
+        });
     }
 
     pub fn execute(&mut self, cpu: &mut icicle_cpu::Cpu, address: u64) {
@@ -222,6 +296,10 @@ impl ExecutionHooks {
         mapping.push(id);
 
         return id;
+    }
+
+    pub fn schedule(&mut self, callback: Box<dyn Fn()>) {
+        self.one_time_callbacks.push(callback);
     }
 
     pub fn remove_generic_hook(&mut self, id: u32) {
@@ -298,6 +376,15 @@ impl icicle_cpu::mem::IoMemory for MmioHandler {
 impl IcicleEmulator {
     pub fn new() -> Self {
         let mut virtual_machine = create_x64_vm();
+        let capacity_400mb = 50_000;
+
+        let mut capacity = 8 * 2 * capacity_400mb; // ~8gb
+        if cfg!(target_pointer_width = "32") {
+            capacity = 2 * capacity_400mb; // ~1gb
+        }
+
+        virtual_machine.cpu.mem.set_capacity(capacity);
+
         let stop_value = Rc::new(RefCell::new(false));
         let exec_hooks = Rc::new(RefCell::new(ExecutionHooks::new(stop_value.clone())));
 
@@ -368,10 +455,10 @@ impl IcicleEmulator {
         }
     }
 
-    fn handle_interrupt(&self, code: i32) -> bool {
-        for (_key, func) in self.interrupt_hooks.get_hooks() {
+    fn handle_interrupt(&mut self, code: i32) -> bool {
+        self.interrupt_hooks.for_each_hook(|func| {
             func(code);
-        }
+        });
 
         return true;
     }
@@ -393,16 +480,15 @@ impl IcicleEmulator {
     }
 
     fn handle_violation(&mut self, address: u64, permission: u8, unmapped: bool) -> bool {
-        let hooks = &self.violation_hooks.get_hooks();
-        if hooks.is_empty() {
+        if self.violation_hooks.is_empty() {
             return false;
         }
 
         let mut continue_execution = true;
 
-        for (_key, func) in self.violation_hooks.get_hooks() {
+        self.violation_hooks.for_each_hook(|func| {
             continue_execution &= func(address, permission, unmapped);
-        }
+        });
 
         return continue_execution;
     }
@@ -412,9 +498,9 @@ impl IcicleEmulator {
             return self.handle_interrupt(value as i32);
         }
 
-        for (_key, func) in self.syscall_hooks.get_hooks() {
+        self.syscall_hooks.for_each_hook(|func| {
             func();
-        }
+        });
 
         self.vm.cpu.write_pc(self.vm.cpu.read_pc() + 2);
         return true;
@@ -521,6 +607,10 @@ impl IcicleEmulator {
         }
     }
 
+    pub fn run_on_next_instruction(&mut self, callback: Box<dyn Fn()>) {
+        self.execution_hooks.borrow_mut().schedule(callback);
+    }
+
     pub fn map_memory(&mut self, address: u64, length: u64, permissions: u8) -> bool {
         const MAPPING_PERMISSIONS: u8 = icicle_vm::cpu::mem::perm::MAP
             | icicle_vm::cpu::mem::perm::INIT
@@ -533,14 +623,7 @@ impl IcicleEmulator {
             value: 0x0,
         };
 
-        let layout = icicle_vm::cpu::mem::AllocLayout {
-            addr: Some(address),
-            size: length,
-            align: 0x1000,
-        };
-
-        let res = self.get_mem().alloc_memory(layout, mapping);
-        return res.is_ok();
+        return self.get_mem().map_memory_len(address, length, mapping);
     }
 
     pub fn map_mmio(
@@ -555,14 +638,7 @@ impl IcicleEmulator {
         let handler = MmioHandler::new(read_function, write_function);
         let handler_id = mem.register_io_handler(handler);
 
-        let layout = icicle_vm::cpu::mem::AllocLayout {
-            addr: Some(address),
-            size: length,
-            align: 0x1000,
-        };
-
-        let res = mem.alloc_memory(layout, handler_id);
-        return res.is_ok();
+        return self.get_mem().map_memory_len(address, length, handler_id);
     }
 
     pub fn unmap_memory(&mut self, address: u64, length: u64) -> bool {

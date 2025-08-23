@@ -51,8 +51,7 @@ namespace minidump_loader
     }
 
     bool parse_minidump_file(windows_emulator& win_emu, const std::filesystem::path& minidump_path,
-                             std::unique_ptr<minidump::minidump_file>& dump_file,
-                             std::unique_ptr<minidump::minidump_reader>& dump_reader)
+                             std::unique_ptr<minidump::minidump_file>& dump_file, std::unique_ptr<minidump::minidump_reader>& dump_reader)
     {
         win_emu.log.info("Parsing minidump file\n");
 
@@ -160,10 +159,9 @@ namespace minidump_loader
             stats.total_memory_size += segment.size;
         }
 
-        win_emu.log.info(
-            "Summary: %s, %zu threads, %zu modules, %zu regions, %zu segments, %zu handles, %" PRIu64 " bytes memory\n",
-            get_architecture_string(dump_file).c_str(), stats.thread_count, stats.module_count,
-            stats.memory_region_count, stats.memory_segment_count, stats.handle_count, stats.total_memory_size);
+        win_emu.log.info("Summary: %s, %zu threads, %zu modules, %zu regions, %zu segments, %zu handles, %" PRIu64 " bytes memory\n",
+                         get_architecture_string(dump_file).c_str(), stats.thread_count, stats.module_count, stats.memory_region_count,
+                         stats.memory_segment_count, stats.handle_count, stats.total_memory_size);
     }
 
     void process_streams(windows_emulator& win_emu, const minidump::minidump_file* dump_file)
@@ -177,9 +175,8 @@ namespace minidump_loader
         const auto* sys_info = dump_file->get_system_info();
         if (sys_info)
         {
-            win_emu.log.info("System: OS %u.%u.%u, %u processors, type %u, platform %u\n", sys_info->major_version,
-                             sys_info->minor_version, sys_info->build_number, sys_info->number_of_processors,
-                             sys_info->product_type, sys_info->platform_id);
+            win_emu.log.info("System: OS %u.%u.%u, %u processors, type %u, platform %u\n", sys_info->major_version, sys_info->minor_version,
+                             sys_info->build_number, sys_info->number_of_processors, sys_info->product_type, sys_info->platform_id);
         }
 
         // Process memory info
@@ -199,8 +196,7 @@ namespace minidump_loader
                 guard_pages++;
             }
         }
-        win_emu.log.info("Memory: %zu regions, %" PRIu64 " bytes reserved, %" PRIu64
-                         " bytes committed, %zu guard pages\n",
+        win_emu.log.info("Memory: %zu regions, %" PRIu64 " bytes reserved, %" PRIu64 " bytes committed, %zu guard pages\n",
                          memory_regions.size(), total_reserved, total_committed, guard_pages);
 
         // Process memory content
@@ -214,25 +210,23 @@ namespace minidump_loader
         }
         if (!memory_segments.empty())
         {
-            win_emu.log.info("Content: %zu segments, range 0x%" PRIx64 "-0x%" PRIx64 " (%" PRIu64 " bytes span)\n",
-                             memory_segments.size(), min_addr, max_addr, max_addr - min_addr);
+            win_emu.log.info("Content: %zu segments, range 0x%" PRIx64 "-0x%" PRIx64 " (%" PRIu64 " bytes span)\n", memory_segments.size(),
+                             min_addr, max_addr, max_addr - min_addr);
         }
 
         // Process modules
         const auto& modules = dump_file->modules();
         for (const auto& mod : modules)
         {
-            win_emu.log.info("Module: %s at 0x%" PRIx64 " (%u bytes)\n", mod.module_name.c_str(), mod.base_of_image,
-                             mod.size_of_image);
+            win_emu.log.info("Module: %s at 0x%" PRIx64 " (%u bytes)\n", mod.module_name.c_str(), mod.base_of_image, mod.size_of_image);
         }
 
         // Process threads
         const auto& threads = dump_file->threads();
         for (const auto& thread : threads)
         {
-            win_emu.log.info("Thread %u: TEB 0x%" PRIx64 ", stack 0x%" PRIx64 " (%u bytes), context %u bytes\n",
-                             thread.thread_id, thread.teb, thread.stack_start_of_memory_range, thread.stack_data_size,
-                             thread.context_data_size);
+            win_emu.log.info("Thread %u: TEB 0x%" PRIx64 ", stack 0x%" PRIx64 " (%u bytes), context %u bytes\n", thread.thread_id,
+                             thread.teb, thread.stack_start_of_memory_range, thread.stack_data_size, thread.context_data_size);
         }
 
         // Process handles
@@ -272,8 +266,7 @@ namespace minidump_loader
         const auto& memory_regions = dump_file->memory_regions();
         const auto& memory_segments = dump_file->memory_segments();
 
-        win_emu.log.info("Reconstructing memory: %zu regions, %zu data segments\n", memory_regions.size(),
-                         memory_segments.size());
+        win_emu.log.info("Reconstructing memory: %zu regions, %zu data segments\n", memory_regions.size(), memory_segments.size());
         size_t reserved_count = 0;
         size_t committed_count = 0;
         size_t failed_count = 0;
@@ -281,8 +274,8 @@ namespace minidump_loader
         for (const auto& region : memory_regions)
         {
             // Log the memory region details
-            win_emu.log.info("Region: 0x%" PRIx64 ", size=%" PRIu64 ", state=0x%08X, protect=0x%08X\n",
-                             region.base_address, region.region_size, region.state, region.protect);
+            win_emu.log.info("Region: 0x%" PRIx64 ", size=%" PRIu64 ", state=0x%08X, protect=0x%08X\n", region.base_address,
+                             region.region_size, region.state, region.protect);
 
             const bool is_reserved = (region.state & MEM_RESERVE) != 0;
             const bool is_committed = (region.state & MEM_COMMIT) != 0;
@@ -297,8 +290,7 @@ namespace minidump_loader
             if (protect_value == 0)
             {
                 protect_value = PAGE_READONLY;
-                win_emu.log.warn("  Region 0x%" PRIx64 " has zero protection, using PAGE_READONLY\n",
-                                 region.base_address);
+                win_emu.log.warn("  Region 0x%" PRIx64 " has zero protection, using PAGE_READONLY\n", region.base_address);
             }
 
             memory_permission perms = map_nt_to_emulator_protection(protect_value);
@@ -307,35 +299,31 @@ namespace minidump_loader
             {
                 if (is_committed)
                 {
-                    if (win_emu.memory.allocate_memory(region.base_address, static_cast<size_t>(region.region_size),
-                                                       perms, false))
+                    if (win_emu.memory.allocate_memory(region.base_address, static_cast<size_t>(region.region_size), perms, false))
                     {
                         committed_count++;
-                        win_emu.log.info("  Allocated committed 0x%" PRIx64 ": size=%" PRIu64
-                                         ", state=0x%08X, protect=0x%08X\n",
+                        win_emu.log.info("  Allocated committed 0x%" PRIx64 ": size=%" PRIu64 ", state=0x%08X, protect=0x%08X\n",
                                          region.base_address, region.region_size, region.state, region.protect);
                     }
                     else
                     {
                         failed_count++;
-                        win_emu.log.warn("  Failed to allocate committed 0x%" PRIx64 ": size=%" PRIu64 "\n",
-                                         region.base_address, region.region_size);
+                        win_emu.log.warn("  Failed to allocate committed 0x%" PRIx64 ": size=%" PRIu64 "\n", region.base_address,
+                                         region.region_size);
                     }
                 }
                 else if (is_reserved)
                 {
-                    if (win_emu.memory.allocate_memory(region.base_address, static_cast<size_t>(region.region_size),
-                                                       perms, true))
+                    if (win_emu.memory.allocate_memory(region.base_address, static_cast<size_t>(region.region_size), perms, true))
                     {
                         reserved_count++;
-                        win_emu.log.info("  Reserved 0x%" PRIx64 ": size=%" PRIu64 ", state=0x%08X, protect=0x%08X\n",
-                                         region.base_address, region.region_size, region.state, region.protect);
+                        win_emu.log.info("  Reserved 0x%" PRIx64 ": size=%" PRIu64 ", state=0x%08X, protect=0x%08X\n", region.base_address,
+                                         region.region_size, region.state, region.protect);
                     }
                     else
                     {
                         failed_count++;
-                        win_emu.log.warn("  Failed to reserve 0x%" PRIx64 ": size=%" PRIu64 "\n", region.base_address,
-                                         region.region_size);
+                        win_emu.log.warn("  Failed to reserve 0x%" PRIx64 ": size=%" PRIu64 "\n", region.base_address, region.region_size);
                     }
                 }
             }
@@ -346,8 +334,7 @@ namespace minidump_loader
             }
         }
 
-        win_emu.log.info("Regions: %zu reserved, %zu committed, %zu failed\n", reserved_count, committed_count,
-                         failed_count);
+        win_emu.log.info("Regions: %zu reserved, %zu committed, %zu failed\n", reserved_count, committed_count, failed_count);
         size_t written_count = 0;
         size_t write_failed_count = 0;
         uint64_t total_bytes_written = 0;
@@ -356,25 +343,21 @@ namespace minidump_loader
         {
             try
             {
-                auto memory_data =
-                    dump_reader->read_memory(segment.start_virtual_address, static_cast<size_t>(segment.size));
-                win_emu.memory.write_memory(segment.start_virtual_address, memory_data.data(),
-                                            static_cast<size_t>(memory_data.size()));
+                auto memory_data = dump_reader->read_memory(segment.start_virtual_address, static_cast<size_t>(segment.size));
+                win_emu.memory.write_memory(segment.start_virtual_address, memory_data.data(), static_cast<size_t>(memory_data.size()));
                 written_count++;
                 total_bytes_written += memory_data.size();
-                win_emu.log.info("  Written segment 0x%" PRIx64 ": %zu bytes\n", segment.start_virtual_address,
-                                 memory_data.size());
+                win_emu.log.info("  Written segment 0x%" PRIx64 ": %zu bytes\n", segment.start_virtual_address, memory_data.size());
             }
             catch (const std::exception& e)
             {
                 write_failed_count++;
-                win_emu.log.error("  Failed to write segment 0x%" PRIx64 ": %s\n", segment.start_virtual_address,
-                                  e.what());
+                win_emu.log.error("  Failed to write segment 0x%" PRIx64 ": %s\n", segment.start_virtual_address, e.what());
             }
         }
 
-        win_emu.log.info("Content: %zu segments written (%" PRIu64 " bytes), %zu failed\n", written_count,
-                         total_bytes_written, write_failed_count);
+        win_emu.log.info("Content: %zu segments written (%" PRIu64 " bytes), %zu failed\n", written_count, total_bytes_written,
+                         write_failed_count);
     }
 
     bool is_main_executable(const minidump::module_info& mod)
@@ -414,15 +397,14 @@ namespace minidump_loader
         {
             try
             {
-                auto* mapped_module = win_emu.mod_manager.map_memory_module(mod.base_of_image, mod.size_of_image,
-                                                                            mod.module_name, win_emu.log);
+                auto* mapped_module =
+                    win_emu.mod_manager.map_memory_module(mod.base_of_image, mod.size_of_image, mod.module_name, win_emu.log);
 
                 if (mapped_module)
                 {
                     mapped_count++;
-                    win_emu.log.info("  Mapped %s at 0x%" PRIx64 " (%u bytes, %zu sections, %zu exports)\n",
-                                     mod.module_name.c_str(), mod.base_of_image, mod.size_of_image,
-                                     mapped_module->sections.size(), mapped_module->exports.size());
+                    win_emu.log.info("  Mapped %s at 0x%" PRIx64 " (%u bytes, %zu sections, %zu exports)\n", mod.module_name.c_str(),
+                                     mod.base_of_image, mod.size_of_image, mapped_module->sections.size(), mapped_module->exports.size());
 
                     if (is_main_executable(mod))
                     {
@@ -446,8 +428,7 @@ namespace minidump_loader
                 else
                 {
                     failed_count++;
-                    win_emu.log.warn("  Failed to map %s at 0x%" PRIx64 "\n", mod.module_name.c_str(),
-                                     mod.base_of_image);
+                    win_emu.log.warn("  Failed to map %s at 0x%" PRIx64 "\n", mod.module_name.c_str(), mod.base_of_image);
                 }
             }
             catch (const std::exception& e)
@@ -457,8 +438,8 @@ namespace minidump_loader
             }
         }
 
-        win_emu.log.info("Module reconstruction: %zu mapped, %zu failed, %zu system modules identified\n", mapped_count,
-                         failed_count, identified_count);
+        win_emu.log.info("Module reconstruction: %zu mapped, %zu failed, %zu system modules identified\n", mapped_count, failed_count,
+                         identified_count);
     }
 
     void setup_kusd_from_dump(windows_emulator& win_emu, const minidump::minidump_file* dump_file)
@@ -483,8 +464,7 @@ namespace minidump_loader
         kusd.ProductTypeIsValid = 1;
 
         win_emu.log.info("KUSD updated: Windows %u.%u.%u, %u processors, product type %u\n", sys_info->major_version,
-                         sys_info->minor_version, sys_info->build_number, sys_info->number_of_processors,
-                         sys_info->product_type);
+                         sys_info->minor_version, sys_info->build_number, sys_info->number_of_processors, sys_info->product_type);
     }
 
     bool load_thread_context(const std::filesystem::path& minidump_path, const minidump::thread_info& thread_info,
@@ -546,8 +526,8 @@ namespace minidump_loader
                     thread.teb->set_address(thread_info.teb);
                 }
 
-                win_emu.log.info("  Thread %u: TEB=0x%" PRIx64 ", stack=0x%" PRIx64 " (%u bytes), context=%s\n",
-                                 thread_info.thread_id, thread_info.teb, thread.stack_base, thread_info.stack_data_size,
+                win_emu.log.info("  Thread %u: TEB=0x%" PRIx64 ", stack=0x%" PRIx64 " (%u bytes), context=%s\n", thread_info.thread_id,
+                                 thread_info.teb, thread.stack_base, thread_info.stack_data_size,
                                  context_loaded ? "loaded" : "unavailable");
 
                 win_emu.process.threads.store(std::move(thread));
@@ -566,8 +546,8 @@ namespace minidump_loader
             win_emu.process.active_thread = &first_thread;
         }
 
-        win_emu.log.info("Thread reconstruction: %zu/%zu threads created, %zu with context\n", success_count,
-                         threads.size(), context_loaded_count);
+        win_emu.log.info("Thread reconstruction: %zu/%zu threads created, %zu with context\n", success_count, threads.size(),
+                         context_loaded_count);
     }
 
     void setup_peb_from_teb(windows_emulator& win_emu, const minidump::minidump_file* dump_file)
@@ -652,8 +632,8 @@ namespace minidump_loader
             }
             catch (const std::exception& e)
             {
-                win_emu.log.error("  Failed to create %s handle '%s': %s\n", handle_info.type_name.c_str(),
-                                  handle_info.object_name.c_str(), e.what());
+                win_emu.log.error("  Failed to create %s handle '%s': %s\n", handle_info.type_name.c_str(), handle_info.object_name.c_str(),
+                                  e.what());
             }
         }
 
@@ -674,10 +654,9 @@ namespace minidump_loader
             return;
         }
 
-        win_emu.process.current_ip = exception_info->exception_record.exception_address;
         win_emu.log.info("Exception context: address=0x%" PRIx64 ", code=0x%08X, thread=%u\n",
-                         exception_info->exception_record.exception_address,
-                         exception_info->exception_record.exception_code, exception_info->thread_id);
+                         exception_info->exception_record.exception_address, exception_info->exception_record.exception_code,
+                         exception_info->thread_id);
     }
 
     void load_minidump_into_emulator(windows_emulator& win_emu, const std::filesystem::path& minidump_path)

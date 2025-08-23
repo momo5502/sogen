@@ -81,6 +81,13 @@ class typed_emulator : public emulator
         return this->hook_instruction(static_cast<int>(instruction_type), std::move(callback));
     }
 
+    emulator_hook* hook_instruction(hookable_instructions instruction_type, simple_instruction_hook_callback callback)
+    {
+        return this->hook_instruction(instruction_type, [c = std::move(callback)](const uint64_t) {
+            return c(); //
+        });
+    }
+
   private:
     emulator_hook* hook_instruction(int instruction_type, instruction_hook_callback callback) override = 0;
 

@@ -74,8 +74,7 @@ class windows_path
     }
 
     template <typename T>
-        requires(!std::is_same_v<std::remove_cvref_t<T>, windows_path> &&
-                 !std::is_same_v<std::remove_cvref_t<T>, std::filesystem::path> &&
+        requires(!std::is_same_v<std::remove_cvref_t<T>, windows_path> && !std::is_same_v<std::remove_cvref_t<T>, std::filesystem::path> &&
                  !std::is_same_v<std::remove_cvref_t<T>, utils::buffer_deserializer>)
     windows_path(T&& path_like)
         : windows_path(std::filesystem::path(std::forward<T>(path_like)))

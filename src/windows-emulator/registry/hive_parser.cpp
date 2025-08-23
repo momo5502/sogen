@@ -228,8 +228,8 @@ void hive_key::parse(std::ifstream& file)
 
         std::string subkey_name(subkey.name, std::min(subkey.len, static_cast<int16_t>(sizeof(subkey.name))));
 
-        const auto [it, inserted] = this->sub_keys_.emplace(
-            std::move(subkey_name), hive_key{subkey.subkeys, subkey.value_count, subkey.offsets});
+        const auto [it, inserted] =
+            this->sub_keys_.emplace(std::move(subkey_name), hive_key{subkey.subkeys, subkey.value_count, subkey.offsets});
         if (inserted)
         {
             this->sub_keys_by_index_.emplace_back(it->first);

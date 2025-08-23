@@ -65,8 +65,8 @@ struct io_device_creation_data
     uint32_t length;
 };
 
-inline NTSTATUS write_io_status(const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
-                                const NTSTATUS status, const bool clear_struct = false)
+inline NTSTATUS write_io_status(const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const NTSTATUS status,
+                                const bool clear_struct = false)
 {
     io_status_block.access([=](IO_STATUS_BLOCK<EmulatorTraits<Emu64>>& status_block) {
         if (clear_struct)

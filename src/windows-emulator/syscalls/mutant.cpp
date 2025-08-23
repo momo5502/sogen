@@ -6,8 +6,7 @@
 
 namespace syscalls
 {
-    NTSTATUS handle_NtReleaseMutant(const syscall_context& c, const handle mutant_handle,
-                                    const emulator_object<LONG> previous_count)
+    NTSTATUS handle_NtReleaseMutant(const syscall_context& c, const handle mutant_handle, const emulator_object<LONG> previous_count)
     {
         if (mutant_handle.value.type != handle_types::mutant)
         {
@@ -42,8 +41,7 @@ namespace syscalls
             const auto attributes = object_attributes.read();
             if (attributes.ObjectName)
             {
-                name = read_unicode_string(
-                    c.emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, attributes.ObjectName});
+                name = read_unicode_string(c.emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, attributes.ObjectName});
                 c.win_emu.callbacks.on_generic_access("Opening mutant", name);
             }
         }

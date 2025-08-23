@@ -251,8 +251,8 @@ class emulator_allocator
         result.MaximumLength = static_cast<USHORT>(max_length);
     }
 
-    emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> make_unicode_string(
-        const std::u16string_view str, const std::optional<size_t> maximum_length = std::nullopt)
+    emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> make_unicode_string(const std::u16string_view str,
+                                                                               const std::optional<size_t> maximum_length = std::nullopt)
     {
         const auto unicode_string = this->reserve<UNICODE_STRING<EmulatorTraits<Emu64>>>();
 
@@ -316,8 +316,7 @@ class emulator_allocator
 };
 
 template <typename Element>
-std::basic_string<Element> read_string(memory_interface& mem, const uint64_t address,
-                                       const std::optional<size_t> size = {})
+std::basic_string<Element> read_string(memory_interface& mem, const uint64_t address, const std::optional<size_t> size = {})
 {
     std::basic_string<Element> result{};
 
@@ -357,8 +356,7 @@ inline std::u16string read_unicode_string(const emulator& emu, const UNICODE_STR
     return result;
 }
 
-inline std::u16string read_unicode_string(const emulator& emu,
-                                          const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> uc_string)
+inline std::u16string read_unicode_string(const emulator& emu, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> uc_string)
 {
     const auto ucs = uc_string.read();
     return read_unicode_string(emu, ucs);
@@ -369,7 +367,7 @@ inline std::u16string read_unicode_string(emulator& emu, const uint64_t uc_strin
     return read_unicode_string(emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{emu, uc_string});
 }
 
-inline uint64_t get_function_argument(x86_64_emulator& emu, const size_t index, bool is_syscall = false)
+inline uint64_t get_function_argument(x86_64_emulator& emu, const size_t index, const bool is_syscall = false)
 {
     switch (index)
     {

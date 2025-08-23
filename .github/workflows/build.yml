@@ -37,7 +37,7 @@ jobs:
       LLVM_VERSION: 20
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -64,7 +64,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Verify Formatting
         uses: jidicula/clang-format-action@v4.15.0
@@ -79,7 +79,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -120,7 +120,7 @@ jobs:
           #  runner: windows-2019
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download DirectX Runtime
         run: curl --connect-timeout 20 --max-time 200 --retry 5 --retry-delay 2 --retry-max-time 200 -L -o directx_Jun2010_redist.exe https://download.microsoft.com/download/8/4/A/84A35BF1-DAFE-4AE8-82AF-AD2AE20B6B14/directx_Jun2010_redist.exe
@@ -132,7 +132,7 @@ jobs:
         run: "cmd /c \"start /wait .\\dxrt\\dxsetup.exe /silent\""
 
       - name: Download API Set Dumper
-        uses: pyTooling/download-artifact@v4
+        uses: pyTooling/download-artifact@v5
         with:
           name: Temp API Set Dumper
           path: build/release/artifacts
@@ -227,7 +227,7 @@ jobs:
             cmake-options: "-DMOMO_EMSCRIPTEN_SUPPORT_NODEJS=On -DMOMO_ENABLE_RUST_CODE=Off -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -322,7 +322,7 @@ jobs:
             devcmd_arch: x64
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -399,7 +399,7 @@ jobs:
             runner: macos-13
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -411,26 +411,26 @@ jobs:
           echo "EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }}" >> $GITHUB_ENV
 
       - name: Download Test Configuration
-        uses: actions/download-artifact@v4.3.0
+        uses: actions/download-artifact@v5.0.0
         with:
           name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
           path: build/${{matrix.preset}}
 
       - name: Download Artifacts
-        uses: pyTooling/download-artifact@v4
+        uses: pyTooling/download-artifact@v5
         with:
           name: ${{ matrix.platform }} ${{matrix.configuration}} Artifacts
           path: build/${{matrix.preset}}/artifacts
 
       - name: Download Windows Artifacts
-        uses: pyTooling/download-artifact@v4
+        uses: pyTooling/download-artifact@v5
         if: "${{ matrix.platform != 'Windows x86_64' }}"
         with:
           name: Windows x86_64 Release Artifacts
           path: build/${{matrix.preset}}/artifacts
 
       - name: Download Emulation Root
-        uses: pyTooling/download-artifact@v4
+        uses: pyTooling/download-artifact@v5
         with:
           name: ${{ matrix.emulation-root }} Emulation Root
           path: build/${{matrix.preset}}/artifacts/root
@@ -470,7 +470,7 @@ jobs:
             preset: release
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -482,19 +482,19 @@ jobs:
           echo "EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }}" >> $GITHUB_ENV
 
       - name: Download Test Configuration
-        uses: actions/download-artifact@v4.3.0
+        uses: actions/download-artifact@v5.0.0
         with:
           name: Temp Isolate Windows x86_64 ${{ matrix.configuration}} Test Config
           path: build/${{ matrix.preset }}
 
       - name: Download Artifacts
-        uses: pyTooling/download-artifact@v4
+        uses: pyTooling/download-artifact@v5
         with:
           name: Temp Isolate Windows x86_64 ${{ matrix.configuration}} Artifacts
           path: build/${{ matrix.preset }}/artifacts
 
       - name: Download Emulation Root
-        uses: pyTooling/download-artifact@v4
+        uses: pyTooling/download-artifact@v5
         with:
           name: ${{ matrix.emulation-root }} Emulation Root
           path: build/${{ matrix.preset }}/artifacts/root
@@ -515,19 +515,19 @@ jobs:
     needs: [create-emulation-root, build]
     steps:
       - name: Download Artifacts
-        uses: pyTooling/download-artifact@v4
+        uses: pyTooling/download-artifact@v5
         with:
           name: Emscripten Node.js Release Artifacts
           path: build/release/artifacts
 
       - name: Download Windows Artifacts
-        uses: pyTooling/download-artifact@v4
+        uses: pyTooling/download-artifact@v5
         with:
           name: Windows x86_64 Release Artifacts
           path: build/release/artifacts
 
       - name: Download Emulation Root
-        uses: pyTooling/download-artifact@v4
+        uses: pyTooling/download-artifact@v5
         with:
           name: Windows 2022 Emulation Root
           path: build/release/artifacts/root
@@ -547,13 +547,13 @@ jobs:
     needs: [create-emulation-root, build]
     steps:
       - name: Download Artifacts
-        uses: pyTooling/download-artifact@v4
+        uses: pyTooling/download-artifact@v5
         with:
           name: MinGW x86_64 Release Artifacts
           path: build/release/artifacts
 
       - name: Download Emulation Root
-        uses: pyTooling/download-artifact@v4
+        uses: pyTooling/download-artifact@v5
         with:
           name: Windows 2022 Emulation Root
           path: build/release/artifacts/root
@@ -605,19 +605,19 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Download Artifacts
-        uses: pyTooling/download-artifact@v4
+        uses: pyTooling/download-artifact@v5
         with:
           name: Android ${{matrix.architecture}} ${{matrix.configuration}} Artifacts
           path: build/${{matrix.preset}}/artifacts
 
       - name: Download Windows Artifacts
-        uses: pyTooling/download-artifact@v4
+        uses: pyTooling/download-artifact@v5
         with:
           name: Windows x86_64 Release Artifacts
           path: build/${{matrix.preset}}/artifacts
 
       - name: Download Emulation Root
-        uses: pyTooling/download-artifact@v4
+        uses: pyTooling/download-artifact@v5
         with:
           name: ${{ matrix.emulation-root }} Emulation Root
           path: build/${{matrix.preset}}/artifacts/root
@@ -638,30 +638,30 @@ jobs:
     needs: [create-emulation-root, build]
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
       - name: Download Emscripten Web Artifacts
-        uses: pyTooling/download-artifact@v4
+        uses: pyTooling/download-artifact@v5
         with:
           name: Emscripten Web Release Artifacts
           path: build/release/artifacts/32
 
       - name: Download Emscripten Web Memory 64 Artifacts
-        uses: pyTooling/download-artifact@v4
+        uses: pyTooling/download-artifact@v5
         with:
           name: Emscripten Web Memory 64 Release Artifacts
           path: build/release/artifacts/64
 
       - name: Download Windows Artifacts
-        uses: pyTooling/download-artifact@v4
+        uses: pyTooling/download-artifact@v5
         with:
           name: Windows x86_64 Release Artifacts
           path: build/release/artifacts
 
       - name: Download Emulation Root
-        uses: pyTooling/download-artifact@v4
+        uses: pyTooling/download-artifact@v5
         with:
           name: Windows 2022 Emulation Root
           path: build/release/artifacts/root
@@ -703,7 +703,7 @@ jobs:
       id-token: write
     steps:
       - name: Download Page Artifacts
-        uses: pyTooling/download-artifact@v4
+        uses: pyTooling/download-artifact@v5
         with:
           name: Page Artifacts
           path: ./page/dist/

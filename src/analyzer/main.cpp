@@ -4,15 +4,15 @@
 #include <backend_selection.hpp>
 #include <win_x64_gdb_stub_handler.hpp>
 #include <minidump_loader.hpp>
+#include <scoped_hook.hpp>
 
 #include "object_watching.hpp"
 #include "snapshot.hpp"
 #include "analysis.hpp"
+#include "tenet_tracer.hpp"
 
 #include <utils/finally.hpp>
 #include <utils/interupt_handler.hpp>
-
-#include <cstdio>
 
 #ifdef OS_EMSCRIPTEN
 #include <event_handler.hpp>
@@ -24,6 +24,8 @@ namespace
     {
         mutable bool use_gdb{false};
         bool log_executable_access{false};
+        bool log_foreign_module_access{false};
+        bool tenet_trace{false};
         std::filesystem::path dump{};
         std::filesystem::path minidump_path{};
         std::string registry_path{"./registry"};
@@ -31,8 +33,7 @@ namespace
         std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
     };
 
-    void split_and_insert(std::set<std::string, std::less<>>& container, const std::string_view str,
-                          const char splitter = ',')
+    void split_and_insert(std::set<std::string, std::less<>>& container, const std::string_view str, const char splitter = ',')
     {
         size_t current_start = 0;
         for (size_t i = 0; i < str.size(); ++i)
@@ -57,8 +58,113 @@ namespace
         }
     }
 
-    void watch_system_objects(windows_emulator& win_emu, const std::set<std::string, std::less<>>& modules,
-                              const bool verbose)
+#if !defined(__GNUC__) || defined(__clang__)
+    struct analysis_state
+    {
+        windows_emulator& win_emu_;
+        scoped_hook env_data_hook_;
+        scoped_hook env_ptr_hook_;
+        scoped_hook params_hook_;
+        scoped_hook ldr_hook_;
+        std::set<std::string, std::less<>> modules_;
+        bool verbose_;
+
+        analysis_state(windows_emulator& win_emu, std::set<std::string, std::less<>> modules, const bool verbose)
+            : win_emu_(win_emu),
+              env_data_hook_(win_emu.emu()),
+              env_ptr_hook_(win_emu.emu()),
+              params_hook_(win_emu.emu()),
+              ldr_hook_(win_emu.emu()),
+              modules_(std::move(modules)),
+              verbose_(verbose)
+        {
+        }
+    };
+
+    emulator_object<RTL_USER_PROCESS_PARAMETERS64> get_process_params(windows_emulator& win_emu)
+    {
+        const auto peb = win_emu.process.peb.read();
+        return {win_emu.emu(), peb.ProcessParameters};
+    }
+
+    uint64_t get_environment_ptr(windows_emulator& win_emu)
+    {
+        const auto process_params = get_process_params(win_emu);
+        return process_params.read().Environment;
+    }
+
+    size_t get_environment_size(const x86_64_emulator& emu, const uint64_t env)
+    {
+        std::array<uint8_t, 4> data{};
+        std::array<uint8_t, 4> empty{};
+
+        for (size_t i = 0; i < 0x100000; ++i)
+        {
+            if (!emu.try_read_memory(env + i, data.data(), data.size()))
+            {
+                return i;
+            }
+
+            if (data == empty)
+            {
+                return i + data.size();
+            }
+        }
+
+        return 0;
+    }
+
+    emulator_hook* install_env_hook(const std::shared_ptr<analysis_state>& state)
+    {
+        const auto process_params = get_process_params(state->win_emu_);
+
+        auto install_env_access_hook = [state] {
+            const auto env_ptr = get_environment_ptr(state->win_emu_);
+            const auto env_size = get_environment_size(state->win_emu_.emu(), env_ptr);
+            if (!env_size)
+            {
+                state->env_data_hook_.remove();
+                return;
+            }
+
+            auto hook_handler = [state, env_ptr](const uint64_t address, const void*, const size_t size) {
+                const auto rip = state->win_emu_.emu().read_instruction_pointer();
+                const auto* mod = state->win_emu_.mod_manager.find_by_address(rip);
+                const auto is_main_access = !mod || (mod == state->win_emu_.mod_manager.executable || state->modules_.contains(mod->name));
+
+                if (!is_main_access && !state->verbose_)
+                {
+                    return;
+                }
+
+                const auto offset = address - env_ptr;
+                const auto* mod_name = mod ? mod->name.c_str() : "<N/A>";
+                state->win_emu_.log.print(is_main_access ? color::green : color::dark_gray,
+                                          "Environment access: 0x%" PRIx64 " (0x%zX) at 0x%" PRIx64 " (%s)\n", offset, size, rip, mod_name);
+            };
+
+            state->env_data_hook_ = state->win_emu_.emu().hook_memory_read(env_ptr, env_size, std::move(hook_handler));
+        };
+
+        install_env_access_hook();
+
+        auto& win_emu = state->win_emu_;
+        return state->win_emu_.emu().hook_memory_write(
+            process_params.value() + offsetof(RTL_USER_PROCESS_PARAMETERS64, Environment), 0x8,
+            [&win_emu, install = std::move(install_env_access_hook)](const uint64_t address, const void*, size_t) {
+                const auto new_process_params = get_process_params(win_emu);
+
+                const auto target_address = new_process_params.value() + offsetof(RTL_USER_PROCESS_PARAMETERS64, Environment);
+
+                if (address == target_address)
+                {
+                    install();
+                }
+            });
+    }
+#endif
+
+    void watch_system_objects(windows_emulator& win_emu, const std::set<std::string, std::less<>>& modules, const bool verbose)
     {
         win_emu.setup_process_if_necessary();
 
@@ -69,26 +175,31 @@ namespace
 #if !defined(__GNUC__) || defined(__clang__)
         watch_object(win_emu, modules, *win_emu.current_thread().teb, verbose);
         watch_object(win_emu, modules, win_emu.process.peb, verbose);
-        watch_object(win_emu, modules, emulator_object<KUSER_SHARED_DATA64>{win_emu.emu(), kusd_mmio::address()},
-                     verbose);
+        watch_object<KUSER_SHARED_DATA64>(win_emu, modules, kusd_mmio::address(), verbose);
 
-        auto* params_hook = watch_object(win_emu, modules, win_emu.process.process_params, verbose);
+        auto state = std::make_shared<analysis_state>(win_emu, modules, verbose);
+
+        state->params_hook_ = watch_object(win_emu, modules, win_emu.process.process_params, verbose);
+        state->ldr_hook_ = watch_object<PEB_LDR_DATA64>(win_emu, modules, win_emu.process.peb.read().Ldr, verbose);
+
+        const auto update_env_hook = [state] {
+            state->env_ptr_hook_ = install_env_hook(state); //
+        };
+
+        update_env_hook();
+
+        win_emu.emu().hook_memory_write(win_emu.process.peb.value() + offsetof(PEB64, ProcessParameters), 0x8,
+                                        [state, update_env = std::move(update_env_hook)](const uint64_t, const void*, size_t) {
+                                            const auto new_ptr = state->win_emu_.process.peb.read().ProcessParameters;
+                                            state->params_hook_ = watch_object<RTL_USER_PROCESS_PARAMETERS64>(
+                                                state->win_emu_, state->modules_, new_ptr, state->verbose_);
+                                            update_env();
+                                        });
 
         win_emu.emu().hook_memory_write(
-            win_emu.process.peb.value() + offsetof(PEB64, ProcessParameters), 0x8,
-            [&win_emu, verbose, params_hook, modules](const uint64_t address, const void*, size_t) mutable {
-                const auto target_address = win_emu.process.peb.value() + offsetof(PEB64, ProcessParameters);
-
-                if (address == target_address)
-                {
-                    const emulator_object<RTL_USER_PROCESS_PARAMETERS64> obj{
-                        win_emu.emu(),
-                        win_emu.emu().read_memory<uint64_t>(address),
-                    };
-
-                    win_emu.emu().delete_hook(params_hook);
-                    params_hook = watch_object(win_emu, modules, obj, verbose);
-                }
+            win_emu.process.peb.value() + offsetof(PEB64, Ldr), 0x8, [state](const uint64_t, const void*, size_t) {
+                const auto new_ptr = state->win_emu_.process.peb.read().Ldr;
+                state->ldr_hook_ = watch_object<PEB_LDR_DATA64>(state->win_emu_, state->modules_, new_ptr, state->verbose_);
             });
 #endif
     }
@@ -110,12 +221,37 @@ namespace
         }
     }
 
+    void print_instruction_summary(const analysis_context& c)
+    {
+        std::map<uint64_t, std::vector<uint32_t>> instruction_counts{};
+
+        for (const auto& [instruction, count] : c.instructions)
+        {
+            instruction_counts[count].push_back(instruction);
+        }
+
+        c.win_emu->log.print(color::white, "Instruction summary:\n");
+
+        for (const auto& [count, instructions] : instruction_counts)
+        {
+            for (const auto& instruction : instructions)
+            {
+                const auto* mnemonic = cs_insn_name(c.d.get_handle(), instruction);
+                c.win_emu->log.print(color::white, "%s: %" PRIx64 "\n", mnemonic, count);
+            }
+        }
+    }
+
     void do_post_emulation_work(const analysis_context& c)
     {
+        if (c.settings->instruction_summary)
+        {
+            print_instruction_summary(c);
+        }
+
         if (c.settings->buffer_stdout)
         {
-            c.win_emu->log.info("%.*s%s", static_cast<int>(c.output.size()), c.output.data(),
-                                c.output.ends_with("\n") ? "" : "\n");
+            c.win_emu->log.info("%.*s%s", static_cast<int>(c.output.size()), c.output.data(), c.output.ends_with("\n") ? "" : "\n");
         }
     }
 
@@ -128,7 +264,7 @@ namespace
             const auto value = signals_received++;
             if (value == 1)
             {
-                win_emu.log.log("Exit already requested. Press CTRL+C again to force kill!");
+                win_emu.log.log("Exit already requested. Press CTRL+C again to force kill!\n");
             }
             else if (value >= 2)
             {
@@ -184,8 +320,7 @@ namespace
         catch (const std::exception& e)
         {
             do_post_emulation_work(c);
-            win_emu.log.error("Emulation failed at: 0x%" PRIx64 " - %s\n", win_emu.emu().read_instruction_pointer(),
-                              e.what());
+            win_emu.log.error("Emulation failed at: 0x%" PRIx64 " - %s\n", win_emu.emu().read_instruction_pointer(), e.what());
             throw;
         }
         catch (...)
@@ -209,8 +344,7 @@ namespace
         {
             do_post_emulation_work(c);
             win_emu.log.disable_output(false);
-            win_emu.log.print(success ? color::green : color::red, "Emulation terminated with status: %X\n",
-                              *exit_status);
+            win_emu.log.print(success ? color::green : color::red, "Emulation terminated with status: %X\n", *exit_status);
         }
 
         return success;
@@ -262,8 +396,7 @@ namespace
         return std::make_unique<windows_emulator>(create_x86_64_emulator(), std::move(app_settings), settings);
     }
 
-    std::unique_ptr<windows_emulator> setup_emulator(const analysis_options& options,
-                                                     const std::span<const std::string_view> args)
+    std::unique_ptr<windows_emulator> setup_emulator(const analysis_options& options, const std::span<const std::string_view> args)
     {
         if (!options.dump.empty())
         {
@@ -284,6 +417,33 @@ namespace
         return create_application_emulator(options, args);
     }
 
+    const char* get_module_memory_region_name(const mapped_module& mod, const uint64_t address)
+    {
+        if (!mod.is_within(address))
+        {
+            return "outside???";
+        }
+
+        uint64_t first_section = mod.image_base + mod.size_of_image;
+
+        for (const auto& section : mod.sections)
+        {
+            first_section = std::min(first_section, section.region.start);
+
+            if (is_within_start_and_length(address, section.region.start, section.region.length))
+            {
+                return section.name.c_str();
+            }
+        }
+
+        if (address < first_section)
+        {
+            return "header";
+        }
+
+        return "?";
+    }
+
     bool run(const analysis_options& options, const std::span<const std::string_view> args)
     {
         analysis_context context{
@@ -296,6 +456,13 @@ namespace
 
         win_emu->log.log("Using emulator: %s\n", win_emu->emu().get_name().c_str());
 
+        std::optional<tenet_tracer> tenet_tracer{};
+        if (options.tenet_trace)
+        {
+            win_emu->log.log("Tenet Tracer enabled. Output: tenet_trace.log\n");
+            tenet_tracer.emplace(*win_emu, "tenet_trace.log");
+        }
+
         register_analysis_callbacks(context);
         watch_system_objects(*win_emu, options.modules, options.verbose_logging);
 
@@ -303,19 +470,67 @@ namespace
 
         const auto concise_logging = !options.verbose_logging;
 
-        win_emu->emu().hook_instruction(x86_hookable_instructions::cpuid, [&] {
+        win_emu->emu().hook_instruction(x86_hookable_instructions::sgdt, [&](const uint64_t) {
             const auto rip = win_emu->emu().read_instruction_pointer();
-            auto* mod = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
+            const auto mod = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
 
-            if (mod)
+            if (mod.has_value())
             {
-                const auto leaf = win_emu->emu().reg<uint32_t>(x86_register::eax);
-                win_emu->log.print(color::blue, "Executing CPUID instruction with leaf 0x%X at 0x%" PRIx64 " (%s)\n",
-                                   leaf, rip, mod->name.c_str());
+                win_emu->log.print(color::blue, "Executing SGDT instruction at 0x%" PRIx64 " (%s)\n", rip,
+                                   (*mod) ? (*mod)->name.c_str() : "<N/A>");
             }
 
             return instruction_hook_continuation::run_instruction;
         });
+
+        win_emu->emu().hook_instruction(x86_hookable_instructions::cpuid, [&] {
+            const auto rip = win_emu->emu().read_instruction_pointer();
+            const auto mod = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
+
+            if (mod.has_value())
+            {
+                const auto leaf = win_emu->emu().reg<uint32_t>(x86_register::eax);
+                win_emu->log.print(color::blue, "Executing CPUID instruction with leaf 0x%X at 0x%" PRIx64 " (%s)\n", leaf, rip,
+                                   (*mod) ? (*mod)->name.c_str() : "<N/A>");
+            }
+
+            return instruction_hook_continuation::run_instruction;
+        });
+
+        if (options.log_foreign_module_access)
+        {
+            auto module_cache = std::make_shared<std::map<std::string, uint64_t>>();
+            win_emu->emu().hook_memory_read(
+                0, std::numeric_limits<uint64_t>::max(), [&, module_cache](const uint64_t address, const void*, size_t) {
+                    const auto rip = win_emu->emu().read_instruction_pointer();
+                    const auto accessor = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
+
+                    if (!accessor.has_value())
+                    {
+                        return;
+                    }
+
+                    const auto* mod = win_emu->mod_manager.find_by_address(address);
+                    if (!mod || mod == *accessor)
+                    {
+                        return;
+                    }
+
+                    if (concise_logging)
+                    {
+                        const auto count = ++(*module_cache)[mod->name];
+                        if (count > 100 && count % 100000 != 0)
+                        {
+                            return;
+                        }
+                    }
+
+                    const auto* region_name = get_module_memory_region_name(*mod, address);
+
+                    win_emu->log.print(color::pink, "Reading from module %s at 0x%" PRIx64 " (%s) via 0x%" PRIx64 " (%s)\n",
+                                       mod->name.c_str(), address, region_name, rip, (*accessor) ? (*accessor)->name.c_str() : "<N/A>");
+                });
+        }
 
         if (options.log_executable_access)
         {
@@ -337,14 +552,13 @@ namespace
                     {
                         static uint64_t count{0};
                         ++count;
-                        if (count > 100 && count % 100000 != 0)
+                        if (count > 20 && count % 100000 != 0)
                         {
                             return;
                         }
                     }
 
-                    win_emu->log.print(color::green,
-                                       "Reading from executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
+                    win_emu->log.print(color::green, "Reading from executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
                                        section.name.c_str(), address, rip);
                 };
 
@@ -365,8 +579,7 @@ namespace
                         }
                     }
 
-                    win_emu->log.print(color::blue,
-                                       "Writing to executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
+                    win_emu->log.print(color::blue, "Writing to executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
                                        section.name.c_str(), address, rip);
                 };
 
@@ -399,15 +612,18 @@ namespace
         printf("  -s, --silent              Silent mode\n");
         printf("  -v, --verbose             Verbose logging\n");
         printf("  -b, --buffer              Buffer stdout\n");
+        printf("  -f, --foreign             Log read access to foreign modules\n");
         printf("  -c, --concise             Concise logging\n");
         printf("  -x, --exec                Log r/w access to executable memory\n");
         printf("  -m, --module <module>     Specify module to track\n");
         printf("  -e, --emulation <path>    Set emulation root path\n");
         printf("  -a, --snapshot <path>     Load snapshot dump from path\n");
         printf("  --minidump <path>         Load minidump from path\n");
+        printf("  -t, --tenet-trace         Enable Tenet tracer\n");
         printf("  -i, --ignore <funcs>      Comma-separated list of functions to ignore\n");
         printf("  -p, --path <src> <dst>    Map Windows path to host path\n");
         printf("  -r, --registry <path>     Set registry path (default: ./registry)\n\n");
+        printf("  -is, --inst-summary       Print a summary of executed instructions of the analyzed modules\n");
         printf("Examples:\n");
         printf("  analyzer -v -e path/to/root myapp.exe\n");
         printf("  analyzer -e path/to/root -p c:/analysis-sample.exe /path/to/sample.exe c:/analysis-sample.exe\n");
@@ -427,7 +643,8 @@ namespace
                 print_help();
                 std::exit(0);
             }
-            else if (arg == "-d" || arg == "--debug")
+
+            if (arg == "-d" || arg == "--debug")
             {
                 options.use_gdb = true;
             }
@@ -447,9 +664,21 @@ namespace
             {
                 options.log_executable_access = true;
             }
+            else if (arg == "-f" || arg == "--foreign")
+            {
+                options.log_foreign_module_access = true;
+            }
             else if (arg == "-c" || arg == "--concise")
             {
                 options.concise_logging = true;
+            }
+            else if (arg == "-t" || arg == "--tenet-trace")
+            {
+                options.tenet_trace = true;
+            }
+            else if (arg == "-is" || arg == "--inst-summary")
+            {
+                options.instruction_summary = true;
             }
             else if (arg == "-m" || arg == "--module")
             {
@@ -555,10 +784,10 @@ namespace
         catch (std::exception& e)
         {
             puts(e.what());
-
-#if defined(_WIN32) && 0
-            MessageBoxA(nullptr, e.what(), "ERROR", MB_ICONERROR);
-#endif
+        }
+        catch (...)
+        {
+            puts("An unknown exception occured");
         }
 
         return 1;

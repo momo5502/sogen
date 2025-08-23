@@ -33,4 +33,7 @@
 	path = deps/minidump_cpp
 	url = https://github.com/redthing1/minidump_cpp
 	shallow = true
-
+[submodule "deps/capstone"]
+	path = deps/capstone
+	url = https://github.com/capstone-engine/capstone.git
+	shallow = true

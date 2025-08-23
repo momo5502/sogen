@@ -1,6 +1,7 @@
 #include "std_include.hpp"
 
 #include "analysis.hpp"
+#include "disassembler.hpp"
 #include "windows_emulator.hpp"
 #include <utils/lazy_object.hpp>
 
@@ -12,6 +13,8 @@
 
 namespace
 {
+    constexpr size_t MAX_INSTRUCTION_BYTES = 15;
+
     template <typename Return, typename... Args>
     std::function<Return(Args...)> make_callback(analysis_context& c, Return (*callback)(analysis_context&, Args...))
     {
@@ -21,19 +24,54 @@ namespace
     }
 
     template <typename Return, typename... Args>
-    std::function<Return(Args...)> make_callback(analysis_context& c,
-                                                 Return (*callback)(const analysis_context&, Args...))
+    std::function<Return(Args...)> make_callback(analysis_context& c, Return (*callback)(const analysis_context&, Args...))
     {
         return [&c, callback](Args... args) {
             return callback(c, std::forward<Args>(args)...); //
         };
     }
 
+    std::string get_instruction_string(const disassembler& d, const emulator& emu, const uint64_t address)
+    {
+        std::array<uint8_t, MAX_INSTRUCTION_BYTES> instruction_bytes{};
+        const auto result = emu.try_read_memory(address, instruction_bytes.data(), instruction_bytes.size());
+        if (!result)
+        {
+            return {};
+        }
+
+        const auto instructions = d.disassemble(instruction_bytes, 1);
+        if (instructions.empty())
+        {
+            return {};
+        }
+
+        const auto& inst = instructions[0];
+        return std::string(inst.mnemonic) + (strlen(inst.op_str) ? " "s + inst.op_str : "");
+    }
+
     void handle_suspicious_activity(const analysis_context& c, const std::string_view details)
     {
+        std::string addition{};
         const auto rip = c.win_emu->emu().read_instruction_pointer();
-        c.win_emu->log.print(color::pink, "Suspicious: %.*s at 0x%" PRIx64 " (via 0x%" PRIx64 ")\n",
-                             STR_VIEW_VA(details), rip, c.win_emu->process.previous_ip);
+
+        // TODO: Pass enum?
+        if (details == "Illegal instruction")
+        {
+            const auto inst = get_instruction_string(c.d, c.win_emu->emu(), rip);
+            if (!inst.empty())
+            {
+                addition = " (" + inst + ")";
+            }
+        }
+
+        c.win_emu->log.print(color::pink, "Suspicious: %.*s%.*s at 0x%" PRIx64 " (via 0x%" PRIx64 ")\n", STR_VIEW_VA(details),
+                             STR_VIEW_VA(addition), rip, c.win_emu->current_thread().previous_ip);
+    }
+
+    void handle_debug_string(const analysis_context& c, const std::string_view details)
+    {
+        c.win_emu->log.info("--> Debug string: %.*s\n", STR_VIEW_VA(details));
     }
 
     void handle_generic_activity(const analysis_context& c, const std::string_view details)
@@ -49,22 +87,20 @@ namespace
     void handle_memory_allocate(const analysis_context& c, const uint64_t address, const uint64_t length,
                                 const memory_permission permission, const bool commit)
     {
-        const auto* action = commit ? "Committed" : "Allocated";
+        const auto* action = commit ? "Committed" : "Allocating";
 
-        c.win_emu->log.print(is_executable(permission) ? color::gray : color::dark_gray,
-                             "--> %s 0x%" PRIx64 " - 0x%" PRIx64 " (%s)\n", action, address, address + length,
+        c.win_emu->log.print(is_executable(permission) ? color::gray : color::dark_gray, "--> %s 0x%" PRIx64 " - 0x%" PRIx64 " (%s)\n",
+                             action, address, address + length, get_permission_string(permission).c_str());
+    }
+
+    void handle_memory_protect(const analysis_context& c, const uint64_t address, const uint64_t length, const memory_permission permission)
+    {
+        c.win_emu->log.print(color::dark_gray, "--> Changing protection at 0x%" PRIx64 "-0x%" PRIx64 " to %s\n", address, address + length,
                              get_permission_string(permission).c_str());
     }
 
-    void handle_memory_protect(const analysis_context& c, const uint64_t address, const uint64_t length,
-                               const memory_permission permission)
-    {
-        c.win_emu->log.print(color::dark_gray, "--> Changing protection at 0x%" PRIx64 "-0x%" PRIx64 " to %s\n",
-                             address, address + length, get_permission_string(permission).c_str());
-    }
-
-    void handle_memory_violate(const analysis_context& c, const uint64_t address, const uint64_t size,
-                               const memory_operation operation, const memory_violation_type type)
+    void handle_memory_violate(const analysis_context& c, const uint64_t address, const uint64_t size, const memory_operation operation,
+                               const memory_violation_type type)
     {
         const auto permission = get_permission_string(operation);
         const auto ip = c.win_emu->emu().read_instruction_pointer();
@@ -72,35 +108,29 @@ namespace
 
         if (type == memory_violation_type::protection)
         {
-            c.win_emu->log.print(color::gray,
-                                 "Protection violation: 0x%" PRIx64 " (%" PRIx64 ") - %s at 0x%" PRIx64 " (%s)\n",
-                                 address, size, permission.c_str(), ip, name);
+            c.win_emu->log.print(color::gray, "Protection violation: 0x%" PRIx64 " (%" PRIx64 ") - %s at 0x%" PRIx64 " (%s)\n", address,
+                                 size, permission.c_str(), ip, name);
         }
         else if (type == memory_violation_type::unmapped)
         {
-            c.win_emu->log.print(color::gray,
-                                 "Mapping violation: 0x%" PRIx64 " (%" PRIx64 ") - %s at 0x%" PRIx64 " (%s)\n", address,
-                                 size, permission.c_str(), ip, name);
+            c.win_emu->log.print(color::gray, "Mapping violation: 0x%" PRIx64 " (%" PRIx64 ") - %s at 0x%" PRIx64 " (%s)\n", address, size,
+                                 permission.c_str(), ip, name);
         }
     }
 
-    void handle_ioctrl(const analysis_context& c, const io_device&, const std::u16string_view device_name,
-                       const ULONG code)
+    void handle_ioctrl(const analysis_context& c, const io_device&, const std::u16string_view device_name, const ULONG code)
     {
-        c.win_emu->log.print(color::dark_gray, "--> %s: 0x%X\n", u16_to_u8(device_name).c_str(),
-                             static_cast<uint32_t>(code));
+        c.win_emu->log.print(color::dark_gray, "--> %s: 0x%X\n", u16_to_u8(device_name).c_str(), static_cast<uint32_t>(code));
     }
 
     void handle_thread_set_name(const analysis_context& c, const emulator_thread& t)
     {
-        c.win_emu->log.print(color::blue, "Setting thread (%d) name: %s\n", t.id, u16_to_u8(t.name).c_str());
+        c.win_emu->log.print(color::blue, "Setting thread (%u) name: %s\n", t.id, u16_to_u8(t.name).c_str());
     }
 
-    void handle_thread_switch(const analysis_context& c, const emulator_thread& current_thread,
-                              const emulator_thread& new_thread)
+    void handle_thread_switch(const analysis_context& c, const emulator_thread& current_thread, const emulator_thread& new_thread)
     {
-        c.win_emu->log.print(color::dark_gray, "Performing thread switch: %X -> %X\n", current_thread.id,
-                             new_thread.id);
+        c.win_emu->log.print(color::dark_gray, "Performing thread switch: %X -> %X\n", current_thread.id, new_thread.id);
     }
 
     void handle_module_load(const analysis_context& c, const mapped_module& mod)
@@ -124,7 +154,7 @@ namespace
     }
 
     template <typename CharType = char>
-    void print_arg_as_string(windows_emulator& win_emu, size_t index)
+    void print_arg_as_string(windows_emulator& win_emu, const size_t index)
     {
         const auto var_ptr = get_function_argument(win_emu.emu(), index);
         if (var_ptr)
@@ -134,7 +164,17 @@ namespace
         }
     }
 
-    void handle_function_details(analysis_context& c, const std::string_view function)
+    void print_module_name(windows_emulator& win_emu, const size_t index)
+    {
+        const auto var_ptr = get_function_argument(win_emu.emu(), index);
+        if (var_ptr)
+        {
+            const auto* module_name = win_emu.mod_manager.find_name(var_ptr);
+            print_string(win_emu.log, module_name);
+        }
+    }
+
+    void handle_function_details(const analysis_context& c, const std::string_view function)
     {
         if (function == "GetEnvironmentVariableA" || function == "ExpandEnvironmentStringsA")
         {
@@ -150,11 +190,114 @@ namespace
             print_arg_as_string<char16_t>(*c.win_emu, 2);
             print_arg_as_string<char16_t>(*c.win_emu, 1);
         }
+        else if (function == "GetProcAddress")
+        {
+            print_module_name(*c.win_emu, 0);
+            print_arg_as_string(*c.win_emu, 1);
+        }
+        else if (function == "WinVerifyTrust")
+        {
+            auto& emu = c.win_emu->emu();
+            emu.reg(x86_register::rip, emu.read_stack(0));
+            emu.reg(x86_register::rsp, emu.reg(x86_register::rsp) + 8);
+            emu.reg(x86_register::rax, 1);
+        }
+        else if (function == "lstrcmp" || function == "lstrcmpi")
+        {
+            print_arg_as_string(*c.win_emu, 0);
+            print_arg_as_string(*c.win_emu, 1);
+        }
+    }
+
+    bool is_thread_alive(const analysis_context& c, const uint32_t thread_id)
+    {
+        for (const auto& t : c.win_emu->process.threads | std::views::values)
+        {
+            if (t.id == thread_id)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    void update_import_access(analysis_context& c, const uint64_t address)
+    {
+        if (c.accessed_imports.empty())
+        {
+            return;
+        }
+
+        const auto& t = c.win_emu->current_thread();
+        for (auto entry = c.accessed_imports.begin(); entry != c.accessed_imports.end();)
+        {
+            auto& a = *entry;
+            const auto is_same_thread = t.id == a.thread_id;
+
+            if (is_same_thread && address == a.address)
+            {
+                entry = c.accessed_imports.erase(entry);
+                continue;
+            }
+
+            constexpr auto inst_delay = 100u;
+            const auto execution_delay_reached = is_same_thread && a.access_inst_count + inst_delay <= t.executed_instructions;
+
+            if (!execution_delay_reached && is_thread_alive(c, a.thread_id))
+            {
+                ++entry;
+                continue;
+            }
+
+            c.win_emu->log.print(color::green, "Import read access without execution: %s (%s) at 0x%" PRIx64 " (%s)\n",
+                                 a.import_name.c_str(), a.import_module.c_str(), a.access_rip, a.accessor_module.c_str());
+
+            entry = c.accessed_imports.erase(entry);
+        }
+    }
+
+    bool is_return(const disassembler& d, const emulator& emu, const uint64_t address)
+    {
+        std::array<uint8_t, MAX_INSTRUCTION_BYTES> instruction_bytes{};
+        const auto result = emu.try_read_memory(address, instruction_bytes.data(), instruction_bytes.size());
+        if (!result)
+        {
+            return false;
+        }
+
+        const auto instructions = d.disassemble(instruction_bytes, 1);
+        if (instructions.empty())
+        {
+            return false;
+        }
+
+        return cs_insn_group(d.get_handle(), instructions.data(), CS_GRP_RET);
+    }
+
+    void record_instruction(analysis_context& c, const uint64_t address)
+    {
+        std::array<uint8_t, MAX_INSTRUCTION_BYTES> instruction_bytes{};
+        const auto result = c.win_emu->emu().try_read_memory(address, instruction_bytes.data(), instruction_bytes.size());
+        if (!result)
+        {
+            return;
+        }
+
+        disassembler disasm{};
+        const auto instructions = disasm.disassemble(instruction_bytes, 1);
+        if (instructions.empty())
+        {
+            return;
+        }
+
+        ++c.instructions[instructions[0].id];
     }
 
     void handle_instruction(analysis_context& c, const uint64_t address)
     {
         auto& win_emu = *c.win_emu;
+        update_import_access(c, address);
 
 #ifdef OS_EMSCRIPTEN
         if ((win_emu.get_executed_instructions() % 0x20000) == 0)
@@ -164,8 +307,9 @@ namespace
         }
 #endif
 
+        const auto previous_ip = c.win_emu->current_thread().previous_ip;
         const auto is_main_exe = win_emu.mod_manager.executable->is_within(address);
-        const auto is_previous_main_exe = win_emu.mod_manager.executable->is_within(c.win_emu->process.previous_ip);
+        const auto is_previous_main_exe = win_emu.mod_manager.executable->is_within(previous_ip);
 
         const auto binary = utils::make_lazy([&] {
             if (is_main_exe)
@@ -182,7 +326,11 @@ namespace
                 return win_emu.mod_manager.executable;
             }
 
-            return win_emu.mod_manager.find_by_address(win_emu.process.previous_ip); //
+            return win_emu.mod_manager.find_by_address(previous_ip); //
+        });
+
+        const auto is_current_binary_interesting = utils::make_lazy([&] {
+            return is_main_exe || (binary && c.settings->modules.contains(binary->name)); //
         });
 
         const auto is_in_interesting_module = [&] {
@@ -191,12 +339,16 @@ namespace
                 return false;
             }
 
-            return (binary && c.settings->modules.contains(binary->name)) ||
-                   (previous_binary && c.settings->modules.contains(previous_binary->name));
+            return is_current_binary_interesting || (previous_binary && c.settings->modules.contains(previous_binary->name));
         };
 
+        if (c.settings->instruction_summary && (is_current_binary_interesting || !binary))
+        {
+            record_instruction(c, address);
+        }
+
         const auto is_interesting_call = is_previous_main_exe //
-                                         || is_main_exe       //
+                                         || !previous_binary  //
                                          || is_in_interesting_module();
 
         if (!c.has_reached_main && c.settings->concise_logging && !c.settings->silent && is_main_exe)
@@ -211,30 +363,73 @@ namespace
         }
 
         const auto export_entry = binary->address_names.find(address);
-        if (export_entry != binary->address_names.end() &&
-            !c.settings->ignored_functions.contains(export_entry->second))
+        if (export_entry != binary->address_names.end())
         {
-            const auto rsp = win_emu.emu().read_stack_pointer();
-
-            uint64_t return_address{};
-            win_emu.emu().try_read_memory(rsp, &return_address, sizeof(return_address));
-
-            const auto* mod_name = win_emu.mod_manager.find_name(return_address);
-
-            win_emu.log.print(is_interesting_call ? color::yellow : color::dark_gray,
-                              "Executing function: %s - %s (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n",
-                              binary->name.c_str(), export_entry->second.c_str(), address, return_address, mod_name);
-
-            if (is_interesting_call)
+            if (!c.settings->ignored_functions.contains(export_entry->second))
             {
-                handle_function_details(c, export_entry->second);
+                win_emu.log.print(is_interesting_call ? color::yellow : color::dark_gray,
+                                  "Executing function: %s (%s) (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n", export_entry->second.c_str(),
+                                  binary->name.c_str(), address, previous_ip, previous_binary ? previous_binary->name.c_str() : "<N/A>");
+
+                if (is_interesting_call)
+                {
+                    handle_function_details(c, export_entry->second);
+                }
             }
         }
         else if (address == binary->entry_point)
         {
-            win_emu.log.print(is_interesting_call ? color::yellow : color::gray,
-                              "Executing entry point: %s (0x%" PRIx64 ")\n", binary->name.c_str(), address);
+            win_emu.log.print(is_interesting_call ? color::yellow : color::gray, "Executing entry point: %s (0x%" PRIx64 ")\n",
+                              binary->name.c_str(), address);
         }
+        else if (is_previous_main_exe && binary != previous_binary && !is_return(c.d, c.win_emu->emu(), previous_ip))
+        {
+            auto nearest_entry = binary->address_names.upper_bound(address);
+            if (nearest_entry == binary->address_names.begin())
+            {
+                return;
+            }
+
+            --nearest_entry;
+
+            win_emu.log.print(is_interesting_call ? color::yellow : color::dark_gray,
+                              "Transition to foreign code: %s+0x%" PRIx64 " (%s) (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n",
+                              nearest_entry->second.c_str(), address - nearest_entry->first, binary->name.c_str(), address, previous_ip,
+                              previous_binary ? previous_binary->name.c_str() : "<N/A>");
+        }
+    }
+
+    void handle_rdtsc(const analysis_context& c)
+    {
+        auto& win_emu = *c.win_emu;
+        auto& emu = win_emu.emu();
+
+        const auto rip = emu.read_instruction_pointer();
+        const auto mod = get_module_if_interesting(win_emu.mod_manager, c.settings->modules, rip);
+
+        if (!mod.has_value())
+        {
+            return;
+        }
+
+        win_emu.log.print(color::blue, "Executing RDTSC instruction at 0x%" PRIx64 " (%s)\n", rip, (*mod) ? (*mod)->name.c_str() : "<N/A>");
+    }
+
+    void handle_rdtscp(const analysis_context& c)
+    {
+        auto& win_emu = *c.win_emu;
+        auto& emu = win_emu.emu();
+
+        const auto rip = emu.read_instruction_pointer();
+        const auto mod = get_module_if_interesting(win_emu.mod_manager, c.settings->modules, rip);
+
+        if (!mod.has_value())
+        {
+            return;
+        }
+
+        win_emu.log.print(color::blue, "Executing RDTSCP instruction at 0x%" PRIx64 " (%s)\n", rip,
+                          (*mod) ? (*mod)->name.c_str() : "<N/A>");
     }
 
     emulator_callbacks::continuation handle_syscall(const analysis_context& c, const uint32_t syscall_id,
@@ -246,13 +441,14 @@ namespace
         const auto address = emu.read_instruction_pointer();
         const auto* mod = win_emu.mod_manager.find_by_address(address);
         const auto is_sus_module = mod != win_emu.mod_manager.ntdll && mod != win_emu.mod_manager.win32u;
+        const auto previous_ip = win_emu.current_thread().previous_ip;
 
         if (is_sus_module)
         {
-            win_emu.log.print(color::blue, "Executing inline syscall: %.*s (0x%X) at 0x%" PRIx64 " (%s)\n",
-                              STR_VIEW_VA(syscall_name), syscall_id, address, mod ? mod->name.c_str() : "<N/A>");
+            win_emu.log.print(color::blue, "Executing inline syscall: %.*s (0x%X) at 0x%" PRIx64 " (%s)\n", STR_VIEW_VA(syscall_name),
+                              syscall_id, address, mod ? mod->name.c_str() : "<N/A>");
         }
-        else if (mod->is_within(win_emu.process.previous_ip))
+        else if (mod->is_within(previous_ip))
         {
             const auto rsp = emu.read_stack_pointer();
 
@@ -261,18 +457,16 @@ namespace
 
             const auto* caller_mod_name = win_emu.mod_manager.find_name(return_address);
 
-            win_emu.log.print(color::dark_gray,
-                              "Executing syscall: %.*s (0x%X) at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n",
+            win_emu.log.print(color::dark_gray, "Executing syscall: %.*s (0x%X) at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n",
                               STR_VIEW_VA(syscall_name), syscall_id, address, return_address, caller_mod_name);
         }
         else
         {
-            const auto* previous_mod = win_emu.mod_manager.find_by_address(win_emu.process.previous_ip);
+            const auto* previous_mod = win_emu.mod_manager.find_by_address(previous_ip);
 
-            win_emu.log.print(color::blue,
-                              "Crafted out-of-line syscall: %.*s (0x%X) at 0x%" PRIx64 " (%s) via 0x%" PRIx64 " (%s)\n",
-                              STR_VIEW_VA(syscall_name), syscall_id, address, mod ? mod->name.c_str() : "<N/A>",
-                              win_emu.process.previous_ip, previous_mod ? previous_mod->name.c_str() : "<N/A>");
+            win_emu.log.print(color::blue, "Crafted out-of-line syscall: %.*s (0x%X) at 0x%" PRIx64 " (%s) via 0x%" PRIx64 " (%s)\n",
+                              STR_VIEW_VA(syscall_name), syscall_id, address, mod ? mod->name.c_str() : "<N/A>", previous_ip,
+                              previous_mod ? previous_mod->name.c_str() : "<N/A>");
         }
 
         return instruction_hook_continuation::run_instruction;
@@ -293,6 +487,68 @@ namespace
             c.win_emu->log.info("%.*s%s", static_cast<int>(data.size()), data.data(), data.ends_with("\n") ? "" : "\n");
         }
     }
+
+    void watch_import_table(analysis_context& c)
+    {
+        c.win_emu->setup_process_if_necessary();
+
+        const auto& import_list = c.win_emu->mod_manager.executable->imports;
+        if (import_list.empty())
+        {
+            return;
+        }
+
+        auto min = std::numeric_limits<uint64_t>::max();
+        auto max = std::numeric_limits<uint64_t>::min();
+
+        for (const auto& imports : import_list | std::views::values)
+        {
+            for (const auto& import : imports)
+            {
+                min = std::min(import.address, min);
+                max = std::max(import.address, max);
+            }
+        }
+
+        c.win_emu->emu().hook_memory_read(min, max - min, [&c](const uint64_t address, const void*, size_t) {
+            const auto& import_list = c.win_emu->mod_manager.executable->imports;
+
+            const auto rip = c.win_emu->emu().read_instruction_pointer();
+            if (!c.win_emu->mod_manager.executable->is_within(rip))
+            {
+                return;
+            }
+
+            for (const auto& [module_name, imports] : import_list)
+            {
+                for (const auto& import : imports)
+                {
+                    if (address != import.address)
+                    {
+                        continue;
+                    }
+
+                    accessed_import access{};
+
+                    access.address = c.win_emu->emu().read_memory<uint64_t>(address);
+
+                    access.access_rip = c.win_emu->emu().read_instruction_pointer();
+                    access.accessor_module = c.win_emu->mod_manager.find_name(access.access_rip);
+
+                    access.import_name = import.name;
+                    access.import_module = module_name;
+
+                    const auto& t = c.win_emu->current_thread();
+                    access.thread_id = t.id;
+                    access.access_inst_count = t.executed_instructions;
+
+                    c.accessed_imports.push_back(std::move(access));
+
+                    return;
+                }
+            }
+        });
+    }
 }
 
 void register_analysis_callbacks(analysis_context& c)
@@ -301,6 +557,8 @@ void register_analysis_callbacks(analysis_context& c)
 
     cb.on_stdout = make_callback(c, handle_stdout);
     cb.on_syscall = make_callback(c, handle_syscall);
+    cb.on_rdtsc = make_callback(c, handle_rdtsc);
+    cb.on_rdtscp = make_callback(c, handle_rdtscp);
     cb.on_ioctrl = make_callback(c, handle_ioctrl);
 
     cb.on_memory_protect = make_callback(c, handle_memory_protect);
@@ -314,28 +572,32 @@ void register_analysis_callbacks(analysis_context& c)
     cb.on_thread_set_name = make_callback(c, handle_thread_set_name);
 
     cb.on_instruction = make_callback(c, handle_instruction);
+    cb.on_debug_string = make_callback(c, handle_debug_string);
     cb.on_generic_access = make_callback(c, handle_generic_access);
     cb.on_generic_activity = make_callback(c, handle_generic_activity);
     cb.on_suspicious_activity = make_callback(c, handle_suspicious_activity);
+
+    watch_import_table(c);
 }
 
-mapped_module* get_module_if_interesting(module_manager& manager, const string_set& modules, uint64_t address)
+std::optional<mapped_module*> get_module_if_interesting(module_manager& manager, const string_set& modules, const uint64_t address)
 {
     if (manager.executable->is_within(address))
     {
         return manager.executable;
     }
 
-    if (modules.empty())
+    auto* mod = manager.find_by_address(address);
+    if (!mod)
     {
+        // Not being part of any module is interesting
         return nullptr;
     }
 
-    auto* mod = manager.find_by_address(address);
-    if (mod && modules.contains(mod->name))
+    if (modules.contains(mod->name))
     {
         return mod;
     }
 
-    return nullptr;
+    return std::nullopt;
 }

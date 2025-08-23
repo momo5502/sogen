@@ -19,8 +19,7 @@ namespace syscalls
             return STATUS_INVALID_PARAMETER;
         }
 
-        const auto name = read_unicode_string(
-            c.emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, attributes.ObjectName});
+        const auto name = read_unicode_string(c.emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, attributes.ObjectName});
         if (name.empty())
         {
             return STATUS_INVALID_PARAMETER;
@@ -38,8 +37,8 @@ namespace syscalls
         return STATUS_OBJECT_NAME_NOT_FOUND;
     }
 
-    NTSTATUS handle_NtReleaseSemaphore(const syscall_context& c, const handle semaphore_handle,
-                                       const ULONG release_count, const emulator_object<LONG> previous_count)
+    NTSTATUS handle_NtReleaseSemaphore(const syscall_context& c, const handle semaphore_handle, const ULONG release_count,
+                                       const emulator_object<LONG> previous_count)
     {
         if (semaphore_handle.value.type != handle_types::semaphore)
         {

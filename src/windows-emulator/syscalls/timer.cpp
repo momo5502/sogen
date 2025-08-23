@@ -6,8 +6,7 @@
 namespace syscalls
 {
     NTSTATUS handle_NtQueryTimerResolution(const syscall_context&, const emulator_object<ULONG> maximum_time,
-                                           const emulator_object<ULONG> minimum_time,
-                                           const emulator_object<ULONG> current_time)
+                                           const emulator_object<ULONG> minimum_time, const emulator_object<ULONG> current_time)
     {
         maximum_time.write_if_valid(0x0002625a);
         minimum_time.write_if_valid(0x00001388);
@@ -15,8 +14,8 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtSetTimerResolution(const syscall_context&, const ULONG /*desired_resolution*/,
-                                         const BOOLEAN set_resolution, const emulator_object<ULONG> current_resolution)
+    NTSTATUS handle_NtSetTimerResolution(const syscall_context&, const ULONG /*desired_resolution*/, const BOOLEAN set_resolution,
+                                         const emulator_object<ULONG> current_resolution)
     {
         if (current_resolution)
         {
@@ -31,10 +30,9 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtCreateTimer2(const syscall_context& c, const emulator_object<handle> timer_handle,
-                                   uint64_t /*reserved*/,
-                                   const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
-                                   ULONG /*attributes*/, ACCESS_MASK /*desired_access*/)
+    NTSTATUS handle_NtCreateTimer2(const syscall_context& c, const emulator_object<handle> timer_handle, uint64_t /*reserved*/,
+                                   const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, ULONG /*attributes*/,
+                                   ACCESS_MASK /*desired_access*/)
     {
         std::u16string name{};
         if (object_attributes)
@@ -69,10 +67,8 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtCreateTimer(const syscall_context& c, const emulator_object<handle> timer_handle,
-                                  ACCESS_MASK desired_access,
-                                  const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
-                                  ULONG timer_type)
+    NTSTATUS handle_NtCreateTimer(const syscall_context& c, const emulator_object<handle> timer_handle, ACCESS_MASK desired_access,
+                                  const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, ULONG timer_type)
     {
         return handle_NtCreateTimer2(c, timer_handle, 0, object_attributes, timer_type, desired_access);
     }
@@ -87,9 +83,8 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtSetTimerEx(const syscall_context& /*c*/, handle /*timer_handle*/,
-                                 uint32_t /*timer_set_info_class*/, uint64_t /*timer_set_information*/,
-                                 ULONG /*timer_set_information_length*/)
+    NTSTATUS handle_NtSetTimerEx(const syscall_context& /*c*/, handle /*timer_handle*/, uint32_t /*timer_set_info_class*/,
+                                 uint64_t /*timer_set_information*/, ULONG /*timer_set_information_length*/)
     {
         return STATUS_NOT_SUPPORTED;
     }

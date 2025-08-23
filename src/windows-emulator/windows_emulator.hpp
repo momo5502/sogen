@@ -27,11 +27,14 @@ struct emulator_callbacks : module_manager::callbacks, process_context::callback
     opt_func<void(uint64_t address, uint64_t length, memory_permission, bool commit)> on_memory_allocate{};
     opt_func<void(uint64_t address, uint64_t length, memory_operation, memory_violation_type type)> on_memory_violate{};
 
+    opt_func<void()> on_rdtsc{};
+    opt_func<void()> on_rdtscp{};
     opt_func<continuation(uint32_t syscall_id, std::string_view syscall_name)> on_syscall{};
     opt_func<void(std::string_view data)> on_stdout{};
     opt_func<void(std::string_view type, std::u16string_view name)> on_generic_access{};
     opt_func<void(std::string_view description)> on_generic_activity{};
     opt_func<void(std::string_view description)> on_suspicious_activity{};
+    opt_func<void(std::string_view message)> on_debug_string{};
     opt_func<void(uint64_t address)> on_instruction{};
     opt_func<void(io_device& device, std::u16string_view device_name, ULONG code)> on_ioctrl{};
 };
@@ -95,11 +98,10 @@ class windows_emulator
     process_context process;
     syscall_dispatcher dispatcher;
 
-    windows_emulator(std::unique_ptr<x86_64_emulator> emu, const emulator_settings& settings = {},
-                     emulator_callbacks callbacks = {}, emulator_interfaces interfaces = {});
-    windows_emulator(std::unique_ptr<x86_64_emulator> emu, application_settings app_settings,
-                     const emulator_settings& settings = {}, emulator_callbacks callbacks = {},
+    windows_emulator(std::unique_ptr<x86_64_emulator> emu, const emulator_settings& settings = {}, emulator_callbacks callbacks = {},
                      emulator_interfaces interfaces = {});
+    windows_emulator(std::unique_ptr<x86_64_emulator> emu, application_settings app_settings, const emulator_settings& settings = {},
+                     emulator_callbacks callbacks = {}, emulator_interfaces interfaces = {});
 
     windows_emulator(windows_emulator&&) = delete;
     windows_emulator(const windows_emulator&) = delete;

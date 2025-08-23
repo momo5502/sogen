@@ -29,5 +29,15 @@ add_subdirectory(minidump_cpp)
 
 ##########################################
 
+
+option(CAPSTONE_BUILD_MACOS_THIN "" ON)
+option(CAPSTONE_X86_SUPPORT "" ON)
+option(CAPSTONE_X86_ATT_DISABLE "" ON)
+option(CAPSTONE_ARCHITECTURE_DEFAULT "" OFF)
+option(CAPSTONE_BUILD_STATIC_MSVC_RUNTIME "" OFF)
+add_subdirectory(capstone)
+
+##########################################
+
 include(googletest.cmake)
 include(zlib.cmake)
