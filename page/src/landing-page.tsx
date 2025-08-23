@@ -313,12 +313,14 @@ export function LandingPage() {
                 <a
                   href="https://github.com/momo5502/sogen"
                   target="_blank"
+                  title="Soure Code"
                   className="text-neutral-400 hover:text-blue-400 transition-colors p-2 rounded-lg hover:bg-neutral-800/50"
                 >
                   <Github className="h-6 w-6" />
                 </a>
                 <a
                   href="#/playground"
+                  title="Playground"
                   className="text-neutral-400 hover:text-blue-400 transition-colors p-2 rounded-lg hover:bg-neutral-800/50"
                 >
                   <Play className="h-6 w-6" />
@@ -326,6 +328,7 @@ export function LandingPage() {
                 <a
                   href="https://github.com/momo5502/sogen/wiki"
                   target="_blank"
+                  title="Wiki"
                   className="text-neutral-400 hover:text-blue-400 transition-colors p-2 rounded-lg hover:bg-neutral-800/50"
                 >
                   <BookOpen className="h-6 w-6" />
