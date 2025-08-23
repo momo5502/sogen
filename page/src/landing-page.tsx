@@ -257,7 +257,7 @@ export function LandingPage() {
         </section>
 
         {/* CTA Section */}
-        <section className="py-24 bg-gradient-to-r from-neutral-900 to-zinc-900">
+        <section className="py-24 bg-gradient-to-r from-neutral-800/40 to-neutral-900">
           <div className="container mx-auto px-6 text-center">
             <h2 className="text-4xl font-bold text-white mb-6">
               Ready to Start Emulating?
