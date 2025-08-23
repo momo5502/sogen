@@ -110,10 +110,10 @@ export function LandingPage() {
                   <Button
                     asChild
                     size="lg"
-                    className="bg-gradient-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100 transform hover:scale-105"
+                    className="bg-gradient-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100"
                   >
                     <span>
-                      <Play className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
+                      <Play className="mr-2 h-5 w-5 transition-transform" />
                       Try Online
                       <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
                     </span>
