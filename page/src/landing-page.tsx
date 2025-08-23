@@ -24,7 +24,7 @@ export function LandingPage() {
       title: "Syscall Emulation",
       description:
         "Operates at syscall level, leveraging existing system DLLs instead of reimplementing Windows APIs",
-      accent: "from-[#fb5b3c] to-[#b00101]",
+      accent: "from-[#f76548] to-[#b00101]",
     },
     {
       icon: <Split className="h-8 w-8" />,
@@ -202,7 +202,7 @@ export function LandingPage() {
                   key={index}
                   className="text-center p-8 rounded-2xl bg-neutral-800/50 border border-neutral-700 hover:border-blue-500/50 transition-all duration-300 group"
                 >
-                  <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 p-3 group-hover:scale-110 transition-transform">
+                  <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-500 p-3 group-hover:scale-110 transition-transform">
                     <div className="text-white">{useCase.icon}</div>
                   </div>
                   <h3 className="text-xl font-semibold text-white mb-3">
