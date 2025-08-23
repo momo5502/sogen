@@ -108,23 +108,29 @@ export function LandingPage() {
               <div className="flex flex-col sm:flex-row gap-4 justify-center items-center pt-8">
                 <a href="#/playground">
                   <Button
+                    asChild
                     size="lg"
                     className="bg-gradient-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100 transform hover:scale-105"
                   >
-                    <Play className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
-                    Try Online
-                    <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
+                    <span>
+                      <Play className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
+                      Try Online
+                      <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
+                    </span>
                   </Button>
                 </a>
                 <a href="https://github.com/momo5502/sogen" target="_blank">
                   <Button
+                    asChild
                     size="lg"
                     variant="outline"
                     className="border-neutral-600 text-neutral-300 hover:bg-neutral-800/50 px-8 py-6 text-lg font-semibold group transition-all duration-300"
                   >
-                    <Github className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
-                    View Source
-                    <ExternalLink className="ml-2 h-4 w-4" />
+                    <span>
+                      <Github className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
+                      View Source
+                      <ExternalLink className="ml-2 h-4 w-4" />
+                    </span>
                   </Button>
                 </a>
               </div>
@@ -262,21 +268,27 @@ export function LandingPage() {
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <a href="#/playground">
                 <Button
+                  asChild
                   size="lg"
                   className="bg-gradient-to-br from-white to-neutral-300 text-neutral-900  px-8 py-6 text-lg font-semibold transition-all duration-100"
                 >
-                  <Play className="mr-2 h-5 w-5" />
-                  Launch Playground
+                  <span>
+                    <Play className="mr-2 h-5 w-5" />
+                    Launch Playground
+                  </span>
                 </Button>
               </a>
               <a href="https://github.com/momo5502/sogen" target="_blank">
                 <Button
+                  asChild
                   size="lg"
                   variant="outline"
                   className="border-white text-white hover:bg-white/10 px-8 py-6 text-lg font-semibold"
                 >
-                  <Download className="mr-2 h-5 w-5" />
-                  Get Source
+                  <span>
+                    <Download className="mr-2 h-5 w-5" />
+                    Get Source
+                  </span>
                 </Button>
               </a>
             </div>
