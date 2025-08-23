@@ -285,12 +285,7 @@ export function LandingPage() {
           <div className="container mx-auto px-6">
             <div className="flex flex-col md:flex-row justify-between items-center">
               <div className="mb-8 md:mb-0 text-center md:text-left">
-                <h2 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
-                  Sogen
-                </h2>
-                <p className="mt-2 text-neutral-400 text-lg">
-                  Windows User Space Emulator
-                </p>
+                <h2 className="text-3xl font-bold">Sogen</h2>
                 <p className="mt-1 text-neutral-500 text-sm">
                   Built by{" "}
                   <a
