@@ -203,7 +203,7 @@ export function LandingPage() {
                   className="text-center p-8 rounded-2xl bg-neutral-800/50 border border-neutral-700 hover:border-blue-400/50 transition-all duration-300 group"
                 >
                   <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-500 p-3 group-hover:scale-110 transition-transform">
-                    <div className="text-white">{useCase.icon}</div>
+                    <div className="text-neutral-800">{useCase.icon}</div>
                   </div>
                   <h3 className="text-xl font-semibold text-white mb-3">
                     {useCase.title}
