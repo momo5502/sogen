@@ -2,6 +2,7 @@
 #include "exception_dispatch.hpp"
 #include "process_context.hpp"
 #include "cpu_context.hpp"
+#include "windows_emulator.hpp"
 
 namespace
 {
@@ -136,19 +137,19 @@ namespace
     }
 }
 
-void dispatch_exception(x86_64_emulator& emu, const process_context& proc, const DWORD status,
-                        const std::vector<EmulatorTraits<Emu64>::ULONG_PTR>& parameters)
+void dispatch_exception(windows_emulator& win_emu, const DWORD status, const std::vector<EmulatorTraits<Emu64>::ULONG_PTR>& parameters)
 {
     CONTEXT64 ctx{};
     ctx.ContextFlags = CONTEXT64_ALL;
-    cpu_context::save(emu, ctx);
+    cpu_context::save(win_emu.emu(), ctx);
+    ctx.Rip = win_emu.current_thread().current_ip;
 
     exception_record record{};
     memset(&record, 0, sizeof(record));
     record.ExceptionCode = status;
     record.ExceptionFlags = 0;
     record.ExceptionRecord = 0;
-    record.ExceptionAddress = emu.read_instruction_pointer();
+    record.ExceptionAddress = ctx.Rip;
     record.NumberParameters = static_cast<DWORD>(parameters.size());
 
     if (parameters.size() > 15)
@@ -165,44 +166,43 @@ void dispatch_exception(x86_64_emulator& emu, const process_context& proc, const
     pointers.ContextRecord = reinterpret_cast<EmulatorTraits<Emu64>::PVOID>(&ctx);
     pointers.ExceptionRecord = reinterpret_cast<EmulatorTraits<Emu64>::PVOID>(&record);
 
-    dispatch_exception_pointers(emu, proc.ki_user_exception_dispatcher, pointers);
+    dispatch_exception_pointers(win_emu.emu(), win_emu.process.ki_user_exception_dispatcher, pointers);
 }
 
-void dispatch_access_violation(x86_64_emulator& emu, const process_context& proc, const uint64_t address, const memory_operation operation)
+void dispatch_access_violation(windows_emulator& win_emu, const uint64_t address, const memory_operation operation)
 {
-    dispatch_exception(emu, proc, STATUS_ACCESS_VIOLATION,
+    dispatch_exception(win_emu, STATUS_ACCESS_VIOLATION,
                        {
                            map_violation_operation_to_parameter(operation),
                            address,
                        });
 }
 
-void dispatch_guard_page_violation(x86_64_emulator& emu, const process_context& proc, const uint64_t address,
-                                   const memory_operation operation)
+void dispatch_guard_page_violation(windows_emulator& win_emu, const uint64_t address, const memory_operation operation)
 {
-    dispatch_exception(emu, proc, STATUS_GUARD_PAGE_VIOLATION,
+    dispatch_exception(win_emu, STATUS_GUARD_PAGE_VIOLATION,
                        {
                            map_violation_operation_to_parameter(operation),
                            address,
                        });
 }
 
-void dispatch_illegal_instruction_violation(x86_64_emulator& emu, const process_context& proc)
+void dispatch_illegal_instruction_violation(windows_emulator& win_emu)
 {
-    dispatch_exception(emu, proc, STATUS_ILLEGAL_INSTRUCTION, {});
+    dispatch_exception(win_emu, STATUS_ILLEGAL_INSTRUCTION, {});
 }
 
-void dispatch_integer_division_by_zero(x86_64_emulator& emu, const process_context& proc)
+void dispatch_integer_division_by_zero(windows_emulator& win_emu)
 {
-    dispatch_exception(emu, proc, STATUS_INTEGER_DIVIDE_BY_ZERO, {});
+    dispatch_exception(win_emu, STATUS_INTEGER_DIVIDE_BY_ZERO, {});
 }
 
-void dispatch_single_step(x86_64_emulator& emu, const process_context& proc)
+void dispatch_single_step(windows_emulator& win_emu)
 {
-    dispatch_exception(emu, proc, STATUS_SINGLE_STEP, {});
+    dispatch_exception(win_emu, STATUS_SINGLE_STEP, {});
 }
 
-void dispatch_breakpoint(x86_64_emulator& emu, const process_context& proc)
+void dispatch_breakpoint(windows_emulator& win_emu)
 {
-    dispatch_exception(emu, proc, STATUS_BREAKPOINT, {});
+    dispatch_exception(win_emu, STATUS_BREAKPOINT, {});
 }

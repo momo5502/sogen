@@ -466,7 +466,7 @@ void windows_emulator::setup_hooks()
     // TODO: Unicorn needs this - This should be handled in the backend
     this->emu().hook_instruction(x86_hookable_instructions::invalid, [&] {
         // TODO: Unify icicle & unicorn handling
-        dispatch_illegal_instruction_violation(this->emu(), this->process);
+        dispatch_illegal_instruction_violation(*this);
         return instruction_hook_continuation::skip_instruction; //
     });
 
@@ -477,7 +477,7 @@ void windows_emulator::setup_hooks()
         switch (interrupt)
         {
         case 0:
-            dispatch_integer_division_by_zero(this->emu(), this->process);
+            dispatch_integer_division_by_zero(*this);
             return;
         case 1:
             if ((eflags & 0x100) != 0)
@@ -486,19 +486,19 @@ void windows_emulator::setup_hooks()
             }
 
             this->callbacks.on_suspicious_activity("Singlestep");
-            dispatch_single_step(this->emu(), this->process);
+            dispatch_single_step(*this);
             return;
         case 3:
             this->callbacks.on_suspicious_activity("Breakpoint");
-            dispatch_breakpoint(this->emu(), this->process);
+            dispatch_breakpoint(*this);
             return;
         case 6:
             this->callbacks.on_suspicious_activity("Illegal instruction");
-            dispatch_illegal_instruction_violation(this->emu(), this->process);
+            dispatch_illegal_instruction_violation(*this);
             return;
         case 45:
             this->callbacks.on_suspicious_activity("DbgPrint");
-            dispatch_breakpoint(this->emu(), this->process);
+            dispatch_breakpoint(*this);
             return;
         default:
             if (this->callbacks.on_generic_activity)
@@ -517,12 +517,12 @@ void windows_emulator::setup_hooks()
             {
                 // Unset the GUARD_PAGE flag and dispatch a STATUS_GUARD_PAGE_VIOLATION
                 this->memory.protect_memory(region.allocation_base, region.length, region.permissions & ~memory_permission_ext::guard);
-                dispatch_guard_page_violation(this->emu(), this->process, address, operation);
+                dispatch_guard_page_violation(*this, address, operation);
             }
             else
             {
                 this->callbacks.on_memory_violate(address, size, operation, type);
-                dispatch_access_violation(this->emu(), this->process, address, operation);
+                dispatch_access_violation(*this, address, operation);
             }
 
             return memory_violation_continuation::resume;
