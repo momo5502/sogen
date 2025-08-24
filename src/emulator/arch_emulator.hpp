@@ -50,7 +50,6 @@ enum class x86_hookable_instructions
     cpuid,
     rdtsc,
     rdtscp,
-    sgdt,
 };
 
 // --[x86_64]-------------------------------------------------------------------------
