@@ -30,7 +30,7 @@ export function LandingPage() {
       icon: <Split className="h-8 w-8" />,
       title: "Hooking Capabilities",
       description:
-        "Provides flexible hooking interfaces to intercept memory access, code execution and much more",
+        "Provides powerful hooking interfaces to intercept memory access, code execution and much more",
       accent: "from-[#ffcb00] to-[#da6000]",
     },
     {
