@@ -5,7 +5,7 @@
 #include "windows_emulator.hpp"
 #include <utils/lazy_object.hpp>
 
-#ifdef OS_EMSCRIPTEN
+#if defined(OS_EMSCRIPTEN) && !defined(MOMO_EMSCRIPTEN_SUPPORT_NODEJS)
 #include <event_handler.hpp>
 #endif
 
@@ -299,7 +299,7 @@ namespace
         auto& win_emu = *c.win_emu;
         update_import_access(c, address);
 
-#ifdef OS_EMSCRIPTEN
+#if defined(OS_EMSCRIPTEN) && !defined(MOMO_EMSCRIPTEN_SUPPORT_NODEJS)
         if ((win_emu.get_executed_instructions() % 0x20000) == 0)
         {
             debugger::event_context ec{.win_emu = win_emu};

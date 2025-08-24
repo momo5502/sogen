@@ -14,7 +14,7 @@
 #include <utils/finally.hpp>
 #include <utils/interupt_handler.hpp>
 
-#ifdef OS_EMSCRIPTEN
+#if defined(OS_EMSCRIPTEN) && !defined(MOMO_EMSCRIPTEN_SUPPORT_NODEJS)
 #include <event_handler.hpp>
 #endif
 
@@ -275,7 +275,7 @@ namespace
         }};
 
         std::optional<NTSTATUS> exit_status{};
-#ifdef OS_EMSCRIPTEN
+#if defined(OS_EMSCRIPTEN) && !defined(MOMO_EMSCRIPTEN_SUPPORT_NODEJS)
         const auto _1 = utils::finally([&] {
             debugger::handle_exit(win_emu, exit_status); //
         });
