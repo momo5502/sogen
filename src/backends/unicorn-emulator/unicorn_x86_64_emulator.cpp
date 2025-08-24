@@ -33,8 +33,6 @@ namespace unicorn
                 return UC_X86_INS_RDTSC;
             case x86_hookable_instructions::rdtscp:
                 return UC_X86_INS_RDTSCP;
-            case x86_hookable_instructions::sgdt:
-                return UC_X86_INS_SGDT;
             default:
                 throw std::runtime_error("Bad instruction for mapping");
             }
@@ -394,18 +392,6 @@ namespace unicorn
                 else if (inst_type == x86_hookable_instructions::syscall)
                 {
                     function_wrapper<void, uc_engine*> wrapper([c = std::move(callback)](uc_engine*) { (void)c(0); });
-
-                    const auto uc_instruction = map_hookable_instruction(inst_type);
-                    uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_INSN, wrapper.get_function(), wrapper.get_user_data(), 0,
-                                    std::numeric_limits<pointer_type>::max(), uc_instruction));
-
-                    container->add(std::move(wrapper), std::move(hook));
-                }
-                else if (inst_type == x86_hookable_instructions::sgdt)
-                {
-                    function_wrapper<int, uc_engine*, uint64_t> wrapper([c = std::move(callback)](uc_engine*, const uint64_t data) {
-                        return (c(data) == instruction_hook_continuation::skip_instruction) ? 1 : 0;
-                    });
 
                     const auto uc_instruction = map_hookable_instruction(inst_type);
                     uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_INSN, wrapper.get_function(), wrapper.get_user_data(), 0,
