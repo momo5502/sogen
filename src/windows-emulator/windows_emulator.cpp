@@ -459,11 +459,14 @@ void windows_emulator::setup_hooks()
         const auto ticks = this->clock_->timestamp_counter();
         this->emu().reg(x86_register::rax, ticks & 0xFFFFFFFF);
         this->emu().reg(x86_register::rdx, (ticks >> 32) & 0xFFFFFFFF);
+
         return instruction_hook_continuation::skip_instruction;
     });
 
     // TODO: Unicorn needs this - This should be handled in the backend
     this->emu().hook_instruction(x86_hookable_instructions::invalid, [&] {
+        // TODO: Unify icicle & unicorn handling
+        dispatch_illegal_instruction_violation(this->emu(), this->process);
         return instruction_hook_continuation::skip_instruction; //
     });
 
