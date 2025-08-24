@@ -66,6 +66,8 @@ namespace
         scoped_hook env_ptr_hook_;
         scoped_hook params_hook_;
         scoped_hook ldr_hook_;
+        std::shared_ptr<object_watching_state> params_state = std::make_shared<object_watching_state>();
+        std::shared_ptr<object_watching_state> ldr_state = std::make_shared<object_watching_state>();
         std::set<std::string, std::less<>> modules_;
         bool verbose_;
 
@@ -179,8 +181,8 @@ namespace
 
         auto state = std::make_shared<analysis_state>(win_emu, modules, verbose);
 
-        state->params_hook_ = watch_object(win_emu, modules, win_emu.process.process_params, verbose);
-        state->ldr_hook_ = watch_object<PEB_LDR_DATA64>(win_emu, modules, win_emu.process.peb.read().Ldr, verbose);
+        state->params_hook_ = watch_object(win_emu, modules, win_emu.process.process_params, verbose, state->params_state);
+        state->ldr_hook_ = watch_object<PEB_LDR_DATA64>(win_emu, modules, win_emu.process.peb.read().Ldr, verbose, state->ldr_state);
 
         const auto update_env_hook = [state] {
             state->env_ptr_hook_ = install_env_hook(state); //
@@ -192,14 +194,15 @@ namespace
                                         [state, update_env = std::move(update_env_hook)](const uint64_t, const void*, size_t) {
                                             const auto new_ptr = state->win_emu_.process.peb.read().ProcessParameters;
                                             state->params_hook_ = watch_object<RTL_USER_PROCESS_PARAMETERS64>(
-                                                state->win_emu_, state->modules_, new_ptr, state->verbose_);
+                                                state->win_emu_, state->modules_, new_ptr, state->verbose_, state->params_state);
                                             update_env();
                                         });
 
         win_emu.emu().hook_memory_write(
             win_emu.process.peb.value() + offsetof(PEB64, Ldr), 0x8, [state](const uint64_t, const void*, size_t) {
                 const auto new_ptr = state->win_emu_.process.peb.read().Ldr;
-                state->ldr_hook_ = watch_object<PEB_LDR_DATA64>(state->win_emu_, state->modules_, new_ptr, state->verbose_);
+                state->ldr_hook_ =
+                    watch_object<PEB_LDR_DATA64>(state->win_emu_, state->modules_, new_ptr, state->verbose_, state->ldr_state);
             });
 #endif
     }
@@ -541,7 +544,10 @@ namespace
                     continue;
                 }
 
-                auto read_handler = [&, section, concise_logging](const uint64_t address, const void*, size_t) {
+                const auto read_count = std::make_shared<uint64_t>(0);
+                const auto write_count = std::make_shared<uint64_t>(0);
+
+                auto read_handler = [&, section, concise_logging, read_count](const uint64_t address, const void*, size_t) {
                     const auto rip = win_emu->emu().read_instruction_pointer();
                     if (!win_emu->mod_manager.executable->is_within(rip))
                     {
@@ -550,8 +556,7 @@ namespace
 
                     if (concise_logging)
                     {
-                        static uint64_t count{0};
-                        ++count;
+                        const auto count = ++*read_count;
                         if (count > 20 && count % 100000 != 0)
                         {
                             return;
@@ -562,7 +567,7 @@ namespace
                                        section.name.c_str(), address, rip);
                 };
 
-                const auto write_handler = [&, section, concise_logging](const uint64_t address, const void*, size_t) {
+                const auto write_handler = [&, section, concise_logging, write_count](const uint64_t address, const void*, size_t) {
                     const auto rip = win_emu->emu().read_instruction_pointer();
                     if (!win_emu->mod_manager.executable->is_within(rip))
                     {
@@ -571,8 +576,7 @@ namespace
 
                     if (concise_logging)
                     {
-                        static uint64_t count{0};
-                        ++count;
+                        const auto count = ++*write_count;
                         if (count > 100 && count % 100000 != 0)
                         {
                             return;

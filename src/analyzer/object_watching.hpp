@@ -2,17 +2,25 @@
 
 #include "reflect_type_info.hpp"
 #include <set>
+#include <memory>
 #include <cinttypes>
+
+struct object_watching_state
+{
+    std::unordered_set<uint64_t> logged_addresses{};
+};
 
 template <typename T>
 emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, std::less<>>& modules, emulator_object<T> object,
-                            const auto verbose)
+                            const auto verbose,
+                            std::shared_ptr<object_watching_state> shared_state = std::make_unique<object_watching_state>())
 {
     const reflect_type_info<T> info{};
 
     return emu.emu().hook_memory_read(
         object.value(), static_cast<size_t>(object.size()),
-        [i = std::move(info), object, &emu, verbose, modules](const uint64_t address, const void*, const size_t size) {
+        [i = std::move(info), object, &emu, verbose, modules, state = std::move(shared_state)](const uint64_t address, const void*,
+                                                                                               const size_t size) {
             const auto rip = emu.emu().read_instruction_pointer();
             const auto* mod = emu.mod_manager.find_by_address(rip);
             const auto is_main_access = !mod || (mod == emu.mod_manager.executable || modules.contains(mod->name));
@@ -24,12 +32,10 @@ emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, s
 
             if (!verbose)
             {
-                static std::unordered_set<uint64_t> logged_addresses{};
-
                 bool is_new = false;
                 for (size_t j = 0; j < size; ++j)
                 {
-                    is_new |= logged_addresses.insert(address + j).second;
+                    is_new |= state->logged_addresses.insert(address + j).second;
                 }
 
                 if (!is_new)
@@ -71,7 +77,7 @@ emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, s
 
 template <typename T>
 emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, std::less<>>& modules, const uint64_t address,
-                            const auto verbose)
+                            const auto verbose, std::shared_ptr<object_watching_state> state = std::make_unique<object_watching_state>())
 {
-    return watch_object<T>(emu, modules, emulator_object<T>{emu.emu(), address}, verbose);
+    return watch_object<T>(emu, modules, emulator_object<T>{emu.emu(), address}, verbose, std::move(state));
 }
