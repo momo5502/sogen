@@ -45,7 +45,7 @@ export function LandingPage() {
       title: "State Management",
       description:
         "Saves and restores the entire state of the emulator to quickly resume your work exactly where you left off.",
-      accent: "from-[#aee703] to-[#5f7001]",
+      accent: "from-[#aee703] to-[#647502]",
     },
   ];
 
