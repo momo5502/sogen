@@ -166,7 +166,7 @@ export function LandingPage() {
               {features.map((feature, index) => (
                 <Card
                   key={index}
-                  className="bg-neutral-800/50 border-neutral-700 hover:bg-neutral-800/80 transition-all duration-200 group hover:shadow-2xl"
+                  className="bg-neutral-800/50 border-neutral-700 hover:border-neutral-600 hover:bg-neutral-800/80 cursor-default transition-all duration-150 group hover:shadow-2xl"
                 >
                   <CardHeader className="pb-4">
                     <div
@@ -206,7 +206,7 @@ export function LandingPage() {
               {useCases.map((useCase, index) => (
                 <div
                   key={index}
-                  className="text-center p-8 rounded-2xl bg-neutral-800/50 border border-neutral-700 hover:border-blue-400/50 transition-all duration-200 group"
+                  className="text-center p-8 rounded-2xl bg-neutral-800/50 border border-neutral-700 hover:border-neutral-600 hover:bg-neutral-800/80 cursor-default transition-all duration-150 group"
                 >
                   <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-500 p-3">
                     <div className="text-neutral-800">{useCase.icon}</div>
