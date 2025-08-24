@@ -144,6 +144,10 @@ if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
   endif()
 
   if(MOMO_EMSCRIPTEN_SUPPORT_NODEJS)
+    add_compile_definitions(
+      MOMO_EMSCRIPTEN_SUPPORT_NODEJS=1
+    )
+
     add_link_options(
       -lnodefs.js -sNODERAWFS=1
       -sENVIRONMENT=node

@@ -6,8 +6,7 @@ export interface HeaderProps {
   preload?: string[];
 }
 
-const image =
-  "https://repository-images.githubusercontent.com/842883987/9e56f43b-4afd-464d-85b9-d7e555751a39";
+const image = "https://momo5502.com/emulator/preview.png";
 
 export function Header(props: HeaderProps) {
   return (
@@ -20,7 +19,7 @@ export function Header(props: HeaderProps) {
       <meta property="og:locale" content="en-us" />
       <meta property="og:type" content="website" />
       <meta name="og:image" content={image} />
-      <meta name="twitter:card" content="summary" />
+      <meta name="twitter:card" content="summary_large_image" />
       <meta name="twitter:title" content={props.title} />
       <meta name="twitter:description" content={props.description} />
       <meta name="twitter:image" content={image} />

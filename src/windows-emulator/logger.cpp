@@ -8,7 +8,7 @@ namespace
 #ifdef _WIN32
 #define COLOR(win, posix, web) win
     using color_type = WORD;
-#elif defined(__EMSCRIPTEN__)
+#elif defined(__EMSCRIPTEN__) && !defined(MOMO_EMSCRIPTEN_SUPPORT_NODEJS)
 #define COLOR(win, posix, web) web
     using color_type = const char*;
 #else

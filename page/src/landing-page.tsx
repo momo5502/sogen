@@ -30,7 +30,7 @@ export function LandingPage() {
       icon: <Split className="h-8 w-8" />,
       title: "Hooking Capabilities",
       description:
-        "Provides flexible hooking interfaces to intercept memory access, code execution and much more",
+        "Provides powerful hooking interfaces to intercept memory access, code execution and much more",
       accent: "from-[#ffcb00] to-[#da6000]",
     },
     {
@@ -80,14 +80,14 @@ export function LandingPage() {
   return (
     <>
       <Header
-        title="Sogen - Windows User Space Emulator"
-        description="Sogen is a high-performance Windows user space emulator that can emulate windows processes. It is ideal for security-, DRM- or malware research."
+        title="Sogen"
+        description="A high-performance Windows user space emulator."
       />
       <div className="flex flex-col min-h-screen bg-gradient-to-br from-zinc-900 via-neutral-900 to-black">
         {/* Hero Section with Animated Background */}
-        <section className="relative overflow-hidden">
+        <section className="relative overflow-visible">
           {/* Animated Background Elements */}
-          <div className="absolute inset-0">
+          <div className="absolute inset-0 container mx-auto ">
             <div className="absolute top-20 left-10 w-72 h-72 bg-yellow-500/10 rounded-full blur-3xl"></div>
             <div className="absolute top-40 right-20 w-96 h-96 bg-lime-500/10 rounded-full blur-3xl"></div>
             <div className="absolute bottom-20 left-1/3 w-80 h-80 bg-cyan-500/10 rounded-full blur-3xl"></div>
@@ -108,23 +108,29 @@ export function LandingPage() {
               <div className="flex flex-col sm:flex-row gap-4 justify-center items-center pt-8">
                 <a href="#/playground">
                   <Button
+                    asChild
                     size="lg"
-                    className="bg-gradient-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100 transform hover:scale-105"
+                    className="bg-gradient-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100"
                   >
-                    <Play className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
-                    Try Online
-                    <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
+                    <span>
+                      <Play className="mr-2 h-5 w-5 transition-transform" />
+                      Try Online
+                      <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
+                    </span>
                   </Button>
                 </a>
                 <a href="https://github.com/momo5502/sogen" target="_blank">
                   <Button
+                    asChild
                     size="lg"
                     variant="outline"
                     className="border-neutral-600 text-neutral-300 hover:bg-neutral-800/50 px-8 py-6 text-lg font-semibold group transition-all duration-300"
                   >
-                    <Github className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
-                    View Source
-                    <ExternalLink className="ml-2 h-4 w-4" />
+                    <span>
+                      <Github className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
+                      View Source
+                      <ExternalLink className="ml-2 h-4 w-4" />
+                    </span>
                   </Button>
                 </a>
               </div>
@@ -164,7 +170,7 @@ export function LandingPage() {
                 >
                   <CardHeader className="pb-4">
                     <div
-                      className={`w-16 h-16 rounded-xl bg-gradient-to-br ${feature.accent} p-4 mb-4 transition-transform duration-200`}
+                      className={`w-16 h-16 rounded-xl bg-gradient-to-br ${feature.accent} p-4 mb-4`}
                     >
                       <div className="text-neutral-900">{feature.icon}</div>
                     </div>
@@ -200,9 +206,9 @@ export function LandingPage() {
               {useCases.map((useCase, index) => (
                 <div
                   key={index}
-                  className="text-center p-8 rounded-2xl bg-neutral-800/50 border border-neutral-700 hover:border-blue-400/50 transition-all duration-300 group"
+                  className="text-center p-8 rounded-2xl bg-neutral-800/50 border border-neutral-700 hover:border-blue-400/50 transition-all duration-200 group"
                 >
-                  <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-500 p-3 group-hover:scale-110 transition-transform">
+                  <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-500 p-3">
                     <div className="text-neutral-800">{useCase.icon}</div>
                   </div>
                   <h3 className="text-xl font-semibold text-white mb-3">
@@ -231,16 +237,19 @@ export function LandingPage() {
             <div className="max-w-3xl mx-auto">
               <div className="relative group">
                 <div className="absolute -inset-4 bg-gradient-to-r from-neutral-500/10 to-neutral-500/10 rounded-3xl blur-xl group-hover:blur-2xl transition-all duration-300"></div>
-                <div className="relative aspect-video rounded-2xl overflow-hidden border border-neutral-700">
-                  <iframe
-                    className="w-full h-full"
-                    src="https://www.youtube.com/embed/wY9Q0DhodOQ?si=Lm_anpeBU6Txl5AW"
-                    title="Sogen Emulator Overview"
-                    frameBorder="0"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                    referrerPolicy="strict-origin-when-cross-origin"
-                    allowFullScreen
-                  ></iframe>
+                <div className="relative aspect-video rounded-2xl overflow-hidden ">
+                  {["wY9Q0DhodOQ"].map((value, index) => (
+                    <iframe
+                      key={index}
+                      className="w-full h-full"
+                      title="Sogen Emulator Overview"
+                      frameBorder="0"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                      referrerPolicy="strict-origin-when-cross-origin"
+                      allowFullScreen
+                      srcDoc={`<style>*{padding:0;margin:0;overflow:hidden}html,body{height:100%}img,div{position:absolute;width:100%;top:0;bottom:0;margin:auto;}div{height:1.5em;text-align:center;font:30px/1.5 sans-serif;color:white;overflow:visible;}span{background:red;padding:10px 20px;border-radius:15px;box-shadow: 3px 5px 10px #0000007a;}</style><a href=https://www.youtube.com/embed/${value}/?autoplay=1><img src=https://img.youtube.com/vi/${value}/maxresdefault.jpg><div><span>&nbsp;▶</span></div></a>`}
+                    ></iframe>
+                  ))}
                 </div>
               </div>
             </div>
@@ -248,7 +257,7 @@ export function LandingPage() {
         </section>
 
         {/* CTA Section */}
-        <section className="py-24 bg-gradient-to-r from-neutral-900 to-zinc-900">
+        <section className="py-24 bg-gradient-to-r from-neutral-800/40 to-neutral-900">
           <div className="container mx-auto px-6 text-center">
             <h2 className="text-4xl font-bold text-white mb-6">
               Ready to Start Emulating?
@@ -259,21 +268,27 @@ export function LandingPage() {
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <a href="#/playground">
                 <Button
+                  asChild
                   size="lg"
                   className="bg-gradient-to-br from-white to-neutral-300 text-neutral-900  px-8 py-6 text-lg font-semibold transition-all duration-100"
                 >
-                  <Play className="mr-2 h-5 w-5" />
-                  Launch Playground
+                  <span>
+                    <Play className="mr-2 h-5 w-5" />
+                    Launch Playground
+                  </span>
                 </Button>
               </a>
               <a href="https://github.com/momo5502/sogen" target="_blank">
                 <Button
+                  asChild
                   size="lg"
                   variant="outline"
                   className="border-white text-white hover:bg-white/10 px-8 py-6 text-lg font-semibold"
                 >
-                  <Download className="mr-2 h-5 w-5" />
-                  Get Source
+                  <span>
+                    <Download className="mr-2 h-5 w-5" />
+                    Get Source
+                  </span>
                 </Button>
               </a>
             </div>
@@ -310,12 +325,14 @@ export function LandingPage() {
                 <a
                   href="https://github.com/momo5502/sogen"
                   target="_blank"
+                  title="Soure Code"
                   className="text-neutral-400 hover:text-blue-400 transition-colors p-2 rounded-lg hover:bg-neutral-800/50"
                 >
                   <Github className="h-6 w-6" />
                 </a>
                 <a
                   href="#/playground"
+                  title="Playground"
                   className="text-neutral-400 hover:text-blue-400 transition-colors p-2 rounded-lg hover:bg-neutral-800/50"
                 >
                   <Play className="h-6 w-6" />
@@ -323,6 +340,7 @@ export function LandingPage() {
                 <a
                   href="https://github.com/momo5502/sogen/wiki"
                   target="_blank"
+                  title="Wiki"
                   className="text-neutral-400 hover:text-blue-400 transition-colors p-2 rounded-lg hover:bg-neutral-800/50"
                 >
                   <BookOpen className="h-6 w-6" />
