@@ -4,6 +4,15 @@ import { Label } from "./ui/label";
 
 import { Settings } from "@/settings";
 import { TextTooltip } from "./text-tooltip";
+import { ItemList } from "./item-list";
+
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { ChevronDown } from "react-bootstrap-icons";
+import { Input } from "./ui/input";
 
 interface SettingsMenuProps {
   settings: Settings;
@@ -46,6 +55,10 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
     }
   }
 
+  updateArgv(commandLine: string) {
+    this.setState({ commandLine });
+  }
+
   render() {
     return (
       <div className="grid gap-4">
@@ -54,6 +67,15 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
           <p className="text-sm text-muted-foreground">
             Set the settings for the emulation.
           </p>
+        </div>
+
+        <div className="flex gap-6">
+          <Input
+            id="settings-argv"
+            placeholder="Command-Line Arguments"
+            value={this.state.commandLine}
+            onChange={(e) => this.updateArgv(e.target.value)}
+          />
         </div>
 
         <div className="flex gap-6">
@@ -135,6 +157,38 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
 
         <div className="flex gap-6">
           <Checkbox
+            id="settings-foreign"
+            checked={this.state.foreignAccess}
+            onCheckedChange={(checked: boolean) => {
+              this.setState({ foreignAccess: checked });
+            }}
+          />
+          <SettingsLabel
+            htmlFor="settings-foreign"
+            text={"Log Foreign Access"}
+            tooltip={
+              "Log when the application reads/writes memory of other modules"
+            }
+          />
+        </div>
+
+        <div className="flex gap-6">
+          <Checkbox
+            id="settings-summary"
+            checked={this.state.instructionSummary}
+            onCheckedChange={(checked: boolean) => {
+              this.setState({ instructionSummary: checked });
+            }}
+          />
+          <SettingsLabel
+            htmlFor="settings-summary"
+            text={"Print Instruction Summary"}
+            tooltip={"Print summary of executed instructions"}
+          />
+        </div>
+
+        <div className="flex gap-6">
+          <Checkbox
             id="settings-persist"
             checked={this.state.persist}
             onCheckedChange={(checked: boolean) => {
@@ -143,7 +197,7 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
           />
           <SettingsLabel
             htmlFor="settings-persist"
-            text={"Persist filesystem"}
+            text={"Persist Filesystem"}
             tooltip={
               "Persist files and folders that were created, modified or deleted during the emulation"
             }
@@ -167,6 +221,46 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
             }
           />
         </div>
+
+        <Popover>
+          <PopoverTrigger>
+            <TextTooltip tooltip="Don't log executions of listed functions">
+              <div className="flex items-center">
+                <Label className="flex-1 text-left cursor-pointer">
+                  Ignored Functions
+                </Label>
+                <ChevronDown />
+              </div>
+            </TextTooltip>
+          </PopoverTrigger>
+          <PopoverContent className="shadow-2xl">
+            <ItemList
+              title="Ignored Functions"
+              items={this.state.ignoredFunctions}
+              onChange={(items) => this.setState({ ignoredFunctions: items })}
+            />
+          </PopoverContent>
+        </Popover>
+
+        <Popover>
+          <PopoverTrigger>
+            <TextTooltip tooltip="Log interactions of additional modules">
+              <div className="flex items-center">
+                <Label className="flex-1 text-left cursor-pointer">
+                  Interesting Modules
+                </Label>
+                <ChevronDown />
+              </div>
+            </TextTooltip>
+          </PopoverTrigger>
+          <PopoverContent className="shadow-2xl">
+            <ItemList
+              title="Interesting Modules"
+              items={this.state.interestingModules}
+              onChange={(items) => this.setState({ interestingModules: items })}
+            />
+          </PopoverContent>
+        </Popover>
       </div>
     );
   }

@@ -1,6 +1,5 @@
-<img src="./docs/images/cover.png" />
 <h1 align="center">
-	Sogen
+	<img src="https://momo5502.com/emulator/banner.png" height="200" />
 	<br>
 	<a href="https://github.com/momo5502/sogen?tab=GPL-2.0-1-ov-file"><img src="https://img.shields.io/github/license/momo5502/sogen?color=00B0F8"/></a>
 	<a href="https://github.com/momo5502/sogen/actions"><img src="https://img.shields.io/github/actions/workflow/status/momo5502/sogen/build.yml?branch=main&label=build"/></a>
@@ -33,10 +32,6 @@ Try it out: <a href="https://sogen.dev">sogen.dev</a>
 	* Supports both full state serialization and ~~fast in-memory snapshots~~ (currently broken 😕)
 * 💻 __Debugging Interface__
 	* Implements GDB serial protocol for integration with common debugging tools (IDA Pro, GDB, LLDB, VS Code, ...)
-
-##
-> [!NOTE]  
-> The project is still in a very early, prototypical state. The code still needs a lot of cleanup and many features and syscalls need to be implemented. However, constant progress is being made :)
 
 ## Preview
 

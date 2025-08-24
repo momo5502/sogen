@@ -308,6 +308,14 @@ pub fn icicle_remove_hook(ptr: *mut c_void, id: u32) {
 }
 
 #[unsafe(no_mangle)]
+pub fn icicle_run_on_next_instruction(ptr: *mut c_void, callback: RawFunction, data: *mut c_void) {
+    unsafe {
+        let emulator = &mut *(ptr as *mut IcicleEmulator);
+        emulator.run_on_next_instruction(Box::new(move || callback(data)));
+    }
+}
+
+#[unsafe(no_mangle)]
 pub fn icicle_read_register(
     ptr: *mut c_void,
     reg: X86Register,

@@ -7,8 +7,7 @@ namespace syscalls
     namespace
     {
         NTSTATUS handle_logical_processor_and_group_information(const syscall_context& c, const uint64_t input_buffer,
-                                                                const uint32_t input_buffer_length,
-                                                                const uint64_t system_information,
+                                                                const uint32_t input_buffer_length, const uint64_t system_information,
                                                                 const uint32_t system_information_length,
                                                                 const emulator_object<uint32_t> return_length)
         {
@@ -87,11 +86,9 @@ namespace syscalls
         }
     }
 
-    NTSTATUS handle_NtQuerySystemInformationEx(const syscall_context& c, const uint32_t info_class,
-                                               const uint64_t input_buffer, const uint32_t input_buffer_length,
-                                               const uint64_t system_information,
-                                               const uint32_t system_information_length,
-                                               const emulator_object<uint32_t> return_length)
+    NTSTATUS handle_NtQuerySystemInformationEx(const syscall_context& c, const uint32_t info_class, const uint64_t input_buffer,
+                                               const uint32_t input_buffer_length, const uint64_t system_information,
+                                               const uint32_t system_information_length, const emulator_object<uint32_t> return_length)
     {
         switch (info_class)
         {
@@ -113,8 +110,7 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
 
         case SystemTimeOfDayInformation:
-            return handle_query<SYSTEM_TIMEOFDAY_INFORMATION64>(c.emu, system_information, system_information_length,
-                                                                return_length,
+            return handle_query<SYSTEM_TIMEOFDAY_INFORMATION64>(c.emu, system_information, system_information_length, return_length,
                                                                 [&](SYSTEM_TIMEOFDAY_INFORMATION64& info) {
                                                                     memset(&info, 0, sizeof(info));
                                                                     info.BootTime.QuadPart = 0;
@@ -125,8 +121,7 @@ namespace syscalls
         case SystemTimeZoneInformation:
         case SystemCurrentTimeZoneInformation:
             return handle_query<SYSTEM_TIMEZONE_INFORMATION>(
-                c.emu, system_information, system_information_length, return_length,
-                [&](SYSTEM_TIMEZONE_INFORMATION& tzi) {
+                c.emu, system_information, system_information_length, return_length, [&](SYSTEM_TIMEZONE_INFORMATION& tzi) {
                     memset(&tzi, 0, sizeof(tzi));
 
                     tzi.Bias = -60;
@@ -160,8 +155,7 @@ namespace syscalls
 
         case SystemDynamicTimeZoneInformation:
             return handle_query<SYSTEM_DYNAMIC_TIMEZONE_INFORMATION>(
-                c.emu, system_information, system_information_length, return_length,
-                [&](SYSTEM_DYNAMIC_TIMEZONE_INFORMATION& dtzi) {
+                c.emu, system_information, system_information_length, return_length, [&](SYSTEM_DYNAMIC_TIMEZONE_INFORMATION& dtzi) {
                     memset(&dtzi, 0, sizeof(dtzi));
 
                     dtzi.Bias = -60;
@@ -199,24 +193,22 @@ namespace syscalls
                 });
 
         case SystemRangeStartInformation:
-            return handle_query<SYSTEM_RANGE_START_INFORMATION64>(c.emu, system_information, system_information_length,
-                                                                  return_length,
+            return handle_query<SYSTEM_RANGE_START_INFORMATION64>(c.emu, system_information, system_information_length, return_length,
                                                                   [&](SYSTEM_RANGE_START_INFORMATION64& info) {
                                                                       info.SystemRangeStart = 0xFFFF800000000000; //
                                                                   });
 
         case SystemProcessorInformation:
-            return handle_query<SYSTEM_PROCESSOR_INFORMATION64>(
-                c.emu, system_information, system_information_length, return_length,
-                [&](SYSTEM_PROCESSOR_INFORMATION64& info) {
-                    memset(&info, 0, sizeof(info));
-                    info.MaximumProcessors = 2;
-                    info.ProcessorArchitecture = PROCESSOR_ARCHITECTURE_AMD64;
-                });
+            return handle_query<SYSTEM_PROCESSOR_INFORMATION64>(c.emu, system_information, system_information_length, return_length,
+                                                                [&](SYSTEM_PROCESSOR_INFORMATION64& info) {
+                                                                    memset(&info, 0, sizeof(info));
+                                                                    info.MaximumProcessors = 2;
+                                                                    info.ProcessorArchitecture = PROCESSOR_ARCHITECTURE_AMD64;
+                                                                });
 
         case SystemNumaProcessorMap:
-            return handle_query<SYSTEM_NUMA_INFORMATION64>(c.emu, system_information, system_information_length,
-                                                           return_length, [&](SYSTEM_NUMA_INFORMATION64& info) {
+            return handle_query<SYSTEM_NUMA_INFORMATION64>(c.emu, system_information, system_information_length, return_length,
+                                                           [&](SYSTEM_NUMA_INFORMATION64& info) {
                                                                memset(&info, 0, sizeof(info));
                                                                info.ActiveProcessorsGroupAffinity->Mask = 0xFFF;
                                                                info.AvailableMemory[0] = 0xFFF;
@@ -224,23 +216,22 @@ namespace syscalls
                                                            });
 
         case SystemErrorPortTimeouts:
-            return handle_query<SYSTEM_ERROR_PORT_TIMEOUTS>(c.emu, system_information, system_information_length,
-                                                            return_length, [&](SYSTEM_ERROR_PORT_TIMEOUTS& info) {
+            return handle_query<SYSTEM_ERROR_PORT_TIMEOUTS>(c.emu, system_information, system_information_length, return_length,
+                                                            [&](SYSTEM_ERROR_PORT_TIMEOUTS& info) {
                                                                 info.StartTimeout = 0;
                                                                 info.CommTimeout = 0;
                                                             });
 
         case SystemKernelDebuggerInformation:
-            return handle_query<SYSTEM_KERNEL_DEBUGGER_INFORMATION>(c.emu, system_information,
-                                                                    system_information_length, return_length,
+            return handle_query<SYSTEM_KERNEL_DEBUGGER_INFORMATION>(c.emu, system_information, system_information_length, return_length,
                                                                     [&](SYSTEM_KERNEL_DEBUGGER_INFORMATION& info) {
                                                                         info.KernelDebuggerEnabled = FALSE;
                                                                         info.KernelDebuggerNotPresent = TRUE;
                                                                     });
 
         case SystemLogicalProcessorAndGroupInformation:
-            return handle_logical_processor_and_group_information(
-                c, input_buffer, input_buffer_length, system_information, system_information_length, return_length);
+            return handle_logical_processor_and_group_information(c, input_buffer, input_buffer_length, system_information,
+                                                                  system_information_length, return_length);
 
         case SystemLogicalProcessorInformation: {
             if (!input_buffer || input_buffer_length != sizeof(USHORT))
@@ -252,35 +243,33 @@ namespace syscalls
 
             const auto processor_group = c.emu.read_memory<USHORT>(input_buffer);
 
-            return handle_query<info_type>(
-                c.emu, system_information, system_information_length, return_length, [&](info_type& info) {
-                    info.Relationship = RelationProcessorCore;
+            return handle_query<info_type>(c.emu, system_information, system_information_length, return_length, [&](info_type& info) {
+                info.Relationship = RelationProcessorCore;
 
-                    if (processor_group == 0)
-                    {
-                        using mask_type = decltype(info.ProcessorMask);
-                        const auto active_processor_count = c.proc.kusd.get().ActiveProcessorCount;
-                        info.ProcessorMask = (static_cast<mask_type>(1) << active_processor_count) - 1;
-                    }
-                });
+                if (processor_group == 0)
+                {
+                    using mask_type = decltype(info.ProcessorMask);
+                    const auto active_processor_count = c.proc.kusd.get().ActiveProcessorCount;
+                    info.ProcessorMask = (static_cast<mask_type>(1) << active_processor_count) - 1;
+                }
+            });
         }
 
         case SystemBasicInformation:
         case SystemEmulationBasicInformation:
-            return handle_query<SYSTEM_BASIC_INFORMATION64>(
-                c.emu, system_information, system_information_length, return_length,
-                [&](SYSTEM_BASIC_INFORMATION64& basic_info) {
-                    basic_info.Reserved = 0;
-                    basic_info.TimerResolution = 0x0002625a;
-                    basic_info.PageSize = 0x1000;
-                    basic_info.LowestPhysicalPageNumber = 0x00000001;
-                    basic_info.HighestPhysicalPageNumber = 0x00c9c7ff;
-                    basic_info.AllocationGranularity = ALLOCATION_GRANULARITY;
-                    basic_info.MinimumUserModeAddress = MIN_ALLOCATION_ADDRESS;
-                    basic_info.MaximumUserModeAddress = MAX_ALLOCATION_ADDRESS;
-                    basic_info.ActiveProcessorsAffinityMask = 0x0000000000000fff;
-                    basic_info.NumberOfProcessors = 1;
-                });
+            return handle_query<SYSTEM_BASIC_INFORMATION64>(c.emu, system_information, system_information_length, return_length,
+                                                            [&](SYSTEM_BASIC_INFORMATION64& basic_info) {
+                                                                basic_info.Reserved = 0;
+                                                                basic_info.TimerResolution = 0x0002625a;
+                                                                basic_info.PageSize = 0x1000;
+                                                                basic_info.LowestPhysicalPageNumber = 0x00000001;
+                                                                basic_info.HighestPhysicalPageNumber = 0x00c9c7ff;
+                                                                basic_info.AllocationGranularity = ALLOCATION_GRANULARITY;
+                                                                basic_info.MinimumUserModeAddress = MIN_ALLOCATION_ADDRESS;
+                                                                basic_info.MaximumUserModeAddress = MAX_ALLOCATION_ADDRESS;
+                                                                basic_info.ActiveProcessorsAffinityMask = 0x0000000000000f;
+                                                                basic_info.NumberOfProcessors = 4;
+                                                            });
 
         default:
             c.win_emu.log.error("Unsupported system info class: %X\n", info_class);
@@ -289,13 +278,10 @@ namespace syscalls
         }
     }
 
-    NTSTATUS handle_NtQuerySystemInformation(const syscall_context& c, const uint32_t info_class,
-                                             const uint64_t system_information,
-                                             const uint32_t system_information_length,
-                                             const emulator_object<uint32_t> return_length)
+    NTSTATUS handle_NtQuerySystemInformation(const syscall_context& c, const uint32_t info_class, const uint64_t system_information,
+                                             const uint32_t system_information_length, const emulator_object<uint32_t> return_length)
     {
-        return handle_NtQuerySystemInformationEx(c, info_class, 0, 0, system_information, system_information_length,
-                                                 return_length);
+        return handle_NtQuerySystemInformationEx(c, info_class, 0, 0, system_information, system_information_length, return_length);
     }
 
     NTSTATUS handle_NtSetSystemInformation()

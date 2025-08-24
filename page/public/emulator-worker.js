@@ -12,6 +12,7 @@ onmessage = async (event) => {
       runEmulation(
         payload.file,
         payload.options,
+        payload.arguments,
         payload.persist,
         payload.wasm64,
         payload.cacheBuster,
@@ -71,8 +72,15 @@ function getMessageFromQueue() {
   return msgQueue.shift();
 }
 
-function runEmulation(file, options, persist, wasm64, cacheBuster) {
-  const mainArguments = [...options, "-e", "./root", file];
+function runEmulation(
+  file,
+  options,
+  appArguments,
+  persist,
+  wasm64,
+  cacheBuster,
+) {
+  const mainArguments = [...options, "-e", "./root", file, ...appArguments];
 
   globalThis.Module = {
     arguments: mainArguments,

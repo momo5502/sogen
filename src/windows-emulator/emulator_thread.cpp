@@ -10,8 +10,7 @@ namespace
     emulator_object<T> allocate_object_on_stack(x86_64_emulator& emu)
     {
         const auto old_sp = emu.reg(x86_register::rsp);
-        const auto new_sp =
-            align_down(old_sp - sizeof(T), std::max(alignof(T), alignof(x86_64_emulator::pointer_type)));
+        const auto new_sp = align_down(old_sp - sizeof(T), std::max(alignof(T), alignof(x86_64_emulator::pointer_type)));
         emu.reg(x86_register::rsp, new_sp);
         return {emu, new_sp};
     }
@@ -88,8 +87,7 @@ namespace
 }
 
 emulator_thread::emulator_thread(memory_manager& memory, const process_context& context, const uint64_t start_address,
-                                 const uint64_t argument, const uint64_t stack_size, const bool suspended,
-                                 const uint32_t id)
+                                 const uint64_t argument, const uint64_t stack_size, const bool suspended, const uint32_t id)
     : memory_ptr(&memory),
       stack_size(page_align_up(std::max(stack_size, static_cast<uint64_t>(STACK_SIZE)))),
       start_address(start_address),
@@ -119,6 +117,7 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
         teb_obj.NtTib.StackLimit = this->stack_base;
         teb_obj.NtTib.StackBase = this->stack_base + this->stack_size;
         teb_obj.NtTib.Self = this->teb->value();
+        teb_obj.CurrentLocale = 0x409;
         teb_obj.ProcessEnvironmentBlock = context.peb.value();
     });
 }

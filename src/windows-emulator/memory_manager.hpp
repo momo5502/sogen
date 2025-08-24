@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 
+#include "memory_permission_ext.hpp"
 #include "memory_region.hpp"
 #include "serialization.hpp"
 
@@ -12,13 +13,15 @@ constexpr auto ALLOCATION_GRANULARITY = 0x0000000000010000ULL;
 constexpr auto MIN_ALLOCATION_ADDRESS = 0x0000000000010000ULL;
 constexpr auto MAX_ALLOCATION_ADDRESS = 0x00007ffffffeffffULL;
 
-struct region_info : basic_memory_region
+// This maps to the `basic_memory_region` struct defined in
+// emulator\memory_region.hpp
+struct region_info : basic_memory_region<nt_memory_permission>
 {
     uint64_t allocation_base{};
     size_t allocation_length{};
     bool is_reserved{};
     bool is_committed{};
-    memory_permission initial_permissions{};
+    nt_memory_permission initial_permissions{};
 };
 
 using mmio_read_callback = std::function<void(uint64_t addr, void* data, size_t size)>;
@@ -41,7 +44,7 @@ class memory_manager : public memory_interface
     struct committed_region
     {
         size_t length{};
-        memory_permission permissions{};
+        nt_memory_permission permissions{};
     };
 
     using committed_region_map = std::map<uint64_t, committed_region>;
@@ -60,20 +63,19 @@ class memory_manager : public memory_interface
     bool try_read_memory(uint64_t address, void* data, size_t size) const final;
     void write_memory(uint64_t address, const void* data, size_t size) final;
 
-    bool protect_memory(uint64_t address, size_t size, memory_permission permissions,
-                        memory_permission* old_permissions = nullptr);
+    bool protect_memory(uint64_t address, size_t size, nt_memory_permission permissions, nt_memory_permission* old_permissions = nullptr);
 
     bool allocate_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb);
-    bool allocate_memory(uint64_t address, size_t size, memory_permission permissions, bool reserve_only = false);
+    bool allocate_memory(uint64_t address, size_t size, nt_memory_permission permissions, bool reserve_only = false);
 
-    bool commit_memory(uint64_t address, size_t size, memory_permission permissions);
+    bool commit_memory(uint64_t address, size_t size, nt_memory_permission permissions);
     bool decommit_memory(uint64_t address, size_t size);
 
     bool release_memory(uint64_t address, size_t size);
 
     void unmap_all_memory();
 
-    uint64_t allocate_memory(size_t size, memory_permission permissions, bool reserve_only = false);
+    uint64_t allocate_memory(size_t size, nt_memory_permission permissions, bool reserve_only = false);
 
     uint64_t find_free_allocation_base(size_t size, uint64_t start = 0) const;
 

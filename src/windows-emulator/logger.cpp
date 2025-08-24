@@ -8,7 +8,7 @@ namespace
 #ifdef _WIN32
 #define COLOR(win, posix, web) win
     using color_type = WORD;
-#elif defined(__EMSCRIPTEN__)
+#elif defined(__EMSCRIPTEN__) && !defined(MOMO_EMSCRIPTEN_SUPPORT_NODEJS)
 #define COLOR(win, posix, web) web
     using color_type = const char*;
 #else
@@ -74,29 +74,47 @@ namespace
         (void)fflush(stdout);
     }
 
-    std::string_view format(va_list* ap, const char* message)
+    int format_internal(const char* message, std::span<char> buffer, va_list* ap)
+    {
+        return vsnprintf(buffer.data(), buffer.size(), message, *ap);
+    }
+
+    std::string_view format(const char* message, std::string& reserve_buffer, va_list* ap1, va_list* ap2)
     {
         thread_local std::array<char, 0x1000> buffer{};
 
-#ifdef _WIN32
-        const int count = _vsnprintf_s(buffer.data(), buffer.size(), buffer.size(), message, *ap);
-#else
-        const int count = vsnprintf(buffer.data(), buffer.size(), message, *ap);
-#endif
+        auto count = format_internal(message, buffer, ap1);
 
         if (count < 0)
         {
             return {};
         }
 
-        return {buffer.data(), static_cast<size_t>(count)};
+        if (static_cast<size_t>(count) < buffer.size())
+        {
+            return {buffer.data(), static_cast<size_t>(count)};
+        }
+
+        reserve_buffer.resize(count + 1);
+        count = format_internal(message, reserve_buffer, ap2);
+
+        if (count < 0)
+        {
+            return {};
+        }
+
+        return {reserve_buffer.data(), std::min(static_cast<size_t>(count), reserve_buffer.size() - 1)};
     }
 
-#define format_to_string(msg, str)     \
-    va_list ap;                        \
-    va_start(ap, msg);                 \
-    const auto str = format(&ap, msg); \
-    va_end(ap)
+#define format_to_string(msg, str)                 \
+    std::string buf{};                             \
+    va_list ap1;                                   \
+    va_list ap2;                                   \
+    va_start(ap1, msg);                            \
+    va_start(ap2, msg);                            \
+    const auto str = format(msg, buf, &ap1, &ap2); \
+    va_end(ap2);                                   \
+    va_end(ap1)
 
     void print_colored(const std::string_view& line, const color_type base_color)
     {

@@ -20,13 +20,13 @@ class module_manager
 
     module_manager(memory_manager& memory, file_system& file_sys, callbacks& cb);
 
-    void map_main_modules(const windows_path& executable_path, const windows_path& ntdll_path,
-                          const windows_path& win32u_path, const logger& logger);
+    void map_main_modules(const windows_path& executable_path, const windows_path& ntdll_path, const windows_path& win32u_path,
+                          const logger& logger);
 
     mapped_module* map_module(const windows_path& file, const logger& logger, bool is_static = false);
     mapped_module* map_local_module(const std::filesystem::path& file, const logger& logger, bool is_static = false);
-    mapped_module* map_memory_module(uint64_t base_address, uint64_t image_size, const std::string& module_name,
-                                     const logger& logger, bool is_static = false);
+    mapped_module* map_memory_module(uint64_t base_address, uint64_t image_size, const std::string& module_name, const logger& logger,
+                                     bool is_static = false);
 
     mapped_module* find_by_address(const uint64_t address)
     {
@@ -34,6 +34,19 @@ class module_manager
         if (entry != this->modules_.end())
         {
             return &entry->second;
+        }
+
+        return nullptr;
+    }
+
+    mapped_module* find_by_name(const std::string_view name)
+    {
+        for (auto& mod : this->modules_ | std::views::values)
+        {
+            if (mod.name == name)
+            {
+                return &mod;
+            }
         }
 
         return nullptr;

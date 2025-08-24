@@ -4,16 +4,15 @@
 
 namespace syscalls
 {
-    NTSTATUS handle_NtSetEvent(const syscall_context& c, const uint64_t handle,
-                               const emulator_object<LONG> previous_state)
+    NTSTATUS handle_NtSetEvent(const syscall_context& c, const uint64_t handle, const emulator_object<LONG> previous_state)
     {
         if (handle == DBWIN_DATA_READY)
         {
-            if (c.proc.dbwin_buffer)
+            if (c.proc.dbwin_buffer && c.win_emu.callbacks.on_debug_string)
             {
                 constexpr auto pid_length = 4;
                 const auto debug_data = read_string<char>(c.win_emu.memory, c.proc.dbwin_buffer + pid_length);
-                c.win_emu.log.info("--> Debug string: %s\n", debug_data.c_str());
+                c.win_emu.callbacks.on_debug_string(debug_data);
             }
 
             return STATUS_SUCCESS;

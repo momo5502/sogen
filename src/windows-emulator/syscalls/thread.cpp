@@ -7,9 +7,8 @@
 
 namespace syscalls
 {
-    NTSTATUS handle_NtSetInformationThread(const syscall_context& c, const handle thread_handle,
-                                           const THREADINFOCLASS info_class, const uint64_t thread_information,
-                                           const uint32_t thread_information_length)
+    NTSTATUS handle_NtSetInformationThread(const syscall_context& c, const handle thread_handle, const THREADINFOCLASS info_class,
+                                           const uint64_t thread_information, const uint32_t thread_information_length)
     {
         auto* thread = thread_handle == CURRENT_THREAD ? c.proc.active_thread : c.proc.threads.get(thread_handle);
 
@@ -18,8 +17,7 @@ namespace syscalls
             return STATUS_INVALID_HANDLE;
         }
 
-        if (info_class == ThreadSchedulerSharedDataSlot || info_class == ThreadBasePriority ||
-            info_class == ThreadAffinityMask)
+        if (info_class == ThreadSchedulerSharedDataSlot || info_class == ThreadBasePriority || info_class == ThreadAffinityMask)
         {
             return STATUS_SUCCESS;
         }
@@ -91,9 +89,8 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtQueryInformationThread(const syscall_context& c, const handle thread_handle,
-                                             const uint32_t info_class, const uint64_t thread_information,
-                                             const uint32_t thread_information_length,
+    NTSTATUS handle_NtQueryInformationThread(const syscall_context& c, const handle thread_handle, const uint32_t info_class,
+                                             const uint64_t thread_information, const uint32_t thread_information_length,
                                              const emulator_object<uint32_t> return_length)
     {
         const auto* thread = thread_handle == CURRENT_THREAD ? c.proc.active_thread : c.proc.threads.get(thread_handle);
@@ -246,9 +243,8 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtOpenThreadToken(const syscall_context&, const handle thread_handle,
-                                      const ACCESS_MASK /*desired_access*/, const BOOLEAN /*open_as_self*/,
-                                      const emulator_object<handle> token_handle)
+    NTSTATUS handle_NtOpenThreadToken(const syscall_context&, const handle thread_handle, const ACCESS_MASK /*desired_access*/,
+                                      const BOOLEAN /*open_as_self*/, const emulator_object<handle> token_handle)
     {
         if (thread_handle != CURRENT_THREAD)
         {
@@ -260,9 +256,9 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtOpenThreadTokenEx(const syscall_context& c, const handle thread_handle,
-                                        const ACCESS_MASK desired_access, const BOOLEAN open_as_self,
-                                        const ULONG /*handle_attributes*/, const emulator_object<handle> token_handle)
+    NTSTATUS handle_NtOpenThreadTokenEx(const syscall_context& c, const handle thread_handle, const ACCESS_MASK desired_access,
+                                        const BOOLEAN open_as_self, const ULONG /*handle_attributes*/,
+                                        const emulator_object<handle> token_handle)
     {
         return handle_NtOpenThreadToken(c, thread_handle, desired_access, open_as_self, token_handle);
     }
@@ -304,8 +300,7 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtDelayExecution(const syscall_context& c, const BOOLEAN alertable,
-                                     const emulator_object<LARGE_INTEGER> delay_interval)
+    NTSTATUS handle_NtDelayExecution(const syscall_context& c, const BOOLEAN alertable, const emulator_object<LARGE_INTEGER> delay_interval)
     {
         auto& t = c.win_emu.current_thread();
         t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), delay_interval.read());
@@ -342,8 +337,7 @@ namespace syscalls
         return handle_NtAlertThreadByThreadId(c, thread_id);
     }
 
-    NTSTATUS handle_NtWaitForAlertByThreadId(const syscall_context& c, const uint64_t,
-                                             const emulator_object<LARGE_INTEGER> timeout)
+    NTSTATUS handle_NtWaitForAlertByThreadId(const syscall_context& c, const uint64_t, const emulator_object<LARGE_INTEGER> timeout)
     {
         auto& t = c.win_emu.current_thread();
         t.waiting_for_alert = true;
@@ -413,15 +407,14 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtContinue(const syscall_context& c, const emulator_object<CONTEXT64> thread_context,
-                               const BOOLEAN raise_alert)
+    NTSTATUS handle_NtContinue(const syscall_context& c, const emulator_object<CONTEXT64> thread_context, const BOOLEAN raise_alert)
     {
         return handle_NtContinueEx(c, thread_context, raise_alert ? 1 : 0);
     }
 
     NTSTATUS handle_NtGetNextThread(const syscall_context& c, const handle process_handle, const handle thread_handle,
-                                    const ACCESS_MASK /*desired_access*/, const ULONG /*handle_attributes*/,
-                                    const ULONG flags, const emulator_object<handle> new_thread_handle)
+                                    const ACCESS_MASK /*desired_access*/, const ULONG /*handle_attributes*/, const ULONG flags,
+                                    const emulator_object<handle> new_thread_handle)
     {
         if (process_handle != CURRENT_PROCESS || thread_handle.value.type != handle_types::thread)
         {
@@ -535,8 +528,7 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
         }
 
-        const auto h = c.proc.create_thread(c.win_emu.memory, start_routine, argument, stack_size,
-                                            create_flags & CREATE_SUSPENDED);
+        const auto h = c.proc.create_thread(c.win_emu.memory, start_routine, argument, stack_size, create_flags & CREATE_SUSPENDED);
         thread_handle.write(h);
 
         if (!attribute_list)
@@ -581,8 +573,7 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtGetCurrentProcessorNumberEx(const syscall_context&,
-                                                  const emulator_object<PROCESSOR_NUMBER> processor_number)
+    NTSTATUS handle_NtGetCurrentProcessorNumberEx(const syscall_context&, const emulator_object<PROCESSOR_NUMBER> processor_number)
     {
         constexpr PROCESSOR_NUMBER number{};
         processor_number.write(number);
@@ -594,9 +585,8 @@ namespace syscalls
         return 0;
     }
 
-    NTSTATUS handle_NtQueueApcThreadEx2(const syscall_context& c, const handle thread_handle,
-                                        const handle /*reserve_handle*/, const uint32_t apc_flags,
-                                        const uint64_t apc_routine, const uint64_t apc_argument1,
+    NTSTATUS handle_NtQueueApcThreadEx2(const syscall_context& c, const handle thread_handle, const handle /*reserve_handle*/,
+                                        const uint32_t apc_flags, const uint64_t apc_routine, const uint64_t apc_argument1,
                                         const uint64_t apc_argument2, const uint64_t apc_argument3)
     {
         auto* thread = thread_handle == CURRENT_THREAD ? c.proc.active_thread : c.proc.threads.get(thread_handle);
@@ -624,9 +614,8 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtQueueApcThreadEx(const syscall_context& c, const handle thread_handle,
-                                       const handle reserve_handle, const uint64_t apc_routine,
-                                       const uint64_t apc_argument1, const uint64_t apc_argument2,
+    NTSTATUS handle_NtQueueApcThreadEx(const syscall_context& c, const handle thread_handle, const handle reserve_handle,
+                                       const uint64_t apc_routine, const uint64_t apc_argument1, const uint64_t apc_argument2,
                                        const uint64_t apc_argument3)
     {
         uint32_t flags{0};
@@ -638,15 +627,13 @@ namespace syscalls
             static_assert(QUEUE_USER_APC_FLAGS_SPECIAL_USER_APC == 1);
         }
 
-        return handle_NtQueueApcThreadEx2(c, thread_handle, real_reserve_handle, flags, apc_routine, apc_argument1,
-                                          apc_argument2, apc_argument3);
+        return handle_NtQueueApcThreadEx2(c, thread_handle, real_reserve_handle, flags, apc_routine, apc_argument1, apc_argument2,
+                                          apc_argument3);
     }
 
     NTSTATUS handle_NtQueueApcThread(const syscall_context& c, const handle thread_handle, const uint64_t apc_routine,
-                                     const uint64_t apc_argument1, const uint64_t apc_argument2,
-                                     const uint64_t apc_argument3)
+                                     const uint64_t apc_argument1, const uint64_t apc_argument2, const uint64_t apc_argument3)
     {
-        return handle_NtQueueApcThreadEx(c, thread_handle, make_handle(0), apc_routine, apc_argument1, apc_argument2,
-                                         apc_argument3);
+        return handle_NtQueueApcThreadEx(c, thread_handle, make_handle(0), apc_routine, apc_argument1, apc_argument2, apc_argument3);
     }
 }

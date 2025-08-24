@@ -42,8 +42,7 @@ namespace utils
     {
         using is_transparent = void;
 
-        bool operator()(const std::basic_string_view<Elem, Traits> lhs,
-                        const std::basic_string_view<Elem, Traits> rhs) const
+        bool operator()(const std::basic_string_view<Elem, Traits> lhs, const std::basic_string_view<Elem, Traits> rhs) const
         {
             return string::equals_ignore_case(lhs, rhs);
         }
@@ -64,8 +63,7 @@ namespace utils
     using unordered_u16string_map = std::unordered_map<std::u16string, T, u16string_hash, std::equal_to<>>;
 
     template <typename T>
-    using unordered_insensitive_string_map =
-        std::unordered_map<std::string, T, insensitive_string_hash, insensitive_string_equal>;
+    using unordered_insensitive_string_map = std::unordered_map<std::string, T, insensitive_string_hash, insensitive_string_equal>;
     template <typename T>
     using unordered_insensitive_u16string_map =
         std::unordered_map<std::u16string, T, insensitive_u16string_hash, insensitive_u16string_equal>;

@@ -76,8 +76,7 @@ namespace
                 MOUNTMGR_MOUNT_POINT point{};
                 const auto symlink = write_string<char16_t>(buffer, make_volume(drive, 0));
                 const auto id = write_string<char>(buffer, make_drive_id(drive, 0));
-                const auto name = write_string<char16_t>(buffer, u"\\Device\\HarddiskVolume" +
-                                                                     u8_to_u16(std::to_string(drive - 'a' + 1)));
+                const auto name = write_string<char16_t>(buffer, u"\\Device\\HarddiskVolume" + u8_to_u16(std::to_string(drive - 'a' + 1)));
 
                 point.SymbolicLinkNameOffset = symlink.first;
                 point.SymbolicLinkNameLength = symlink.second;

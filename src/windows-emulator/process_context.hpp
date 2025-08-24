@@ -65,12 +65,10 @@ struct process_context
     {
     }
 
-    void setup(x86_64_emulator& emu, memory_manager& memory, registry_manager& registry,
-               const application_settings& app_settings, const mapped_module& executable, const mapped_module& ntdll,
-               const apiset::container& apiset_container);
+    void setup(x86_64_emulator& emu, memory_manager& memory, registry_manager& registry, const application_settings& app_settings,
+               const mapped_module& executable, const mapped_module& ntdll, const apiset::container& apiset_container);
 
-    handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size,
-                         bool suspended);
+    handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size, bool suspended);
 
     std::optional<uint16_t> find_atom(std::u16string_view name);
     uint16_t add_or_find_atom(std::u16string name);
@@ -84,9 +82,6 @@ struct process_context
     generic_handle_store* get_handle_store(handle handle);
 
     callbacks* callbacks_{};
-
-    uint64_t current_ip{0};
-    uint64_t previous_ip{0};
 
     uint64_t shared_section_address{0};
     uint64_t shared_section_size{0};

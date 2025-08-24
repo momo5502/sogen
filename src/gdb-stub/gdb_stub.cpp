@@ -35,8 +35,7 @@ namespace gdb_stub
             async_handler& async;
         };
 
-        network::tcp_client_socket accept_client(const network::address& bind_address,
-                                                 const utils::optional_function<bool()>& should_stop)
+        network::tcp_client_socket accept_client(const network::address& bind_address, const utils::optional_function<bool()>& should_stop)
         {
             network::tcp_server_socket server{bind_address.get_family()};
             if (!server.bind(bind_address))
@@ -194,8 +193,8 @@ namespace gdb_stub
             return static_cast<breakpoint_type>(type);
         }
 
-        bool change_breakpoint(debugging_handler& handler, const bool set, const breakpoint_type type,
-                               const uint64_t address, const size_t size)
+        bool change_breakpoint(debugging_handler& handler, const bool set, const breakpoint_type type, const uint64_t address,
+                               const size_t size)
         {
             if (set)
             {

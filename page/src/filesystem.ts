@@ -1,62 +1,14 @@
+import { downloadBinaryFilePercent, DownloadPercentHandler } from "./download";
 import { parseZipFile, ProgressHandler } from "./zip-file";
 import idbfsModule, { MainModule } from "@irori/idbfs";
 
-type DownloadProgressHandler = (
-  receivedBytes: number,
-  totalBytes: number,
-) => void;
-
-function fetchFilesystemZip(progressCallback: DownloadProgressHandler) {
-  return fetch("./root.zip", {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/octet-stream",
-    },
-  }).then((response) => {
-    const maybeReader = response.body?.getReader();
-    if (!maybeReader) {
-      throw new Error("Bad reader");
-    }
-
-    const reader = maybeReader;
-
-    const contentLength = parseInt(
-      response.headers?.get("Content-Length") || "0",
-    );
-
-    let receivedLength = 0;
-    let chunks: Uint8Array<ArrayBufferLike>[] = [];
-
-    function processData(
-      res: ReadableStreamReadResult<Uint8Array<ArrayBufferLike>>,
-    ): Promise<ArrayBuffer> {
-      if (res.value) {
-        chunks.push(res.value);
-        receivedLength += res.value.length;
-      }
-
-      progressCallback(receivedLength, contentLength);
-
-      if (!res.done) {
-        return reader.read().then(processData);
-      }
-      const chunksAll = new Uint8Array(receivedLength);
-      let position = 0;
-      for (const chunk of chunks) {
-        chunksAll.set(new Uint8Array(chunk), position);
-        position += chunk.length;
-      }
-
-      return Promise.resolve(chunksAll.buffer);
-    }
-
-    return reader.read().then(processData);
-  });
+function fetchFilesystemZip(progressCallback: DownloadPercentHandler) {
+  return downloadBinaryFilePercent("./root.zip", progressCallback);
 }
 
 async function fetchFilesystem(
   progressHandler: ProgressHandler,
-  downloadProgressHandler: DownloadProgressHandler,
+  downloadProgressHandler: DownloadPercentHandler,
 ) {
   const filesys = await fetchFilesystemZip(downloadProgressHandler);
   return await parseZipFile(filesys, progressHandler);
@@ -72,6 +24,28 @@ function synchronizeIDBFS(idbfs: MainModule, populate: boolean) {
       }
     });
   });
+}
+
+const filesystemPrefix = "/root/filesys/";
+
+export function internalToWindowsPath(internalPath: string): string {
+  if (
+    !internalPath.startsWith(filesystemPrefix) ||
+    internalPath.length <= filesystemPrefix.length
+  ) {
+    throw new Error("Invalid path");
+  }
+
+  const winPath = internalPath.substring(filesystemPrefix.length);
+  return `${winPath[0]}:${winPath.substring(1)}`;
+}
+
+export function windowsToInternalPath(windowsPath: string): string {
+  if (windowsPath.length < 2 || windowsPath[1] != ":") {
+    throw new Error("Invalid path");
+  }
+
+  return `${filesystemPrefix}${windowsPath[0]}${windowsPath.substring(2)}`;
 }
 
 async function initializeIDBFS() {
@@ -210,7 +184,7 @@ export class Filesystem {
 
 export async function setupFilesystem(
   progressHandler: ProgressHandler,
-  downloadProgressHandler: DownloadProgressHandler,
+  downloadProgressHandler: DownloadPercentHandler,
 ) {
   const idbfs = await initializeIDBFS();
   const fs = new Filesystem(idbfs);

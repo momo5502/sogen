@@ -11,6 +11,7 @@
 #include "apiset/apiset.hpp"
 
 #include "network/static_socket_factory.hpp"
+#include "memory_permission_ext.hpp"
 
 constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 0x20000;
 
@@ -51,6 +52,7 @@ namespace
     void perform_context_switch_work(windows_emulator& win_emu)
     {
         auto& threads = win_emu.process.threads;
+        auto*& active = win_emu.process.active_thread;
 
         for (auto it = threads.begin(); it != threads.end();)
         {
@@ -58,6 +60,11 @@ namespace
             {
                 ++it;
                 continue;
+            }
+
+            if (active == &it->second)
+            {
+                active = nullptr;
             }
 
             const auto [new_it, deleted] = threads.erase(it);
@@ -253,8 +260,7 @@ namespace
         }
     };
 
-    std::unique_ptr<utils::clock> get_clock(emulator_interfaces& interfaces, const uint64_t& instructions,
-                                            const bool use_relative_time)
+    std::unique_ptr<utils::clock> get_clock(emulator_interfaces& interfaces, const uint64_t& instructions, const bool use_relative_time)
     {
         if (interfaces.clock)
         {
@@ -284,16 +290,15 @@ namespace
 }
 
 windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, application_settings app_settings,
-                                   const emulator_settings& settings, emulator_callbacks callbacks,
-                                   emulator_interfaces interfaces)
+                                   const emulator_settings& settings, emulator_callbacks callbacks, emulator_interfaces interfaces)
     : windows_emulator(std::move(emu), settings, std::move(callbacks), std::move(interfaces))
 {
     fixup_application_settings(app_settings);
     this->application_settings_ = std::move(app_settings);
 }
 
-windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, const emulator_settings& settings,
-                                   emulator_callbacks callbacks, emulator_interfaces interfaces)
+windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, const emulator_settings& settings, emulator_callbacks callbacks,
+                                   emulator_interfaces interfaces)
     : emu_(std::move(emu)),
       clock_(get_clock(interfaces, this->executed_instructions_, settings.use_relative_time)),
       socket_factory_(get_socket_factory(interfaces)),
@@ -346,8 +351,8 @@ void windows_emulator::setup_process(const application_settings& app_settings)
     const auto& emu = this->emu();
     auto& context = this->process;
 
-    this->mod_manager.map_main_modules(app_settings.application, R"(C:\Windows\System32\ntdll.dll)",
-                                       R"(C:\Windows\System32\win32u.dll)", this->log);
+    this->mod_manager.map_main_modules(app_settings.application, R"(C:\Windows\System32\ntdll.dll)", R"(C:\Windows\System32\win32u.dll)",
+                                       this->log);
 
     const auto* executable = this->mod_manager.executable;
     const auto* ntdll = this->mod_manager.ntdll;
@@ -362,8 +367,7 @@ void windows_emulator::setup_process(const application_settings& app_settings)
 
     this->dispatcher.setup(ntdll->exports, ntdll_data, win32u->exports, win32u_data);
 
-    const auto main_thread_id =
-        context.create_thread(this->memory, this->mod_manager.executable->entry_point, 0, 0, false);
+    const auto main_thread_id = context.create_thread(this->memory, this->mod_manager.executable->entry_point, 0, 0, false);
     switch_to_thread(*this, main_thread_id);
 }
 
@@ -422,8 +426,8 @@ void windows_emulator::on_instruction_execution(const uint64_t address)
         this->yield_thread();
     }
 
-    this->process.previous_ip = this->process.current_ip;
-    this->process.current_ip = this->emu().read_instruction_pointer();
+    thread.previous_ip = thread.current_ip;
+    thread.current_ip = this->emu().read_instruction_pointer();
 
     this->callbacks.on_instruction(address);
 }
@@ -436,6 +440,8 @@ void windows_emulator::setup_hooks()
     });
 
     this->emu().hook_instruction(x86_hookable_instructions::rdtscp, [&] {
+        this->callbacks.on_rdtscp();
+
         const auto ticks = this->clock_->timestamp_counter();
         this->emu().reg(x86_register::rax, ticks & 0xFFFFFFFF);
         this->emu().reg(x86_register::rdx, (ticks >> 32) & 0xFFFFFFFF);
@@ -448,6 +454,8 @@ void windows_emulator::setup_hooks()
     });
 
     this->emu().hook_instruction(x86_hookable_instructions::rdtsc, [&] {
+        this->callbacks.on_rdtsc();
+
         const auto ticks = this->clock_->timestamp_counter();
         this->emu().reg(x86_register::rax, ticks & 0xFFFFFFFF);
         this->emu().reg(x86_register::rdx, (ticks >> 32) & 0xFFFFFFFF);
@@ -502,12 +510,23 @@ void windows_emulator::setup_hooks()
         }
     });
 
-    this->emu().hook_memory_violation([&](const uint64_t address, const size_t size, const memory_operation operation,
-                                          const memory_violation_type type) {
-        this->callbacks.on_memory_violate(address, size, operation, type);
-        dispatch_access_violation(this->emu(), this->process, address, operation);
-        return memory_violation_continuation::resume;
-    });
+    this->emu().hook_memory_violation(
+        [&](const uint64_t address, const size_t size, const memory_operation operation, const memory_violation_type type) {
+            auto region = this->memory.get_region_info(address);
+            if (region.permissions.is_guarded())
+            {
+                // Unset the GUARD_PAGE flag and dispatch a STATUS_GUARD_PAGE_VIOLATION
+                this->memory.protect_memory(region.allocation_base, region.length, region.permissions & ~memory_permission_ext::guard);
+                dispatch_guard_page_violation(this->emu(), this->process, address, operation);
+            }
+            else
+            {
+                this->callbacks.on_memory_violate(address, size, operation, type);
+                dispatch_access_violation(this->emu(), this->process, address, operation);
+            }
+
+            return memory_violation_continuation::resume;
+        });
 
     this->emu().hook_memory_execution([&](const uint64_t address) {
         this->on_instruction_execution(address); //

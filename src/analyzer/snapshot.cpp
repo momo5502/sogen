@@ -85,8 +85,7 @@ namespace snapshot
 
     std::filesystem::path write_emulator_snapshot(const windows_emulator& win_emu, const bool log)
     {
-        std::filesystem::path snapshot_file =
-            get_main_executable_name(win_emu) + "-" + std::to_string(time(nullptr)) + ".snap";
+        std::filesystem::path snapshot_file = get_main_executable_name(win_emu) + "-" + std::to_string(time(nullptr)) + ".snap";
 
         if (log)
         {

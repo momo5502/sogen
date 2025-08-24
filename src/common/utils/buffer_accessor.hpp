@@ -6,8 +6,8 @@
 namespace utils
 {
     template <typename Type, typename SpanElement = const std::byte>
-        requires(std::is_trivially_copyable_v<Type> && (std::is_same_v<uint8_t, std::remove_cv_t<SpanElement>> ||
-                                                        std::is_same_v<std::byte, std::remove_cv_t<SpanElement>>))
+        requires(std::is_trivially_copyable_v<Type> &&
+                 (std::is_same_v<uint8_t, std::remove_cv_t<SpanElement>> || std::is_same_v<std::byte, std::remove_cv_t<SpanElement>>))
     class safe_object_accessor
     {
       public:
@@ -54,8 +54,7 @@ namespace utils
     };
 
     template <typename SpanElement>
-        requires(std::is_same_v<uint8_t, std::remove_cv_t<SpanElement>> ||
-                 std::is_same_v<std::byte, std::remove_cv_t<SpanElement>>)
+        requires(std::is_same_v<uint8_t, std::remove_cv_t<SpanElement>> || std::is_same_v<std::byte, std::remove_cv_t<SpanElement>>)
     class safe_buffer_accessor
     {
       public:

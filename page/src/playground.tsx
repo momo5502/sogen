@@ -3,7 +3,11 @@ import React from "react";
 import { Output } from "@/components/output";
 
 import { Emulator, EmulationState, isFinalState } from "./emulator";
-import { Filesystem, setupFilesystem } from "./filesystem";
+import {
+  Filesystem,
+  setupFilesystem,
+  windowsToInternalPath,
+} from "./filesystem";
 
 import { memory64 } from "wasm-feature-detect";
 
@@ -39,11 +43,17 @@ import {
 } from "@/components/ui/drawer";
 import { FilesystemExplorer } from "./filesystem-explorer";
 import { EmulationStatus } from "./emulator";
-import { TextTooltip } from "./components/text-tooltip";
 import { EmulationSummary } from "./components/emulation-summary";
+import { downloadBinaryFilePercent } from "./download";
 
-interface PlaygroundProps {}
-interface PlaygroundState {
+export interface PlaygroundFile {
+  file: string;
+  storage: string;
+}
+
+export interface PlaygroundProps {}
+
+export interface PlaygroundState {
   settings: Settings;
   filesystemPromise?: Promise<Filesystem>;
   filesystem?: Filesystem;
@@ -52,28 +62,57 @@ interface PlaygroundState {
   application?: string;
   drawerOpen: boolean;
   allowWasm64: boolean;
+  file?: PlaygroundFile;
 }
 
-function makePercentHandler(
-  handler: (percent: number) => void,
-): (current: number, total: number) => void {
-  const progress = {
-    tracked: 0,
-  };
+function decodeFileData(data: string | null): PlaygroundFile | undefined {
+  if (!data) {
+    return undefined;
+  }
 
-  return (current, total) => {
-    if (total == 0) {
-      return;
-    }
+  try {
+    const jsonData = JSON.parse(atob(data));
 
-    const percent = Math.floor((current * 100) / total);
-    const sanePercent = Math.max(Math.min(percent, 100), 0);
+    return {
+      file: jsonData.file,
+      storage: jsonData.storage,
+    };
+  } catch (e) {
+    console.log(e);
+  }
 
-    if (sanePercent + 1 > progress.tracked) {
-      progress.tracked = sanePercent + 1;
-      handler(sanePercent);
-    }
-  };
+  return undefined;
+}
+
+interface GlobalThisExt {
+  emulateCache?: string | null;
+}
+
+function getGlobalThis() {
+  return globalThis as GlobalThisExt;
+}
+
+export function storeEmulateData(data?: string) {
+  getGlobalThis().emulateCache = undefined;
+
+  if (data) {
+    localStorage.setItem("emulate", data);
+  } else {
+    localStorage.removeItem("emulate");
+  }
+}
+
+function getEmulateData() {
+  const gt = getGlobalThis();
+  if (gt.emulateCache) {
+    return gt.emulateCache;
+  }
+
+  const emulateData = localStorage.getItem("emulate");
+  localStorage.removeItem("emulate");
+
+  gt.emulateCache = emulateData;
+  return emulateData;
 }
 
 export class Playground extends React.Component<
@@ -90,13 +129,14 @@ export class Playground extends React.Component<
 
     this.start = this.start.bind(this);
     this.resetFilesys = this.resetFilesys.bind(this);
-    this.createEmulator = this.createEmulator.bind(this);
+    this.startEmulator = this.startEmulator.bind(this);
     this.toggleEmulatorState = this.toggleEmulatorState.bind(this);
 
     this.state = {
       settings: loadSettings(),
       drawerOpen: false,
       allowWasm64: false,
+      file: decodeFileData(getEmulateData()),
     };
   }
 
@@ -104,6 +144,10 @@ export class Playground extends React.Component<
     memory64().then((allowWasm64) => {
       this.setState({ allowWasm64 });
     });
+
+    if (this.state.file) {
+      this.emulateRemoteFile(this.state.file);
+    }
   }
 
   async resetFilesys() {
@@ -151,9 +195,9 @@ export class Playground extends React.Component<
         (current, total, file) => {
           this.logLine(`Processing filesystem (${current}/${total}): ${file}`);
         },
-        makePercentHandler((percent) => {
+        (percent) => {
           this.logLine(`Downloading filesystem: ${percent}%`);
-        }),
+        },
       ).then(resolve);
     });
 
@@ -165,6 +209,29 @@ export class Playground extends React.Component<
 
   setDrawerOpen(drawerOpen: boolean) {
     this.setState({ drawerOpen });
+  }
+
+  async downloadFileToFilesystem(file: PlaygroundFile) {
+    const fs = await this.initFilesys();
+
+    const fileData = await downloadBinaryFilePercent(
+      file.storage,
+      (percent) => {
+        this.logLine(`Downloading binary: ${percent}%`);
+      },
+    );
+
+    await fs.storeFiles([
+      {
+        name: windowsToInternalPath(file.file),
+        data: fileData,
+      },
+    ]);
+  }
+
+  async emulateRemoteFile(file: PlaygroundFile) {
+    await this.downloadFileToFilesystem(file);
+    await this.startEmulator(file.file);
   }
 
   async start() {
@@ -195,7 +262,7 @@ export class Playground extends React.Component<
     }
   }
 
-  async createEmulator(userFile: string) {
+  async startEmulator(userFile: string) {
     this.state.emulator?.stop();
     this.output.current?.clear();
 
@@ -226,7 +293,7 @@ export class Playground extends React.Component<
       <>
         <Header
           title="Sogen - Playground"
-          description="Playground to test and run Sogen, the Windows user space emulator, right in your browser."
+          description="Playground to test and run Sogen, a Windows user space emulator, right in your browser."
           preload={
             [
               /*"./emulator-worker.js", "./analyzer.js", "./analyzer.wasm"*/
@@ -316,7 +383,7 @@ export class Playground extends React.Component<
                     <FilesystemExplorer
                       filesystem={this.state.filesystem}
                       iconCache={this.iconCache}
-                      runFile={this.createEmulator}
+                      runFile={this.startEmulator}
                       resetFilesys={this.resetFilesys}
                       path={["c"]}
                     />

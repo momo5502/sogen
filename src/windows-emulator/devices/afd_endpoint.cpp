@@ -221,8 +221,7 @@ namespace
         return win_emu.emu().read_memory<afd_creation_data>(data.buffer);
     }
 
-    std::pair<AFD_POLL_INFO64, std::vector<AFD_POLL_HANDLE_INFO64>> get_poll_info(windows_emulator& win_emu,
-                                                                                  const io_device_context& c)
+    std::pair<AFD_POLL_INFO64, std::vector<AFD_POLL_HANDLE_INFO64>> get_poll_info(windows_emulator& win_emu, const io_device_context& c)
     {
         constexpr auto info_size = offsetof(AFD_POLL_INFO64, Handles);
         if (!c.input_buffer || c.input_buffer_length < info_size || c.input_buffer != c.output_buffer)
@@ -272,8 +271,8 @@ namespace
         return socket_events;
     }
 
-    ULONG map_socket_response_events_to_afd(const int16_t socket_events, const ULONG afd_poll_events,
-                                            const bool is_listening, const bool is_connecting)
+    ULONG map_socket_response_events_to_afd(const int16_t socket_events, const ULONG afd_poll_events, const bool is_listening,
+                                            const bool is_connecting)
     {
         ULONG afd_events = 0;
 
@@ -306,8 +305,7 @@ namespace
             }
         }
 
-        if ((socket_events & (POLLHUP | POLLERR)) == (POLLHUP | POLLERR) &&
-            afd_poll_events & (AFD_POLL_CONNECT_FAIL | AFD_POLL_ABORT))
+        if ((socket_events & (POLLHUP | POLLERR)) == (POLLHUP | POLLERR) && afd_poll_events & (AFD_POLL_CONNECT_FAIL | AFD_POLL_ABORT))
         {
             afd_events |= (AFD_POLL_CONNECT_FAIL | AFD_POLL_ABORT);
         }
@@ -388,8 +386,7 @@ namespace
 
         void delay_ioctrl(const io_device_context& c, const std::optional<bool> require_poll = {},
                           const std::optional<std::chrono::steady_clock::time_point> timeout = {},
-                          const std::optional<std::function<void(windows_emulator&, const io_device_context&)>>&
-                              timeout_callback = {})
+                          const std::optional<std::function<void(windows_emulator&, const io_device_context&)>>& timeout_callback = {})
         {
             if (this->executing_delayed_ioctl_)
             {
@@ -426,8 +423,7 @@ namespace
             }
             if (this->event_select_mask_)
             {
-                pfd.events =
-                    static_cast<int16_t>(pfd.events | map_afd_request_events_to_socket(this->event_select_mask_));
+                pfd.events = static_cast<int16_t>(pfd.events | map_afd_request_events_to_socket(this->event_select_mask_));
             }
             pfd.revents = pfd.events;
 
@@ -440,10 +436,9 @@ namespace
 
             if (socket_events && this->event_select_mask_)
             {
-                const bool is_connecting =
-                    this->delayed_ioctl_ && _AFD_REQUEST(this->delayed_ioctl_->io_control_code) == AFD_CONNECT;
-                ULONG current_events = map_socket_response_events_to_afd(socket_events, this->event_select_mask_,
-                                                                         pfd.s->is_listening(), is_connecting);
+                const bool is_connecting = this->delayed_ioctl_ && _AFD_REQUEST(this->delayed_ioctl_->io_control_code) == AFD_CONNECT;
+                ULONG current_events =
+                    map_socket_response_events_to_afd(socket_events, this->event_select_mask_, pfd.s->is_listening(), is_connecting);
 
                 if ((current_events & ~this->triggered_events_) != 0)
                 {
@@ -463,8 +458,7 @@ namespace
 
                 if (this->require_poll_.has_value())
                 {
-                    const auto is_ready =
-                        socket_events & ((*this->require_poll_ ? POLLIN : POLLOUT) | POLLHUP | POLLERR);
+                    const auto is_ready = socket_events & ((*this->require_poll_ ? POLLIN : POLLOUT) | POLLHUP | POLLERR);
                     if (!is_ready)
                     {
                         return;
@@ -955,8 +949,7 @@ namespace
                     endpoint->delayed_ioctl_ && _AFD_REQUEST(endpoint->delayed_ioctl_->io_control_code) == AFD_CONNECT;
 
                 auto entry = handle_info_obj.read(i);
-                entry.PollEvents = map_socket_response_events_to_afd(pfd.revents, handle.PollEvents,
-                                                                     pfd.s->is_listening(), is_connecting);
+                entry.PollEvents = map_socket_response_events_to_afd(pfd.revents, handle.PollEvents, pfd.s->is_listening(), is_connecting);
                 entry.Status = STATUS_SUCCESS;
 
                 handle_info_obj.write(entry, current_index++);
@@ -1102,8 +1095,8 @@ namespace
             const auto send_info = emu.read_memory<AFD_SEND_DATAGRAM_INFO<EmulatorTraits<Emu64>>>(c.input_buffer);
             const auto buffer = emu.read_memory<EMU_WSABUF<EmulatorTraits<Emu64>>>(send_info.BufferArray);
 
-            auto address_buffer = emu.read_memory(send_info.TdiConnInfo.RemoteAddress,
-                                                  static_cast<size_t>(send_info.TdiConnInfo.RemoteAddressLength));
+            auto address_buffer =
+                emu.read_memory(send_info.TdiConnInfo.RemoteAddress, static_cast<size_t>(send_info.TdiConnInfo.RemoteAddressLength));
 
             const auto target = convert_to_host_address(win_emu, address_buffer);
             const auto data = emu.read_memory(buffer.buf, buffer.len);

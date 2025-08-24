@@ -6,9 +6,8 @@
 
 namespace syscalls
 {
-    NTSTATUS handle_NtQueryInformationProcess(const syscall_context& c, const handle process_handle,
-                                              const uint32_t info_class, const uint64_t process_information,
-                                              const uint32_t process_information_length,
+    NTSTATUS handle_NtQueryInformationProcess(const syscall_context& c, const handle process_handle, const uint32_t info_class,
+                                              const uint64_t process_information, const uint32_t process_information_length,
                                               const emulator_object<uint32_t> return_length)
     {
         if (process_handle != CURRENT_PROCESS)
@@ -24,48 +23,43 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
 
         case ProcessTimes:
-            return handle_query<KERNEL_USER_TIMES>(c.emu, process_information, process_information_length,
-                                                   return_length, [](KERNEL_USER_TIMES& t) {
+            return handle_query<KERNEL_USER_TIMES>(c.emu, process_information, process_information_length, return_length,
+                                                   [](KERNEL_USER_TIMES& t) {
                                                        t = {}; //
                                                    });
 
         case ProcessCookie:
-            return handle_query<uint32_t>(c.emu, process_information, process_information_length, return_length,
-                                          [](uint32_t& cookie) {
-                                              cookie = 0x01234567; //
-                                          });
+            return handle_query<uint32_t>(c.emu, process_information, process_information_length, return_length, [](uint32_t& cookie) {
+                cookie = 0x01234567; //
+            });
 
         case ProcessDebugObjectHandle:
-            return handle_query<handle>(c.emu, process_information, process_information_length, return_length,
-                                        [](handle& h) {
-                                            h = NULL_HANDLE;
-                                            return STATUS_PORT_NOT_SET;
-                                        });
+            return handle_query<handle>(c.emu, process_information, process_information_length, return_length, [](handle& h) {
+                h = NULL_HANDLE;
+                return STATUS_PORT_NOT_SET;
+            });
 
         case ProcessDebugFlags:
         case ProcessWx86Information:
         case ProcessDefaultHardErrorMode:
-            return handle_query<ULONG>(c.emu, process_information, process_information_length, return_length,
-                                       [&](ULONG& res) {
-                                           res = (info_class == ProcessDebugFlags ? 1 : 0); //
-                                       });
+            return handle_query<ULONG>(c.emu, process_information, process_information_length, return_length, [&](ULONG& res) {
+                res = (info_class == ProcessDebugFlags ? 1 : 0); //
+            });
 
         case ProcessDebugPort:
         case ProcessDeviceMap:
-            return handle_query<EmulatorTraits<Emu64>::PVOID>(c.emu, process_information, process_information_length,
-                                                              return_length, [](EmulatorTraits<Emu64>::PVOID& ptr) {
+            return handle_query<EmulatorTraits<Emu64>::PVOID>(c.emu, process_information, process_information_length, return_length,
+                                                              [](EmulatorTraits<Emu64>::PVOID& ptr) {
                                                                   ptr = 0; //
                                                               });
 
         case ProcessEnableAlignmentFaultFixup:
-            return handle_query<BOOLEAN>(c.emu, process_information, process_information_length, return_length,
-                                         [](BOOLEAN& b) {
-                                             b = FALSE; //
-                                         });
+            return handle_query<BOOLEAN>(c.emu, process_information, process_information_length, return_length, [](BOOLEAN& b) {
+                b = FALSE; //
+            });
 
         case ProcessBasicInformation:
-            return handle_query<PROCESS_BASIC_INFORMATION64>(c.emu, process_information, process_information_length,
-                                                             return_length,
+            return handle_query<PROCESS_BASIC_INFORMATION64>(c.emu, process_information, process_information_length, return_length,
                                                              [&](PROCESS_BASIC_INFORMATION64& basic_info) {
                                                                  basic_info.PebBaseAddress = c.proc.peb.value();
                                                                  basic_info.UniqueProcessId = 1;
@@ -80,8 +74,7 @@ namespace syscalls
                     const emulator_object<PEDosHeader_t> dos_header_obj{c.emu, mod.image_base};
                     const auto dos_header = dos_header_obj.read();
 
-                    const emulator_object<PENTHeaders_t<uint64_t>> nt_headers_obj{c.emu,
-                                                                                  mod.image_base + dos_header.e_lfanew};
+                    const emulator_object<PENTHeaders_t<uint64_t>> nt_headers_obj{c.emu, mod.image_base + dos_header.e_lfanew};
                     const auto nt_headers = nt_headers_obj.read();
 
                     const auto& file_header = nt_headers.FileHeader;
@@ -123,8 +116,7 @@ namespace syscalls
 
             const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> info{c.emu, process_information};
             info.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& str) {
-                const auto buffer_start =
-                    static_cast<uint64_t>(process_information) + sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>);
+                const auto buffer_start = static_cast<uint64_t>(process_information) + sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>);
                 const auto string = read_unicode_string(c.emu, params.ImagePathName);
                 c.emu.write_memory(buffer_start, string.c_str(), (string.size() + 1) * 2);
                 str.Length = params.ImagePathName.Length;
@@ -143,9 +135,8 @@ namespace syscalls
         }
     }
 
-    NTSTATUS handle_NtSetInformationProcess(const syscall_context& c, const handle process_handle,
-                                            const uint32_t info_class, const uint64_t process_information,
-                                            const uint32_t process_information_length)
+    NTSTATUS handle_NtSetInformationProcess(const syscall_context& c, const handle process_handle, const uint32_t info_class,
+                                            const uint64_t process_information, const uint32_t process_information_length)
     {
         if (process_handle != CURRENT_PROCESS)
         {
@@ -243,8 +234,8 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtOpenProcessToken(const syscall_context&, const handle process_handle,
-                                       const ACCESS_MASK /*desired_access*/, const emulator_object<handle> token_handle)
+    NTSTATUS handle_NtOpenProcessToken(const syscall_context&, const handle process_handle, const ACCESS_MASK /*desired_access*/,
+                                       const emulator_object<handle> token_handle)
     {
         if (process_handle != CURRENT_PROCESS)
         {
@@ -256,9 +247,8 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtOpenProcessTokenEx(const syscall_context& c, const handle process_handle,
-                                         const ACCESS_MASK desired_access, const ULONG /*handle_attributes*/,
-                                         const emulator_object<handle> token_handle)
+    NTSTATUS handle_NtOpenProcessTokenEx(const syscall_context& c, const handle process_handle, const ACCESS_MASK desired_access,
+                                         const ULONG /*handle_attributes*/, const emulator_object<handle> token_handle)
     {
         return handle_NtOpenProcessToken(c, process_handle, desired_access, token_handle);
     }
