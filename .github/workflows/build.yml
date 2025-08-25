@@ -48,7 +48,7 @@ jobs:
         uses: nick-fields/retry@v3.0.2
         with:
           max_attempts: 5
-          timeout_minutes: 10
+          timeout_minutes: 15
           retry_wait_seconds: 60
           command: |
             wget https://apt.llvm.org/llvm.sh
@@ -252,7 +252,7 @@ jobs:
         if: "${{ matrix.platform == 'Linux x86_64 Clang' }}"
         with:
           max_attempts: 5
-          timeout_minutes: 10
+          timeout_minutes: 15
           retry_wait_seconds: 60
           command: |
             wget https://apt.llvm.org/llvm.sh
