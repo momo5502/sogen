@@ -45,16 +45,21 @@ jobs:
         uses: seanmiddleditch/gha-setup-ninja@v6
 
       - name: Install Clang
-        run: |
-          wget https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh ${{ env.LLVM_VERSION }}
-          sudo apt install -y clang-tidy-${{ env.LLVM_VERSION }}
-          sudo apt install -y clang-${{ env.LLVM_VERSION }} lld-${{ env.LLVM_VERSION }}
-          sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang-${{ env.LLVM_VERSION }} 100
-          sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${{ env.LLVM_VERSION }} 100
-          sudo update-alternatives --set cc /usr/bin/clang-${{ env.LLVM_VERSION }}
-          sudo update-alternatives --set c++ /usr/bin/clang++-${{ env.LLVM_VERSION }}
+        uses: nick-fields/retry@v3.0.2
+        with:
+          max_attempts: 5
+          timeout_minutes: 10
+          retry_wait_seconds: 60
+          command: |
+            wget https://apt.llvm.org/llvm.sh
+            chmod +x llvm.sh
+            sudo ./llvm.sh ${{ env.LLVM_VERSION }}
+            sudo apt install -y clang-tidy-${{ env.LLVM_VERSION }}
+            sudo apt install -y clang-${{ env.LLVM_VERSION }} lld-${{ env.LLVM_VERSION }}
+            sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang-${{ env.LLVM_VERSION }} 100
+            sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${{ env.LLVM_VERSION }} 100
+            sudo update-alternatives --set cc /usr/bin/clang-${{ env.LLVM_VERSION }}
+            sudo update-alternatives --set c++ /usr/bin/clang++-${{ env.LLVM_VERSION }}
 
       - name: CMake Build
         run: cmake --preset=release -DMOMO_ENABLE_CLANG_TIDY=On && cmake --build --preset=release
@@ -243,16 +248,21 @@ jobs:
         uses: mymindstorm/setup-emsdk@v14
 
       - name: Install Clang
+        uses: nick-fields/retry@v3.0.2
         if: "${{ matrix.platform == 'Linux x86_64 Clang' }}"
-        run: |
-          wget https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh ${{ matrix.clang-version }}
-          sudo apt install -y clang-${{ matrix.clang-version }} lld-${{ matrix.clang-version }}
-          sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang-${{ matrix.clang-version }} 100
-          sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${{ matrix.clang-version }} 100
-          sudo update-alternatives --set cc /usr/bin/clang-${{ matrix.clang-version }}
-          sudo update-alternatives --set c++ /usr/bin/clang++-${{ matrix.clang-version }}
+        with:
+          max_attempts: 5
+          timeout_minutes: 10
+          retry_wait_seconds: 60
+          command: |
+            wget https://apt.llvm.org/llvm.sh
+            chmod +x llvm.sh
+            sudo ./llvm.sh ${{ matrix.clang-version }}
+            sudo apt install -y clang-${{ matrix.clang-version }} lld-${{ matrix.clang-version }}
+            sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang-${{ matrix.clang-version }} 100
+            sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${{ matrix.clang-version }} 100
+            sudo update-alternatives --set cc /usr/bin/clang-${{ matrix.clang-version }}
+            sudo update-alternatives --set c++ /usr/bin/clang++-${{ matrix.clang-version }}
 
       - name: Set up MinGW
         uses: egor-tensin/setup-mingw@v2
