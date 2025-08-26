@@ -6,6 +6,7 @@
 
 #include "emulator_utils.hpp"
 #include "handles.hpp"
+#include "windows_objects.hpp"
 
 class windows_emulator;
 struct process_context;
@@ -93,6 +94,13 @@ struct io_device : ref_counted_object
 
     virtual NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) = 0;
 
+    virtual std::unique_ptr<file> open(windows_emulator& win_emu, std::u16string_view path)
+    {
+        (void)win_emu;
+        (void)path;
+        return nullptr;
+    }
+
     virtual void create(windows_emulator& win_emu, const io_device_creation_data& data)
     {
         (void)win_emu;
@@ -142,15 +150,23 @@ class io_device_container : public io_device
     io_device_container(std::u16string device, windows_emulator& win_emu, const io_device_creation_data& data)
         : device_name_(std::move(device))
     {
-        this->setup();
-        this->device_->create(win_emu, data);
-    }
+            this->setup();
+            if (this->device_)
+            {
+                this->device_->create(win_emu, data);
+            }
+        }
 
     void work(windows_emulator& win_emu) override;
     NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override;
 
     void serialize_object(utils::buffer_serializer& buffer) const override;
     void deserialize_object(utils::buffer_deserializer& buffer) override;
+
+    explicit operator bool() const noexcept
+    {
+        return static_cast<bool>(this->device_);
+    }
 
     template <typename T = io_device>
         requires(std::is_base_of_v<io_device, T> || std::is_same_v<io_device, T>)

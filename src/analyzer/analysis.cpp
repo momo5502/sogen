@@ -565,8 +565,23 @@ void register_analysis_callbacks(analysis_context& c)
     cb.on_memory_violate = make_callback(c, handle_memory_violate);
     cb.on_memory_allocate = make_callback(c, handle_memory_allocate);
 
-    cb.on_module_load = make_callback(c, handle_module_load);
-    cb.on_module_unload = make_callback(c, handle_module_unload);
+    auto existing_load_cb = std::move(cb.on_module_load);
+    cb.on_module_load = [&c, existing_load_cb = std::move(existing_load_cb)](mapped_module& mod) {
+        if (existing_load_cb)
+        {
+            existing_load_cb(mod);
+        }
+        handle_module_load(c, mod);
+    };
+
+    auto existing_unload_cb = std::move(cb.on_module_unload);
+    cb.on_module_unload = [&c, existing_unload_cb = std::move(existing_unload_cb)](mapped_module& mod) {
+        if (existing_unload_cb)
+        {
+            existing_unload_cb(mod);
+        }
+        handle_module_unload(c, mod);
+    };
 
     cb.on_thread_switch = make_callback(c, handle_thread_switch);
     cb.on_thread_set_name = make_callback(c, handle_thread_set_name);

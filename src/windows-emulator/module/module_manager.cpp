@@ -2,6 +2,7 @@
 #include "module_manager.hpp"
 #include "module_mapping.hpp"
 #include "windows-emulator/logger.hpp"
+#include "windows-emulator/windows_emulator.hpp"
 
 #include <serialization_helper.hpp>
 
@@ -84,7 +85,7 @@ namespace utils
     }
 }
 
-module_manager::module_manager(memory_manager& memory, file_system& file_sys, callbacks& cb)
+module_manager::module_manager(memory_manager& memory, file_system& file_sys, emulator_callbacks& cb)
     : memory_(&memory),
       file_sys_(&file_sys),
       callbacks_(&cb)
@@ -123,7 +124,10 @@ mapped_module* module_manager::map_local_module(const std::filesystem::path& fil
 
         const auto image_base = mod.image_base;
         const auto entry = this->modules_.try_emplace(image_base, std::move(mod));
-        this->callbacks_->on_module_load(entry.first->second);
+        if (this->callbacks_->on_module_load)
+        {
+            this->callbacks_->on_module_load(entry.first->second);
+        }
         return &entry.first->second;
     }
     catch (const std::exception& e)
@@ -156,7 +160,10 @@ mapped_module* module_manager::map_memory_module(uint64_t base_address, uint64_t
 
         const auto image_base = mod.image_base;
         const auto entry = this->modules_.try_emplace(image_base, std::move(mod));
-        this->callbacks_->on_module_load(entry.first->second);
+        if (this->callbacks_->on_module_load)
+        {
+            this->callbacks_->on_module_load(entry.first->second);
+        }
         return &entry.first->second;
     }
     catch (const std::exception& e)
@@ -206,7 +213,10 @@ bool module_manager::unmap(const uint64_t address)
         return true;
     }
 
-    this->callbacks_->on_module_unload(mod->second);
+    if (this->callbacks_->on_module_unload)
+    {
+        this->callbacks_->on_module_unload(mod->second);
+    }
     unmap_module(*this->memory_, mod->second);
     this->modules_.erase(mod);
 

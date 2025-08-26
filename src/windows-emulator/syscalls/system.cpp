@@ -92,6 +92,11 @@ namespace syscalls
     {
         switch (info_class)
         {
+        case SystemSupportedProcessorArchitectures:
+            return handle_query<ULONG>(c.emu, system_information, system_information_length, return_length,
+                                       [&](ULONG& info) {
+                                           info = 3;
+                                       });
         case 250: // Build 27744
         case SystemFlushInformation:
         case SystemModuleInformation:

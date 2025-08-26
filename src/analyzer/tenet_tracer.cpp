@@ -48,31 +48,27 @@ namespace
     }
 }
 
-tenet_tracer::tenet_tracer(windows_emulator& win_emu, const std::filesystem::path& log_filename)
+tenet_tracer::tenet_tracer(windows_emulator& win_emu, const std::filesystem::path& log_filename,
+                           const std::set<std::string, std::less<>>& modules)
     : win_emu_(win_emu),
-      log_file_(log_filename)
+      log_file_(log_filename),
+      traced_modules_(modules)
 {
     if (!log_file_)
     {
         throw std::runtime_error("TenetTracer: Failed to open log file -> " + log_filename.string());
     }
 
-    auto& emu = win_emu_.emu();
-
-    auto* read_hook = emu.hook_memory_read(0, 0xFFFFFFFFFFFFFFFF, [this](uint64_t a, const void* d, size_t s) {
-        this->log_memory_read(a, d, s); //
-    });
-    read_hook_ = scoped_hook(emu, read_hook);
-
-    auto* write_hook = emu.hook_memory_write(0, 0xFFFFFFFFFFFFFFFF, [this](uint64_t a, const void* d, size_t s) {
-        this->log_memory_write(a, d, s); //
-    });
-    write_hook_ = scoped_hook(emu, write_hook);
-
-    auto* execute_hook = emu.hook_memory_execution([&](uint64_t address) {
-        this->process_instruction(address); //
-    });
-    execute_hook_ = scoped_hook(emu, execute_hook);
+    if (traced_modules_.empty())
+    {
+        setup_tracing_hooks();
+        tracing_active_ = true;
+    }
+    else
+    {
+        win_emu_.callbacks.on_module_load = [this](auto& mod) { this->on_module_load(mod); };
+        win_emu_.callbacks.on_module_unload = [this](auto& mod) { this->on_module_unload(mod); };
+    }
 }
 
 tenet_tracer::~tenet_tracer()
@@ -125,6 +121,14 @@ void tenet_tracer::filter_and_write_buffer()
         uint64_t address = std::strtoull(line.c_str() + rip_pos + 6, &end_ptr, 16);
 
         bool is_line_inside = exe_module->is_within(address);
+        if (!is_line_inside && !traced_modules_.empty())
+        {
+            const auto* mod = win_emu_.mod_manager.find_by_address(address);
+            if (mod && traced_modules_.contains(mod->name))
+            {
+                is_line_inside = true;
+            }
+        }
         const auto _1 = utils::finally([&] {
             currently_outside = !is_line_inside; //
         });
@@ -181,9 +185,61 @@ void tenet_tracer::filter_and_write_buffer()
     raw_log_buffer_.clear();
 }
 
+void tenet_tracer::on_module_load(const mapped_module& mod)
+{
+    if (traced_module_base_ != 0 || !traced_modules_.contains(mod.name))
+    {
+        return;
+    }
+
+    traced_module_base_ = mod.image_base;
+    tracing_active_ = true;
+
+    log_file_ << "mb=" << format_hex(traced_module_base_) << '\n';
+
+    setup_tracing_hooks();
+}
+
+void tenet_tracer::on_module_unload(const mapped_module& mod)
+{
+    if (mod.image_base != traced_module_base_)
+    {
+        return;
+    }
+
+    log_file_ << "mu=" << format_hex(traced_module_base_) << '\n';
+
+    tracing_active_ = false;
+    traced_module_base_ = 0;
+
+    read_hook_ = {};
+    write_hook_ = {};
+    execute_hook_ = {};
+}
+
+void tenet_tracer::setup_tracing_hooks()
+{
+    auto& emu = win_emu_.emu();
+
+    auto* read_hook = emu.hook_memory_read(0, 0xFFFFFFFFFFFFFFFF, [this](uint64_t a, const void* d, size_t s) {
+        this->log_memory_read(a, d, s);
+    });
+    read_hook_ = scoped_hook(emu, read_hook);
+
+    auto* write_hook = emu.hook_memory_write(0, 0xFFFFFFFFFFFFFFFF, [this](uint64_t a, const void* d, size_t s) {
+        this->log_memory_write(a, d, s);
+    });
+    write_hook_ = scoped_hook(emu, write_hook);
+
+    auto* execute_hook = emu.hook_memory_execution([&](uint64_t address) {
+        this->process_instruction(address);
+    });
+    execute_hook_ = scoped_hook(emu, execute_hook);
+}
+
 void tenet_tracer::log_memory_read(uint64_t address, const void* data, size_t size)
 {
-    if (!mem_read_log_.str().empty())
+    if (!tracing_active_ || !mem_read_log_.str().empty())
     {
         mem_read_log_ << ";";
     }
@@ -193,7 +249,7 @@ void tenet_tracer::log_memory_read(uint64_t address, const void* data, size_t si
 
 void tenet_tracer::log_memory_write(uint64_t address, const void* data, size_t size)
 {
-    if (!mem_write_log_.str().empty())
+    if (!tracing_active_ || !mem_write_log_.str().empty())
     {
         mem_write_log_ << ";";
     }
@@ -203,6 +259,11 @@ void tenet_tracer::log_memory_write(uint64_t address, const void* data, size_t s
 
 void tenet_tracer::process_instruction(const uint64_t address)
 {
+    if (!tracing_active_)
+    {
+        return;
+    }
+
     auto& emu = win_emu_.emu();
     std::stringstream trace_line;
 

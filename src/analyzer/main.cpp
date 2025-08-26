@@ -463,7 +463,7 @@ namespace
         if (options.tenet_trace)
         {
             win_emu->log.log("Tenet Tracer enabled. Output: tenet_trace.log\n");
-            tenet_tracer.emplace(*win_emu, "tenet_trace.log");
+            tenet_tracer.emplace(*win_emu, "tenet_trace.log", options.modules);
         }
 
         register_analysis_callbacks(context);

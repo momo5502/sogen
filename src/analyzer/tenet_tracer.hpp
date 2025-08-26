@@ -28,7 +28,8 @@ constexpr std::array<std::pair<x86_register, std::string_view>, 16> GPRs_TO_TRAC
 class tenet_tracer
 {
   public:
-    tenet_tracer(windows_emulator& win_emu, const std::filesystem::path& log_filename);
+    tenet_tracer(windows_emulator& win_emu, const std::filesystem::path& log_filename,
+                 const std::set<std::string, std::less<>>& modules);
     ~tenet_tracer();
 
     tenet_tracer(tenet_tracer&) = delete;
@@ -36,7 +37,12 @@ class tenet_tracer
     tenet_tracer& operator=(tenet_tracer&) = delete;
     tenet_tracer& operator=(const tenet_tracer&) = delete;
 
+    void on_module_load(const mapped_module& mod);
+    void on_module_unload(const mapped_module& mod);
+
   private:
+    void setup_tracing_hooks();
+
     void filter_and_write_buffer();
     void log_memory_read(uint64_t address, const void* data, size_t size);
     void log_memory_write(uint64_t address, const void* data, size_t size);
@@ -44,10 +50,13 @@ class tenet_tracer
 
     windows_emulator& win_emu_;
     std::ofstream log_file_;
+    const std::set<std::string, std::less<>>& traced_modules_;
 
     std::vector<std::string> raw_log_buffer_;
     std::array<uint64_t, GPRs_TO_TRACE.size()> previous_registers_{};
     bool is_first_instruction_ = true;
+    bool tracing_active_ = false;
+    uint64_t traced_module_base_{};
 
     std::stringstream mem_read_log_;
     std::stringstream mem_write_log_;

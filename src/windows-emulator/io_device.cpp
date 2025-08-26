@@ -6,6 +6,7 @@
 #include "devices/security_support_provider.hpp"
 #include "devices/named_pipe.hpp"
 #include <iostream>
+#include "devices/console_driver.hpp"
 
 namespace
 {
@@ -25,11 +26,15 @@ std::unique_ptr<io_device> create_device(const std::u16string_view device)
         || device == u"RasAcd"              //
         || device == u"PcwDrv"              //
         || device == u"DeviceApi\\CMApi"    //
-        || device == u"DeviceApi\\CMNotify" //
-        || device == u"ConDrv\\Server")
+        || device == u"DeviceApi\\CMNotify")
     {
         return std::make_unique<dummy_device>();
     }
+
+   if (device.starts_with(u"ConDrv"))
+   {
+       return create_console_driver();
+   }
 
     if (device == u"Afd\\Endpoint")
     {
@@ -56,7 +61,7 @@ std::unique_ptr<io_device> create_device(const std::u16string_view device)
         return std::make_unique<named_pipe>();
     }
 
-    throw std::runtime_error("Unsupported device: " + u16_to_u8(device));
+    return nullptr;
 }
 
 NTSTATUS io_device_container::io_control(windows_emulator& win_emu, const io_device_context& context)

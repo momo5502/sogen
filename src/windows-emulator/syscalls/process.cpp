@@ -22,6 +22,12 @@ namespace syscalls
         case ProcessEnclaveInformation:
             return STATUS_NOT_SUPPORTED;
 
+        case ProcessWow64Information:
+            return handle_query<ULONG>(c.emu, process_information, process_information_length, return_length,
+                                       [&](ULONG& info) {
+                                           info = 3;
+                                       });
+
         case ProcessTimes:
             return handle_query<KERNEL_USER_TIMES>(c.emu, process_information, process_information_length, return_length,
                                                    [](KERNEL_USER_TIMES& t) {

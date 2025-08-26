@@ -333,6 +333,7 @@ windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, const e
 
 windows_emulator::~windows_emulator() = default;
 
+
 void windows_emulator::setup_process_if_necessary()
 {
     if (!this->application_settings_)

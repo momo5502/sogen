@@ -21,19 +21,40 @@ namespace syscalls
         return STATUS_INVALID_HANDLE;
     }
 
-    NTSTATUS handle_NtDuplicateObject(const syscall_context& c, const handle source_process_handle, const handle source_handle,
-                                      const handle target_process_handle, const emulator_object<handle> target_handle,
-                                      const ACCESS_MASK /*desired_access*/, const ULONG /*handle_attributes*/, const ULONG /*options*/)
+    NTSTATUS handle_NtDuplicateObject(const syscall_context& c, const handle source_process_handle,
+                                      const handle source_handle, const handle target_process_handle,
+                                      const emulator_object<handle> target_handle, const ACCESS_MASK /*desired_access*/,
+                                      const ULONG /*handle_attributes*/, const ULONG /*options*/)
     {
-        if (source_process_handle != CURRENT_PROCESS || target_process_handle != CURRENT_PROCESS)
+        process_context* source_proc = &c.proc;
+        if (source_process_handle != CURRENT_PROCESS)
         {
-            return STATUS_NOT_SUPPORTED;
+        // TODO: Implement process enumeration
+        return STATUS_NOT_SUPPORTED;
+        }
+
+        process_context* target_proc = &c.proc;
+        if (target_process_handle != CURRENT_PROCESS)
+        {
+        // TODO: Implement process enumeration
+        return STATUS_NOT_SUPPORTED;
+        }
+
+        if (source_proc != target_proc)
+        {
+        return STATUS_NOT_SUPPORTED;
+        }
+
+        if (source_handle == CURRENT_PROCESS)
+        {
+        target_handle.write(make_handle(c.proc.id, handle_types::process, false));
+        return STATUS_SUCCESS;
         }
 
         if (source_handle.value.is_pseudo)
         {
-            target_handle.write(source_handle);
-            return STATUS_SUCCESS;
+        target_handle.write(source_handle);
+        return STATUS_SUCCESS;
         }
 
         auto* store = c.proc.get_handle_store(source_handle);

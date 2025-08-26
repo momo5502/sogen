@@ -17,9 +17,12 @@ struct io_device;
 
 #define opt_func utils::optional_function
 
-struct emulator_callbacks : module_manager::callbacks, process_context::callbacks
+struct emulator_callbacks : process_context::callbacks
 {
     using continuation = instruction_hook_continuation;
+
+    opt_func<void(mapped_module& mod)> on_module_load{};
+    opt_func<void(mapped_module& mod)> on_module_unload{};
 
     opt_func<void()> on_exception{};
 
@@ -154,6 +157,7 @@ class windows_emulator
     {
         return this->executed_instructions_;
     }
+
 
     void setup_process_if_necessary();
 
