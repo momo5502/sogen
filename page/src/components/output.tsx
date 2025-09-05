@@ -1,5 +1,10 @@
 import React from "react";
-import { FixedSizeList as List } from "react-window";
+import {
+  List,
+  ListImperativeAPI,
+  useListRef,
+  type RowComponentProps,
+} from "react-window";
 
 interface OutputProps {}
 
@@ -156,9 +161,26 @@ class OutputGrouper {
   }
 }
 
+function LogLineRow({
+  index,
+  lines,
+  style,
+}: RowComponentProps<{
+  lines: LogLine[];
+}>) {
+  {
+    const line = lines[index];
+    return (
+      <span className={line.classNames} style={style}>
+        {line.text}
+      </span>
+    );
+  }
+}
+
 export class Output extends React.Component<OutputProps, FullOutputState> {
   private outputRef: React.RefObject<HTMLDivElement | null>;
-  private listRef: React.RefObject<List | null>;
+  private listRef: React.RefObject<ListImperativeAPI | null>;
   private resizeObserver: ResizeObserver;
 
   constructor(props: OutputProps) {
@@ -201,13 +223,14 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
 
   componentDidUpdate(_: OutputProps, prevState: FullOutputState) {
     if (
-      prevState.lines.length == this.state.lines.length ||
-      !this.listRef.current
+      !this.listRef.current ||
+      this.state.lines.length == 0 ||
+      prevState.lines.length == this.state.lines.length
     ) {
       return;
     }
 
-    this.listRef.current.scrollToItem(this.state.lines.length - 1);
+    this.listRef.current.scrollToRow({ index: this.state.lines.length - 1 });
   }
 
   clear() {
@@ -261,21 +284,14 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
     return (
       <div className="terminal-output" ref={this.outputRef}>
         <List
-          ref={this.listRef}
-          width={this.state.width}
-          height={this.state.height}
-          itemCount={this.state.lines.length}
-          itemSize={20}
-        >
-          {({ index, style }) => {
-            const line = this.state.lines[index];
-            return (
-              <span className={line.classNames} style={style}>
-                {line.text}
-              </span>
-            );
-          }}
-        </List>
+          listRef={this.listRef}
+          overscanCount={30}
+          rowComponent={LogLineRow}
+          rowCount={this.state.lines.length}
+          rowProps={{ lines: this.state.lines }}
+          rowHeight={20}
+          style={{ height: this.state.height, width: this.state.width }}
+        />
       </div>
     );
   }
