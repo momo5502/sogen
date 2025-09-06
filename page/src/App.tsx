@@ -1,20 +1,12 @@
 import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { HashRouter, Route, Routes, Navigate } from "react-router-dom";
-import { Playground, PlaygroundFile, storeEmulateData } from "./playground";
+import { Playground, storeEmulateData } from "./playground";
 import { LandingPage } from "./landing-page";
 
 import { useParams } from "react-router-dom";
 
-import "@fontsource/inter/100.css";
-import "@fontsource/inter/200.css";
-import "@fontsource/inter/300.css";
-import "@fontsource/inter/400.css";
-import "@fontsource/inter/500.css";
-import "@fontsource/inter/600.css";
-import "@fontsource/inter/700.css";
-import "@fontsource/inter/800.css";
-import "@fontsource/inter/900.css";
+import "@fontsource/inter/latin.css";
 
 import "./App.css";
 

@@ -73,6 +73,8 @@ function decodeEvent(data: string) {
 type StateChangeHandler = (state: EmulationState) => void;
 type StatusUpdateHandler = (status: EmulationStatus) => void;
 
+const cacheBuster = undefined; //import.meta.env.VITE_BUILD_TIME || Date.now();
+
 export class Emulator {
   logHandler: LogHandler;
   stateChangeHandler: StateChangeHandler;
@@ -99,13 +101,9 @@ export class Emulator {
       this.terminateReject = reject;
     });
 
-    const cacheBuster = import.meta.env.VITE_BUILD_TIME || Date.now();
+    const busterParams = cacheBuster ? `?${cacheBuster}` : "";
 
-    this.worker = new Worker(
-      /*new URL('./emulator-worker.js', import.meta.url)*/ "./emulator-worker.js?" +
-        cacheBuster,
-    );
-
+    this.worker = new Worker("./emulator-worker.js" + busterParams);
     this.worker.onerror = this._onError.bind(this);
     this.worker.onmessage = (e) => queueMicrotask(() => this._onMessage(e));
   }
@@ -124,7 +122,7 @@ export class Emulator {
         arguments: options.applicationOptions,
         persist: settings.persist,
         wasm64: settings.wasm64,
-        cacheBuster: import.meta.env.VITE_BUILD_TIME || Date.now(),
+        cacheBuster,
       },
     });
   }

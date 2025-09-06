@@ -87,7 +87,8 @@ function runEmulation(
     noInitialRun: true,
     locateFile: (path, scriptDirectory) => {
       const bitness = wasm64 ? "64" : "32";
-      return `${scriptDirectory}${bitness}/${path}?${cacheBuster}`;
+      const busterParams = cacheBuster ? `?${cacheBuster}` : "";
+      return `${scriptDirectory}${bitness}/${path}${busterParams}`;
     },
     onRuntimeInitialized: function () {
       FS.mkdir("/root");
@@ -105,9 +106,11 @@ function runEmulation(
     postRun: flushLines,
   };
 
+  const busterParams = cacheBuster ? `?${cacheBuster}` : "";
+
   if (wasm64) {
-    importScripts("./64/analyzer.js?" + cacheBuster);
+    importScripts("./64/analyzer.js" + busterParams);
   } else {
-    importScripts("./32/analyzer.js?" + cacheBuster);
+    importScripts("./32/analyzer.js" + busterParams);
   }
 }
