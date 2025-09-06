@@ -15,6 +15,7 @@ export default defineConfig({
       registerType: "autoUpdate",
       manifest: {
         theme_color: "#0279E8",
+        background_color: "#141416",
       },
       workbox: {
         maximumFileSizeToCacheInBytes: 100 * mb,
