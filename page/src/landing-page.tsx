@@ -87,7 +87,7 @@ export function LandingPage() {
         {/* Hero Section with Animated Background */}
         <section className="relative overflow-visible">
           {/* Animated Background Elements */}
-          <div className="absolute inset-0 container mx-auto ">
+          <div className="absolute inset-0 container mx-auto overflow-x-hidden sm:overflow-x-visible">
             <div className="absolute top-20 left-10 w-72 h-72 bg-yellow-500/10 rounded-full blur-3xl"></div>
             <div className="absolute top-40 right-20 w-96 h-96 bg-lime-500/10 rounded-full blur-3xl"></div>
             <div className="absolute bottom-20 left-1/3 w-80 h-80 bg-cyan-500/10 rounded-full blur-3xl"></div>
@@ -136,7 +136,7 @@ export function LandingPage() {
               </div>
 
               {/* Stats */}
-              <div className="flex justify-center gap-8 pt-12">
+              <div className="flex justify-center flex-col sm:flex-row gap-8 pt-12">
                 {stats.map((stat, index) => (
                   <div key={index} className="text-center">
                     <div className="text-2xl font-bold text-white">
