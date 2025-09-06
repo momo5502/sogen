@@ -40,7 +40,7 @@ export default defineConfig({
       },
       workbox: {
         maximumFileSizeToCacheInBytes: 100 * mb,
-        globPatterns: ["**/*.{js,css,html,woff,woff2}"],
+        globPatterns: ["**/*.{js,css,html,woff,woff2,wasm}"],
         runtimeCaching: [
           generateExternalCache(
             /^https:\/\/momo5502\.com\/.*/i,
