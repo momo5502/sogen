@@ -240,7 +240,7 @@ namespace
             for (const auto& instruction : instructions)
             {
                 const auto* mnemonic = cs_insn_name(c.d.get_handle(), instruction);
-                c.win_emu->log.print(color::white, "%s: %" PRIx64 "\n", mnemonic, count);
+                c.win_emu->log.print(color::white, "%s: %" PRIu64 "\n", mnemonic, count);
             }
         }
     }
