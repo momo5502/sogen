@@ -136,7 +136,7 @@ export function LandingPage() {
               </div>
 
               {/* Stats */}
-              <div className="flex justify-center flex-col sm:flex-row gap-8 pt-12">
+              <div className="flex justify-center flex-col min-[400px]:flex-row gap-6 sm:gap-8 pt-12">
                 {stats.map((stat, index) => (
                   <div key={index} className="text-center">
                     <div className="text-2xl font-bold text-white">
