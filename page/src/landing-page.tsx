@@ -17,6 +17,42 @@ import {
 } from "lucide-react";
 import { Header } from "./Header";
 
+function generateButtons(additionalClasses: string = "") {
+  return (
+    <div
+      className={`flex flex-col sm:flex-row gap-4 justify-center items-stretch sm:items-center px-4 min-[340px]:px-16 ${additionalClasses}`}
+    >
+      <a href="#/playground">
+        <Button
+          asChild
+          size="lg"
+          className="bg-gradient-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100 w-full flex"
+        >
+          <span>
+            <Play className="mr-2 h-5 w-5 transition-transform" />
+            <span className="flex-1">Try Online</span>
+            <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
+          </span>
+        </Button>
+      </a>
+      <a href="https://github.com/momo5502/sogen" target="_blank">
+        <Button
+          asChild
+          size="lg"
+          variant="outline"
+          className="border-neutral-600 text-neutral-300 hover:bg-neutral-800/50 px-8 py-6 text-lg font-semibold group transition-all duration-300 w-full flex"
+        >
+          <span>
+            <Github className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
+            <span className="flex-1">Get Source</span>
+            <ExternalLink className="ml-2 h-4 w-4" />
+          </span>
+        </Button>
+      </a>
+    </div>
+  );
+}
+
 export function LandingPage() {
   const features = [
     {
@@ -83,17 +119,17 @@ export function LandingPage() {
         title="Sogen"
         description="A high-performance Windows user space emulator."
       />
-      <div className="flex flex-col min-h-screen bg-gradient-to-br from-zinc-900 via-neutral-900 to-black">
+      <div className="flex flex-col min-h-screen bg-gradient-to-br from-zinc-900 via-neutral-900 to-black overflow-x-hidden">
         {/* Hero Section with Animated Background */}
         <section className="relative overflow-visible">
           {/* Animated Background Elements */}
-          <div className="absolute inset-0 container mx-auto overflow-x-hidden sm:overflow-x-visible">
+          <div className="absolute inset-0 container mx-auto">
             <div className="absolute top-20 left-10 w-72 h-72 bg-yellow-500/10 rounded-full blur-3xl"></div>
             <div className="absolute top-40 right-20 w-96 h-96 bg-lime-500/10 rounded-full blur-3xl"></div>
             <div className="absolute bottom-20 left-1/3 w-80 h-80 bg-cyan-500/10 rounded-full blur-3xl"></div>
           </div>
 
-          <div className="relative container mx-auto min-h-[100dvh] p-4 flex items-center xl:min-h-0 xl:px-6 xl:py-32">
+          <div className="relative container mx-auto min-h-[100dvh] p-1 min-[340px]:p-4 flex items-center xl:min-h-0 xl:px-6 xl:py-32">
             <div className="text-center space-y-8 max-w-4xl mx-auto">
               {/* Main Headline */}
               <h1 className="text-5xl md:text-7xl font-bold text-white leading-tight">
@@ -104,36 +140,10 @@ export function LandingPage() {
                 A high-performance Windows user space emulator.
               </p>
 
-              {/* CTA Buttons */}
-              <div className="flex flex-col sm:flex-row gap-4 justify-center items-center pt-8">
-                <a href="#/playground">
-                  <Button
-                    asChild
-                    size="lg"
-                    className="bg-gradient-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100"
-                  >
-                    <span>
-                      <Play className="mr-2 h-5 w-5 transition-transform" />
-                      Try Online
-                      <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
-                    </span>
-                  </Button>
-                </a>
-                <a href="https://github.com/momo5502/sogen" target="_blank">
-                  <Button
-                    asChild
-                    size="lg"
-                    variant="outline"
-                    className="border-neutral-600 text-neutral-300 hover:bg-neutral-800/50 px-8 py-6 text-lg font-semibold group transition-all duration-300"
-                  >
-                    <span>
-                      <Github className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
-                      View Source
-                      <ExternalLink className="ml-2 h-4 w-4" />
-                    </span>
-                  </Button>
-                </a>
-              </div>
+              {
+                /* CTA Buttons */
+                generateButtons("pt-8")
+              }
 
               {/* Stats */}
               <div className="flex justify-center flex-col min-[400px]:flex-row gap-6 sm:gap-8 pt-12">
@@ -265,33 +275,7 @@ export function LandingPage() {
             <p className="text-xl text-neutral-300 mb-8 max-w-2xl mx-auto">
               Try Sogen directly in your browser or explore the source code.
             </p>
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <a href="#/playground">
-                <Button
-                  asChild
-                  size="lg"
-                  className="bg-gradient-to-br from-white to-neutral-300 text-neutral-900  px-8 py-6 text-lg font-semibold transition-all duration-100"
-                >
-                  <span>
-                    <Play className="mr-2 h-5 w-5" />
-                    Launch Playground
-                  </span>
-                </Button>
-              </a>
-              <a href="https://github.com/momo5502/sogen" target="_blank">
-                <Button
-                  asChild
-                  size="lg"
-                  variant="outline"
-                  className="border-white text-white hover:bg-white/10 px-8 py-6 text-lg font-semibold"
-                >
-                  <span>
-                    <Download className="mr-2 h-5 w-5" />
-                    Get Source
-                  </span>
-                </Button>
-              </a>
-            </div>
+            {generateButtons()}
           </div>
         </section>
 
