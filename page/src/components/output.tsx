@@ -190,6 +190,7 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
     this.logLine = this.logLine.bind(this);
     this.logLines = this.logLines.bind(this);
     this.handleScroll = this.handleScroll.bind(this);
+    this.scrollListToEnd = this.scrollListToEnd.bind(this);
     this.updateDimensions = this.updateDimensions.bind(this);
 
     this.outputRef = React.createRef();
@@ -334,20 +335,16 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
           rowHeight={20}
           style={{ height: this.state.height, width: this.state.width }}
         />
-
-        {this.state.autoScroll ? (
-          <></>
-        ) : (
-          <Button
-            className="absolute bottom-6 right-6 z-50 terminal-glass"
-            variant="secondary"
-            onClick={() => {
-              this.scrollListToEnd();
-            }}
-          >
-            <ArrowDown />
-          </Button>
-        )}
+        <Button
+          className={
+            "absolute bottom-6 right-6 z-50 terminal-glass transition-opacity duration-50 ease-linear " +
+            (this.state.autoScroll ? "opacity-0" : "")
+          }
+          variant="secondary"
+          onClick={this.scrollListToEnd}
+        >
+          <ArrowDown />
+        </Button>
       </div>
     );
   }
