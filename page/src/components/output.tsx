@@ -254,7 +254,10 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
 
   scrollListToEnd() {
     if (this.listRef.current && this.state.lines.length > 0) {
-      this.listRef.current.scrollToRow({ index: this.state.lines.length - 1 });
+      this.listRef.current.scrollToRow({
+        index: this.state.lines.length - 1,
+        behavior: "instant",
+      });
     }
 
     this.setState({ autoScroll: true });
