@@ -150,6 +150,10 @@ export class Playground extends React.Component<
     }
   }
 
+  componentWillUnmount(): void {
+    this.state.emulator?.stop();
+  }
+
   async resetFilesys() {
     if (!this.state.filesystem) {
       return;
