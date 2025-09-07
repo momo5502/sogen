@@ -181,6 +181,7 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
   private listRef: React.RefObject<ListImperativeAPI | null>;
   private resizeObserver: ResizeObserver;
   private scrollElement: HTMLDivElement | null | undefined;
+  private scrollActive: boolean = false;
 
   constructor(props: OutputProps) {
     super(props);
@@ -189,6 +190,7 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
     this.logLine = this.logLine.bind(this);
     this.logLines = this.logLines.bind(this);
     this.handleScroll = this.handleScroll.bind(this);
+    this.handleScrollEnd = this.handleScrollEnd.bind(this);
     this.updateDimensions = this.updateDimensions.bind(this);
 
     this.outputRef = React.createRef();
@@ -211,6 +213,10 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
   }
 
   handleScroll(e: Event) {
+    if (this.scrollActive) {
+      return;
+    }
+
     const threshold = 40;
     const element = e.target as HTMLElement;
     const { scrollTop, scrollHeight, clientHeight } = element;
@@ -219,8 +225,14 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
     this.setState({ autoScroll: isAtEnd });
   }
 
+  handleScrollEnd(e: Event) {
+    this.scrollActive = false;
+    this.handleScroll(e);
+  }
+
   unregisterScrollListener() {
     this.scrollElement?.removeEventListener("scroll", this.handleScroll);
+    this.scrollElement?.removeEventListener("scrollend", this.handleScrollEnd);
   }
 
   registerScrollListener(element: HTMLDivElement | null | undefined) {
@@ -231,6 +243,7 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
     this.unregisterScrollListener();
     this.scrollElement = element;
     element?.addEventListener("scroll", this.handleScroll);
+    element?.addEventListener("scrollend", this.handleScrollEnd);
   }
 
   registerScrollOnList() {
@@ -254,6 +267,7 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
 
   scrollListToEnd() {
     if (this.listRef.current && this.state.lines.length > 0) {
+      this.scrollActive = true;
       this.listRef.current.scrollToRow({
         index: this.state.lines.length - 1,
         behavior: "instant",
