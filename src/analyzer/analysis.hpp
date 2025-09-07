@@ -44,6 +44,9 @@ struct analysis_context
     disassembler d{};
     std::unordered_map<uint32_t, uint64_t> instructions{};
     std::vector<accessed_import> accessed_imports{};
+    std::set<uint64_t> rdtsc_cache{};
+    std::set<uint64_t> rdtscp_cache{};
+    std::set<std::pair<uint64_t, uint32_t>> cpuid_cache{};
 };
 
 void register_analysis_callbacks(analysis_context& c);

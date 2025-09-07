@@ -453,6 +453,8 @@ namespace
             .settings = &options,
         };
 
+        const auto concise_logging = !options.verbose_logging;
+
         const auto win_emu = setup_emulator(options, args);
         win_emu->log.disable_output(options.concise_logging || options.silent);
         context.win_emu = win_emu.get();
@@ -471,15 +473,13 @@ namespace
 
         const auto& exe = *win_emu->mod_manager.executable;
 
-        const auto concise_logging = !options.verbose_logging;
-
         win_emu->emu().hook_instruction(x86_hookable_instructions::cpuid, [&] {
             const auto rip = win_emu->emu().read_instruction_pointer();
+            const auto leaf = win_emu->emu().reg<uint32_t>(x86_register::eax);
             const auto mod = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
 
-            if (mod.has_value())
+            if (mod.has_value() && (!concise_logging || context.cpuid_cache.insert({rip, leaf}).second))
             {
-                const auto leaf = win_emu->emu().reg<uint32_t>(x86_register::eax);
                 win_emu->log.print(color::blue, "Executing CPUID instruction with leaf 0x%X at 0x%" PRIx64 " (%s)\n", leaf, rip,
                                    (*mod) ? (*mod)->name.c_str() : "<N/A>");
             }

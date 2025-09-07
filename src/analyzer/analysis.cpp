@@ -399,7 +399,7 @@ namespace
         }
     }
 
-    void handle_rdtsc(const analysis_context& c)
+    void handle_rdtsc(analysis_context& c)
     {
         auto& win_emu = *c.win_emu;
         auto& emu = win_emu.emu();
@@ -407,7 +407,7 @@ namespace
         const auto rip = emu.read_instruction_pointer();
         const auto mod = get_module_if_interesting(win_emu.mod_manager, c.settings->modules, rip);
 
-        if (!mod.has_value())
+        if (!mod.has_value() || (c.settings->concise_logging && !c.rdtsc_cache.insert(rip).second))
         {
             return;
         }
@@ -415,7 +415,7 @@ namespace
         win_emu.log.print(color::blue, "Executing RDTSC instruction at 0x%" PRIx64 " (%s)\n", rip, (*mod) ? (*mod)->name.c_str() : "<N/A>");
     }
 
-    void handle_rdtscp(const analysis_context& c)
+    void handle_rdtscp(analysis_context& c)
     {
         auto& win_emu = *c.win_emu;
         auto& emu = win_emu.emu();
@@ -423,7 +423,7 @@ namespace
         const auto rip = emu.read_instruction_pointer();
         const auto mod = get_module_if_interesting(win_emu.mod_manager, c.settings->modules, rip);
 
-        if (!mod.has_value())
+        if (!mod.has_value() || (c.settings->concise_logging && !c.rdtscp_cache.insert(rip).second))
         {
             return;
         }
