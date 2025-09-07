@@ -42,6 +42,8 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 100 * mb,
         cleanupOutdatedCaches: true,
         globPatterns: ["**/*.{js,css,html,woff,woff2,wasm}"],
+        globIgnores: ["root.zip"],
+        navigateFallbackDenylist: [/^\/root\.zip$/],
         runtimeCaching: [
           generateExternalCache(
             /^https:\/\/momo5502\.com\/.*/i,
