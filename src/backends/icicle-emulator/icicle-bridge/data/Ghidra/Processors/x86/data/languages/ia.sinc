@@ -3936,7 +3936,19 @@ define pcodeop skinit;
 
 :SWAPGS             is vexMode=0 & bit64=1 & byte=0x0f; byte=0x01; byte=0xf8   { swapgs(); }
 
-:RDTSCP             is vexMode=0 & bit64=1 & byte=0x0f; byte=0x01; byte=0xf9   { rdtscp(); }
+:RDTSCP             is vexMode=0 & bit64=1 & byte=0x0f; byte=0x01; byte=0xf9   { 
+    tmp:12 = rdtscp();
+
+@ifdef IA64
+	RAX = zext(tmp[0,32]);
+	RDX = zext(tmp[32,32]);
+	RCX = zext(tmp[64,32]);
+@else
+	EAX = tmp[0,32];
+	EDX = tmp[32,32];
+	ECX = tmp[64,32];
+@endif
+ }
 
 :TEST   AL,imm8     is vexMode=0 & byte=0xA8; AL & imm8                 { logicalflags(); local tmp =   AL & imm8;  resultflags(tmp); }
 :TEST   AX,imm16    is vexMode=0 & opsize=0; byte=0xA9; AX & imm16          { logicalflags(); local tmp =   AX & imm16; resultflags(tmp); }
