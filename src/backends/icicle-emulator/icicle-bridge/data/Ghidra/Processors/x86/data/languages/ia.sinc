@@ -3937,16 +3937,16 @@ define pcodeop skinit;
 :SWAPGS             is vexMode=0 & bit64=1 & byte=0x0f; byte=0x01; byte=0xf8   { swapgs(); }
 
 :RDTSCP             is vexMode=0 & bit64=1 & byte=0x0f; byte=0x01; byte=0xf9   { 
-    tmp:12 = rdtscp();
+    tmp:8 = rdtsc();
 
 @ifdef IA64
 	RAX = zext(tmp[0,32]);
 	RDX = zext(tmp[32,32]);
-	RCX = zext(tmp[64,32]);
+	RCX = zext(0);
 @else
 	EAX = tmp[0,32];
 	EDX = tmp[32,32];
-	ECX = tmp[64,32];
+	ECX = 0;
 @endif
  }
 
