@@ -74,7 +74,7 @@ namespace
         kusd.QpcFrequency = utils::clock::steady_duration::period::den;
         kusd.ProcessorFeatures.arr[PF_RDTSC_INSTRUCTION_AVAILABLE] = 1;
         kusd.ProcessorFeatures.arr[PF_RDTSCP_INSTRUCTION_AVAILABLE] = 1;
-        kusd.ProcessorFeatures.arr[PF_RDPID_INSTRUCTION_AVAILABLE] = 1;
+        kusd.ProcessorFeatures.arr[PF_RDPID_INSTRUCTION_AVAILABLE] = 0;
 
         constexpr std::u16string_view root_dir{u"C:\\WINDOWS"};
         memcpy(&kusd.NtSystemRoot.arr[0], root_dir.data(), root_dir.size() * 2);
