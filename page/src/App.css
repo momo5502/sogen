@@ -136,3 +136,9 @@ button.fancy.bg-secondary:hover {
 .terminal-dark-gray {
   color: rgb(81, 81, 81);
 }
+
+.terminal-glass {
+  box-shadow: 0px 0px 15px 4px rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(6px) brightness(0.8) saturate(1.3);
+  background: transparent;
+}

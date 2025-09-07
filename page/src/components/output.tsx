@@ -1,10 +1,7 @@
 import React from "react";
-import {
-  List,
-  ListImperativeAPI,
-  useListRef,
-  type RowComponentProps,
-} from "react-window";
+import { List, ListImperativeAPI, type RowComponentProps } from "react-window";
+import { ArrowDown } from "react-bootstrap-icons";
+import { Button } from "./ui/button";
 
 interface OutputProps {}
 
@@ -26,6 +23,7 @@ interface FullOutputState extends OutputState {
   height: number;
   width: number;
   state: SizeState;
+  autoScroll: boolean;
 }
 
 interface LogLine {
@@ -182,6 +180,7 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
   private outputRef: React.RefObject<HTMLDivElement | null>;
   private listRef: React.RefObject<ListImperativeAPI | null>;
   private resizeObserver: ResizeObserver;
+  private scrollElement: HTMLDivElement | null | undefined;
 
   constructor(props: OutputProps) {
     super(props);
@@ -189,6 +188,7 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
     this.clear = this.clear.bind(this);
     this.logLine = this.logLine.bind(this);
     this.logLines = this.logLines.bind(this);
+    this.handleScroll = this.handleScroll.bind(this);
     this.updateDimensions = this.updateDimensions.bind(this);
 
     this.outputRef = React.createRef();
@@ -202,11 +202,39 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
       height: 10,
       width: 10,
       state: SizeState.Final,
+      autoScroll: true,
     };
 
     this.state.grouper.handler = (lines: string[]) => {
       this.setState((s) => mergeLines(s, lines));
     };
+  }
+
+  handleScroll(e: Event) {
+    const threshold = 40;
+    const element = e.target as HTMLElement;
+    const { scrollTop, scrollHeight, clientHeight } = element;
+    const isAtEnd = scrollTop + clientHeight >= scrollHeight - threshold;
+
+    this.setState({ autoScroll: isAtEnd });
+  }
+
+  unregisterScrollListener() {
+    this.scrollElement?.removeEventListener("scroll", this.handleScroll);
+  }
+
+  registerScrollListener(element: HTMLDivElement | null | undefined) {
+    if (element == this.scrollElement) {
+      return;
+    }
+
+    this.unregisterScrollListener();
+    this.scrollElement = element;
+    element?.addEventListener("scroll", this.handleScroll);
+  }
+
+  registerScrollOnList() {
+    this.registerScrollListener(this.listRef.current?.element);
   }
 
   componentDidMount() {
@@ -215,22 +243,32 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
     if (this.outputRef.current) {
       this.resizeObserver.observe(this.outputRef.current);
     }
+
+    this.registerScrollOnList();
   }
 
   componentWillUnmount() {
     this.resizeObserver.disconnect();
+    this.unregisterScrollListener();
+  }
+
+  scrollListToEnd() {
+    if (this.listRef.current && this.state.lines.length > 0) {
+      this.listRef.current.scrollToRow({ index: this.state.lines.length - 1 });
+    }
+
+    this.setState({ autoScroll: true });
   }
 
   componentDidUpdate(_: OutputProps, prevState: FullOutputState) {
-    if (
-      !this.listRef.current ||
-      this.state.lines.length == 0 ||
-      prevState.lines.length == this.state.lines.length
-    ) {
-      return;
-    }
+    this.registerScrollOnList();
 
-    this.listRef.current.scrollToRow({ index: this.state.lines.length - 1 });
+    if (
+      this.state.autoScroll &&
+      prevState.lines.length != this.state.lines.length
+    ) {
+      this.scrollListToEnd();
+    }
   }
 
   clear() {
@@ -292,6 +330,20 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
           rowHeight={20}
           style={{ height: this.state.height, width: this.state.width }}
         />
+
+        {this.state.autoScroll ? (
+          <></>
+        ) : (
+          <Button
+            className="absolute bottom-6 right-6 z-50 terminal-glass"
+            variant="secondary"
+            onClick={() => {
+              this.scrollListToEnd();
+            }}
+          >
+            <ArrowDown />
+          </Button>
+        )}
       </div>
     );
   }
