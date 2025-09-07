@@ -160,8 +160,9 @@ class OutputGrouper {
 }
 
 function LogLineRow({
-  index,
+  ariaAttributes,
   lines,
+  index,
   style,
 }: RowComponentProps<{
   lines: LogLine[];
@@ -169,7 +170,7 @@ function LogLineRow({
   {
     const line = lines[index];
     return (
-      <span className={line.classNames} style={style}>
+      <span className={line.classNames} style={style} {...ariaAttributes}>
         {line.text}
       </span>
     );
