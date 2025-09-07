@@ -32,7 +32,7 @@ jobs:
     name: Run Clang Tidy
     runs-on: ubuntu-24.04
     env:
-      LLVM_VERSION: 20
+      LLVM_VERSION: 21
     steps:
       - name: Checkout Source
         uses: actions/checkout@v5
@@ -200,7 +200,7 @@ jobs:
             runner: ubuntu-24.04
           - platform: Linux x86_64 Clang
             runner: ubuntu-24.04
-            clang-version: 20
+            clang-version: 21
           - platform: iOS arm64
             runner: macos-latest
             rust-target: aarch64-apple-ios
