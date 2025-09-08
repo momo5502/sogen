@@ -15,6 +15,7 @@
 #pragma warning(push)
 #pragma warning(disable : 4189)
 #pragma warning(disable : 4308)
+#pragma warning(disable : 4715)
 #endif
 
 #include "reflect_extension.hpp"

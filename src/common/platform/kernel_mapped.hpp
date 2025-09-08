@@ -811,13 +811,15 @@ typedef struct _XSTATE_CONFIGURATION
 
 #endif
 
+#define ORIGINALLY_VOLATILE /*volatile*/
+
 typedef struct _KUSER_SHARED_DATA64
 {
     ULONG TickCountLowDeprecated;
     ULONG TickCountMultiplier;
-    volatile KSYSTEM_TIME InterruptTime;
-    volatile KSYSTEM_TIME SystemTime;
-    volatile KSYSTEM_TIME TimeZoneBias;
+    ORIGINALLY_VOLATILE KSYSTEM_TIME InterruptTime;
+    ORIGINALLY_VOLATILE KSYSTEM_TIME SystemTime;
+    ORIGINALLY_VOLATILE KSYSTEM_TIME TimeZoneBias;
     USHORT ImageNumberLow;
     USHORT ImageNumberHigh;
     ARRAY_CONTAINER<char16_t, 260> NtSystemRoot;
@@ -829,7 +831,7 @@ typedef struct _KUSER_SHARED_DATA64
     ULONG AppCompatFlag;
     ULONGLONG RNGSeedVersion;
     ULONG GlobalValidationRunlevel;
-    volatile LONG TimeZoneBiasStamp;
+    ORIGINALLY_VOLATILE LONG TimeZoneBiasStamp;
     ULONG NtBuildNumber;
     NT_PRODUCT_TYPE NtProductType;
     BOOLEAN ProductTypeIsValid;
@@ -840,7 +842,7 @@ typedef struct _KUSER_SHARED_DATA64
     ARRAY_CONTAINER<BOOLEAN, PROCESSOR_FEATURE_MAX> ProcessorFeatures;
     ULONG Reserved1;
     ULONG Reserved3;
-    volatile ULONG TimeSlip;
+    ORIGINALLY_VOLATILE ULONG TimeSlip;
     ALTERNATIVE_ARCHITECTURE_TYPE AlternativeArchitecture;
     ULONG BootId;
     LARGE_INTEGER SystemExpirationDate;
@@ -848,8 +850,8 @@ typedef struct _KUSER_SHARED_DATA64
     BOOLEAN KdDebuggerEnabled;
     KUSD_MITIGATION_POLICIES_UNION MitigationPolicies;
     USHORT CyclesPerYield;
-    volatile ULONG ActiveConsoleId;
-    volatile ULONG DismountCount;
+    ORIGINALLY_VOLATILE ULONG ActiveConsoleId;
+    ORIGINALLY_VOLATILE ULONG DismountCount;
     ULONG ComPlusPackage;
     ULONG LastSystemRITEventTickCount;
     ULONG NumberOfPhysicalPages;
@@ -882,10 +884,10 @@ typedef struct _KUSER_SHARED_DATA64
     ULONG ImageFileExecutionOptions;
     ULONG LangGenerationCount;
     ULONGLONG Reserved4;
-    volatile ULONGLONG InterruptTimeBias;
-    volatile ULONGLONG QpcBias;
+    ORIGINALLY_VOLATILE ULONGLONG InterruptTimeBias;
+    ORIGINALLY_VOLATILE ULONGLONG QpcBias;
     ULONG ActiveProcessorCount;
-    volatile UCHAR ActiveGroupCount;
+    ORIGINALLY_VOLATILE UCHAR ActiveGroupCount;
     UCHAR Reserved9;
     KUSD_QPC_DATA_UNION QpcData;
     LARGE_INTEGER TimeZoneBiasEffectiveStart;
