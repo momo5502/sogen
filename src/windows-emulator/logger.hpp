@@ -6,6 +6,7 @@ class logger : public generic_logger
   public:
     void print(color c, std::string_view message) override;
     void print(color c, const char* message, ...) override FORMAT_ATTRIBUTE(3, 4);
+    void force_print(color c, const char* message, ...) FORMAT_ATTRIBUTE(3, 4);
     void info(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);
     void warn(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);
     void error(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);

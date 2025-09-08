@@ -289,8 +289,7 @@ namespace
             if (options.use_gdb)
             {
                 const auto* address = "127.0.0.1:28960";
-                win_emu.log.print(color::pink, "Waiting for GDB connection on %s...\n", address);
-                win_emu.log.disable_output(options.concise_logging || options.silent);
+                win_emu.log.force_print(color::pink, "Waiting for GDB connection on %s...\n", address);
 
                 const auto should_stop = [&] { return signals_received > 0; };
 
@@ -305,7 +304,6 @@ namespace
             }
             else
             {
-                win_emu.log.disable_output(options.concise_logging || options.silent);
                 win_emu.start();
             }
 
@@ -460,7 +458,12 @@ namespace
         const auto win_emu = setup_emulator(options, args);
         context.win_emu = win_emu.get();
 
-        win_emu->log.log("Using emulator: %s\n", win_emu->emu().get_name().c_str());
+        win_emu->log.disable_output(concise_logging || options.silent);
+
+        if (!options.silent)
+        {
+            win_emu->log.force_print(color::gray, "Using emulator backend: %s\n", win_emu->emu().get_name().c_str());
+        }
 
         std::optional<tenet_tracer> tenet_tracer{};
         if (options.tenet_trace)

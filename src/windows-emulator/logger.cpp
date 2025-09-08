@@ -147,6 +147,13 @@ void logger::print(const color c, const char* message, ...)
 }
 
 // NOLINTNEXTLINE(cert-dcl50-cpp)
+void logger::force_print(const color c, const char* message, ...)
+{
+    format_to_string(message, data);
+    this->print_message(c, data, true);
+}
+
+// NOLINTNEXTLINE(cert-dcl50-cpp)
 void logger::info(const char* message, ...) const
 {
     format_to_string(message, data);
