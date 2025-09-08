@@ -22,6 +22,17 @@ struct analysis_settings
     string_set ignored_functions{};
 };
 
+struct accessed_import
+{
+    uint64_t address{};
+    uint32_t thread_id{};
+    uint64_t access_rip{};
+    uint64_t access_inst_count{};
+    std::string accessor_module{};
+    std::string import_name{};
+    std::string import_module{};
+};
+
 struct analysis_context
 {
     const analysis_settings* settings{};
@@ -32,6 +43,7 @@ struct analysis_context
 
     disassembler d{};
     std::unordered_map<uint32_t, uint64_t> instructions{};
+    std::vector<accessed_import> accessed_imports{};
     std::set<uint64_t> rdtsc_cache{};
     std::set<uint64_t> rdtscp_cache{};
     std::set<std::pair<uint64_t, uint32_t>> cpuid_cache{};

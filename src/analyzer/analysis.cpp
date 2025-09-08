@@ -209,6 +209,54 @@ namespace
         }
     }
 
+    bool is_thread_alive(const analysis_context& c, const uint32_t thread_id)
+    {
+        for (const auto& t : c.win_emu->process.threads | std::views::values)
+        {
+            if (t.id == thread_id)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    void update_import_access(analysis_context& c, const uint64_t address)
+    {
+        if (c.accessed_imports.empty())
+        {
+            return;
+        }
+
+        const auto& t = c.win_emu->current_thread();
+        for (auto entry = c.accessed_imports.begin(); entry != c.accessed_imports.end();)
+        {
+            auto& a = *entry;
+            const auto is_same_thread = t.id == a.thread_id;
+
+            if (is_same_thread && address == a.address)
+            {
+                entry = c.accessed_imports.erase(entry);
+                continue;
+            }
+
+            constexpr auto inst_delay = 100u;
+            const auto execution_delay_reached = is_same_thread && a.access_inst_count + inst_delay <= t.executed_instructions;
+
+            if (!execution_delay_reached && is_thread_alive(c, a.thread_id))
+            {
+                ++entry;
+                continue;
+            }
+
+            c.win_emu->log.print(color::green, "Import read access without execution: %s (%s) at 0x%" PRIx64 " (%s)\n",
+                                 a.import_name.c_str(), a.import_module.c_str(), a.access_rip, a.accessor_module.c_str());
+
+            entry = c.accessed_imports.erase(entry);
+        }
+    }
+
     bool is_return(const disassembler& d, const emulator& emu, const uint64_t address)
     {
         std::array<uint8_t, MAX_INSTRUCTION_BYTES> instruction_bytes{};
@@ -249,6 +297,7 @@ namespace
     void handle_instruction(analysis_context& c, const uint64_t address)
     {
         auto& win_emu = *c.win_emu;
+        update_import_access(c, address);
 
 #if defined(OS_EMSCRIPTEN) && !defined(MOMO_EMSCRIPTEN_SUPPORT_NODEJS)
         if ((win_emu.get_executed_instructions() % 0x20000) == 0)
@@ -475,10 +524,21 @@ namespace
                 return;
             }
 
-            const auto& module_name = watched_module.imported_modules[sym->second.module_index];
+            accessed_import access{};
 
-            c.win_emu->log.print(color::green, "Import read access: %s (%s) at 0x%" PRIx64 " (%s)\n", sym->second.name.c_str(),
-                                 module_name.c_str(), rip, accessor_module.name.c_str());
+            access.address = c.win_emu->emu().read_memory<uint64_t>(address);
+
+            access.access_rip = rip;
+            access.accessor_module = accessor_module.name;
+
+            access.import_name = sym->second.name;
+            access.import_module = watched_module.imported_modules.at(sym->second.module_index);
+
+            const auto& t = c.win_emu->current_thread();
+            access.thread_id = t.id;
+            access.access_inst_count = t.executed_instructions;
+
+            c.accessed_imports.push_back(std::move(access));
         });
     }
 }
