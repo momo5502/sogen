@@ -422,7 +422,7 @@ namespace
 
     const char* get_module_memory_region_name(const mapped_module& mod, const uint64_t address)
     {
-        if (!mod.is_within(address))
+        if (!mod.contains(address))
         {
             return "outside???";
         }
@@ -540,7 +540,7 @@ namespace
 
                 auto read_handler = [&, section, concise_logging, read_count](const uint64_t address, const void*, size_t) {
                     const auto rip = win_emu->emu().read_instruction_pointer();
-                    if (!win_emu->mod_manager.executable->is_within(rip))
+                    if (!win_emu->mod_manager.executable->contains(rip))
                     {
                         return;
                     }
@@ -560,7 +560,7 @@ namespace
 
                 const auto write_handler = [&, section, concise_logging, write_count](const uint64_t address, const void*, size_t) {
                     const auto rip = win_emu->emu().read_instruction_pointer();
-                    if (!win_emu->mod_manager.executable->is_within(rip))
+                    if (!win_emu->mod_manager.executable->contains(rip))
                     {
                         return;
                     }

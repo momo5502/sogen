@@ -42,7 +42,7 @@ struct mapped_module
 
     bool is_static{false};
 
-    bool is_within(const uint64_t address) const
+    bool contains(const uint64_t address) const
     {
         return address >= this->image_base && address < (this->image_base + this->size_of_image);
     }

@@ -308,8 +308,8 @@ namespace
 #endif
 
         const auto previous_ip = c.win_emu->current_thread().previous_ip;
-        const auto is_main_exe = win_emu.mod_manager.executable->is_within(address);
-        const auto is_previous_main_exe = win_emu.mod_manager.executable->is_within(previous_ip);
+        const auto is_main_exe = win_emu.mod_manager.executable->contains(address);
+        const auto is_previous_main_exe = win_emu.mod_manager.executable->contains(previous_ip);
 
         const auto binary = utils::make_lazy([&] {
             if (is_main_exe)
@@ -448,7 +448,7 @@ namespace
             win_emu.log.print(color::blue, "Executing inline syscall: %.*s (0x%X) at 0x%" PRIx64 " (%s)\n", STR_VIEW_VA(syscall_name),
                               syscall_id, address, mod ? mod->name.c_str() : "<N/A>");
         }
-        else if (mod->is_within(previous_ip))
+        else if (mod->contains(previous_ip))
         {
             const auto rsp = emu.read_stack_pointer();
 
@@ -514,7 +514,7 @@ namespace
             const auto& import_list = c.win_emu->mod_manager.executable->imports;
 
             const auto rip = c.win_emu->emu().read_instruction_pointer();
-            if (!c.win_emu->mod_manager.executable->is_within(rip))
+            if (!c.win_emu->mod_manager.executable->contains(rip))
             {
                 return;
             }
@@ -582,7 +582,7 @@ void register_analysis_callbacks(analysis_context& c)
 
 std::optional<mapped_module*> get_module_if_interesting(module_manager& manager, const string_set& modules, const uint64_t address)
 {
-    if (manager.executable->is_within(address))
+    if (manager.executable->contains(address))
     {
         return manager.executable;
     }

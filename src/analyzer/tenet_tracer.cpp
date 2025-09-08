@@ -124,7 +124,7 @@ void tenet_tracer::filter_and_write_buffer()
         char* end_ptr = nullptr;
         uint64_t address = std::strtoull(line.c_str() + rip_pos + 6, &end_ptr, 16);
 
-        bool is_line_inside = exe_module->is_within(address);
+        bool is_line_inside = exe_module->contains(address);
         const auto _1 = utils::finally([&] {
             currently_outside = !is_line_inside; //
         });

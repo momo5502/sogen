@@ -99,7 +99,7 @@ class module_manager
 
         std::advance(upper_bound, -1);
 
-        if (upper_bound->second.is_within(address))
+        if (upper_bound->second.contains(address))
         {
             return upper_bound;
         }
