@@ -290,6 +290,7 @@ namespace
             {
                 const auto* address = "127.0.0.1:28960";
                 win_emu.log.print(color::pink, "Waiting for GDB connection on %s...\n", address);
+                win_emu.log.disable_output(options.concise_logging || options.silent);
 
                 const auto should_stop = [&] { return signals_received > 0; };
 
@@ -304,6 +305,7 @@ namespace
             }
             else
             {
+                win_emu.log.disable_output(options.concise_logging || options.silent);
                 win_emu.start();
             }
 
@@ -456,7 +458,6 @@ namespace
         const auto concise_logging = !options.verbose_logging;
 
         const auto win_emu = setup_emulator(options, args);
-        win_emu->log.disable_output(options.concise_logging || options.silent);
         context.win_emu = win_emu.get();
 
         win_emu->log.log("Using emulator: %s\n", win_emu->emu().get_name().c_str());
