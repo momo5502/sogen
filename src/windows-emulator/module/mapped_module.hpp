@@ -12,11 +12,12 @@ struct exported_symbol
 struct imported_symbol
 {
     std::string name{};
-    uint64_t address{};
+    size_t module_index{};
 };
 
 using exported_symbols = std::vector<exported_symbol>;
-using imported_symbols = std::map<std::string, std::vector<imported_symbol>>;
+using imported_symbols = std::unordered_map<uint64_t, imported_symbol>;
+using imported_module_list = std::vector<std::string>;
 using address_name_mapping = std::map<uint64_t, std::string>;
 
 struct mapped_section
@@ -36,6 +37,7 @@ struct mapped_module
 
     exported_symbols exports{};
     imported_symbols imports{};
+    imported_module_list imported_modules{};
     address_name_mapping address_names{};
 
     std::vector<mapped_section> sections{};
