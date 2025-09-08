@@ -12,6 +12,7 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
-    }
+    },
+    "types": ["vite-plugin-pwa/client"]
   }
 }
