@@ -71,15 +71,6 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
         </div>
 
         <div className="flex gap-6">
-          <Input
-            id="settings-argv"
-            placeholder="Command-Line Arguments"
-            value={this.state.commandLine}
-            onChange={(e) => this.updateArgv(e.target.value)}
-          />
-        </div>
-
-        <div className="flex gap-6">
           <RadioGroup
             defaultValue="regular"
             value={this.state.logging}
@@ -220,6 +211,15 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
             tooltip={
               "Use 64-bit WebAssembly which supports emulating applications that require more than 2gb of memory"
             }
+          />
+        </div>
+
+        <div className="flex gap-6">
+          <Input
+            id="settings-argv"
+            placeholder="Command-Line Arguments"
+            value={this.state.commandLine}
+            onChange={(e) => this.updateArgv(e.target.value)}
           />
         </div>
 
