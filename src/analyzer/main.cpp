@@ -294,7 +294,7 @@ namespace
                 const auto should_stop = [&] { return signals_received > 0; };
 
                 win_x64_gdb_stub_handler handler{win_emu, should_stop};
-                gdb_stub::run_gdb_stub(network::address{"0.0.0.0:28960", AF_INET}, handler);
+                gdb_stub::run_gdb_stub(network::address{address, AF_INET}, handler);
             }
             else if (!options.minidump_path.empty())
             {
