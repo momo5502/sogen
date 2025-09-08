@@ -209,54 +209,6 @@ namespace
         }
     }
 
-    bool is_thread_alive(const analysis_context& c, const uint32_t thread_id)
-    {
-        for (const auto& t : c.win_emu->process.threads | std::views::values)
-        {
-            if (t.id == thread_id)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    void update_import_access(analysis_context& c, const uint64_t address)
-    {
-        if (c.accessed_imports.empty())
-        {
-            return;
-        }
-
-        const auto& t = c.win_emu->current_thread();
-        for (auto entry = c.accessed_imports.begin(); entry != c.accessed_imports.end();)
-        {
-            auto& a = *entry;
-            const auto is_same_thread = t.id == a.thread_id;
-
-            if (is_same_thread && address == a.address)
-            {
-                entry = c.accessed_imports.erase(entry);
-                continue;
-            }
-
-            constexpr auto inst_delay = 100u;
-            const auto execution_delay_reached = is_same_thread && a.access_inst_count + inst_delay <= t.executed_instructions;
-
-            if (!execution_delay_reached && is_thread_alive(c, a.thread_id))
-            {
-                ++entry;
-                continue;
-            }
-
-            c.win_emu->log.print(color::green, "Import read access without execution: %s (%s) at 0x%" PRIx64 " (%s)\n",
-                                 a.import_name.c_str(), a.import_module.c_str(), a.access_rip, a.accessor_module.c_str());
-
-            entry = c.accessed_imports.erase(entry);
-        }
-    }
-
     bool is_return(const disassembler& d, const emulator& emu, const uint64_t address)
     {
         std::array<uint8_t, MAX_INSTRUCTION_BYTES> instruction_bytes{};
@@ -297,7 +249,6 @@ namespace
     void handle_instruction(analysis_context& c, const uint64_t address)
     {
         auto& win_emu = *c.win_emu;
-        update_import_access(c, address);
 
 #if defined(OS_EMSCRIPTEN) && !defined(MOMO_EMSCRIPTEN_SUPPORT_NODEJS)
         if ((win_emu.get_executed_instructions() % 0x20000) == 0)
@@ -501,52 +452,33 @@ namespace
         auto min = std::numeric_limits<uint64_t>::max();
         auto max = std::numeric_limits<uint64_t>::min();
 
-        for (const auto& imports : import_list | std::views::values)
+        for (const auto& import_thunk : import_list | std::views::keys)
         {
-            for (const auto& import : imports)
-            {
-                min = std::min(import.address, min);
-                max = std::max(import.address, max);
-            }
+            min = std::min(import_thunk, min);
+            max = std::max(import_thunk, max);
         }
 
         c.win_emu->emu().hook_memory_read(min, max - min, [&c](const uint64_t address, const void*, size_t) {
-            const auto& import_list = c.win_emu->mod_manager.executable->imports;
+            const auto& watched_module = *c.win_emu->mod_manager.executable;
+            const auto& accessor_module = *c.win_emu->mod_manager.executable;
 
             const auto rip = c.win_emu->emu().read_instruction_pointer();
-            if (!c.win_emu->mod_manager.executable->contains(rip))
+
+            if (!accessor_module.contains(rip))
             {
                 return;
             }
 
-            for (const auto& [module_name, imports] : import_list)
+            const auto sym = watched_module.imports.find(address);
+            if (sym == watched_module.imports.end())
             {
-                for (const auto& import : imports)
-                {
-                    if (address != import.address)
-                    {
-                        continue;
-                    }
-
-                    accessed_import access{};
-
-                    access.address = c.win_emu->emu().read_memory<uint64_t>(address);
-
-                    access.access_rip = c.win_emu->emu().read_instruction_pointer();
-                    access.accessor_module = c.win_emu->mod_manager.find_name(access.access_rip);
-
-                    access.import_name = import.name;
-                    access.import_module = module_name;
-
-                    const auto& t = c.win_emu->current_thread();
-                    access.thread_id = t.id;
-                    access.access_inst_count = t.executed_instructions;
-
-                    c.accessed_imports.push_back(std::move(access));
-
-                    return;
-                }
+                return;
             }
+
+            const auto& module_name = watched_module.imported_modules[sym->second.module_index];
+
+            c.win_emu->log.print(color::green, "Import read access: %s (%s) at 0x%" PRIx64 " (%s)\n", sym->second.name.c_str(),
+                                 module_name.c_str(), rip, accessor_module.name.c_str());
         });
     }
 }

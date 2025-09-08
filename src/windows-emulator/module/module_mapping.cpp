@@ -48,8 +48,8 @@ namespace
                 break;
             }
 
-            const auto module_name = buffer.as_string(descriptor.Name);
-            auto& imports = binary.imports[module_name];
+            const auto module_index = binary.imported_modules.size();
+            binary.imported_modules.push_back(buffer.as_string(descriptor.Name));
 
             auto original_thunk_data = buffer.as<IMAGE_THUNK_DATA64>(descriptor.FirstThunk);
             if (descriptor.OriginalFirstThunk)
@@ -65,11 +65,12 @@ namespace
                     break;
                 }
 
-                imported_symbol sym{};
-
                 static_assert(sizeof(IMAGE_THUNK_DATA64) == sizeof(uint64_t));
                 const auto thunk_rva = descriptor.FirstThunk + sizeof(IMAGE_THUNK_DATA64) * j;
-                sym.address = thunk_rva + binary.image_base;
+                const auto thunk_address = thunk_rva + binary.image_base;
+
+                auto& sym = binary.imports[thunk_address];
+                sym.module_index = module_index;
 
                 if (IMAGE_SNAP_BY_ORDINAL64(original_thunk.u1.Ordinal))
                 {
@@ -80,8 +81,6 @@ namespace
                     sym.name =
                         buffer.as_string(static_cast<size_t>(original_thunk.u1.AddressOfData + offsetof(IMAGE_IMPORT_BY_NAME, Name)));
                 }
-
-                imports.push_back(std::move(sym));
             }
         }
     }
