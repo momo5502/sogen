@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/popover";
 import { ChevronDown } from "react-bootstrap-icons";
 import { Input } from "./ui/input";
+import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
 
 interface SettingsMenuProps {
   settings: Settings;
@@ -79,48 +80,48 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
         </div>
 
         <div className="flex gap-6">
-          <Checkbox
-            id="settings-verbose"
-            checked={this.state.verbose}
-            onCheckedChange={(checked: boolean) => {
-              this.setState({ verbose: checked });
-            }}
-          />
-          <SettingsLabel
-            htmlFor="settings-verbose"
-            text={"Verbose Logging"}
-            tooltip={"Very detailed logging of all function call and accesses"}
-          />
-        </div>
-
-        <div className="flex gap-6">
-          <Checkbox
-            id="settings-concise"
-            checked={this.state.concise}
-            onCheckedChange={(checked: boolean) => {
-              this.setState({ concise: checked });
-            }}
-          />
-          <SettingsLabel
-            htmlFor="settings-concise"
-            text={"Concise Logging"}
-            tooltip={"Suppress logging until the application code runs"}
-          />
-        </div>
-
-        <div className="flex gap-6">
-          <Checkbox
-            id="settings-silent"
-            checked={this.state.silent}
-            onCheckedChange={(checked: boolean) => {
-              this.setState({ silent: checked });
-            }}
-          />
-          <SettingsLabel
-            htmlFor="settings-silent"
-            text={"Silent Logging"}
-            tooltip={"Suppress all logging except for stdout"}
-          />
+          <RadioGroup
+            defaultValue="regular"
+            value={this.state.logging}
+            onValueChange={(value) => this.setState({ logging: value })}
+          >
+            <div className="flex items-center gap-3">
+              <RadioGroupItem value="regular" id="settings-regular" />
+              <SettingsLabel
+                htmlFor="settings-regular"
+                text={"Regular Logging"}
+                tooltip={
+                  "Default logging behaviour, not too verbose, but also not very concise"
+                }
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              <RadioGroupItem value="verbose" id="settings-verbose" />
+              <SettingsLabel
+                htmlFor="settings-verbose"
+                text={"Verbose Logging"}
+                tooltip={
+                  "Very detailed logging of all function calls and accesses"
+                }
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              <RadioGroupItem value="concise" id="settings-concise" />
+              <SettingsLabel
+                htmlFor="settings-concise"
+                text={"Concise Logging"}
+                tooltip={"Suppress logging until the application code runs"}
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              <RadioGroupItem value="silent" id="settings-silent" />
+              <SettingsLabel
+                htmlFor="settings-silent"
+                text={"Silent Logging"}
+                tooltip={"Suppress all logging except for stdout"}
+              />
+            </div>
+          </RadioGroup>
         </div>
 
         <div className="flex gap-6">

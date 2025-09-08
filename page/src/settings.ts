@@ -1,9 +1,7 @@
 import { parse } from "shell-quote";
 
 export interface Settings {
-  verbose: boolean;
-  concise: boolean;
-  silent: boolean;
+  logging: "verbose" | "silent" | "concise" | string;
   bufferStdout: boolean;
   persist: boolean;
   execAccess: boolean;
@@ -22,9 +20,7 @@ export interface TranslatedSettings {
 
 export function createDefaultSettings(): Settings {
   return {
-    verbose: false,
-    concise: false,
-    silent: false,
+    logging: "regular",
     bufferStdout: true,
     persist: false,
     execAccess: true,
@@ -67,16 +63,19 @@ export function translateSettings(settings: Settings): TranslatedSettings {
   const switches: string[] = [];
   const options: string[] = [];
 
-  if (settings.verbose) {
-    switches.push("-v");
-  }
+  switch (settings.logging) {
+    case "verbose":
+      switches.push("-v");
+      break;
+    case "silent":
+      switches.push("-s");
+      break;
+    case "concise":
+      switches.push("-c");
+      break;
 
-  if (settings.concise) {
-    switches.push("-c");
-  }
-
-  if (settings.silent) {
-    switches.push("-s");
+    default:
+      break;
   }
 
   if (settings.bufferStdout) {
