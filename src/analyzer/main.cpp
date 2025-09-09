@@ -453,7 +453,7 @@ namespace
             .settings = &options,
         };
 
-        const auto concise_logging = !options.verbose_logging;
+        const auto concise_logging = options.concise_logging;
 
         const auto win_emu = setup_emulator(options, args);
         context.win_emu = win_emu.get();
