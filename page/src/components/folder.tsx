@@ -63,7 +63,7 @@ function getIcon(
     return (
       <div className={className}>
         <div className="w-full h-full flex items-center">
-          <img className="rounded-sm" src={icon} />
+          <img className="rounded-lg folder-icon" src={icon} />
         </div>
       </div>
     );
