@@ -200,7 +200,7 @@ function getIconDataUrl(iconEntry: IconEntry, iconData: ArrayBuffer) {
     contentType = "image/x-icon";
 
     const header = generateIcoHeader(iconEntry);
-    iconData = mergeArrayBuffers(header, iconData);
+    iconData = mergeArrayBuffers(header.slice().buffer, iconData);
   }
 
   return generateDataURL(new Uint8Array(iconData), contentType);
