@@ -691,8 +691,28 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtUserFindWindowEx()
+    NTSTATUS handle_NtUserFindWindowEx(const syscall_context& c, const hwnd, const hwnd,
+                                       const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
+                                       const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> window_name)
     {
+        if (c.win_emu.callbacks.on_generic_activity)
+        {
+            std::string class_name_str = "(null)";
+            std::string window_name_str = "(null)";
+
+            if (class_name)
+            {
+                class_name_str = u16_to_u8(read_unicode_string(c.emu, class_name));
+            }
+
+            if (window_name)
+            {
+                window_name_str = u16_to_u8(read_unicode_string(c.emu, window_name));
+            }
+
+            c.win_emu.callbacks.on_generic_activity("Window query for class '" + class_name_str + "' and name '" + window_name_str + "'");
+        }
+
         return 0;
     }
 
