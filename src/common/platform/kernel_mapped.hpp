@@ -1059,6 +1059,11 @@ struct EMU_GENERIC_MAPPING
     ACCESS_MASK GenericAll;
 };
 
+struct OBJECT_TYPES_INFORMATION
+{
+    ULONG NumberOfTypes;
+};
+
 struct OBJECT_TYPE_INFORMATION
 {
     STRING64 TypeName;

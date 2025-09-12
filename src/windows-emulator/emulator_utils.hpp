@@ -308,6 +308,16 @@ class emulator_allocator
         }
     }
 
+    void skip(const uint64_t bytes)
+    {
+        this->active_address_ += bytes;
+    }
+
+    void skip_until(const uint64_t offset)
+    {
+        this->active_address_ = offset;
+    }
+
   private:
     memory_interface* memory_{};
     uint64_t address_{};

@@ -159,6 +159,35 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
+        if (object_information_class == ObjectTypesInformation)
+        {
+            const auto name = get_type_name(static_cast<handle_types::type>(handle.value.type));
+            constexpr auto type_start_offset = align_up(sizeof(OBJECT_TYPES_INFORMATION), sizeof(uint64_t));
+
+            const auto required_size = type_start_offset + sizeof(OBJECT_TYPE_INFORMATION) + (name.size() + 1) * 2;
+            return_length.write_if_valid(static_cast<ULONG>(required_size));
+
+            if (required_size > object_information_length)
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            emulator_allocator allocator(c.emu, object_information, object_information_length);
+            const auto types_info = allocator.reserve<OBJECT_TYPES_INFORMATION>();
+            types_info.access([&](OBJECT_TYPES_INFORMATION& i) {
+                i.NumberOfTypes = 1; //
+            });
+
+            allocator.skip_until(type_start_offset);
+
+            const auto info = allocator.reserve<OBJECT_TYPE_INFORMATION>();
+            info.access([&](OBJECT_TYPE_INFORMATION& i) {
+                allocator.make_unicode_string(i.TypeName, name); //
+            });
+
+            return STATUS_SUCCESS;
+        }
+
         if (object_information_class == ObjectHandleFlagInformation)
         {
             return handle_query<OBJECT_HANDLE_FLAG_INFORMATION>(c.emu, object_information, object_information_length, return_length,
