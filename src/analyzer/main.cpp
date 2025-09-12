@@ -66,19 +66,22 @@ namespace
         scoped_hook env_ptr_hook_;
         scoped_hook params_hook_;
         scoped_hook ldr_hook_;
-        std::shared_ptr<object_watching_state> params_state = std::make_shared<object_watching_state>();
-        std::shared_ptr<object_watching_state> ldr_state = std::make_shared<object_watching_state>();
+        std::map<std::string, uint64_t> env_module_cache_{};
+        std::shared_ptr<object_watching_state> params_state_ = std::make_shared<object_watching_state>();
+        std::shared_ptr<object_watching_state> ldr_state_ = std::make_shared<object_watching_state>();
         std::set<std::string, std::less<>> modules_;
         bool verbose_;
+        bool concise_;
 
-        analysis_state(windows_emulator& win_emu, std::set<std::string, std::less<>> modules, const bool verbose)
+        analysis_state(windows_emulator& win_emu, std::set<std::string, std::less<>> modules, const bool verbose, const bool concise)
             : win_emu_(win_emu),
               env_data_hook_(win_emu.emu()),
               env_ptr_hook_(win_emu.emu()),
               params_hook_(win_emu.emu()),
               ldr_hook_(win_emu.emu()),
               modules_(std::move(modules)),
-              verbose_(verbose)
+              verbose_(verbose),
+              concise_(concise)
         {
         }
     };
@@ -139,6 +142,15 @@ namespace
                     return;
                 }
 
+                if (state->concise_)
+                {
+                    const auto count = ++state->env_module_cache_[mod->name];
+                    if (count > 100 && count % 1000 != 0)
+                    {
+                        return;
+                    }
+                }
+
                 const auto offset = address - env_ptr;
                 const auto* mod_name = mod ? mod->name.c_str() : "<N/A>";
                 state->win_emu_.log.print(is_main_access ? color::green : color::dark_gray,
@@ -166,23 +178,25 @@ namespace
     }
 #endif
 
-    void watch_system_objects(windows_emulator& win_emu, const std::set<std::string, std::less<>>& modules, const bool verbose)
+    void watch_system_objects(windows_emulator& win_emu, const std::set<std::string, std::less<>>& modules, const bool verbose,
+                              const bool concise)
     {
         win_emu.setup_process_if_necessary();
 
         (void)win_emu;
         (void)modules;
         (void)verbose;
+        (void)concise;
 
 #if !defined(__GNUC__) || defined(__clang__)
         watch_object(win_emu, modules, *win_emu.current_thread().teb, verbose);
         watch_object(win_emu, modules, win_emu.process.peb, verbose);
         watch_object<KUSER_SHARED_DATA64>(win_emu, modules, kusd_mmio::address(), verbose);
 
-        auto state = std::make_shared<analysis_state>(win_emu, modules, verbose);
+        auto state = std::make_shared<analysis_state>(win_emu, modules, verbose, concise);
 
-        state->params_hook_ = watch_object(win_emu, modules, win_emu.process.process_params, verbose, state->params_state);
-        state->ldr_hook_ = watch_object<PEB_LDR_DATA64>(win_emu, modules, win_emu.process.peb.read().Ldr, verbose, state->ldr_state);
+        state->params_hook_ = watch_object(win_emu, modules, win_emu.process.process_params, verbose, state->params_state_);
+        state->ldr_hook_ = watch_object<PEB_LDR_DATA64>(win_emu, modules, win_emu.process.peb.read().Ldr, verbose, state->ldr_state_);
 
         const auto update_env_hook = [state] {
             state->env_ptr_hook_ = install_env_hook(state); //
@@ -194,7 +208,7 @@ namespace
                                         [state, update_env = std::move(update_env_hook)](const uint64_t, const void*, size_t) {
                                             const auto new_ptr = state->win_emu_.process.peb.read().ProcessParameters;
                                             state->params_hook_ = watch_object<RTL_USER_PROCESS_PARAMETERS64>(
-                                                state->win_emu_, state->modules_, new_ptr, state->verbose_, state->params_state);
+                                                state->win_emu_, state->modules_, new_ptr, state->verbose_, state->params_state_);
                                             update_env();
                                         });
 
@@ -202,7 +216,7 @@ namespace
             win_emu.process.peb.value() + offsetof(PEB64, Ldr), 0x8, [state](const uint64_t, const void*, size_t) {
                 const auto new_ptr = state->win_emu_.process.peb.read().Ldr;
                 state->ldr_hook_ =
-                    watch_object<PEB_LDR_DATA64>(state->win_emu_, state->modules_, new_ptr, state->verbose_, state->ldr_state);
+                    watch_object<PEB_LDR_DATA64>(state->win_emu_, state->modules_, new_ptr, state->verbose_, state->ldr_state_);
             });
 #endif
     }
@@ -473,7 +487,7 @@ namespace
         }
 
         register_analysis_callbacks(context);
-        watch_system_objects(*win_emu, options.modules, options.verbose_logging);
+        watch_system_objects(*win_emu, options.modules, options.verbose_logging, options.concise_logging);
 
         const auto& exe = *win_emu->mod_manager.executable;
 
