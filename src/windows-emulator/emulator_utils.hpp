@@ -315,7 +315,7 @@ class emulator_allocator
 
     void skip_until(const uint64_t offset)
     {
-        this->active_address_ = offset;
+        this->active_address_ = this->address_ + offset;
     }
 
   private:
