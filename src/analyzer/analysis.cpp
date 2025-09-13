@@ -176,7 +176,9 @@ namespace
 
     void handle_function_details(const analysis_context& c, const std::string_view function)
     {
-        if (function == "GetEnvironmentVariableA" || function == "ExpandEnvironmentStringsA")
+        if (function == "GetEnvironmentVariableA"      //
+            || function == "ExpandEnvironmentStringsA" //
+            || function == "LoadLibraryA")
         {
             print_arg_as_string(*c.win_emu, 0);
         }
