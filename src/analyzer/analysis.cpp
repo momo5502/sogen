@@ -252,8 +252,8 @@ namespace
                 continue;
             }
 
-            c.win_emu->log.print(color::green, "Import read access without execution: %s (%s) at 0x%" PRIx64 " (%s)\n",
-                                 a.import_name.c_str(), a.import_module.c_str(), a.access_rip, a.accessor_module.c_str());
+            c.win_emu->log.print(color::green, "Import read access: %s (%s) at 0x%" PRIx64 " (%s)\n", a.import_name.c_str(),
+                                 a.import_module.c_str(), a.access_rip, a.accessor_module.c_str());
 
             entry = c.accessed_imports.erase(entry);
         }
