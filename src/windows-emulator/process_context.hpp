@@ -79,6 +79,9 @@ struct process_context
     void serialize(utils::buffer_serializer& buffer) const;
     void deserialize(utils::buffer_deserializer& buffer);
 
+    // WOW64 support flag - set during process setup based on executable architecture
+    bool is_wow64_process{false};
+
     generic_handle_store* get_handle_store(handle handle);
 
     callbacks* callbacks_{};
