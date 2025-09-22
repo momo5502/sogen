@@ -1,6 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <system_error>
+#include <variant>
 
 // NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
@@ -326,6 +330,42 @@ typedef struct _IMAGE_THUNK_DATA64
 
 #endif
 
+// Template type definitions for architecture-specific thunk data
+template <typename T>
+struct thunk_data_traits;
+
+template <>
+struct thunk_data_traits<std::uint32_t>
+{
+    using type = IMAGE_THUNK_DATA32;
+    static constexpr DWORD ordinal_flag = IMAGE_ORDINAL_FLAG32;
+
+    static constexpr WORD ordinal_mask(DWORD ordinal)
+    {
+        return IMAGE_ORDINAL32(ordinal);
+    }
+    static constexpr bool snap_by_ordinal(DWORD ordinal)
+    {
+        return IMAGE_SNAP_BY_ORDINAL32(ordinal);
+    }
+};
+
+template <>
+struct thunk_data_traits<std::uint64_t>
+{
+    using type = IMAGE_THUNK_DATA64;
+    static constexpr ULONGLONG ordinal_flag = IMAGE_ORDINAL_FLAG64;
+
+    static constexpr WORD ordinal_mask(ULONGLONG ordinal)
+    {
+        return IMAGE_ORDINAL64(ordinal);
+    }
+    static constexpr bool snap_by_ordinal(ULONGLONG ordinal)
+    {
+        return IMAGE_SNAP_BY_ORDINAL64(ordinal);
+    }
+};
+
 template <typename Traits>
 struct SECTION_IMAGE_INFORMATION
 {
@@ -382,5 +422,118 @@ struct SECTION_IMAGE_INFORMATION
     ULONG ImageFileSize;
     ULONG CheckSum;
 };
+
+namespace winpe
+{
+
+    enum class pe_arch
+    {
+        pe32,
+        pe64
+    };
+
+    inline std::variant<pe_arch, std::error_code> get_pe_arch(const std::filesystem::path& file)
+    {
+        std::ifstream f(file, std::ios::binary);
+        if (!f)
+        {
+            return std::make_error_code(std::errc::no_such_file_or_directory);
+        }
+
+        PEDosHeader_t dos{};
+        f.read(reinterpret_cast<char*>(&dos), sizeof(dos));
+        if (!f || dos.e_magic != PEDosHeader_t::k_Magic)
+        {
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        f.seekg(dos.e_lfanew, std::ios::beg);
+        uint32_t nt_signature = 0;
+        f.read(reinterpret_cast<char*>(&nt_signature), sizeof(nt_signature));
+        if (!f || nt_signature != PENTHeaders_t<std::uint32_t>::k_Signature)
+        {
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        PEFileHeader_t file_header{};
+        f.read(reinterpret_cast<char*>(&file_header), sizeof(file_header));
+        if (!f)
+        {
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        uint16_t magic = 0;
+        f.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+        if (!f)
+        {
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        if (magic == PEOptionalHeader_t<std::uint32_t>::k_Magic)
+        {
+            return pe_arch::pe32;
+        }
+        if (magic == PEOptionalHeader_t<std::uint64_t>::k_Magic)
+        {
+            return pe_arch::pe64;
+        }
+
+        return std::make_error_code(std::errc::executable_format_error);
+    }
+
+    inline std::variant<pe_arch, std::error_code> get_pe_arch(uint64_t base_address, uint64_t image_size)
+    {
+        const auto* base = reinterpret_cast<const std::byte*>(reinterpret_cast<const void*>(static_cast<uintptr_t>(base_address)));
+        const uint64_t size = image_size;
+
+        auto read = [&](uint64_t off, void* dst, size_t n) -> bool {
+            if (off > size)
+                return false;
+            if (n > size - off)
+                return false;
+            std::memcpy(dst, base + off, n);
+            return true;
+        };
+
+        PEDosHeader_t dos{};
+        if (!read(0, &dos, sizeof(dos)) || dos.e_magic != PEDosHeader_t::k_Magic)
+        {
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        const uint64_t nt_off = static_cast<uint64_t>(dos.e_lfanew);
+        uint32_t nt_signature = 0;
+        if (!read(nt_off, &nt_signature, sizeof(nt_signature)) || nt_signature != PENTHeaders_t<std::uint32_t>::k_Signature)
+        {
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        PEFileHeader_t file_header{};
+        const uint64_t fh_off = nt_off + sizeof(nt_signature);
+        if (!read(fh_off, &file_header, sizeof(file_header)))
+        {
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        uint16_t magic = 0;
+        const uint64_t opt_magic_off = fh_off + sizeof(file_header);
+        if (!read(opt_magic_off, &magic, sizeof(magic)))
+        {
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        if (magic == PEOptionalHeader_t<std::uint32_t>::k_Magic)
+        {
+            return pe_arch::pe32;
+        }
+        if (magic == PEOptionalHeader_t<std::uint64_t>::k_Magic)
+        {
+            return pe_arch::pe64;
+        }
+
+        return std::make_error_code(std::errc::executable_format_error);
+    }
+
+}
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
