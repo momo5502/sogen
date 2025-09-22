@@ -32,6 +32,7 @@ struct mapped_module
     std::filesystem::path path{};
 
     uint64_t image_base{};
+    uint64_t image_base_file{};
     uint64_t size_of_image{};
     uint64_t entry_point{};
 
@@ -60,5 +61,10 @@ struct mapped_module
         }
 
         return 0;
+    }
+
+    uint64_t get_image_base_file() const
+    {
+        return this->image_base_file;
     }
 };
