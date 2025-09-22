@@ -351,7 +351,7 @@ void windows_emulator::setup_process(const application_settings& app_settings)
     const auto& emu = this->emu();
     auto& context = this->process;
 
-    this->mod_manager.map_main_modules(app_settings.application, R"(C:\Windows\System32\ntdll.dll)", R"(C:\Windows\System32\win32u.dll)",
+    this->mod_manager.map_main_modules(app_settings.application, R"(C:\Windows\System32)", R"(C:\Windows\SysWOW64)",
                                        this->log);
 
     const auto* executable = this->mod_manager.executable;
