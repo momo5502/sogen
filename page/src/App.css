@@ -34,7 +34,6 @@ button {
   cursor: pointer;
 }
 
-/*
 button.fancy.bg-primary,
 button.fancy.bg-secondary,
 button.fancy.bg-destructive {
@@ -47,7 +46,7 @@ button.fancy.bg-primary {
     rgba(38, 144, 255, 1) 0%,
     rgba(0, 123, 255, 1) 100%
   );
-  border: 1px solid rgb(18, 101, 236);
+  border: 0px solid rgb(27, 149, 255);
   text-shadow: rgba(0, 0, 0, 0.2) 0px 1px;
 }
 
@@ -57,38 +56,37 @@ button.fancy.bg-primary:hover {
     rgba(46, 151, 255, 1) 0%,
     rgba(8, 130, 255, 1) 100%
   );
-  border: 1px solid rgb(33, 33, 34);
+  /*border: 1px solid rgb(33, 33, 34);*/
 }
 
 button.fancy.bg-destructive {
   background: linear-gradient(
     180deg,
-    rgb(202, 23, 23) 0%,
-    rgb(176, 40, 9) 100%
+    rgb(174, 23, 23) 0%,
+    rgb(144, 37, 13) 100%
   );
-  border: 1px solid rgb(134, 30, 6);
+  border: 0px solid rgb(147, 32, 7);
   text-shadow: rgba(0, 0, 0, 0.2) 0px 1px;
 }
 
 button.fancy.bg-destructive:hover {
   background: linear-gradient(
     180deg,
-    rgb(210, 30, 29) 0%,
-    rgb(184, 47, 15) 100%
+    rgb(183, 30, 30) 0%,
+    rgb(154, 43, 18) 100%
   );
-  border: 1px solid rgb(33, 33, 34);
+  /*border: 1px solid rgb(33, 33, 34);*/
 }
 
 button.fancy.bg-secondary {
   background: linear-gradient(180deg, rgb(38, 38, 39) 0%, rgb(34, 34, 35) 100%);
-  border: 1px solid rgb(42, 42, 44);
+  border: 0px solid rgb(44, 44, 46);
 }
 
 button.fancy.bg-secondary:hover {
   background: linear-gradient(180deg, rgb(42, 42, 43) 0%, rgb(38, 38, 39) 100%);
-  border: 1px solid rgb(33, 33, 34);
+  /*border: 1px solid rgb(33, 33, 34);*/
 }
-*/
 
 /*.terminal-output span {
   padding: 0px 16px;
