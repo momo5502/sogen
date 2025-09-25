@@ -494,7 +494,7 @@ namespace syscalls
 
     NTSTATUS handle_NtGdiInit(const syscall_context& c)
     {
-        c.proc.peb.access([&](PEB64& peb) {
+        c.proc.peb64.access([&](PEB64& peb) {
             if (!peb.GdiSharedHandleTable)
             {
                 const auto shared_memory = c.proc.base_allocator.reserve<GDI_SHARED_MEMORY64>();
