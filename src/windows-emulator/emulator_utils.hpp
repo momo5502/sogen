@@ -222,6 +222,14 @@ class emulator_allocator
         return emulator_object<T>(*this->memory_, potential_start);
     }
 
+    template <typename T>
+    emulator_object<T> reserve_page_aligned(const size_t count = 1)
+    {
+        constexpr auto page_aligned_size = page_align_up(sizeof(T));
+        const auto potential_start = this->reserve(page_aligned_size * count, 0x1000);
+        return emulator_object<T>(*this->memory_, potential_start);
+    }
+
     uint64_t copy_string(const std::u16string_view str)
     {
         UNICODE_STRING<EmulatorTraits<Emu64>> uc_str{};

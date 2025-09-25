@@ -77,7 +77,7 @@ class memory_manager : public memory_interface
 
     void unmap_all_memory();
 
-    uint64_t allocate_memory(size_t size, nt_memory_permission permissions, bool reserve_only = false);
+    uint64_t allocate_memory(size_t size, nt_memory_permission permissions, bool reserve_only = false, uint64_t start = 0);
 
     uint64_t find_free_allocation_base(size_t size, uint64_t start = 0) const;
 

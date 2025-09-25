@@ -283,6 +283,13 @@ mapped_module map_module_from_data(memory_manager& memory, const std::span<const
     binary.image_base = optional_header.ImageBase;
     binary.image_base_file = optional_header.ImageBase;
     binary.size_of_image = page_align_up(optional_header.SizeOfImage); // TODO: Sanitize
+    
+    // Store PE header fields
+    binary.machine = static_cast<uint16_t>(nt_headers.FileHeader.Machine);
+    binary.size_of_stack_reserve = optional_header.SizeOfStackReserve;
+    binary.size_of_stack_commit = optional_header.SizeOfStackCommit;
+    binary.size_of_heap_reserve = optional_header.SizeOfHeapReserve;
+    binary.size_of_heap_commit = optional_header.SizeOfHeapCommit;
 
     if (!memory.allocate_memory(binary.image_base, static_cast<size_t>(binary.size_of_image), memory_permission::all))
     {
@@ -368,6 +375,13 @@ mapped_module map_module_from_memory(memory_manager& memory, uint64_t base_addre
         const auto& optional_header = nt_headers.OptionalHeader;
 
         binary.entry_point = binary.image_base + optional_header.AddressOfEntryPoint;
+        
+        // Store PE header fields
+        binary.machine = static_cast<uint16_t>(nt_headers.FileHeader.Machine);
+        binary.size_of_stack_reserve = optional_header.SizeOfStackReserve;
+        binary.size_of_stack_commit = optional_header.SizeOfStackCommit;
+        binary.size_of_heap_reserve = optional_header.SizeOfHeapReserve;
+        binary.size_of_heap_commit = optional_header.SizeOfHeapCommit;
 
         const auto section_offset = get_first_section_offset(nt_headers, nt_headers_offset);
         const auto sections = buffer.as<IMAGE_SECTION_HEADER>(static_cast<size_t>(section_offset));

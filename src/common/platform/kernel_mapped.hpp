@@ -1618,23 +1618,6 @@ struct OBJECT_TYPE_INFORMATION
     ULONG DefaultNonPagedPoolCharge;
 };
 
-#if 0
-typedef struct _WOW64_CPURESERVED
-{
-    USHORT Flags;
-    USHORT MachineType;
-
-    //
-    // CONTEXT has different alignment for
-    // each architecture and its location
-    // is determined at runtime.
-    //
-    // CONTEXT      Context;
-    // CONTEXT_EX   ContextEx;
-    //
-} WOW64_CPURESERVED, *PWOW64_CPURESERVED;
-#endif // 0
-
 // WIN8 to REDSTONE
 typedef struct _PS_MITIGATION_OPTIONS_MAP_V1
 {
@@ -1848,6 +1831,20 @@ typedef struct _PROCESS_MITIGATION_POLICY_RAW_DATA
 
 static_assert(sizeof(PROCESS_MITIGATION_POLICY_RAW_DATA) == 0x8);
 
+typedef struct _WOW64_CPURESERVED
+{
+    USHORT Flags;       // Initialised to 0x02 by ntdll.dll and periodically bitwise OR'd with WOW64_CPURESERVED_FLAG_RESET_STATE
+    USHORT MachineType; // IMAGE_FILE_MACHINE_I386 (0x014C) for x86 architecture
 
+    // Under IMAGE_FILE_MACHINE_I386 machine type, this is the WOW64_CONTEXT structure containing x86 architecture context
+    WOW64_CONTEXT Context;
+
+    // Padding to align WOW64 stack
+    BYTE AlignmentPad[0x10];
+} WOW64_CPURESERVED, *PWOW64_CPURESERVED;
+
+static_assert(sizeof(WOW64_CPURESERVED) == 0x2E0);
+
+#define WOW64_CPURESERVED_FLAG_RESET_STATE 1
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)

@@ -472,9 +472,9 @@ void memory_manager::unmap_all_memory()
     this->reserved_regions_.clear();
 }
 
-uint64_t memory_manager::allocate_memory(const size_t size, const nt_memory_permission permissions, const bool reserve_only)
+uint64_t memory_manager::allocate_memory(const size_t size, const nt_memory_permission permissions, const bool reserve_only, uint64_t start)
 {
-    const auto allocation_base = this->find_free_allocation_base(size);
+    const auto allocation_base = this->find_free_allocation_base(size, start);
     if (!allocate_memory(allocation_base, size, permissions, reserve_only))
     {
         return 0;

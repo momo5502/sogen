@@ -19,11 +19,18 @@
 #define PEB_SEGMENT_SIZE (20 << 20) // 20 MB
 #define GS_SEGMENT_SIZE  (1 << 20)  // 1 MB
 
-#define STACK_SIZE       0x40000ULL
+#define STACK_SIZE       0x40000ULL // 256KB
 
-#define GDT_ADDR         0x30000
+#define GDT_ADDR         0x35000
 #define GDT_LIMIT        0x1000
 #define GDT_ENTRY_SIZE   0x8
+
+// TODO: Get rid of that
+#define WOW64_PEB32_PROCESS_PARA_BASE 0x30000
+#define WOW64_PEB32_PROCESS_PARA_SIZE 0x5000
+#define WOW64_NATIVE_STACK_BASE       0x98000
+#define WOW64_NATIVE_STACK_SIZE       0x8000
+#define WOW64_32BIT_STACK_SIZE        (1 << 20)
 
 struct emulator_settings;
 struct application_settings;
@@ -59,14 +66,14 @@ struct process_context
     process_context(x86_64_emulator& emu, memory_manager& memory, utils::clock& clock, callbacks& cb)
         : callbacks_(&cb),
           base_allocator(emu),
-          peb(emu),
-          process_params(emu),
+          peb64(emu),
+          process_params64(emu),
           kusd(memory, clock)
     {
     }
 
     void setup(x86_64_emulator& emu, memory_manager& memory, registry_manager& registry, const application_settings& app_settings,
-               const mapped_module& executable, const mapped_module& ntdll, const apiset::container& apiset_container);
+               const mapped_module& executable, const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32 = nullptr);
 
     handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size, bool suspended);
 
@@ -95,8 +102,8 @@ struct process_context
 
     emulator_allocator base_allocator;
 
-    emulator_object<PEB64> peb;
-    emulator_object<RTL_USER_PROCESS_PARAMETERS64> process_params;
+    emulator_object<PEB64> peb64;
+    emulator_object<RTL_USER_PROCESS_PARAMETERS64> process_params64;
     kusd_mmio kusd;
 
     uint64_t ntdll_image_base{};
@@ -104,6 +111,11 @@ struct process_context
     uint64_t rtl_user_thread_start{};
     uint64_t ki_user_apc_dispatcher{};
     uint64_t ki_user_exception_dispatcher{};
+
+    // For WOW64 processes
+    std::optional<emulator_object<PEB32>> peb32;
+    std::optional<emulator_object<RTL_USER_PROCESS_PARAMETERS32>> process_params32;
+    std::optional<uint64_t> rtl_user_thread_start32{};
 
     handle_store<handle_types::event, event> events{};
     handle_store<handle_types::file, file> files{};

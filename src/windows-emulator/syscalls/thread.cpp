@@ -68,7 +68,7 @@ namespace syscalls
 
             for (const auto& t : c.proc.threads | std::views::values)
             {
-                t.teb->access([&](TEB64& teb) {
+                t.teb64->access([&](TEB64& teb) {
                     if (tls_cell < TLS_MINIMUM_AVAILABLE)
                     {
                         teb.TlsSlots.arr[tls_cell] = 0;
@@ -113,7 +113,7 @@ namespace syscalls
             }
 
             const auto teb_info = c.emu.read_memory<THREAD_TEB_INFORMATION>(thread_information);
-            const auto data = c.emu.read_memory(thread->teb->value() + teb_info.TebOffset, teb_info.BytesToRead);
+            const auto data = c.emu.read_memory(thread->teb64->value() + teb_info.TebOffset, teb_info.BytesToRead);
             c.emu.write_memory(teb_info.TebInformation, data.data(), data.size());
 
             return STATUS_SUCCESS;
@@ -133,8 +133,8 @@ namespace syscalls
 
             const emulator_object<THREAD_BASIC_INFORMATION64> info{c.emu, thread_information};
             info.access([&](THREAD_BASIC_INFORMATION64& i) {
-                i.TebBaseAddress = thread->teb->value();
-                i.ClientId = thread->teb->read().ClientId;
+                i.TebBaseAddress = thread->teb64->value();
+                i.ClientId = thread->teb64->read().ClientId;
             });
 
             return STATUS_SUCCESS;
@@ -555,12 +555,12 @@ namespace syscalls
 
                     if (type == PsAttributeClientId)
                     {
-                        const auto client_id = thread->teb->read().ClientId;
+                        const auto client_id = thread->teb64->read().ClientId;
                         write_attribute(c.emu, attribute, client_id);
                     }
                     else if (type == PsAttributeTebAddress)
                     {
-                        write_attribute(c.emu, attribute, thread->teb->value());
+                        write_attribute(c.emu, attribute, thread->teb64->value());
                     }
                     else
                     {
