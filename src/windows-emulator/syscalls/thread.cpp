@@ -17,6 +17,39 @@ namespace syscalls
             return STATUS_INVALID_HANDLE;
         }
 
+        if (info_class == ThreadWow64Context)
+        {
+            // ThreadWow64Context is only valid for WOW64 processes
+            if (!c.proc.is_wow64_process)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            if (thread_information_length != sizeof(WOW64_CONTEXT))
+            {
+                return STATUS_BUFFER_OVERFLOW;
+            }
+
+            // Check if thread has persistent WOW64 context
+            if (!thread->wow64_cpu_reserved.has_value())
+            {
+                c.win_emu.log.print(color::red, "Error: WOW64 saved context not initialized for thread %d\n", thread->id);
+                return STATUS_INTERNAL_ERROR;
+            }
+
+            const emulator_object<WOW64_CONTEXT> context_obj{c.emu, thread_information};
+            const auto new_wow64_context = context_obj.read();
+
+            // Update the persistent context for future queries
+            thread->wow64_cpu_reserved->access([&](WOW64_CPURESERVED& ctx) {
+                ctx.Flags |= WOW64_CPURESERVED_FLAG_RESET_STATE;
+                ctx.Context = new_wow64_context;
+                c.win_emu.callbacks.on_suspicious_activity("WOW64 CONTEXT");
+            });
+
+            return STATUS_SUCCESS;
+        }
+
         if (info_class == ThreadSchedulerSharedDataSlot || info_class == ThreadBasePriority || info_class == ThreadAffinityMask)
         {
             return STATUS_SUCCESS;
@@ -98,6 +131,42 @@ namespace syscalls
         if (!thread)
         {
             return STATUS_INVALID_HANDLE;
+        }
+
+        if (info_class == ThreadWow64Context)
+        {
+            // ThreadWow64Context is only valid for WOW64 processes
+            if (!c.proc.is_wow64_process)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            if (return_length)
+            {
+                return_length.write(sizeof(WOW64_CONTEXT));
+            }
+
+            if (thread_information_length < sizeof(WOW64_CONTEXT))
+            {
+                return STATUS_BUFFER_OVERFLOW;
+            }
+
+            const emulator_object<WOW64_CONTEXT> context_obj{c.emu, thread_information};
+
+            // Check if thread has persistent WOW64 context
+            if (!thread->wow64_cpu_reserved.has_value())
+            {
+                c.win_emu.log.print(color::red, "Error: WOW64 saved context not initialized for thread %d\n", thread->id);
+                return STATUS_INTERNAL_ERROR;
+            }
+
+            // Return the saved context (which was set by NtSetInformationThread)
+            thread->wow64_cpu_reserved->access([&](const WOW64_CPURESERVED& ctx) {
+                const auto wow64_context = ctx.Context;
+                context_obj.write(wow64_context);
+            });
+
+            return STATUS_SUCCESS;
         }
 
         if (info_class == ThreadTebInformation)
