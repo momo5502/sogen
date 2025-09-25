@@ -232,6 +232,12 @@ namespace syscalls
                                        emulator_object<LARGE_INTEGER> /*section_offset*/,
                                        emulator_object<EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T)> view_size,
                                        SECTION_INHERIT /*inherit_disposition*/, ULONG /*allocation_type*/, ULONG /*win32_protect*/);
+    NTSTATUS handle_NtMapViewOfSectionEx(const syscall_context& c, handle section_handle, handle process_handle,
+                                         emulator_object<uint64_t> base_address, emulator_object<LARGE_INTEGER> section_offset,
+                                         emulator_object<EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T)> view_size,
+                                         ULONG allocation_type, ULONG page_protection,
+                                         uint64_t extended_parameters, // PMEM_EXTENDED_PARAMETER
+                                         ULONG extended_parameter_count);
     NTSTATUS handle_NtUnmapViewOfSection(const syscall_context& c, handle process_handle, uint64_t base_address);
     NTSTATUS handle_NtUnmapViewOfSectionEx(const syscall_context& c, handle process_handle, uint64_t base_address, ULONG /*flags*/);
     NTSTATUS handle_NtAreMappedFilesTheSame();
@@ -974,6 +980,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtManageHotPatch);
     add_handler(NtOpenSection);
     add_handler(NtMapViewOfSection);
+    add_handler(NtMapViewOfSectionEx);
     add_handler(NtOpenSymbolicLinkObject);
     add_handler(NtQuerySymbolicLinkObject);
     add_handler(NtQuerySystemInformationEx);

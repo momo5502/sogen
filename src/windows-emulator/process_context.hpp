@@ -134,4 +134,10 @@ struct process_context
     uint32_t spawned_thread_count{0};
     handle_store<handle_types::thread, emulator_thread> threads{};
     emulator_thread* active_thread{nullptr};
+
+    // Extended parameters from last NtMapViewOfSectionEx call
+    // These can be used by other syscalls like NtAllocateVirtualMemoryEx
+    uint64_t last_extended_params_numa_node{0};
+    uint32_t last_extended_params_attributes{0};
+    uint16_t last_extended_params_image_machine{IMAGE_FILE_MACHINE_UNKNOWN};
 };

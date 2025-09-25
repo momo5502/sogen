@@ -253,6 +253,175 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
+    NTSTATUS handle_NtMapViewOfSectionEx(const syscall_context& c, const handle section_handle, const handle process_handle,
+                                         const emulator_object<uint64_t> base_address, const emulator_object<LARGE_INTEGER> section_offset,
+                                         const emulator_object<EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T)> view_size,
+                                         const ULONG allocation_type, const ULONG page_protection,
+                                         const uint64_t extended_parameters, // PMEM_EXTENDED_PARAMETER
+                                         const ULONG extended_parameter_count)
+    {
+        // Process extended parameters if present
+        struct ExtendedParamsInfo
+        {
+            uint64_t numa_node = 0;
+            uint64_t lowest_address = 0;
+            uint64_t highest_address = UINT64_MAX;
+            uint64_t alignment = 0;
+            uint32_t attribute_flags = 0;
+            uint16_t image_machine = IMAGE_FILE_MACHINE_UNKNOWN;
+            bool has_address_requirements = false;
+            bool has_numa_node = false;
+            bool has_attributes = false;
+            bool has_image_machine = false;
+        } ext_info;
+
+        if (extended_parameters && extended_parameter_count > 0)
+        {
+            c.win_emu.log.info("NtMapViewOfSectionEx: Processing %u extended parameters\n", extended_parameter_count);
+
+            // Read and process each extended parameter
+            for (ULONG i = 0; i < extended_parameter_count; i++)
+            {
+                const auto param_addr = extended_parameters + (i * sizeof(MEM_EXTENDED_PARAMETER64));
+                MEM_EXTENDED_PARAMETER64 param{};
+
+                // Read the extended parameter structure
+                if (!c.emu.try_read_memory(param_addr, &param, sizeof(param)))
+                {
+                    c.win_emu.log.error("NtMapViewOfSectionEx: Failed to read extended parameter %u\n", i);
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                // Extract the type (lower 8 bits)
+                const auto param_type = static_cast<MEM_EXTENDED_PARAMETER_TYPE>(param.Type & 0xFF);
+
+                switch (param_type)
+                {
+                case MemExtendedParameterAddressRequirements: {
+                    // Read the MEM_ADDRESS_REQUIREMENTS structure
+                    MEM_ADDRESS_REQUIREMENTS64 addr_req{};
+                    if (!c.emu.try_read_memory(param.Pointer, &addr_req, sizeof(addr_req)))
+                    {
+                        c.win_emu.log.error("NtMapViewOfSectionEx: Failed to read address requirements\n");
+                        return STATUS_INVALID_PARAMETER;
+                    }
+
+                    ext_info.lowest_address = addr_req.LowestStartingAddress;
+                    ext_info.highest_address = addr_req.HighestEndingAddress;
+                    ext_info.alignment = addr_req.Alignment;
+                    ext_info.has_address_requirements = true;
+
+                    c.win_emu.log.info("NtMapViewOfSectionEx: Address requirements - Low: 0x%llX, High: 0x%llX, Align: 0x%llX\n",
+                                       ext_info.lowest_address, ext_info.highest_address, ext_info.alignment);
+                }
+                break;
+
+                case MemExtendedParameterNumaNode:
+                    ext_info.numa_node = param.ULong64;
+                    ext_info.has_numa_node = true;
+                    c.win_emu.log.info("NtMapViewOfSectionEx: NUMA node: %llu\n", ext_info.numa_node);
+                    break;
+
+                case MemExtendedParameterAttributeFlags:
+                    ext_info.attribute_flags = static_cast<uint32_t>(param.ULong64);
+                    ext_info.has_attributes = true;
+                    c.win_emu.log.info("NtMapViewOfSectionEx: Attribute flags: 0x%X\n", ext_info.attribute_flags);
+
+                    // Log specific attribute flags
+                    if (ext_info.attribute_flags & MEM_EXTENDED_PARAMETER_GRAPHICS)
+                        c.win_emu.log.info("  - Graphics memory requested\n");
+                    if (ext_info.attribute_flags & MEM_EXTENDED_PARAMETER_NONPAGED)
+                        c.win_emu.log.info("  - Non-paged memory requested\n");
+                    if (ext_info.attribute_flags & MEM_EXTENDED_PARAMETER_EC_CODE)
+                        c.win_emu.log.info("  - EC code memory requested\n");
+                    break;
+
+                case MemExtendedParameterImageMachine:
+                    ext_info.image_machine = static_cast<uint16_t>(param.ULong);
+                    ext_info.has_image_machine = true;
+                    c.win_emu.log.info("NtMapViewOfSectionEx: Image machine: 0x%X\n", ext_info.image_machine);
+                    break;
+
+                case MemExtendedParameterPartitionHandle:
+                    c.win_emu.log.info("NtMapViewOfSectionEx: Partition handle parameter (not supported)\n");
+                    break;
+
+                case MemExtendedParameterUserPhysicalHandle:
+                    c.win_emu.log.info("NtMapViewOfSectionEx: User physical handle parameter (not supported)\n");
+                    break;
+
+                default:
+                    c.win_emu.log.warn("NtMapViewOfSectionEx: Unknown extended parameter type: %u\n", param_type);
+                    break;
+                }
+            }
+
+            // Store extended parameters info in process context for other syscalls to use
+            // This allows NtAllocateVirtualMemoryEx and other functions to access the same info
+            c.proc.last_extended_params_numa_node = ext_info.numa_node;
+            c.proc.last_extended_params_attributes = ext_info.attribute_flags;
+        }
+
+        // Call the existing NtMapViewOfSection implementation
+        // For WOW64 processes with image machine parameter, validate architecture compatibility
+        if (ext_info.has_image_machine && c.proc.is_wow64_process)
+        {
+            c.win_emu.log.info("NtMapViewOfSectionEx: WOW64 process mapping with machine type 0x%X\n", ext_info.image_machine);
+
+            // Special handling for IMAGE_FILE_MACHINE_I386 (0x014c) on WOW64
+            if (ext_info.image_machine == IMAGE_FILE_MACHINE_I386)
+            {
+                // This indicates the caller wants to map a 32-bit view
+                // Store this for the module manager to use
+                c.win_emu.log.info("NtMapViewOfSectionEx: Mapping 32-bit view for WOW64 process\n");
+            }
+            else if (ext_info.image_machine == IMAGE_FILE_MACHINE_AMD64)
+            {
+                // This indicates the caller wants to map a 64-bit view
+                c.win_emu.log.info("NtMapViewOfSectionEx: Mapping 64-bit view for WOW64 process\n");
+            }
+        }
+
+        // Store extended parameters for other syscalls to use
+        if (ext_info.has_numa_node)
+        {
+            c.proc.last_extended_params_numa_node = ext_info.numa_node;
+        }
+        if (ext_info.has_attributes)
+        {
+            c.proc.last_extended_params_attributes = ext_info.attribute_flags;
+        }
+        if (ext_info.has_image_machine)
+        {
+            c.proc.last_extended_params_image_machine = ext_info.image_machine;
+        }
+
+        // Perform the actual mapping
+        const auto status = handle_NtMapViewOfSection(c, section_handle, process_handle, base_address,
+                                                      0,                // zero_bits (not in Ex)
+                                                      0,                // commit_size (not in Ex)
+                                                      section_offset,   // section_offset
+                                                      view_size,        // view_size
+                                                      ViewUnmap,        // inherit_disposition (default)
+                                                      allocation_type,  // allocation_type
+                                                      page_protection); // page_protection
+
+        // If mapping succeeded and this is a WOW64 image section with specific machine type
+        if (NT_SUCCESS(status) && ext_info.has_image_machine && c.proc.is_wow64_process)
+        {
+            // Check if this was an image section (DLL/EXE)
+            auto* section_entry = c.proc.sections.get(section_handle);
+            if (section_entry && section_entry->is_image())
+            {
+                c.win_emu.log.info("NtMapViewOfSectionEx: Successfully mapped image section for WOW64 with machine type 0x%X\n",
+                                   ext_info.image_machine);
+                // Note: In a full WOW64 implementation, we would check for Wow64Transition export here
+            }
+        }
+
+        return status;
+    }
+
     NTSTATUS handle_NtUnmapViewOfSection(const syscall_context& c, const handle process_handle, const uint64_t base_address)
     {
         if (process_handle != CURRENT_PROCESS)
