@@ -308,8 +308,8 @@ namespace
             debugger::handle_events(ec);
         }
 #endif
-
-        const auto previous_ip = c.win_emu->current_thread().previous_ip;
+        const auto& current_thread = c.win_emu->current_thread();
+        const auto previous_ip = current_thread.previous_ip;
         const auto is_main_exe = win_emu.mod_manager.executable->contains(address);
         const auto is_previous_main_exe = win_emu.mod_manager.executable->contains(previous_ip);
 
@@ -349,8 +349,8 @@ namespace
             record_instruction(c, address);
         }
 
-        const auto is_interesting_call = is_previous_main_exe //
-                                         || !previous_binary  //
+        const auto is_interesting_call = is_previous_main_exe                                              //
+                                         || (!previous_binary && current_thread.executed_instructions > 1) //
                                          || is_in_interesting_module();
 
         if (!c.has_reached_main && c.settings->concise_logging && !c.settings->silent && is_main_exe)
