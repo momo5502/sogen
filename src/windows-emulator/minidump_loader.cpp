@@ -226,7 +226,7 @@ namespace minidump_loader
         for (const auto& thread : threads)
         {
             win_emu.log.info("Thread %u: TEB 0x%" PRIx64 ", stack 0x%" PRIx64 " (%u bytes), context %u bytes\n", thread.thread_id,
-                             thread.teb, thread.stack_start_of_memory_range, thread.stack_data_size, thread.context_data_size);
+                             thread.teb64, thread.stack_start_of_memory_range, thread.stack_data_size, thread.context_data_size);
         }
 
         // Process handles
@@ -520,14 +520,14 @@ namespace minidump_loader
                 }
 
                 // Set TEB address if valid
-                if (thread_info.teb != 0)
+                if (thread_info.teb64 != 0)
                 {
-                    thread.teb = emulator_object<TEB64>(win_emu.memory);
-                    thread.teb->set_address(thread_info.teb);
+                    thread.teb64 = emulator_object<TEB64>(win_emu.memory);
+                    thread.teb64->set_address(thread_info.teb64);
                 }
 
                 win_emu.log.info("  Thread %u: TEB=0x%" PRIx64 ", stack=0x%" PRIx64 " (%u bytes), context=%s\n", thread_info.thread_id,
-                                 thread_info.teb, thread.stack_base, thread_info.stack_data_size,
+                                 thread_info.teb64, thread.stack_base, thread_info.stack_data_size,
                                  context_loaded ? "loaded" : "unavailable");
 
                 win_emu.process.threads.store(std::move(thread));
@@ -560,7 +560,7 @@ namespace minidump_loader
         }
 
         const auto& first_thread = threads[0];
-        if (first_thread.teb == 0)
+        if (first_thread.teb64 == 0)
         {
             win_emu.log.warn("Thread %u has null TEB address\n", first_thread.thread_id);
             return;
@@ -571,16 +571,16 @@ namespace minidump_loader
             constexpr uint64_t teb_peb_offset = offsetof(TEB64, ProcessEnvironmentBlock);
             uint64_t peb_address = 0;
 
-            win_emu.memory.read_memory(first_thread.teb + teb_peb_offset, &peb_address, sizeof(peb_address));
+            win_emu.memory.read_memory(first_thread.teb64 + teb_peb_offset, &peb_address, sizeof(peb_address));
 
             if (peb_address == 0)
             {
-                win_emu.log.warn("PEB address is null in TEB at 0x%" PRIx64 "\n", first_thread.teb);
+                win_emu.log.warn("PEB address is null in TEB at 0x%" PRIx64 "\n", first_thread.teb64);
                 return;
             }
 
-            win_emu.process.peb.set_address(peb_address);
-            win_emu.log.info("PEB address: 0x%" PRIx64 " (from TEB 0x%" PRIx64 ")\n", peb_address, first_thread.teb);
+            win_emu.process.peb64.set_address(peb_address);
+            win_emu.log.info("PEB address: 0x%" PRIx64 " (from TEB 0x%" PRIx64 ")\n", peb_address, first_thread.teb64);
         }
         catch (const std::exception& e)
         {
