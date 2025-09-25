@@ -3,19 +3,16 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App.tsx";
 import { registerSW } from "virtual:pwa-register";
-
-(window as any).loading = false;
+import Loader from "./Loader";
 
 registerSW({
   onNeedRefresh() {
-    setTimeout(() => {
-      window.location.reload();
-    }, 5000);
+    window.location.reload();
   },
   onOfflineReady() {},
   onRegisteredSW(_, registration) {
     registration?.addEventListener("updatefound", () => {
-      (window as any).loading = true;
+      Loader.setLoading(true);
     });
   },
 });

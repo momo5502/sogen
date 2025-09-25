@@ -3,8 +3,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { HashRouter, Route, Routes, Navigate } from "react-router-dom";
 import { Playground, storeEmulateData } from "./playground";
 import { LandingPage } from "./landing-page";
-import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import Loader from "./Loader";
 
 import "@fontsource/inter/latin.css";
 
@@ -17,28 +17,8 @@ function EmulateFile() {
   return <Navigate to="/playground" replace />;
 }
 
-function isWindowLoading() {
-  return !!(window as any).loading;
-}
-
-function useLoader() {
-  const [isLoading, setIsLoading] = useState(isWindowLoading());
-
-  useEffect(() => {
-    const id = setInterval(() => {
-      setIsLoading(isWindowLoading());
-    }, 60);
-
-    return () => {
-      clearInterval(id);
-    };
-  });
-
-  return isLoading;
-}
-
-function Loader() {
-  const loading = useLoader();
+function Spinner() {
+  const loading = Loader.useLoader();
 
   if (!loading) {
     return <></>;
@@ -61,7 +41,7 @@ function App() {
             <Route path="/emulate/:encodedData?" element={<EmulateFile />} />
           </Routes>
         </HashRouter>
-        <Loader />
+        <Spinner />
       </TooltipProvider>
     </ThemeProvider>
   );
