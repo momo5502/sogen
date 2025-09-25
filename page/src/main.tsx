@@ -7,9 +7,12 @@ import Loader from "./Loader";
 
 registerSW({
   onNeedRefresh() {
+    Loader.setLoading(false);
     window.location.reload();
   },
-  onOfflineReady() {},
+  onOfflineReady() {
+    Loader.setLoading(false);
+  },
   onRegisteredSW(_, registration) {
     registration?.addEventListener("updatefound", () => {
       Loader.setLoading(true);
