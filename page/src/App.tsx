@@ -25,7 +25,9 @@ function Spinner() {
   }
 
   return (
-    <div className="fixed z-9999 top-10 right-10 p-8 rounded-2xl ring-of-dots bg-[#00000081]"></div>
+    <div className="fixed z-9999 top-10 right-10">
+      <span className="loader"></span>
+    </div>
   );
 }
 
