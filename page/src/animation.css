@@ -1,33 +1,30 @@
-.loader {
-  width: 48px;
-  height: 48px;
-  display: inline-block;
-  position: relative;
-}
-.loader::after,
-.loader::before {
-  content: "";
-  box-sizing: border-box;
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: #fff;
-  position: absolute;
-  left: 0;
-  top: 0;
-  animation: animloader 2s linear infinite;
-}
-.loader::after {
-  animation-delay: 1s;
+:root {
+  --gradient-loader-1: rgb(38, 38, 38);
+  --gradient-loader-2: rgb(255, 255, 255);
 }
 
-@keyframes animloader {
+.animated-gradient {
+  background: repeating-linear-gradient(
+    to right,
+    var(--gradient-loader-1) 0%,
+    var(--gradient-loader-1) 35%,
+    var(--gradient-loader-2) 50%,
+    var(--gradient-loader-1) 65%,
+    var(--gradient-loader-1) 100%
+  );
+  width: 100%;
+  background-size: 200% auto;
+  background-position: 0 100%;
+  animation: gradient 2s infinite;
+  animation-fill-mode: forwards;
+  animation-timing-function: linear;
+}
+
+@keyframes gradient {
   0% {
-    transform: scale(0);
-    opacity: 1;
+    background-position: 0 0;
   }
   100% {
-    transform: scale(1);
-    opacity: 0;
+    background-position: -200% 0;
   }
 }

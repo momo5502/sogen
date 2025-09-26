@@ -25,9 +25,7 @@ function Spinner() {
   }
 
   return (
-    <div className="fixed z-9999 top-10 right-10">
-      <span className="loader"></span>
-    </div>
+    <div className="fixed z-9999 top-0 left-0 right-0 h-[2px] animated-gradient"></div>
   );
 }
 
