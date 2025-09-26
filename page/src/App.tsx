@@ -20,12 +20,13 @@ function EmulateFile() {
 function Spinner() {
   const loading = Loader.useLoader();
 
-  if (!loading) {
-    return <></>;
-  }
-
   return (
-    <div className="fixed z-9999 top-0 left-0 right-0 h-[2px] animated-gradient"></div>
+    <div
+      className={
+        "fixed z-9999 top-0 left-0 right-0 h-[2px] pointer-events-none select-none transition-opacity duration-1000 animated-gradient " +
+        (loading ? "opacity-100" : "opacity-0")
+      }
+    ></div>
   );
 }
 
