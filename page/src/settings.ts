@@ -23,7 +23,7 @@ export function createDefaultSettings(): Settings {
     logging: "regular",
     bufferStdout: true,
     persist: false,
-    execAccess: true,
+    execAccess: false,
     foreignAccess: false,
     wasm64: false,
     instructionSummary: false,
