@@ -1,5 +1,5 @@
 :root {
-  --gradient-loader-1: rgb(38, 38, 38);
+  --gradient-loader-1: rgba(38, 38, 38, 0);
   --gradient-loader-2: rgb(255, 255, 255);
 }
 
@@ -9,7 +9,7 @@
     var(--gradient-loader-1) 0%,
     var(--gradient-loader-1) 35%,
     var(--gradient-loader-2) 50%,
-    var(--gradient-loader-1) 65%,
+    var(--gradient-loader-1) 55%,
     var(--gradient-loader-1) 100%
   );
   width: 100%;
