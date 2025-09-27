@@ -154,6 +154,14 @@ export class Playground extends React.Component<
     this.state.emulator?.stop();
   }
 
+  resetFilesystemState() {
+    this.setState({
+      filesystemPromise: undefined,
+      filesystem: undefined,
+      drawerOpen: false,
+    });
+  }
+
   async resetFilesys() {
     if (!this.state.filesystem) {
       return;
@@ -161,14 +169,8 @@ export class Playground extends React.Component<
 
     await this.state.filesystem.delete();
 
-    this.setState({
-      filesystemPromise: undefined,
-      filesystem: undefined,
-      drawerOpen: false,
-    });
-
+    this.resetFilesystemState();
     this.output.current?.clear();
-
     location.reload();
   }
 
@@ -214,6 +216,7 @@ export class Playground extends React.Component<
       console.log(e);
       this.logLine("Failed to fetch filesystem:");
       this.logLine(e.toString());
+      this.resetFilesystemState();
     });
 
     return promise;
