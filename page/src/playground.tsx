@@ -190,7 +190,7 @@ export class Playground extends React.Component<
       return this.state.filesystemPromise;
     }
 
-    const promise = new Promise<Filesystem>((resolve) => {
+    const promise = new Promise<Filesystem>((resolve, reject) => {
       if (!force) {
         this.logLine("Loading filesystem...");
       }
@@ -202,11 +202,19 @@ export class Playground extends React.Component<
         (percent) => {
           this.logLine(`Downloading filesystem: ${percent}%`);
         },
-      ).then(resolve);
+      )
+        .then(resolve)
+        .catch(reject);
     });
 
     promise.then((filesystem) => this.setState({ filesystem }));
     this.setState({ filesystemPromise: promise });
+
+    promise.catch((e) => {
+      console.log(e);
+      this.logLine("Failed to fetch filesystem:");
+      this.logLine(e.toString());
+    });
 
     return promise;
   }
