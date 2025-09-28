@@ -63,7 +63,7 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
   render() {
     return (
       <div className="grid gap-3">
-        <div className="space-y-2">
+        <div className="space-y-2 mb-1">
           <h4 className="font-medium leading-none">Settings</h4>
           <p className="text-sm text-muted-foreground">
             Set the settings for the emulation.
