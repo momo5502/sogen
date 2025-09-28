@@ -181,7 +181,7 @@ export function LandingPage() {
                 >
                   <CardHeader>
                     <div
-                      className={`w-12 h-12 rounded-xl bg-gradient-to-br ${feature.accent} p-3 mb-4`}
+                      className={`w-12 h-12 rounded-[0.625rem] bg-gradient-to-br ${feature.accent} p-3 mb-4`}
                     >
                       <div className="text-neutral-900">{feature.icon}</div>
                     </div>
@@ -219,7 +219,7 @@ export function LandingPage() {
                   key={index}
                   className="text-center p-8 rounded-2xl bg-neutral-800/50 border border-neutral-700 hover:border-neutral-600 hover:bg-neutral-800/80 cursor-default transition-all duration-150 group"
                 >
-                  <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-500 p-3">
+                  <div className="w-12 h-12 mx-auto mb-4 rounded-[0.625rem] bg-gradient-to-br from-cyan-500 to-blue-500 p-3">
                     <div className="text-neutral-800">{useCase.icon}</div>
                   </div>
                   <h3 className="text-xl font-semibold text-white mb-3">
