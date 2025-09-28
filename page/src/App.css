@@ -62,8 +62,8 @@ button.fancy.bg-primary:hover {
 button.fancy.bg-destructive {
   background: linear-gradient(
     180deg,
-    rgb(174, 23, 23) 0%,
-    rgb(144, 37, 13) 100%
+    rgb(173, 35, 35) 0%,
+    rgb(143, 46, 24) 100%
   );
   border: 0px solid rgb(147, 32, 7);
   text-shadow: rgba(0, 0, 0, 0.2) 0px 1px;
@@ -72,8 +72,8 @@ button.fancy.bg-destructive {
 button.fancy.bg-destructive:hover {
   background: linear-gradient(
     180deg,
-    rgb(183, 30, 30) 0%,
-    rgb(154, 43, 18) 100%
+    rgb(185, 47, 47) 0%,
+    rgb(153, 53, 30) 100%
   );
   /*border: 1px solid rgb(33, 33, 34);*/
 }
