@@ -47,7 +47,8 @@ button.fancy.bg-primary {
     rgba(0, 123, 255, 1) 100%
   );
   border: 0px solid rgb(27, 149, 255);
-  text-shadow: rgba(0, 0, 0, 0.2) 0px 1px;
+  text-shadow: rgba(207, 207, 207, 0.2) 0px 1px;
+  color: #222;
 }
 
 button.fancy.bg-primary:hover {
