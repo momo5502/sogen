@@ -56,28 +56,28 @@ function generateButtons(additionalClasses: string = "") {
 export function LandingPage() {
   const features = [
     {
-      icon: <Cpu className="h-8 w-8" />,
+      icon: <Cpu className="h-6 w-6" />,
       title: "Syscall Emulation",
       description:
         "Operates at syscall level, leveraging existing system DLLs instead of reimplementing Windows APIs",
       accent: "from-[#f76548] to-[#b00101]",
     },
     {
-      icon: <Split className="h-8 w-8" />,
+      icon: <Split className="h-6 w-6" />,
       title: "Hooking Capabilities",
       description:
         "Provides powerful hooking interfaces to intercept memory access, code execution and much more",
       accent: "from-[#ffcb00] to-[#da6000]",
     },
     {
-      icon: <Terminal className="h-8 w-8" />,
+      icon: <Terminal className="h-6 w-6" />,
       title: "Debugging Interface",
       description:
         "Implements GDB serial protocol for integration with common debugging tools",
       accent: "from-[#00c4e9] to-[#005ff6]",
     },
     {
-      icon: <Layers className="h-8 w-8" />,
+      icon: <Layers className="h-6 w-6" />,
       title: "State Management",
       description:
         "Saves and restores the entire state of the emulator to quickly resume your work exactly where you left off.",
@@ -178,9 +178,9 @@ export function LandingPage() {
                   key={index}
                   className="bg-neutral-800/50 border-neutral-700 hover:border-neutral-600 hover:bg-neutral-800/80 cursor-default transition-all duration-150 group hover:shadow-2xl"
                 >
-                  <CardHeader className="pb-4">
+                  <CardHeader>
                     <div
-                      className={`w-16 h-16 rounded-xl bg-gradient-to-br ${feature.accent} p-4 mb-4`}
+                      className={`w-12 h-12 rounded-xl bg-gradient-to-br ${feature.accent} p-3 mb-4`}
                     >
                       <div className="text-neutral-900">{feature.icon}</div>
                     </div>
