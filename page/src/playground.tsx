@@ -194,6 +194,7 @@ export class Playground extends React.Component<
 
     const promise = new Promise<Filesystem>((resolve, reject) => {
       if (!force) {
+        this.output.current?.clear();
         this.logLine("Loading filesystem...");
       }
 
