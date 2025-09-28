@@ -124,9 +124,9 @@ export function LandingPage() {
         <section className="relative overflow-visible">
           {/* Animated Background Elements */}
           <div className="absolute inset-0 container mx-auto">
-            <div className="absolute top-20 left-10 w-72 h-72 bg-yellow-500/10 rounded-full blur-3xl"></div>
-            <div className="absolute top-40 right-20 w-96 h-96 bg-lime-500/10 rounded-full blur-3xl"></div>
-            <div className="absolute bottom-20 left-1/3 w-80 h-80 bg-cyan-500/10 rounded-full blur-3xl"></div>
+            <div className="absolute top-20 left-10 w-72 h-72 bg-yellow-500/15 rounded-full blur-3xl"></div>
+            <div className="absolute top-40 right-20 w-96 h-96 bg-lime-500/15 rounded-full blur-3xl"></div>
+            <div className="absolute bottom-20 left-1/3 w-80 h-80 bg-cyan-500/15 rounded-full blur-3xl"></div>
           </div>
 
           <div className="relative container mx-auto min-h-[100dvh] p-1 min-[340px]:p-4 flex items-center xl:min-h-0 xl:px-6 xl:py-32">
