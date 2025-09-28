@@ -440,12 +440,14 @@ void emulator_thread::setup_registers(x86_64_emulator& emu, const process_contex
             {
                 ctx.Context.Eip = static_cast<uint32_t>(context.rtl_user_thread_start32.value());
             }
-            else
-            {
-                // Fallback: use the originally set start address
-                ctx.Context.Eip = static_cast<uint32_t>(this->start_address);
-            }
         });
+
+        // For WOW64, also set FS segment base to point to 32-bit TEB
+        // Windows kernel sets both GDT descriptor and FS_BASE MSR during thread creation
+        if (this->teb32.has_value())
+        {
+            emu.set_segment_base(x86_register::fs, this->teb32->value());
+        }
     }
 
     // Native 64-bit process setup

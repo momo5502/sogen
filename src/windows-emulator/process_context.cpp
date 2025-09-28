@@ -23,14 +23,51 @@ namespace
 
     void setup_gdt(x86_64_emulator& emu, memory_manager& memory)
     {
-        memory.allocate_memory(GDT_ADDR, static_cast<size_t>(page_align_up(GDT_LIMIT)), memory_permission::read);
+        // Allocate GDT with read-write permissions for segment descriptor setup
+        memory.allocate_memory(GDT_ADDR, static_cast<size_t>(page_align_up(GDT_LIMIT)), memory_permission::read_write);
+
+        // Clear the entire GDT first to ensure all entries are null
+        std::vector<uint8_t> zero_gdt(GDT_LIMIT, 0);
+        emu.write_memory(GDT_ADDR, zero_gdt.data(), GDT_LIMIT);
         emu.load_gdt(GDT_ADDR, GDT_LIMIT);
 
-        emu.write_memory<uint64_t>(GDT_ADDR + 6 * (sizeof(uint64_t)), 0xEFFE000000FFFF);
+        // Index 1 (selector 0x08) - 64-bit kernel code segment (Ring 0)
+        // P=1, DPL=0, S=1, Type=0xA (Code, Execute/Read), L=1 (Long mode)
+        emu.write_memory<uint64_t>(GDT_ADDR + 1 * sizeof(uint64_t), 0x00AF9B000000FFFF);
+
+        // Index 2 (selector 0x10) - 64-bit kernel data segment (Ring 0)
+        // P=1, DPL=0, S=1, Type=0x2 (Data, Read/Write), L=1 (64-bit)
+        emu.write_memory<uint64_t>(GDT_ADDR + 2 * sizeof(uint64_t), 0x00CF93000000FFFF);
+
+        // Index 3 (selector 0x18) - 32-bit compatibility mode segment (Ring 0)
+        // P=1, DPL=0, S=1, Type=0xA (Code, Execute/Read), DB=1, G=1
+        emu.write_memory<uint64_t>(GDT_ADDR + 3 * sizeof(uint64_t), 0x00CF9B000000FFFF);
+
+        // Index 4 (selector 0x23) - 32-bit code segment for WOW64 (Ring 3)
+        // Real Windows: Code RE Ac 3 Bg Pg P Nl 00000cfb
+        // P=1, DPL=3, S=1, Type=0xA (Code, Execute/Read), DB=1, G=1
+        emu.write_memory<uint64_t>(GDT_ADDR + 4 * sizeof(uint64_t), 0x00CFFB000000FFFF);
+
+        // Index 5 (selector 0x2B) - Data segment for user mode (Ring 3)
+        // Real Windows: Data RW Ac 3 Bg Pg P Nl 00000cf3
+        // P=1, DPL=3, S=1, Type=0x2 (Data, Read/Write), G=1
+        emu.write_memory<uint64_t>(GDT_ADDR + 5 * sizeof(uint64_t), 0x00CFF3000000FFFF);
+        emu.reg<uint16_t>(x86_register::ss, 0x2B);
+        emu.reg<uint16_t>(x86_register::ds, 0x2B);
+        emu.reg<uint16_t>(x86_register::es, 0x2B);
+        emu.reg<uint16_t>(x86_register::gs, 0x2B); // Initial GS value, will be overridden with proper base later
+
+        // Index 6 (selector 0x33) - 64-bit code segment (Ring 3)
+        // P=1, DPL=3, S=1, Type=0xA (Code, Execute/Read), L=1 (Long mode)
+        emu.write_memory<uint64_t>(GDT_ADDR + 6 * sizeof(uint64_t), 0x00AFFB000000FFFF);
         emu.reg<uint16_t>(x86_register::cs, 0x33);
 
-        emu.write_memory<uint64_t>(GDT_ADDR + 5 * (sizeof(uint64_t)), 0xEFF6000000FFFF);
-        emu.reg<uint16_t>(x86_register::ss, 0x2B);
+        // Index 10 (selector 0x53) - FS segment for WOW64 TEB access
+        // Real Windows: Data RW Ac 3 Bg By P Nl 000004f3 (base=0x002c1000, limit=0xfff)
+        // Initially set with base=0, will be updated during thread creation
+        // P=1, DPL=3, S=1, Type=0x3 (Data, Read/Write, Accessed), G=0 (byte granularity), DB=1
+        emu.write_memory<uint64_t>(GDT_ADDR + 10 * sizeof(uint64_t), 0x0040F3000000FFFF);
+        emu.reg<uint16_t>(x86_register::fs, 0x53);
     }
 
     std::u16string expand_environment_string(const std::u16string& input,
