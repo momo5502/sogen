@@ -318,8 +318,13 @@ export class Playground extends React.Component<
         />
         <div className="h-[100dvh] flex flex-col">
           <header className="flex shrink-0 items-center gap-2 border-b p-2 overflow-y-auto">
-            <a href="#/">
-              <Button size="sm" variant="secondary" className="fancy">
+            <a title="Home" href="#/">
+              <Button
+                size="sm"
+                variant="secondary"
+                className="fancy"
+                title="Home Button"
+              >
                 <HouseFill />
               </Button>
             </a>

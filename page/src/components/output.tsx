@@ -336,6 +336,7 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
           style={{ height: this.state.height, width: this.state.width }}
         />
         <Button
+          title="Scroll to end"
           className={
             "absolute bottom-6 right-6 z-50 terminal-glass transition-opacity duration-50 ease-linear " +
             (this.state.autoScroll ? "opacity-0" : "")
