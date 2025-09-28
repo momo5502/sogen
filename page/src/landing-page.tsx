@@ -27,7 +27,7 @@ function generateButtons(additionalClasses: string = "") {
         <Button
           asChild
           size="lg"
-          className="bg-gradient-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100 w-full flex"
+          className="rounded-lg bg-gradient-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100 w-full flex"
         >
           <span>
             <Play className="mr-2 h-5 w-5 transition-transform" />
@@ -41,7 +41,7 @@ function generateButtons(additionalClasses: string = "") {
           asChild
           size="lg"
           variant="outline"
-          className="border-neutral-600 text-neutral-300 hover:bg-neutral-800/50 px-8 py-6 text-lg font-semibold group transition-all duration-300 w-full flex"
+          className="rounded-lg border-neutral-600 text-neutral-300 hover:bg-neutral-800/50 px-8 py-6 text-lg font-semibold group transition-all duration-300 w-full flex"
         >
           <span>
             <Github className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
