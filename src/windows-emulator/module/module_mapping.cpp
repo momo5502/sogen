@@ -79,7 +79,8 @@ namespace
                 auto& sym = binary.imports[thunk_address];
                 sym.module_index = module_index;
 
-                if (IMAGE_SNAP_BY_ORDINAL64(original_thunk.u1.Ordinal))
+                // Use architecture-specific ordinal checking
+                if (thunk_traits::snap_by_ordinal(original_thunk.u1.Ordinal))
                 {
                     sym.name = "#" + std::to_string(thunk_traits::ordinal_mask(original_thunk.u1.Ordinal));
                 }
@@ -300,13 +301,13 @@ mapped_module map_module_from_data(memory_manager& memory, const std::span<const
         {
             // Use 32-bit allocation for WOW64 modules
             binary.image_base =
-                memory.find_free_allocation_base(static_cast<size_t>(binary.size_of_image, DEFAULT_ALLOCATION_ADDRESS_32BIT));
+                memory.find_free_allocation_base(static_cast<size_t>(binary.size_of_image), DEFAULT_ALLOCATION_ADDRESS_32BIT);
         }
         else
         {
             // Use 64-bit allocation for native modules
             binary.image_base =
-                memory.find_free_allocation_base(static_cast<size_t>(binary.size_of_image, DEFAULT_ALLOCATION_ADDRESS_64BIT));
+                memory.find_free_allocation_base(static_cast<size_t>(binary.size_of_image), DEFAULT_ALLOCATION_ADDRESS_64BIT);
         }
         
         const auto is_dll = nt_headers.FileHeader.Characteristics & IMAGE_FILE_DLL;

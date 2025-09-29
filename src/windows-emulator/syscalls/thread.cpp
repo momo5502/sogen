@@ -44,7 +44,7 @@ namespace syscalls
             thread->wow64_cpu_reserved->access([&](WOW64_CPURESERVED& ctx) {
                 ctx.Flags |= WOW64_CPURESERVED_FLAG_RESET_STATE;
                 ctx.Context = new_wow64_context;
-                c.win_emu.callbacks.on_suspicious_activity("WOW64 CONTEXT");
+                // c.win_emu.callbacks.on_suspicious_activity("WOW64 CONTEXT");
             });
 
             return STATUS_SUCCESS;

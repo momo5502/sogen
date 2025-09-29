@@ -253,7 +253,11 @@ namespace
         {
             for (const auto& instruction : instructions)
             {
-                const auto* mnemonic = cs_insn_name(c.d.get_handle(), instruction);
+                const auto& e = c.win_emu;
+                auto& emu = e->emu();
+                const auto reg_cs = emu.reg<uint16_t>(x86_register::cs);
+                const auto handle = c.d.resolve_handle(emu, reg_cs);
+                const auto* mnemonic = cs_insn_name(handle, instruction);
                 c.win_emu->log.print(color::white, "%s: %" PRIu64 "\n", mnemonic, count);
             }
         }

@@ -313,6 +313,22 @@ namespace unicorn
                 return result_size;
             }
 
+            bool read_descriptor_table(const int reg, descriptor_table_register& table) override
+            {
+                if (reg != static_cast<int>(x86_register::gdtr) && reg != static_cast<int>(x86_register::idtr))
+                {
+                    return false;
+                }
+
+                uc_x86_mmr gdt{};
+
+                this->read_register(x86_register::gdtr, &gdt, sizeof(gdt));
+
+                table.base = gdt.base;
+                table.limit = gdt.limit;
+                return true;
+            }
+
             void map_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) override
             {
                 auto read_wrapper = [c = std::move(read_cb)](uc_engine*, const uint64_t addr, const uint32_t s) {
