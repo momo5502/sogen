@@ -3,10 +3,12 @@
 #include "module_mapping.hpp"
 #include "platform/win_pefile.hpp"
 #include "windows-emulator/logger.hpp"
+#include "../wow64_heaven_gate.hpp"
 
 #include <serialization_helper.hpp>
 #include <random>
 #include <algorithm>
+#include <vector>
 
 namespace utils
 {
@@ -262,6 +264,7 @@ void module_manager::load_wow64_modules(const windows_path& executable_path,
     this->ntdll = this->map_module(ntdll_path, logger, true);      // 64-bit ntdll
     this->win32u = this->map_module(win32u_path, logger, true);    // 64-bit win32u
 
+    // Load 32-bit ntdll module for WOW64 subsystem
     this->wow64_modules_.ntdll32 = this->map_module(ntdll32_path, logger, true); // 32-bit ntdll
     
     // Get original ImageBase values from PE files
@@ -339,6 +342,73 @@ void module_manager::load_wow64_modules(const windows_path& executable_path,
     this->memory_->write_memory(ldr_init_block_addr, &init_block, symtem_dll_init_block_fix_size);
     
     logger.info("Successfully initialized LdrSystemDllInitBlock at 0x%llx\n", ldr_init_block_addr);
+
+    // Install the WOW64 Heaven's Gate trampoline used for compat-mode -> 64-bit transitions.
+    this->install_wow64_heaven_gate(logger);
+}
+
+void module_manager::install_wow64_heaven_gate(const logger& logger)
+{
+    using namespace wow64::heaven_gate;
+
+    auto allocate_or_validate = [&](uint64_t base, size_t size, memory_permission perms, const char* name) {
+        if (!this->memory_->allocate_memory(base, size, perms))
+        {
+            const auto region = this->memory_->get_region_info(base);
+            if (!region.is_reserved || region.allocation_length < size)
+            {
+                logger.error("Failed to allocate %s at 0x%llx (size 0x%zx)\n", name, base, size);
+                return false;
+            }
+        }
+        return true;
+    };
+
+    bool code_initialized = false;
+    if (allocate_or_validate(kCodeBase, kCodeSize, memory_permission::read_write, "WOW64 heaven gate code"))
+    {
+        if (!this->memory_->protect_memory(kCodeBase, kCodeSize, nt_memory_permission(memory_permission::read_write)))
+        {
+            logger.error("Failed to change protection for WOW64 heaven gate code at 0x%llx\n", kCodeBase);
+        }
+        else
+        {
+            std::vector<uint8_t> buffer(kCodeSize, 0);
+            this->memory_->write_memory(kCodeBase, buffer.data(), buffer.size());
+            this->memory_->write_memory(kCodeBase, kTrampolineBytes.data(), kTrampolineBytes.size());
+            this->memory_->protect_memory(kCodeBase, kCodeSize, nt_memory_permission(memory_permission::read | memory_permission::exec));
+            code_initialized = true;
+        }
+
+        if (code_initialized && this->modules_.find(kCodeBase) == this->modules_.end())
+        {
+            mapped_module module{};
+            module.name = "wow64_heaven_gate";
+            module.path = "<wow64-heaven-gate>";
+            module.image_base = kCodeBase;
+            module.image_base_file = kCodeBase;
+            module.size_of_image = kCodeSize;
+            module.entry_point = kCodeBase;
+            constexpr uint16_t kMachineAmd64 = 0x8664;
+            module.machine = kMachineAmd64;
+            module.is_static = true;
+
+            mapped_section section{};
+            section.name = ".gate";
+            section.region.start = kCodeBase;
+            section.region.length = kCodeSize;
+            section.region.permissions = memory_permission::read | memory_permission::exec;
+            module.sections.emplace_back(std::move(section));
+
+            this->modules_.emplace(module.image_base, std::move(module));
+        }
+    }
+
+    if (allocate_or_validate(kStackBase, kStackSize, memory_permission::read_write, "WOW64 heaven gate stack"))
+    {
+        std::vector<uint8_t> buffer(kStackSize, 0);
+        this->memory_->write_memory(kStackBase, buffer.data(), buffer.size());
+    }
 }
 
 // Refactored map_main_modules with execution mode detection

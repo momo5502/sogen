@@ -183,6 +183,8 @@ class module_manager
                            const windows_path& ntdll32_path,
                            const logger& logger);
 
+    void install_wow64_heaven_gate(const logger& logger);
+
     module_map::iterator get_module(const uint64_t address)
     {
         if (this->modules_.empty())
