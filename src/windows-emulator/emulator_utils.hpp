@@ -6,6 +6,7 @@
 #include "memory_utils.hpp"
 #include "address_utils.hpp"
 #include "x86_register.hpp"
+#include "common/segment_utils.hpp"
 
 #include <utils/time.hpp>
 
@@ -387,6 +388,22 @@ inline std::u16string read_unicode_string(emulator& emu, const uint64_t uc_strin
 
 inline uint64_t get_function_argument(x86_64_emulator& emu, const size_t index, const bool is_syscall = false)
 {
+    bool use_32bit_stack = false;
+
+    if (!is_syscall)
+    {
+        const auto cs_selector = emu.reg<uint16_t>(x86_register::cs);
+        const auto bitness = segment_utils::get_segment_bitness(emu, cs_selector);
+        use_32bit_stack = bitness && *bitness == segment_utils::segment_bitness::bit32;
+    }
+
+    if (use_32bit_stack)
+    {
+        const auto esp = emu.reg<uint32_t>(x86_register::esp);
+        const auto address = static_cast<uint64_t>(esp) + static_cast<uint64_t>((index + 1) * sizeof(uint32_t));
+        return static_cast<uint64_t>(emu.read_memory<uint32_t>(address));
+    }
+
     switch (index)
     {
     case 0:

@@ -203,9 +203,9 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
         teb_obj.ClientId.UniqueProcess = 1ul;
         teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
 
-        // Native 64-bit stack is fixed at 0x98000-0x9FFFF
-        teb_obj.NtTib.StackLimit = this->stack_base;              // 0x98000
-        teb_obj.NtTib.StackBase = wow64_cpureserved_base;         // 0x9FD20 (near top of native stack)
+        // Native 64-bit stack 
+        teb_obj.NtTib.StackLimit = this->stack_base;
+        teb_obj.NtTib.StackBase = wow64_cpureserved_base; 
         teb_obj.NtTib.Self = this->teb64->value();
         teb_obj.CurrentLocale = 0x409;
         teb_obj.ProcessEnvironmentBlock = context.peb64.value();
