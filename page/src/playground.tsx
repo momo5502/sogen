@@ -154,6 +154,14 @@ export class Playground extends React.Component<
     this.state.emulator?.stop();
   }
 
+  resetFilesystemState() {
+    this.setState({
+      filesystemPromise: undefined,
+      filesystem: undefined,
+      drawerOpen: false,
+    });
+  }
+
   async resetFilesys() {
     if (!this.state.filesystem) {
       return;
@@ -161,14 +169,8 @@ export class Playground extends React.Component<
 
     await this.state.filesystem.delete();
 
-    this.setState({
-      filesystemPromise: undefined,
-      filesystem: undefined,
-      drawerOpen: false,
-    });
-
+    this.resetFilesystemState();
     this.output.current?.clear();
-
     location.reload();
   }
 
@@ -190,8 +192,9 @@ export class Playground extends React.Component<
       return this.state.filesystemPromise;
     }
 
-    const promise = new Promise<Filesystem>((resolve) => {
+    const promise = new Promise<Filesystem>((resolve, reject) => {
       if (!force) {
+        this.output.current?.clear();
         this.logLine("Loading filesystem...");
       }
 
@@ -202,11 +205,20 @@ export class Playground extends React.Component<
         (percent) => {
           this.logLine(`Downloading filesystem: ${percent}%`);
         },
-      ).then(resolve);
+      )
+        .then(resolve)
+        .catch(reject);
     });
 
     promise.then((filesystem) => this.setState({ filesystem }));
     this.setState({ filesystemPromise: promise });
+
+    promise.catch((e) => {
+      console.log(e);
+      this.logLine("Failed to fetch filesystem:");
+      this.logLine(e.toString());
+      this.resetFilesystemState();
+    });
 
     return promise;
   }
@@ -306,12 +318,22 @@ export class Playground extends React.Component<
         />
         <div className="h-[100dvh] flex flex-col">
           <header className="flex shrink-0 items-center gap-2 border-b p-2 overflow-y-auto">
-            <a href="#/">
-              <Button size="sm" variant="secondary" className="fancy">
+            <a title="Home" href="#/">
+              <Button
+                size="sm"
+                variant="secondary"
+                className="fancy"
+                title="Home Button"
+              >
                 <HouseFill />
               </Button>
             </a>
-            <Button size="sm" className="fancy" onClick={this.start}>
+            <Button
+              size="sm"
+              className="fancy"
+              onClick={this.start}
+              title="Start"
+            >
               <PlayFill /> <span>Start</span>
             </Button>
 
@@ -321,6 +343,7 @@ export class Playground extends React.Component<
                 isFinalState(this.state.emulator.getState())
               }
               size="sm"
+              title="Stop"
               variant="secondary"
               className="fancy"
               onClick={() => this.state.emulator?.stop()}
@@ -329,6 +352,7 @@ export class Playground extends React.Component<
             </Button>
             <Button
               size="sm"
+              title={this.isEmulatorPaused() ? "Resume" : "Pause"}
               disabled={
                 !this.state.emulator ||
                 isFinalState(this.state.emulator.getState())
@@ -350,7 +374,12 @@ export class Playground extends React.Component<
 
             <Popover>
               <PopoverTrigger asChild>
-                <Button size="sm" variant="secondary" className="fancy">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="fancy"
+                  title="Settings"
+                >
                   <GearFill />{" "}
                   <span className="hidden sm:inline">Settings</span>
                 </Button>

@@ -3,17 +3,31 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { HashRouter, Route, Routes, Navigate } from "react-router-dom";
 import { Playground, storeEmulateData } from "./playground";
 import { LandingPage } from "./landing-page";
-
 import { useParams } from "react-router-dom";
+import Loader from "./Loader";
 
 import "@fontsource/inter/latin.css";
 
 import "./App.css";
+import "./animation.css";
 
 function EmulateFile() {
   const { encodedData } = useParams();
   storeEmulateData(encodedData);
   return <Navigate to="/playground" replace />;
+}
+
+function Spinner() {
+  const loading = Loader.useLoader();
+
+  return (
+    <div
+      className={
+        "fixed z-9999 top-0 left-0 right-0 h-[2px] pointer-events-none select-none transition-opacity duration-1000 animated-gradient " +
+        (loading ? "opacity-100" : "opacity-0")
+      }
+    ></div>
+  );
 }
 
 function App() {
@@ -28,6 +42,7 @@ function App() {
             <Route path="/emulate/:encodedData?" element={<EmulateFile />} />
           </Routes>
         </HashRouter>
+        <Spinner />
       </TooltipProvider>
     </ThemeProvider>
   );

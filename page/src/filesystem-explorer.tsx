@@ -307,6 +307,17 @@ export class FilesystemExplorer extends React.Component<
   }
 
   async _onFileRename(file: string, newFile: string) {
+    newFile = newFile.toLowerCase();
+
+    if (newFile == file) {
+      this.setState({ renameFile: "" });
+      return;
+    }
+
+    if (!this._validateName(newFile)) {
+      return;
+    }
+
     const oldPath = makeFullPathWithState(this.state, file);
     const newPath = makeFullPathWithState(this.state, newFile);
 
@@ -324,24 +335,32 @@ export class FilesystemExplorer extends React.Component<
     await this._uploadFiles(files);
   }
 
-  async _onFolderCreate(name: string) {
-    this.setState({ createFolder: false });
-
-    name = name.toLowerCase();
-
+  _validateName(name: string) {
     if (name.length == 0) {
-      return;
+      return false;
     }
 
     if (name.includes("/") || name.includes("\\")) {
       this._showError("Folder must not contain special characters");
-      return;
+      return false;
     }
 
     if (this.state.path.length == 0 && name.length > 1) {
       this._showError("Drives must be a single letter");
+      return false;
+    }
+
+    return true;
+  }
+
+  async _onFolderCreate(name: string) {
+    name = name.toLowerCase();
+
+    if (!this._validateName(name)) {
       return;
     }
+
+    this.setState({ createFolder: false });
 
     const fullPath = makeFullPathWithState(this.state, name);
     await this.props.filesystem.createFolder(fullPath);
