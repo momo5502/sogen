@@ -6,6 +6,93 @@
 
 namespace syscalls
 {
+    // Helper function to parse PE headers and extract image information
+    template <typename T>
+    static bool parse_pe_headers(const std::vector<std::byte>& file_data, section::image_info& info)
+    {
+        if (file_data.size() < sizeof(PEDosHeader_t))
+        {
+            return false;
+        }
+
+        const auto* dos_header = reinterpret_cast<const PEDosHeader_t*>(file_data.data());
+        if (dos_header->e_magic != PEDosHeader_t::k_Magic)
+        {
+            return false;
+        }
+
+        // First check if we can read up to the optional header magic
+        if (file_data.size() < dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t) + sizeof(uint16_t))
+        {
+            return false;
+        }
+
+        // Read the magic number from the optional header
+        const auto* magic_ptr = reinterpret_cast<const uint16_t*>(
+            file_data.data() + dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t));
+        const uint16_t magic = *magic_ptr;
+
+        // Check if the magic matches the expected type
+        constexpr uint16_t expected_magic = (sizeof(T) == sizeof(uint32_t)) ? 
+            PEOptionalHeader_t<std::uint32_t>::k_Magic : PEOptionalHeader_t<std::uint64_t>::k_Magic;
+        
+        if (magic != expected_magic)
+        {
+            return false;
+        }
+
+        // Now check the full NT headers size
+        if (file_data.size() < dos_header->e_lfanew + sizeof(PENTHeaders_t<T>))
+        {
+            return false;
+        }
+
+        const auto* nt_headers = reinterpret_cast<const PENTHeaders_t<T>*>(file_data.data() + dos_header->e_lfanew);
+        if (nt_headers->Signature != PENTHeaders_t<T>::k_Signature)
+        {
+            return false;
+        }
+
+        const auto& file_header = nt_headers->FileHeader;
+        const auto& optional_header = nt_headers->OptionalHeader;
+
+        // Extract information from headers
+        info.machine = static_cast<uint16_t>(file_header.Machine);
+        info.image_characteristics = file_header.Characteristics;
+
+        info.entry_point_rva = optional_header.AddressOfEntryPoint;
+        info.image_base = optional_header.ImageBase;
+        info.subsystem = optional_header.Subsystem;
+        info.subsystem_major_version = optional_header.MajorSubsystemVersion;
+        info.subsystem_minor_version = optional_header.MinorSubsystemVersion;
+        info.dll_characteristics = optional_header.DllCharacteristics;
+        info.size_of_stack_reserve = optional_header.SizeOfStackReserve;
+        info.size_of_stack_commit = optional_header.SizeOfStackCommit;
+        info.size_of_code = optional_header.SizeOfCode;
+        info.loader_flags = optional_header.LoaderFlags;
+        info.checksum = optional_header.CheckSum;
+
+        // Check if image contains code
+        info.has_code = (optional_header.SizeOfCode > 0) || (optional_header.AddressOfEntryPoint != 0);
+
+        // Also check section characteristics for code sections
+        const auto sections_offset = dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t) + file_header.SizeOfOptionalHeader;
+        if (file_data.size() >= sections_offset + sizeof(IMAGE_SECTION_HEADER) * file_header.NumberOfSections)
+        {
+            const auto* sections = reinterpret_cast<const IMAGE_SECTION_HEADER*>(file_data.data() + sections_offset);
+            for (uint16_t i = 0; i < file_header.NumberOfSections; ++i)
+            {
+                if (sections[i].Characteristics & IMAGE_SCN_CNT_CODE)
+                {
+                    info.has_code = true;
+                    break;
+                }
+            }
+        }
+
+        return true;
+    }
+
     NTSTATUS handle_NtCreateSection(const syscall_context& c, const emulator_object<handle> section_handle,
                                     const ACCESS_MASK /*desired_access*/,
                                     const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
@@ -44,6 +131,45 @@ namespace syscalls
         else if (!file)
         {
             return STATUS_INVALID_PARAMETER;
+        }
+
+        // If this is an image section, parse PE headers
+        if ((allocation_attributes & SEC_IMAGE) && !s.file_name.empty())
+        {
+            std::vector<std::byte> file_data;
+            if (utils::io::read_file(s.file_name, &file_data))
+            {
+                section::image_info info{};
+
+                // Read the PE magic to determine if it's 32-bit or 64-bit
+                bool parsed = false;
+                if (file_data.size() >= sizeof(PEDosHeader_t))
+                {
+                    const auto* dos_header = reinterpret_cast<const PEDosHeader_t*>(file_data.data());
+                    if (dos_header->e_magic == PEDosHeader_t::k_Magic &&
+                        file_data.size() >= dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t) + sizeof(uint16_t))
+                    {
+                        const auto* magic_ptr = reinterpret_cast<const uint16_t*>(
+                            file_data.data() + dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t));
+                        const uint16_t magic = *magic_ptr;
+
+                        // Parse based on the actual PE type
+                        if (magic == PEOptionalHeader_t<std::uint32_t>::k_Magic)
+                        {
+                            parsed = parse_pe_headers<uint32_t>(file_data, info);
+                        }
+                        else if (magic == PEOptionalHeader_t<std::uint64_t>::k_Magic)
+                        {
+                            parsed = parse_pe_headers<uint64_t>(file_data, info);
+                        }
+                    }
+                }
+
+                if (parsed)
+                {
+                    s.cached_image_info = info;
+                }
+            }
         }
 
         const auto h = c.proc.sections.store(std::move(s));
@@ -95,7 +221,8 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
         }
 
-        if (attributes.RootDirectory != KNOWN_DLLS_DIRECTORY && attributes.RootDirectory != BASE_NAMED_OBJECTS_DIRECTORY)
+        if (attributes.RootDirectory != KNOWN_DLLS_DIRECTORY && attributes.RootDirectory != KNOWN_DLLS32_DIRECTORY &&
+            attributes.RootDirectory != BASE_NAMED_OBJECTS_DIRECTORY)
         {
             c.win_emu.log.error("Unsupported section\n");
             c.emu.stop();
@@ -478,5 +605,278 @@ namespace syscalls
     NTSTATUS handle_NtAreMappedFilesTheSame()
     {
         return STATUS_NOT_SUPPORTED;
+    }
+
+    enum SECTION_INFORMATION_CLASS
+    {
+        SectionBasicInformation = 0,
+        SectionImageInformation = 1,
+        SectionRelocationInformation = 2,
+        SectionOriginalBaseInformation = 3,
+        SectionInternalImageInformation = 4
+    };
+
+    struct SECTION_BASIC_INFORMATION
+    {
+        PVOID BaseAddress;
+        ULONG Attributes;
+        LARGE_INTEGER Size;
+    };
+
+    struct SECTION_IMAGE_INFORMATION
+    {
+        PVOID TransferAddress;
+        ULONG ZeroBits;
+        SIZE_T MaximumStackSize;
+        SIZE_T CommittedStackSize;
+        ULONG SubSystemType;
+        union
+        {
+            struct
+            {
+                USHORT SubSystemMinorVersion;
+                USHORT SubSystemMajorVersion;
+            };
+            ULONG SubSystemVersion;
+        };
+        ULONG GpValue;
+        USHORT ImageCharacteristics;
+        USHORT DllCharacteristics;
+        USHORT Machine;
+        BOOLEAN ImageContainsCode;
+        union
+        {
+            struct
+            {
+                UCHAR ComPlusNativeReady : 1;
+                UCHAR ComPlusILOnly : 1;
+                UCHAR ImageDynamicallyRelocated : 1;
+                UCHAR ImageMappedFlat : 1;
+                UCHAR Reserved : 4;
+            };
+            UCHAR ImageFlags;
+        };
+        ULONG LoaderFlags;
+        ULONG ImageFileSize;
+        ULONG CheckSum;
+    };
+
+    NTSTATUS handle_NtQuerySection(const syscall_context& c, const handle section_handle, const ULONG section_information_class,
+                                   const uint64_t section_information, const SIZE_T section_information_length,
+                                   const emulator_object<SIZE_T> result_length)
+    {
+        // Check if section handle is valid
+        auto* section_entry = c.proc.sections.get(section_handle);
+
+        // Handle special sections
+        if (section_handle == SHARED_SECTION || section_handle == DBWIN_BUFFER)
+        {
+            // These special sections don't support querying
+            return STATUS_INVALID_HANDLE;
+        }
+
+        if (!section_entry)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        switch (section_information_class)
+        {
+        case SectionBasicInformation: {
+            // Check buffer size
+            if (section_information_length < sizeof(SECTION_BASIC_INFORMATION))
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            SECTION_BASIC_INFORMATION info{};
+
+            // BaseAddress - typically NULL unless SEC_BASED is used
+            info.BaseAddress = nullptr;
+
+            // Attributes - combine the SEC_ flags
+            info.Attributes = section_entry->allocation_attributes;
+
+            // If it's an image section, ensure SEC_IMAGE is set
+            if (section_entry->is_image())
+            {
+                info.Attributes |= SEC_IMAGE;
+            }
+
+            // If it's file-backed, ensure SEC_FILE is set
+            if (!section_entry->file_name.empty())
+            {
+                info.Attributes |= SEC_FILE;
+            }
+
+            // Size - maximum size of the section
+            info.Size.QuadPart = section_entry->maximum_size;
+
+            // Write the structure to user buffer
+            c.emu.write_memory(section_information, &info, sizeof(info));
+
+            // Set return length if requested
+            if (result_length)
+            {
+                result_length.write(sizeof(SECTION_BASIC_INFORMATION));
+            }
+
+            return STATUS_SUCCESS;
+        }
+
+        case SectionImageInformation: {
+            // Only image sections support this query
+            if (!section_entry->is_image())
+            {
+                return STATUS_SECTION_NOT_IMAGE;
+            }
+
+            // Check buffer size
+            if (section_information_length < sizeof(SECTION_IMAGE_INFORMATION))
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            SECTION_IMAGE_INFORMATION info{};
+
+            // First check if we have cached PE information
+            if (section_entry->cached_image_info.has_value())
+            {
+                const auto& cached = section_entry->cached_image_info.value();
+
+                // TransferAddress - entry point address (image base + RVA)
+                info.TransferAddress = reinterpret_cast<PVOID>(cached.image_base + cached.entry_point_rva);
+
+                // Machine type
+                info.Machine = cached.machine;
+
+                // Subsystem information
+                info.SubSystemType = cached.subsystem;
+                info.SubSystemMajorVersion = cached.subsystem_major_version;
+                info.SubSystemMinorVersion = cached.subsystem_minor_version;
+
+                // Stack sizes
+                info.MaximumStackSize = cached.size_of_stack_reserve;
+                info.CommittedStackSize = cached.size_of_stack_commit;
+
+                // Image characteristics
+                info.ImageCharacteristics = cached.image_characteristics;
+                info.DllCharacteristics = cached.dll_characteristics;
+
+                // Image contains code
+                info.ImageContainsCode = cached.has_code ? TRUE : FALSE;
+
+                // Image flags
+                info.ImageMappedFlat = 1;
+                info.ImageDynamicallyRelocated = (cached.dll_characteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) ? 1 : 0;
+
+                // Other fields
+                info.ZeroBits = 0;
+                info.GpValue = 0;
+                info.LoaderFlags = cached.loader_flags;
+                info.CheckSum = cached.checksum;
+                info.ImageFileSize = static_cast<ULONG>(section_entry->maximum_size);
+            }
+            else
+            {
+                // Try to get the mapped module to extract PE information
+                // Convert u16string to string for find_by_name
+                std::string narrow_name;
+                if (!section_entry->name.empty())
+                {
+                    narrow_name = u16_to_u8(section_entry->name);
+                }
+                else if (!section_entry->file_name.empty())
+                {
+                    narrow_name = u16_to_u8(section_entry->file_name);
+                }
+
+                const mapped_module* module = nullptr;
+                if (!narrow_name.empty())
+                {
+                    module = c.win_emu.mod_manager.find_by_name(narrow_name);
+                }
+
+                if (module)
+                {
+                    // TransferAddress - entry point address
+                    info.TransferAddress = reinterpret_cast<PVOID>(module->entry_point);
+
+                    // Machine type and other fields would need to be extracted from PE headers
+                    // For now, set reasonable defaults for x64
+                    info.Machine = IMAGE_FILE_MACHINE_AMD64;
+                    info.SubSystemType = 3; // IMAGE_SUBSYSTEM_WINDOWS_CUI
+                    info.SubSystemMajorVersion = 10;
+                    info.SubSystemMinorVersion = 0;
+
+                    // Stack sizes - typical defaults
+                    info.MaximumStackSize = 0x100000;  // 1MB
+                    info.CommittedStackSize = 0x10000; // 64KB
+
+                    // Image characteristics
+                    info.ImageCharacteristics = 0x0022; // IMAGE_FILE_EXECUTABLE_IMAGE | IMAGE_FILE_LARGE_ADDRESS_AWARE
+                    info.DllCharacteristics = 0x8160;   // Common DLL characteristics including ASLR and DEP
+
+                    // Check if it's a DLL
+                    if (section_entry->name.find(u".dll") != std::u16string::npos)
+                    {
+                        info.ImageCharacteristics |= IMAGE_FILE_DLL;
+                    }
+
+                    // Image contains code
+                    info.ImageContainsCode = TRUE;
+
+                    // Image flags
+                    info.ImageMappedFlat = 1;
+                    info.ImageDynamicallyRelocated = 1; // ASLR enabled
+
+                    // File size
+                    info.ImageFileSize = static_cast<ULONG>(module->size_of_image);
+
+                    // Other fields
+                    info.ZeroBits = 0;
+                    info.GpValue = 0;
+                    info.LoaderFlags = 0;
+                    info.CheckSum = 0;
+                }
+                else
+                {
+                    // If module is not mapped yet and no cached info, return minimal information
+                    info.Machine = IMAGE_FILE_MACHINE_AMD64;
+                    info.SubSystemType = 3;
+                    info.SubSystemMajorVersion = 10;
+                    info.SubSystemMinorVersion = 0;
+                    info.MaximumStackSize = 0x100000;
+                    info.CommittedStackSize = 0x10000;
+                    info.ImageCharacteristics = 0x0022;
+                    info.DllCharacteristics = 0x8160;
+                    info.ImageContainsCode = TRUE;
+                    info.ImageMappedFlat = 1;
+                    info.ImageDynamicallyRelocated = 1;
+                    info.ImageFileSize = static_cast<ULONG>(section_entry->maximum_size);
+                }
+            }
+
+            // Write the structure to user buffer
+            c.emu.write_memory(section_information, &info, sizeof(info));
+
+            // Set return length if requested
+            if (result_length)
+            {
+                result_length.write(sizeof(SECTION_IMAGE_INFORMATION));
+            }
+
+            return STATUS_SUCCESS;
+        }
+
+        case SectionRelocationInformation:
+        case SectionOriginalBaseInformation:
+        case SectionInternalImageInformation:
+            // These information classes are not implemented
+            return STATUS_NOT_SUPPORTED;
+
+        default:
+            return STATUS_NOT_SUPPORTED;
+        }
     }
 }
