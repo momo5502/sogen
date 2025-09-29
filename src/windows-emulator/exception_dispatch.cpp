@@ -4,6 +4,9 @@
 #include "cpu_context.hpp"
 #include "windows_emulator.hpp"
 
+#include "common/segment_utils.hpp"
+#include "wow64_heaven_gate.hpp"
+
 namespace
 {
     using exception_record = EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>;
@@ -111,9 +114,6 @@ namespace
 
         emu.write_memory(new_sp, zero_memory.data(), zero_memory.size());
 
-        emu.reg(x86_register::rsp, new_sp);
-        emu.reg(x86_register::rip, dispatcher);
-
         const emulator_object<CONTEXT64> context_record_obj{emu, new_sp};
         context_record_obj.write(*reinterpret_cast<CONTEXT64*>(pointers.ContextRecord));
 
@@ -134,6 +134,23 @@ namespace
             frame.cs = record.SegCs;
             frame.eflags = record.EFlags;
         });
+
+        const auto cs_selector = emu.reg<uint16_t>(x86_register::cs);
+        const auto bitness = segment_utils::get_segment_bitness(emu, cs_selector);
+
+        if (!bitness || *bitness != segment_utils::segment_bitness::bit32)
+        {
+            emu.reg(x86_register::rsp, new_sp);
+            emu.reg(x86_register::rip, dispatcher);
+            return;
+        }
+
+        emu.reg(x86_register::rax, dispatcher);
+        emu.reg(x86_register::rbx, new_sp);
+        emu.reg(x86_register::rcx, static_cast<uint64_t>(wow64::heaven_gate::kUserCodeSelector));
+        emu.reg(x86_register::rdx, static_cast<uint64_t>(wow64::heaven_gate::kUserStackSelector));
+        emu.reg(x86_register::rsp, wow64::heaven_gate::kStackTop);
+        emu.reg(x86_register::rip, wow64::heaven_gate::kCodeBase);
     }
 }
 
