@@ -123,9 +123,18 @@ typedef struct _EMU_NT_TIB64
     std::uint64_t FiberData;
     std::uint64_t ArbitraryUserPointer;
     EMULATOR_CAST(std::uint64_t, struct _EMU_NT_TIB64*) Self;
-} EMU_NT_TIB64;
+} EMU_NT_TIB64, *PEMU_NT_TIB64;
 
-typedef EMU_NT_TIB64* PEMU_NT_TIB64;
+typedef struct _EMU_NT_TIB32
+{
+    EMULATOR_CAST(std::uint32_t, struct _EXCEPTION_REGISTRATION_RECORD*) ExceptionList;
+    std::uint32_t StackBase;
+    std::uint32_t StackLimit;
+    std::uint32_t SubSystemTib;
+    std::uint32_t FiberData;
+    std::uint32_t ArbitraryUserPointer;
+    EMULATOR_CAST(std::uint32_t, struct _EMU_NT_TIB32*) Self;
+} EMU_NT_TIB32, *PEMU_NT_TIB32;
 
 union PEB_BITFIELD_UNION
 {
@@ -151,6 +160,12 @@ typedef struct _LIST_ENTRY64
     ULONGLONG Flink;
     ULONGLONG Blink;
 } LIST_ENTRY64, *PLIST_ENTRY64, *RESTRICTED_POINTER PRLIST_ENTRY64;
+
+typedef struct _LIST_ENTRY32
+{
+    ULONG Flink;
+    ULONG Blink;
+} LIST_ENTRY32, *PLIST_ENTRY32, *RESTRICTED_POINTER PRLIST_ENTRY32;
 
 #endif
 
@@ -1032,7 +1047,7 @@ inline TEB64* NtCurrentTeb64()
 
 typedef struct _TEB32
 {
-    NT_TIB32 NtTib;
+    EMU_NT_TIB32 NtTib;
 
     std::uint32_t EnvironmentPointer;
     CLIENT_ID32 ClientId;

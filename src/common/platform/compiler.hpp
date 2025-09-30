@@ -31,9 +31,9 @@
 #define RESTRICTED_POINTER
 
 // Windows-specific macros for unreferenced parameters
-#define UNREFERENCED_PARAMETER(P)          (P)
-#define DBG_UNREFERENCED_PARAMETER(P)      (P)
-#define DBG_UNREFERENCED_LOCAL_VARIABLE(V) (V)
+// #define UNREFERENCED_PARAMETER(P)          (P)
+// #define DBG_UNREFERENCED_PARAMETER(P)      (P)
+// #define DBG_UNREFERENCED_LOCAL_VARIABLE(V) (V)
 
 #else
 #include <cstddef>
