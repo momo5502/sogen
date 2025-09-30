@@ -73,8 +73,18 @@
 #define SL_NO_CURSOR_UPDATE            0x10
 
 #ifndef SEC_IMAGE
-#define SEC_IMAGE   0x01000000
-#define SEC_RESERVE 0x04000000
+#define SEC_HUGE_PAGES             0x00020000
+#define SEC_PARTITION_OWNER_HANDLE 0x00040000
+#define SEC_64K_PAGES              0x00080000
+#define SEC_FILE                   0x00800000
+#define SEC_IMAGE                  0x01000000
+#define SEC_PROTECTED_IMAGE        0x02000000
+#define SEC_RESERVE                0x04000000
+#define SEC_COMMIT                 0x08000000
+#define SEC_NOCACHE                0x10000000
+#define SEC_WRITECOMBINE           0x40000000
+#define SEC_LARGE_PAGES            0x80000000
+#define SEC_IMAGE_NO_EXECUTE       (SEC_IMAGE | SEC_NOCACHE)
 #endif
 
 #define CTL_CODE(DeviceType, Function, Method, Access) (((DeviceType) << 16) | ((Access) << 14) | ((Function) << 2) | (Method))
