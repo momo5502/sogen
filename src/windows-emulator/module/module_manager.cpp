@@ -6,6 +6,7 @@
 #include "../wow64_heaven_gate.hpp"
 
 #include <serialization_helper.hpp>
+#include <cinttypes>
 #include <random>
 #include <algorithm>
 #include <vector>
@@ -344,7 +345,7 @@ void module_manager::load_wow64_modules(const windows_path& executable_path, con
     // Write the initialized structure to the export address
     this->memory_->write_memory(ldr_init_block_addr, &init_block, symtem_dll_init_block_fix_size);
 
-    logger.info("Successfully initialized LdrSystemDllInitBlock at 0x%llx\n", ldr_init_block_addr);
+    logger.info("Successfully initialized LdrSystemDllInitBlock at 0x%" PRIx64 "\n", ldr_init_block_addr);
 
     // Install the WOW64 Heaven's Gate trampoline used for compat-mode -> 64-bit transitions.
     this->install_wow64_heaven_gate(logger);
@@ -360,7 +361,7 @@ void module_manager::install_wow64_heaven_gate(const logger& logger)
             const auto region = this->memory_->get_region_info(base);
             if (!region.is_reserved || region.allocation_length < size)
             {
-                logger.error("Failed to allocate %s at 0x%llx (size 0x%zx)\n", name, base, size);
+                logger.error("Failed to allocate %s at 0x%" PRIx64 " (size 0x%zx)\n", name, base, size);
                 return false;
             }
         }
@@ -372,7 +373,7 @@ void module_manager::install_wow64_heaven_gate(const logger& logger)
     {
         if (!this->memory_->protect_memory(kCodeBase, kCodeSize, nt_memory_permission(memory_permission::read_write)))
         {
-            logger.error("Failed to change protection for WOW64 heaven gate code at 0x%llx\n", kCodeBase);
+            logger.error("Failed to change protection for WOW64 heaven gate code at 0x%" PRIx64 "\n", kCodeBase);
         }
         else
         {
