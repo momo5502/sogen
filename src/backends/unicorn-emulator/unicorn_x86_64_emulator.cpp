@@ -537,7 +537,7 @@ namespace unicorn
                     c(address); //
 
                     // Fix unicorn bug?
-                    const uint16_t cs_current = this->reg<uint16_t>(x86_register::cs);
+                    const auto cs_current = this->reg<uint16_t>(x86_register::cs);
                     if (this->current_reg_cs_ != cs_current)
                     {
                         this->set_segment_base(x86_register::gs, preserved_gs_base_);
