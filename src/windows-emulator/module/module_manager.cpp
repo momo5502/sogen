@@ -194,7 +194,7 @@ module_manager::module_manager(memory_manager& memory, file_system& file_sys, ca
 }
 
 // Core mapping logic to eliminate code duplication
-mapped_module* module_manager::map_module_core(const pe_detection_result& detection_result, std::function<mapped_module()> mapper,
+mapped_module* module_manager::map_module_core(const pe_detection_result& detection_result, const std::function<mapped_module()>& mapper,
                                                const logger& logger, bool is_static)
 {
     if (!detection_result.is_valid())
@@ -353,7 +353,11 @@ void module_manager::load_wow64_modules(const windows_path& executable_path, con
 
 void module_manager::install_wow64_heaven_gate(const logger& logger)
 {
-    using namespace wow64::heaven_gate;
+    using wow64::heaven_gate::kCodeBase;
+    using wow64::heaven_gate::kCodeSize;
+    using wow64::heaven_gate::kStackBase;
+    using wow64::heaven_gate::kStackSize;
+    using wow64::heaven_gate::kTrampolineBytes;
 
     auto allocate_or_validate = [&](uint64_t base, size_t size, memory_permission perms, const char* name) {
         if (!this->memory_->allocate_memory(base, size, perms))
@@ -591,15 +595,15 @@ void module_manager::patch_shell32_entry_point_if_needed(mapped_module& mod)
 
     // Temporarily change memory protection to writable
     nt_memory_permission mem_permisson(memory_permission::none);
-    if (!this->memory_->protect_memory(entry_page_start, page_size, memory_permission::all, (nt_memory_permission*)&mem_permisson))
+    if (!this->memory_->protect_memory(entry_page_start, page_size, memory_permission::all, &mem_permisson))
     {
         return; // Failed to change protection
     }
 
     // Write the ret 0Ch instruction at the entry point (0xB8, 0x01, 0x00, 0x00, 0x00, 0xC2, 0x0C, 0x00)
     // This makes DllMain return immediately without executing CRT startup
-    const uint8_t patch_bytes[] = {0xB8, 0x01, 0x00, 0x00, 0x00, 0xC2, 0x0C, 0x00}; // mov eax, 1 && ret 0Ch
-    this->memory_->write_memory(mod.entry_point, patch_bytes, sizeof(patch_bytes));
+    constexpr std::array<uint8_t, 8> patch_bytes = {0xB8, 0x01, 0x00, 0x00, 0x00, 0xC2, 0x0C, 0x00}; // mov eax, 1 && ret 0Ch
+    this->memory_->write_memory(mod.entry_point, patch_bytes.data(), patch_bytes.size());
 
     // Restore the original memory protection
     this->memory_->protect_memory(entry_page_start, page_size, mem_permisson, nullptr);
