@@ -485,7 +485,7 @@ uint64_t memory_manager::allocate_memory(const size_t size, const nt_memory_perm
 
 uint64_t memory_manager::find_free_allocation_base(const size_t size, const uint64_t start) const
 {
-    uint64_t start_address = std::max(MIN_ALLOCATION_ADDRESS, start ? start : this->default_allocation_address_);
+    uint64_t start_address = std::max(static_cast<uint64_t>(MIN_ALLOCATION_ADDRESS), start ? start : this->default_allocation_address_);
     start_address = align_up(start_address, ALLOCATION_GRANULARITY);
 
     // Since reserved_regions_ is a sorted map, we can iterate through it
