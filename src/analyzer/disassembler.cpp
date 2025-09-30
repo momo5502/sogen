@@ -99,7 +99,7 @@ std::optional<disassembler::segment_bitness> disassembler::get_segment_bitness(e
 
 csh disassembler::resolve_handle(emulator& cpu, const uint16_t cs_selector) const
 {
-    const auto mode = this->get_segment_bitness(cpu, cs_selector);
+    const auto mode = disassembler::get_segment_bitness(cpu, cs_selector);
     if (!mode)
     {
         return this->handle_64_;
