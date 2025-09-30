@@ -225,7 +225,7 @@ namespace syscalls
                                     ULONG allocation_attributes, handle file_handle);
     NTSTATUS handle_NtOpenSection(const syscall_context& c, emulator_object<handle> section_handle, ACCESS_MASK /*desired_access*/,
                                   emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes);
-    NTSTATUS handle_NtQuerySection(const syscall_context& c, handle section_handle, ULONG section_information_class,
+    NTSTATUS handle_NtQuerySection(const syscall_context& c, handle section_handle, SECTION_INFORMATION_CLASS section_information_class,
                                    uint64_t section_information, SIZE_T section_information_length, emulator_object<SIZE_T> result_length);
     NTSTATUS handle_NtMapViewOfSection(const syscall_context& c, handle section_handle, handle process_handle,
                                        emulator_object<uint64_t> base_address,

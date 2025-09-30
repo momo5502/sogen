@@ -221,6 +221,7 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
     // Clone the API set for PEB64 and PEB32
     uint64_t apiset_map_address_32 = 0;
     const auto apiset_map_address = apiset::clone(emu, allocator, apiset_container).value();
+    DBG_UNREFERENCED_LOCAL_VARIABLE(apiset_map_address);
     if (this->is_wow64_process)
     {
         apiset_map_address_32 = apiset::clone(emu, allocator, apiset_container).value();

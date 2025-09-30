@@ -323,6 +323,7 @@ namespace
         const auto current_ip = current_thread.current_ip;
         const auto is_main_exe = win_emu.mod_manager.executable->contains(address);
         const auto is_previous_main_exe = win_emu.mod_manager.executable->contains(previous_ip);
+        DBG_UNREFERENCED_LOCAL_VARIABLE(current_ip);
 
         const auto binary = utils::make_lazy([&] {
             if (is_main_exe)
