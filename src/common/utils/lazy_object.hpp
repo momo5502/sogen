@@ -7,9 +7,7 @@ namespace utils
 {
     template <typename F, typename T>
     concept CallableWithReturn = requires(const F f) {
-        {
-            f()
-        } -> std::same_as<T>;
+        { f() } -> std::same_as<T>;
     };
 
     template <typename T, typename F>
