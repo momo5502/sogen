@@ -458,11 +458,17 @@ namespace syscalls
 
                     // Log specific attribute flags
                     if (ext_info.attribute_flags & MEM_EXTENDED_PARAMETER_GRAPHICS)
+                    {
                         c.win_emu.log.info("  - Graphics memory requested\n");
+                    }
                     if (ext_info.attribute_flags & MEM_EXTENDED_PARAMETER_NONPAGED)
+                    {
                         c.win_emu.log.info("  - Non-paged memory requested\n");
+                    }
                     if (ext_info.attribute_flags & MEM_EXTENDED_PARAMETER_EC_CODE)
+                    {
                         c.win_emu.log.info("  - EC code memory requested\n");
+                    }
                     break;
 
                 case MemExtendedParameterImageMachine:
@@ -659,7 +665,7 @@ namespace syscalls
             }
 
             // Size - maximum size of the section
-            info.Size.QuadPart = section_entry->maximum_size;
+            info.Size.QuadPart = static_cast<LONGLONG>(section_entry->maximum_size);
 
             // Write the structure to user buffer
             c.emu.write_memory(section_information, &info, sizeof(info));

@@ -173,6 +173,11 @@ class emulator_thread : public ref_counted_object
         buffer.write_optional(this->pending_status);
         buffer.write_optional(this->gs_segment);
         buffer.write_optional(this->teb64);
+        buffer.write_optional(this->wow64_stack_base);
+        buffer.write_optional(this->wow64_stack_size);
+        buffer.write_optional(this->teb32);
+        buffer.write_optional(this->wow64_context_segment);
+        buffer.write_optional(this->wow64_cpu_reserved);
 
         buffer.write_vector(this->last_registers);
     }
@@ -213,6 +218,11 @@ class emulator_thread : public ref_counted_object
         buffer.read_optional(this->pending_status);
         buffer.read_optional(this->gs_segment, [this] { return emulator_allocator(*this->memory_ptr); });
         buffer.read_optional(this->teb64, [this] { return emulator_object<TEB64>(*this->memory_ptr); });
+        buffer.read_optional(this->wow64_stack_base);
+        buffer.read_optional(this->wow64_stack_size);
+        buffer.read_optional(this->teb32, [this] { return emulator_object<TEB32>(*this->memory_ptr); });
+        buffer.read_optional(this->wow64_context_segment, [this] { return emulator_allocator(*this->memory_ptr); });
+        buffer.read_optional(this->wow64_cpu_reserved, [this] { return emulator_object<WOW64_CPURESERVED>(*this->memory_ptr); });
 
         buffer.read_vector(this->last_registers);
     }
