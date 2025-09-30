@@ -416,7 +416,7 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
             p32.ProcessParameters = WOW64_PEB32_PROCESS_PARA_BASE; // Fixed address on 0x30000
 
             // Use the dedicated 32-bit ApiSetMap for PEB32
-            p32.ApiSetMap = reinterpret_cast<struct _API_SET_NAMESPACE * POINTER_32>(static_cast<uint32_t>(apiset_map_address_32));
+            p32.ApiSetMap = static_cast<uint32_t>(apiset_map_address_32);
 
             // Copy similar settings from PEB64
             p32.ProcessHeap = 0;
