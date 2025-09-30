@@ -287,7 +287,7 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
         ctx.MachineType = IMAGE_FILE_MACHINE_I386;
 
         // Set context flags for all state
-        ctx.Context.ContextFlags = CONTEXT_ALL;
+        ctx.Context.ContextFlags = CONTEXT32_ALL;
 
         // Debug registers - all zero for initial state
         ctx.Context.Dr0 = 0;
