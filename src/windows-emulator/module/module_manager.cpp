@@ -205,6 +205,7 @@ mapped_module* module_manager::map_module_core(const pe_detection_result& detect
     try
     {
         auto& strategy = strategy_factory_.get_strategy(detection_result.architecture);
+        DBG_UNREFERENCED_LOCAL_VARIABLE(strategy);
         mapped_module mod = mapper();
         mod.is_static = is_static;
 
@@ -563,7 +564,8 @@ void module_manager::patch_shell32_entry_point_if_needed(mapped_module& mod)
     // Only patch shell32.dll in SysWOW64 directory (32-bit)
     // Convert module name to lowercase for case-insensitive comparison
     std::string module_name_lower = mod.name;
-    std::transform(module_name_lower.begin(), module_name_lower.end(), module_name_lower.begin(), ::tolower);
+    std::transform(module_name_lower.begin(), module_name_lower.end(), module_name_lower.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     if (module_name_lower != "shell32.dll")
     {
         return;
@@ -572,7 +574,7 @@ void module_manager::patch_shell32_entry_point_if_needed(mapped_module& mod)
     // Check if this is the SysWOW64 version by examining if it's a 32-bit module
     // Convert path to lowercase for case-insensitive comparison
     std::string path_str = mod.path.string();
-    std::transform(path_str.begin(), path_str.end(), path_str.begin(), ::tolower);
+    std::transform(path_str.begin(), path_str.end(), path_str.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     if (path_str.find("syswow64") == std::string::npos)
     {
         return;

@@ -313,13 +313,13 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
         ctx.Context.Ebp = 0;
 
         // EBX - 32-bit PEB address
-        ctx.Context.Ebx = teb32_peb;
+        ctx.Context.Ebx = static_cast<uint32_t>(teb32_peb);
 
         // EAX - thread entry point
-        ctx.Context.Eax = this->start_address;
+        ctx.Context.Eax = static_cast<uint32_t>(this->start_address);
 
         // ESP - Fixed stack pointer at top of allocated stack
-        ctx.Context.Esp = nttib32_stack_base - 0x10; // Leaving 0x10 bytes at top as per WinDbg
+        ctx.Context.Esp = static_cast<uint32_t>(nttib32_stack_base - 0x10); // Leaving 0x10 bytes at top as per WinDbg
 
         // EIP - will be set to RtlUserThreadStart during setup_registers()
         ctx.Context.Eip = 0;
