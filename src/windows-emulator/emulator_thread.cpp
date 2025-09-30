@@ -156,12 +156,10 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
 
         return;
     }
-    else
-    {
-        // Default native size of wow64 is 256KB
-        this->stack_size = WOW64_NATIVE_STACK_SIZE;
-        this->wow64_stack_size = page_align_up(std::max(stack_size, static_cast<uint64_t>(STACK_SIZE)));
-    }
+
+    // Default native size of wow64 is 256KB
+    this->stack_size = WOW64_NATIVE_STACK_SIZE;
+    this->wow64_stack_size = page_align_up(std::max(stack_size, static_cast<uint64_t>(STACK_SIZE)));
 
     // Set the default memory allocation address to the specified 32-bit address
     memory.set_default_allocation_address(DEFAULT_ALLOCATION_ADDRESS_32BIT);
@@ -171,7 +169,7 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
     constexpr size_t teb64_size = sizeof(TEB64);
     constexpr size_t teb32_size = sizeof(TEB32);                                // 4120 bytes
     const uint64_t required_gs_size = teb64_size + wow_teb_offset + teb32_size; // Need space for both TEBs
-    const size_t actual_gs_size =
+    const auto actual_gs_size =
         static_cast<size_t>((required_gs_size > GS_SEGMENT_SIZE) ? page_align_up(required_gs_size) : GS_SEGMENT_SIZE);
 
     // Allocate GS segment to hold both TEB32 and TEB64 for WOW64 process
@@ -248,7 +246,7 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
 
         // Set ClientId for 32-bit TEB
         teb32_obj.ClientId.UniqueProcess = 1;
-        teb32_obj.ClientId.UniqueThread = static_cast<uint32_t>(this->id);
+        teb32_obj.ClientId.UniqueThread = this->id;
 
         // Set 32-bit PEB pointer
         if (context.peb32.has_value())
