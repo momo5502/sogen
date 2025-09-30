@@ -35,13 +35,13 @@
 
 #define EXPORT_SYMBOL __attribute__((visibility("default")))
 #define IMPORT_SYMBOL
-#define NO_INLINE                          __attribute__((noinline))
+#define NO_INLINE          __attribute__((noinline))
 
-#define DECLSPEC_ALIGN(n)                  alignas(n)
-#define fopen_s                            fopen
-#define sscanf_s                           sscanf
+#define DECLSPEC_ALIGN(n)  alignas(n)
+#define fopen_s            fopen
+#define sscanf_s           sscanf
 
-#define RESTRICTED_POINTER                 __restrict
+#define RESTRICTED_POINTER __restrict
 
 #ifdef OS_MAC
 #define _fseeki64 fseeko

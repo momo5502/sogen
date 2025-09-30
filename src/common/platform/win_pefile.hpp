@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstring>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -315,7 +316,7 @@ typedef struct _IMAGE_IMPORT_DESCRIPTOR
     DWORD ForwarderChain; // -1 if no forwarders
     DWORD Name;
     DWORD FirstThunk; // RVA to IAT (if bound this IAT has actual addresses)
-} IMAGE_IMPORT_DESCRIPTOR;
+} IMAGE_IMPORT_DESCRIPTOR, *PIMAGE_IMPORT_DESCRIPTOR;
 
 typedef struct _IMAGE_THUNK_DATA64
 {
@@ -326,7 +327,18 @@ typedef struct _IMAGE_THUNK_DATA64
         ULONGLONG Ordinal;
         ULONGLONG AddressOfData; // PIMAGE_IMPORT_BY_NAME
     } u1;
-} IMAGE_THUNK_DATA64;
+} IMAGE_THUNK_DATA64, *PIMAGE_THUNK_DATA64;
+
+typedef struct _IMAGE_THUNK_DATA32
+{
+    union
+    {
+        DWORD ForwarderString; // PBYTE
+        DWORD Function;        // PDWORD
+        DWORD Ordinal;
+        DWORD AddressOfData; // PIMAGE_IMPORT_BY_NAME
+    } u1;
+} IMAGE_THUNK_DATA32, *PIMAGE_THUNK_DATA32;
 
 #endif
 

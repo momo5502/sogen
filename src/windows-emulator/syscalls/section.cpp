@@ -33,8 +33,9 @@ namespace syscalls
         const uint16_t magic = *magic_ptr;
 
         // Check if the magic matches the expected type
-        constexpr uint16_t expected_magic =
-            (sizeof(T) == sizeof(uint32_t)) ? PEOptionalHeader_t<std::uint32_t>::k_Magic : PEOptionalHeader_t<std::uint64_t>::k_Magic;
+        constexpr uint16_t expected_magic = (sizeof(T) == sizeof(uint32_t))
+                                                ? static_cast<uint16_t>(PEOptionalHeader_t<std::uint32_t>::k_Magic)
+                                                : static_cast<uint16_t>(PEOptionalHeader_t<std::uint64_t>::k_Magic);
 
         if (magic != expected_magic)
         {
