@@ -454,9 +454,7 @@ namespace syscalls
                 return ret(STATUS_BUFFER_OVERFLOW);
             }
 
-            struct _stat64 file_stat
-            {
-            };
+            struct _stat64 file_stat{};
             if (fstat64(f->handle, &file_stat) != 0)
             {
                 return STATUS_INVALID_HANDLE;
@@ -576,9 +574,7 @@ namespace syscalls
                 return ret(status);
             }
 
-            struct _stat64 file_stat
-            {
-            };
+            struct _stat64 file_stat{};
             if (fstat64(native_file_handle, &file_stat) != 0)
             {
                 return STATUS_INVALID_HANDLE;
@@ -1014,9 +1010,7 @@ namespace syscalls
 
         const auto local_filename = c.win_emu.file_sys.translate(filename).u8string();
 
-        struct _stat64 file_stat
-        {
-        };
+        struct _stat64 file_stat{};
         if (_stat64(reinterpret_cast<const char*>(local_filename.c_str()), &file_stat) != 0)
         {
             return STATUS_OBJECT_NAME_NOT_FOUND;
@@ -1063,9 +1057,7 @@ namespace syscalls
 
         const auto local_filename = c.win_emu.file_sys.translate(filepath).u8string();
 
-        struct _stat64 file_stat
-        {
-        };
+        struct _stat64 file_stat{};
         if (_stat64(reinterpret_cast<const char*>(local_filename.c_str()), &file_stat) != 0)
         {
             return STATUS_OBJECT_NAME_NOT_FOUND;
