@@ -81,7 +81,7 @@ namespace
         constexpr std::u16string_view root_dir{u"C:\\Windows"};
         memcpy(&kusd.NtSystemRoot.arr[0], root_dir.data(), root_dir.size() * 2);
 
-        kusd.ImageNumberLow = IMAGE_FILE_MACHINE_AMD64; 
+        kusd.ImageNumberLow = IMAGE_FILE_MACHINE_AMD64;
         kusd.ImageNumberHigh = IMAGE_FILE_MACHINE_AMD64;
     }
 }

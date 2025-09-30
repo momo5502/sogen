@@ -854,7 +854,7 @@ int main(const int argc, const char* argv[])
 
     bool valid = true;
 
-	RUN_TEST(test_io, "I/O")
+    RUN_TEST(test_io, "I/O")
     RUN_TEST(test_dir_io, "Dir I/O")
     RUN_TEST(test_apis, "APIs")
     RUN_TEST(test_working_directory, "Working Directory")

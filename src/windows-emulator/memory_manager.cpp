@@ -493,7 +493,7 @@ uint64_t memory_manager::find_free_allocation_base(const size_t size, const uint
     while (start_address + size <= MAX_ALLOCATION_ADDRESS)
     {
         bool conflict = false;
-        
+
         // Check if the proposed range [start_address, start_address+size) conflicts with any existing region
         for (const auto& region : this->reserved_regions_)
         {
@@ -502,20 +502,20 @@ uint64_t memory_manager::find_free_allocation_base(const size_t size, const uint
             {
                 continue;
             }
-            
+
             // If this region starts after our end, we're done checking (map is sorted)
             if (region.first >= start_address + size)
             {
                 break;
             }
-            
+
             // Otherwise, we have a conflict
             conflict = true;
             // Move start_address past this conflicting region
             start_address = align_up(region.first + region.second.length, ALLOCATION_GRANULARITY);
             break;
         }
-        
+
         // If no conflict was found, we have our address
         if (!conflict)
         {

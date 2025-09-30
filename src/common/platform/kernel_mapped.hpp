@@ -5,7 +5,7 @@
 // NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
 #ifndef NT_SUCCESS
-#define NT_SUCCESS(Status)                                              (((NTSTATUS)(Status)) >= 0)
+#define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
 #endif
 
 #define PROCESSOR_FEATURE_MAX                                           64
@@ -625,8 +625,8 @@ typedef struct _PEB32
     EMULATOR_CAST(std::uint32_t, struct _SILO_USER_SHARED_DATA* POINTER_32) SharedData; // HotpatchInformation
     EMULATOR_CAST(std::uint32_t, PVOID32* POINTER_32) ReadOnlyStaticServerData;
 
-    EMULATOR_CAST(std::uint32_t, PVOID32) AnsiCodePageData; // PCPTABLEINFO
-    EMULATOR_CAST(std::uint32_t, PVOID32) OemCodePageData;  // PCPTABLEINFO
+    EMULATOR_CAST(std::uint32_t, PVOID32) AnsiCodePageData;     // PCPTABLEINFO
+    EMULATOR_CAST(std::uint32_t, PVOID32) OemCodePageData;      // PCPTABLEINFO
     EMULATOR_CAST(std::uint32_t, PVOID32) UnicodeCaseTableData; // PNLSTABLEINFO
 
     ULONG NumberOfProcessors;
@@ -1506,12 +1506,14 @@ typedef struct _MEM_ADDRESS_REQUIREMENTS64
 // Extended memory parameter structure
 typedef struct _MEM_EXTENDED_PARAMETER64
 {
-    struct {
-        ULONG64 Type : 8;      // MEM_EXTENDED_PARAMETER_TYPE
+    struct
+    {
+        ULONG64 Type : 8; // MEM_EXTENDED_PARAMETER_TYPE
         ULONG64 Reserved : 56;
     };
-    
-    union {
+
+    union
+    {
         ULONG64 ULong64;
         EMULATOR_CAST(std::uint64_t, PVOID) Pointer;
         EMULATOR_CAST(std::uint64_t, SIZE_T) Size;

@@ -26,7 +26,7 @@ namespace
         constexpr uint64_t fs_gdt_offset = GDT_ADDR + 10 * sizeof(uint64_t);
         memory.write_memory(fs_gdt_offset, &descriptor, sizeof(descriptor));
     }
-    
+
     template <typename T>
     emulator_object<T> allocate_object_on_stack(x86_64_emulator& emu)
     {
@@ -203,9 +203,9 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
         teb_obj.ClientId.UniqueProcess = 1ul;
         teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
 
-        // Native 64-bit stack 
+        // Native 64-bit stack
         teb_obj.NtTib.StackLimit = this->stack_base;
-        teb_obj.NtTib.StackBase = wow64_cpureserved_base; 
+        teb_obj.NtTib.StackBase = wow64_cpureserved_base;
         teb_obj.NtTib.Self = this->teb64->value();
         teb_obj.CurrentLocale = 0x409;
         teb_obj.ProcessEnvironmentBlock = context.peb64.value();
@@ -238,8 +238,8 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
     this->teb32->access([&](TEB32& teb32_obj) {
         // Set NT_TIB32 fields
         teb32_obj.NtTib.Self = static_cast<uint32_t>(teb32_addr);                // Self pointer to 32-bit TEB
-        teb32_obj.NtTib.StackBase = static_cast<uint32_t>(nttib32_stack_base);   // Top of 32-bit stack (High address) 
-        teb32_obj.NtTib.StackLimit = static_cast<uint32_t>(nttib32_stack_limit); // Bottom of 32-bit stack (Low address) 
+        teb32_obj.NtTib.StackBase = static_cast<uint32_t>(nttib32_stack_base);   // Top of 32-bit stack (High address)
+        teb32_obj.NtTib.StackLimit = static_cast<uint32_t>(nttib32_stack_limit); // Bottom of 32-bit stack (Low address)
         teb32_obj.NtTib.ExceptionList = static_cast<uint32_t>(0xffffffff);       // Must be 0xffffffff on 32-bit TEB
         teb32_obj.NtTib.SubSystemTib = static_cast<uint32_t>(0x0);
         teb32_obj.NtTib.FiberData = static_cast<uint32_t>(0x1e00);
@@ -266,7 +266,7 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
 
         // Note: CurrentLocale and other fields will be initialized by WOW64 runtime
     });
-    
+
     // CRITICAL: Setup FS segment (0x53) to point to 32-bit TEB for accurate WOW64 emulation
     // This mimics what Windows kernel does during NtCreateUserProcess for WOW64 processes
     // Without this, FS:0 won't correctly access the 32-bit TEB
@@ -331,7 +331,6 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
         memset(&ctx.Context.FloatSave, 0, sizeof(ctx.Context.FloatSave));
         memset(&ctx.Context.ExtendedRegisters, 0, sizeof(ctx.Context.ExtendedRegisters));
     });
-    
 }
 
 void emulator_thread::mark_as_ready(const NTSTATUS status)

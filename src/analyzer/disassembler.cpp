@@ -81,7 +81,8 @@ void disassembler::release()
     }
 }
 
-instructions disassembler::disassemble(emulator& cpu, const uint16_t cs_selector, const std::span<const uint8_t> data, const size_t count) const
+instructions disassembler::disassemble(emulator& cpu, const uint16_t cs_selector, const std::span<const uint8_t> data,
+                                       const size_t count) const
 {
     // Select the handle by decoding the code segment descriptor as documented in Intel 64 and IA-32 Architectures SDM Vol. 3.
     const csh handle_to_use = this->resolve_handle(cpu, cs_selector);
