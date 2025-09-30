@@ -92,7 +92,7 @@ instructions disassembler::disassemble(emulator& cpu, const uint16_t cs_selector
     return instructions{std::span(insts, inst_count)};
 }
 
-std::optional<disassembler::segment_bitness> disassembler::get_segment_bitness(emulator& cpu, const uint16_t cs_selector) const
+std::optional<disassembler::segment_bitness> disassembler::get_segment_bitness(emulator& cpu, const uint16_t cs_selector)
 {
     return segment_utils::get_segment_bitness(cpu, cs_selector);
 }

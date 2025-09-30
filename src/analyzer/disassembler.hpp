@@ -99,7 +99,7 @@ class disassembler
     using segment_bitness = segment_utils::segment_bitness;
 
     instructions disassemble(emulator& cpu, uint16_t cs_selector, std::span<const uint8_t> data, size_t count) const;
-    std::optional<segment_bitness> get_segment_bitness(emulator& cpu, uint16_t cs_selector) const;
+    static std::optional<segment_bitness> get_segment_bitness(emulator& cpu, uint16_t cs_selector);
     csh resolve_handle(emulator& cpu, uint16_t cs_selector) const;
 
     csh get_handle_64() const
