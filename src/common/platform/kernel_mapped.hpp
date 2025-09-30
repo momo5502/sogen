@@ -178,7 +178,7 @@ typedef struct _PEB_LDR_DATA32
     std::uint32_t EntryInProgress;
     BOOLEAN ShutdownInProgress;
     EmulatorTraits<Emu32>::HANDLE ShutdownThreadId;
-} PEB_LDR_DATA32, *POINTER_32 PPEB_LDR_DATA32;
+} PEB_LDR_DATA32, *PPEB_LDR_DATA32;
 
 static_assert(sizeof(PEB_LDR_DATA32) == 48);
 
@@ -371,7 +371,7 @@ typedef struct _CURDIR32
 {
     UNICODE_STRING<EmulatorTraits<Emu32>> DosPath;
     EmulatorTraits<Emu32>::HANDLE Handle;
-} CURDIR32, *POINTER_32 PCURDIR32;
+} CURDIR32, *PCURDIR32;
 
 static_assert(sizeof(CURDIR32) == 12);
 
@@ -381,7 +381,7 @@ typedef struct _RTL_DRIVE_LETTER_CURDIR32
     USHORT Length;
     ULONG TimeStamp;
     UNICODE_STRING<EmulatorTraits<Emu32>> DosPath;
-} RTL_DRIVE_LETTER_CURDIR32, *POINTER_32 PRTL_DRIVE_LETTER_CURDIR32;
+} RTL_DRIVE_LETTER_CURDIR32, *PRTL_DRIVE_LETTER_CURDIR32;
 
 static_assert(sizeof(RTL_DRIVE_LETTER_CURDIR32) == 16);
 
@@ -434,7 +434,7 @@ typedef struct _RTL_USER_PROCESS_PARAMETERS32
     ULONG DefaultThreadpoolCpuSetMaskCount;
     ULONG DefaultThreadpoolThreadMaximum;
     ULONG HeapMemoryTypeMask; // WIN11
-} RTL_USER_PROCESS_PARAMETERS32, *POINTER_32 PRTL_USER_PROCESS_PARAMETERS32;
+} RTL_USER_PROCESS_PARAMETERS32, *PRTL_USER_PROCESS_PARAMETERS32;
 
 static_assert(sizeof(RTL_USER_PROCESS_PARAMETERS32) == 708);
 
@@ -586,11 +586,11 @@ typedef struct _PEB32
 
     std::uint32_t ImageBaseAddress;
     EMULATOR_CAST(std::uint32_t, PPEB_LDR_DATA32) Ldr;
-    EMULATOR_CAST(std::uint32_t, struct _RTL_USER_PROCESS_PARAMETERS32* POINTER_32) ProcessParameters;
+    EMULATOR_CAST(std::uint32_t, struct _RTL_USER_PROCESS_PARAMETERS32*) ProcessParameters;
     EMULATOR_CAST(std::uint32_t, PVOID32) SubSystemData;
     EMULATOR_CAST(std::uint32_t, PVOID32) ProcessHeap;
-    EMULATOR_CAST(std::uint32_t, struct _RTL_CRITICAL_SECTION32* POINTER_32) FastPebLock;
-    union _SLIST_HEADER* POINTER_32 AtlThunkSListPtr;
+    EMULATOR_CAST(std::uint32_t, struct _RTL_CRITICAL_SECTION32*) FastPebLock;
+    union _SLIST_HEADER* AtlThunkSListPtr;
     EMULATOR_CAST(std::uint32_t, PVOID32) IFEOKey;
 
     union
@@ -616,14 +616,14 @@ typedef struct _PEB32
     };
     ULONG SystemReserved;
     ULONG AtlThunkSListPtr32;
-    struct _API_SET_NAMESPACE* POINTER_32 ApiSetMap;
+    struct _API_SET_NAMESPACE* ApiSetMap;
     ULONG TlsExpansionCounter;
-    struct _RTL_BITMAP* POINTER_32 TlsBitmap;
+    struct _RTL_BITMAP* TlsBitmap;
     ARRAY_CONTAINER<ULONG, 2> TlsBitmapBits;
 
     EMULATOR_CAST(std::uint32_t, PVOID32) ReadOnlySharedMemoryBase;
-    EMULATOR_CAST(std::uint32_t, struct _SILO_USER_SHARED_DATA* POINTER_32) SharedData; // HotpatchInformation
-    EMULATOR_CAST(std::uint32_t, PVOID32* POINTER_32) ReadOnlyStaticServerData;
+    EMULATOR_CAST(std::uint32_t, struct _SILO_USER_SHARED_DATA*) SharedData; // HotpatchInformation
+    EMULATOR_CAST(std::uint32_t, PVOID32*) ReadOnlyStaticServerData;
 
     EMULATOR_CAST(std::uint32_t, PVOID32) AnsiCodePageData;     // PCPTABLEINFO
     EMULATOR_CAST(std::uint32_t, PVOID32) OemCodePageData;      // PCPTABLEINFO
@@ -640,13 +640,13 @@ typedef struct _PEB32
 
     ULONG NumberOfHeaps;
     ULONG MaximumNumberOfHeaps;
-    EMULATOR_CAST(std::uint32_t, PVOID32* POINTER_32) ProcessHeaps; // PHEAP
+    EMULATOR_CAST(std::uint32_t, PVOID32*) ProcessHeaps; // PHEAP
 
     EMULATOR_CAST(std::uint32_t, PVOID32) GdiSharedHandleTable; // PGDI_SHARED_MEMORY
     EMULATOR_CAST(std::uint32_t, PVOID32) ProcessStarterHelper;
     ULONG GdiDCAttributeList;
 
-    EMULATOR_CAST(std::uint32_t, struct _RTL_CRITICAL_SECTION32* POINTER_32) LoaderLock;
+    EMULATOR_CAST(std::uint32_t, struct _RTL_CRITICAL_SECTION32*) LoaderLock;
 
     ULONG OSMajorVersion;
     ULONG OSMinorVersion;
@@ -672,10 +672,10 @@ typedef struct _PEB32
 
     UNICODE_STRING<EmulatorTraits<Emu32>> CSDVersion;
 
-    EMULATOR_CAST(std::uint32_t, struct _ACTIVATION_CONTEXT_DATA* POINTER_32) ActivationContextData;
-    EMULATOR_CAST(std::uint32_t, struct _ASSEMBLY_STORAGE_MAP32* POINTER_32) ProcessAssemblyStorageMap;
-    EMULATOR_CAST(std::uint32_t, struct _ACTIVATION_CONTEXT_DATA* POINTER_32) SystemDefaultActivationContextData;
-    EMULATOR_CAST(std::uint32_t, struct _ASSEMBLY_STORAGE_MAP32* POINTER_32) SystemAssemblyStorageMap;
+    EMULATOR_CAST(std::uint32_t, struct _ACTIVATION_CONTEXT_DATA*) ActivationContextData;
+    EMULATOR_CAST(std::uint32_t, struct _ASSEMBLY_STORAGE_MAP32*) ProcessAssemblyStorageMap;
+    EMULATOR_CAST(std::uint32_t, struct _ACTIVATION_CONTEXT_DATA*) SystemDefaultActivationContextData;
+    EMULATOR_CAST(std::uint32_t, struct _ASSEMBLY_STORAGE_MAP32*) SystemAssemblyStorageMap;
 
     EMULATOR_CAST(std::uint32_t, SIZE_T32) MinimumStackCommit;
 
@@ -714,15 +714,15 @@ typedef struct _PEB32
         };
     };
     ULONGLONG CsrServerReadOnlySharedMemoryBase;
-    EMULATOR_CAST(std::uint32_t, struct _RTL_CRITICAL_SECTION32* POINTER_32) TppWorkerpListLock;
+    EMULATOR_CAST(std::uint32_t, struct _RTL_CRITICAL_SECTION32*) TppWorkerpListLock;
     LIST_ENTRY32 TppWorkerpList;
     ARRAY_CONTAINER<ULONG, 128> WaitOnAddressHashTable;
-    EMULATOR_CAST(std::uint32_t, struct _PTELEMETRY_COVERAGE_HEADER* POINTER_32) TelemetryCoverageHeader; // REDSTONE3
+    EMULATOR_CAST(std::uint32_t, struct _PTELEMETRY_COVERAGE_HEADER*) TelemetryCoverageHeader; // REDSTONE3
     ULONG CloudFileFlags;
     ULONG CloudFileDiagFlags; // REDSTONE4
     CHAR PlaceholderCompatibilityMode;
     ARRAY_CONTAINER<CHAR, 7> PlaceholderCompatibilityModeReserved;
-    EMULATOR_CAST(std::uint32_t, struct _LEAP_SECOND_DATA* POINTER_32) LeapSecondData; // REDSTONE5
+    EMULATOR_CAST(std::uint32_t, struct _LEAP_SECOND_DATA*) LeapSecondData; // REDSTONE5
     union
     {
         ULONG LeapSecondFlags;
@@ -735,7 +735,7 @@ typedef struct _PEB32
     ULONG NtGlobalFlag2;
     ULONGLONG ExtendedFeatureDisableMask; // since WIN11
 
-} PEB32, *POINTER_32 PPEB32;
+} PEB32, *PPEB32;
 
 static_assert(sizeof(PEB32) == 0x488, "sizeof(PEB32) is incorrect"); // WIN11
 
@@ -751,7 +751,7 @@ typedef struct _ASSEMBLY_STORAGE_MAP_ENTRY32
     ULONG Flags;
     UNICODE_STRING<EmulatorTraits<Emu32>> DosPath;
     EMULATOR_CAST(std::uint32_t, HANDLE32) Handle;
-} ASSEMBLY_STORAGE_MAP_ENTRY32, *POINTER_32 PASSEMBLY_STORAGE_MAP_ENTRY32;
+} ASSEMBLY_STORAGE_MAP_ENTRY32, *PASSEMBLY_STORAGE_MAP_ENTRY32;
 
 static_assert(sizeof(ASSEMBLY_STORAGE_MAP_ENTRY32) == 16);
 
@@ -759,8 +759,8 @@ typedef struct _ASSEMBLY_STORAGE_MAP32
 {
     ULONG Flags;
     ULONG AssemblyCount;
-    EMULATOR_CAST(std::uint32_t, PASSEMBLY_STORAGE_MAP_ENTRY32* POINTER_32) AssemblyArray;
-} ASSEMBLY_STORAGE_MAP32, *POINTER_32 PASSEMBLY_STORAGE_MAP32;
+    EMULATOR_CAST(std::uint32_t, PASSEMBLY_STORAGE_MAP_ENTRY32*) AssemblyArray;
+} ASSEMBLY_STORAGE_MAP32, *PASSEMBLY_STORAGE_MAP32;
 
 static_assert(sizeof(ASSEMBLY_STORAGE_MAP32) == 12);
 
@@ -768,23 +768,23 @@ typedef struct _ACTIVATION_CONTEXT32
 {
     LONG RefCount;
     ULONG Flags;
-    EMULATOR_CAST(std::uint32_t, struct _ACTIVATION_CONTEXT_DATA* POINTER_32) ActivationContextData;
+    EMULATOR_CAST(std::uint32_t, struct _ACTIVATION_CONTEXT_DATA*) ActivationContextData;
     std::uint32_t /*PACTIVATION_CONTEXT_NOTIFY_ROUTINE*/ NotificationRoutine;
     std::uint32_t NotificationContext;
     ULONG SentNotifications[8];
     ULONG DisabledNotifications[8];
     ASSEMBLY_STORAGE_MAP32 StorageMap;
     EMULATOR_CAST(std::uint32_t, PASSEMBLY_STORAGE_MAP_ENTRY32) InlineStorageMapEntries[32];
-} ACTIVATION_CONTEXT32, *POINTER_32 PACTIVATION_CONTEXT32;
+} ACTIVATION_CONTEXT32, *PACTIVATION_CONTEXT32;
 
 static_assert(sizeof(ACTIVATION_CONTEXT32) == 224);
 
 typedef struct _RTL_ACTIVATION_CONTEXT_STACK_FRAME32
 {
-    EMULATOR_CAST(std::uint32_t, struct _RTL_ACTIVATION_CONTEXT_STACK_FRAME32* POINTER_32) Previous;
+    EMULATOR_CAST(std::uint32_t, struct _RTL_ACTIVATION_CONTEXT_STACK_FRAME32*) Previous;
     EMULATOR_CAST(std::uint32_t, PACTIVATION_CONTEXT32) ActivationContext;
     ULONG Flags; // RTL_ACTIVATION_CONTEXT_STACK_FRAME_FLAG_*
-} RTL_ACTIVATION_CONTEXT_STACK_FRAME32, *POINTER_32 PRTL_ACTIVATION_CONTEXT_STACK_FRAME32;
+} RTL_ACTIVATION_CONTEXT_STACK_FRAME32, *PRTL_ACTIVATION_CONTEXT_STACK_FRAME32;
 
 static_assert(sizeof(RTL_ACTIVATION_CONTEXT_STACK_FRAME32) == 12);
 
@@ -795,7 +795,7 @@ typedef struct _ACTIVATION_CONTEXT_STACK32
     ULONG Flags; // ACTIVATION_CONTEXT_STACK_FLAG_*
     ULONG NextCookieSequenceNumber;
     ULONG StackId;
-} ACTIVATION_CONTEXT_STACK32, *POINTER_32 PACTIVATION_CONTEXT_STACK32;
+} ACTIVATION_CONTEXT_STACK32, *PACTIVATION_CONTEXT_STACK32;
 
 static_assert(sizeof(ACTIVATION_CONTEXT_STACK32) == 24);
 
@@ -820,7 +820,7 @@ typedef struct _GDI_TEB_BATCH32
     ULONG Offset;
     EMULATOR_CAST(std::uint32_t, ULONG_PTR32) HDC;
     ULONG Buffer[GDI_BATCH_BUFFER_SIZE];
-} GDI_TEB_BATCH32, *POINTER_32 PGDI_TEB_BATCH32;
+} GDI_TEB_BATCH32, *PGDI_TEB_BATCH32;
 
 static_assert(sizeof(GDI_TEB_BATCH32) == 1248, "sizeof(GDI_TEB_BATCH32) is incorrect");
 
@@ -1128,7 +1128,7 @@ typedef struct _TEB32
     EMULATOR_CAST(std::uint32_t, PVOID32) SavedPriorityState;
     EMULATOR_CAST(std::uint32_t, ULONG_PTR32) ReservedForCodeCoverage;
     std::uint32_t ThreadPoolData;
-    EMULATOR_CAST(std::uint32_t, PVOID32* POINTER_32) TlsExpansionSlots;
+    EMULATOR_CAST(std::uint32_t, PVOID32*) TlsExpansionSlots;
     ULONG MuiGeneration;
     ULONG IsImpersonating;
     std::uint32_t NlsCache;
@@ -1184,7 +1184,7 @@ typedef struct _TEB32
     ULONGLONG LastSleepCounter; // Win11
     ULONG SpinCallCount;
     ULONGLONG ExtendedFeatureDisableMask;
-} TEB32, *POINTER_32 PTEB32;
+} TEB32, *PTEB32;
 
 static_assert(sizeof(TEB32) == 4120, "sizeof(TEB32) is incorrect");
 
