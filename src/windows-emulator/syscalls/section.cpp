@@ -439,7 +439,8 @@ namespace syscalls
                     ext_info.alignment = addr_req.Alignment;
                     ext_info.has_address_requirements = true;
 
-                    c.win_emu.log.info("NtMapViewOfSectionEx: Address requirements - Low: 0x%llX, High: 0x%llX, Align: 0x%llX\n",
+                    c.win_emu.log.info("NtMapViewOfSectionEx: Address requirements - Low: 0x%" PRIX64 ", High: 0x%" PRIX64
+                                       ", Align: 0x%" PRIX64 "\n",
                                        ext_info.lowest_address, ext_info.highest_address, ext_info.alignment);
                 }
                 break;
