@@ -28,14 +28,14 @@ namespace syscalls
         }
 
         // Read the magic number from the optional header
-        const auto* magic_ptr = reinterpret_cast<const uint16_t*>(
-            file_data.data() + dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t));
+        const auto* magic_ptr =
+            reinterpret_cast<const uint16_t*>(file_data.data() + dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t));
         const uint16_t magic = *magic_ptr;
 
         // Check if the magic matches the expected type
-        constexpr uint16_t expected_magic = (sizeof(T) == sizeof(uint32_t)) ? 
-            PEOptionalHeader_t<std::uint32_t>::k_Magic : PEOptionalHeader_t<std::uint64_t>::k_Magic;
-        
+        constexpr uint16_t expected_magic =
+            (sizeof(T) == sizeof(uint32_t)) ? PEOptionalHeader_t<std::uint32_t>::k_Magic : PEOptionalHeader_t<std::uint64_t>::k_Magic;
+
         if (magic != expected_magic)
         {
             return false;
@@ -149,8 +149,8 @@ namespace syscalls
                     if (dos_header->e_magic == PEDosHeader_t::k_Magic &&
                         file_data.size() >= dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t) + sizeof(uint16_t))
                     {
-                        const auto* magic_ptr = reinterpret_cast<const uint16_t*>(
-                            file_data.data() + dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t));
+                        const auto* magic_ptr = reinterpret_cast<const uint16_t*>(file_data.data() + dos_header->e_lfanew +
+                                                                                  sizeof(uint32_t) + sizeof(PEFileHeader_t));
                         const uint16_t magic = *magic_ptr;
 
                         // Parse based on the actual PE type

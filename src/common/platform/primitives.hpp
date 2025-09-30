@@ -20,6 +20,7 @@
 using LONG = std::int32_t;
 using ULONG = DWORD;
 using DWORD64 = std::uint64_t;
+using ULONG64 = std::uint64_t;
 using ULONGLONG = DWORD64;
 using LONGLONG = std::int64_t;
 using UINT = std::uint32_t;
