@@ -590,7 +590,7 @@ typedef struct _PEB32
     EMULATOR_CAST(std::uint32_t, PVOID32) SubSystemData;
     EMULATOR_CAST(std::uint32_t, PVOID32) ProcessHeap;
     EMULATOR_CAST(std::uint32_t, struct _RTL_CRITICAL_SECTION32*) FastPebLock;
-    union _SLIST_HEADER* AtlThunkSListPtr;
+    EMULATOR_CAST(std::uint32_t, union _SLIST_HEADER*) AtlThunkSListPtr;
     EMULATOR_CAST(std::uint32_t, PVOID32) IFEOKey;
 
     union
@@ -616,9 +616,9 @@ typedef struct _PEB32
     };
     ULONG SystemReserved;
     ULONG AtlThunkSListPtr32;
-    struct _API_SET_NAMESPACE* ApiSetMap;
+    EMULATOR_CAST(std::uint32_t, struct _API_SET_NAMESPACE*) ApiSetMap;
     ULONG TlsExpansionCounter;
-    struct _RTL_BITMAP* TlsBitmap;
+    EMULATOR_CAST(std::uint32_t, struct _RTL_BITMAP*) TlsBitmap;
     ARRAY_CONTAINER<ULONG, 2> TlsBitmapBits;
 
     EMULATOR_CAST(std::uint32_t, PVOID32) ReadOnlySharedMemoryBase;
