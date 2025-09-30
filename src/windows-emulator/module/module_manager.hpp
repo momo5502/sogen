@@ -179,8 +179,8 @@ class module_manager
     execution_mode current_execution_mode_ = execution_mode::unknown;
 
     // Core mapping logic to eliminate code duplication
-    mapped_module* map_module_core(const pe_detection_result& detection_result, std::function<mapped_module()> mapper, const logger& logger,
-                                   bool is_static);
+    mapped_module* map_module_core(const pe_detection_result& detection_result, const std::function<mapped_module()>& mapper,
+                                   const logger& logger, bool is_static);
 
     // Shell32.dll entry point patching to prevent TLS storage issues
     void patch_shell32_entry_point_if_needed(mapped_module& mod);
