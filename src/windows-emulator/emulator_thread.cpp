@@ -244,7 +244,6 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
         teb32_obj.NtTib.ExceptionList = static_cast<uint32_t>(0xffffffff);       // Must be 0xffffffff on 32-bit TEB
         teb32_obj.NtTib.SubSystemTib = static_cast<uint32_t>(0x0);
         teb32_obj.NtTib.FiberData = static_cast<uint32_t>(0x1e00);
-        teb32_obj.NtTib.Version = static_cast<uint32_t>(0x1e00);
         teb32_obj.NtTib.ArbitraryUserPointer = static_cast<uint32_t>(0x0);
 
         // Set ClientId for 32-bit TEB
