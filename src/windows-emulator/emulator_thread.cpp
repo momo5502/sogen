@@ -169,9 +169,10 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
     // Calculate required GS segment size for WOW64 (64-bit TEB + 32-bit TEB)
     constexpr uint64_t wow_teb_offset = 0x2000;
     constexpr size_t teb64_size = sizeof(TEB64);
-    constexpr size_t teb32_size = sizeof(TEB32);                              // 4120 bytes
-    const size_t required_gs_size = teb64_size + wow_teb_offset + teb32_size; // Need space for both TEBs
-    const size_t actual_gs_size = (required_gs_size > GS_SEGMENT_SIZE) ? page_align_up(required_gs_size) : GS_SEGMENT_SIZE;
+    constexpr size_t teb32_size = sizeof(TEB32);                                // 4120 bytes
+    const uint64_t required_gs_size = teb64_size + wow_teb_offset + teb32_size; // Need space for both TEBs
+    const size_t actual_gs_size =
+        static_cast<size_t>((required_gs_size > GS_SEGMENT_SIZE) ? page_align_up(required_gs_size) : GS_SEGMENT_SIZE);
 
     // Allocate GS segment to hold both TEB32 and TEB64 for WOW64 process
     this->gs_segment = emulator_allocator{
@@ -220,7 +221,7 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
     });
 
     // Allocate dynamic 32-bit stack for WOW64 thread
-    this->wow64_stack_base = memory.allocate_memory(this->wow64_stack_size.value(), memory_permission::read_write);
+    this->wow64_stack_base = memory.allocate_memory(static_cast<size_t>(this->wow64_stack_size.value()), memory_permission::read_write);
 
     // Create and initialize 32-bit TEB for WOW64
     // According to WinDbg: 32-bit TEB = 64-bit TEB + WowTebOffset (0x2000)

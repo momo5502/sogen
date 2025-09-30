@@ -499,7 +499,7 @@ namespace winpe
                 return false;
             if (n > size - off)
                 return false;
-            std::memcpy(dst, base + off, n);
+            memcpy(dst, base + off, n);
             return true;
         };
 
