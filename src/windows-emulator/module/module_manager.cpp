@@ -204,8 +204,7 @@ mapped_module* module_manager::map_module_core(const pe_detection_result& detect
 
     try
     {
-        auto& strategy = strategy_factory_.get_strategy(detection_result.architecture);
-        DBG_UNREFERENCED_LOCAL_VARIABLE(strategy);
+        [[maybe_unused]] auto& strategy = strategy_factory_.get_strategy(detection_result.architecture);
         mapped_module mod = mapper();
         mod.is_static = is_static;
 

@@ -30,11 +30,6 @@
 
 #define RESTRICTED_POINTER
 
-// Windows-specific macros for unreferenced parameters
-// #define UNREFERENCED_PARAMETER(P)          (P)
-// #define DBG_UNREFERENCED_PARAMETER(P)      (P)
-// #define DBG_UNREFERENCED_LOCAL_VARIABLE(V) (V)
-
 #else
 #include <cstddef>
 
@@ -47,11 +42,6 @@
 #define sscanf_s                           sscanf
 
 #define RESTRICTED_POINTER                 __restrict
-
-// Cross-platform macros for unreferenced parameters (matching Windows behavior)
-#define UNREFERENCED_PARAMETER(P)          (void)(P)
-#define DBG_UNREFERENCED_PARAMETER(P)      (void)(P)
-#define DBG_UNREFERENCED_LOCAL_VARIABLE(V) (void)(V)
 
 #ifdef OS_MAC
 #define _fseeki64 fseeko
