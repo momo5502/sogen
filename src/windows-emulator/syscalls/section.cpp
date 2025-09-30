@@ -608,13 +608,11 @@ namespace syscalls
     }
 
     NTSTATUS handle_NtQuerySection(const syscall_context& c, const handle section_handle,
-                                   const SECTION_INFORMATION_CLASS section_information_class,
-                                   const uint64_t section_information, const SIZE_T section_information_length,
-                                   const emulator_object<SIZE_T> result_length)
+                                   const SECTION_INFORMATION_CLASS section_information_class, const uint64_t section_information,
+                                   const SIZE_T section_information_length, const emulator_object<SIZE_T> result_length)
     {
         // Check if section handle is valid
         auto* section_entry = c.proc.sections.get(section_handle);
-
 
         // Handle special sections
         if (section_handle == SHARED_SECTION || section_handle == DBWIN_BUFFER)
