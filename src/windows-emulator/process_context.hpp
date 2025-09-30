@@ -16,14 +16,14 @@
 
 #include "apiset/apiset.hpp"
 
-#define PEB_SEGMENT_SIZE (20 << 20) // 20 MB
-#define GS_SEGMENT_SIZE  (1 << 20)  // 1 MB
+#define PEB_SEGMENT_SIZE              (20 << 20) // 20 MB
+#define GS_SEGMENT_SIZE               (1 << 20)  // 1 MB
 
-#define STACK_SIZE       0x40000ULL // 256KB
+#define STACK_SIZE                    0x40000ULL // 256KB
 
-#define GDT_ADDR         0x35000
-#define GDT_LIMIT        0x1000
-#define GDT_ENTRY_SIZE   0x8
+#define GDT_ADDR                      0x35000
+#define GDT_LIMIT                     0x1000
+#define GDT_ENTRY_SIZE                0x8
 
 // TODO: Get rid of that
 #define WOW64_PEB32_PROCESS_PARA_BASE 0x30000
@@ -73,7 +73,8 @@ struct process_context
     }
 
     void setup(x86_64_emulator& emu, memory_manager& memory, registry_manager& registry, const application_settings& app_settings,
-               const mapped_module& executable, const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32 = nullptr);
+               const mapped_module& executable, const mapped_module& ntdll, const apiset::container& apiset_container,
+               const mapped_module* ntdll32 = nullptr);
 
     handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size, bool suspended);
 

@@ -18,8 +18,12 @@ namespace utils
 
     template <typename T>
     concept Serializable = requires(T a, const T ac, buffer_serializer& serializer, buffer_deserializer& deserializer) {
-        { ac.serialize(serializer) } -> std::same_as<void>;
-        { a.deserialize(deserializer) } -> std::same_as<void>;
+        {
+            ac.serialize(serializer)
+        } -> std::same_as<void>;
+        {
+            a.deserialize(deserializer)
+        } -> std::same_as<void>;
     };
 
     template <typename T>

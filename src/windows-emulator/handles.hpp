@@ -84,7 +84,7 @@ constexpr handle make_handle(const uint32_t id, const handle_types::type type, c
 {
     handle_value value{};
 
-    //value.padding = 0;
+    // value.padding = 0;
     value.id = id;
     value.type = type;
     value.is_system = false;

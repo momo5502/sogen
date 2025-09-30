@@ -284,7 +284,7 @@ mapped_module map_module_from_data(memory_manager& memory, const std::span<const
     binary.image_base = optional_header.ImageBase;
     binary.image_base_file = optional_header.ImageBase;
     binary.size_of_image = page_align_up(optional_header.SizeOfImage); // TODO: Sanitize
-    
+
     // Store PE header fields
     binary.machine = static_cast<uint16_t>(nt_headers.FileHeader.Machine);
     binary.size_of_stack_reserve = optional_header.SizeOfStackReserve;
@@ -296,7 +296,7 @@ mapped_module map_module_from_data(memory_manager& memory, const std::span<const
     {
         // Check if this is a 32-bit module (WOW64)
         const bool is_32bit = (nt_headers.FileHeader.Machine == PEMachineType::I386);
-        
+
         if (is_32bit)
         {
             // Use 32-bit allocation for WOW64 modules
@@ -309,7 +309,7 @@ mapped_module map_module_from_data(memory_manager& memory, const std::span<const
             binary.image_base =
                 memory.find_free_allocation_base(static_cast<size_t>(binary.size_of_image), DEFAULT_ALLOCATION_ADDRESS_64BIT);
         }
-        
+
         const auto is_dll = nt_headers.FileHeader.Characteristics & IMAGE_FILE_DLL;
         const auto has_dynamic_base = optional_header.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
         const auto is_relocatable = is_dll || has_dynamic_base;
@@ -376,7 +376,7 @@ mapped_module map_module_from_memory(memory_manager& memory, uint64_t base_addre
         const auto& optional_header = nt_headers.OptionalHeader;
 
         binary.entry_point = binary.image_base + optional_header.AddressOfEntryPoint;
-        
+
         // Store PE header fields
         binary.machine = static_cast<uint16_t>(nt_headers.FileHeader.Machine);
         binary.size_of_stack_reserve = optional_header.SizeOfStackReserve;
@@ -444,6 +444,6 @@ template mapped_module map_module_from_file<std::uint32_t>(memory_manager& memor
 template mapped_module map_module_from_file<std::uint64_t>(memory_manager& memory, std::filesystem::path file);
 
 template mapped_module map_module_from_memory<std::uint32_t>(memory_manager& memory, uint64_t base_address, uint64_t image_size,
-                                             const std::string& module_name);
+                                                             const std::string& module_name);
 template mapped_module map_module_from_memory<std::uint64_t>(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                                              const std::string& module_name);
