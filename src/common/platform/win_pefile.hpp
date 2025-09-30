@@ -367,6 +367,14 @@ struct thunk_data_traits<std::uint64_t>
 };
 
 template <typename Traits>
+struct SECTION_BASIC_INFORMATION
+{
+    typename Traits::PVOID BaseAddress;
+    ULONG Attributes;
+    LARGE_INTEGER Size;
+};
+
+template <typename Traits>
 struct SECTION_IMAGE_INFORMATION
 {
     typename Traits::PVOID TransferAddress;

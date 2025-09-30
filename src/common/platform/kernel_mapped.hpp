@@ -1849,4 +1849,13 @@ static_assert(sizeof(WOW64_CPURESERVED) == 0x2E0);
 
 #define WOW64_CPURESERVED_FLAG_RESET_STATE 1
 
+typedef enum class _SECTION_INFORMATION_CLASS
+{
+    SectionBasicInformation = 0,
+    SectionImageInformation = 1,
+    SectionRelocationInformation = 2,
+    SectionOriginalBaseInformation = 3,
+    SectionInternalImageInformation = 4
+} SECTION_INFORMATION_CLASS, *PSECTION_INFORMATION_CLASS;
+
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)

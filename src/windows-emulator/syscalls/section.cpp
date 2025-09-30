@@ -607,66 +607,14 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    enum SECTION_INFORMATION_CLASS
-    {
-        SectionBasicInformation = 0,
-        SectionImageInformation = 1,
-        SectionRelocationInformation = 2,
-        SectionOriginalBaseInformation = 3,
-        SectionInternalImageInformation = 4
-    };
-
-    struct SECTION_BASIC_INFORMATION
-    {
-        PVOID BaseAddress;
-        ULONG Attributes;
-        LARGE_INTEGER Size;
-    };
-
-    struct SECTION_IMAGE_INFORMATION
-    {
-        PVOID TransferAddress;
-        ULONG ZeroBits;
-        SIZE_T MaximumStackSize;
-        SIZE_T CommittedStackSize;
-        ULONG SubSystemType;
-        union
-        {
-            struct
-            {
-                USHORT SubSystemMinorVersion;
-                USHORT SubSystemMajorVersion;
-            };
-            ULONG SubSystemVersion;
-        };
-        ULONG GpValue;
-        USHORT ImageCharacteristics;
-        USHORT DllCharacteristics;
-        USHORT Machine;
-        BOOLEAN ImageContainsCode;
-        union
-        {
-            struct
-            {
-                UCHAR ComPlusNativeReady : 1;
-                UCHAR ComPlusILOnly : 1;
-                UCHAR ImageDynamicallyRelocated : 1;
-                UCHAR ImageMappedFlat : 1;
-                UCHAR Reserved : 4;
-            };
-            UCHAR ImageFlags;
-        };
-        ULONG LoaderFlags;
-        ULONG ImageFileSize;
-        ULONG CheckSum;
-    };
-
-    NTSTATUS handle_NtQuerySection(const syscall_context& c, const handle section_handle, const ULONG section_information_class,
+    NTSTATUS handle_NtQuerySection(const syscall_context& c, const handle section_handle,
+                                   const SECTION_INFORMATION_CLASS section_information_class,
                                    const uint64_t section_information, const SIZE_T section_information_length,
                                    const emulator_object<SIZE_T> result_length)
     {
         // Check if section handle is valid
         auto* section_entry = c.proc.sections.get(section_handle);
+
 
         // Handle special sections
         if (section_handle == SHARED_SECTION || section_handle == DBWIN_BUFFER)
@@ -682,17 +630,17 @@ namespace syscalls
 
         switch (section_information_class)
         {
-        case SectionBasicInformation: {
+        case SECTION_INFORMATION_CLASS::SectionBasicInformation: {
             // Check buffer size
-            if (section_information_length < sizeof(SECTION_BASIC_INFORMATION))
+            if (section_information_length < sizeof(SECTION_BASIC_INFORMATION<EmulatorTraits<Emu64>>))
             {
                 return STATUS_INFO_LENGTH_MISMATCH;
             }
 
-            SECTION_BASIC_INFORMATION info{};
+            SECTION_BASIC_INFORMATION<EmulatorTraits<Emu64>> info{};
 
             // BaseAddress - typically NULL unless SEC_BASED is used
-            info.BaseAddress = nullptr;
+            info.BaseAddress = 0;
 
             // Attributes - combine the SEC_ flags
             info.Attributes = section_entry->allocation_attributes;
@@ -718,13 +666,13 @@ namespace syscalls
             // Set return length if requested
             if (result_length)
             {
-                result_length.write(sizeof(SECTION_BASIC_INFORMATION));
+                result_length.write(sizeof(SECTION_BASIC_INFORMATION<EmulatorTraits<Emu64>>));
             }
 
             return STATUS_SUCCESS;
         }
 
-        case SectionImageInformation: {
+        case SECTION_INFORMATION_CLASS::SectionImageInformation: {
             // Only image sections support this query
             if (!section_entry->is_image())
             {
@@ -732,12 +680,12 @@ namespace syscalls
             }
 
             // Check buffer size
-            if (section_information_length < sizeof(SECTION_IMAGE_INFORMATION))
+            if (section_information_length < sizeof(SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>>))
             {
                 return STATUS_INFO_LENGTH_MISMATCH;
             }
 
-            SECTION_IMAGE_INFORMATION info{};
+            SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>> info{};
 
             // First check if we have cached PE information
             if (section_entry->cached_image_info.has_value())
@@ -745,10 +693,10 @@ namespace syscalls
                 const auto& cached = section_entry->cached_image_info.value();
 
                 // TransferAddress - entry point address (image base + RVA)
-                info.TransferAddress = reinterpret_cast<PVOID>(cached.image_base + cached.entry_point_rva);
+                info.TransferAddress = static_cast<std::uint64_t>(cached.image_base + cached.entry_point_rva);
 
                 // Machine type
-                info.Machine = cached.machine;
+                info.Machine = static_cast<PEMachineType>(cached.machine);
 
                 // Subsystem information
                 info.SubSystemType = cached.subsystem;
@@ -772,7 +720,6 @@ namespace syscalls
 
                 // Other fields
                 info.ZeroBits = 0;
-                info.GpValue = 0;
                 info.LoaderFlags = cached.loader_flags;
                 info.CheckSum = cached.checksum;
                 info.ImageFileSize = static_cast<ULONG>(section_entry->maximum_size);
@@ -800,11 +747,11 @@ namespace syscalls
                 if (module)
                 {
                     // TransferAddress - entry point address
-                    info.TransferAddress = reinterpret_cast<PVOID>(module->entry_point);
+                    info.TransferAddress = static_cast<std::uint64_t>(module->entry_point);
 
                     // Machine type and other fields would need to be extracted from PE headers
                     // For now, set reasonable defaults for x64
-                    info.Machine = IMAGE_FILE_MACHINE_AMD64;
+                    info.Machine = PEMachineType::AMD64;
                     info.SubSystemType = 3; // IMAGE_SUBSYSTEM_WINDOWS_CUI
                     info.SubSystemMajorVersion = 10;
                     info.SubSystemMinorVersion = 0;
@@ -835,14 +782,13 @@ namespace syscalls
 
                     // Other fields
                     info.ZeroBits = 0;
-                    info.GpValue = 0;
                     info.LoaderFlags = 0;
                     info.CheckSum = 0;
                 }
                 else
                 {
                     // If module is not mapped yet and no cached info, return minimal information
-                    info.Machine = IMAGE_FILE_MACHINE_AMD64;
+                    info.Machine = PEMachineType::AMD64;
                     info.SubSystemType = 3;
                     info.SubSystemMajorVersion = 10;
                     info.SubSystemMinorVersion = 0;
@@ -863,15 +809,15 @@ namespace syscalls
             // Set return length if requested
             if (result_length)
             {
-                result_length.write(sizeof(SECTION_IMAGE_INFORMATION));
+                result_length.write(sizeof(SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>>));
             }
 
             return STATUS_SUCCESS;
         }
 
-        case SectionRelocationInformation:
-        case SectionOriginalBaseInformation:
-        case SectionInternalImageInformation:
+        case SECTION_INFORMATION_CLASS::SectionRelocationInformation:
+        case SECTION_INFORMATION_CLASS::SectionOriginalBaseInformation:
+        case SECTION_INFORMATION_CLASS::SectionInternalImageInformation:
             // These information classes are not implemented
             return STATUS_NOT_SUPPORTED;
 
