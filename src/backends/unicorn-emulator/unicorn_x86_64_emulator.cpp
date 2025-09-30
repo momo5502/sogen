@@ -651,6 +651,11 @@ namespace unicorn
 
                 const uc_context_serializer serializer(this->uc_, is_snapshot);
                 serializer.serialize(buffer);
+
+                // Serialize unicorn bug workaround state
+                buffer.write(this->preserved_gs_base_);
+                buffer.write(this->preserved_fs_base_);
+                buffer.write(this->current_reg_cs_);
             }
 
             void deserialize_state(utils::buffer_deserializer& buffer, const bool is_snapshot) override
@@ -663,6 +668,10 @@ namespace unicorn
 
                 const uc_context_serializer serializer(this->uc_, is_snapshot);
                 serializer.deserialize(buffer);
+                // Deserialize unicorn bug workaround state
+                buffer.read(this->preserved_gs_base_);
+                buffer.read(this->preserved_fs_base_);
+                buffer.read(this->current_reg_cs_);
             }
 
             std::vector<std::byte> save_registers() const override
