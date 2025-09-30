@@ -448,7 +448,7 @@ namespace syscalls
                 case MemExtendedParameterNumaNode:
                     ext_info.numa_node = param.ULong64;
                     ext_info.has_numa_node = true;
-                    c.win_emu.log.info("NtMapViewOfSectionEx: NUMA node: %llu\n", ext_info.numa_node);
+                    c.win_emu.log.info("NtMapViewOfSectionEx: NUMA node: %" PRIu64 "\n", ext_info.numa_node);
                     break;
 
                 case MemExtendedParameterAttributeFlags:
