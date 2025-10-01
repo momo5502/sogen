@@ -853,6 +853,28 @@ namespace syscalls
         const auto attributes = object_attributes.read();
         auto filename = read_unicode_string(c.emu, attributes.ObjectName);
 
+        // Check for console device paths
+        // Convert to uppercase for case-insensitive comparison
+        std::u16string filename_upper = filename;
+        std::transform(filename_upper.begin(), filename_upper.end(), filename_upper.begin(), ::towupper);
+
+        // Handle console output device
+        if (filename_upper == u"\\??\\CONOUT$" || filename_upper == u"\\DEVICE\\CONOUT$" || filename_upper == u"CONOUT$" ||
+            filename_upper == u"\\??\\CON" || filename_upper == u"\\DEVICE\\CONSOLE" || filename_upper == u"CON")
+        {
+            c.win_emu.callbacks.on_generic_access("Opening console output", filename);
+            file_handle.write(STDOUT_HANDLE);
+            return STATUS_SUCCESS;
+        }
+
+        // Handle console input device
+        if (filename_upper == u"\\??\\CONIN$" || filename_upper == u"\\DEVICE\\CONIN$" || filename_upper == u"CONIN$")
+        {
+            c.win_emu.callbacks.on_generic_access("Opening console input", filename);
+            file_handle.write(STDIN_HANDLE);
+            return STATUS_SUCCESS;
+        }
+
         if (is_named_pipe_path(filename))
         {
             return handle_named_pipe_create(c, file_handle, filename, attributes, desired_access);
@@ -1074,6 +1096,12 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
+        if (object_name == u"\\KnownDlls32")
+        {
+            directory_handle.write(KNOWN_DLLS32_DIRECTORY);
+            return STATUS_SUCCESS;
+        }
+
         if (object_name == u"\\Sessions\\1\\BaseNamedObjects")
         {
             directory_handle.write(BASE_NAMED_OBJECTS_DIRECTORY);
@@ -1127,6 +1155,29 @@ namespace syscalls
 
                 str.Length = str_length;
                 c.emu.write_memory(str.Buffer, system32.data(), max_length);
+            });
+
+            return too_small ? STATUS_BUFFER_TOO_SMALL : STATUS_SUCCESS;
+        }
+
+        if (link_handle == KNOWN_DLLS32_SYMLINK)
+        {
+            constexpr std::u16string_view syswow64 = u"C:\\WINDOWS\\SysWOW64";
+            constexpr auto str_length = syswow64.size() * 2;
+            constexpr auto max_length = str_length + 2;
+
+            returned_length.write(max_length);
+
+            bool too_small = false;
+            link_target.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& str) {
+                if (str.MaximumLength < max_length)
+                {
+                    too_small = true;
+                    return;
+                }
+
+                str.Length = str_length;
+                c.emu.write_memory(str.Buffer, syswow64.data(), max_length);
             });
 
             return too_small ? STATUS_BUFFER_TOO_SMALL : STATUS_SUCCESS;

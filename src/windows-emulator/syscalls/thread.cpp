@@ -17,6 +17,39 @@ namespace syscalls
             return STATUS_INVALID_HANDLE;
         }
 
+        if (info_class == ThreadWow64Context)
+        {
+            // ThreadWow64Context is only valid for WOW64 processes
+            if (!c.proc.is_wow64_process)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            if (thread_information_length != sizeof(WOW64_CONTEXT))
+            {
+                return STATUS_BUFFER_OVERFLOW;
+            }
+
+            // Check if thread has persistent WOW64 context
+            if (!thread->wow64_cpu_reserved.has_value())
+            {
+                c.win_emu.log.print(color::red, "Error: WOW64 saved context not initialized for thread %d\n", thread->id);
+                return STATUS_INTERNAL_ERROR;
+            }
+
+            const emulator_object<WOW64_CONTEXT> context_obj{c.emu, thread_information};
+            const auto new_wow64_context = context_obj.read();
+
+            // Update the persistent context for future queries
+            thread->wow64_cpu_reserved->access([&](WOW64_CPURESERVED& ctx) {
+                ctx.Flags |= WOW64_CPURESERVED_FLAG_RESET_STATE;
+                ctx.Context = new_wow64_context;
+                // c.win_emu.callbacks.on_suspicious_activity("WOW64 CONTEXT");
+            });
+
+            return STATUS_SUCCESS;
+        }
+
         if (info_class == ThreadSchedulerSharedDataSlot || info_class == ThreadBasePriority || info_class == ThreadAffinityMask)
         {
             return STATUS_SUCCESS;
@@ -68,7 +101,7 @@ namespace syscalls
 
             for (const auto& t : c.proc.threads | std::views::values)
             {
-                t.teb->access([&](TEB64& teb) {
+                t.teb64->access([&](TEB64& teb) {
                     if (tls_cell < TLS_MINIMUM_AVAILABLE)
                     {
                         teb.TlsSlots.arr[tls_cell] = 0;
@@ -100,6 +133,42 @@ namespace syscalls
             return STATUS_INVALID_HANDLE;
         }
 
+        if (info_class == ThreadWow64Context)
+        {
+            // ThreadWow64Context is only valid for WOW64 processes
+            if (!c.proc.is_wow64_process)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            if (return_length)
+            {
+                return_length.write(sizeof(WOW64_CONTEXT));
+            }
+
+            if (thread_information_length < sizeof(WOW64_CONTEXT))
+            {
+                return STATUS_BUFFER_OVERFLOW;
+            }
+
+            const emulator_object<WOW64_CONTEXT> context_obj{c.emu, thread_information};
+
+            // Check if thread has persistent WOW64 context
+            if (!thread->wow64_cpu_reserved.has_value())
+            {
+                c.win_emu.log.print(color::red, "Error: WOW64 saved context not initialized for thread %d\n", thread->id);
+                return STATUS_INTERNAL_ERROR;
+            }
+
+            // Return the saved context (which was set by NtSetInformationThread)
+            thread->wow64_cpu_reserved->access([&](const WOW64_CPURESERVED& ctx) {
+                const auto wow64_context = ctx.Context;
+                context_obj.write(wow64_context);
+            });
+
+            return STATUS_SUCCESS;
+        }
+
         if (info_class == ThreadTebInformation)
         {
             if (return_length)
@@ -113,7 +182,7 @@ namespace syscalls
             }
 
             const auto teb_info = c.emu.read_memory<THREAD_TEB_INFORMATION>(thread_information);
-            const auto data = c.emu.read_memory(thread->teb->value() + teb_info.TebOffset, teb_info.BytesToRead);
+            const auto data = c.emu.read_memory(thread->teb64->value() + teb_info.TebOffset, teb_info.BytesToRead);
             c.emu.write_memory(teb_info.TebInformation, data.data(), data.size());
 
             return STATUS_SUCCESS;
@@ -133,8 +202,8 @@ namespace syscalls
 
             const emulator_object<THREAD_BASIC_INFORMATION64> info{c.emu, thread_information};
             info.access([&](THREAD_BASIC_INFORMATION64& i) {
-                i.TebBaseAddress = thread->teb->value();
-                i.ClientId = thread->teb->read().ClientId;
+                i.TebBaseAddress = thread->teb64->value();
+                i.ClientId = thread->teb64->read().ClientId;
             });
 
             return STATUS_SUCCESS;
@@ -555,12 +624,12 @@ namespace syscalls
 
                     if (type == PsAttributeClientId)
                     {
-                        const auto client_id = thread->teb->read().ClientId;
+                        const auto client_id = thread->teb64->read().ClientId;
                         write_attribute(c.emu, attribute, client_id);
                     }
                     else if (type == PsAttributeTebAddress)
                     {
-                        write_attribute(c.emu, attribute, thread->teb->value());
+                        write_attribute(c.emu, attribute, thread->teb64->value());
                     }
                     else
                     {

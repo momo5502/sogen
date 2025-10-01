@@ -472,9 +472,9 @@ void memory_manager::unmap_all_memory()
     this->reserved_regions_.clear();
 }
 
-uint64_t memory_manager::allocate_memory(const size_t size, const nt_memory_permission permissions, const bool reserve_only)
+uint64_t memory_manager::allocate_memory(const size_t size, const nt_memory_permission permissions, const bool reserve_only, uint64_t start)
 {
-    const auto allocation_base = this->find_free_allocation_base(size);
+    const auto allocation_base = this->find_free_allocation_base(size, start);
     if (!allocate_memory(allocation_base, size, permissions, reserve_only))
     {
         return 0;
@@ -485,28 +485,42 @@ uint64_t memory_manager::allocate_memory(const size_t size, const nt_memory_perm
 
 uint64_t memory_manager::find_free_allocation_base(const size_t size, const uint64_t start) const
 {
-    uint64_t start_address = std::max(MIN_ALLOCATION_ADDRESS, start ? start : 0x100000000ULL);
+    uint64_t start_address = std::max(static_cast<uint64_t>(MIN_ALLOCATION_ADDRESS), start ? start : this->default_allocation_address_);
     start_address = align_up(start_address, ALLOCATION_GRANULARITY);
 
-    for (const auto& region : this->reserved_regions_)
+    // Since reserved_regions_ is a sorted map, we can iterate through it
+    // and find gaps between regions
+    while (start_address + size <= MAX_ALLOCATION_ADDRESS)
     {
-        const auto region_end = region.first + region.second.length;
-        if (region_end < start_address)
+        bool conflict = false;
+
+        // Check if the proposed range [start_address, start_address+size) conflicts with any existing region
+        for (const auto& region : this->reserved_regions_)
         {
-            continue;
+            // If this region ends before our start, skip it
+            if (region.first + region.second.length <= start_address)
+            {
+                continue;
+            }
+
+            // If this region starts after our end, we're done checking (map is sorted)
+            if (region.first >= start_address + size)
+            {
+                break;
+            }
+
+            // Otherwise, we have a conflict
+            conflict = true;
+            // Move start_address past this conflicting region
+            start_address = align_up(region.first + region.second.length, ALLOCATION_GRANULARITY);
+            break;
         }
 
-        if (!regions_with_length_intersect(start_address, size, region.first, region.second.length))
+        // If no conflict was found, we have our address
+        if (!conflict)
         {
             return start_address;
         }
-
-        start_address = align_up(region_end, ALLOCATION_GRANULARITY);
-    }
-
-    if (start_address + size <= MAX_ALLOCATION_ADDRESS)
-    {
-        return start_address;
     }
 
     return 0;

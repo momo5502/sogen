@@ -522,8 +522,8 @@ namespace minidump_loader
                 // Set TEB address if valid
                 if (thread_info.teb != 0)
                 {
-                    thread.teb = emulator_object<TEB64>(win_emu.memory);
-                    thread.teb->set_address(thread_info.teb);
+                    thread.teb64 = emulator_object<TEB64>(win_emu.memory);
+                    thread.teb64->set_address(thread_info.teb);
                 }
 
                 win_emu.log.info("  Thread %u: TEB=0x%" PRIx64 ", stack=0x%" PRIx64 " (%u bytes), context=%s\n", thread_info.thread_id,
@@ -579,7 +579,7 @@ namespace minidump_loader
                 return;
             }
 
-            win_emu.process.peb.set_address(peb_address);
+            win_emu.process.peb64.set_address(peb_address);
             win_emu.log.info("PEB address: 0x%" PRIx64 " (from TEB 0x%" PRIx64 ")\n", peb_address, first_thread.teb);
         }
         catch (const std::exception& e)

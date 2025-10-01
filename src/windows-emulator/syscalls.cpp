@@ -225,6 +225,9 @@ namespace syscalls
                                     ULONG allocation_attributes, handle file_handle);
     NTSTATUS handle_NtOpenSection(const syscall_context& c, emulator_object<handle> section_handle, ACCESS_MASK /*desired_access*/,
                                   emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes);
+    NTSTATUS handle_NtQuerySection(const syscall_context& c, handle section_handle, SECTION_INFORMATION_CLASS section_information_class,
+                                   uint64_t section_information, EmulatorTraits<Emu64>::SIZE_T section_information_length,
+                                   emulator_object<EmulatorTraits<Emu64>::SIZE_T> result_length);
     NTSTATUS handle_NtMapViewOfSection(const syscall_context& c, handle section_handle, handle process_handle,
                                        emulator_object<uint64_t> base_address,
                                        EMULATOR_CAST(EmulatorTraits<Emu64>::ULONG_PTR, ULONG_PTR) /*zero_bits*/,
@@ -232,6 +235,12 @@ namespace syscalls
                                        emulator_object<LARGE_INTEGER> /*section_offset*/,
                                        emulator_object<EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T)> view_size,
                                        SECTION_INHERIT /*inherit_disposition*/, ULONG /*allocation_type*/, ULONG /*win32_protect*/);
+    NTSTATUS handle_NtMapViewOfSectionEx(const syscall_context& c, handle section_handle, handle process_handle,
+                                         emulator_object<uint64_t> base_address, emulator_object<LARGE_INTEGER> section_offset,
+                                         emulator_object<EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T)> view_size,
+                                         ULONG allocation_type, ULONG page_protection,
+                                         uint64_t extended_parameters, // PMEM_EXTENDED_PARAMETER
+                                         ULONG extended_parameter_count);
     NTSTATUS handle_NtUnmapViewOfSection(const syscall_context& c, handle process_handle, uint64_t base_address);
     NTSTATUS handle_NtUnmapViewOfSectionEx(const syscall_context& c, handle process_handle, uint64_t base_address, ULONG /*flags*/);
     NTSTATUS handle_NtAreMappedFilesTheSame();
@@ -494,7 +503,7 @@ namespace syscalls
 
     NTSTATUS handle_NtGdiInit(const syscall_context& c)
     {
-        c.proc.peb.access([&](PEB64& peb) {
+        c.proc.peb64.access([&](PEB64& peb) {
             if (!peb.GdiSharedHandleTable)
             {
                 const auto shared_memory = c.proc.base_allocator.reserve<GDI_SHARED_MEMORY64>();
@@ -974,6 +983,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtManageHotPatch);
     add_handler(NtOpenSection);
     add_handler(NtMapViewOfSection);
+    add_handler(NtMapViewOfSectionEx);
     add_handler(NtOpenSymbolicLinkObject);
     add_handler(NtQuerySymbolicLinkObject);
     add_handler(NtQuerySystemInformationEx);
@@ -981,6 +991,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtQueryVolumeInformationFile);
     add_handler(NtApphelpCacheControl);
     add_handler(NtCreateSection);
+    add_handler(NtQuerySection);
     add_handler(NtConnectPort);
     add_handler(NtSecureConnectPort);
     add_handler(NtCreateFile);

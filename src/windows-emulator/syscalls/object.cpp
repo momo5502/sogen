@@ -98,6 +98,10 @@ namespace syscalls
             std::u16string device_path;
             switch (handle.value.type)
             {
+            case handle_types::reserved: {
+                return STATUS_NOT_SUPPORTED;
+            }
+
             case handle_types::file: {
                 const auto* file = c.proc.files.get(handle);
                 if (!file)
@@ -116,6 +120,50 @@ namespace syscalls
                 }
 
                 device_path = device->get_device_path();
+                break;
+            }
+            case handle_types::directory: {
+                // Directory handles are pseudo handles representing specific object directories
+                if (handle == KNOWN_DLLS_DIRECTORY)
+                {
+                    device_path = u"\\KnownDlls";
+                }
+                else if (handle == KNOWN_DLLS32_DIRECTORY)
+                {
+                    device_path = u"\\KnownDlls32";
+                }
+                else if (handle == BASE_NAMED_OBJECTS_DIRECTORY)
+                {
+                    device_path = u"\\Sessions\\1\\BaseNamedObjects";
+                }
+                else if (handle == RPC_CONTROL_DIRECTORY)
+                {
+                    device_path = u"\\RPC Control";
+                }
+                else
+                {
+                    // Unknown directory handle
+                    return STATUS_INVALID_HANDLE;
+                }
+                break;
+            }
+            case handle_types::registry: {
+                const auto* registry = c.proc.registry_keys.get(handle);
+                if (!registry)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+
+                // Build the full registry path in device format
+                auto registry_path = (registry->hive.get() / registry->path.get()).u16string();
+
+                // Convert backslashes to forward slashes for consistency
+                std::ranges::replace(registry_path, u'/', u'\\');
+
+                // Convert to uppercase as Windows registry paths are case-insensitive
+                std::ranges::transform(registry_path, registry_path.begin(), std::towupper);
+
+                device_path = registry_path;
                 break;
             }
             default:
