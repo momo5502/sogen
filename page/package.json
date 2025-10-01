@@ -27,7 +27,7 @@
     "@tailwindcss/vite": "^4.1.13",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "flatbuffers": "^25.2.10",
+    "flatbuffers": "^25.9.23",
     "jszip": "^3.10.1",
     "lucide-react": "^0.544.0",
     "pe-library": "^1.0.1",
