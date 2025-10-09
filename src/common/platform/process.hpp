@@ -982,17 +982,17 @@ struct GDI_SHARED_MEMORY64
 
 static_assert(offsetof(GDI_SHARED_MEMORY64, Objects) == 0x1800B0);
 
-typedef struct _CLIENT_ID32
+struct CLIENT_ID32
 {
     ULONG UniqueProcess;
     ULONG UniqueThread;
-} CLIENT_ID32, *PCLIENT_ID32;
+};
 
-typedef struct _CLIENT_ID64
+struct CLIENT_ID64
 {
     DWORD64 UniqueProcess;
     DWORD64 UniqueThread;
-} CLIENT_ID64, *PCLIENT_ID64;
+};
 
 struct PORT_MESSAGE64
 {
