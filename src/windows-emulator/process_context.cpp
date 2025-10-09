@@ -464,12 +464,16 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
     buffer.write_optional(this->exit_status);
     buffer.write(this->base_allocator);
     buffer.write(this->peb64);
+    buffer.write_optional(this->peb32);
     buffer.write(this->process_params64);
+    buffer.write_optional(this->process_params32);
     buffer.write(this->kusd);
 
+    buffer.write(this->is_wow64_process);
     buffer.write(this->ntdll_image_base);
     buffer.write(this->ldr_initialize_thunk);
     buffer.write(this->rtl_user_thread_start);
+    buffer.write_optional(this->rtl_user_thread_start32);
     buffer.write(this->ki_user_apc_dispatcher);
     buffer.write(this->ki_user_exception_dispatcher);
 
@@ -484,6 +488,10 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
     buffer.write(this->timers);
     buffer.write(this->registry_keys);
     buffer.write_map(this->atoms);
+
+    buffer.write(this->last_extended_params_numa_node);
+    buffer.write(this->last_extended_params_attributes);
+    buffer.write(this->last_extended_params_image_machine);
 
     buffer.write_vector(this->default_register_set);
     buffer.write(this->spawned_thread_count);
@@ -501,12 +509,16 @@ void process_context::deserialize(utils::buffer_deserializer& buffer)
     buffer.read_optional(this->exit_status);
     buffer.read(this->base_allocator);
     buffer.read(this->peb64);
+    buffer.read_optional(this->peb32);
     buffer.read(this->process_params64);
+    buffer.read_optional(this->process_params32);
     buffer.read(this->kusd);
 
+    buffer.read(this->is_wow64_process);
     buffer.read(this->ntdll_image_base);
     buffer.read(this->ldr_initialize_thunk);
     buffer.read(this->rtl_user_thread_start);
+    buffer.read_optional(this->rtl_user_thread_start32);
     buffer.read(this->ki_user_apc_dispatcher);
     buffer.read(this->ki_user_exception_dispatcher);
 
@@ -521,6 +533,10 @@ void process_context::deserialize(utils::buffer_deserializer& buffer)
     buffer.read(this->timers);
     buffer.read(this->registry_keys);
     buffer.read_map(this->atoms);
+
+    buffer.read(this->last_extended_params_numa_node);
+    buffer.read(this->last_extended_params_attributes);
+    buffer.read(this->last_extended_params_image_machine);
 
     buffer.read_vector(this->default_register_set);
     buffer.read(this->spawned_thread_count);
