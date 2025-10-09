@@ -85,6 +85,9 @@ export class Emulator {
   worker: Worker;
   state: EmulationState = EmulationState.Stopped;
   exit_status: number | null = null;
+  start_time: Date = new Date();
+  pause_time: Date | null = null;
+  paused_time: number = 0;
 
   constructor(
     logHandler: LogHandler,
@@ -109,6 +112,9 @@ export class Emulator {
   }
 
   async start(settings: Settings, file: string) {
+    this.start_time = new Date();
+    this.pause_time = null;
+    this.paused_time = 0;
     this._setState(EmulationState.Running);
     this.stautsUpdateHandler(createDefaultEmulationStatus());
 
@@ -184,6 +190,12 @@ export class Emulator {
     this.updateState();
   }
 
+  getExecutionTime() {
+    const endTime = this.pause_time ? this.pause_time : new Date();
+    const totalTime = endTime.getTime() - this.start_time.getTime();
+    return totalTime - this.paused_time;
+  }
+
   logError(message: string) {
     this.logHandler([`<span class="terminal-red">${message}</span>`]);
   }
@@ -233,6 +245,14 @@ export class Emulator {
 
   _setState(state: EmulationState) {
     this.state = state;
+
+    if (isFinalState(this.state) || this.state === EmulationState.Paused) {
+      this.pause_time = new Date();
+    } else if (this.state == EmulationState.Running && this.pause_time) {
+      this.paused_time += new Date().getTime() - this.pause_time.getTime();
+      this.pause_time = null;
+    }
+
     this.stateChangeHandler(this.state);
   }
 
