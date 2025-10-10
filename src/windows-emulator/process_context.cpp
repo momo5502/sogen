@@ -299,7 +299,7 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
         // peb32->ProcessParameters : 0x30000
         if (!memory.allocate_memory(WOW64_PEB32_PROCESS_PARA_BASE, WOW64_PEB32_PROCESS_PARA_SIZE, memory_permission::read_write))
         {
-            throw std::runtime_error("Failed to allocate fixed 32-bit application stack at 0x30000");
+            throw std::runtime_error("Failed to allocate 32-bit process parameters at 0x30000");
         }
 
         // Initialize RTL_USER_PROCESS_PARAMETERS32 structure
@@ -314,54 +314,25 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
         params32.StandardInput = static_cast<uint32_t>(STDIN_HANDLE.h);
         params32.StandardError = params32.StandardOutput;
 
-        // Copy values from 64-bit ProcessParameters
         this->process_params64.access([&](const RTL_USER_PROCESS_PARAMETERS64& params64) {
-            // Helper to copy string data directly to the allocated memory
-            auto copy_string_to_memory = [&](UNICODE_STRING<EmulatorTraits<Emu32>>& dest32,
-                                             const UNICODE_STRING<EmulatorTraits<Emu64>>& src64, uint32_t& offset) -> void {
-                dest32.Length = static_cast<uint16_t>(src64.Length);
-                dest32.MaximumLength = static_cast<uint16_t>(src64.MaximumLength);
-
-                if (src64.Buffer && src64.Length > 0)
-                {
-                    // Align offset to 2 bytes for wide chars
-                    offset = (offset + 1) & ~1;
-
-                    // Make sure we don't overflow the allocated region
-                    if (offset + src64.Length <= WOW64_PEB32_PROCESS_PARA_SIZE)
-                    {
-                        dest32.Buffer = static_cast<uint32_t>(WOW64_PEB32_PROCESS_PARA_BASE + offset);
-
-                        // Read string from 64-bit memory and write to 32-bit memory
-                        std::vector<std::byte> string_data(src64.Length);
-                        memory.read_memory(src64.Buffer, string_data.data(), src64.Length);
-                        memory.write_memory(WOW64_PEB32_PROCESS_PARA_BASE + offset, string_data.data(), src64.Length);
-
-                        offset += src64.MaximumLength;
-                    }
-                    else
-                    {
-                        dest32.Buffer = 0;
-                    }
-                }
-                else
-                {
-                    dest32.Buffer = 0;
-                }
-            };
-
-            // Start copying strings after the RTL_USER_PROCESS_PARAMETERS32 structure
             uint32_t string_offset = sizeof(RTL_USER_PROCESS_PARAMETERS32);
 
-            // Copy all the UNICODE_STRING fields
-            copy_string_to_memory(params32.ImagePathName, params64.ImagePathName, string_offset);
-            copy_string_to_memory(params32.CommandLine, params64.CommandLine, string_offset);
-            copy_string_to_memory(params32.DllPath, params64.DllPath, string_offset);
-            copy_string_to_memory(params32.CurrentDirectory.DosPath, params64.CurrentDirectory.DosPath, string_offset);
-            copy_string_to_memory(params32.WindowTitle, params64.WindowTitle, string_offset);
-            copy_string_to_memory(params32.DesktopInfo, params64.DesktopInfo, string_offset);
-            copy_string_to_memory(params32.ShellInfo, params64.ShellInfo, string_offset);
-            copy_string_to_memory(params32.RuntimeData, params64.RuntimeData, string_offset);
+            copy_unicode_string_64_to_32(memory, params32.ImagePathName, params64.ImagePathName, WOW64_PEB32_PROCESS_PARA_BASE,
+                                         string_offset, WOW64_PEB32_PROCESS_PARA_SIZE);
+            copy_unicode_string_64_to_32(memory, params32.CommandLine, params64.CommandLine, WOW64_PEB32_PROCESS_PARA_BASE, string_offset,
+                                         WOW64_PEB32_PROCESS_PARA_SIZE);
+            copy_unicode_string_64_to_32(memory, params32.DllPath, params64.DllPath, WOW64_PEB32_PROCESS_PARA_BASE, string_offset,
+                                         WOW64_PEB32_PROCESS_PARA_SIZE);
+            copy_unicode_string_64_to_32(memory, params32.CurrentDirectory.DosPath, params64.CurrentDirectory.DosPath,
+                                         WOW64_PEB32_PROCESS_PARA_BASE, string_offset, WOW64_PEB32_PROCESS_PARA_SIZE);
+            copy_unicode_string_64_to_32(memory, params32.WindowTitle, params64.WindowTitle, WOW64_PEB32_PROCESS_PARA_BASE, string_offset,
+                                         WOW64_PEB32_PROCESS_PARA_SIZE);
+            copy_unicode_string_64_to_32(memory, params32.DesktopInfo, params64.DesktopInfo, WOW64_PEB32_PROCESS_PARA_BASE, string_offset,
+                                         WOW64_PEB32_PROCESS_PARA_SIZE);
+            copy_unicode_string_64_to_32(memory, params32.ShellInfo, params64.ShellInfo, WOW64_PEB32_PROCESS_PARA_BASE, string_offset,
+                                         WOW64_PEB32_PROCESS_PARA_SIZE);
+            copy_unicode_string_64_to_32(memory, params32.RuntimeData, params64.RuntimeData, WOW64_PEB32_PROCESS_PARA_BASE, string_offset,
+                                         WOW64_PEB32_PROCESS_PARA_SIZE);
 
             // RedirectionDllName - Initialize to empty but valid string
             params32.RedirectionDllName.Length = 0;
