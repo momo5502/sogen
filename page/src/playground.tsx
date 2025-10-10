@@ -130,6 +130,7 @@ export class Playground extends React.Component<
     this.start = this.start.bind(this);
     this.resetFilesys = this.resetFilesys.bind(this);
     this.startEmulator = this.startEmulator.bind(this);
+    this.fetchExecutionTime = this.fetchExecutionTime.bind(this);
     this.toggleEmulatorState = this.toggleEmulatorState.bind(this);
 
     this.state = {
@@ -160,6 +161,10 @@ export class Playground extends React.Component<
       filesystem: undefined,
       drawerOpen: false,
     });
+  }
+
+  fetchExecutionTime() {
+    return this.state.emulator ? this.state.emulator.getExecutionTime() : 0;
   }
 
   async resetFilesys() {
@@ -283,8 +288,6 @@ export class Playground extends React.Component<
     this.output.current?.clear();
 
     this.setDrawerOpen(false);
-
-    this.logLine("Starting emulation...");
 
     if (this.state.filesystemPromise) {
       await this.state.filesystemPromise;
@@ -440,7 +443,10 @@ export class Playground extends React.Component<
             </div>
           </header>
           <div className="flex flex-1">
-            <EmulationSummary status={this.state.emulationStatus} />
+            <EmulationSummary
+              status={this.state.emulationStatus}
+              executionTimeFetcher={this.fetchExecutionTime}
+            />
             <div className="flex flex-1 flex-col pl-1 overflow-auto">
               <Output ref={this.output} />
             </div>
