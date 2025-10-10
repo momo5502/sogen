@@ -19,15 +19,12 @@ disassembler::disassembler()
 {
     auto deleter = utils::finally([&] { this->release(); });
 
-    // Open 64-bit handle
     cse(cs_open(CS_ARCH_X86, CS_MODE_64, &this->handle_64_));
     cse(cs_option(this->handle_64_, CS_OPT_DETAIL, CS_OPT_ON));
 
-    // Open 32-bit handle
     cse(cs_open(CS_ARCH_X86, CS_MODE_32, &this->handle_32_));
     cse(cs_option(this->handle_32_, CS_OPT_DETAIL, CS_OPT_ON));
 
-    // Open 16-bit handle
     cse(cs_open(CS_ARCH_X86, CS_MODE_16, &this->handle_16_));
     cse(cs_option(this->handle_16_, CS_OPT_DETAIL, CS_OPT_ON));
 

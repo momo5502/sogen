@@ -252,6 +252,7 @@ struct section : ref_counted_object
         buffer.write(this->maximum_size);
         buffer.write(this->section_page_protection);
         buffer.write(this->allocation_attributes);
+        buffer.write_optional<image_info>(this->cached_image_info);
     }
 
     void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -261,6 +262,7 @@ struct section : ref_counted_object
         buffer.read(this->maximum_size);
         buffer.read(this->section_page_protection);
         buffer.read(this->allocation_attributes);
+        buffer.read_optional(this->cached_image_info);
     }
 };
 
