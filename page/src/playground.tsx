@@ -289,8 +289,6 @@ export class Playground extends React.Component<
 
     this.setDrawerOpen(false);
 
-    this.logLine("Starting emulation...");
-
     if (this.state.filesystemPromise) {
       await this.state.filesystemPromise;
     }
