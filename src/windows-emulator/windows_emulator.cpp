@@ -351,8 +351,10 @@ void windows_emulator::setup_process(const application_settings& app_settings)
     const auto& emu = this->emu();
     auto& context = this->process;
 
-    this->mod_manager.map_main_modules(app_settings.application, R"(C:\Windows\System32\ntdll.dll)", R"(C:\Windows\System32\win32u.dll)",
-                                       this->log);
+    this->mod_manager.map_main_modules(app_settings.application, R"(C:\Windows\System32)", R"(C:\Windows\SysWOW64)", this->log);
+
+    // Set WOW64 flag based on the detected execution mode
+    context.is_wow64_process = (this->mod_manager.get_execution_mode() == execution_mode::wow64_32bit);
 
     const auto* executable = this->mod_manager.executable;
     const auto* ntdll = this->mod_manager.ntdll;
@@ -360,14 +362,17 @@ void windows_emulator::setup_process(const application_settings& app_settings)
 
     const auto apiset_data = apiset::obtain(this->emulation_root);
 
-    this->process.setup(this->emu(), this->memory, this->registry, app_settings, *executable, *ntdll, apiset_data);
+    this->process.setup(this->emu(), this->memory, this->registry, app_settings, *executable, *ntdll, apiset_data,
+                        this->mod_manager.wow64_modules_.ntdll32);
 
     const auto ntdll_data = emu.read_memory(ntdll->image_base, static_cast<size_t>(ntdll->size_of_image));
     const auto win32u_data = emu.read_memory(win32u->image_base, static_cast<size_t>(win32u->size_of_image));
 
     this->dispatcher.setup(ntdll->exports, ntdll_data, win32u->exports, win32u_data);
 
-    const auto main_thread_id = context.create_thread(this->memory, this->mod_manager.executable->entry_point, 0, 0, false);
+    const auto main_thread_id = context.create_thread(this->memory, this->mod_manager.executable->entry_point, 0,
+                                                      this->mod_manager.executable->size_of_stack_commit, false);
+
     switch_to_thread(*this, main_thread_id);
 }
 
