@@ -24,10 +24,6 @@ namespace
     {
         // Allocate GDT with read-write permissions for segment descriptor setup
         memory.allocate_memory(GDT_ADDR, static_cast<size_t>(page_align_up(GDT_LIMIT)), memory_permission::read_write);
-
-        // Clear the entire GDT first to ensure all entries are null
-        std::vector<uint8_t> zero_gdt(GDT_LIMIT, 0);
-        emu.write_memory(GDT_ADDR, zero_gdt.data(), GDT_LIMIT);
         emu.load_gdt(GDT_ADDR, GDT_LIMIT);
 
         // Index 1 (selector 0x08) - 64-bit kernel code segment (Ring 0)
