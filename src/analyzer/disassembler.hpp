@@ -1,6 +1,12 @@
 #pragma once
 
 #include <capstone/capstone.h>
+#include <optional>
+#include <span>
+
+#include "common/segment_utils.hpp"
+
+class emulator;
 
 class instructions
 {
@@ -90,15 +96,31 @@ class disassembler
     disassembler(const disassembler& obj) = delete;
     disassembler& operator=(const disassembler& obj) = delete;
 
-    instructions disassemble(std::span<const uint8_t> data, size_t count) const;
+    using segment_bitness = segment_utils::segment_bitness;
 
-    csh get_handle() const
+    instructions disassemble(emulator& cpu, uint16_t cs_selector, std::span<const uint8_t> data, size_t count) const;
+    static std::optional<segment_bitness> get_segment_bitness(emulator& cpu, uint16_t cs_selector);
+    csh resolve_handle(emulator& cpu, uint16_t cs_selector) const;
+
+    csh get_handle_64() const
     {
-        return this->handle_;
+        return this->handle_64_;
+    }
+
+    csh get_handle_32() const
+    {
+        return this->handle_32_;
+    }
+
+    csh get_handle_16() const
+    {
+        return this->handle_16_;
     }
 
   private:
-    csh handle_{};
+    csh handle_64_{};
+    csh handle_32_{};
+    csh handle_16_{};
 
     void release();
 };

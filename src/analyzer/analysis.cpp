@@ -40,7 +40,10 @@ namespace
             return {};
         }
 
-        const auto instructions = d.disassemble(instruction_bytes, 1);
+        uint16_t reg_cs = 0;
+        auto& emu_ref = const_cast<emulator&>(emu);
+        emu_ref.read_raw_register(static_cast<int>(x86_register::cs), &reg_cs, sizeof(reg_cs));
+        const auto instructions = d.disassemble(emu_ref, reg_cs, instruction_bytes, 1);
         if (instructions.empty())
         {
             return {};
@@ -268,26 +271,32 @@ namespace
             return false;
         }
 
-        const auto instructions = d.disassemble(instruction_bytes, 1);
+        uint16_t reg_cs = 0;
+        auto& emu_ref = const_cast<emulator&>(emu);
+        emu_ref.read_raw_register(static_cast<int>(x86_register::cs), &reg_cs, sizeof(reg_cs));
+        const auto instructions = d.disassemble(emu_ref, reg_cs, instruction_bytes, 1);
         if (instructions.empty())
         {
             return false;
         }
 
-        return cs_insn_group(d.get_handle(), instructions.data(), CS_GRP_RET);
+        const auto handle = d.resolve_handle(emu_ref, reg_cs);
+        return cs_insn_group(handle, instructions.data(), CS_GRP_RET);
     }
 
     void record_instruction(analysis_context& c, const uint64_t address)
     {
+        auto& emu = c.win_emu->emu();
         std::array<uint8_t, MAX_INSTRUCTION_BYTES> instruction_bytes{};
-        const auto result = c.win_emu->emu().try_read_memory(address, instruction_bytes.data(), instruction_bytes.size());
+        const auto result = emu.try_read_memory(address, instruction_bytes.data(), instruction_bytes.size());
         if (!result)
         {
             return;
         }
 
+        const auto reg_cs = emu.reg<uint16_t>(x86_register::cs);
         disassembler disasm{};
-        const auto instructions = disasm.disassemble(instruction_bytes, 1);
+        const auto instructions = disasm.disassemble(emu, reg_cs, instruction_bytes, 1);
         if (instructions.empty())
         {
             return;
@@ -308,8 +317,10 @@ namespace
             debugger::handle_events(ec);
         }
 #endif
+
         const auto& current_thread = c.win_emu->current_thread();
         const auto previous_ip = current_thread.previous_ip;
+        [[maybe_unused]] const auto current_ip = current_thread.current_ip;
         const auto is_main_exe = win_emu.mod_manager.executable->contains(address);
         const auto is_previous_main_exe = win_emu.mod_manager.executable->contains(previous_ip);
 

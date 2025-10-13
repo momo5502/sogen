@@ -12,6 +12,8 @@
 constexpr auto ALLOCATION_GRANULARITY = 0x0000000000010000ULL;
 constexpr auto MIN_ALLOCATION_ADDRESS = 0x0000000000010000ULL;
 constexpr auto MAX_ALLOCATION_ADDRESS = 0x00007ffffffeffffULL;
+constexpr auto DEFAULT_ALLOCATION_ADDRESS_64BIT = 0x100000000ULL;
+constexpr auto DEFAULT_ALLOCATION_ADDRESS_32BIT = 0x10000ULL;
 
 // This maps to the `basic_memory_region` struct defined in
 // emulator\memory_region.hpp
@@ -75,7 +77,7 @@ class memory_manager : public memory_interface
 
     void unmap_all_memory();
 
-    uint64_t allocate_memory(size_t size, nt_memory_permission permissions, bool reserve_only = false);
+    uint64_t allocate_memory(size_t size, nt_memory_permission permissions, bool reserve_only = false, uint64_t start = 0);
 
     uint64_t find_free_allocation_base(size_t size, uint64_t start = 0) const;
 
@@ -95,6 +97,16 @@ class memory_manager : public memory_interface
         return this->layout_version_.load(std::memory_order_relaxed);
     }
 
+    std::uint64_t get_default_allocation_address() const
+    {
+        return this->default_allocation_address_;
+    }
+
+    void set_default_allocation_address(std::uint64_t address)
+    {
+        this->default_allocation_address_ = address;
+    }
+
     void serialize_memory_state(utils::buffer_serializer& buffer, bool is_snapshot) const;
     void deserialize_memory_state(utils::buffer_deserializer& buffer, bool is_snapshot);
 
@@ -104,6 +116,7 @@ class memory_manager : public memory_interface
     memory_interface* memory_{};
     reserved_region_map reserved_regions_{};
     std::atomic<std::uint64_t> layout_version_{0};
+    std::uint64_t default_allocation_address_{0x100000000ULL};
 
     void map_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) final;
     void map_memory(uint64_t address, size_t size, memory_permission permissions) final;

@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <cinttypes>
 #include <cstring>
 #include <string>
 #include <fstream>
@@ -798,7 +799,7 @@ namespace
     void print_time()
     {
         const auto epoch_time = std::chrono::system_clock::now().time_since_epoch();
-        printf("Time: %lld\n", std::chrono::duration_cast<std::chrono::nanoseconds>(epoch_time).count());
+        printf("Time: %" PRId64 "\n", std::chrono::duration_cast<std::chrono::nanoseconds>(epoch_time).count());
     }
 
     bool test_apis()
@@ -872,6 +873,7 @@ int main(const int argc, const char* argv[])
         RUN_TEST(test_interrupts, "Interrupts")
     }
     RUN_TEST(test_tls, "TLS")
+
     RUN_TEST(test_socket, "Socket")
     RUN_TEST(test_apc, "APC")
 

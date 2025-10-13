@@ -66,8 +66,10 @@ class emulator_thread : public ref_counted_object
 
     memory_manager* memory_ptr{};
 
-    uint64_t stack_base{};
-    uint64_t stack_size{};
+    uint64_t stack_base{};                    // Native 64-bit stack base
+    uint64_t stack_size{};                    // Native 64-bit stack size
+    std::optional<uint64_t> wow64_stack_base; // WOW64 32-bit stack base
+    std::optional<uint64_t> wow64_stack_size; // WOW64 32-bit stack size
     uint64_t start_address{};
     uint64_t argument{};
     uint64_t executed_instructions{0};
@@ -93,7 +95,10 @@ class emulator_thread : public ref_counted_object
     std::optional<NTSTATUS> pending_status{};
 
     std::optional<emulator_allocator> gs_segment;
-    std::optional<emulator_object<TEB64>> teb;
+    std::optional<emulator_object<TEB64>> teb64;                          // Native 64-bit TEB
+    std::optional<emulator_object<TEB32>> teb32;                          // WOW64 32-bit TEB
+    std::optional<emulator_allocator> wow64_context_segment;              // For WOW64 context (CONTEXT64) allocation
+    std::optional<emulator_object<WOW64_CPURESERVED>> wow64_cpu_reserved; // Persistent WOW64 thread context for ThreadWow64Context queries
 
     std::vector<std::byte> last_registers{};
 
@@ -167,7 +172,12 @@ class emulator_thread : public ref_counted_object
 
         buffer.write_optional(this->pending_status);
         buffer.write_optional(this->gs_segment);
-        buffer.write_optional(this->teb);
+        buffer.write_optional(this->teb64);
+        buffer.write_optional(this->wow64_stack_base);
+        buffer.write_optional(this->wow64_stack_size);
+        buffer.write_optional(this->teb32);
+        buffer.write_optional(this->wow64_context_segment);
+        buffer.write_optional(this->wow64_cpu_reserved);
 
         buffer.write_vector(this->last_registers);
     }
@@ -207,7 +217,12 @@ class emulator_thread : public ref_counted_object
 
         buffer.read_optional(this->pending_status);
         buffer.read_optional(this->gs_segment, [this] { return emulator_allocator(*this->memory_ptr); });
-        buffer.read_optional(this->teb, [this] { return emulator_object<TEB64>(*this->memory_ptr); });
+        buffer.read_optional(this->teb64, [this] { return emulator_object<TEB64>(*this->memory_ptr); });
+        buffer.read_optional(this->wow64_stack_base);
+        buffer.read_optional(this->wow64_stack_size);
+        buffer.read_optional(this->teb32, [this] { return emulator_object<TEB32>(*this->memory_ptr); });
+        buffer.read_optional(this->wow64_context_segment, [this] { return emulator_allocator(*this->memory_ptr); });
+        buffer.read_optional(this->wow64_cpu_reserved, [this] { return emulator_object<WOW64_CPURESERVED>(*this->memory_ptr); });
 
         buffer.read_vector(this->last_registers);
     }

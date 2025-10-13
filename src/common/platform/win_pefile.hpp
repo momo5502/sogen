@@ -1,6 +1,11 @@
 #pragma once
 
+#include <cstring>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <system_error>
+#include <variant>
 
 // NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
@@ -54,10 +59,42 @@
 #define IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE 0x0040
 #define IMAGE_FILE_DLL                        0x2000
 
-#define IMAGE_FILE_MACHINE_I386               0x014c
-#define IMAGE_FILE_MACHINE_AMD64              0x8664
+#ifndef OS_WINDOWS
+#define IMAGE_FILE_MACHINE_UNKNOWN     0
+#define IMAGE_FILE_MACHINE_TARGET_HOST 0x0001 // Useful for indicating we want to interact with the host and not a WoW guest.
+#define IMAGE_FILE_MACHINE_I386        0x014c // Intel 386.
+#define IMAGE_FILE_MACHINE_R3000       0x0162 // MIPS little-endian, 0x160 big-endian
+#define IMAGE_FILE_MACHINE_R4000       0x0166 // MIPS little-endian
+#define IMAGE_FILE_MACHINE_R10000      0x0168 // MIPS little-endian
+#define IMAGE_FILE_MACHINE_WCEMIPSV2   0x0169 // MIPS little-endian WCE v2
+#define IMAGE_FILE_MACHINE_ALPHA       0x0184 // Alpha_AXP
+#define IMAGE_FILE_MACHINE_SH3         0x01a2 // SH3 little-endian
+#define IMAGE_FILE_MACHINE_SH3DSP      0x01a3
+#define IMAGE_FILE_MACHINE_SH3E        0x01a4 // SH3E little-endian
+#define IMAGE_FILE_MACHINE_SH4         0x01a6 // SH4 little-endian
+#define IMAGE_FILE_MACHINE_SH5         0x01a8 // SH5
+#define IMAGE_FILE_MACHINE_ARM         0x01c0 // ARM Little-Endian
+#define IMAGE_FILE_MACHINE_THUMB       0x01c2 // ARM Thumb/Thumb-2 Little-Endian
+#define IMAGE_FILE_MACHINE_ARMNT       0x01c4 // ARM Thumb-2 Little-Endian
+#define IMAGE_FILE_MACHINE_AM33        0x01d3
+#define IMAGE_FILE_MACHINE_POWERPC     0x01F0 // IBM PowerPC Little-Endian
+#define IMAGE_FILE_MACHINE_POWERPCFP   0x01f1
+#define IMAGE_FILE_MACHINE_IA64        0x0200 // Intel 64
+#define IMAGE_FILE_MACHINE_MIPS16      0x0266 // MIPS
+#define IMAGE_FILE_MACHINE_ALPHA64     0x0284 // ALPHA64
+#define IMAGE_FILE_MACHINE_MIPSFPU     0x0366 // MIPS
+#define IMAGE_FILE_MACHINE_MIPSFPU16   0x0466 // MIPS
+#define IMAGE_FILE_MACHINE_AXP64       IMAGE_FILE_MACHINE_ALPHA64
+#define IMAGE_FILE_MACHINE_TRICORE     0x0520 // Infineon
+#define IMAGE_FILE_MACHINE_CEF         0x0CEF
+#define IMAGE_FILE_MACHINE_EBC         0x0EBC // EFI Byte Code
+#define IMAGE_FILE_MACHINE_AMD64       0x8664 // AMD64 (K8)
+#define IMAGE_FILE_MACHINE_M32R        0x9041 // M32R little-endian
+#define IMAGE_FILE_MACHINE_ARM64       0xAA64 // ARM64 Little-Endian
+#define IMAGE_FILE_MACHINE_CEE         0xC0EE
+#endif
 
-#define PROCESSOR_ARCHITECTURE_AMD64          9
+#define PROCESSOR_ARCHITECTURE_AMD64 9
 
 enum class PEMachineType : std::uint16_t
 {
@@ -311,7 +348,7 @@ typedef struct _IMAGE_IMPORT_DESCRIPTOR
     DWORD ForwarderChain; // -1 if no forwarders
     DWORD Name;
     DWORD FirstThunk; // RVA to IAT (if bound this IAT has actual addresses)
-} IMAGE_IMPORT_DESCRIPTOR;
+} IMAGE_IMPORT_DESCRIPTOR, *PIMAGE_IMPORT_DESCRIPTOR;
 
 typedef struct _IMAGE_THUNK_DATA64
 {
@@ -322,9 +359,64 @@ typedef struct _IMAGE_THUNK_DATA64
         ULONGLONG Ordinal;
         ULONGLONG AddressOfData; // PIMAGE_IMPORT_BY_NAME
     } u1;
-} IMAGE_THUNK_DATA64;
+} IMAGE_THUNK_DATA64, *PIMAGE_THUNK_DATA64;
+
+typedef struct _IMAGE_THUNK_DATA32
+{
+    union
+    {
+        DWORD ForwarderString; // PBYTE
+        DWORD Function;        // PDWORD
+        DWORD Ordinal;
+        DWORD AddressOfData; // PIMAGE_IMPORT_BY_NAME
+    } u1;
+} IMAGE_THUNK_DATA32, *PIMAGE_THUNK_DATA32;
 
 #endif
+
+// Template type definitions for architecture-specific thunk data
+template <typename T>
+struct thunk_data_traits;
+
+template <>
+struct thunk_data_traits<std::uint32_t>
+{
+    using type = IMAGE_THUNK_DATA32;
+    static constexpr DWORD ordinal_flag = IMAGE_ORDINAL_FLAG32;
+
+    static constexpr WORD ordinal_mask(DWORD ordinal)
+    {
+        return IMAGE_ORDINAL32(ordinal);
+    }
+    static constexpr bool snap_by_ordinal(DWORD ordinal)
+    {
+        return IMAGE_SNAP_BY_ORDINAL32(ordinal);
+    }
+};
+
+template <>
+struct thunk_data_traits<std::uint64_t>
+{
+    using type = IMAGE_THUNK_DATA64;
+    static constexpr ULONGLONG ordinal_flag = IMAGE_ORDINAL_FLAG64;
+
+    static constexpr WORD ordinal_mask(ULONGLONG ordinal)
+    {
+        return IMAGE_ORDINAL64(ordinal);
+    }
+    static constexpr bool snap_by_ordinal(ULONGLONG ordinal)
+    {
+        return IMAGE_SNAP_BY_ORDINAL64(ordinal);
+    }
+};
+
+template <typename Traits>
+struct SECTION_BASIC_INFORMATION
+{
+    typename Traits::PVOID BaseAddress;
+    ULONG Attributes;
+    LARGE_INTEGER Size;
+};
 
 template <typename Traits>
 struct SECTION_IMAGE_INFORMATION
@@ -382,5 +474,122 @@ struct SECTION_IMAGE_INFORMATION
     ULONG ImageFileSize;
     ULONG CheckSum;
 };
+
+namespace winpe
+{
+
+    enum class pe_arch
+    {
+        pe32,
+        pe64
+    };
+
+    inline std::variant<pe_arch, std::error_code> get_pe_arch(const std::filesystem::path& file)
+    {
+        std::ifstream f(file, std::ios::binary);
+        if (!f)
+        {
+            return std::make_error_code(std::errc::no_such_file_or_directory);
+        }
+
+        PEDosHeader_t dos{};
+        f.read(reinterpret_cast<char*>(&dos), sizeof(dos));
+        if (!f || dos.e_magic != PEDosHeader_t::k_Magic)
+        {
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        f.seekg(dos.e_lfanew, std::ios::beg);
+        uint32_t nt_signature = 0;
+        f.read(reinterpret_cast<char*>(&nt_signature), sizeof(nt_signature));
+        if (!f || nt_signature != PENTHeaders_t<std::uint32_t>::k_Signature)
+        {
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        PEFileHeader_t file_header{};
+        f.read(reinterpret_cast<char*>(&file_header), sizeof(file_header));
+        if (!f)
+        {
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        uint16_t magic = 0;
+        f.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+        if (!f)
+        {
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        if (magic == PEOptionalHeader_t<std::uint32_t>::k_Magic)
+        {
+            return pe_arch::pe32;
+        }
+        if (magic == PEOptionalHeader_t<std::uint64_t>::k_Magic)
+        {
+            return pe_arch::pe64;
+        }
+
+        return std::make_error_code(std::errc::executable_format_error);
+    }
+
+    inline std::variant<pe_arch, std::error_code> get_pe_arch(uint64_t base_address, uint64_t image_size)
+    {
+        const auto* base = reinterpret_cast<const std::byte*>(reinterpret_cast<const void*>(static_cast<uintptr_t>(base_address)));
+        const uint64_t size = image_size;
+
+        auto read = [&](uint64_t off, void* dst, size_t n) -> bool {
+            if (off > size)
+            {
+                return false;
+            }
+            if (n > size - off)
+            {
+                return false;
+            }
+            memcpy(dst, base + off, n);
+            return true;
+        };
+
+        PEDosHeader_t dos{};
+        if (!read(0, &dos, sizeof(dos)) || dos.e_magic != PEDosHeader_t::k_Magic)
+        {
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        const auto nt_off = static_cast<uint64_t>(dos.e_lfanew);
+        uint32_t nt_signature = 0;
+        if (!read(nt_off, &nt_signature, sizeof(nt_signature)) || nt_signature != PENTHeaders_t<std::uint32_t>::k_Signature)
+        {
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        PEFileHeader_t file_header{};
+        const uint64_t fh_off = nt_off + sizeof(nt_signature);
+        if (!read(fh_off, &file_header, sizeof(file_header)))
+        {
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        uint16_t magic = 0;
+        const uint64_t opt_magic_off = fh_off + sizeof(file_header);
+        if (!read(opt_magic_off, &magic, sizeof(magic)))
+        {
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        if (magic == PEOptionalHeader_t<std::uint32_t>::k_Magic)
+        {
+            return pe_arch::pe32;
+        }
+        if (magic == PEOptionalHeader_t<std::uint64_t>::k_Magic)
+        {
+            return pe_arch::pe64;
+        }
+
+        return std::make_error_code(std::errc::executable_format_error);
+    }
+
+}
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
