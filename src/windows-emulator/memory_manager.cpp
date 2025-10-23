@@ -504,7 +504,7 @@ uint64_t memory_manager::find_free_allocation_base(const size_t size, const uint
         start_address = align_up(region_end, ALLOCATION_GRANULARITY);
     }
 
-    if (start_address + size <= MAX_ALLOCATION_ADDRESS)
+    if  (start_address + size <= MAX_ALLOCATION_END_EXCL)
     {
         return start_address;
     }
@@ -516,7 +516,7 @@ region_info memory_manager::get_region_info(const uint64_t address)
 {
     region_info result{};
     result.start = MIN_ALLOCATION_ADDRESS;
-    result.length = static_cast<size_t>(MAX_ALLOCATION_ADDRESS - result.start);
+    result.length = static_cast<size_t>(MAX_ALLOCATION_END_EXCL - result.start);
     result.permissions = nt_memory_permission();
     result.initial_permissions = nt_memory_permission();
     result.allocation_base = {};
@@ -541,7 +541,7 @@ region_info memory_manager::get_region_info(const uint64_t address)
     if (lower_end <= address)
     {
         result.start = lower_end;
-        result.length = static_cast<size_t>(MAX_ALLOCATION_ADDRESS - result.start);
+        result.length = static_cast<size_t>(MAX_ALLOCATION_END_EXCL - result.start);
         return result;
     }
 

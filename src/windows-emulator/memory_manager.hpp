@@ -12,6 +12,7 @@
 constexpr auto ALLOCATION_GRANULARITY = 0x0000000000010000ULL;
 constexpr auto MIN_ALLOCATION_ADDRESS = 0x0000000000010000ULL;
 constexpr auto MAX_ALLOCATION_ADDRESS = 0x00007ffffffeffffULL;
+constexpr auto MAX_ALLOCATION_END_EXCL = MAX_ALLOCATION_ADDRESS + 1ULL;
 
 // This maps to the `basic_memory_region` struct defined in
 // emulator\memory_region.hpp
