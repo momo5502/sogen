@@ -204,17 +204,6 @@ namespace
             emu.reg(x86_register::rsp, emu.reg(x86_register::rsp) + 8);
             emu.reg(x86_register::rax, 1);
         }
-        else if (function == "VirtualQuery")
-        {
-            auto& emu = c.win_emu->emu();
-            const auto lpAddress = emu.reg(x86_register::rcx);
-            const auto lpBuffer = emu.reg(x86_register::rdx);
-            const auto dwLength = emu.reg(x86_register::r8);
-
-            c.win_emu->log.print(color::yellow,
-                                 "VirtualQuery called: lpAddress=0x%" PRIx64 ", lpBuffer=0x%" PRIx64 ", dwLength=%" PRIu64 "\n", lpAddress,
-                                 lpBuffer, dwLength);
-        }
         else if (function == "lstrcmp" || function == "lstrcmpi")
         {
             print_arg_as_string(*c.win_emu, 0);
