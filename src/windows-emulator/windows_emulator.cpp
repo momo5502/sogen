@@ -328,7 +328,7 @@ windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, const e
         this->map_port(mapping.first, mapping.second);
     }
 
-        this->setup_hooks();
+    this->setup_hooks();
 }
 
 windows_emulator::~windows_emulator() = default;
