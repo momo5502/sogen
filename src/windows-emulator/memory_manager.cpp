@@ -504,7 +504,7 @@ uint64_t memory_manager::find_free_allocation_base(const size_t size, const uint
         start_address = align_up(region_end, ALLOCATION_GRANULARITY);
     }
 
-    if  (start_address + size <= MAX_ALLOCATION_END_EXCL)
+    if (start_address + size <= MAX_ALLOCATION_END_EXCL)
     {
         return start_address;
     }
