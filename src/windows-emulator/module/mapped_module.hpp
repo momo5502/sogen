@@ -32,8 +32,16 @@ struct mapped_module
     std::filesystem::path path{};
 
     uint64_t image_base{};
+    uint64_t image_base_file{};
     uint64_t size_of_image{};
     uint64_t entry_point{};
+
+    // PE header fields
+    uint16_t machine{};               // Machine type from file header
+    uint64_t size_of_stack_reserve{}; // Stack reserve size from optional header
+    uint64_t size_of_stack_commit{};  // Stack commit size from optional header
+    uint64_t size_of_heap_reserve{};  // Heap reserve size from optional header
+    uint64_t size_of_heap_commit{};   // Heap commit size from optional header
 
     exported_symbols exports{};
     imported_symbols imports{};
@@ -60,5 +68,10 @@ struct mapped_module
         }
 
         return 0;
+    }
+
+    uint64_t get_image_base_file() const
+    {
+        return this->image_base_file;
     }
 };

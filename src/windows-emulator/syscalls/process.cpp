@@ -17,8 +17,36 @@ namespace syscalls
 
         switch (info_class)
         {
+        case ProcessExecuteFlags:
+            return STATUS_NOT_SUPPORTED;
         case ProcessGroupInformation:
-        case ProcessMitigationPolicy:
+        case ProcessMitigationPolicy: {
+            // ProcessMitigationPolicy requires special handling because the caller
+            // specifies which policy to query via the Policy field in the input buffer.
+            // We need to read this field first to determine what's being queried.
+
+            // Ensure we have at least enough space to read the Policy field
+            if (process_information_length < sizeof(PROCESS_MITIGATION_POLICY))
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            // Read the policy type from the input buffer using safe emulator memory access
+            const emulator_object<PROCESS_MITIGATION_POLICY> policy_obj{c.emu, process_information};
+            const auto policy = policy_obj.read();
+
+            // We only support querying ProcessDynamicCodePolicy
+            if (policy != ProcessDynamicCodePolicy)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            return handle_query<PROCESS_MITIGATION_POLICY_RAW_DATA>(c.emu, process_information, process_information_length, return_length,
+                                                                    [policy](PROCESS_MITIGATION_POLICY_RAW_DATA& policy_data) {
+                                                                        policy_data.Policy = policy;
+                                                                        policy_data.Value = 0;
+                                                                    });
+        }
         case ProcessEnclaveInformation:
             return STATUS_NOT_SUPPORTED;
 
@@ -61,7 +89,7 @@ namespace syscalls
         case ProcessBasicInformation:
             return handle_query<PROCESS_BASIC_INFORMATION64>(c.emu, process_information, process_information_length, return_length,
                                                              [&](PROCESS_BASIC_INFORMATION64& basic_info) {
-                                                                 basic_info.PebBaseAddress = c.proc.peb.value();
+                                                                 basic_info.PebBaseAddress = c.proc.peb64.value();
                                                                  basic_info.UniqueProcessId = 1;
                                                              });
 
@@ -99,7 +127,7 @@ namespace syscalls
                 });
 
         case ProcessImageFileNameWin32: {
-            const auto peb = c.proc.peb.read();
+            const auto peb = c.proc.peb64.read();
             emulator_object<RTL_USER_PROCESS_PARAMETERS64> proc_params{c.emu, peb.ProcessParameters};
             const auto params = proc_params.read();
             const auto length = params.ImagePathName.Length + sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>) + 2;
@@ -154,6 +182,11 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
+        if (info_class == ProcessExecuteFlags)
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
+
         if (info_class == ProcessTlsInformation)
         {
             constexpr auto thread_data_offset = offsetof(PROCESS_TLS_INFO, ThreadData);
@@ -184,7 +217,7 @@ namespace syscalls
 
                 entry.Flags = 2;
 
-                thread_iterator->second.teb->access([&](TEB64& teb) {
+                thread_iterator->second.teb64->access([&](TEB64& teb) {
                     entry.ThreadId = teb.ClientId.UniqueThread;
 
                     const auto tls_vector = teb.ThreadLocalStoragePointer;

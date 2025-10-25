@@ -74,14 +74,16 @@ namespace
         kusd.QpcData.QpcBypassEnabled = 0x83;
         kusd.QpcBias = 0x000000159530c4af;
         kusd.QpcFrequency = utils::clock::steady_duration::period::den;
+        kusd.Reserved1 = 0x7ffeffff;
+        kusd.Reserved3 = 0x80000000;
         kusd.ProcessorFeatures.arr[PF_RDTSC_INSTRUCTION_AVAILABLE] = 1;
         kusd.ProcessorFeatures.arr[PF_RDTSCP_INSTRUCTION_AVAILABLE] = 1;
         kusd.ProcessorFeatures.arr[PF_RDPID_INSTRUCTION_AVAILABLE] = 0;
 
-        constexpr std::u16string_view root_dir{u"C:\\WINDOWS"};
+        constexpr std::u16string_view root_dir{u"C:\\Windows"};
         memcpy(&kusd.NtSystemRoot.arr[0], root_dir.data(), root_dir.size() * 2);
 
-        kusd.ImageNumberLow = IMAGE_FILE_MACHINE_I386;
+        kusd.ImageNumberLow = IMAGE_FILE_MACHINE_AMD64;
         kusd.ImageNumberHigh = IMAGE_FILE_MACHINE_AMD64;
     }
 }

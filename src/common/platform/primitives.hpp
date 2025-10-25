@@ -20,6 +20,7 @@
 using LONG = std::int32_t;
 using ULONG = DWORD;
 using DWORD64 = std::uint64_t;
+using ULONG64 = std::uint64_t;
 using ULONGLONG = DWORD64;
 using LONGLONG = std::int64_t;
 using UINT = std::uint32_t;
@@ -52,6 +53,7 @@ using BYTE = std::uint8_t;
 #endif
 
 using WORD = std::uint16_t;
+#define WCHAR   WORD
 
 #define UCHAR   uint8_t
 #define BOOLEAN UCHAR

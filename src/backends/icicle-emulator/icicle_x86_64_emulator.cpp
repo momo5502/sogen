@@ -188,6 +188,29 @@ namespace icicle
             return icicle_read_register(this->emu_, reg, value, size);
         }
 
+        bool read_descriptor_table(const int reg, descriptor_table_register& table) override
+        {
+            if (reg != static_cast<int>(x86_register::gdtr) && reg != static_cast<int>(x86_register::idtr))
+            {
+                return false;
+            }
+
+            struct gdtr
+            {
+                uint32_t padding{};
+                uint32_t limit{};
+                uint64_t address{};
+            };
+
+            gdtr entry{};
+            static_assert(sizeof(gdtr) - offsetof(gdtr, limit) == 12);
+            this->read_register(x86_register::gdtr, &entry.limit, 12);
+
+            table.base = entry.address;
+            table.limit = entry.limit;
+            return true;
+        }
+
         void map_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) override
         {
             struct mmio_wrapper : utils::object

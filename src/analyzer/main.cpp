@@ -88,7 +88,7 @@ namespace
 
     emulator_object<RTL_USER_PROCESS_PARAMETERS64> get_process_params(windows_emulator& win_emu)
     {
-        const auto peb = win_emu.process.peb.read();
+        const auto peb = win_emu.process.peb64.read();
         return {win_emu.emu(), peb.ProcessParameters};
     }
 
@@ -189,14 +189,14 @@ namespace
         (void)concise;
 
 #if !defined(__GNUC__) || defined(__clang__)
-        watch_object(win_emu, modules, *win_emu.current_thread().teb, verbose);
-        watch_object(win_emu, modules, win_emu.process.peb, verbose);
+        watch_object(win_emu, modules, *win_emu.current_thread().teb64, verbose);
+        watch_object(win_emu, modules, win_emu.process.peb64, verbose);
         watch_object<KUSER_SHARED_DATA64>(win_emu, modules, kusd_mmio::address(), verbose);
 
         auto state = std::make_shared<analysis_state>(win_emu, modules, verbose, concise);
 
-        state->params_hook_ = watch_object(win_emu, modules, win_emu.process.process_params, verbose, state->params_state_);
-        state->ldr_hook_ = watch_object<PEB_LDR_DATA64>(win_emu, modules, win_emu.process.peb.read().Ldr, verbose, state->ldr_state_);
+        state->params_hook_ = watch_object(win_emu, modules, win_emu.process.process_params64, verbose, state->params_state_);
+        state->ldr_hook_ = watch_object<PEB_LDR_DATA64>(win_emu, modules, win_emu.process.peb64.read().Ldr, verbose, state->ldr_state_);
 
         const auto update_env_hook = [state] {
             state->env_ptr_hook_ = install_env_hook(state); //
@@ -204,17 +204,17 @@ namespace
 
         update_env_hook();
 
-        win_emu.emu().hook_memory_write(win_emu.process.peb.value() + offsetof(PEB64, ProcessParameters), 0x8,
+        win_emu.emu().hook_memory_write(win_emu.process.peb64.value() + offsetof(PEB64, ProcessParameters), 0x8,
                                         [state, update_env = std::move(update_env_hook)](const uint64_t, const void*, size_t) {
-                                            const auto new_ptr = state->win_emu_.process.peb.read().ProcessParameters;
+                                            const auto new_ptr = state->win_emu_.process.peb64.read().ProcessParameters;
                                             state->params_hook_ = watch_object<RTL_USER_PROCESS_PARAMETERS64>(
                                                 state->win_emu_, state->modules_, new_ptr, state->verbose_, state->params_state_);
                                             update_env();
                                         });
 
         win_emu.emu().hook_memory_write(
-            win_emu.process.peb.value() + offsetof(PEB64, Ldr), 0x8, [state](const uint64_t, const void*, size_t) {
-                const auto new_ptr = state->win_emu_.process.peb.read().Ldr;
+            win_emu.process.peb64.value() + offsetof(PEB64, Ldr), 0x8, [state](const uint64_t, const void*, size_t) {
+                const auto new_ptr = state->win_emu_.process.peb64.read().Ldr;
                 state->ldr_hook_ =
                     watch_object<PEB_LDR_DATA64>(state->win_emu_, state->modules_, new_ptr, state->verbose_, state->ldr_state_);
             });
@@ -253,7 +253,11 @@ namespace
         {
             for (const auto& instruction : instructions)
             {
-                const auto* mnemonic = cs_insn_name(c.d.get_handle(), instruction);
+                const auto& e = c.win_emu;
+                auto& emu = e->emu();
+                const auto reg_cs = emu.reg<uint16_t>(x86_register::cs);
+                const auto handle = c.d.resolve_handle(emu, reg_cs);
+                const auto* mnemonic = cs_insn_name(handle, instruction);
                 c.win_emu->log.print(color::white, "%s: %" PRIu64 "\n", mnemonic, count);
             }
         }

@@ -221,6 +221,26 @@ struct section : ref_counted_object
     uint32_t section_page_protection{};
     uint32_t allocation_attributes{};
 
+    // Cached PE image information for image sections
+    struct image_info
+    {
+        uint64_t entry_point_rva{};
+        uint64_t image_base{};
+        uint16_t machine{};
+        uint16_t subsystem{};
+        uint16_t subsystem_major_version{};
+        uint16_t subsystem_minor_version{};
+        uint16_t image_characteristics{};
+        uint16_t dll_characteristics{};
+        uint64_t size_of_stack_reserve{};
+        uint64_t size_of_stack_commit{};
+        uint32_t size_of_code{};
+        uint32_t loader_flags{};
+        uint32_t checksum{};
+        bool has_code{false};
+    };
+    std::optional<image_info> cached_image_info{};
+
     bool is_image() const
     {
         return this->allocation_attributes & SEC_IMAGE;
@@ -233,6 +253,7 @@ struct section : ref_counted_object
         buffer.write(this->maximum_size);
         buffer.write(this->section_page_protection);
         buffer.write(this->allocation_attributes);
+        buffer.write_optional<image_info>(this->cached_image_info);
     }
 
     void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -242,6 +263,7 @@ struct section : ref_counted_object
         buffer.read(this->maximum_size);
         buffer.read(this->section_page_protection);
         buffer.read(this->allocation_attributes);
+        buffer.read_optional(this->cached_image_info);
     }
 };
 
