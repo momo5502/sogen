@@ -30,6 +30,7 @@ concurrency:
 jobs:
   clang-tidy:
     name: Run Clang Tidy
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository }}
     runs-on: ubuntu-24.04
     env:
       LLVM_VERSION: 21
@@ -64,6 +65,7 @@ jobs:
 
   verify-formatting:
     name: Verify Formatting
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository }}
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout Source
@@ -79,6 +81,7 @@ jobs:
 
   build-apiset-dumper:
     name: Build API Set Dumper
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository }}
     runs-on: windows-latest
     steps:
       - name: Checkout Source
@@ -105,6 +108,7 @@ jobs:
 
   create-emulation-root:
     name: Create Emulation Root
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository }}
     runs-on: ${{ matrix.runner }}
     needs: [build-apiset-dumper]
     strategy:
@@ -156,6 +160,7 @@ jobs:
 
   build:
     name: Build
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -311,6 +316,7 @@ jobs:
   # waiting for other platforms
   build-isolate:
     name: Build Isolate
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -363,6 +369,7 @@ jobs:
 
   test:
     name: Test
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository }}
     runs-on: ${{ matrix.runner }}
     needs: [create-emulation-root, build]
     strategy:
@@ -456,6 +463,7 @@ jobs:
 
   win-test:
     name: Windows Test
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository }}
     runs-on: windows-latest
     needs: [create-emulation-root, build-isolate]
     strategy:
@@ -519,6 +527,7 @@ jobs:
 
   smoke-test-node:
     name: Smoke Test Node.js
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository }}
     runs-on: ubuntu-24.04
     needs: [create-emulation-root, build]
     steps:
@@ -551,6 +560,7 @@ jobs:
 
   smoke-test-mingw:
     name: Smoke Test MinGW x86_64
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository }}
     runs-on: windows-latest
     needs: [create-emulation-root, build]
     steps:
@@ -577,6 +587,7 @@ jobs:
 
   smoke-test-android:
     name: Smoke Test Android
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository }}
     runs-on: ${{ matrix.runner }}
     needs: [create-emulation-root, build]
     strategy:
@@ -642,6 +653,7 @@ jobs:
 
   build-page:
     name: Build Page
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository }}
     runs-on: ubuntu-latest
     needs: [create-emulation-root, build]
     steps:
@@ -746,7 +758,7 @@ jobs:
         win-test,
         verify-formatting,
       ]
-    if: always()
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
     steps:
       - uses: geekyeggo/delete-artifact@v5
         continue-on-error: true
