@@ -445,18 +445,10 @@ void emulator_thread::setup_registers(x86_64_emulator& emu, const process_contex
                 ctx.Context.Eip = static_cast<uint32_t>(context.rtl_user_thread_start32.value());
             }
         });
-
-        // For WOW64, also set FS segment base to point to 32-bit TEB
-        // Windows kernel sets both GDT descriptor and FS_BASE MSR during thread creation
-        if (this->teb32.has_value())
-        {
-            emu.set_segment_base(x86_register::fs, this->teb32->value());
-        }
     }
 
     // Native 64-bit process setup
     setup_stack(emu, context, this->stack_base, static_cast<size_t>(this->stack_size));
-    emu.set_segment_base(x86_register::gs, this->gs_segment->get_base());
 
     CONTEXT64 ctx{};
     ctx.ContextFlags = CONTEXT64_ALL;

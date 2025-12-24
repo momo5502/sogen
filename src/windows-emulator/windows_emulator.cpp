@@ -114,8 +114,6 @@ namespace
             return;
         }
 
-        thread.setup_if_necessary(win_emu.emu(), win_emu.process);
-
         win_emu.callbacks.on_generic_activity("APC Dispatch");
 
         const auto next_apx = apcs.front();

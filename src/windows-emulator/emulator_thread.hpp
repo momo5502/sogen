@@ -121,6 +121,14 @@ class emulator_thread : public ref_counted_object
     void restore(x86_64_emulator& emu) const
     {
         emu.restore_registers(this->last_registers);
+
+        // For WOW64, also set FS segment base to point to 32-bit TEB
+        // Windows kernel sets both GDT descriptor and FS_BASE MSR during thread creation
+        if (this->teb32.has_value())
+        {
+            emu.set_segment_base(x86_register::fs, this->teb32->value());
+        }
+        emu.set_segment_base(x86_register::gs, this->gs_segment->get_base());
     }
 
     void setup_if_necessary(x86_64_emulator& emu, const process_context& context)
