@@ -443,6 +443,7 @@ void emulator_thread::setup_registers(x86_64_emulator& emu, const process_contex
             if (context.rtl_user_thread_start32.has_value())
             {
                 ctx.Context.Eip = static_cast<uint32_t>(context.rtl_user_thread_start32.value());
+                ctx.Context.Ebx = static_cast<uint32_t>(this->argument);
             }
         });
     }
