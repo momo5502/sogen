@@ -1648,45 +1648,45 @@ typedef struct _KERNEL_USER_TIMES
     LARGE_INTEGER UserTime;
 } KERNEL_USER_TIMES, *PKERNEL_USER_TIMES;
 
-struct THREAD_TLS_INFO
+struct THREAD_TLS_INFORMATION
 {
     ULONG Flags;
     uint32_t _Padding;
 
     union
     {
-        EmulatorTraits<Emu64>::PVOID TlsVector;
-        EmulatorTraits<Emu64>::PVOID TlsModulePointer;
+        EmulatorTraits<Emu64>::PVOID NewTlsData;
+        EmulatorTraits<Emu64>::PVOID OldTlsData;
     };
 
-    EMULATOR_CAST(std::uint64_t, ULONG_PTR) ThreadId;
+    uint64_t ThreadId;
 };
 
-static_assert(sizeof(THREAD_TLS_INFO) == 0x18);
+static_assert(sizeof(THREAD_TLS_INFORMATION) == 0x18);
 
-typedef enum _PROCESS_TLS_INFORMATION_TYPE
+enum PROCESS_TLS_INFORMATION_TYPE
 {
     ProcessTlsReplaceIndex,
     ProcessTlsReplaceVector,
     MaxProcessTlsOperation
-} PROCESS_TLS_INFORMATION_TYPE, *PPROCESS_TLS_INFORMATION_TYPE;
+};
 
-struct PROCESS_TLS_INFO
+struct PROCESS_TLS_INFORMATION
 {
-    ULONG Unknown;
-    PROCESS_TLS_INFORMATION_TYPE TlsRequest;
+    ULONG Flags;
+    PROCESS_TLS_INFORMATION_TYPE OperationType;
     ULONG ThreadDataCount;
 
     union
     {
         ULONG TlsIndex;
-        ULONG TlsVectorLength;
+        ULONG PreviousCount;
     };
 
-    THREAD_TLS_INFO ThreadData[1];
+    THREAD_TLS_INFORMATION ThreadData[1];
 };
 
-static_assert(sizeof(PROCESS_TLS_INFO) - sizeof(THREAD_TLS_INFO) == 0x10);
+static_assert(sizeof(PROCESS_TLS_INFORMATION) == 0x28);
 
 struct EMU_GENERIC_MAPPING
 {

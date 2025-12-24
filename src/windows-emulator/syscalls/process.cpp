@@ -198,15 +198,16 @@ namespace syscalls
 
         if (info_class == ProcessTlsInformation)
         {
-            constexpr auto thread_data_offset = offsetof(PROCESS_TLS_INFO, ThreadData);
-            if (process_information_length < thread_data_offset)
+            if (process_information_length < sizeof(PROCESS_TLS_INFORMATION) ||
+                (process_information_length - (sizeof(PROCESS_TLS_INFORMATION) - sizeof(THREAD_TLS_INFORMATION))) % sizeof(THREAD_TLS_INFORMATION))
             {
-                return STATUS_BUFFER_OVERFLOW;
+                return STATUS_INFO_LENGTH_MISMATCH;
             }
+            
+            constexpr auto thread_data_offset = offsetof(PROCESS_TLS_INFORMATION, ThreadData);
+            const emulator_object<THREAD_TLS_INFORMATION> data{c.emu, process_information + thread_data_offset};
 
-            const emulator_object<THREAD_TLS_INFO> data{c.emu, process_information + thread_data_offset};
-
-            PROCESS_TLS_INFO tls_info{};
+            PROCESS_TLS_INFORMATION tls_info{};
             c.emu.read_memory(process_information, &tls_info, thread_data_offset);
 
             for (uint32_t i = 0; i < tls_info.ThreadDataCount; ++i)
@@ -226,38 +227,69 @@ namespace syscalls
 
                 entry.Flags = 2;
 
+                const auto is_wow64 = c.win_emu.process.is_wow64_process;
+
                 thread_iterator->second.teb64->access([&](TEB64& teb) {
                     entry.ThreadId = teb.ClientId.UniqueThread;
 
-                    const auto tls_vector = teb.ThreadLocalStoragePointer;
-                    constexpr auto ptr_size = sizeof(EmulatorTraits<Emu64>::PVOID);
+                    uint64_t tls_vector = teb.ThreadLocalStoragePointer;
+                    const auto ptr_size = is_wow64 ? sizeof(EmulatorTraits<Emu32>::PVOID) : sizeof(EmulatorTraits<Emu64>::PVOID);
+
+                    if (is_wow64)
+                    {
+                        if (!thread_iterator->second.teb32.has_value())
+                        {
+                            return;
+                        }
+
+                        thread_iterator->second.teb32->access([&tls_vector](const TEB32& teb32) {
+                                tls_vector = teb32.ThreadLocalStoragePointer;
+                            });
+                    }
 
                     if (!tls_vector)
                     {
                         return;
                     }
 
-                    if (tls_info.TlsRequest == ProcessTlsReplaceIndex)
+                    if (tls_info.OperationType == ProcessTlsReplaceIndex)
                     {
                         const auto tls_entry_ptr = tls_vector + (tls_info.TlsIndex * ptr_size);
+                        uint64_t old_entry;
 
-                        const auto old_entry = c.emu.read_memory<EmulatorTraits<Emu64>::PVOID>(tls_entry_ptr);
-                        c.emu.write_memory<EmulatorTraits<Emu64>::PVOID>(tls_entry_ptr, entry.TlsModulePointer);
-
-                        entry.TlsModulePointer = old_entry;
-                    }
-                    else if (tls_info.TlsRequest == ProcessTlsReplaceVector)
-                    {
-                        const auto new_tls_vector = entry.TlsVector;
-
-                        for (uint32_t index = 0; index < tls_info.TlsVectorLength; ++index)
+                        if (is_wow64)
                         {
-                            const auto old_entry = c.emu.read_memory<uint64_t>(tls_vector + index * ptr_size);
-                            c.emu.write_memory(new_tls_vector + index * ptr_size, old_entry);
+                            old_entry = c.emu.read_memory<EmulatorTraits<Emu32>::PVOID>(tls_entry_ptr);
+                            c.emu.write_memory<EmulatorTraits<Emu32>::PVOID>(tls_entry_ptr, static_cast<uint32_t>(entry.NewTlsData));
+                        }
+                        else
+                        {
+                            old_entry = c.emu.read_memory<EmulatorTraits<Emu64>::PVOID>(tls_entry_ptr);
+                            c.emu.write_memory<EmulatorTraits<Emu64>::PVOID>(tls_entry_ptr, entry.NewTlsData);
+                        }
+                        
+                        entry.NewTlsData = old_entry;
+                    }
+                    else if (tls_info.OperationType == ProcessTlsReplaceVector)
+                    {
+                        const auto new_tls_vector = entry.NewTlsData;
+
+                        for (uint32_t index = 0; index < tls_info.ThreadDataCount; ++index)
+                        {
+                            if (is_wow64)
+                            {
+                                const auto old_entry = c.emu.read_memory<uint32_t>(tls_vector + index * ptr_size);
+                                c.emu.write_memory(new_tls_vector + index * ptr_size, old_entry);
+                            }
+                            else
+                            {
+                                const auto old_entry = c.emu.read_memory<uint64_t>(tls_vector + index * ptr_size);
+                                c.emu.write_memory(new_tls_vector + index * ptr_size, old_entry);
+                            }
                         }
 
                         teb.ThreadLocalStoragePointer = new_tls_vector;
-                        entry.TlsVector = tls_vector;
+                        entry.NewTlsData = tls_vector;
                     }
                 });
             }
