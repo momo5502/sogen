@@ -555,9 +555,9 @@ generic_handle_store* process_context::get_handle_store(const handle handle)
 }
 
 handle process_context::create_thread(memory_manager& memory, const uint64_t start_address, const uint64_t argument,
-                                      const uint64_t stack_size, const bool suspended)
+                                      const uint64_t stack_size, const bool suspended, const bool initial_thread)
 {
-    emulator_thread t{memory, *this, start_address, argument, stack_size, suspended, ++this->spawned_thread_count};
+    emulator_thread t{memory, *this, start_address, argument, stack_size, suspended, ++this->spawned_thread_count, initial_thread};
     auto [h, thr] = this->threads.store_and_get(std::move(t));
     this->callbacks_->on_thread_create(h, *thr);
     return h;

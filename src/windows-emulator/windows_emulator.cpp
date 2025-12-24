@@ -371,7 +371,7 @@ void windows_emulator::setup_process(const application_settings& app_settings)
     this->dispatcher.setup(ntdll->exports, ntdll_data, win32u->exports, win32u_data);
 
     const auto main_thread_id = context.create_thread(this->memory, this->mod_manager.executable->entry_point, 0,
-                                                      this->mod_manager.executable->size_of_stack_commit, false);
+                                                      this->mod_manager.executable->size_of_stack_commit, false, true);
 
     switch_to_thread(*this, main_thread_id);
 }
