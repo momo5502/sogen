@@ -199,11 +199,12 @@ namespace syscalls
         if (info_class == ProcessTlsInformation)
         {
             if (process_information_length < sizeof(PROCESS_TLS_INFORMATION) ||
-                (process_information_length - (sizeof(PROCESS_TLS_INFORMATION) - sizeof(THREAD_TLS_INFORMATION))) % sizeof(THREAD_TLS_INFORMATION))
+                (process_information_length - (sizeof(PROCESS_TLS_INFORMATION) - sizeof(THREAD_TLS_INFORMATION))) %
+                    sizeof(THREAD_TLS_INFORMATION))
             {
                 return STATUS_INFO_LENGTH_MISMATCH;
             }
-            
+
             constexpr auto thread_data_offset = offsetof(PROCESS_TLS_INFORMATION, ThreadData);
             const emulator_object<THREAD_TLS_INFORMATION> data{c.emu, process_information + thread_data_offset};
 
@@ -242,9 +243,8 @@ namespace syscalls
                             return;
                         }
 
-                        thread_iterator->second.teb32->access([&tls_vector](const TEB32& teb32) {
-                                tls_vector = teb32.ThreadLocalStoragePointer;
-                            });
+                        thread_iterator->second.teb32->access(
+                            [&tls_vector](const TEB32& teb32) { tls_vector = teb32.ThreadLocalStoragePointer; });
                     }
 
                     if (!tls_vector)
@@ -255,7 +255,7 @@ namespace syscalls
                     if (tls_info.OperationType == ProcessTlsReplaceIndex)
                     {
                         const auto tls_entry_ptr = tls_vector + (tls_info.TlsIndex * ptr_size);
-                        uint64_t old_entry;
+                        uint64_t old_entry{};
 
                         if (is_wow64)
                         {
@@ -267,7 +267,7 @@ namespace syscalls
                             old_entry = c.emu.read_memory<EmulatorTraits<Emu64>::PVOID>(tls_entry_ptr);
                             c.emu.write_memory<EmulatorTraits<Emu64>::PVOID>(tls_entry_ptr, entry.NewTlsData);
                         }
-                        
+
                         entry.NewTlsData = old_entry;
                     }
                     else if (tls_info.OperationType == ProcessTlsReplaceVector)
