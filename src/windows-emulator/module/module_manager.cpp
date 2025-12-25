@@ -224,12 +224,6 @@ mapped_module* module_manager::map_module_core(const pe_detection_result& detect
         const auto image_base = mod.image_base;
         const auto entry = this->modules_.try_emplace(image_base, std::move(mod));
         this->last_module_cache_ = this->modules_.end();
-
-        // TODO: Patch shell32.dll entry point to prevent TLS storage issues
-        // The shell32.dll module in SysWOW64 has TLS storage that fails, causing crashes
-        // This is a temporary workaround until the root cause is investigated and fixed
-        this->patch_shell32_entry_point_if_needed(entry.first->second);
-
         this->callbacks_->on_module_load(entry.first->second);
         return &entry.first->second;
     }
@@ -572,50 +566,4 @@ bool module_manager::unmap(const uint64_t address)
     this->last_module_cache_ = this->modules_.end();
 
     return true;
-}
-
-void module_manager::patch_shell32_entry_point_if_needed(mapped_module& mod)
-{
-    // Only patch shell32.dll in SysWOW64 directory (32-bit)
-    // Convert module name to lowercase for case-insensitive comparison
-    std::string module_name_lower = mod.name;
-    std::transform(module_name_lower.begin(), module_name_lower.end(), module_name_lower.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (module_name_lower != "shell32.dll")
-    {
-        return;
-    }
-
-    // Check if this is the SysWOW64 version by examining if it's a 32-bit module
-    // Convert path to lowercase for case-insensitive comparison
-    std::string path_str = mod.path.string();
-    std::transform(path_str.begin(), path_str.end(), path_str.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (path_str.find("syswow64") == std::string::npos)
-    {
-        return;
-    }
-
-    if (mod.entry_point == 0)
-    {
-        return;
-    }
-
-    // Get the page containing the entry point
-    const auto entry_page_start = mod.entry_point & ~0xFFFULL;
-    const auto page_size = 0x1000;
-
-    // Temporarily change memory protection to writable
-    nt_memory_permission mem_permisson(memory_permission::none);
-    if (!this->memory_->protect_memory(entry_page_start, page_size, memory_permission::all, &mem_permisson))
-    {
-        return; // Failed to change protection
-    }
-
-    // Write the ret 0Ch instruction at the entry point (0xB8, 0x01, 0x00, 0x00, 0x00, 0xC2, 0x0C, 0x00)
-    // This makes DllMain return immediately without executing CRT startup
-    constexpr std::array<uint8_t, 8> patch_bytes = {0xB8, 0x01, 0x00, 0x00, 0x00, 0xC2, 0x0C, 0x00}; // mov eax, 1 && ret 0Ch
-    this->memory_->write_memory(mod.entry_point, patch_bytes.data(), patch_bytes.size());
-
-    // Restore the original memory protection
-    this->memory_->protect_memory(entry_page_start, page_size, mem_permisson, nullptr);
 }

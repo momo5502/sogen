@@ -116,15 +116,18 @@ namespace
 }
 
 emulator_thread::emulator_thread(memory_manager& memory, const process_context& context, const uint64_t start_address,
-                                 const uint64_t argument, const uint64_t stack_size, const bool suspended, const uint32_t id)
+                                 const uint64_t argument, const uint64_t stack_size, const uint32_t create_flags, const uint32_t id,
+                                 const bool initial_thread)
     : memory_ptr(&memory),
       // stack_size(page_align_up(std::max(stack_size, static_cast<uint64_t>(STACK_SIZE)))),
       start_address(start_address),
       argument(argument),
       id(id),
-      suspended(suspended),
+      create_flags(create_flags),
       last_registers(context.default_register_set)
 {
+    this->suspended = create_flags & THREAD_CREATE_FLAGS_CREATE_SUSPENDED;
+
     // native 64-bit
     if (!context.is_wow64_process)
     {
@@ -152,6 +155,10 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
             teb_obj.NtTib.Self = this->teb64->value();
             teb_obj.CurrentLocale = 0x409;
             teb_obj.ProcessEnvironmentBlock = context.peb64.value();
+            teb_obj.SameTebFlags.InitialThread = initial_thread;
+            teb_obj.SameTebFlags.SkipThreadAttach = static_cast<bool>(create_flags & THREAD_CREATE_FLAGS_SKIP_THREAD_ATTACH);
+            teb_obj.SameTebFlags.LoaderWorker = static_cast<bool>(create_flags & THREAD_CREATE_FLAGS_LOADER_WORKER);
+            teb_obj.SameTebFlags.SkipLoaderInit = static_cast<bool>(create_flags & THREAD_CREATE_FLAGS_SKIP_LOADER_INIT);
         });
 
         return;
@@ -209,6 +216,10 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
         teb_obj.CurrentLocale = 0x409;
 
         teb_obj.ProcessEnvironmentBlock = context.peb64.value();
+        teb_obj.SameTebFlags.InitialThread = initial_thread;
+        teb_obj.SameTebFlags.SkipThreadAttach = static_cast<bool>(create_flags & THREAD_CREATE_FLAGS_SKIP_THREAD_ATTACH);
+        teb_obj.SameTebFlags.LoaderWorker = static_cast<bool>(create_flags & THREAD_CREATE_FLAGS_LOADER_WORKER);
+        teb_obj.SameTebFlags.SkipLoaderInit = static_cast<bool>(create_flags & THREAD_CREATE_FLAGS_SKIP_LOADER_INIT);
         teb_obj.StaticUnicodeString.MaximumLength = sizeof(teb_obj.StaticUnicodeBuffer);
         teb_obj.StaticUnicodeString.Buffer = this->teb64->value() + offsetof(TEB64, StaticUnicodeBuffer);
 
@@ -264,6 +275,10 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
         }
 
         teb32_obj.WowTebOffset = -0x2000;
+        teb32_obj.InitialThread = initial_thread;
+        teb32_obj.SkipThreadAttach = static_cast<bool>(create_flags & THREAD_CREATE_FLAGS_SKIP_THREAD_ATTACH);
+        teb32_obj.LoaderWorker = static_cast<bool>(create_flags & THREAD_CREATE_FLAGS_LOADER_WORKER);
+        teb32_obj.SkipLoaderInit = static_cast<bool>(create_flags & THREAD_CREATE_FLAGS_SKIP_LOADER_INIT);
 
         // Note: CurrentLocale and other fields will be initialized by WOW64 runtime
     });
@@ -439,20 +454,13 @@ void emulator_thread::setup_registers(x86_64_emulator& emu, const process_contex
             if (context.rtl_user_thread_start32.has_value())
             {
                 ctx.Context.Eip = static_cast<uint32_t>(context.rtl_user_thread_start32.value());
+                ctx.Context.Ebx = static_cast<uint32_t>(this->argument);
             }
         });
-
-        // For WOW64, also set FS segment base to point to 32-bit TEB
-        // Windows kernel sets both GDT descriptor and FS_BASE MSR during thread creation
-        if (this->teb32.has_value())
-        {
-            emu.set_segment_base(x86_register::fs, this->teb32->value());
-        }
     }
 
     // Native 64-bit process setup
     setup_stack(emu, context, this->stack_base, static_cast<size_t>(this->stack_size));
-    emu.set_segment_base(x86_register::gs, this->gs_segment->get_base());
 
     CONTEXT64 ctx{};
     ctx.ContextFlags = CONTEXT64_ALL;

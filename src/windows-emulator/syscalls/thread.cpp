@@ -598,7 +598,7 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
         }
 
-        const auto h = c.proc.create_thread(c.win_emu.memory, start_routine, argument, stack_size, create_flags & CREATE_SUSPENDED);
+        const auto h = c.proc.create_thread(c.win_emu.memory, start_routine, argument, stack_size, create_flags);
         thread_handle.write(h);
 
         if (!attribute_list)

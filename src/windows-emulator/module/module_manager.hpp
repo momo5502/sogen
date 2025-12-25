@@ -183,9 +183,6 @@ class module_manager
     mapped_module* map_module_core(const pe_detection_result& detection_result, const std::function<mapped_module()>& mapper,
                                    const logger& logger, bool is_static);
 
-    // Shell32.dll entry point patching to prevent TLS storage issues
-    void patch_shell32_entry_point_if_needed(mapped_module& mod);
-
     // Execution mode detection
     execution_mode detect_execution_mode(const windows_path& executable_path, const logger& logger);
 

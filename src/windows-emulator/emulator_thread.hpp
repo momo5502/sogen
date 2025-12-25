@@ -49,7 +49,7 @@ class emulator_thread : public ref_counted_object
     }
 
     emulator_thread(memory_manager& memory, const process_context& context, uint64_t start_address, uint64_t argument, uint64_t stack_size,
-                    bool suspended, uint32_t id);
+                    uint32_t create_flags, uint32_t id, bool initial_thread);
 
     emulator_thread(const emulator_thread&) = delete;
     emulator_thread& operator=(const emulator_thread&) = delete;
@@ -86,6 +86,7 @@ class emulator_thread : public ref_counted_object
     bool await_any{false};
     bool waiting_for_alert{false};
     bool alerted{false};
+    uint32_t create_flags{0};
     uint32_t suspended{0};
     std::optional<std::chrono::steady_clock::time_point> await_time{};
 
@@ -121,6 +122,14 @@ class emulator_thread : public ref_counted_object
     void restore(x86_64_emulator& emu) const
     {
         emu.restore_registers(this->last_registers);
+
+        // For WOW64, also set FS segment base to point to 32-bit TEB
+        // Windows kernel sets both GDT descriptor and FS_BASE MSR during thread creation
+        if (this->teb32.has_value())
+        {
+            emu.set_segment_base(x86_register::fs, this->teb32->value());
+        }
+        emu.set_segment_base(x86_register::gs, this->gs_segment->get_base());
     }
 
     void setup_if_necessary(x86_64_emulator& emu, const process_context& context)

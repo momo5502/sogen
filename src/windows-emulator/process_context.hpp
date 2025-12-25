@@ -74,7 +74,8 @@ struct process_context
                const mapped_module& executable, const mapped_module& ntdll, const apiset::container& apiset_container,
                const mapped_module* ntdll32 = nullptr);
 
-    handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size, bool suspended);
+    handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size, uint32_t create_flags,
+                         bool initial_thread = false);
 
     std::optional<uint16_t> find_atom(std::u16string_view name);
     uint16_t add_or_find_atom(std::u16string name);
