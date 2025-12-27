@@ -68,5 +68,7 @@ using NTSTATUS = std::uint32_t;
 
 #define STATUS_BUFFER_OVERFLOW            ((NTSTATUS)0x80000005L)
 
+#define STATUS_SERVICE_NOTIFICATION       ((NTSTATUS)0x40000018L)
+
 #define FILE_DEVICE_NETWORK               0x00000012
 #define FSCTL_AFD_BASE                    FILE_DEVICE_NETWORK

@@ -232,7 +232,17 @@ NTSTATUS handle_query(x86_64_emulator& emu, const uint64_t buffer, const uint32_
     const auto length_setter = [&](const size_t required_size) {
         if (return_length)
         {
-            return_length.write(static_cast<LengthType>(required_size));
+            try
+            {
+                // VMProtect is trying to pass an incorrect return address.
+                // This can run on the original version of Windows, but in
+                // the emulator, this will cause an exception.
+                return_length.write(static_cast<LengthType>(required_size));
+            }
+            catch (...)
+            {
+
+            }
         }
     };
 

@@ -27,7 +27,7 @@ namespace syscalls
     // syscalls/exception.cpp
     NTSTATUS handle_NtRaiseHardError(const syscall_context& c, NTSTATUS error_status, ULONG number_of_parameters,
                                      emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> unicode_string_parameter_mask,
-                                     emulator_object<DWORD> parameters, HARDERROR_RESPONSE_OPTION valid_response_option,
+                                     uint64_t parameters, HARDERROR_RESPONSE_OPTION valid_response_option,
                                      emulator_object<HARDERROR_RESPONSE> response);
     NTSTATUS handle_NtRaiseException(const syscall_context& c,
                                      emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>> exception_record,

@@ -281,6 +281,23 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
+        if (info_class == ProcessInstrumentationCallback)
+        {
+
+            if (process_information_length != sizeof(PROCESS_INSTRUMENTATION_CALLBACK_INFORMATION))
+            {
+                return STATUS_BUFFER_OVERFLOW;
+            }
+
+            PROCESS_INSTRUMENTATION_CALLBACK_INFORMATION info;
+
+            c.emu.read_memory(process_information, &info, sizeof(PROCESS_INSTRUMENTATION_CALLBACK_INFORMATION));
+
+            c.proc.instrumentation_callback = (uint64_t)info.Callback;
+
+            return STATUS_SUCCESS;
+        }
+
         c.win_emu.log.error("Unsupported info process class: %X\n", info_class);
         c.emu.stop();
 

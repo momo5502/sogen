@@ -1014,6 +1014,12 @@ namespace syscalls
         std::error_code ec{};
 
         const windows_path path = f.name;
+
+        if (!path.is_absolute())
+        {
+            return STATUS_OBJECT_NAME_NOT_FOUND;
+        }
+
         const bool is_directory = std::filesystem::is_directory(c.win_emu.file_sys.translate(path), ec);
 
         if (is_directory || create_options & FILE_DIRECTORY_FILE)
