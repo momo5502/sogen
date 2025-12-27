@@ -110,6 +110,7 @@ struct process_context
     uint64_t rtl_user_thread_start{};
     uint64_t ki_user_apc_dispatcher{};
     uint64_t ki_user_exception_dispatcher{};
+    uint64_t instrumentation_callback{};
 
     // For WOW64 processes
     std::optional<emulator_object<PEB32>> peb32;

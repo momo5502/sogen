@@ -101,6 +101,19 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
         }
 
         entry->second.handler(c);
+
+        if (context.instrumentation_callback != 0 && entry->second.name != "NtContinue")
+        {
+            uint64_t rip_old = emu.reg<uint64_t>(x86_register::rip);
+
+            // The increase in RIP caused by executing the syscall here has not yet occurred.
+            // If RIP is set directly, it will lead to an incorrect address, so the length of
+            // the syscall instruction needs to be subtracted.
+            emu.reg<uint64_t>(x86_register::rip, context.instrumentation_callback - 2);
+
+            emu.reg<uint64_t>(x86_register::r10, rip_old);
+        }
+
     }
     catch (std::exception& e)
     {
