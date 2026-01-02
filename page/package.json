@@ -36,7 +36,7 @@
     "react-dom": "^19.2.3",
     "react-dropzone": "^14.3.8",
     "react-helmet": "^6.1.0",
-    "react-resizable-panels": "^3.0.6",
+    "react-resizable-panels": "^4.2.0",
     "react-router-dom": "^7.11.0",
     "react-window": "^2.2.3",
     "shell-quote": "^1.8.3",
