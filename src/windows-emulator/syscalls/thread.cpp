@@ -309,6 +309,8 @@ namespace syscalls
             const emulator_object<BOOLEAN> info{c.emu, thread_information};
             info.write(cur_emulator_thread.debugger_hide);
 
+            c.win_emu.callbacks.on_suspicious_activity("Checking if the thread is hidden from the debugger");
+
             return STATUS_SUCCESS;
         }
 

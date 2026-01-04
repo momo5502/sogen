@@ -15,6 +15,8 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
         }
 
+        const auto return_length_info = c.win_emu.memory.get_region_info(return_length.value());
+
         switch (info_class)
         {
         case ProcessExecuteFlags:
@@ -62,6 +64,24 @@ namespace syscalls
             });
 
         case ProcessDebugObjectHandle:
+
+            c.win_emu.callbacks.on_suspicious_activity("Anti-debug check with ProcessDebugObjectHandle");
+
+            if ((process_information & 3) != 0)
+            {
+                return STATUS_DATATYPE_MISALIGNMENT;
+            }
+
+            if (return_length.value() == 0)
+            {
+                return STATUS_PORT_NOT_SET;
+            }
+
+            if (!return_length_info.is_reserved)
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
             return handle_query<handle>(c.emu, process_information, process_information_length, return_length, [](handle& h) {
                 h = NULL_HANDLE;
                 return STATUS_PORT_NOT_SET;
@@ -75,6 +95,13 @@ namespace syscalls
             });
 
         case ProcessDebugPort:
+            c.win_emu.callbacks.on_suspicious_activity("Anti-debug check with ProcessDebugPort");
+
+            return handle_query<EmulatorTraits<Emu64>::PVOID>(c.emu, process_information, process_information_length, return_length,
+                                                              [](EmulatorTraits<Emu64>::PVOID& ptr) {
+                                                                  ptr = 0; //
+                                                              });
+
         case ProcessDeviceMap:
             return handle_query<EmulatorTraits<Emu64>::PVOID>(c.emu, process_information, process_information_length, return_length,
                                                               [](EmulatorTraits<Emu64>::PVOID& ptr) {
@@ -202,7 +229,7 @@ namespace syscalls
             || info_class == ProcessDynamicFunctionTableInformation      //
             || info_class == ProcessPriorityBoost                        //
             || info_class == ProcessPriorityClassEx                      //
-            || info_class == ProcessPriorityClass)
+            || info_class == ProcessPriorityClass || info_class == ProcessAffinityMask)
         {
             return STATUS_SUCCESS;
         }
@@ -333,6 +360,7 @@ namespace syscalls
             PROCESS_INSTRUMENTATION_CALLBACK_INFORMATION info;
 
             c.emu.read_memory(process_information, &info, sizeof(PROCESS_INSTRUMENTATION_CALLBACK_INFORMATION));
+            c.win_emu.callbacks.on_suspicious_activity("Setting ProcessInstrumentationCallback");
 
             c.proc.instrumentation_callback = info.Callback;
 

@@ -8,8 +8,10 @@ namespace syscalls
     {
         const auto value = h.value;
 
-        if (h.h == 0xDEADC0DE)
+        if (h.h == 0xDEADC0DE || h.h == 0xDEADBEEF)
         {
+            c.win_emu.callbacks.on_suspicious_activity("Anti-debug check with invalid handle");
+
             return STATUS_INVALID_HANDLE;
         }
 
