@@ -21,6 +21,7 @@ struct handle_types
         token,
         window,
         timer,
+        monitor,
     };
 };
 

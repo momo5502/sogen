@@ -391,6 +391,24 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
     this->instrumentation_callback = 0;
 
     this->default_register_set = emu.save_registers();
+
+    this->user_handles.setup(memory);
+
+    auto [h, monitor_obj] = this->user_handles.allocate_object<USER_MONITOR>(handle_types::monitor);
+    this->default_monitor_handle = h;
+    monitor_obj.access([&](USER_MONITOR& monitor) {
+        monitor.hmon = h.bits;
+        monitor.monitorRect = {.left = 0, .top = 0, .right = 1920, .bottom = 1080};
+        monitor.workRect = monitor.monitorRect;
+        monitor.monitorDpi = 96;
+        monitor.nativeDpi = monitor.monitorDpi;
+    });
+
+    const auto user_display_info = this->user_handles.get_display_info();
+    user_display_info.access([&](USER_DISPINFO& display_info) {
+        display_info.dwMonitorCount = 1;
+        display_info.pPrimaryMonitor = monitor_obj.value();
+    });
 }
 
 void process_context::serialize(utils::buffer_serializer& buffer) const
@@ -416,6 +434,8 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
     buffer.write(this->ki_user_exception_dispatcher);
     buffer.write(this->instrumentation_callback);
 
+    buffer.write(this->user_handles);
+    buffer.write(this->default_monitor_handle);
     buffer.write(this->events);
     buffer.write(this->files);
     buffer.write(this->sections);
@@ -462,6 +482,8 @@ void process_context::deserialize(utils::buffer_deserializer& buffer)
     buffer.read(this->ki_user_exception_dispatcher);
     buffer.read(this->instrumentation_callback);
 
+    buffer.read(this->user_handles);
+    buffer.read(this->default_monitor_handle);
     buffer.read(this->events);
     buffer.read(this->files);
     buffer.read(this->sections);

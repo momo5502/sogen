@@ -14,6 +14,7 @@
 #include "windows_objects.hpp"
 #include "emulator_thread.hpp"
 #include "port.hpp"
+#include "user_handle_table.hpp"
 
 #include "apiset/apiset.hpp"
 
@@ -118,6 +119,8 @@ struct process_context
     std::optional<emulator_object<RTL_USER_PROCESS_PARAMETERS32>> process_params32;
     std::optional<uint64_t> rtl_user_thread_start32{};
 
+    user_handle_table user_handles{};
+    handle default_monitor_handle{};
     handle_store<handle_types::event, event> events{};
     handle_store<handle_types::file, file> files{};
     handle_store<handle_types::section, section> sections{};
@@ -125,7 +128,7 @@ struct process_context
     handle_store<handle_types::semaphore, semaphore> semaphores{};
     handle_store<handle_types::port, port_container> ports{};
     handle_store<handle_types::mutant, mutant> mutants{};
-    handle_store<handle_types::window, window> windows{};
+    user_handle_store<handle_types::window, window> windows{user_handles};
     handle_store<handle_types::timer, timer> timers{};
     handle_store<handle_types::registry, registry_key, 2> registry_keys{};
     std::map<uint16_t, atom_entry> atoms{};

@@ -17,6 +17,7 @@
 #include "unicode.hpp"
 #include "status.hpp"
 #include "process.hpp"
+#include "user.hpp"
 #include "kernel_mapped.hpp"
 #include "memory.hpp"
 #include "file_management.hpp"

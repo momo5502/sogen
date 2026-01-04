@@ -466,7 +466,7 @@ namespace syscalls
             return STATUS_INVALID_HANDLE;
         }
 
-        if (auto* e = c.win_emu.process.events.get(event))
+        if (auto* e = c.proc.events.get(event))
         {
             e->signaled = false;
         }
@@ -834,7 +834,7 @@ namespace syscalls
                                      const hwnd /*parent*/, const hmenu /*menu*/, const hinstance /*instance*/, const pointer /*l_param*/,
                                      const DWORD /*flags*/, const pointer /*acbi_buffer*/)
     {
-        window win{};
+        auto [handle, win] = c.proc.windows.create(c.win_emu.memory);
         win.x = x;
         win.y = y;
         win.width = width;
@@ -843,7 +843,7 @@ namespace syscalls
         win.class_name = read_large_string(class_name);
         win.name = read_large_string(window_name);
 
-        return c.proc.windows.store(std::move(win)).bits;
+        return handle.bits;
     }
 
     BOOL handle_NtUserDestroyWindow(const syscall_context& c, const hwnd window)
@@ -1029,6 +1029,19 @@ namespace syscalls
     NTSTATUS handle_NtNotifyChangeDirectoryFileEx()
     {
         return STATUS_NOT_SUPPORTED;
+    }
+
+    BOOL handle_NtUserGetHDevName(const syscall_context& c, handle hdev, emulator_pointer device_name)
+    {
+        if (hdev != c.proc.default_monitor_handle)
+        {
+            return FALSE;
+        }
+
+        const std::u16string name = u"\\\\.\\DISPLAY1";
+        c.emu.write_memory(device_name, name.c_str(), (name.size() + 1) * sizeof(char16_t));
+
+        return TRUE;
     }
 }
 
@@ -1243,6 +1256,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtSetInformationDebugObject);
     add_handler(NtRemoveProcessDebug);
     add_handler(NtNotifyChangeDirectoryFileEx);
+    add_handler(NtUserGetHDevName);
 
 #undef add_handler
 }

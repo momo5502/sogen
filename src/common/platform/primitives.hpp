@@ -50,6 +50,14 @@ typedef union _LARGE_INTEGER
 
 using BYTE = std::uint8_t;
 #define CHAR          BYTE
+
+typedef struct _RECT
+{
+    LONG left;
+    LONG top;
+    LONG right;
+    LONG bottom;
+} RECT;
 #endif
 
 using WORD = std::uint16_t;
