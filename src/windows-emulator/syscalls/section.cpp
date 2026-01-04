@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
+#include "../memory_manager.hpp"
 
 #include <utils/io.hpp>
 
@@ -193,7 +194,8 @@ namespace syscalls
             constexpr auto shared_section_size = 0x10000;
 
             const auto address = c.win_emu.memory.find_free_allocation_base(shared_section_size);
-            c.win_emu.memory.allocate_memory(address, shared_section_size, memory_permission::read_write);
+            c.win_emu.memory.allocate_memory(address, shared_section_size, memory_permission::read_write, false,
+                                             memory_region_kind::section_view);
             c.proc.shared_section_address = address;
             c.proc.shared_section_size = shared_section_size;
 
@@ -206,7 +208,8 @@ namespace syscalls
             constexpr auto dbwin_buffer_section_size = 0x1000;
 
             const auto address = c.win_emu.memory.find_free_allocation_base(dbwin_buffer_section_size);
-            c.win_emu.memory.allocate_memory(address, dbwin_buffer_section_size, memory_permission::read_write);
+            c.win_emu.memory.allocate_memory(address, dbwin_buffer_section_size, memory_permission::read_write, false,
+                                             memory_region_kind::section_view);
             c.proc.dbwin_buffer = address;
             c.proc.dbwin_buffer_size = dbwin_buffer_section_size;
 
@@ -373,7 +376,7 @@ namespace syscalls
         const auto aligned_size = static_cast<size_t>(page_align_up(size));
         const auto reserve_only = section_entry->allocation_attributes == SEC_RESERVE;
         const auto protection = map_nt_to_emulator_protection(section_entry->section_page_protection);
-        const auto address = c.win_emu.memory.allocate_memory(aligned_size, protection, reserve_only);
+        const auto address = c.win_emu.memory.allocate_memory(aligned_size, protection, reserve_only, 0, memory_region_kind::section_view);
 
         if (!reserve_only && !file_data.empty())
         {
@@ -577,24 +580,27 @@ namespace syscalls
             return STATUS_INVALID_PARAMETER;
         }
 
-        if (base_address == c.proc.shared_section_address)
+        if (c.proc.shared_section_address && base_address >= c.proc.shared_section_address &&
+            base_address < c.proc.shared_section_address + c.proc.shared_section_size)
         {
+            const auto address = c.proc.shared_section_address;
             c.proc.shared_section_address = 0;
-            c.win_emu.memory.release_memory(base_address, static_cast<size_t>(c.proc.shared_section_size));
+            c.win_emu.memory.release_memory(address, static_cast<size_t>(c.proc.shared_section_size));
             return STATUS_SUCCESS;
         }
 
-        if (base_address == c.proc.dbwin_buffer)
+        if (c.proc.dbwin_buffer && base_address >= c.proc.dbwin_buffer && base_address < c.proc.dbwin_buffer + c.proc.dbwin_buffer_size)
         {
+            const auto address = c.proc.dbwin_buffer;
             c.proc.dbwin_buffer = 0;
-            c.win_emu.memory.release_memory(base_address, static_cast<size_t>(c.proc.dbwin_buffer_size));
+            c.win_emu.memory.release_memory(address, static_cast<size_t>(c.proc.dbwin_buffer_size));
             return STATUS_SUCCESS;
         }
 
         const auto* mod = c.win_emu.mod_manager.find_by_address(base_address);
         if (mod != nullptr)
         {
-            if (c.win_emu.mod_manager.unmap(base_address))
+            if (c.win_emu.mod_manager.unmap(mod->image_base))
             {
                 return STATUS_SUCCESS;
             }
@@ -602,14 +608,14 @@ namespace syscalls
             return STATUS_INVALID_PARAMETER;
         }
 
-        if (c.win_emu.memory.release_memory(base_address, 0))
+        const auto region_info = c.win_emu.memory.get_region_info(base_address);
+        if (region_info.is_reserved && memory_region_policy::is_section_kind(region_info.kind) &&
+            c.win_emu.memory.release_memory(region_info.allocation_base, 0))
         {
             return STATUS_SUCCESS;
         }
 
-        c.win_emu.log.error("Unmapping non-module/non-memory section not supported!\n");
-        c.emu.stop();
-        return STATUS_NOT_SUPPORTED;
+        return STATUS_NOT_MAPPED_VIEW;
     }
 
     NTSTATUS handle_NtUnmapViewOfSectionEx(const syscall_context& c, const handle process_handle, const uint64_t base_address,

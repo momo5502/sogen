@@ -1,4 +1,5 @@
 #pragma once
+#include "std_include.hpp"
 #include <map>
 #include <atomic>
 #include <cstdint>
@@ -16,6 +17,15 @@ constexpr auto MAX_ALLOCATION_END_EXCL = MAX_ALLOCATION_ADDRESS + 1ULL;
 constexpr auto DEFAULT_ALLOCATION_ADDRESS_64BIT = 0x100000000ULL;
 constexpr auto DEFAULT_ALLOCATION_ADDRESS_32BIT = 0x10000ULL;
 
+enum class memory_region_kind : uint8_t
+{
+    free = 0,
+    private_allocation,
+    section_view,
+    section_image,
+    mmio,
+};
+
 // This maps to the `basic_memory_region` struct defined in
 // emulator\memory_region.hpp
 struct region_info : basic_memory_region<nt_memory_permission>
@@ -25,6 +35,7 @@ struct region_info : basic_memory_region<nt_memory_permission>
     bool is_reserved{};
     bool is_committed{};
     nt_memory_permission initial_permissions{};
+    memory_region_kind kind{memory_region_kind::free};
 };
 
 using mmio_read_callback = std::function<void(uint64_t addr, void* data, size_t size)>;
@@ -57,7 +68,7 @@ class memory_manager : public memory_interface
         size_t length{};
         memory_permission initial_permission{};
         committed_region_map committed_regions{};
-        bool is_mmio{false};
+        memory_region_kind kind{memory_region_kind::private_allocation};
     };
 
     using reserved_region_map = std::map<uint64_t, reserved_region>;
@@ -70,7 +81,8 @@ class memory_manager : public memory_interface
     bool protect_memory(uint64_t address, size_t size, nt_memory_permission permissions, nt_memory_permission* old_permissions = nullptr);
 
     bool allocate_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb);
-    bool allocate_memory(uint64_t address, size_t size, nt_memory_permission permissions, bool reserve_only = false);
+    bool allocate_memory(uint64_t address, size_t size, nt_memory_permission permissions, bool reserve_only = false,
+                         memory_region_kind kind = memory_region_kind::private_allocation);
 
     bool commit_memory(uint64_t address, size_t size, nt_memory_permission permissions);
     bool decommit_memory(uint64_t address, size_t size);
@@ -79,7 +91,8 @@ class memory_manager : public memory_interface
 
     void unmap_all_memory();
 
-    uint64_t allocate_memory(size_t size, nt_memory_permission permissions, bool reserve_only = false, uint64_t start = 0);
+    uint64_t allocate_memory(size_t size, nt_memory_permission permissions, bool reserve_only = false, uint64_t start = 0,
+                             memory_region_kind kind = memory_region_kind::private_allocation);
 
     uint64_t find_free_allocation_base(size_t size, uint64_t start = 0) const;
 
@@ -88,6 +101,8 @@ class memory_manager : public memory_interface
     reserved_region_map::iterator find_reserved_region(uint64_t address);
 
     bool overlaps_reserved_region(uint64_t address, size_t size) const;
+
+    memory_region_kind get_region_kind(uint64_t address) const;
 
     const reserved_region_map& get_reserved_regions() const
     {
@@ -127,3 +142,46 @@ class memory_manager : public memory_interface
 
     void update_layout_version();
 };
+
+namespace memory_region_policy
+{
+    constexpr bool is_section_kind(const memory_region_kind kind)
+    {
+        return kind == memory_region_kind::section_view || kind == memory_region_kind::section_image;
+    }
+
+    constexpr bool is_mapped_memory_kind(const memory_region_kind kind)
+    {
+        return is_section_kind(kind) || kind == memory_region_kind::mmio;
+    }
+
+    constexpr uint32_t to_memory_basic_information_type(const memory_region_kind kind)
+    {
+        switch (kind)
+        {
+        case memory_region_kind::section_image:
+            return MEM_IMAGE;
+        case memory_region_kind::section_view:
+            return MEM_MAPPED;
+        case memory_region_kind::mmio:
+            return MEM_MAPPED;
+        default:
+            return MEM_PRIVATE;
+        }
+    }
+
+    constexpr NTSTATUS nt_free_virtual_memory_denied_status(const memory_region_kind kind)
+    {
+        if (is_section_kind(kind))
+        {
+            return STATUS_UNABLE_TO_DELETE_SECTION;
+        }
+
+        if (kind == memory_region_kind::mmio)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        return STATUS_SUCCESS;
+    }
+}

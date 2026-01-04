@@ -28,6 +28,7 @@
 #define MEM_PRIVATE                 0x00020000
 #define MEM_MAPPED                  0x00040000
 #define MEM_RESET                   0x00080000
+#define MEM_IMAGE                   0x01000000
 #define MEM_TOP_DOWN                0x00100000
 #define MEM_WRITE_WATCH             0x00200000
 #define MEM_PHYSICAL                0x00400000

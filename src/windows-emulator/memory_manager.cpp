@@ -78,7 +78,7 @@ namespace utils
 
     static void serialize(buffer_serializer& buffer, const memory_manager::reserved_region& region)
     {
-        buffer.write(region.is_mmio);
+        buffer.write(region.kind);
         buffer.write(region.initial_permission);
         buffer.write<uint64_t>(region.length);
         buffer.write_map(region.committed_regions);
@@ -86,7 +86,7 @@ namespace utils
 
     static void deserialize(buffer_deserializer& buffer, memory_manager::reserved_region& region)
     {
-        buffer.read(region.is_mmio);
+        buffer.read(region.kind);
         buffer.read(region.initial_permission);
         region.length = static_cast<size_t>(buffer.read<uint64_t>());
         buffer.read_map(region.committed_regions);
@@ -133,7 +133,7 @@ void memory_manager::serialize_memory_state(utils::buffer_serializer& buffer, co
 
     for (const auto& reserved_region : this->reserved_regions_)
     {
-        if (reserved_region.second.is_mmio)
+        if (reserved_region.second.kind == memory_region_kind::mmio)
         {
             continue;
         }
@@ -169,7 +169,7 @@ void memory_manager::deserialize_memory_state(utils::buffer_deserializer& buffer
     for (auto i = this->reserved_regions_.begin(); i != this->reserved_regions_.end();)
     {
         auto& reserved_region = i->second;
-        if (reserved_region.is_mmio)
+        if (reserved_region.kind == memory_region_kind::mmio)
         {
             i = this->reserved_regions_.erase(i);
             continue;
@@ -183,7 +183,9 @@ void memory_manager::deserialize_memory_state(utils::buffer_deserializer& buffer
 
             buffer.read(data.data(), region.second.length);
 
-            this->map_memory(region.first, region.second.length, region.second.permissions);
+            const auto effective_permission =
+                region.second.permissions.is_guarded() ? memory_permission::none : region.second.permissions.common;
+            this->map_memory(region.first, region.second.length, effective_permission);
             this->write_memory(region.first, data.data(), region.second.length);
         }
     }
@@ -211,6 +213,8 @@ bool memory_manager::protect_memory(const uint64_t address, const size_t size, c
     auto& committed_regions = entry->second.committed_regions;
     split_regions(committed_regions, {address, end});
 
+    const auto effective_permission = permissions.is_guarded() ? memory_permission::none : permissions.common;
+
     for (auto& sub_region : committed_regions)
     {
         if (sub_region.first >= end)
@@ -226,7 +230,7 @@ bool memory_manager::protect_memory(const uint64_t address, const size_t size, c
                 old_first_permissions = sub_region.second.permissions;
             }
 
-            this->apply_memory_protection(sub_region.first, sub_region.second.length, permissions);
+            this->apply_memory_protection(sub_region.first, sub_region.second.length, effective_permission);
             sub_region.second.permissions = permissions;
         }
     }
@@ -256,7 +260,7 @@ bool memory_manager::allocate_mmio(const uint64_t address, const size_t size, mm
                            .try_emplace(address,
                                         reserved_region{
                                             .length = size,
-                                            .is_mmio = true,
+                                            .kind = memory_region_kind::mmio,
                                         })
                            .first;
 
@@ -268,7 +272,7 @@ bool memory_manager::allocate_mmio(const uint64_t address, const size_t size, mm
 }
 
 bool memory_manager::allocate_memory(const uint64_t address, const size_t size, const nt_memory_permission permissions,
-                                     const bool reserve_only)
+                                     const bool reserve_only, const memory_region_kind kind)
 {
     if (this->overlaps_reserved_region(address, size))
     {
@@ -280,6 +284,7 @@ bool memory_manager::allocate_memory(const uint64_t address, const size_t size, 
                                         reserved_region{
                                             .length = size,
                                             .initial_permission = permissions,
+                                            .kind = kind,
                                         })
                            .first;
 
@@ -316,6 +321,8 @@ bool memory_manager::commit_memory(const uint64_t address, const size_t size, co
     uint64_t last_region_start{};
     const committed_region* last_region{nullptr};
 
+    const auto effective_permission = permissions.is_guarded() ? memory_permission::none : permissions.common;
+
     for (auto& sub_region : committed_regions)
     {
         if (sub_region.first >= end)
@@ -331,7 +338,7 @@ bool memory_manager::commit_memory(const uint64_t address, const size_t size, co
 
             if (map_length > 0)
             {
-                this->map_memory(map_start, static_cast<size_t>(map_length), permissions);
+                this->map_memory(map_start, static_cast<size_t>(map_length), effective_permission);
                 committed_regions[map_start] = committed_region{static_cast<size_t>(map_length), permissions};
             }
 
@@ -345,7 +352,7 @@ bool memory_manager::commit_memory(const uint64_t address, const size_t size, co
         const auto map_start = last_region ? (last_region_start + last_region->length) : address;
         const auto map_length = end - map_start;
 
-        this->map_memory(map_start, static_cast<size_t>(map_length), permissions);
+        this->map_memory(map_start, static_cast<size_t>(map_length), effective_permission);
         committed_regions[map_start] = committed_region{static_cast<size_t>(map_length), permissions};
     }
 
@@ -364,7 +371,7 @@ bool memory_manager::decommit_memory(const uint64_t address, const size_t size)
         return false;
     }
 
-    if (entry->second.is_mmio)
+    if (entry->second.kind == memory_region_kind::mmio)
     {
         throw std::runtime_error("Not allowed to decommit MMIO!");
     }
@@ -406,38 +413,59 @@ bool memory_manager::decommit_memory(const uint64_t address, const size_t size)
 
 bool memory_manager::release_memory(const uint64_t address, size_t size)
 {
-    const auto entry = this->reserved_regions_.find(address);
+    if (!size)
+    {
+        const auto entry = this->reserved_regions_.find(address);
+        if (entry == this->reserved_regions_.end())
+        {
+            return false;
+        }
+
+        auto& committed_regions = entry->second.committed_regions;
+        for (auto i = committed_regions.begin(); i != committed_regions.end();)
+        {
+            this->unmap_memory(i->first, i->second.length);
+            i = committed_regions.erase(i);
+        }
+
+        this->reserved_regions_.erase(entry);
+        this->update_layout_version();
+        return true;
+    }
+
+    const auto aligned_start = page_align_down(address);
+    const auto aligned_end = page_align_up(address + size);
+    size = static_cast<size_t>(aligned_end - aligned_start);
+
+    const auto entry = this->find_reserved_region(aligned_start);
     if (entry == this->reserved_regions_.end())
     {
         return false;
     }
 
-    if (!size)
-    {
-        size = entry->second.length;
-    }
+    const auto reserved_start = entry->first;
+    const auto reserved_end = entry->first + entry->second.length;
 
-    size = static_cast<size_t>(page_align_up(size));
-
-    if (size > entry->second.length)
+    if (reserved_end < aligned_end)
     {
         throw std::runtime_error("Cross region release not supported yet!");
     }
 
-    const auto end = address + size;
-    auto& committed_regions = entry->second.committed_regions;
+    reserved_region region = std::move(entry->second);
+    this->reserved_regions_.erase(entry);
 
-    split_regions(committed_regions, {end});
+    auto& committed_regions = region.committed_regions;
+    split_regions(committed_regions, {aligned_start, aligned_end});
 
     for (auto i = committed_regions.begin(); i != committed_regions.end();)
     {
-        if (i->first >= end)
+        if (i->first >= aligned_end)
         {
             break;
         }
 
         const auto sub_region_end = i->first + i->second.length;
-        if (i->first >= address && sub_region_end <= end)
+        if (i->first >= aligned_start && sub_region_end <= aligned_end)
         {
             this->unmap_memory(i->first, i->second.length);
             i = committed_regions.erase(i);
@@ -448,13 +476,41 @@ bool memory_manager::release_memory(const uint64_t address, size_t size)
         }
     }
 
-    entry->second.length -= size;
-    if (entry->second.length > 0)
+    committed_region_map left_committed{};
+    committed_region_map right_committed{};
+
+    for (const auto& sub_region : committed_regions)
     {
-        this->reserved_regions_[address + size] = std::move(entry->second);
+        if (sub_region.first < aligned_start)
+        {
+            left_committed.emplace(sub_region.first, sub_region.second);
+        }
+        else if (sub_region.first >= aligned_end)
+        {
+            right_committed.emplace(sub_region.first, sub_region.second);
+        }
     }
 
-    this->reserved_regions_.erase(entry);
+    if (reserved_start < aligned_start)
+    {
+        reserved_region left_region{};
+        left_region.length = static_cast<size_t>(aligned_start - reserved_start);
+        left_region.initial_permission = region.initial_permission;
+        left_region.kind = region.kind;
+        left_region.committed_regions = std::move(left_committed);
+        this->reserved_regions_.try_emplace(reserved_start, std::move(left_region));
+    }
+
+    if (aligned_end < reserved_end)
+    {
+        reserved_region right_region{};
+        right_region.length = static_cast<size_t>(reserved_end - aligned_end);
+        right_region.initial_permission = region.initial_permission;
+        right_region.kind = region.kind;
+        right_region.committed_regions = std::move(right_committed);
+        this->reserved_regions_.try_emplace(aligned_end, std::move(right_region));
+    }
+
     this->update_layout_version();
     return true;
 }
@@ -472,10 +528,11 @@ void memory_manager::unmap_all_memory()
     this->reserved_regions_.clear();
 }
 
-uint64_t memory_manager::allocate_memory(const size_t size, const nt_memory_permission permissions, const bool reserve_only, uint64_t start)
+uint64_t memory_manager::allocate_memory(const size_t size, const nt_memory_permission permissions, const bool reserve_only, uint64_t start,
+                                         const memory_region_kind kind)
 {
     const auto allocation_base = this->find_free_allocation_base(size, start);
-    if (!allocate_memory(allocation_base, size, permissions, reserve_only))
+    if (!allocate_memory(allocation_base, size, permissions, reserve_only, kind))
     {
         return 0;
     }
@@ -569,6 +626,7 @@ region_info memory_manager::get_region_info(const uint64_t address)
     result.start = result.allocation_base;
     result.length = result.allocation_length;
     result.initial_permissions = entry->second.initial_permission;
+    result.kind = reserved_region.kind;
 
     if (committed_regions.empty())
     {
@@ -632,6 +690,28 @@ bool memory_manager::overlaps_reserved_region(const uint64_t address, const size
     }
 
     return false;
+}
+
+memory_region_kind memory_manager::get_region_kind(const uint64_t address) const
+{
+    if (this->reserved_regions_.empty())
+    {
+        return memory_region_kind::free;
+    }
+
+    auto upper_bound = this->reserved_regions_.upper_bound(address);
+    if (upper_bound == this->reserved_regions_.begin())
+    {
+        return memory_region_kind::free;
+    }
+
+    const auto entry = --upper_bound;
+    if (entry->first + entry->second.length <= address)
+    {
+        return memory_region_kind::free;
+    }
+
+    return entry->second.kind;
 }
 
 void memory_manager::read_memory(const uint64_t address, void* data, const size_t size) const

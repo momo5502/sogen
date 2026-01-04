@@ -3,6 +3,7 @@
 #include "../cpu_context.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
+#include "../memory_manager.hpp"
 
 namespace syscalls
 {
@@ -58,7 +59,15 @@ namespace syscalls
 
                 image_info.Protect = map_emulator_to_nt_protection(region_info.permissions);
                 image_info.AllocationProtect = map_emulator_to_nt_protection(region_info.initial_permissions);
-                image_info.Type = MEM_PRIVATE;
+
+                if (!region_info.is_reserved)
+                {
+                    image_info.Type = 0;
+                }
+                else
+                {
+                    image_info.Type = memory_region_policy::to_memory_basic_information_type(region_info.kind);
+                }
             });
 
             return STATUS_SUCCESS;
@@ -199,6 +208,12 @@ namespace syscalls
         allocation_bytes = page_align_up(allocation_bytes);
         bytes_to_allocate.write(allocation_bytes);
 
+        const auto base_protection = page_protection & ~static_cast<uint32_t>(PAGE_GUARD | PAGE_NOCACHE | PAGE_WRITECOMBINE);
+        if (base_protection == PAGE_WRITECOPY || base_protection == PAGE_EXECUTE_WRITECOPY)
+        {
+            return STATUS_INVALID_PAGE_PROTECTION;
+        }
+
         const auto protection = try_map_nt_to_emulator_protection(page_protection);
         if (!protection.has_value())
         {
@@ -218,7 +233,7 @@ namespace syscalls
             // initial value of BaseAddress is non-NULL, the region is allocated starting at the specified virtual
             // address rounded down to the next host page size address boundary. If the initial value of BaseAddress
             // is NULL, the operating system will determine where to allocate the region.
-            potential_base = page_align_up(potential_base);
+            potential_base = page_align_down(potential_base);
         }
 
         if (!potential_base)
@@ -267,7 +282,7 @@ namespace syscalls
 
         if (free_type == 0)
         {
-            return STATUS_INVALID_PARAMETER;
+            return STATUS_INVALID_PARAMETER_4;
         }
 
         const auto allocation_base = base_address.read();
@@ -275,14 +290,70 @@ namespace syscalls
 
         if (free_type & MEM_RELEASE)
         {
-            return c.win_emu.memory.release_memory(allocation_base, static_cast<size_t>(allocation_size)) ? STATUS_SUCCESS
-                                                                                                          : STATUS_MEMORY_NOT_ALLOCATED;
+            if (!allocation_size)
+            {
+                const auto region_info = c.win_emu.memory.get_region_info(allocation_base);
+                if (!region_info.is_reserved)
+                {
+                    return STATUS_MEMORY_NOT_ALLOCATED;
+                }
+
+                if (region_info.allocation_base != allocation_base)
+                {
+                    return STATUS_FREE_VM_NOT_AT_BASE;
+                }
+            }
+
+            const auto region_kind = c.win_emu.memory.get_region_kind(allocation_base);
+            const auto denied_status = memory_region_policy::nt_free_virtual_memory_denied_status(region_kind);
+            if (denied_status != STATUS_SUCCESS)
+            {
+                return denied_status;
+            }
+
+            const bool success = c.win_emu.memory.release_memory(allocation_base, static_cast<size_t>(allocation_size));
+            if (success)
+            {
+                return STATUS_SUCCESS;
+            }
+
+            const auto region_info = c.win_emu.memory.get_region_info(allocation_base);
+            if (!region_info.is_reserved)
+            {
+                return STATUS_MEMORY_NOT_ALLOCATED;
+            }
+
+            return STATUS_FREE_VM_NOT_AT_BASE;
         }
 
         if (free_type & MEM_DECOMMIT)
         {
-            return c.win_emu.memory.decommit_memory(allocation_base, static_cast<size_t>(allocation_size)) ? STATUS_SUCCESS
-                                                                                                           : STATUS_MEMORY_NOT_ALLOCATED;
+            const auto region_kind = c.win_emu.memory.get_region_kind(allocation_base);
+            const auto denied_status = memory_region_policy::nt_free_virtual_memory_denied_status(region_kind);
+            if (denied_status != STATUS_SUCCESS)
+            {
+                return denied_status;
+            }
+
+            auto decommit_size = static_cast<size_t>(allocation_size);
+            if (!decommit_size)
+            {
+                const auto region_info = c.win_emu.memory.get_region_info(allocation_base);
+                if (!region_info.is_reserved)
+                {
+                    return STATUS_MEMORY_NOT_ALLOCATED;
+                }
+
+                if (region_info.allocation_base != allocation_base)
+                {
+                    return STATUS_FREE_VM_NOT_AT_BASE;
+                }
+
+                decommit_size = region_info.allocation_length;
+            }
+
+            const bool success = c.win_emu.memory.decommit_memory(allocation_base, decommit_size);
+            return success ? STATUS_SUCCESS : STATUS_MEMORY_NOT_ALLOCATED;
         }
 
         throw std::runtime_error("Bad free type");
