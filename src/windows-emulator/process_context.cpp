@@ -351,6 +351,8 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
                             const application_settings& app_settings, const mapped_module& executable, const mapped_module& ntdll,
                             const apiset::container& apiset_container, const mapped_module* ntdll32)
 {
+    this->windows_build_number = read_windows_build(registry);
+
     setup_gdt(emu, memory);
 
     this->kusd.setup();
@@ -569,6 +571,34 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
     this->instrumentation_callback = 0;
 
     this->default_register_set = emu.save_registers();
+
+    this->user_handles.setup();
+
+    auto [h, monitor_obj] = this->user_handles.allocate_object<USER_MONITOR>(handle_types::monitor);
+    this->default_monitor_handle = h;
+    monitor_obj.access([&](USER_MONITOR& monitor) {
+        monitor.hmon = h.bits;
+        monitor.rcMonitor = {.left = 0, .top = 0, .right = 1920, .bottom = 1080};
+        monitor.rcWork = monitor.rcMonitor;
+        if (this->is_older_windows_build())
+        {
+            monitor.b20.monitorDpi = 96;
+            monitor.b20.nativeDpi = monitor.b20.monitorDpi;
+            monitor.b20.cachedDpi = monitor.b20.monitorDpi;
+            monitor.b20.rcMonitorDpiAware = monitor.rcMonitor;
+        }
+        else
+        {
+            monitor.b26.monitorDpi = 96;
+            monitor.b26.nativeDpi = monitor.b26.monitorDpi;
+        }
+    });
+
+    const auto user_display_info = this->user_handles.get_display_info();
+    user_display_info.access([&](USER_DISPINFO& display_info) {
+        display_info.dwMonitorCount = 1;
+        display_info.pPrimaryMonitor = monitor_obj.value();
+    });
 }
 
 void process_context::serialize(utils::buffer_serializer& buffer) const
@@ -586,6 +616,7 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
     buffer.write(this->kusd);
 
     buffer.write(this->is_wow64_process);
+    buffer.write(this->windows_build_number);
     buffer.write(this->ntdll_image_base);
     buffer.write(this->ldr_initialize_thunk);
     buffer.write(this->rtl_user_thread_start);
@@ -594,6 +625,8 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
     buffer.write(this->ki_user_exception_dispatcher);
     buffer.write(this->instrumentation_callback);
 
+    buffer.write(this->user_handles);
+    buffer.write(this->default_monitor_handle);
     buffer.write(this->events);
     buffer.write(this->files);
     buffer.write(this->sections);
@@ -632,6 +665,7 @@ void process_context::deserialize(utils::buffer_deserializer& buffer)
     buffer.read(this->kusd);
 
     buffer.read(this->is_wow64_process);
+    buffer.read(this->windows_build_number);
     buffer.read(this->ntdll_image_base);
     buffer.read(this->ldr_initialize_thunk);
     buffer.read(this->rtl_user_thread_start);
@@ -640,6 +674,8 @@ void process_context::deserialize(utils::buffer_deserializer& buffer)
     buffer.read(this->ki_user_exception_dispatcher);
     buffer.read(this->instrumentation_callback);
 
+    buffer.read(this->user_handles);
+    buffer.read(this->default_monitor_handle);
     buffer.read(this->events);
     buffer.read(this->files);
     buffer.read(this->sections);

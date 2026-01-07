@@ -1,11 +1,12 @@
 #include "std_include.hpp"
+
 #include "minidump_loader.hpp"
 #include "windows_emulator.hpp"
 #include "windows_objects.hpp"
 #include "emulator_thread.hpp"
-#include "common/platform/unicode.hpp"
-#include "common/platform/kernel_mapped.hpp"
 #include "memory_utils.hpp"
+
+#include <platform/platform.hpp>
 
 #include <minidump/minidump.hpp>
 

@@ -15,6 +15,15 @@ namespace
             return STATUS_NOT_SUPPORTED;
         }
     };
+
+    struct noop_port : port
+    {
+        NTSTATUS handle_request(windows_emulator& /*win_emu*/, const lpc_request_context& c) override
+        {
+            c.recv_buffer_length = 0;
+            return STATUS_SUCCESS;
+        }
+    };
 }
 
 std::unique_ptr<port> create_port(const std::u16string_view port)
@@ -27,6 +36,11 @@ std::unique_ptr<port> create_port(const std::u16string_view port)
     if (port == u"\\RPC Control\\DNSResolver")
     {
         return create_dns_resolver();
+    }
+
+    if (port == u"\\WindowsErrorReportingServicePort")
+    {
+        return std::make_unique<noop_port>();
     }
 
     return std::make_unique<dummy_port>();

@@ -9,7 +9,13 @@ namespace
     {
         NTSTATUS handle_request(windows_emulator& win_emu, const lpc_request_context& c) override
         {
-            // TODO: Fix this. This is broken and wrong.
+            uint32_t server_dll_index{};
+            win_emu.memory.read_memory(c.recv_buffer + 0x18, &server_dll_index, sizeof(server_dll_index));
+
+            if (server_dll_index != 3)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
 
             try
             {
@@ -17,8 +23,13 @@ namespace
                 const auto dest = data.read();
                 const auto base = dest.Base;
 
-                const auto value = base + 0x10;
-                win_emu.emu().write_memory(base + 8, &value, sizeof(value));
+                const emulator_object<USER_SHAREDINFO> shared_obj{win_emu.emu(), base + 8};
+                shared_obj.access([&](USER_SHAREDINFO& shared) {
+                    shared.psi = win_emu.process.user_handles.get_server_info().value();
+                    shared.aheList = win_emu.process.user_handles.get_handle_table().value();
+                    shared.HeEntrySize = sizeof(USER_HANDLEENTRY);
+                    shared.pDispInfo = win_emu.process.user_handles.get_display_info().value();
+                });
             }
             catch (...)
             {

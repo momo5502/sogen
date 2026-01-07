@@ -2,6 +2,12 @@
 
 #include <cstdint>
 
+#include "primitives.hpp"
+#include "traits.hpp"
+#include "unicode.hpp"
+#include "status.hpp"
+#include "process.hpp"
+
 // NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
 #ifndef NT_SUCCESS

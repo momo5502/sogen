@@ -110,4 +110,12 @@ struct KEY_VALUE_FULL_INFORMATION
     char16_t Name[1];
 };
 
+struct KEY_VALUE_ENTRY
+{
+    EmulatorTraits<Emu64>::PVOID ValueName;
+    ULONG DataLength;
+    ULONG DataOffset;
+    ULONG Type;
+};
+
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)

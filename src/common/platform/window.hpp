@@ -1,5 +1,7 @@
 #pragma once
 
+#include "kernel_mapped.hpp"
+
 // NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
 using pointer = uint64_t;

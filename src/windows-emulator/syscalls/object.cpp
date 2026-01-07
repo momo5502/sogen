@@ -267,6 +267,11 @@ namespace syscalls
                || h.value.type == handle_types::event;
     }
 
+    NTSTATUS handle_NtCompareObjects(const syscall_context&, const handle first, const handle second)
+    {
+        return (first == second) ? STATUS_SUCCESS : STATUS_NOT_SAME_OBJECT;
+    }
+
     NTSTATUS handle_NtWaitForMultipleObjects(const syscall_context& c, const ULONG count, const emulator_object<handle> handles,
                                              const WAIT_TYPE wait_type, const BOOLEAN alertable,
                                              const emulator_object<LARGE_INTEGER> timeout)
@@ -290,6 +295,44 @@ namespace syscalls
             {
                 c.win_emu.log.warn("Unsupported handle type for NtWaitForMultipleObjects: %d!\n", h.value.type);
                 return STATUS_NOT_SUPPORTED;
+            }
+
+            t.await_objects.push_back(h);
+        }
+
+        if (timeout.value() && !t.await_time.has_value())
+        {
+            t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
+        }
+
+        c.win_emu.yield_thread(alertable);
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS handle_NtWaitForMultipleObjects32(const syscall_context& c, const ULONG count, const emulator_object<uint32_t> handles,
+                                               const WAIT_TYPE wait_type, const BOOLEAN alertable,
+                                               const emulator_object<LARGE_INTEGER> timeout)
+    {
+        if (wait_type != WaitAny && wait_type != WaitAll)
+        {
+            c.win_emu.log.error("Wait type not supported!\n");
+            c.emu.stop();
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        auto& t = c.win_emu.current_thread();
+        t.await_objects.clear();
+        t.await_any = wait_type == WaitAny;
+
+        for (ULONG i = 0; i < count; ++i)
+        {
+            const auto raw_handle = handles.read(i);
+            const auto h = make_handle(static_cast<uint64_t>(raw_handle));
+
+            if (!is_awaitable_object_type(h))
+            {
+                c.win_emu.log.warn("Unsupported handle type for NtWaitForMultipleObjects32: %d!\n", h.value.type);
+                return STATUS_INVALID_HANDLE;
             }
 
             t.await_objects.push_back(h);

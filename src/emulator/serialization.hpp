@@ -160,6 +160,36 @@ namespace utils
             this->write_span(std::span(vec));
         }
 
+        void write_vector(const std::vector<bool>& vec)
+        {
+            this->write(static_cast<uint64_t>(vec.size()));
+
+            uint8_t byte = 0;
+            uint8_t bit_index = 0;
+
+            for (const bool b : vec)
+            {
+                if (b)
+                {
+                    byte |= (1u << bit_index);
+                }
+
+                ++bit_index;
+
+                if (bit_index == 8)
+                {
+                    this->write<uint8_t>(byte);
+                    byte = 0;
+                    bit_index = 0;
+                }
+            }
+
+            if (bit_index != 0)
+            {
+                this->write<uint8_t>(byte);
+            }
+        }
+
         template <typename T>
         void write_list(const std::list<T>& vec)
         {
@@ -382,6 +412,25 @@ namespace utils
             for (uint64_t i = 0; i < size; ++i)
             {
                 result.emplace_back(this->read<T>());
+            }
+        }
+
+        void read_vector(std::vector<bool>& result)
+        {
+            const auto bit_count = this->read<uint64_t>();
+            result.clear();
+            result.reserve(static_cast<size_t>(bit_count));
+
+            const auto size = (bit_count + 7) / 8;
+
+            for (uint64_t i = 0; i < size; ++i)
+            {
+                const auto byte = this->read<uint8_t>();
+
+                for (uint8_t bit = 0; bit < 8 && result.size() < bit_count; ++bit)
+                {
+                    result.push_back((byte >> bit) & 1u);
+                }
             }
         }
 

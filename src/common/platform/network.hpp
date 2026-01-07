@@ -1,5 +1,8 @@
 #pragma once
 
+#include "traits.hpp"
+#include "primitives.hpp"
+
 template <typename Traits>
 struct EMU_WSABUF
 {

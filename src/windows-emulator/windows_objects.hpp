@@ -55,19 +55,47 @@ struct event : ref_counted_object
     }
 };
 
-struct window : ref_counted_object
+template <typename GuestType>
+struct user_object : ref_counted_object
+{
+    using guest_type = GuestType;
+    emulator_object<GuestType> guest;
+
+    user_object(memory_interface& memory)
+        : guest(memory)
+    {
+    }
+
+    void serialize_object(utils::buffer_serializer& buffer) const override
+    {
+        buffer.write(this->guest);
+    }
+
+    void deserialize_object(utils::buffer_deserializer& buffer) override
+    {
+        buffer.read(this->guest);
+    }
+};
+
+struct window : user_object<USER_WINDOW>
 {
     uint32_t thread_id{};
     std::u16string name{};
     std::u16string class_name{};
-    int32_t width;
-    int32_t height;
-    int32_t x;
-    int32_t y;
+    int32_t width{};
+    int32_t height{};
+    int32_t x{};
+    int32_t y{};
     std::unordered_map<std::u16string, uint64_t> props;
+
+    window(memory_interface& memory)
+        : user_object(memory)
+    {
+    }
 
     void serialize_object(utils::buffer_serializer& buffer) const override
     {
+        user_object::serialize_object(buffer);
         buffer.write(this->thread_id);
         buffer.write(this->name);
         buffer.write(this->class_name);
@@ -80,6 +108,7 @@ struct window : ref_counted_object
 
     void deserialize_object(utils::buffer_deserializer& buffer) override
     {
+        user_object::deserialize_object(buffer);
         buffer.read(this->thread_id);
         buffer.read(this->name);
         buffer.read(this->class_name);
@@ -187,7 +216,6 @@ struct file : ref_counted_object
     utils::file_handle handle{};
     std::u16string name{};
     std::optional<file_enumeration_state> enumeration_state{};
-    std::optional<std::u16string> deferred_rename;
 
     bool is_file() const
     {

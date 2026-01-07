@@ -261,6 +261,86 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
+    NTSTATUS handle_NtQueryMultipleValueKey(const syscall_context& c, const handle key_handle,
+                                            const emulator_object<KEY_VALUE_ENTRY> value_entries, const ULONG entry_count,
+                                            const uint64_t value_buffer, const emulator_object<ULONG> buffer_length,
+                                            const emulator_object<ULONG> required_buffer_length)
+    {
+        if (entry_count > 0x10000)
+        {
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+
+        const auto* key = c.proc.registry_keys.get(key_handle);
+        if (!key)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        NTSTATUS status = STATUS_SUCCESS;
+        auto remaining_length = buffer_length.read();
+        ULONG required_length = 0;
+        ULONG written_bytes = 0;
+
+        for (ULONG i = 0; i < entry_count; i++)
+        {
+            auto entry = value_entries.read(i);
+            if (!entry.ValueName)
+            {
+                status = STATUS_INVALID_PARAMETER;
+                break;
+            }
+
+            const auto query_name = read_unicode_string(c.emu, entry.ValueName);
+
+            if (c.win_emu.callbacks.on_generic_access)
+            {
+                // TODO: Find a better way to log this
+                c.win_emu.callbacks.on_generic_access("Querying multiple value key ", query_name + u" (" + key->to_string() + u")");
+            }
+
+            const auto value = c.win_emu.registry.get_value(*key, u16_to_u8(query_name));
+            if (!value)
+            {
+                status = STATUS_OBJECT_NAME_NOT_FOUND;
+                break;
+            }
+
+            const auto data_length = static_cast<ULONG>(value->data.size());
+
+            if (status == STATUS_SUCCESS)
+            {
+                if (remaining_length >= data_length)
+                {
+                    entry.DataOffset = written_bytes;
+                    entry.DataLength = data_length;
+                    entry.Type = value->type;
+
+                    c.emu.write_memory(value_buffer + entry.DataOffset, value->data.data(), entry.DataLength);
+                    value_entries.write(entry, i);
+
+                    remaining_length -= data_length;
+                    written_bytes += data_length;
+                }
+                else
+                {
+                    status = STATUS_BUFFER_OVERFLOW;
+                }
+            }
+
+            required_length += data_length;
+        }
+
+        buffer_length.write(written_bytes);
+
+        if (required_buffer_length.value())
+        {
+            required_buffer_length.write(required_length);
+        }
+
+        return status;
+    }
+
     NTSTATUS handle_NtCreateKey(const syscall_context& c, const emulator_object<handle> key_handle, const ACCESS_MASK desired_access,
                                 const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                 const ULONG /*title_index*/, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*class*/,
