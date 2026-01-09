@@ -12,7 +12,7 @@
 #include <typeindex>
 #include <map>
 
-template <typename ...Args>
+template <typename... Args>
 using serialized_map = std::map<Args...>;
 
 namespace utils
