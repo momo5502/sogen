@@ -85,7 +85,7 @@ struct window : user_object<USER_WINDOW>
     int32_t height{};
     int32_t x{};
     int32_t y{};
-    std::unordered_map<std::u16string, uint64_t> props;
+    serialized_map<std::u16string, uint64_t> props;
 
     window(memory_interface& memory)
         : user_object(memory)

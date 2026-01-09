@@ -61,7 +61,7 @@ class memory_manager : public memory_interface
         nt_memory_permission permissions{};
     };
 
-    using committed_region_map = std::map<uint64_t, committed_region>;
+    using committed_region_map = serialized_map<uint64_t, committed_region>;
 
     struct reserved_region
     {
@@ -71,7 +71,7 @@ class memory_manager : public memory_interface
         memory_region_kind kind{memory_region_kind::private_allocation};
     };
 
-    using reserved_region_map = std::map<uint64_t, reserved_region>;
+    using reserved_region_map = serialized_map<uint64_t, reserved_region>;
 
     void read_memory(uint64_t address, void* data, size_t size) const final;
     bool try_read_memory(uint64_t address, void* data, size_t size) const final;

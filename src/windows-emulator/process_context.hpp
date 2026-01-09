@@ -139,7 +139,7 @@ struct process_context
     user_handle_store<handle_types::window, window> windows{user_handles};
     handle_store<handle_types::timer, timer> timers{};
     handle_store<handle_types::registry, registry_key, 2> registry_keys{};
-    std::map<uint16_t, atom_entry> atoms{};
+    serialized_map<uint16_t, atom_entry> atoms{};
 
     std::vector<std::byte> default_register_set{};
 

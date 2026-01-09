@@ -35,7 +35,7 @@ class syscall_dispatcher
     }
 
   private:
-    std::map<uint64_t, syscall_handler_entry> handlers_{};
+    serialized_map<uint64_t, syscall_handler_entry> handlers_{};
 
     static void add_handlers(std::map<std::string, syscall_handler>& handler_mapping);
     void add_handlers();

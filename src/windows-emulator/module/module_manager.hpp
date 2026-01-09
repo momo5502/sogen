@@ -87,7 +87,7 @@ class module_manager
         utils::optional_function<void(mapped_module& mod)> on_module_unload{};
     };
 
-    using module_map = std::map<uint64_t, mapped_module>;
+    using module_map = serialized_map<uint64_t, mapped_module>;
 
     module_manager(memory_manager& memory, file_system& file_sys, callbacks& cb);
 

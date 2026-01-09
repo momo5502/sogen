@@ -167,7 +167,7 @@ class handle_store : public generic_handle_store
 {
   public:
     using index_type = uint32_t;
-    using value_map = std::map<index_type, T>;
+    using value_map = serialized_map<index_type, T>;
 
     bool block_mutation(bool blocked)
     {
