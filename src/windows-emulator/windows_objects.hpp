@@ -85,7 +85,7 @@ struct window : user_object<USER_WINDOW>
     int32_t height{};
     int32_t x{};
     int32_t y{};
-    serialized_map<std::u16string, uint64_t> props;
+    serializable_map<std::u16string, uint64_t> props;
 
     window(memory_interface& memory)
         : user_object(memory)

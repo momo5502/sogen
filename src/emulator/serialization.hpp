@@ -13,7 +13,7 @@
 #include <map>
 
 template <typename... Args>
-using serialized_map = std::map<Args...>;
+using serializable_map = std::map<Args...>;
 
 namespace utils
 {

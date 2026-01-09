@@ -19,7 +19,7 @@ struct imported_symbol
 using exported_symbols = std::vector<exported_symbol>;
 using imported_symbols = std::unordered_map<uint64_t, imported_symbol>;
 using imported_module_list = std::vector<std::string>;
-using address_name_mapping = serialized_map<uint64_t, std::string>;
+using address_name_mapping = serializable_map<uint64_t, std::string>;
 
 struct mapped_section
 {
