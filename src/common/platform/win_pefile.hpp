@@ -4,8 +4,11 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <vector>
 #include <system_error>
 #include <variant>
+#include <array>
+#include "../utils/buffer_accessor.hpp"
 
 #include "primitives.hpp"
 
@@ -480,12 +483,75 @@ struct SECTION_IMAGE_INFORMATION
 
 namespace winpe
 {
+    struct pe_image_basic_info
+    {
+        uint64_t entry_point_rva{};
+        uint64_t image_base{};
+        uint64_t size_of_stack_reserve{};
+        uint64_t size_of_stack_commit{};
+        uint32_t size_of_code{};
+        uint32_t loader_flags{};
+        uint32_t checksum{};
+        uint16_t machine{};
+        uint16_t subsystem{};
+        uint16_t subsystem_major_version{};
+        uint16_t subsystem_minor_version{};
+        uint16_t image_characteristics{};
+        uint16_t dll_characteristics{};
+        bool has_code{false};
+        std::array<char, 7> _padding{};
+    };
 
     enum class pe_arch
     {
         pe32,
         pe64
     };
+
+    template <typename T>
+    inline uint64_t get_first_section_offset(const PENTHeaders_t<T>& nt_headers, const uint64_t nt_headers_offset)
+    {
+        const auto* nt_headers_addr = reinterpret_cast<const uint8_t*>(&nt_headers);
+        const size_t optional_header_offset =
+            reinterpret_cast<uintptr_t>(&(nt_headers.OptionalHeader)) - reinterpret_cast<uintptr_t>(&nt_headers);
+        const size_t optional_header_size = nt_headers.FileHeader.SizeOfOptionalHeader;
+        const auto* first_section_addr = nt_headers_addr + optional_header_offset + optional_header_size;
+
+        const auto first_section_absolute = reinterpret_cast<uint64_t>(first_section_addr);
+        const auto absolute_base = reinterpret_cast<uint64_t>(&nt_headers);
+        return nt_headers_offset + (first_section_absolute - absolute_base);
+    }
+
+    template <typename T>
+    inline PEDirectory_t2 get_data_directory_by_index(const PENTHeaders_t<T>& nt_headers, uint64_t directory_index)
+    {
+        return nt_headers.OptionalHeader.DataDirectory[directory_index];
+    }
+
+    template <typename T>
+    IMAGE_SECTION_HEADER get_section_header_by_rva(const utils::safe_buffer_accessor<const std::byte>& buffer,
+                                                   const PENTHeaders_t<T>& nt_headers, uint64_t nt_headers_offset, uint64_t rva)
+    {
+        IMAGE_SECTION_HEADER section_header = {};
+
+        auto next_section_offset = winpe::get_first_section_offset(nt_headers, nt_headers_offset);
+        for (size_t i = 0; i < nt_headers.FileHeader.NumberOfSections; i++)
+        {
+            const auto section = buffer.as<IMAGE_SECTION_HEADER>(static_cast<size_t>(next_section_offset)).get();
+            auto section_va_start = section.VirtualAddress;
+            auto section_va_end = section.VirtualAddress + section.Misc.VirtualSize;
+
+            if (section_va_start <= rva && rva <= section_va_end)
+            {
+                section_header = section;
+                break;
+            }
+
+            next_section_offset += sizeof(IMAGE_SECTION_HEADER);
+        }
+
+        return section_header;
+    }
 
     inline std::variant<pe_arch, std::error_code> get_pe_arch(const std::filesystem::path& file)
     {
@@ -593,6 +659,85 @@ namespace winpe
         return std::make_error_code(std::errc::executable_format_error);
     }
 
+    template <typename T>
+    inline bool parse_pe_headers(const std::vector<std::byte>& file_data, pe_image_basic_info& info)
+    {
+        if (file_data.size() < sizeof(PEDosHeader_t))
+        {
+            return false;
+        }
+
+        const auto* dos_header = reinterpret_cast<const PEDosHeader_t*>(file_data.data());
+        if (dos_header->e_magic != PEDosHeader_t::k_Magic)
+        {
+            return false;
+        }
+
+        if (file_data.size() < dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t) + sizeof(uint16_t))
+        {
+            return false;
+        }
+
+        const auto* magic_ptr =
+            reinterpret_cast<const uint16_t*>(file_data.data() + dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t));
+        const uint16_t magic = *magic_ptr;
+
+        constexpr uint16_t expected_magic = (sizeof(T) == sizeof(uint32_t))
+                                                ? static_cast<uint16_t>(PEOptionalHeader_t<std::uint32_t>::k_Magic)
+                                                : static_cast<uint16_t>(PEOptionalHeader_t<std::uint64_t>::k_Magic);
+
+        if (magic != expected_magic)
+        {
+            return false;
+        }
+
+        if (file_data.size() < dos_header->e_lfanew + sizeof(PENTHeaders_t<T>))
+        {
+            return false;
+        }
+
+        const auto* nt_headers = reinterpret_cast<const PENTHeaders_t<T>*>(file_data.data() + dos_header->e_lfanew);
+        if (nt_headers->Signature != PENTHeaders_t<T>::k_Signature)
+        {
+            return false;
+        }
+
+        const auto& file_header = nt_headers->FileHeader;
+        const auto& optional_header = nt_headers->OptionalHeader;
+
+        info.machine = static_cast<uint16_t>(file_header.Machine);
+        info.image_characteristics = file_header.Characteristics;
+
+        info.entry_point_rva = optional_header.AddressOfEntryPoint;
+        info.image_base = optional_header.ImageBase;
+        info.subsystem = optional_header.Subsystem;
+        info.subsystem_major_version = optional_header.MajorSubsystemVersion;
+        info.subsystem_minor_version = optional_header.MinorSubsystemVersion;
+        info.dll_characteristics = optional_header.DllCharacteristics;
+        info.size_of_stack_reserve = optional_header.SizeOfStackReserve;
+        info.size_of_stack_commit = optional_header.SizeOfStackCommit;
+        info.size_of_code = optional_header.SizeOfCode;
+        info.loader_flags = optional_header.LoaderFlags;
+        info.checksum = optional_header.CheckSum;
+
+        info.has_code = (optional_header.SizeOfCode > 0) || (optional_header.AddressOfEntryPoint != 0);
+
+        const auto sections_offset = dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t) + file_header.SizeOfOptionalHeader;
+        if (file_data.size() >= sections_offset + sizeof(IMAGE_SECTION_HEADER) * file_header.NumberOfSections)
+        {
+            const auto* sections = reinterpret_cast<const IMAGE_SECTION_HEADER*>(file_data.data() + sections_offset);
+            for (uint16_t i = 0; i < file_header.NumberOfSections; ++i)
+            {
+                if (sections[i].Characteristics & IMAGE_SCN_CNT_CODE)
+                {
+                    info.has_code = true;
+                    break;
+                }
+            }
+        }
+
+        return true;
+    }
 }
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)

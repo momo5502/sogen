@@ -7,93 +7,7 @@
 
 namespace syscalls
 {
-    // Helper function to parse PE headers and extract image information
-    template <typename T>
-    static bool parse_pe_headers(const std::vector<std::byte>& file_data, section::image_info& info)
-    {
-        if (file_data.size() < sizeof(PEDosHeader_t))
-        {
-            return false;
-        }
-
-        const auto* dos_header = reinterpret_cast<const PEDosHeader_t*>(file_data.data());
-        if (dos_header->e_magic != PEDosHeader_t::k_Magic)
-        {
-            return false;
-        }
-
-        // First check if we can read up to the optional header magic
-        if (file_data.size() < dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t) + sizeof(uint16_t))
-        {
-            return false;
-        }
-
-        // Read the magic number from the optional header
-        const auto* magic_ptr =
-            reinterpret_cast<const uint16_t*>(file_data.data() + dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t));
-        const uint16_t magic = *magic_ptr;
-
-        // Check if the magic matches the expected type
-        constexpr uint16_t expected_magic = (sizeof(T) == sizeof(uint32_t))
-                                                ? static_cast<uint16_t>(PEOptionalHeader_t<std::uint32_t>::k_Magic)
-                                                : static_cast<uint16_t>(PEOptionalHeader_t<std::uint64_t>::k_Magic);
-
-        if (magic != expected_magic)
-        {
-            return false;
-        }
-
-        // Now check the full NT headers size
-        if (file_data.size() < dos_header->e_lfanew + sizeof(PENTHeaders_t<T>))
-        {
-            return false;
-        }
-
-        const auto* nt_headers = reinterpret_cast<const PENTHeaders_t<T>*>(file_data.data() + dos_header->e_lfanew);
-        if (nt_headers->Signature != PENTHeaders_t<T>::k_Signature)
-        {
-            return false;
-        }
-
-        const auto& file_header = nt_headers->FileHeader;
-        const auto& optional_header = nt_headers->OptionalHeader;
-
-        // Extract information from headers
-        info.machine = static_cast<uint16_t>(file_header.Machine);
-        info.image_characteristics = file_header.Characteristics;
-
-        info.entry_point_rva = optional_header.AddressOfEntryPoint;
-        info.image_base = optional_header.ImageBase;
-        info.subsystem = optional_header.Subsystem;
-        info.subsystem_major_version = optional_header.MajorSubsystemVersion;
-        info.subsystem_minor_version = optional_header.MinorSubsystemVersion;
-        info.dll_characteristics = optional_header.DllCharacteristics;
-        info.size_of_stack_reserve = optional_header.SizeOfStackReserve;
-        info.size_of_stack_commit = optional_header.SizeOfStackCommit;
-        info.size_of_code = optional_header.SizeOfCode;
-        info.loader_flags = optional_header.LoaderFlags;
-        info.checksum = optional_header.CheckSum;
-
-        // Check if image contains code
-        info.has_code = (optional_header.SizeOfCode > 0) || (optional_header.AddressOfEntryPoint != 0);
-
-        // Also check section characteristics for code sections
-        const auto sections_offset = dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t) + file_header.SizeOfOptionalHeader;
-        if (file_data.size() >= sections_offset + sizeof(IMAGE_SECTION_HEADER) * file_header.NumberOfSections)
-        {
-            const auto* sections = reinterpret_cast<const IMAGE_SECTION_HEADER*>(file_data.data() + sections_offset);
-            for (uint16_t i = 0; i < file_header.NumberOfSections; ++i)
-            {
-                if (sections[i].Characteristics & IMAGE_SCN_CNT_CODE)
-                {
-                    info.has_code = true;
-                    break;
-                }
-            }
-        }
-
-        return true;
-    }
+    using namespace std::string_view_literals;
 
     NTSTATUS handle_NtCreateSection(const syscall_context& c, const emulator_object<handle> section_handle,
                                     const ACCESS_MASK /*desired_access*/,
@@ -141,36 +55,7 @@ namespace syscalls
             std::vector<std::byte> file_data;
             if (utils::io::read_file(c.win_emu.file_sys.translate(s.file_name), &file_data))
             {
-                section::image_info info{};
-
-                // Read the PE magic to determine if it's 32-bit or 64-bit
-                bool parsed = false;
-                if (file_data.size() >= sizeof(PEDosHeader_t))
-                {
-                    const auto* dos_header = reinterpret_cast<const PEDosHeader_t*>(file_data.data());
-                    if (dos_header->e_magic == PEDosHeader_t::k_Magic &&
-                        file_data.size() >= dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t) + sizeof(uint16_t))
-                    {
-                        const auto* magic_ptr = reinterpret_cast<const uint16_t*>(file_data.data() + dos_header->e_lfanew +
-                                                                                  sizeof(uint32_t) + sizeof(PEFileHeader_t));
-                        const uint16_t magic = *magic_ptr;
-
-                        // Parse based on the actual PE type
-                        if (magic == PEOptionalHeader_t<std::uint32_t>::k_Magic)
-                        {
-                            parsed = parse_pe_headers<uint32_t>(file_data, info);
-                        }
-                        else if (magic == PEOptionalHeader_t<std::uint64_t>::k_Magic)
-                        {
-                            parsed = parse_pe_headers<uint64_t>(file_data, info);
-                        }
-                    }
-                }
-
-                if (parsed)
-                {
-                    s.cached_image_info = info;
-                }
+                s.cache_image_info_from_filedata(file_data);
             }
         }
 
@@ -187,9 +72,10 @@ namespace syscalls
         const auto attributes = object_attributes.read();
 
         auto filename = read_unicode_string(c.emu, attributes.ObjectName);
+        auto filename_sv = std::u16string_view(filename);
         c.win_emu.callbacks.on_generic_access("Opening section", filename);
 
-        if (filename == u"\\Windows\\SharedSection")
+        if (utils::string::equals_ignore_case(filename_sv, u"\\Windows\\SharedSection"sv))
         {
             constexpr auto shared_section_size = 0x10000;
 
@@ -203,7 +89,7 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
-        if (filename == u"DBWIN_BUFFER")
+        if (utils::string::equals_ignore_case(filename_sv, u"DBWIN_BUFFER"sv))
         {
             constexpr auto dbwin_buffer_section_size = 0x1000;
 
@@ -217,29 +103,56 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
-        if (filename == u"windows_shell_global_counters"             //
-            || filename == u"Global\\__ComCatalogCache__"            //
-            || filename == u"{00020000-0000-1005-8005-0000C06B5161}" //
-            || filename == u"Global\\{00020000-0000-1005-8005-0000C06B5161}")
+        if (utils::string::equals_ignore_case(filename_sv, u"windows_shell_global_counters"sv) ||
+            utils::string::equals_ignore_case(filename_sv, u"Global\\__ComCatalogCache__"sv) ||
+            utils::string::equals_ignore_case(filename_sv, u"{00020000-0000-1005-8005-0000C06B5161}"sv) ||
+            utils::string::equals_ignore_case(filename_sv, u"Global\\{00020000-0000-1005-8005-0000C06B5161}"sv))
         {
             return STATUS_NOT_SUPPORTED;
         }
 
-        if (attributes.RootDirectory != KNOWN_DLLS_DIRECTORY && attributes.RootDirectory != KNOWN_DLLS32_DIRECTORY &&
-            attributes.RootDirectory != BASE_NAMED_OBJECTS_DIRECTORY && !filename.starts_with(u"\\KnownDlls"))
+        bool is_knowndll = (attributes.RootDirectory == KNOWN_DLLS32_DIRECTORY ||
+                            utils::string::starts_with_ignore_case(filename_sv, u"\\KnownDlls32\\"sv)) ||
+                           attributes.RootDirectory == KNOWN_DLLS_DIRECTORY ||
+                           utils::string::starts_with_ignore_case(filename_sv, u"\\KnownDlls\\"sv);
+
+        if (!is_knowndll && attributes.RootDirectory != BASE_NAMED_OBJECTS_DIRECTORY)
         {
             c.win_emu.log.error("Unsupported section\n");
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
         }
 
-        utils::string::to_lower_inplace(filename);
-
-        for (auto& section_entry : c.proc.sections)
+        if (is_knowndll)
         {
-            if (section_entry.second.is_image() && section_entry.second.name == filename)
+            bool is_knowndll32 = attributes.RootDirectory == KNOWN_DLLS32_DIRECTORY ||
+                                 utils::string::starts_with_ignore_case(filename_sv, u"\\KnownDlls32"sv);
+
+            if (utils::string::starts_with_ignore_case(filename_sv, u"\\KnownDlls32\\"sv))
             {
-                section_handle.write(c.proc.sections.make_handle(section_entry.first));
+                filename = filename_sv.substr(13, filename.length() - 13);
+            }
+
+            else if (utils::string::starts_with_ignore_case(filename_sv, u"\\KnownDlls\\"sv))
+            {
+                filename = filename_sv.substr(11, filename.length() - 11);
+            }
+
+            auto section = c.win_emu.process.get_knowndll_section_by_name(filename, is_knowndll32);
+            if (!section.has_value())
+            {
+                return STATUS_OBJECT_NAME_NOT_FOUND;
+            }
+
+            section_handle.write(c.proc.sections.store(section.value()));
+            return STATUS_SUCCESS;
+        }
+
+        for (auto& [handle, section] : c.proc.sections)
+        {
+            if (section.is_image() && utils::string::equals_ignore_case(section.file_name, filename))
+            {
+                section_handle.write(c.proc.sections.make_handle(handle));
                 return STATUS_SUCCESS;
             }
         }
@@ -334,7 +247,7 @@ namespace syscalls
 
         if (section_entry->is_image())
         {
-            const auto* binary = c.win_emu.mod_manager.map_module(section_entry->file_name, c.win_emu.log);
+            const auto* binary = c.win_emu.mod_manager.map_module(section_entry->file_name, c.win_emu.log, false, true);
             if (!binary)
             {
                 return STATUS_FILE_INVALID;
@@ -349,6 +262,17 @@ namespace syscalls
             }
 
             base_address.write(binary->image_base);
+
+            // Should return STATUS_IMAGE_MACHINE_TYPE_MISMATCH if a 64-bit process tried to map a 32-bit PE.
+            if (!c.win_emu.process.is_wow64_process && binary->machine == IMAGE_FILE_MACHINE_I386)
+            {
+                return STATUS_IMAGE_MACHINE_TYPE_MISMATCH;
+            }
+
+            if (c.win_emu.mod_manager.get_module_load_count_by_path(section_entry->file_name) > 1)
+            {
+                return STATUS_IMAGE_NOT_AT_BASE;
+            }
 
             return STATUS_SUCCESS;
         }

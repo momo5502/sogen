@@ -3,6 +3,7 @@
 #include <vector>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 
 #include "../emulator_utils.hpp"
 

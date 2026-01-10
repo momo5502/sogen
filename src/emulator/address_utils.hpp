@@ -52,3 +52,8 @@ constexpr uint64_t page_align_up(const uint64_t value, const uint64_t page_size 
 {
     return align_up(value, page_size);
 }
+
+constexpr uint64_t rva_to_file_offset(uint64_t va_base, uint64_t raw_base, uint64_t rva)
+{
+    return rva - (va_base - raw_base);
+}

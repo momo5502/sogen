@@ -181,4 +181,54 @@ namespace utils::string
     {
         return std::ranges::equal(lhs, rhs, [](const auto c1, const auto c2) { return char_to_lower(c1) == char_to_lower(c2); });
     }
+
+    template <class Elem, class Traits, class Alloc>
+    bool starts_with_ignore_case(const std::basic_string<Elem, Traits, Alloc>& lhs, const std::basic_string<Elem, Traits, Alloc>& rhs)
+    {
+        if (lhs.length() < rhs.length())
+        {
+            return false;
+        }
+
+        return std::ranges::equal(lhs.substr(0, rhs.length()), rhs,
+                                  [](const auto c1, const auto c2) { return char_to_lower(c1) == char_to_lower(c2); });
+    }
+
+    template <class Elem, class Traits>
+    bool starts_with_ignore_case(const std::basic_string_view<Elem, Traits>& lhs, const std::basic_string_view<Elem, Traits>& rhs)
+    {
+        if (lhs.length() < rhs.length())
+        {
+            return false;
+        }
+
+        return std::ranges::equal(lhs.substr(0, rhs.length()), rhs,
+                                  [](const auto c1, const auto c2) { return char_to_lower(c1) == char_to_lower(c2); });
+    }
+
+    template <class Elem, class Traits, class Alloc>
+    bool ends_with_ignore_case(const std::basic_string<Elem, Traits, Alloc>& lhs, const std::basic_string<Elem, Traits, Alloc>& rhs)
+    {
+        if (lhs.length() < rhs.length())
+        {
+            return false;
+        }
+
+        auto start = lhs.length() - rhs.length();
+        return std::ranges::equal(lhs.substr(start, rhs.length()), rhs,
+                                  [](const auto c1, const auto c2) { return char_to_lower(c1) == char_to_lower(c2); });
+    }
+
+    template <class Elem, class Traits>
+    bool ends_with_ignore_case(const std::basic_string_view<Elem, Traits>& lhs, const std::basic_string_view<Elem, Traits>& rhs)
+    {
+        if (lhs.length() < rhs.length())
+        {
+            return false;
+        }
+
+        auto start = lhs.length() - rhs.length();
+        return std::ranges::equal(lhs.substr(start, rhs.length()), rhs,
+                                  [](const auto c1, const auto c2) { return char_to_lower(c1) == char_to_lower(c2); });
+    }
 }

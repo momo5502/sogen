@@ -94,10 +94,12 @@ class module_manager
     void map_main_modules(const windows_path& executable_path, const windows_path& system32_path, const windows_path& syswow64_path,
                           const logger& logger);
 
-    mapped_module* map_module(const windows_path& file, const logger& logger, bool is_static = false);
-    mapped_module* map_local_module(const std::filesystem::path& file, const logger& logger, bool is_static = false);
+    std::optional<uint64_t> get_module_load_count_by_path(const windows_path& path);
+    mapped_module* map_module(const windows_path& file, const logger& logger, bool is_static = false, bool allow_duplicate = false);
+    mapped_module* map_local_module(const std::filesystem::path& file, const logger& logger, bool is_static = false,
+                                    bool allow_duplicate = false);
     mapped_module* map_memory_module(uint64_t base_address, uint64_t image_size, const std::string& module_name, const logger& logger,
-                                     bool is_static = false);
+                                     bool is_static = false, bool allow_duplicate = false);
 
     mapped_module* find_by_address(const uint64_t address)
     {
@@ -157,6 +159,7 @@ class module_manager
     mapped_module* executable{};
     mapped_module* ntdll{};
     mapped_module* win32u{};
+    std::map<std::filesystem::path, uint64_t> module_load_count;
 
     // WOW64-specific modules (for validation and future use)
     struct wow64_modules

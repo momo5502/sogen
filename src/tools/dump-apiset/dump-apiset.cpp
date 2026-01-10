@@ -32,7 +32,7 @@ int main()
     printf("EntryOffset: %08lX\n", api_set_map->EntryOffset);
     printf("HashOffset: %08lX\n", api_set_map->HashOffset);
     printf("HashFactor: %08lX\n", api_set_map->HashFactor);
-    // print_apiset(apiSetMap);
+    print_apiset(api_set_map);
 
     // Compress the API-SET binary blob
     const auto* data_ptr = reinterpret_cast<const std::byte*>(api_set_map);

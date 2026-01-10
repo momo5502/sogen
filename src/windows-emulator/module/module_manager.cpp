@@ -221,6 +221,11 @@ mapped_module* module_manager::map_module_core(const pe_detection_result& detect
         mapped_module mod = mapper();
         mod.is_static = is_static;
 
+        if (!mod.path.empty())
+        {
+            this->module_load_count[mod.path]++;
+        }
+
         const auto image_base = mod.image_base;
         const auto entry = this->modules_.try_emplace(image_base, std::move(mod));
         this->last_module_cache_ = this->modules_.end();
@@ -446,22 +451,45 @@ void module_manager::map_main_modules(const windows_path& executable_path, const
     }
 }
 
-mapped_module* module_manager::map_module(const windows_path& file, const logger& logger, const bool is_static)
+std::optional<uint64_t> module_manager::get_module_load_count_by_path(const windows_path& path)
 {
-    return this->map_local_module(this->file_sys_->translate(file), logger, is_static);
+    auto local_file = std::filesystem::weakly_canonical(std::filesystem::absolute(this->file_sys_->translate(path)));
+
+    if (!module_load_count.contains(local_file))
+    {
+        return {};
+    }
+
+    return module_load_count[local_file];
+}
+
+mapped_module* module_manager::map_module(const windows_path& file, const logger& logger, const bool is_static, bool allow_duplicate)
+{
+    auto local_file = this->file_sys_->translate(file);
+
+    if (local_file.filename() == "win32u.dll")
+    {
+        return this->map_local_module(local_file, logger, is_static, false);
+    }
+
+    return this->map_local_module(local_file, logger, is_static, allow_duplicate);
 }
 
 // Refactored map_local_module using the new architecture
-mapped_module* module_manager::map_local_module(const std::filesystem::path& file, const logger& logger, const bool is_static)
+mapped_module* module_manager::map_local_module(const std::filesystem::path& file, const logger& logger, const bool is_static,
+                                                bool allow_duplicate)
 {
     auto local_file = weakly_canonical(absolute(file));
 
-    // Check if module is already loaded
-    for (auto& mod : this->modules_ | std::views::values)
+    if (!allow_duplicate)
     {
-        if (mod.path == local_file)
+        // Check if module is already loaded
+        for (auto& mod : this->modules_ | std::views::values)
         {
-            return &mod;
+            if (mod.path == local_file)
+            {
+                return &mod;
+            }
         }
     }
 
@@ -480,14 +508,17 @@ mapped_module* module_manager::map_local_module(const std::filesystem::path& fil
 
 // Refactored map_memory_module using the new architecture
 mapped_module* module_manager::map_memory_module(uint64_t base_address, uint64_t image_size, const std::string& module_name,
-                                                 const logger& logger, bool is_static)
+                                                 const logger& logger, bool is_static, bool allow_duplicate)
 {
-    // Check if module is already loaded at this address
-    for (auto& mod : this->modules_ | std::views::values)
+    if (!allow_duplicate)
     {
-        if (mod.image_base == base_address)
+        // Check if module is already loaded at this address
+        for (auto& mod : this->modules_ | std::views::values)
         {
-            return &mod;
+            if (mod.image_base == base_address)
+            {
+                return &mod;
+            }
         }
     }
 
@@ -507,6 +538,7 @@ mapped_module* module_manager::map_memory_module(uint64_t base_address, uint64_t
 void module_manager::serialize(utils::buffer_serializer& buffer) const
 {
     buffer.write_map(this->modules_);
+    buffer.write_map(this->module_load_count);
 
     buffer.write(this->executable ? this->executable->image_base : 0);
     buffer.write(this->ntdll ? this->ntdll->image_base : 0);
@@ -524,6 +556,7 @@ void module_manager::serialize(utils::buffer_serializer& buffer) const
 void module_manager::deserialize(utils::buffer_deserializer& buffer)
 {
     buffer.read_map(this->modules_);
+    buffer.read_map(this->module_load_count);
     this->last_module_cache_ = this->modules_.end();
 
     const auto executable_base = buffer.read<uint64_t>();

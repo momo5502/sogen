@@ -421,4 +421,14 @@ namespace syscalls
 
         return STATUS_NOT_SUPPORTED;
     }
+
+    NTSTATUS handle_NtFlushInstructionCache(const syscall_context& c, const handle process_handle,
+                                            const emulator_object<uint64_t> base_address, const uint64_t region_size)
+    {
+        (void)c;
+        (void)process_handle;
+        (void)base_address;
+        (void)region_size;
+        return STATUS_SUCCESS;
+    }
 }

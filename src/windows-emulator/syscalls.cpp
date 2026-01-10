@@ -364,6 +364,8 @@ namespace syscalls
                                             emulator_object<ULONG> return_length);
     NTSTATUS handle_NtQuerySecurityAttributesToken();
     NTSTATUS handle_NtAdjustPrivilegesToken();
+    NTSTATUS handle_NtFlushInstructionCache(const syscall_context& c, handle process_handle, emulator_object<uint64_t> base_address,
+                                            uint64_t region_size);
 
     NTSTATUS handle_NtQueryPerformanceCounter(const syscall_context& c, const emulator_object<LARGE_INTEGER> performance_counter,
                                               const emulator_object<LARGE_INTEGER> performance_frequency)
@@ -1322,6 +1324,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtRemoveProcessDebug);
     add_handler(NtNotifyChangeDirectoryFileEx);
     add_handler(NtUserGetHDevName);
+    add_handler(NtFlushInstructionCache);
     add_handler(NtUserMapDesktopObject);
 
 #undef add_handler

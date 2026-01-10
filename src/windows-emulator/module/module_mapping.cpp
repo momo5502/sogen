@@ -4,23 +4,10 @@
 
 #include <utils/io.hpp>
 #include <utils/buffer_accessor.hpp>
+#include <platform/win_pefile.hpp>
 
 namespace
 {
-    template <typename T>
-    uint64_t get_first_section_offset(const PENTHeaders_t<T>& nt_headers, const uint64_t nt_headers_offset)
-    {
-        const auto* nt_headers_addr = reinterpret_cast<const uint8_t*>(&nt_headers);
-        const size_t optional_header_offset =
-            reinterpret_cast<uintptr_t>(&(nt_headers.OptionalHeader)) - reinterpret_cast<uintptr_t>(&nt_headers);
-        const size_t optional_header_size = nt_headers.FileHeader.SizeOfOptionalHeader;
-        const auto* first_section_addr = nt_headers_addr + optional_header_offset + optional_header_size;
-
-        const auto first_section_absolute = reinterpret_cast<uint64_t>(first_section_addr);
-        const auto absolute_base = reinterpret_cast<uint64_t>(&nt_headers);
-        return nt_headers_offset + (first_section_absolute - absolute_base);
-    }
-
     template <typename T>
     std::vector<std::byte> read_mapped_memory(const memory_manager& memory, const mapped_module& binary)
     {
@@ -210,7 +197,7 @@ namespace
     void map_sections(memory_manager& memory, mapped_module& binary, const utils::safe_buffer_accessor<const std::byte> buffer,
                       const PENTHeaders_t<T>& nt_headers, const uint64_t nt_headers_offset)
     {
-        const auto first_section_offset = get_first_section_offset(nt_headers, nt_headers_offset);
+        const auto first_section_offset = winpe::get_first_section_offset(nt_headers, nt_headers_offset);
         const auto sections = buffer.as<IMAGE_SECTION_HEADER>(static_cast<size_t>(first_section_offset));
 
         for (size_t i = 0; i < nt_headers.FileHeader.NumberOfSections; ++i)
@@ -384,7 +371,7 @@ mapped_module map_module_from_memory(memory_manager& memory, uint64_t base_addre
         binary.size_of_heap_reserve = optional_header.SizeOfHeapReserve;
         binary.size_of_heap_commit = optional_header.SizeOfHeapCommit;
 
-        const auto section_offset = get_first_section_offset(nt_headers, nt_headers_offset);
+        const auto section_offset = winpe::get_first_section_offset(nt_headers, nt_headers_offset);
         const auto sections = buffer.as<IMAGE_SECTION_HEADER>(static_cast<size_t>(section_offset));
 
         for (size_t i = 0; i < nt_headers.FileHeader.NumberOfSections; ++i)
