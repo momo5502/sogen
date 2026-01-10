@@ -2,6 +2,7 @@
 #include "kusd_mmio.hpp"
 #include <utils/time.hpp>
 #include "windows_emulator.hpp"
+#include "version/windows_version_manager.hpp"
 
 #include <address_utils.hpp>
 
@@ -11,7 +12,7 @@ constexpr auto KUSD_BUFFER_SIZE = page_align_up(KUSD_SIZE);
 
 namespace
 {
-    void setup_kusd(KUSER_SHARED_DATA64& kusd)
+    void setup_kusd(KUSER_SHARED_DATA64& kusd, const windows_version_manager& version)
     {
         memset(reinterpret_cast<void*>(&kusd), 0, sizeof(kusd));
 
@@ -29,11 +30,12 @@ namespace
         kusd.LargePageMinimum = 0x00200000;
         kusd.RNGSeedVersion = 0;
         kusd.TimeZoneBiasStamp = 0x00000004;
-        kusd.NtBuildNumber = 19045;
+        kusd.NtBuildNumber = version.get_windows_build_number();
         kusd.NtProductType = NtProductWinNt;
         kusd.ProductTypeIsValid = 0x01;
         kusd.NativeProcessorArchitecture = 0x0009;
-        kusd.NtMajorVersion = 0x0000000a;
+        kusd.NtMajorVersion = version.get_major_version();
+        kusd.NtMinorVersion = version.get_minor_version();
         kusd.BootId = 0;
         kusd.SystemExpirationDate.QuadPart = 0;
         kusd.SuiteMask = 0;
@@ -80,8 +82,10 @@ namespace
         kusd.ProcessorFeatures.arr[PF_RDTSCP_INSTRUCTION_AVAILABLE] = 1;
         kusd.ProcessorFeatures.arr[PF_RDPID_INSTRUCTION_AVAILABLE] = 0;
 
-        constexpr std::u16string_view root_dir{u"C:\\Windows"};
-        memcpy(&kusd.NtSystemRoot.arr[0], root_dir.data(), root_dir.size() * 2);
+        const auto& system_root = version.get_system_root();
+        const auto& root_str = system_root.u16string();
+        const auto copy_size = std::min(root_str.size() * sizeof(char16_t), sizeof(kusd.NtSystemRoot.arr) - sizeof(char16_t));
+        memcpy(&kusd.NtSystemRoot.arr[0], root_str.data(), copy_size);
 
         kusd.ImageNumberLow = IMAGE_FILE_MACHINE_AMD64;
         kusd.ImageNumberHigh = IMAGE_FILE_MACHINE_AMD64;
@@ -118,9 +122,9 @@ kusd_mmio::kusd_mmio(utils::buffer_deserializer& buffer)
 {
 }
 
-void kusd_mmio::setup()
+void kusd_mmio::setup(const windows_version_manager& version)
 {
-    setup_kusd(this->kusd_);
+    setup_kusd(this->kusd_, version);
     this->register_mmio();
 }
 

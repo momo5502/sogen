@@ -33,6 +33,7 @@
 
 struct emulator_settings;
 struct application_settings;
+class windows_version_manager;
 
 struct process_context
 {
@@ -72,9 +73,9 @@ struct process_context
     {
     }
 
-    void setup(x86_64_emulator& emu, memory_manager& memory, registry_manager& registry, const application_settings& app_settings,
-               const mapped_module& executable, const mapped_module& ntdll, const apiset::container& apiset_container,
-               const mapped_module* ntdll32 = nullptr);
+    void setup(x86_64_emulator& emu, memory_manager& memory, registry_manager& registry, windows_version_manager& version,
+               const application_settings& app_settings, const mapped_module& executable, const mapped_module& ntdll,
+               const apiset::container& apiset_container, const mapped_module* ntdll32 = nullptr);
 
     void setup_callback_hook(windows_emulator& win_emu, memory_manager& memory);
 
@@ -94,13 +95,6 @@ struct process_context
 
     // WOW64 support flag - set during process setup based on executable architecture
     bool is_wow64_process{false};
-
-    uint32_t windows_build_number{0};
-
-    bool is_older_windows_build() const
-    {
-        return windows_build_number < 26040;
-    }
 
     callbacks* callbacks_{};
 

@@ -4,6 +4,8 @@
 #include "platform/win_pefile.hpp"
 #include "windows-emulator/logger.hpp"
 #include "../wow64_heaven_gate.hpp"
+#include "../version/windows_version_manager.hpp"
+#include "../process_context.hpp"
 
 #include <serialization_helper.hpp>
 #include <cinttypes>
@@ -257,23 +259,19 @@ void module_manager::load_native_64bit_modules(const windows_path& executable_pa
     this->win32u = this->map_module(win32u_path, logger, true);
 }
 
-// WOW64 module loading (with TODO placeholders for 32-bit details)
+// WOW64 module loading
 void module_manager::load_wow64_modules(const windows_path& executable_path, const windows_path& ntdll_path,
-                                        const windows_path& win32u_path, const windows_path& ntdll32_path, const logger& logger)
+                                        const windows_path& win32u_path, const windows_path& ntdll32_path, windows_version_manager& version,
+                                        const logger& logger)
 {
     logger.info("Loading WOW64 modules for 32-bit application\n");
 
-    // Load 32-bit main executable
     this->executable = this->map_module(executable_path, logger, true);
+    this->ntdll = this->map_module(ntdll_path, logger, true);
+    this->win32u = this->map_module(win32u_path, logger, true);
 
-    // Load 64-bit system modules for WOW64 subsystem
-    this->ntdll = this->map_module(ntdll_path, logger, true);   // 64-bit ntdll
-    this->win32u = this->map_module(win32u_path, logger, true); // 64-bit win32u
+    this->wow64_modules_.ntdll32 = this->map_module(ntdll32_path, logger, true);
 
-    // Load 32-bit ntdll module for WOW64 subsystem
-    this->wow64_modules_.ntdll32 = this->map_module(ntdll32_path, logger, true); // 32-bit ntdll
-
-    // Get original ImageBase values from PE files
     const auto ntdll32_original_imagebase = this->wow64_modules_.ntdll32->get_image_base_file();
     const auto ntdll64_original_imagebase = this->ntdll->get_image_base_file();
 
@@ -283,12 +281,10 @@ void module_manager::load_wow64_modules(const windows_path& executable_path, con
         return;
     }
 
-    // Set up LdrSystemDllInitBlock structure
     PS_SYSTEM_DLL_INIT_BLOCK init_block = {};
-    constexpr uint64_t symtem_dll_init_block_fix_size = 0xF0; // Wine or WIN10
+    const auto init_block_size = version.get_system_dll_init_block_size();
 
-    // Basic structure initialization
-    init_block.Size = symtem_dll_init_block_fix_size;
+    init_block.Size = static_cast<ULONG>(init_block_size);
 
     // Calculate relocation values
     // SystemDllWowRelocation = mapped_base - original_imagebase for 32-bit ntdll
@@ -344,8 +340,7 @@ void module_manager::load_wow64_modules(const windows_path& executable_path, con
         return;
     }
 
-    // Write the initialized structure to the export address
-    this->memory_->write_memory(ldr_init_block_addr, &init_block, symtem_dll_init_block_fix_size);
+    this->memory_->write_memory(ldr_init_block_addr, &init_block, static_cast<size_t>(init_block_size));
 
     logger.info("Successfully initialized LdrSystemDllInitBlock at 0x%" PRIx64 "\n", ldr_init_block_addr);
 
@@ -422,14 +417,16 @@ void module_manager::install_wow64_heaven_gate(const logger& logger)
     }
 }
 
-// Refactored map_main_modules with execution mode detection
-void module_manager::map_main_modules(const windows_path& executable_path, const windows_path& system32_path,
-                                      const windows_path& syswow64_path, const logger& logger)
+void module_manager::map_main_modules(const windows_path& executable_path, windows_version_manager& version, process_context& context,
+                                      const logger& logger)
 {
-    // Detect execution mode based on executable architecture
-    current_execution_mode_ = detect_execution_mode(executable_path, logger);
+    const auto& system_root = version.get_system_root();
+    const auto system32_path = system_root / "System32";
+    const auto syswow64_path = system_root / "SysWOW64";
 
-    // Load modules based on detected execution mode
+    current_execution_mode_ = detect_execution_mode(executable_path, logger);
+    context.is_wow64_process = (current_execution_mode_ == execution_mode::wow64_32bit);
+
     switch (current_execution_mode_)
     {
     case execution_mode::native_64bit:
@@ -437,7 +434,8 @@ void module_manager::map_main_modules(const windows_path& executable_path, const
         break;
 
     case execution_mode::wow64_32bit:
-        load_wow64_modules(executable_path, system32_path / "ntdll.dll", system32_path / "win32u.dll", syswow64_path / "ntdll.dll", logger);
+        load_wow64_modules(executable_path, system32_path / "ntdll.dll", system32_path / "win32u.dll", syswow64_path / "ntdll.dll", version,
+                           logger);
         break;
 
     case execution_mode::unknown:

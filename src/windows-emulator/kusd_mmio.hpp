@@ -9,6 +9,7 @@
 
 struct process_context;
 class windows_emulator;
+class windows_version_manager;
 
 class kusd_mmio
 {
@@ -38,7 +39,7 @@ class kusd_mmio
 
     static uint64_t address();
 
-    void setup();
+    void setup(const windows_version_manager& version);
 
   private:
     memory_manager* memory_{};

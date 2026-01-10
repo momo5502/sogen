@@ -12,6 +12,7 @@
 #include "memory_manager.hpp"
 #include "module/module_manager.hpp"
 #include "network/socket_factory.hpp"
+#include "version/windows_version_manager.hpp"
 
 struct io_device;
 
@@ -94,6 +95,7 @@ class windows_emulator
     file_system file_sys;
     memory_manager memory;
     registry_manager registry{};
+    windows_version_manager version{};
     module_manager mod_manager;
     process_context process;
     syscall_dispatcher dispatcher;
