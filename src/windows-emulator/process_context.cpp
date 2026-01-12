@@ -411,6 +411,38 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
         }
     }
 
+    if (this->gdi_shared_table_address == 0)
+    {
+        const auto shared_memory = allocator.reserve<GDI_SHARED_MEMORY64>();
+        shared_memory.access([](GDI_SHARED_MEMORY64& mem) {
+            mem = {};
+            mem.Objects[0x12] = 1;
+            mem.Objects[0x13] = 1;
+        });
+        this->gdi_shared_table_address = shared_memory.value();
+    }
+
+    this->peb64.access([&](PEB64& p) { p.GdiSharedHandleTable = this->gdi_shared_table_address; });
+    if (this->is_wow64_process && this->peb32)
+    {
+        this->peb32->access([&](PEB32& p32) { p32.GdiSharedHandleTable = static_cast<uint32_t>(this->gdi_shared_table_address); });
+    }
+
+    if (this->is_wow64_process)
+    {
+        if (this->gdi_cookie == 0)
+        {
+            // TODO: for now let's hardcode the cookie from the DLL for determinism
+            this->gdi_cookie = 0x06f2b3d5u;
+        }
+
+        this->peb64.access([&](PEB64& p) { p.GdiDCAttributeList = this->gdi_cookie; });
+        if (this->peb32)
+        {
+            this->peb32->access([&](PEB32& p32) { p32.GdiDCAttributeList = this->gdi_cookie; });
+        }
+    }
+
     this->ntdll_image_base = ntdll.image_base;
     this->ldr_initialize_thunk = ntdll.find_export("LdrInitializeThunk");
     this->rtl_user_thread_start = ntdll.find_export("RtlUserThreadStart");
@@ -532,6 +564,8 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
     buffer.write(this->ki_user_apc_dispatcher);
     buffer.write(this->ki_user_exception_dispatcher);
     buffer.write(this->instrumentation_callback);
+    buffer.write(this->gdi_shared_table_address);
+    buffer.write(this->gdi_cookie);
 
     buffer.write(this->user_handles);
     buffer.write(this->default_monitor_handle);
@@ -583,6 +617,8 @@ void process_context::deserialize(utils::buffer_deserializer& buffer)
     buffer.read(this->ki_user_apc_dispatcher);
     buffer.read(this->ki_user_exception_dispatcher);
     buffer.read(this->instrumentation_callback);
+    buffer.read(this->gdi_shared_table_address);
+    buffer.read(this->gdi_cookie);
 
     buffer.read(this->user_handles);
     buffer.read(this->default_monitor_handle);

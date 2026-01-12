@@ -95,6 +95,11 @@ struct process_context
     // WOW64 support flag - set during process setup based on executable architecture
     bool is_wow64_process{false};
 
+    uint64_t gdi_shared_table_address{0};
+    uint32_t gdi_cookie{0};
+
+    generic_handle_store* get_handle_store(handle handle);
+  
     uint32_t windows_build_number{0};
 
     bool is_older_windows_build() const
