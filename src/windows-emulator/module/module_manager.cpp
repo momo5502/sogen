@@ -181,9 +181,9 @@ execution_mode pe_architecture_detector::determine_execution_mode(winpe::pe_arch
 }
 
 // PE32 Mapping Strategy Implementation
-mapped_module pe32_mapping_strategy::map_from_file(memory_manager& memory, std::filesystem::path file)
+mapped_module pe32_mapping_strategy::map_from_file(memory_manager& memory, std::filesystem::path file, bool relocate)
 {
-    return map_module_from_file<std::uint32_t>(memory, std::move(file));
+    return map_module_from_file<std::uint32_t>(memory, std::move(file), relocate);
 }
 
 mapped_module pe32_mapping_strategy::map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
@@ -193,9 +193,9 @@ mapped_module pe32_mapping_strategy::map_from_memory(memory_manager& memory, uin
 }
 
 // PE64 Mapping Strategy Implementation
-mapped_module pe64_mapping_strategy::map_from_file(memory_manager& memory, std::filesystem::path file)
+mapped_module pe64_mapping_strategy::map_from_file(memory_manager& memory, std::filesystem::path file, bool relocate)
 {
-    return map_module_from_file<std::uint64_t>(memory, std::move(file));
+    return map_module_from_file<std::uint64_t>(memory, std::move(file), relocate);
 }
 
 mapped_module pe64_mapping_strategy::map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
@@ -487,19 +487,23 @@ std::optional<uint64_t> module_manager::get_module_load_count_by_path(const wind
 
 mapped_module* module_manager::map_module(const windows_path& file, const logger& logger, const bool is_static, bool allow_duplicate)
 {
+    bool relocate = true;
     auto local_file = this->file_sys_->translate(file);
 
-    if (local_file.filename() == "win32u.dll")
+    // If a module has been load one time or more, don't relocate because we will return STATUS_IMAGE_NOT_AT_BASE
+    // because if ntdll for instance with (win32u.dll) or anybody who checks if its not at base, tried to relocate it again
+    // we will end up crashing.
+    if (get_module_load_count_by_path(file) >= 1)
     {
-        return this->map_local_module(local_file, logger, is_static, false);
+        relocate = false;
     }
 
-    return this->map_local_module(local_file, logger, is_static, allow_duplicate);
+    return this->map_local_module(local_file, logger, is_static, allow_duplicate, relocate);
 }
 
 // Refactored map_local_module using the new architecture
 mapped_module* module_manager::map_local_module(const std::filesystem::path& file, const logger& logger, const bool is_static,
-                                                bool allow_duplicate)
+                                                bool allow_duplicate, bool relocate)
 {
     auto local_file = weakly_canonical(absolute(file));
 
@@ -523,7 +527,7 @@ mapped_module* module_manager::map_local_module(const std::filesystem::path& fil
         detection_result,
         [&]() {
             auto& strategy = strategy_factory_.get_strategy(detection_result.architecture);
-            return strategy.map_from_file(*this->memory_, std::move(local_file));
+            return strategy.map_from_file(*this->memory_, std::move(local_file), relocate);
         },
         logger, is_static);
 }

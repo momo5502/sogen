@@ -6,6 +6,8 @@
 #include <utils/buffer_accessor.hpp>
 #include <platform/win_pefile.hpp>
 
+#include <iostream>
+
 namespace
 {
     template <typename T>
@@ -249,7 +251,7 @@ namespace
 }
 
 template <typename T>
-mapped_module map_module_from_data(memory_manager& memory, const std::span<const std::byte> data, std::filesystem::path file)
+mapped_module map_module_from_data(memory_manager& memory, const std::span<const std::byte> data, std::filesystem::path file, bool relocate)
 {
     mapped_module binary{};
     binary.path = std::move(file);
@@ -321,7 +323,11 @@ mapped_module map_module_from_data(memory_manager& memory, const std::span<const
     auto mapped_memory = read_mapped_memory<T>(memory, binary);
     utils::safe_buffer_accessor<std::byte> mapped_buffer{mapped_memory};
 
-    apply_relocations(binary, mapped_buffer, optional_header);
+    if (relocate)
+    {
+        apply_relocations(binary, mapped_buffer, optional_header);
+    }
+
     collect_exports(binary, mapped_buffer, optional_header);
     collect_imports(binary, mapped_buffer, optional_header);
 
@@ -331,7 +337,7 @@ mapped_module map_module_from_data(memory_manager& memory, const std::span<const
 }
 
 template <typename T>
-mapped_module map_module_from_file(memory_manager& memory, std::filesystem::path file)
+mapped_module map_module_from_file(memory_manager& memory, std::filesystem::path file, bool relocate)
 {
     const auto data = utils::io::read_file(file);
     if (data.empty())
@@ -339,7 +345,7 @@ mapped_module map_module_from_file(memory_manager& memory, std::filesystem::path
         throw std::runtime_error("Bad file data: " + file.string());
     }
 
-    return map_module_from_data<T>(memory, data, std::move(file));
+    return map_module_from_data<T>(memory, data, std::move(file), relocate);
 }
 
 template <typename T>
@@ -424,11 +430,11 @@ bool unmap_module(memory_manager& memory, const mapped_module& mod)
 }
 
 template mapped_module map_module_from_data<std::uint32_t>(memory_manager& memory, const std::span<const std::byte> data,
-                                                           std::filesystem::path file);
+                                                           std::filesystem::path file, bool relocate);
 template mapped_module map_module_from_data<std::uint64_t>(memory_manager& memory, const std::span<const std::byte> data,
-                                                           std::filesystem::path file);
-template mapped_module map_module_from_file<std::uint32_t>(memory_manager& memory, std::filesystem::path file);
-template mapped_module map_module_from_file<std::uint64_t>(memory_manager& memory, std::filesystem::path file);
+                                                           std::filesystem::path file, bool relocate);
+template mapped_module map_module_from_file<std::uint32_t>(memory_manager& memory, std::filesystem::path file, bool relocate);
+template mapped_module map_module_from_file<std::uint64_t>(memory_manager& memory, std::filesystem::path file, bool relocate);
 
 template mapped_module map_module_from_memory<std::uint32_t>(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                                              const std::string& module_name);

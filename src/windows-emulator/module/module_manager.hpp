@@ -37,7 +37,7 @@ class module_mapping_strategy
 {
   public:
     virtual ~module_mapping_strategy() = default;
-    virtual mapped_module map_from_file(memory_manager& memory, std::filesystem::path file) = 0;
+    virtual mapped_module map_from_file(memory_manager& memory, std::filesystem::path file, bool relocate = true) = 0;
     virtual mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                           const std::string& module_name) = 0;
 };
@@ -46,7 +46,7 @@ class module_mapping_strategy
 class pe32_mapping_strategy : public module_mapping_strategy
 {
   public:
-    mapped_module map_from_file(memory_manager& memory, std::filesystem::path file) override;
+    mapped_module map_from_file(memory_manager& memory, std::filesystem::path file, bool relocate = true) override;
     mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                   const std::string& module_name) override;
 };
@@ -55,7 +55,7 @@ class pe32_mapping_strategy : public module_mapping_strategy
 class pe64_mapping_strategy : public module_mapping_strategy
 {
   public:
-    mapped_module map_from_file(memory_manager& memory, std::filesystem::path file) override;
+    mapped_module map_from_file(memory_manager& memory, std::filesystem::path file, bool relocate = true) override;
     mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                   const std::string& module_name) override;
 };
@@ -100,7 +100,7 @@ class module_manager
     std::optional<uint64_t> get_module_load_count_by_path(const windows_path& path);
     mapped_module* map_module(const windows_path& file, const logger& logger, bool is_static = false, bool allow_duplicate = false);
     mapped_module* map_local_module(const std::filesystem::path& file, const logger& logger, bool is_static = false,
-                                    bool allow_duplicate = false);
+                                    bool allow_duplicate = false, bool relocate = true);
     mapped_module* map_memory_module(uint64_t base_address, uint64_t image_size, const std::string& module_name, const logger& logger,
                                      bool is_static = false, bool allow_duplicate = false);
 
