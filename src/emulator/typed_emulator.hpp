@@ -1,6 +1,51 @@
 #pragma once
 
 #include "emulator.hpp"
+#include <utility>
+
+struct emulator_stack_allocation
+{
+    uint64_t address{};
+    size_t size{};
+
+    emulator_stack_allocation() = default;
+
+    ~emulator_stack_allocation()
+    {
+        assert(address == 0 && "Emulator stack leak: allocation was not freed before destruction");
+    }
+
+    emulator_stack_allocation(const emulator_stack_allocation&) = delete;
+    emulator_stack_allocation& operator=(const emulator_stack_allocation&) = delete;
+
+    emulator_stack_allocation(emulator_stack_allocation&& other) noexcept
+        : address(std::exchange(other.address, 0)),
+          size(std::exchange(other.size, 0))
+    {
+    }
+
+    emulator_stack_allocation& operator=(emulator_stack_allocation&& other) noexcept
+    {
+        if (this != &other)
+        {
+            address = std::exchange(other.address, 0);
+            size = std::exchange(other.size, 0);
+        }
+        return *this;
+    }
+
+    void serialize(utils::buffer_serializer& buffer) const
+    {
+        buffer.write(address);
+        buffer.write(size);
+    }
+
+    void deserialize(utils::buffer_deserializer& buffer)
+    {
+        buffer.read(address);
+        buffer.read(size);
+    }
+};
 
 template <typename Traits>
 class typed_emulator : public emulator
@@ -80,6 +125,32 @@ class typed_emulator : public emulator
         this->reg(stack_pointer, sp + pointer_size);
 
         return result;
+    }
+
+    template <typename T>
+        requires std::is_trivially_copyable_v<T>
+    emulator_stack_allocation push_stack(const T& data)
+    {
+        uint64_t old_rsp = read_stack_pointer();
+        uint64_t new_rsp = (old_rsp - sizeof(T)) & ~0xF;
+
+        reg(stack_pointer, new_rsp);
+        write_memory(new_rsp, &data, sizeof(T));
+
+        emulator_stack_allocation alloc{};
+        alloc.address = new_rsp;
+        alloc.size = static_cast<size_t>(old_rsp - new_rsp);
+
+        return alloc;
+    }
+
+    void pop_stack(emulator_stack_allocation allocation)
+    {
+        uint64_t current_rsp = read_stack_pointer();
+        assert(current_rsp == allocation.address && "Invalid stack deallocation");
+
+        reg(stack_pointer, current_rsp + allocation.size);
+        allocation = {};
     }
 
     emulator_hook* hook_instruction(hookable_instructions instruction_type, instruction_hook_callback callback)

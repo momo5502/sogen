@@ -80,13 +80,17 @@ struct user_object : ref_counted_object
 struct window : user_object<USER_WINDOW>
 {
     uint32_t thread_id{};
+    hwnd handle{};
     std::u16string name{};
     std::u16string class_name{};
     int32_t width{};
     int32_t height{};
     int32_t x{};
     int32_t y{};
-    std::unordered_map<std::u16string, uint64_t> props;
+    uint32_t ex_style{};
+    uint32_t style{};
+    std::map<std::u16string, uint64_t> props{};
+    emulator_pointer wnd_proc{};
 
     window(memory_interface& memory)
         : user_object(memory)
@@ -97,26 +101,34 @@ struct window : user_object<USER_WINDOW>
     {
         user_object::serialize_object(buffer);
         buffer.write(this->thread_id);
+        buffer.write(this->handle);
         buffer.write(this->name);
         buffer.write(this->class_name);
         buffer.write(this->width);
         buffer.write(this->height);
         buffer.write(this->x);
         buffer.write(this->y);
+        buffer.write(this->ex_style);
+        buffer.write(this->style);
         buffer.write_map(this->props);
+        buffer.write(this->wnd_proc);
     }
 
     void deserialize_object(utils::buffer_deserializer& buffer) override
     {
         user_object::deserialize_object(buffer);
         buffer.read(this->thread_id);
+        buffer.read(this->handle);
         buffer.read(this->name);
         buffer.read(this->class_name);
         buffer.read(this->width);
         buffer.read(this->height);
         buffer.read(this->x);
         buffer.read(this->y);
+        buffer.read(this->ex_style);
+        buffer.read(this->style);
         buffer.read_map(this->props);
+        buffer.read(this->wnd_proc);
     }
 };
 

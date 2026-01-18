@@ -38,9 +38,40 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtQueryEvent()
+    NTSTATUS handle_NtQueryEvent(const syscall_context& c, const handle event_handle, const uint32_t event_information_class,
+                                 const emulator_object<EVENT_BASIC_INFORMATION> event_information, const uint32_t event_information_length,
+                                 const emulator_object<uint32_t> return_length)
     {
-        return STATUS_NOT_SUPPORTED;
+        if (event_information_class != 0) // EventBasicInformation
+        {
+            return STATUS_INVALID_INFO_CLASS;
+        }
+
+        if (event_information_length < sizeof(EVENT_BASIC_INFORMATION))
+        {
+            return STATUS_INFO_LENGTH_MISMATCH;
+        }
+
+        EVENT_TYPE type = NotificationEvent;
+        bool is_signaled = false;
+
+        if (auto* entry = c.proc.events.get(event_handle))
+        {
+            type = entry->type;
+            is_signaled = entry->signaled;
+        }
+
+        event_information.access([&](EVENT_BASIC_INFORMATION& info) {
+            info.EventType = type;
+            info.EventState = is_signaled ? 1 : 0;
+        });
+
+        if (return_length)
+        {
+            return_length.write(sizeof(EVENT_BASIC_INFORMATION));
+        }
+
+        return STATUS_SUCCESS;
     }
 
     NTSTATUS handle_NtClearEvent(const syscall_context& c, const handle event_handle)

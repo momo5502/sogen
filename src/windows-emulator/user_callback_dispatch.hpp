@@ -27,23 +27,39 @@ void prepare_call_stack(x86_64_emulator& emu, uint64_t return_address, Args... a
     (set_function_argument(emu, index++, static_cast<uint64_t>(args)), ...);
 }
 
-template <typename... Args>
-void dispatch_user_callback(const syscall_context& c, callback_id completion_id, uint64_t func_address, Args... args)
+template <typename StateT, typename... Args>
+    requires(std::derived_from<std::remove_reference_t<StateT>, completion_state> ||
+             std::same_as<std::remove_reference_t<StateT>, std::nullptr_t>)
+void dispatch_user_callback(const syscall_context& c, callback_id completion_id, StateT&& state_obj, uint64_t func_address, Args... args)
 {
-    const callback_frame frame{
-        .handler_id = completion_id,
-        .rip = c.emu.read_instruction_pointer(),
-        .rsp = c.emu.read_stack_pointer(),
-        .r10 = c.emu.reg(x86_register::r10),
-        .rcx = c.emu.reg(x86_register::rcx),
-        .rdx = c.emu.reg(x86_register::rdx),
-        .r8 = c.emu.reg(x86_register::r8),
-        .r9 = c.emu.reg(x86_register::r9),
-    };
-    c.proc.active_thread->callback_stack.push_back(frame);
+    if (c.run_callback)
+    {
+        throw std::runtime_error("A callback has already been dispatched");
+    }
 
-    prepare_call_stack(c.emu, c.proc.callback_sentinel_addr, args...);
+    std::unique_ptr<completion_state> state;
+
+    if constexpr (std::same_as<std::remove_reference_t<StateT>, std::nullptr_t>)
+    {
+        state = nullptr;
+    }
+    else
+    {
+        state = std::make_unique<std::remove_reference_t<StateT>>(std::forward<StateT>(state_obj));
+    }
+
+    callback_frame frame(completion_id, std::move(state));
+    frame.save_registers(c.emu);
+    c.proc.active_thread->callback_stack.emplace_back(std::move(frame));
+
+    prepare_call_stack(c.emu, c.proc.zw_callback_return, args...);
 
     c.emu.reg(x86_register::rip, func_address);
     c.run_callback = true;
+}
+
+template <typename... Args>
+void dispatch_user_callback(const syscall_context& c, callback_id completion_id, uint64_t func_address, Args... args)
+{
+    dispatch_user_callback(c, completion_id, nullptr, func_address, args...);
 }

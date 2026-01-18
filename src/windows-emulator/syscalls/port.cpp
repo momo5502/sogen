@@ -124,6 +124,11 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
+    NTSTATUS handle_NtAlpcSetInformation()
+    {
+        return STATUS_SUCCESS;
+    }
+
     NTSTATUS handle_NtAlpcCreateSecurityContext()
     {
         return STATUS_NOT_SUPPORTED;

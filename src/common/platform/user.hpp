@@ -4,11 +4,18 @@
 
 // NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
+#define FNID_START      0x29A
+#define FNID_ARRAY_SIZE 24
+
 struct USER_SERVERINFO
 {
     DWORD dwSRVIFlags;
     uint64_t cHandleEntries;
-    uint8_t unknown[0x1000];
+    uint8_t unknown1[0x178];
+    uint64_t apfnClientA[FNID_ARRAY_SIZE];
+    uint64_t apfnClientW[FNID_ARRAY_SIZE];
+    uint64_t apfnClientWorker[FNID_ARRAY_SIZE];
+    uint8_t unknown2[0x1000];
 };
 
 struct USER_DISPINFO
@@ -36,23 +43,6 @@ struct USER_SHAREDINFO
     uint32_t HeEntrySize;
     EMULATOR_CAST(uint64_t, USER_DISPINFO*) pDispInfo;
     uint8_t unknown[0xFF];
-};
-
-struct USER_THROBJHEAD
-{
-    struct
-    {
-        uint64_t h;
-        uint32_t cLockObj;
-    } h;
-    uint64_t pti;
-};
-
-struct USER_THRDESKHEAD
-{
-    USER_THROBJHEAD h;
-    uint64_t rpdesk;
-    uint64_t pSelf;
 };
 
 enum USER_HANDLETYPE : uint8_t
@@ -109,7 +99,50 @@ struct USER_MONITOR
     uint8_t unknown4[0xFF];
 };
 
+template <typename Traits>
+struct CLSMENUNAME
+{
+    EMULATOR_CAST(typename Traits::PVOID, char*) pszClientAnsiMenuName;
+    EMULATOR_CAST(typename Traits::PVOID, char16_t*) pwszClientUnicodeMenuName;
+    EMULATOR_CAST(typename Traits::PVOID, UNICODE_STRING*) pusMenuName;
+};
+
+struct USER_CLASS
+{
+    uint8_t unknown[0xFF];
+};
+
 struct USER_WINDOW
+{
+    uint64_t hWnd;
+    uint64_t ptrBase;
+    uint8_t pad_010[2];
+    uint8_t bFlags;
+    uint8_t pad_013[5];
+    uint32_t dwExStyle;
+    uint32_t dwStyle;
+    uint64_t hInstance;
+    uint8_t pad_028[8];
+    uint64_t spwndParent;
+    uint8_t pad_038[64];
+    uint64_t lpfnWndProc;
+    uint64_t pcls;
+    uint8_t pad_088[16];
+    uint64_t spmenu;
+    uint8_t pad_0A0[40];
+    uint32_t cbWndExtra;
+    uint8_t pad_0CC[12];
+    uint64_t userData;
+    uint64_t pActCtx;
+    uint8_t pad_0E8[16];
+    uint32_t wndExtraOffset;
+    uint8_t pad_0FC[44];
+    uint64_t pExtraBytes;
+    uint8_t pad_130[16];
+    uint64_t wID;
+};
+
+struct USER_DESKTOPINFO
 {
     uint8_t unknown[0xFF];
 };

@@ -741,4 +741,33 @@ namespace syscalls
     {
         return handle_NtQueueApcThreadEx(c, thread_handle, make_handle(0), apc_routine, apc_argument1, apc_argument2, apc_argument3);
     }
+
+    NTSTATUS handle_NtCallbackReturn(const syscall_context& c)
+    {
+        auto& t = c.win_emu.current_thread();
+
+        if (t.callback_stack.empty())
+        {
+            throw std::runtime_error("Unexpected callback return");
+        }
+
+        const uint64_t callback_result = c.emu.reg(x86_register::rax);
+
+        const auto frame = std::move(t.callback_stack.back());
+        t.callback_stack.pop_back();
+
+        frame.restore_registers(c.emu);
+
+        auto dispatch_result = c.win_emu.dispatcher.dispatch_completion(c.win_emu, frame.handler_id, frame.state.get(), callback_result);
+
+        if (dispatch_result != dispatch_result::new_callback)
+        {
+            // Move past syscall instruction
+            const auto new_ip = c.emu.read_instruction_pointer();
+            c.emu.reg(x86_register::rip, new_ip + 2);
+        }
+
+        c.write_status = false;
+        return {};
+    }
 }

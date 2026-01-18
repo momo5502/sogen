@@ -950,6 +950,130 @@ namespace
         SleepEx(1, TRUE);
         return executions == 2;
     }
+
+    bool test_message_queue()
+    {
+        static UINT wnd_proc_num = 0;
+        static const UINT wnd_msg_id = WM_APP + 2;
+
+        WNDCLASSEXA wc = {};
+        wc.cbSize = sizeof(wc);
+        wc.lpszClassName = "TestMsgQueueClass";
+        wc.hInstance = GetModuleHandleA(nullptr);
+        wc.lpfnWndProc = +[](HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) -> LRESULT {
+            if (msg == WM_CREATE)
+            {
+                const auto cs = reinterpret_cast<CREATESTRUCTA*>(lp);
+                if (cs->lpCreateParams == reinterpret_cast<void*>(0x1337))
+                {
+                    wnd_proc_num += 1;
+                }
+            }
+            else if (msg == wnd_msg_id)
+            {
+                if (wp == 123 && lp == 456)
+                {
+                    wnd_proc_num += 1;
+                    return 777;
+                }
+            }
+            return DefWindowProcA(hwnd, msg, wp, lp);
+        };
+
+        if (!RegisterClassExA(&wc))
+        {
+            puts("Failed to register window class");
+            return false;
+        }
+
+        HWND hwnd = CreateWindowExA(0, wc.lpszClassName, nullptr, 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, wc.hInstance,
+                                    reinterpret_cast<void*>(0x1337));
+        if (!hwnd || wnd_proc_num != 1)
+        {
+            puts("Failed to create message window");
+            UnregisterClassA(wc.lpszClassName, wc.hInstance);
+            return false;
+        }
+
+        const LRESULT send_res = SendMessageA(hwnd, wnd_msg_id, 123, 456);
+
+        if (send_res != 777 || wnd_proc_num != 2)
+        {
+            puts("SendMessage failed");
+            DestroyWindow(hwnd);
+            UnregisterClassA(wc.lpszClassName, wc.hInstance);
+            return false;
+        }
+
+        wnd_proc_num = 0;
+        if (!PostMessageA(hwnd, wnd_msg_id, 123, 456))
+        {
+            puts("PostMessage failed");
+            DestroyWindow(hwnd);
+            UnregisterClassA(wc.lpszClassName, wc.hInstance);
+            return false;
+        }
+
+        MSG msg = {};
+        if (GetMessageA(&msg, hwnd, 0, 0) <= 0)
+        {
+            puts("GetMessage failed or returned WM_QUIT unexpectedly");
+            DestroyWindow(hwnd);
+            UnregisterClassA(wc.lpszClassName, wc.hInstance);
+            return false;
+        }
+
+        if (msg.message != wnd_msg_id)
+        {
+            puts("Retrieved message is not the expected custom message");
+            DestroyWindow(hwnd);
+            UnregisterClassA(wc.lpszClassName, wc.hInstance);
+            return false;
+        }
+
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+
+        if (wnd_proc_num != 1)
+        {
+            puts("Posted window message did not execute WndProc");
+            DestroyWindow(hwnd);
+            UnregisterClassA(wc.lpszClassName, wc.hInstance);
+            return false;
+        }
+
+        constexpr int quit_code = 42;
+        PostQuitMessage(quit_code);
+
+        const BOOL quit_result = GetMessageA(&msg, nullptr, 0, 0);
+        if (quit_result != 0)
+        {
+            puts("GetMessage did not return 0 for WM_QUIT");
+            DestroyWindow(hwnd);
+            UnregisterClassA(wc.lpszClassName, wc.hInstance);
+            return false;
+        }
+
+        if (msg.message != WM_QUIT)
+        {
+            puts("Message is not WM_QUIT");
+            DestroyWindow(hwnd);
+            UnregisterClassA(wc.lpszClassName, wc.hInstance);
+            return false;
+        }
+
+        if (msg.wParam != quit_code)
+        {
+            puts("WM_QUIT exit code mismatch");
+            DestroyWindow(hwnd);
+            UnregisterClassA(wc.lpszClassName, wc.hInstance);
+            return false;
+        }
+
+        DestroyWindow(hwnd);
+        UnregisterClassA(wc.lpszClassName, wc.hInstance);
+        return true;
+    }
 }
 
 #define RUN_TEST(func, name)                 \
@@ -993,6 +1117,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_socket, "Socket")
     RUN_TEST(test_apc, "APC")
     RUN_TEST(test_user_callback, "User Callback")
+    RUN_TEST(test_message_queue, "Message Queue")
 
     return valid ? 0 : 1;
 }

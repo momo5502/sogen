@@ -6,6 +6,7 @@
 
 #include <utils/moved_marker.hpp>
 
+struct completion_state;
 struct process_context;
 
 struct pending_apc
@@ -35,46 +36,80 @@ struct pending_apc
     }
 };
 
+struct pending_msg
+{
+    emulator_object<msg> message;
+    hwnd hwnd_filter{};
+    UINT filter_min{};
+    UINT filter_max{};
+
+    pending_msg(memory_interface& memory)
+        : message(memory)
+    {
+    }
+
+    pending_msg(emulator_object<msg> message, hwnd hwnd_filter, UINT filter_min, UINT filter_max)
+        : message(message),
+          hwnd_filter(hwnd_filter),
+          filter_min(filter_min),
+          filter_max(filter_max)
+    {
+    }
+
+    void serialize(utils::buffer_serializer& buffer) const
+    {
+        buffer.write(this->message);
+        buffer.write(this->hwnd_filter);
+        buffer.write(this->filter_min);
+        buffer.write(this->filter_max);
+    }
+
+    void deserialize(utils::buffer_deserializer& buffer)
+    {
+        buffer.read(this->message);
+        buffer.read(this->hwnd_filter);
+        buffer.read(this->filter_min);
+        buffer.read(this->filter_max);
+    }
+};
+
 enum class callback_id : uint32_t
 {
     Invalid = 0,
+    NtUserCreateWindowEx,
+    NtUserDestroyWindow,
+    NtUserShowWindow,
     NtUserEnumDisplayMonitors,
 };
 
 struct callback_frame
 {
-    callback_id handler_id;
-    uint64_t rip;
-    uint64_t rsp;
-    uint64_t r10;
-    uint64_t rcx;
-    uint64_t rdx;
-    uint64_t r8;
-    uint64_t r9;
+    callback_id handler_id{};
+    uint64_t rip{};
+    uint64_t rsp{};
+    uint64_t r10{};
+    uint64_t rcx{};
+    uint64_t rdx{};
+    uint64_t r8{};
+    uint64_t r9{};
+    std::unique_ptr<completion_state> state{};
 
-    void serialize(utils::buffer_serializer& buffer) const
-    {
-        buffer.write(this->handler_id);
-        buffer.write(this->rip);
-        buffer.write(this->rsp);
-        buffer.write(this->r10);
-        buffer.write(this->rcx);
-        buffer.write(this->rdx);
-        buffer.write(this->r8);
-        buffer.write(this->r9);
-    }
+    callback_frame();
+    callback_frame(callback_id callback_id, std::unique_ptr<completion_state> completion_state);
 
-    void deserialize(utils::buffer_deserializer& buffer)
-    {
-        buffer.read(this->handler_id);
-        buffer.read(this->rip);
-        buffer.read(this->rsp);
-        buffer.read(this->r10);
-        buffer.read(this->rcx);
-        buffer.read(this->rdx);
-        buffer.read(this->r8);
-        buffer.read(this->r9);
-    }
+    callback_frame(const callback_frame&) = delete;
+    callback_frame& operator=(const callback_frame&) = delete;
+
+    callback_frame(callback_frame&& obj) noexcept;
+    callback_frame& operator=(callback_frame&& obj) noexcept;
+
+    ~callback_frame();
+
+    void save_registers(x86_64_emulator& emu);
+    void restore_registers(x86_64_emulator& emu) const;
+
+    void serialize(utils::buffer_serializer& buffer) const;
+    void deserialize(utils::buffer_deserializer& buffer);
 };
 
 class emulator_thread : public ref_counted_object
@@ -131,6 +166,7 @@ class emulator_thread : public ref_counted_object
     uint32_t create_flags{0};
     uint32_t suspended{0};
     std::optional<std::chrono::steady_clock::time_point> await_time{};
+    std::optional<pending_msg> await_msg{};
 
     bool apc_alertable{false};
     std::vector<pending_apc> pending_apcs{};
@@ -149,6 +185,8 @@ class emulator_thread : public ref_counted_object
 
     std::vector<callback_frame> callback_stack;
 
+    std::vector<msg> message_queue;
+
     void mark_as_ready(NTSTATUS status);
 
     bool is_await_time_over(utils::clock& clock) const
@@ -156,6 +194,9 @@ class emulator_thread : public ref_counted_object
         constexpr auto infinite = std::chrono::steady_clock::time_point::min();
         return this->await_time.has_value() && this->await_time.value() != infinite && this->await_time.value() < clock.steady_now();
     }
+
+    std::optional<msg> peek_pending_message(hwnd hwnd_filter, UINT filter_min, UINT filter_max, bool remove = false);
+    void post_message(const msg& msg);
 
     bool is_terminated() const;
 
@@ -216,6 +257,7 @@ class emulator_thread : public ref_counted_object
         buffer.write(this->create_flags);
         buffer.write(this->suspended);
         buffer.write_optional(this->await_time);
+        buffer.write_optional(this->await_msg);
 
         buffer.write(this->apc_alertable);
         buffer.write_vector(this->pending_apcs);
@@ -234,6 +276,8 @@ class emulator_thread : public ref_counted_object
         buffer.write(this->debugger_hide);
 
         buffer.write_vector(this->callback_stack);
+
+        buffer.write_vector(this->message_queue);
     }
 
     void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -266,6 +310,7 @@ class emulator_thread : public ref_counted_object
         buffer.read(this->create_flags);
         buffer.read(this->suspended);
         buffer.read_optional(this->await_time);
+        buffer.read_optional(this->await_msg, [this] { return pending_msg{*this->memory_ptr}; });
 
         buffer.read(this->apc_alertable);
         buffer.read_vector(this->pending_apcs);
@@ -284,6 +329,8 @@ class emulator_thread : public ref_counted_object
         buffer.read(this->debugger_hide);
 
         buffer.read_vector(this->callback_stack);
+
+        buffer.read_vector(this->message_queue);
     }
 
     void leak_memory()

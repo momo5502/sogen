@@ -142,38 +142,44 @@ void syscall_dispatcher::dispatch_callback(windows_emulator& win_emu, std::strin
     }
 }
 
-void syscall_dispatcher::dispatch_completion(windows_emulator& win_emu, callback_id callback_id, uint64_t guest_result)
+dispatch_result syscall_dispatcher::dispatch_completion(windows_emulator& win_emu, callback_id callback_id,
+                                                        completion_state* completion_state, uint64_t callback_result)
 {
     auto& emu = win_emu.emu();
-    const syscall_context c{
-        .win_emu = win_emu,
-        .emu = emu,
-        .proc = win_emu.process,
-        .write_status = true,
-    };
 
-    const auto entry = this->callbacks_.find(callback_id);
+    const syscall_context c{.win_emu = win_emu,
+                            .emu = emu,
+                            .proc = win_emu.process,
+                            .write_status = true,
+                            .is_callback_completion = true,
+                            .current_completion_state = completion_state,
+                            .previous_callback_result = callback_result};
 
-    if (entry == this->callbacks_.end())
+    const auto entry = this->completion_handlers_.find(callback_id);
+
+    if (entry == this->completion_handlers_.end())
     {
         win_emu.log.error("Unknown callback: 0x%X\n", static_cast<uint32_t>(callback_id));
         c.emu.stop();
-        return;
+        return dispatch_result::error;
     }
 
     try
     {
-        entry->second(c, guest_result);
+        entry->second(c);
+        return c.run_callback ? dispatch_result::new_callback : dispatch_result::completed;
     }
     catch (std::exception& e)
     {
-        win_emu.log.error("Callback 0x%X threw an exception - %s\n", static_cast<int>(callback_id), e.what());
+        win_emu.log.error("Completion for callback 0x%X threw an exception - %s\n", static_cast<int>(callback_id), e.what());
         emu.stop();
+        return dispatch_result::error;
     }
     catch (...)
     {
-        win_emu.log.error("Callback 0x%X threw an unknown exception\n", static_cast<int>(callback_id));
+        win_emu.log.error("Completion for callback 0x%X threw an unknown exception\n", static_cast<int>(callback_id));
         emu.stop();
+        return dispatch_result::error;
     }
 }
 
@@ -182,3 +188,5 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports, co
 {
     this->setup(ntdll_exports, ntdll_data, win32u_exports, win32u_data);
 }
+
+std::map<callback_id, std::function<std::unique_ptr<completion_state>()>> syscall_dispatcher::completion_state_factories_{};
