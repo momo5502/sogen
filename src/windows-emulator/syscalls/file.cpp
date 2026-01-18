@@ -105,6 +105,20 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
+        if (info_class == FileDispositionInformation)
+        {
+            if (length < sizeof(FILE_DISPOSITION_INFORMATION))
+            {
+                return STATUS_BUFFER_OVERFLOW;
+            }
+
+            const auto info = c.emu.read_memory<FILE_DISPOSITION_INFORMATION>(file_information);
+
+            f->handle.defer_delete(info.DeleteFile ? c.win_emu.file_sys.translate(f->name) : std::filesystem::path{});
+
+            return STATUS_SUCCESS;
+        }
+
         if (info_class == FileBasicInformation)
         {
             return STATUS_NOT_SUPPORTED;
@@ -140,7 +154,34 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
-        c.win_emu.log.error("Unsupported set file info class: %X\n", info_class);
+        if (info_class == FileEndOfFileInformation)
+        {
+            if (!f->handle)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            if (length < sizeof(FILE_END_OF_FILE_INFORMATION))
+            {
+                return STATUS_BUFFER_OVERFLOW;
+            }
+
+            const auto info = c.emu.read_memory<FILE_END_OF_FILE_INFORMATION>(file_information);
+
+            if (!f->handle.resize(info.EndOfFile.QuadPart))
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            return STATUS_SUCCESS;
+        }
+
+        if (info_class == FileAllocationInformation)
+        {
+            return STATUS_SUCCESS;
+        }
+
+        c.win_emu.log.error("Unsupported set file info class: 0x%X\n", info_class);
         c.emu.stop();
 
         return STATUS_NOT_SUPPORTED;
@@ -479,7 +520,7 @@ namespace syscalls
             }
 
             struct _stat64 file_stat{};
-            if (fstat64(f->handle, &file_stat) != 0)
+            if (fstat64(f->handle.file_descriptor(), &file_stat) != 0)
             {
                 return STATUS_INVALID_HANDLE;
             }
@@ -585,7 +626,7 @@ namespace syscalls
             }
 
             struct _stat64 file_stat{};
-            if (fstat64(f->handle, &file_stat) != 0)
+            if (fstat64(f->handle.file_descriptor(), &file_stat) != 0)
             {
                 return ret(STATUS_INVALID_HANDLE);
             }
@@ -598,6 +639,90 @@ namespace syscalls
             memcpy(&i.FileId.Identifier[0], &file_stat.st_ino, sizeof(file_stat.st_ino));
 
             info.write(i);
+
+            return ret(STATUS_SUCCESS);
+        }
+
+        if (info_class == FileStreamInformation)
+        {
+            const std::u16string stream_name = u"::$DATA";
+            const auto stream_name_len = static_cast<uint32_t>(stream_name.size() * sizeof(char16_t));
+
+            const uint32_t required_length = offsetof(FILE_STREAM_INFORMATION, StreamName) + stream_name_len;
+            block.Information = required_length;
+
+            if (length < required_length)
+            {
+                return ret(STATUS_BUFFER_OVERFLOW);
+            }
+
+            struct _stat64 file_stat{};
+            if (f->handle)
+            {
+                if (fstat64(f->handle.file_descriptor(), &file_stat) != 0)
+                {
+                    return ret(STATUS_INVALID_HANDLE);
+                }
+            }
+
+            FILE_STREAM_INFORMATION info{};
+            info.NextEntryOffset = 0;
+            info.StreamNameLength = stream_name_len;
+
+            if (f->is_directory())
+            {
+                info.StreamSize.QuadPart = 0;
+                info.StreamAllocationSize.QuadPart = 0;
+            }
+            else
+            {
+                info.StreamSize.QuadPart = file_stat.st_size;
+                info.StreamAllocationSize.QuadPart = file_stat.st_size;
+            }
+
+            c.emu.write_memory(file_information, info);
+            c.emu.write_memory(file_information + offsetof(FILE_STREAM_INFORMATION, StreamName), stream_name.c_str(), stream_name_len);
+
+            return ret(STATUS_SUCCESS);
+        }
+
+        if (info_class == FileEaInformation)
+        {
+            block.Information = sizeof(FILE_EA_INFORMATION);
+
+            if (length < block.Information)
+            {
+                return ret(STATUS_BUFFER_OVERFLOW);
+            }
+
+            const emulator_object<FILE_EA_INFORMATION> info{c.emu, file_information};
+            FILE_EA_INFORMATION i{};
+
+            i.EaSize = 0;
+
+            info.write(i);
+
+            return ret(STATUS_SUCCESS);
+        }
+
+        if (info_class == FileVolumeNameInformation)
+        {
+            const std::u16string volume_name = u"\\Device\\HarddiskVolume1";
+            const auto name_bytes = static_cast<uint32_t>(volume_name.size() * sizeof(char16_t));
+
+            const uint32_t required_length = offsetof(FILE_VOLUME_NAME_INFORMATION, DeviceName) + name_bytes;
+            block.Information = required_length;
+
+            if (length < required_length)
+            {
+                return ret(STATUS_BUFFER_OVERFLOW);
+            }
+
+            FILE_VOLUME_NAME_INFORMATION vni{};
+            vni.DeviceNameLength = name_bytes;
+
+            c.emu.write_memory(file_information, vni);
+            c.emu.write_memory(file_information + offsetof(FILE_VOLUME_NAME_INFORMATION, DeviceName), volume_name.c_str(), name_bytes);
 
             return ret(STATUS_SUCCESS);
         }
@@ -655,7 +780,7 @@ namespace syscalls
             }
 
             struct _stat64 file_stat{};
-            if (fstat64(native_file_handle, &file_stat) != 0)
+            if (fstat64(native_file_handle.file_descriptor(), &file_stat) != 0)
             {
                 return STATUS_INVALID_HANDLE;
             }
@@ -1027,8 +1152,18 @@ namespace syscalls
         {
             c.win_emu.callbacks.on_generic_access("Opening folder", f.name);
 
-            if (create_disposition & FILE_CREATE)
+            if (create_disposition == FILE_CREATE || create_disposition == FILE_OPEN_IF)
             {
+                if (create_disposition == FILE_CREATE && std::filesystem::exists(host_path))
+                {
+                    return STATUS_OBJECT_NAME_COLLISION;
+                }
+
+                if (!std::filesystem::is_directory(host_path.parent_path()))
+                {
+                    return STATUS_OBJECT_PATH_NOT_FOUND;
+                }
+
                 create_directory(host_path, ec);
 
                 if (ec)
@@ -1084,6 +1219,8 @@ namespace syscalls
         }
 
         f.handle = std::move(native_file_handle);
+        f.open_mode = mode;
+        f.host_path = host_path;
 
         const auto handle = c.proc.files.store(std::move(f));
         file_handle.write(handle);

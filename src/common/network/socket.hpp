@@ -42,7 +42,7 @@ namespace network
         socket(socket&& obj) noexcept;
         socket& operator=(socket&& obj) noexcept;
 
-        operator bool() const;
+        explicit operator bool() const;
 
         bool is_valid() const;
 

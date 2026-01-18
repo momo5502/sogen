@@ -300,9 +300,9 @@ namespace syscalls
     NTSTATUS handle_NtQueryInformationThread(const syscall_context& c, handle thread_handle, uint32_t info_class,
                                              uint64_t thread_information, uint32_t thread_information_length,
                                              emulator_object<uint32_t> return_length);
-    NTSTATUS handle_NtOpenThread(const syscall_context&, handle thread_handle, ACCESS_MASK /*desired_access*/,
-                                 emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
-                                 emulator_pointer /*client_id*/);
+    NTSTATUS handle_NtOpenThread(const syscall_context&, emulator_object<handle> thread_handle, ACCESS_MASK desired_access,
+                                 emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                 emulator_object<CLIENT_ID64> client_id);
     NTSTATUS handle_NtOpenThreadToken(const syscall_context&, handle thread_handle, ACCESS_MASK /*desired_access*/,
                                       BOOLEAN /*open_as_self*/, emulator_object<handle> token_handle);
     NTSTATUS handle_NtOpenThreadTokenEx(const syscall_context& c, handle thread_handle, ACCESS_MASK desired_access, BOOLEAN open_as_self,
@@ -314,6 +314,7 @@ namespace syscalls
                                               emulator_object<EMU_RTL_SRWLOCK<EmulatorTraits<Emu64>>> lock);
     NTSTATUS handle_NtWaitForAlertByThreadId(const syscall_context& c, uint64_t, emulator_object<LARGE_INTEGER> timeout);
     NTSTATUS handle_NtYieldExecution(const syscall_context& c);
+    NTSTATUS handle_NtSuspendThread(const syscall_context& c, handle thread_handle, emulator_object<ULONG> previous_suspend_count);
     NTSTATUS handle_NtResumeThread(const syscall_context& c, handle thread_handle, emulator_object<ULONG> previous_suspend_count);
     NTSTATUS handle_NtContinue(const syscall_context& c, emulator_object<CONTEXT64> thread_context, BOOLEAN raise_alert);
     NTSTATUS handle_NtContinueEx(const syscall_context& c, emulator_object<CONTEXT64> thread_context, uint64_t continue_argument);
@@ -326,7 +327,7 @@ namespace syscalls
                                      /*object_attributes*/,
                                      handle process_handle, uint64_t start_routine, uint64_t argument, ULONG create_flags,
                                      EmulatorTraits<Emu64>::SIZE_T /*zero_bits*/, EmulatorTraits<Emu64>::SIZE_T stack_size,
-                                     EmulatorTraits<Emu64>::SIZE_T /*maximum_stack_size*/,
+                                     EmulatorTraits<Emu64>::SIZE_T maximum_stack_size,
                                      emulator_object<PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>> attribute_list);
     NTSTATUS handle_NtGetCurrentProcessorNumberEx(const syscall_context&, emulator_object<PROCESSOR_NUMBER> processor_number);
     ULONG handle_NtGetCurrentProcessorNumber();
@@ -1266,6 +1267,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtRequestWaitReplyPort);
     add_handler(NtQueryDefaultLocale);
     add_handler(NtSetTimerResolution);
+    add_handler(NtSuspendThread);
     add_handler(NtResumeThread);
     add_handler(NtClearEvent);
     add_handler(NtTraceControl);

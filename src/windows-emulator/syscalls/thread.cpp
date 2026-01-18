@@ -338,11 +338,27 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtOpenThread(const syscall_context&, handle /*thread_handle*/, ACCESS_MASK /*desired_access*/,
+    NTSTATUS handle_NtOpenThread(const syscall_context& c, const emulator_object<handle> thread_handle, ACCESS_MASK /*desired_access*/,
                                  emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
-                                 emulator_pointer /*client_id*/)
+                                 emulator_object<CLIENT_ID64> client_id)
     {
-        return STATUS_NOT_SUPPORTED;
+        if (!client_id)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const auto id = client_id.read();
+
+        for (auto& [h_val, t] : c.proc.threads)
+        {
+            if (t.id == id.UniqueThread)
+            {
+                thread_handle.write(c.proc.threads.make_handle(h_val));
+                return STATUS_SUCCESS;
+            }
+        }
+
+        return STATUS_INVALID_CID;
     }
 
     NTSTATUS handle_NtOpenThreadToken(const syscall_context&, const handle thread_handle, const ACCESS_MASK /*desired_access*/,
@@ -463,10 +479,41 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
+    NTSTATUS handle_NtSuspendThread(const syscall_context& c, const handle thread_handle,
+                                    const emulator_object<ULONG> previous_suspend_count)
+    {
+        auto* thread = thread_handle == CURRENT_THREAD ? c.proc.active_thread : c.proc.threads.get(thread_handle);
+
+        if (!thread)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        const auto old_count = thread->suspended;
+        if (previous_suspend_count)
+        {
+            previous_suspend_count.write(old_count);
+        }
+
+        if (thread->suspended >= 0x7F) // MAXIMUM_SUSPEND_COUNT
+        {
+            return STATUS_SUSPEND_COUNT_EXCEEDED;
+        }
+
+        thread->suspended += 1;
+
+        if (thread == c.proc.active_thread)
+        {
+            c.win_emu.yield_thread();
+        }
+
+        return STATUS_SUCCESS;
+    }
+
     NTSTATUS handle_NtResumeThread(const syscall_context& c, const handle thread_handle,
                                    const emulator_object<ULONG> previous_suspend_count)
     {
-        auto* thread = c.proc.threads.get(thread_handle);
+        auto* thread = thread_handle == CURRENT_THREAD ? c.proc.active_thread : c.proc.threads.get(thread_handle);
         if (!thread)
         {
             return STATUS_INVALID_HANDLE;
@@ -624,8 +671,7 @@ namespace syscalls
                                      /*object_attributes*/,
                                      const handle process_handle, const uint64_t start_routine, const uint64_t argument,
                                      const ULONG create_flags, const EmulatorTraits<Emu64>::SIZE_T /*zero_bits*/,
-                                     const EmulatorTraits<Emu64>::SIZE_T stack_size,
-                                     const EmulatorTraits<Emu64>::SIZE_T /*maximum_stack_size*/,
+                                     const EmulatorTraits<Emu64>::SIZE_T stack_size, const EmulatorTraits<Emu64>::SIZE_T maximum_stack_size,
                                      const emulator_object<PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>> attribute_list)
     {
         if (process_handle != CURRENT_PROCESS)
@@ -633,7 +679,18 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
         }
 
-        const auto h = c.proc.create_thread(c.win_emu.memory, start_routine, argument, stack_size, create_flags);
+        if (stack_size > maximum_stack_size)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        uint64_t actual_stack_size = maximum_stack_size;
+        if (maximum_stack_size == 0)
+        {
+            actual_stack_size = c.win_emu.mod_manager.executable->size_of_stack_reserve;
+        }
+
+        const auto h = c.proc.create_thread(c.win_emu.memory, start_routine, argument, actual_stack_size, create_flags);
         thread_handle.write(h);
 
         if (!attribute_list)

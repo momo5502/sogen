@@ -215,6 +215,8 @@ struct file : ref_counted_object
 {
     utils::file_handle handle{};
     std::u16string name{};
+    std::u16string open_mode{};
+    std::filesystem::path host_path{};
     std::optional<file_enumeration_state> enumeration_state{};
 
     bool is_file() const
@@ -229,16 +231,49 @@ struct file : ref_counted_object
 
     void serialize_object(utils::buffer_serializer& buffer) const override
     {
-        // TODO: Serialize handle
         buffer.write(this->name);
+        buffer.write(this->open_mode);
+        buffer.write(this->host_path.u16string());
         buffer.write_optional(this->enumeration_state);
+
+        const auto has_handle = static_cast<bool>(this->handle);
+        buffer.write(has_handle);
+
+        if (has_handle)
+        {
+            buffer.write(this->handle);
+        }
     }
 
     void deserialize_object(utils::buffer_deserializer& buffer) override
     {
         buffer.read(this->name);
+        buffer.read(this->open_mode);
+        this->host_path = buffer.read<std::u16string>();
         buffer.read_optional(this->enumeration_state);
+
+        const auto has_handle = buffer.read<bool>();
+
         this->handle = {};
+
+        if (has_handle)
+        {
+#if defined(OS_WINDOWS)
+            FILE* native_file = _wfopen(this->host_path.c_str(), reinterpret_cast<const wchar_t*>(this->open_mode.c_str()));
+#else
+            FILE* native_file = fopen(u16_to_u8(this->host_path.u16string()).c_str(), u16_to_u8(this->open_mode).c_str());
+#endif
+
+            if (native_file)
+            {
+                this->handle = native_file;
+                buffer.read(this->handle);
+            }
+            else
+            {
+                throw std::runtime_error("Failed to reobtain file handle");
+            }
+        }
     }
 };
 

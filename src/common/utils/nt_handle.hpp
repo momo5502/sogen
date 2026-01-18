@@ -69,7 +69,7 @@ namespace utils::nt
             return *this;
         }
 
-        [[nodiscard]] operator bool() const
+        [[nodiscard]] explicit operator bool() const
         {
             return this->handle_ != InvalidHandleFunction();
         }

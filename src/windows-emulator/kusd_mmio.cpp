@@ -173,6 +173,10 @@ void kusd_mmio::update()
 
     this->kusd_.TickCount.TickCountQuad = (duration_100ns << 24) / this->kusd_.TickCountMultiplier;
     this->kusd_.TickCount.TickCount.High2Time = this->kusd_.TickCount.TickCount.High1Time;
+
+    this->kusd_.InterruptTime.High2Time = static_cast<int32_t>(duration_100ns >> 32);
+    this->kusd_.InterruptTime.LowPart = static_cast<uint32_t>(duration_100ns & 0xFFFFFFFF);
+    this->kusd_.InterruptTime.High1Time = static_cast<int32_t>(duration_100ns >> 32);
 }
 
 void kusd_mmio::register_mmio()
