@@ -52,7 +52,7 @@ namespace
         }
         else
         {
-            const uint64_t stack_end = stack_base + stack_size - sizeof(WOW64_CPURESERVED) - 0x548;
+            const uint64_t stack_end = stack_base + stack_size - sizeof(WOW64_CPURESERVED) - 0x1578;
             emu.reg(x86_register::rsp, stack_end);
         }
     }
@@ -197,7 +197,7 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
         return;
     }
 
-    uint64_t wow64_cpureserved_base = this->stack_base + this->stack_size - sizeof(WOW64_CPURESERVED);
+    const uint64_t wow64_cpureserved_base = this->stack_base + this->stack_size - sizeof(WOW64_CPURESERVED) - 0x1030;
 
     // Initialize 64-bit TEB first
     this->teb64->access([&](TEB64& teb_obj) {
