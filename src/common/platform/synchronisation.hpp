@@ -17,4 +17,10 @@ typedef enum _WAIT_TYPE
     WaitDpc,
 } WAIT_TYPE;
 
+struct EVENT_BASIC_INFORMATION
+{
+    EVENT_TYPE EventType;
+    LONG EventState;
+};
+
 // NOLINTEND(modernize-use-using)

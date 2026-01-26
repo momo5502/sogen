@@ -246,4 +246,41 @@ namespace utils::string
         return std::ranges::equal(lhs.substr(start, rhs.length()), rhs,
                                   [](const auto c1, const auto c2) { return char_to_lower(c1) == char_to_lower(c2); });
     }
+
+    template <class Elem, class Traits>
+    int compare_ignore_case(std::basic_string_view<Elem, Traits> lhs, std::basic_string_view<Elem, Traits> rhs)
+    {
+        const std::size_t n = std::min(lhs.size(), rhs.size());
+
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            auto c1 = char_to_lower(lhs[i]);
+            auto c2 = char_to_lower(rhs[i]);
+
+            if (c1 < c2)
+            {
+                return -1;
+            }
+            if (c1 > c2)
+            {
+                return 1;
+            }
+        }
+
+        if (lhs.size() < rhs.size())
+        {
+            return -1;
+        }
+        if (lhs.size() > rhs.size())
+        {
+            return 1;
+        }
+        return 0;
+    }
+
+    template <class Elem, class Traits, class Alloc>
+    int compare_ignore_case(const std::basic_string<Elem, Traits, Alloc>& lhs, const std::basic_string<Elem, Traits, Alloc>& rhs)
+    {
+        return compare_ignore_case(std::basic_string_view<Elem, Traits>(lhs), std::basic_string_view<Elem, Traits>(rhs));
+    }
 }

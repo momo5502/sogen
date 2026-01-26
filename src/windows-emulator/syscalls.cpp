@@ -3,7 +3,6 @@
 #include "cpu_context.hpp"
 #include "emulator_utils.hpp"
 #include "syscall_utils.hpp"
-#include "user_callback_dispatch.hpp"
 
 #include <numeric>
 #include <cwctype>
@@ -17,7 +16,9 @@ namespace syscalls
     // syscalls/event.cpp:
     NTSTATUS handle_NtSetEvent(const syscall_context& c, uint64_t handle, emulator_object<LONG> previous_state);
     NTSTATUS handle_NtTraceEvent();
-    NTSTATUS handle_NtQueryEvent();
+    NTSTATUS handle_NtQueryEvent(const syscall_context& c, handle event_handle, uint32_t event_information_class,
+                                 emulator_object<EVENT_BASIC_INFORMATION> event_information, uint32_t event_information_length,
+                                 emulator_object<uint32_t> return_length);
     NTSTATUS handle_NtClearEvent(const syscall_context& c, handle event_handle);
     NTSTATUS handle_NtCreateEvent(const syscall_context& c, emulator_object<handle> event_handle, ACCESS_MASK desired_access,
                                   emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, EVENT_TYPE event_type,
@@ -207,6 +208,7 @@ namespace syscalls
                                               /*receive_message_attributes*/,
                                               emulator_object<LARGE_INTEGER> /*timeout*/);
     NTSTATUS handle_NtAlpcQueryInformation();
+    NTSTATUS handle_NtAlpcSetInformation();
     NTSTATUS handle_NtAlpcCreateSecurityContext();
     NTSTATUS handle_NtAlpcDeleteSecurityContext();
 
@@ -337,6 +339,7 @@ namespace syscalls
                                        uint64_t apc_argument1, uint64_t apc_argument2, uint64_t apc_argument3);
     NTSTATUS handle_NtQueueApcThread(const syscall_context& c, handle thread_handle, uint64_t apc_routine, uint64_t apc_argument1,
                                      uint64_t apc_argument2, uint64_t apc_argument3);
+    NTSTATUS handle_NtCallbackReturn(const syscall_context& c);
 
     // syscalls/timer.cpp:
     NTSTATUS handle_NtQueryTimerResolution(const syscall_context&, emulator_object<ULONG> maximum_time, emulator_object<ULONG> minimum_time,
@@ -367,6 +370,77 @@ namespace syscalls
     NTSTATUS handle_NtAdjustPrivilegesToken();
     NTSTATUS handle_NtFlushInstructionCache(const syscall_context& c, handle process_handle, emulator_object<uint64_t> base_address,
                                             uint64_t region_size);
+
+    // syscalls/user.cpp:
+    NTSTATUS handle_NtUserDisplayConfigGetDeviceInfo();
+    NTSTATUS handle_NtUserRegisterWindowMessage();
+    NTSTATUS handle_NtUserGetThreadState();
+    hdc handle_NtUserGetDCEx(const syscall_context& c, hwnd window, uint64_t clip_region, ULONG flags);
+    hdc handle_NtUserGetDC(const syscall_context& c, hwnd window);
+    NTSTATUS handle_NtUserGetWindowDC();
+    NTSTATUS handle_NtUserReleaseDC();
+    NTSTATUS handle_NtUserGetCursorPos();
+    NTSTATUS handle_NtUserSetCursor();
+    NTSTATUS handle_NtUserFindExistingCursorIcon();
+    NTSTATUS handle_NtUserFindWindowEx(const syscall_context& c, hwnd parent, hwnd child_after,
+                                       emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
+                                       emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> window_name);
+    NTSTATUS handle_NtUserMoveWindow();
+    NTSTATUS handle_NtUserGetProcessWindowStation();
+    NTSTATUS handle_NtUserRegisterClassExWOW(const syscall_context& c, emulator_object<EMU_WNDCLASSEX> wnd_class_ex,
+                                             emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
+                                             emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_version,
+                                             emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> class_menu_name, DWORD function_id,
+                                             DWORD flags, emulator_pointer wow);
+    NTSTATUS handle_NtUserUnregisterClass(const syscall_context& c, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
+                                          emulator_pointer instance, emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> class_menu_name);
+    BOOL handle_NtUserGetClassInfoEx(const syscall_context& c, hinstance /*instance*/,
+                                     emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
+                                     emulator_object<EMU_WNDCLASSEX> wnd_class_ex, emulator_pointer menu_name, BOOL /*ansi*/);
+    NTSTATUS handle_NtUserSetWindowsHookEx();
+    NTSTATUS handle_NtUserUnhookWindowsHookEx();
+    hwnd handle_NtUserCreateWindowEx(const syscall_context& c, DWORD ex_style, emulator_object<LARGE_STRING> class_name,
+                                     emulator_object<LARGE_STRING> cls_version, emulator_object<LARGE_STRING> window_name, DWORD style,
+                                     int x, int y, int width, int height, hwnd parent, hmenu menu, hinstance instance, pointer l_param,
+                                     DWORD flags, pointer acbi_buffer);
+    hwnd completion_NtUserCreateWindowEx(const syscall_context& c, DWORD ex_style, emulator_object<LARGE_STRING> class_name,
+                                         emulator_object<LARGE_STRING> cls_version, emulator_object<LARGE_STRING> window_name, DWORD style,
+                                         int x, int y, int width, int height, hwnd parent, hmenu menu, hinstance instance, pointer l_param,
+                                         DWORD flags, pointer acbi_buffer);
+    BOOL handle_NtUserDestroyWindow(const syscall_context& c, hwnd window);
+    BOOL completion_NtUserDestroyWindow(const syscall_context& c, hwnd window);
+    BOOL handle_NtUserSetProp(const syscall_context& c, hwnd window, uint16_t atom, uint64_t data);
+    BOOL handle_NtUserSetProp2(const syscall_context& c, hwnd window, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> str,
+                               uint64_t data);
+    uint64_t handle_NtUserChangeWindowMessageFilterEx();
+    BOOL handle_NtUserShowWindow(const syscall_context& c, hwnd hwnd, LONG cmd_show);
+    BOOL completion_NtUserShowWindow(const syscall_context& c, hwnd hwnd, LONG cmd_show);
+    BOOL handle_NtUserGetMessage(const syscall_context& c, emulator_object<msg> message, hwnd hwnd, UINT msg_filter_min,
+                                 UINT msg_filter_max);
+    BOOL handle_NtUserPeekMessage(const syscall_context& c, emulator_object<msg> message, hwnd hwnd, UINT msg_filter_min,
+                                  UINT msg_filter_max, UINT remove_message);
+    BOOL handle_NtUserPostMessage(const syscall_context& c, hwnd hwnd, UINT msg, uint64_t wParam, uint64_t lParam);
+    BOOL handle_NtUserPostQuitMessage(const syscall_context& c, int exit_code);
+    NTSTATUS handle_NtUserEnumDisplayDevices(const syscall_context& c, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> str_device,
+                                             DWORD dev_num, emulator_object<EMU_DISPLAY_DEVICEW> display_device, DWORD flags);
+    NTSTATUS handle_NtUserEnumDisplaySettings(const syscall_context& c, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> device_name,
+                                              DWORD mode_num, emulator_object<EMU_DEVMODEW> dev_mode, DWORD flags);
+    BOOL handle_NtUserEnumDisplayMonitors(const syscall_context& c, hdc hdc_in, uint64_t clip_rect_ptr, uint64_t callback, uint64_t param);
+    BOOL completion_NtUserEnumDisplayMonitors(const syscall_context& c, hdc hdc_in, uint64_t clip_rect_ptr, uint64_t callback,
+                                              uint64_t param);
+    BOOL handle_NtUserGetHDevName(const syscall_context& c, handle hdev, emulator_pointer device_name);
+    emulator_pointer handle_NtUserMapDesktopObject(const syscall_context& c, handle handle);
+    NTSTATUS handle_NtUserTransformRect();
+    NTSTATUS handle_NtUserSetWindowPos();
+    NTSTATUS handle_NtUserSetForegroundWindow();
+    emulator_pointer handle_NtUserSetWindowLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
+                                                   BOOL Ansi);
+    uint32_t handle_NtUserSetWindowLong(const syscall_context& c, handle hWnd, int nIndex, uint32_t dwNewLong, BOOL Ansi);
+    NTSTATUS handle_NtUserRedrawWindow();
+    NTSTATUS handle_NtUserGetCPD();
+    NTSTATUS handle_NtUserSetWindowFNID();
+    NTSTATUS handle_NtUserEnableWindow();
+    NTSTATUS handle_NtUserGetSystemMenu();
 
     NTSTATUS handle_NtQueryPerformanceCounter(const syscall_context& c, const emulator_object<LARGE_INTEGER> performance_counter,
                                               const emulator_object<LARGE_INTEGER> performance_frequency)
@@ -531,12 +605,6 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtUserDisplayConfigGetDeviceInfo()
-    {
-        // puts("NtUserDisplayConfigGetDeviceInfo not supported");
-        return STATUS_NOT_SUPPORTED;
-    }
-
     NTSTATUS handle_NtGdiInit(const syscall_context& c)
     {
         c.proc.peb64.access([&](PEB64& peb) {
@@ -560,16 +628,6 @@ namespace syscalls
     {
         handle_NtGdiInit(c);
         return STATUS_NOT_SUPPORTED;
-    }
-
-    NTSTATUS handle_NtUserRegisterWindowMessage()
-    {
-        return STATUS_NOT_SUPPORTED;
-    }
-
-    NTSTATUS handle_NtUserGetThreadState()
-    {
-        return 0;
     }
 
     NTSTATUS handle_NtUpdateWnfStateData()
@@ -676,44 +734,9 @@ namespace syscalls
         return 96;
     }
 
-    hdc handle_NtUserGetDCEx(const syscall_context& /*c*/, const hwnd window, const uint64_t /*clip_region*/, const ULONG /*flags*/)
-    {
-        return window;
-    }
-
-    hdc handle_NtUserGetDC(const syscall_context& c, const hwnd window)
-    {
-        return handle_NtUserGetDCEx(c, window, 0, 0);
-    }
-
-    NTSTATUS handle_NtUserGetWindowDC()
-    {
-        return 1;
-    }
-
-    NTSTATUS handle_NtUserReleaseDC()
-    {
-        return STATUS_SUCCESS;
-    }
-
     NTSTATUS handle_NtUserModifyUserStartupInfoFlags()
     {
         return STATUS_SUCCESS;
-    }
-
-    NTSTATUS handle_NtUserGetCursorPos()
-    {
-        return STATUS_NOT_SUPPORTED;
-    }
-
-    NTSTATUS handle_NtUserSetCursor()
-    {
-        return STATUS_NOT_SUPPORTED;
-    }
-
-    NTSTATUS handle_NtUserFindExistingCursorIcon()
-    {
-        return STATUS_NOT_SUPPORTED;
     }
 
     NTSTATUS handle_NtSystemDebugControl()
@@ -736,76 +759,6 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtUserFindWindowEx(const syscall_context& c, const hwnd, const hwnd,
-                                       const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
-                                       const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> window_name)
-    {
-        if (c.win_emu.callbacks.on_generic_activity)
-        {
-            std::string class_name_str = "(null)";
-            std::string window_name_str = "(null)";
-
-            if (class_name)
-            {
-                class_name_str = u16_to_u8(read_unicode_string(c.emu, class_name));
-            }
-
-            if (window_name)
-            {
-                window_name_str = u16_to_u8(read_unicode_string(c.emu, window_name));
-            }
-
-            c.win_emu.callbacks.on_generic_activity("Window query for class '" + class_name_str + "' and name '" + window_name_str + "'");
-        }
-
-        return 0;
-    }
-
-    NTSTATUS handle_NtUserMoveWindow()
-    {
-        return 0;
-    }
-
-    NTSTATUS handle_NtUserGetProcessWindowStation()
-    {
-        return 0;
-    }
-
-    template <typename Traits>
-    struct CLSMENUNAME
-    {
-        EMULATOR_CAST(typename Traits::PVOID, char*) pszClientAnsiMenuName;
-        EMULATOR_CAST(typename Traits::PVOID, char16_t*) pwszClientUnicodeMenuName;
-        EMULATOR_CAST(typename Traits::PVOID, UNICODE_STRING*) pusMenuName;
-    };
-
-    NTSTATUS handle_NtUserRegisterClassExWOW(const syscall_context& c, const emulator_pointer /*wnd_class_ex*/,
-                                             const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
-                                             const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*class_version*/,
-                                             const emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> /*class_menu_name*/,
-                                             const DWORD /*function_id*/, const DWORD /*flags*/, const emulator_pointer /*wow*/)
-    {
-        uint16_t index = c.proc.add_or_find_atom(read_unicode_string(c.emu, class_name));
-        return index;
-    }
-
-    NTSTATUS handle_NtUserUnregisterClass(const syscall_context& c, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
-                                          const emulator_pointer /*instance*/,
-                                          const emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> /*class_menu_name*/)
-    {
-        return c.proc.delete_atom(read_unicode_string(c.emu, class_name));
-    }
-
-    NTSTATUS handle_NtUserSetWindowsHookEx()
-    {
-        return STATUS_NOT_SUPPORTED;
-    }
-
-    NTSTATUS handle_NtUserUnhookWindowsHookEx()
-    {
-        return STATUS_NOT_SUPPORTED;
-    }
-
     NTSTATUS handle_NtUserMapVirtualKeyEx()
     {
         return 0;
@@ -821,76 +774,6 @@ namespace syscalls
         return 0;
     }
 
-    std::u16string read_large_string(const emulator_object<LARGE_STRING> str_obj)
-    {
-        if (!str_obj)
-        {
-            return {};
-        }
-
-        const auto str = str_obj.read();
-        if (!str.bAnsi)
-        {
-            return read_string<char16_t>(*str_obj.get_memory_interface(), str.Buffer, str.Length / 2);
-        }
-
-        const auto ansi_string = read_string<char>(*str_obj.get_memory_interface(), str.Buffer, str.Length);
-        return u8_to_u16(ansi_string);
-    }
-
-    hwnd handle_NtUserCreateWindowEx(const syscall_context& c, const DWORD /*ex_style*/, const emulator_object<LARGE_STRING> class_name,
-                                     const emulator_object<LARGE_STRING> /*cls_version*/, const emulator_object<LARGE_STRING> window_name,
-                                     const DWORD /*style*/, const int x, const int y, const int width, const int height,
-                                     const hwnd /*parent*/, const hmenu /*menu*/, const hinstance /*instance*/, const pointer /*l_param*/,
-                                     const DWORD /*flags*/, const pointer /*acbi_buffer*/)
-    {
-        auto [handle, win] = c.proc.windows.create(c.win_emu.memory);
-        win.x = x;
-        win.y = y;
-        win.width = width;
-        win.height = height;
-        win.thread_id = c.win_emu.current_thread().id;
-        win.class_name = read_large_string(class_name);
-        win.name = read_large_string(window_name);
-
-        return handle.bits;
-    }
-
-    BOOL handle_NtUserDestroyWindow(const syscall_context& c, const hwnd window)
-    {
-        return c.proc.windows.erase(window);
-    }
-
-    BOOL handle_NtUserSetProp(const syscall_context& c, const hwnd window, const uint16_t atom, const uint64_t data)
-    {
-        auto* win = c.proc.windows.get(window);
-        const auto* prop = c.proc.get_atom_name(atom);
-
-        if (!win || !prop)
-        {
-            return FALSE;
-        }
-
-        win->props[*prop] = data;
-
-        return TRUE;
-    }
-
-    BOOL handle_NtUserSetProp2(const syscall_context& c, const hwnd window,
-                               const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> str, const uint64_t data)
-    {
-        auto* win = c.proc.windows.get(window);
-        if (!win || !str)
-        {
-            return FALSE;
-        }
-
-        auto prop = read_unicode_string(c.emu, str);
-        win->props[std::move(prop)] = data;
-
-        return TRUE;
-    }
-
     ULONG handle_NtUserGetRawInputDeviceList()
     {
         return 0;
@@ -899,157 +782,6 @@ namespace syscalls
     ULONG handle_NtUserGetKeyboardType()
     {
         return 0;
-    }
-
-    uint64_t handle_NtUserChangeWindowMessageFilterEx()
-    {
-        return 0;
-    }
-
-    BOOL handle_NtUserShowWindow(const syscall_context& c, const hwnd hwnd, const LONG cmd_show)
-    {
-        (void)c;
-        (void)hwnd;
-        (void)cmd_show;
-        return TRUE;
-    }
-
-    BOOL handle_NtUserGetMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd, const UINT msg_filter_min,
-                                 const UINT msg_filter_max)
-    {
-        (void)c;
-        (void)message;
-        (void)hwnd;
-        (void)msg_filter_min;
-        (void)msg_filter_max;
-
-        return TRUE;
-    }
-
-    BOOL handle_NtUserPeekMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd, const UINT msg_filter_min,
-                                  const UINT msg_filter_max, const UINT remove_message)
-    {
-        (void)c;
-        (void)message;
-        (void)hwnd;
-        (void)msg_filter_min;
-        (void)msg_filter_max;
-        (void)remove_message;
-
-        return FALSE;
-    }
-
-    NTSTATUS handle_NtUserEnumDisplayDevices(const syscall_context& c,
-                                             const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> str_device, const DWORD dev_num,
-                                             const emulator_object<EMU_DISPLAY_DEVICEW> display_device, const DWORD /*flags*/)
-    {
-        if (!str_device)
-        {
-            if (dev_num > 0)
-            {
-                return STATUS_UNSUCCESSFUL;
-            }
-
-            display_device.access([&](EMU_DISPLAY_DEVICEW& dev) {
-                dev.StateFlags = 0x5; // DISPLAY_DEVICE_PRIMARY_DEVICE | DISPLAY_DEVICE_ATTACHED_TO_DESKTOP
-                utils::string::copy(dev.DeviceName, u"\\\\.\\DISPLAY1");
-                utils::string::copy(dev.DeviceString, u"Emulated Virtual Adapter");
-                utils::string::copy(dev.DeviceID, u"PCI\\VEN_10DE&DEV_0000&SUBSYS_00000000&REV_A1");
-                utils::string::copy(dev.DeviceKey, u"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Video\\{00000001-"
-                                                   u"0002-0003-0004-000000000005}\\0000");
-            });
-        }
-        else
-        {
-            const auto dev_name = read_unicode_string(c.emu, str_device);
-
-            if (dev_name != u"\\\\.\\DISPLAY1")
-            {
-                return STATUS_UNSUCCESSFUL;
-            }
-
-            if (dev_num > 0)
-            {
-                return STATUS_UNSUCCESSFUL;
-            }
-
-            display_device.access([&](EMU_DISPLAY_DEVICEW& dev) {
-                dev.StateFlags = 0x1; // DISPLAY_DEVICE_ACTIVE
-                utils::string::copy(dev.DeviceName, u"\\\\.\\DISPLAY1\\Monitor0");
-                utils::string::copy(dev.DeviceString, u"Generic PnP Monitor");
-                utils::string::copy(dev.DeviceID, u"MONITOR\\EMU1234\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0000");
-                utils::string::copy(dev.DeviceKey, u"\\Registry\\Machine\\System\\CurrentControlSet\\Enum\\DISPLAY\\EMU1234\\"
-                                                   u"1&23a45b&0&UID67568640");
-            });
-        }
-
-        return STATUS_SUCCESS;
-    }
-
-    NTSTATUS handle_NtUserEnumDisplaySettings(const syscall_context& c,
-                                              const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> device_name,
-                                              const DWORD mode_num, const emulator_object<EMU_DEVMODEW> dev_mode, const DWORD /*flags*/)
-    {
-        if (dev_mode && (mode_num == ENUM_CURRENT_SETTINGS || mode_num == 0))
-        {
-            const auto dev_name = read_unicode_string(c.emu, device_name);
-
-            if (dev_name == u"\\\\.\\DISPLAY1")
-            {
-                dev_mode.access([](EMU_DEVMODEW& dm) {
-                    dm.dmFields = 0x5C0000; // DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY
-                    dm.dmPelsWidth = 1920;
-                    dm.dmPelsHeight = 1080;
-                    dm.dmBitsPerPel = 32;
-                    dm.dmDisplayFrequency = 60;
-                });
-
-                return STATUS_SUCCESS;
-            }
-        }
-
-        return STATUS_UNSUCCESSFUL;
-    }
-
-    BOOL handle_NtUserEnumDisplayMonitors(const syscall_context& c, const hdc hdc_in, const uint64_t clip_rect_ptr, const uint64_t callback,
-                                          const uint64_t param)
-    {
-        if (!callback)
-        {
-            return FALSE;
-        }
-
-        const auto hmon = c.win_emu.process.default_monitor_handle.bits;
-        const auto display_info = c.proc.user_handles.get_display_info().read();
-
-        if (clip_rect_ptr)
-        {
-            RECT clip{};
-            c.emu.read_memory(clip_rect_ptr, &clip, sizeof(clip));
-
-            const emulator_object<USER_MONITOR> monitor_obj(c.emu, display_info.pPrimaryMonitor);
-            const auto monitor = monitor_obj.read();
-
-            auto effective_rc{monitor.rcMonitor};
-            effective_rc.left = std::max(effective_rc.left, clip.left);
-            effective_rc.top = std::max(effective_rc.top, clip.top);
-            effective_rc.right = std::min(effective_rc.right, clip.right);
-            effective_rc.bottom = std::min(effective_rc.bottom, clip.bottom);
-            if (effective_rc.right <= effective_rc.left || effective_rc.bottom <= effective_rc.top)
-            {
-                return TRUE;
-            }
-        }
-
-        const uint64_t rect_ptr = display_info.pPrimaryMonitor + offsetof(USER_MONITOR, rcMonitor);
-        dispatch_user_callback(c, callback_id::NtUserEnumDisplayMonitors, callback, hmon, hdc_in, rect_ptr, param);
-        return {};
-    }
-
-    BOOL completion_NtUserEnumDisplayMonitors(const syscall_context&, BOOL guest_result, const hdc /*hdc_in*/,
-                                              const uint64_t /*clip_rect_ptr*/, const uint64_t /*callback*/, const uint64_t /*param*/)
-    {
-        return guest_result;
     }
 
     NTSTATUS handle_NtAssociateWaitCompletionPacket()
@@ -1082,30 +814,14 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    BOOL handle_NtUserGetHDevName(const syscall_context& c, handle hdev, emulator_pointer device_name)
+    NTSTATUS handle_NtGdiGetEntry()
     {
-        if (hdev != c.proc.default_monitor_handle)
-        {
-            return FALSE;
-        }
-
-        const std::u16string name = u"\\\\.\\DISPLAY1";
-        c.emu.write_memory(device_name, name.c_str(), (name.size() + 1) * sizeof(char16_t));
-
-        return TRUE;
+        return STATUS_NOT_SUPPORTED;
     }
 
-    emulator_pointer handle_NtUserMapDesktopObject(const syscall_context& c, handle handle)
+    NTSTATUS handle_NtGdiCreateCompatibleDC()
     {
-        const auto index = handle.value.id;
-
-        if (index == 0 || index >= user_handle_table::MAX_HANDLES)
-        {
-            return 0;
-        }
-
-        const auto handle_entry = c.proc.user_handles.get_handle_table().read(static_cast<size_t>(index));
-        return handle_entry.pHead;
+        return STATUS_NOT_SUPPORTED;
     }
 }
 
@@ -1328,19 +1044,47 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserGetHDevName);
     add_handler(NtFlushInstructionCache);
     add_handler(NtUserMapDesktopObject);
+    add_handler(NtAlpcSetInformation);
+    add_handler(NtGdiGetEntry);
+    add_handler(NtGdiCreateCompatibleDC);
+    add_handler(NtUserTransformRect);
+    add_handler(NtUserSetWindowPos);
+    add_handler(NtUserSetForegroundWindow);
+    add_handler(NtUserSetWindowLongPtr);
+    add_handler(NtUserSetWindowLong);
+    add_handler(NtUserPostMessage);
+    add_handler(NtUserRedrawWindow);
+    add_handler(NtUserGetCPD);
+    add_handler(NtUserSetWindowFNID);
+    add_handler(NtUserEnableWindow);
+    add_handler(NtUserGetSystemMenu);
+    add_handler(NtCallbackReturn);
+    add_handler(NtUserPostQuitMessage);
+    add_handler(NtUserGetClassInfoEx);
 
 #undef add_handler
 }
 
 void syscall_dispatcher::add_callbacks()
 {
-#define add_callback(syscall)                                                                                        \
-    do                                                                                                               \
-    {                                                                                                                \
-        this->callbacks_[callback_id::syscall] = make_callback_completion_handler<syscalls::completion_##syscall>(); \
+#define add_callback(syscall, completion_state)                                                                                      \
+    do                                                                                                                               \
+    {                                                                                                                                \
+        this->completion_handlers_[callback_id::syscall] = make_syscall_handler<syscalls::completion_##syscall>();                   \
+        syscall_dispatcher::completion_state_factories_[callback_id::syscall] = [] { return std::make_unique<completion_state>(); }; \
     } while (0)
 
-    add_callback(NtUserEnumDisplayMonitors);
+#define add_stateless_callback(syscall)                                                                            \
+    do                                                                                                             \
+    {                                                                                                              \
+        this->completion_handlers_[callback_id::syscall] = make_syscall_handler<syscalls::completion_##syscall>(); \
+    } while (0)
+
+    add_callback(NtUserCreateWindowEx, window_create_state);
+    add_callback(NtUserDestroyWindow, window_destroy_state);
+    add_callback(NtUserShowWindow, window_show_state);
+    add_stateless_callback(NtUserEnumDisplayMonitors);
 
 #undef add_callback
+#undef add_stateless_callback
 }

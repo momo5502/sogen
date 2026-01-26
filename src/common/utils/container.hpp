@@ -48,6 +48,17 @@ namespace utils
         }
     };
 
+    template <typename Elem, typename Traits>
+    struct basic_insensitive_string_less
+    {
+        using is_transparent = void;
+
+        bool operator()(std::basic_string_view<Elem, Traits> lhs, std::basic_string_view<Elem, Traits> rhs) const
+        {
+            return string::compare_ignore_case(lhs, rhs) < 0;
+        }
+    };
+
     using string_hash = basic_string_hash<char, std::char_traits<char>>;
     using u16string_hash = basic_string_hash<char16_t, std::char_traits<char16_t>>;
 
@@ -56,6 +67,9 @@ namespace utils
 
     using insensitive_string_equal = basic_insensitive_string_equal<char, std::char_traits<char>>;
     using insensitive_u16string_equal = basic_insensitive_string_equal<char16_t, std::char_traits<char16_t>>;
+
+    using insensitive_string_less = basic_insensitive_string_less<char, std::char_traits<char>>;
+    using insensitive_u16string_less = basic_insensitive_string_less<char16_t, std::char_traits<char16_t>>;
 
     template <typename T>
     using unordered_string_map = std::unordered_map<std::string, T, string_hash, std::equal_to<>>;
@@ -67,6 +81,11 @@ namespace utils
     template <typename T>
     using unordered_insensitive_u16string_map =
         std::unordered_map<std::u16string, T, insensitive_u16string_hash, insensitive_u16string_equal>;
+
+    template <typename T>
+    using insensitive_string_map = std::map<std::string, T, insensitive_string_less>;
+    template <typename T>
+    using insensitive_u16string_map = std::map<std::u16string, T, insensitive_u16string_less>;
 
     using unordered_string_set = std::unordered_set<std::string, string_hash, std::equal_to<>>;
     using unordered_u16string_set = std::unordered_set<std::u16string, u16string_hash, std::equal_to<>>;

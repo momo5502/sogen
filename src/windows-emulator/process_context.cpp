@@ -2,6 +2,7 @@
 #include "process_context.hpp"
 
 #include "emulator_utils.hpp"
+#include "syscall_utils.hpp"
 #include "windows_emulator.hpp"
 #include "version/windows_version_manager.hpp"
 
@@ -400,6 +401,7 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
     this->ki_user_apc_dispatcher = ntdll.find_export("KiUserApcDispatcher");
     this->ki_user_exception_dispatcher = ntdll.find_export("KiUserExceptionDispatcher");
     this->instrumentation_callback = 0;
+    this->zw_callback_return = ntdll.find_export("ZwCallbackReturn");
 
     this->default_register_set = emu.save_registers();
 
@@ -432,66 +434,6 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
     });
 }
 
-void process_context::setup_callback_hook(windows_emulator& win_emu, memory_manager& memory)
-{
-    uint64_t sentinel_addr = this->callback_sentinel_addr;
-    if (!sentinel_addr)
-    {
-        using sentinel_type = std::array<uint8_t, 2>;
-        constexpr sentinel_type sentinel_opcodes{0x90, 0xC3}; // NOP, RET
-
-        auto sentinel_obj = this->base_allocator.reserve_page_aligned<sentinel_type>();
-        sentinel_addr = sentinel_obj.value();
-        this->callback_sentinel_addr = sentinel_addr;
-
-        win_emu.emu().write_memory(sentinel_addr, sentinel_opcodes.data(), sentinel_opcodes.size());
-
-        const auto sentinel_aligned_length = page_align_up(sentinel_addr + sentinel_opcodes.size()) - sentinel_addr;
-        memory.protect_memory(sentinel_addr, static_cast<size_t>(sentinel_aligned_length), memory_permission::all);
-    }
-
-    auto& emu = win_emu.emu();
-
-    emu.hook_memory_execution(sentinel_addr, [&](uint64_t) {
-        auto* t = this->active_thread;
-
-        if (!t || t->callback_stack.empty())
-        {
-            return;
-        }
-
-        const auto frame = t->callback_stack.back();
-        t->callback_stack.pop_back();
-
-        const auto callbacks_before = t->callback_stack.size();
-        const uint64_t guest_result = emu.reg(x86_register::rax);
-
-        emu.reg(x86_register::rip, frame.rip);
-        emu.reg(x86_register::rsp, frame.rsp);
-        emu.reg(x86_register::r10, frame.r10);
-        emu.reg(x86_register::rcx, frame.rcx);
-        emu.reg(x86_register::rdx, frame.rdx);
-        emu.reg(x86_register::r8, frame.r8);
-        emu.reg(x86_register::r9, frame.r9);
-
-        win_emu.dispatcher.dispatch_completion(win_emu, frame.handler_id, guest_result);
-
-        uint64_t target_rip = emu.reg(x86_register::rip);
-        emu.reg(x86_register::rip, this->callback_sentinel_addr + 1);
-
-        const bool new_callback_dispatched = t->callback_stack.size() > callbacks_before;
-        if (!new_callback_dispatched)
-        {
-            // Move past the syscall instruction
-            target_rip += 2;
-        }
-
-        const uint64_t ret_stack_ptr = emu.reg(x86_register::rsp) - sizeof(emulator_pointer);
-        emu.write_memory(ret_stack_ptr, &target_rip, sizeof(target_rip));
-        emu.reg(x86_register::rsp, ret_stack_ptr);
-    });
-}
-
 void process_context::serialize(utils::buffer_serializer& buffer) const
 {
     buffer.write(this->shared_section_address);
@@ -514,6 +456,8 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
     buffer.write(this->ki_user_apc_dispatcher);
     buffer.write(this->ki_user_exception_dispatcher);
     buffer.write(this->instrumentation_callback);
+    buffer.write(this->zw_callback_return);
+    buffer.write(this->dispatch_client_message);
 
     buffer.write(this->user_handles);
     buffer.write(this->default_monitor_handle);
@@ -528,6 +472,8 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
     buffer.write(this->timers);
     buffer.write(this->registry_keys);
     buffer.write_map(this->atoms);
+    buffer.write_map(this->classes);
+
     buffer.write_map(this->apiset);
     buffer.write_map(this->knowndlls32_sections);
     buffer.write_map(this->knowndlls64_sections);
@@ -541,8 +487,6 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
     buffer.write(this->threads);
 
     buffer.write(this->threads.find_handle(this->active_thread).bits);
-
-    buffer.write(this->callback_sentinel_addr);
 }
 
 void process_context::deserialize(utils::buffer_deserializer& buffer)
@@ -567,6 +511,8 @@ void process_context::deserialize(utils::buffer_deserializer& buffer)
     buffer.read(this->ki_user_apc_dispatcher);
     buffer.read(this->ki_user_exception_dispatcher);
     buffer.read(this->instrumentation_callback);
+    buffer.read(this->zw_callback_return);
+    buffer.read(this->dispatch_client_message);
 
     buffer.read(this->user_handles);
     buffer.read(this->default_monitor_handle);
@@ -581,6 +527,8 @@ void process_context::deserialize(utils::buffer_deserializer& buffer)
     buffer.read(this->timers);
     buffer.read(this->registry_keys);
     buffer.read_map(this->atoms);
+    buffer.read_map(this->classes);
+
     buffer.read_map(this->apiset);
     buffer.read_map(this->knowndlls32_sections);
     buffer.read_map(this->knowndlls64_sections);
@@ -600,8 +548,6 @@ void process_context::deserialize(utils::buffer_deserializer& buffer)
     buffer.read(this->threads);
 
     this->active_thread = this->threads.get(buffer.read<uint64_t>());
-
-    buffer.read(this->callback_sentinel_addr);
 }
 
 generic_handle_store* process_context::get_handle_store(const handle handle)

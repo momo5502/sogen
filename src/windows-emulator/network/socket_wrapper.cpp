@@ -44,9 +44,9 @@ namespace network
 
     std::optional<address> socket_wrapper::get_local_address()
     {
-        sockaddr addr{};
-        socklen_t addrlen = sizeof(sockaddr);
-        const auto res = ::getsockname(this->socket_.get_socket(), &addr, &addrlen);
+        sockaddr_storage addr{};
+        socklen_t addrlen = sizeof(sockaddr_storage);
+        const auto res = ::getsockname(this->socket_.get_socket(), reinterpret_cast<sockaddr*>(&addr), &addrlen);
 
         if (res != 0)
         {
@@ -54,7 +54,7 @@ namespace network
         }
 
         address address{};
-        address.set_address(&addr, addrlen);
+        address.set_address(reinterpret_cast<sockaddr*>(&addr), addrlen);
         return address;
     }
 
