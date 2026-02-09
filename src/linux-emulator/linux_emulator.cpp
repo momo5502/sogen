@@ -82,6 +82,11 @@ linux_emulator::linux_emulator(std::unique_ptr<x86_64_emulator> emu, const std::
     // Set up GDT for 64-bit long mode
     setup_gdt(*this->emu_, this->memory);
 
+    // Allow passthrough access to the executable directory.
+    // This enables loading colocated test/shared objects (e.g. RUNPATH=$ORIGIN)
+    // even when the executable path itself is outside the emulation root.
+    this->file_sys.add_passthrough_prefix(executable.parent_path());
+
     // Load the ELF binary
     this->mod_manager.map_main_modules(executable);
 
