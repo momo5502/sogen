@@ -86,6 +86,7 @@ linux_emulator::linux_emulator(std::unique_ptr<x86_64_emulator> emu, const std::
     // This enables loading colocated test/shared objects (e.g. RUNPATH=$ORIGIN)
     // even when the executable path itself is outside the emulation root.
     this->file_sys.add_passthrough_prefix(executable.parent_path());
+    this->file_sys.add_passthrough_prefix(executable.parent_path().parent_path());
 
     // Load the ELF binary
     this->mod_manager.map_main_modules(executable);
