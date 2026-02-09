@@ -13,7 +13,6 @@ namespace
 {
     constexpr int AT_FDCWD = -100;
 
-    constexpr int O_RDONLY = 0;
     constexpr int O_WRONLY = 1;
     constexpr int O_RDWR = 2;
     constexpr int O_CREAT = 0100;
@@ -152,11 +151,22 @@ void sys_write(const linux_syscall_context& c)
 
     if (fd == 1 || fd == 2)
     {
-        // stdout / stderr: write directly to host
-        auto* target = (fd == 1) ? stdout : stderr;
-        const auto written = fwrite(buffer.data(), 1, count, target);
-        fflush(target);
-        write_linux_syscall_result(c, static_cast<int64_t>(written));
+        // stdout / stderr: invoke callback if set, otherwise write to host
+        const auto sv = std::string_view(reinterpret_cast<const char*>(buffer.data()), count);
+        auto& callback = (fd == 1) ? c.emu_ref.on_stdout : c.emu_ref.on_stderr;
+
+        if (callback)
+        {
+            callback(sv);
+        }
+        else
+        {
+            auto* target = (fd == 1) ? stdout : stderr;
+            fwrite(buffer.data(), 1, count, target);
+            fflush(target);
+        }
+
+        write_linux_syscall_result(c, static_cast<int64_t>(count));
         return;
     }
 
@@ -520,10 +530,21 @@ void sys_writev(const linux_syscall_context& c)
 
         if (fd == 1 || fd == 2)
         {
-            auto* target = (fd == 1) ? stdout : stderr;
-            const auto written = fwrite(buffer.data(), 1, iov_len, target);
-            fflush(target);
-            total_written += static_cast<int64_t>(written);
+            const auto sv = std::string_view(reinterpret_cast<const char*>(buffer.data()), iov_len);
+            auto& callback = (fd == 1) ? c.emu_ref.on_stdout : c.emu_ref.on_stderr;
+
+            if (callback)
+            {
+                callback(sv);
+            }
+            else
+            {
+                auto* target = (fd == 1) ? stdout : stderr;
+                fwrite(buffer.data(), 1, iov_len, target);
+                fflush(target);
+            }
+
+            total_written += static_cast<int64_t>(iov_len);
         }
         else if (fd_entry->handle)
         {

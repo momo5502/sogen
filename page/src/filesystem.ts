@@ -182,6 +182,27 @@ export class Filesystem {
   }
 }
 
+export async function setupLinuxFilesystem() {
+  const idbfs = await initializeIDBFS();
+  const fs = new Filesystem(idbfs);
+
+  // Ensure basic Linux root structure exists
+  const dirs = [
+    "/root/bin",
+    "/root/lib",
+    "/root/tmp",
+  ];
+
+  for (const dir of dirs) {
+    if (!idbfs.FS.analyzePath(dir, false).exists) {
+      idbfs.FS.mkdirTree(dir, 0o777);
+    }
+  }
+
+  await fs.sync();
+  return fs;
+}
+
 export async function setupFilesystem(
   progressHandler: ProgressHandler,
   downloadProgressHandler: DownloadPercentHandler,

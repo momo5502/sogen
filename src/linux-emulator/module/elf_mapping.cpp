@@ -29,7 +29,7 @@ namespace
     }
 
     void parse_dynamic_section(const std::span<const std::byte> data, const Elf64_Phdr& dyn_phdr, linux_mapped_module& mod,
-                               uint64_t base_delta)
+                               uint64_t /*base_delta*/)
     {
         if (dyn_phdr.p_offset + dyn_phdr.p_filesz > data.size())
         {
@@ -437,7 +437,7 @@ linux_mapped_module map_elf_from_data(linux_memory_manager& memory, const std::s
     return mod;
 }
 
-void apply_elf_relocations(linux_memory_manager& memory, linux_mapped_module& mod, const std::span<const std::byte> data,
+void apply_elf_relocations(linux_memory_manager& memory, linux_mapped_module& /*mod*/, const std::span<const std::byte> data,
                            const int64_t base_delta)
 {
     const auto* ehdr = get_header(data);

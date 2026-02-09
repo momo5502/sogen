@@ -10,6 +10,11 @@
 #include <network/address.hpp>
 #include <backend_selection.hpp>
 
+#if defined(OS_EMSCRIPTEN) && !defined(MOMO_EMSCRIPTEN_SUPPORT_NODEJS)
+#include <linux_event_handler.hpp>
+#include <utils/finally.hpp>
+#endif
+
 namespace
 {
     struct cli_options
@@ -118,6 +123,15 @@ int main(const int argc, char* argv[])
             linux_emu.log.disable_output(true);
         }
 
+#if defined(OS_EMSCRIPTEN) && !defined(MOMO_EMSCRIPTEN_SUPPORT_NODEJS)
+        std::optional<int> exit_status{};
+        const auto exit_handler = utils::finally([&] { linux_debugger::handle_exit(linux_emu, exit_status); });
+
+        linux_debugger::event_context ec{.linux_emu = linux_emu};
+
+        linux_emu.on_periodic_event = [&ec] { linux_debugger::handle_events(ec); };
+#endif
+
         if (opts.use_gdb)
         {
             const auto* address = "127.0.0.1:28960";
@@ -131,14 +145,18 @@ int main(const int argc, char* argv[])
             linux_emu.start();
         }
 
-        const auto exit_status = linux_emu.process.exit_status.value_or(-1);
+#if defined(OS_EMSCRIPTEN) && !defined(MOMO_EMSCRIPTEN_SUPPORT_NODEJS)
+        exit_status = linux_emu.process.exit_status;
+#endif
+
+        const auto final_exit_status = linux_emu.process.exit_status.value_or(-1);
         const auto instructions = linux_emu.get_executed_instructions();
 
         printf("\n--- Emulation finished ---\n");
-        printf("Exit status: %d\n", exit_status);
+        printf("Exit status: %d\n", final_exit_status);
         printf("Instructions executed: %llu\n", static_cast<unsigned long long>(instructions));
 
-        return exit_status;
+        return final_exit_status;
     }
     catch (const std::exception& e)
     {

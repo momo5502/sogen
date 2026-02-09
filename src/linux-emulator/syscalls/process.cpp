@@ -339,11 +339,12 @@ void sys_kill(const linux_syscall_context& c)
     const auto pid = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
     const auto sig = static_cast<int>(get_linux_syscall_argument(c.emu, 1));
 
+    const auto is_self = (pid >= 0 && static_cast<uint32_t>(pid) == c.proc.pid) || pid == 0 || pid == -1;
+
     // If sending signal 0, it's just a process existence check
     if (sig == 0)
     {
-        // Our own pid or pid 0 (process group) always exists
-        if (pid == c.proc.pid || pid == 0 || pid == -1)
+        if (is_self)
         {
             write_linux_syscall_result(c, 0);
         }
@@ -355,7 +356,7 @@ void sys_kill(const linux_syscall_context& c)
     }
 
     // Sending to ourselves
-    if (pid == c.proc.pid || pid == 0 || pid == -1)
+    if (is_self)
     {
         constexpr int LINUX_SIGKILL = 9;
         constexpr int LINUX_SIGTERM = 15;
@@ -387,11 +388,13 @@ void sys_tgkill(const linux_syscall_context& c)
 
     (void)tgid;
 
+    const auto tid_exists =
+        (tid >= 0 && static_cast<uint32_t>(tid) == c.proc.pid) || (tid >= 0 && c.proc.threads.count(static_cast<uint32_t>(tid)) > 0);
+
     // Signal 0 is existence check
     if (sig == 0)
     {
-        // Check if tid exists
-        if (tid == c.proc.pid || c.proc.threads.count(tid) > 0)
+        if (tid_exists)
         {
             write_linux_syscall_result(c, 0);
         }

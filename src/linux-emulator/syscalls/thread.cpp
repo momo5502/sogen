@@ -8,28 +8,24 @@ using namespace linux_errno;
 
 // --- Phase 4b: Threading syscalls ---
 
-// clone flags
+// clone flags — use LINUX_ prefix to avoid Emscripten/Linux sysroot macro clashes
 namespace
 {
-    constexpr uint64_t CLONE_VM = 0x00000100;
-    constexpr uint64_t CLONE_FS = 0x00000200;
-    constexpr uint64_t CLONE_FILES = 0x00000400;
-    constexpr uint64_t CLONE_SIGHAND = 0x00000800;
-    constexpr uint64_t CLONE_THREAD = 0x00010000;
-    constexpr uint64_t CLONE_SETTLS = 0x00080000;
-    constexpr uint64_t CLONE_PARENT_SETTID = 0x00100000;
-    constexpr uint64_t CLONE_CHILD_CLEARTID = 0x00200000;
-    constexpr uint64_t CLONE_CHILD_SETTID = 0x01000000;
+    constexpr uint64_t LINUX_CLONE_THREAD = 0x00010000;
+    constexpr uint64_t LINUX_CLONE_SETTLS = 0x00080000;
+    constexpr uint64_t LINUX_CLONE_PARENT_SETTID = 0x00100000;
+    constexpr uint64_t LINUX_CLONE_CHILD_CLEARTID = 0x00200000;
+    constexpr uint64_t LINUX_CLONE_CHILD_SETTID = 0x01000000;
 
     // Futex operations
-    constexpr int FUTEX_WAIT = 0;
-    constexpr int FUTEX_WAKE = 1;
-    constexpr int FUTEX_WAIT_BITSET = 9;
-    constexpr int FUTEX_WAKE_BITSET = 10;
-    constexpr int FUTEX_PRIVATE_FLAG = 128;
-    constexpr int FUTEX_CMD_MASK = ~FUTEX_PRIVATE_FLAG;
+    constexpr int LINUX_FUTEX_WAIT = 0;
+    constexpr int LINUX_FUTEX_WAKE = 1;
+    constexpr int LINUX_FUTEX_WAIT_BITSET = 9;
+    constexpr int LINUX_FUTEX_WAKE_BITSET = 10;
+    constexpr int LINUX_FUTEX_PRIVATE_FLAG = 128;
+    constexpr int LINUX_FUTEX_CMD_MASK = ~LINUX_FUTEX_PRIVATE_FLAG;
 
-    constexpr uint32_t FUTEX_BITSET_MATCH_ANY = 0xFFFFFFFF;
+    constexpr uint32_t LINUX_FUTEX_BITSET_MATCH_ANY = 0xFFFFFFFF;
 }
 
 void sys_clone(const linux_syscall_context& c)
@@ -42,7 +38,7 @@ void sys_clone(const linux_syscall_context& c)
     const auto tls = get_linux_syscall_argument(c.emu, 4);
 
     // We only support CLONE_THREAD (pthread_create style) for now
-    if (!(flags & CLONE_THREAD))
+    if (!(flags & LINUX_CLONE_THREAD))
     {
         // fork()-style clone is not yet supported
         c.emu_ref.log.warn("clone() without CLONE_THREAD not supported (flags=0x%llx)\n", static_cast<unsigned long long>(flags));
@@ -78,26 +74,26 @@ void sys_clone(const linux_syscall_context& c)
     // The saved RIP should already be the return address
 
     // Set TLS if requested
-    if (flags & CLONE_SETTLS)
+    if (flags & LINUX_CLONE_SETTLS)
     {
         new_thread.fs_base = tls;
         new_thread.saved_regs.fs_base = tls;
     }
 
     // Handle tid addresses
-    if (flags & CLONE_CHILD_CLEARTID)
+    if (flags & LINUX_CLONE_CHILD_CLEARTID)
     {
         new_thread.clear_child_tid = child_tid_addr;
     }
 
-    if (flags & CLONE_CHILD_SETTID)
+    if (flags & LINUX_CLONE_CHILD_SETTID)
     {
         // Write the child's tid to the address in the child's address space
         const auto tid32 = static_cast<int32_t>(new_tid);
         c.emu.write_memory(child_tid_addr, &tid32, sizeof(tid32));
     }
 
-    if (flags & CLONE_PARENT_SETTID)
+    if (flags & LINUX_CLONE_PARENT_SETTID)
     {
         // Write the child's tid to parent_tid in the parent's address space
         const auto tid32 = static_cast<int32_t>(new_tid);
@@ -120,12 +116,12 @@ void sys_futex(const linux_syscall_context& c)
     // uaddr2 is arg 4
     const auto val3 = static_cast<uint32_t>(get_linux_syscall_argument(c.emu, 5));
 
-    const auto cmd = futex_op & FUTEX_CMD_MASK;
+    const auto cmd = futex_op & LINUX_FUTEX_CMD_MASK;
 
     switch (cmd)
     {
-    case FUTEX_WAIT:
-    case FUTEX_WAIT_BITSET: {
+    case LINUX_FUTEX_WAIT:
+    case LINUX_FUTEX_WAIT_BITSET: {
         // Read the current value at uaddr
         uint32_t current_val{};
         c.emu.read_memory(uaddr, &current_val, sizeof(current_val));
@@ -156,7 +152,7 @@ void sys_futex(const linux_syscall_context& c)
         }
 
         // Multi-threaded: mark this thread as waiting on the futex
-        const auto bitset = (cmd == FUTEX_WAIT_BITSET) ? val3 : FUTEX_BITSET_MATCH_ANY;
+        const auto bitset = (cmd == LINUX_FUTEX_WAIT_BITSET) ? val3 : LINUX_FUTEX_BITSET_MATCH_ANY;
 
         c.proc.active_thread->wait_state = thread_wait_state::futex_wait;
         c.proc.active_thread->futex_wait_address = uaddr;
@@ -169,10 +165,10 @@ void sys_futex(const linux_syscall_context& c)
         break;
     }
 
-    case FUTEX_WAKE:
-    case FUTEX_WAKE_BITSET: {
+    case LINUX_FUTEX_WAKE:
+    case LINUX_FUTEX_WAKE_BITSET: {
         // Wake up to val threads waiting on this futex address.
-        const auto bitset = (cmd == FUTEX_WAKE_BITSET) ? val3 : FUTEX_BITSET_MATCH_ANY;
+        const auto bitset = (cmd == LINUX_FUTEX_WAKE_BITSET) ? val3 : LINUX_FUTEX_BITSET_MATCH_ANY;
         int woken = 0;
         const auto max_wake = static_cast<int>(val);
 

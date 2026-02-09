@@ -8,18 +8,12 @@ using namespace linux_errno;
 
 namespace
 {
-    constexpr int PROT_NONE = 0;
     constexpr int PROT_READ = 1;
     constexpr int PROT_WRITE = 2;
     constexpr int PROT_EXEC = 4;
 
-    constexpr int MAP_SHARED = 0x01;
-    constexpr int MAP_PRIVATE = 0x02;
     constexpr int MAP_FIXED = 0x10;
     constexpr int MAP_ANONYMOUS = 0x20;
-    constexpr int MAP_GROWSDOWN = 0x100;
-    constexpr int MAP_NORESERVE = 0x4000;
-    constexpr int MAP_POPULATE = 0x8000;
 
     memory_permission prot_to_permission(const int prot)
     {

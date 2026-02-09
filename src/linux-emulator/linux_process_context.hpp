@@ -46,7 +46,7 @@ struct linux_process_context
         thread.saved_regs.rip = entry_point;
         thread.saved_regs.rsp = stack_base + stack_size;
 
-        auto [it, _] = this->threads.emplace(tid, std::move(thread));
+        this->threads.emplace(tid, std::move(thread));
         return tid;
     }
 

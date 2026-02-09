@@ -78,20 +78,8 @@ namespace
         return h;
     }
 
-    // Helper to write a uint16_t at a byte offset
-    void put_u16(std::vector<uint8_t>& img, const size_t off, const uint16_t val)
-    {
-        memcpy(&img[off], &val, sizeof(val));
-    }
-
     // Helper to write a uint32_t at a byte offset
     void put_u32(std::vector<uint8_t>& img, const size_t off, const uint32_t val)
-    {
-        memcpy(&img[off], &val, sizeof(val));
-    }
-
-    // Helper to write a uint64_t at a byte offset
-    void put_u64(std::vector<uint8_t>& img, const size_t off, const uint64_t val)
     {
         memcpy(&img[off], &val, sizeof(val));
     }
@@ -101,14 +89,6 @@ namespace
     void put_struct(std::vector<uint8_t>& img, const size_t off, const T& val)
     {
         memcpy(&img[off], &val, sizeof(val));
-    }
-
-    // Helper to write a string (with null terminator) into the image
-    size_t put_string(std::vector<uint8_t>& img, size_t off, const char* str)
-    {
-        const auto len = strlen(str) + 1;
-        memcpy(&img[off], str, len);
-        return len;
     }
 }
 
@@ -138,7 +118,7 @@ uint64_t linux_vdso::setup(linux_memory_manager& memory)
     // We lay everything out in a single page (0x1000 bytes).
     // All offsets are relative to VDSO_BASE.
 
-    constexpr size_t PAGE_SIZE = 0x1000;
+    constexpr size_t VDSO_PAGE_SIZE = 0x1000;
 
     // ELF header: 0x000 - 0x03F (64 bytes)
     constexpr size_t EHDR_OFF = 0;
@@ -238,14 +218,14 @@ uint64_t linux_vdso::setup(linux_memory_manager& memory)
     const size_t total_size = shstrtab_off + shstrtab_size;
 
     // Ensure it fits in one page
-    if (total_size > PAGE_SIZE)
+    if (total_size > VDSO_PAGE_SIZE)
     {
         // Should not happen with our small vDSO
         return 0;
     }
 
     // ---- Build the image ----
-    std::vector<uint8_t> image(PAGE_SIZE, 0);
+    std::vector<uint8_t> image(VDSO_PAGE_SIZE, 0);
 
     // -- ELF header --
     Elf64_Ehdr ehdr{};
@@ -281,9 +261,9 @@ uint64_t linux_vdso::setup(linux_memory_manager& memory)
         phdr.p_offset = 0;
         phdr.p_vaddr = 0; // Relative to base (ET_DYN)
         phdr.p_paddr = 0;
-        phdr.p_filesz = PAGE_SIZE;
-        phdr.p_memsz = PAGE_SIZE;
-        phdr.p_align = PAGE_SIZE;
+        phdr.p_filesz = VDSO_PAGE_SIZE;
+        phdr.p_memsz = VDSO_PAGE_SIZE;
+        phdr.p_align = VDSO_PAGE_SIZE;
         put_struct(image, PHDR_OFF, phdr);
     }
 
@@ -495,16 +475,16 @@ uint64_t linux_vdso::setup(linux_memory_manager& memory)
     // ---- Map into emulated memory ----
     const auto base = VDSO_BASE;
 
-    if (!memory.allocate_memory(base, PAGE_SIZE, memory_permission::read | memory_permission::exec))
+    if (!memory.allocate_memory(base, VDSO_PAGE_SIZE, memory_permission::read | memory_permission::exec))
     {
         return 0;
     }
 
     // Write the image
-    memory.write_memory(base, image.data(), PAGE_SIZE);
+    memory.write_memory(base, image.data(), VDSO_PAGE_SIZE);
 
     this->base_address_ = base;
-    this->image_size_ = PAGE_SIZE;
+    this->image_size_ = VDSO_PAGE_SIZE;
 
     return base;
 }
