@@ -453,6 +453,7 @@ jobs:
           EMULATOR_ROOT: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/root
           EMULATOR_VERBOSE: ${{ github.event.inputs.verbose }}
           ANALYSIS_SAMPLE: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/test-sample.exe
+          LINUX_TEST_ROOT: ${{github.workspace}}/test/linux
 
   win-test:
     name: Windows Test
@@ -688,6 +689,12 @@ jobs:
           cp ./build/release/artifacts/32/analyzer.wasm ./page/public/32/
           cp ./build/release/artifacts/64/analyzer.js ./page/public/64/
           cp ./build/release/artifacts/64/analyzer.wasm ./page/public/64/
+          mkdir -p ./page/public/linux32/
+          mkdir -p ./page/public/linux64/
+          cp ./build/release/artifacts/32/linux-analyzer.js ./page/public/linux32/
+          cp ./build/release/artifacts/32/linux-analyzer.wasm ./page/public/linux32/
+          cp ./build/release/artifacts/64/linux-analyzer.js ./page/public/linux64/
+          cp ./build/release/artifacts/64/linux-analyzer.wasm ./page/public/linux64/
 
       - name: Build Page
         run: cd ./page && npm i && npm run build

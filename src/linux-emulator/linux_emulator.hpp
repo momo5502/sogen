@@ -3,6 +3,7 @@
 #include "std_include.hpp"
 
 #include <arch_emulator.hpp>
+#include <platform/compiler.hpp>
 
 #include "linux_logger.hpp"
 #include "linux_file_system.hpp"
@@ -50,6 +51,14 @@ class linux_emulator
     {
         return *this->emu_;
     }
+
+    // Callbacks for emulated stdout/stderr output
+    std::function<void(std::string_view data)> on_stdout{};
+    std::function<void(std::string_view data)> on_stderr{};
+
+    // Callback invoked periodically during emulation (every 0x20000 instructions).
+    // Used by the web debugger for ASYNCIFY yield and event handling.
+    std::function<void()> on_periodic_event{};
 
     void start(size_t count = 0);
     void stop();

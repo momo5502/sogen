@@ -114,14 +114,10 @@ namespace
     // Epoll event flags
     constexpr uint32_t EPOLLIN = 0x001;
     constexpr uint32_t EPOLLOUT = 0x004;
-    constexpr uint32_t EPOLLERR = 0x008;
-    constexpr uint32_t EPOLLHUP = 0x010;
 
     // Poll event flags
     constexpr int16_t POLLIN = 0x0001;
     constexpr int16_t POLLOUT = 0x0004;
-    constexpr int16_t POLLERR = 0x0008;
-    constexpr int16_t POLLHUP = 0x0010;
     constexpr int16_t POLLNVAL = 0x0020;
 
 #pragma pack(push, 1)

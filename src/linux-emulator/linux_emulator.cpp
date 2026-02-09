@@ -205,6 +205,11 @@ void linux_emulator::on_instruction_execution(const uint64_t /*address*/)
     {
         ++this->process.active_thread->executed_instructions;
     }
+
+    if (this->on_periodic_event && (this->executed_instructions_ % 0x20000) == 0)
+    {
+        this->on_periodic_event();
+    }
 }
 
 void linux_emulator::start(const size_t count)

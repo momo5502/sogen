@@ -6,15 +6,10 @@ using namespace linux_errno;
 
 namespace
 {
-    // Linux clock IDs
-    constexpr int CLOCK_REALTIME = 0;
-    constexpr int CLOCK_MONOTONIC = 1;
-    constexpr int CLOCK_PROCESS_CPUTIME_ID = 2;
-    constexpr int CLOCK_THREAD_CPUTIME_ID = 3;
-    constexpr int CLOCK_MONOTONIC_RAW = 4;
-    constexpr int CLOCK_REALTIME_COARSE = 5;
-    constexpr int CLOCK_MONOTONIC_COARSE = 6;
-    constexpr int CLOCK_BOOTTIME = 7;
+    // Linux clock IDs (for reference):
+    // 0 = CLOCK_REALTIME, 1 = CLOCK_MONOTONIC, 2 = CLOCK_PROCESS_CPUTIME_ID,
+    // 3 = CLOCK_THREAD_CPUTIME_ID, 4 = CLOCK_MONOTONIC_RAW,
+    // 5 = CLOCK_REALTIME_COARSE, 6 = CLOCK_MONOTONIC_COARSE, 7 = CLOCK_BOOTTIME
 
     struct linux_timespec
     {

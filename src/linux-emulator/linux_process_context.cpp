@@ -27,11 +27,6 @@ namespace
         return addr;
     }
 
-    void push_u64(linux_memory_manager& memory, uint64_t& sp, const uint64_t value)
-    {
-        sp -= sizeof(uint64_t);
-        memory.write_memory(sp, &value, sizeof(value));
-    }
 }
 
 void linux_process_context::setup(x86_64_emulator& emu, linux_memory_manager& memory, const linux_mapped_module& exe,

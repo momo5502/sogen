@@ -21,7 +21,6 @@ namespace
     constexpr int SOCK_TYPE_MASK = 0xF;
 
     // Socket type flags (upper bits)
-    constexpr int SOCK_NONBLOCK = 04000;
     constexpr int SOCK_CLOEXEC = 02000000;
 
     // Shutdown how

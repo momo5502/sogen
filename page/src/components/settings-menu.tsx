@@ -72,6 +72,32 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
 
         <div className="flex gap-6 mb-2">
           <RadioGroup
+            value={this.state.mode}
+            onValueChange={(value) =>
+              this.setState({ mode: value as "windows" | "linux" })
+            }
+          >
+            <div className="flex items-center gap-4">
+              <RadioGroupItem value="windows" id="settings-mode-win" />
+              <SettingsLabel
+                htmlFor="settings-mode-win"
+                text={"Windows Emulator"}
+                tooltip={"Emulate Windows NT x86-64 binaries (PE/EXE)"}
+              />
+            </div>
+            <div className="flex items-center gap-4">
+              <RadioGroupItem value="linux" id="settings-mode-linux" />
+              <SettingsLabel
+                htmlFor="settings-mode-linux"
+                text={"Linux Emulator"}
+                tooltip={"Emulate Linux x86-64 binaries (ELF)"}
+              />
+            </div>
+          </RadioGroup>
+        </div>
+
+        <div className="flex gap-6 mb-2">
+          <RadioGroup
             defaultValue="regular"
             value={this.state.logging}
             onValueChange={(value) => this.setState({ logging: value })}

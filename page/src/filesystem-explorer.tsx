@@ -38,6 +38,7 @@ export interface FilesystemExplorerProps {
   resetFilesys: () => void;
   path: string[];
   iconCache: Map<string, string | null>;
+  linuxMode?: boolean;
 }
 export interface FilesystemExplorerState {
   path: string[];
@@ -283,7 +284,10 @@ export class FilesystemExplorer extends React.Component<
 
   _onElementSelect(element: FolderElement) {
     if (element.type != FolderElementType.Folder) {
-      if (element.name.endsWith(".exe")) {
+      if (this.props.linuxMode) {
+        const file = "./root/" + makeRelativePathWithState(this.state, element.name);
+        this.props.runFile(file);
+      } else if (element.name.endsWith(".exe")) {
         const file = makeWindowsPathWithState(this.state, element.name);
         this.props.runFile(file);
       }
