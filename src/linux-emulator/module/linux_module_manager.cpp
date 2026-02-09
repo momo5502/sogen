@@ -37,6 +37,13 @@ void linux_module_manager::map_main_modules(const std::filesystem::path& executa
         static_cast<int64_t>(mod.image_base) - static_cast<int64_t>(mod.image_base - (mod.entry_point - get_header(data_span)->e_entry));
     apply_elf_relocations(*this->memory_, mod, data_span, base_delta);
 
+    // Collect IRELATIVE relocations (IFUNC resolvers, common in glibc static binaries)
+    auto irelatives = collect_irelative_relocations(data_span, base_delta);
+    if (!irelatives.empty())
+    {
+        this->irelative_entries.insert(this->irelative_entries.end(), irelatives.begin(), irelatives.end());
+    }
+
     // Check for PT_INTERP — dynamic linker path
     const auto* ehdr = get_header(data_span);
     const auto* phdrs = get_program_headers(data_span);

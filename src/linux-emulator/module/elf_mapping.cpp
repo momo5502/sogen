@@ -437,6 +437,51 @@ linux_mapped_module map_elf_from_data(linux_memory_manager& memory, const std::s
     return mod;
 }
 
+std::vector<elf_irelative_entry> collect_irelative_relocations(const std::span<const std::byte> data, const int64_t base_delta)
+{
+    std::vector<elf_irelative_entry> result{};
+
+    const auto* ehdr = get_header(data);
+    const auto* shdrs = get_section_headers(data);
+    if (!shdrs)
+    {
+        return result;
+    }
+
+    for (uint16_t i = 0; i < ehdr->e_shnum; ++i)
+    {
+        const auto& sh = shdrs[i];
+        if (sh.sh_type != SHT_RELA)
+        {
+            continue;
+        }
+
+        if (sh.sh_offset + sh.sh_size > data.size())
+        {
+            continue;
+        }
+
+        const auto rela_count = sh.sh_size / sizeof(Elf64_Rela);
+        const auto* relas = reinterpret_cast<const Elf64_Rela*>(data.data() + sh.sh_offset);
+
+        for (size_t j = 0; j < rela_count; ++j)
+        {
+            const auto& rela = relas[j];
+            const auto type = elf64_r_type(rela.r_info);
+
+            if (type == R_X86_64_IRELATIVE)
+            {
+                elf_irelative_entry entry{};
+                entry.got_addr = rela.r_offset + static_cast<uint64_t>(base_delta);
+                entry.resolver_addr = static_cast<uint64_t>(static_cast<int64_t>(rela.r_addend) + base_delta);
+                result.push_back(entry);
+            }
+        }
+    }
+
+    return result;
+}
+
 void apply_elf_relocations(linux_memory_manager& memory, linux_mapped_module& /*mod*/, const std::span<const std::byte> data,
                            const int64_t base_delta)
 {

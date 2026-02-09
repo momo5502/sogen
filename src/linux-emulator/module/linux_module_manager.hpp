@@ -21,6 +21,10 @@ class linux_module_manager
 
     std::string interpreter_path{};
 
+    // IRELATIVE relocations collected during ELF loading, to be resolved by running
+    // each resolver function in the emulator before starting execution.
+    std::vector<elf_irelative_entry> irelative_entries{};
+
     void map_main_modules(const std::filesystem::path& executable_path);
     linux_mapped_module* map_module(const std::filesystem::path& path, uint64_t forced_base = 0);
 

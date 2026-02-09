@@ -218,24 +218,97 @@ void linux_process_context::setup(x86_64_emulator& emu, linux_memory_manager& me
     }
 
     // ---- Set up initial TLS area ----
-    // Allocate a minimal TLS block with a self-referencing TCB pointer.
-    // x86-64 TLS variant II: FS_BASE points to the Thread Control Block (TCB).
-    // The first 8 bytes at %fs:0 contain a self-pointer (used by glibc/musl for
-    // __builtin_thread_pointer() / tp-relative accesses). Without this, any %fs:
-    // access before arch_prctl(ARCH_SET_FS) would fault on unmapped memory.
-    constexpr uint64_t INITIAL_TLS_ADDR = 0x7ffff7ffd000; // Below vDSO, above typical library range
-    constexpr size_t INITIAL_TLS_SIZE = 0x1000;           // 4KB — enough for TCB + small TLS
+    // x86-64 TLS variant II layout (used by glibc and musl):
+    //
+    //   Low address                                    High address
+    //   [   TLS data block (tls_mem_size)   ] [ TCB (Thread Control Block) ]
+    //                                          ^
+    //                                          |
+    //                                        FS_BASE points here
+    //
+    // Thread-local variables are accessed at NEGATIVE offsets from FS_BASE.
+    // The TCB's first 8 bytes at %fs:0 contain a self-pointer (the "tp" value).
+    // glibc's TCB also expects: offset 0 = self-pointer, offset 8 = dtv pointer.
+    //
+    // For static binaries with PT_TLS, we copy .tdata and zero .tbss into the
+    // TLS data block. For dynamic binaries, the dynamic linker (ld-linux/ld-musl)
+    // will set up its own TLS via arch_prctl(ARCH_SET_FS), but we still need a
+    // valid initial FS_BASE so that any early %fs: accesses don't fault.
 
-    if (memory.allocate_memory(INITIAL_TLS_ADDR, INITIAL_TLS_SIZE, memory_permission::read_write))
+    constexpr uint64_t INITIAL_TLS_REGION = 0x7ffff7ff8000; // Base of the TLS allocation region
+    constexpr size_t MIN_TLS_REGION_SIZE = 0x6000;          // 24KB minimum (6 pages)
+    constexpr size_t TCB_SIZE = 0xA00;                      // 2560 bytes for TCB + struct pthread (glibc's struct pthread is ~0x900 bytes)
+
+    // Determine TLS data size from the executable's PT_TLS segment
+    const auto tls_mem_size = exe.tls_mem_size;
+    const auto tls_image_size = exe.tls_image_size;
+    const auto tls_alignment = exe.tls_alignment > 0 ? exe.tls_alignment : 8;
+    const auto tls_image_addr = exe.tls_image_addr; // Address of .tdata in emulated memory (already mapped)
+
+    // Calculate the total region size needed:
+    // We need: [alignment padding] [TLS block (tls_mem_size, aligned)] [TCB (TCB_SIZE)]
+    // All page-aligned for the allocation.
+    const auto aligned_tls_size = align_up(tls_mem_size, tls_alignment);
+    const auto total_tls_needed = aligned_tls_size + TCB_SIZE;
+    const auto tls_region_size = page_align_up(std::max(total_tls_needed, static_cast<uint64_t>(MIN_TLS_REGION_SIZE)));
+
+    // Position the allocation so that the TCB falls at a known address.
+    // We allocate from INITIAL_TLS_REGION and compute the TCB position within it.
+    const auto tls_alloc_base = INITIAL_TLS_REGION;
+
+    uint64_t initial_fs_base = 0;
+
+    if (memory.allocate_memory(tls_alloc_base, static_cast<size_t>(tls_region_size), memory_permission::read_write))
     {
-        // Write self-referencing pointer at offset 0 (TCB pointer)
-        memory.write_memory(INITIAL_TLS_ADDR, &INITIAL_TLS_ADDR, sizeof(uint64_t));
+        // Place the TCB at the end of the allocated region (aligned to 16 bytes).
+        // The TLS data block sits immediately before the TCB.
+        const auto tcb_addr = align_down(tls_alloc_base + tls_region_size - TCB_SIZE, 16);
+        const auto tls_block_start = tcb_addr - aligned_tls_size;
 
-        // Set FS_BASE to the TLS area
-        emu.set_segment_base(x86_register::fs, INITIAL_TLS_ADDR);
+        // Copy .tdata (initialized thread-local data) from the mapped ELF image
+        if (tls_image_size > 0 && tls_image_addr != 0)
+        {
+            // The .tdata is already in emulated memory at tls_image_addr (from PT_LOAD mapping).
+            // Copy it to the TLS block. In variant II, .tdata goes at the END of the TLS block
+            // (closest to the TCB), and .tbss fills the space before it.
+            // Actually, the layout is: [.tbss zero-fill] [.tdata] [TCB]
+            // with .tdata at the highest addresses of the TLS block.
+            // But the standard glibc layout is simpler:
+            //   TLS block at [tls_block_start .. tls_block_start + tls_mem_size)
+            //   where [0 .. tls_image_size) = .tdata copy, [tls_image_size .. tls_mem_size) = .tbss (zeroed)
+            // Thread-local vars are accessed as %fs:-(tls_mem_size - var_offset)
+            std::vector<uint8_t> tls_data(static_cast<size_t>(tls_image_size));
+            memory.read_memory(tls_image_addr, tls_data.data(), tls_data.size());
+            memory.write_memory(tls_block_start, tls_data.data(), tls_data.size());
+        }
+
+        // .tbss portion (tls_image_size .. tls_mem_size) is already zero from fresh allocation
+
+        // Write self-referencing pointer at TCB offset 0 (%fs:0 = tcb pointer)
+        memory.write_memory(tcb_addr, &tcb_addr, sizeof(uint64_t));
+
+        // Write a NULL DTV pointer at TCB offset 8 (%fs:8 = dtv)
+        // glibc checks this; a NULL or valid pointer prevents crashes
+        const uint64_t null_dtv = 0;
+        memory.write_memory(tcb_addr + 8, &null_dtv, sizeof(uint64_t));
+
+        // Write self-pointer at TCB offset 16 (%fs:0x10 = struct pthread * / thread descriptor)
+        // In glibc, the TCB is embedded within struct pthread, so the thread descriptor
+        // pointer should point to the TCB itself. glibc's __syscall_cancel and other
+        // routines access fields via %fs:0x10 + offset (e.g., 0x308 for cancel state).
+        // By pointing %fs:0x10 to the TCB (which has a large zero-filled area after it),
+        // these accesses will read zeros instead of faulting.
+        memory.write_memory(tcb_addr + 16, &tcb_addr, sizeof(uint64_t));
+
+        // Set FS_BASE to the TCB
+        emu.set_segment_base(x86_register::fs, tcb_addr);
+        initial_fs_base = tcb_addr;
     }
-
-    const uint64_t initial_fs_base = INITIAL_TLS_ADDR;
+    else
+    {
+        // Fallback: if allocation failed, set a basic FS_BASE anyway
+        initial_fs_base = INITIAL_TLS_REGION;
+    }
 
     // ---- Create the initial thread ----
     // If an interpreter is loaded, execution starts at the interpreter's entry point.

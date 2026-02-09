@@ -102,19 +102,56 @@ linux_emulator::linux_emulator(std::unique_ptr<x86_64_emulator> emu, const std::
 
     if (!this->mod_manager.interpreter_path.empty())
     {
-        // Resolve the interpreter path via the file system
-        const auto interp_host_path = this->file_sys.translate(this->mod_manager.interpreter_path);
+        // Resolve the interpreter path via the file system.
+        // Some Linux systems encode PT_INTERP as /lib64/ld-linux-x86-64.so.2,
+        // while distro sysroots may place the file under /lib/x86_64-linux-gnu.
+        // Try the exact PT_INTERP path first, then a few common fallbacks.
+        std::vector<std::string> guest_candidates{};
+        guest_candidates.push_back(this->mod_manager.interpreter_path);
 
-        if (std::filesystem::exists(interp_host_path))
+        const auto interp_filename = std::filesystem::path(this->mod_manager.interpreter_path).filename().string();
+        if (!interp_filename.empty())
         {
-            this->mod_manager.interpreter = this->mod_manager.map_module(interp_host_path);
+            guest_candidates.push_back("/lib/x86_64-linux-gnu/" + interp_filename);
+            guest_candidates.push_back("/lib/" + interp_filename);
+            guest_candidates.push_back("/usr/lib64/" + interp_filename);
+            guest_candidates.push_back("/usr/lib/x86_64-linux-gnu/" + interp_filename);
+        }
 
-            if (this->mod_manager.interpreter)
+        std::filesystem::path interp_host_path{};
+        std::string chosen_guest_path{};
+
+        for (const auto& guest_path : guest_candidates)
+        {
+            const auto candidate = this->file_sys.translate(guest_path);
+            if (std::filesystem::exists(candidate))
             {
-                interpreter_base = this->mod_manager.interpreter->image_base;
-                initial_rip = this->mod_manager.interpreter->entry_point;
+                interp_host_path = candidate;
+                chosen_guest_path = guest_path;
+                break;
             }
         }
+
+        if (interp_host_path.empty())
+        {
+            throw std::runtime_error("ELF requires dynamic linker '" + this->mod_manager.interpreter_path +
+                                     "' but it was not found under --root. Tried host paths such as '" +
+                                     this->file_sys.translate(this->mod_manager.interpreter_path).string() +
+                                     "' and common alternatives under /lib and /usr/lib. Provide a Linux sysroot via --root containing "
+                                     "this loader and required glibc/musl libraries.");
+        }
+
+        this->mod_manager.interpreter = this->mod_manager.map_module(interp_host_path);
+        if (!this->mod_manager.interpreter)
+        {
+            throw std::runtime_error("Failed to map dynamic linker: " + interp_host_path.string());
+        }
+
+        // Keep the selected interpreter path for logging consistency.
+        this->mod_manager.interpreter_path = chosen_guest_path;
+
+        interpreter_base = this->mod_manager.interpreter->image_base;
+        initial_rip = this->mod_manager.interpreter->entry_point;
     }
 
     // Set up the synthetic vDSO (must be done before process.setup so AT_SYSINFO_EHDR is available)
@@ -129,6 +166,14 @@ linux_emulator::linux_emulator(std::unique_ptr<x86_64_emulator> emu, const std::
     // Install CPU hooks
     this->setup_hooks();
 
+    // Resolve IRELATIVE (IFUNC) relocations eagerly only for static binaries.
+    // For dynamically linked binaries, the runtime linker (ld-linux/ld-musl)
+    // handles IFUNC relocation itself.
+    if (!this->mod_manager.interpreter)
+    {
+        this->resolve_irelative_relocations();
+    }
+
     this->log.info("Linux emulator initialized\n");
     this->log.info("  Executable: %s\n", executable.string().c_str());
     this->log.info("  Entry point: 0x%llx\n", static_cast<unsigned long long>(this->mod_manager.executable->entry_point));
@@ -139,10 +184,6 @@ linux_emulator::linux_emulator(std::unique_ptr<x86_64_emulator> emu, const std::
         this->log.info("  Interpreter: %s (loaded at 0x%llx, entry 0x%llx)\n", this->mod_manager.interpreter_path.c_str(),
                        static_cast<unsigned long long>(this->mod_manager.interpreter->image_base),
                        static_cast<unsigned long long>(this->mod_manager.interpreter->entry_point));
-    }
-    else if (!this->mod_manager.interpreter_path.empty())
-    {
-        this->log.warn("  Interpreter: %s (not found, proceeding without it)\n", this->mod_manager.interpreter_path.c_str());
     }
 }
 
@@ -197,7 +238,7 @@ void linux_emulator::setup_hooks()
     this->emu().hook_memory_execution([this](const uint64_t address) { this->on_instruction_execution(address); });
 }
 
-void linux_emulator::on_instruction_execution(const uint64_t /*address*/)
+void linux_emulator::on_instruction_execution(const uint64_t address)
 {
     ++this->executed_instructions_;
 
@@ -205,6 +246,8 @@ void linux_emulator::on_instruction_execution(const uint64_t /*address*/)
     {
         ++this->process.active_thread->executed_instructions;
     }
+
+    (void)address;
 
     if (this->on_periodic_event && (this->executed_instructions_ % 0x20000) == 0)
     {
@@ -249,4 +292,148 @@ void linux_emulator::stop()
 {
     this->should_stop = true;
     this->emu().stop();
+}
+
+void linux_emulator::resolve_irelative_relocations()
+{
+    const auto& entries = this->mod_manager.irelative_entries;
+    if (entries.empty())
+    {
+        return;
+    }
+
+    this->log.info("Resolving %zu IRELATIVE (IFUNC) relocations...\n", entries.size());
+
+    // Save all current CPU state so we can restore it after running resolvers
+    const auto saved_rip = this->emu().reg(x86_register::rip);
+    const auto saved_rsp = this->emu().reg(x86_register::rsp);
+    const auto saved_rax = this->emu().reg(x86_register::rax);
+    const auto saved_rbx = this->emu().reg(x86_register::rbx);
+    const auto saved_rcx = this->emu().reg(x86_register::rcx);
+    const auto saved_rdx = this->emu().reg(x86_register::rdx);
+    const auto saved_rsi = this->emu().reg(x86_register::rsi);
+    const auto saved_rdi = this->emu().reg(x86_register::rdi);
+    const auto saved_rbp = this->emu().reg(x86_register::rbp);
+    const auto saved_r8 = this->emu().reg(x86_register::r8);
+    const auto saved_r9 = this->emu().reg(x86_register::r9);
+    const auto saved_r10 = this->emu().reg(x86_register::r10);
+    const auto saved_r11 = this->emu().reg(x86_register::r11);
+    const auto saved_r12 = this->emu().reg(x86_register::r12);
+    const auto saved_r13 = this->emu().reg(x86_register::r13);
+    const auto saved_r14 = this->emu().reg(x86_register::r14);
+    const auto saved_r15 = this->emu().reg(x86_register::r15);
+    const auto saved_rflags = this->emu().reg(x86_register::rflags);
+    const auto saved_fs_base = this->emu().get_segment_base(x86_register::fs);
+    const auto saved_gs_base = this->emu().get_segment_base(x86_register::gs);
+
+    // Allocate scratch pages for the resolver execution:
+    // - Sentinel page: contains a `hlt` instruction that stops the emulator when the resolver returns
+    // - Stack page: a small stack for the resolver functions
+    constexpr uint64_t SENTINEL_PAGE = 0x10000;       // Low address, unlikely to be used
+    constexpr uint64_t RESOLVER_STACK_PAGE = 0x11000; // Stack page right after sentinel
+    constexpr size_t PAGE_SIZE = 0x1000;
+
+    const bool ok1 = this->memory.allocate_memory(SENTINEL_PAGE, PAGE_SIZE, memory_permission::all);
+    const bool ok2 = this->memory.allocate_memory(RESOLVER_STACK_PAGE, PAGE_SIZE, memory_permission::read_write);
+
+    if (!ok1 || !ok2)
+    {
+        this->log.warn("Failed to allocate scratch pages for IRELATIVE resolvers\n");
+        if (ok1)
+            this->memory.release_memory(SENTINEL_PAGE, PAGE_SIZE);
+        if (ok2)
+            this->memory.release_memory(RESOLVER_STACK_PAGE, PAGE_SIZE);
+        return;
+    }
+
+    // Write `hlt` instruction at the sentinel address. When the resolver returns to this
+    // address, `hlt` will cause a privilege fault that stops Unicorn.
+    const uint8_t hlt_insn = 0xF4; // hlt
+    this->memory.write_memory(SENTINEL_PAGE, &hlt_insn, 1);
+
+    // Stack grows downward from the top of the stack page
+    constexpr uint64_t RESOLVER_STACK_TOP = RESOLVER_STACK_PAGE + PAGE_SIZE;
+
+    size_t resolved_count = 0;
+
+    for (const auto& entry : entries)
+    {
+        // Set up the CPU for calling the resolver:
+        // - RSP points to the resolver stack with the sentinel as return address
+        // - RIP points to the resolver function
+        const uint64_t resolver_sp = RESOLVER_STACK_TOP - 8; // Room for return address
+
+        // Push sentinel address as return address
+        this->memory.write_memory(resolver_sp, &SENTINEL_PAGE, sizeof(uint64_t));
+
+        this->emu().reg(x86_register::rsp, resolver_sp);
+        this->emu().reg(x86_register::rip, entry.resolver_addr);
+        this->emu().reg(x86_register::rax, uint64_t{0});
+        this->emu().reg(x86_register::rflags, uint64_t{0x202});
+
+        // Run the resolver (it should execute a few instructions and `ret`).
+        // When it returns to the sentinel, the `hlt` instruction will cause an
+        // exception from Unicorn. We catch it and continue.
+        try
+        {
+            this->emu().start(10000);
+        }
+        catch (...)
+        {
+            // Expected: the `hlt` instruction at the sentinel causes an exception
+        }
+
+        // Read the resolved function address from RAX
+        const auto resolved_addr = this->emu().reg(x86_register::rax);
+
+        if (resolved_addr != 0)
+        {
+            // Write the resolved address into the GOT slot
+            this->memory.write_memory(entry.got_addr, &resolved_addr, sizeof(uint64_t));
+            ++resolved_count;
+        }
+        else
+        {
+            this->log.warn("IRELATIVE resolver at 0x%llx returned 0 for GOT 0x%llx\n", static_cast<unsigned long long>(entry.resolver_addr),
+                           static_cast<unsigned long long>(entry.got_addr));
+        }
+    }
+
+    // Free the scratch pages
+    this->memory.release_memory(SENTINEL_PAGE, PAGE_SIZE);
+    this->memory.release_memory(RESOLVER_STACK_PAGE, PAGE_SIZE);
+
+    // Restore all CPU state
+    this->emu().reg(x86_register::rip, saved_rip);
+    this->emu().reg(x86_register::rsp, saved_rsp);
+    this->emu().reg(x86_register::rax, saved_rax);
+    this->emu().reg(x86_register::rbx, saved_rbx);
+    this->emu().reg(x86_register::rcx, saved_rcx);
+    this->emu().reg(x86_register::rdx, saved_rdx);
+    this->emu().reg(x86_register::rsi, saved_rsi);
+    this->emu().reg(x86_register::rdi, saved_rdi);
+    this->emu().reg(x86_register::rbp, saved_rbp);
+    this->emu().reg(x86_register::r8, saved_r8);
+    this->emu().reg(x86_register::r9, saved_r9);
+    this->emu().reg(x86_register::r10, saved_r10);
+    this->emu().reg(x86_register::r11, saved_r11);
+    this->emu().reg(x86_register::r12, saved_r12);
+    this->emu().reg(x86_register::r13, saved_r13);
+    this->emu().reg(x86_register::r14, saved_r14);
+    this->emu().reg(x86_register::r15, saved_r15);
+    this->emu().reg(x86_register::rflags, saved_rflags);
+    this->emu().set_segment_base(x86_register::fs, saved_fs_base);
+    this->emu().set_segment_base(x86_register::gs, saved_gs_base);
+
+    // Reset execution counters (the resolver runs shouldn't count)
+    this->executed_instructions_ = 0;
+    if (this->process.active_thread)
+    {
+        this->process.active_thread->executed_instructions = 0;
+    }
+
+    // Reset stop flag
+    this->should_stop = false;
+
+    this->log.info("Resolved %zu/%zu IRELATIVE relocations\n", resolved_count, entries.size());
 }

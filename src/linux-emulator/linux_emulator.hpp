@@ -73,4 +73,5 @@ class linux_emulator
 
     void setup_hooks();
     void on_instruction_execution(uint64_t address);
+    void resolve_irelative_relocations();
 };
