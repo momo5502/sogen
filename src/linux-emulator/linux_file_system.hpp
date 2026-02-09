@@ -89,7 +89,25 @@ class linux_file_system
             return this->root_ / guest_path.substr(1);
         }
 
-        return this->root_ / guest_path;
+        // Relative path: prefer emulation-root path by default.
+        // If the target does not exist there, allow lookup under passthrough
+        // prefixes (useful for executable-adjacent host files).
+        const auto rooted = this->root_ / guest_path;
+        if (std::filesystem::exists(rooted))
+        {
+            return rooted;
+        }
+
+        for (const auto& prefix : this->passthrough_prefixes_)
+        {
+            const auto candidate = prefix / guest_path;
+            if (std::filesystem::exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return rooted;
     }
 
     void add_passthrough_prefix(const std::filesystem::path& prefix)
