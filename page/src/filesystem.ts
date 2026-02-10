@@ -6,6 +6,15 @@ function fetchFilesystemZip(progressCallback: DownloadPercentHandler) {
   return downloadBinaryFilePercent("./root.zip", progressCallback);
 }
 
+async function fetchOptionalFilesystemZip(path: string) {
+  const response = await fetch(path);
+  if (!response.ok) {
+    return null;
+  }
+
+  return await response.arrayBuffer();
+}
+
 async function fetchFilesystem(
   progressHandler: ProgressHandler,
   downloadProgressHandler: DownloadPercentHandler,
@@ -196,6 +205,65 @@ export async function setupLinuxFilesystem() {
   for (const dir of dirs) {
     if (!idbfs.FS.analyzePath(dir, false).exists) {
       idbfs.FS.mkdirTree(dir, 0o777);
+    }
+  }
+
+  // Optionally preload Linux sysroot files from page/public/linux-root.zip.
+  // This enables dynamic ELF binaries in web mode when a local sysroot archive
+  // is present, while still working when no archive exists.
+  const linuxRootMarker = "/root/.linux-root-loaded";
+  if (!idbfs.FS.analyzePath(linuxRootMarker, false).exists) {
+    try {
+      const linuxRootZip = await fetchOptionalFilesystemZip("./linux-root.zip");
+      if (linuxRootZip) {
+        const entries = await parseZipFile(linuxRootZip);
+
+        for (const entry of entries) {
+          let relativePath = entry.name.replace(/\\/g, "/");
+
+          while (relativePath.startsWith("./")) {
+            relativePath = relativePath.substring(2);
+          }
+
+          if (relativePath.startsWith("/")) {
+            relativePath = relativePath.substring(1);
+          }
+
+          if (relativePath.startsWith("root/")) {
+            relativePath = relativePath.substring("root/".length);
+          }
+
+          if (
+            relativePath.length === 0 ||
+            relativePath === "." ||
+            relativePath.startsWith("__MACOSX/")
+          ) {
+            continue;
+          }
+
+          const fullPath = "/root/" + relativePath;
+
+          if (entry.name.endsWith("/")) {
+            if (!idbfs.FS.analyzePath(fullPath, false).exists) {
+              idbfs.FS.mkdirTree(fullPath, 0o777);
+            }
+            continue;
+          }
+
+          const slash = fullPath.lastIndexOf("/");
+          const parent = slash > 0 ? fullPath.substring(0, slash) : "/root";
+
+          if (!idbfs.FS.analyzePath(parent, false).exists) {
+            idbfs.FS.mkdirTree(parent, 0o777);
+          }
+
+          idbfs.FS.writeFile(fullPath, new Uint8Array(entry.data));
+        }
+
+        idbfs.FS.writeFile(linuxRootMarker, new Uint8Array([1]));
+      }
+    } catch (_) {
+      // Ignore optional preload errors; users can still upload files manually.
     }
   }
 

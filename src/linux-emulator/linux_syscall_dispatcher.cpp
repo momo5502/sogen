@@ -15,6 +15,8 @@ void sys_fstat(const linux_syscall_context& c);
 void sys_lseek(const linux_syscall_context& c);
 void sys_access(const linux_syscall_context& c);
 void sys_openat(const linux_syscall_context& c);
+void sys_fsync(const linux_syscall_context& c);
+void sys_fdatasync(const linux_syscall_context& c);
 
 // Tier 2 — file
 void sys_stat(const linux_syscall_context& c);
@@ -66,11 +68,15 @@ void sys_madvise(const linux_syscall_context& c);
 // Tier 2 — process
 void sys_sched_yield(const linux_syscall_context& c);
 void sys_sched_getaffinity(const linux_syscall_context& c);
+void sys_sched_getscheduler(const linux_syscall_context& c);
+void sys_sched_getparam(const linux_syscall_context& c);
+void sys_getpriority(const linux_syscall_context& c);
 void sys_clock_getres(const linux_syscall_context& c);
 
 // Tier 1 — time
 void sys_clock_gettime(const linux_syscall_context& c);
 void sys_gettimeofday(const linux_syscall_context& c);
+void sys_time(const linux_syscall_context& c);
 
 // Tier 2 — time
 void sys_nanosleep(const linux_syscall_context& c);
@@ -191,6 +197,8 @@ void linux_syscall_dispatcher::add_handlers()
     this->handlers_[SYS_lseek] = {sys_lseek, "lseek"};
     this->handlers_[SYS_access] = {sys_access, "access"};
     this->handlers_[SYS_openat] = {sys_openat, "openat"};
+    this->handlers_[SYS_fsync] = {sys_fsync, "fsync"};
+    this->handlers_[SYS_fdatasync] = {sys_fdatasync, "fdatasync"};
 
     // File syscalls (Tier 2)
     this->handlers_[SYS_stat] = {sys_stat, "stat"};
@@ -242,11 +250,15 @@ void linux_syscall_dispatcher::add_handlers()
     // Process syscalls (Tier 2)
     this->handlers_[SYS_sched_yield] = {sys_sched_yield, "sched_yield"};
     this->handlers_[SYS_sched_getaffinity] = {sys_sched_getaffinity, "sched_getaffinity"};
+    this->handlers_[SYS_sched_getscheduler] = {sys_sched_getscheduler, "sched_getscheduler"};
+    this->handlers_[SYS_sched_getparam] = {sys_sched_getparam, "sched_getparam"};
+    this->handlers_[SYS_getpriority] = {sys_getpriority, "getpriority"};
     this->handlers_[SYS_clock_getres] = {sys_clock_getres, "clock_getres"};
 
     // Time syscalls
     this->handlers_[SYS_clock_gettime] = {sys_clock_gettime, "clock_gettime"};
     this->handlers_[SYS_gettimeofday] = {sys_gettimeofday, "gettimeofday"};
+    this->handlers_[SYS_time] = {sys_time, "time"};
     this->handlers_[SYS_nanosleep] = {sys_nanosleep, "nanosleep"};
     this->handlers_[SYS_clock_nanosleep] = {sys_clock_nanosleep, "clock_nanosleep"};
 

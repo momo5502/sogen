@@ -13,6 +13,7 @@ namespace
     constexpr int PROT_EXEC = 4;
 
     constexpr int MAP_FIXED = 0x10;
+    constexpr int MAP_FIXED_NOREPLACE = 0x100000;
     constexpr int MAP_ANONYMOUS = 0x20;
 
     memory_permission prot_to_permission(const int prot)
@@ -58,7 +59,32 @@ void sys_mmap(const linux_syscall_context& c)
     auto& memory = c.emu_ref.memory;
     uint64_t mapped_addr = 0;
 
-    if (flags & MAP_FIXED)
+    if (flags & MAP_FIXED_NOREPLACE)
+    {
+        if (addr == 0 || page_align_down(addr) != addr)
+        {
+            write_linux_syscall_result(c, -LINUX_EINVAL);
+            return;
+        }
+
+        const auto aligned_addr = addr;
+
+        // Do not replace existing mappings; fail with EEXIST if occupied.
+        if (memory.overlaps_mapped_region(aligned_addr, aligned_length))
+        {
+            write_linux_syscall_result(c, -LINUX_EEXIST);
+            return;
+        }
+
+        if (!memory.allocate_memory(aligned_addr, aligned_length, memory_permission::read_write))
+        {
+            write_linux_syscall_result(c, -LINUX_ENOMEM);
+            return;
+        }
+
+        mapped_addr = aligned_addr;
+    }
+    else if (flags & MAP_FIXED)
     {
         if (addr == 0)
         {

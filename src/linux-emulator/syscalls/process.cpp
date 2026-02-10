@@ -299,6 +299,74 @@ void sys_sched_getaffinity(const linux_syscall_context& c)
     write_linux_syscall_result(c, static_cast<int64_t>(write_size));
 }
 
+void sys_sched_getscheduler(const linux_syscall_context& c)
+{
+    const auto pid = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
+
+    if (pid != 0 && static_cast<uint32_t>(pid) != c.proc.pid)
+    {
+        write_linux_syscall_result(c, -LINUX_ESRCH);
+        return;
+    }
+
+    // SCHED_OTHER
+    write_linux_syscall_result(c, 0);
+}
+
+void sys_sched_getparam(const linux_syscall_context& c)
+{
+    const auto pid = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
+    const auto param_addr = get_linux_syscall_argument(c.emu, 1);
+
+    if (param_addr == 0)
+    {
+        write_linux_syscall_result(c, -LINUX_EFAULT);
+        return;
+    }
+
+    if (pid != 0 && static_cast<uint32_t>(pid) != c.proc.pid)
+    {
+        write_linux_syscall_result(c, -LINUX_ESRCH);
+        return;
+    }
+
+    struct linux_sched_param
+    {
+        int32_t sched_priority;
+    };
+
+    linux_sched_param param{};
+    param.sched_priority = 0;
+    c.emu.write_memory(param_addr, &param, sizeof(param));
+
+    write_linux_syscall_result(c, 0);
+}
+
+void sys_getpriority(const linux_syscall_context& c)
+{
+    const auto which = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
+    const auto who = static_cast<int>(get_linux_syscall_argument(c.emu, 1));
+
+    constexpr int LINUX_PRIO_PROCESS = 0;
+    constexpr int LINUX_PRIO_PGRP = 1;
+    constexpr int LINUX_PRIO_USER = 2;
+
+    if (which != LINUX_PRIO_PROCESS && which != LINUX_PRIO_PGRP && which != LINUX_PRIO_USER)
+    {
+        write_linux_syscall_result(c, -LINUX_EINVAL);
+        return;
+    }
+
+    if (which == LINUX_PRIO_PROCESS && who != 0 && static_cast<uint32_t>(who) != c.proc.pid)
+    {
+        write_linux_syscall_result(c, -LINUX_ESRCH);
+        return;
+    }
+
+    // Linux nice range is [-20, 19]. Return default priority 0.
+    write_linux_syscall_result(c, 0);
+}
+
 void sys_clock_getres(const linux_syscall_context& c)
 {
     // clock_id is arg 0 (ignored — all clocks report 1ns resolution)

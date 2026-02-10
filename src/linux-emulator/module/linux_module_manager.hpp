@@ -26,7 +26,7 @@ class linux_module_manager
     std::vector<elf_irelative_entry> irelative_entries{};
 
     void map_main_modules(const std::filesystem::path& executable_path);
-    linux_mapped_module* map_module(const std::filesystem::path& path, uint64_t forced_base = 0);
+    linux_mapped_module* map_module(const std::filesystem::path& path, uint64_t forced_base = 0, bool apply_relocations = false);
 
     // Load all DT_NEEDED dependencies of already-loaded modules recursively.
     // Uses DT_RPATH, DT_RUNPATH, configured library paths, and emulation root standard directories.

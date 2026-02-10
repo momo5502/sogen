@@ -4,8 +4,10 @@
 #include "../linux_stat.hpp"
 #include "../procfs.hpp"
 
+#include <cerrno>
 #include <cstring>
 #include <sys/stat.h>
+#include <unistd.h>
 
 using namespace linux_errno;
 
@@ -18,6 +20,156 @@ namespace
     constexpr int O_CREAT = 0100;
     constexpr int O_TRUNC = 01000;
     constexpr int O_APPEND = 02000;
+    constexpr int O_DIRECTORY = 0200000;
+    constexpr int O_CLOEXEC = 02000000;
+
+    struct cached_dir_entry
+    {
+        uint64_t ino{};
+        uint8_t d_type{};
+        std::string name{};
+    };
+
+    std::map<int, std::vector<cached_dir_entry>> g_directory_entries{};
+    std::map<int, size_t> g_directory_offsets{};
+
+    uint8_t file_type_to_d_type(const std::filesystem::file_type type)
+    {
+        // Linux DT_* values
+        constexpr uint8_t DT_UNKNOWN = 0;
+        constexpr uint8_t DT_FIFO = 1;
+        constexpr uint8_t DT_CHR = 2;
+        constexpr uint8_t DT_DIR = 4;
+        constexpr uint8_t DT_BLK = 6;
+        constexpr uint8_t DT_REG = 8;
+        constexpr uint8_t DT_LNK = 10;
+        constexpr uint8_t DT_SOCK = 12;
+
+        switch (type)
+        {
+        case std::filesystem::file_type::directory:
+            return DT_DIR;
+        case std::filesystem::file_type::regular:
+            return DT_REG;
+        case std::filesystem::file_type::symlink:
+            return DT_LNK;
+        case std::filesystem::file_type::block:
+            return DT_BLK;
+        case std::filesystem::file_type::character:
+            return DT_CHR;
+        case std::filesystem::file_type::fifo:
+            return DT_FIFO;
+        case std::filesystem::file_type::socket:
+            return DT_SOCK;
+        default:
+            return DT_UNKNOWN;
+        }
+    }
+
+    uint64_t get_inode_for_path(const std::filesystem::path& path)
+    {
+        struct stat st{};
+        if (lstat(path.string().c_str(), &st) == 0)
+        {
+            return static_cast<uint64_t>(st.st_ino);
+        }
+
+        return 0;
+    }
+
+    std::vector<cached_dir_entry> build_cached_dir_entries(const std::filesystem::path& dir_path)
+    {
+        std::vector<cached_dir_entry> entries{};
+
+        // Include "." and ".." first to match Linux behavior.
+        entries.push_back({get_inode_for_path(dir_path), file_type_to_d_type(std::filesystem::file_type::directory), "."});
+
+        const auto parent = dir_path.parent_path().empty() ? dir_path : dir_path.parent_path();
+        entries.push_back({get_inode_for_path(parent), file_type_to_d_type(std::filesystem::file_type::directory), ".."});
+
+        std::error_code ec{};
+        for (const auto& de : std::filesystem::directory_iterator(dir_path, ec))
+        {
+            if (ec)
+            {
+                break;
+            }
+
+            const auto p = de.path();
+            const auto type = de.symlink_status(ec).type();
+            if (ec)
+            {
+                ec.clear();
+            }
+
+            cached_dir_entry entry{};
+            entry.ino = get_inode_for_path(p);
+            entry.d_type = file_type_to_d_type(type);
+            entry.name = p.filename().string();
+            entries.push_back(std::move(entry));
+        }
+
+        return entries;
+    }
+
+    void init_directory_fd_state(const int fd, const std::filesystem::path& dir_path)
+    {
+        g_directory_entries[fd] = build_cached_dir_entries(dir_path);
+        g_directory_offsets[fd] = 0;
+    }
+
+    void cleanup_directory_fd_state(const int fd)
+    {
+        g_directory_entries.erase(fd);
+        g_directory_offsets.erase(fd);
+    }
+
+    size_t align_up_8(const size_t value)
+    {
+        return (value + 7) & ~static_cast<size_t>(7);
+    }
+
+    int64_t map_host_errno_to_linux(const int host_errno)
+    {
+        switch (host_errno)
+        {
+        case EAGAIN:
+#if defined(EWOULDBLOCK) && EWOULDBLOCK != EAGAIN
+        case EWOULDBLOCK:
+#endif
+            return LINUX_EAGAIN;
+        case EINTR:
+            return LINUX_EINTR;
+        case EBADF:
+            return LINUX_EBADF;
+        case EINVAL:
+            return LINUX_EINVAL;
+        case EPIPE:
+            return LINUX_EPIPE;
+        case ENOENT:
+            return LINUX_ENOENT;
+        case EACCES:
+            return LINUX_EACCES;
+        case ENOSPC:
+            return LINUX_ENOSPC;
+        case EISDIR:
+            return LINUX_EISDIR;
+        case ENOTDIR:
+            return LINUX_ENOTDIR;
+        default:
+            return LINUX_EIO;
+        }
+    }
+
+#pragma pack(push, 1)
+    struct linux_dirent64_header
+    {
+        uint64_t d_ino;
+        int64_t d_off;
+        uint16_t d_reclen;
+        uint8_t d_type;
+    };
+#pragma pack(pop)
 
     const char* translate_open_flags(int flags)
     {
@@ -122,15 +274,44 @@ void sys_read(const linux_syscall_context& c)
         return;
     }
 
+    if (fd_entry->type == fd_type::directory)
+    {
+        write_linux_syscall_result(c, -LINUX_EISDIR);
+        return;
+    }
+
+    if (fd_entry->type == fd_type::pipe_write)
+    {
+        write_linux_syscall_result(c, -LINUX_EBADF);
+        return;
+    }
+
     std::vector<uint8_t> buffer(count);
-    const auto bytes_read = fread(buffer.data(), 1, count, fd_entry->handle);
+    ssize_t bytes_read = 0;
+
+    if (fd_entry->type == fd_type::pipe_read)
+    {
+        const auto host_fd = fileno(fd_entry->handle);
+        errno = 0;
+        bytes_read = ::read(host_fd, buffer.data(), count);
+        if (bytes_read < 0)
+        {
+            write_linux_syscall_result(c, -map_host_errno_to_linux(errno));
+            return;
+        }
+    }
+    else
+    {
+        const auto stdio_bytes = fread(buffer.data(), 1, count, fd_entry->handle);
+        bytes_read = static_cast<ssize_t>(stdio_bytes);
+    }
 
     if (bytes_read > 0)
     {
-        c.emu.write_memory(buf_addr, buffer.data(), bytes_read);
+        c.emu.write_memory(buf_addr, buffer.data(), static_cast<size_t>(bytes_read));
     }
 
-    write_linux_syscall_result(c, static_cast<int64_t>(bytes_read));
+    write_linux_syscall_result(c, bytes_read);
 }
 
 void sys_write(const linux_syscall_context& c)
@@ -176,6 +357,27 @@ void sys_write(const linux_syscall_context& c)
         return;
     }
 
+    if (fd_entry->type == fd_type::directory || fd_entry->type == fd_type::pipe_read)
+    {
+        write_linux_syscall_result(c, -LINUX_EBADF);
+        return;
+    }
+
+    if (fd_entry->type == fd_type::pipe_write)
+    {
+        const auto host_fd = fileno(fd_entry->handle);
+        errno = 0;
+        const auto written = ::write(host_fd, buffer.data(), count);
+        if (written < 0)
+        {
+            write_linux_syscall_result(c, -map_host_errno_to_linux(errno));
+            return;
+        }
+
+        write_linux_syscall_result(c, written);
+        return;
+    }
+
     const auto written = fwrite(buffer.data(), 1, count, fd_entry->handle);
     write_linux_syscall_result(c, static_cast<int64_t>(written));
 }
@@ -211,6 +413,32 @@ void sys_open(const linux_syscall_context& c)
 
     const auto host_path = c.emu_ref.file_sys.translate(guest_path);
 
+    if (flags & O_DIRECTORY)
+    {
+        if (!std::filesystem::exists(host_path))
+        {
+            write_linux_syscall_result(c, -LINUX_ENOENT);
+            return;
+        }
+
+        if (!std::filesystem::is_directory(host_path))
+        {
+            write_linux_syscall_result(c, -LINUX_ENOTDIR);
+            return;
+        }
+
+        linux_fd new_fd{};
+        new_fd.type = fd_type::directory;
+        new_fd.host_path = host_path.string();
+        new_fd.flags = flags;
+        new_fd.close_on_exec = (flags & O_CLOEXEC) != 0;
+
+        const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
+        init_directory_fd_state(fd_num, host_path);
+        write_linux_syscall_result(c, fd_num);
+        return;
+    }
+
     auto* handle = fopen(host_path.string().c_str(), translate_open_flags(flags));
     if (!handle)
     {
@@ -223,6 +451,7 @@ void sys_open(const linux_syscall_context& c)
     new_fd.host_path = host_path.string();
     new_fd.handle = handle;
     new_fd.flags = flags;
+    new_fd.close_on_exec = (flags & O_CLOEXEC) != 0;
 
     const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
     write_linux_syscall_result(c, fd_num);
@@ -231,6 +460,9 @@ void sys_open(const linux_syscall_context& c)
 void sys_close(const linux_syscall_context& c)
 {
     const auto fd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
+
+    // Tear down any per-fd directory iteration state.
+    cleanup_directory_fd_state(fd);
 
     if (!c.proc.fds.close(fd))
     {
@@ -371,6 +603,32 @@ void sys_openat(const linux_syscall_context& c)
         host_path = c.emu_ref.file_sys.translate(guest_path);
     }
 
+    if (flags & O_DIRECTORY)
+    {
+        if (!std::filesystem::exists(host_path))
+        {
+            write_linux_syscall_result(c, -LINUX_ENOENT);
+            return;
+        }
+
+        if (!std::filesystem::is_directory(host_path))
+        {
+            write_linux_syscall_result(c, -LINUX_ENOTDIR);
+            return;
+        }
+
+        linux_fd new_fd{};
+        new_fd.type = fd_type::directory;
+        new_fd.host_path = host_path.string();
+        new_fd.flags = flags;
+        new_fd.close_on_exec = (flags & O_CLOEXEC) != 0;
+
+        const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
+        init_directory_fd_state(fd_num, host_path);
+        write_linux_syscall_result(c, fd_num);
+        return;
+    }
+
     auto* handle = fopen(host_path.string().c_str(), translate_open_flags(flags));
     if (!handle)
     {
@@ -383,6 +641,7 @@ void sys_openat(const linux_syscall_context& c)
     new_fd.host_path = host_path.string();
     new_fd.handle = handle;
     new_fd.flags = flags;
+    new_fd.close_on_exec = (flags & O_CLOEXEC) != 0;
 
     const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
     write_linux_syscall_result(c, fd_num);
@@ -759,15 +1018,98 @@ void sys_readlinkat(const linux_syscall_context& c)
 void sys_getdents64(const linux_syscall_context& c)
 {
     const auto fd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
+    const auto dirp_addr = get_linux_syscall_argument(c.emu, 1);
+    const auto count = static_cast<size_t>(get_linux_syscall_argument(c.emu, 2));
 
-    if (!c.proc.fds.get(fd))
+    auto* fd_entry = c.proc.fds.get(fd);
+    if (!fd_entry)
     {
         write_linux_syscall_result(c, -LINUX_EBADF);
         return;
     }
 
-    // Stub: return 0 (end of directory)
+    if (fd_entry->type != fd_type::directory)
+    {
+        write_linux_syscall_result(c, -LINUX_ENOTDIR);
+        return;
+    }
+
+    // Lazily initialize cache if missing.
+    if (g_directory_entries.count(fd) == 0)
+    {
+        init_directory_fd_state(fd, fd_entry->host_path);
+    }
+
+    auto entries_it = g_directory_entries.find(fd);
+    if (entries_it == g_directory_entries.end())
+    {
+        write_linux_syscall_result(c, 0);
+        return;
+    }
+
+    auto& entries = entries_it->second;
+    auto& offset = g_directory_offsets[fd];
+
+    size_t written = 0;
+
+    while (offset < entries.size())
+    {
+        const auto& entry = entries[offset];
+        const auto name_bytes = entry.name.size() + 1; // include trailing NUL
+        const auto reclen = align_up_8(sizeof(linux_dirent64_header) + name_bytes);
+
+        if (written + reclen > count)
+        {
+            if (written == 0)
+            {
+                write_linux_syscall_result(c, -LINUX_EINVAL);
+                return;
+            }
+            break;
+        }
+
+        linux_dirent64_header hdr{};
+        hdr.d_ino = entry.ino;
+        hdr.d_off = static_cast<int64_t>(offset + 1);
+        hdr.d_reclen = static_cast<uint16_t>(reclen);
+        hdr.d_type = entry.d_type;
+
+        std::vector<uint8_t> record(reclen, 0);
+        memcpy(record.data(), &hdr, sizeof(hdr));
+        memcpy(record.data() + sizeof(hdr), entry.name.c_str(), entry.name.size() + 1);
+
+        c.emu.write_memory(dirp_addr + written, record.data(), record.size());
+
+        written += reclen;
+        ++offset;
+    }
+
+    write_linux_syscall_result(c, static_cast<int64_t>(written));
+}
+
+void sys_fsync(const linux_syscall_context& c)
+{
+    const auto fd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
+
+    auto* fd_entry = c.proc.fds.get(fd);
+    if (!fd_entry)
+    {
+        write_linux_syscall_result(c, -LINUX_EBADF);
+        return;
+    }
+
+    if (fd_entry->handle)
+    {
+        fflush(fd_entry->handle);
+    }
+
     write_linux_syscall_result(c, 0);
+}
+
+void sys_fdatasync(const linux_syscall_context& c)
+{
+    // Our emulation does not currently distinguish metadata sync from data sync.
+    sys_fsync(c);
 }
 
 void sys_newfstatat(const linux_syscall_context& c)
