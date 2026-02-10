@@ -17,6 +17,10 @@ target_link_libraries(linux-emulator-test PRIVATE
   backend-selection
 )
 
+target_compile_definitions(linux-emulator-test PRIVATE
+  LINUX_TORTURE_FIXTURE_ROOT="${PROJECT_SOURCE_DIR}/test/linux/torture/fixtures"
+)
+
 add_test(NAME linux-emulator-test
          COMMAND ${CMAKE_COMMAND} -E env "LD_LIBRARY_PATH=." -- "${PYTHON3_EXE}" "${PROJECT_SOURCE_DIR}/deps/gtest-parallel/gtest_parallel.py" ./linux-emulator-test
          WORKING_DIRECTORY "$<TARGET_FILE_DIR:linux-emulator-test>")

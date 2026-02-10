@@ -162,9 +162,17 @@ void sys_mprotect(const linux_syscall_context& c)
     const auto length = static_cast<size_t>(get_linux_syscall_argument(c.emu, 1));
     const auto prot = static_cast<int>(get_linux_syscall_argument(c.emu, 2));
 
+    if (length == 0 || page_align_down(addr) != addr)
+    {
+        write_linux_syscall_result(c, -LINUX_EINVAL);
+        return;
+    }
+
+    const auto aligned_length = page_align_up(length);
+
     const auto perms = prot_to_permission(prot);
 
-    if (c.emu_ref.memory.protect_memory(addr, length, perms))
+    if (c.emu_ref.memory.protect_memory(addr, aligned_length, perms))
     {
         write_linux_syscall_result(c, 0);
     }
@@ -179,7 +187,15 @@ void sys_munmap(const linux_syscall_context& c)
     const auto addr = get_linux_syscall_argument(c.emu, 0);
     const auto length = static_cast<size_t>(get_linux_syscall_argument(c.emu, 1));
 
-    if (c.emu_ref.memory.release_memory(addr, length))
+    if (length == 0 || page_align_down(addr) != addr)
+    {
+        write_linux_syscall_result(c, -LINUX_EINVAL);
+        return;
+    }
+
+    const auto aligned_length = page_align_up(length);
+
+    if (c.emu_ref.memory.release_memory(addr, aligned_length))
     {
         write_linux_syscall_result(c, 0);
     }
