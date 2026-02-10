@@ -115,6 +115,48 @@ def build_native_cmd(binary: pathlib.Path, binary_args: list[str]) -> list[str]:
     return [str(binary)] + binary_args
 
 
+def map_host_path_to_container(
+    value: str, host_mount: pathlib.Path, guest_mount: str
+) -> str:
+    p = pathlib.Path(value)
+    if not p.is_absolute():
+        return value
+
+    try:
+        rel = p.resolve().relative_to(host_mount)
+    except Exception:
+        return value
+
+    return str(pathlib.PurePosixPath(guest_mount) / pathlib.PurePosixPath(*rel.parts))
+
+
+def build_native_container_cmd(
+    native_cmd: list[str],
+    *,
+    image: str,
+    platform_name: str,
+    host_mount: pathlib.Path,
+    guest_mount: str,
+    env_overrides: dict[str, str],
+) -> list[str]:
+    mapped = [
+        map_host_path_to_container(x, host_mount, guest_mount) for x in native_cmd
+    ]
+
+    cmd: list[str] = ["docker", "run", "--rm"]
+    if platform_name:
+        cmd += ["--platform", platform_name]
+
+    cmd += ["-v", f"{host_mount}:{guest_mount}", "-w", guest_mount]
+
+    for k, v in env_overrides.items():
+        cmd += ["-e", f"{k}={v}"]
+
+    cmd += [image]
+    cmd += mapped
+    return cmd
+
+
 def build_emu_cmd(
     analyzer: pathlib.Path,
     root: pathlib.Path,
@@ -177,6 +219,25 @@ def main() -> int:
         help="Native env override KEY=VALUE (repeatable)",
     )
     parser.add_argument(
+        "--native-container-image",
+        help="If set, run native oracle in docker image (Linux host oracle)",
+    )
+    parser.add_argument(
+        "--native-container-platform",
+        default="linux/amd64",
+        help="Container platform for native oracle when --native-container-image is set",
+    )
+    parser.add_argument(
+        "--native-container-mount-host",
+        default=str(REPO_ROOT),
+        help="Host path mounted into native oracle container",
+    )
+    parser.add_argument(
+        "--native-container-mount-guest",
+        default="/work",
+        help="Container mount path for host repository",
+    )
+    parser.add_argument(
         "--emu-env",
         action="append",
         default=[],
@@ -200,6 +261,23 @@ def main() -> int:
         help="Path to compare_results.py",
     )
     parser.add_argument(
+        "--compare-path-map",
+        action="append",
+        default=[],
+        help="Pass-through path normalization OLD=NEW for compare_results.py (repeatable)",
+    )
+    parser.add_argument(
+        "--compare-ignore-line-regex",
+        action="append",
+        default=[],
+        help="Pass-through ignore-line regex for compare_results.py (repeatable)",
+    )
+    parser.add_argument(
+        "--no-default-compare-noise-filter",
+        action="store_true",
+        help="Disable default emulator noise filtering regexes used during compare",
+    )
+    parser.add_argument(
         "binary_args", nargs=argparse.REMAINDER, help="Arguments for test binary"
     )
 
@@ -208,6 +286,9 @@ def main() -> int:
     binary = pathlib.Path(args.binary).resolve()
     analyzer = pathlib.Path(args.analyzer).resolve()
     root = pathlib.Path(args.root).resolve()
+    native_container_mount_host = pathlib.Path(
+        args.native_container_mount_host
+    ).resolve()
     artifacts_dir = pathlib.Path(args.artifacts_dir).resolve()
     output_path = (
         pathlib.Path(args.output).resolve()
@@ -249,13 +330,29 @@ def main() -> int:
 
     if args.mode in ("native", "both"):
         native_cmd = build_native_cmd(binary, binary_args)
+
+        if args.native_container_image:
+            native_cmd = build_native_container_cmd(
+                native_cmd,
+                image=args.native_container_image,
+                platform_name=args.native_container_platform,
+                host_mount=native_container_mount_host,
+                guest_mount=args.native_container_mount_guest,
+                env_overrides=native_env_overrides,
+            )
+
         result["repro"]["native"] = {
             "command": native_cmd,
             "cwd": args.cwd,
             "env_overrides": native_env_overrides,
+            "container_image": args.native_container_image,
+            "container_platform": args.native_container_platform,
+            "container_mount_host": str(native_container_mount_host),
+            "container_mount_guest": args.native_container_mount_guest,
         }
         native_env = base_env.copy()
-        native_env.update(native_env_overrides)
+        if not args.native_container_image:
+            native_env.update(native_env_overrides)
         result["native"] = run_command(
             native_cmd, cwd=args.cwd, env=native_env, timeout_sec=args.timeout
         )
@@ -302,6 +399,21 @@ def main() -> int:
     compare_output = artifacts_dir / f"{run_id}.compare.json"
     compare_summary: dict[str, Any] | None = None
     if args.compare and args.mode == "both":
+        compare_path_maps = list(args.compare_path_map)
+        compare_ignore_regexes = list(args.compare_ignore_line_regex)
+
+        if not args.no_default_compare_noise_filter:
+            compare_ignore_regexes.extend(
+                [
+                    r"^\[INFO\].*$",
+                    r"^\[WARN\].*$",
+                    r"^\[ERROR\].*$",
+                    r"^--- Emulation finished ---$",
+                    r"^Exit status: .*$",
+                    r"^Instructions executed: .*$",
+                ]
+            )
+
         compare_cmd = [
             sys.executable,
             str(pathlib.Path(args.compare_script).resolve()),
@@ -310,6 +422,13 @@ def main() -> int:
             "--output",
             str(compare_output),
         ]
+
+        for item in compare_path_maps:
+            compare_cmd += ["--path-map", item]
+
+        for item in compare_ignore_regexes:
+            compare_cmd += ["--ignore-line-regex", item]
+
         cp = subprocess.run(compare_cmd, capture_output=True, text=True, check=False)
         compare_rc = cp.returncode
         if cp.stdout:

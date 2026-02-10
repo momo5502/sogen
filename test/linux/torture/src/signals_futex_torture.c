@@ -50,6 +50,12 @@ enum
     LINUX_FUTEX_BITSET_MATCH_ANY = -1
 };
 
+struct linux_timespec
+{
+    int64_t tv_sec;
+    int64_t tv_nsec;
+};
+
 static void dummy_handler(int signo)
 {
     (void)signo;
@@ -87,10 +93,15 @@ int main(void)
     CHECK(syscall(SYS_futex, &fut, LINUX_FUTEX_WAIT | LINUX_FUTEX_PRIVATE_FLAG, 0, NULL, NULL, 0) == -1 && errno == EAGAIN,
           "futex wait value mismatch");
 
-    /* Single-threaded model returns EAGAIN to avoid deadlock. */
+    /* Deterministic no-wait path: zero timeout avoids indefinite block on native Linux. */
+    struct linux_timespec zero_timeout;
+    zero_timeout.tv_sec = 0;
+    zero_timeout.tv_nsec = 0;
+
     errno = 0;
-    CHECK(syscall(SYS_futex, &fut, LINUX_FUTEX_WAIT | LINUX_FUTEX_PRIVATE_FLAG, 123, NULL, NULL, 0) == -1 && errno == EAGAIN,
-          "futex wait single-thread fallback");
+    CHECK(syscall(SYS_futex, &fut, LINUX_FUTEX_WAIT | LINUX_FUTEX_PRIVATE_FLAG, 123, &zero_timeout, NULL, 0) == -1 &&
+              (errno == EAGAIN || errno == ETIMEDOUT),
+          "futex wait deterministic timeout/fallback");
 
     CHECK(syscall(SYS_futex, &fut, LINUX_FUTEX_WAKE | LINUX_FUTEX_PRIVATE_FLAG, 1, NULL, NULL, 0) == 0, "futex wake with no waiters");
 

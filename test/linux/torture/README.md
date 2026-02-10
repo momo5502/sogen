@@ -34,9 +34,13 @@ The torture suite focuses on failure boundaries and semantic fidelity:
 - `replay_failure.sh`: one-command repro from artifact metadata
 - `capture_syscall_trace.py`: deterministic trace capture helper (native `strace` where available, emulator verbose fallback)
 - `run_mustpass.py`: executes `baseline.mustpass.json` and emits CI-friendly `TEST:<name>:PASS|FAIL:<details>` lines
+- `run_differential_suite.py`: runs deterministic case matrix (`differential.deterministic.json`) against native Linux oracle + emulator
 
 `baseline.mustpass.json`
 - initial merge-gate candidate list for fast Phase 10 must-pass checks
+
+`differential.deterministic.json`
+- deterministic native-vs-emulated case matrix used to satisfy sprint differential-count criteria
 
 `artifacts/`
 - `seed/`: deterministic seed records
@@ -108,4 +112,13 @@ Run the must-pass baseline slice:
 python3 test/linux/torture/tools/run_mustpass.py \
   --baseline test/linux/torture/baseline.mustpass.json \
   --root /path/to/emulation-root
+```
+
+Run the deterministic differential suite (Docker native oracle):
+
+```bash
+python3 test/linux/torture/tools/run_differential_suite.py \
+  --cases test/linux/torture/differential.deterministic.json \
+  --root /path/to/emulation-root \
+  --native-container-image debian:bookworm-slim
 ```
