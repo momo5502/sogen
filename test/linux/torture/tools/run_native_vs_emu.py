@@ -7,6 +7,8 @@ import datetime as dt
 import json
 import os
 import pathlib
+import re
+import shutil
 import subprocess
 import sys
 import time
@@ -125,6 +127,18 @@ def build_emu_cmd(
 def write_text(path: pathlib.Path, data: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(data, encoding="utf-8")
+
+
+def write_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def safe_name(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._")
+    return cleaned or "unnamed"
 
 
 def main() -> int:
@@ -259,10 +273,7 @@ def main() -> int:
             emu_cmd, cwd=args.cwd, env=emu_env, timeout_sec=args.timeout
         )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    write_json(output_path, result)
 
     # Persist canonical artifacts for replay and triage.
     write_text(artifacts_dir / "seed" / f"{run_id}.seed", f"{seed}\n")
@@ -288,6 +299,8 @@ def main() -> int:
         )
 
     compare_rc = 0
+    compare_output = artifacts_dir / f"{run_id}.compare.json"
+    compare_summary: dict[str, Any] | None = None
     if args.compare and args.mode == "both":
         compare_cmd = [
             sys.executable,
@@ -295,7 +308,7 @@ def main() -> int:
             "--result-json",
             str(output_path),
             "--output",
-            str(artifacts_dir / f"{run_id}.compare.json"),
+            str(compare_output),
         ]
         cp = subprocess.run(compare_cmd, capture_output=True, text=True, check=False)
         compare_rc = cp.returncode
@@ -303,6 +316,69 @@ def main() -> int:
             sys.stdout.write(cp.stdout)
         if cp.stderr:
             sys.stderr.write(cp.stderr)
+
+        if compare_output.exists():
+            try:
+                compare_summary = json.loads(compare_output.read_text(encoding="utf-8"))
+            except Exception as ex:  # pragma: no cover - defensive path
+                compare_summary = {
+                    "match": False,
+                    "parse_error": f"{type(ex).__name__}: {ex}",
+                }
+
+    result["compare"] = {
+        "enabled": bool(args.compare and args.mode == "both"),
+        "return_code": compare_rc,
+        "summary": compare_summary,
+        "compare_json": str(compare_output) if compare_output.exists() else None,
+    }
+
+    mismatch_info: dict[str, Any] | None = None
+    if (
+        args.compare
+        and args.mode == "both"
+        and compare_rc != 0
+        and compare_summary is not None
+    ):
+        failure_root = artifacts_dir / "failures" / safe_name(test_name)
+        first_mismatch = failure_root / "first_mismatch"
+        created = False
+
+        if not first_mismatch.exists():
+            created = True
+            first_mismatch.mkdir(parents=True, exist_ok=True)
+
+            write_text(first_mismatch / "run_id.txt", f"{run_id}\n")
+            write_text(first_mismatch / "seed.txt", f"{seed}\n")
+            write_text(first_mismatch / "binary.txt", f"{binary}\n")
+            write_text(first_mismatch / "root.txt", f"{root}\n")
+
+            trace_dir = artifacts_dir / "trace"
+            for suffix in (
+                "native.stdout.txt",
+                "native.stderr.txt",
+                "emu.stdout.txt",
+                "emu.stderr.txt",
+            ):
+                src = trace_dir / f"{run_id}.{suffix}"
+                if src.exists():
+                    shutil.copy2(src, first_mismatch / src.name)
+
+        mismatch_info = {
+            "path": str(first_mismatch),
+            "created": created,
+        }
+
+    result["first_mismatch_artifact"] = mismatch_info
+
+    # Rewrite result.json with compare summary and mismatch metadata.
+    write_json(output_path, result)
+
+    if mismatch_info and mismatch_info.get("created"):
+        first_mismatch = pathlib.Path(mismatch_info["path"])
+        shutil.copy2(output_path, first_mismatch / "result.json")
+        if compare_output.exists():
+            shutil.copy2(compare_output, first_mismatch / "compare.json")
 
     # Non-zero on infrastructure issues, and on compare mismatch when --compare is used.
     infra_failure = False
