@@ -126,7 +126,7 @@ struct linux_siginfo_t
     int32_t si_code;
     int32_t _pad0;
     // Union of various fields -- for SIGSEGV, the fault address is at offset 16
-    uint64_t si_addr;       // _sigfault.si_addr
+    uint64_t fault_address; // _sigfault.si_addr
     uint8_t _pad[128 - 24]; // pad to 128 bytes total
 };
 #pragma pack(pop)

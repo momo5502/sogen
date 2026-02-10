@@ -50,6 +50,7 @@ struct linux_process_context
         return tid;
     }
 
-    void setup(x86_64_emulator& emu, linux_memory_manager& memory, const linux_mapped_module& exe, const std::vector<std::string>& argv,
-               const std::vector<std::string>& envp, uint64_t interpreter_base = 0, uint64_t initial_rip = 0, uint64_t vdso_base = 0);
+    void setup(x86_64_emulator& emu, linux_memory_manager& memory, const linux_mapped_module& exe,
+               const std::vector<std::string>& argv_values, const std::vector<std::string>& envp_values, uint64_t interpreter_base = 0,
+               uint64_t initial_rip = 0, uint64_t vdso_base = 0);
 };

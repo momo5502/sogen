@@ -123,7 +123,7 @@ bool signal_dispatcher::deliver_signal(linux_emulator& emu, const int signum, co
     frame.info.si_signo = static_cast<int32_t>(signum);
     frame.info.si_errno = 0;
     frame.info.si_code = static_cast<int32_t>(si_code);
-    frame.info.si_addr = fault_addr;
+    frame.info.fault_address = fault_addr;
 
     // Fill ucontext
     frame.uc.uc_flags = 0;
