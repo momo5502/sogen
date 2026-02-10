@@ -4,10 +4,16 @@
 #include "../linux_stat.hpp"
 #include "../procfs.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <limits>
 #include <sys/stat.h>
+#if defined(_WIN32)
+#include <io.h>
+#else
 #include <unistd.h>
+#endif
 
 using namespace linux_errno;
 
@@ -32,6 +38,37 @@ namespace
 
     std::map<int, std::vector<cached_dir_entry>> g_directory_entries{};
     std::map<int, size_t> g_directory_offsets{};
+
+    int host_lstat(const char* path, struct stat* st)
+    {
+#if defined(_WIN32)
+        return ::stat(path, st);
+#else
+        return ::lstat(path, st);
+#endif
+    }
+
+    int64_t host_read_fd(const int fd, void* buffer, const size_t count)
+    {
+#if defined(_WIN32)
+        constexpr auto max_count = static_cast<size_t>(std::numeric_limits<unsigned int>::max());
+        const auto request = static_cast<unsigned int>(std::min(count, max_count));
+        return static_cast<int64_t>(_read(fd, buffer, request));
+#else
+        return static_cast<int64_t>(::read(fd, buffer, count));
+#endif
+    }
+
+    int64_t host_write_fd(const int fd, const void* buffer, const size_t count)
+    {
+#if defined(_WIN32)
+        constexpr auto max_count = static_cast<size_t>(std::numeric_limits<unsigned int>::max());
+        const auto request = static_cast<unsigned int>(std::min(count, max_count));
+        return static_cast<int64_t>(_write(fd, buffer, request));
+#else
+        return static_cast<int64_t>(::write(fd, buffer, count));
+#endif
+    }
 
     uint8_t file_type_to_d_type(const std::filesystem::file_type type)
     {
@@ -69,7 +106,7 @@ namespace
     uint64_t get_inode_for_path(const std::filesystem::path& path)
     {
         struct stat st{};
-        if (lstat(path.string().c_str(), &st) == 0)
+        if (host_lstat(path.string().c_str(), &st) == 0)
         {
             return static_cast<uint64_t>(st.st_ino);
         }
@@ -254,18 +291,25 @@ namespace
 
 #ifdef __APPLE__
         ls.st_atime_sec = static_cast<uint64_t>(host_stat.st_atimespec.tv_sec);
-        ls.st_atime_nsec = static_cast<uint64_t>(host_stat.st_atimespec.tv_nsec);
+        ls.st_atime_nsecs = static_cast<uint64_t>(host_stat.st_atimespec.tv_nsec);
         ls.st_mtime_sec = static_cast<uint64_t>(host_stat.st_mtimespec.tv_sec);
-        ls.st_mtime_nsec = static_cast<uint64_t>(host_stat.st_mtimespec.tv_nsec);
+        ls.st_mtime_nsecs = static_cast<uint64_t>(host_stat.st_mtimespec.tv_nsec);
         ls.st_ctime_sec = static_cast<uint64_t>(host_stat.st_ctimespec.tv_sec);
-        ls.st_ctime_nsec = static_cast<uint64_t>(host_stat.st_ctimespec.tv_nsec);
+        ls.st_ctime_nsecs = static_cast<uint64_t>(host_stat.st_ctimespec.tv_nsec);
+#elif defined(_WIN32)
+        ls.st_atime_sec = static_cast<uint64_t>(host_stat.st_atime);
+        ls.st_atime_nsecs = 0;
+        ls.st_mtime_sec = static_cast<uint64_t>(host_stat.st_mtime);
+        ls.st_mtime_nsecs = 0;
+        ls.st_ctime_sec = static_cast<uint64_t>(host_stat.st_ctime);
+        ls.st_ctime_nsecs = 0;
 #else
         ls.st_atime_sec = static_cast<uint64_t>(host_stat.st_atim.tv_sec);
-        ls.st_atime_nsec = static_cast<uint64_t>(host_stat.st_atim.tv_nsec);
+        ls.st_atime_nsecs = static_cast<uint64_t>(host_stat.st_atim.tv_nsec);
         ls.st_mtime_sec = static_cast<uint64_t>(host_stat.st_mtim.tv_sec);
-        ls.st_mtime_nsec = static_cast<uint64_t>(host_stat.st_mtim.tv_nsec);
+        ls.st_mtime_nsecs = static_cast<uint64_t>(host_stat.st_mtim.tv_nsec);
         ls.st_ctime_sec = static_cast<uint64_t>(host_stat.st_ctim.tv_sec);
-        ls.st_ctime_nsec = static_cast<uint64_t>(host_stat.st_ctim.tv_nsec);
+        ls.st_ctime_nsecs = static_cast<uint64_t>(host_stat.st_ctim.tv_nsec);
 #endif
     }
 
@@ -321,13 +365,13 @@ void sys_read(const linux_syscall_context& c)
     }
 
     std::vector<uint8_t> buffer(count);
-    ssize_t bytes_read = 0;
+    int64_t bytes_read = 0;
 
     if (fd_entry->type == fd_type::pipe_read)
     {
         const auto host_fd = fileno(fd_entry->handle);
         errno = 0;
-        bytes_read = ::read(host_fd, buffer.data(), count);
+        bytes_read = host_read_fd(host_fd, buffer.data(), count);
         if (bytes_read < 0)
         {
             write_linux_syscall_result(c, -map_host_errno_to_linux(errno));
@@ -337,7 +381,7 @@ void sys_read(const linux_syscall_context& c)
     else
     {
         const auto stdio_bytes = fread(buffer.data(), 1, count, fd_entry->handle);
-        bytes_read = static_cast<ssize_t>(stdio_bytes);
+        bytes_read = static_cast<int64_t>(stdio_bytes);
     }
 
     if (bytes_read > 0)
@@ -401,7 +445,7 @@ void sys_write(const linux_syscall_context& c)
     {
         const auto host_fd = fileno(fd_entry->handle);
         errno = 0;
-        const auto written = ::write(host_fd, buffer.data(), count);
+        const auto written = host_write_fd(host_fd, buffer.data(), count);
         if (written < 0)
         {
             write_linux_syscall_result(c, -map_host_errno_to_linux(errno));
@@ -744,7 +788,7 @@ void sys_lstat(const linux_syscall_context& c)
     const auto host_path = c.emu_ref.file_sys.translate(guest_path);
 
     struct stat host_stat{};
-    if (lstat(host_path.string().c_str(), &host_stat) != 0)
+    if (host_lstat(host_path.string().c_str(), &host_stat) != 0)
     {
         write_linux_syscall_result(c, -LINUX_ENOENT);
         return;
@@ -1215,7 +1259,7 @@ void sys_newfstatat(const linux_syscall_context& c)
     if (flags & AT_SYMLINK_NOFOLLOW)
     {
         struct stat host_stat{};
-        if (lstat(host_path.string().c_str(), &host_stat) != 0)
+        if (host_lstat(host_path.string().c_str(), &host_stat) != 0)
         {
             write_linux_syscall_result(c, -LINUX_ENOENT);
             return;

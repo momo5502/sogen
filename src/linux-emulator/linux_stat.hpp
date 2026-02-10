@@ -19,11 +19,11 @@ struct linux_stat
     int64_t st_blksize;
     int64_t st_blocks;
     uint64_t st_atime_sec;
-    uint64_t st_atime_nsec;
+    uint64_t st_atime_nsecs;
     uint64_t st_mtime_sec;
-    uint64_t st_mtime_nsec;
+    uint64_t st_mtime_nsecs;
     uint64_t st_ctime_sec;
-    uint64_t st_ctime_nsec;
+    uint64_t st_ctime_nsecs;
     int64_t reserved_[3];
 };
 #pragma pack(pop)
