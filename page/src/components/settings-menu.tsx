@@ -61,6 +61,8 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
   }
 
   render() {
+    const isLinux = this.state.mode === "linux";
+
     return (
       <div className="grid gap-3">
         <div className="space-y-2 mb-1">
@@ -96,6 +98,15 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
           </RadioGroup>
         </div>
 
+        {isLinux ? (
+          <p className="text-xs text-muted-foreground mb-2">
+            Linux mode currently supports verbose logging. Windows-specific
+            tracing options are disabled.
+          </p>
+        ) : (
+          <></>
+        )}
+
         <div className="flex gap-6 mb-2">
           <RadioGroup
             defaultValue="regular"
@@ -123,7 +134,11 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
               />
             </div>
             <div className="flex items-center gap-4">
-              <RadioGroupItem value="concise" id="settings-concise" />
+              <RadioGroupItem
+                value="concise"
+                id="settings-concise"
+                disabled={isLinux}
+              />
               <SettingsLabel
                 htmlFor="settings-concise"
                 text={"Concise Logging"}
@@ -131,7 +146,11 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
               />
             </div>
             <div className="flex items-center gap-4">
-              <RadioGroupItem value="silent" id="settings-silent" />
+              <RadioGroupItem
+                value="silent"
+                id="settings-silent"
+                disabled={isLinux}
+              />
               <SettingsLabel
                 htmlFor="settings-silent"
                 text={"Silent Logging"}
@@ -144,6 +163,7 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
         <div className="flex gap-4">
           <Checkbox
             id="settings-buffer"
+            disabled={isLinux}
             checked={this.state.bufferStdout}
             onCheckedChange={(checked: boolean) => {
               this.setState({ bufferStdout: checked });
@@ -161,6 +181,7 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
         <div className="flex gap-4">
           <Checkbox
             id="settings-exec"
+            disabled={isLinux}
             checked={this.state.execAccess}
             onCheckedChange={(checked: boolean) => {
               this.setState({ execAccess: checked });
@@ -176,6 +197,7 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
         <div className="flex gap-4">
           <Checkbox
             id="settings-foreign"
+            disabled={isLinux}
             checked={this.state.foreignAccess}
             onCheckedChange={(checked: boolean) => {
               this.setState({ foreignAccess: checked });
@@ -193,6 +215,7 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
         <div className="flex gap-4">
           <Checkbox
             id="settings-summary"
+            disabled={isLinux}
             checked={this.state.instructionSummary}
             onCheckedChange={(checked: boolean) => {
               this.setState({ instructionSummary: checked });
@@ -249,45 +272,51 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
           />
         </div>
 
-        <Popover>
-          <PopoverTrigger>
-            <TextTooltip tooltip="Don't log executions of listed functions">
-              <div className="flex items-center mb-2">
-                <Label className="flex-1 text-left cursor-pointer">
-                  Ignored Functions
-                </Label>
-                <ChevronDown />
-              </div>
-            </TextTooltip>
-          </PopoverTrigger>
-          <PopoverContent className="shadow-2xl">
-            <ItemList
-              title="Ignored Functions"
-              items={this.state.ignoredFunctions}
-              onChange={(items) => this.setState({ ignoredFunctions: items })}
-            />
-          </PopoverContent>
-        </Popover>
+        {isLinux ? (
+          <></>
+        ) : (
+          <>
+            <Popover>
+              <PopoverTrigger>
+                <TextTooltip tooltip="Don't log executions of listed functions">
+                  <div className="flex items-center mb-2">
+                    <Label className="flex-1 text-left cursor-pointer">
+                      Ignored Functions
+                    </Label>
+                    <ChevronDown />
+                  </div>
+                </TextTooltip>
+              </PopoverTrigger>
+              <PopoverContent className="shadow-2xl">
+                <ItemList
+                  title="Ignored Functions"
+                  items={this.state.ignoredFunctions}
+                  onChange={(items) => this.setState({ ignoredFunctions: items })}
+                />
+              </PopoverContent>
+            </Popover>
 
-        <Popover>
-          <PopoverTrigger>
-            <TextTooltip tooltip="Log interactions of additional modules">
-              <div className="flex items-center mb-1">
-                <Label className="flex-1 text-left cursor-pointer">
-                  Interesting Modules
-                </Label>
-                <ChevronDown />
-              </div>
-            </TextTooltip>
-          </PopoverTrigger>
-          <PopoverContent className="shadow-2xl">
-            <ItemList
-              title="Interesting Modules"
-              items={this.state.interestingModules}
-              onChange={(items) => this.setState({ interestingModules: items })}
-            />
-          </PopoverContent>
-        </Popover>
+            <Popover>
+              <PopoverTrigger>
+                <TextTooltip tooltip="Log interactions of additional modules">
+                  <div className="flex items-center mb-1">
+                    <Label className="flex-1 text-left cursor-pointer">
+                      Interesting Modules
+                    </Label>
+                    <ChevronDown />
+                  </div>
+                </TextTooltip>
+              </PopoverTrigger>
+              <PopoverContent className="shadow-2xl">
+                <ItemList
+                  title="Interesting Modules"
+                  items={this.state.interestingModules}
+                  onChange={(items) => this.setState({ interestingModules: items })}
+                />
+              </PopoverContent>
+            </Popover>
+          </>
+        )}
       </div>
     );
   }

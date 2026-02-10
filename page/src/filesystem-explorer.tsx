@@ -100,6 +100,18 @@ function makeWindowsPathWithState(
   return relativePathToWindowsPath(fullPath);
 }
 
+function makeDisplayPathWithState(
+  state: FilesystemExplorerState,
+  element: string,
+  linuxMode: boolean = false,
+) {
+  if (linuxMode) {
+    return "/" + makeRelativePathWithState(state, element);
+  }
+
+  return makeWindowsPathWithState(state, element);
+}
+
 function getFolderElements(
   filesystem: Filesystem,
   path: string[],
@@ -163,11 +175,11 @@ async function readFiles(files: FileList | File[]): Promise<FileWithData[]> {
   return Promise.all(promises);
 }
 
-function selectFiles(): Promise<FileList> {
+function selectFiles(linuxMode: boolean = false): Promise<FileList> {
   return new Promise((resolve) => {
     const fileInput = document.createElement("input");
     fileInput.type = "file";
-    fileInput.accept = ".exe";
+    fileInput.accept = linuxMode ? ".elf,.so,.bin" : ".exe";
 
     fileInput.addEventListener("change", function (event) {
       const files = (event as any).target.files as FileList;
@@ -325,7 +337,9 @@ export class FilesystemExplorer extends React.Component<
   }
 
   async _onFileRename(file: string, newFile: string) {
-    newFile = newFile.toLowerCase();
+    if (!this.props.linuxMode) {
+      newFile = newFile.toLowerCase();
+    }
 
     if (newFile == file) {
       this.setState({ renameFile: "" });
@@ -353,7 +367,7 @@ export class FilesystemExplorer extends React.Component<
   }
 
   async _onAddFiles() {
-    const files = await selectFiles();
+    const files = await selectFiles(this.props.linuxMode);
     await this._uploadFiles(files);
   }
 
@@ -376,7 +390,9 @@ export class FilesystemExplorer extends React.Component<
   }
 
   async _onFolderCreate(name: string) {
-    name = name.toLowerCase();
+    if (!this.props.linuxMode) {
+      name = name.toLowerCase();
+    }
 
     if (!this._validateName(name)) {
       return;
@@ -405,10 +421,11 @@ export class FilesystemExplorer extends React.Component<
 
     const fileData = (await readFiles(files)).map((f) => {
       const name = getFileName(f.file);
+      const normalizedName = this.props.linuxMode ? name : name.toLowerCase();
       return {
         name: makeFullPathWithState(
           this.state,
-          name.toLowerCase(),
+          normalizedName,
           this.props.linuxMode,
         ),
         data: f.data,
@@ -549,7 +566,11 @@ export class FilesystemExplorer extends React.Component<
           <div className="py-4">
             Are you sure you want to delete{" "}
             <b className="break-all">
-              {makeWindowsPathWithState(this.state, this.state.removeFile)}
+              {makeDisplayPathWithState(
+                this.state,
+                this.state.removeFile,
+                this.props.linuxMode,
+              )}
             </b>
           </div>
           <DialogFooter>
