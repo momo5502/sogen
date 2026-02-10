@@ -455,6 +455,16 @@ jobs:
           ANALYSIS_SAMPLE: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/test-sample.exe
           LINUX_TEST_ROOT: ${{github.workspace}}/test/linux
 
+      - name: Phase 10 Must-Pass
+        if: ${{ matrix.platform == 'Linux x86_64 GCC' && matrix.emulator == 'Unicorn' }}
+        run: |
+          python3 test/linux/torture/tools/run_mustpass.py \
+            --baseline test/linux/torture/baseline.mustpass.json \
+            --analyzer "${{github.workspace}}/build/${{matrix.preset}}/artifacts/linux-analyzer" \
+            --root "${{github.workspace}}" \
+            --artifacts-dir "${{github.workspace}}/test/linux/torture/artifacts" \
+            --timeout 120
+
   win-test:
     name: Windows Test
     runs-on: windows-latest
