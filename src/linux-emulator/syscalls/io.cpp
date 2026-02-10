@@ -3,18 +3,76 @@
 #include "../linux_syscall_dispatcher.hpp"
 
 #include <fcntl.h>
+#if defined(_WIN32)
+#include <io.h>
+#else
 #include <unistd.h>
+#endif
 
 using namespace linux_errno;
 
 // --- Phase 4b: I/O syscalls (pipe, eventfd) ---
+
+namespace
+{
+    int host_create_pipe(int (&pipefd)[2])
+    {
+#if defined(_WIN32)
+        return _pipe(pipefd, 4096, _O_BINARY);
+#else
+        return ::pipe(pipefd);
+#endif
+    }
+
+    int host_close(const int fd)
+    {
+#if defined(_WIN32)
+        return _close(fd);
+#else
+        return ::close(fd);
+#endif
+    }
+
+    void apply_pipe2_host_flags(const int (&pipefd)[2], const bool nonblock, const bool cloexec)
+    {
+#if defined(_WIN32)
+        (void)pipefd;
+        (void)nonblock;
+        (void)cloexec;
+#else
+        if (nonblock)
+        {
+            for (const int fd : pipefd)
+            {
+                const auto current = fcntl(fd, F_GETFL, 0);
+                if (current >= 0)
+                {
+                    (void)fcntl(fd, F_SETFL, current | O_NONBLOCK);
+                }
+            }
+        }
+
+        if (cloexec)
+        {
+            for (const int fd : pipefd)
+            {
+                const auto current = fcntl(fd, F_GETFD, 0);
+                if (current >= 0)
+                {
+                    (void)fcntl(fd, F_SETFD, current | FD_CLOEXEC);
+                }
+            }
+        }
+#endif
+    }
+}
 
 void sys_pipe(const linux_syscall_context& c)
 {
     const auto pipefd_addr = get_linux_syscall_argument(c.emu, 0);
 
     int host_pipe[2] = {-1, -1};
-    if (::pipe(host_pipe) != 0)
+    if (host_create_pipe(host_pipe) != 0)
     {
         write_linux_syscall_result(c, -LINUX_EMFILE);
         return;
@@ -31,7 +89,7 @@ void sys_pipe(const linux_syscall_context& c)
         }
         else if (host_pipe[0] >= 0)
         {
-            close(host_pipe[0]);
+            host_close(host_pipe[0]);
         }
 
         if (write_stream)
@@ -40,7 +98,7 @@ void sys_pipe(const linux_syscall_context& c)
         }
         else if (host_pipe[1] >= 0)
         {
-            close(host_pipe[1]);
+            host_close(host_pipe[1]);
         }
 
         write_linux_syscall_result(c, -LINUX_EMFILE);
@@ -76,7 +134,7 @@ void sys_pipe2(const linux_syscall_context& c)
     constexpr int LINUX_O_NONBLOCK = 04000;
 
     int host_pipe[2] = {-1, -1};
-    if (::pipe(host_pipe) != 0)
+    if (host_create_pipe(host_pipe) != 0)
     {
         write_linux_syscall_result(c, -LINUX_EMFILE);
         return;
@@ -85,29 +143,7 @@ void sys_pipe2(const linux_syscall_context& c)
     const bool nonblock = (flags & LINUX_O_NONBLOCK) != 0;
     const bool cloexec = (flags & LINUX_O_CLOEXEC) != 0;
 
-    if (nonblock)
-    {
-        for (int fd : host_pipe)
-        {
-            const auto current = fcntl(fd, F_GETFL, 0);
-            if (current >= 0)
-            {
-                (void)fcntl(fd, F_SETFL, current | O_NONBLOCK);
-            }
-        }
-    }
-
-    if (cloexec)
-    {
-        for (int fd : host_pipe)
-        {
-            const auto current = fcntl(fd, F_GETFD, 0);
-            if (current >= 0)
-            {
-                (void)fcntl(fd, F_SETFD, current | FD_CLOEXEC);
-            }
-        }
-    }
+    apply_pipe2_host_flags(host_pipe, nonblock, cloexec);
 
     auto* read_stream = fdopen(host_pipe[0], "rb");
     auto* write_stream = fdopen(host_pipe[1], "wb");
@@ -120,7 +156,7 @@ void sys_pipe2(const linux_syscall_context& c)
         }
         else if (host_pipe[0] >= 0)
         {
-            close(host_pipe[0]);
+            host_close(host_pipe[0]);
         }
 
         if (write_stream)
@@ -129,7 +165,7 @@ void sys_pipe2(const linux_syscall_context& c)
         }
         else if (host_pipe[1] >= 0)
         {
-            close(host_pipe[1]);
+            host_close(host_pipe[1]);
         }
 
         write_linux_syscall_result(c, -LINUX_EMFILE);
