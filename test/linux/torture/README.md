@@ -32,6 +32,11 @@ The torture suite focuses on failure boundaries and semantic fidelity:
 - `run_native_vs_emu.py`: single-test runner (`native`, `emu`, or `both`)
 - `compare_results.py`: deterministic comparator with normalization hooks
 - `replay_failure.sh`: one-command repro from artifact metadata
+- `capture_syscall_trace.py`: deterministic trace capture helper (native `strace` where available, emulator verbose fallback)
+- `run_mustpass.py`: executes `baseline.mustpass.json` and emits CI-friendly `TEST:<name>:PASS|FAIL:<details>` lines
+
+`baseline.mustpass.json`
+- initial merge-gate candidate list for fast Phase 10 must-pass checks
 
 `artifacts/`
 - `seed/`: deterministic seed records
@@ -39,6 +44,7 @@ The torture suite focuses on failure boundaries and semantic fidelity:
 - `root/`: emulation root metadata
 - `trace/`: captured stdout/stderr traces
 - `result.json`: latest machine-readable run summary
+- `failures/<test>/first_mismatch/`: sticky first mismatch artifact for deterministic replay and triage
 
 ## Fixture and Naming Conventions
 
@@ -94,4 +100,12 @@ Replay latest failure artifact:
 
 ```bash
 test/linux/torture/tools/replay_failure.sh test/linux/torture/artifacts/result.json emu
+```
+
+Run the must-pass baseline slice:
+
+```bash
+python3 test/linux/torture/tools/run_mustpass.py \
+  --baseline test/linux/torture/baseline.mustpass.json \
+  --root /path/to/emulation-root
 ```
