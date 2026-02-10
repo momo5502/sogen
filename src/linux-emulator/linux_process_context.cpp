@@ -30,12 +30,12 @@ namespace
 }
 
 void linux_process_context::setup(x86_64_emulator& emu, linux_memory_manager& memory, const linux_mapped_module& exe,
-                                  const std::vector<std::string>& argv, const std::vector<std::string>& envp,
+                                  const std::vector<std::string>& argv_values, const std::vector<std::string>& envp_values,
                                   const uint64_t interpreter_base, const uint64_t initial_rip, const uint64_t vdso_base)
 {
     // Store argv/envp for procfs emulation
-    this->argv = argv;
-    this->envp = envp;
+    this->argv = argv_values;
+    this->envp = envp_values;
 
     // ---- Allocate the stack ----
     const auto stack_base = STACK_TOP;
@@ -89,14 +89,14 @@ void linux_process_context::setup(x86_64_emulator& emu, linux_memory_manager& me
 
     // Write argv strings
     std::vector<uint64_t> argv_addrs{};
-    for (const auto& arg : argv)
+    for (const auto& arg : argv_values)
     {
         argv_addrs.push_back(write_string_to_memory(memory, string_cursor, arg));
     }
 
     // Write envp strings
     std::vector<uint64_t> envp_addrs{};
-    for (const auto& env : envp)
+    for (const auto& env : envp_values)
     {
         envp_addrs.push_back(write_string_to_memory(memory, string_cursor, env));
     }
@@ -131,7 +131,7 @@ void linux_process_context::setup(x86_64_emulator& emu, linux_memory_manager& me
     // So we'll calculate the total size needed, then write it.
 
     // Calculate the number of entries we need:
-    const auto argc = argv.size();
+    const auto argc = argv_values.size();
     // Total entries: argc(1) + argv_ptrs(argc) + null(1) + envp_ptrs(envp.size()) + null(1) + auxv entries
     // Each auxv entry is 2 uint64_t values
 
@@ -164,7 +164,7 @@ void linux_process_context::setup(x86_64_emulator& emu, linux_memory_manager& me
 
     // Total stack frame size (in uint64_t units):
     // 1 (argc) + argc (argv ptrs) + 1 (null) + envp.size() (envp ptrs) + 1 (null) + auxv.size()*2
-    const auto total_u64s = 1 + argc + 1 + envp.size() + 1 + auxv.size() * 2;
+    const auto total_u64s = 1 + argc + 1 + envp_values.size() + 1 + auxv.size() * 2;
     const auto frame_size = total_u64s * sizeof(uint64_t);
 
     // Position sp so the frame fits

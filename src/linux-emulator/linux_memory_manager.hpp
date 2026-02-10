@@ -18,14 +18,14 @@
 // memory_permission rather than nt_memory_permission.
 // --------------------------------------------------------------------------
 
-constexpr auto LINUX_PAGE_SIZE = 0x1000ULL;
-constexpr auto LINUX_ALLOCATION_GRANULARITY = 0x1000ULL;
-constexpr auto LINUX_MIN_MMAP_ADDRESS = 0x0000000000010000ULL;
+constexpr uint64_t LINUX_PAGE_SIZE = 0x1000ULL;
+constexpr uint64_t LINUX_ALLOCATION_GRANULARITY = 0x1000ULL;
+constexpr uint64_t LINUX_MIN_MMAP_ADDRESS = 0x0000000000010000ULL;
 // Allow higher virtual addresses used by modern Linux loaders/runtime setups
 // (e.g. 5-level paging style layouts) instead of limiting to classic 47-bit.
-constexpr auto LINUX_MAX_MMAP_ADDRESS = 0x0000ffffffffffffULL;
-constexpr auto LINUX_MAX_MMAP_END_EXCL = LINUX_MAX_MMAP_ADDRESS + 1ULL;
-constexpr auto LINUX_DEFAULT_MMAP_BASE = 0x7f0000000000ULL;
+constexpr uint64_t LINUX_MAX_MMAP_ADDRESS = 0x0000ffffffffffffULL;
+constexpr uint64_t LINUX_MAX_MMAP_END_EXCL = LINUX_MAX_MMAP_ADDRESS + 1ULL;
+constexpr uint64_t LINUX_DEFAULT_MMAP_BASE = 0x7f0000000000ULL;
 
 class linux_memory_manager : public memory_interface
 {
