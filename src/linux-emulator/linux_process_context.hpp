@@ -19,7 +19,7 @@ struct linux_process_context
     linux_thread* active_thread{};
 
     uint32_t pid{1};
-    uint32_t ppid{0};
+    uint32_t ppid{1};
 
     uint32_t uid{1000};
     uint32_t gid{1000};

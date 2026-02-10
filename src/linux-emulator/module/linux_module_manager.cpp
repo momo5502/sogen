@@ -32,21 +32,10 @@ void linux_module_manager::map_main_modules(const std::filesystem::path& executa
     // Map the ELF into emulated memory
     auto mod = map_elf_from_data(*this->memory_, data_span, executable_path);
 
-    // Apply relocations (for PIE binaries)
-    const int64_t base_delta =
-        static_cast<int64_t>(mod.image_base) - static_cast<int64_t>(mod.image_base - (mod.entry_point - get_header(data_span)->e_entry));
-    apply_elf_relocations(*this->memory_, mod, data_span, base_delta);
-
-    // Collect IRELATIVE relocations (IFUNC resolvers, common in glibc static binaries)
-    auto irelatives = collect_irelative_relocations(data_span, base_delta);
-    if (!irelatives.empty())
-    {
-        this->irelative_entries.insert(this->irelative_entries.end(), irelatives.begin(), irelatives.end());
-    }
-
     // Check for PT_INTERP — dynamic linker path
     const auto* ehdr = get_header(data_span);
     const auto* phdrs = get_program_headers(data_span);
+    bool has_interp = false;
 
     if (ehdr && phdrs)
     {
@@ -57,6 +46,8 @@ void linux_module_manager::map_main_modules(const std::filesystem::path& executa
             {
                 continue;
             }
+
+            has_interp = true;
 
             if (ph.p_offset + ph.p_filesz <= file_data.size())
             {
@@ -76,11 +67,27 @@ void linux_module_manager::map_main_modules(const std::filesystem::path& executa
         }
     }
 
+    // For statically-linked binaries (no PT_INTERP), apply relocations now.
+    // For dynamically-linked binaries, leave relocations to the runtime linker.
+    if (!has_interp)
+    {
+        const int64_t base_delta = static_cast<int64_t>(mod.entry_point) - static_cast<int64_t>(ehdr->e_entry);
+        apply_elf_relocations(*this->memory_, mod, data_span, base_delta);
+
+        // Collect IRELATIVE relocations (IFUNC resolvers, common in glibc static binaries)
+        auto irelatives = collect_irelative_relocations(data_span, base_delta);
+        if (!irelatives.empty())
+        {
+            this->irelative_entries.insert(this->irelative_entries.end(), irelatives.begin(), irelatives.end());
+        }
+    }
+
     // Store the module
     this->executable = this->insert_module(std::move(mod));
 }
 
-linux_mapped_module* linux_module_manager::map_module(const std::filesystem::path& path, const uint64_t forced_base)
+linux_mapped_module* linux_module_manager::map_module(const std::filesystem::path& path, const uint64_t forced_base,
+                                                      const bool apply_relocations)
 {
     auto file_data = utils::io::read_file(path);
     if (file_data.empty())
@@ -92,11 +99,12 @@ linux_mapped_module* linux_module_manager::map_module(const std::filesystem::pat
 
     auto mod = map_elf_from_data(*this->memory_, data_span, path, forced_base);
 
-    // Compute base delta for relocations
-    const auto* ehdr = get_header(data_span);
-    const int64_t base_delta = (ehdr->e_type == ET_DYN) ? static_cast<int64_t>(mod.image_base) : 0;
-
-    apply_elf_relocations(*this->memory_, mod, data_span, base_delta);
+    if (apply_relocations)
+    {
+        const auto* ehdr = get_header(data_span);
+        const int64_t base_delta = static_cast<int64_t>(mod.entry_point) - static_cast<int64_t>(ehdr->e_entry);
+        apply_elf_relocations(*this->memory_, mod, data_span, base_delta);
+    }
 
     return this->insert_module(std::move(mod));
 }

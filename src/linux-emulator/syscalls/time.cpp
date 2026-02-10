@@ -68,6 +68,22 @@ void sys_gettimeofday(const linux_syscall_context& c)
     write_linux_syscall_result(c, 0);
 }
 
+void sys_time(const linux_syscall_context& c)
+{
+    const auto tloc_addr = get_linux_syscall_argument(c.emu, 0);
+
+    const auto now = std::chrono::system_clock::now();
+    const auto secs = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+
+    if (tloc_addr != 0)
+    {
+        const int64_t value = secs;
+        c.emu.write_memory(tloc_addr, &value, sizeof(value));
+    }
+
+    write_linux_syscall_result(c, secs);
+}
+
 // --- Phase 4b: Additional time syscalls ---
 
 void sys_nanosleep(const linux_syscall_context& c)

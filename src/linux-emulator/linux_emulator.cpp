@@ -88,6 +88,16 @@ linux_emulator::linux_emulator(std::unique_ptr<x86_64_emulator> emu, const std::
     this->file_sys.add_passthrough_prefix(executable.parent_path());
     this->file_sys.add_passthrough_prefix(executable.parent_path().parent_path());
 
+    // Provision core writable directories expected by many Linux programs.
+    // With --root pointing at a minimal sysroot/project tree, /tmp often does
+    // not exist yet, causing openat("/tmp/...", O_CREAT) to fail unexpectedly.
+    if (!this->emulation_root.empty())
+    {
+        std::error_code ec{};
+        std::filesystem::create_directories(this->file_sys.translate("/tmp"), ec);
+        std::filesystem::create_directories(this->file_sys.translate("/var/tmp"), ec);
+    }
+
     // Load the ELF binary
     this->mod_manager.map_main_modules(executable);
 
@@ -147,7 +157,7 @@ linux_emulator::linux_emulator(std::unique_ptr<x86_64_emulator> emu, const std::
                                      "this loader and required glibc/musl libraries.");
         }
 
-        this->mod_manager.interpreter = this->mod_manager.map_module(interp_host_path);
+        this->mod_manager.interpreter = this->mod_manager.map_module(interp_host_path, 0, false);
         if (!this->mod_manager.interpreter)
         {
             throw std::runtime_error("Failed to map dynamic linker: " + interp_host_path.string());
@@ -337,18 +347,18 @@ void linux_emulator::resolve_irelative_relocations()
     // - Stack page: a small stack for the resolver functions
     constexpr uint64_t SENTINEL_PAGE = 0x10000;       // Low address, unlikely to be used
     constexpr uint64_t RESOLVER_STACK_PAGE = 0x11000; // Stack page right after sentinel
-    constexpr size_t PAGE_SIZE = 0x1000;
+    constexpr size_t IRELATIVE_PAGE_SIZE = 0x1000;
 
-    const bool ok1 = this->memory.allocate_memory(SENTINEL_PAGE, PAGE_SIZE, memory_permission::all);
-    const bool ok2 = this->memory.allocate_memory(RESOLVER_STACK_PAGE, PAGE_SIZE, memory_permission::read_write);
+    const bool ok1 = this->memory.allocate_memory(SENTINEL_PAGE, IRELATIVE_PAGE_SIZE, memory_permission::all);
+    const bool ok2 = this->memory.allocate_memory(RESOLVER_STACK_PAGE, IRELATIVE_PAGE_SIZE, memory_permission::read_write);
 
     if (!ok1 || !ok2)
     {
         this->log.warn("Failed to allocate scratch pages for IRELATIVE resolvers\n");
         if (ok1)
-            this->memory.release_memory(SENTINEL_PAGE, PAGE_SIZE);
+            this->memory.release_memory(SENTINEL_PAGE, IRELATIVE_PAGE_SIZE);
         if (ok2)
-            this->memory.release_memory(RESOLVER_STACK_PAGE, PAGE_SIZE);
+            this->memory.release_memory(RESOLVER_STACK_PAGE, IRELATIVE_PAGE_SIZE);
         return;
     }
 
@@ -358,7 +368,7 @@ void linux_emulator::resolve_irelative_relocations()
     this->memory.write_memory(SENTINEL_PAGE, &hlt_insn, 1);
 
     // Stack grows downward from the top of the stack page
-    constexpr uint64_t RESOLVER_STACK_TOP = RESOLVER_STACK_PAGE + PAGE_SIZE;
+    constexpr uint64_t RESOLVER_STACK_TOP = RESOLVER_STACK_PAGE + IRELATIVE_PAGE_SIZE;
 
     size_t resolved_count = 0;
 
@@ -406,8 +416,8 @@ void linux_emulator::resolve_irelative_relocations()
     }
 
     // Free the scratch pages
-    this->memory.release_memory(SENTINEL_PAGE, PAGE_SIZE);
-    this->memory.release_memory(RESOLVER_STACK_PAGE, PAGE_SIZE);
+    this->memory.release_memory(SENTINEL_PAGE, IRELATIVE_PAGE_SIZE);
+    this->memory.release_memory(RESOLVER_STACK_PAGE, IRELATIVE_PAGE_SIZE);
 
     // Restore all CPU state
     this->emu().reg(x86_register::rip, saved_rip);

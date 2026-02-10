@@ -2,6 +2,9 @@
 #include "../linux_emulator.hpp"
 #include "../linux_syscall_dispatcher.hpp"
 
+#include <fcntl.h>
+#include <unistd.h>
+
 using namespace linux_errno;
 
 // --- Phase 4b: I/O syscalls (pipe, eventfd) ---
@@ -10,23 +13,50 @@ void sys_pipe(const linux_syscall_context& c)
 {
     const auto pipefd_addr = get_linux_syscall_argument(c.emu, 0);
 
-    // Create two connected fd entries (pipe_read, pipe_write)
-    // For now, we use a simple in-memory buffer approach via a shared tmpfile
-
-    auto* tmp = tmpfile();
-    if (!tmp)
+    int host_pipe[2] = {-1, -1};
+    if (::pipe(host_pipe) != 0)
     {
         write_linux_syscall_result(c, -LINUX_EMFILE);
         return;
     }
 
+    auto* read_stream = fdopen(host_pipe[0], "rb");
+    auto* write_stream = fdopen(host_pipe[1], "wb");
+
+    if (!read_stream || !write_stream)
+    {
+        if (read_stream)
+        {
+            fclose(read_stream);
+        }
+        else if (host_pipe[0] >= 0)
+        {
+            close(host_pipe[0]);
+        }
+
+        if (write_stream)
+        {
+            fclose(write_stream);
+        }
+        else if (host_pipe[1] >= 0)
+        {
+            close(host_pipe[1]);
+        }
+
+        write_linux_syscall_result(c, -LINUX_EMFILE);
+        return;
+    }
+
+    setvbuf(read_stream, nullptr, _IONBF, 0);
+    setvbuf(write_stream, nullptr, _IONBF, 0);
+
     linux_fd read_end{};
     read_end.type = fd_type::pipe_read;
-    read_end.handle = tmp;
+    read_end.handle = read_stream;
 
     linux_fd write_end{};
     write_end.type = fd_type::pipe_write;
-    write_end.handle = tmp; // Shared handle — simplified model
+    write_end.handle = write_stream;
 
     const auto read_fd = c.proc.fds.allocate(std::move(read_end));
     const auto write_fd = c.proc.fds.allocate(std::move(write_end));
@@ -45,23 +75,80 @@ void sys_pipe2(const linux_syscall_context& c)
     constexpr int LINUX_O_CLOEXEC = 02000000;
     constexpr int LINUX_O_NONBLOCK = 04000;
 
-    auto* tmp = tmpfile();
-    if (!tmp)
+    int host_pipe[2] = {-1, -1};
+    if (::pipe(host_pipe) != 0)
     {
         write_linux_syscall_result(c, -LINUX_EMFILE);
         return;
     }
 
+    const bool nonblock = (flags & LINUX_O_NONBLOCK) != 0;
+    const bool cloexec = (flags & LINUX_O_CLOEXEC) != 0;
+
+    if (nonblock)
+    {
+        for (int fd : host_pipe)
+        {
+            const auto current = fcntl(fd, F_GETFL, 0);
+            if (current >= 0)
+            {
+                (void)fcntl(fd, F_SETFL, current | O_NONBLOCK);
+            }
+        }
+    }
+
+    if (cloexec)
+    {
+        for (int fd : host_pipe)
+        {
+            const auto current = fcntl(fd, F_GETFD, 0);
+            if (current >= 0)
+            {
+                (void)fcntl(fd, F_SETFD, current | FD_CLOEXEC);
+            }
+        }
+    }
+
+    auto* read_stream = fdopen(host_pipe[0], "rb");
+    auto* write_stream = fdopen(host_pipe[1], "wb");
+
+    if (!read_stream || !write_stream)
+    {
+        if (read_stream)
+        {
+            fclose(read_stream);
+        }
+        else if (host_pipe[0] >= 0)
+        {
+            close(host_pipe[0]);
+        }
+
+        if (write_stream)
+        {
+            fclose(write_stream);
+        }
+        else if (host_pipe[1] >= 0)
+        {
+            close(host_pipe[1]);
+        }
+
+        write_linux_syscall_result(c, -LINUX_EMFILE);
+        return;
+    }
+
+    setvbuf(read_stream, nullptr, _IONBF, 0);
+    setvbuf(write_stream, nullptr, _IONBF, 0);
+
     linux_fd read_end{};
     read_end.type = fd_type::pipe_read;
-    read_end.handle = tmp;
-    read_end.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
+    read_end.handle = read_stream;
+    read_end.close_on_exec = cloexec;
     read_end.flags = flags & LINUX_O_NONBLOCK;
 
     linux_fd write_end{};
     write_end.type = fd_type::pipe_write;
-    write_end.handle = tmp;
-    write_end.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
+    write_end.handle = write_stream;
+    write_end.close_on_exec = cloexec;
     write_end.flags = flags & LINUX_O_NONBLOCK;
 
     const auto read_fd = c.proc.fds.allocate(std::move(read_end));

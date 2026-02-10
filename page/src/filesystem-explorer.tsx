@@ -49,19 +49,29 @@ export interface FilesystemExplorerState {
   renameFile: string;
 }
 
-function makeFullPath(path: string[]) {
-  return "/root/filesys/" + path.join("/");
+function makeFullPath(path: string[], linuxMode: boolean = false) {
+  const root = linuxMode ? "/root" : "/root/filesys";
+  if (path.length === 0) {
+    return root;
+  }
+
+  return root + "/" + path.join("/");
 }
 
-function makeFullPathAndJoin(path: string[], element: string) {
-  return makeFullPath([...path, element]);
+function makeFullPathAndJoin(
+  path: string[],
+  element: string,
+  linuxMode: boolean = false,
+) {
+  return makeFullPath([...path, element], linuxMode);
 }
 
 function makeFullPathWithState(
   state: FilesystemExplorerState,
   element: string,
+  linuxMode: boolean = false,
 ) {
-  return makeFullPathAndJoin(state.path, element);
+  return makeFullPathAndJoin(state.path, element, linuxMode);
 }
 
 function relativePathToWindowsPath(fullPath: string) {
@@ -90,8 +100,12 @@ function makeWindowsPathWithState(
   return relativePathToWindowsPath(fullPath);
 }
 
-function getFolderElements(filesystem: Filesystem, path: string[]) {
-  const fullPath = makeFullPath(path);
+function getFolderElements(
+  filesystem: Filesystem,
+  path: string[],
+  linuxMode: boolean = false,
+) {
+  const fullPath = makeFullPath(path, linuxMode);
   const files = filesystem.readDir(fullPath);
 
   return files
@@ -322,8 +336,12 @@ export class FilesystemExplorer extends React.Component<
       return;
     }
 
-    const oldPath = makeFullPathWithState(this.state, file);
-    const newPath = makeFullPathWithState(this.state, newFile);
+    const oldPath = makeFullPathWithState(this.state, file, this.props.linuxMode);
+    const newPath = makeFullPathWithState(
+      this.state,
+      newFile,
+      this.props.linuxMode,
+    );
 
     this.setState({ renameFile: "" });
 
@@ -349,7 +367,7 @@ export class FilesystemExplorer extends React.Component<
       return false;
     }
 
-    if (this.state.path.length == 0 && name.length > 1) {
+    if (!this.props.linuxMode && this.state.path.length == 0 && name.length > 1) {
       this._showError("Drives must be a single letter");
       return false;
     }
@@ -366,7 +384,11 @@ export class FilesystemExplorer extends React.Component<
 
     this.setState({ createFolder: false });
 
-    const fullPath = makeFullPathWithState(this.state, name);
+    const fullPath = makeFullPathWithState(
+      this.state,
+      name,
+      this.props.linuxMode,
+    );
     await this.props.filesystem.createFolder(fullPath);
     this.forceUpdate();
   }
@@ -376,7 +398,7 @@ export class FilesystemExplorer extends React.Component<
       return;
     }
 
-    if (this.state.path.length == 0) {
+    if (!this.props.linuxMode && this.state.path.length == 0) {
       this._showError("Files must be within a drive");
       return;
     }
@@ -384,7 +406,11 @@ export class FilesystemExplorer extends React.Component<
     const fileData = (await readFiles(files)).map((f) => {
       const name = getFileName(f.file);
       return {
-        name: makeFullPathWithState(this.state, name.toLowerCase()),
+        name: makeFullPathWithState(
+          this.state,
+          name.toLowerCase(),
+          this.props.linuxMode,
+        ),
         data: f.data,
       };
     });
@@ -534,6 +560,7 @@ export class FilesystemExplorer extends React.Component<
                 const file = makeFullPathWithState(
                   this.state,
                   this.state.removeFile,
+                  this.props.linuxMode,
                 );
                 this.setState({ removeFile: "" });
                 this._removeFromCache(file);
@@ -641,13 +668,21 @@ export class FilesystemExplorer extends React.Component<
   }
 
   _downloadFile(file: string) {
-    const fullPath = makeFullPathWithState(this.state, file);
+    const fullPath = makeFullPathWithState(
+      this.state,
+      file,
+      this.props.linuxMode,
+    );
     const data = this.props.filesystem.readFile(fullPath);
     downloadData(data, file);
   }
 
   render() {
-    const elements = getFolderElements(this.props.filesystem, this.state.path);
+    const elements = getFolderElements(
+      this.props.filesystem,
+      this.state.path,
+      this.props.linuxMode,
+    );
 
     return (
       <>
@@ -692,7 +727,11 @@ export class FilesystemExplorer extends React.Component<
                 iconReader={(e) =>
                   getPeIcon(
                     this.props.filesystem,
-                    makeFullPathWithState(this.state, e.name),
+                    makeFullPathWithState(
+                      this.state,
+                      e.name,
+                      this.props.linuxMode,
+                    ),
                     this.props.iconCache,
                   )
                 }
