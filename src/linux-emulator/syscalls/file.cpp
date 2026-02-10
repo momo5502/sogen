@@ -161,6 +161,34 @@ namespace
         }
     }
 
+    std::optional<std::filesystem::path> resolve_guest_path_at(const linux_syscall_context& c, const int dirfd,
+                                                               const std::string& guest_path)
+    {
+        if (!guest_path.empty() && guest_path[0] == '/')
+        {
+            return c.emu_ref.file_sys.translate(guest_path);
+        }
+
+        if (dirfd == AT_FDCWD)
+        {
+            return c.emu_ref.file_sys.translate(guest_path);
+        }
+
+        auto* fd_entry = c.proc.fds.get(dirfd);
+        if (!fd_entry || fd_entry->host_path.empty())
+        {
+            return std::nullopt;
+        }
+
+        std::filesystem::path base = fd_entry->host_path;
+        if (fd_entry->type != fd_type::directory)
+        {
+            base = base.parent_path();
+        }
+
+        return (base / guest_path).lexically_normal();
+    }
+
 #pragma pack(push, 1)
     struct linux_dirent64_header
     {
@@ -209,15 +237,9 @@ namespace
         }
     }
 
-    void fill_linux_stat(linux_stat& ls, const std::filesystem::path& host_path)
+    void fill_linux_stat_from_host(linux_stat& ls, const struct stat& host_stat)
     {
         memset(&ls, 0, sizeof(ls));
-
-        struct stat host_stat{};
-        if (stat(host_path.string().c_str(), &host_stat) != 0)
-        {
-            return;
-        }
 
         ls.st_dev = static_cast<uint64_t>(host_stat.st_dev);
         ls.st_ino = static_cast<uint64_t>(host_stat.st_ino);
@@ -245,6 +267,18 @@ namespace
         ls.st_ctime_sec = static_cast<uint64_t>(host_stat.st_ctim.tv_sec);
         ls.st_ctime_nsec = static_cast<uint64_t>(host_stat.st_ctim.tv_nsec);
 #endif
+    }
+
+    void fill_linux_stat(linux_stat& ls, const std::filesystem::path& host_path)
+    {
+        struct stat host_stat{};
+        if (stat(host_path.string().c_str(), &host_stat) != 0)
+        {
+            memset(&ls, 0, sizeof(ls));
+            return;
+        }
+
+        fill_linux_stat_from_host(ls, host_stat);
     }
 }
 
@@ -591,17 +625,14 @@ void sys_openat(const linux_syscall_context& c)
         return;
     }
 
-    // AT_FDCWD means use cwd (which in emulation is just the root)
-    std::filesystem::path host_path;
-    if (dirfd == AT_FDCWD || (!guest_path.empty() && guest_path[0] == '/'))
+    auto resolved = resolve_guest_path_at(c, dirfd, guest_path);
+    if (!resolved.has_value())
     {
-        host_path = c.emu_ref.file_sys.translate(guest_path);
+        write_linux_syscall_result(c, -LINUX_EBADF);
+        return;
     }
-    else
-    {
-        // Relative to dirfd — not yet supported, treat as relative to root
-        host_path = c.emu_ref.file_sys.translate(guest_path);
-    }
+
+    const auto host_path = *resolved;
 
     if (flags & O_DIRECTORY)
     {
@@ -720,7 +751,7 @@ void sys_lstat(const linux_syscall_context& c)
     }
 
     linux_stat ls{};
-    fill_linux_stat(ls, host_path);
+    fill_linux_stat_from_host(ls, host_stat);
 
     c.emu.write_memory(buf_addr, &ls, sizeof(ls));
     write_linux_syscall_result(c, 0);
@@ -1122,6 +1153,7 @@ void sys_newfstatat(const linux_syscall_context& c)
     const auto guest_path = read_string<char>(c.emu, path_addr);
 
     constexpr int AT_EMPTY_PATH = 0x1000;
+    constexpr int AT_SYMLINK_NOFOLLOW = 0x100;
     if (guest_path.empty() && (flags & AT_EMPTY_PATH))
     {
         auto* fd_entry = c.proc.fds.get(dirfd);
@@ -1163,15 +1195,14 @@ void sys_newfstatat(const linux_syscall_context& c)
         return;
     }
 
-    std::filesystem::path host_path;
-    if (dirfd == AT_FDCWD || (!guest_path.empty() && guest_path[0] == '/'))
+    auto resolved = resolve_guest_path_at(c, dirfd, guest_path);
+    if (!resolved.has_value())
     {
-        host_path = c.emu_ref.file_sys.translate(guest_path);
+        write_linux_syscall_result(c, -LINUX_EBADF);
+        return;
     }
-    else
-    {
-        host_path = c.emu_ref.file_sys.translate(guest_path);
-    }
+
+    const auto host_path = *resolved;
 
     if (!std::filesystem::exists(host_path))
     {
@@ -1180,7 +1211,22 @@ void sys_newfstatat(const linux_syscall_context& c)
     }
 
     linux_stat ls{};
-    fill_linux_stat(ls, host_path);
+
+    if (flags & AT_SYMLINK_NOFOLLOW)
+    {
+        struct stat host_stat{};
+        if (lstat(host_path.string().c_str(), &host_stat) != 0)
+        {
+            write_linux_syscall_result(c, -LINUX_ENOENT);
+            return;
+        }
+
+        fill_linux_stat_from_host(ls, host_stat);
+    }
+    else
+    {
+        fill_linux_stat(ls, host_path);
+    }
 
     c.emu.write_memory(buf_addr, &ls, sizeof(ls));
     write_linux_syscall_result(c, 0);
@@ -1256,12 +1302,20 @@ void sys_unlink(const linux_syscall_context& c)
 void sys_unlinkat(const linux_syscall_context& c)
 {
     // unlinkat(int dirfd, const char *pathname, int flags)
-    // const auto dirfd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
+    const auto dirfd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
     const auto path_addr = get_linux_syscall_argument(c.emu, 1);
     const auto flags = static_cast<int>(get_linux_syscall_argument(c.emu, 2));
 
     const auto guest_path = read_string<char>(c.emu, path_addr);
-    const auto host_path = c.emu_ref.file_sys.translate(guest_path);
+
+    auto resolved = resolve_guest_path_at(c, dirfd, guest_path);
+    if (!resolved.has_value())
+    {
+        write_linux_syscall_result(c, -LINUX_EBADF);
+        return;
+    }
+
+    const auto host_path = *resolved;
 
     constexpr int AT_REMOVEDIR = 0x200;
 
@@ -1629,7 +1683,7 @@ void sys_readv(const linux_syscall_context& c)
 void sys_faccessat(const linux_syscall_context& c)
 {
     // faccessat(int dirfd, const char *pathname, int mode, int flags)
-    // const auto dirfd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
+    const auto dirfd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
     const auto path_addr = get_linux_syscall_argument(c.emu, 1);
     // mode is arg 2, flags is arg 3
 
@@ -1642,7 +1696,14 @@ void sys_faccessat(const linux_syscall_context& c)
         return;
     }
 
-    const auto host_path = c.emu_ref.file_sys.translate(guest_path);
+    auto resolved = resolve_guest_path_at(c, dirfd, guest_path);
+    if (!resolved.has_value())
+    {
+        write_linux_syscall_result(c, -LINUX_EBADF);
+        return;
+    }
+
+    const auto host_path = *resolved;
 
     if (std::filesystem::exists(host_path))
     {

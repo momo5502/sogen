@@ -62,6 +62,28 @@ namespace linux_test
         uint64_t instructions_executed{0};
     };
 
+    struct linux_loader_fixture_result
+    {
+        bool loader_rejected{false};
+        std::optional<int> exit_status{};
+        uint64_t instructions_executed{0};
+        std::string diagnostics{};
+
+        bool rejected() const
+        {
+            return this->loader_rejected || (this->exit_status.has_value() && *this->exit_status != 0);
+        }
+    };
+
+    inline std::filesystem::path get_linux_torture_fixture_root()
+    {
+#ifdef LINUX_TORTURE_FIXTURE_ROOT
+        return std::filesystem::path(LINUX_TORTURE_FIXTURE_ROOT);
+#else
+        return get_linux_test_root() / "test" / "linux" / "torture" / "fixtures";
+#endif
+    }
+
     inline linux_emulator_result run_linux_binary(const std::filesystem::path& binary, std::vector<std::string> argv = {},
                                                   std::vector<std::string> envp = {}, const std::filesystem::path& emulation_root = {})
     {
@@ -94,6 +116,38 @@ namespace linux_test
 
         result.exit_status = linux_emu.process.exit_status;
         result.instructions_executed = linux_emu.get_executed_instructions();
+
+        return result;
+    }
+
+    inline linux_loader_fixture_result run_linux_loader_fixture(const std::filesystem::path& fixture,
+                                                                const std::filesystem::path& emulation_root = {},
+                                                                const size_t instruction_budget = 200000)
+    {
+        linux_loader_fixture_result result{};
+
+        try
+        {
+            auto emu_backend = create_x86_64_emulator();
+            linux_emulator linux_emu(std::move(emu_backend), emulation_root, fixture, {fixture.string()}, default_envp());
+            linux_emu.log.disable_output(true);
+
+            linux_emu.start(instruction_budget);
+
+            result.exit_status = linux_emu.process.exit_status;
+            result.instructions_executed = linux_emu.get_executed_instructions();
+        }
+        catch (const std::exception& ex)
+        {
+            result.loader_rejected = true;
+            result.diagnostics = ex.what();
+            return result;
+        }
+
+        if (result.exit_status.has_value() && *result.exit_status != 0)
+        {
+            result.diagnostics = "Process terminated with non-zero status " + std::to_string(*result.exit_status);
+        }
 
         return result;
     }
