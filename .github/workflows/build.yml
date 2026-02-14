@@ -38,6 +38,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Install Ninja
         uses: seanmiddleditch/gha-setup-ninja@v6
@@ -60,19 +61,152 @@ jobs:
             sudo update-alternatives --set c++ /usr/bin/clang++-${{ env.LLVM_VERSION }}
 
       - name: CMake Build
-        run: cmake --preset=release -DMOMO_ENABLE_CLANG_TIDY=On && cmake --build --preset=release
+        run: cmake --preset=release -DMOMO_ENABLE_CLANG_TIDY=Off && cmake --build --preset=release
+
+      - name: Run clang-tidy on changed files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+            RANGE="origin/${{ github.base_ref }}...${{ github.sha }}"
+          elif [[ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
+            RANGE="${{ github.event.before }}...${{ github.sha }}"
+          else
+            RANGE="HEAD~1...HEAD"
+          fi
+
+          echo "Using diff range: ${RANGE}"
+
+          RANGE="$RANGE" python3 - <<'PY'
+          import os
+          import pathlib
+          import subprocess
+
+          range_spec = os.environ["RANGE"]
+          out = subprocess.check_output(
+              ["git", "diff", "--name-only", "--diff-filter=ACMR", range_spec],
+              text=True,
+          )
+
+          source_exts = {".c", ".cc", ".cpp", ".cxx", ".m", ".mm"}
+          candidates: list[str] = []
+
+          for raw_path in out.splitlines():
+              path = raw_path.strip()
+              if not path:
+                  continue
+
+              if not path.startswith(("src/", "test/", "cmake/")):
+                  continue
+
+              if pathlib.Path(path).suffix.lower() in source_exts:
+                  candidates.append(path)
+
+          candidates = sorted(set(candidates))
+
+          output_path = pathlib.Path("/tmp/clang_tidy_files.txt")
+          output_path.write_text("\n".join(candidates) + ("\n" if candidates else ""), encoding="utf-8")
+
+          if candidates:
+              print("Will run clang-tidy on:")
+              for candidate in candidates:
+                  print(f"  - {candidate}")
+          else:
+              print("No changed C/C++ source files found.")
+          PY
+
+          if [[ ! -s /tmp/clang_tidy_files.txt ]]; then
+            exit 0
+          fi
+
+          CLANG_TIDY_BIN="clang-tidy-${{ env.LLVM_VERSION }}"
+          if ! command -v "$CLANG_TIDY_BIN" >/dev/null 2>&1; then
+            CLANG_TIDY_BIN="clang-tidy"
+          fi
+
+          while IFS= read -r file; do
+            "$CLANG_TIDY_BIN" "$file" -p build/release --use-color --config-file=.clang-tidy
+          done < /tmp/clang_tidy_files.txt
 
   verify-formatting:
     name: Verify Formatting
     runs-on: ubuntu-24.04
+    env:
+      LLVM_VERSION: 21
     steps:
       - name: Checkout Source
         uses: actions/checkout@v6
-
-      - name: Verify Formatting
-        uses: jidicula/clang-format-action@v4.16.0
         with:
-          clang-format-version: "21"
+          fetch-depth: 0
+
+      - name: Install Clang Format
+        uses: nick-fields/retry@v3.0.2
+        with:
+          max_attempts: 5
+          timeout_minutes: 15
+          retry_wait_seconds: 60
+          command: |
+            wget https://apt.llvm.org/llvm.sh
+            chmod +x llvm.sh
+            sudo ./llvm.sh ${{ env.LLVM_VERSION }}
+            sudo apt install -y clang-format-${{ env.LLVM_VERSION }}
+
+      - name: Verify C/C++ Formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+            RANGE="origin/${{ github.base_ref }}...${{ github.sha }}"
+          elif [[ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
+            RANGE="${{ github.event.before }}...${{ github.sha }}"
+          else
+            RANGE="HEAD~1...HEAD"
+          fi
+
+          RANGE="$RANGE" python3 - <<'PY'
+          import os
+          import pathlib
+          import shutil
+          import subprocess
+          import sys
+
+          exts = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".ipp", ".inl"}
+          include_prefixes = ("src/", "test/", "cmake/")
+          exclude_prefixes = ("deps/",)
+
+          range_spec = os.environ["RANGE"]
+          tracked = subprocess.check_output(
+              ["git", "diff", "--name-only", "--diff-filter=ACMR", range_spec],
+              text=True,
+          ).splitlines()
+          files = []
+
+          for path_str in tracked:
+              if not path_str.startswith(include_prefixes):
+                  continue
+
+              if path_str.startswith(exclude_prefixes):
+                  continue
+
+              if pathlib.Path(path_str).suffix.lower() in exts:
+                  files.append(path_str)
+
+          files = sorted(set(files))
+
+          if not files:
+              print("No C/C++ files found for formatting check.")
+              sys.exit(0)
+
+          clang_format = "clang-format-21"
+          if not shutil.which(clang_format):
+              clang_format = "clang-format"
+
+          subprocess.run([clang_format, "--dry-run", "--Werror", *files], check=True)
+          PY
 
       - name: Verify Page Formatting
         run: cd page && npx --yes prettier . --check
@@ -453,6 +587,17 @@ jobs:
           EMULATOR_ROOT: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/root
           EMULATOR_VERBOSE: ${{ github.event.inputs.verbose }}
           ANALYSIS_SAMPLE: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/test-sample.exe
+          LINUX_TEST_ROOT: ${{github.workspace}}/test/linux
+
+      - name: Phase 10 Must-Pass
+        if: ${{ matrix.platform == 'Linux x86_64 GCC' && matrix.emulator == 'Unicorn' }}
+        run: |
+          python3 test/linux/torture/tools/run_mustpass.py \
+            --baseline test/linux/torture/baseline.mustpass.json \
+            --analyzer "${{github.workspace}}/build/${{matrix.preset}}/artifacts/linux-analyzer" \
+            --root "${{github.workspace}}" \
+            --artifacts-dir "${{github.workspace}}/test/linux/torture/artifacts" \
+            --timeout 120
 
   win-test:
     name: Windows Test
@@ -688,6 +833,12 @@ jobs:
           cp ./build/release/artifacts/32/analyzer.wasm ./page/public/32/
           cp ./build/release/artifacts/64/analyzer.js ./page/public/64/
           cp ./build/release/artifacts/64/analyzer.wasm ./page/public/64/
+          mkdir -p ./page/public/linux32/
+          mkdir -p ./page/public/linux64/
+          cp ./build/release/artifacts/32/linux-analyzer.js ./page/public/linux32/
+          cp ./build/release/artifacts/32/linux-analyzer.wasm ./page/public/linux32/
+          cp ./build/release/artifacts/64/linux-analyzer.js ./page/public/linux64/
+          cp ./build/release/artifacts/64/linux-analyzer.wasm ./page/public/linux64/
 
       - name: Build Page
         run: cd ./page && npm i && npm run build

@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "name": "phase10-must-pass",
+  "description": "Fast deterministic must-pass slice for Phase 10 CI and local gating.",
+  "tests": [
+    {
+      "name": "loader_base_hello",
+      "binary": "test/linux/torture/fixtures/elf/valid/base_hello.elf",
+      "args": [],
+      "expected_exit": 0,
+      "stdout_contains": [
+        "Hello"
+      ]
+    },
+    {
+      "name": "fd_pipe_torture",
+      "binary": "test/linux/torture/bin/fd_pipe_torture",
+      "args": [],
+      "expected_exit": 0,
+      "stdout_contains": [
+        "ALL PASS fd_pipe_torture"
+      ]
+    },
+    {
+      "name": "openat_getdents_torture",
+      "binary": "test/linux/torture/bin/openat_getdents_torture",
+      "args": [],
+      "expected_exit": 0,
+      "stdout_contains": [
+        "ALL PASS openat_getdents_torture"
+      ]
+    },
+    {
+      "name": "mmap_brk_torture",
+      "binary": "test/linux/torture/bin/mmap_brk_torture",
+      "args": [],
+      "expected_exit": 0,
+      "stdout_contains": [
+        "ALL PASS mmap_brk_torture"
+      ]
+    },
+    {
+      "name": "signals_futex_torture",
+      "binary": "test/linux/torture/bin/signals_futex_torture",
+      "args": [],
+      "expected_exit": 0,
+      "stdout_contains": [
+        "ALL PASS signals_futex_torture"
+      ]
+    },
+    {
+      "name": "poll_select_epoll_torture",
+      "binary": "test/linux/torture/bin/poll_select_epoll_torture",
+      "args": [],
+      "expected_exit": 0,
+      "stdout_contains": [
+        "ALL PASS poll_select_epoll_torture"
+      ]
+    },
+    {
+      "name": "signal_rt_sigreturn",
+      "binary": "test/linux/test_signal",
+      "args": [],
+      "expected_exit": 0,
+      "stdout_contains": [
+        "Signal recovery OK"
+      ]
+    }
+  ]
+}

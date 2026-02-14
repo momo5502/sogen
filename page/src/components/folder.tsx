@@ -74,6 +74,13 @@ function getIcon(
       if (element.name.endsWith(".dll")) {
         return <FileEarmarkBinary className={className} />;
       }
+      if (
+        element.name.endsWith(".so") ||
+        element.name.endsWith(".elf") ||
+        element.name.endsWith(".bin")
+      ) {
+        return <FileEarmarkBinary className={className} />;
+      }
       if (element.name.endsWith(".exe")) {
         return <FiletypeExe className={className} />;
       }

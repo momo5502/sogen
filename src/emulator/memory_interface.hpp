@@ -8,11 +8,13 @@ using mmio_read_callback = std::function<void(uint64_t addr, void* data, size_t 
 using mmio_write_callback = std::function<void(uint64_t addr, const void* data, size_t size)>;
 
 class memory_manager;
+class linux_memory_manager;
 
 class memory_interface
 {
   public:
     friend memory_manager;
+    friend linux_memory_manager;
 
     virtual ~memory_interface() = default;
 
