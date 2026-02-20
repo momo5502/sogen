@@ -253,11 +253,13 @@ namespace
 }
 
 template <typename T>
-mapped_module map_module_from_data(memory_manager& memory, const std::span<const std::byte> data, std::filesystem::path file)
+mapped_module map_module_from_data(memory_manager& memory, const std::span<const std::byte> data, std::filesystem::path file,
+                                   windows_path module_path)
 {
     mapped_module binary{};
     binary.path = std::move(file);
-    binary.name = binary.path.filename().string();
+    binary.name = u16_to_u8(module_path.leaf());
+    binary.module_path = std::move(module_path);
 
     utils::safe_buffer_accessor buffer{data};
 
@@ -340,7 +342,7 @@ mapped_module map_module_from_data(memory_manager& memory, const std::span<const
 }
 
 template <typename T>
-mapped_module map_module_from_file(memory_manager& memory, std::filesystem::path file)
+mapped_module map_module_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path)
 {
     const auto data = utils::io::read_file(file);
     if (data.empty())
@@ -348,15 +350,16 @@ mapped_module map_module_from_file(memory_manager& memory, std::filesystem::path
         throw std::runtime_error("Bad file data: " + file.string());
     }
 
-    return map_module_from_data<T>(memory, data, std::move(file));
+    return map_module_from_data<T>(memory, data, std::move(file), std::move(module_path));
 }
 
 template <typename T>
-mapped_module map_module_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size, const std::string& module_name)
+mapped_module map_module_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size, windows_path module_path)
 {
     mapped_module binary{};
-    binary.name = module_name;
-    binary.path = module_name;
+    binary.name = u16_to_u8(module_path.leaf());
+    binary.path = module_path.to_portable_path();
+    binary.module_path = std::move(module_path);
     binary.image_base = base_address;
     binary.image_base_file = base_address;
     binary.size_of_image = image_size;
@@ -421,7 +424,7 @@ mapped_module map_module_from_memory(memory_manager& memory, uint64_t base_addre
     {
         // bad!
         throw std::runtime_error("Failed to map module from memory at " + std::to_string(base_address) + " with size " +
-                                 std::to_string(image_size) + " for module " + module_name);
+                                 std::to_string(image_size) + " for module " + binary.name);
     }
 
     return binary;
@@ -433,13 +436,13 @@ bool unmap_module(memory_manager& memory, const mapped_module& mod)
 }
 
 template mapped_module map_module_from_data<std::uint32_t>(memory_manager& memory, const std::span<const std::byte> data,
-                                                           std::filesystem::path file);
+                                                           std::filesystem::path file, windows_path module_path);
 template mapped_module map_module_from_data<std::uint64_t>(memory_manager& memory, const std::span<const std::byte> data,
-                                                           std::filesystem::path file);
-template mapped_module map_module_from_file<std::uint32_t>(memory_manager& memory, std::filesystem::path file);
-template mapped_module map_module_from_file<std::uint64_t>(memory_manager& memory, std::filesystem::path file);
+                                                           std::filesystem::path file, windows_path module_path);
+template mapped_module map_module_from_file<std::uint32_t>(memory_manager& memory, std::filesystem::path file, windows_path module_path);
+template mapped_module map_module_from_file<std::uint64_t>(memory_manager& memory, std::filesystem::path file, windows_path module_path);
 
 template mapped_module map_module_from_memory<std::uint32_t>(memory_manager& memory, uint64_t base_address, uint64_t image_size,
-                                                             const std::string& module_name);
+                                                             windows_path module_path);
 template mapped_module map_module_from_memory<std::uint64_t>(memory_manager& memory, uint64_t base_address, uint64_t image_size,
-                                                             const std::string& module_name);
+                                                             windows_path module_path);

@@ -102,49 +102,6 @@ class file_system
         }
     }
 
-    windows_path local_to_windows_path(const std::filesystem::path& local_path) const
-    {
-        const auto absolute_local_path = weakly_canonical(absolute(local_path));
-        const auto relative_path = relative(absolute_local_path, this->root_);
-
-        if (is_escaping_relative_path(relative_path))
-        {
-            throw std::runtime_error("Path '" + local_path.string() + "' is not within the root filesystem!");
-        }
-
-        char drive{};
-        std::list<std::u16string> folders{};
-
-        for (auto i = relative_path.begin(); i != relative_path.end(); ++i)
-        {
-            if (i == relative_path.begin())
-            {
-                const auto str = i->string();
-                assert(str.size() == 1);
-                drive = str[0];
-            }
-            else
-            {
-                folders.push_back(i->u16string());
-            }
-        }
-
-        return windows_path{drive, std::move(folders)};
-    }
-
-    windows_path mapped_path_to_windows_path(const std::filesystem::path& local_path) const
-    {
-        for (const auto& [src, dest] : this->mappings_)
-        {
-            if (dest == local_path)
-            {
-                return src;
-            }
-        }
-
-        return {};
-    }
-
     void map(windows_path src, std::filesystem::path dest)
     {
         this->mappings_[std::move(src)] = std::move(dest);

@@ -106,18 +106,6 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
         return static_cast<uint32_t>(*status);
     }
 
-    std::string get_windows_path(const std::filesystem::path& path)
-    {
-        try
-        {
-            return win_emu_->file_sys.local_to_windows_path(path).string();
-        }
-        catch (...)
-        {
-            return win_emu_->file_sys.mapped_path_to_windows_path(path).string();
-        }
-    }
-
     std::vector<gdb_stub::library_info> get_libraries() override
     {
         std::vector<gdb_stub::library_info> libs{};
@@ -125,11 +113,9 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
         libs.reserve(this->win_emu_->mod_manager.modules().size());
         for (const auto& [base_addr, mod] : mod_manager.modules())
         {
-            const auto module_path = get_windows_path(mod.path);
-
-            if (!module_path.empty())
+            if (!mod.module_path.empty())
             {
-                libs.push_back({.name = module_path, .segment_address = base_addr + 0x1000});
+                libs.push_back({.name = mod.module_path.string(), .segment_address = base_addr + 0x1000});
             }
         }
 
@@ -139,7 +125,7 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
     std::string get_executable_path() override
     {
         const auto& mod_manager = this->win_emu_->mod_manager;
-        return get_windows_path(mod_manager.executable->path);
+        return mod_manager.executable->module_path.string();
     }
 
     void reset_library_stop() override

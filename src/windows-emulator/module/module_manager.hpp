@@ -32,35 +32,28 @@ struct pe_detection_result
     }
 };
 
-// Strategy interface for module mapping
 class module_mapping_strategy
 {
   public:
     virtual ~module_mapping_strategy() = default;
-    virtual mapped_module map_from_file(memory_manager& memory, std::filesystem::path file) = 0;
-    virtual mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
-                                          const std::string& module_name) = 0;
+    virtual mapped_module map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path) = 0;
+    virtual mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size, windows_path module_path) = 0;
 };
 
-// PE32 mapping strategy implementation
 class pe32_mapping_strategy : public module_mapping_strategy
 {
   public:
-    mapped_module map_from_file(memory_manager& memory, std::filesystem::path file) override;
-    mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
-                                  const std::string& module_name) override;
+    mapped_module map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path) override;
+    mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size, windows_path module_path) override;
 };
 
-// PE64 mapping strategy implementation
 class pe64_mapping_strategy : public module_mapping_strategy
 {
   public:
-    mapped_module map_from_file(memory_manager& memory, std::filesystem::path file) override;
-    mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
-                                  const std::string& module_name) override;
+    mapped_module map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path) override;
+    mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size, windows_path module_path) override;
 };
 
-// Factory for creating mapping strategies
 class mapping_strategy_factory
 {
   private:
@@ -72,7 +65,6 @@ class mapping_strategy_factory
     module_mapping_strategy& get_strategy(winpe::pe_arch arch);
 };
 
-// PE architecture detector utility class
 class pe_architecture_detector
 {
   public:
@@ -98,10 +90,10 @@ class module_manager
                           const logger& logger);
 
     std::optional<uint64_t> get_module_load_count_by_path(const windows_path& path);
-    mapped_module* map_module(const windows_path& file, const logger& logger, bool is_static = false, bool allow_duplicate = false);
-    mapped_module* map_local_module(const std::filesystem::path& file, const logger& logger, bool is_static = false,
-                                    bool allow_duplicate = false);
-    mapped_module* map_memory_module(uint64_t base_address, uint64_t image_size, const std::string& module_name, const logger& logger,
+    mapped_module* map_module(windows_path file, const logger& logger, bool is_static = false, bool allow_duplicate = false);
+    mapped_module* map_local_module(const std::filesystem::path& file, windows_path module_path, const logger& logger,
+                                    bool is_static = false, bool allow_duplicate = false);
+    mapped_module* map_memory_module(uint64_t base_address, uint64_t image_size, windows_path module_path, const logger& logger,
                                      bool is_static = false, bool allow_duplicate = false);
 
     mapped_module* find_by_address(const uint64_t address)
@@ -181,18 +173,14 @@ class module_manager
     module_map modules_{};
     mutable module_map::iterator last_module_cache_{modules_.end()};
 
-    // Strategy pattern components
     mapping_strategy_factory strategy_factory_;
     execution_mode current_execution_mode_ = execution_mode::unknown;
 
-    // Core mapping logic to eliminate code duplication
     mapped_module* map_module_core(const pe_detection_result& detection_result, const std::function<mapped_module()>& mapper,
                                    const logger& logger, bool is_static);
 
-    // Execution mode detection
     execution_mode detect_execution_mode(const windows_path& executable_path, const logger& logger);
 
-    // Module loading helpers
     void load_native_64bit_modules(const windows_path& executable_path, const windows_path& ntdll_path, const windows_path& win32u_path,
                                    const logger& logger);
     void load_wow64_modules(const windows_path& executable_path, const windows_path& ntdll_path, const windows_path& win32u_path,
