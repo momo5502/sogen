@@ -9,6 +9,101 @@ namespace syscalls
 {
     using namespace std::string_view_literals;
 
+    namespace
+    {
+        // From syswow64 kernel32:
+        // - _BaseDllInitialize reads ReadOnlyStaticServerData[2]
+        // - _BaseDllInitializeIniFileMappings / BaseDllCaptureIniFileParameters read +0x170 and +0x9e8
+        constexpr uint64_t k_base_static_server_data_table_index = 2;
+        constexpr uint64_t k_base_static_server_data_ini_file_mapping_offset = 0x170;
+        constexpr uint64_t k_base_static_server_data_bias_offset = 0x9e8;
+
+        struct ini_file_mapping64
+        {
+            uint64_t file_names;
+            uint64_t default_file_name_mapping;
+            uint64_t win_ini_file_mapping;
+            uint32_t reserved;
+            uint32_t padding;
+        };
+
+        static_assert(sizeof(ini_file_mapping64) == 0x20);
+
+        constexpr uint64_t align_up_u64(const uint64_t value, const uint64_t alignment)
+        {
+            return (value + (alignment - 1)) & ~(alignment - 1);
+        }
+
+        bool is_within_range(const uint64_t total_size, const uint64_t offset, const uint64_t size)
+        {
+            return offset <= total_size && size <= (total_size - offset);
+        }
+
+        NTSTATUS initialize_shared_section_base_static_server_data_mapping(const syscall_context& c, const uint64_t shared_section_address,
+                                                                           const uint64_t shared_section_size, uint64_t& obj_address)
+        {
+            // BaseStaticServerData starts after shared pointer table entries
+            const auto base_static_server_data_offset =
+                align_up_u64((k_base_static_server_data_table_index + 1) * sizeof(uint32_t), sizeof(uint64_t));
+
+            // Put the emulator-owned ini mapping object at the end to avoid overlap
+            const auto ini_file_mapping_offset =
+                align_up_u64(shared_section_size - sizeof(ini_file_mapping64), alignof(ini_file_mapping64));
+
+            if (!is_within_range(shared_section_size, sizeof(uint32_t) * k_base_static_server_data_table_index, sizeof(uint32_t)) ||
+                !is_within_range(shared_section_size, base_static_server_data_offset + k_base_static_server_data_ini_file_mapping_offset,
+                                 sizeof(uint64_t)) ||
+                !is_within_range(shared_section_size, base_static_server_data_offset + k_base_static_server_data_bias_offset,
+                                 sizeof(uint64_t)) ||
+                !is_within_range(shared_section_size, ini_file_mapping_offset, sizeof(ini_file_mapping64)))
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            c.emu.write_memory<uint32_t>(shared_section_address + (sizeof(uint32_t) * k_base_static_server_data_table_index),
+                                         static_cast<uint32_t>(base_static_server_data_offset));
+
+            // BaseStaticServerData (BASE_STATIC_SERVER_DATA)
+            obj_address = shared_section_address + base_static_server_data_offset;
+
+            const auto ini_file_mapping_address = shared_section_address + ini_file_mapping_offset;
+            const auto ini_file_mapping_relative = ini_file_mapping_address - obj_address;
+
+            c.emu.write_memory<uint64_t>(obj_address + k_base_static_server_data_ini_file_mapping_offset, ini_file_mapping_relative);
+            c.emu.write_memory<uint64_t>(obj_address + k_base_static_server_data_bias_offset, 0);
+
+            const ini_file_mapping64 zero_ini_file_mapping{};
+            c.emu.write_memory(ini_file_mapping_address, &zero_ini_file_mapping, sizeof(zero_ini_file_mapping));
+
+            return STATUS_SUCCESS;
+        }
+
+        void initialize_shared_section_base_static_server_data_paths(const syscall_context& c, const uint64_t obj_address,
+                                                                     const uint64_t windows_dir_size)
+        {
+            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> windir_obj{c.emu, obj_address};
+            windir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs) {
+                const auto dir_address = kusd_mmio::address() + offsetof(KUSER_SHARED_DATA64, NtSystemRoot);
+
+                ucs.Buffer = dir_address - obj_address;
+                ucs.Length = static_cast<uint16_t>(windows_dir_size);
+                ucs.MaximumLength = ucs.Length;
+            });
+
+            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> sysdir_obj{c.emu, windir_obj.value() + windir_obj.size()};
+            sysdir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs) {
+                c.proc.base_allocator.make_unicode_string(ucs, u"C:\\WINDOWS\\System32");
+                ucs.Buffer = ucs.Buffer - obj_address;
+            });
+
+            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> base_dir_obj{c.emu, sysdir_obj.value() + sysdir_obj.size()};
+            base_dir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs) {
+                c.proc.base_allocator.make_unicode_string(ucs, u"\\Sessions\\1\\BaseNamedObjects");
+                ucs.Buffer = ucs.Buffer - obj_address;
+            });
+        }
+    }
+
     NTSTATUS handle_NtCreateSection(const syscall_context& c, const emulator_object<handle> section_handle,
                                     const ACCESS_MASK /*desired_access*/,
                                     const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
@@ -184,37 +279,14 @@ namespace syscalls
             const std::u16string_view windows_dir = c.proc.kusd.get().NtSystemRoot.arr;
             const auto windows_dir_size = windows_dir.size() * 2;
 
-            constexpr auto windows_dir_offset = 0x10;
-            c.emu.write_memory(address + 8, windows_dir_offset);
+            uint64_t obj_address{};
+            if (const auto status = initialize_shared_section_base_static_server_data_mapping(c, address, shared_section_size, obj_address);
+                !NT_SUCCESS(status))
+            {
+                return status;
+            }
 
-            // aka. BaseStaticServerData (BASE_STATIC_SERVER_DATA)
-            const auto obj_address = address + windows_dir_offset;
-
-            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> windir_obj{c.emu, obj_address};
-            windir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs) {
-                const auto dir_address = kusd_mmio::address() + offsetof(KUSER_SHARED_DATA64, NtSystemRoot);
-
-                ucs.Buffer = dir_address - obj_address;
-                ucs.Length = static_cast<uint16_t>(windows_dir_size);
-                ucs.MaximumLength = ucs.Length;
-            });
-
-            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> sysdir_obj{c.emu, windir_obj.value() + windir_obj.size()};
-            sysdir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs) {
-                c.proc.base_allocator.make_unicode_string(ucs, u"C:\\WINDOWS\\System32");
-                ucs.Buffer = ucs.Buffer - obj_address;
-            });
-
-            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> base_dir_obj{c.emu, sysdir_obj.value() + sysdir_obj.size()};
-            base_dir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs) {
-                c.proc.base_allocator.make_unicode_string(ucs, u"\\Sessions\\1\\BaseNamedObjects");
-                ucs.Buffer = ucs.Buffer - obj_address;
-            });
-
-            c.emu.write_memory(obj_address + 0x9C8, 0xFFFFFFFF); // TIME_ZONE_ID_INVALID
-
-            // Windows 2019 offset!
-            c.emu.write_memory(obj_address + 0xA70, 0xFFFFFFFF); // TIME_ZONE_ID_INVALID
+            initialize_shared_section_base_static_server_data_paths(c, obj_address, windows_dir_size);
 
             if (view_size)
             {
