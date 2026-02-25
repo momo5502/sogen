@@ -586,8 +586,8 @@ namespace
                         }
                     }
 
-                    win_emu->log.print(color::green, "Reading from executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n",
-                                       section.name.c_str(), address, rip);
+                    win_emu->log.print(color::green, "Reading from executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n",
+                                       section.name.c_str(), address, rip, win_emu->mod_manager.find_name(rip));
                 };
 
                 const auto write_handler = [&, section, concise_logging, write_count](const uint64_t address, const void*, size_t size) {
@@ -606,8 +606,8 @@ namespace
                         }
                     }
 
-                    win_emu->log.print(color::blue, "Writing %zd bytes to executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 "\n", size,
-                                       section.name.c_str(), address, rip);
+                    win_emu->log.print(color::blue, "Writing %zd bytes to executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n",
+                                       size, section.name.c_str(), address, rip, win_emu->mod_manager.find_name(rip));
                 };
 
                 win_emu->emu().hook_memory_read(section.region.start, section.region.length, std::move(read_handler));

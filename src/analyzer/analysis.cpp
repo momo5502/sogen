@@ -68,8 +68,9 @@ namespace
             }
         }
 
-        c.win_emu->log.print(color::pink, "Suspicious: %.*s%.*s at 0x%" PRIx64 " (via 0x%" PRIx64 ")\n", STR_VIEW_VA(details),
-                             STR_VIEW_VA(addition), rip, c.win_emu->current_thread().previous_ip);
+        const auto previous_ip = c.win_emu->current_thread().previous_ip;
+        c.win_emu->log.print(color::pink, "Suspicious: %.*s%.*s at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n", STR_VIEW_VA(details),
+                             STR_VIEW_VA(addition), rip, previous_ip, c.win_emu->mod_manager.find_name(previous_ip));
     }
 
     void handle_debug_string(const analysis_context& c, const std::string_view details)
