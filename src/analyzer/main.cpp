@@ -590,7 +590,8 @@ namespace
                                        section.name.c_str(), address, rip, win_emu->mod_manager.find_name(rip));
                 };
 
-                const auto write_handler = [&, section, concise_logging, write_count](const uint64_t address, const void*, size_t size) {
+                const auto write_handler = [&, section, concise_logging, write_count](const uint64_t address, const void* value,
+                                                                                      size_t size) {
                     const auto rip = win_emu->emu().read_instruction_pointer();
                     if (!win_emu->mod_manager.executable->contains(rip))
                     {
@@ -606,8 +607,13 @@ namespace
                         }
                     }
 
-                    win_emu->log.print(color::blue, "Writing %zd bytes to executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n",
-                                       size, section.name.c_str(), address, rip, win_emu->mod_manager.find_name(rip));
+                    uint64_t int_value{};
+                    memcpy(&int_value, value, std::min(size, sizeof(int_value)));
+
+                    win_emu->log.print(color::blue,
+                                       "Writing %zd bytes with value 0x%" PRIX64 " to executable section %s at 0x%" PRIx64 " via 0x%" PRIx64
+                                       " (%s)\n",
+                                       size, int_value, section.name.c_str(), address, rip, win_emu->mod_manager.find_name(rip));
                 };
 
                 win_emu->emu().hook_memory_read(section.region.start, section.region.length, std::move(read_handler));
