@@ -717,7 +717,7 @@ jobs:
     name: Deploy Page
     runs-on: ubuntu-latest
     needs: [build-page, summary]
-    if: github.repository_owner == 'momo5502' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.repository_owner == 'momo5502' && (github.event_name == 'push'|| github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     permissions:
       contents: read
       pages: write
