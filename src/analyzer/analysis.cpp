@@ -599,7 +599,7 @@ namespace
             max = std::max(import_thunk, max);
         }
 
-        c.win_emu->emu().hook_memory_write(min, max - min, [&c](const uint64_t address, const void*, size_t) {
+        c.win_emu->emu().hook_memory_write(min, max - min, [&c](const uint64_t address, const void* value, size_t size) {
             const auto rip = c.win_emu->emu().read_instruction_pointer();
             const auto& watched_module = *c.win_emu->mod_manager.executable;
 
@@ -610,10 +610,14 @@ namespace
                 return;
             }
 
+            uint64_t int_value{};
+            memcpy(&int_value, value, std::min(size, sizeof(int_value)));
+
             const auto import_module = watched_module.imported_modules.at(sym->second.module_index);
 
-            c.win_emu->log.print(color::blue, "Import write access: %s (%s) at 0x%" PRIx64 " (%s)\n", sym->second.name.c_str(),
-                                 import_module.c_str(), rip, c.win_emu->mod_manager.find_name(rip));
+            c.win_emu->log.print(color::blue, "Import write access: %zd bytes with value 0x%" PRIX64 " to %s (%s) at 0x%" PRIx64 " (%s)\n",
+                                 size, int_value, sym->second.name.c_str(), import_module.c_str(), rip,
+                                 c.win_emu->mod_manager.find_name(rip));
         });
 
         c.win_emu->emu().hook_memory_read(min, max - min, [&c](const uint64_t address, const void*, size_t) {
