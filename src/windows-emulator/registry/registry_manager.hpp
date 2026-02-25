@@ -79,19 +79,57 @@ class registry_manager
     std::optional<registry_key> get_key(const utils::path_key& key);
     std::optional<registry_value> get_value(const registry_key& key, std::string_view name);
     std::optional<registry_value> get_value(const registry_key& key, size_t index);
+    void set_value(const registry_key& key, std::string name, uint32_t type, std::span<const std::byte> data);
 
     std::optional<std::string_view> get_sub_key_name(const registry_key& key, size_t index);
 
     std::optional<exposed_hive_key> get_hive_key(const registry_key& key);
 
     std::optional<std::u16string> read_u16string(const registry_key& key, size_t index);
+    void serialize_runtime_state(utils::buffer_serializer& buffer) const;
+    void deserialize_runtime_state(utils::buffer_deserializer& buffer);
 
   private:
+    struct overlay_value
+    {
+        uint32_t type{};
+        std::vector<std::byte> data{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->type);
+            buffer.write_vector(this->data);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->type);
+            buffer.read_vector(this->data);
+        }
+    };
+
+    struct overlay_bucket
+    {
+        utils::insensitive_string_map<overlay_value> values{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write_map(this->values);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read_map(this->values);
+        }
+    };
+
     std::filesystem::path hive_path_{};
     hive_map hives_{};
-    std::unordered_map<utils::path_key, utils::path_key> path_mapping_{};
+    std::map<utils::path_key, utils::path_key> path_mapping_{};
+    std::map<utils::path_key, overlay_bucket> overlay_values_{};
 
     utils::path_key normalize_path(utils::path_key path) const;
+    static utils::path_key get_full_key_path(const registry_key& key);
     void add_path_mapping(const utils::path_key& key, const utils::path_key& value);
 
     hive_map::iterator find_hive(const utils::path_key& key);

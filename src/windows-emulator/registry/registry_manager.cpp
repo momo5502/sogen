@@ -38,7 +38,7 @@ namespace
         hives[key] = std::make_unique<hive_parser>(file);
     }
 
-    std::pair<utils::path_key, bool> perform_path_substitution(const std::unordered_map<utils::path_key, utils::path_key>& path_mapping,
+    std::pair<utils::path_key, bool> perform_path_substitution(const std::map<utils::path_key, utils::path_key>& path_mapping,
                                                                utils::path_key path)
     {
         for (const auto& mapping : path_mapping)
@@ -72,6 +72,7 @@ registry_manager::registry_manager(const std::filesystem::path& hive_path)
 void registry_manager::setup()
 {
     this->path_mapping_.clear();
+    this->overlay_values_.clear();
     this->hives_.clear();
 
     const std::filesystem::path root = R"(\registry)";
@@ -110,6 +111,11 @@ utils::path_key registry_manager::normalize_path(utils::path_key path) const
 void registry_manager::add_path_mapping(const utils::path_key& key, const utils::path_key& value)
 {
     this->path_mapping_[key] = value;
+}
+
+utils::path_key registry_manager::get_full_key_path(const registry_key& key)
+{
+    return utils::path_key{key.hive.get() / key.path.get()};
 }
 
 std::optional<registry_key> registry_manager::get_key(const utils::path_key& key)
@@ -164,6 +170,20 @@ std::optional<registry_key> registry_manager::get_key(const utils::path_key& key
 
 std::optional<registry_value> registry_manager::get_value(const registry_key& key, const std::string_view name)
 {
+    if (const auto overlay_entry = this->overlay_values_.find(registry_manager::get_full_key_path(key));
+        overlay_entry != this->overlay_values_.end())
+    {
+        if (const auto value_entry = overlay_entry->second.values.find(std::string{name});
+            value_entry != overlay_entry->second.values.end())
+        {
+            registry_value v{};
+            v.type = value_entry->second.type;
+            v.name = value_entry->first;
+            v.data = value_entry->second.data;
+            return v;
+        }
+    }
+
     const auto iterator = this->hives_.find(key.hive);
     if (iterator == this->hives_.end())
     {
@@ -204,6 +224,24 @@ std::optional<registry_value> registry_manager::get_value(const registry_key& ke
     v.data = entry->data;
 
     return v;
+}
+
+void registry_manager::set_value(const registry_key& key, std::string name, const uint32_t type, const std::span<const std::byte> data)
+{
+    auto& bucket = this->overlay_values_[registry_manager::get_full_key_path(key)];
+    auto& value = bucket.values[std::move(name)];
+    value.type = type;
+    value.data.assign(data.begin(), data.end());
+}
+
+void registry_manager::serialize_runtime_state(utils::buffer_serializer& buffer) const
+{
+    buffer.write_map(this->overlay_values_);
+}
+
+void registry_manager::deserialize_runtime_state(utils::buffer_deserializer& buffer)
+{
+    buffer.read_map(this->overlay_values_);
 }
 
 registry_manager::hive_map::iterator registry_manager::find_hive(const utils::path_key& key)

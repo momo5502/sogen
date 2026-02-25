@@ -639,6 +639,7 @@ void windows_emulator::serialize(utils::buffer_serializer& buffer) const
     buffer.write(this->use_relative_time_);
 
     this->version.serialize(buffer);
+    this->registry.serialize_runtime_state(buffer);
 
     this->emu().serialize_state(buffer, false);
     this->memory.serialize_memory_state(buffer, false);
@@ -664,6 +665,7 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
     }
 
     this->version.deserialize(buffer);
+    this->registry.deserialize_runtime_state(buffer);
 
     this->memory.unmap_all_memory();
 
@@ -683,6 +685,7 @@ void windows_emulator::save_snapshot()
     buffer.write(this->switch_thread_);
 
     this->version.serialize(buffer);
+    this->registry.serialize_runtime_state(buffer);
 
     this->emu().serialize_state(buffer, true);
     this->memory.serialize_memory_state(buffer, true);
@@ -712,6 +715,7 @@ void windows_emulator::restore_snapshot()
     buffer.read(this->switch_thread_);
 
     this->version.deserialize(buffer);
+    this->registry.deserialize_runtime_state(buffer);
 
     this->emu().deserialize_state(buffer, true);
     this->memory.deserialize_memory_state(buffer, true);

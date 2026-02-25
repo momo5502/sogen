@@ -242,6 +242,9 @@ namespace syscalls
                                 emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, ULONG /*title_index*/,
                                 emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*class*/, ULONG /*create_options*/,
                                 emulator_object<ULONG> /*disposition*/);
+    NTSTATUS handle_NtSetValueKey(const syscall_context& c, handle key_handle,
+                                  emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> value_name, ULONG /*title_index*/, ULONG type,
+                                  uint64_t data, ULONG data_size);
     NTSTATUS handle_NtNotifyChangeKey();
     NTSTATUS handle_NtSetInformationKey();
     NTSTATUS handle_NtEnumerateKey(const syscall_context& c, handle key_handle, ULONG index, KEY_INFORMATION_CLASS key_information_class,
@@ -952,6 +955,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtGetNlsSectionPtr);
     add_handler(NtAccessCheck);
     add_handler(NtCreateKey);
+    add_handler(NtSetValueKey);
     add_handler(NtNotifyChangeKey);
     add_handler(NtGetCurrentProcessorNumberEx);
     add_handler(NtGetCurrentProcessorNumber);
