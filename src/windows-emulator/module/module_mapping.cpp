@@ -225,10 +225,11 @@ namespace
         {
             const auto section = sections.get(i);
             const auto target_ptr = binary.image_base + section.VirtualAddress;
+            const auto size_of_section = page_align_up(section.Misc.VirtualSize, nt_headers.OptionalHeader.SectionAlignment);
 
             if (section.SizeOfRawData > 0)
             {
-                const auto size_of_data = std::min(section.SizeOfRawData, section.Misc.VirtualSize);
+                const auto size_of_data = static_cast<size_t>(std::min<uint64_t>(size_of_section, section.SizeOfRawData));
                 const auto* source_ptr = buffer.get_pointer_for_range(section.PointerToRawData, size_of_data);
                 memory.write_memory(target_ptr, source_ptr, size_of_data);
             }
@@ -249,8 +250,6 @@ namespace
             {
                 permissions |= memory_permission::write;
             }
-
-            const auto size_of_section = page_align_up(std::max(section.SizeOfRawData, section.Misc.VirtualSize));
 
             memory.protect_memory(target_ptr, static_cast<size_t>(size_of_section), permissions, nullptr);
 
