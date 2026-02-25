@@ -600,26 +600,20 @@ namespace
         }
 
         c.win_emu->emu().hook_memory_write(min, max - min, [&c](const uint64_t address, const void*, size_t) {
-            const auto& watched_module = *c.win_emu->mod_manager.executable;
-            const auto& accessor_module = *c.win_emu->mod_manager.executable;
-
             const auto rip = c.win_emu->emu().read_instruction_pointer();
-
-            if (!accessor_module.contains(rip))
-            {
-                return;
-            }
+            const auto& watched_module = *c.win_emu->mod_manager.executable;
 
             const auto sym = watched_module.imports.find(address);
             if (sym == watched_module.imports.end())
             {
+                // TODO: Print unaligned write accesses?
                 return;
             }
 
             const auto import_module = watched_module.imported_modules.at(sym->second.module_index);
 
             c.win_emu->log.print(color::blue, "Import write access: %s (%s) at 0x%" PRIx64 " (%s)\n", sym->second.name.c_str(),
-                                 import_module.c_str(), rip, accessor_module.name.c_str());
+                                 import_module.c_str(), rip, c.win_emu->mod_manager.find_name(rip));
         });
 
         c.win_emu->emu().hook_memory_read(min, max - min, [&c](const uint64_t address, const void*, size_t) {
