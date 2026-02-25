@@ -361,15 +361,45 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtQuerySecurityAttributesToken()
+    NTSTATUS handle_NtQuerySecurityAttributesToken(const syscall_context& c, const handle token_handle,
+                                                   emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*attributes*/,
+                                                   const ULONG /*number_of_attributes*/, const uint64_t buffer, const ULONG buffer_length,
+                                                   const emulator_object<ULONG> return_length)
     {
-        // puts("NtQuerySecurityAttributesToken not supported");
-        return STATUS_NOT_SUPPORTED;
+        if (token_handle != CURRENT_PROCESS_TOKEN && token_handle != CURRENT_THREAD_TOKEN &&
+            token_handle != CURRENT_THREAD_EFFECTIVE_TOKEN && token_handle != DUMMY_IMPERSONATION_TOKEN)
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        constexpr auto required_size = sizeof(TOKEN_SECURITY_ATTRIBUTES_INFORMATION);
+        if (return_length.value())
+        {
+            return_length.write(required_size);
+        }
+
+        if (buffer == 0)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        if (buffer_length < required_size)
+        {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        c.emu.write_memory(buffer, TOKEN_SECURITY_ATTRIBUTES_INFORMATION{
+                                       .Version = 0,
+                                       .Reserved = {},
+                                       .AttributeCount = 0,
+                                       .Attribute = {},
+                                   });
+
+        return STATUS_SUCCESS;
     }
 
     NTSTATUS handle_NtAdjustPrivilegesToken()
     {
-        // puts("NtQuerySecurityAttributesToken not supported");
         return STATUS_NOT_SUPPORTED;
     }
 }
