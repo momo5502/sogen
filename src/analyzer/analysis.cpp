@@ -617,12 +617,11 @@ namespace
         });
 
         c.win_emu->emu().hook_memory_read(min, max - min, [&c](const uint64_t address, const void*, size_t) {
-            const auto& watched_module = *c.win_emu->mod_manager.executable;
-            const auto& accessor_module = *c.win_emu->mod_manager.executable;
-
             const auto rip = c.win_emu->emu().read_instruction_pointer();
+            const auto& watched_module = *c.win_emu->mod_manager.executable;
+            const auto accessor_module = get_module_if_interesting(c.win_emu->mod_manager, c.settings->modules, rip);
 
-            if (!accessor_module.contains(rip))
+            if (!accessor_module.has_value())
             {
                 return;
             }
@@ -638,7 +637,7 @@ namespace
             access.address = c.win_emu->emu().read_memory<uint64_t>(address);
 
             access.access_rip = rip;
-            access.accessor_module = accessor_module.name;
+            access.accessor_module = accessor_module.value() ? (*accessor_module)->name : "<N/A>";
 
             access.import_name = sym->second.name;
             access.import_module = watched_module.imported_modules.at(sym->second.module_index);
