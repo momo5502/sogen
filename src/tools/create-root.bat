@@ -121,6 +121,7 @@ CALL :collect umpdc.dll
 CALL :collect urlmon.dll
 CALL :collect user32.dll
 CALL :collect userenv.dll
+CALL :collect usp10.dll
 CALL :collect uxtheme.dll
 CALL :collect vcruntime140.dll
 CALL :collect vcruntime140_1.dll
