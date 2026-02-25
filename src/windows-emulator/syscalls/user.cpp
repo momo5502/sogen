@@ -295,6 +295,11 @@ namespace syscalls
 {
     hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, handle bitmap);
 
+    NTSTATUS handle_NtUserTraceLoggingSendMixedModeTelemetry()
+    {
+        return STATUS_SUCCESS;
+    }
+
     NTSTATUS handle_NtUserDisplayConfigGetDeviceInfo()
     {
         return STATUS_NOT_SUPPORTED;

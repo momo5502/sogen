@@ -378,6 +378,7 @@ namespace syscalls
                                             uint64_t region_size);
 
     // syscalls/user.cpp:
+    NTSTATUS handle_NtUserTraceLoggingSendMixedModeTelemetry();
     NTSTATUS handle_NtUserDisplayConfigGetDeviceInfo();
     NTSTATUS handle_NtUserRegisterWindowMessage();
     NTSTATUS handle_NtUserGetThreadState(const syscall_context& c, ULONG routine);
@@ -927,6 +928,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserRemoteConnectState);
     add_handler(NtUserGetThreadDesktop);
     add_handler(NtOpenKeyEx);
+    add_handler(NtUserTraceLoggingSendMixedModeTelemetry);
     add_handler(NtUserDisplayConfigGetDeviceInfo);
     add_handler(NtOpenEvent);
     add_handler(NtGetMUIRegistryInfo);
