@@ -570,9 +570,11 @@ namespace
                 const auto read_count = std::make_shared<uint64_t>(0);
                 const auto write_count = std::make_shared<uint64_t>(0);
 
-                auto read_handler = [&, section, concise_logging, read_count](const uint64_t address, const void*, size_t) {
+                auto read_handler = [&, section, concise_logging, read_count](const uint64_t address, const void*, size_t size) {
                     const auto rip = win_emu->emu().read_instruction_pointer();
-                    if (!win_emu->mod_manager.executable->contains(rip))
+                    const auto accessor = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
+
+                    if (!accessor.has_value())
                     {
                         return;
                     }
@@ -586,8 +588,9 @@ namespace
                         }
                     }
 
-                    win_emu->log.print(color::green, "Reading from executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n",
-                                       section.name.c_str(), address, rip, win_emu->mod_manager.find_name(rip));
+                    win_emu->log.print(color::green,
+                                       "Reading %zd bytes from executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n", size,
+                                       section.name.c_str(), address, rip, (*accessor) ? (*accessor)->name.c_str() : "<N/A>");
                 };
 
                 const auto write_handler = [&, section, concise_logging, write_count](const uint64_t address, const void* value,
