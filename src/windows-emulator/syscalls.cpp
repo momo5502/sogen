@@ -811,6 +811,11 @@ namespace syscalls
     {
         return STATUS_NOT_SUPPORTED;
     }
+
+    uint64_t handle_NtUserCallNoParam()
+    {
+        return 0;
+    }
 }
 
 void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& handler_mapping)
@@ -1078,6 +1083,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtCallbackReturn);
     add_handler(NtUserPostQuitMessage);
     add_handler(NtUserGetClassInfoEx);
+    add_handler(NtUserCallNoParam);
 
 #undef add_handler
 }
