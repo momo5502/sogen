@@ -333,7 +333,7 @@ namespace syscalls
             }
 
             const emulator_object<ULONG> info{c.emu, thread_information};
-            info.write(c.proc.threads.size() <= 1);
+            info.write(c.proc.get_live_thread_count() <= 1);
 
             return STATUS_SUCCESS;
         }

@@ -645,6 +645,11 @@ generic_handle_store* process_context::get_handle_store(const handle handle)
     }
 }
 
+size_t process_context::get_live_thread_count() const
+{
+    return std::count_if(threads.begin(), threads.end(), [](auto& item) { return !item.second.is_terminated(); });
+}
+
 handle process_context::create_thread(memory_manager& memory, const uint64_t start_address, const uint64_t argument,
                                       const uint64_t stack_size, const uint32_t create_flags, const bool initial_thread)
 {

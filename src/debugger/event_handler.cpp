@@ -241,7 +241,7 @@ namespace debugger
         status.reserved_memory = memory_status.reserved_memory;
         status.committed_memory = memory_status.committed_memory;
         status.executed_instructions = win_emu.get_executed_instructions();
-        status.active_threads = static_cast<uint32_t>(win_emu.process.threads.size());
+        status.active_threads = static_cast<uint32_t>(win_emu.process.get_live_thread_count());
         send_event(status);
     }
 

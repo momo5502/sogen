@@ -116,6 +116,8 @@ struct process_context
 
     generic_handle_store* get_handle_store(handle handle);
 
+    size_t get_live_thread_count() const;
+
     // WOW64 support flag - set during process setup based on executable architecture
     bool is_wow64_process{false};
 
