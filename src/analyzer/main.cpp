@@ -593,10 +593,6 @@ namespace
                 const auto write_handler = [&, section, concise_logging, write_count](const uint64_t address, const void* value,
                                                                                       size_t size) {
                     const auto rip = win_emu->emu().read_instruction_pointer();
-                    if (!win_emu->mod_manager.executable->contains(rip))
-                    {
-                        return;
-                    }
 
                     if (concise_logging)
                     {
