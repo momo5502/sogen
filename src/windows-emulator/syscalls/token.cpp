@@ -43,21 +43,17 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
         }
 
-        // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-        const uint8_t sid[] = {
-            0x01, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x15, 0x00, 0x00, 0x00, 0x84, 0x94,
-            0xD4, 0x04, 0x4B, 0x68, 0x42, 0x34, 0x23, 0xBE, 0x69, 0x4E, 0xE9, 0x03, 0x00, 0x00,
-        };
-
         if (token_information_class == TokenAppContainerSid)
         {
             return STATUS_NOT_SUPPORTED;
         }
 
+        const auto& sid = c.win_emu.sid;
+
         if (token_information_class == TokenUser)
         {
-            constexpr auto required_size = sizeof(TOKEN_USER64) + sizeof(sid);
-            return_length.write(required_size);
+            const auto required_size = sizeof(TOKEN_USER64) + sid.size();
+            return_length.write(static_cast<ULONG>(required_size));
 
             if (required_size > token_information_length)
             {
@@ -69,14 +65,14 @@ namespace syscalls
             user.User.Sid = token_information + sizeof(TOKEN_USER64);
 
             emulator_object<TOKEN_USER64>{c.emu, token_information}.write(user);
-            c.emu.write_memory(token_information + sizeof(TOKEN_USER64), sid, sizeof(sid));
+            c.emu.write_memory(token_information + sizeof(TOKEN_USER64), sid.data(), sid.size());
             return STATUS_SUCCESS;
         }
 
         if (token_information_class == TokenGroups)
         {
-            constexpr auto required_size = sizeof(TOKEN_GROUPS64) + sizeof(sid);
-            return_length.write(required_size);
+            const auto required_size = sizeof(TOKEN_GROUPS64) + sid.size();
+            return_length.write(static_cast<ULONG>(required_size));
 
             if (required_size > token_information_length)
             {
@@ -89,14 +85,14 @@ namespace syscalls
             groups.Groups[0].Sid = token_information + sizeof(TOKEN_GROUPS64);
 
             emulator_object<TOKEN_GROUPS64>{c.emu, token_information}.write(groups);
-            c.emu.write_memory(token_information + sizeof(TOKEN_GROUPS64), sid, sizeof(sid));
+            c.emu.write_memory(token_information + sizeof(TOKEN_GROUPS64), sid.data(), sid.size());
             return STATUS_SUCCESS;
         }
 
         if (token_information_class == TokenOwner)
         {
-            constexpr auto required_size = sizeof(sid) + sizeof(TOKEN_OWNER64);
-            return_length.write(required_size);
+            const auto required_size = sizeof(TOKEN_OWNER64) + sid.size();
+            return_length.write(static_cast<ULONG>(required_size));
 
             if (required_size > token_information_length)
             {
@@ -107,14 +103,14 @@ namespace syscalls
             owner.Owner = token_information + sizeof(TOKEN_OWNER64);
 
             emulator_object<TOKEN_OWNER64>{c.emu, token_information}.write(owner);
-            c.emu.write_memory(token_information + sizeof(TOKEN_OWNER64), sid, sizeof(sid));
+            c.emu.write_memory(token_information + sizeof(TOKEN_OWNER64), sid.data(), sid.size());
             return STATUS_SUCCESS;
         }
 
         if (token_information_class == TokenPrimaryGroup)
         {
-            constexpr auto required_size = sizeof(sid) + sizeof(TOKEN_PRIMARY_GROUP64);
-            return_length.write(required_size);
+            const auto required_size = sizeof(TOKEN_PRIMARY_GROUP64) + sid.size();
+            return_length.write(static_cast<ULONG>(required_size));
 
             if (required_size > token_information_length)
             {
@@ -125,15 +121,15 @@ namespace syscalls
             primary_group.PrimaryGroup = token_information + sizeof(TOKEN_PRIMARY_GROUP64);
 
             emulator_object<TOKEN_PRIMARY_GROUP64>{c.emu, token_information}.write(primary_group);
-            c.emu.write_memory(token_information + sizeof(TOKEN_PRIMARY_GROUP64), sid, sizeof(sid));
+            c.emu.write_memory(token_information + sizeof(TOKEN_PRIMARY_GROUP64), sid.data(), sid.size());
             return STATUS_SUCCESS;
         }
 
         if (token_information_class == TokenDefaultDacl)
         {
-            constexpr auto acl_size = sizeof(ACL) + sizeof(ACCESS_ALLOWED_ACE) + sizeof(sid) - sizeof(ULONG);
-            constexpr auto required_size = sizeof(TOKEN_DEFAULT_DACL64) + acl_size;
-            return_length.write(required_size);
+            const auto acl_size = sizeof(ACL) + sizeof(ACCESS_ALLOWED_ACE) + sid.size() - sizeof(ULONG);
+            const auto required_size = sizeof(TOKEN_DEFAULT_DACL64) + acl_size;
+            return_length.write(static_cast<ULONG>(required_size));
 
             if (required_size > token_information_length)
             {
@@ -159,13 +155,13 @@ namespace syscalls
             ACCESS_ALLOWED_ACE ace{};
             ace.Header.AceType = 0; // ACCESS_ALLOWED_ACE_TYPE
             ace.Header.AceFlags = 0;
-            ace.Header.AceSize = static_cast<USHORT>(sizeof(ACCESS_ALLOWED_ACE) + sizeof(sid) - sizeof(ULONG));
+            ace.Header.AceSize = static_cast<USHORT>(sizeof(ACCESS_ALLOWED_ACE) + sid.size() - sizeof(ULONG));
             ace.Mask = GENERIC_ALL;
 
             c.emu.write_memory(ace_offset, ace);
 
             const auto sid_offset = ace_offset + sizeof(ACCESS_ALLOWED_ACE) - sizeof(ULONG);
-            c.emu.write_memory(sid_offset, sid, sizeof(sid));
+            c.emu.write_memory(sid_offset, sid.data(), sid.size());
 
             return STATUS_SUCCESS;
         }
