@@ -257,7 +257,7 @@ mapped_module* module_manager::map_module_core(const pe_detection_result& detect
     }
     catch (const std::exception& e)
     {
-        logger.error("Failed to map module: %s", e.what());
+        logger.error("Failed to map module: %s\n", e.what());
         return nullptr;
     }
 }
@@ -268,7 +268,7 @@ execution_mode module_manager::detect_execution_mode(const windows_path& executa
 
     if (!detection_result.is_valid())
     {
-        logger.error("Failed to detect executable architecture: %s", detection_result.error_message.c_str());
+        logger.error("Failed to detect executable architecture: %s\n", detection_result.error_message.c_str());
         return execution_mode::unknown;
     }
 
