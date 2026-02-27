@@ -74,4 +74,31 @@ class memory_interface
     {
         this->write_memory(reinterpret_cast<uint64_t>(address), data, size);
     }
+
+    void move_memory(uint64_t dst, uint64_t src, size_t size)
+    {
+        if (dst == src || !size)
+        {
+            return;
+        }
+
+        const auto copy_from_end = src < dst;
+        const auto increment = copy_from_end ? -1 : 1;
+
+        auto p_src = copy_from_end ? src + size - 1 : src;
+        auto p_dst = copy_from_end ? dst + size - 1 : dst;
+
+        while (size--)
+        {
+            const auto elem = this->read_memory<std::byte>(p_src);
+            this->write_memory(p_dst, elem);
+            p_src += increment;
+            p_dst += increment;
+        }
+    }
+
+    void move_memory(void* dst, const void* src, size_t size)
+    {
+        this->move_memory(reinterpret_cast<uint64_t>(dst), reinterpret_cast<uint64_t>(src), size);
+    }
 };
