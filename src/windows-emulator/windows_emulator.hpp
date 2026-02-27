@@ -89,6 +89,7 @@ class windows_emulator
     std::unique_ptr<network::socket_factory> socket_factory_{};
 
   public:
+    std::vector<uint8_t> sid{}; // TODO: Isolate into some user management component
     std::filesystem::path emulation_root{};
     emulator_callbacks callbacks{};
     logger log{};

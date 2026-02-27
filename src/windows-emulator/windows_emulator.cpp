@@ -13,6 +13,8 @@
 #include "network/static_socket_factory.hpp"
 #include "memory_permission_ext.hpp"
 
+#include <sstream>
+
 constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 0x20000;
 
 namespace
@@ -287,6 +289,85 @@ namespace
         return std::make_unique<network::socket_factory>();
 #endif
     }
+
+    std::vector<uint8_t> sid_string_to_bytes(const std::string& sid_string)
+    {
+        if (sid_string.substr(0, 2) != "S-")
+        {
+            throw std::invalid_argument("invalid SID string");
+        }
+
+        std::string token{};
+        std::vector<std::string> parts{};
+        std::stringstream ss(sid_string.substr(2));
+
+        while (std::getline(ss, token, '-'))
+        {
+            parts.push_back(token);
+        }
+
+        if (parts.size() < 2)
+        {
+            throw std::invalid_argument("invalid SID string");
+        }
+
+        const auto revision = static_cast<uint8_t>(std::stoul(parts[0]));
+        const auto authority = std::stoull(parts[1]);
+        const auto sub_authority_count = static_cast<uint8_t>(parts.size() - 2);
+
+        std::vector<uint8_t> result;
+        result.push_back(revision);
+        result.push_back(sub_authority_count);
+
+        for (int i = 5; i >= 0; --i)
+        {
+            result.push_back((authority >> (i * 8)) & 0xFF);
+        }
+
+        for (size_t i = 2; i < parts.size(); ++i)
+        {
+            uint32_t sub = std::stoul(parts[i]);
+            result.push_back((sub >> 0) & 0xFF);
+            result.push_back((sub >> 8) & 0xFF);
+            result.push_back((sub >> 16) & 0xFF);
+            result.push_back((sub >> 24) & 0xFF);
+        }
+
+        return result;
+    }
+
+    std::string get_user_sid_string(registry_manager& registry)
+    {
+        constexpr auto profile_list_path = R"(\Registry\Machine\Software\Microsoft\Windows NT\CurrentVersion\ProfileList)";
+
+        const auto profile_list_key = registry.get_key({profile_list_path});
+        if (!profile_list_key)
+        {
+            throw std::runtime_error("Failed to get ProfileList registry key");
+        }
+
+        for (size_t i = 0;; ++i)
+        {
+            const auto value = registry.get_sub_key_name(*profile_list_key, i);
+            if (!value.has_value())
+            {
+                break;
+            }
+
+            if (value->starts_with("S-1-5-21-"))
+            {
+                return std::string(*value);
+            }
+        }
+
+        return "S-1-5-18";
+    }
+
+    std::vector<uint8_t> get_sid(registry_manager& registry)
+    {
+        const auto sid_string = get_user_sid_string(registry);
+        return sid_string_to_bytes(sid_string);
+    }
 }
 
 windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, application_settings app_settings,
@@ -351,6 +432,7 @@ void windows_emulator::setup_process(const application_settings& app_settings)
     const auto& emu = this->emu();
     auto& context = this->process;
 
+    this->sid = get_sid(this->registry);
     this->version.load_from_registry(this->registry, this->log);
 
     this->mod_manager.map_main_modules(app_settings.application, this->version, context, this->log);
@@ -633,6 +715,7 @@ void windows_emulator::register_factories(utils::buffer_deserializer& buffer)
 
 void windows_emulator::serialize(utils::buffer_serializer& buffer) const
 {
+    buffer.write_vector(this->sid);
     buffer.write_optional(this->application_settings_);
     buffer.write(this->executed_instructions_);
     buffer.write(this->switch_thread_);
@@ -652,6 +735,7 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
 {
     this->register_factories(buffer);
 
+    buffer.read_vector(this->sid);
     buffer.read_optional(this->application_settings_);
     buffer.read(this->executed_instructions_);
     buffer.read(this->switch_thread_);
