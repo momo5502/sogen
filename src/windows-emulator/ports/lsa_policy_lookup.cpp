@@ -33,7 +33,7 @@ namespace
             case 3:
                 return handle_close_policy(win_emu, c);
             default:
-                win_emu.log.warn("Unsupported lsapolicylookup procedure: %u\n", procedure_id);
+                // win_emu.log.warn("Unsupported lsapolicylookup procedure: %u\n", procedure_id);
                 return STATUS_NOT_SUPPORTED;
             }
         }
