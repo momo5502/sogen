@@ -45,6 +45,12 @@ namespace network
         this->parse(addr, family);
     }
 
+    address::address(const std::string& addr, const uint16_t port)
+    {
+        this->resolve(addr, std::nullopt);
+        this->set_port(port);
+    }
+
     address::address(const sockaddr_in6& addr)
         : address()
     {
