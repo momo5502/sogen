@@ -651,7 +651,10 @@ jobs:
         with:
           api-level: 29
           arch: ${{matrix.architecture}}
-          script: 'adb push build/${{matrix.preset}}/artifacts/* /data/local/tmp && adb shell "cd /data/local/tmp && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && EMULATOR_ICICLE=${{ matrix.emulator == ''Icicle'' }} ./analyzer -e ./root c:/test-sample.exe"'
+          script: |
+            tar -cf build/${{matrix.preset}}/artifacts.tar -C build/${{matrix.preset}}/artifacts .
+            adb push build/${{matrix.preset}}/artifacts.tar /data/local/tmp/
+            adb shell "cd /data/local/tmp && tar xf artifacts.tar && rm artifacts.tar && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }} ./analyzer -e ./root c:/test-sample.exe"
 
   build-page:
     name: Build Page
