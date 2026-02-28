@@ -52,6 +52,41 @@ struct registry_value
     uint32_t type;
     std::string_view name;
     std::span<const std::byte> data;
+
+    bool is_dword() const
+    {
+        return type == REG_DWORD;
+    }
+
+    bool is_string() const
+    {
+        return type == REG_SZ;
+    }
+
+    std::optional<DWORD> as_dword() const
+    {
+        DWORD value{};
+        if (!is_dword() || data.size() < sizeof(value))
+        {
+            return std::nullopt;
+        }
+
+        memcpy(&value, data.data(), sizeof(value));
+        return value;
+    }
+
+    std::optional<std::u16string> as_string() const
+    {
+        if (!is_string())
+        {
+            return std::nullopt;
+        }
+
+        const auto* data_ptr = reinterpret_cast<const char16_t*>(data.data());
+        const auto char_count = data.size() / sizeof(char16_t);
+        const auto count = char_count > 0 && data_ptr[char_count - 1] == u'\0' ? char_count - 1 : char_count;
+        return std::u16string(data_ptr, count);
+    }
 };
 
 struct exposed_hive_key
