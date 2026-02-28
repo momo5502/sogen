@@ -96,9 +96,4 @@ class memory_interface
             p_dst += increment;
         }
     }
-
-    void move_memory(void* dst, const void* src, size_t size)
-    {
-        this->move_memory(reinterpret_cast<uint64_t>(dst), reinterpret_cast<uint64_t>(src), size);
-    }
 };
