@@ -16,29 +16,26 @@ void windows_version_manager::load_from_registry(registry_manager& registry, con
 
     for (size_t i = 0; const auto value = registry.get_value(*version_key, i); ++i)
     {
-        if (value->name == "SystemRoot" && value->type == REG_SZ && !value->data.empty())
+        if (value->name == "SystemRoot" && value->is_string())
         {
-            const auto* data_ptr = reinterpret_cast<const char16_t*>(value->data.data());
-            const auto char_count = value->data.size() / sizeof(char16_t);
-            std::u16string system_root(data_ptr, char_count > 0 && data_ptr[char_count - 1] == u'\0' ? char_count - 1 : char_count);
-            info_.system_root = windows_path{system_root};
+            info_.system_root = windows_path{value->as_string().value_or({})};
         }
-        else if ((value->name == "CurrentBuildNumber" || value->name == "CurrentBuild") && value->type == REG_SZ)
+        else if ((value->name == "CurrentBuildNumber" || value->name == "CurrentBuild") && value->is_string())
         {
-            const auto* s = reinterpret_cast<const char16_t*>(value->data.data());
-            info_.windows_build_number = static_cast<uint32_t>(std::strtoul(u16_to_u8(s).c_str(), nullptr, 10));
+            const auto str = value->as_string().value_or(u"0");
+            info_.windows_build_number = static_cast<uint32_t>(std::strtoul(u16_to_u8(str).c_str(), nullptr, 10));
         }
-        else if (value->name == "UBR" && value->type == REG_DWORD && value->data.size() >= sizeof(uint32_t))
+        else if (value->name == "UBR" && value->is_dword())
         {
-            info_.windows_update_build_revision = *reinterpret_cast<const uint32_t*>(value->data.data());
+            info_.windows_update_build_revision = value->as_dword().value_or(0);
         }
-        else if (value->name == "CurrentMajorVersionNumber" && value->type == REG_DWORD && value->data.size() >= sizeof(uint32_t))
+        else if (value->name == "CurrentMajorVersionNumber" && value->is_dword())
         {
-            info_.major_version = *reinterpret_cast<const uint32_t*>(value->data.data());
+            info_.major_version = value->as_dword().value_or(0);
         }
-        else if (value->name == "CurrentMinorVersionNumber" && value->type == REG_DWORD && value->data.size() >= sizeof(uint32_t))
+        else if (value->name == "CurrentMinorVersionNumber" && value->is_dword())
         {
-            info_.minor_version = *reinterpret_cast<const uint32_t*>(value->data.data());
+            info_.minor_version = value->as_dword().value_or(0);
         }
     }
 
