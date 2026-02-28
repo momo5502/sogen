@@ -20,6 +20,8 @@ MKDIR %EMU_SYSDIR%
 MKDIR %EMU_SYSDIR_WOW64%
 MKDIR %EMU_REGDIR%
 
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0create-profile-dirs.ps1" "%EMU_FILESYS%"
+
 REG SAVE HKLM\HARDWARE %EMU_REGDIR%\HARDWARE /Y
 REG SAVE HKLM\SAM %EMU_REGDIR%\SAM /Y
 REG SAVE HKLM\SECURITY %EMU_REGDIR%\SECURITY /Y
@@ -99,6 +101,7 @@ CALL :collect oleaut32.dll
 CALL :collect opengl32.dll
 CALL :collect pdh.dll
 CALL :collect powrprof.dll
+CALL :collect profapi.dll
 CALL :collect propsys.dll
 CALL :collect psapi.dll
 CALL :collect resampledmo.dll

@@ -16,15 +16,12 @@
 #define WIN32_LEAN_AND_MEAN
 #include <intrin.h>
 
-#ifdef __MINGW64__
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#else
-#include <Windows.h>
-#include <WinSock2.h>
-#include <WS2tcpip.h>
-#endif
+#include <shlobj.h>
+#include <combaseapi.h>
+#include <knownfolders.h>
 
 using namespace std::literals;
 
@@ -926,7 +923,20 @@ namespace
 
         wchar_t buffer[0x100];
         DWORD size = sizeof(buffer) / 2;
-        return GetComputerNameExW(ComputerNameNetBIOS, buffer, &size);
+        if (!GetComputerNameExW(ComputerNameNetBIOS, buffer, &size))
+        {
+            return false;
+        }
+
+        PWSTR path{};
+        const auto hr = SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &path);
+        if (FAILED(hr))
+        {
+            return false;
+        }
+
+        CoTaskMemFree(path);
+        return true;
     }
 
     bool test_apc()
