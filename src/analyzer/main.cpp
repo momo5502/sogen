@@ -706,15 +706,15 @@ namespace
 
                 arg_it = args.erase(arg_it);
 
-                int port{};
-                int size{};
+                char* end_ptr = nullptr;
+                const auto port = strtoull(std::string(args[0]).c_str(), &end_ptr, 10);
 
-                if (sscanf_s(std::string(args[0]).c_str(), "%d%n", &port, &size) != 1 || static_cast<unsigned int>(size) != args[0].size())
+                if (*end_ptr)
                 {
                     throw std::runtime_error("Bad port number");
                 }
 
-                if (port < 0 || port > 65535)
+                if (port > 65535)
                 {
                     throw std::runtime_error("Port number should be in range 0-65535");
                 }
