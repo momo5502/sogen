@@ -101,6 +101,7 @@ CALL :collect oleaut32.dll
 CALL :collect opengl32.dll
 CALL :collect pdh.dll
 CALL :collect powrprof.dll
+CALL :collect profapi.dll
 CALL :collect propsys.dll
 CALL :collect psapi.dll
 CALL :collect resampledmo.dll
