@@ -26,6 +26,10 @@
 #include <WS2tcpip.h>
 #endif
 
+#include <Shlobj.h>
+#include <combaseapi.h>
+#include <KnownFolders.h>
+
 using namespace std::literals;
 
 // Externally visible and potentially modifiable state
@@ -926,7 +930,20 @@ namespace
 
         wchar_t buffer[0x100];
         DWORD size = sizeof(buffer) / 2;
-        return GetComputerNameExW(ComputerNameNetBIOS, buffer, &size);
+        if (!GetComputerNameExW(ComputerNameNetBIOS, buffer, &size))
+        {
+            return false;
+        }
+
+        PWSTR path{};
+        const auto hr = SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &path);
+        if (FAILED(hr))
+        {
+            return false;
+        }
+
+        CoTaskMemFree(path);
+        return true;
     }
 
     bool test_apc()
