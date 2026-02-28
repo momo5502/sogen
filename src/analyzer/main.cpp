@@ -23,6 +23,8 @@ namespace
     struct analysis_options : analysis_settings
     {
         mutable bool use_gdb{false};
+        std::string gdb_host{"127.0.0.1"};
+        uint16_t gdb_port{28960};
         bool log_executable_access{false};
         bool log_foreign_module_access{false};
         bool tenet_trace{false};
@@ -306,13 +308,13 @@ namespace
         {
             if (options.use_gdb)
             {
-                const auto* address = "127.0.0.1:28960";
-                win_emu.log.force_print(color::pink, "Waiting for GDB connection on %s...\n", address);
+                const auto address = network::address{options.gdb_host, options.gdb_port};
+                win_emu.log.force_print(color::pink, "Waiting for GDB connection on %s...\n", address.to_string().c_str());
 
                 const auto should_stop = [&] { return signals_received > 0; };
 
                 win_x64_gdb_stub_handler handler{win_emu, should_stop};
-                gdb_stub::run_gdb_stub(network::address{address, AF_INET}, handler);
+                gdb_stub::run_gdb_stub(address, handler);
             }
             else if (!options.minidump_path.empty())
             {
@@ -641,6 +643,8 @@ namespace
         printf("Options:\n");
         printf("  -h, --help                Show this help message\n");
         printf("  -d, --debug               Enable GDB debugging mode\n");
+        printf("  --bind <ip>               IP or hostname to bind to in GDB mode (default: 127.0.0.1)\n");
+        printf("  --port <port>             Port to listen to in GDB mode (default: 28960)\n");
         printf("  -s, --silent              Silent mode\n");
         printf("  -v, --verbose             Verbose logging\n");
         printf("  -b, --buffer              Buffer stdout\n");
@@ -665,6 +669,7 @@ namespace
     analysis_options parse_options(std::vector<std::string_view>& args)
     {
         analysis_options options{};
+        bool require_debug_option = false;
 
         while (!args.empty())
         {
@@ -680,6 +685,42 @@ namespace
             if (arg == "-d" || arg == "--debug")
             {
                 options.use_gdb = true;
+            }
+            else if (arg == "--bind")
+            {
+                if (args.size() < 2)
+                {
+                    throw std::runtime_error("No IP provided after --bind");
+                }
+
+                arg_it = args.erase(arg_it);
+                options.gdb_host = args[0];
+                require_debug_option = true;
+            }
+            else if (arg == "--port")
+            {
+                if (args.size() < 2)
+                {
+                    throw std::runtime_error("No port number provided after --port");
+                }
+
+                arg_it = args.erase(arg_it);
+
+                int port{};
+                int size{};
+
+                if (sscanf_s(std::string(args[0]).c_str(), "%d%n", &port, &size) != 1 || static_cast<unsigned int>(size) != args[0].size())
+                {
+                    throw std::runtime_error("Bad port number");
+                }
+
+                if (port < 0 || port > 65535)
+                {
+                    throw std::runtime_error("Port number should be in range 0-65535");
+                }
+
+                options.gdb_port = static_cast<uint16_t>(port);
+                require_debug_option = true;
             }
             else if (arg == "-s" || arg == "--silent")
             {
@@ -791,6 +832,11 @@ namespace
             }
 
             args.erase(arg_it);
+        }
+
+        if (require_debug_option && !options.use_gdb)
+        {
+            throw std::runtime_error("--bind or --port options used without -d");
         }
 
         return options;

@@ -45,6 +45,7 @@ namespace network
       public:
         address();
         address(std::string_view addr, const std::optional<int>& family = std::nullopt);
+        address(const std::string& addr, uint16_t port);
         address(const sockaddr_in& addr);
         address(const sockaddr_in6& addr);
         address(const sockaddr* addr, socklen_t length);
