@@ -18,7 +18,7 @@ Get-ChildItem $profileListPath -ErrorAction SilentlyContinue | ForEach-Object {
         New-Item -ItemType Directory -Path $target -Force | Out-Null
         Write-Host 'Created:' $target
         $appData = Join-Path $target 'appdata'
-        @('local', 'roaming', 'Locallow') | ForEach-Object {
+        @('local', 'roaming', 'locallow') | ForEach-Object {
             $sub = Join-Path $appData $_
             New-Item -ItemType Directory -Path $sub -Force | Out-Null
             Write-Host 'Created:' $sub
