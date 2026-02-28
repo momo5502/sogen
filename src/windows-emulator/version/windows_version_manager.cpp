@@ -18,7 +18,7 @@ void windows_version_manager::load_from_registry(registry_manager& registry, con
     {
         if (value->name == "SystemRoot" && value->is_string())
         {
-            info_.system_root = windows_path{value->as_string().value_or({})};
+            info_.system_root = windows_path{value->as_string().value_or(u"")};
         }
         else if ((value->name == "CurrentBuildNumber" || value->name == "CurrentBuild") && value->is_string())
         {
