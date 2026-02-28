@@ -16,19 +16,12 @@
 #define WIN32_LEAN_AND_MEAN
 #include <intrin.h>
 
-#ifdef __MINGW64__
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#else
-#include <Windows.h>
-#include <WinSock2.h>
-#include <WS2tcpip.h>
-#endif
-
-#include <Shlobj.h>
+#include <shlobj.h>
 #include <combaseapi.h>
-#include <KnownFolders.h>
+#include <knownfolders.h>
 
 using namespace std::literals;
 
