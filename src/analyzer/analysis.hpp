@@ -18,6 +18,7 @@ struct analysis_settings
     bool buffer_stdout{false};
     bool instruction_summary{false};
     bool skip_syscalls{false};
+    bool reproducible{false};
 
     string_set modules{};
     string_set ignored_functions{};

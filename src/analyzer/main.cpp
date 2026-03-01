@@ -390,6 +390,7 @@ namespace
     emulator_settings create_emulator_settings(const analysis_options& options)
     {
         return {
+            .use_relative_time = options.reproducible,
             .emulation_root = options.emulation_root,
             .registry_directory = options.registry_path,
             .path_mappings = options.path_mappings,
@@ -661,6 +662,7 @@ namespace
         printf("  -r, --registry <path>     Set registry path (default: ./registry)\n\n");
         printf("  -is, --inst-summary       Print a summary of executed instructions of the analyzed modules\n");
         printf("  -ss, --skip-syscalls      Skip the logging of regular syscalls\n");
+        printf("  -rep, --reproducible      Stub clocks and other mechanisms to make executions reproducible\n");
         printf("Examples:\n");
         printf("  analyzer -v -e path/to/root myapp.exe\n");
         printf("  analyzer -e path/to/root -p c:/analysis-sample.exe /path/to/sample.exe c:/analysis-sample.exe\n");
@@ -757,6 +759,10 @@ namespace
             else if (arg == "-ss" || arg == "--skip-syscalls")
             {
                 options.skip_syscalls = true;
+            }
+            else if (arg == "-rep" || arg == "--reproducible")
+            {
+                options.reproducible = true;
             }
             else if (arg == "-m" || arg == "--module")
             {
