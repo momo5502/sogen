@@ -142,7 +142,7 @@ jobs:
         run: "cmd /c \"start /wait .\\dxrt\\dxsetup.exe /silent\""
 
       - name: Download API Set Dumper
-        uses: pyTooling/download-artifact@v7
+        uses: pyTooling/download-artifact@v8
         with:
           name: Temp API Set Dumper
           path: build/release/artifacts
@@ -426,20 +426,20 @@ jobs:
           path: build/${{matrix.preset}}
 
       - name: Download Artifacts
-        uses: pyTooling/download-artifact@v7
+        uses: pyTooling/download-artifact@v8
         with:
           name: ${{ matrix.platform }} ${{matrix.configuration}} Artifacts
           path: build/${{matrix.preset}}/artifacts
 
       - name: Download Windows Artifacts
-        uses: pyTooling/download-artifact@v7
+        uses: pyTooling/download-artifact@v8
         if: "${{ matrix.platform != 'Windows x86_64' }}"
         with:
           name: Windows x86_64 Release Artifacts
           path: build/${{matrix.preset}}/artifacts
 
       - name: Download Emulation Root
-        uses: pyTooling/download-artifact@v7
+        uses: pyTooling/download-artifact@v8
         with:
           name: ${{ matrix.emulation-root }} Emulation Root
           path: build/${{matrix.preset}}/artifacts/root
@@ -497,13 +497,13 @@ jobs:
           path: build/${{ matrix.preset }}
 
       - name: Download Artifacts
-        uses: pyTooling/download-artifact@v7
+        uses: pyTooling/download-artifact@v8
         with:
           name: Temp Isolate Windows x86_64 ${{ matrix.configuration}} Artifacts
           path: build/${{ matrix.preset }}/artifacts
 
       - name: Download Emulation Root
-        uses: pyTooling/download-artifact@v7
+        uses: pyTooling/download-artifact@v8
         with:
           name: ${{ matrix.emulation-root }} Emulation Root
           path: build/${{ matrix.preset }}/artifacts/root
@@ -524,19 +524,19 @@ jobs:
     needs: [create-emulation-root, build]
     steps:
       - name: Download Artifacts
-        uses: pyTooling/download-artifact@v7
+        uses: pyTooling/download-artifact@v8
         with:
           name: Emscripten Node.js Release Artifacts
           path: build/release/artifacts
 
       - name: Download Windows Artifacts
-        uses: pyTooling/download-artifact@v7
+        uses: pyTooling/download-artifact@v8
         with:
           name: Windows x86_64 Release Artifacts
           path: build/release/artifacts
 
       - name: Download Emulation Root
-        uses: pyTooling/download-artifact@v7
+        uses: pyTooling/download-artifact@v8
         with:
           name: Windows 2022 Emulation Root
           path: build/release/artifacts/root
@@ -556,13 +556,13 @@ jobs:
     needs: [create-emulation-root, build]
     steps:
       - name: Download Artifacts
-        uses: pyTooling/download-artifact@v7
+        uses: pyTooling/download-artifact@v8
         with:
           name: MinGW x86_64 Release Artifacts
           path: build/release/artifacts
 
       - name: Download Emulation Root
-        uses: pyTooling/download-artifact@v7
+        uses: pyTooling/download-artifact@v8
         with:
           name: Windows 2022 Emulation Root
           path: build/release/artifacts/root
@@ -614,19 +614,19 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Download Artifacts
-        uses: pyTooling/download-artifact@v7
+        uses: pyTooling/download-artifact@v8
         with:
           name: Android ${{matrix.architecture}} ${{matrix.configuration}} Artifacts
           path: build/${{matrix.preset}}/artifacts
 
       - name: Download Windows Artifacts
-        uses: pyTooling/download-artifact@v7
+        uses: pyTooling/download-artifact@v8
         with:
           name: Windows x86_64 Release Artifacts
           path: build/${{matrix.preset}}/artifacts
 
       - name: Download Emulation Root
-        uses: pyTooling/download-artifact@v7
+        uses: pyTooling/download-artifact@v8
         with:
           name: ${{ matrix.emulation-root }} Emulation Root
           path: build/${{matrix.preset}}/artifacts/root
@@ -655,25 +655,25 @@ jobs:
           submodules: recursive
 
       - name: Download Emscripten Web Artifacts
-        uses: pyTooling/download-artifact@v7
+        uses: pyTooling/download-artifact@v8
         with:
           name: Emscripten Web Release Artifacts
           path: build/release/artifacts/32
 
       - name: Download Emscripten Web Memory 64 Artifacts
-        uses: pyTooling/download-artifact@v7
+        uses: pyTooling/download-artifact@v8
         with:
           name: Emscripten Web Memory 64 Release Artifacts
           path: build/release/artifacts/64
 
       - name: Download Windows Artifacts
-        uses: pyTooling/download-artifact@v7
+        uses: pyTooling/download-artifact@v8
         with:
           name: Windows x86_64 Release Artifacts
           path: build/release/artifacts
 
       - name: Download Emulation Root
-        uses: pyTooling/download-artifact@v7
+        uses: pyTooling/download-artifact@v8
         with:
           name: Windows 2022 Emulation Root
           path: build/release/artifacts/root
@@ -715,7 +715,7 @@ jobs:
       id-token: write
     steps:
       - name: Download Page Artifacts
-        uses: pyTooling/download-artifact@v7
+        uses: pyTooling/download-artifact@v8
         with:
           name: Page Artifacts
           path: ./page/dist/
