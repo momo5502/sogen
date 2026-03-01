@@ -39,9 +39,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Ninja
-        uses: seanmiddleditch/gha-setup-ninja@v6
-
       - name: Install Clang
         uses: nick-fields/retry@v3.0.2
         with:
@@ -98,9 +95,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
-
-      - name: Install Ninja
-        uses: seanmiddleditch/gha-setup-ninja@v6
 
       - name: Enable Developer Command Prompt
         uses: ilammy/msvc-dev-cmd@v1.13.0
@@ -247,9 +241,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Ninja
-        uses: seanmiddleditch/gha-setup-ninja@v6
-
       - name: Install Rust Target
         if: "${{ matrix.rust-target }}"
         run: rustup target add ${{ matrix.rust-target }}
@@ -346,9 +337,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
-
-      - name: Install Ninja
-        uses: seanmiddleditch/gha-setup-ninja@v6
 
       - name: Enable Developer Command Prompt
         uses: ilammy/msvc-dev-cmd@v1.13.0
