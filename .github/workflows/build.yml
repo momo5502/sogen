@@ -103,7 +103,7 @@ jobs:
         run: cmake --preset=release && cmake --build --preset=release -t dump-apiset
 
       - name: Upload Artifacts
-        uses: pyTooling/upload-artifact@v6
+        uses: pyTooling/upload-artifact@v7
         with:
           name: Temp API Set Dumper
           working-directory: build/release/artifacts/
@@ -154,7 +154,7 @@ jobs:
         run: cd root && ../build/release/artifacts/dump-apiset.exe
 
       - name: Upload Artifacts
-        uses: pyTooling/upload-artifact@v6
+        uses: pyTooling/upload-artifact@v7
         with:
           name: ${{ matrix.platform }} Emulation Root
           path: "*"
@@ -296,7 +296,7 @@ jobs:
         run: cmake --preset=${{matrix.preset}} ${{matrix.cmake-options}} && cmake --build --preset=${{matrix.preset}}
 
       - name: Upload Artifacts
-        uses: pyTooling/upload-artifact@v6
+        uses: pyTooling/upload-artifact@v7
         with:
           name: ${{ matrix.platform }} ${{matrix.configuration}} Artifacts
           working-directory: build/${{matrix.preset}}/artifacts/
@@ -348,7 +348,7 @@ jobs:
         run: cmake --preset=${{matrix.preset}} ${{matrix.cmake-options}} && cmake --build --preset=${{matrix.preset}}
 
       - name: Upload Artifacts
-        uses: pyTooling/upload-artifact@v6
+        uses: pyTooling/upload-artifact@v7
         with:
           name: Temp Isolate ${{ matrix.platform }} ${{matrix.configuration}} Artifacts
           working-directory: build/${{matrix.preset}}/artifacts/
@@ -697,7 +697,7 @@ jobs:
         run: cd ./page && npm i && npm run build
 
       - name: Upload Page Artifacts
-        uses: pyTooling/upload-artifact@v6
+        uses: pyTooling/upload-artifact@v7
         with:
           name: Page Artifacts
           working-directory: page/dist/
