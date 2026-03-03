@@ -692,6 +692,23 @@ namespace gdb_stub
             }
         }
 
+        void check_thread_alive(const debugging_context& c, const std::string_view payload)
+        {
+            if (payload.empty())
+            {
+                c.connection.send_reply({});
+                return;
+            }
+
+            uint32_t id{};
+            rt_assert(sscanf_s(std::string(payload).c_str(), "%x", &id) == 1);
+
+            const auto ids = c.handler.get_thread_ids();
+            const auto is_alive = std::ranges::find(ids, id) != ids.cend();
+
+            c.connection.send_reply(is_alive ? "OK" : "E01");
+        }
+
         void handle_command(const debugging_context& c, const uint8_t command, const std::string_view data)
         {
             // printf("GDB command: %c -> %.*s\n", command, static_cast<int>(data.size()), data.data());
@@ -758,6 +775,10 @@ namespace gdb_stub
 
             case 'H':
                 switch_to_thread(c, data);
+                break;
+
+            case 'T':
+                check_thread_alive(c, data);
                 break;
 
             default:
