@@ -368,6 +368,14 @@ namespace gdb_stub
 
                 c.connection.send_reply(reply);
             }
+            else if (name == "GetTIBAddr")
+            {
+                uint32_t thread_id{};
+                rt_assert(sscanf_s(std::string(args).c_str(), "%" PRIx32, &thread_id) == 1);
+
+                const auto address = c.handler.get_thread_teb_addr(thread_id);
+                c.connection.send_reply(utils::string::to_hex_number(address));
+            }
             else
             {
                 c.connection.send_reply({});

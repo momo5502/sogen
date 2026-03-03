@@ -91,6 +91,12 @@ namespace gdb_stub
         {
             return {};
         }
+
+        virtual uint64_t get_thread_teb_addr(uint32_t id) const
+        {
+            (void)id;
+            return 0;
+        }
     };
 
     bool run_gdb_stub(const network::address& bind_address, debugging_handler& handler);

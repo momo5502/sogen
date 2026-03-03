@@ -155,6 +155,24 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
         return thread_list;
     }
 
+    uint64_t get_thread_teb_addr(uint32_t id) const override
+    {
+        for (const auto& t : this->win_emu_->process.threads | std::views::values)
+        {
+            if (t.id == id)
+            {
+                if (!t.is_terminated() && t.teb64)
+                {
+                    return t.teb64->value();
+                }
+
+                break;
+            }
+        }
+
+        return 0;
+    }
+
   private:
     windows_emulator* win_emu_{};
     utils::optional_function<bool()> should_stop_{};
