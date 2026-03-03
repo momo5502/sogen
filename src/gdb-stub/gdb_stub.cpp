@@ -16,6 +16,8 @@ namespace gdb_stub
 {
     namespace
     {
+        constexpr size_t max_data_size = 128 * 1024;
+
         void rt_assert(const bool condition)
         {
             (void)condition;
@@ -217,7 +219,13 @@ namespace gdb_stub
 
             if (name == "Supported")
             {
-                c.connection.send_reply("PacketSize=1024;qXfer:features:read+;qXfer:libraries:read+;qXfer:exec-file:read+");
+                std::string reply = "PacketSize=";
+                reply.append(utils::string::to_hex_number(max_data_size));
+                reply.append(";qXfer:features:read+"
+                             ";qXfer:libraries:read+"
+                             ";qXfer:exec-file:read+");
+
+                c.connection.send_reply(reply);
             }
             else if (name == "Attached")
             {
@@ -482,7 +490,7 @@ namespace gdb_stub
             size_t size{};
             rt_assert(sscanf_s(payload.c_str(), "%" PRIx64 ",%zx", &address, &size) == 2);
 
-            if (size > 0x1000)
+            if (size > max_data_size / 2)
             {
                 c.connection.send_reply("E01");
                 return;
@@ -509,7 +517,7 @@ namespace gdb_stub
             uint64_t address{};
             rt_assert(sscanf_s(std::string(info).c_str(), "%" PRIx64 ",%zx", &address, &size) == 2);
 
-            if (size > 0x1000)
+            if (size > max_data_size)
             {
                 c.connection.send_reply("E01");
                 return;
@@ -556,7 +564,7 @@ namespace gdb_stub
             uint64_t address{};
             rt_assert(sscanf_s(std::string(info).c_str(), "%" PRIx64 ",%zx", &address, &size) == 2);
 
-            if (size > 0x1000)
+            if (size > max_data_size)
             {
                 c.connection.send_reply("E01");
                 return;
