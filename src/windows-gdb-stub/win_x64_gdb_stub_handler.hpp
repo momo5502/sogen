@@ -138,6 +138,23 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
         return library_stop_pending_;
     }
 
+    std::vector<gdb_stub::thread_info> get_thread_list() const override
+    {
+        std::vector<gdb_stub::thread_info> thread_list{};
+        const auto& threads = this->win_emu_->process.threads;
+        thread_list.reserve(threads.size());
+
+        for (const auto& t : threads | std::views::values)
+        {
+            if (!t.is_terminated())
+            {
+                thread_list.push_back({.id = t.id, .name = u16_to_u8(t.name)});
+            }
+        }
+
+        return thread_list;
+    }
+
   private:
     windows_emulator* win_emu_{};
     utils::optional_function<bool()> should_stop_{};

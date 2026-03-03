@@ -262,6 +262,37 @@ namespace gdb_stub
             send_xfer_data(c.connection, std::string(data), exec_path);
         }
 
+        void handle_threads(const debugging_context& c, const std::string_view payload)
+        {
+            const auto [command, args] = split_string(payload, ':');
+            if (command != "read")
+            {
+                c.connection.send_reply({});
+                return;
+            }
+
+            const auto [annex, data] = split_string(args, ':');
+            if (!annex.empty())
+            {
+                c.connection.send_reply({});
+                return;
+            }
+
+            std::string xml = "<threads>\n";
+
+            for (const auto& thread : c.handler.get_thread_list())
+            {
+                xml += "<thread id=\"";
+                xml += utils::string::to_hex_number(thread.id);
+                xml += "\" name=\"";
+                xml += escape_xml(thread.name);
+                xml += "\"/>\n";
+            }
+            xml += "</threads>";
+
+            send_xfer_data(c.connection, std::string(data), xml);
+        }
+
         void process_xfer(const debugging_context& c, const std::string_view payload)
         {
             auto [name, args] = split_string(payload, ':');
@@ -277,6 +308,10 @@ namespace gdb_stub
             else if (name == "exec-file")
             {
                 handle_exec_file(c, args);
+            }
+            else if (name == "threads")
+            {
+                handle_threads(c, args);
             }
             else
             {
@@ -294,7 +329,8 @@ namespace gdb_stub
                 reply.append(utils::string::to_hex_number(max_data_size));
                 reply.append(";qXfer:features:read+"
                              ";qXfer:libraries:read+"
-                             ";qXfer:exec-file:read+");
+                             ";qXfer:exec-file:read+"
+                             ";qXfer:threads:read+");
 
                 c.connection.send_reply(reply);
             }

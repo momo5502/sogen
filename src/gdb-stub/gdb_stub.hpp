@@ -27,6 +27,12 @@ namespace gdb_stub
         uint64_t segment_address;
     };
 
+    struct thread_info
+    {
+        uint32_t id;
+        std::string name;
+    };
+
     struct debugging_handler
     {
         virtual ~debugging_handler() = default;
@@ -77,6 +83,11 @@ namespace gdb_stub
         }
 
         virtual std::string get_executable_path()
+        {
+            return {};
+        }
+
+        virtual std::vector<thread_info> get_thread_list() const
         {
             return {};
         }
