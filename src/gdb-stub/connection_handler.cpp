@@ -65,10 +65,72 @@ namespace gdb_stub
         return std::nullopt;
     }
 
+    static constexpr std::string compress(const std::string_view data)
+    {
+        std::string result;
+        result.reserve(data.size());
+
+        auto compress_run = [&result](char symbol, int repeat_count) {
+            if (repeat_count >= 3)
+            {
+                result.push_back('*');
+                if (repeat_count == 6 || repeat_count == 7)
+                {
+                    result.push_back(static_cast<char>(5 + 29));
+                    result.push_back(symbol);
+                    if (repeat_count == 7)
+                    {
+                        result.push_back(symbol);
+                    }
+                }
+                else
+                {
+                    result.push_back(static_cast<char>(repeat_count + 29));
+                }
+            }
+            else if (repeat_count >= 1)
+            {
+                result.push_back(symbol);
+                if (repeat_count == 2)
+                {
+                    result.push_back(symbol);
+                }
+            }
+        };
+
+        bool start = true;
+        char prev_ch = 0;
+        int counter = 0;
+
+        for (auto ch : data)
+        {
+            if (start || prev_ch != ch || counter == 97)
+            {
+                compress_run(prev_ch, counter);
+                result.push_back(ch);
+                prev_ch = ch;
+                counter = 0;
+                start = false;
+            }
+            else
+            {
+                counter++;
+            }
+        }
+
+        if (counter)
+        {
+            compress_run(prev_ch, counter);
+        }
+
+        return result;
+    }
+
     void connection_handler::send_reply(const std::string_view data)
     {
-        const auto checksum = utils::string::to_hex_string(compute_checksum(data));
-        this->send_raw_data("$" + std::string(data) + "#" + checksum);
+        const auto compressed = compress(data);
+        const auto checksum = utils::string::to_hex_string(compute_checksum(compressed));
+        this->send_raw_data("$" + compressed + "#" + checksum);
     }
 
     void connection_handler::send_raw_data(const std::string_view data)
