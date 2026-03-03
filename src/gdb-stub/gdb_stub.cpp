@@ -59,6 +59,73 @@ namespace gdb_stub
             return server.accept();
         }
 
+        constexpr std::string escape(const std::string_view data, size_t max_size, size_t* total_copied = nullptr)
+        {
+            std::string result;
+            result.reserve(data.size());
+
+            size_t count = 0;
+
+            for (auto ch : data)
+            {
+                if (ch == '$' || ch == '#' || ch == '}' || ch == '*')
+                {
+                    if (max_size < 2)
+                    {
+                        break;
+                    }
+
+                    max_size--;
+                    result.push_back('}');
+                    ch ^= 0x20;
+                }
+
+                if (!max_size)
+                {
+                    break;
+                }
+
+                max_size--;
+                count++;
+                result.push_back(ch);
+            }
+
+            if (total_copied)
+            {
+                *total_copied = count;
+            }
+
+            return result;
+        }
+
+        std::string unescape(const std::string_view data)
+        {
+            std::string result{};
+            result.reserve(data.size());
+
+            bool xor_next = false;
+
+            for (auto value : data)
+            {
+                if (xor_next)
+                {
+                    value ^= 0x20;
+                    xor_next = false;
+                }
+                else if (value == '}')
+                {
+                    xor_next = true;
+                    continue;
+                }
+
+                result.push_back(value);
+            }
+
+            rt_assert(!xor_next);
+
+            return result;
+        }
+
         std::pair<std::string_view, std::string_view> split_string(const std::string_view payload, const char separator)
         {
             auto name = payload;
@@ -90,12 +157,16 @@ namespace gdb_stub
 
             const auto remaining = data.size() - offset;
             const auto real_length = std::min(remaining, length);
-            const auto is_end = real_length == remaining;
 
             const auto sub_region = data.substr(offset, real_length);
 
+            size_t num_copied = 0;
+            const auto max_size = std::max(real_length, max_data_size - 1);
+            const auto escaped_data = escape(sub_region, max_size, &num_copied);
+            const auto is_end = num_copied == remaining;
+
             std::string reply = is_end ? "l" : "m";
-            reply.append(sub_region);
+            reply.append(escaped_data);
 
             connection.send_reply(reply);
         }
@@ -530,32 +601,6 @@ namespace gdb_stub
             c.connection.send_reply(res ? "OK" : "E01");
         }
 
-        std::string decode_x_memory(const std::string_view payload)
-        {
-            std::string result{};
-            result.reserve(payload.size());
-
-            bool xor_next = false;
-
-            for (auto value : payload)
-            {
-                if (xor_next)
-                {
-                    value ^= 0x20;
-                    xor_next = false;
-                }
-                else if (value == '}')
-                {
-                    xor_next = true;
-                    continue;
-                }
-
-                result.push_back(value);
-            }
-
-            return result;
-        }
-
         void write_x_memory(const debugging_context& c, const std::string_view payload)
         {
             const auto [info, encoded_data] = split_string(payload, ':');
@@ -570,7 +615,7 @@ namespace gdb_stub
                 return;
             }
 
-            auto data = decode_x_memory(encoded_data);
+            auto data = unescape(encoded_data);
             data.resize(size);
 
             const auto res = c.handler.write_memory(address, data.data(), data.size());
