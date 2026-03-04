@@ -40,6 +40,11 @@
             "name": "vs2022",
             "generator": "Visual Studio 17 2022",
             "inherits": "build"
+        },
+        {
+            "name": "vs2026",
+            "generator": "Visual Studio 18 2026",
+            "inherits": "build"
         }
     ],
     "buildPresets": [
