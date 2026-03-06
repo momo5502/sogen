@@ -25,8 +25,9 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 ##########################################
 
-if(NOT MINGW AND NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten" AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+if(NOT MINGW AND NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF)
 endif()
 
 ##########################################
