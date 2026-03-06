@@ -137,7 +137,8 @@ pe_detection_result pe_architecture_detector::detect_from_file(const std::filesy
     if (std::holds_alternative<std::error_code>(variant_result))
     {
         pe_detection_result result;
-        result.error_message = "Failed to detect PE architecture from file: " + file.string();
+        const auto error_code = std::get<std::error_code>(variant_result);
+        result.error_message = error_code.message();
         return result;
     }
 
@@ -264,11 +265,13 @@ mapped_module* module_manager::map_module_core(const pe_detection_result& detect
 
 execution_mode module_manager::detect_execution_mode(const windows_path& executable_path, const logger& logger)
 {
-    auto detection_result = pe_architecture_detector::detect_from_file(this->file_sys_->translate(executable_path));
+    const auto local_file = this->file_sys_->translate(executable_path);
+    auto detection_result = pe_architecture_detector::detect_from_file(local_file);
 
     if (!detection_result.is_valid())
     {
-        logger.error("Failed to detect executable architecture: %s\n", detection_result.error_message.c_str());
+        logger.error("Failed to detect executable architecture of file %s: %s\n", local_file.string().c_str(),
+                     detection_result.error_message.c_str());
         return execution_mode::unknown;
     }
 
