@@ -457,7 +457,7 @@ namespace
             if (!c.settings->ignored_functions.contains(export_entry->second))
             {
                 win_emu.log.print(is_interesting_call ? color::yellow : color::dark_gray,
-                                  "Executing function: %s (%s) (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n", export_entry->second.c_str(),
+                                  "Executing function: %s (%s) (0x%" PRIx64 ") via 0x%" PRIx64 " (%s)\n", export_entry->second.c_str(),
                                   binary->name.c_str(), address, previous_ip, previous_binary ? previous_binary->name.c_str() : "<N/A>");
 
                 if (is_interesting_call)
@@ -482,7 +482,7 @@ namespace
             --nearest_entry;
 
             win_emu.log.print(is_interesting_call ? color::yellow : color::dark_gray,
-                              "Transition to foreign code: %s+0x%" PRIx64 " (%s) (0x%" PRIx64 ") via (0x%" PRIx64 ") %s\n",
+                              "Transition to foreign code: %s+0x%" PRIx64 " (%s) (0x%" PRIx64 ") via 0x%" PRIx64 " (%s)\n",
                               nearest_entry->second.c_str(), address - nearest_entry->first, binary->name.c_str(), address, previous_ip,
                               previous_binary ? previous_binary->name.c_str() : "<N/A>");
         }
