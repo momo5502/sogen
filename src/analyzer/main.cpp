@@ -60,7 +60,6 @@ namespace
         }
     }
 
-#if !defined(__GNUC__) || defined(__clang__)
     struct analysis_state
     {
         windows_emulator& win_emu_;
@@ -178,19 +177,12 @@ namespace
                 }
             });
     }
-#endif
 
     void watch_system_objects(windows_emulator& win_emu, const std::set<std::string, std::less<>>& modules, const bool verbose,
                               const bool concise)
     {
         win_emu.setup_process_if_necessary();
 
-        (void)win_emu;
-        (void)modules;
-        (void)verbose;
-        (void)concise;
-
-#if !defined(__GNUC__) || defined(__clang__)
         watch_object(win_emu, modules, *win_emu.current_thread().teb64, verbose);
         watch_object(win_emu, modules, win_emu.process.peb64, verbose);
         watch_object<KUSER_SHARED_DATA64>(win_emu, modules, kusd_mmio::address(), verbose);
@@ -220,7 +212,6 @@ namespace
                 state->ldr_hook_ =
                     watch_object<PEB_LDR_DATA64>(state->win_emu_, state->modules_, new_ptr, state->verbose_, state->ldr_state_);
             });
-#endif
     }
 
     bool read_yes_no_answer()

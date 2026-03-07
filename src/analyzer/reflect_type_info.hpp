@@ -21,7 +21,8 @@
 #if defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection)
 #define HAS_NATIVE_REFLECTION
 #include <meta>
-#elif defined(MOMO_ENABLE_REFLECTION)
+#elif defined(MOMO_ENABLE_REFLECTION) && (!defined(__GNUC__) || defined(__clang__))
+#define HAS_CUSTOM_REFLECTION
 #include "reflect_extension.hpp"
 #include <reflect>
 #endif
@@ -58,7 +59,7 @@ class reflect_type_info
 
             this->members_[member_offset] = std::make_pair(std::string(member_name), member_size);
         }
-#elif defined(MOMO_ENABLE_REFLECTION)
+#elif defined(HAS_CUSTOM_REFLECTION)
         this->type_name_ = reflect::type_name<T>();
 
         reflect::for_each<T>([this](auto I) {
