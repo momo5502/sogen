@@ -72,6 +72,23 @@ class reflect_type_info
         this->type_name_ = typeid(T).name();
         this->members_[0] = std::make_pair("?", sizeof(T));
 #endif
+
+        size_t padding_offset = 0;
+        size_t padding_size = sizeof(T);
+
+        if (!this->members_.empty())
+        {
+            const auto last_member = --this->members_.end();
+            const auto member_end = last_member->first + last_member->second.second;
+
+            padding_offset = member_end;
+            padding_size = sizeof(T) - padding_offset;
+        }
+
+        if (padding_size > 0 && padding_offset < sizeof(T))
+        {
+            this->members_[padding_offset] = std::make_pair(std::string("<padding>"), padding_size);
+        }
     }
 
     std::string get_member_name(const size_t offset) const
