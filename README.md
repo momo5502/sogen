@@ -41,7 +41,7 @@ Try it out: <a href="https://sogen.dev">sogen.dev</a>
 
 ## Preview
 
-![Preview](./docs/images/preview.jpg)
+![Preview](https://momo5502.com/emulator/preview.svg)
 
 ## YouTube Overview
 
