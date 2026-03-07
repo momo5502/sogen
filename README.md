@@ -45,7 +45,9 @@ Try it out: <a href="https://sogen.dev">sogen.dev</a>
 
 ## YouTube Overview
 
-[![YouTube video](./docs/images/yt.jpg)](https://www.youtube.com/watch?v=wY9Q0DhodOQ)
+<a href="https://www.youtube.com/watch?v=wY9Q0DhodOQ">
+  <img src="https://momo5502.com/emulator/video.png" alt="YouTube Video" width="600" />
+</a>
 
 Click <a href="https://docs.google.com/presentation/d/1pha4tFfDMpVzJ_ehJJ21SA_HAWkufQBVYQvh1IFhVls/edit">here</a> for the slides.
 
