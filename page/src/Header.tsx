@@ -6,7 +6,7 @@ export interface HeaderProps {
   preload?: string[];
 }
 
-const image = "https://momo5502.com/emulator/preview.png";
+const image = "https://momo5502.com/sogen/preview.png";
 
 export function Header(props: HeaderProps) {
   return (

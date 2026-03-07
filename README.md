@@ -1,5 +1,5 @@
 <h1 align="center">
-	<img src="https://momo5502.com/emulator/banner.png" height="300" />
+	<img src="https://momo5502.com/sogen/banner.png" height="300" />
 	<br>
 	<a href="https://github.com/momo5502/sogen?tab=GPL-2.0-1-ov-file"><img src="https://img.shields.io/github/license/momo5502/sogen?color=00B0F8"/></a>
 	<a href="https://github.com/momo5502/sogen/actions"><img src="https://img.shields.io/github/actions/workflow/status/momo5502/sogen/build.yml?branch=main&label=build"/></a>
@@ -40,12 +40,12 @@ Try it out: <a href="https://sogen.dev">sogen.dev</a>
 
 ## Preview
 
-![Preview](https://momo5502.com/emulator/preview.svg)
+![Preview](https://momo5502.com/sogen/preview.svg)
 
 ## YouTube Overview
 
 <a href="https://www.youtube.com/watch?v=wY9Q0DhodOQ" target="_blank">
-  <img src="https://momo5502.com/emulator/video.png" alt="YouTube Video" width="600" />
+  <img src="https://momo5502.com/sogen/video.png" alt="YouTube Video" width="600" />
 </a>
 
 Click <a href="https://docs.google.com/presentation/d/1pha4tFfDMpVzJ_ehJJ21SA_HAWkufQBVYQvh1IFhVls/edit">here</a> for the slides.
