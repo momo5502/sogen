@@ -737,6 +737,7 @@ namespace gdb_stub
                 break;
 
             case 'D':
+                c.connection.send_reply("OK");
                 c.connection.close();
                 break;
 
