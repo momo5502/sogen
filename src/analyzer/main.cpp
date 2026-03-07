@@ -331,6 +331,12 @@ namespace
                 }
             }
         }
+        catch (const gdb_stub::binding_error& e)
+        {
+            win_emu.log.error("Cannot bind to address %s\n", e.what());
+            options.use_gdb = false;
+            return false;
+        }
         catch (const std::exception& e)
         {
             do_post_emulation_work(c);
