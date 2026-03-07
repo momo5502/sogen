@@ -42,7 +42,7 @@ namespace gdb_stub
             network::tcp_server_socket server{bind_address.get_family()};
             if (!server.bind(bind_address))
             {
-                return false;
+                return {};
             }
 
             server.set_blocking(false);

@@ -31,7 +31,7 @@ namespace network
       public:
         socket() = default;
 
-        socket(SOCKET s);
+        explicit socket(SOCKET s);
 
         socket(int af, int type, int protocol);
         virtual ~socket();
