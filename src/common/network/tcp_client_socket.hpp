@@ -26,6 +26,7 @@ namespace network
         std::optional<address> get_target() const;
 
         bool connect(const address& target);
+        void close() override;
 
       private:
         friend tcp_server_socket;

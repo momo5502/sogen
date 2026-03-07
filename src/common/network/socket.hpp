@@ -69,7 +69,7 @@ namespace network
 
         static bool is_socket_ready(SOCKET s, bool in_poll);
 
-        void close();
+        virtual void close();
 
       private:
         SOCKET socket_ = INVALID_SOCKET;
