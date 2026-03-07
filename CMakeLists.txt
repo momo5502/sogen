@@ -6,12 +6,17 @@ option(MOMO_ENABLE_AVX2 "Enable AVX2 support" ON)
 option(MOMO_ENABLE_SANITIZER "Enable sanitizer" OFF)
 option(MOMO_ENABLE_CLANG_TIDY "Enable clang-tidy checks" OFF)
 option(MOMO_ENABLE_RUST_CODE "Enable code parts written in rust" ON)
+option(MOMO_ENABLE_REFLECTION "Enable reflection using the reflect library" ON)
 option(MOMO_EMSCRIPTEN_MEMORY64 "Enable memory 64 support for emscripten builds" OFF)
 option(MOMO_EMSCRIPTEN_SUPPORT_NODEJS "Enable Node.js filesystem for emscripten compilation" OFF)
 
 set(MOMO_REFLECTION_LEVEL "0" CACHE STRING "Reflection level for the build")
 message(STATUS "Reflection level is set to: ${MOMO_REFLECTION_LEVEL}")
 add_compile_definitions(MOMO_REFLECTION_LEVEL=${MOMO_REFLECTION_LEVEL})
+
+if(MOMO_ENABLE_REFLECTION)
+  add_compile_definitions(MOMO_ENABLE_REFLECTION=1)
+endif()
 
 ##########################################
 

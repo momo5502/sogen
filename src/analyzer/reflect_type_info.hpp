@@ -18,8 +18,13 @@
 #pragma warning(disable : 4715)
 #endif
 
+#if defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection)
+#define HAS_NATIVE_REFLECTION
+#include <meta>
+#elif defined(MOMO_ENABLE_REFLECTION)
 #include "reflect_extension.hpp"
 #include <reflect>
+#endif
 
 #ifdef _MSC_VER
 #pragma warning(pop)
@@ -39,6 +44,21 @@ class reflect_type_info
   public:
     reflect_type_info()
     {
+#if defined(HAS_NATIVE_REFLECTION)
+        this->type_name_ = std::meta::identifier_of(^^T);
+
+        constexpr std::meta::info members_info =
+            std::meta::reflect_constant_array(std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unchecked()));
+
+        template for (constexpr std::meta::info member : [:members_info:])
+        {
+            const auto member_name = std::meta::identifier_of(member);
+            const auto member_offset = std::meta::offset_of(member).bytes;
+            const auto member_size = std::meta::size_of(member);
+
+            this->members_[member_offset] = std::make_pair(std::string(member_name), member_size);
+        }
+#elif defined(MOMO_ENABLE_REFLECTION)
         this->type_name_ = reflect::type_name<T>();
 
         reflect::for_each<T>([this](auto I) {
@@ -48,6 +68,10 @@ class reflect_type_info
 
             this->members_[member_offset] = std::make_pair(std::string(member_name), member_size);
         });
+#else
+        this->type_name_ = typeid(T).name();
+        this->members_[0] = std::make_pair("?", sizeof(T));
+#endif
     }
 
     std::string get_member_name(const size_t offset) const
