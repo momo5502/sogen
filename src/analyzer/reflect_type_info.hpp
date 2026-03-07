@@ -18,8 +18,10 @@
 #pragma warning(disable : 4715)
 #endif
 
+#ifdef MOMO_ENABLE_REFLECTION
 #include "reflect_extension.hpp"
 #include <reflect>
+#endif
 
 #ifdef _MSC_VER
 #pragma warning(pop)
@@ -39,6 +41,7 @@ class reflect_type_info
   public:
     reflect_type_info()
     {
+#ifdef MOMO_ENABLE_REFLECTION
         this->type_name_ = reflect::type_name<T>();
 
         reflect::for_each<T>([this](auto I) {
@@ -48,6 +51,10 @@ class reflect_type_info
 
             this->members_[member_offset] = std::make_pair(std::string(member_name), member_size);
         });
+#else
+        this->type_name_ = typeid(T).name();
+        this->members_[0] = std::make_pair("?", sizeof(T));
+#endif
     }
 
     std::string get_member_name(const size_t offset) const
