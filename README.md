@@ -45,7 +45,7 @@ Try it out: <a href="https://sogen.dev">sogen.dev</a>
 
 ## YouTube Overview
 
-<a href="https://www.youtube.com/watch?v=wY9Q0DhodOQ">
+<a href="https://www.youtube.com/watch?v=wY9Q0DhodOQ" target="_blank">
   <img src="https://momo5502.com/emulator/video.png" alt="YouTube Video" width="600" />
 </a>
 
