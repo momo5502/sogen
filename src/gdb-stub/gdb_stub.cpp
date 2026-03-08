@@ -42,7 +42,7 @@ namespace gdb_stub
             network::tcp_server_socket server{bind_address.get_family()};
             if (!server.bind(bind_address))
             {
-                return false;
+                throw binding_error(bind_address.to_string());
             }
 
             server.set_blocking(false);
@@ -737,6 +737,7 @@ namespace gdb_stub
                 break;
 
             case 'D':
+                c.connection.send_reply("OK");
                 c.connection.close();
                 break;
 

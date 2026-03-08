@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <network/address.hpp>
+#include <stdexcept>
 
 namespace gdb_stub
 {
@@ -31,6 +32,15 @@ namespace gdb_stub
     {
         uint32_t id;
         std::string name;
+    };
+
+    class binding_error : public std::runtime_error
+    {
+      public:
+        binding_error(const std::string& address)
+            : std::runtime_error(address)
+        {
+        }
     };
 
     struct debugging_handler

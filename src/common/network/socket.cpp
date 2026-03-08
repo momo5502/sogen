@@ -24,7 +24,11 @@ namespace network
         }
 
         int optval = 1;
+#ifdef _WIN32
+        setsockopt(this->socket_, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<char*>(&optval), static_cast<int>(sizeof(optval)));
+#else
         setsockopt(this->socket_, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<char*>(&optval), static_cast<int>(sizeof(optval)));
+#endif
     }
 
     socket::~socket()
