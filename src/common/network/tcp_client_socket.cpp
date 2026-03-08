@@ -19,7 +19,7 @@ namespace network
 
     tcp_client_socket::~tcp_client_socket()
     {
-        this->close();
+        tcp_client_socket::close();
     }
 
     bool tcp_client_socket::send(const void* data, const size_t size) const
