@@ -161,7 +161,7 @@ export function LandingPage() {
           </div>
         </section>
 
-        {/* Features Section with Hover Effects */}
+        {/* Features Section */}
         <section className="py-24 relative">
           <div className="container mx-auto px-6">
             <div className="text-center mb-16">
@@ -232,7 +232,7 @@ export function LandingPage() {
           </div>
         </section>
 
-        {/* Video Section with Modern Design */}
+        {/* Video Section */}
         <section className="py-24">
           <div className="container mx-auto px-6">
             <div className="text-center mb-16">
