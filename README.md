@@ -34,7 +34,7 @@ Try it out: <a href="https://sogen.dev">sogen.dev</a>
 - 🧵 **Threading Support**
   - Provides a scheduled (round-robin) threading model
 - 💾 **State Management**
-  - Supports both full state serialization and ~~fast in-memory snapshots~~ (currently broken 😕)
+  - Supports both full state serialization and fast in-memory snapshots
 - 💻 **Debugging Interface**
   - Implements GDB serial protocol for integration with common debugging tools (IDA Pro, GDB, LLDB, VS Code, ...)
 
