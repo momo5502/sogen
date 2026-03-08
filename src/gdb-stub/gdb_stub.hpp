@@ -9,6 +9,7 @@ namespace gdb_stub
     {
         none,
         resume,
+        output,
         shutdown,
     };
 
@@ -106,6 +107,11 @@ namespace gdb_stub
         {
             (void)id;
             return 0;
+        }
+
+        virtual std::string consume_debug_output()
+        {
+            return {};
         }
     };
 

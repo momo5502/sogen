@@ -21,12 +21,18 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
 
         mod_load_id = win_emu_->callbacks.on_module_load.add(hook);
         mod_unload_id = win_emu_->callbacks.on_module_unload.add(hook);
+        dbg_msg_id = win_emu_->callbacks.on_debug_string.add([this](std::string_view message) {
+            debug_message.assign(message);
+            action = gdb_stub::action::output;
+            win_emu_->stop();
+        });
     }
 
     ~win_x64_gdb_stub_handler() override
     {
         win_emu_->callbacks.on_module_load.remove(mod_load_id);
         win_emu_->callbacks.on_module_unload.remove(mod_unload_id);
+        win_emu_->callbacks.on_debug_string.remove(dbg_msg_id);
     }
 
     void on_interrupt() override
@@ -50,7 +56,7 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
             this->win_emu_->log.error("%s\n", e.what());
         }
 
-        return gdb_stub::action::resume;
+        return action;
     }
 
     gdb_stub::action singlestep() override
@@ -64,7 +70,7 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
             this->win_emu_->log.error("%s\n", e.what());
         }
 
-        return gdb_stub::action::resume;
+        return action;
     }
 
     uint32_t get_current_thread_id() override
@@ -173,12 +179,21 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
         return 0;
     }
 
+    std::string consume_debug_output() override
+    {
+        action = gdb_stub::action::resume;
+        return std::move(debug_message);
+    }
+
   private:
     windows_emulator* win_emu_{};
     utils::optional_function<bool()> should_stop_{};
 
     // Track library stop events
     std::atomic<bool> library_stop_pending_{true};
+    std::string debug_message{};
+    gdb_stub::action action{gdb_stub::action::resume};
     utils::callback_id_type mod_load_id{};
     utils::callback_id_type mod_unload_id{};
+    utils::callback_id_type dbg_msg_id{};
 };
