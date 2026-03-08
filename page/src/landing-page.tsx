@@ -161,11 +161,33 @@ export function LandingPage() {
           </div>
         </section>
 
+        {/* Preview Section */}
+        <section className="py-24 bg-linear-to-b from-neutral-900/0 to-neutral-800/40">
+          <div className="container mx-auto px-6">
+            <div className="text-center mb-16">
+              <h2 className="text-4xl font-bold text-white mb-6">
+                Understand Your Applications
+              </h2>
+              <p className="text-xl text-neutral-400">
+                Analyze application semantics and uncover how programs truly
+                behave.
+              </p>
+            </div>
+
+            <div className="mx-auto w-full gap-12 flex items-center justify-center flex-col lg:flex-row">
+              <img
+                className="mx-auto -my-8"
+                src="https://momo5502.com/sogen/preview.svg"
+              />
+            </div>
+          </div>
+        </section>
+
         {/* Features Section */}
         <section className="py-24 relative">
           <div className="container mx-auto px-6">
             <div className="text-center mb-16">
-              <h2 className="text-4xl md:text-5xl font-bold text-white mb-6">
+              <h2 className="text-4xl font-bold text-white mb-6">
                 Powerful Features
               </h2>
               <p className="text-xl text-neutral-400 max-w-2xl mx-auto">
@@ -173,7 +195,7 @@ export function LandingPage() {
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-8 lg:m-32">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-8 lg:mx-32">
               {features.map((feature, index) => (
                 <Card
                   key={index}
