@@ -114,6 +114,11 @@ namespace utils::string
         return result;
     }
 
+    inline std::string to_hex_string(const std::string_view str, const bool uppercase = false)
+    {
+        return to_hex_string(str.data(), str.size(), uppercase);
+    }
+
     template <typename Integer>
         requires(std::is_integral_v<Integer>)
     std::string to_hex_number(const Integer& i, const bool uppercase = false)

@@ -142,6 +142,33 @@ namespace gdb_stub
             return {name, args};
         }
 
+        void send_output(const debugging_context& c, const std::string_view output)
+        {
+            auto length = output.length();
+            size_t chunk_length{};
+            size_t offset = 0;
+
+            while (length > 0)
+            {
+                if ((2 * length) + 1 > max_data_size)
+                {
+                    chunk_length = (max_data_size - 1) / 2;
+                }
+                else
+                {
+                    chunk_length = length;
+                }
+
+                length -= chunk_length;
+
+                std::string reply{"O"};
+                const auto chunk = output.substr(offset, chunk_length);
+                offset += chunk_length;
+                reply.append(utils::string::to_hex_string(chunk));
+                c.connection.send_reply(reply);
+            }
+        }
+
         void send_xfer_data(connection_handler& connection, const std::string& args, const std::string_view data)
         {
             size_t offset{};
@@ -383,14 +410,6 @@ namespace gdb_stub
             }
         }
 
-        void process_action(const connection_handler& connection, const action a)
-        {
-            if (a == action::shutdown)
-            {
-                connection.close();
-            }
-        }
-
         breakpoint_type translate_breakpoint_type(const uint32_t type)
         {
             if (type >= static_cast<size_t>(breakpoint_type::END))
@@ -456,25 +475,50 @@ namespace gdb_stub
             }
         }
 
+        bool process_action(const debugging_context& c, const action a)
+        {
+            bool continue_execution = false;
+
+            if (a == action::shutdown)
+            {
+                c.connection.close();
+            }
+            else if (a == action::output)
+            {
+                const auto message = c.handler.consume_debug_output();
+                send_output(c, message);
+                continue_execution = true;
+            }
+            else
+            {
+                signal_stop(c);
+            }
+
+            return continue_execution;
+        }
+
         void resume_execution(const debugging_context& c, const bool single_step)
         {
             apply_continuation_thread(c);
 
             action a{};
+            bool continue_execution = false;
 
-            if (single_step)
+            do
             {
-                a = c.handler.singlestep();
-            }
-            else
-            {
-                c.async.run();
-                a = c.handler.run();
-                c.async.pause();
-            }
+                if (single_step)
+                {
+                    a = c.handler.singlestep();
+                }
+                else
+                {
+                    c.async.run();
+                    a = c.handler.run();
+                    c.async.pause();
+                }
 
-            process_action(c.connection, a);
-            signal_stop(c);
+                continue_execution = process_action(c, a);
+            } while (continue_execution);
         }
 
         void store_continuation_thread(const debugging_context& c, const std::string_view thread_string)
