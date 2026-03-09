@@ -182,7 +182,7 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
     std::string consume_debug_output() override
     {
         action = gdb_stub::action::resume;
-        return std::move(debug_message);
+        return std::exchange(debug_message, std::string{});
     }
 
   private:
