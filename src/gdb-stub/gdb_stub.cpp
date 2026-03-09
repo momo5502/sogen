@@ -330,7 +330,8 @@ namespace gdb_stub
                 reply.append(";qXfer:features:read+"
                              ";qXfer:libraries:read+"
                              ";qXfer:exec-file:read+"
-                             ";qXfer:threads:read+");
+                             ";qXfer:threads:read+"
+                             ";binary-upload+");
 
                 c.connection.send_reply(reply);
             }
@@ -672,6 +673,27 @@ namespace gdb_stub
             c.connection.send_reply("OK");
         }
 
+        void read_x_memory(const debugging_context& c, const std::string_view payload)
+        {
+            uint64_t address{};
+            size_t size{};
+            rt_assert(sscanf_s(std::string(payload).c_str(), "%" PRIx64 ",%zx", &address, &size) == 2);
+
+            size = std::min(size, max_data_size - 1);
+
+            std::string data{"b"};
+            data.resize(size + 1);
+
+            if (const auto res = c.handler.read_memory(address, data.data() + 1, size); !res)
+            {
+                c.connection.send_reply("E01");
+                return;
+            }
+
+            const auto encoded_data = escape(data, max_data_size - 1);
+            c.connection.send_reply(encoded_data);
+        }
+
         void switch_to_thread(const debugging_context& c, const std::string_view payload)
         {
             if (payload.size() < 2)
@@ -780,6 +802,10 @@ namespace gdb_stub
 
             case 'X':
                 write_x_memory(c, data);
+                break;
+
+            case 'x':
+                read_x_memory(c, data);
                 break;
 
             case 'H':
