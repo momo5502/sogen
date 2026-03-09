@@ -1261,6 +1261,11 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
+    hwnd handle_NtUserGetForegroundWindow()
+    {
+        return 0;
+    }
+
     emulator_pointer handle_NtUserSetWindowLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
                                                    BOOL /*Ansi*/)
     {

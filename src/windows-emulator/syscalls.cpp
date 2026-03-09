@@ -450,6 +450,7 @@ namespace syscalls
     NTSTATUS handle_NtUserTransformRect();
     NTSTATUS handle_NtUserSetWindowPos();
     NTSTATUS handle_NtUserSetForegroundWindow();
+    hwnd handle_NtUserGetForegroundWindow();
     emulator_pointer handle_NtUserSetWindowLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
                                                    BOOL Ansi);
     uint32_t handle_NtUserSetWindowLong(const syscall_context& c, handle hWnd, int nIndex, uint32_t dwNewLong, BOOL Ansi);
@@ -1072,6 +1073,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserTransformRect);
     add_handler(NtUserSetWindowPos);
     add_handler(NtUserSetForegroundWindow);
+    add_handler(NtUserGetForegroundWindow);
     add_handler(NtUserSetWindowLongPtr);
     add_handler(NtUserSetWindowLong);
     add_handler(NtUserPostMessage);
