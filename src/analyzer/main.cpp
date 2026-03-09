@@ -18,6 +18,10 @@
 #include <event_handler.hpp>
 #endif
 
+#ifndef _WIN32
+#include <csignal>
+#endif
+
 namespace
 {
     struct analysis_options : analysis_settings
@@ -847,6 +851,10 @@ namespace
 
     int run_main(const int argc, char** argv)
     {
+#ifndef _WIN32
+        signal(SIGPIPE, SIG_IGN);
+#endif
+
         try
         {
             auto args = bundle_arguments(argc, argv);
