@@ -34,7 +34,7 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       injectRegister: false,
-      registerType: "autoUpdate",
+      registerType: "prompt",
       manifest: {
         theme_color: "#0279E8",
         background_color: "#141416",
