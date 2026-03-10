@@ -4,10 +4,10 @@ import "./index.css";
 import App from "./App.tsx";
 import Installer from "./Installer";
 
-Installer.reinstall();
-
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+Installer.setup().then(() => {
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+});

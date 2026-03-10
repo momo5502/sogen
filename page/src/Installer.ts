@@ -1,9 +1,8 @@
 import { registerSW } from "virtual:pwa-register";
 import Loader from "./Loader";
 
-function registerWorker() {
-  console.log("Registering worker");
-  registerSW({
+async function registerWorker() {
+  await registerSW({
     onNeedRefresh() {
       Loader.setLoading(false);
       window.location.reload();
@@ -19,14 +18,27 @@ function registerWorker() {
   });
 }
 
-class Installer {
-  private wasInstalled: boolean = false;
-
-  public isInstalled(): boolean {
-    return localStorage.getItem("pwa-installed") === "true";
+async function hasBeenRegisteredPreviously() {
+  if (!("serviceWorker" in navigator)) {
+    return false;
   }
 
-  public isRejected(): boolean {
+  return (await navigator.serviceWorker.getRegistration()) !== undefined;
+}
+
+class Installer {
+  private setupDone: boolean = false;
+  private wasInstalled: boolean = false;
+  private wasReinstalled: boolean = false;
+
+  public isInstalled() {
+    if (!this.setupDone) {
+      throw new Error("Need to setup first");
+    }
+    return this.wasInstalled;
+  }
+
+  public isRejected() {
     return localStorage.getItem("pwa-never-install") === "true";
   }
 
@@ -34,22 +46,35 @@ class Installer {
     localStorage.setItem("pwa-never-install", "true");
   }
 
-  public install() {
-    if (this.wasInstalled) {
-      console.log("Already installed");
+  public async install() {
+    if (this.wasReinstalled) {
       return;
     }
 
-    console.log("Installing");
-
     this.wasInstalled = true;
-    localStorage.setItem("pwa-installed", "true");
-    registerWorker();
+    this.wasReinstalled = true;
+    this.setupDone = true;
+    await registerWorker();
   }
 
-  public reinstall() {
+  public async reinstall() {
     if (this.isInstalled()) {
-      this.install();
+      await this.install();
+    }
+  }
+
+  public async setup(awaitReinstall: boolean = false) {
+    if (this.setupDone) {
+      return;
+    }
+
+    this.wasInstalled = await hasBeenRegisteredPreviously();
+    this.setupDone = true;
+
+    const reinstallPromise = this.reinstall();
+
+    if (awaitReinstall) {
+      await reinstallPromise;
     }
   }
 }
