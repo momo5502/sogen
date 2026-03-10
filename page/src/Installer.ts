@@ -15,6 +15,11 @@ async function registerWorker() {
       registration?.addEventListener("updatefound", () => {
         Loader.setLoading(true);
       });
+
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        Loader.setLoading(false);
+        window.location.reload();
+      });
     },
   });
 }
