@@ -33,6 +33,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
+      injectRegister: false,
       registerType: "autoUpdate",
       manifest: {
         theme_color: "#0279E8",
