@@ -40,6 +40,8 @@ export default defineConfig({
         background_color: "#141416",
       },
       workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
         maximumFileSizeToCacheInBytes: 100 * mb,
         cleanupOutdatedCaches: true,
         globPatterns: ["**/*.{js,css,html,woff,woff2,wasm}"],
