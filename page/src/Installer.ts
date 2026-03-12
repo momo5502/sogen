@@ -3,7 +3,6 @@ import Loader from "./Loader";
 
 async function registerWorker() {
   await registerSW({
-    immediate: true,
     /*onNeedRefresh() {
       Loader.setLoading(false);
       window.location.reload();
