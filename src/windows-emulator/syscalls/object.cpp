@@ -653,4 +653,9 @@ namespace syscalls
     {
         return STATUS_SUCCESS;
     }
+
+    NTSTATUS handle_NtCreatePrivateNamespace()
+    {
+        return STATUS_SUCCESS;
+    }
 }
