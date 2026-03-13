@@ -171,23 +171,31 @@ namespace utils::string
         return static_cast<std::byte>(0);
     }
 
-    inline std::vector<std::byte> from_hex_string(const std::string_view str)
+    template <typename Result>
+    constexpr Result from_hex_string(const std::string_view str)
     {
+        using value_type = typename Result::value_type;
+
         const auto size = str.size() / 2;
 
-        std::vector<std::byte> data{};
+        Result data{};
         data.reserve(size);
 
         for (size_t i = 0; i < size; ++i)
         {
             const auto high = parse_nibble(str[(i * 2) + 0]);
             const auto low = parse_nibble(str[(i * 2) + 1]);
-            const auto value = (high << 4) | low;
+            const auto value = static_cast<value_type>((high << 4) | low);
 
             data.push_back(value);
         }
 
         return data;
+    }
+
+    constexpr std::vector<std::byte> from_hex_string(const std::string_view str)
+    {
+        return from_hex_string<std::vector<std::byte>>(str);
     }
 
     template <class Elem, class Traits, class Alloc>

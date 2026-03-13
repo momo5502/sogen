@@ -118,6 +118,12 @@ namespace gdb_stub
         {
             return {};
         }
+
+        virtual std::string translate_path(std::string_view win_path) const
+        {
+            (void)win_path;
+            return {};
+        }
     };
 
     bool run_gdb_stub(const network::address& bind_address, debugging_handler& handler);
