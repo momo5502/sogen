@@ -235,7 +235,7 @@ mapped_module* module_manager::map_module_core(const pe_detection_result& detect
 {
     if (!detection_result.is_valid())
     {
-        logger.error("%s", detection_result.error_message.c_str());
+        logger.error("Cannot map module: %s\n", detection_result.error_message.c_str());
         return nullptr;
     }
 
@@ -282,8 +282,22 @@ void module_manager::load_native_64bit_modules(const windows_path& executable_pa
                                                const windows_path& win32u_path, const logger& logger)
 {
     this->executable = this->map_module(executable_path, logger, true);
+    if (this->executable == nullptr)
+    {
+        throw std::runtime_error{"Cannot map executable"};
+    }
+
     this->ntdll = this->map_module(ntdll_path, logger, true);
+    if (this->ntdll == nullptr)
+    {
+        throw std::runtime_error{"Cannot map 64-bit ntdll.dll"};
+    }
+
     this->win32u = this->map_module(win32u_path, logger, true);
+    if (this->win32u == nullptr)
+    {
+        throw std::runtime_error{"Cannot map 64-bit win32u.dll"};
+    }
 }
 
 void module_manager::load_wow64_modules(const windows_path& executable_path, const windows_path& ntdll_path,
@@ -292,11 +306,14 @@ void module_manager::load_wow64_modules(const windows_path& executable_path, con
 {
     logger.info("Loading WOW64 modules for 32-bit application\n");
 
-    this->executable = this->map_module(executable_path, logger, true);
-    this->ntdll = this->map_module(ntdll_path, logger, true);
-    this->win32u = this->map_module(win32u_path, logger, true);
+    load_native_64bit_modules(executable_path, ntdll_path, win32u_path, logger);
 
     this->wow64_modules_.ntdll32 = this->map_module(ntdll32_path, logger, true);
+
+    if (!wow64_modules_.ntdll32)
+    {
+        throw std::runtime_error{"Cannot map 32-bit ntdll.dll"};
+    }
 
     const auto ntdll32_original_imagebase = this->wow64_modules_.ntdll32->get_image_base_file();
     const auto ntdll64_original_imagebase = this->ntdll->get_image_base_file();
