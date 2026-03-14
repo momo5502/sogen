@@ -227,6 +227,7 @@ class emulator_thread : public ref_counted_object
     uint64_t start_address{};
     uint64_t argument{};
     uint64_t executed_instructions{0};
+    bool setup_done{false};
 
     uint32_t id{};
 
@@ -301,8 +302,9 @@ class emulator_thread : public ref_counted_object
 
     void setup_if_necessary(x86_64_emulator& emu, const process_context& context)
     {
-        if (!this->executed_instructions)
+        if (!this->setup_done)
         {
+            this->setup_done = true;
             this->setup_registers(emu, context);
         }
 
@@ -327,6 +329,7 @@ class emulator_thread : public ref_counted_object
         buffer.write(this->start_address);
         buffer.write(this->argument);
         buffer.write(this->executed_instructions);
+        buffer.write(this->setup_done);
         buffer.write(this->id);
         buffer.write(this->current_ip);
         buffer.write(this->previous_ip);
@@ -388,6 +391,7 @@ class emulator_thread : public ref_counted_object
         buffer.read(this->start_address);
         buffer.read(this->argument);
         buffer.read(this->executed_instructions);
+        buffer.read(this->setup_done);
         buffer.read(this->id);
         buffer.read(this->current_ip);
         buffer.read(this->previous_ip);
