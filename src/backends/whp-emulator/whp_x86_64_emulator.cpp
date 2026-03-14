@@ -503,45 +503,536 @@ namespace whp
         class whp_x86_64_emulator : public x86_64_emulator
         {
           public:
-            whp_x86_64_emulator();
+            whp_x86_64_emulator()
+            {
+                this->ensure_platform_support();
+                this->configure_partition();
+                this->vp_ = std::make_unique<virtual_processor_handle>(this->partition_);
+                this->initialize_long_mode_page_tables();
+                this->initialize_virtual_processor_state();
+                this->initialize_syscall_intercept_page();
+            }
+
             ~whp_x86_64_emulator() override = default;
 
-            void start(size_t count) override;
-            void stop() override;
+            void start(const size_t count) override
+            {
+                if (count != 0)
+                {
+                    throw std::runtime_error("WHP backend does not support exact instruction counts yet");
+                }
 
-            void load_gdt(pointer_type address, uint32_t limit) override;
-            void set_segment_base(x86_register base, pointer_type value) override;
-            pointer_type get_segment_base(x86_register base) override;
+                this->stop_requested_ = false;
 
-            size_t write_raw_register(int reg, const void* value, size_t size) override;
-            size_t read_raw_register(int reg, void* value, size_t size) override;
-            bool read_descriptor_table(int reg, descriptor_table_register& table) override;
+                while (!this->stop_requested_)
+                {
+                    WHV_RUN_VP_EXIT_CONTEXT exit_context{};
+                    this->run_active_ = true;
+                    const auto run_hr = WHvRunVirtualProcessor(this->partition_, vp_index, &exit_context, sizeof(exit_context));
+                    this->run_active_ = false;
+                    if (FAILED(run_hr))
+                    {
+                        throw_hr(run_hr, "WHvRunVirtualProcessor");
+                    }
 
-            void map_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) override;
-            void map_memory(uint64_t address, size_t size, memory_permission permissions) override;
-            void unmap_memory(uint64_t address, size_t size) override;
-            bool try_read_memory(uint64_t address, void* data, size_t size) const override;
-            void read_memory(uint64_t address, void* data, size_t size) const override;
-            bool try_write_memory(uint64_t address, const void* data, size_t size) override;
-            void write_memory(uint64_t address, const void* data, size_t size) override;
-            void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) override;
+                    switch (exit_context.ExitReason)
+                    {
+                    case WHvRunVpExitReasonCanceled:
+                        return;
+                    case WHvRunVpExitReasonX64Halt:
+                        if (this->syscall_hook_ && exit_context.VpContext.Rip == (this->syscall_hook_page_ + 1))
+                        {
+                            if (this->handle_syscall_halt())
+                            {
+                                continue;
+                            }
+                        }
+                        else
+                        {
+                            return;
+                        }
 
-            emulator_hook* hook_instruction(int instruction_type, instruction_hook_callback callback) override;
-            emulator_hook* hook_basic_block(basic_block_hook_callback callback) override;
-            emulator_hook* hook_interrupt(interrupt_hook_callback callback) override;
-            emulator_hook* hook_memory_violation(memory_violation_hook_callback callback) override;
-            emulator_hook* hook_memory_execution(memory_execution_hook_callback callback) override;
-            emulator_hook* hook_memory_execution(uint64_t address, memory_execution_hook_callback callback) override;
-            emulator_hook* hook_memory_read(uint64_t address, uint64_t size, memory_access_hook_callback callback) override;
-            emulator_hook* hook_memory_write(uint64_t address, uint64_t size, memory_access_hook_callback callback) override;
-            void delete_hook(emulator_hook* hook) override;
+                        if (this->stop_requested_)
+                        {
+                            return;
+                        }
 
-            void serialize_state(utils::buffer_serializer& buffer, bool is_snapshot) const override;
-            void deserialize_state(utils::buffer_deserializer& buffer, bool is_snapshot) override;
-            std::vector<std::byte> save_registers() const override;
-            void restore_registers(const std::vector<std::byte>& register_data) override;
-            bool has_violation() const override;
-            std::string get_name() const override;
+                        if (this->syscall_hook_)
+                        {
+                            continue;
+                        }
+                        return;
+                    case WHvRunVpExitReasonMemoryAccess:
+                        if (this->handle_memory_access(exit_context.MemoryAccess))
+                        {
+                            continue;
+                        }
+                        return;
+                    case WHvRunVpExitReasonException:
+                        if (this->handle_exception(exit_context))
+                        {
+                            continue;
+                        }
+                        return;
+                    case WHvRunVpExitReasonX64Cpuid:
+                        if (this->handle_instruction_exit(x86_hookable_instructions::cpuid, 2))
+                        {
+                            continue;
+                        }
+                        throw std::runtime_error("Unhandled CPUID exit");
+                    case WHvRunVpExitReasonX64Rdtsc:
+                        if (this->handle_instruction_exit(exit_context.ReadTsc.RdtscInfo.IsRdtscp ? x86_hookable_instructions::rdtscp
+                                                                                                  : x86_hookable_instructions::rdtsc,
+                                                          2))
+                        {
+                            continue;
+                        }
+                        throw std::runtime_error("Unhandled RDTSC/RDTSCP exit");
+                    case WHvRunVpExitReasonUnsupportedFeature:
+                        throw std::runtime_error("Encountered unsupported processor feature");
+                    default:
+                        throw_unhandled_exit(exit_context);
+                    }
+                }
+            }
+
+            void stop() override
+            {
+                this->stop_requested_ = true;
+                if (this->run_active_)
+                {
+                    WHP_CHECK_HR(WHvCancelRunVirtualProcessor(this->partition_, vp_index, 0));
+                }
+            }
+
+            void load_gdt(const pointer_type address, const uint32_t limit) override
+            {
+                WHV_REGISTER_VALUE value{};
+                value.Table.Base = address;
+                value.Table.Limit = static_cast<UINT16>(limit);
+                this->set_register(WHvX64RegisterGdtr, value);
+            }
+
+            void set_segment_base(const x86_register base, const pointer_type value) override
+            {
+                const auto mapping = map_register(base);
+                auto segment = this->get_register(mapping.name).Segment;
+                segment.Base = value;
+                this->set_register(mapping.name, WHV_REGISTER_VALUE{.Segment = segment});
+            }
+
+            pointer_type get_segment_base(const x86_register base) override
+            {
+                const auto mapping = map_register(base);
+                return this->get_register(mapping.name).Segment.Base;
+            }
+
+            void map_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) override
+            {
+                if (!is_page_aligned(address) || !is_page_aligned(size))
+                {
+                    throw std::runtime_error("WHP MMIO mappings must be page aligned");
+                }
+
+                mmio_region region{
+                    .address = address,
+                    .size = size,
+                    .read_cb = std::move(read_cb),
+                    .write_cb = std::move(write_cb),
+                };
+
+                for (size_t offset = 0; offset < size; offset += page_size)
+                {
+                    const auto guest_address = address + offset;
+                    auto& page = this->mapped_pages_[guest_address];
+                    if (!page)
+                    {
+                        page = std::make_unique<mapped_page>();
+                    }
+
+                    if (page->host_page == nullptr)
+                    {
+                        auto* raw_page =
+                            static_cast<uint8_t*>(::VirtualAlloc(nullptr, page_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+                        if (raw_page == nullptr)
+                        {
+                            throw std::runtime_error("VirtualAlloc failed while backing an MMIO page");
+                        }
+
+                        std::memset(raw_page, 0, page_size);
+                        page->owned_page.reset(raw_page);
+                        page->host_page = raw_page;
+                    }
+
+                    page->permissions = memory_permission::none;
+                    this->remap_page(guest_address, *page);
+                    this->ensure_virtual_mapping(guest_address);
+                }
+
+                this->mmio_regions_[address] = std::move(region);
+            }
+
+            void map_memory(const uint64_t address, const size_t size, const memory_permission permissions) override
+            {
+                if (!is_page_aligned(address) || !is_page_aligned(size))
+                {
+                    throw std::runtime_error("WHP memory mappings must be page aligned");
+                }
+
+                for (size_t offset = 0; offset < size; offset += page_size)
+                {
+                    const auto guest_address = address + offset;
+                    auto& page = this->mapped_pages_[guest_address];
+                    if (!page)
+                    {
+                        page = std::make_unique<mapped_page>();
+                    }
+
+                    if (page->host_page == nullptr)
+                    {
+                        auto* raw_page =
+                            static_cast<uint8_t*>(::VirtualAlloc(nullptr, page_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+                        if (raw_page == nullptr)
+                        {
+                            throw std::runtime_error("VirtualAlloc failed while backing a guest page");
+                        }
+
+                        std::memset(raw_page, 0, page_size);
+                        page->owned_page.reset(raw_page);
+                        page->host_page = raw_page;
+                    }
+
+                    page->permissions = permissions;
+                    this->remap_page(guest_address, *page);
+                    this->ensure_virtual_mapping(guest_address);
+                }
+            }
+
+            void unmap_memory(const uint64_t address, const size_t size) override
+            {
+                if (!is_page_aligned(address) || !is_page_aligned(size))
+                {
+                    throw std::runtime_error("WHP memory unmappings must be page aligned");
+                }
+
+                for (size_t offset = 0; offset < size; offset += page_size)
+                {
+                    const auto guest_address = address + offset;
+                    const auto entry = this->mapped_pages_.find(guest_address);
+                    if (entry == this->mapped_pages_.end())
+                    {
+                        continue;
+                    }
+
+                    if (entry->second->map_flags != 0)
+                    {
+                        WHP_CHECK_HR(WHvUnmapGpaRange(this->partition_, guest_address, page_size));
+                    }
+
+                    this->mapped_pages_.erase(entry);
+                }
+
+                const auto mmio = this->mmio_regions_.find(address);
+                if (mmio != this->mmio_regions_.end() && mmio->second.size == size)
+                {
+                    this->mmio_regions_.erase(mmio);
+                }
+            }
+
+            bool try_read_memory(const uint64_t address, void* data, const size_t size) const override
+            {
+                return this->access_memory(address, data, size, false);
+            }
+
+            void read_memory(const uint64_t address, void* data, const size_t size) const override
+            {
+                if (!this->try_read_memory(address, data, size))
+                {
+                    throw std::runtime_error("Failed to read WHP guest memory");
+                }
+            }
+
+            bool try_write_memory(const uint64_t address, const void* data, const size_t size) override
+            {
+                return this->access_memory(address, const_cast<void*>(data), size, true);
+            }
+
+            void write_memory(const uint64_t address, const void* data, const size_t size) override
+            {
+                if (!this->try_write_memory(address, data, size))
+                {
+                    throw std::runtime_error("Failed to write WHP guest memory");
+                }
+            }
+
+            void apply_memory_protection(const uint64_t address, const size_t size, const memory_permission permissions) override
+            {
+                if (!is_page_aligned(address) || !is_page_aligned(size))
+                {
+                    throw std::runtime_error("WHP protection changes must be page aligned");
+                }
+
+                for (size_t offset = 0; offset < size; offset += page_size)
+                {
+                    const auto guest_address = address + offset;
+                    const auto entry = this->mapped_pages_.find(guest_address);
+                    if (entry == this->mapped_pages_.end())
+                    {
+                        continue;
+                    }
+
+                    entry->second->permissions = permissions;
+                    this->remap_page(guest_address, *entry->second);
+                }
+            }
+
+            size_t write_raw_register(const int reg, const void* value, const size_t size) override
+            {
+                const auto mapping = map_register(static_cast<x86_register>(reg));
+                auto current = this->get_register(mapping.name);
+
+                switch (mapping.kind)
+                {
+                case register_kind::reg64:
+                    std::memcpy(&current.Reg64, value, (std::min)(size, sizeof(current.Reg64)));
+                    break;
+                case register_kind::segment:
+                    if (static_cast<x86_register>(reg) == x86_register::fs_base || static_cast<x86_register>(reg) == x86_register::gs_base)
+                    {
+                        std::memcpy(&current.Segment.Base, value, (std::min)(size, sizeof(current.Segment.Base)));
+                    }
+                    else
+                    {
+                        std::memcpy(&current.Segment.Selector, value, (std::min)(size, sizeof(current.Segment.Selector)));
+                    }
+                    break;
+                case register_kind::table:
+                    std::memcpy(&current.Table, value, (std::min)(size, sizeof(current.Table)));
+                    break;
+                case register_kind::fp:
+                    std::memcpy(&current.Fp.AsUINT128, value, (std::min)(size, sizeof(current.Fp.AsUINT128)));
+                    break;
+                case register_kind::fp_control:
+                    if (static_cast<x86_register>(reg) == x86_register::fpcw)
+                    {
+                        std::memcpy(&current.FpControlStatus.FpControl, value, (std::min)(size, sizeof(current.FpControlStatus.FpControl)));
+                    }
+                    else if (static_cast<x86_register>(reg) == x86_register::fpsw)
+                    {
+                        std::memcpy(&current.FpControlStatus.FpStatus, value, (std::min)(size, sizeof(current.FpControlStatus.FpStatus)));
+                    }
+                    else
+                    {
+                        uint16_t fp_tag{};
+                        std::memcpy(&fp_tag, value, (std::min)(size, sizeof(fp_tag)));
+                        current.FpControlStatus.FpTag = static_cast<UINT8>(fp_tag);
+                    }
+                    break;
+                case register_kind::xmm_control:
+                    std::memcpy(&current.XmmControlStatus.XmmStatusControl, value,
+                                (std::min)(size, sizeof(current.XmmControlStatus.XmmStatusControl)));
+                    current.XmmControlStatus.XmmStatusControlMask = 0xFFFFFFFF;
+                    break;
+                case register_kind::reg128:
+                    std::memcpy(&current.Reg128, value, (std::min)(size, sizeof(current.Reg128)));
+                    break;
+                }
+
+                this->set_register(mapping.name, current);
+                return size;
+            }
+
+            size_t read_raw_register(const int reg, void* value, const size_t size) override
+            {
+                const auto mapping = map_register(static_cast<x86_register>(reg));
+                const auto current = this->get_register(mapping.name);
+
+                switch (mapping.kind)
+                {
+                case register_kind::reg64:
+                    std::memcpy(value, &current.Reg64, (std::min)(size, sizeof(current.Reg64)));
+                    break;
+                case register_kind::segment:
+                    if (static_cast<x86_register>(reg) == x86_register::fs_base || static_cast<x86_register>(reg) == x86_register::gs_base)
+                    {
+                        std::memcpy(value, &current.Segment.Base, (std::min)(size, sizeof(current.Segment.Base)));
+                    }
+                    else
+                    {
+                        std::memcpy(value, &current.Segment.Selector, (std::min)(size, sizeof(current.Segment.Selector)));
+                    }
+                    break;
+                case register_kind::table:
+                    std::memcpy(value, &current.Table, (std::min)(size, sizeof(current.Table)));
+                    break;
+                case register_kind::fp:
+                    std::memcpy(value, &current.Fp.AsUINT128, (std::min)(size, sizeof(current.Fp.AsUINT128)));
+                    break;
+                case register_kind::fp_control:
+                    if (static_cast<x86_register>(reg) == x86_register::fpcw)
+                    {
+                        std::memcpy(value, &current.FpControlStatus.FpControl, (std::min)(size, sizeof(current.FpControlStatus.FpControl)));
+                    }
+                    else if (static_cast<x86_register>(reg) == x86_register::fpsw)
+                    {
+                        std::memcpy(value, &current.FpControlStatus.FpStatus, (std::min)(size, sizeof(current.FpControlStatus.FpStatus)));
+                    }
+                    else
+                    {
+                        uint16_t fp_tag = current.FpControlStatus.FpTag;
+                        std::memcpy(value, &fp_tag, (std::min)(size, sizeof(fp_tag)));
+                    }
+                    break;
+                case register_kind::xmm_control:
+                    std::memcpy(value, &current.XmmControlStatus.XmmStatusControl,
+                                (std::min)(size, sizeof(current.XmmControlStatus.XmmStatusControl)));
+                    break;
+                case register_kind::reg128:
+                    std::memcpy(value, &current.Reg128, (std::min)(size, sizeof(current.Reg128)));
+                    break;
+                }
+
+                return size;
+            }
+
+            bool read_descriptor_table(const int reg, descriptor_table_register& table) override
+            {
+                if (reg != static_cast<int>(x86_register::gdtr) && reg != static_cast<int>(x86_register::idtr))
+                {
+                    return false;
+                }
+
+                const auto mapping = map_register(static_cast<x86_register>(reg));
+                const auto value = this->get_register(mapping.name).Table;
+                table.base = value.Base;
+                table.limit = value.Limit;
+                return true;
+            }
+
+            emulator_hook* hook_instruction(const int instruction_type, instruction_hook_callback callback) override
+            {
+                auto* hook = this->make_hook();
+                auto& entry = this->instruction_hooks_[hook];
+                entry.type = static_cast<x86_hookable_instructions>(instruction_type);
+                entry.callback = std::move(callback);
+
+                if (entry.type == x86_hookable_instructions::syscall)
+                {
+                    this->syscall_hook_ = &entry;
+                }
+
+                return hook;
+            }
+
+            emulator_hook* hook_basic_block(basic_block_hook_callback callback) override
+            {
+                auto* hook = this->make_hook();
+                this->basic_block_hooks_[hook] = std::move(callback);
+                return hook;
+            }
+
+            emulator_hook* hook_interrupt(interrupt_hook_callback callback) override
+            {
+                auto* hook = this->make_hook();
+                this->interrupt_hooks_[hook] = std::move(callback);
+                return hook;
+            }
+
+            emulator_hook* hook_memory_violation(memory_violation_hook_callback callback) override
+            {
+                auto* hook = this->make_hook();
+                this->memory_violation_hooks_[hook] = std::move(callback);
+                return hook;
+            }
+
+            emulator_hook* hook_memory_execution(memory_execution_hook_callback callback) override
+            {
+                auto* hook = this->make_hook();
+                this->memory_execution_hooks_[hook] = execution_hook_entry{.address = std::nullopt, .callback = std::move(callback)};
+                return hook;
+            }
+
+            emulator_hook* hook_memory_execution(const uint64_t address, memory_execution_hook_callback callback) override
+            {
+                auto* hook = this->make_hook();
+                this->memory_execution_hooks_[hook] = execution_hook_entry{.address = address, .callback = std::move(callback)};
+                return hook;
+            }
+
+            emulator_hook* hook_memory_read(const uint64_t address, const uint64_t size, memory_access_hook_callback callback) override
+            {
+                auto* hook = this->make_hook();
+                this->memory_read_hooks_[hook] =
+                    memory_access_hook_entry{.address = address, .size = size, .callback = std::move(callback)};
+                return hook;
+            }
+
+            emulator_hook* hook_memory_write(const uint64_t address, const uint64_t size, memory_access_hook_callback callback) override
+            {
+                auto* hook = this->make_hook();
+                this->memory_write_hooks_[hook] =
+                    memory_access_hook_entry{.address = address, .size = size, .callback = std::move(callback)};
+                return hook;
+            }
+
+            void delete_hook(emulator_hook* hook) override
+            {
+                this->instruction_hooks_.erase(hook);
+                this->basic_block_hooks_.erase(hook);
+                this->interrupt_hooks_.erase(hook);
+                this->memory_violation_hooks_.erase(hook);
+                this->memory_execution_hooks_.erase(hook);
+                this->memory_read_hooks_.erase(hook);
+                this->memory_write_hooks_.erase(hook);
+            }
+
+            void serialize_state(utils::buffer_serializer& buffer, const bool) const override
+            {
+                buffer.write_vector(this->save_registers());
+            }
+
+            void deserialize_state(utils::buffer_deserializer& buffer, const bool) override
+            {
+                this->restore_registers(buffer.read_vector<std::byte>());
+            }
+
+            std::vector<std::byte> save_registers() const override
+            {
+                auto names = snapshot_register_names();
+                std::vector<WHV_REGISTER_VALUE> values(names.size());
+                WHP_CHECK_HR(WHvGetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()),
+                                                             values.data()));
+
+                std::vector<std::byte> bytes(sizeof(WHV_REGISTER_VALUE) * values.size());
+                std::memcpy(bytes.data(), values.data(), bytes.size());
+                return bytes;
+            }
+
+            void restore_registers(const std::vector<std::byte>& register_data) override
+            {
+                auto names = snapshot_register_names();
+                const auto expected_size = sizeof(WHV_REGISTER_VALUE) * names.size();
+                if (register_data.size() != expected_size)
+                {
+                    throw std::runtime_error("Unexpected WHP register snapshot size");
+                }
+
+                std::vector<WHV_REGISTER_VALUE> values(names.size());
+                std::memcpy(values.data(), register_data.data(), register_data.size());
+
+                WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()),
+                                                             values.data()));
+            }
+
+            bool has_violation() const override
+            {
+                return false;
+            }
+
+            std::string get_name() const override
+            {
+                return "Windows Hypervisor Platform";
+            }
 
             bool supports_instruction_counting() const override
             {
@@ -609,844 +1100,224 @@ namespace whp
             std::optional<pending_mmio_step> pending_mmio_step_{};
             instruction_hook_entry* syscall_hook_ = nullptr;
 
-            void ensure_platform_support();
-            void configure_partition();
-            void initialize_virtual_processor_state();
-            void initialize_syscall_intercept_page();
-            bool handle_syscall_halt();
-            void initialize_long_mode_page_tables();
-            uint64_t allocate_internal_page(bool executable = false, bool map_into_guest = true);
-            void remap_page(uint64_t guest_address, mapped_page& page);
-            mmio_region* find_mmio_region(uint64_t address);
-            const mmio_region* find_mmio_region(uint64_t address) const;
-            void refresh_mmio_page(const mmio_region& region, uint64_t page_base);
-            void flush_mmio_write(const mmio_region& region, uint64_t page_base, const std::vector<std::byte>& old_page);
-            bool arm_mmio_single_step(uint64_t page_base, bool is_write);
-            bool complete_pending_mmio_step();
-            uint64_t* get_page_table_entries(uint64_t page_gpa);
-            uint64_t ensure_child_table(uint64_t table_gpa, size_t index);
-            void ensure_virtual_mapping(uint64_t guest_address);
-            bool access_memory(uint64_t address, void* data, size_t size, bool is_write) const;
-            WHV_REGISTER_VALUE get_register(WHV_REGISTER_NAME name) const;
-            void set_register(WHV_REGISTER_NAME name, const WHV_REGISTER_VALUE& value);
-            emulator_hook* make_hook();
-            bool handle_instruction_exit(x86_hookable_instructions type, uint64_t instruction_size);
-            bool handle_memory_access(const WHV_MEMORY_ACCESS_CONTEXT& memory_access);
-            bool handle_exception(const WHV_RUN_VP_EXIT_CONTEXT& exit_context);
-            void advance_rip(uint64_t amount);
-        };
-
-        whp_x86_64_emulator::whp_x86_64_emulator()
-        {
-            this->ensure_platform_support();
-            this->configure_partition();
-            this->vp_ = std::make_unique<virtual_processor_handle>(this->partition_);
-            this->initialize_long_mode_page_tables();
-            this->initialize_virtual_processor_state();
-            this->initialize_syscall_intercept_page();
-        }
-
-        void whp_x86_64_emulator::start(const size_t count)
-        {
-            if (count != 0)
+            void ensure_platform_support()
             {
-                throw std::runtime_error("WHP backend does not support exact instruction counts yet");
-            }
+                BOOL hypervisor_present = FALSE;
+                UINT32 bytes_written = 0;
 
-            this->stop_requested_ = false;
+                WHP_CHECK_HR(
+                    WHvGetCapability(WHvCapabilityCodeHypervisorPresent, &hypervisor_present, sizeof(hypervisor_present), &bytes_written));
 
-            while (!this->stop_requested_)
-            {
-                WHV_RUN_VP_EXIT_CONTEXT exit_context{};
-                this->run_active_ = true;
-                const auto run_hr = WHvRunVirtualProcessor(this->partition_, vp_index, &exit_context, sizeof(exit_context));
-                this->run_active_ = false;
-                if (FAILED(run_hr))
+                if (!hypervisor_present)
                 {
-                    throw_hr(run_hr, "WHvRunVirtualProcessor");
+                    throw std::runtime_error("Hypervisor is not present. Enable Hyper-V and Windows Hypervisor Platform.");
                 }
 
-                switch (exit_context.ExitReason)
+                WHP_CHECK_HR(WHvGetCapability(WHvCapabilityCodeExtendedVmExits, &this->supported_exits_, sizeof(this->supported_exits_),
+                                              &bytes_written));
+            }
+
+            void configure_partition()
+            {
+                UINT32 processor_count = 1;
+                WHP_CHECK_HR(WHvSetPartitionProperty(this->partition_, WHvPartitionPropertyCodeProcessorCount, &processor_count,
+                                                     sizeof(processor_count)));
+
+                WHV_EXTENDED_VM_EXITS enabled_exits{};
+                enabled_exits.ExceptionExit = this->supported_exits_.ExceptionExit ? 1 : 0;
+                enabled_exits.X64CpuidExit = this->supported_exits_.X64CpuidExit ? 1 : 0;
+                enabled_exits.X64RdtscExit = this->supported_exits_.X64RdtscExit ? 1 : 0;
+
+                WHP_CHECK_HR(WHvSetPartitionProperty(this->partition_, WHvPartitionPropertyCodeExtendedVmExits, &enabled_exits,
+                                                     sizeof(enabled_exits)));
+
+                WHP_CHECK_HR(WHvSetupPartition(this->partition_));
+            }
+
+            void initialize_virtual_processor_state()
+            {
+                const std::array<WHV_REGISTER_NAME, 16> names = {
+                    WHvX64RegisterCs,
+                    WHvX64RegisterSs,
+                    WHvX64RegisterDs,
+                    WHvX64RegisterEs,
+                    WHvX64RegisterFs,
+                    WHvX64RegisterGs,
+                    WHvX64RegisterCr0,
+                    WHvX64RegisterCr4,
+                    WHvX64RegisterCr3,
+                    WHvX64RegisterEfer,
+                    WHvX64RegisterRflags,
+                    WHvX64RegisterStar,
+                    WHvX64RegisterSfmask,
+                    WHvX64RegisterXCr0,
+                    WHvX64RegisterFpControlStatus,
+                    WHvX64RegisterXmmControlStatus,
+                };
+
+                std::array<WHV_REGISTER_VALUE, names.size()> values{};
+                values[0].Segment = make_segment(0x33, true);
+                values[1].Segment = make_segment(0x2B, false);
+                values[2].Segment = make_segment(0x2B, false);
+                values[3].Segment = make_segment(0x2B, false);
+                values[4].Segment = make_segment(0x53, false);
+                values[5].Segment = make_segment(0x2B, false);
+                values[6].Reg64 = 0x80000033ull;
+                values[7].Reg64 = 0x620ull;
+                values[8].Reg64 = this->pml4_gpa_;
+                values[9].Reg64 = (1ull << 0) | (1ull << 8) | (1ull << 10);
+                values[10].Reg64 = 0x2ull;
+                values[11].Reg64 = (0x23ull << 48) | (0x08ull << 32);
+                values[12].Reg64 = 0;
+                values[13].Reg64 = 0x3ull;
+                values[14].FpControlStatus.FpControl = 0x037Full;
+                values[14].FpControlStatus.FpStatus = 0;
+                values[14].FpControlStatus.FpTag = 0xFF;
+                values[15].XmmControlStatus.XmmStatusControl = 0x1F80u;
+                values[15].XmmControlStatus.XmmStatusControlMask = 0xFFFFFFFFu;
+
+                WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()),
+                                                             values.data()));
+            }
+
+            void initialize_syscall_intercept_page()
+            {
+                this->syscall_hook_page_ = this->allocate_internal_page(true);
+                auto* code = static_cast<uint8_t*>(this->mapped_pages_.at(this->syscall_hook_page_)->host_page);
+                code[0] = 0xF4;
+
+                WHV_REGISTER_VALUE lstar{};
+                lstar.Reg64 = this->syscall_hook_page_;
+                this->set_register(WHvX64RegisterLstar, lstar);
+            }
+
+            bool handle_syscall_halt()
+            {
+                if (!this->syscall_hook_)
                 {
-                case WHvRunVpExitReasonCanceled:
-                    return;
-                case WHvRunVpExitReasonX64Halt:
-                    if (this->syscall_hook_ && exit_context.VpContext.Rip == (this->syscall_hook_page_ + 1))
-                    {
-                        if (this->handle_syscall_halt())
-                        {
-                            continue;
-                        }
-                    }
-                    else
-                    {
-                        return;
-                    }
-
-                    if (this->stop_requested_)
-                    {
-                        return;
-                    }
-
-                    if (this->syscall_hook_)
-                    {
-                        continue;
-                    }
-                    return;
-                case WHvRunVpExitReasonMemoryAccess:
-                    if (this->handle_memory_access(exit_context.MemoryAccess))
-                    {
-                        continue;
-                    }
-                    return;
-                case WHvRunVpExitReasonException:
-                    if (this->handle_exception(exit_context))
-                    {
-                        continue;
-                    }
-                    return;
-                case WHvRunVpExitReasonX64Cpuid:
-                    if (this->handle_instruction_exit(x86_hookable_instructions::cpuid, 2))
-                    {
-                        continue;
-                    }
-                    throw std::runtime_error("Unhandled CPUID exit");
-                case WHvRunVpExitReasonX64Rdtsc:
-                    if (this->handle_instruction_exit(exit_context.ReadTsc.RdtscInfo.IsRdtscp ? x86_hookable_instructions::rdtscp
-                                                                                              : x86_hookable_instructions::rdtsc,
-                                                      2))
-                    {
-                        continue;
-                    }
-                    throw std::runtime_error("Unhandled RDTSC/RDTSCP exit");
-                case WHvRunVpExitReasonUnsupportedFeature:
-                    throw std::runtime_error("Encountered unsupported processor feature");
-                default:
-                    throw_unhandled_exit(exit_context);
-                }
-            }
-        }
-
-        void whp_x86_64_emulator::stop()
-        {
-            this->stop_requested_ = true;
-            if (this->run_active_)
-            {
-                WHP_CHECK_HR(WHvCancelRunVirtualProcessor(this->partition_, vp_index, 0));
-            }
-        }
-
-        void whp_x86_64_emulator::load_gdt(const pointer_type address, const uint32_t limit)
-        {
-            WHV_REGISTER_VALUE value{};
-            value.Table.Base = address;
-            value.Table.Limit = static_cast<UINT16>(limit);
-            this->set_register(WHvX64RegisterGdtr, value);
-        }
-
-        void whp_x86_64_emulator::set_segment_base(const x86_register base, const pointer_type value)
-        {
-            const auto mapping = map_register(base);
-            auto segment = this->get_register(mapping.name).Segment;
-            segment.Base = value;
-            this->set_register(mapping.name, WHV_REGISTER_VALUE{.Segment = segment});
-        }
-
-        whp_x86_64_emulator::pointer_type whp_x86_64_emulator::get_segment_base(const x86_register base)
-        {
-            const auto mapping = map_register(base);
-            return this->get_register(mapping.name).Segment.Base;
-        }
-
-        void whp_x86_64_emulator::map_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb,
-                                           mmio_write_callback write_cb)
-        {
-            if (!is_page_aligned(address) || !is_page_aligned(size))
-            {
-                throw std::runtime_error("WHP MMIO mappings must be page aligned");
-            }
-
-            mmio_region region{
-                .address = address,
-                .size = size,
-                .read_cb = std::move(read_cb),
-                .write_cb = std::move(write_cb),
-            };
-
-            for (size_t offset = 0; offset < size; offset += page_size)
-            {
-                const auto guest_address = address + offset;
-                auto& page = this->mapped_pages_[guest_address];
-                if (!page)
-                {
-                    page = std::make_unique<mapped_page>();
+                    return false;
                 }
 
-                if (page->host_page == nullptr)
-                {
-                    auto* raw_page = static_cast<uint8_t*>(::VirtualAlloc(nullptr, page_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-                    if (raw_page == nullptr)
-                    {
-                        throw std::runtime_error("VirtualAlloc failed while backing an MMIO page");
-                    }
+                const auto post_syscall_rcx = this->get_register(WHvX64RegisterRcx).Reg64;
+                const auto post_syscall_r10 = this->get_register(WHvX64RegisterR10).Reg64;
+                const auto saved_rflags = this->get_register(WHvX64RegisterR11).Reg64;
 
-                    std::memset(raw_page, 0, page_size);
-                    page->owned_page.reset(raw_page);
-                    page->host_page = raw_page;
+                auto rip = this->get_register(WHvX64RegisterRip);
+                auto rcx = this->get_register(WHvX64RegisterRcx);
+                auto rflags = this->get_register(WHvX64RegisterRflags);
+                auto cs = this->get_register(WHvX64RegisterCs);
+                auto ss = this->get_register(WHvX64RegisterSs);
+
+                const auto pre_syscall_rip = post_syscall_rcx - 2;
+
+                rip.Reg64 = pre_syscall_rip;
+                rcx.Reg64 = post_syscall_r10;
+                rflags.Reg64 = saved_rflags;
+                cs.Segment = make_segment(0x33, true);
+                ss.Segment = make_segment(0x2B, false);
+
+                this->set_register(WHvX64RegisterRip, rip);
+                this->set_register(WHvX64RegisterRcx, rcx);
+                this->set_register(WHvX64RegisterRflags, rflags);
+                this->set_register(WHvX64RegisterCs, cs);
+                this->set_register(WHvX64RegisterSs, ss);
+
+                const auto continuation = this->syscall_hook_->callback(0);
+
+                auto new_rip = this->get_register(WHvX64RegisterRip);
+                if (continuation == instruction_hook_continuation::skip_instruction && new_rip.Reg64 == pre_syscall_rip)
+                {
+                    new_rip.Reg64 = post_syscall_rcx;
+                    this->set_register(WHvX64RegisterRip, new_rip);
                 }
 
-                page->permissions = memory_permission::none;
-                this->remap_page(guest_address, *page);
-                this->ensure_virtual_mapping(guest_address);
+                cs.Segment = make_segment(0x33, true);
+                ss.Segment = make_segment(0x2B, false);
+                this->set_register(WHvX64RegisterCs, cs);
+                this->set_register(WHvX64RegisterSs, ss);
+
+                return true;
             }
 
-            this->mmio_regions_[address] = std::move(region);
-        }
-
-        void whp_x86_64_emulator::map_memory(const uint64_t address, const size_t size, const memory_permission permissions)
-        {
-            if (!is_page_aligned(address) || !is_page_aligned(size))
+            void initialize_long_mode_page_tables()
             {
-                throw std::runtime_error("WHP memory mappings must be page aligned");
+                this->pml4_gpa_ = this->allocate_internal_page(false, false);
             }
 
-            for (size_t offset = 0; offset < size; offset += page_size)
+            uint64_t allocate_internal_page(const bool executable = false, const bool map_into_guest = true)
             {
-                const auto guest_address = address + offset;
-                auto& page = this->mapped_pages_[guest_address];
-                if (!page)
+                auto* raw_page = static_cast<uint8_t*>(::VirtualAlloc(nullptr, page_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+                if (raw_page == nullptr)
                 {
-                    page = std::make_unique<mapped_page>();
+                    throw std::runtime_error("VirtualAlloc failed while creating an internal page");
                 }
 
-                if (page->host_page == nullptr)
-                {
-                    auto* raw_page = static_cast<uint8_t*>(::VirtualAlloc(nullptr, page_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-                    if (raw_page == nullptr)
-                    {
-                        throw std::runtime_error("VirtualAlloc failed while backing a guest page");
-                    }
+                std::memset(raw_page, 0, page_size);
 
-                    std::memset(raw_page, 0, page_size);
-                    page->owned_page.reset(raw_page);
-                    page->host_page = raw_page;
+                const auto page_gpa = this->next_internal_gpa_;
+                this->next_internal_gpa_ += page_size;
+
+                auto page = std::make_unique<mapped_page>();
+                page->owned_page.reset(raw_page);
+                page->host_page = raw_page;
+                page->permissions = executable ? memory_permission::all : memory_permission::read_write;
+
+                this->mapped_pages_[page_gpa] = std::move(page);
+                this->remap_page(page_gpa, *this->mapped_pages_[page_gpa]);
+                this->page_table_views_[page_gpa] = reinterpret_cast<uint64_t*>(raw_page);
+
+                if (map_into_guest)
+                {
+                    this->ensure_virtual_mapping(page_gpa);
                 }
 
-                page->permissions = permissions;
-                this->remap_page(guest_address, *page);
-                this->ensure_virtual_mapping(guest_address);
-            }
-        }
-
-        void whp_x86_64_emulator::unmap_memory(const uint64_t address, const size_t size)
-        {
-            if (!is_page_aligned(address) || !is_page_aligned(size))
-            {
-                throw std::runtime_error("WHP memory unmappings must be page aligned");
+                return page_gpa;
             }
 
-            for (size_t offset = 0; offset < size; offset += page_size)
+            void remap_page(const uint64_t guest_address, mapped_page& page)
             {
-                const auto guest_address = address + offset;
-                const auto entry = this->mapped_pages_.find(guest_address);
-                if (entry == this->mapped_pages_.end())
-                {
-                    continue;
-                }
-
-                if (entry->second->map_flags != 0)
+                if (page.map_flags != 0)
                 {
                     WHP_CHECK_HR(WHvUnmapGpaRange(this->partition_, guest_address, page_size));
                 }
 
-                this->mapped_pages_.erase(entry);
-            }
-
-            const auto mmio = this->mmio_regions_.find(address);
-            if (mmio != this->mmio_regions_.end() && mmio->second.size == size)
-            {
-                this->mmio_regions_.erase(mmio);
-            }
-        }
-
-        bool whp_x86_64_emulator::try_read_memory(const uint64_t address, void* data, const size_t size) const
-        {
-            return this->access_memory(address, data, size, false);
-        }
-
-        void whp_x86_64_emulator::read_memory(const uint64_t address, void* data, const size_t size) const
-        {
-            if (!this->try_read_memory(address, data, size))
-            {
-                throw std::runtime_error("Failed to read WHP guest memory");
-            }
-        }
-
-        bool whp_x86_64_emulator::try_write_memory(const uint64_t address, const void* data, const size_t size)
-        {
-            return this->access_memory(address, const_cast<void*>(data), size, true);
-        }
-
-        void whp_x86_64_emulator::write_memory(const uint64_t address, const void* data, const size_t size)
-        {
-            if (!this->try_write_memory(address, data, size))
-            {
-                throw std::runtime_error("Failed to write WHP guest memory");
-            }
-        }
-
-        void whp_x86_64_emulator::apply_memory_protection(const uint64_t address, const size_t size, const memory_permission permissions)
-        {
-            if (!is_page_aligned(address) || !is_page_aligned(size))
-            {
-                throw std::runtime_error("WHP protection changes must be page aligned");
-            }
-
-            for (size_t offset = 0; offset < size; offset += page_size)
-            {
-                const auto guest_address = address + offset;
-                const auto entry = this->mapped_pages_.find(guest_address);
-                if (entry == this->mapped_pages_.end())
+                page.map_flags = to_whp_map_flags(page.permissions);
+                if (page.map_flags == 0)
                 {
-                    continue;
+                    return;
                 }
 
-                entry->second->permissions = permissions;
-                this->remap_page(guest_address, *entry->second);
+                WHP_CHECK_HR(WHvMapGpaRange(this->partition_, page.host_page, guest_address, page_size,
+                                            static_cast<WHV_MAP_GPA_RANGE_FLAGS>(page.map_flags)));
             }
-        }
 
-        size_t whp_x86_64_emulator::write_raw_register(const int reg, const void* value, const size_t size)
-        {
-            const auto mapping = map_register(static_cast<x86_register>(reg));
-            auto current = this->get_register(mapping.name);
-
-            switch (mapping.kind)
+            mmio_region* find_mmio_region(const uint64_t address)
             {
-            case register_kind::reg64:
-                std::memcpy(&current.Reg64, value, (std::min)(size, sizeof(current.Reg64)));
-                break;
-            case register_kind::segment:
-                if (static_cast<x86_register>(reg) == x86_register::fs_base || static_cast<x86_register>(reg) == x86_register::gs_base)
+                for (auto& [base, region] : this->mmio_regions_)
                 {
-                    std::memcpy(&current.Segment.Base, value, (std::min)(size, sizeof(current.Segment.Base)));
-                }
-                else
-                {
-                    std::memcpy(&current.Segment.Selector, value, (std::min)(size, sizeof(current.Segment.Selector)));
-                }
-                break;
-            case register_kind::table:
-                std::memcpy(&current.Table, value, (std::min)(size, sizeof(current.Table)));
-                break;
-            case register_kind::fp:
-                std::memcpy(&current.Fp.AsUINT128, value, (std::min)(size, sizeof(current.Fp.AsUINT128)));
-                break;
-            case register_kind::fp_control:
-                if (static_cast<x86_register>(reg) == x86_register::fpcw)
-                {
-                    std::memcpy(&current.FpControlStatus.FpControl, value, (std::min)(size, sizeof(current.FpControlStatus.FpControl)));
-                }
-                else if (static_cast<x86_register>(reg) == x86_register::fpsw)
-                {
-                    std::memcpy(&current.FpControlStatus.FpStatus, value, (std::min)(size, sizeof(current.FpControlStatus.FpStatus)));
-                }
-                else
-                {
-                    uint16_t fp_tag{};
-                    std::memcpy(&fp_tag, value, (std::min)(size, sizeof(fp_tag)));
-                    current.FpControlStatus.FpTag = static_cast<UINT8>(fp_tag);
-                }
-                break;
-            case register_kind::xmm_control:
-                std::memcpy(&current.XmmControlStatus.XmmStatusControl, value,
-                            (std::min)(size, sizeof(current.XmmControlStatus.XmmStatusControl)));
-                current.XmmControlStatus.XmmStatusControlMask = 0xFFFFFFFF;
-                break;
-            case register_kind::reg128:
-                std::memcpy(&current.Reg128, value, (std::min)(size, sizeof(current.Reg128)));
-                break;
-            }
-
-            this->set_register(mapping.name, current);
-            return size;
-        }
-
-        size_t whp_x86_64_emulator::read_raw_register(const int reg, void* value, const size_t size)
-        {
-            const auto mapping = map_register(static_cast<x86_register>(reg));
-            const auto current = this->get_register(mapping.name);
-
-            switch (mapping.kind)
-            {
-            case register_kind::reg64:
-                std::memcpy(value, &current.Reg64, (std::min)(size, sizeof(current.Reg64)));
-                break;
-            case register_kind::segment:
-                if (static_cast<x86_register>(reg) == x86_register::fs_base || static_cast<x86_register>(reg) == x86_register::gs_base)
-                {
-                    std::memcpy(value, &current.Segment.Base, (std::min)(size, sizeof(current.Segment.Base)));
-                }
-                else
-                {
-                    std::memcpy(value, &current.Segment.Selector, (std::min)(size, sizeof(current.Segment.Selector)));
-                }
-                break;
-            case register_kind::table:
-                std::memcpy(value, &current.Table, (std::min)(size, sizeof(current.Table)));
-                break;
-            case register_kind::fp:
-                std::memcpy(value, &current.Fp.AsUINT128, (std::min)(size, sizeof(current.Fp.AsUINT128)));
-                break;
-            case register_kind::fp_control:
-                if (static_cast<x86_register>(reg) == x86_register::fpcw)
-                {
-                    std::memcpy(value, &current.FpControlStatus.FpControl, (std::min)(size, sizeof(current.FpControlStatus.FpControl)));
-                }
-                else if (static_cast<x86_register>(reg) == x86_register::fpsw)
-                {
-                    std::memcpy(value, &current.FpControlStatus.FpStatus, (std::min)(size, sizeof(current.FpControlStatus.FpStatus)));
-                }
-                else
-                {
-                    uint16_t fp_tag = current.FpControlStatus.FpTag;
-                    std::memcpy(value, &fp_tag, (std::min)(size, sizeof(fp_tag)));
-                }
-                break;
-            case register_kind::xmm_control:
-                std::memcpy(value, &current.XmmControlStatus.XmmStatusControl,
-                            (std::min)(size, sizeof(current.XmmControlStatus.XmmStatusControl)));
-                break;
-            case register_kind::reg128:
-                std::memcpy(value, &current.Reg128, (std::min)(size, sizeof(current.Reg128)));
-                break;
-            }
-
-            return size;
-        }
-
-        bool whp_x86_64_emulator::read_descriptor_table(const int reg, descriptor_table_register& table)
-        {
-            if (reg != static_cast<int>(x86_register::gdtr) && reg != static_cast<int>(x86_register::idtr))
-            {
-                return false;
-            }
-
-            const auto mapping = map_register(static_cast<x86_register>(reg));
-            const auto value = this->get_register(mapping.name).Table;
-            table.base = value.Base;
-            table.limit = value.Limit;
-            return true;
-        }
-
-        emulator_hook* whp_x86_64_emulator::hook_instruction(const int instruction_type, instruction_hook_callback callback)
-        {
-            auto* hook = this->make_hook();
-            auto& entry = this->instruction_hooks_[hook];
-            entry.type = static_cast<x86_hookable_instructions>(instruction_type);
-            entry.callback = std::move(callback);
-
-            if (entry.type == x86_hookable_instructions::syscall)
-            {
-                this->syscall_hook_ = &entry;
-            }
-
-            return hook;
-        }
-
-        emulator_hook* whp_x86_64_emulator::hook_basic_block(basic_block_hook_callback callback)
-        {
-            auto* hook = this->make_hook();
-            this->basic_block_hooks_[hook] = std::move(callback);
-            return hook;
-        }
-
-        emulator_hook* whp_x86_64_emulator::hook_interrupt(interrupt_hook_callback callback)
-        {
-            auto* hook = this->make_hook();
-            this->interrupt_hooks_[hook] = std::move(callback);
-            return hook;
-        }
-
-        emulator_hook* whp_x86_64_emulator::hook_memory_violation(memory_violation_hook_callback callback)
-        {
-            auto* hook = this->make_hook();
-            this->memory_violation_hooks_[hook] = std::move(callback);
-            return hook;
-        }
-
-        emulator_hook* whp_x86_64_emulator::hook_memory_execution(memory_execution_hook_callback callback)
-        {
-            auto* hook = this->make_hook();
-            this->memory_execution_hooks_[hook] = execution_hook_entry{.address = std::nullopt, .callback = std::move(callback)};
-            return hook;
-        }
-
-        emulator_hook* whp_x86_64_emulator::hook_memory_execution(const uint64_t address, memory_execution_hook_callback callback)
-        {
-            auto* hook = this->make_hook();
-            this->memory_execution_hooks_[hook] = execution_hook_entry{.address = address, .callback = std::move(callback)};
-            return hook;
-        }
-
-        emulator_hook* whp_x86_64_emulator::hook_memory_read(const uint64_t address, const uint64_t size,
-                                                             memory_access_hook_callback callback)
-        {
-            auto* hook = this->make_hook();
-            this->memory_read_hooks_[hook] = memory_access_hook_entry{.address = address, .size = size, .callback = std::move(callback)};
-            return hook;
-        }
-
-        emulator_hook* whp_x86_64_emulator::hook_memory_write(const uint64_t address, const uint64_t size,
-                                                              memory_access_hook_callback callback)
-        {
-            auto* hook = this->make_hook();
-            this->memory_write_hooks_[hook] = memory_access_hook_entry{.address = address, .size = size, .callback = std::move(callback)};
-            return hook;
-        }
-
-        void whp_x86_64_emulator::delete_hook(emulator_hook* hook)
-        {
-            this->instruction_hooks_.erase(hook);
-            this->basic_block_hooks_.erase(hook);
-            this->interrupt_hooks_.erase(hook);
-            this->memory_violation_hooks_.erase(hook);
-            this->memory_execution_hooks_.erase(hook);
-            this->memory_read_hooks_.erase(hook);
-            this->memory_write_hooks_.erase(hook);
-        }
-
-        void whp_x86_64_emulator::serialize_state(utils::buffer_serializer& buffer, const bool) const
-        {
-            buffer.write_vector(this->save_registers());
-        }
-
-        void whp_x86_64_emulator::deserialize_state(utils::buffer_deserializer& buffer, const bool)
-        {
-            this->restore_registers(buffer.read_vector<std::byte>());
-        }
-
-        std::vector<std::byte> whp_x86_64_emulator::save_registers() const
-        {
-            auto names = snapshot_register_names();
-            std::vector<WHV_REGISTER_VALUE> values(names.size());
-            WHP_CHECK_HR(WHvGetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()),
-                                                         values.data()));
-
-            std::vector<std::byte> bytes(sizeof(WHV_REGISTER_VALUE) * values.size());
-            std::memcpy(bytes.data(), values.data(), bytes.size());
-            return bytes;
-        }
-
-        void whp_x86_64_emulator::restore_registers(const std::vector<std::byte>& register_data)
-        {
-            auto names = snapshot_register_names();
-            const auto expected_size = sizeof(WHV_REGISTER_VALUE) * names.size();
-            if (register_data.size() != expected_size)
-            {
-                throw std::runtime_error("Unexpected WHP register snapshot size");
-            }
-
-            std::vector<WHV_REGISTER_VALUE> values(names.size());
-            std::memcpy(values.data(), register_data.data(), register_data.size());
-
-            WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()),
-                                                         values.data()));
-        }
-
-        bool whp_x86_64_emulator::has_violation() const
-        {
-            return false;
-        }
-
-        std::string whp_x86_64_emulator::get_name() const
-        {
-            return "Windows Hypervisor Platform";
-        }
-
-        void whp_x86_64_emulator::ensure_platform_support()
-        {
-            BOOL hypervisor_present = FALSE;
-            UINT32 bytes_written = 0;
-
-            WHP_CHECK_HR(
-                WHvGetCapability(WHvCapabilityCodeHypervisorPresent, &hypervisor_present, sizeof(hypervisor_present), &bytes_written));
-
-            if (!hypervisor_present)
-            {
-                throw std::runtime_error("Hypervisor is not present. Enable Hyper-V and Windows Hypervisor Platform.");
-            }
-
-            WHP_CHECK_HR(WHvGetCapability(WHvCapabilityCodeExtendedVmExits, &this->supported_exits_, sizeof(this->supported_exits_),
-                                          &bytes_written));
-        }
-
-        void whp_x86_64_emulator::configure_partition()
-        {
-            UINT32 processor_count = 1;
-            WHP_CHECK_HR(WHvSetPartitionProperty(this->partition_, WHvPartitionPropertyCodeProcessorCount, &processor_count,
-                                                 sizeof(processor_count)));
-
-            WHV_EXTENDED_VM_EXITS enabled_exits{};
-            enabled_exits.ExceptionExit = this->supported_exits_.ExceptionExit ? 1 : 0;
-            enabled_exits.X64CpuidExit = this->supported_exits_.X64CpuidExit ? 1 : 0;
-            enabled_exits.X64RdtscExit = this->supported_exits_.X64RdtscExit ? 1 : 0;
-
-            WHP_CHECK_HR(
-                WHvSetPartitionProperty(this->partition_, WHvPartitionPropertyCodeExtendedVmExits, &enabled_exits, sizeof(enabled_exits)));
-
-            WHP_CHECK_HR(WHvSetupPartition(this->partition_));
-        }
-
-        void whp_x86_64_emulator::initialize_virtual_processor_state()
-        {
-            const std::array<WHV_REGISTER_NAME, 16> names = {
-                WHvX64RegisterCs,
-                WHvX64RegisterSs,
-                WHvX64RegisterDs,
-                WHvX64RegisterEs,
-                WHvX64RegisterFs,
-                WHvX64RegisterGs,
-                WHvX64RegisterCr0,
-                WHvX64RegisterCr4,
-                WHvX64RegisterCr3,
-                WHvX64RegisterEfer,
-                WHvX64RegisterRflags,
-                WHvX64RegisterStar,
-                WHvX64RegisterSfmask,
-                WHvX64RegisterXCr0,
-                WHvX64RegisterFpControlStatus,
-                WHvX64RegisterXmmControlStatus,
-            };
-
-            std::array<WHV_REGISTER_VALUE, names.size()> values{};
-            values[0].Segment = make_segment(0x33, true);
-            values[1].Segment = make_segment(0x2B, false);
-            values[2].Segment = make_segment(0x2B, false);
-            values[3].Segment = make_segment(0x2B, false);
-            values[4].Segment = make_segment(0x53, false);
-            values[5].Segment = make_segment(0x2B, false);
-            values[6].Reg64 = 0x80000033ull;
-            values[7].Reg64 = 0x620ull;
-            values[8].Reg64 = this->pml4_gpa_;
-            values[9].Reg64 = (1ull << 0) | (1ull << 8) | (1ull << 10);
-            values[10].Reg64 = 0x2ull;
-            values[11].Reg64 = (0x23ull << 48) | (0x08ull << 32);
-            values[12].Reg64 = 0;
-            values[13].Reg64 = 0x3ull;
-            values[14].FpControlStatus.FpControl = 0x037Full;
-            values[14].FpControlStatus.FpStatus = 0;
-            values[14].FpControlStatus.FpTag = 0xFF;
-            values[15].XmmControlStatus.XmmStatusControl = 0x1F80u;
-            values[15].XmmControlStatus.XmmStatusControlMask = 0xFFFFFFFFu;
-
-            WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()),
-                                                         values.data()));
-        }
-
-        void whp_x86_64_emulator::initialize_syscall_intercept_page()
-        {
-            this->syscall_hook_page_ = this->allocate_internal_page(true);
-            auto* code = static_cast<uint8_t*>(this->mapped_pages_.at(this->syscall_hook_page_)->host_page);
-            code[0] = 0xF4;
-
-            WHV_REGISTER_VALUE lstar{};
-            lstar.Reg64 = this->syscall_hook_page_;
-            this->set_register(WHvX64RegisterLstar, lstar);
-        }
-
-        bool whp_x86_64_emulator::handle_syscall_halt()
-        {
-            if (!this->syscall_hook_)
-            {
-                return false;
-            }
-
-            const auto post_syscall_rcx = this->get_register(WHvX64RegisterRcx).Reg64;
-            const auto post_syscall_r10 = this->get_register(WHvX64RegisterR10).Reg64;
-            const auto saved_rflags = this->get_register(WHvX64RegisterR11).Reg64;
-
-            auto rip = this->get_register(WHvX64RegisterRip);
-            auto rcx = this->get_register(WHvX64RegisterRcx);
-            auto rflags = this->get_register(WHvX64RegisterRflags);
-            auto cs = this->get_register(WHvX64RegisterCs);
-            auto ss = this->get_register(WHvX64RegisterSs);
-
-            const auto pre_syscall_rip = post_syscall_rcx - 2;
-
-            rip.Reg64 = pre_syscall_rip;
-            rcx.Reg64 = post_syscall_r10;
-            rflags.Reg64 = saved_rflags;
-            cs.Segment = make_segment(0x33, true);
-            ss.Segment = make_segment(0x2B, false);
-
-            this->set_register(WHvX64RegisterRip, rip);
-            this->set_register(WHvX64RegisterRcx, rcx);
-            this->set_register(WHvX64RegisterRflags, rflags);
-            this->set_register(WHvX64RegisterCs, cs);
-            this->set_register(WHvX64RegisterSs, ss);
-
-            const auto continuation = this->syscall_hook_->callback(0);
-
-            auto new_rip = this->get_register(WHvX64RegisterRip);
-            if (continuation == instruction_hook_continuation::skip_instruction && new_rip.Reg64 == pre_syscall_rip)
-            {
-                new_rip.Reg64 = post_syscall_rcx;
-                this->set_register(WHvX64RegisterRip, new_rip);
-            }
-
-            cs.Segment = make_segment(0x33, true);
-            ss.Segment = make_segment(0x2B, false);
-            this->set_register(WHvX64RegisterCs, cs);
-            this->set_register(WHvX64RegisterSs, ss);
-
-            return true;
-        }
-
-        void whp_x86_64_emulator::initialize_long_mode_page_tables()
-        {
-            this->pml4_gpa_ = this->allocate_internal_page(false, false);
-        }
-
-        uint64_t whp_x86_64_emulator::allocate_internal_page(const bool executable, const bool map_into_guest)
-        {
-            auto* raw_page = static_cast<uint8_t*>(::VirtualAlloc(nullptr, page_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-            if (raw_page == nullptr)
-            {
-                throw std::runtime_error("VirtualAlloc failed while creating an internal page");
-            }
-
-            std::memset(raw_page, 0, page_size);
-
-            const auto page_gpa = this->next_internal_gpa_;
-            this->next_internal_gpa_ += page_size;
-
-            auto page = std::make_unique<mapped_page>();
-            page->owned_page.reset(raw_page);
-            page->host_page = raw_page;
-            page->permissions = executable ? memory_permission::all : memory_permission::read_write;
-
-            this->mapped_pages_[page_gpa] = std::move(page);
-            this->remap_page(page_gpa, *this->mapped_pages_[page_gpa]);
-            this->page_table_views_[page_gpa] = reinterpret_cast<uint64_t*>(raw_page);
-
-            if (map_into_guest)
-            {
-                this->ensure_virtual_mapping(page_gpa);
-            }
-
-            return page_gpa;
-        }
-
-        void whp_x86_64_emulator::remap_page(const uint64_t guest_address, mapped_page& page)
-        {
-            if (page.map_flags != 0)
-            {
-                WHP_CHECK_HR(WHvUnmapGpaRange(this->partition_, guest_address, page_size));
-            }
-
-            page.map_flags = to_whp_map_flags(page.permissions);
-            if (page.map_flags == 0)
-            {
-                return;
-            }
-
-            WHP_CHECK_HR(WHvMapGpaRange(this->partition_, page.host_page, guest_address, page_size,
-                                        static_cast<WHV_MAP_GPA_RANGE_FLAGS>(page.map_flags)));
-        }
-
-        whp_x86_64_emulator::mmio_region* whp_x86_64_emulator::find_mmio_region(const uint64_t address)
-        {
-            for (auto& [base, region] : this->mmio_regions_)
-            {
-                if (address >= base && address < base + region.size)
-                {
-                    return &region;
-                }
-            }
-
-            return nullptr;
-        }
-
-        const whp_x86_64_emulator::mmio_region* whp_x86_64_emulator::find_mmio_region(const uint64_t address) const
-        {
-            for (const auto& [base, region] : this->mmio_regions_)
-            {
-                if (address >= base && address < base + region.size)
-                {
-                    return &region;
-                }
-            }
-
-            return nullptr;
-        }
-
-        void whp_x86_64_emulator::refresh_mmio_page(const mmio_region& region, const uint64_t page_base)
-        {
-            auto entry = this->mapped_pages_.find(page_base);
-            if (entry == this->mapped_pages_.end() || !entry->second || entry->second->host_page == nullptr)
-            {
-                throw std::runtime_error("MMIO page backing is missing");
-            }
-
-            auto* page = static_cast<std::byte*>(entry->second->host_page);
-            std::memset(page, 0, page_size);
-
-            const auto region_offset = static_cast<size_t>(page_base - region.address);
-            const auto bytes_to_read = (std::min)(static_cast<size_t>(page_size), region.size - region_offset);
-            region.read_cb(region_offset, page, bytes_to_read);
-        }
-
-        void whp_x86_64_emulator::flush_mmio_write(const mmio_region& region, const uint64_t page_base,
-                                                   const std::vector<std::byte>& old_page)
-        {
-            auto entry = this->mapped_pages_.find(page_base);
-            if (entry == this->mapped_pages_.end() || !entry->second || entry->second->host_page == nullptr)
-            {
-                throw std::runtime_error("MMIO page backing is missing");
-            }
-
-            const auto* current_page = static_cast<const std::byte*>(entry->second->host_page);
-            const auto region_offset = static_cast<size_t>(page_base - region.address);
-            const auto bytes_in_region = (std::min)(static_cast<size_t>(page_size), region.size - region_offset);
-
-            size_t index = 0;
-            while (index < bytes_in_region)
-            {
-                if (old_page[index] == current_page[index])
-                {
-                    ++index;
-                    continue;
+                    if (address >= base && address < base + region.size)
+                    {
+                        return &region;
+                    }
                 }
 
-                const auto start = index;
-                while (index < bytes_in_region && old_page[index] != current_page[index])
+                return nullptr;
+            }
+
+            const mmio_region* find_mmio_region(const uint64_t address) const
+            {
+                for (const auto& [base, region] : this->mmio_regions_)
                 {
-                    ++index;
+                    if (address >= base && address < base + region.size)
+                    {
+                        return &region;
+                    }
                 }
 
-                region.write_cb(region_offset + start, current_page + start, index - start);
-            }
-        }
-
-        bool whp_x86_64_emulator::arm_mmio_single_step(const uint64_t page_base, const bool is_write)
-        {
-            if (this->pending_mmio_step_.has_value())
-            {
-                return false;
+                return nullptr;
             }
 
-            auto rflags = this->get_register(WHvX64RegisterRflags);
-            const auto original_rflags = rflags.Reg64;
-
-            pending_mmio_step state{};
-            state.page_base = page_base;
-            state.original_rflags = original_rflags;
-            state.had_trap_flag = (original_rflags & 0x100) != 0;
-            state.allow_debug_delivery = state.had_trap_flag;
-            state.is_write = is_write;
-
-            if (is_write)
+            void refresh_mmio_page(const mmio_region& region, const uint64_t page_base)
             {
                 auto entry = this->mapped_pages_.find(page_base);
                 if (entry == this->mapped_pages_.end() || !entry->second || entry->second->host_page == nullptr)
@@ -1454,235 +1325,208 @@ namespace whp
                     throw std::runtime_error("MMIO page backing is missing");
                 }
 
-                state.old_page.resize(page_size);
-                std::memcpy(state.old_page.data(), entry->second->host_page, page_size);
+                auto* page = static_cast<std::byte*>(entry->second->host_page);
+                std::memset(page, 0, page_size);
+
+                const auto region_offset = static_cast<size_t>(page_base - region.address);
+                const auto bytes_to_read = (std::min)(static_cast<size_t>(page_size), region.size - region_offset);
+                region.read_cb(region_offset, page, bytes_to_read);
             }
 
-            rflags.Reg64 = original_rflags | 0x100;
-            this->set_register(WHvX64RegisterRflags, rflags);
-            this->pending_mmio_step_ = std::move(state);
-            return true;
-        }
-
-        bool whp_x86_64_emulator::complete_pending_mmio_step()
-        {
-            if (!this->pending_mmio_step_.has_value())
+            void flush_mmio_write(const mmio_region& region, const uint64_t page_base, const std::vector<std::byte>& old_page)
             {
-                return false;
-            }
-
-            const auto state = std::move(*this->pending_mmio_step_);
-            this->pending_mmio_step_.reset();
-
-            const auto entry = this->mapped_pages_.find(state.page_base);
-            if (entry == this->mapped_pages_.end() || !entry->second)
-            {
-                throw std::runtime_error("MMIO page backing is missing");
-            }
-
-            if (state.is_write)
-            {
-                if (const auto* region = this->find_mmio_region(state.page_base))
-                {
-                    this->flush_mmio_write(*region, state.page_base, state.old_page);
-                }
-            }
-
-            entry->second->permissions = memory_permission::none;
-            this->remap_page(state.page_base, *entry->second);
-
-            WHV_REGISTER_VALUE rflags{};
-            rflags.Reg64 = state.original_rflags;
-            this->set_register(WHvX64RegisterRflags, rflags);
-
-            return !state.allow_debug_delivery;
-        }
-
-        uint64_t* whp_x86_64_emulator::get_page_table_entries(const uint64_t page_gpa)
-        {
-            return this->page_table_views_.at(page_gpa);
-        }
-
-        uint64_t whp_x86_64_emulator::ensure_child_table(const uint64_t table_gpa, const size_t index)
-        {
-            auto* const table_entries = this->get_page_table_entries(table_gpa);
-            auto& entry = table_entries[index];
-
-            if ((entry & page_table_entry_present) == 0)
-            {
-                const auto child_gpa = this->allocate_internal_page(false, false);
-                entry = child_gpa | page_table_entry_present | page_table_entry_writable | page_table_entry_user;
-                return child_gpa;
-            }
-
-            return entry & page_table_entry_address_mask;
-        }
-
-        void whp_x86_64_emulator::ensure_virtual_mapping(const uint64_t guest_address)
-        {
-            const auto page_base = align_down_to_page(guest_address);
-            const auto pml4_index = static_cast<size_t>((page_base >> 39) & 0x1FF);
-            const auto pdpt_index = static_cast<size_t>((page_base >> 30) & 0x1FF);
-            const auto pd_index = static_cast<size_t>((page_base >> 21) & 0x1FF);
-            const auto pt_index = static_cast<size_t>((page_base >> 12) & 0x1FF);
-
-            const auto pdpt_gpa = this->ensure_child_table(this->pml4_gpa_, pml4_index);
-            const auto pd_gpa = this->ensure_child_table(pdpt_gpa, pdpt_index);
-            const auto pt_gpa = this->ensure_child_table(pd_gpa, pd_index);
-
-            auto* const pt_entries = this->get_page_table_entries(pt_gpa);
-            pt_entries[pt_index] = page_base | page_table_entry_present | page_table_entry_writable | page_table_entry_user;
-        }
-
-        bool whp_x86_64_emulator::access_memory(const uint64_t address, void* data, size_t size, const bool is_write) const
-        {
-            auto current_address = address;
-            auto* cursor = static_cast<std::byte*>(data);
-
-            while (size > 0)
-            {
-                const auto page_base = align_down_to_page(current_address);
-                const auto entry = this->mapped_pages_.find(page_base);
+                auto entry = this->mapped_pages_.find(page_base);
                 if (entry == this->mapped_pages_.end() || !entry->second || entry->second->host_page == nullptr)
-                {
-                    return false;
-                }
-
-                const auto offset = static_cast<size_t>(current_address - page_base);
-                const auto chunk = (std::min)(size, static_cast<size_t>(page_size - offset));
-                auto* page_ptr = static_cast<std::byte*>(entry->second->host_page) + offset;
-
-                if (is_write)
-                {
-                    std::memcpy(page_ptr, cursor, chunk);
-                }
-                else
-                {
-                    std::memcpy(cursor, page_ptr, chunk);
-                }
-
-                current_address += chunk;
-                cursor += chunk;
-                size -= chunk;
-            }
-
-            return true;
-        }
-
-        WHV_REGISTER_VALUE whp_x86_64_emulator::get_register(const WHV_REGISTER_NAME name) const
-        {
-            WHV_REGISTER_VALUE value{};
-            WHP_CHECK_HR(WHvGetVirtualProcessorRegisters(this->partition_, vp_index, &name, 1, &value));
-            return value;
-        }
-
-        void whp_x86_64_emulator::set_register(const WHV_REGISTER_NAME name, const WHV_REGISTER_VALUE& value)
-        {
-            WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, vp_index, &name, 1, &value));
-        }
-
-        emulator_hook* whp_x86_64_emulator::make_hook()
-        {
-            return reinterpret_cast<emulator_hook*>(this->next_hook_id_++);
-        }
-
-        bool whp_x86_64_emulator::handle_instruction_exit(const x86_hookable_instructions type, const uint64_t instruction_size)
-        {
-            bool handled = false;
-            for (auto& [_, hook] : this->instruction_hooks_)
-            {
-                if (hook.type != type)
-                {
-                    continue;
-                }
-
-                handled = true;
-                if (hook.callback(0) == instruction_hook_continuation::skip_instruction)
-                {
-                    this->advance_rip(instruction_size);
-                }
-            }
-
-            return handled;
-        }
-
-        bool whp_x86_64_emulator::handle_memory_access(const WHV_MEMORY_ACCESS_CONTEXT& memory_access)
-        {
-            const auto mmio_address = memory_access.AccessInfo.GvaValid ? memory_access.Gva : memory_access.Gpa;
-            if (auto* region = this->find_mmio_region(mmio_address))
-            {
-                const auto page_base = align_down_to_page(mmio_address);
-                const auto operation = map_memory_operation(static_cast<WHV_MEMORY_ACCESS_TYPE>(memory_access.AccessInfo.AccessType));
-                const auto is_write = operation == memory_operation::write;
-
-                this->refresh_mmio_page(*region, page_base);
-
-                auto page_it = this->mapped_pages_.find(page_base);
-                if (page_it == this->mapped_pages_.end())
                 {
                     throw std::runtime_error("MMIO page backing is missing");
                 }
 
-                page_it->second->permissions = is_write ? memory_permission::read_write : memory_permission::read;
-                this->remap_page(page_base, *page_it->second);
+                const auto* current_page = static_cast<const std::byte*>(entry->second->host_page);
+                const auto region_offset = static_cast<size_t>(page_base - region.address);
+                const auto bytes_in_region = (std::min)(static_cast<size_t>(page_size), region.size - region_offset);
 
-                if (is_write && !this->arm_mmio_single_step(page_base, true))
+                size_t index = 0;
+                while (index < bytes_in_region)
                 {
-                    throw std::runtime_error("Nested WHP MMIO single-step state is not supported");
+                    if (old_page[index] == current_page[index])
+                    {
+                        ++index;
+                        continue;
+                    }
+
+                    const auto start = index;
+                    while (index < bytes_in_region && old_page[index] != current_page[index])
+                    {
+                        ++index;
+                    }
+
+                    region.write_cb(region_offset + start, current_page + start, index - start);
+                }
+            }
+
+            bool arm_mmio_single_step(const uint64_t page_base, const bool is_write)
+            {
+                if (this->pending_mmio_step_.has_value())
+                {
+                    return false;
+                }
+
+                auto rflags = this->get_register(WHvX64RegisterRflags);
+                const auto original_rflags = rflags.Reg64;
+
+                pending_mmio_step state{};
+                state.page_base = page_base;
+                state.original_rflags = original_rflags;
+                state.had_trap_flag = (original_rflags & 0x100) != 0;
+                state.allow_debug_delivery = state.had_trap_flag;
+                state.is_write = is_write;
+
+                if (is_write)
+                {
+                    auto entry = this->mapped_pages_.find(page_base);
+                    if (entry == this->mapped_pages_.end() || !entry->second || entry->second->host_page == nullptr)
+                    {
+                        throw std::runtime_error("MMIO page backing is missing");
+                    }
+
+                    state.old_page.resize(page_size);
+                    std::memcpy(state.old_page.data(), entry->second->host_page, page_size);
+                }
+
+                rflags.Reg64 = original_rflags | 0x100;
+                this->set_register(WHvX64RegisterRflags, rflags);
+                this->pending_mmio_step_ = std::move(state);
+                return true;
+            }
+
+            bool complete_pending_mmio_step()
+            {
+                if (!this->pending_mmio_step_.has_value())
+                {
+                    return false;
+                }
+
+                const auto state = std::move(*this->pending_mmio_step_);
+                this->pending_mmio_step_.reset();
+
+                const auto entry = this->mapped_pages_.find(state.page_base);
+                if (entry == this->mapped_pages_.end() || !entry->second)
+                {
+                    throw std::runtime_error("MMIO page backing is missing");
+                }
+
+                if (state.is_write)
+                {
+                    if (const auto* region = this->find_mmio_region(state.page_base))
+                    {
+                        this->flush_mmio_write(*region, state.page_base, state.old_page);
+                    }
+                }
+
+                entry->second->permissions = memory_permission::none;
+                this->remap_page(state.page_base, *entry->second);
+
+                WHV_REGISTER_VALUE rflags{};
+                rflags.Reg64 = state.original_rflags;
+                this->set_register(WHvX64RegisterRflags, rflags);
+
+                return !state.allow_debug_delivery;
+            }
+
+            uint64_t* get_page_table_entries(const uint64_t page_gpa)
+            {
+                return this->page_table_views_.at(page_gpa);
+            }
+
+            uint64_t ensure_child_table(const uint64_t table_gpa, const size_t index)
+            {
+                auto* const table_entries = this->get_page_table_entries(table_gpa);
+                auto& entry = table_entries[index];
+
+                if ((entry & page_table_entry_present) == 0)
+                {
+                    const auto child_gpa = this->allocate_internal_page(false, false);
+                    entry = child_gpa | page_table_entry_present | page_table_entry_writable | page_table_entry_user;
+                    return child_gpa;
+                }
+
+                return entry & page_table_entry_address_mask;
+            }
+
+            void ensure_virtual_mapping(const uint64_t guest_address)
+            {
+                const auto page_base = align_down_to_page(guest_address);
+                const auto pml4_index = static_cast<size_t>((page_base >> 39) & 0x1FF);
+                const auto pdpt_index = static_cast<size_t>((page_base >> 30) & 0x1FF);
+                const auto pd_index = static_cast<size_t>((page_base >> 21) & 0x1FF);
+                const auto pt_index = static_cast<size_t>((page_base >> 12) & 0x1FF);
+
+                const auto pdpt_gpa = this->ensure_child_table(this->pml4_gpa_, pml4_index);
+                const auto pd_gpa = this->ensure_child_table(pdpt_gpa, pdpt_index);
+                const auto pt_gpa = this->ensure_child_table(pd_gpa, pd_index);
+
+                auto* const pt_entries = this->get_page_table_entries(pt_gpa);
+                pt_entries[pt_index] = page_base | page_table_entry_present | page_table_entry_writable | page_table_entry_user;
+            }
+
+            bool access_memory(const uint64_t address, void* data, size_t size, const bool is_write) const
+            {
+                auto current_address = address;
+                auto* cursor = static_cast<std::byte*>(data);
+
+                while (size > 0)
+                {
+                    const auto page_base = align_down_to_page(current_address);
+                    const auto entry = this->mapped_pages_.find(page_base);
+                    if (entry == this->mapped_pages_.end() || !entry->second || entry->second->host_page == nullptr)
+                    {
+                        return false;
+                    }
+
+                    const auto offset = static_cast<size_t>(current_address - page_base);
+                    const auto chunk = (std::min)(size, static_cast<size_t>(page_size - offset));
+                    auto* page_ptr = static_cast<std::byte*>(entry->second->host_page) + offset;
+
+                    if (is_write)
+                    {
+                        std::memcpy(page_ptr, cursor, chunk);
+                    }
+                    else
+                    {
+                        std::memcpy(cursor, page_ptr, chunk);
+                    }
+
+                    current_address += chunk;
+                    cursor += chunk;
+                    size -= chunk;
                 }
 
                 return true;
             }
 
-            if (this->memory_violation_hooks_.empty())
+            WHV_REGISTER_VALUE get_register(const WHV_REGISTER_NAME name) const
             {
-                throw std::runtime_error("Unhandled WHP memory access violation");
+                WHV_REGISTER_VALUE value{};
+                WHP_CHECK_HR(WHvGetVirtualProcessorRegisters(this->partition_, vp_index, &name, 1, &value));
+                return value;
             }
 
-            const auto operation = map_memory_operation(static_cast<WHV_MEMORY_ACCESS_TYPE>(memory_access.AccessInfo.AccessType));
-            const auto type = memory_access.AccessInfo.GpaUnmapped ? memory_violation_type::unmapped : memory_violation_type::protection;
-
-            for (auto& [_, hook] : this->memory_violation_hooks_)
+            void set_register(const WHV_REGISTER_NAME name, const WHV_REGISTER_VALUE& value)
             {
-                const auto result = hook(memory_access.Gva, 1, operation, type);
-                if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
-                {
-                    return true;
-                }
+                WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, vp_index, &name, 1, &value));
             }
 
-            return false;
-        }
-
-        bool whp_x86_64_emulator::handle_exception(const WHV_RUN_VP_EXIT_CONTEXT& exit_context)
-        {
-            const auto& exception = exit_context.VpException;
-
-            if (exception.ExceptionType == WHvX64ExceptionTypeDebugTrapOrFault && this->pending_mmio_step_.has_value())
+            emulator_hook* make_hook()
             {
-                const auto swallow = this->complete_pending_mmio_step();
-                if (swallow)
-                {
-                    return true;
-                }
+                return reinterpret_cast<emulator_hook*>(this->next_hook_id_++);
             }
 
-            if (exception.ExceptionType == WHvX64ExceptionTypeBreakpointTrap && this->syscall_hook_ != nullptr)
-            {
-                const auto rip = exit_context.VpContext.Rip;
-                if (rip == this->syscall_hook_page_ || rip == (this->syscall_hook_page_ + 1))
-                {
-                    return this->handle_syscall_halt();
-                }
-            }
-
-            if (exception.ExceptionType == WHvX64ExceptionTypeInvalidOpcodeFault)
+            bool handle_instruction_exit(const x86_hookable_instructions type, const uint64_t instruction_size)
             {
                 bool handled = false;
-
                 for (auto& [_, hook] : this->instruction_hooks_)
                 {
-                    if (hook.type != x86_hookable_instructions::invalid)
+                    if (hook.type != type)
                     {
                         continue;
                     }
@@ -1690,32 +1534,124 @@ namespace whp
                     handled = true;
                     if (hook.callback(0) == instruction_hook_continuation::skip_instruction)
                     {
-                        this->advance_rip(exception.InstructionByteCount);
+                        this->advance_rip(instruction_size);
                     }
                 }
 
-                if (handled)
+                return handled;
+            }
+
+            bool handle_memory_access(const WHV_MEMORY_ACCESS_CONTEXT& memory_access)
+            {
+                const auto mmio_address = memory_access.AccessInfo.GvaValid ? memory_access.Gva : memory_access.Gpa;
+                if (auto* region = this->find_mmio_region(mmio_address))
                 {
+                    const auto page_base = align_down_to_page(mmio_address);
+                    const auto operation = map_memory_operation(static_cast<WHV_MEMORY_ACCESS_TYPE>(memory_access.AccessInfo.AccessType));
+                    const auto is_write = operation == memory_operation::write;
+
+                    this->refresh_mmio_page(*region, page_base);
+
+                    auto page_it = this->mapped_pages_.find(page_base);
+                    if (page_it == this->mapped_pages_.end())
+                    {
+                        throw std::runtime_error("MMIO page backing is missing");
+                    }
+
+                    page_it->second->permissions = is_write ? memory_permission::read_write : memory_permission::read;
+                    this->remap_page(page_base, *page_it->second);
+
+                    if (is_write && !this->arm_mmio_single_step(page_base, true))
+                    {
+                        throw std::runtime_error("Nested WHP MMIO single-step state is not supported");
+                    }
+
                     return true;
                 }
+
+                if (this->memory_violation_hooks_.empty())
+                {
+                    throw std::runtime_error("Unhandled WHP memory access violation");
+                }
+
+                const auto operation = map_memory_operation(static_cast<WHV_MEMORY_ACCESS_TYPE>(memory_access.AccessInfo.AccessType));
+                const auto type =
+                    memory_access.AccessInfo.GpaUnmapped ? memory_violation_type::unmapped : memory_violation_type::protection;
+
+                for (auto& [_, hook] : this->memory_violation_hooks_)
+                {
+                    const auto result = hook(memory_access.Gva, 1, operation, type);
+                    if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
             }
 
-            for (auto& [_, hook] : this->interrupt_hooks_)
+            bool handle_exception(const WHV_RUN_VP_EXIT_CONTEXT& exit_context)
             {
-                hook(exception.ExceptionType);
-                return true;
+                const auto& exception = exit_context.VpException;
+
+                if (exception.ExceptionType == WHvX64ExceptionTypeDebugTrapOrFault && this->pending_mmio_step_.has_value())
+                {
+                    const auto swallow = this->complete_pending_mmio_step();
+                    if (swallow)
+                    {
+                        return true;
+                    }
+                }
+
+                if (exception.ExceptionType == WHvX64ExceptionTypeBreakpointTrap && this->syscall_hook_ != nullptr)
+                {
+                    const auto rip = exit_context.VpContext.Rip;
+                    if (rip == this->syscall_hook_page_ || rip == (this->syscall_hook_page_ + 1))
+                    {
+                        return this->handle_syscall_halt();
+                    }
+                }
+
+                if (exception.ExceptionType == WHvX64ExceptionTypeInvalidOpcodeFault)
+                {
+                    bool handled = false;
+
+                    for (auto& [_, hook] : this->instruction_hooks_)
+                    {
+                        if (hook.type != x86_hookable_instructions::invalid)
+                        {
+                            continue;
+                        }
+
+                        handled = true;
+                        if (hook.callback(0) == instruction_hook_continuation::skip_instruction)
+                        {
+                            this->advance_rip(exception.InstructionByteCount);
+                        }
+                    }
+
+                    if (handled)
+                    {
+                        return true;
+                    }
+                }
+
+                for (auto& [_, hook] : this->interrupt_hooks_)
+                {
+                    hook(exception.ExceptionType);
+                    return true;
+                }
+
+                return false;
             }
 
-            return false;
-        }
-
-        void whp_x86_64_emulator::advance_rip(const uint64_t amount)
-        {
-            auto rip = this->get_register(WHvX64RegisterRip);
-            rip.Reg64 += amount;
-            this->set_register(WHvX64RegisterRip, rip);
-        }
-
+            void advance_rip(const uint64_t amount)
+            {
+                auto rip = this->get_register(WHvX64RegisterRip);
+                rip.Reg64 += amount;
+                this->set_register(WHvX64RegisterRip, rip);
+            }
+        };
     }
 
     std::unique_ptr<x86_64_emulator> create_x86_64_emulator()
