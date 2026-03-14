@@ -113,6 +113,11 @@ namespace gdb_stub
         {
             return {};
         }
+
+        virtual std::string get_os_abi()
+        {
+            return {};
+        }
     };
 
     bool run_gdb_stub(const network::address& bind_address, debugging_handler& handler);
