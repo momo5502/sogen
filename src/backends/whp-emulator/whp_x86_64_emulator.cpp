@@ -519,6 +519,7 @@ namespace whp
             uint64_t pml4_gpa_ = 0;
             uint64_t next_internal_gpa_ = internal_page_table_base;
             bool stop_requested_ = false;
+            std::atomic_bool run_active_ = false;
             uint64_t syscall_hook_page_ = 0;
             size_t next_hook_id_ = 1;
 
@@ -556,7 +557,7 @@ namespace whp
             emulator_hook* make_hook();
             bool handle_instruction_exit(x86_hookable_instructions type, uint64_t instruction_size);
             bool handle_memory_access(const WHV_MEMORY_ACCESS_CONTEXT& memory_access);
-            bool handle_exception(const WHV_VP_EXCEPTION_CONTEXT& exception);
+            bool handle_exception(const WHV_RUN_VP_EXIT_CONTEXT& exit_context);
             void advance_rip(uint64_t amount);
             static std::array<WHV_REGISTER_NAME, 37> snapshot_register_names();
         };
@@ -583,14 +584,20 @@ namespace whp
             while (!this->stop_requested_)
             {
                 WHV_RUN_VP_EXIT_CONTEXT exit_context{};
-                WHP_CHECK_HR(WHvRunVirtualProcessor(this->partition_, vp_index, &exit_context, sizeof(exit_context)));
+                this->run_active_ = true;
+                const auto run_hr = WHvRunVirtualProcessor(this->partition_, vp_index, &exit_context, sizeof(exit_context));
+                this->run_active_ = false;
+                if (FAILED(run_hr))
+                {
+                    throw_hr(run_hr, "WHvRunVirtualProcessor");
+                }
 
                 switch (exit_context.ExitReason)
                 {
                 case WHvRunVpExitReasonCanceled:
                     return;
                 case WHvRunVpExitReasonX64Halt:
-                    if (this->syscall_hook_ && exit_context.VpContext.Rip == this->syscall_hook_page_)
+                    if (this->syscall_hook_ && exit_context.VpContext.Rip == (this->syscall_hook_page_ + 1))
                     {
                         if (this->handle_syscall_halt())
                         {
@@ -619,7 +626,7 @@ namespace whp
                     }
                     return;
                 case WHvRunVpExitReasonException:
-                    if (this->handle_exception(exit_context.VpException))
+                    if (this->handle_exception(exit_context))
                     {
                         continue;
                     }
@@ -649,7 +656,10 @@ namespace whp
         void whp_x86_64_emulator::stop()
         {
             this->stop_requested_ = true;
-            WHP_CHECK_HR(WHvCancelRunVirtualProcessor(this->partition_, vp_index, 0));
+            if (this->run_active_)
+            {
+                WHP_CHECK_HR(WHvCancelRunVirtualProcessor(this->partition_, vp_index, 0));
+            }
         }
 
         void whp_x86_64_emulator::load_gdt(const pointer_type address, const uint32_t limit)
@@ -1114,10 +1124,11 @@ namespace whp
 
         void whp_x86_64_emulator::initialize_virtual_processor_state()
         {
-            const std::array<WHV_REGISTER_NAME, 13> names = {
+            const std::array<WHV_REGISTER_NAME, 16> names = {
                 WHvX64RegisterCs,  WHvX64RegisterSs,  WHvX64RegisterDs,  WHvX64RegisterEs,   WHvX64RegisterFs,     WHvX64RegisterGs,
                 WHvX64RegisterCr0, WHvX64RegisterCr4, WHvX64RegisterCr3, WHvX64RegisterEfer, WHvX64RegisterRflags,
-                WHvX64RegisterStar, WHvX64RegisterSfmask,
+                WHvX64RegisterStar, WHvX64RegisterSfmask, WHvX64RegisterXCr0, WHvX64RegisterFpControlStatus,
+                WHvX64RegisterXmmControlStatus,
             };
 
             std::array<WHV_REGISTER_VALUE, names.size()> values{};
@@ -1127,13 +1138,19 @@ namespace whp
             values[3].Segment = make_segment(0x2B, false);
             values[4].Segment = make_segment(0x53, false);
             values[5].Segment = make_segment(0x2B, false);
-            values[6].Reg64 = 0x80000001ull;
-            values[7].Reg64 = 0x20ull;
+            values[6].Reg64 = 0x80000033ull;
+            values[7].Reg64 = 0x620ull;
             values[8].Reg64 = this->pml4_gpa_;
-            values[9].Reg64 = (1ull << 8) | (1ull << 10);
+            values[9].Reg64 = (1ull << 0) | (1ull << 8) | (1ull << 10);
             values[10].Reg64 = 0x2ull;
             values[11].Reg64 = (0x23ull << 48) | (0x08ull << 32);
             values[12].Reg64 = 0;
+            values[13].Reg64 = 0x3ull;
+            values[14].FpControlStatus.FpControl = 0x037Full;
+            values[14].FpControlStatus.FpStatus = 0;
+            values[14].FpControlStatus.FpTag = 0xFF;
+            values[15].XmmControlStatus.XmmStatusControl = 0x1F80u;
+            values[15].XmmControlStatus.XmmStatusControlMask = 0xFFFFFFFFu;
 
             WHP_CHECK_HR(
                 WHvSetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()), values.data()));
@@ -1548,14 +1565,25 @@ namespace whp
             return false;
         }
 
-        bool whp_x86_64_emulator::handle_exception(const WHV_VP_EXCEPTION_CONTEXT& exception)
+        bool whp_x86_64_emulator::handle_exception(const WHV_RUN_VP_EXIT_CONTEXT& exit_context)
         {
+            const auto& exception = exit_context.VpException;
+
             if (exception.ExceptionType == WHvX64ExceptionTypeDebugTrapOrFault && this->pending_mmio_step_.has_value())
             {
                 const auto swallow = this->complete_pending_mmio_step();
                 if (swallow)
                 {
                     return true;
+                }
+            }
+
+            if (exception.ExceptionType == WHvX64ExceptionTypeBreakpointTrap && this->syscall_hook_ != nullptr)
+            {
+                const auto rip = exit_context.VpContext.Rip;
+                if (rip == this->syscall_hook_page_ || rip == (this->syscall_hook_page_ + 1))
+                {
+                    return this->handle_syscall_halt();
                 }
             }
 

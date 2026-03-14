@@ -358,7 +358,7 @@ namespace
         if (!exit_status.has_value())
         {
             do_post_emulation_work(c);
-            win_emu.log.error("Emulation terminated without status!\n");
+            win_emu.log.error("Emulation terminated without status at: 0x%" PRIx64 "\n", win_emu.emu().read_instruction_pointer());
             return false;
         }
 
