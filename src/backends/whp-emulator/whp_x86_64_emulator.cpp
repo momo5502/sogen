@@ -43,14 +43,14 @@ namespace whp
             throw std::runtime_error(stream.str());
         }
 
-#define WHP_CHECK_HR(expr)                                                                                                              \
-    do                                                                                                                                 \
-    {                                                                                                                                  \
-        const HRESULT hr_ = (expr);                                                                                                    \
-        if (FAILED(hr_))                                                                                                               \
-        {                                                                                                                              \
-            throw_hr(hr_, #expr);                                                                                                      \
-        }                                                                                                                              \
+#define WHP_CHECK_HR(expr)          \
+    do                              \
+    {                               \
+        const HRESULT hr_ = (expr); \
+        if (FAILED(hr_))            \
+        {                           \
+            throw_hr(hr_, #expr);   \
+        }                           \
     } while (false)
 
         class partition_handle
@@ -260,8 +260,8 @@ namespace whp
                 stream << " register=0x" << exit_context.VpContext.ExecutionState.AsUINT16;
                 break;
             case WHvRunVpExitReasonUnsupportedFeature:
-                stream << " feature_code=0x" << static_cast<uint32_t>(exit_context.UnsupportedFeature.FeatureCode)
-                       << " feature_param=0x" << exit_context.UnsupportedFeature.FeatureParameter;
+                stream << " feature_code=0x" << static_cast<uint32_t>(exit_context.UnsupportedFeature.FeatureCode) << " feature_param=0x"
+                       << exit_context.UnsupportedFeature.FeatureParameter;
                 break;
             case WHvRunVpExitReasonException:
                 stream << " exception_type=0x" << static_cast<uint32_t>(exit_context.VpException.ExceptionType);
@@ -276,19 +276,70 @@ namespace whp
         constexpr std::array<WHV_REGISTER_NAME, 64> snapshot_register_names()
         {
             return std::array<WHV_REGISTER_NAME, 64>{{
-                WHvX64RegisterRax,  WHvX64RegisterRbx, WHvX64RegisterRcx, WHvX64RegisterRdx, WHvX64RegisterRsi,  WHvX64RegisterRdi,
-                WHvX64RegisterRbp,  WHvX64RegisterRsp, WHvX64RegisterR8,  WHvX64RegisterR9,  WHvX64RegisterR10,  WHvX64RegisterR11,
-                WHvX64RegisterR12,  WHvX64RegisterR13, WHvX64RegisterR14, WHvX64RegisterR15, WHvX64RegisterRip,  WHvX64RegisterRflags,
-                WHvX64RegisterCs,   WHvX64RegisterSs,  WHvX64RegisterDs,  WHvX64RegisterEs,  WHvX64RegisterFs,   WHvX64RegisterGs,
-                WHvX64RegisterCr0,  WHvX64RegisterCr2, WHvX64RegisterCr3, WHvX64RegisterCr4, WHvX64RegisterDr0,  WHvX64RegisterDr1,
-                WHvX64RegisterDr2,  WHvX64RegisterDr3, WHvX64RegisterDr6, WHvX64RegisterDr7, WHvX64RegisterGdtr, WHvX64RegisterIdtr,
-                WHvX64RegisterEfer, WHvX64RegisterXCr0, WHvX64RegisterFpControlStatus, WHvX64RegisterXmmControlStatus,
-                WHvX64RegisterFpMmx0, WHvX64RegisterFpMmx1, WHvX64RegisterFpMmx2, WHvX64RegisterFpMmx3,
-                WHvX64RegisterFpMmx4, WHvX64RegisterFpMmx5, WHvX64RegisterFpMmx6, WHvX64RegisterFpMmx7,
-                WHvX64RegisterXmm0, WHvX64RegisterXmm1, WHvX64RegisterXmm2, WHvX64RegisterXmm3,
-                WHvX64RegisterXmm4, WHvX64RegisterXmm5, WHvX64RegisterXmm6, WHvX64RegisterXmm7,
-                WHvX64RegisterXmm8, WHvX64RegisterXmm9, WHvX64RegisterXmm10, WHvX64RegisterXmm11,
-                WHvX64RegisterXmm12, WHvX64RegisterXmm13, WHvX64RegisterXmm14, WHvX64RegisterXmm15,
+                WHvX64RegisterRax,
+                WHvX64RegisterRbx,
+                WHvX64RegisterRcx,
+                WHvX64RegisterRdx,
+                WHvX64RegisterRsi,
+                WHvX64RegisterRdi,
+                WHvX64RegisterRbp,
+                WHvX64RegisterRsp,
+                WHvX64RegisterR8,
+                WHvX64RegisterR9,
+                WHvX64RegisterR10,
+                WHvX64RegisterR11,
+                WHvX64RegisterR12,
+                WHvX64RegisterR13,
+                WHvX64RegisterR14,
+                WHvX64RegisterR15,
+                WHvX64RegisterRip,
+                WHvX64RegisterRflags,
+                WHvX64RegisterCs,
+                WHvX64RegisterSs,
+                WHvX64RegisterDs,
+                WHvX64RegisterEs,
+                WHvX64RegisterFs,
+                WHvX64RegisterGs,
+                WHvX64RegisterCr0,
+                WHvX64RegisterCr2,
+                WHvX64RegisterCr3,
+                WHvX64RegisterCr4,
+                WHvX64RegisterDr0,
+                WHvX64RegisterDr1,
+                WHvX64RegisterDr2,
+                WHvX64RegisterDr3,
+                WHvX64RegisterDr6,
+                WHvX64RegisterDr7,
+                WHvX64RegisterGdtr,
+                WHvX64RegisterIdtr,
+                WHvX64RegisterEfer,
+                WHvX64RegisterXCr0,
+                WHvX64RegisterFpControlStatus,
+                WHvX64RegisterXmmControlStatus,
+                WHvX64RegisterFpMmx0,
+                WHvX64RegisterFpMmx1,
+                WHvX64RegisterFpMmx2,
+                WHvX64RegisterFpMmx3,
+                WHvX64RegisterFpMmx4,
+                WHvX64RegisterFpMmx5,
+                WHvX64RegisterFpMmx6,
+                WHvX64RegisterFpMmx7,
+                WHvX64RegisterXmm0,
+                WHvX64RegisterXmm1,
+                WHvX64RegisterXmm2,
+                WHvX64RegisterXmm3,
+                WHvX64RegisterXmm4,
+                WHvX64RegisterXmm5,
+                WHvX64RegisterXmm6,
+                WHvX64RegisterXmm7,
+                WHvX64RegisterXmm8,
+                WHvX64RegisterXmm9,
+                WHvX64RegisterXmm10,
+                WHvX64RegisterXmm11,
+                WHvX64RegisterXmm12,
+                WHvX64RegisterXmm13,
+                WHvX64RegisterXmm14,
+                WHvX64RegisterXmm15,
             }};
         }
 
@@ -702,7 +753,8 @@ namespace whp
             return this->get_register(mapping.name).Segment.Base;
         }
 
-        void whp_x86_64_emulator::map_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb)
+        void whp_x86_64_emulator::map_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb,
+                                           mmio_write_callback write_cb)
         {
             if (!is_page_aligned(address) || !is_page_aligned(size))
             {
@@ -1073,8 +1125,8 @@ namespace whp
         {
             auto names = snapshot_register_names();
             std::vector<WHV_REGISTER_VALUE> values(names.size());
-            WHP_CHECK_HR(
-                WHvGetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()), values.data()));
+            WHP_CHECK_HR(WHvGetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()),
+                                                         values.data()));
 
             std::vector<std::byte> bytes(sizeof(WHV_REGISTER_VALUE) * values.size());
             std::memcpy(bytes.data(), values.data(), bytes.size());
@@ -1093,8 +1145,8 @@ namespace whp
             std::vector<WHV_REGISTER_VALUE> values(names.size());
             std::memcpy(values.data(), register_data.data(), register_data.size());
 
-            WHP_CHECK_HR(
-                WHvSetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()), values.data()));
+            WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()),
+                                                         values.data()));
         }
 
         bool whp_x86_64_emulator::has_violation() const
@@ -1112,22 +1164,23 @@ namespace whp
             BOOL hypervisor_present = FALSE;
             UINT32 bytes_written = 0;
 
-            WHP_CHECK_HR(WHvGetCapability(WHvCapabilityCodeHypervisorPresent, &hypervisor_present, sizeof(hypervisor_present), &bytes_written));
+            WHP_CHECK_HR(
+                WHvGetCapability(WHvCapabilityCodeHypervisorPresent, &hypervisor_present, sizeof(hypervisor_present), &bytes_written));
 
             if (!hypervisor_present)
             {
                 throw std::runtime_error("Hypervisor is not present. Enable Hyper-V and Windows Hypervisor Platform.");
             }
 
-            WHP_CHECK_HR(
-                WHvGetCapability(WHvCapabilityCodeExtendedVmExits, &this->supported_exits_, sizeof(this->supported_exits_), &bytes_written));
+            WHP_CHECK_HR(WHvGetCapability(WHvCapabilityCodeExtendedVmExits, &this->supported_exits_, sizeof(this->supported_exits_),
+                                          &bytes_written));
         }
 
         void whp_x86_64_emulator::configure_partition()
         {
             UINT32 processor_count = 1;
-            WHP_CHECK_HR(
-                WHvSetPartitionProperty(this->partition_, WHvPartitionPropertyCodeProcessorCount, &processor_count, sizeof(processor_count)));
+            WHP_CHECK_HR(WHvSetPartitionProperty(this->partition_, WHvPartitionPropertyCodeProcessorCount, &processor_count,
+                                                 sizeof(processor_count)));
 
             WHV_EXTENDED_VM_EXITS enabled_exits{};
             enabled_exits.ExceptionExit = this->supported_exits_.ExceptionExit ? 1 : 0;
@@ -1143,9 +1196,21 @@ namespace whp
         void whp_x86_64_emulator::initialize_virtual_processor_state()
         {
             const std::array<WHV_REGISTER_NAME, 16> names = {
-                WHvX64RegisterCs,  WHvX64RegisterSs,  WHvX64RegisterDs,  WHvX64RegisterEs,   WHvX64RegisterFs,     WHvX64RegisterGs,
-                WHvX64RegisterCr0, WHvX64RegisterCr4, WHvX64RegisterCr3, WHvX64RegisterEfer, WHvX64RegisterRflags,
-                WHvX64RegisterStar, WHvX64RegisterSfmask, WHvX64RegisterXCr0, WHvX64RegisterFpControlStatus,
+                WHvX64RegisterCs,
+                WHvX64RegisterSs,
+                WHvX64RegisterDs,
+                WHvX64RegisterEs,
+                WHvX64RegisterFs,
+                WHvX64RegisterGs,
+                WHvX64RegisterCr0,
+                WHvX64RegisterCr4,
+                WHvX64RegisterCr3,
+                WHvX64RegisterEfer,
+                WHvX64RegisterRflags,
+                WHvX64RegisterStar,
+                WHvX64RegisterSfmask,
+                WHvX64RegisterXCr0,
+                WHvX64RegisterFpControlStatus,
                 WHvX64RegisterXmmControlStatus,
             };
 
@@ -1170,8 +1235,8 @@ namespace whp
             values[15].XmmControlStatus.XmmStatusControl = 0x1F80u;
             values[15].XmmControlStatus.XmmStatusControlMask = 0xFFFFFFFFu;
 
-            WHP_CHECK_HR(
-                WHvSetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()), values.data()));
+            WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()),
+                                                         values.data()));
         }
 
         void whp_x86_64_emulator::initialize_syscall_intercept_page()
@@ -1281,8 +1346,8 @@ namespace whp
                 return;
             }
 
-            WHP_CHECK_HR(
-                WHvMapGpaRange(this->partition_, page.host_page, guest_address, page_size, static_cast<WHV_MAP_GPA_RANGE_FLAGS>(page.map_flags)));
+            WHP_CHECK_HR(WHvMapGpaRange(this->partition_, page.host_page, guest_address, page_size,
+                                        static_cast<WHV_MAP_GPA_RANGE_FLAGS>(page.map_flags)));
         }
 
         whp_x86_64_emulator::mmio_region* whp_x86_64_emulator::find_mmio_region(const uint64_t address)
@@ -1327,7 +1392,8 @@ namespace whp
             region.read_cb(region_offset, page, bytes_to_read);
         }
 
-        void whp_x86_64_emulator::flush_mmio_write(const mmio_region& region, const uint64_t page_base, const std::vector<std::byte>& old_page)
+        void whp_x86_64_emulator::flush_mmio_write(const mmio_region& region, const uint64_t page_base,
+                                                   const std::vector<std::byte>& old_page)
         {
             auto entry = this->mapped_pages_.find(page_base);
             if (entry == this->mapped_pages_.end() || !entry->second || entry->second->host_page == nullptr)
