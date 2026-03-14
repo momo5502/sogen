@@ -185,6 +185,11 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
         return std::exchange(debug_message, std::string{});
     }
 
+    std::string get_os_abi() override
+    {
+        return "Windows";
+    }
+
   private:
     windows_emulator* win_emu_{};
     utils::optional_function<bool()> should_stop_{};

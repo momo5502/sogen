@@ -3,6 +3,10 @@
 #include <map>
 #include <string>
 
+#define OSABI_TEMPLATE "<!--OSABI-->"
+
+constexpr std::string_view osabi_template = OSABI_TEMPLATE;
+
 inline std::map<std::string, std::string, std::less<>> x64_target_descriptions{
     {
         "target.xml",
@@ -18,6 +22,7 @@ inline std::map<std::string, std::string, std::less<>> x64_target_descriptions{
 <!DOCTYPE target SYSTEM "gdb-target.dtd">
 <target>
   <architecture>i386:x86-64</architecture>
+  )__xml__" OSABI_TEMPLATE R"__xml__(
   <xi:include href="64bit-core.xml"/>
   <xi:include href="64bit-sse.xml"/>
   <xi:include href="64bit-segments.xml"/>
@@ -213,3 +218,5 @@ inline std::map<std::string, std::string, std::less<>> x64_target_descriptions{
 )__xml__",
     },
 };
+
+#undef OSABI_TEMPLATE

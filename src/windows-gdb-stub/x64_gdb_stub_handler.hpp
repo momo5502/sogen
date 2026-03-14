@@ -224,7 +224,18 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
             return {};
         }
 
-        return entry->second;
+        auto data = entry->second;
+
+        if (const auto os_abi = this->get_os_abi(); !os_abi.empty())
+        {
+            auto start_pos = data.find(osabi_template);
+            if (start_pos != std::string::npos)
+            {
+                data.replace(start_pos, osabi_template.length(), "<osabi>" + os_abi + "</osabi>");
+            }
+        }
+
+        return data;
     }
 
     uint32_t get_current_thread_id() override
