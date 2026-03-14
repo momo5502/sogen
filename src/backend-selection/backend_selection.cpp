@@ -7,7 +7,7 @@
 #include <icicle_x86_64_emulator.hpp>
 #endif
 
-#ifdef _WIN64
+#if defined(_WIN64) && !defined(__MINGW64__)
 #include <whp_x86_64_emulator.hpp>
 #endif
 
@@ -15,7 +15,7 @@ using namespace std::literals;
 
 std::unique_ptr<x86_64_emulator> create_x86_64_emulator()
 {
-#ifdef _WIN64
+#if defined(_WIN64) && !defined(__MINGW64__)
     {
         const auto* env = getenv("EMULATOR_WHP");
         if (env && (env == "1"sv || env == "true"sv))

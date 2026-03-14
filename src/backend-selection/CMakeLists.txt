@@ -22,7 +22,7 @@ if (MOMO_ENABLE_RUST)
   )
 endif()
 
-if (MSVC)
+if (NOT MINGW AND MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8)
   target_link_libraries(backend-selection PRIVATE
     whp-emulator
   )
