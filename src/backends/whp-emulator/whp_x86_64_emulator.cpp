@@ -273,6 +273,25 @@ namespace whp
             throw std::runtime_error(stream.str());
         }
 
+        constexpr std::array<WHV_REGISTER_NAME, 64> snapshot_register_names()
+        {
+            return std::array<WHV_REGISTER_NAME, 64>{{
+                WHvX64RegisterRax,  WHvX64RegisterRbx, WHvX64RegisterRcx, WHvX64RegisterRdx, WHvX64RegisterRsi,  WHvX64RegisterRdi,
+                WHvX64RegisterRbp,  WHvX64RegisterRsp, WHvX64RegisterR8,  WHvX64RegisterR9,  WHvX64RegisterR10,  WHvX64RegisterR11,
+                WHvX64RegisterR12,  WHvX64RegisterR13, WHvX64RegisterR14, WHvX64RegisterR15, WHvX64RegisterRip,  WHvX64RegisterRflags,
+                WHvX64RegisterCs,   WHvX64RegisterSs,  WHvX64RegisterDs,  WHvX64RegisterEs,  WHvX64RegisterFs,   WHvX64RegisterGs,
+                WHvX64RegisterCr0,  WHvX64RegisterCr2, WHvX64RegisterCr3, WHvX64RegisterCr4, WHvX64RegisterDr0,  WHvX64RegisterDr1,
+                WHvX64RegisterDr2,  WHvX64RegisterDr3, WHvX64RegisterDr6, WHvX64RegisterDr7, WHvX64RegisterGdtr, WHvX64RegisterIdtr,
+                WHvX64RegisterEfer, WHvX64RegisterXCr0, WHvX64RegisterFpControlStatus, WHvX64RegisterXmmControlStatus,
+                WHvX64RegisterFpMmx0, WHvX64RegisterFpMmx1, WHvX64RegisterFpMmx2, WHvX64RegisterFpMmx3,
+                WHvX64RegisterFpMmx4, WHvX64RegisterFpMmx5, WHvX64RegisterFpMmx6, WHvX64RegisterFpMmx7,
+                WHvX64RegisterXmm0, WHvX64RegisterXmm1, WHvX64RegisterXmm2, WHvX64RegisterXmm3,
+                WHvX64RegisterXmm4, WHvX64RegisterXmm5, WHvX64RegisterXmm6, WHvX64RegisterXmm7,
+                WHvX64RegisterXmm8, WHvX64RegisterXmm9, WHvX64RegisterXmm10, WHvX64RegisterXmm11,
+                WHvX64RegisterXmm12, WHvX64RegisterXmm13, WHvX64RegisterXmm14, WHvX64RegisterXmm15,
+            }};
+        }
+
         register_mapping map_register(const x86_register reg)
         {
             switch (reg)
@@ -518,7 +537,7 @@ namespace whp
             std::unordered_map<uint64_t, uint64_t*> page_table_views_{};
             uint64_t pml4_gpa_ = 0;
             uint64_t next_internal_gpa_ = internal_page_table_base;
-            bool stop_requested_ = false;
+            std::atomic_bool stop_requested_ = false;
             std::atomic_bool run_active_ = false;
             uint64_t syscall_hook_page_ = 0;
             size_t next_hook_id_ = 1;
@@ -559,7 +578,6 @@ namespace whp
             bool handle_memory_access(const WHV_MEMORY_ACCESS_CONTEXT& memory_access);
             bool handle_exception(const WHV_RUN_VP_EXIT_CONTEXT& exit_context);
             void advance_rip(uint64_t amount);
-            static std::array<WHV_REGISTER_NAME, 37> snapshot_register_names();
         };
 
         whp_x86_64_emulator::whp_x86_64_emulator()
@@ -1053,7 +1071,7 @@ namespace whp
 
         std::vector<std::byte> whp_x86_64_emulator::save_registers() const
         {
-            auto names = this->snapshot_register_names();
+            auto names = snapshot_register_names();
             std::vector<WHV_REGISTER_VALUE> values(names.size());
             WHP_CHECK_HR(
                 WHvGetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()), values.data()));
@@ -1065,7 +1083,7 @@ namespace whp
 
         void whp_x86_64_emulator::restore_registers(const std::vector<std::byte>& register_data)
         {
-            auto names = this->snapshot_register_names();
+            auto names = snapshot_register_names();
             const auto expected_size = sizeof(WHV_REGISTER_VALUE) * names.size();
             if (register_data.size() != expected_size)
             {
@@ -1627,18 +1645,6 @@ namespace whp
             this->set_register(WHvX64RegisterRip, rip);
         }
 
-        std::array<WHV_REGISTER_NAME, 37> whp_x86_64_emulator::snapshot_register_names()
-        {
-            return {
-                WHvX64RegisterRax,  WHvX64RegisterRbx, WHvX64RegisterRcx, WHvX64RegisterRdx, WHvX64RegisterRsi,  WHvX64RegisterRdi,
-                WHvX64RegisterRbp,  WHvX64RegisterRsp, WHvX64RegisterR8,  WHvX64RegisterR9,  WHvX64RegisterR10,  WHvX64RegisterR11,
-                WHvX64RegisterR12,  WHvX64RegisterR13, WHvX64RegisterR14, WHvX64RegisterR15, WHvX64RegisterRip,  WHvX64RegisterRflags,
-                WHvX64RegisterCs,   WHvX64RegisterSs,  WHvX64RegisterDs,  WHvX64RegisterEs,  WHvX64RegisterFs,   WHvX64RegisterGs,
-                WHvX64RegisterCr0,  WHvX64RegisterCr2, WHvX64RegisterCr3, WHvX64RegisterCr4, WHvX64RegisterDr0,  WHvX64RegisterDr1,
-                WHvX64RegisterDr2,  WHvX64RegisterDr3, WHvX64RegisterDr6, WHvX64RegisterDr7, WHvX64RegisterGdtr, WHvX64RegisterIdtr,
-                WHvX64RegisterEfer,
-            };
-        }
     }
 
     std::unique_ptr<x86_64_emulator> create_x86_64_emulator()
