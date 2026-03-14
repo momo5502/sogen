@@ -21,3 +21,9 @@ if (MOMO_ENABLE_RUST)
     icicle-emulator
   )
 endif()
+
+if (MSVC)
+  target_link_libraries(backend-selection PRIVATE
+    whp-emulator
+  )
+endif()
