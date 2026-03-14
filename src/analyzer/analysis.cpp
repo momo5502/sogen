@@ -537,7 +537,7 @@ namespace
             win_emu.log.print(color::blue, "Executing inline syscall: %.*s (0x%X) at 0x%" PRIx64 " (%s)\n", STR_VIEW_VA(syscall_name),
                               syscall_id, address, mod ? mod->name.c_str() : "<N/A>");
         }
-        else if (mod->contains(previous_ip))
+        else if (!previous_ip || mod->contains(previous_ip))
         {
             if (!c.settings->skip_syscalls)
             {
