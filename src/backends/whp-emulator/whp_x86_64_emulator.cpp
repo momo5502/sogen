@@ -527,6 +527,7 @@ namespace whp
                 while (!this->stop_requested_)
                 {
                     WHV_RUN_VP_EXIT_CONTEXT exit_context{};
+                    const auto start_rip = this->read_instruction_pointer();
                     this->run_active_ = true;
                     const auto run_hr = WHvRunVirtualProcessor(this->partition_, vp_index, &exit_context, sizeof(exit_context));
                     this->run_active_ = false;
@@ -537,8 +538,18 @@ namespace whp
 
                     switch (exit_context.ExitReason)
                     {
-                    case WHvRunVpExitReasonCanceled:
+                    case WHvRunVpExitReasonCanceled: {
+                        // If rip has not changed, we _probably_ executed nothing.
+                        // Could be that the execution was cancelled while it was not running.
+                        // Just restart it.
+                        if (start_rip == exit_context.VpContext.Rip)
+                        {
+                            this->stop_requested_ = false;
+                            continue;
+                        }
+
                         return;
+                    }
                     case WHvRunVpExitReasonX64Halt:
                         if (this->syscall_hook_ && exit_context.VpContext.Rip == (this->syscall_hook_page_ + 1))
                         {
