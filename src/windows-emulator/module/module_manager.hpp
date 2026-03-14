@@ -91,6 +91,8 @@ class module_manager
 
     std::optional<uint64_t> get_module_load_count_by_path(const windows_path& path);
     mapped_module* map_module(windows_path file, const logger& logger, bool is_static = false, bool allow_duplicate = false);
+    mapped_module* map_module_or_throw(const windows_path& file, const logger& logger, bool is_static = false,
+                                       bool allow_duplicate = false);
     mapped_module* map_local_module(const std::filesystem::path& file, windows_path module_path, const logger& logger,
                                     bool is_static = false, bool allow_duplicate = false);
     mapped_module* map_memory_module(uint64_t base_address, uint64_t image_size, windows_path module_path, const logger& logger,

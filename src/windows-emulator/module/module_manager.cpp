@@ -235,7 +235,7 @@ mapped_module* module_manager::map_module_core(const pe_detection_result& detect
 {
     if (!detection_result.is_valid())
     {
-        logger.error("%s", detection_result.error_message.c_str());
+        logger.error("Cannot map module: %s\n", detection_result.error_message.c_str());
         return nullptr;
     }
 
@@ -281,9 +281,9 @@ execution_mode module_manager::detect_execution_mode(const windows_path& executa
 void module_manager::load_native_64bit_modules(const windows_path& executable_path, const windows_path& ntdll_path,
                                                const windows_path& win32u_path, const logger& logger)
 {
-    this->executable = this->map_module(executable_path, logger, true);
-    this->ntdll = this->map_module(ntdll_path, logger, true);
-    this->win32u = this->map_module(win32u_path, logger, true);
+    this->executable = this->map_module_or_throw(executable_path, logger, true);
+    this->ntdll = this->map_module_or_throw(ntdll_path, logger, true);
+    this->win32u = this->map_module_or_throw(win32u_path, logger, true);
 }
 
 void module_manager::load_wow64_modules(const windows_path& executable_path, const windows_path& ntdll_path,
@@ -292,11 +292,9 @@ void module_manager::load_wow64_modules(const windows_path& executable_path, con
 {
     logger.info("Loading WOW64 modules for 32-bit application\n");
 
-    this->executable = this->map_module(executable_path, logger, true);
-    this->ntdll = this->map_module(ntdll_path, logger, true);
-    this->win32u = this->map_module(win32u_path, logger, true);
+    load_native_64bit_modules(executable_path, ntdll_path, win32u_path, logger);
 
-    this->wow64_modules_.ntdll32 = this->map_module(ntdll32_path, logger, true);
+    this->wow64_modules_.ntdll32 = this->map_module_or_throw(ntdll32_path, logger, true);
 
     const auto ntdll32_original_imagebase = this->wow64_modules_.ntdll32->get_image_base_file();
     const auto ntdll64_original_imagebase = this->ntdll->get_image_base_file();
@@ -492,6 +490,18 @@ mapped_module* module_manager::map_module(windows_path file, const logger& logge
     }
 
     return this->map_local_module(local_file, std::move(file), logger, is_static, allow_duplicate);
+}
+
+mapped_module* module_manager::map_module_or_throw(const windows_path& file, const logger& logger, const bool is_static,
+                                                   bool allow_duplicate)
+{
+    auto* mapped_module = this->map_module(file, logger, is_static, allow_duplicate);
+    if (mapped_module == nullptr)
+    {
+        throw std::runtime_error{"Cannot map " + file.string()};
+    }
+
+    return mapped_module;
 }
 
 mapped_module* module_manager::map_local_module(const std::filesystem::path& file, windows_path module_path, const logger& logger,
