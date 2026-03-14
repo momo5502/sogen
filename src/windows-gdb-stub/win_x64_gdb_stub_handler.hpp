@@ -190,6 +190,19 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
         return "Windows";
     }
 
+    std::string translate_path(std::string_view emulated_path) const override
+    {
+        try
+        {
+            const auto fs_path = this->win_emu_->file_sys.translate(emulated_path);
+            return fs_path.string();
+        }
+        catch (const std::runtime_error&)
+        {
+            return {};
+        }
+    }
+
   private:
     windows_emulator* win_emu_{};
     utils::optional_function<bool()> should_stop_{};

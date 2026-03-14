@@ -9,6 +9,7 @@
 
 #include "async_handler.hpp"
 #include "connection_handler.hpp"
+#include "gdb_fs.hpp"
 
 using namespace std::literals;
 
@@ -35,6 +36,7 @@ namespace gdb_stub
             debugging_handler& handler;
             debugging_state& state;
             async_handler& async;
+            gdb_filesystem& host_fs;
         };
 
         network::tcp_client_socket accept_client(const network::address& bind_address, const utils::optional_function<bool()>& should_stop)
@@ -410,6 +412,159 @@ namespace gdb_stub
             }
         }
 
+        void send_file_result(const debugging_context& c, uint32_t result)
+        {
+            c.connection.send_reply("F" + utils::string::to_hex_number(result));
+        }
+
+        void send_file_error(const debugging_context& c, uint32_t error)
+        {
+            c.connection.send_reply("F-1," + utils::string::to_hex_number(error));
+        }
+
+        void send_file_attachment(const debugging_context& c, const std::string_view data)
+        {
+            const auto hex_size = utils::string::to_hex_number(data.size()).size() + 1;
+
+            size_t total_copied = 0;
+            const auto attachment = escape(data, max_data_size - 1 - hex_size - 1, &total_copied);
+            c.connection.send_reply("F" + utils::string::to_hex_number(total_copied) + ";" + attachment);
+        }
+
+        void process_file_open(const debugging_context& c, const std::string_view payload)
+        {
+            const auto& [hex_name, args] = split_string(payload, ',');
+
+            uint32_t flags{};
+            uint32_t mode{};
+            rt_assert(sscanf_s(std::string(args).c_str(), "%x,%x", &flags, &mode) == 2);
+
+            const auto path = utils::string::from_hex_string<std::string>(hex_name);
+            const auto file_path = c.handler.translate_path(path);
+
+            if (file_path.empty())
+            {
+                send_file_error(c, ENOENT);
+                return;
+            }
+
+            const auto fd = c.host_fs.open(file_path, flags, mode);
+            if (fd == 0)
+            {
+                send_file_error(c, ENOENT);
+                return;
+            }
+
+            send_file_result(c, fd);
+        }
+
+        void process_file_close(const debugging_context& c, const std::string_view payload)
+        {
+            uint32_t fd{};
+            rt_assert(sscanf_s(std::string(payload).c_str(), "%x", &fd) == 1);
+
+            c.host_fs.close(fd);
+            send_file_result(c, 0);
+        }
+
+        void process_file_read(const debugging_context& c, const std::string_view payload)
+        {
+            uint32_t fd{};
+            size_t count{};
+            uint64_t offset{};
+            rt_assert(sscanf_s(std::string(payload).c_str(), "%x,%zx,%" PRIx64, &fd, &count, &offset) == 3);
+
+            count = std::min(count, max_data_size);
+
+            const auto data = c.host_fs.read(fd, count, offset);
+            send_file_attachment(c, data);
+        }
+
+        void process_file_write(const debugging_context& c, const std::string_view payload)
+        {
+            const auto [fd_str, remainder] = split_string(payload, ',');
+
+            uint32_t fd{};
+            rt_assert(sscanf_s(std::string(fd_str).c_str(), "%x", &fd) == 1);
+
+            const auto [offset_str, encoded_data] = split_string(remainder, ',');
+
+            uint64_t offset{};
+            rt_assert(sscanf_s(std::string(offset_str).c_str(), "%" PRIx64, &offset) == 1);
+
+            const auto data = unescape(encoded_data);
+            const auto n = c.host_fs.write(fd, offset, data.data(), data.size());
+            send_file_result(c, static_cast<uint32_t>(n));
+        }
+
+        void process_file_fstat(const debugging_context& c, const std::string_view payload)
+        {
+            uint32_t fd{};
+            rt_assert(sscanf_s(std::string(payload).c_str(), "%x", &fd) == 1);
+
+            const auto data = c.host_fs.fstat(fd);
+            if (data.empty())
+            {
+                send_file_error(c, ENOENT);
+                return;
+            }
+            send_file_attachment(c, data);
+        }
+
+        void process_file_unlink(const debugging_context& c, const std::string_view payload)
+        {
+            const auto path = utils::string::from_hex_string<std::string>(payload);
+            const auto file_path = c.handler.translate_path(path);
+
+            if (file_path.empty())
+            {
+                send_file_error(c, ENOENT);
+                return;
+            }
+
+            const auto r = c.host_fs.unlink(file_path);
+            if (r == 0)
+            {
+                send_file_result(c, 0);
+            }
+            else
+            {
+                send_file_error(c, ENOENT);
+            }
+        }
+
+        void process_file_operation(const debugging_context& c, const std::string_view operation, const std::string_view payload)
+        {
+            if (operation == "open")
+            {
+                process_file_open(c, payload);
+            }
+            else if (operation == "close")
+            {
+                process_file_close(c, payload);
+            }
+            else if (operation == "pread")
+            {
+                process_file_read(c, payload);
+            }
+            else if (operation == "pwrite")
+            {
+                process_file_write(c, payload);
+            }
+            else if (operation == "fstat")
+            {
+                process_file_fstat(c, payload);
+            }
+            else if (operation == "unlink")
+            {
+                process_file_unlink(c, payload);
+            }
+            else
+            {
+                c.connection.send_reply({});
+            }
+        }
+
         breakpoint_type translate_breakpoint_type(const uint32_t type)
         {
             if (type >= static_cast<size_t>(breakpoint_type::END))
@@ -548,6 +703,11 @@ namespace gdb_stub
 
                 store_continuation_thread(c, thread);
                 resume_execution(c, singlestep);
+            }
+            else if (name == "File")
+            {
+                const auto [operation, payload] = split_string(args, ':');
+                process_file_operation(c, operation, payload);
             }
             else
             {
@@ -913,12 +1073,14 @@ namespace gdb_stub
 
         debugging_state state{};
         connection_handler connection{client, should_stop};
+        gdb_filesystem host_fs{};
 
         debugging_context c{
             .connection = connection,
             .handler = handler,
             .state = state,
             .async = async,
+            .host_fs = host_fs,
         };
 
         while (!should_stop())
