@@ -166,6 +166,7 @@ namespace syscalls
     NTSTATUS handle_NtQuerySecurityObject(const syscall_context& c, handle /*h*/, SECURITY_INFORMATION /*security_information*/,
                                           emulator_pointer security_descriptor, ULONG length, emulator_object<ULONG> length_needed);
     NTSTATUS handle_NtSetSecurityObject();
+    NTSTATUS handle_NtCreatePrivateNamespace();
 
     // syscalls/port.cpp:
     NTSTATUS handle_NtConnectPort(const syscall_context& c, emulator_object<handle> client_port_handle,
@@ -1086,6 +1087,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserPostQuitMessage);
     add_handler(NtUserGetClassInfoEx);
     add_handler(NtUserCallNoParam);
+    add_handler(NtCreatePrivateNamespace);
 
 #undef add_handler
 }
