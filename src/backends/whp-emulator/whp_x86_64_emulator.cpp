@@ -543,6 +543,11 @@ namespace whp
             bool has_violation() const override;
             std::string get_name() const override;
 
+            bool supports_instruction_counting() const override
+            {
+                return false;
+            }
+
           private:
             struct instruction_hook_entry
             {

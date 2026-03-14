@@ -213,7 +213,7 @@ class windows_emulator
     bool activate_thread(uint32_t id);
 
   private:
-    bool switch_thread_{false};
+    std::atomic_bool switch_thread_{false};
     bool use_relative_time_{false}; // TODO: Get rid of that
     std::atomic_bool should_stop{false};
 
