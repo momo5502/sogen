@@ -593,6 +593,7 @@ namespace whp
                     case WHvRunVpExitReasonException:
                         if (this->handle_exception(exit_context))
                         {
+                            this->clear_pending_exception_state();
                             continue;
                         }
                         return;
@@ -613,6 +614,7 @@ namespace whp
                     case WHvRunVpExitReasonUnrecoverableException:
                         if (this->handle_unrecoverable_exception())
                         {
+                            this->clear_pending_exception_state();
                             continue;
                         }
                         throw_unhandled_exit(exit_context);
@@ -1634,6 +1636,7 @@ namespace whp
                 if (this->access_memory(rip, opcode.data(), opcode.size(), false) && opcode[0] == std::byte{0x0F} &&
                     opcode[1] == std::byte{0x0B})
                 {
+                    bool skip = false;
                     bool consumed = false;
 
                     for (auto& [_, hook] : this->instruction_hooks_)
@@ -1645,17 +1648,20 @@ namespace whp
 
                         if (hook.callback(0) == instruction_hook_continuation::skip_instruction)
                         {
-                            this->advance_rip(2);
+                            skip = true;
                             consumed = true;
                         }
+                    }
+
+                    if (skip && this->read_instruction_pointer() == rip)
+                    {
+                        this->advance_rip(2);
                     }
 
                     if (consumed)
                     {
                         return true;
                     }
-
-                    this->clear_pending_exception_state();
 
                     for (auto& [_, hook] : this->interrupt_hooks_)
                     {
@@ -1678,8 +1684,6 @@ namespace whp
                 const auto rflags = this->reg<uint64_t>(x86_register::rflags);
                 if ((rflags & 0x100ull) != 0)
                 {
-                    this->clear_pending_exception_state();
-
                     for (auto& [_, hook] : this->interrupt_hooks_)
                     {
                         hook(1);
@@ -1691,8 +1695,6 @@ namespace whp
 
                 if (fault_address != 0 && !this->memory_violation_hooks_.empty())
                 {
-                    this->clear_pending_exception_state();
-
                     for (auto& [_, hook] : this->memory_violation_hooks_)
                     {
                         const auto result = hook(fault_address, 1, memory_operation::read, memory_violation_type::unmapped);
@@ -1702,8 +1704,6 @@ namespace whp
                         }
                     }
                 }
-
-                this->clear_pending_exception_state();
 
                 for (auto& [_, hook] : this->interrupt_hooks_)
                 {
@@ -1808,8 +1808,6 @@ namespace whp
                         return true;
                     }
                 }
-
-                this->clear_pending_exception_state();
 
                 for (auto& [_, hook] : this->interrupt_hooks_)
                 {
