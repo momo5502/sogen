@@ -9,7 +9,6 @@
 
 #include "async_handler.hpp"
 #include "connection_handler.hpp"
-#include "gdb_fs.hpp"
 
 using namespace std::literals;
 
@@ -36,7 +35,6 @@ namespace gdb_stub
             debugging_handler& handler;
             debugging_state& state;
             async_handler& async;
-            gdb_filesystem& host_fs;
         };
 
         network::tcp_client_socket accept_client(const network::address& bind_address, const utils::optional_function<bool()>& should_stop)
@@ -439,16 +437,14 @@ namespace gdb_stub
             uint32_t mode{};
             rt_assert(sscanf_s(std::string(args).c_str(), "%x,%x", &flags, &mode) == 2);
 
-            const auto path = utils::string::from_hex_string<std::string>(hex_name);
-            const auto file_path = c.handler.translate_path(path);
-
+            const auto file_path = utils::string::from_hex_string<std::string>(hex_name);
             if (file_path.empty())
             {
                 send_file_error(c, ENOENT);
                 return;
             }
 
-            const auto fd = c.host_fs.open(file_path, flags, mode);
+            const auto fd = c.handler.get_filesystem()->open(file_path, flags, mode);
             if (fd == 0)
             {
                 send_file_error(c, ENOENT);
@@ -463,7 +459,7 @@ namespace gdb_stub
             uint32_t fd{};
             rt_assert(sscanf_s(std::string(payload).c_str(), "%x", &fd) == 1);
 
-            c.host_fs.close(fd);
+            c.handler.get_filesystem()->close(fd);
             send_file_result(c, 0);
         }
 
@@ -476,7 +472,7 @@ namespace gdb_stub
 
             count = std::min(count, max_data_size);
 
-            const auto data = c.host_fs.read(fd, count, offset);
+            const auto data = c.handler.get_filesystem()->read(fd, count, offset);
             send_file_attachment(c, data);
         }
 
@@ -493,7 +489,7 @@ namespace gdb_stub
             rt_assert(sscanf_s(std::string(offset_str).c_str(), "%" PRIx64, &offset) == 1);
 
             const auto data = unescape(encoded_data);
-            const auto n = c.host_fs.write(fd, offset, data.data(), data.size());
+            const auto n = c.handler.get_filesystem()->write(fd, offset, data.data(), data.size());
             send_file_result(c, static_cast<uint32_t>(n));
         }
 
@@ -502,7 +498,7 @@ namespace gdb_stub
             uint32_t fd{};
             rt_assert(sscanf_s(std::string(payload).c_str(), "%x", &fd) == 1);
 
-            const auto data = c.host_fs.fstat(fd);
+            const auto data = c.handler.get_filesystem()->fstat(fd);
             if (data.empty())
             {
                 send_file_error(c, ENOENT);
@@ -513,16 +509,9 @@ namespace gdb_stub
 
         void process_file_unlink(const debugging_context& c, const std::string_view payload)
         {
-            const auto path = utils::string::from_hex_string<std::string>(payload);
-            const auto file_path = c.handler.translate_path(path);
+            const auto file_path = utils::string::from_hex_string<std::string>(payload);
+            const auto r = c.handler.get_filesystem()->unlink(file_path);
 
-            if (file_path.empty())
-            {
-                send_file_error(c, ENOENT);
-                return;
-            }
-
-            const auto r = c.host_fs.unlink(file_path);
             if (r == 0)
             {
                 send_file_result(c, 0);
@@ -706,8 +695,15 @@ namespace gdb_stub
             }
             else if (name == "File")
             {
-                const auto [operation, payload] = split_string(args, ':');
-                process_file_operation(c, operation, payload);
+                if (c.handler.get_filesystem())
+                {
+                    const auto [operation, payload] = split_string(args, ':');
+                    process_file_operation(c, operation, payload);
+                }
+                else
+                {
+                    c.connection.send_reply({});
+                }
             }
             else
             {
@@ -1073,14 +1069,12 @@ namespace gdb_stub
 
         debugging_state state{};
         connection_handler connection{client, should_stop};
-        gdb_filesystem host_fs{};
 
         debugging_context c{
             .connection = connection,
             .handler = handler,
             .state = state,
             .async = async,
-            .host_fs = host_fs,
         };
 
         while (!should_stop())

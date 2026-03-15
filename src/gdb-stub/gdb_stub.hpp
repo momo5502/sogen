@@ -3,6 +3,8 @@
 #include <network/address.hpp>
 #include <stdexcept>
 
+#include "gdb_fs.hpp"
+
 namespace gdb_stub
 {
     enum class action : uint8_t
@@ -123,6 +125,11 @@ namespace gdb_stub
         {
             (void)emulated_path;
             return {};
+        }
+
+        virtual filesystem_interface* get_filesystem()
+        {
+            return nullptr;
         }
     };
 
