@@ -1655,6 +1655,8 @@ namespace whp
                         return true;
                     }
 
+                    this->clear_pending_exception_state();
+
                     for (auto& [_, hook] : this->interrupt_hooks_)
                     {
                         hook(6);
@@ -1676,6 +1678,8 @@ namespace whp
                 const auto rflags = this->reg<uint64_t>(x86_register::rflags);
                 if ((rflags & 0x100ull) != 0)
                 {
+                    this->clear_pending_exception_state();
+
                     for (auto& [_, hook] : this->interrupt_hooks_)
                     {
                         hook(1);
@@ -1687,6 +1691,8 @@ namespace whp
 
                 if (fault_address != 0 && !this->memory_violation_hooks_.empty())
                 {
+                    this->clear_pending_exception_state();
+
                     for (auto& [_, hook] : this->memory_violation_hooks_)
                     {
                         const auto result = hook(fault_address, 1, memory_operation::read, memory_violation_type::unmapped);
@@ -1696,6 +1702,8 @@ namespace whp
                         }
                     }
                 }
+
+                this->clear_pending_exception_state();
 
                 for (auto& [_, hook] : this->interrupt_hooks_)
                 {
@@ -1801,6 +1809,8 @@ namespace whp
                     }
                 }
 
+                this->clear_pending_exception_state();
+
                 for (auto& [_, hook] : this->interrupt_hooks_)
                 {
                     hook(exception.ExceptionType);
@@ -1815,6 +1825,21 @@ namespace whp
                 auto rip = this->get_register(WHvX64RegisterRip);
                 rip.Reg64 += amount;
                 this->set_register(WHvX64RegisterRip, rip);
+            }
+
+            void clear_pending_exception_state()
+            {
+                WHV_REGISTER_VALUE pending_interruption{};
+                pending_interruption.PendingInterruption.AsUINT64 = 0;
+                this->set_register(WHvRegisterPendingInterruption, pending_interruption);
+
+                WHV_REGISTER_VALUE pending_event{};
+                pending_event.ExceptionEvent.AsUINT128 = {};
+                this->set_register(WHvRegisterPendingEvent, pending_event);
+
+                WHV_REGISTER_VALUE pending_debug{};
+                pending_debug.PendingDebugException.AsUINT64 = 0;
+                this->set_register(WHvX64RegisterPendingDebugException, pending_debug);
             }
         };
     }
