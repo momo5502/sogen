@@ -1546,6 +1546,7 @@ namespace whp
             bool handle_instruction_exit(const x86_hookable_instructions type, const uint64_t instruction_size)
             {
                 bool handled = false;
+                bool skip = false;
                 for (auto& [_, hook] : this->instruction_hooks_)
                 {
                     if (hook.type != type)
@@ -1556,8 +1557,13 @@ namespace whp
                     handled = true;
                     if (hook.callback(0) == instruction_hook_continuation::skip_instruction)
                     {
-                        this->advance_rip(instruction_size);
+                        skip = true;
                     }
+                }
+
+                if (skip)
+                {
+                    this->advance_rip(instruction_size);
                 }
 
                 return handled;
