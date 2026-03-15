@@ -597,7 +597,7 @@ namespace whp
                         }
                         return;
                     case WHvRunVpExitReasonX64Cpuid:
-                        if (this->handle_instruction_exit(x86_hookable_instructions::cpuid, 2))
+                        if (this->handle_instruction_exit(x86_hookable_instructions::cpuid, exit_context, 2))
                         {
                             continue;
                         }
@@ -605,6 +605,7 @@ namespace whp
                     case WHvRunVpExitReasonX64Rdtsc:
                         if (this->handle_instruction_exit(exit_context.ReadTsc.RdtscInfo.IsRdtscp ? x86_hookable_instructions::rdtscp
                                                                                                   : x86_hookable_instructions::rdtsc,
+                                                          exit_context,
                                                           2))
                         {
                             continue;
@@ -1543,7 +1544,38 @@ namespace whp
                 return reinterpret_cast<emulator_hook*>(this->next_hook_id_++);
             }
 
-            bool handle_instruction_exit(const x86_hookable_instructions type, const uint64_t instruction_size)
+            void apply_default_instruction_exit(const x86_hookable_instructions type, const WHV_RUN_VP_EXIT_CONTEXT& exit_context)
+            {
+                switch (type)
+                {
+                case x86_hookable_instructions::cpuid: {
+                    const auto& cpuid = exit_context.CpuidAccess;
+                    this->reg(x86_register::rax, static_cast<uint64_t>(cpuid.DefaultResultRax));
+                    this->reg(x86_register::rbx, static_cast<uint64_t>(cpuid.DefaultResultRbx));
+                    this->reg(x86_register::rcx, static_cast<uint64_t>(cpuid.DefaultResultRcx));
+                    this->reg(x86_register::rdx, static_cast<uint64_t>(cpuid.DefaultResultRdx));
+                    break;
+                }
+                case x86_hookable_instructions::rdtsc:
+                case x86_hookable_instructions::rdtscp: {
+                    const auto tsc = exit_context.ReadTsc.Tsc;
+                    this->reg(x86_register::rax, static_cast<uint32_t>(tsc & 0xFFFFFFFFull));
+                    this->reg(x86_register::rdx, static_cast<uint32_t>(tsc >> 32));
+
+                    if (type == x86_hookable_instructions::rdtscp)
+                    {
+                        this->reg(x86_register::rcx, static_cast<uint32_t>(exit_context.ReadTsc.TscAux & 0xFFFFFFFFull));
+                    }
+
+                    break;
+                }
+                default:
+                    break;
+                }
+            }
+
+            bool handle_instruction_exit(const x86_hookable_instructions type, const WHV_RUN_VP_EXIT_CONTEXT& exit_context,
+                                         const uint64_t instruction_size)
             {
                 bool handled = false;
                 bool skip = false;
@@ -1561,12 +1593,15 @@ namespace whp
                     }
                 }
 
-                if (skip)
+                if (!handled || !skip)
                 {
-                    this->advance_rip(instruction_size);
+                    this->apply_default_instruction_exit(type, exit_context);
                 }
 
-                return handled;
+                this->advance_rip(instruction_size);
+
+                return handled || type == x86_hookable_instructions::cpuid || type == x86_hookable_instructions::rdtsc ||
+                       type == x86_hookable_instructions::rdtscp;
             }
 
             bool handle_memory_access(const WHV_MEMORY_ACCESS_CONTEXT& memory_access)
