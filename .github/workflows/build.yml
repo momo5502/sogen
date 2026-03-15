@@ -468,7 +468,7 @@ jobs:
         emulator:
           - Unicorn
           - Icicle
-          - WHP
+          #- WHP
         emulation-root:
           - Windows 2025
           - Windows 2022
@@ -549,6 +549,33 @@ jobs:
       - name: CMake Test
         run: cd build/release/artifacts && node ./windows-emulator-test.js
         env:
+          EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
+          EMULATOR_VERBOSE: ${{ github.event.inputs.verbose }}
+
+  smoke-test-whp:
+    name: Smoke Test WHP x86_64
+    runs-on: windows-latest
+    needs: [create-emulation-root, build]
+    steps:
+      - name: Download Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows x86_64 Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Emulation Root
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows 2022 Emulation Root
+          path: build/release/artifacts/root
+
+      - name: Copy Test Sample
+        run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
+
+      - name: CMake Test
+        run: cd build/release/artifacts && ./analyzer.exe -e root c:/test-sample.exe
+        env:
+          EMULATOR_WHP: "1"
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ github.event.inputs.verbose }}
 
@@ -742,6 +769,7 @@ jobs:
         build-page,
         clang-tidy,
         build-apiset-dumper,
+        smoke-test-whp,
         smoke-test-node,
         smoke-test-mingw,
         smoke-test-android,
