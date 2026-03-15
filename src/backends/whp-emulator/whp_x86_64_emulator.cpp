@@ -605,8 +605,7 @@ namespace whp
                     case WHvRunVpExitReasonX64Rdtsc:
                         if (this->handle_instruction_exit(exit_context.ReadTsc.RdtscInfo.IsRdtscp ? x86_hookable_instructions::rdtscp
                                                                                                   : x86_hookable_instructions::rdtsc,
-                                                          exit_context,
-                                                          2))
+                                                          exit_context, 2))
                         {
                             continue;
                         }
@@ -1103,6 +1102,8 @@ namespace whp
             partition_handle partition_{};
             std::unique_ptr<virtual_processor_handle> vp_{};
             WHV_EXTENDED_VM_EXITS supported_exits_{};
+            WHV_PROCESSOR_XSAVE_FEATURES supported_xsave_features_{};
+            bool has_supported_xsave_features_ = false;
             std::unordered_map<uint64_t, std::unique_ptr<mapped_page>> mapped_pages_{};
             std::unordered_map<uint64_t, uint64_t*> page_table_views_{};
             uint64_t pml4_gpa_ = 0;
@@ -1138,6 +1139,12 @@ namespace whp
 
                 WHP_CHECK_HR(WHvGetCapability(WHvCapabilityCodeExtendedVmExits, &this->supported_exits_, sizeof(this->supported_exits_),
                                               &bytes_written));
+
+                bytes_written = 0;
+                const auto xsave_hr = WHvGetCapability(WHvCapabilityCodeProcessorXsaveFeatures, &this->supported_xsave_features_,
+                                                       sizeof(this->supported_xsave_features_), &bytes_written);
+                this->has_supported_xsave_features_ = SUCCEEDED(xsave_hr) && bytes_written == sizeof(this->supported_xsave_features_) &&
+                                                      this->supported_xsave_features_.XsaveSupport;
             }
 
             void configure_partition()
@@ -1159,7 +1166,7 @@ namespace whp
 
             void initialize_virtual_processor_state()
             {
-                const std::array<WHV_REGISTER_NAME, 16> names = {
+                std::vector<WHV_REGISTER_NAME> names = {
                     WHvX64RegisterCs,
                     WHvX64RegisterSs,
                     WHvX64RegisterDs,
@@ -1173,12 +1180,10 @@ namespace whp
                     WHvX64RegisterRflags,
                     WHvX64RegisterStar,
                     WHvX64RegisterSfmask,
-                    WHvX64RegisterXCr0,
                     WHvX64RegisterFpControlStatus,
                     WHvX64RegisterXmmControlStatus,
                 };
-
-                std::array<WHV_REGISTER_VALUE, names.size()> values{};
+                std::vector<WHV_REGISTER_VALUE> values(names.size());
                 values[0].Segment = make_segment(0x33, true);
                 values[1].Segment = make_segment(0x2B, false);
                 values[2].Segment = make_segment(0x2B, false);
@@ -1186,18 +1191,25 @@ namespace whp
                 values[4].Segment = make_segment(0x53, false);
                 values[5].Segment = make_segment(0x2B, false);
                 values[6].Reg64 = 0x80000033ull;
-                values[7].Reg64 = 0x620ull;
+                values[7].Reg64 = this->has_supported_xsave_features_ ? 0x40620ull : 0x620ull;
                 values[8].Reg64 = this->pml4_gpa_;
                 values[9].Reg64 = (1ull << 0) | (1ull << 8) | (1ull << 10);
                 values[10].Reg64 = 0x2ull;
                 values[11].Reg64 = (0x23ull << 48) | (0x08ull << 32);
                 values[12].Reg64 = 0;
-                values[13].Reg64 = 0x3ull;
-                values[14].FpControlStatus.FpControl = 0x037Full;
-                values[14].FpControlStatus.FpStatus = 0;
-                values[14].FpControlStatus.FpTag = 0xFF;
-                values[15].XmmControlStatus.XmmStatusControl = 0x1F80u;
-                values[15].XmmControlStatus.XmmStatusControlMask = 0xFFFFFFFFu;
+                values[13].FpControlStatus.FpControl = 0x037Full;
+                values[13].FpControlStatus.FpStatus = 0;
+                values[13].FpControlStatus.FpTag = 0xFF;
+                values[14].XmmControlStatus.XmmStatusControl = 0x1F80u;
+                values[14].XmmControlStatus.XmmStatusControlMask = 0xFFFFFFFFu;
+
+                if (this->has_supported_xsave_features_)
+                {
+                    names.push_back(WHvX64RegisterXCr0);
+                    WHV_REGISTER_VALUE xcr0{};
+                    xcr0.Reg64 = 0x3ull;
+                    values.push_back(xcr0);
+                }
 
                 WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()),
                                                              values.data()));
