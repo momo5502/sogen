@@ -1265,6 +1265,11 @@ namespace whp
                     new_rip.Reg64 = post_syscall_rcx;
                     this->set_register(WHvX64RegisterRip, new_rip);
                 }
+                else
+                {
+                    new_rip.Reg64 += 2;
+                    this->set_register(WHvX64RegisterRip, new_rip);
+                }
 
                 cs.Segment = make_segment(0x33, true);
                 ss.Segment = make_segment(0x2B, false);
