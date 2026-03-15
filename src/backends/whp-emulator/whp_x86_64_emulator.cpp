@@ -593,6 +593,7 @@ namespace whp
                     case WHvRunVpExitReasonException:
                         if (this->handle_exception(exit_context))
                         {
+                            this->clear_pending_exception_state();
                             continue;
                         }
                         return;
@@ -613,6 +614,7 @@ namespace whp
                     case WHvRunVpExitReasonUnrecoverableException:
                         if (this->handle_unrecoverable_exception())
                         {
+                            this->clear_pending_exception_state();
                             continue;
                         }
                         throw_unhandled_exit(exit_context);
@@ -1634,6 +1636,7 @@ namespace whp
                 if (this->access_memory(rip, opcode.data(), opcode.size(), false) && opcode[0] == std::byte{0x0F} &&
                     opcode[1] == std::byte{0x0B})
                 {
+                    bool skip = false;
                     bool consumed = false;
 
                     for (auto& [_, hook] : this->instruction_hooks_)
@@ -1645,9 +1648,14 @@ namespace whp
 
                         if (hook.callback(0) == instruction_hook_continuation::skip_instruction)
                         {
-                            this->advance_rip(2);
+                            skip = true;
                             consumed = true;
                         }
+                    }
+
+                    if (skip && this->read_instruction_pointer() == rip)
+                    {
+                        this->advance_rip(2);
                     }
 
                     if (consumed)
@@ -1745,7 +1753,7 @@ namespace whp
 
                 for (auto& [_, hook] : this->memory_violation_hooks_)
                 {
-                    const auto result = hook(memory_access.Gva, 1, operation, type);
+                    const auto result = hook(mmio_address, 1, operation, type);
                     if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
                     {
                         return true;
@@ -1815,6 +1823,21 @@ namespace whp
                 auto rip = this->get_register(WHvX64RegisterRip);
                 rip.Reg64 += amount;
                 this->set_register(WHvX64RegisterRip, rip);
+            }
+
+            void clear_pending_exception_state()
+            {
+                WHV_REGISTER_VALUE pending_interruption{};
+                pending_interruption.PendingInterruption.AsUINT64 = 0;
+                this->set_register(WHvRegisterPendingInterruption, pending_interruption);
+
+                WHV_REGISTER_VALUE pending_event{};
+                pending_event.ExceptionEvent.AsUINT128 = {};
+                this->set_register(WHvRegisterPendingEvent, pending_event);
+
+                WHV_REGISTER_VALUE pending_debug{};
+                pending_debug.PendingDebugException.AsUINT64 = 0;
+                this->set_register(WHvX64RegisterPendingDebugException, pending_debug);
             }
         };
     }
