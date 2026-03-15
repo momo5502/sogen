@@ -28,4 +28,6 @@ struct cpu_interface
 
     // TODO: Remove this
     virtual bool has_violation() const = 0;
+
+    virtual bool supports_instruction_counting() const = 0;
 };

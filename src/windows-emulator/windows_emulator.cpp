@@ -4,6 +4,7 @@
 #include "cpu_context.hpp"
 
 #include <utils/io.hpp>
+#include <utils/timer.hpp>
 #include <utils/finally.hpp>
 #include <utils/lazy_object.hpp>
 
@@ -473,7 +474,7 @@ void windows_emulator::yield_thread(const bool alertable)
 
 bool windows_emulator::perform_thread_switch()
 {
-    const auto needed_switch = std::exchange(this->switch_thread_, false);
+    const auto needed_switch = this->switch_thread_.exchange(false);
 
     this->switch_thread_ = false;
     while (!switch_to_next_thread(*this))
@@ -652,6 +653,43 @@ void windows_emulator::start(size_t count)
     const auto start_instructions = this->executed_instructions_;
     const auto target_instructions = start_instructions + count;
 
+    std::mutex interrupt_mutex{};
+    std::condition_variable interrupt_cond{};
+    std::thread interrupt_thread{};
+
+    const auto _ = utils::finally([&] {
+        {
+            std::unique_lock lock{interrupt_mutex};
+            this->should_stop = true;
+        }
+
+        interrupt_cond.notify_all();
+
+        if (interrupt_thread.joinable())
+        {
+            interrupt_thread.join();
+        }
+    });
+
+    if (!this->emu().supports_instruction_counting())
+    {
+        interrupt_thread = std::thread([&] {
+            while (!this->should_stop)
+            {
+                std::unique_lock lock{interrupt_mutex};
+                interrupt_cond.wait_for(lock, std::chrono::seconds(1), [&] {
+                    return this->should_stop.load(); //
+                });
+
+                if (!this->should_stop)
+                {
+                    this->switch_thread_ = true;
+                    this->emu().stop();
+                }
+            }
+        });
+    }
+
     while (!this->should_stop)
     {
         if (this->switch_thread_ || !this->current_thread().is_thread_ready(this->process, this->clock()))
@@ -725,7 +763,7 @@ void windows_emulator::serialize(utils::buffer_serializer& buffer) const
     buffer.write_vector(this->sid);
     buffer.write_optional(this->application_settings_);
     buffer.write(this->executed_instructions_);
-    buffer.write(this->switch_thread_);
+    buffer.write_atomic(this->switch_thread_);
     buffer.write(this->use_relative_time_);
 
     this->version.serialize(buffer);
@@ -745,7 +783,7 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
     buffer.read_vector(this->sid);
     buffer.read_optional(this->application_settings_);
     buffer.read(this->executed_instructions_);
-    buffer.read(this->switch_thread_);
+    buffer.read_atomic(this->switch_thread_);
 
     const auto old_relative_time = this->use_relative_time_;
     buffer.read(this->use_relative_time_);
@@ -773,7 +811,7 @@ void windows_emulator::save_snapshot()
 
     buffer.write_optional(this->application_settings_);
     buffer.write(this->executed_instructions_);
-    buffer.write(this->switch_thread_);
+    buffer.write_atomic(this->switch_thread_);
 
     this->version.serialize(buffer);
     this->registry.serialize_runtime_state(buffer);
@@ -803,7 +841,7 @@ void windows_emulator::restore_snapshot()
 
     buffer.read_optional(this->application_settings_);
     buffer.read(this->executed_instructions_);
-    buffer.read(this->switch_thread_);
+    buffer.read_atomic(this->switch_thread_);
 
     this->version.deserialize(buffer);
     this->registry.deserialize_runtime_state(buffer);
