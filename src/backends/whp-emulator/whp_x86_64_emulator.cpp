@@ -1629,6 +1629,60 @@ namespace whp
 
             bool handle_unrecoverable_exception()
             {
+                const auto rip = this->read_instruction_pointer();
+                std::array<std::byte, 2> opcode{};
+                if (this->access_memory(rip, opcode.data(), opcode.size(), false) && opcode[0] == std::byte{0x0F} &&
+                    opcode[1] == std::byte{0x0B})
+                {
+                    bool consumed = false;
+
+                    for (auto& [_, hook] : this->instruction_hooks_)
+                    {
+                        if (hook.type != x86_hookable_instructions::invalid)
+                        {
+                            continue;
+                        }
+
+                        if (hook.callback(0) == instruction_hook_continuation::skip_instruction)
+                        {
+                            this->advance_rip(2);
+                            consumed = true;
+                        }
+                    }
+
+                    if (consumed)
+                    {
+                        return true;
+                    }
+
+                    for (auto& [_, hook] : this->interrupt_hooks_)
+                    {
+                        hook(6);
+                        return true;
+                    }
+
+                    return false;
+                }
+
+                if (this->pending_mmio_step_.has_value())
+                {
+                    const auto swallow = this->complete_pending_mmio_step();
+                    if (swallow)
+                    {
+                        return true;
+                    }
+                }
+
+                const auto rflags = this->reg<uint64_t>(x86_register::rflags);
+                if ((rflags & 0x100ull) != 0)
+                {
+                    for (auto& [_, hook] : this->interrupt_hooks_)
+                    {
+                        hook(1);
+                        return true;
+                    }
+                }
+
                 const auto fault_address = this->reg<uint64_t>(x86_register::cr2);
 
                 if (fault_address != 0 && !this->memory_violation_hooks_.empty())
@@ -1725,7 +1779,7 @@ namespace whp
 
                 if (exception.ExceptionType == WHvX64ExceptionTypeInvalidOpcodeFault)
                 {
-                    bool handled = false;
+                    bool consumed = false;
 
                     for (auto& [_, hook] : this->instruction_hooks_)
                     {
@@ -1734,14 +1788,14 @@ namespace whp
                             continue;
                         }
 
-                        handled = true;
                         if (hook.callback(0) == instruction_hook_continuation::skip_instruction)
                         {
                             this->advance_rip(exception.InstructionByteCount);
+                            consumed = true;
                         }
                     }
 
-                    if (handled)
+                    if (consumed)
                     {
                         return true;
                     }
