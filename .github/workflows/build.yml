@@ -572,6 +572,27 @@ jobs:
       - name: Copy Test Sample
         run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
 
+      - name: Print WHP Diagnostics
+        shell: powershell
+        run: |
+          $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+          $cs = Get-CimInstance Win32_ComputerSystem
+          $os = Get-CimInstance Win32_OperatingSystem
+
+          Write-Host "WHP diagnostics"
+          Write-Host "  CPU Name: $($cpu.Name)"
+          Write-Host "  CPU Manufacturer: $($cpu.Manufacturer)"
+          Write-Host "  CPU Description: $($cpu.Description)"
+          Write-Host "  CPU Architecture: $($cpu.Architecture)"
+          Write-Host "  Logical Processors: $($cpu.NumberOfLogicalProcessors)"
+          Write-Host "  Address Width: $($cpu.AddressWidth)"
+          Write-Host "  Data Width: $($cpu.DataWidth)"
+          Write-Host "  Hypervisor Present: $($cs.HypervisorPresent)"
+          Write-Host "  System Model: $($cs.Model)"
+          Write-Host "  System Manufacturer: $($cs.Manufacturer)"
+          Write-Host "  OS Version: $($os.Caption) $($os.Version)"
+          systeminfo | Select-String -Pattern 'Hyper-V Requirements|Virtualization Enabled In Firmware|VM Monitor Mode Extensions|Second Level Address Translation|Data Execution Prevention'
+
       - name: CMake Test
         run: cd build/release/artifacts && ./analyzer.exe -e root c:/test-sample.exe
         env:
