@@ -468,6 +468,7 @@ jobs:
         emulator:
           - Unicorn
           - Icicle
+          - WHP
         emulation-root:
           - Windows 2025
           - Windows 2022
@@ -489,6 +490,7 @@ jobs:
           echo "RUST_BACKTRACE=1" >> $GITHUB_ENV
           echo "ASAN_OPTIONS=detect_odr_violation=0" >> $GITHUB_ENV
           echo "EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }}" >> $GITHUB_ENV
+          echo "EMULATOR_WHP=${{ matrix.emulator == 'WHP' }}" >> $GITHUB_ENV
 
       - name: Download Test Configuration
         uses: actions/download-artifact@v8.0.0
