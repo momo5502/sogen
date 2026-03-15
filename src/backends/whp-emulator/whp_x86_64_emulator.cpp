@@ -14,6 +14,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include <utils/object.hpp>
+
 namespace whp
 {
     namespace
@@ -513,7 +515,16 @@ namespace whp
                 this->initialize_syscall_intercept_page();
             }
 
-            ~whp_x86_64_emulator() override = default;
+            ~whp_x86_64_emulator() override
+            {
+                utils::reset_object_with_delayed_destruction(this->memory_write_hooks_);
+                utils::reset_object_with_delayed_destruction(this->memory_read_hooks_);
+                utils::reset_object_with_delayed_destruction(this->memory_execution_hooks_);
+                utils::reset_object_with_delayed_destruction(this->memory_violation_hooks_);
+                utils::reset_object_with_delayed_destruction(this->interrupt_hooks_);
+                utils::reset_object_with_delayed_destruction(this->basic_block_hooks_);
+                utils::reset_object_with_delayed_destruction(this->instruction_hooks_);
+            }
 
             void start(const size_t count) override
             {
