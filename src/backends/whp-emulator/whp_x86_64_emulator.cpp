@@ -610,6 +610,12 @@ namespace whp
                             continue;
                         }
                         throw std::runtime_error("Unhandled RDTSC/RDTSCP exit");
+                    case WHvRunVpExitReasonUnrecoverableException:
+                        if (this->handle_unrecoverable_exception())
+                        {
+                            continue;
+                        }
+                        throw_unhandled_exit(exit_context);
                     case WHvRunVpExitReasonUnsupportedFeature:
                         throw std::runtime_error("Encountered unsupported processor feature");
                     default:
@@ -1619,6 +1625,31 @@ namespace whp
 
                 return handled || type == x86_hookable_instructions::cpuid || type == x86_hookable_instructions::rdtsc ||
                        type == x86_hookable_instructions::rdtscp;
+            }
+
+            bool handle_unrecoverable_exception()
+            {
+                const auto fault_address = this->reg<uint64_t>(x86_register::cr2);
+
+                if (fault_address != 0 && !this->memory_violation_hooks_.empty())
+                {
+                    for (auto& [_, hook] : this->memory_violation_hooks_)
+                    {
+                        const auto result = hook(fault_address, 1, memory_operation::read, memory_violation_type::unmapped);
+                        if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
+                        {
+                            return true;
+                        }
+                    }
+                }
+
+                for (auto& [_, hook] : this->interrupt_hooks_)
+                {
+                    hook(14);
+                    return true;
+                }
+
+                return false;
             }
 
             bool handle_memory_access(const WHV_MEMORY_ACCESS_CONTEXT& memory_access)
