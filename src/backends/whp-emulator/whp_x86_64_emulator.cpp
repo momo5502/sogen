@@ -1753,7 +1753,7 @@ namespace whp
 
                 for (auto& [_, hook] : this->memory_violation_hooks_)
                 {
-                    const auto result = hook(memory_access.Gva, 1, operation, type);
+                    const auto result = hook(mmio_address, 1, operation, type);
                     if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
                     {
                         return true;
