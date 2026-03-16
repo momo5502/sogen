@@ -1241,48 +1241,58 @@ namespace whp
                     return false;
                 }
 
-                const auto post_syscall_rcx = this->get_register(WHvX64RegisterRcx).Reg64;
-                const auto post_syscall_r10 = this->get_register(WHvX64RegisterR10).Reg64;
-                const auto saved_rflags = this->get_register(WHvX64RegisterR11).Reg64;
+                constexpr std::array<WHV_REGISTER_NAME, 7> entry_names = {
+                    WHvX64RegisterRip,    WHvX64RegisterRcx, WHvX64RegisterR10, WHvX64RegisterR11,
+                    WHvX64RegisterRflags, WHvX64RegisterCs,  WHvX64RegisterSs,
+                };
+                auto entry_values = this->get_registers(entry_names);
 
-                auto rip = this->get_register(WHvX64RegisterRip);
-                auto rcx = this->get_register(WHvX64RegisterRcx);
-                auto rflags = this->get_register(WHvX64RegisterRflags);
-                auto cs = this->get_register(WHvX64RegisterCs);
-                auto ss = this->get_register(WHvX64RegisterSs);
+                const auto post_syscall_rcx = entry_values[1].Reg64;
+                const auto post_syscall_r10 = entry_values[2].Reg64;
+                const auto saved_rflags = entry_values[3].Reg64;
 
                 const auto pre_syscall_rip = post_syscall_rcx - 2;
 
-                rip.Reg64 = pre_syscall_rip;
-                rcx.Reg64 = post_syscall_r10;
-                rflags.Reg64 = saved_rflags;
-                cs.Segment = make_segment(0x33, true);
-                ss.Segment = make_segment(0x2B, false);
+                entry_values[0].Reg64 = pre_syscall_rip;
+                entry_values[1].Reg64 = post_syscall_r10;
+                entry_values[4].Reg64 = saved_rflags;
+                entry_values[5].Segment = make_segment(0x33, true);
+                entry_values[6].Segment = make_segment(0x2B, false);
 
-                this->set_register(WHvX64RegisterRip, rip);
-                this->set_register(WHvX64RegisterRcx, rcx);
-                this->set_register(WHvX64RegisterRflags, rflags);
-                this->set_register(WHvX64RegisterCs, cs);
-                this->set_register(WHvX64RegisterSs, ss);
+                constexpr std::array<WHV_REGISTER_NAME, 5> pre_hook_names = {
+                    WHvX64RegisterRip, WHvX64RegisterRcx, WHvX64RegisterRflags, WHvX64RegisterCs, WHvX64RegisterSs,
+                };
+                const std::array<WHV_REGISTER_VALUE, 5> pre_hook_values = {
+                    entry_values[0], entry_values[1], entry_values[4], entry_values[5], entry_values[6],
+                };
+                this->set_registers(pre_hook_names, pre_hook_values);
 
                 const auto continuation = this->syscall_hook_->callback(0);
 
-                auto new_rip = this->get_register(WHvX64RegisterRip);
-                if (continuation == instruction_hook_continuation::skip_instruction && new_rip.Reg64 == pre_syscall_rip)
+                constexpr std::array<WHV_REGISTER_NAME, 1> post_hook_rip_name = {WHvX64RegisterRip};
+                auto post_hook_rip_value = this->get_registers(post_hook_rip_name);
+                if (continuation == instruction_hook_continuation::skip_instruction && post_hook_rip_value[0].Reg64 == pre_syscall_rip)
                 {
-                    new_rip.Reg64 = post_syscall_rcx;
-                    this->set_register(WHvX64RegisterRip, new_rip);
+                    post_hook_rip_value[0].Reg64 = post_syscall_rcx;
                 }
                 else
                 {
-                    new_rip.Reg64 += 2;
-                    this->set_register(WHvX64RegisterRip, new_rip);
+                    post_hook_rip_value[0].Reg64 += 2;
                 }
 
-                cs.Segment = make_segment(0x33, true);
-                ss.Segment = make_segment(0x2B, false);
-                this->set_register(WHvX64RegisterCs, cs);
-                this->set_register(WHvX64RegisterSs, ss);
+                constexpr std::array<WHV_REGISTER_NAME, 3> post_hook_names = {
+                    WHvX64RegisterRip,
+                    WHvX64RegisterCs,
+                    WHvX64RegisterSs,
+                };
+                std::array<WHV_REGISTER_VALUE, 3> post_hook_values = {
+                    post_hook_rip_value[0],
+                    {},
+                    {},
+                };
+                post_hook_values[1].Segment = make_segment(0x33, true);
+                post_hook_values[2].Segment = make_segment(0x2B, false);
+                this->set_registers(post_hook_names, post_hook_values);
 
                 return true;
             }
@@ -1559,9 +1569,25 @@ namespace whp
                 return value;
             }
 
+            template <size_t N>
+            std::array<WHV_REGISTER_VALUE, N> get_registers(const std::array<WHV_REGISTER_NAME, N>& names) const
+            {
+                std::array<WHV_REGISTER_VALUE, N> values{};
+                WHP_CHECK_HR(WHvGetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()),
+                                                             values.data()));
+                return values;
+            }
+
             void set_register(const WHV_REGISTER_NAME name, const WHV_REGISTER_VALUE& value)
             {
                 WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, vp_index, &name, 1, &value));
+            }
+
+            template <size_t N>
+            void set_registers(const std::array<WHV_REGISTER_NAME, N>& names, const std::array<WHV_REGISTER_VALUE, N>& values)
+            {
+                WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()),
+                                                             values.data()));
             }
 
             emulator_hook* make_hook()
