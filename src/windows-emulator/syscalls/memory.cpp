@@ -422,4 +422,9 @@ namespace syscalls
     {
         return TRUE;
     }
+
+    NTSTATUS handle_NtFlushVirtualMemory()
+    {
+        return STATUS_SUCCESS;
+    }
 }
