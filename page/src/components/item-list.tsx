@@ -6,6 +6,7 @@ import { Label } from "./ui/label";
 interface ItemListProps {
   title: string;
   items: string[];
+  trim?: boolean;
   onChange: (items: string[]) => void;
 }
 
@@ -19,6 +20,10 @@ export function ItemList(props: ItemListProps) {
   const addItem = (item: string) => {
     if (item.length == 0) {
       return;
+    }
+
+    if (props.trim) {
+      item = item.trim();
     }
 
     const newItems = props.items.concat(item);

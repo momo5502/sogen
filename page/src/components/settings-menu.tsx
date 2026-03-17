@@ -237,6 +237,7 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
           <PopoverContent className="shadow-2xl">
             <ItemList
               title="Ignored Functions"
+              trim
               items={this.state.ignoredFunctions}
               onChange={(items) => this.setState({ ignoredFunctions: items })}
             />
@@ -257,6 +258,7 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
           <PopoverContent className="shadow-2xl">
             <ItemList
               title="Interesting Modules"
+              trim
               items={this.state.interestingModules}
               onChange={(items) => this.setState({ interestingModules: items })}
             />
