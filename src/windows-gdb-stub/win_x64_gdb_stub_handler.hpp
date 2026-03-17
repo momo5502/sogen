@@ -14,7 +14,7 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
         : x64_gdb_stub_handler(win_emu.emu()),
           win_emu_(&win_emu),
           should_stop_(std::move(should_stop)),
-          windows_filesystem_(windows_filesystem(win_emu))
+          windows_filesystem_(win_emu)
     {
         auto hook = [this](mapped_module&) {
             library_stop_pending_ = true;
