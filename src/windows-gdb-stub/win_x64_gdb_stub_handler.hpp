@@ -1,5 +1,6 @@
 #pragma once
 #include "x64_gdb_stub_handler.hpp"
+#include "windows_filesystem.hpp"
 
 #include <atomic>
 #include <windows_emulator.hpp>
@@ -12,7 +13,8 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
     win_x64_gdb_stub_handler(windows_emulator& win_emu, utils::optional_function<bool()> should_stop = {})
         : x64_gdb_stub_handler(win_emu.emu()),
           win_emu_(&win_emu),
-          should_stop_(std::move(should_stop))
+          should_stop_(std::move(should_stop)),
+          windows_filesystem_(win_emu)
     {
         auto hook = [this](mapped_module&) {
             library_stop_pending_ = true;
@@ -190,9 +192,15 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
         return "Windows";
     }
 
+    gdb_stub::filesystem_interface* get_filesystem() override
+    {
+        return &windows_filesystem_;
+    }
+
   private:
     windows_emulator* win_emu_{};
     utils::optional_function<bool()> should_stop_{};
+    windows_filesystem windows_filesystem_;
 
     // Track library stop events
     std::atomic<bool> library_stop_pending_{true};

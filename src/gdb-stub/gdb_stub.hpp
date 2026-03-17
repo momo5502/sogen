@@ -3,6 +3,8 @@
 #include <network/address.hpp>
 #include <stdexcept>
 
+#include "filesystem_interface.hpp"
+
 namespace gdb_stub
 {
     enum class action : uint8_t
@@ -117,6 +119,17 @@ namespace gdb_stub
         virtual std::string get_os_abi()
         {
             return {};
+        }
+
+        virtual std::string translate_path(std::string_view emulated_path) const
+        {
+            (void)emulated_path;
+            return {};
+        }
+
+        virtual filesystem_interface* get_filesystem()
+        {
+            return nullptr;
         }
     };
 
