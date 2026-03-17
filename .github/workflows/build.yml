@@ -803,7 +803,7 @@ jobs:
       ]
     if: always()
     steps:
-      - uses: geekyeggo/delete-artifact@v5
+      - uses: geekyeggo/delete-artifact@v6
         continue-on-error: true
         with:
           name: "Temp *"
