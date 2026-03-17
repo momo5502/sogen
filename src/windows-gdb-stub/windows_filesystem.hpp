@@ -1,6 +1,6 @@
 #pragma once
 
-#include <gdb_fs.hpp>
+#include <filesystem_interface.hpp>
 #include <windows_emulator.hpp>
 
 #include <fstream>

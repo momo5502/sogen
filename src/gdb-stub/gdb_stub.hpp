@@ -3,7 +3,7 @@
 #include <network/address.hpp>
 #include <stdexcept>
 
-#include "gdb_fs.hpp"
+#include "filesystem_interface.hpp"
 
 namespace gdb_stub
 {
