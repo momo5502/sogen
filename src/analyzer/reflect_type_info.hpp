@@ -39,6 +39,8 @@
 #pragma GCC diagnostic pop
 #endif
 
+#include <utils/string.hpp>
+
 template <typename T>
 class reflect_type_info
 {
@@ -100,7 +102,7 @@ class reflect_type_info
                 return this->name;
             }
 
-            return this->name + "+" + std::to_string(diff);
+            return this->name + utils::string::va("+0x%zX", this->offset);
         }
     };
 
