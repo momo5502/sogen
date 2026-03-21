@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../std_include.hpp"
+#include "../handles.hpp"
 
 // NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
@@ -104,19 +105,21 @@ struct AFD_RECV_DATAGRAM_INFO
     EMULATOR_CAST(typename Traits::PVOID, PULONG) AddressLength;
 };
 
-struct AFD_POLL_HANDLE_INFO64
+template <typename Traits>
+struct AFD_POLL_HANDLE_INFO
 {
-    EmulatorTraits<Emu64>::HANDLE Handle;
+    Traits::HANDLE Handle;
     ULONG PollEvents;
     NTSTATUS Status;
 };
 
-struct AFD_POLL_INFO64
+template <typename Traits>
+struct AFD_POLL_INFO
 {
     LARGE_INTEGER Timeout;
     ULONG NumberOfHandles;
     BOOLEAN Unique;
-    AFD_POLL_HANDLE_INFO64 Handles[1];
+    AFD_POLL_HANDLE_INFO<Traits> Handles[1];
 };
 
 #define AFD_POLL_RECEIVE_BIT           0
