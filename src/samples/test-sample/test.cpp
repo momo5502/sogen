@@ -887,7 +887,11 @@ namespace
         return test_access_violation_exception()       //
                && test_illegal_instruction_exception() //
                && test_unhandled_exception()           //
+#ifdef _WIN64
                && test_guard_page_exception();
+#else
+            ;
+#endif
     }
 #endif
 
