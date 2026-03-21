@@ -1148,7 +1148,9 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_socket, "Socket")
     RUN_TEST(test_apc, "APC")
     RUN_TEST(test_user_callback, "User Callback")
+#ifdef _WIN64
     RUN_TEST(test_message_queue, "Message Queue")
+#endif
 
     return valid ? 0 : 1;
 }
