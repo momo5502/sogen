@@ -1132,7 +1132,9 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_io, "I/O")
     RUN_TEST(test_dir_io, "Dir I/O")
     RUN_TEST(test_apis, "APIs")
+#ifdef _WIN64
     RUN_TEST(test_working_directory, "Working Directory")
+#endif
     RUN_TEST(test_registry, "Registry")
     RUN_TEST(test_system_info, "System Info")
     RUN_TEST(test_monitor_info, "Monitor Info")
