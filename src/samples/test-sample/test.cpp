@@ -895,7 +895,7 @@ namespace
     }
 #endif
 
-    bool trap_flag_cleared = false;
+    thread_local bool trap_flag_cleared = false;
     constexpr DWORD TRAP_FLAG_MASK = 0x100;
 
     LONG NTAPI single_step_handler(PEXCEPTION_POINTERS exception_info)
@@ -912,9 +912,13 @@ namespace
 
     bool test_interrupts()
     {
+        trap_flag_cleared = false;
+
         PVOID veh_handle = AddVectoredExceptionHandler(1, single_step_handler);
         if (!veh_handle)
+        {
             return false;
+        }
 
         __writeeflags(__readeflags() | TRAP_FLAG_MASK);
 
