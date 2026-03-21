@@ -1144,10 +1144,12 @@ int main(const int argc, const char* argv[])
 #ifndef __MINGW64__
     RUN_TEST(test_native_exceptions, "Native Exceptions")
 #endif
+#ifdef _WIN64
     if (!getenv("EMULATOR_ICICLE"))
     {
         RUN_TEST(test_interrupts, "Interrupts")
     }
+#endif
     RUN_TEST(test_tls, "TLS")
     RUN_TEST(test_socket, "Socket")
     RUN_TEST(test_apc, "APC")
