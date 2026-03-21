@@ -194,7 +194,9 @@ class win_x86_64_gdb_stub_handler : public x86_64_gdb_stub_handler
 
     bool is_32_bit() const override
     {
-        return win_emu_->process.is_wow64_process;
+        // Later IDA versions support debugging 32 bit applications in 64 bit environments
+        // If debugger doesn't support that, enable that
+        return false; // win_emu_->process.is_wow64_process;
     }
 
     gdb_stub::filesystem_interface* get_filesystem() override
