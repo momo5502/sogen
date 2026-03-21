@@ -5,6 +5,9 @@
 
 #include <utils/concurrency.hpp>
 
+#include "x86_register_mapping.hpp"
+#include "x86_target_descriptions.hpp"
+
 #include "x64_register_mapping.hpp"
 #include "x64_target_descriptions.hpp"
 
@@ -30,15 +33,15 @@ struct std::hash<breakpoint_key>
     }
 };
 
-class x64_gdb_stub_handler : public gdb_stub::debugging_handler
+class x86_64_gdb_stub_handler : public gdb_stub::debugging_handler
 {
   public:
-    x64_gdb_stub_handler(x86_64_emulator& emu)
+    x86_64_gdb_stub_handler(x86_64_emulator& emu)
         : emu_(&emu)
     {
     }
 
-    ~x64_gdb_stub_handler() override = default;
+    ~x86_64_gdb_stub_handler() override = default;
 
     gdb_stub::action run() override
     {
@@ -70,7 +73,7 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
 
     size_t get_register_count() override
     {
-        return gdb_registers.size();
+        return this->get_register_mapping().size();
     }
 
     size_t get_max_register_size() override
@@ -82,12 +85,13 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
     {
         try
         {
-            if (reg >= gdb_registers.size())
+            const auto& registers = this->get_register_mapping();
+            if (reg >= registers.size())
             {
                 return 0;
             }
 
-            const auto real_reg = gdb_registers[reg];
+            const auto real_reg = registers[reg];
 
             auto size = this->emu_->read_register(real_reg.reg, data, max_length);
 
@@ -116,12 +120,13 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
     {
         try
         {
-            if (reg >= gdb_registers.size())
+            const auto& registers = this->get_register_mapping();
+            if (reg >= registers.size())
             {
                 return 0;
             }
 
-            const auto real_reg = gdb_registers[reg];
+            const auto real_reg = registers[reg];
 
             size_t written_size = 0;
 
@@ -218,8 +223,9 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
 
     std::string get_target_description(const std::string_view file) override
     {
-        const auto entry = x64_target_descriptions.find(file);
-        if (entry == x64_target_descriptions.end())
+        const auto& target_descriptions = this->get_target_descriptions();
+        const auto entry = target_descriptions.find(file);
+        if (entry == target_descriptions.end())
         {
             return {};
         }
@@ -238,6 +244,26 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
         return data;
     }
 
+    const std::vector<register_entry>& get_register_mapping() const
+    {
+        if (this->is_32_bit())
+        {
+            return x86_gdb_registers;
+        }
+
+        return x64_gdb_registers;
+    }
+
+    const std::map<std::string, std::string, std::less<>>& get_target_descriptions() const
+    {
+        if (this->is_32_bit())
+        {
+            return x86_target_descriptions;
+        }
+
+        return x64_target_descriptions;
+    }
+
     uint32_t get_current_thread_id() override
     {
         return 1;
@@ -247,6 +273,8 @@ class x64_gdb_stub_handler : public gdb_stub::debugging_handler
     {
         return {this->get_current_thread_id()};
     }
+
+    virtual bool is_32_bit() const = 0;
 
   private:
     x86_64_emulator* emu_{};

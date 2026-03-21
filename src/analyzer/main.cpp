@@ -2,7 +2,7 @@
 
 #include <windows_emulator.hpp>
 #include <backend_selection.hpp>
-#include <win_x64_gdb_stub_handler.hpp>
+#include <win_x86_64_gdb_stub_handler.hpp>
 #include <minidump_loader.hpp>
 #include <scoped_hook.hpp>
 
@@ -308,7 +308,7 @@ namespace
 
                 const auto should_stop = [&] { return signals_received > 0; };
 
-                win_x64_gdb_stub_handler handler{win_emu, should_stop};
+                win_x86_64_gdb_stub_handler handler{win_emu, should_stop};
                 gdb_stub::run_gdb_stub(address, handler);
             }
             else if (!options.minidump_path.empty())

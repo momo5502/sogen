@@ -1,5 +1,5 @@
 #pragma once
-#include "x64_gdb_stub_handler.hpp"
+#include "x86_64_gdb_stub_handler.hpp"
 #include "windows_filesystem.hpp"
 
 #include <atomic>
@@ -7,11 +7,11 @@
 #include <utils/function.hpp>
 #include <utils/string.hpp>
 
-class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
+class win_x86_64_gdb_stub_handler : public x86_64_gdb_stub_handler
 {
   public:
-    win_x64_gdb_stub_handler(windows_emulator& win_emu, utils::optional_function<bool()> should_stop = {})
-        : x64_gdb_stub_handler(win_emu.emu()),
+    win_x86_64_gdb_stub_handler(windows_emulator& win_emu, utils::optional_function<bool()> should_stop = {})
+        : x86_64_gdb_stub_handler(win_emu.emu()),
           win_emu_(&win_emu),
           should_stop_(std::move(should_stop)),
           windows_filesystem_(win_emu)
@@ -30,7 +30,7 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
         });
     }
 
-    ~win_x64_gdb_stub_handler() override
+    ~win_x86_64_gdb_stub_handler() override
     {
         win_emu_->callbacks.on_module_load.remove(mod_load_id);
         win_emu_->callbacks.on_module_unload.remove(mod_unload_id);
@@ -190,6 +190,13 @@ class win_x64_gdb_stub_handler : public x64_gdb_stub_handler
     std::string get_os_abi() override
     {
         return "Windows";
+    }
+
+    bool is_32_bit() const override
+    {
+        // Later IDA versions support debugging 32 bit applications in 64 bit environments
+        // If debugger doesn't support that, enable that
+        return false; // win_emu_->process.is_wow64_process;
     }
 
     gdb_stub::filesystem_interface* get_filesystem() override

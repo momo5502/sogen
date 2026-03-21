@@ -5,7 +5,7 @@
 
 #include "osabi_template.hpp"
 
-inline std::map<std::string, std::string, std::less<>> x64_target_descriptions{
+inline std::map<std::string, std::string, std::less<>> x86_target_descriptions{
     {
         "target.xml",
         R"__xml__(<?xml version="1.0"?>
@@ -19,19 +19,18 @@ inline std::map<std::string, std::string, std::less<>> x64_target_descriptions{
 
 <!DOCTYPE target SYSTEM "gdb-target.dtd">
 <target>
-  <architecture>i386:x86-64</architecture>
+  <architecture>i386</architecture>
   )__xml__" OSABI_TEMPLATE R"__xml__(
-  <xi:include href="64bit-core.xml"/>
-  <xi:include href="64bit-sse.xml"/>
+  <xi:include href="32bit-core.xml"/>
+  <xi:include href="32bit-sse.xml"/>
   <xi:include href="64bit-segments.xml"/>
-  <xi:include href="64bit-avx.xml"/>
 </target>
 )__xml__",
     },
     {
-        "64bit-core.xml",
+        "32bit-core.xml",
         R"__xml__(<?xml version="1.0"?>
-<!-- Copyright (C) 2010-2018 Free Software Foundation, Inc.
+<!-- Copyright (C) 2010-2015 Free Software Foundation, Inc.
 
      Copying and distribution of this file, with or without modification,
      are permitted in any medium without royalty provided the copyright
@@ -59,24 +58,16 @@ inline std::map<std::string, std::string, std::less<>> x64_target_descriptions{
     <field name="ID" start="21" end="21"/>
   </flags>
 
-  <reg name="rax" bitsize="64" type="int64"/>
-  <reg name="rbx" bitsize="64" type="int64"/>
-  <reg name="rcx" bitsize="64" type="int64"/>
-  <reg name="rdx" bitsize="64" type="int64"/>
-  <reg name="rsi" bitsize="64" type="int64"/>
-  <reg name="rdi" bitsize="64" type="int64"/>
-  <reg name="rbp" bitsize="64" type="data_ptr"/>
-  <reg name="rsp" bitsize="64" type="data_ptr"/>
-  <reg name="r8" bitsize="64" type="int64"/>
-  <reg name="r9" bitsize="64" type="int64"/>
-  <reg name="r10" bitsize="64" type="int64"/>
-  <reg name="r11" bitsize="64" type="int64"/>
-  <reg name="r12" bitsize="64" type="int64"/>
-  <reg name="r13" bitsize="64" type="int64"/>
-  <reg name="r14" bitsize="64" type="int64"/>
-  <reg name="r15" bitsize="64" type="int64"/>
+  <reg name="eax" bitsize="32" type="int32"/>
+  <reg name="ecx" bitsize="32" type="int32"/>
+  <reg name="edx" bitsize="32" type="int32"/>
+  <reg name="ebx" bitsize="32" type="int32"/>
+  <reg name="esp" bitsize="32" type="data_ptr"/>
+  <reg name="ebp" bitsize="32" type="data_ptr"/>
+  <reg name="esi" bitsize="32" type="int32"/>
+  <reg name="edi" bitsize="32" type="int32"/>
 
-  <reg name="rip" bitsize="64" type="code_ptr"/>
+  <reg name="eip" bitsize="32" type="code_ptr"/>
   <reg name="eflags" bitsize="32" type="i386_eflags"/>
   <reg name="cs" bitsize="32" type="int32"/>
   <reg name="ss" bitsize="32" type="int32"/>
@@ -106,9 +97,9 @@ inline std::map<std::string, std::string, std::less<>> x64_target_descriptions{
 )__xml__",
     },
     {
-        "64bit-sse.xml",
+        "32bit-sse.xml",
         R"__xml__(<?xml version="1.0"?>
-<!-- Copyright (C) 2010-2018 Free Software Foundation, Inc.
+<!-- Copyright (C) 2010-2015 Free Software Foundation, Inc.
 
      Copying and distribution of this file, with or without modification,
      are permitted in any medium without royalty provided the copyright
@@ -148,7 +139,7 @@ inline std::map<std::string, std::string, std::less<>> x64_target_descriptions{
     <field name="FZ" start="15" end="15"/>
   </flags>
 
-  <reg name="xmm0" bitsize="128" type="vec128" regnum="40"/>
+  <reg name="xmm0" bitsize="128" type="vec128" regnum="32"/>
   <reg name="xmm1" bitsize="128" type="vec128"/>
   <reg name="xmm2" bitsize="128" type="vec128"/>
   <reg name="xmm3" bitsize="128" type="vec128"/>
@@ -156,14 +147,6 @@ inline std::map<std::string, std::string, std::less<>> x64_target_descriptions{
   <reg name="xmm5" bitsize="128" type="vec128"/>
   <reg name="xmm6" bitsize="128" type="vec128"/>
   <reg name="xmm7" bitsize="128" type="vec128"/>
-  <reg name="xmm8" bitsize="128" type="vec128"/>
-  <reg name="xmm9" bitsize="128" type="vec128"/>
-  <reg name="xmm10" bitsize="128" type="vec128"/>
-  <reg name="xmm11" bitsize="128" type="vec128"/>
-  <reg name="xmm12" bitsize="128" type="vec128"/>
-  <reg name="xmm13" bitsize="128" type="vec128"/>
-  <reg name="xmm14" bitsize="128" type="vec128"/>
-  <reg name="xmm15" bitsize="128" type="vec128"/>
 
   <reg name="mxcsr" bitsize="32" type="i386_mxcsr" group="vector"/>
 </feature>
@@ -182,36 +165,6 @@ inline std::map<std::string, std::string, std::less<>> x64_target_descriptions{
 <feature name="org.gnu.gdb.i386.segments">
   <reg name="fs_base" bitsize="64" type="int"/>
   <reg name="gs_base" bitsize="64" type="int"/>
-</feature>
-)__xml__",
-    },
-    {
-        "64bit-avx.xml",
-        R"__xml__(<?xml version="1.0"?>
-<!-- Copyright (C) 2010-2018 Free Software Foundation, Inc.
-
-     Copying and distribution of this file, with or without modification,
-     are permitted in any medium without royalty provided the copyright
-     notice and this notice are preserved.  -->
-
-<!DOCTYPE feature SYSTEM "gdb-target.dtd">
-<feature name="org.gnu.gdb.i386.avx">
-  <reg name="ymm0h" bitsize="128" type="uint128"/>
-  <reg name="ymm1h" bitsize="128" type="uint128"/>
-  <reg name="ymm2h" bitsize="128" type="uint128"/>
-  <reg name="ymm3h" bitsize="128" type="uint128"/>
-  <reg name="ymm4h" bitsize="128" type="uint128"/>
-  <reg name="ymm5h" bitsize="128" type="uint128"/>
-  <reg name="ymm6h" bitsize="128" type="uint128"/>
-  <reg name="ymm7h" bitsize="128" type="uint128"/>
-  <reg name="ymm8h" bitsize="128" type="uint128"/>
-  <reg name="ymm9h" bitsize="128" type="uint128"/>
-  <reg name="ymm10h" bitsize="128" type="uint128"/>
-  <reg name="ymm11h" bitsize="128" type="uint128"/>
-  <reg name="ymm12h" bitsize="128" type="uint128"/>
-  <reg name="ymm13h" bitsize="128" type="uint128"/>
-  <reg name="ymm14h" bitsize="128" type="uint128"/>
-  <reg name="ymm15h" bitsize="128" type="uint128"/>
 </feature>
 )__xml__",
     },
