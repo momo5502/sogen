@@ -235,7 +235,7 @@ namespace
 
         std::ifstream t(filename2);
         t.seekg(0, std::ios::end);
-        const size_t size = t.tellg();
+        const size_t size = static_cast<size_t>(t.tellg());
         std::string buffer(size, ' ');
         t.seekg(0);
         t.read(buffer.data(), static_cast<std::streamsize>(size));
@@ -690,14 +690,15 @@ namespace
         int sender_length = sizeof(sender_addr);
 
         const auto len = recvfrom(receiver, buffer, sizeof(buffer), 0, reinterpret_cast<sockaddr*>(&sender_addr), &sender_length);
+        const auto ulen = static_cast<size_t>(len);
 
-        if (len != send_data.size())
+        if (ulen != send_data.size())
         {
             puts("Failed to receive data!");
             return false;
         }
 
-        return send_data == std::string_view(buffer, len);
+        return send_data == std::string_view(buffer, ulen);
     }
 
 #ifndef __MINGW64__
@@ -740,10 +741,16 @@ namespace
         thread_local bool caught{};
         caught = false;
 
-        auto* old = SetUnhandledExceptionFilter(+[](struct _EXCEPTION_POINTERS* ExceptionInfo) -> LONG {
+        auto* old = SetUnhandledExceptionFilter([](struct _EXCEPTION_POINTERS* info) -> LONG {
             caught = true;
-            ExceptionInfo->ContextRecord->Rip += 1;
-            return EXCEPTION_CONTINUE_EXECUTION; //
+
+#ifdef _WIN64
+            info->ContextRecord->Rip += 1;
+#else
+            info->ContextRecord->Eip += 1;
+#endif
+
+            return EXCEPTION_CONTINUE_EXECUTION;
         });
 
         DebugBreak();
@@ -754,7 +761,7 @@ namespace
 
     bool test_illegal_instruction_exception()
     {
-        const auto address = VirtualAlloc(nullptr, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+        auto* const address = VirtualAlloc(nullptr, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
         if (!address)
         {
             return false;
@@ -943,7 +950,7 @@ namespace
     {
         int executions = 0;
 
-        auto* apc_func = +[](const ULONG_PTR param) {
+        PAPCFUNC apc_func = [](const ULONG_PTR param) {
             *reinterpret_cast<int*>(param) += 1; //
         };
 
@@ -963,17 +970,17 @@ namespace
 
     bool test_message_queue()
     {
-        static UINT wnd_proc_num = 0;
+        static thread_local UINT wnd_proc_num = 0;
         static const UINT wnd_msg_id = WM_APP + 2;
 
         WNDCLASSEXA wc = {};
         wc.cbSize = sizeof(wc);
         wc.lpszClassName = "TestMsgQueueClass";
         wc.hInstance = GetModuleHandleA(nullptr);
-        wc.lpfnWndProc = +[](HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) -> LRESULT {
+        wc.lpfnWndProc = [](HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) -> LRESULT {
             if (msg == WM_CREATE)
             {
-                const auto cs = reinterpret_cast<CREATESTRUCTA*>(lp);
+                auto* const cs = reinterpret_cast<CREATESTRUCTA*>(lp);
                 if (cs->lpCreateParams == reinterpret_cast<void*>(0x1337))
                 {
                     wnd_proc_num += 1;
