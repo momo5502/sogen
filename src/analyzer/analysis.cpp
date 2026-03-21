@@ -531,8 +531,13 @@ namespace
         const auto* mod = win_emu.mod_manager.find_by_address(address);
         const auto is_sus_module = mod != win_emu.mod_manager.ntdll && mod != win_emu.mod_manager.win32u;
         const auto previous_ip = win_emu.current_thread().previous_ip;
+        const auto is_valid_32_bit_module = utils::make_lazy([&] {
+            return mod                                                              //
+                   && win_emu.process.is_wow64_process                              //
+                   && (mod->name == "wow64cpu.dll" || mod->name == "wow64win.dll"); //
+        });
 
-        if (is_sus_module)
+        if (is_sus_module && !is_valid_32_bit_module)
         {
             win_emu.log.print(color::blue, "Executing inline syscall: %.*s (0x%X) at 0x%" PRIx64 " (%s)\n", STR_VIEW_VA(syscall_name),
                               syscall_id, address, mod ? mod->name.c_str() : "<N/A>");
