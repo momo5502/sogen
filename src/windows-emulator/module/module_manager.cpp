@@ -290,8 +290,6 @@ void module_manager::load_wow64_modules(const windows_path& executable_path, con
                                         const windows_path& win32u_path, const windows_path& ntdll32_path, windows_version_manager& version,
                                         const logger& logger)
 {
-    logger.info("Loading WOW64 modules for 32-bit application\n");
-
     load_native_64bit_modules(executable_path, ntdll_path, win32u_path, logger);
 
     this->wow64_modules_.ntdll32 = this->map_module_or_throw(ntdll32_path, logger, true);
@@ -366,8 +364,6 @@ void module_manager::load_wow64_modules(const windows_path& executable_path, con
 
     this->memory_->write_memory(ldr_init_block_addr, &init_block, static_cast<size_t>(init_block_size));
 
-    logger.info("Successfully initialized LdrSystemDllInitBlock at 0x%" PRIx64 "\n", ldr_init_block_addr);
-
     // Install the WOW64 Heaven's Gate trampoline used for compat-mode -> 64-bit transitions.
     this->install_wow64_heaven_gate(logger);
 }
@@ -409,7 +405,7 @@ void module_manager::install_wow64_heaven_gate(const logger& logger)
             code_initialized = true;
         }
 
-        if (code_initialized && this->modules_.find(kCodeBase) == this->modules_.end())
+        if (code_initialized && this->modules_.contains(kCodeBase))
         {
             mapped_module module{};
             module.name = "wow64_heaven_gate";
