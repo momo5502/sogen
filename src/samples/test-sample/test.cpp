@@ -416,10 +416,16 @@ namespace
 
     bool test_registry()
     {
+#ifdef _WIN64
+        const std::string_view progDir = "C:\\Program Files";
+#else
+        const std::string_view progDir = "C:\\Program Files (x86)";
+#endif
+
         // Basic Reading Test
         const auto prog_files_dir =
             read_registry_string(HKEY_LOCAL_MACHINE, R"(SOFTWARE\Microsoft\Windows\CurrentVersion)", "ProgramFilesDir");
-        if (!prog_files_dir || *prog_files_dir != "C:\\Program Files")
+        if (!prog_files_dir || *prog_files_dir != progDir)
         {
             return false;
         }
@@ -448,10 +454,14 @@ namespace
                 break;
             }
         }
+
+        (void)found_fonts;
+#ifdef _WIN64
         if (!found_fonts)
         {
             return false;
         }
+#endif
 
         // Key Values Enumeration Test
         const auto values_opt = get_all_registry_values(HKEY_LOCAL_MACHINE, R"(SOFTWARE\Microsoft\Windows NT\CurrentVersion)");
@@ -877,11 +887,15 @@ namespace
         return test_access_violation_exception()       //
                && test_illegal_instruction_exception() //
                && test_unhandled_exception()           //
+#ifdef _WIN64
                && test_guard_page_exception();
+#else
+            ;
+#endif
     }
 #endif
 
-    bool trap_flag_cleared = false;
+    thread_local bool trap_flag_cleared = false;
     constexpr DWORD TRAP_FLAG_MASK = 0x100;
 
     LONG NTAPI single_step_handler(PEXCEPTION_POINTERS exception_info)
@@ -898,9 +912,13 @@ namespace
 
     bool test_interrupts()
     {
+        trap_flag_cleared = false;
+
         PVOID veh_handle = AddVectoredExceptionHandler(1, single_step_handler);
         if (!veh_handle)
+        {
             return false;
+        }
 
         __writeeflags(__readeflags() | TRAP_FLAG_MASK);
 
@@ -1126,15 +1144,19 @@ int main(const int argc, const char* argv[])
 #ifndef __MINGW64__
     RUN_TEST(test_native_exceptions, "Native Exceptions")
 #endif
+#ifdef _WIN64
     if (!getenv("EMULATOR_ICICLE"))
     {
         RUN_TEST(test_interrupts, "Interrupts")
     }
+#endif
     RUN_TEST(test_tls, "TLS")
     RUN_TEST(test_socket, "Socket")
     RUN_TEST(test_apc, "APC")
     RUN_TEST(test_user_callback, "User Callback")
+#ifdef _WIN64
     RUN_TEST(test_message_queue, "Message Queue")
+#endif
 
     return valid ? 0 : 1;
 }

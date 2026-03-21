@@ -39,7 +39,12 @@ namespace
     };
 }
 
-std::unique_ptr<io_device> create_device(const std::u16string_view device)
+bool needs_32_bit_devices(const windows_emulator& win_emu)
+{
+    return win_emu.process.is_wow64_process;
+}
+
+std::unique_ptr<io_device> create_device(const std::u16string_view device, const bool is_32_bit)
 {
     if (device == u"CNG"                    //
         || device == u"Nsi"                 //
@@ -54,12 +59,12 @@ std::unique_ptr<io_device> create_device(const std::u16string_view device)
 
     if (device == u"Afd\\Endpoint")
     {
-        return create_afd_endpoint();
+        return create_afd_endpoint(is_32_bit);
     }
 
     if (device == u"Afd\\AsyncConnectHlp")
     {
-        return create_afd_async_connect_hlp();
+        return create_afd_async_connect_hlp(is_32_bit);
     }
 
     if (device == u"MountPointManager")
@@ -102,13 +107,16 @@ void io_device_container::serialize_object(utils::buffer_serializer& buffer) con
 {
     this->assert_validity();
 
+    buffer.write(this->is_32_bit_);
     buffer.write_string(this->device_name_);
     this->device_->serialize(buffer);
 }
 
 void io_device_container::deserialize_object(utils::buffer_deserializer& buffer)
 {
+    buffer.read(this->is_32_bit_);
     buffer.read_string(this->device_name_);
+
     this->setup();
     this->device_->deserialize(buffer);
 }
