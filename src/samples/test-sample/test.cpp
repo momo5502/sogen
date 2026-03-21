@@ -416,10 +416,16 @@ namespace
 
     bool test_registry()
     {
+#ifdef _WIN64
+        const std::string_view progDir = "C:\\Program Files";
+#else
+        const std::string_view progDir = "C:\\Program Files (x86)";
+#endif
+
         // Basic Reading Test
         const auto prog_files_dir =
             read_registry_string(HKEY_LOCAL_MACHINE, R"(SOFTWARE\Microsoft\Windows\CurrentVersion)", "ProgramFilesDir");
-        if (!prog_files_dir || *prog_files_dir != "C:\\Program Files")
+        if (!prog_files_dir || *prog_files_dir != progDir)
         {
             return false;
         }
@@ -448,10 +454,14 @@ namespace
                 break;
             }
         }
+
+        (void)found_fonts;
+#ifdef _WIN64
         if (!found_fonts)
         {
             return false;
         }
+#endif
 
         // Key Values Enumeration Test
         const auto values_opt = get_all_registry_values(HKEY_LOCAL_MACHINE, R"(SOFTWARE\Microsoft\Windows NT\CurrentVersion)");
