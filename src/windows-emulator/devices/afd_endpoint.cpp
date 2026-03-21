@@ -221,27 +221,29 @@ namespace
         return win_emu.emu().read_memory<afd_creation_data>(data.buffer);
     }
 
-    std::pair<AFD_POLL_INFO<EmulatorTraits<Emu64>>, std::vector<AFD_POLL_HANDLE_INFO<EmulatorTraits<Emu64>>>> get_poll_info(
-        windows_emulator& win_emu, const io_device_context& c)
+    template <typename Traits>
+    std::pair<AFD_POLL_INFO<Traits>, std::vector<AFD_POLL_HANDLE_INFO<Traits>>> get_poll_info(windows_emulator& win_emu,
+                                                                                              const io_device_context& c)
     {
-        constexpr auto info_size = offsetof(AFD_POLL_INFO<EmulatorTraits<Emu64>>, Handles);
+        constexpr auto info_size = offsetof(AFD_POLL_INFO<Traits>, Handles);
         if (!c.input_buffer || c.input_buffer_length < info_size || c.input_buffer != c.output_buffer)
         {
             throw std::runtime_error("Bad AFD poll data");
         }
 
-        AFD_POLL_INFO<EmulatorTraits<Emu64>> poll_info{};
+        AFD_POLL_INFO<Traits> poll_info{};
         win_emu.emu().read_memory(c.input_buffer, &poll_info, info_size);
 
-        std::vector<AFD_POLL_HANDLE_INFO<EmulatorTraits<Emu64>>> handle_info{};
+        std::vector<AFD_POLL_HANDLE_INFO<Traits>> handle_info{};
 
-        const emulator_object<AFD_POLL_HANDLE_INFO<EmulatorTraits<Emu64>>> handle_info_obj{win_emu.emu(), c.input_buffer + info_size};
+        const emulator_object<AFD_POLL_HANDLE_INFO<Traits>> handle_info_obj{win_emu.emu(), c.input_buffer + info_size};
 
-        if (c.input_buffer_length < (info_size + (sizeof(AFD_POLL_HANDLE_INFO<EmulatorTraits<Emu64>>) * poll_info.NumberOfHandles)))
+        if (c.input_buffer_length < (info_size + (sizeof(AFD_POLL_HANDLE_INFO<Traits>) * poll_info.NumberOfHandles)))
         {
             throw std::runtime_error("Bad AFD poll handle data");
         }
 
+        handle_info.reserve(poll_info.NumberOfHandles);
         for (ULONG i = 0; i < poll_info.NumberOfHandles; ++i)
         {
             handle_info.emplace_back(handle_info_obj.read(i));
@@ -323,8 +325,11 @@ namespace
         return afd_events;
     }
 
+    template <typename Traits>
     struct afd_endpoint : io_device
     {
+        using status_block = IO_STATUS_BLOCK<EmulatorTraits<Emu64>>;
+
         struct pending_connection
         {
             network::address remote_address;
@@ -697,7 +702,7 @@ namespace
 
             if (c.io_status_block)
             {
-                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                status_block block{};
                 block.Information = sizeof(AFD_LISTEN_RESPONSE_INFO);
                 c.io_status_block.write(block);
             }
@@ -755,12 +760,12 @@ namespace
 
             auto& emu = win_emu.emu();
 
-            if (c.input_buffer_length < sizeof(AFD_RECV_INFO<EmulatorTraits<Emu64>>))
+            if (c.input_buffer_length < sizeof(AFD_RECV_INFO<Traits>))
             {
                 return STATUS_BUFFER_TOO_SMALL;
             }
 
-            const auto receive_info = emu.read_memory<AFD_RECV_INFO<EmulatorTraits<Emu64>>>(c.input_buffer);
+            const auto receive_info = emu.read_memory<AFD_RECV_INFO<Traits>>(c.input_buffer);
 
             if (!receive_info.BufferArray || receive_info.BufferCount == 0)
             {
@@ -773,7 +778,7 @@ namespace
                 return STATUS_NOT_SUPPORTED;
             }
 
-            const auto wsabuf = emu.read_memory<EMU_WSABUF<EmulatorTraits<Emu64>>>(receive_info.BufferArray);
+            const auto wsabuf = emu.read_memory<EMU_WSABUF<Traits>>(receive_info.BufferArray);
             if (!wsabuf.buf || wsabuf.len == 0)
             {
                 return STATUS_INVALID_PARAMETER;
@@ -805,7 +810,7 @@ namespace
 
             if (c.io_status_block)
             {
-                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                status_block block{};
                 block.Information = static_cast<uint32_t>(bytes_received);
                 c.io_status_block.write(block);
             }
@@ -822,12 +827,12 @@ namespace
 
             auto& emu = win_emu.emu();
 
-            if (c.input_buffer_length < sizeof(AFD_SEND_INFO<EmulatorTraits<Emu64>>))
+            if (c.input_buffer_length < sizeof(AFD_SEND_INFO<Traits>))
             {
                 return STATUS_BUFFER_TOO_SMALL;
             }
 
-            const auto send_info = emu.read_memory<AFD_SEND_INFO<EmulatorTraits<Emu64>>>(c.input_buffer);
+            const auto send_info = emu.read_memory<AFD_SEND_INFO<Traits>>(c.input_buffer);
 
             if (!send_info.BufferArray || send_info.BufferCount == 0)
             {
@@ -840,7 +845,7 @@ namespace
                 return STATUS_NOT_SUPPORTED;
             }
 
-            const auto wsabuf = emu.read_memory<EMU_WSABUF<EmulatorTraits<Emu64>>>(send_info.BufferArray);
+            const auto wsabuf = emu.read_memory<EMU_WSABUF<Traits>>(send_info.BufferArray);
             if (!wsabuf.buf || wsabuf.len == 0)
             {
                 return STATUS_INVALID_PARAMETER;
@@ -872,7 +877,7 @@ namespace
 
             if (c.io_status_block)
             {
-                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                status_block block{};
                 block.Information = static_cast<uint32_t>(bytes_sent);
                 c.io_status_block.write(block);
             }
@@ -880,8 +885,8 @@ namespace
             return STATUS_SUCCESS;
         }
 
-        static std::vector<const afd_endpoint*> resolve_endpoints(
-            windows_emulator& win_emu, const std::span<const AFD_POLL_HANDLE_INFO<EmulatorTraits<Emu64>>> handles)
+        static std::vector<const afd_endpoint*> resolve_endpoints(windows_emulator& win_emu,
+                                                                  const std::span<const AFD_POLL_HANDLE_INFO<Traits>> handles)
         {
             auto& proc = win_emu.process;
 
@@ -896,7 +901,7 @@ namespace
                     throw std::runtime_error("Bad device!");
                 }
 
-                const auto* endpoint = device->get_internal_device<afd_endpoint>();
+                const auto* endpoint = device->template get_internal_device<afd_endpoint<Traits>>();
                 if (!endpoint || !endpoint->s_)
                 {
                     throw std::runtime_error("Invalid AFD endpoint!");
@@ -910,7 +915,7 @@ namespace
 
         static NTSTATUS perform_poll(windows_emulator& win_emu, const io_device_context& c,
                                      const std::span<const afd_endpoint* const> endpoints,
-                                     const std::span<const AFD_POLL_HANDLE_INFO<EmulatorTraits<Emu64>>> handles)
+                                     const std::span<const AFD_POLL_HANDLE_INFO<Traits>> handles)
         {
             std::vector<network::poll_entry> poll_data{};
             poll_data.resize(endpoints.size());
@@ -931,8 +936,8 @@ namespace
                 return STATUS_PENDING;
             }
 
-            constexpr auto info_size = offsetof(AFD_POLL_INFO<EmulatorTraits<Emu64>>, Handles);
-            const emulator_object<AFD_POLL_HANDLE_INFO<EmulatorTraits<Emu64>>> handle_info_obj{win_emu.emu(), c.input_buffer + info_size};
+            constexpr auto info_size = offsetof(AFD_POLL_INFO<Traits>, Handles);
+            const emulator_object<AFD_POLL_HANDLE_INFO<Traits>> handle_info_obj{win_emu.emu(), c.input_buffer + info_size};
 
             size_t current_index = 0;
 
@@ -959,15 +964,15 @@ namespace
 
             assert(current_index == static_cast<size_t>(count));
 
-            const emulator_object<AFD_POLL_INFO<EmulatorTraits<Emu64>>> info_obj{win_emu.emu(), c.input_buffer};
-            info_obj.access([&](AFD_POLL_INFO<EmulatorTraits<Emu64>>& info) {
+            const emulator_object<AFD_POLL_INFO<Traits>> info_obj{win_emu.emu(), c.input_buffer};
+            info_obj.access([&](AFD_POLL_INFO<Traits>& info) {
                 info.NumberOfHandles = static_cast<ULONG>(current_index); //
             });
 
             if (c.io_status_block)
             {
-                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                block.Information = info_size + (sizeof(AFD_POLL_HANDLE_INFO<EmulatorTraits<Emu64>>) * current_index);
+                status_block block{};
+                block.Information = info_size + (sizeof(AFD_POLL_HANDLE_INFO<Traits>) * current_index);
                 c.io_status_block.write(block);
             }
 
@@ -976,7 +981,7 @@ namespace
 
         NTSTATUS ioctl_poll(windows_emulator& win_emu, const io_device_context& c)
         {
-            const auto [info, handles] = get_poll_info(win_emu, c);
+            const auto [info, handles] = get_poll_info<Traits>(win_emu, c);
             const auto endpoints = resolve_endpoints(win_emu, handles);
 
             const auto status = perform_poll(win_emu, c, endpoints, handles);
@@ -988,8 +993,8 @@ namespace
             if (!this->executing_delayed_ioctl_)
             {
                 const auto timeout_callback = [](windows_emulator& win_emu, const io_device_context& c) {
-                    const emulator_object<AFD_POLL_INFO<EmulatorTraits<Emu64>>> info_obj{win_emu.emu(), c.input_buffer};
-                    info_obj.access([&](AFD_POLL_INFO<EmulatorTraits<Emu64>>& poll_info) {
+                    const emulator_object<AFD_POLL_INFO<Traits>> info_obj{win_emu.emu(), c.input_buffer};
+                    info_obj.access([&](AFD_POLL_INFO<Traits>& poll_info) {
                         poll_info.NumberOfHandles = 0; //
                     });
                 };
@@ -1026,13 +1031,13 @@ namespace
 
             auto& emu = win_emu.emu();
 
-            if (c.input_buffer_length < sizeof(AFD_RECV_DATAGRAM_INFO<EmulatorTraits<Emu64>>))
+            if (c.input_buffer_length < sizeof(AFD_RECV_DATAGRAM_INFO<Traits>))
             {
                 return STATUS_BUFFER_TOO_SMALL;
             }
 
-            const auto receive_info = emu.read_memory<AFD_RECV_DATAGRAM_INFO<EmulatorTraits<Emu64>>>(c.input_buffer);
-            const auto buffer = emu.read_memory<EMU_WSABUF<EmulatorTraits<Emu64>>>(receive_info.BufferArray);
+            const auto receive_info = emu.read_memory<AFD_RECV_DATAGRAM_INFO<Traits>>(c.input_buffer);
+            const auto buffer = emu.read_memory<EMU_WSABUF<Traits>>(receive_info.BufferArray);
 
             if (!buffer.len || buffer.len > 0x10000 || !buffer.buf)
             {
@@ -1073,7 +1078,7 @@ namespace
 
             if (c.io_status_block)
             {
-                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                status_block block{};
                 block.Information = static_cast<uint32_t>(recevied_data);
                 c.io_status_block.write(block);
             }
@@ -1090,13 +1095,13 @@ namespace
 
             const auto& emu = win_emu.emu();
 
-            if (c.input_buffer_length < sizeof(AFD_SEND_DATAGRAM_INFO<EmulatorTraits<Emu64>>))
+            if (c.input_buffer_length < sizeof(AFD_SEND_DATAGRAM_INFO<Traits>))
             {
                 return STATUS_BUFFER_TOO_SMALL;
             }
 
-            const auto send_info = emu.read_memory<AFD_SEND_DATAGRAM_INFO<EmulatorTraits<Emu64>>>(c.input_buffer);
-            const auto buffer = emu.read_memory<EMU_WSABUF<EmulatorTraits<Emu64>>>(send_info.BufferArray);
+            const auto send_info = emu.read_memory<AFD_SEND_DATAGRAM_INFO<Traits>>(c.input_buffer);
+            const auto buffer = emu.read_memory<EMU_WSABUF<Traits>>(send_info.BufferArray);
 
             auto address_buffer =
                 emu.read_memory(send_info.TdiConnInfo.RemoteAddress, static_cast<size_t>(send_info.TdiConnInfo.RemoteAddressLength));
@@ -1119,7 +1124,7 @@ namespace
 
             if (c.io_status_block)
             {
-                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                status_block block{};
                 block.Information = static_cast<uint32_t>(sent_data);
                 c.io_status_block.write(block);
             }
@@ -1151,7 +1156,7 @@ namespace
 
             if (c.io_status_block)
             {
-                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                status_block block{};
                 block.Information = static_cast<ULONG>(win_addr_bytes.size());
                 c.io_status_block.write(block);
             }
@@ -1220,7 +1225,7 @@ namespace
 
             if (c.io_status_block)
             {
-                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                status_block block{};
                 block.Information = 56;
                 c.io_status_block.write(block);
             }
@@ -1229,6 +1234,7 @@ namespace
         }
     };
 
+    template <typename Traits>
     struct afd_async_connect_hlp : stateless_device
     {
         NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
@@ -1251,7 +1257,7 @@ namespace
                 return STATUS_INVALID_HANDLE;
             }
 
-            auto* target_endpoint = target_device->get_internal_device<afd_endpoint>();
+            auto* target_endpoint = target_device->get_internal_device<afd_endpoint<Traits>>();
             if (!target_endpoint)
             {
                 return STATUS_INVALID_HANDLE;
@@ -1262,12 +1268,22 @@ namespace
     };
 }
 
-std::unique_ptr<io_device> create_afd_endpoint()
+std::unique_ptr<io_device> create_afd_endpoint(const bool is_32_bit)
 {
-    return std::make_unique<afd_endpoint>();
+    if (is_32_bit)
+    {
+        return std::make_unique<afd_endpoint<EmulatorTraits<Emu32>>>();
+    }
+
+    return std::make_unique<afd_endpoint<EmulatorTraits<Emu64>>>();
 }
 
-std::unique_ptr<io_device> create_afd_async_connect_hlp()
+std::unique_ptr<io_device> create_afd_async_connect_hlp(const bool is_32_bit)
 {
-    return std::make_unique<afd_async_connect_hlp>();
+    if (is_32_bit)
+    {
+        return std::make_unique<afd_async_connect_hlp<EmulatorTraits<Emu32>>>();
+    }
+
+    return std::make_unique<afd_async_connect_hlp<EmulatorTraits<Emu64>>>();
 }
