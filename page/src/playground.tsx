@@ -27,6 +27,7 @@ import {
   GearFill,
   PauseFill,
   HouseFill,
+  FileEarmarkArrowDownFill,
 } from "react-bootstrap-icons";
 import { StatusIndicator } from "@/components/status-indicator";
 import { Header } from "./Header";
@@ -63,6 +64,18 @@ export interface PlaygroundState {
   drawerOpen: boolean;
   allowWasm64: boolean;
   file?: PlaygroundFile;
+}
+
+function downloadTextFile(content: string, filename = "output.txt") {
+  const blob = new Blob([content], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function decodeFileData(data: string | null): PlaygroundFile | undefined {
@@ -268,6 +281,15 @@ export class Playground extends React.Component<
     this.output.current?.logLines(lines);
   }
 
+  exportLog() {
+    if (!this.output.current) {
+      return;
+    }
+
+    const log = this.output.current.getLines();
+    downloadTextFile(log.map((l) => l.text).join("\n"));
+  }
+
   isEmulatorPaused() {
     return (
       this.state.emulator &&
@@ -398,6 +420,18 @@ export class Playground extends React.Component<
                 />
               </PopoverContent>
             </Popover>
+
+            <Button
+              disabled={!this.output.current || !this.state.emulator}
+              size="sm"
+              title="Export Logs"
+              variant="secondary"
+              className="fancy"
+              onClick={() => this.exportLog()}
+            >
+              <FileEarmarkArrowDownFill />{" "}
+              <span className="hidden sm:inline">Export Logs</span>
+            </Button>
 
             {!this.state.filesystem ? (
               <></>
