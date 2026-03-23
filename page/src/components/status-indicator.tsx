@@ -81,7 +81,7 @@ export function StatusIndicator(props: StatusIndicatorProps) {
         }
         color="transparent"
       />
-      {getStateName(props.state)}
+      <span className="hidden sm:inline">{getStateName(props.state)}</span>
     </Badge>
   );
 }
