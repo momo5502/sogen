@@ -422,7 +422,11 @@ export class Playground extends React.Component<
             </Popover>
 
             <Button
-              disabled={!this.output.current || !this.state.emulator}
+              disabled={
+                !this.output.current ||
+                !this.state.emulator ||
+                this.state.emulator.getState() == EmulationState.Running
+              }
               size="sm"
               title="Export Logs"
               variant="secondary"
