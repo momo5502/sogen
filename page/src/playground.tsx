@@ -319,7 +319,7 @@ export class Playground extends React.Component<
             ]
           }
         />
-        <div className="h-[100dvh] flex flex-col">
+        <div className="h-dvh flex flex-col">
           <header className="flex shrink-0 items-center gap-2 border-b p-2 overflow-y-auto">
             <a title="Home" href="#/">
               <Button
@@ -406,7 +406,7 @@ export class Playground extends React.Component<
                 open={this.state.drawerOpen}
                 onOpenChange={(o) => this.setState({ drawerOpen: o })}
               >
-                <DrawerContent className="!will-change-auto">
+                <DrawerContent className="will-change-auto!">
                   <DrawerHeader>
                     <DrawerTitle className="hidden">
                       Filesystem Explorer
