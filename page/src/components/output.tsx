@@ -212,6 +212,10 @@ export class Output extends React.Component<OutputProps, FullOutputState> {
     };
   }
 
+  getLines() {
+    return this.state.lines;
+  }
+
   handleScroll(e: Event) {
     const threshold = 40;
     const element = e.target as HTMLElement;
