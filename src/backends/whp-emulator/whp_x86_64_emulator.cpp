@@ -123,8 +123,20 @@ namespace whp
             void* host_page = nullptr;
             uint32_t map_flags = 0;
             memory_permission permissions = memory_permission::none;
-            std::unique_ptr<uint8_t, virtual_free_deleter> owned_page{};
+            std::shared_ptr<uint8_t> owned_page{};
         };
+
+        std::shared_ptr<uint8_t> allocate_backing_memory(const size_t size)
+        {
+            auto* raw_memory = static_cast<uint8_t*>(::VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            if (raw_memory == nullptr)
+            {
+                throw std::runtime_error("VirtualAlloc failed while backing guest memory");
+            }
+
+            std::memset(raw_memory, 0, size);
+            return std::shared_ptr<uint8_t>(raw_memory, mapped_page::virtual_free_deleter{});
+        }
 
         enum class register_kind
         {
@@ -546,7 +558,6 @@ namespace whp
                     {
                         throw_hr(run_hr, "WHvRunVirtualProcessor");
                     }
-
                     switch (exit_context.ExitReason)
                     {
                     case WHvRunVpExitReasonCanceled: {
@@ -671,6 +682,43 @@ namespace whp
                     .write_cb = std::move(write_cb),
                 };
 
+                bool can_batch_map = true;
+                for (size_t offset = 0; offset < size; offset += page_size)
+                {
+                    const auto guest_address = address + offset;
+                    const auto entry = this->mapped_pages_.find(guest_address);
+                    if (entry != this->mapped_pages_.end() && entry->second && entry->second->host_page != nullptr)
+                    {
+                        can_batch_map = false;
+                        break;
+                    }
+                }
+
+                if (can_batch_map)
+                {
+                    auto backing = allocate_backing_memory(size);
+                    auto* backing_base = backing.get();
+
+                    for (size_t offset = 0; offset < size; offset += page_size)
+                    {
+                        const auto guest_address = address + offset;
+                        auto& page = this->mapped_pages_[guest_address];
+                        if (!page)
+                        {
+                            page = std::make_unique<mapped_page>();
+                        }
+
+                        page->owned_page = backing;
+                        page->host_page = backing_base + offset;
+                        page->permissions = memory_permission::none;
+                        this->ensure_virtual_mapping(guest_address);
+                    }
+
+                    this->remap_pages(address, size);
+                    this->mmio_regions_[address] = std::move(region);
+                    return;
+                }
+
                 for (size_t offset = 0; offset < size; offset += page_size)
                 {
                     const auto guest_address = address + offset;
@@ -682,16 +730,9 @@ namespace whp
 
                     if (page->host_page == nullptr)
                     {
-                        auto* raw_page =
-                            static_cast<uint8_t*>(::VirtualAlloc(nullptr, page_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-                        if (raw_page == nullptr)
-                        {
-                            throw std::runtime_error("VirtualAlloc failed while backing an MMIO page");
-                        }
-
-                        std::memset(raw_page, 0, page_size);
-                        page->owned_page.reset(raw_page);
-                        page->host_page = raw_page;
+                        auto backing = allocate_backing_memory(page_size);
+                        page->owned_page = std::move(backing);
+                        page->host_page = page->owned_page.get();
                     }
 
                     page->permissions = memory_permission::none;
@@ -709,6 +750,42 @@ namespace whp
                     throw std::runtime_error("WHP memory mappings must be page aligned");
                 }
 
+                bool can_batch_map = true;
+                for (size_t offset = 0; offset < size; offset += page_size)
+                {
+                    const auto guest_address = address + offset;
+                    const auto entry = this->mapped_pages_.find(guest_address);
+                    if (entry != this->mapped_pages_.end() && entry->second && entry->second->host_page != nullptr)
+                    {
+                        can_batch_map = false;
+                        break;
+                    }
+                }
+
+                if (can_batch_map)
+                {
+                    auto backing = allocate_backing_memory(size);
+                    auto* backing_base = backing.get();
+
+                    for (size_t offset = 0; offset < size; offset += page_size)
+                    {
+                        const auto guest_address = address + offset;
+                        auto& page = this->mapped_pages_[guest_address];
+                        if (!page)
+                        {
+                            page = std::make_unique<mapped_page>();
+                        }
+
+                        page->owned_page = backing;
+                        page->host_page = backing_base + offset;
+                        page->permissions = permissions;
+                        this->ensure_virtual_mapping(guest_address);
+                    }
+
+                    this->remap_pages(address, size);
+                    return;
+                }
+
                 for (size_t offset = 0; offset < size; offset += page_size)
                 {
                     const auto guest_address = address + offset;
@@ -720,16 +797,9 @@ namespace whp
 
                     if (page->host_page == nullptr)
                     {
-                        auto* raw_page =
-                            static_cast<uint8_t*>(::VirtualAlloc(nullptr, page_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-                        if (raw_page == nullptr)
-                        {
-                            throw std::runtime_error("VirtualAlloc failed while backing a guest page");
-                        }
-
-                        std::memset(raw_page, 0, page_size);
-                        page->owned_page.reset(raw_page);
-                        page->host_page = raw_page;
+                        auto backing = allocate_backing_memory(page_size);
+                        page->owned_page = std::move(backing);
+                        page->host_page = page->owned_page.get();
                     }
 
                     page->permissions = permissions;
@@ -812,8 +882,9 @@ namespace whp
                     }
 
                     entry->second->permissions = permissions;
-                    this->remap_page(guest_address, *entry->second);
                 }
+
+                this->remap_pages(address, size);
             }
 
             size_t write_raw_register(const int reg, const void* value, const size_t size) override
@@ -1131,7 +1202,6 @@ namespace whp
             std::unordered_map<uint64_t, mmio_region> mmio_regions_{};
             std::optional<pending_mmio_step> pending_mmio_step_{};
             instruction_hook_entry* syscall_hook_ = nullptr;
-
             void ensure_platform_support()
             {
                 BOOL hypervisor_present = FALSE;
@@ -1304,19 +1374,14 @@ namespace whp
 
             uint64_t allocate_internal_page(const bool executable = false, const bool map_into_guest = true)
             {
-                auto* raw_page = static_cast<uint8_t*>(::VirtualAlloc(nullptr, page_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-                if (raw_page == nullptr)
-                {
-                    throw std::runtime_error("VirtualAlloc failed while creating an internal page");
-                }
-
-                std::memset(raw_page, 0, page_size);
+                auto backing = allocate_backing_memory(page_size);
+                auto* raw_page = backing.get();
 
                 const auto page_gpa = this->next_internal_gpa_;
                 this->next_internal_gpa_ += page_size;
 
                 auto page = std::make_unique<mapped_page>();
-                page->owned_page.reset(raw_page);
+                page->owned_page = std::move(backing);
                 page->host_page = raw_page;
                 page->permissions = executable ? memory_permission::all : memory_permission::read_write;
 
@@ -1347,6 +1412,75 @@ namespace whp
 
                 WHP_CHECK_HR(WHvMapGpaRange(this->partition_, page.host_page, guest_address, page_size,
                                             static_cast<WHV_MAP_GPA_RANGE_FLAGS>(page.map_flags)));
+            }
+
+            void remap_pages(const uint64_t address, const size_t size)
+            {
+                if (size == 0)
+                {
+                    return;
+                }
+
+                size_t offset = 0;
+                while (offset < size)
+                {
+                    const auto run_address = address + offset;
+                    auto entry = this->mapped_pages_.find(run_address);
+                    if (entry == this->mapped_pages_.end() || !entry->second || entry->second->host_page == nullptr)
+                    {
+                        offset += page_size;
+                        continue;
+                    }
+
+                    auto* const run_host_base = static_cast<uint8_t*>(entry->second->host_page);
+                    const auto run_flags = to_whp_map_flags(entry->second->permissions);
+                    const auto run_had_mapping = entry->second->map_flags != 0;
+
+                    size_t run_size = page_size;
+                    while (offset + run_size < size)
+                    {
+                        const auto next_address = address + offset + run_size;
+                        const auto next_entry = this->mapped_pages_.find(next_address);
+                        if (next_entry == this->mapped_pages_.end() || !next_entry->second || next_entry->second->host_page == nullptr)
+                        {
+                            break;
+                        }
+
+                        const auto next_flags = to_whp_map_flags(next_entry->second->permissions);
+                        const auto next_had_mapping = next_entry->second->map_flags != 0;
+                        auto* const expected_host = run_host_base + run_size;
+                        if (next_entry->second->host_page != expected_host || next_flags != run_flags ||
+                            next_had_mapping != run_had_mapping)
+                        {
+                            break;
+                        }
+
+                        run_size += page_size;
+                    }
+
+                    this->remap_page_range(run_address, run_size, run_host_base, run_flags, run_had_mapping);
+                    for (size_t run_offset = 0; run_offset < run_size; run_offset += page_size)
+                    {
+                        this->mapped_pages_.at(run_address + run_offset)->map_flags = run_flags;
+                    }
+
+                    offset += run_size;
+                }
+            }
+
+            void remap_page_range(const uint64_t guest_address, const size_t size, void* host_base, const uint32_t map_flags,
+                                  const bool had_mapping)
+            {
+                if (had_mapping)
+                {
+                    WHP_CHECK_HR(WHvUnmapGpaRange(this->partition_, guest_address, size));
+                }
+
+                if (map_flags != 0)
+                {
+                    WHP_CHECK_HR(
+                        WHvMapGpaRange(this->partition_, host_base, guest_address, size, static_cast<WHV_MAP_GPA_RANGE_FLAGS>(map_flags)));
+                }
             }
 
             mmio_region* find_mmio_region(const uint64_t address)
