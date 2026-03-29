@@ -17,10 +17,10 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 100
-    groups:
-      npm-dependencies:
-        patterns:
-          - "*"
+    #groups:
+    #  npm-dependencies:
+    #    patterns:
+    #      - "*"
 
   - package-ecosystem: "cargo"
     directory: "/src/backends/icicle-emulator/icicle-bridge/"
