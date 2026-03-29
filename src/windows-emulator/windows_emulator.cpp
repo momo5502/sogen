@@ -293,7 +293,7 @@ namespace
 
     std::vector<uint8_t> sid_string_to_bytes(const std::string& sid_string)
     {
-        if (sid_string.substr(0, 2) != "S-")
+        if (!sid_string.starts_with("S-"))
         {
             throw std::invalid_argument("invalid SID string");
         }
