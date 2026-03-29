@@ -633,7 +633,7 @@ namespace syscalls
             const emulator_object<FILE_ID_INFORMATION> info{c.emu, file_information};
             FILE_ID_INFORMATION i{};
 
-            i.VolumeSerialNumber = file_stat.st_dev;
+            i.VolumeSerialNumber = f->drive_number;
             memset(&i.FileId, 0, sizeof(i.FileId));
             memcpy(&i.FileId.Identifier[0], &file_stat.st_ino, sizeof(file_stat.st_ino));
 
@@ -795,7 +795,7 @@ namespace syscalls
 
         if (info_class == FileVolumeNameInformation)
         {
-            const std::u16string volume_name = u"\\Device\\HarddiskVolume1";
+            const auto volume_name = u8_to_u16("\\Device\\HarddiskVolume" + std::to_string(f->drive_number));
             const auto name_bytes = static_cast<uint32_t>(volume_name.size() * sizeof(char16_t));
 
             const uint32_t required_length = offsetof(FILE_VOLUME_NAME_INFORMATION, DeviceName) + name_bytes;
@@ -1233,6 +1233,8 @@ namespace syscalls
         {
             return STATUS_OBJECT_NAME_NOT_FOUND;
         }
+
+        f.drive_number = path.get_drive().value() - 'a' + 1;
 
         const auto host_path = c.win_emu.file_sys.translate(path);
         const bool is_directory = std::filesystem::is_directory(host_path, ec);
