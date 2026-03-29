@@ -225,6 +225,7 @@ namespace syscalls
     NTSTATUS handle_NtOpenProcessTokenEx(const syscall_context& c, handle process_handle, ACCESS_MASK desired_access,
                                          ULONG /*handle_attributes*/, emulator_object<handle> token_handle);
     NTSTATUS handle_NtTerminateProcess(const syscall_context& c, handle process_handle, NTSTATUS exit_status);
+    NTSTATUS handle_NtFlushProcessWriteBuffers(const syscall_context& c);
 
     // syscalls/registry.cpp:
     NTSTATUS handle_NtOpenKey(const syscall_context& c, emulator_object<handle> key_handle, ACCESS_MASK /*desired_access*/,
@@ -890,6 +891,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtContinue);
     add_handler(NtContinueEx);
     add_handler(NtTerminateProcess);
+    add_handler(NtFlushProcessWriteBuffers);
     add_handler(NtWriteFile);
     add_handler(NtRaiseHardError);
     add_handler(NtCreateSemaphore);
