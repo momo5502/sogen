@@ -5,7 +5,6 @@ import {
   Cpu,
   Terminal,
   ExternalLink,
-  Github,
   Play,
   ArrowRight,
   BookOpen,
@@ -13,7 +12,9 @@ import {
   Bug,
   Split,
   Layers,
+  Code,
 } from "lucide-react";
+
 import { Header } from "./Header";
 import { YoutubeVideo } from "@/components/youtube-video";
 
@@ -43,7 +44,7 @@ function generateButtons(additionalClasses: string = "") {
           className="rounded-lg border-neutral-600 text-neutral-300 hover:bg-neutral-800/50 px-8 py-6 text-lg font-semibold group transition-all duration-300 w-full flex"
         >
           <span>
-            <Github className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
+            <Code className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
             <span className="flex-1">Get Source</span>
             <ExternalLink className="ml-2 h-4 w-4" />
           </span>
@@ -330,7 +331,7 @@ export function LandingPage() {
                   title="Soure Code"
                   className="text-neutral-400 hover:text-blue-400 transition-colors p-2 rounded-lg hover:bg-neutral-800/50"
                 >
-                  <Github className="h-6 w-6" />
+                  <Code className="h-6 w-6" />
                 </a>
                 <a
                   href="#/playground"
