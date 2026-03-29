@@ -36,7 +36,7 @@
     "react-dom": "^19.2.4",
     "react-dropzone": "^15.0.0",
     "react-helmet": "^6.1.0",
-    "react-router-dom": "^7.13.1",
+    "react-router-dom": "^7.13.2",
     "react-window": "^2.2.7",
     "shell-quote": "^1.8.3",
     "tailwind-merge": "^3.5.0",
