@@ -462,106 +462,6 @@ namespace syscalls
             return ret(STATUS_INVALID_HANDLE);
         }
 
-        if (info_class == FileNameInformation || info_class == FileNormalizedNameInformation)
-        {
-            const auto relative_path = u"\\" + windows_path(f->name).without_drive().u16string();
-            const auto required_length = static_cast<uint32_t>((relative_path.size() * 2) + offsetof(FILE_NAME_INFORMATION, FileName));
-
-            if (length < sizeof(FILE_NAME_INFORMATION))
-            {
-                return ret(STATUS_INFO_LENGTH_MISMATCH);
-            }
-
-            const uint32_t copy_length = std::min(length, required_length) - offsetof(FILE_NAME_INFORMATION, FileName);
-
-            c.emu.write_memory(file_information, FILE_NAME_INFORMATION{
-                                                     .FileNameLength = static_cast<ULONG>(relative_path.size() * 2),
-                                                     .FileName = {},
-                                                 });
-
-            c.emu.write_memory(file_information + offsetof(FILE_NAME_INFORMATION, FileName), relative_path.c_str(), copy_length);
-
-            const uint32_t total_copied = copy_length + offsetof(FILE_NAME_INFORMATION, FileName);
-            return ret(total_copied == required_length ? STATUS_SUCCESS : STATUS_BUFFER_OVERFLOW, total_copied);
-        }
-
-        if (info_class == FileStandardInformation)
-        {
-            constexpr auto required_length = sizeof(FILE_STANDARD_INFORMATION);
-
-            if (length < required_length)
-            {
-                return ret(STATUS_INFO_LENGTH_MISMATCH);
-            }
-
-            const emulator_object<FILE_STANDARD_INFORMATION> info{c.emu, file_information};
-            FILE_STANDARD_INFORMATION i{};
-            i.Directory = f->is_directory() ? TRUE : FALSE;
-            i.NumberOfLinks = 1;
-
-            if (f->handle)
-            {
-                i.EndOfFile.QuadPart = f->handle.size();
-                i.AllocationSize.QuadPart = static_cast<LONGLONG>(align_up(i.EndOfFile.QuadPart, 512));
-            }
-
-            info.write(i);
-
-            return ret(STATUS_SUCCESS, required_length);
-        }
-
-        if (info_class == FileBasicInformation)
-        {
-            constexpr auto required_length = sizeof(FILE_BASIC_INFORMATION);
-
-            if (length < required_length)
-            {
-                return ret(STATUS_INFO_LENGTH_MISMATCH);
-            }
-
-            struct compat_stat file_stat{};
-            if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
-            {
-                return STATUS_INVALID_HANDLE;
-            }
-
-            const emulator_object<FILE_BASIC_INFORMATION> info{c.emu, file_information};
-            FILE_BASIC_INFORMATION i{};
-            i.CreationTime = convert_timespec_to_filetime(file_stat.st_ctimespec);
-            i.LastAccessTime = convert_timespec_to_filetime(file_stat.st_atimespec);
-            i.LastWriteTime = convert_timespec_to_filetime(file_stat.st_mtimespec);
-            i.ChangeTime = i.LastWriteTime;
-            i.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
-
-            info.write(i);
-
-            return ret(STATUS_SUCCESS, required_length);
-        }
-
-        if (info_class == FilePositionInformation)
-        {
-            if (!f->handle)
-            {
-                return ret(STATUS_NOT_SUPPORTED);
-            }
-
-            constexpr auto required_length = sizeof(FILE_POSITION_INFORMATION);
-
-            if (length < required_length)
-            {
-                return ret(STATUS_INFO_LENGTH_MISMATCH);
-            }
-
-            const emulator_object<FILE_POSITION_INFORMATION> info{c.emu, file_information};
-            FILE_POSITION_INFORMATION i{};
-
-            i.CurrentByteOffset.QuadPart = f->handle.tell();
-
-            info.write(i);
-
-            return ret(STATUS_SUCCESS, required_length);
-        }
-
         if (info_class == FileAttributeTagInformation)
         {
             if (!f->handle)
@@ -684,6 +584,80 @@ namespace syscalls
             return ret(STATUS_SUCCESS, required_length);
         }
 
+        if (info_class == FileVolumeNameInformation)
+        {
+            const auto volume_name = u8_to_u16("\\Device\\HarddiskVolume" + std::to_string(f->drive_number));
+            const auto name_bytes = static_cast<uint32_t>(volume_name.size() * sizeof(char16_t));
+
+            const uint32_t required_length = offsetof(FILE_VOLUME_NAME_INFORMATION, DeviceName) + name_bytes;
+
+            if (length < required_length)
+            {
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
+            }
+
+            FILE_VOLUME_NAME_INFORMATION vni{};
+            vni.DeviceNameLength = name_bytes;
+
+            c.emu.write_memory(file_information, vni);
+            c.emu.write_memory(file_information + offsetof(FILE_VOLUME_NAME_INFORMATION, DeviceName), volume_name.c_str(), name_bytes);
+
+            return ret(STATUS_SUCCESS, required_length);
+        }
+
+        if (info_class == FileBasicInformation)
+        {
+            constexpr auto required_length = sizeof(FILE_BASIC_INFORMATION);
+
+            if (length < required_length)
+            {
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
+            }
+
+            struct compat_stat file_stat{};
+            if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            const emulator_object<FILE_BASIC_INFORMATION> info{c.emu, file_information};
+            FILE_BASIC_INFORMATION i{};
+            i.CreationTime = convert_timespec_to_filetime(file_stat.st_ctimespec);
+            i.LastAccessTime = convert_timespec_to_filetime(file_stat.st_atimespec);
+            i.LastWriteTime = convert_timespec_to_filetime(file_stat.st_mtimespec);
+            i.ChangeTime = i.LastWriteTime;
+            i.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+
+            info.write(i);
+
+            return ret(STATUS_SUCCESS, required_length);
+        }
+
+        if (info_class == FileStandardInformation)
+        {
+            constexpr auto required_length = sizeof(FILE_STANDARD_INFORMATION);
+
+            if (length < required_length)
+            {
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
+            }
+
+            const emulator_object<FILE_STANDARD_INFORMATION> info{c.emu, file_information};
+            FILE_STANDARD_INFORMATION i{};
+            i.Directory = f->is_directory() ? TRUE : FALSE;
+            i.NumberOfLinks = 1;
+
+            if (f->handle)
+            {
+                i.EndOfFile.QuadPart = f->handle.size();
+                i.AllocationSize.QuadPart = static_cast<LONGLONG>(align_up(i.EndOfFile.QuadPart, 512));
+            }
+
+            info.write(i);
+
+            return ret(STATUS_SUCCESS, required_length);
+        }
+
         if (info_class == FileInternalInformation)
         {
             const uint32_t required_length = sizeof(FILE_INTERNAL_INFORMATION);
@@ -751,6 +725,30 @@ namespace syscalls
             return ret(STATUS_SUCCESS, required_length);
         }
 
+        if (info_class == FilePositionInformation)
+        {
+            if (!f->handle)
+            {
+                return ret(STATUS_NOT_SUPPORTED);
+            }
+
+            constexpr auto required_length = sizeof(FILE_POSITION_INFORMATION);
+
+            if (length < required_length)
+            {
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
+            }
+
+            const emulator_object<FILE_POSITION_INFORMATION> info{c.emu, file_information};
+            FILE_POSITION_INFORMATION i{};
+
+            i.CurrentByteOffset.QuadPart = f->handle.tell();
+
+            info.write(i);
+
+            return ret(STATUS_SUCCESS, required_length);
+        }
+
         if (info_class == FileModeInformation)
         {
             constexpr auto required_length = sizeof(FILE_MODE_INFORMATION);
@@ -793,25 +791,27 @@ namespace syscalls
             return ret(STATUS_SUCCESS, required_length);
         }
 
-        if (info_class == FileVolumeNameInformation)
+        if (info_class == FileNameInformation || info_class == FileNormalizedNameInformation)
         {
-            const auto volume_name = u8_to_u16("\\Device\\HarddiskVolume" + std::to_string(f->drive_number));
-            const auto name_bytes = static_cast<uint32_t>(volume_name.size() * sizeof(char16_t));
+            const auto relative_path = u"\\" + windows_path(f->name).without_drive().u16string();
+            const auto required_length = static_cast<uint32_t>((relative_path.size() * 2) + offsetof(FILE_NAME_INFORMATION, FileName));
 
-            const uint32_t required_length = offsetof(FILE_VOLUME_NAME_INFORMATION, DeviceName) + name_bytes;
-
-            if (length < required_length)
+            if (length < sizeof(FILE_NAME_INFORMATION))
             {
                 return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
-            FILE_VOLUME_NAME_INFORMATION vni{};
-            vni.DeviceNameLength = name_bytes;
+            const uint32_t copy_length = std::min(length, required_length) - offsetof(FILE_NAME_INFORMATION, FileName);
 
-            c.emu.write_memory(file_information, vni);
-            c.emu.write_memory(file_information + offsetof(FILE_VOLUME_NAME_INFORMATION, DeviceName), volume_name.c_str(), name_bytes);
+            c.emu.write_memory(file_information, FILE_NAME_INFORMATION{
+                                                     .FileNameLength = static_cast<ULONG>(relative_path.size() * 2),
+                                                     .FileName = {},
+                                                 });
 
-            return ret(STATUS_SUCCESS, required_length);
+            c.emu.write_memory(file_information + offsetof(FILE_NAME_INFORMATION, FileName), relative_path.c_str(), copy_length);
+
+            const uint32_t total_copied = copy_length + offsetof(FILE_NAME_INFORMATION, FileName);
+            return ret(total_copied == required_length ? STATUS_SUCCESS : STATUS_BUFFER_OVERFLOW, total_copied);
         }
 
         if (info_class == FileAllInformation)
