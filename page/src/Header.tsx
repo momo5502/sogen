@@ -1,38 +1,38 @@
-import { Helmet } from "react-helmet";
+import { useEffect } from "react";
 
 export interface HeaderProps {
   title: string;
   description: string;
-  preload?: string[];
 }
 
-const image = "https://momo5502.com/sogen/preview.png";
+const defaultTitle = "Sogen - Windows User Space Emulator";
+const defaultDescription =
+  "Sogen is a high-performance Windows user space emulator that can emulate windows processes. It is ideal for security-, DRM- or malware research.";
+
+function setDescriptionMetaTag(content: string): void {
+  let meta = document.head.querySelector<HTMLMetaElement>(
+    'meta[name="description"]',
+  );
+
+  if (!meta) {
+    meta = document.createElement("meta");
+    meta.setAttribute("name", "description");
+    document.head.appendChild(meta);
+  }
+
+  meta.content = content;
+}
 
 export function Header(props: HeaderProps) {
-  return (
-    <Helmet>
-      <title>{props.title}</title>
-      <meta name="description" content={props.description} />
-      <meta property="og:site_name" content={props.title} />
-      <meta property="og:title" content={props.title} />
-      <meta property="og:description" content={props.description} />
-      <meta property="og:locale" content="en-us" />
-      <meta property="og:type" content="website" />
-      <meta name="og:image" content={image} />
-      <meta name="twitter:card" content="summary_large_image" />
-      <meta name="twitter:title" content={props.title} />
-      <meta name="twitter:description" content={props.description} />
-      <meta name="twitter:image" content={image} />
+  useEffect(() => {
+    document.title = props.title;
+    setDescriptionMetaTag(props.description);
 
-      {props.preload?.map((l) => (
-        <link
-          key={`link-${l}`}
-          rel="preload"
-          as={l.endsWith(".js") ? "script" : "fetch"}
-          crossOrigin=""
-          href={`${l}${l.indexOf("?") == -1 ? "?" : "&"}cb=${import.meta.env.VITE_BUILD_TIME}`}
-        />
-      ))}
-    </Helmet>
-  );
+    return () => {
+      document.title = defaultTitle;
+      setDescriptionMetaTag(defaultDescription);
+    };
+  }, [props.description, props.title]);
+
+  return null;
 }
