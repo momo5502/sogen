@@ -442,19 +442,22 @@ namespace syscalls
                                            const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                            const uint64_t file_information, const uint32_t length, const uint32_t info_class)
     {
-        IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-        block.Status = STATUS_SUCCESS;
-        block.Information = 0;
+        if (info_class == 0 || info_class >= FileMaximumInformation)
+        {
+            return STATUS_INVALID_INFO_CLASS;
+        }
 
-        const auto _ = utils::finally([&] {
-            if (io_status_block)
-            {
-                io_status_block.write(block);
-            }
-        });
+        auto block = io_status_block.try_read();
+        if (!block.has_value())
+        {
+            return STATUS_ACCESS_VIOLATION;
+        }
 
-        const auto ret = [&](const NTSTATUS status) {
-            block.Status = status;
+        const auto _ = utils::finally([&] { io_status_block.write(block.value()); });
+
+        const auto ret = [&](const NTSTATUS status, size_t size = 0) {
+            block->Status = status;
+            block->Information = size;
             return status;
         };
 
@@ -469,11 +472,9 @@ namespace syscalls
             const auto relative_path = u"\\" + windows_path(f->name).without_drive().u16string();
             const auto required_length = sizeof(FILE_NAME_INFORMATION) + (relative_path.size() * 2);
 
-            block.Information = required_length;
-
-            if (length < block.Information)
+            if (length < required_length)
             {
-                return ret(STATUS_BUFFER_OVERFLOW);
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
             c.emu.write_memory(file_information, FILE_NAME_INFORMATION{
@@ -484,16 +485,16 @@ namespace syscalls
             c.emu.write_memory(file_information + offsetof(FILE_NAME_INFORMATION, FileName), relative_path.c_str(),
                                (relative_path.size() + 1) * 2);
 
-            return ret(STATUS_SUCCESS);
+            return ret(STATUS_SUCCESS, required_length);
         }
 
         if (info_class == FileStandardInformation)
         {
-            block.Information = sizeof(FILE_STANDARD_INFORMATION);
+            constexpr auto required_length = sizeof(FILE_STANDARD_INFORMATION);
 
-            if (length < block.Information)
+            if (length < required_length)
             {
-                return ret(STATUS_BUFFER_OVERFLOW);
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
             const emulator_object<FILE_STANDARD_INFORMATION> info{c.emu, file_information};
@@ -507,16 +508,16 @@ namespace syscalls
 
             info.write(i);
 
-            return ret(STATUS_SUCCESS);
+            return ret(STATUS_SUCCESS, required_length);
         }
 
         if (info_class == FileBasicInformation)
         {
-            block.Information = sizeof(FILE_BASIC_INFORMATION);
+            constexpr auto required_length = sizeof(FILE_BASIC_INFORMATION);
 
-            if (length < block.Information)
+            if (length < required_length)
             {
-                return ret(STATUS_BUFFER_OVERFLOW);
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
             struct _stat64 file_stat{};
@@ -536,7 +537,7 @@ namespace syscalls
 
             info.write(i);
 
-            return ret(STATUS_SUCCESS);
+            return ret(STATUS_SUCCESS, required_length);
         }
 
         if (info_class == FilePositionInformation)
@@ -546,11 +547,11 @@ namespace syscalls
                 return ret(STATUS_NOT_SUPPORTED);
             }
 
-            block.Information = sizeof(FILE_POSITION_INFORMATION);
+            constexpr auto required_length = sizeof(FILE_POSITION_INFORMATION);
 
-            if (length < block.Information)
+            if (length < required_length)
             {
-                return ret(STATUS_BUFFER_OVERFLOW);
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
             const emulator_object<FILE_POSITION_INFORMATION> info{c.emu, file_information};
@@ -560,7 +561,7 @@ namespace syscalls
 
             info.write(i);
 
-            return ret(STATUS_SUCCESS);
+            return ret(STATUS_SUCCESS, required_length);
         }
 
         if (info_class == FileAttributeTagInformation)
@@ -570,11 +571,11 @@ namespace syscalls
                 return ret(STATUS_NOT_SUPPORTED);
             }
 
-            block.Information = sizeof(FILE_ATTRIBUTE_TAG_INFORMATION);
+            constexpr auto required_length = sizeof(FILE_ATTRIBUTE_TAG_INFORMATION);
 
-            if (length < block.Information)
+            if (length < required_length)
             {
-                return ret(STATUS_BUFFER_OVERFLOW);
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
             const emulator_object<FILE_ATTRIBUTE_TAG_INFORMATION> info{c.emu, file_information};
@@ -584,7 +585,7 @@ namespace syscalls
 
             info.write(i);
 
-            return ret(STATUS_SUCCESS);
+            return ret(STATUS_SUCCESS, required_length);
         }
 
         if (info_class == FileIsRemoteDeviceInformation)
@@ -594,11 +595,11 @@ namespace syscalls
                 return ret(STATUS_NOT_SUPPORTED);
             }
 
-            block.Information = sizeof(FILE_IS_REMOTE_DEVICE_INFORMATION);
+            constexpr auto required_length = sizeof(FILE_IS_REMOTE_DEVICE_INFORMATION);
 
-            if (length < block.Information)
+            if (length < required_length)
             {
-                return ret(STATUS_BUFFER_OVERFLOW);
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
             const emulator_object<FILE_IS_REMOTE_DEVICE_INFORMATION> info{c.emu, file_information};
@@ -608,7 +609,7 @@ namespace syscalls
 
             info.write(i);
 
-            return ret(STATUS_SUCCESS);
+            return ret(STATUS_SUCCESS, required_length);
         }
 
         if (info_class == FileIdInformation)
@@ -618,11 +619,11 @@ namespace syscalls
                 return ret(STATUS_NOT_SUPPORTED);
             }
 
-            block.Information = sizeof(FILE_ID_INFORMATION);
+            constexpr auto required_length = sizeof(FILE_ID_INFORMATION);
 
-            if (length < block.Information)
+            if (length < required_length)
             {
-                return ret(STATUS_BUFFER_OVERFLOW);
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
             struct _stat64 file_stat{};
@@ -640,7 +641,7 @@ namespace syscalls
 
             info.write(i);
 
-            return ret(STATUS_SUCCESS);
+            return ret(STATUS_SUCCESS, required_length);
         }
 
         if (info_class == FileStreamInformation)
@@ -649,11 +650,10 @@ namespace syscalls
             const auto stream_name_len = static_cast<uint32_t>(stream_name.size() * sizeof(char16_t));
 
             const uint32_t required_length = offsetof(FILE_STREAM_INFORMATION, StreamName) + stream_name_len;
-            block.Information = required_length;
 
             if (length < required_length)
             {
-                return ret(STATUS_BUFFER_OVERFLOW);
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
             struct _stat64 file_stat{};
@@ -683,16 +683,16 @@ namespace syscalls
             c.emu.write_memory(file_information, info);
             c.emu.write_memory(file_information + offsetof(FILE_STREAM_INFORMATION, StreamName), stream_name.c_str(), stream_name_len);
 
-            return ret(STATUS_SUCCESS);
+            return ret(STATUS_SUCCESS, required_length);
         }
 
         if (info_class == FileEaInformation)
         {
-            block.Information = sizeof(FILE_EA_INFORMATION);
+            constexpr auto required_length = sizeof(FILE_EA_INFORMATION);
 
-            if (length < block.Information)
+            if (length < required_length)
             {
-                return ret(STATUS_BUFFER_OVERFLOW);
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
             const emulator_object<FILE_EA_INFORMATION> info{c.emu, file_information};
@@ -702,7 +702,7 @@ namespace syscalls
 
             info.write(i);
 
-            return ret(STATUS_SUCCESS);
+            return ret(STATUS_SUCCESS, required_length);
         }
 
         if (info_class == FileVolumeNameInformation)
@@ -711,11 +711,10 @@ namespace syscalls
             const auto name_bytes = static_cast<uint32_t>(volume_name.size() * sizeof(char16_t));
 
             const uint32_t required_length = offsetof(FILE_VOLUME_NAME_INFORMATION, DeviceName) + name_bytes;
-            block.Information = required_length;
 
             if (length < required_length)
             {
-                return ret(STATUS_BUFFER_OVERFLOW);
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
             FILE_VOLUME_NAME_INFORMATION vni{};
@@ -724,7 +723,7 @@ namespace syscalls
             c.emu.write_memory(file_information, vni);
             c.emu.write_memory(file_information + offsetof(FILE_VOLUME_NAME_INFORMATION, DeviceName), volume_name.c_str(), name_bytes);
 
-            return ret(STATUS_SUCCESS);
+            return ret(STATUS_SUCCESS, required_length);
         }
 
         if (info_class == FileAllInformation)
