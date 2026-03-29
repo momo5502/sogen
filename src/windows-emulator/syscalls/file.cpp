@@ -497,10 +497,12 @@ namespace syscalls
             const emulator_object<FILE_STANDARD_INFORMATION> info{c.emu, file_information};
             FILE_STANDARD_INFORMATION i{};
             i.Directory = f->is_directory() ? TRUE : FALSE;
+            i.NumberOfLinks = 1;
 
             if (f->handle)
             {
                 i.EndOfFile.QuadPart = f->handle.size();
+                i.AllocationSize.QuadPart = static_cast<LONGLONG>(align_up(i.EndOfFile.QuadPart, 512));
             }
 
             info.write(i);
