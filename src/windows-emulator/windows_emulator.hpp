@@ -16,10 +16,11 @@
 
 struct io_device;
 
-#define opt_func utils::optional_function
-
 struct emulator_callbacks : module_manager::callbacks, process_context::callbacks
 {
+    template <typename T>
+    using opt_func = utils::optional_function<T>;
+
     using continuation = instruction_hook_continuation;
 
     opt_func<void()> on_exception{};
