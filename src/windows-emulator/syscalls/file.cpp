@@ -6,16 +6,11 @@
 #include <iostream>
 #include <utils/finally.hpp>
 #include <utils/wildcard.hpp>
+#include "utils/stat.hpp"
 
 #include <sys/stat.h>
 
 #include "../devices/named_pipe.hpp"
-
-#if defined(OS_WINDOWS)
-#define fstat64 _fstat64
-#elif defined(OS_MAC)
-#define fstat64 fstat
-#endif
 
 namespace syscalls
 {
@@ -522,18 +517,17 @@ namespace syscalls
                 return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
-            struct _stat64 file_stat{};
-            if (fstat64(f->handle.file_descriptor(), &file_stat) != 0)
+            struct compat_stat file_stat{};
+            if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
             {
                 return STATUS_INVALID_HANDLE;
             }
 
             const emulator_object<FILE_BASIC_INFORMATION> info{c.emu, file_information};
             FILE_BASIC_INFORMATION i{};
-
-            i.CreationTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
-            i.LastAccessTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
-            i.LastWriteTime = utils::convert_unix_to_windows_time(file_stat.st_mtime);
+            i.CreationTime = convert_timespec_to_filetime(file_stat.st_ctimespec);
+            i.LastAccessTime = convert_timespec_to_filetime(file_stat.st_atimespec);
+            i.LastWriteTime = convert_timespec_to_filetime(file_stat.st_mtimespec);
             i.ChangeTime = i.LastWriteTime;
             i.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
 
@@ -628,8 +622,8 @@ namespace syscalls
                 return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
-            struct _stat64 file_stat{};
-            if (fstat64(f->handle.file_descriptor(), &file_stat) != 0)
+            struct compat_stat file_stat{};
+            if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
             {
                 return ret(STATUS_INVALID_HANDLE);
             }
@@ -658,10 +652,10 @@ namespace syscalls
                 return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
-            struct _stat64 file_stat{};
+            struct compat_stat file_stat{};
             if (f->handle)
             {
-                if (fstat64(f->handle.file_descriptor(), &file_stat) != 0)
+                if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
                 {
                     return ret(STATUS_INVALID_HANDLE);
                 }
@@ -843,17 +837,17 @@ namespace syscalls
                 return ret(status);
             }
 
-            struct _stat64 file_stat{};
-            if (fstat64(native_file_handle.file_descriptor(), &file_stat) != 0)
+            struct compat_stat file_stat{};
+            if (!compat_fstat(native_file_handle.file_descriptor(), &file_stat))
             {
                 return STATUS_INVALID_HANDLE;
             }
 
             EMU_FILE_STAT_BASIC_INFORMATION i{};
 
-            i.CreationTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
-            i.LastAccessTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
-            i.LastWriteTime = utils::convert_unix_to_windows_time(file_stat.st_mtime);
+            i.CreationTime = convert_timespec_to_filetime(file_stat.st_ctimespec);
+            i.LastAccessTime = convert_timespec_to_filetime(file_stat.st_atimespec);
+            i.LastWriteTime = convert_timespec_to_filetime(file_stat.st_mtimespec);
             i.ChangeTime = i.LastWriteTime;
             i.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
 
@@ -1327,18 +1321,18 @@ namespace syscalls
 
         const auto local_filename = c.win_emu.file_sys.translate(filename).u8string();
 
-        struct _stat64 file_stat{};
-        if (_stat64(reinterpret_cast<const char*>(local_filename.c_str()), &file_stat) != 0)
+        struct compat_stat file_stat{};
+        if (!compat_stat(reinterpret_cast<const char*>(local_filename.c_str()), &file_stat))
         {
             return STATUS_OBJECT_NAME_NOT_FOUND;
         }
 
         file_information.access([&](FILE_NETWORK_OPEN_INFORMATION& info) {
-            info.CreationTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
-            info.LastAccessTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
-            info.LastWriteTime = utils::convert_unix_to_windows_time(file_stat.st_mtime);
-            info.AllocationSize.QuadPart = file_stat.st_size;
-            info.EndOfFile.QuadPart = file_stat.st_size;
+            info.CreationTime = convert_timespec_to_filetime(file_stat.st_ctimespec);
+            info.LastAccessTime = convert_timespec_to_filetime(file_stat.st_atimespec);
+            info.LastWriteTime = convert_timespec_to_filetime(file_stat.st_mtimespec);
+            info.AllocationSize.QuadPart = static_cast<LONGLONG>(file_stat.st_size);
+            info.EndOfFile.QuadPart = static_cast<LONGLONG>(file_stat.st_size);
             info.ChangeTime = info.LastWriteTime;
             info.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
         });
@@ -1385,16 +1379,16 @@ namespace syscalls
 
         const auto local_filename = c.win_emu.file_sys.translate(filepath).u8string();
 
-        struct _stat64 file_stat{};
-        if (_stat64(reinterpret_cast<const char*>(local_filename.c_str()), &file_stat) != 0)
+        struct compat_stat file_stat{};
+        if (!compat_stat(reinterpret_cast<const char*>(local_filename.c_str()), &file_stat))
         {
             return STATUS_OBJECT_NAME_NOT_FOUND;
         }
 
         file_information.access([&](FILE_BASIC_INFORMATION& info) {
-            info.CreationTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
-            info.LastAccessTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
-            info.LastWriteTime = utils::convert_unix_to_windows_time(file_stat.st_mtime);
+            info.CreationTime = convert_timespec_to_filetime(file_stat.st_ctimespec);
+            info.LastAccessTime = convert_timespec_to_filetime(file_stat.st_atimespec);
+            info.LastWriteTime = convert_timespec_to_filetime(file_stat.st_mtimespec);
             info.ChangeTime = info.LastWriteTime;
             info.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
         });
