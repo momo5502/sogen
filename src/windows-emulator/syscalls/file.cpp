@@ -682,6 +682,33 @@ namespace syscalls
             return ret(STATUS_SUCCESS, required_length);
         }
 
+        if (info_class == FileInternalInformation)
+        {
+            const uint32_t required_length = sizeof(FILE_INTERNAL_INFORMATION);
+
+            if (length < required_length)
+            {
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
+            }
+
+            struct compat_stat file_stat{};
+            if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            auto address = file_information;
+
+            const emulator_object<FILE_INTERNAL_INFORMATION> info{c.emu, address};
+            FILE_INTERNAL_INFORMATION i{};
+
+            i.IndexNumber.QuadPart = static_cast<LONGLONG>(file_stat.st_ino);
+
+            info.write(i);
+
+            return ret(STATUS_SUCCESS, required_length);
+        }
+
         if (info_class == FileEaInformation)
         {
             constexpr auto required_length = sizeof(FILE_EA_INFORMATION);
