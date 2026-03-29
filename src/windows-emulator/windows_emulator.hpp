@@ -16,10 +16,11 @@
 
 struct io_device;
 
-#define opt_func utils::optional_function
-
 struct emulator_callbacks : module_manager::callbacks, process_context::callbacks
 {
+    template <typename T>
+    using opt_func = utils::optional_function<T>;
+
     using continuation = instruction_hook_continuation;
 
     opt_func<void()> on_exception{};
@@ -89,8 +90,7 @@ class windows_emulator
     std::unique_ptr<network::socket_factory> socket_factory_{};
 
   public:
-    std::vector<uint8_t> sid{}; // TODO: Isolate into some user management component
-    std::filesystem::path emulation_root{};
+    const std::filesystem::path emulation_root{};
     emulator_callbacks callbacks{};
     logger log{};
     file_system file_sys;

@@ -48,7 +48,7 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
         }
 
-        const auto& sid = c.win_emu.sid;
+        const auto& sid = c.proc.sid;
 
         if (token_information_class == TokenUser)
         {
