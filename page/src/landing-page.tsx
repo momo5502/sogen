@@ -9,7 +9,6 @@ import {
   Play,
   ArrowRight,
   BookOpen,
-  Download,
   Lock,
   Bug,
   Split,
