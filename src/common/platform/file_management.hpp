@@ -61,18 +61,34 @@
 #define FILE_SYNCHRONOUS_IO_NONALERT   0x00000020
 #define FILE_NON_DIRECTORY_FILE        0x00000040
 #define FILE_CREATE_TREE_CONNECTION    0x00000080
+#define FILE_DELETE_ON_CLOSE           0x00001000
 
-#define FILE_ATTRIBUTE_NORMAL          0x00000080
-#define FILE_ATTRIBUTE_DIRECTORY       0x00000010
+#define FILE_BYTE_ALIGNMENT            ((1 << (1 - 1)) - 1)
+#define FILE_WORD_ALIGNMENT            ((1 << (2 - 1)) - 1)
+#define FILE_LONG_ALIGNMENT            ((1 << (3 - 1)) - 1)
+#define FILE_QUAD_ALIGNMENT            ((1 << (4 - 1)) - 1)
+#define FILE_OCTA_ALIGNMENT            ((1 << (5 - 1)) - 1)
+#define FILE_32_BYTE_ALIGNMENT         ((1 << (6 - 1)) - 1)
+#define FILE_64_BYTE_ALIGNMENT         ((1 << (7 - 1)) - 1)
+#define FILE_128_BYTE_ALIGNMENT        ((1 << (8 - 1)) - 1)
+#define FILE_256_BYTE_ALIGNMENT        ((1 << (9 - 1)) - 1)
+#define FILE_512_BYTE_ALIGNMENT        ((1 << (10 - 1)) - 1)
 
-#define PS_ATTRIBUTE_NUMBER_MASK       0x0000ffff
-#define PS_ATTRIBUTE_THREAD            0x00010000 // may be used with thread creation
-#define PS_ATTRIBUTE_INPUT             0x00020000 // input only
-#define PS_ATTRIBUTE_ADDITIVE          0x00040000 // "accumulated" e.g. bitmasks, counters, etc.
+#define FILE_MODE_MASK                                                                                        \
+    (FILE_WRITE_THROUGH | FILE_SEQUENTIAL_ONLY | FILE_NO_INTERMEDIATE_BUFFERING | FILE_SYNCHRONOUS_IO_ALERT | \
+     FILE_SYNCHRONOUS_IO_NONALERT | FILE_DELETE_ON_CLOSE)
 
-#define SL_RESTART_SCAN                0x01
-#define SL_RETURN_SINGLE_ENTRY         0x02
-#define SL_NO_CURSOR_UPDATE            0x10
+#define FILE_ATTRIBUTE_NORMAL    0x00000080
+#define FILE_ATTRIBUTE_DIRECTORY 0x00000010
+
+#define PS_ATTRIBUTE_NUMBER_MASK 0x0000ffff
+#define PS_ATTRIBUTE_THREAD      0x00010000 // may be used with thread creation
+#define PS_ATTRIBUTE_INPUT       0x00020000 // input only
+#define PS_ATTRIBUTE_ADDITIVE    0x00040000 // "accumulated" e.g. bitmasks, counters, etc.
+
+#define SL_RESTART_SCAN          0x01
+#define SL_RETURN_SINGLE_ENTRY   0x02
+#define SL_NO_CURSOR_UPDATE      0x10
 
 #ifndef SEC_IMAGE
 #define SEC_HUGE_PAGES             0x00020000
@@ -504,6 +520,21 @@ typedef struct _FILE_EA_INFORMATION
 {
     ULONG EaSize;
 } FILE_EA_INFORMATION, *PFILE_EA_INFORMATION;
+
+typedef struct _FILE_ACCESS_INFORMATION
+{
+    ACCESS_MASK AccessFlags;
+} FILE_ACCESS_INFORMATION, *PFILE_ACCESS_INFORMATION;
+
+typedef struct _FILE_MODE_INFORMATION
+{
+    ULONG Mode;
+} FILE_MODE_INFORMATION, *PFILE_MODE_INFORMATION;
+
+typedef struct _FILE_ALIGNMENT_INFORMATION
+{
+    ULONG AlignmentRequirement;
+} FILE_ALIGNMENT_INFORMATION, *PFILE_ALIGNMENT_INFORMATION;
 
 typedef struct _FILE_VOLUME_NAME_INFORMATION
 {

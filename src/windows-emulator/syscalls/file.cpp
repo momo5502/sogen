@@ -707,6 +707,69 @@ namespace syscalls
             return ret(STATUS_SUCCESS, required_length);
         }
 
+        if (info_class == FileAccessInformation)
+        {
+            constexpr auto required_length = sizeof(FILE_ACCESS_INFORMATION);
+
+            if (length < required_length)
+            {
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
+            }
+
+            auto address = file_information;
+
+            const emulator_object<FILE_ACCESS_INFORMATION> info{c.emu, address};
+            FILE_ACCESS_INFORMATION i{};
+
+            i.AccessFlags = f->access_mask;
+
+            info.write(i);
+
+            return ret(STATUS_SUCCESS, required_length);
+        }
+
+        if (info_class == FileModeInformation)
+        {
+            constexpr auto required_length = sizeof(FILE_MODE_INFORMATION);
+
+            if (length < required_length)
+            {
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
+            }
+
+            auto address = file_information;
+
+            const emulator_object<FILE_MODE_INFORMATION> info{c.emu, address};
+            FILE_MODE_INFORMATION i{};
+
+            i.Mode = f->file_mode;
+
+            info.write(i);
+
+            return ret(STATUS_SUCCESS, required_length);
+        }
+
+        if (info_class == FileAlignmentInformation)
+        {
+            constexpr auto required_length = sizeof(FILE_ALIGNMENT_INFORMATION);
+
+            if (length < required_length)
+            {
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
+            }
+
+            auto address = file_information;
+
+            const emulator_object<FILE_ALIGNMENT_INFORMATION> info{c.emu, address};
+            FILE_ALIGNMENT_INFORMATION i{};
+
+            i.AlignmentRequirement = FILE_BYTE_ALIGNMENT;
+
+            info.write(i);
+
+            return ret(STATUS_SUCCESS, required_length);
+        }
+
         if (info_class == FileVolumeNameInformation)
         {
             const std::u16string volume_name = u"\\Device\\HarddiskVolume1";
@@ -1121,6 +1184,8 @@ namespace syscalls
         }
 
         file f{};
+        f.access_mask = desired_access;
+        f.file_mode = create_options & FILE_MODE_MASK;
         f.name = std::move(filename);
 
         if (attributes.RootDirectory)
