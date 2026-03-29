@@ -470,22 +470,24 @@ namespace syscalls
         if (info_class == FileNameInformation || info_class == FileNormalizedNameInformation)
         {
             const auto relative_path = u"\\" + windows_path(f->name).without_drive().u16string();
-            const auto required_length = sizeof(FILE_NAME_INFORMATION) + (relative_path.size() * 2);
+            const auto required_length = static_cast<uint32_t>((relative_path.size() * 2) + offsetof(FILE_NAME_INFORMATION, FileName));
 
-            if (length < required_length)
+            if (length < sizeof(FILE_NAME_INFORMATION))
             {
                 return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
+
+            const uint32_t copy_length = std::min(length, required_length) - offsetof(FILE_NAME_INFORMATION, FileName);
 
             c.emu.write_memory(file_information, FILE_NAME_INFORMATION{
                                                      .FileNameLength = static_cast<ULONG>(relative_path.size() * 2),
                                                      .FileName = {},
                                                  });
 
-            c.emu.write_memory(file_information + offsetof(FILE_NAME_INFORMATION, FileName), relative_path.c_str(),
-                               (relative_path.size() + 1) * 2);
+            c.emu.write_memory(file_information + offsetof(FILE_NAME_INFORMATION, FileName), relative_path.c_str(), copy_length);
 
-            return ret(STATUS_SUCCESS, required_length);
+            const uint32_t total_copied = copy_length + offsetof(FILE_NAME_INFORMATION, FileName);
+            return ret(total_copied == required_length ? STATUS_SUCCESS : STATUS_BUFFER_OVERFLOW, total_copied);
         }
 
         if (info_class == FileStandardInformation)
