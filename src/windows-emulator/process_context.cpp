@@ -9,9 +9,97 @@
 #include <utils/io.hpp>
 #include <utils/buffer_accessor.hpp>
 #include <regex>
+#include <sstream>
 
 namespace
 {
+
+    std::vector<uint8_t> sid_string_to_bytes(const std::string& sid_string)
+    {
+        if (!sid_string.starts_with("S-"))
+        {
+            throw std::invalid_argument("invalid SID string");
+        }
+
+        std::string token{};
+        std::vector<std::string> parts{};
+        std::stringstream ss(sid_string.substr(2));
+
+        while (std::getline(ss, token, '-'))
+        {
+            parts.push_back(token);
+        }
+
+        if (parts.size() < 2)
+        {
+            throw std::invalid_argument("invalid SID string");
+        }
+
+        const auto revision = static_cast<uint8_t>(std::stoul(parts[0]));
+        const auto authority = std::stoull(parts[1]);
+        const auto sub_authority_count = static_cast<uint8_t>(parts.size() - 2);
+
+        std::vector<uint8_t> result;
+        result.push_back(revision);
+        result.push_back(sub_authority_count);
+
+        for (int i = 5; i >= 0; --i)
+        {
+            result.push_back((authority >> (i * 8)) & 0xFF);
+        }
+
+        for (size_t i = 2; i < parts.size(); ++i)
+        {
+            uint32_t sub = std::stoul(parts[i]);
+            result.push_back((sub >> 0) & 0xFF);
+            result.push_back((sub >> 8) & 0xFF);
+            result.push_back((sub >> 16) & 0xFF);
+            result.push_back((sub >> 24) & 0xFF);
+        }
+
+        return result;
+    }
+
+    std::string get_user_sid_string(registry_manager& registry)
+    {
+        const std::filesystem::path profile_list_path = R"(\Registry\Machine\Software\Microsoft\Windows NT\CurrentVersion\ProfileList)";
+
+        const auto profile_list_key = registry.get_key(profile_list_path);
+        if (!profile_list_key)
+        {
+            throw std::runtime_error("Failed to get ProfileList registry key");
+        }
+
+        for (size_t i = 0;; ++i)
+        {
+            const auto value = registry.get_sub_key_name(*profile_list_key, i);
+            if (!value.has_value())
+            {
+                break;
+            }
+
+            const auto profile_key = registry.get_key(profile_list_path / *value);
+            if (!profile_key.has_value())
+            {
+                continue;
+            }
+
+            const auto full_profile = registry.get_value(*profile_key, "FullProfile");
+            if (full_profile && full_profile->as_dword().value_or(0) == 1)
+            {
+                return std::string(*value);
+            }
+        }
+
+        return "S-1-5-18";
+    }
+
+    std::vector<uint8_t> get_sid(registry_manager& registry)
+    {
+        const auto sid_string = get_user_sid_string(registry);
+        return sid_string_to_bytes(sid_string);
+    }
+
     emulator_allocator create_allocator(memory_manager& memory, const size_t size, const bool is_wow64_process)
     {
         uint64_t default_allocation_base = (is_wow64_process == true) ? DEFAULT_ALLOCATION_ADDRESS_32BIT : DEFAULT_ALLOCATION_ADDRESS_64BIT;
@@ -34,25 +122,25 @@ namespace
 
         // Index 1 (selector 0x08) - 64-bit kernel code segment (Ring 0)
         // P=1, DPL=0, S=1, Type=0xA (Code, Execute/Read), L=1 (Long mode)
-        emu.write_memory<uint64_t>(GDT_ADDR + 1 * sizeof(uint64_t), 0x00AF9B000000FFFF);
+        emu.write_memory<uint64_t>(GDT_ADDR + (1 * sizeof(uint64_t)), 0x00AF9B000000FFFF);
 
         // Index 2 (selector 0x10) - 64-bit kernel data segment (Ring 0)
         // P=1, DPL=0, S=1, Type=0x2 (Data, Read/Write), L=1 (64-bit)
-        emu.write_memory<uint64_t>(GDT_ADDR + 2 * sizeof(uint64_t), 0x00CF93000000FFFF);
+        emu.write_memory<uint64_t>(GDT_ADDR + (2 * sizeof(uint64_t)), 0x00CF93000000FFFF);
 
         // Index 3 (selector 0x18) - 32-bit compatibility mode segment (Ring 0)
         // P=1, DPL=0, S=1, Type=0xA (Code, Execute/Read), DB=1, G=1
-        emu.write_memory<uint64_t>(GDT_ADDR + 3 * sizeof(uint64_t), 0x00CF9B000000FFFF);
+        emu.write_memory<uint64_t>(GDT_ADDR + (3 * sizeof(uint64_t)), 0x00CF9B000000FFFF);
 
         // Index 4 (selector 0x23) - 32-bit code segment for WOW64 (Ring 3)
         // Real Windows: Code RE Ac 3 Bg Pg P Nl 00000cfb
         // P=1, DPL=3, S=1, Type=0xA (Code, Execute/Read), DB=1, G=1
-        emu.write_memory<uint64_t>(GDT_ADDR + 4 * sizeof(uint64_t), 0x00CFFB000000FFFF);
+        emu.write_memory<uint64_t>(GDT_ADDR + (4 * sizeof(uint64_t)), 0x00CFFB000000FFFF);
 
         // Index 5 (selector 0x2B) - Data segment for user mode (Ring 3)
         // Real Windows: Data RW Ac 3 Bg Pg P Nl 00000cf3
         // P=1, DPL=3, S=1, Type=0x2 (Data, Read/Write), G=1
-        emu.write_memory<uint64_t>(GDT_ADDR + 5 * sizeof(uint64_t), 0x00CFF3000000FFFF);
+        emu.write_memory<uint64_t>(GDT_ADDR + (5 * sizeof(uint64_t)), 0x00CFF3000000FFFF);
         emu.reg<uint16_t>(x86_register::ss, 0x2B);
         emu.reg<uint16_t>(x86_register::ds, 0x2B);
         emu.reg<uint16_t>(x86_register::es, 0x2B);
@@ -60,14 +148,14 @@ namespace
 
         // Index 6 (selector 0x33) - 64-bit code segment (Ring 3)
         // P=1, DPL=3, S=1, Type=0xA (Code, Execute/Read), L=1 (Long mode)
-        emu.write_memory<uint64_t>(GDT_ADDR + 6 * sizeof(uint64_t), 0x00AFFB000000FFFF);
+        emu.write_memory<uint64_t>(GDT_ADDR + (6 * sizeof(uint64_t)), 0x00AFFB000000FFFF);
         emu.reg<uint16_t>(x86_register::cs, 0x33);
 
         // Index 10 (selector 0x53) - FS segment for WOW64 TEB access
         // Real Windows: Data RW Ac 3 Bg By P Nl 000004f3 (base=0x002c1000, limit=0xfff)
         // Initially set with base=0, will be updated during thread creation
         // P=1, DPL=3, S=1, Type=0x3 (Data, Read/Write, Accessed), G=0 (byte granularity), DB=1
-        emu.write_memory<uint64_t>(GDT_ADDR + 10 * sizeof(uint64_t), 0x0040F3000000FFFF);
+        emu.write_memory<uint64_t>(GDT_ADDR + (10 * sizeof(uint64_t)), 0x0040F3000000FFFF);
         emu.reg<uint16_t>(x86_register::fs, 0x53);
     }
 
@@ -204,6 +292,8 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
                             windows_version_manager& version, const application_settings& app_settings, const mapped_module& executable,
                             const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32)
 {
+    this->sid = get_sid(registry);
+
     setup_gdt(emu, memory);
 
     this->kusd.setup(version);
@@ -478,6 +568,7 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
 
 void process_context::serialize(utils::buffer_serializer& buffer) const
 {
+    buffer.write_vector(this->sid);
     buffer.write(this->shared_section_address);
     buffer.write(this->shared_section_size);
     buffer.write(this->dbwin_buffer);
@@ -541,6 +632,7 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
 
 void process_context::deserialize(utils::buffer_deserializer& buffer)
 {
+    buffer.read_vector(this->sid);
     buffer.read(this->shared_section_address);
     buffer.read(this->shared_section_size);
     buffer.read(this->dbwin_buffer);
@@ -711,7 +803,7 @@ uint16_t process_context::add_or_find_atom(std::u16string name)
         last_entry = entry.first;
     }
 
-    atoms[index] = {std::move(name), 1};
+    atoms[index] = {.name = std::move(name), .ref_count = 1};
 
     return index;
 }
