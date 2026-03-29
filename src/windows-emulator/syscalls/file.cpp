@@ -435,7 +435,7 @@ namespace syscalls
 
     NTSTATUS handle_NtQueryInformationFile(const syscall_context& c, const handle file_handle,
                                            const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
-                                           const uint64_t file_information, const uint32_t length, const uint32_t info_class)
+                                           const uint64_t file_information, uint32_t length, const uint32_t info_class)
     {
         if (info_class == 0 || info_class >= FileMaximumInformation)
         {
@@ -605,7 +605,15 @@ namespace syscalls
             return ret(STATUS_SUCCESS, required_length);
         }
 
-        if (info_class == FileBasicInformation)
+        const auto all_info = info_class == FileAllInformation;
+        size_t all_length = 0;
+
+        if (all_info && length < sizeof(FILE_ALL_INFORMATION))
+        {
+            return ret(STATUS_INFO_LENGTH_MISMATCH);
+        }
+
+        if (info_class == FileBasicInformation || all_info)
         {
             constexpr auto required_length = sizeof(FILE_BASIC_INFORMATION);
 
@@ -620,7 +628,13 @@ namespace syscalls
                 return STATUS_INVALID_HANDLE;
             }
 
-            const emulator_object<FILE_BASIC_INFORMATION> info{c.emu, file_information};
+            auto address = file_information;
+            if (all_info)
+            {
+                address += offsetof(FILE_ALL_INFORMATION, BasicInformation);
+            }
+
+            const emulator_object<FILE_BASIC_INFORMATION> info{c.emu, address};
             FILE_BASIC_INFORMATION i{};
             i.CreationTime = convert_timespec_to_filetime(file_stat.st_ctimespec);
             i.LastAccessTime = convert_timespec_to_filetime(file_stat.st_atimespec);
@@ -630,10 +644,16 @@ namespace syscalls
 
             info.write(i);
 
-            return ret(STATUS_SUCCESS, required_length);
+            if (!all_info)
+            {
+                return ret(STATUS_SUCCESS, required_length);
+            }
+
+            length -= required_length;
+            all_length += required_length;
         }
 
-        if (info_class == FileStandardInformation)
+        if (info_class == FileStandardInformation || all_info)
         {
             constexpr auto required_length = sizeof(FILE_STANDARD_INFORMATION);
 
@@ -642,7 +662,13 @@ namespace syscalls
                 return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
-            const emulator_object<FILE_STANDARD_INFORMATION> info{c.emu, file_information};
+            auto address = file_information;
+            if (all_info)
+            {
+                address += offsetof(FILE_ALL_INFORMATION, StandardInformation);
+            }
+
+            const emulator_object<FILE_STANDARD_INFORMATION> info{c.emu, address};
             FILE_STANDARD_INFORMATION i{};
             i.Directory = f->is_directory() ? TRUE : FALSE;
             i.NumberOfLinks = 1;
@@ -655,10 +681,16 @@ namespace syscalls
 
             info.write(i);
 
-            return ret(STATUS_SUCCESS, required_length);
+            if (!all_info)
+            {
+                return ret(STATUS_SUCCESS, required_length);
+            }
+
+            length -= required_length;
+            all_length += required_length;
         }
 
-        if (info_class == FileInternalInformation)
+        if (info_class == FileInternalInformation || all_info)
         {
             const uint32_t required_length = sizeof(FILE_INTERNAL_INFORMATION);
 
@@ -674,6 +706,10 @@ namespace syscalls
             }
 
             auto address = file_information;
+            if (all_info)
+            {
+                address += offsetof(FILE_ALL_INFORMATION, InternalInformation);
+            }
 
             const emulator_object<FILE_INTERNAL_INFORMATION> info{c.emu, address};
             FILE_INTERNAL_INFORMATION i{};
@@ -682,10 +718,16 @@ namespace syscalls
 
             info.write(i);
 
-            return ret(STATUS_SUCCESS, required_length);
+            if (!all_info)
+            {
+                return ret(STATUS_SUCCESS, required_length);
+            }
+
+            length -= required_length;
+            all_length += required_length;
         }
 
-        if (info_class == FileEaInformation)
+        if (info_class == FileEaInformation || all_info)
         {
             constexpr auto required_length = sizeof(FILE_EA_INFORMATION);
 
@@ -694,17 +736,28 @@ namespace syscalls
                 return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
-            const emulator_object<FILE_EA_INFORMATION> info{c.emu, file_information};
+            auto address = file_information;
+            if (all_info)
+            {
+                address += offsetof(FILE_ALL_INFORMATION, EaInformation);
+            }
+            const emulator_object<FILE_EA_INFORMATION> info{c.emu, address};
             FILE_EA_INFORMATION i{};
 
             i.EaSize = 0;
 
             info.write(i);
 
-            return ret(STATUS_SUCCESS, required_length);
+            if (!all_info)
+            {
+                return ret(STATUS_SUCCESS, required_length);
+            }
+
+            length -= required_length;
+            all_length += required_length;
         }
 
-        if (info_class == FileAccessInformation)
+        if (info_class == FileAccessInformation || all_info)
         {
             constexpr auto required_length = sizeof(FILE_ACCESS_INFORMATION);
 
@@ -714,6 +767,10 @@ namespace syscalls
             }
 
             auto address = file_information;
+            if (all_info)
+            {
+                address += offsetof(FILE_ALL_INFORMATION, AccessInformation);
+            }
 
             const emulator_object<FILE_ACCESS_INFORMATION> info{c.emu, address};
             FILE_ACCESS_INFORMATION i{};
@@ -722,10 +779,16 @@ namespace syscalls
 
             info.write(i);
 
-            return ret(STATUS_SUCCESS, required_length);
+            if (!all_info)
+            {
+                return ret(STATUS_SUCCESS, required_length);
+            }
+
+            length -= required_length;
+            all_length += required_length;
         }
 
-        if (info_class == FilePositionInformation)
+        if (info_class == FilePositionInformation || all_info)
         {
             if (!f->handle)
             {
@@ -739,17 +802,29 @@ namespace syscalls
                 return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
-            const emulator_object<FILE_POSITION_INFORMATION> info{c.emu, file_information};
+            auto address = file_information;
+            if (all_info)
+            {
+                address += offsetof(FILE_ALL_INFORMATION, PositionInformation);
+            }
+
+            const emulator_object<FILE_POSITION_INFORMATION> info{c.emu, address};
             FILE_POSITION_INFORMATION i{};
 
             i.CurrentByteOffset.QuadPart = f->handle.tell();
 
             info.write(i);
 
-            return ret(STATUS_SUCCESS, required_length);
+            if (!all_info)
+            {
+                return ret(STATUS_SUCCESS, required_length);
+            }
+
+            length -= required_length;
+            all_length += required_length;
         }
 
-        if (info_class == FileModeInformation)
+        if (info_class == FileModeInformation || all_info)
         {
             constexpr auto required_length = sizeof(FILE_MODE_INFORMATION);
 
@@ -759,6 +834,10 @@ namespace syscalls
             }
 
             auto address = file_information;
+            if (all_info)
+            {
+                address += offsetof(FILE_ALL_INFORMATION, ModeInformation);
+            }
 
             const emulator_object<FILE_MODE_INFORMATION> info{c.emu, address};
             FILE_MODE_INFORMATION i{};
@@ -767,10 +846,16 @@ namespace syscalls
 
             info.write(i);
 
-            return ret(STATUS_SUCCESS, required_length);
+            if (!all_info)
+            {
+                return ret(STATUS_SUCCESS, required_length);
+            }
+
+            length -= required_length;
+            all_length += required_length;
         }
 
-        if (info_class == FileAlignmentInformation)
+        if (info_class == FileAlignmentInformation || all_info)
         {
             constexpr auto required_length = sizeof(FILE_ALIGNMENT_INFORMATION);
 
@@ -780,6 +865,10 @@ namespace syscalls
             }
 
             auto address = file_information;
+            if (all_info)
+            {
+                address += offsetof(FILE_ALL_INFORMATION, AlignmentInformation);
+            }
 
             const emulator_object<FILE_ALIGNMENT_INFORMATION> info{c.emu, address};
             FILE_ALIGNMENT_INFORMATION i{};
@@ -788,10 +877,16 @@ namespace syscalls
 
             info.write(i);
 
-            return ret(STATUS_SUCCESS, required_length);
+            if (!all_info)
+            {
+                return ret(STATUS_SUCCESS, required_length);
+            }
+
+            length -= required_length;
+            all_length += required_length;
         }
 
-        if (info_class == FileNameInformation || info_class == FileNormalizedNameInformation)
+        if (info_class == FileNameInformation || info_class == FileNormalizedNameInformation || all_info)
         {
             const auto relative_path = u"\\" + windows_path(f->name).without_drive().u16string();
             const auto required_length = static_cast<uint32_t>((relative_path.size() * 2) + offsetof(FILE_NAME_INFORMATION, FileName));
@@ -803,20 +898,33 @@ namespace syscalls
 
             const uint32_t copy_length = std::min(length, required_length) - offsetof(FILE_NAME_INFORMATION, FileName);
 
-            c.emu.write_memory(file_information, FILE_NAME_INFORMATION{
-                                                     .FileNameLength = static_cast<ULONG>(relative_path.size() * 2),
-                                                     .FileName = {},
-                                                 });
+            auto address = file_information;
+            if (all_info)
+            {
+                address += offsetof(FILE_ALL_INFORMATION, NameInformation);
+            }
 
-            c.emu.write_memory(file_information + offsetof(FILE_NAME_INFORMATION, FileName), relative_path.c_str(), copy_length);
+            c.emu.write_memory(address, FILE_NAME_INFORMATION{
+                                            .FileNameLength = static_cast<ULONG>(relative_path.size() * 2),
+                                            .FileName = {},
+                                        });
+
+            c.emu.write_memory(address + offsetof(FILE_NAME_INFORMATION, FileName), relative_path.c_str(), copy_length);
 
             const uint32_t total_copied = copy_length + offsetof(FILE_NAME_INFORMATION, FileName);
-            return ret(total_copied == required_length ? STATUS_SUCCESS : STATUS_BUFFER_OVERFLOW, total_copied);
+
+            if (!all_info)
+            {
+                return ret(total_copied == required_length ? STATUS_SUCCESS : STATUS_BUFFER_OVERFLOW, total_copied);
+            }
+
+            length -= total_copied;
+            all_length += total_copied;
         }
 
-        if (info_class == FileAllInformation)
+        if (all_info)
         {
-            return ret(STATUS_NOT_SUPPORTED);
+            return ret(STATUS_SUCCESS, all_length);
         }
 
         c.win_emu.log.error("Unsupported query file info class: 0x%X\n", info_class);
