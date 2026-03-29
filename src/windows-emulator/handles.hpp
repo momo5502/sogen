@@ -26,6 +26,7 @@ struct handle_types
         io_completion,
         wait_completion_packet,
         worker_factory,
+        private_namespace,
     };
 };
 

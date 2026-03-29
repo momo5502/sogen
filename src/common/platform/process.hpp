@@ -767,6 +767,25 @@ typedef struct _SYSTEM_KERNEL_DEBUGGER_INFORMATION
     BOOLEAN KernelDebuggerNotPresent;
 } SYSTEM_KERNEL_DEBUGGER_INFORMATION, *PSYSTEM_KERNEL_DEBUGGER_INFORMATION;
 
+#ifndef OS_WINDOWS
+struct SID_IDENTIFIER_AUTHORITY
+{
+    BYTE Value[6];
+};
+
+#define SID_REVISION                    (1)
+#define SID_MAX_SUB_AUTHORITIES         (15)
+#define SID_RECOMMENDED_SUB_AUTHORITIES (1)
+
+struct SID
+{
+    BYTE Revision;
+    BYTE SubAuthorityCount;
+    SID_IDENTIFIER_AUTHORITY IdentifierAuthority;
+    DWORD SubAuthority[ANYSIZE_ARRAY];
+};
+#endif
+
 struct SID_AND_ATTRIBUTES64
 {
     EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, PSID) Sid;

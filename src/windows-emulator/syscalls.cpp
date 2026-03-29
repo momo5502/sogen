@@ -149,6 +149,16 @@ namespace syscalls
     NTSTATUS handle_NtCreateMutant(const syscall_context& c, emulator_object<handle> mutant_handle, ACCESS_MASK desired_access,
                                    emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, BOOLEAN initial_owner);
 
+    // syscalls/namespace.cpp:
+    NTSTATUS handle_NtCreatePrivateNamespace(const syscall_context& c, emulator_object<handle> namespace_handle, ACCESS_MASK desired_access,
+                                             emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                             emulator_object<OBJECT_BOUNDARY_DESCRIPTOR> boundary_descriptor);
+
+    NTSTATUS handle_NtOpenPrivateNamespace(const syscall_context& c, emulator_object<handle> namespace_handle, ACCESS_MASK desired_access,
+                                           emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                           emulator_object<OBJECT_BOUNDARY_DESCRIPTOR> boundary_descriptor);
+    NTSTATUS handle_NtDeletePrivateNamespace(const syscall_context& c, handle namespace_handle);
+
     // syscalls/object.cpp:
     NTSTATUS handle_NtClose(const syscall_context& c, handle h);
     NTSTATUS handle_NtDuplicateObject(const syscall_context& c, handle source_process_handle, handle source_handle,
@@ -167,7 +177,6 @@ namespace syscalls
     NTSTATUS handle_NtQuerySecurityObject(const syscall_context& c, handle /*h*/, SECURITY_INFORMATION /*security_information*/,
                                           emulator_pointer security_descriptor, ULONG length, emulator_object<ULONG> length_needed);
     NTSTATUS handle_NtSetSecurityObject();
-    NTSTATUS handle_NtCreatePrivateNamespace();
 
     // syscalls/port.cpp:
     NTSTATUS handle_NtConnectPort(const syscall_context& c, emulator_object<handle> client_port_handle,
@@ -977,6 +986,9 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtWaitForMultipleObjects32);
     add_handler(NtCreateMutant);
     add_handler(NtReleaseMutant);
+    add_handler(NtCreatePrivateNamespace);
+    add_handler(NtOpenPrivateNamespace);
+    add_handler(NtDeletePrivateNamespace);
     add_handler(NtDuplicateToken);
     add_handler(NtQueryTimerResolution);
     add_handler(NtSetInformationKey);
@@ -1089,7 +1101,6 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserPostQuitMessage);
     add_handler(NtUserGetClassInfoEx);
     add_handler(NtUserCallNoParam);
-    add_handler(NtCreatePrivateNamespace);
 
 #undef add_handler
 }

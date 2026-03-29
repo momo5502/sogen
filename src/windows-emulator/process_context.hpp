@@ -165,6 +165,7 @@ struct process_context
     handle_store<handle_types::worker_factory, worker_factory> worker_factories{};
     handle_store<handle_types::port, port_container> ports{};
     handle_store<handle_types::mutant, mutant> mutants{};
+    handle_store<handle_types::private_namespace, private_namespace> private_namespaces{};
     handle default_desktop{};
     handle_store<handle_types::desktop, desktop> desktops{};
     user_handle_store<handle_types::window, window> windows{user_handles};
