@@ -119,6 +119,8 @@ namespace syscalls
             return u"WaitCompletionPacket";
         case handle_types::worker_factory:
             return u"TpWorkerFactory";
+        case handle_types::private_namespace:
+            return u"Directory";
         default:
             return u"";
         }
@@ -241,6 +243,26 @@ namespace syscalls
 
                 device_path = factory->name;
                 break;
+            }
+            case handle_types::private_namespace: {
+                const auto* ns = c.proc.private_namespaces.get(handle);
+                if (!ns)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+
+                UNICODE_STRING<EmulatorTraits<Emu64>> result{};
+
+                const auto required_length = sizeof(result);
+                if (object_information_length < required_length)
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                return_length.write_if_valid(required_length);
+                c.emu.write_memory(object_information, result);
+
+                return STATUS_SUCCESS;
             }
             default:
                 c.win_emu.log.error("Unsupported handle type for name information query: %X\n", handle.value.type);
@@ -650,11 +672,6 @@ namespace syscalls
     }
 
     NTSTATUS handle_NtSetSecurityObject()
-    {
-        return STATUS_SUCCESS;
-    }
-
-    NTSTATUS handle_NtCreatePrivateNamespace()
     {
         return STATUS_SUCCESS;
     }

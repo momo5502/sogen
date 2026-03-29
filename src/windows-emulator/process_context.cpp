@@ -732,6 +732,8 @@ generic_handle_store* process_context::get_handle_store(const handle handle)
         return &ports;
     case handle_types::section:
         return &sections;
+    case handle_types::private_namespace:
+        return &private_namespaces;
     default:
         return nullptr;
     }

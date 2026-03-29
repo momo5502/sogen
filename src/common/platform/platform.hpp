@@ -28,6 +28,7 @@
 #include "threading.hpp"
 #include "window.hpp"
 #include "port.hpp"
+#include "namespace.hpp"
 
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
