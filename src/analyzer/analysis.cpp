@@ -184,12 +184,12 @@ namespace
 
     void handle_module_load(const analysis_context& c, const mapped_module& mod)
     {
-        c.win_emu->log.log("Mapped %s at 0x%" PRIx64 "\n", mod.path.generic_string().c_str(), mod.image_base);
+        c.win_emu->log.log("Mapped %s at 0x%" PRIx64 "\n", mod.module_path.string().c_str(), mod.image_base);
     }
 
     void handle_module_unload(const analysis_context& c, const mapped_module& mod)
     {
-        c.win_emu->log.log("Unmapping %s (0x%" PRIx64 ")\n", mod.path.generic_string().c_str(), mod.image_base);
+        c.win_emu->log.log("Unmapping %s (0x%" PRIx64 ")\n", mod.module_path.string().c_str(), mod.image_base);
     }
 
     void print_string(logger& log, const std::string_view str)
