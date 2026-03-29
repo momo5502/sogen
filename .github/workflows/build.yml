@@ -6,6 +6,12 @@ on:
       - "**"
     types: [opened, synchronize, reopened]
 
+permissions:
+  contents: read
+  actions: write
+  pages: write
+  id-token: write
+
 jobs:
   ci:
     uses: ./.github/workflows/ci-reusable.yml
