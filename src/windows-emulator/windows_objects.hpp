@@ -248,6 +248,9 @@ struct file : ref_counted_object
     std::u16string open_mode{};
     std::filesystem::path host_path{};
     std::optional<file_enumeration_state> enumeration_state{};
+    ACCESS_MASK access_mask{};
+    uint32_t file_mode{}; // FileModeInformation
+    uint8_t drive_number{'c' - 'a' + 1};
 
     bool is_file() const
     {
@@ -265,6 +268,9 @@ struct file : ref_counted_object
         buffer.write(this->open_mode);
         buffer.write(this->host_path.u16string());
         buffer.write_optional(this->enumeration_state);
+        buffer.write(this->access_mask);
+        buffer.write(this->file_mode);
+        buffer.write(this->drive_number);
 
         const auto has_handle = static_cast<bool>(this->handle);
         buffer.write(has_handle);
@@ -281,6 +287,9 @@ struct file : ref_counted_object
         buffer.read(this->open_mode);
         this->host_path = buffer.read<std::u16string>();
         buffer.read_optional(this->enumeration_state);
+        buffer.read(this->access_mask);
+        buffer.read(this->file_mode);
+        buffer.read(this->drive_number);
 
         const auto has_handle = buffer.read<bool>();
 

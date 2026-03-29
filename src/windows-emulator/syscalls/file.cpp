@@ -6,16 +6,11 @@
 #include <iostream>
 #include <utils/finally.hpp>
 #include <utils/wildcard.hpp>
+#include "utils/stat.hpp"
 
 #include <sys/stat.h>
 
 #include "../devices/named_pipe.hpp"
-
-#if defined(OS_WINDOWS)
-#define fstat64 _fstat64
-#elif defined(OS_MAC)
-#define fstat64 fstat
-#endif
 
 namespace syscalls
 {
@@ -440,21 +435,24 @@ namespace syscalls
 
     NTSTATUS handle_NtQueryInformationFile(const syscall_context& c, const handle file_handle,
                                            const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
-                                           const uint64_t file_information, const uint32_t length, const uint32_t info_class)
+                                           const uint64_t file_information, uint32_t length, const uint32_t info_class)
     {
-        IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-        block.Status = STATUS_SUCCESS;
-        block.Information = 0;
+        if (info_class == 0 || info_class >= FileMaximumInformation)
+        {
+            return STATUS_INVALID_INFO_CLASS;
+        }
 
-        const auto _ = utils::finally([&] {
-            if (io_status_block)
-            {
-                io_status_block.write(block);
-            }
-        });
+        auto block = io_status_block.try_read();
+        if (!block.has_value())
+        {
+            return STATUS_ACCESS_VIOLATION;
+        }
 
-        const auto ret = [&](const NTSTATUS status) {
-            block.Status = status;
+        const auto _ = utils::finally([&] { io_status_block.write(block.value()); });
+
+        const auto ret = [&](const NTSTATUS status, size_t size = 0) {
+            block->Status = status;
+            block->Information = size;
             return status;
         };
 
@@ -464,105 +462,6 @@ namespace syscalls
             return ret(STATUS_INVALID_HANDLE);
         }
 
-        if (info_class == FileNameInformation || info_class == FileNormalizedNameInformation)
-        {
-            const auto relative_path = u"\\" + windows_path(f->name).without_drive().u16string();
-            const auto required_length = sizeof(FILE_NAME_INFORMATION) + (relative_path.size() * 2);
-
-            block.Information = required_length;
-
-            if (length < block.Information)
-            {
-                return ret(STATUS_BUFFER_OVERFLOW);
-            }
-
-            c.emu.write_memory(file_information, FILE_NAME_INFORMATION{
-                                                     .FileNameLength = static_cast<ULONG>(relative_path.size() * 2),
-                                                     .FileName = {},
-                                                 });
-
-            c.emu.write_memory(file_information + offsetof(FILE_NAME_INFORMATION, FileName), relative_path.c_str(),
-                               (relative_path.size() + 1) * 2);
-
-            return ret(STATUS_SUCCESS);
-        }
-
-        if (info_class == FileStandardInformation)
-        {
-            block.Information = sizeof(FILE_STANDARD_INFORMATION);
-
-            if (length < block.Information)
-            {
-                return ret(STATUS_BUFFER_OVERFLOW);
-            }
-
-            const emulator_object<FILE_STANDARD_INFORMATION> info{c.emu, file_information};
-            FILE_STANDARD_INFORMATION i{};
-            i.Directory = f->is_directory() ? TRUE : FALSE;
-
-            if (f->handle)
-            {
-                i.EndOfFile.QuadPart = f->handle.size();
-            }
-
-            info.write(i);
-
-            return ret(STATUS_SUCCESS);
-        }
-
-        if (info_class == FileBasicInformation)
-        {
-            block.Information = sizeof(FILE_BASIC_INFORMATION);
-
-            if (length < block.Information)
-            {
-                return ret(STATUS_BUFFER_OVERFLOW);
-            }
-
-            struct _stat64 file_stat{};
-            if (fstat64(f->handle.file_descriptor(), &file_stat) != 0)
-            {
-                return STATUS_INVALID_HANDLE;
-            }
-
-            const emulator_object<FILE_BASIC_INFORMATION> info{c.emu, file_information};
-            FILE_BASIC_INFORMATION i{};
-
-            i.CreationTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
-            i.LastAccessTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
-            i.LastWriteTime = utils::convert_unix_to_windows_time(file_stat.st_mtime);
-            i.ChangeTime = i.LastWriteTime;
-            i.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
-
-            info.write(i);
-
-            return ret(STATUS_SUCCESS);
-        }
-
-        if (info_class == FilePositionInformation)
-        {
-            if (!f->handle)
-            {
-                return ret(STATUS_NOT_SUPPORTED);
-            }
-
-            block.Information = sizeof(FILE_POSITION_INFORMATION);
-
-            if (length < block.Information)
-            {
-                return ret(STATUS_BUFFER_OVERFLOW);
-            }
-
-            const emulator_object<FILE_POSITION_INFORMATION> info{c.emu, file_information};
-            FILE_POSITION_INFORMATION i{};
-
-            i.CurrentByteOffset.QuadPart = f->handle.tell();
-
-            info.write(i);
-
-            return ret(STATUS_SUCCESS);
-        }
-
         if (info_class == FileAttributeTagInformation)
         {
             if (!f->handle)
@@ -570,11 +469,11 @@ namespace syscalls
                 return ret(STATUS_NOT_SUPPORTED);
             }
 
-            block.Information = sizeof(FILE_ATTRIBUTE_TAG_INFORMATION);
+            constexpr auto required_length = sizeof(FILE_ATTRIBUTE_TAG_INFORMATION);
 
-            if (length < block.Information)
+            if (length < required_length)
             {
-                return ret(STATUS_BUFFER_OVERFLOW);
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
             const emulator_object<FILE_ATTRIBUTE_TAG_INFORMATION> info{c.emu, file_information};
@@ -584,7 +483,7 @@ namespace syscalls
 
             info.write(i);
 
-            return ret(STATUS_SUCCESS);
+            return ret(STATUS_SUCCESS, required_length);
         }
 
         if (info_class == FileIsRemoteDeviceInformation)
@@ -594,11 +493,11 @@ namespace syscalls
                 return ret(STATUS_NOT_SUPPORTED);
             }
 
-            block.Information = sizeof(FILE_IS_REMOTE_DEVICE_INFORMATION);
+            constexpr auto required_length = sizeof(FILE_IS_REMOTE_DEVICE_INFORMATION);
 
-            if (length < block.Information)
+            if (length < required_length)
             {
-                return ret(STATUS_BUFFER_OVERFLOW);
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
             const emulator_object<FILE_IS_REMOTE_DEVICE_INFORMATION> info{c.emu, file_information};
@@ -608,7 +507,7 @@ namespace syscalls
 
             info.write(i);
 
-            return ret(STATUS_SUCCESS);
+            return ret(STATUS_SUCCESS, required_length);
         }
 
         if (info_class == FileIdInformation)
@@ -618,15 +517,15 @@ namespace syscalls
                 return ret(STATUS_NOT_SUPPORTED);
             }
 
-            block.Information = sizeof(FILE_ID_INFORMATION);
+            constexpr auto required_length = sizeof(FILE_ID_INFORMATION);
 
-            if (length < block.Information)
+            if (length < required_length)
             {
-                return ret(STATUS_BUFFER_OVERFLOW);
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
-            struct _stat64 file_stat{};
-            if (fstat64(f->handle.file_descriptor(), &file_stat) != 0)
+            struct compat_stat file_stat{};
+            if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
             {
                 return ret(STATUS_INVALID_HANDLE);
             }
@@ -634,13 +533,13 @@ namespace syscalls
             const emulator_object<FILE_ID_INFORMATION> info{c.emu, file_information};
             FILE_ID_INFORMATION i{};
 
-            i.VolumeSerialNumber = file_stat.st_dev;
+            i.VolumeSerialNumber = f->drive_number;
             memset(&i.FileId, 0, sizeof(i.FileId));
             memcpy(&i.FileId.Identifier[0], &file_stat.st_ino, sizeof(file_stat.st_ino));
 
             info.write(i);
 
-            return ret(STATUS_SUCCESS);
+            return ret(STATUS_SUCCESS, required_length);
         }
 
         if (info_class == FileStreamInformation)
@@ -649,17 +548,16 @@ namespace syscalls
             const auto stream_name_len = static_cast<uint32_t>(stream_name.size() * sizeof(char16_t));
 
             const uint32_t required_length = offsetof(FILE_STREAM_INFORMATION, StreamName) + stream_name_len;
-            block.Information = required_length;
 
             if (length < required_length)
             {
-                return ret(STATUS_BUFFER_OVERFLOW);
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
-            struct _stat64 file_stat{};
+            struct compat_stat file_stat{};
             if (f->handle)
             {
-                if (fstat64(f->handle.file_descriptor(), &file_stat) != 0)
+                if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
                 {
                     return ret(STATUS_INVALID_HANDLE);
                 }
@@ -683,39 +581,19 @@ namespace syscalls
             c.emu.write_memory(file_information, info);
             c.emu.write_memory(file_information + offsetof(FILE_STREAM_INFORMATION, StreamName), stream_name.c_str(), stream_name_len);
 
-            return ret(STATUS_SUCCESS);
-        }
-
-        if (info_class == FileEaInformation)
-        {
-            block.Information = sizeof(FILE_EA_INFORMATION);
-
-            if (length < block.Information)
-            {
-                return ret(STATUS_BUFFER_OVERFLOW);
-            }
-
-            const emulator_object<FILE_EA_INFORMATION> info{c.emu, file_information};
-            FILE_EA_INFORMATION i{};
-
-            i.EaSize = 0;
-
-            info.write(i);
-
-            return ret(STATUS_SUCCESS);
+            return ret(STATUS_SUCCESS, required_length);
         }
 
         if (info_class == FileVolumeNameInformation)
         {
-            const std::u16string volume_name = u"\\Device\\HarddiskVolume1";
+            const auto volume_name = u8_to_u16("\\Device\\HarddiskVolume" + std::to_string(f->drive_number));
             const auto name_bytes = static_cast<uint32_t>(volume_name.size() * sizeof(char16_t));
 
             const uint32_t required_length = offsetof(FILE_VOLUME_NAME_INFORMATION, DeviceName) + name_bytes;
-            block.Information = required_length;
 
             if (length < required_length)
             {
-                return ret(STATUS_BUFFER_OVERFLOW);
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
             }
 
             FILE_VOLUME_NAME_INFORMATION vni{};
@@ -724,12 +602,329 @@ namespace syscalls
             c.emu.write_memory(file_information, vni);
             c.emu.write_memory(file_information + offsetof(FILE_VOLUME_NAME_INFORMATION, DeviceName), volume_name.c_str(), name_bytes);
 
-            return ret(STATUS_SUCCESS);
+            return ret(STATUS_SUCCESS, required_length);
         }
 
-        if (info_class == FileAllInformation)
+        const auto all_info = info_class == FileAllInformation;
+        size_t all_length = 0;
+
+        if (all_info && length < sizeof(FILE_ALL_INFORMATION))
         {
-            return ret(STATUS_NOT_SUPPORTED);
+            return ret(STATUS_INFO_LENGTH_MISMATCH);
+        }
+
+        if (info_class == FileBasicInformation || all_info)
+        {
+            constexpr auto required_length = sizeof(FILE_BASIC_INFORMATION);
+
+            if (length < required_length)
+            {
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
+            }
+
+            struct compat_stat file_stat{};
+            if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            auto address = file_information;
+            if (all_info)
+            {
+                address += offsetof(FILE_ALL_INFORMATION, BasicInformation);
+            }
+
+            const emulator_object<FILE_BASIC_INFORMATION> info{c.emu, address};
+            FILE_BASIC_INFORMATION i{};
+            i.CreationTime = convert_timespec_to_filetime(file_stat.st_ctimespec);
+            i.LastAccessTime = convert_timespec_to_filetime(file_stat.st_atimespec);
+            i.LastWriteTime = convert_timespec_to_filetime(file_stat.st_mtimespec);
+            i.ChangeTime = i.LastWriteTime;
+            i.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+
+            info.write(i);
+
+            if (!all_info)
+            {
+                return ret(STATUS_SUCCESS, required_length);
+            }
+
+            length -= required_length;
+            all_length += required_length;
+        }
+
+        if (info_class == FileStandardInformation || all_info)
+        {
+            constexpr auto required_length = sizeof(FILE_STANDARD_INFORMATION);
+
+            if (length < required_length)
+            {
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
+            }
+
+            auto address = file_information;
+            if (all_info)
+            {
+                address += offsetof(FILE_ALL_INFORMATION, StandardInformation);
+            }
+
+            const emulator_object<FILE_STANDARD_INFORMATION> info{c.emu, address};
+            FILE_STANDARD_INFORMATION i{};
+            i.Directory = f->is_directory() ? TRUE : FALSE;
+            i.NumberOfLinks = 1;
+
+            if (f->handle)
+            {
+                i.EndOfFile.QuadPart = f->handle.size();
+                i.AllocationSize.QuadPart = static_cast<LONGLONG>(align_up(i.EndOfFile.QuadPart, 512));
+            }
+
+            info.write(i);
+
+            if (!all_info)
+            {
+                return ret(STATUS_SUCCESS, required_length);
+            }
+
+            length -= required_length;
+            all_length += required_length;
+        }
+
+        if (info_class == FileInternalInformation || all_info)
+        {
+            const uint32_t required_length = sizeof(FILE_INTERNAL_INFORMATION);
+
+            if (length < required_length)
+            {
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
+            }
+
+            struct compat_stat file_stat{};
+            if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            auto address = file_information;
+            if (all_info)
+            {
+                address += offsetof(FILE_ALL_INFORMATION, InternalInformation);
+            }
+
+            const emulator_object<FILE_INTERNAL_INFORMATION> info{c.emu, address};
+            FILE_INTERNAL_INFORMATION i{};
+
+            i.IndexNumber.QuadPart = static_cast<LONGLONG>(file_stat.st_ino);
+
+            info.write(i);
+
+            if (!all_info)
+            {
+                return ret(STATUS_SUCCESS, required_length);
+            }
+
+            length -= required_length;
+            all_length += required_length;
+        }
+
+        if (info_class == FileEaInformation || all_info)
+        {
+            constexpr auto required_length = sizeof(FILE_EA_INFORMATION);
+
+            if (length < required_length)
+            {
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
+            }
+
+            auto address = file_information;
+            if (all_info)
+            {
+                address += offsetof(FILE_ALL_INFORMATION, EaInformation);
+            }
+            const emulator_object<FILE_EA_INFORMATION> info{c.emu, address};
+            FILE_EA_INFORMATION i{};
+
+            i.EaSize = 0;
+
+            info.write(i);
+
+            if (!all_info)
+            {
+                return ret(STATUS_SUCCESS, required_length);
+            }
+
+            length -= required_length;
+            all_length += required_length;
+        }
+
+        if (info_class == FileAccessInformation || all_info)
+        {
+            constexpr auto required_length = sizeof(FILE_ACCESS_INFORMATION);
+
+            if (length < required_length)
+            {
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
+            }
+
+            auto address = file_information;
+            if (all_info)
+            {
+                address += offsetof(FILE_ALL_INFORMATION, AccessInformation);
+            }
+
+            const emulator_object<FILE_ACCESS_INFORMATION> info{c.emu, address};
+            FILE_ACCESS_INFORMATION i{};
+
+            i.AccessFlags = f->access_mask;
+
+            info.write(i);
+
+            if (!all_info)
+            {
+                return ret(STATUS_SUCCESS, required_length);
+            }
+
+            length -= required_length;
+            all_length += required_length;
+        }
+
+        if (info_class == FilePositionInformation || all_info)
+        {
+            if (!f->handle)
+            {
+                return ret(STATUS_NOT_SUPPORTED);
+            }
+
+            constexpr auto required_length = sizeof(FILE_POSITION_INFORMATION);
+
+            if (length < required_length)
+            {
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
+            }
+
+            auto address = file_information;
+            if (all_info)
+            {
+                address += offsetof(FILE_ALL_INFORMATION, PositionInformation);
+            }
+
+            const emulator_object<FILE_POSITION_INFORMATION> info{c.emu, address};
+            FILE_POSITION_INFORMATION i{};
+
+            i.CurrentByteOffset.QuadPart = f->handle.tell();
+
+            info.write(i);
+
+            if (!all_info)
+            {
+                return ret(STATUS_SUCCESS, required_length);
+            }
+
+            length -= required_length;
+            all_length += required_length;
+        }
+
+        if (info_class == FileModeInformation || all_info)
+        {
+            constexpr auto required_length = sizeof(FILE_MODE_INFORMATION);
+
+            if (length < required_length)
+            {
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
+            }
+
+            auto address = file_information;
+            if (all_info)
+            {
+                address += offsetof(FILE_ALL_INFORMATION, ModeInformation);
+            }
+
+            const emulator_object<FILE_MODE_INFORMATION> info{c.emu, address};
+            FILE_MODE_INFORMATION i{};
+
+            i.Mode = f->file_mode;
+
+            info.write(i);
+
+            if (!all_info)
+            {
+                return ret(STATUS_SUCCESS, required_length);
+            }
+
+            length -= required_length;
+            all_length += required_length;
+        }
+
+        if (info_class == FileAlignmentInformation || all_info)
+        {
+            constexpr auto required_length = sizeof(FILE_ALIGNMENT_INFORMATION);
+
+            if (length < required_length)
+            {
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
+            }
+
+            auto address = file_information;
+            if (all_info)
+            {
+                address += offsetof(FILE_ALL_INFORMATION, AlignmentInformation);
+            }
+
+            const emulator_object<FILE_ALIGNMENT_INFORMATION> info{c.emu, address};
+            FILE_ALIGNMENT_INFORMATION i{};
+
+            i.AlignmentRequirement = FILE_BYTE_ALIGNMENT;
+
+            info.write(i);
+
+            if (!all_info)
+            {
+                return ret(STATUS_SUCCESS, required_length);
+            }
+
+            length -= required_length;
+            all_length += required_length;
+        }
+
+        if (info_class == FileNameInformation || info_class == FileNormalizedNameInformation || all_info)
+        {
+            const auto relative_path = u"\\" + windows_path(f->name).without_drive().u16string();
+            const auto required_length = static_cast<uint32_t>((relative_path.size() * 2) + offsetof(FILE_NAME_INFORMATION, FileName));
+
+            if (length < sizeof(FILE_NAME_INFORMATION))
+            {
+                return ret(STATUS_INFO_LENGTH_MISMATCH);
+            }
+
+            const uint32_t copy_length = std::min(length, required_length) - offsetof(FILE_NAME_INFORMATION, FileName);
+
+            auto address = file_information;
+            if (all_info)
+            {
+                address += offsetof(FILE_ALL_INFORMATION, NameInformation);
+            }
+
+            c.emu.write_memory(address, FILE_NAME_INFORMATION{
+                                            .FileNameLength = static_cast<ULONG>(relative_path.size() * 2),
+                                            .FileName = {},
+                                        });
+
+            c.emu.write_memory(address + offsetof(FILE_NAME_INFORMATION, FileName), relative_path.c_str(), copy_length);
+
+            const uint32_t total_copied = copy_length + offsetof(FILE_NAME_INFORMATION, FileName);
+
+            if (!all_info)
+            {
+                return ret(total_copied == required_length ? STATUS_SUCCESS : STATUS_BUFFER_OVERFLOW, total_copied);
+            }
+
+            length -= total_copied;
+            all_length += total_copied;
+        }
+
+        if (all_info)
+        {
+            return ret(STATUS_SUCCESS, all_length);
         }
 
         c.win_emu.log.error("Unsupported query file info class: 0x%X\n", info_class);
@@ -779,17 +974,17 @@ namespace syscalls
                 return ret(status);
             }
 
-            struct _stat64 file_stat{};
-            if (fstat64(native_file_handle.file_descriptor(), &file_stat) != 0)
+            struct compat_stat file_stat{};
+            if (!compat_fstat(native_file_handle.file_descriptor(), &file_stat))
             {
                 return STATUS_INVALID_HANDLE;
             }
 
             EMU_FILE_STAT_BASIC_INFORMATION i{};
 
-            i.CreationTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
-            i.LastAccessTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
-            i.LastWriteTime = utils::convert_unix_to_windows_time(file_stat.st_mtime);
+            i.CreationTime = convert_timespec_to_filetime(file_stat.st_ctimespec);
+            i.LastAccessTime = convert_timespec_to_filetime(file_stat.st_atimespec);
+            i.LastWriteTime = convert_timespec_to_filetime(file_stat.st_mtimespec);
             i.ChangeTime = i.LastWriteTime;
             i.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
 
@@ -1120,6 +1315,8 @@ namespace syscalls
         }
 
         file f{};
+        f.access_mask = desired_access;
+        f.file_mode = create_options & FILE_MODE_MASK;
         f.name = std::move(filename);
 
         if (attributes.RootDirectory)
@@ -1144,6 +1341,8 @@ namespace syscalls
         {
             return STATUS_OBJECT_NAME_NOT_FOUND;
         }
+
+        f.drive_number = path.get_drive().value() - 'a' + 1;
 
         const auto host_path = c.win_emu.file_sys.translate(path);
         const bool is_directory = std::filesystem::is_directory(host_path, ec);
@@ -1261,18 +1460,18 @@ namespace syscalls
 
         const auto local_filename = c.win_emu.file_sys.translate(filename).u8string();
 
-        struct _stat64 file_stat{};
-        if (_stat64(reinterpret_cast<const char*>(local_filename.c_str()), &file_stat) != 0)
+        struct compat_stat file_stat{};
+        if (!compat_stat(reinterpret_cast<const char*>(local_filename.c_str()), &file_stat))
         {
             return STATUS_OBJECT_NAME_NOT_FOUND;
         }
 
         file_information.access([&](FILE_NETWORK_OPEN_INFORMATION& info) {
-            info.CreationTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
-            info.LastAccessTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
-            info.LastWriteTime = utils::convert_unix_to_windows_time(file_stat.st_mtime);
-            info.AllocationSize.QuadPart = file_stat.st_size;
-            info.EndOfFile.QuadPart = file_stat.st_size;
+            info.CreationTime = convert_timespec_to_filetime(file_stat.st_ctimespec);
+            info.LastAccessTime = convert_timespec_to_filetime(file_stat.st_atimespec);
+            info.LastWriteTime = convert_timespec_to_filetime(file_stat.st_mtimespec);
+            info.AllocationSize.QuadPart = static_cast<LONGLONG>(file_stat.st_size);
+            info.EndOfFile.QuadPart = static_cast<LONGLONG>(file_stat.st_size);
             info.ChangeTime = info.LastWriteTime;
             info.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
         });
@@ -1319,16 +1518,16 @@ namespace syscalls
 
         const auto local_filename = c.win_emu.file_sys.translate(filepath).u8string();
 
-        struct _stat64 file_stat{};
-        if (_stat64(reinterpret_cast<const char*>(local_filename.c_str()), &file_stat) != 0)
+        struct compat_stat file_stat{};
+        if (!compat_stat(reinterpret_cast<const char*>(local_filename.c_str()), &file_stat))
         {
             return STATUS_OBJECT_NAME_NOT_FOUND;
         }
 
         file_information.access([&](FILE_BASIC_INFORMATION& info) {
-            info.CreationTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
-            info.LastAccessTime = utils::convert_unix_to_windows_time(file_stat.st_atime);
-            info.LastWriteTime = utils::convert_unix_to_windows_time(file_stat.st_mtime);
+            info.CreationTime = convert_timespec_to_filetime(file_stat.st_ctimespec);
+            info.LastAccessTime = convert_timespec_to_filetime(file_stat.st_atimespec);
+            info.LastWriteTime = convert_timespec_to_filetime(file_stat.st_mtimespec);
             info.ChangeTime = info.LastWriteTime;
             info.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
         });
