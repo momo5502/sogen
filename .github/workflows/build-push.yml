@@ -1,0 +1,62 @@
+name: Build Branch
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+    inputs:
+      verbose:
+        description: "Enable verbose logging during tests"
+        type: choice
+        required: false
+        default: "false"
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: read
+  actions: write
+  pages: write
+  id-token: write
+  pull-requests: read
+
+jobs:
+  detect-open-pr:
+    name: Detect Open PR
+    runs-on: ubuntu-24.04
+    outputs:
+      should_run: ${{ steps.detect.outputs.should_run }}
+    steps:
+      - name: Detect Open PR For Branch
+        id: detect
+        uses: actions/github-script@v8
+        with:
+          script: |
+            if (context.eventName !== "push") {
+              core.setOutput("should_run", "true");
+              return;
+            }
+
+            const branch = context.ref.replace("refs/heads/", "");
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const { data: pulls } = await github.rest.pulls.list({
+              owner,
+              repo,
+              state: "open",
+              head: `${owner}:${branch}`,
+            });
+
+            core.setOutput("should_run", pulls.length === 0 ? "true" : "false");
+
+  ci:
+    name: Build
+    needs: detect-open-pr
+    if: ${{ needs.detect-open-pr.outputs.should_run == 'true' }}
+    uses: ./.github/workflows/ci-reusable.yml
+    secrets: inherit
+    with:
+      enable_deploy: ${{ github.repository_owner == 'momo5502' && github.ref == 'refs/heads/main' }}
+      verbose: ${{ inputs.verbose || 'false' }}
