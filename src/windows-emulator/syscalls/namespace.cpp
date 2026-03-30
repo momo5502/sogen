@@ -148,12 +148,12 @@ namespace syscalls
                         return STATUS_OBJECT_PATH_NOT_FOUND;
                     }
 
-                    ++entry.second.ref_count;
-
                     if (!open)
                     {
                         return STATUS_OBJECT_NAME_COLLISION;
                     }
+
+                    ++entry.second.ref_count;
 
                     c.win_emu.callbacks.on_generic_access("Opening private namespace", get_description(name, boundary_name));
                     namespace_handle.write(c.proc.private_namespaces.make_handle(entry.first));

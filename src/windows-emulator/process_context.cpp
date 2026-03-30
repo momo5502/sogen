@@ -612,6 +612,7 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
     buffer.write(this->windows);
     buffer.write(this->timers);
     buffer.write(this->registry_keys);
+    buffer.write(this->private_namespaces);
     buffer.write_map(this->atoms);
     buffer.write_map(this->classes);
 
@@ -676,6 +677,7 @@ void process_context::deserialize(utils::buffer_deserializer& buffer)
     buffer.read(this->windows);
     buffer.read(this->timers);
     buffer.read(this->registry_keys);
+    buffer.read(this->private_namespaces);
     buffer.read_map(this->atoms);
     buffer.read_map(this->classes);
 
