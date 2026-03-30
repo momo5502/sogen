@@ -9,6 +9,9 @@
 #include <optional>
 #include <filesystem>
 #include <string_view>
+#include <array>
+
+#include "../../common/utils/finally.hpp"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -22,6 +25,7 @@
 #include <shlobj.h>
 #include <combaseapi.h>
 #include <knownfolders.h>
+#include <sddl.h>
 
 using namespace std::literals;
 
@@ -1109,6 +1113,146 @@ namespace
         UnregisterClassA(wc.lpszClassName, wc.hInstance);
         return true;
     }
+
+    bool test_private_namespace()
+    {
+        auto create_boundary_descriptor = [](const wchar_t* name) -> HANDLE {
+            auto* hBoundaryDescriptor = CreateBoundaryDescriptorW(name, 0);
+            if (hBoundaryDescriptor == nullptr)
+            {
+                puts("Failed to create boundary descriptor");
+                return nullptr;
+            }
+
+            PSID pLocalAdmin{};
+            if (ConvertStringSidToSidW(L"S-1-1-0", &pLocalAdmin) == FALSE)
+            {
+                puts("ConvertStringSidToSid failed");
+                return nullptr;
+            }
+
+            auto res = AddSIDToBoundaryDescriptor(&hBoundaryDescriptor, pLocalAdmin);
+            LocalFree(pLocalAdmin);
+
+            if (res == FALSE)
+            {
+                puts("AddSIDToBoundaryDescriptor failed");
+                return nullptr;
+            }
+
+            return hBoundaryDescriptor;
+        };
+
+        std::array<HANDLE, 2> boundary{};
+        std::array<HANDLE, 5> ns{};
+
+        const auto _ = utils::finally([&]() {
+            for (auto* elem : boundary)
+            {
+                if (elem)
+                {
+                    DeleteBoundaryDescriptor(elem);
+                }
+            }
+
+            for (auto* elem : ns)
+            {
+                if (elem)
+                {
+                    ClosePrivateNamespace(elem, 0);
+                }
+            }
+        });
+
+        boundary[0] = create_boundary_descriptor(L"boundary1");
+        if (boundary[0] == nullptr)
+        {
+            return false;
+        }
+
+        ns[0] = CreatePrivateNamespaceW(nullptr, boundary[0], L"ns");
+        if (ns[0] == nullptr)
+        {
+            puts("CreatePrivateNamespaceW failed");
+            return false;
+        }
+
+        ns[1] = CreatePrivateNamespaceW(nullptr, boundary[0], L"alt_ns");
+        if (ns[1] != nullptr)
+        {
+            puts("CreatePrivateNamespaceW did not refuse to associate another prefix with existing namespace");
+            return false;
+        }
+
+        if (GetLastError() != ERROR_ALREADY_EXISTS)
+        {
+            puts("GetLastError did not return ERROR_ALREADY_EXISTS");
+            return false;
+        }
+
+        boundary[1] = create_boundary_descriptor(L"boundary2");
+        if (boundary[1] == nullptr)
+        {
+            return false;
+        }
+
+        ns[2] = CreatePrivateNamespaceW(nullptr, boundary[1], L"ns");
+        if (ns[2] != nullptr)
+        {
+            puts("CreatePrivateNamespaceW did not refuse to create another namespace associated with existing prefix");
+            return false;
+        }
+
+        if (GetLastError() != ERROR_DUP_NAME)
+        {
+            puts("GetLastError did not return ERROR_DUP_NAME");
+            return false;
+        }
+
+        auto* mutex = CreateMutexW(nullptr, FALSE, L"ns\\mutex");
+        if (mutex == nullptr)
+        {
+            puts("CreateMutex failed to create mutex in private namespace");
+            return false;
+        }
+
+        CloseHandle(mutex);
+
+        ns[3] = OpenPrivateNamespaceW(boundary[0], L"alt_ns");
+        if (ns[3] == nullptr)
+        {
+            puts("OpenPrivateNamespaceW failed to open existing namespace and associate it with different prefix");
+            return false;
+        }
+
+        ns[4] = OpenPrivateNamespaceW(boundary[0], L"ns");
+        if (ns[4])
+        {
+            puts("OpenPrivateNamespaceW did not refuse to open existing namespace and associate it with existing prefix");
+            return false;
+        }
+
+        DeleteBoundaryDescriptor(boundary[0]);
+        boundary[0] = nullptr;
+
+        if (!ClosePrivateNamespace(ns[3], 0))
+        {
+            puts("ClosePrivateNamespace failed");
+            return false;
+        }
+
+        ns[3] = nullptr;
+
+        if (!ClosePrivateNamespace(ns[0], PRIVATE_NAMESPACE_FLAG_DESTROY))
+        {
+            puts("ClosePrivateNamespace (with destroy flag) failed");
+            return false;
+        }
+
+        ns[0] = nullptr;
+
+        return true;
+    }
 }
 
 #define RUN_TEST(func, name)                 \
@@ -1159,6 +1303,7 @@ int main(const int argc, const char* argv[])
 #ifdef _WIN64
     RUN_TEST(test_message_queue, "Message Queue")
 #endif
+    RUN_TEST(test_private_namespace, "Private Namespace")
 
     return valid ? 0 : 1;
 }
