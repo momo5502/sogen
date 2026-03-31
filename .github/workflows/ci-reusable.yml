@@ -763,7 +763,7 @@ jobs:
           cp ./build/release/artifacts/64/analyzer.wasm ./page/public/64/
 
       - name: Build Page
-        run: cd ./page && npm i && npm run build
+        run: cd ./page && npm ci && npm run build
 
       - name: Upload Page Artifacts
         uses: pyTooling/upload-artifact@v7
