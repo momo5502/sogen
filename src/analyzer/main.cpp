@@ -37,6 +37,7 @@ namespace
         std::string registry_path{"./registry"};
         std::string emulation_root{};
         std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
+        utils::unordered_insensitive_u16string_map<std::u16string> environment{};
     };
 
     void split_and_insert(std::set<std::string, std::less<>>& container, const std::string_view str, const char splitter = ',')
@@ -415,6 +416,7 @@ namespace
         application_settings app_settings{
             .application = args[0],
             .arguments = parse_arguments(args),
+            .environment = options.environment,
         };
 
         const auto settings = create_emulator_settings(options);
@@ -664,6 +666,7 @@ namespace
         printf("  -is, --inst-summary       Print a summary of executed instructions of the analyzed modules\n");
         printf("  -ss, --skip-syscalls      Skip the logging of regular syscalls\n");
         printf("  -rep, --reproducible      Stub clocks and other mechanisms to make executions reproducible\n");
+        printf("  --env <var> <value>       Set environment variable\n");
         printf("Examples:\n");
         printf("  analyzer -v -e path/to/root myapp.exe\n");
         printf("  analyzer -e path/to/root -p c:/analysis-sample.exe /path/to/sample.exe c:/analysis-sample.exe\n");
@@ -832,6 +835,19 @@ namespace
                 }
                 arg_it = args.erase(arg_it);
                 options.registry_path = args[0];
+            }
+            else if (arg == "--env")
+            {
+                if (args.size() < 3)
+                {
+                    throw std::runtime_error("No environment variable provided after --env");
+                }
+                arg_it = args.erase(arg_it);
+                auto env_var = std::u16string(args[0].begin(), args[0].end());
+                arg_it = args.erase(arg_it);
+                auto env_value = std::u16string(args[0].begin(), args[0].end());
+
+                options.environment[std::move(env_var)] = std::move(env_value);
             }
             else
             {
