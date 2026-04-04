@@ -202,9 +202,10 @@ namespace
     }
 
     utils::unordered_insensitive_u16string_map<std::u16string> get_environment_variables(registry_manager& registry,
-                                                                                         const windows_version_manager& version)
+                                                                                         const windows_version_manager& version,
+                                                                                         const application_settings& app_settings)
     {
-        utils::unordered_insensitive_u16string_map<std::u16string> env_map;
+        utils::unordered_insensitive_u16string_map<std::u16string> env_map = app_settings.environment;
         std::unordered_set<std::u16string_view> keys_to_expand;
 
         const auto env_key = registry.get_key({R"(\Registry\Machine\System\CurrentControlSet\Control\Session Manager\Environment)"});
@@ -319,7 +320,6 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
      */
 
     this->process_params64 = allocator.reserve<RTL_USER_PROCESS_PARAMETERS64>();
-
     // Clone the API set for PEB64 and PEB32
     uint64_t apiset_map_address_32 = 0;
     [[maybe_unused]] const auto apiset_map_address = apiset::clone(emu, allocator, apiset_container).value();
@@ -338,7 +338,7 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
 
         proc_params.Environment = allocator.copy_string(u"=::=::\\");
 
-        const auto env_map = get_environment_variables(registry, version);
+        const auto env_map = get_environment_variables(registry, version, app_settings);
         for (const auto& [name, value] : env_map)
         {
             std::u16string entry;

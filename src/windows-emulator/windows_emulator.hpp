@@ -46,12 +46,14 @@ struct application_settings
     windows_path application{};
     windows_path working_directory{};
     std::vector<std::u16string> arguments{};
+    utils::unordered_insensitive_u16string_map<std::u16string> environment{};
 
     void serialize(utils::buffer_serializer& buffer) const
     {
         buffer.write(this->application);
         buffer.write(this->working_directory);
         buffer.write_vector(this->arguments);
+        buffer.write_map(this->environment);
     }
 
     void deserialize(utils::buffer_deserializer& buffer)
@@ -59,6 +61,7 @@ struct application_settings
         buffer.read(this->application);
         buffer.read(this->working_directory);
         buffer.read_vector(this->arguments);
+        buffer.read_map(this->environment);
     }
 };
 
