@@ -156,6 +156,101 @@ namespace whp
             size_t logical_size = sizeof(uint64_t);
         };
 
+        struct gp_register_access
+        {
+            size_t offset = 0;
+            size_t width = sizeof(uint64_t);
+            bool zero_extend_32 = false;
+        };
+
+        std::optional<gp_register_access> classify_gp_register_access(const x86_register reg)
+        {
+            switch (reg)
+            {
+            case x86_register::al:
+            case x86_register::bl:
+            case x86_register::cl:
+            case x86_register::dl:
+            case x86_register::sil:
+            case x86_register::dil:
+            case x86_register::bpl:
+            case x86_register::spl:
+            case x86_register::r8b:
+            case x86_register::r9b:
+            case x86_register::r10b:
+            case x86_register::r11b:
+            case x86_register::r12b:
+            case x86_register::r13b:
+            case x86_register::r14b:
+            case x86_register::r15b:
+                return gp_register_access{.offset = 0, .width = sizeof(uint8_t)};
+            case x86_register::ah:
+            case x86_register::bh:
+            case x86_register::ch:
+            case x86_register::dh:
+                return gp_register_access{.offset = 1, .width = sizeof(uint8_t)};
+            case x86_register::ax:
+            case x86_register::bx:
+            case x86_register::cx:
+            case x86_register::dx:
+            case x86_register::si:
+            case x86_register::di:
+            case x86_register::bp:
+            case x86_register::sp:
+            case x86_register::r8w:
+            case x86_register::r9w:
+            case x86_register::r10w:
+            case x86_register::r11w:
+            case x86_register::r12w:
+            case x86_register::r13w:
+            case x86_register::r14w:
+            case x86_register::r15w:
+            case x86_register::ip:
+            case x86_register::flags:
+                return gp_register_access{.offset = 0, .width = sizeof(uint16_t)};
+            case x86_register::eax:
+            case x86_register::ebx:
+            case x86_register::ecx:
+            case x86_register::edx:
+            case x86_register::esi:
+            case x86_register::edi:
+            case x86_register::ebp:
+            case x86_register::esp:
+            case x86_register::r8d:
+            case x86_register::r9d:
+            case x86_register::r10d:
+            case x86_register::r11d:
+            case x86_register::r12d:
+            case x86_register::r13d:
+            case x86_register::r14d:
+            case x86_register::r15d:
+            case x86_register::eip:
+            case x86_register::eflags:
+                return gp_register_access{.offset = 0, .width = sizeof(uint32_t), .zero_extend_32 = true};
+            case x86_register::rax:
+            case x86_register::rbx:
+            case x86_register::rcx:
+            case x86_register::rdx:
+            case x86_register::rsi:
+            case x86_register::rdi:
+            case x86_register::rbp:
+            case x86_register::rsp:
+            case x86_register::r8:
+            case x86_register::r9:
+            case x86_register::r10:
+            case x86_register::r11:
+            case x86_register::r12:
+            case x86_register::r13:
+            case x86_register::r14:
+            case x86_register::r15:
+            case x86_register::rip:
+            case x86_register::rflags:
+                return gp_register_access{.offset = 0, .width = sizeof(uint64_t)};
+            default:
+                return std::nullopt;
+            }
+        }
+
         uint32_t to_whp_map_flags(const memory_permission permissions)
         {
             uint32_t flags = 0;
@@ -386,18 +481,22 @@ namespace whp
             case x86_register::rdx:
                 return {WHvX64RegisterRdx, register_kind::reg64, sizeof(uint64_t)};
             case x86_register::si:
+            case x86_register::sil:
             case x86_register::esi:
             case x86_register::rsi:
                 return {WHvX64RegisterRsi, register_kind::reg64, sizeof(uint64_t)};
             case x86_register::di:
+            case x86_register::dil:
             case x86_register::edi:
             case x86_register::rdi:
                 return {WHvX64RegisterRdi, register_kind::reg64, sizeof(uint64_t)};
             case x86_register::bp:
+            case x86_register::bpl:
             case x86_register::ebp:
             case x86_register::rbp:
                 return {WHvX64RegisterRbp, register_kind::reg64, sizeof(uint64_t)};
             case x86_register::sp:
+            case x86_register::spl:
             case x86_register::esp:
             case x86_register::rsp:
                 return {WHvX64RegisterRsp, register_kind::reg64, sizeof(uint64_t)};
@@ -895,7 +994,30 @@ namespace whp
                 switch (mapping.kind)
                 {
                 case register_kind::reg64:
-                    std::memcpy(&current.Reg64, value, (std::min)(size, sizeof(current.Reg64)));
+                    if (const auto access = classify_gp_register_access(static_cast<x86_register>(reg)))
+                    {
+                        uint64_t incoming = 0;
+                        const auto copy_size = (std::min)(size, access->width);
+                        std::memcpy(&incoming, value, copy_size);
+
+                        if (access->zero_extend_32)
+                        {
+                            current.Reg64 = static_cast<uint32_t>(incoming);
+                        }
+                        else if (access->width >= sizeof(current.Reg64))
+                        {
+                            current.Reg64 = incoming;
+                        }
+                        else
+                        {
+                            const auto mask = ((uint64_t{1} << (access->width * 8)) - 1) << (access->offset * 8);
+                            current.Reg64 = (current.Reg64 & ~mask) | ((incoming << (access->offset * 8)) & mask);
+                        }
+                    }
+                    else
+                    {
+                        std::memcpy(&current.Reg64, value, (std::min)(size, sizeof(current.Reg64)));
+                    }
                     break;
                 case register_kind::segment:
                     if (static_cast<x86_register>(reg) == x86_register::fs_base || static_cast<x86_register>(reg) == x86_register::gs_base)
@@ -951,7 +1073,15 @@ namespace whp
                 switch (mapping.kind)
                 {
                 case register_kind::reg64:
-                    std::memcpy(value, &current.Reg64, (std::min)(size, sizeof(current.Reg64)));
+                    if (const auto access = classify_gp_register_access(static_cast<x86_register>(reg)))
+                    {
+                        const auto narrowed = current.Reg64 >> (access->offset * 8);
+                        std::memcpy(value, &narrowed, (std::min)(size, access->width));
+                    }
+                    else
+                    {
+                        std::memcpy(value, &current.Reg64, (std::min)(size, sizeof(current.Reg64)));
+                    }
                     break;
                 case register_kind::segment:
                     if (static_cast<x86_register>(reg) == x86_register::fs_base || static_cast<x86_register>(reg) == x86_register::gs_base)
@@ -1078,6 +1208,12 @@ namespace whp
 
             void delete_hook(emulator_hook* hook) override
             {
+                const auto instruction_it = this->instruction_hooks_.find(hook);
+                if (instruction_it != this->instruction_hooks_.end() && &instruction_it->second == this->syscall_hook_)
+                {
+                    this->syscall_hook_ = nullptr;
+                }
+
                 this->instruction_hooks_.erase(hook);
                 this->basic_block_hooks_.erase(hook);
                 this->interrupt_hooks_.erase(hook);
