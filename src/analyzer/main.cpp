@@ -346,13 +346,13 @@ namespace
         {
             do_post_emulation_work(c);
             win_emu.log.error("Emulation failed at: 0x%" PRIx64 " - %s\n", win_emu.emu().read_instruction_pointer(), e.what());
-            throw;
+            return false;
         }
         catch (...)
         {
             do_post_emulation_work(c);
             win_emu.log.error("Emulation failed at: 0x%" PRIx64 "\n", win_emu.emu().read_instruction_pointer());
-            throw;
+            return false;
         }
 
         exit_status = win_emu.process.exit_status;
