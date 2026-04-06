@@ -69,12 +69,14 @@ namespace utils
 
     static void serialize(buffer_serializer& buffer, const mapped_section& mod)
     {
+        buffer.write_optional(mod.first_execute);
         buffer.write(mod.name);
         buffer.write(mod.region);
     }
 
     static void deserialize(buffer_deserializer& buffer, mapped_section& mod)
     {
+        buffer.read_optional(mod.first_execute);
         buffer.read(mod.name);
         buffer.read(mod.region);
     }

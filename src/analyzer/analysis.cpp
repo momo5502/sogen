@@ -367,6 +367,32 @@ namespace
         ++c.instructions[instructions[0].id];
     }
 
+    void log_first_section_execution(windows_emulator& win_emu, mapped_module* binary, const uint64_t address)
+    {
+        if (!binary)
+        {
+            return;
+        }
+
+        for (auto& section : binary->sections)
+        {
+            if (!is_within_start_and_length(address, section.region.start, section.region.length))
+            {
+                continue;
+            }
+
+            if (!section.first_execute.has_value())
+            {
+                section.first_execute = address;
+                win_emu.log.print(color::green, "Section %s (%s) first execute at 0x%" PRIx64 " 0x%" PRIx64 " (tid: %" PRIx32 ")\n",
+                                  binary->name.c_str(), section.name.c_str(), *section.first_execute,
+                                  *section.first_execute - binary->image_base + binary->image_base_file, win_emu.current_thread().id);
+            }
+
+            break;
+        }
+    }
+
     void handle_instruction(analysis_context& c, const uint64_t address)
     {
         auto& win_emu = *c.win_emu;
@@ -395,18 +421,9 @@ namespace
             return win_emu.mod_manager.find_by_address(address); //
         });
 
-        if (binary)
+        if (c.settings->log_first_section_execution)
         {
-            for (auto& section : binary->sections)
-            {
-                if (is_within_start_and_length(address, section.region.start, section.region.length) && section.first_execute == UINT64_MAX)
-                {
-                    section.first_execute = address;
-                    win_emu.log.print(color::green, "Section %s (%s) first execute at 0x%" PRIx64 " 0x%" PRIx64 " (tid: %" PRIx32 ")\n",
-                                      binary->name.c_str(), section.name.c_str(), section.first_execute,
-                                      section.first_execute - binary->image_base + binary->image_base_file, current_thread.id);
-                }
-            }
+            log_first_section_execution(win_emu, binary, address);
         }
 
         const auto previous_binary = utils::make_lazy([&] {

@@ -663,6 +663,7 @@ namespace
         printf("  -i, --ignore <funcs>      Comma-separated list of functions to ignore\n");
         printf("  -p, --path <src> <dst>    Map Windows path to host path\n");
         printf("  -r, --registry <path>     Set registry path (default: ./registry)\n\n");
+        printf("  -fx, --first-exec         Print first executions of sections\n");
         printf("  -is, --inst-summary       Print a summary of executed instructions of the analyzed modules\n");
         printf("  -ss, --skip-syscalls      Skip the logging of regular syscalls\n");
         printf("  -rep, --reproducible      Stub clocks and other mechanisms to make executions reproducible\n");
@@ -755,6 +756,10 @@ namespace
             else if (arg == "-t" || arg == "--tenet-trace")
             {
                 options.tenet_trace = true;
+            }
+            else if (arg == "-fx" || arg == "--first-exec")
+            {
+                options.log_first_section_execution = true;
             }
             else if (arg == "-is" || arg == "--inst-summary")
             {
