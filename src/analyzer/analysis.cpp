@@ -119,6 +119,19 @@ namespace
         {
             c.win_emu->log.print(color::gray, "Mapping violation: 0x%" PRIx64 " (%" PRIx64 ") - %s at 0x%" PRIx64 " (%s)\n", address, size,
                                  permission.c_str(), ip, name);
+
+            if (c.mapping_violation.first == address)
+            {
+                if (++c.mapping_violation.second > 5)
+                {
+                    throw std::runtime_error("Too many identical violations. Aborting...");
+                }
+            }
+            else
+            {
+                c.mapping_violation.first = address;
+                c.mapping_violation.second = 1;
+            }
         }
     }
 
