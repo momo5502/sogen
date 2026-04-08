@@ -1,6 +1,6 @@
 #pragma once
 
-// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 
 #define MOUNTMGRCONTROLTYPE                        0x0000006D // 'm'
 #define MOUNTDEVCONTROLTYPE                        0x0000004D // 'M'
@@ -54,4 +54,4 @@ typedef struct _MOUNTMGR_MOUNT_POINTS
     MOUNTMGR_MOUNT_POINT MountPoints[1];
 } MOUNTMGR_MOUNT_POINTS, *PMOUNTMGR_MOUNT_POINTS;
 
-// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)

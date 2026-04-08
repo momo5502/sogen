@@ -2,6 +2,7 @@
 
 #include "handles.hpp"
 
+#include <algorithm>
 #include <serialization_helper.hpp>
 #include <utils/file_handle.hpp>
 #include <platform/synchronisation.hpp>
@@ -480,8 +481,8 @@ struct io_completion : ref_counted_object
 
     bool remove_by_wait_packet(const handle wait_packet_handle)
     {
-        const auto entry = std::find_if(this->queue.begin(), this->queue.end(), [&](const io_completion_message& message) {
-            return message.wait_packet_handle == wait_packet_handle;
+        const auto entry = std::ranges::find_if(this->queue, [&](const io_completion_message& message) {
+            return message.wait_packet_handle == wait_packet_handle; //
         });
 
         if (entry == this->queue.end())

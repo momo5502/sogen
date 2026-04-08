@@ -65,7 +65,7 @@ static bool do_stat(HANDLE handle, struct compat_stat* stat)
     stat->st_atimespec = convert_filetime_to_timespec(file_info.ftLastAccessTime, stat->st_mtimespec);
     stat->st_ctimespec = convert_filetime_to_timespec(file_info.ftCreationTime, stat->st_mtimespec);
 
-    stat->st_size = (file_info.nFileSizeHigh * 0x100000000ULL) + file_info.nFileSizeLow;
+    stat->st_size = static_cast<int64_t>((file_info.nFileSizeHigh * 0x100000000ULL) + file_info.nFileSizeLow);
     stat->st_ino = (file_info.nFileIndexHigh * 0x100000000ULL) + file_info.nFileIndexLow;
 
     return true;

@@ -461,139 +461,295 @@ namespace whp
             case x86_register::ax:
             case x86_register::eax:
             case x86_register::rax:
-                return {WHvX64RegisterRax, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterRax,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::bl:
             case x86_register::bh:
             case x86_register::bx:
             case x86_register::ebx:
             case x86_register::rbx:
-                return {WHvX64RegisterRbx, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterRbx,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::cl:
             case x86_register::ch:
             case x86_register::cx:
             case x86_register::ecx:
             case x86_register::rcx:
-                return {WHvX64RegisterRcx, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterRcx,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::dl:
             case x86_register::dh:
             case x86_register::dx:
             case x86_register::edx:
             case x86_register::rdx:
-                return {WHvX64RegisterRdx, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterRdx,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::si:
             case x86_register::sil:
             case x86_register::esi:
             case x86_register::rsi:
-                return {WHvX64RegisterRsi, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterRsi,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::di:
             case x86_register::dil:
             case x86_register::edi:
             case x86_register::rdi:
-                return {WHvX64RegisterRdi, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterRdi,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::bp:
             case x86_register::bpl:
             case x86_register::ebp:
             case x86_register::rbp:
-                return {WHvX64RegisterRbp, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterRbp,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::sp:
             case x86_register::spl:
             case x86_register::esp:
             case x86_register::rsp:
-                return {WHvX64RegisterRsp, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterRsp,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::ip:
             case x86_register::eip:
             case x86_register::rip:
-                return {WHvX64RegisterRip, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterRip,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::r8:
             case x86_register::r8d:
             case x86_register::r8w:
             case x86_register::r8b:
-                return {WHvX64RegisterR8, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterR8,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::r9:
             case x86_register::r9d:
             case x86_register::r9w:
             case x86_register::r9b:
-                return {WHvX64RegisterR9, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterR9,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::r10:
             case x86_register::r10d:
             case x86_register::r10w:
             case x86_register::r10b:
-                return {WHvX64RegisterR10, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterR10,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::r11:
             case x86_register::r11d:
             case x86_register::r11w:
             case x86_register::r11b:
-                return {WHvX64RegisterR11, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterR11,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::r12:
             case x86_register::r12d:
             case x86_register::r12w:
             case x86_register::r12b:
-                return {WHvX64RegisterR12, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterR12,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::r13:
             case x86_register::r13d:
             case x86_register::r13w:
             case x86_register::r13b:
-                return {WHvX64RegisterR13, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterR13,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::r14:
             case x86_register::r14d:
             case x86_register::r14w:
             case x86_register::r14b:
-                return {WHvX64RegisterR14, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterR14,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::r15:
             case x86_register::r15d:
             case x86_register::r15w:
             case x86_register::r15b:
-                return {WHvX64RegisterR15, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterR15,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::flags:
             case x86_register::eflags:
             case x86_register::rflags:
-                return {WHvX64RegisterRflags, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterRflags,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::cs:
-                return {WHvX64RegisterCs, register_kind::segment, sizeof(uint16_t)};
+                return {
+                    .name = WHvX64RegisterCs,
+                    .kind = register_kind::segment,
+                    .logical_size = sizeof(uint16_t),
+                };
             case x86_register::ss:
-                return {WHvX64RegisterSs, register_kind::segment, sizeof(uint16_t)};
+                return {
+                    .name = WHvX64RegisterSs,
+                    .kind = register_kind::segment,
+                    .logical_size = sizeof(uint16_t),
+                };
             case x86_register::ds:
-                return {WHvX64RegisterDs, register_kind::segment, sizeof(uint16_t)};
+                return {
+                    .name = WHvX64RegisterDs,
+                    .kind = register_kind::segment,
+                    .logical_size = sizeof(uint16_t),
+                };
             case x86_register::es:
-                return {WHvX64RegisterEs, register_kind::segment, sizeof(uint16_t)};
+                return {
+                    .name = WHvX64RegisterEs,
+                    .kind = register_kind::segment,
+                    .logical_size = sizeof(uint16_t),
+                };
             case x86_register::fs:
             case x86_register::fs_base:
-                return {WHvX64RegisterFs, register_kind::segment, sizeof(uint16_t)};
+                return {
+                    .name = WHvX64RegisterFs,
+                    .kind = register_kind::segment,
+                    .logical_size = sizeof(uint16_t),
+                };
             case x86_register::gs:
             case x86_register::gs_base:
-                return {WHvX64RegisterGs, register_kind::segment, sizeof(uint16_t)};
+                return {
+                    .name = WHvX64RegisterGs,
+                    .kind = register_kind::segment,
+                    .logical_size = sizeof(uint16_t),
+                };
             case x86_register::gdtr:
-                return {WHvX64RegisterGdtr, register_kind::table, sizeof(WHV_X64_TABLE_REGISTER)};
+                return {
+                    .name = WHvX64RegisterGdtr,
+                    .kind = register_kind::table,
+                    .logical_size = sizeof(WHV_X64_TABLE_REGISTER),
+                };
             case x86_register::idtr:
-                return {WHvX64RegisterIdtr, register_kind::table, sizeof(WHV_X64_TABLE_REGISTER)};
+                return {
+                    .name = WHvX64RegisterIdtr,
+                    .kind = register_kind::table,
+                    .logical_size = sizeof(WHV_X64_TABLE_REGISTER),
+                };
             case x86_register::cr0:
-                return {WHvX64RegisterCr0, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterCr0,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::cr2:
-                return {WHvX64RegisterCr2, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterCr2,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::cr3:
-                return {WHvX64RegisterCr3, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterCr3,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::cr4:
-                return {WHvX64RegisterCr4, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterCr4,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::dr0:
-                return {WHvX64RegisterDr0, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterDr0,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::dr1:
-                return {WHvX64RegisterDr1, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterDr1,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::dr2:
-                return {WHvX64RegisterDr2, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterDr2,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::dr3:
-                return {WHvX64RegisterDr3, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterDr3,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::dr6:
-                return {WHvX64RegisterDr6, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterDr6,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::dr7:
-                return {WHvX64RegisterDr7, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterDr7,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::fpcw:
             case x86_register::fpsw:
             case x86_register::fptag:
-                return {WHvX64RegisterFpControlStatus, register_kind::fp_control, sizeof(uint16_t)};
+                return {
+                    .name = WHvX64RegisterFpControlStatus,
+                    .kind = register_kind::fp_control,
+                    .logical_size = sizeof(uint16_t),
+                };
             case x86_register::mxcsr:
-                return {WHvX64RegisterXmmControlStatus, register_kind::xmm_control, sizeof(uint32_t)};
+                return {
+                    .name = WHvX64RegisterXmmControlStatus,
+                    .kind = register_kind::xmm_control,
+                    .logical_size = sizeof(uint32_t),
+                };
             case x86_register::msr:
-                return {WHvX64RegisterEfer, register_kind::reg64, sizeof(uint64_t)};
+                return {
+                    .name = WHvX64RegisterEfer,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint64_t),
+                };
             default:
                 break;
             }
@@ -601,13 +757,21 @@ namespace whp
             if (reg >= x86_register::xmm0 && reg <= x86_register::xmm15)
             {
                 const auto index = static_cast<int>(reg) - static_cast<int>(x86_register::xmm0);
-                return {static_cast<WHV_REGISTER_NAME>(WHvX64RegisterXmm0 + index), register_kind::reg128, sizeof(WHV_UINT128)};
+                return {
+                    .name = static_cast<WHV_REGISTER_NAME>(WHvX64RegisterXmm0 + index),
+                    .kind = register_kind::reg128,
+                    .logical_size = sizeof(WHV_UINT128),
+                };
             }
 
             if (reg >= x86_register::st0 && reg <= x86_register::st7)
             {
                 const auto index = static_cast<int>(reg) - static_cast<int>(x86_register::st0);
-                return {static_cast<WHV_REGISTER_NAME>(WHvX64RegisterFpMmx0 + index), register_kind::fp, sizeof(WHV_X64_FP_REGISTER)};
+                return {
+                    .name = static_cast<WHV_REGISTER_NAME>(WHvX64RegisterFpMmx0 + index),
+                    .kind = register_kind::fp,
+                    .logical_size = sizeof(WHV_X64_FP_REGISTER),
+                };
             }
 
             throw std::runtime_error("Unsupported WHP register");
