@@ -51,7 +51,7 @@ namespace
     std::string read_env(const char* env)
     {
         std::array<char, 0x1000> buffer{};
-        if (!GetEnvironmentVariableA(env, buffer.data(), buffer.size()))
+        if (!GetEnvironmentVariableA(env, buffer.data(), static_cast<DWORD>(buffer.size())))
         {
             return {};
         }
@@ -311,7 +311,7 @@ namespace
         }
 
         std::array<char, MAX_PATH> data{};
-        DWORD length = data.size();
+        auto length = static_cast<DWORD>(data.size());
         const auto res = RegQueryValueExA(key, value, nullptr, nullptr, reinterpret_cast<uint8_t*>(data.data()), &length);
 
         if (RegCloseKey(key) != ERROR_SUCCESS)
@@ -496,7 +496,7 @@ namespace
     bool test_system_info()
     {
         std::array<char, MAX_PATH> sys_dir{};
-        if (GetSystemDirectoryA(sys_dir.data(), sys_dir.size()) == 0)
+        if (GetSystemDirectoryA(sys_dir.data(), static_cast<DWORD>(sys_dir.size())) == 0)
         {
             return false;
         }
@@ -705,7 +705,8 @@ namespace
         sockaddr_in sender_addr{};
         int sender_length = sizeof(sender_addr);
 
-        const auto len = recvfrom(receiver, buffer.data(), buffer.size(), 0, reinterpret_cast<sockaddr*>(&sender_addr), &sender_length);
+        const auto len = recvfrom(receiver, buffer.data(), static_cast<int>(buffer.size()), 0, reinterpret_cast<sockaddr*>(&sender_addr),
+                                  &sender_length);
         const auto ulen = static_cast<size_t>(len);
 
         if (ulen != send_data.size())
@@ -953,7 +954,7 @@ namespace
         }
 
         std::array<wchar_t, 0x100> buffer{};
-        DWORD size = buffer.size() / 2;
+        auto size = static_cast<DWORD>(buffer.size() / 2);
         if (!GetComputerNameExW(ComputerNameNetBIOS, buffer.data(), &size))
         {
             return false;
