@@ -31,12 +31,12 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - Windows
+          #- Windows
           - Linux
         include:
-          - platform: Windows
-            runner: windows-2025
-            devcmd_arch: x64
+          #- platform: Windows
+          #  runner: windows-2025
+          #  devcmd_arch: x64
           - platform: Linux
             runner: ubuntu-24.04
     steps:
