@@ -136,7 +136,7 @@ namespace gdb_stub
     void connection_handler::send_raw_data(const std::string_view data)
     {
         {
-            std::scoped_lock _{this->mutex_};
+            std::lock_guard _{this->mutex_};
             this->output_stream_.append(data);
         }
 
