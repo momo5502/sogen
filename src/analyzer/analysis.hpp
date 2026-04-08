@@ -1,12 +1,18 @@
 #pragma once
 
+#include <type_traits>
+#include <utility>
 #include <set>
 #include <string>
+#include <unordered_map>
+#include <vector>
+#include "analysis_event.hpp"
 #include "disassembler.hpp"
 
 struct mapped_module;
 class module_manager;
 class windows_emulator;
+class analysis_reporter;
 
 using string_set = std::set<std::string, std::less<>>;
 
@@ -40,6 +46,7 @@ struct analysis_context
 {
     const analysis_settings* settings{};
     windows_emulator* win_emu{};
+    std::vector<analysis_reporter*> reporters{};
 
     std::string output{};
     bool has_reached_main{false};
@@ -52,6 +59,30 @@ struct analysis_context
     std::set<std::pair<uint64_t, uint32_t>> cpuid_cache{};
 
     mutable std::pair<uint64_t, uint64_t> mapping_violation{0, 0};
+    mutable uint64_t next_event_sequence{1};
+
+    event_header make_event_header() const;
+    execution_context make_execution_context() const;
+    void emit_event(analysis_event event) const;
+
+    template <typename Payload>
+    void emit_observation(Payload payload) const
+    {
+        this->emit_event(observation_event<std::decay_t<Payload>>{
+            .header = this->make_event_header(),
+            .execution = this->make_execution_context(),
+            .payload = std::move(payload),
+        });
+    }
+
+    template <typename Payload>
+    void emit_summary(Payload payload) const
+    {
+        this->emit_event(summary_event<std::decay_t<Payload>>{
+            .header = this->make_event_header(),
+            .payload = std::move(payload),
+        });
+    }
 };
 
 void register_analysis_callbacks(analysis_context& c);
