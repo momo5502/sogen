@@ -49,11 +49,14 @@ struct handle_value
 static_assert(sizeof(handle_value) == 8);
 
 // TODO: this is a concrete 64bit handle
-union handle
+struct handle
 {
-    handle_value value;
-    uint64_t bits;
-    std::uint64_t h;
+    union
+    {
+        handle_value value;
+        uint64_t bits;
+        std::uint64_t h;
+    };
 };
 
 namespace utils

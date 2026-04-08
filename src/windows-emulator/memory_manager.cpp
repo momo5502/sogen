@@ -25,7 +25,10 @@ namespace
 
                     i->second.length = static_cast<size_t>(first_length);
 
-                    regions[split_point] = memory_manager::committed_region{static_cast<size_t>(second_length), i->second.permissions};
+                    regions[split_point] = memory_manager::committed_region{
+                        .length = static_cast<size_t>(second_length),
+                        .permissions = i->second.permissions,
+                    };
                 }
             }
         }

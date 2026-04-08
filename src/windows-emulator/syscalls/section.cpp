@@ -432,7 +432,7 @@ namespace syscalls
 
                 if (!c.emu.try_read_memory(param_addr, &param, sizeof(param)))
                 {
-                    c.win_emu.log.error("NtMapViewOfSectionEx: Failed to read extended parameter %u\n", i);
+                    c.win_emu.log.error("NtMapViewOfSectionEx: Failed to read extended parameter %u\n", static_cast<uint32_t>(i));
                     return STATUS_INVALID_PARAMETER;
                 }
 

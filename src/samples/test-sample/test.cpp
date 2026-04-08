@@ -50,13 +50,13 @@ namespace
     // getenv is broken right now :(
     std::string read_env(const char* env)
     {
-        char buffer[0x1000] = {};
-        if (!GetEnvironmentVariableA(env, buffer, sizeof(buffer)))
+        std::array<char, 0x1000> buffer{};
+        if (!GetEnvironmentVariableA(env, buffer.data(), buffer.size()))
         {
             return {};
         }
 
-        return buffer;
+        return buffer.data();
     }
 
     bool test_threads()
@@ -107,12 +107,12 @@ namespace
         };
 
         constexpr int thread_count = 5;
-        HANDLE threads[thread_count] = {nullptr};
-        ctx_t ctxs[thread_count] = {};
+        std::array<HANDLE, thread_count> threads = {};
+        std::array<ctx_t, thread_count> ctxs = {};
 
         for (int i = 0; i < thread_count; i++)
         {
-            ctxs[i] = {5 * (i + 1), 0};
+            ctxs[i] = {.iterations = 5 * (i + 1), .result = 0};
             threads[i] = CreateThread(nullptr, 0, thread_proc, &ctxs[i], 0, nullptr);
             if (!threads[i])
             {
@@ -120,9 +120,9 @@ namespace
             }
         }
 
-        WaitForMultipleObjects(thread_count, threads, TRUE, INFINITE);
+        WaitForMultipleObjects(thread_count, threads.data(), TRUE, INFINITE);
 
-        const int expected_results[thread_count] = {5, 10, 15, 20, 25};
+        const std::array<int, thread_count> expected_results = {5, 10, 15, 20, 25};
         for (int i = 0; i < thread_count; i++)
         {
             if (ctxs[i].result != expected_results[i])
@@ -144,6 +144,7 @@ namespace
         std::vector<std::thread> ts{};
         kill = false;
 
+        ts.reserve(thread_count);
         for (size_t i = 0; i < thread_count; ++i)
         {
             ts.emplace_back([&] {
@@ -194,6 +195,7 @@ namespace
     {
         std::error_code ec{};
         const auto absolute_file = absolute(filename, ec);
+        (void)absolute_file;
 
         if (ec)
         {
@@ -308,9 +310,9 @@ namespace
             return std::nullopt;
         }
 
-        char data[MAX_PATH]{};
-        DWORD length = sizeof(data);
-        const auto res = RegQueryValueExA(key, value, nullptr, nullptr, reinterpret_cast<uint8_t*>(data), &length);
+        std::array<char, MAX_PATH> data{};
+        DWORD length = data.size();
+        const auto res = RegQueryValueExA(key, value, nullptr, nullptr, reinterpret_cast<uint8_t*>(data.data()), &length);
 
         if (RegCloseKey(key) != ERROR_SUCCESS)
         {
@@ -327,7 +329,7 @@ namespace
             return "";
         }
 
-        return {std::string(data, std::min(static_cast<size_t>(length - 1), sizeof(data)))};
+        return {std::string(data.data(), std::min(static_cast<size_t>(length - 1), data.size()))};
     }
 
     std::optional<std::vector<std::string>> get_all_registry_keys(const HKEY root, const char* path)
@@ -493,12 +495,12 @@ namespace
 
     bool test_system_info()
     {
-        char sys_dir[MAX_PATH];
-        if (GetSystemDirectoryA(sys_dir, sizeof(sys_dir)) == 0)
+        std::array<char, MAX_PATH> sys_dir{};
+        if (GetSystemDirectoryA(sys_dir.data(), sys_dir.size()) == 0)
         {
             return false;
         }
-        if (strlen(sys_dir) != 19)
+        if (strlen(sys_dir.data()) != 19)
         {
             return false;
         }
@@ -543,7 +545,7 @@ namespace
     bool test_monitor_info()
     {
         const POINT pt = {0, 0};
-        const auto hMonitor = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
+        auto* const hMonitor = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
         if (!hMonitor)
         {
             return false;
@@ -699,11 +701,11 @@ namespace
             return false;
         }
 
-        char buffer[100] = {};
+        std::array<char, 100> buffer = {};
         sockaddr_in sender_addr{};
         int sender_length = sizeof(sender_addr);
 
-        const auto len = recvfrom(receiver, buffer, sizeof(buffer), 0, reinterpret_cast<sockaddr*>(&sender_addr), &sender_length);
+        const auto len = recvfrom(receiver, buffer.data(), buffer.size(), 0, reinterpret_cast<sockaddr*>(&sender_addr), &sender_length);
         const auto ulen = static_cast<size_t>(len);
 
         if (ulen != send_data.size())
@@ -712,7 +714,7 @@ namespace
             return false;
         }
 
-        return send_data == std::string_view(buffer, ulen);
+        return send_data == std::string_view(buffer.data(), ulen);
     }
 
 #ifndef __MINGW64__
@@ -819,7 +821,7 @@ namespace
 
         // The second array element specifies the virtual address of the
         // inaccessible data.
-        if (exception_information[1] != (ULONG_PTR)address)
+        if (exception_information[1] != reinterpret_cast<ULONG_PTR>(address))
         {
             return EXCEPTION_CONTINUE_SEARCH;
         }
@@ -950,9 +952,9 @@ namespace
             return false;
         }
 
-        wchar_t buffer[0x100];
-        DWORD size = sizeof(buffer) / 2;
-        if (!GetComputerNameExW(ComputerNameNetBIOS, buffer, &size))
+        std::array<wchar_t, 0x100> buffer{};
+        DWORD size = buffer.size() / 2;
+        if (!GetComputerNameExW(ComputerNameNetBIOS, buffer.data(), &size))
         {
             return false;
         }
