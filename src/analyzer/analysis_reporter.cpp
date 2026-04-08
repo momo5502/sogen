@@ -13,6 +13,12 @@ namespace
         using Ts::operator()...;
     };
 
+    template <typename... Ts>
+    auto make_overloaded(Ts&&... ts)
+    {
+        return overloaded<std::decay_t<Ts>...>{std::forward<Ts>(ts)...};
+    }
+
     std::string hex_string(const uint64_t value)
     {
         char buffer[32] = {};
@@ -213,7 +219,7 @@ namespace
         void report(const analysis_event& event) override
         {
             std::visit(
-                overloaded{
+                make_overloaded(
                     [&](const run_started_event& e) {
                         if (!this->settings_.silent)
                         {
@@ -418,7 +424,7 @@ namespace
                                          " via 0x%" PRIx64 " (%s)\n",
                                          e.payload.size, e.payload.value, e.payload.section_name.c_str(), e.payload.address,
                                          e.execution.rip, e.execution.rip_module.c_str());
-                    }},
+                    }),
                 event);
         }
 
@@ -448,12 +454,12 @@ namespace
                 json_object_builder object{line};
                 object.field("schemaVersion", 1U);
 
-                std::visit(overloaded{[&](const auto& e) {
+                std::visit(make_overloaded([&](const auto& e) {
                                object.field("sequence", e.header.sequence);
                                object.field("instructionCount", e.header.instruction_count);
                                this->event_type_fields(object, e);
                                this->event_payload_field(object, e);
-                           }},
+                           }),
                            event);
             }
 
@@ -713,7 +719,7 @@ namespace
 
         void write_payload(json_object_builder& payload, const import_write_payload& value)
         {
-            payload.field("size", value.size);
+            payload.field("size", static_cast<uint64_t>(value.size));
             payload.hex_field("value", value.value);
             payload.field("importName", value.import_name);
             payload.field("importModule", value.import_module);
@@ -799,7 +805,7 @@ namespace
         void write_payload(json_object_builder& payload, const foreign_module_read_payload& value)
         {
             payload.hex_field("address", value.address);
-            payload.field("size", value.size);
+            payload.field("size", static_cast<uint64_t>(value.size));
             payload.field("moduleName", value.module_name);
             payload.field("regionName", value.region_name);
         }
@@ -807,14 +813,14 @@ namespace
         void write_payload(json_object_builder& payload, const executable_read_payload& value)
         {
             payload.hex_field("address", value.address);
-            payload.field("size", value.size);
+            payload.field("size", static_cast<uint64_t>(value.size));
             payload.field("sectionName", value.section_name);
         }
 
         void write_payload(json_object_builder& payload, const executable_write_payload& value)
         {
             payload.hex_field("address", value.address);
-            payload.field("size", value.size);
+            payload.field("size", static_cast<uint64_t>(value.size));
             payload.hex_field("value", value.value);
             payload.field("sectionName", value.section_name);
         }

@@ -70,7 +70,7 @@ namespace
 
         try
         {
-            const auto str = read_string<CharType>(win_emu.memory, var_ptr);
+            auto str = read_string<CharType>(win_emu.memory, var_ptr);
             if constexpr (std::is_same_v<CharType, char16_t>)
             {
                 return u16_to_u8(str);
@@ -245,17 +245,29 @@ namespace
         std::vector<std::string> flags{};
 
         if (t.create_flags & THREAD_CREATE_FLAGS_CREATE_SUSPENDED)
+        {
             flags.emplace_back("suspended");
+        }
         if (t.create_flags & THREAD_CREATE_FLAGS_SKIP_THREAD_ATTACH)
+        {
             flags.emplace_back("skip thread attach");
+        }
         if (t.create_flags & THREAD_CREATE_FLAGS_HIDE_FROM_DEBUGGER)
+        {
             flags.emplace_back("hide from debugger");
+        }
         if (t.create_flags & THREAD_CREATE_FLAGS_LOADER_WORKER)
+        {
             flags.emplace_back("loader worker");
+        }
         if (t.create_flags & THREAD_CREATE_FLAGS_SKIP_LOADER_INIT)
+        {
             flags.emplace_back("skip loader init");
+        }
         if (t.create_flags & THREAD_CREATE_FLAGS_BYPASS_PROCESS_FREEZE)
+        {
             flags.emplace_back("bypass process freeze");
+        }
 
         c.emit_observation(thread_create_payload{
             .created_thread_id = t.id,
@@ -735,7 +747,7 @@ execution_context analysis_context::make_execution_context() const
     return context;
 }
 
-void analysis_context::emit_event(analysis_event event) const
+void analysis_context::emit_event(const analysis_event& event) const
 {
     for (auto* reporter : this->reporters)
     {

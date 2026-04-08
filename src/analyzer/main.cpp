@@ -542,16 +542,26 @@ namespace
         std::vector<std::string> application_args{};
         if (!args.empty())
         {
-            application_args.reserve(args.size() > 0 ? args.size() - 1 : 0);
+            application_args.reserve(args.size() - 1);
             for (size_t i = 1; i < args.size(); ++i)
             {
                 application_args.emplace_back(args[i]);
             }
         }
 
+        const auto* run_mode = "application";
+        if (!options.minidump_path.empty())
+        {
+            run_mode = "minidump";
+        }
+        else if (!options.dump.empty())
+        {
+            run_mode = "snapshot";
+        }
+
         context.emit_summary(run_started_payload{
             .backend_name = win_emu->emu().get_name(),
-            .mode = !options.minidump_path.empty() ? "minidump" : (!options.dump.empty() ? "snapshot" : "application"),
+            .mode = run_mode,
             .application = args.empty() ? std::string{} : std::string(args[0]),
             .arguments = std::move(application_args),
         });

@@ -63,7 +63,7 @@ struct analysis_context
 
     event_header make_event_header() const;
     execution_context make_execution_context() const;
-    void emit_event(analysis_event event) const;
+    void emit_event(const analysis_event& event) const;
 
     template <typename Payload>
     void emit_observation(Payload payload) const
