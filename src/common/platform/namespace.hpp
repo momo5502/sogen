@@ -7,6 +7,8 @@
 
 #include "primitives.hpp"
 
+// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-use-enum-class)
+
 enum BOUNDARY_ENTRY_TYPE : ULONG
 {
     OBNS_Invalid,
@@ -43,6 +45,8 @@ struct OBJECT_BOUNDARY_DESCRIPTOR
     };
     // OBJECT_BOUNDARY_ENTRY Entries[1];
 };
+
+// NOLINTEND(modernize-use-using,cppcoreguidelines-use-enum-class)
 
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop

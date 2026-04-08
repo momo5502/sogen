@@ -266,7 +266,10 @@ bool memory_manager::allocate_mmio(const uint64_t address, const size_t size, mm
                                         })
                            .first;
 
-    entry->second.committed_regions[address] = committed_region{size, memory_permission::read_write};
+    entry->second.committed_regions[address] = committed_region{
+        .length = size,
+        .permissions = memory_permission::read_write,
+    };
 
     this->update_layout_version();
 
@@ -293,7 +296,10 @@ bool memory_manager::allocate_memory(const uint64_t address, const size_t size, 
     if (!reserve_only)
     {
         this->map_memory(address, size, permissions.is_guarded() ? memory_permission::none : permissions.common);
-        entry->second.committed_regions[address] = committed_region{size, permissions};
+        entry->second.committed_regions[address] = committed_region{
+            .length = size,
+            .permissions = permissions,
+        };
     }
 
     this->update_layout_version();
@@ -346,7 +352,10 @@ bool memory_manager::commit_memory(const uint64_t address, const size_t size, co
             if (map_length > 0)
             {
                 this->map_memory(map_start, static_cast<size_t>(map_length), effective_permission);
-                committed_regions[map_start] = committed_region{static_cast<size_t>(map_length), permissions};
+                committed_regions[map_start] = committed_region{
+                    .length = static_cast<size_t>(map_length),
+                    .permissions = permissions,
+                };
             }
 
             // Update protection for existing committed region when re-committing
@@ -364,7 +373,10 @@ bool memory_manager::commit_memory(const uint64_t address, const size_t size, co
         const auto map_length = end - map_start;
 
         this->map_memory(map_start, static_cast<size_t>(map_length), effective_permission);
-        committed_regions[map_start] = committed_region{static_cast<size_t>(map_length), permissions};
+        committed_regions[map_start] = committed_region{
+            .length = static_cast<size_t>(map_length),
+            .permissions = permissions,
+        };
     }
 
     merge_regions(committed_regions);

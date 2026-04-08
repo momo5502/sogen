@@ -2,6 +2,8 @@
 
 #include <serialization.hpp>
 
+// NOLINTBEGIN(cppcoreguidelines-use-enum-class)
+
 struct handle_types
 {
     enum type : uint16_t
@@ -29,6 +31,8 @@ struct handle_types
         private_namespace,
     };
 };
+
+// NOLINTEND(cppcoreguidelines-use-enum-class)
 
 #pragma pack(push)
 #pragma pack(1)

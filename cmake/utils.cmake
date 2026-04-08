@@ -379,10 +379,15 @@ endmacro()
 
 function(momo_target_enable_clang_tidy target)
   if(MOMO_ENABLE_CLANG_TIDY)
-    set(CLANG_TIDY_COMMAND "clang-tidy;--use-color;--config-file=${CMAKE_CURRENT_SOURCE_DIR}/.clang-tidy")
+    set(CLANG_TIDY_COMMAND_C "clang-tidy;--use-color;--config-file=${CMAKE_CURRENT_SOURCE_DIR}/.clang-tidy")
+    set(CLANG_TIDY_COMMAND_CXX "${CLANG_TIDY_COMMAND_C}")
 
-    set_target_properties(${target} PROPERTIES C_CLANG_TIDY "${CLANG_TIDY_COMMAND}")
-    set_target_properties(${target} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}")
+    if(MSVC)
+      set(CLANG_TIDY_COMMAND_CXX "${CLANG_TIDY_COMMAND_CXX};--extra-arg=/EHa")
+    endif()
+
+    set_target_properties(${target} PROPERTIES C_CLANG_TIDY "${CLANG_TIDY_COMMAND_C}")
+    set_target_properties(${target} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND_CXX}")
   endif()
 endfunction()
 

@@ -81,8 +81,8 @@ enum class io_completion_wait_type : uint8_t
 
 struct pending_io_completion_wait
 {
-    io_completion_wait_type type{io_completion_wait_type::remove_single};
     handle io_completion_handle{};
+    io_completion_wait_type type{io_completion_wait_type::remove_single};
     emulator_pointer key_context_ptr{};
     emulator_pointer apc_context_ptr{};
     emulator_pointer io_status_block_ptr{};

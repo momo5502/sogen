@@ -1,6 +1,6 @@
 #pragma once
 
-// NOLINTBEGIN(modernize-use-using)
+// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-use-enum-class)
 
 typedef enum _EVENT_TYPE
 {
@@ -23,4 +23,4 @@ struct EVENT_BASIC_INFORMATION
     LONG EventState;
 };
 
-// NOLINTEND(modernize-use-using)
+// NOLINTEND(modernize-use-using,cppcoreguidelines-use-enum-class)

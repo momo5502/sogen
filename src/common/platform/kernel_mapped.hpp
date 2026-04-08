@@ -8,7 +8,7 @@
 #include "status.hpp"
 #include "process.hpp"
 
-// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 
 #ifndef NT_SUCCESS
 #define NT_SUCCESS(Status) ((static_cast<std::int32_t>(Status)) >= 0)
@@ -2034,4 +2034,4 @@ constexpr uint64_t PS_SYSTEM_DLL_INIT_BLOCK_SIZE_V2 = sizeof(PS_SYSTEM_DLL_INIT_
 constexpr uint64_t PS_SYSTEM_DLL_INIT_BLOCK_SIZE_V3_2004 = offsetof(PS_SYSTEM_DLL_INIT_BLOCK_V3, ScpCfgCheckFunction);
 constexpr uint64_t PS_SYSTEM_DLL_INIT_BLOCK_SIZE_V3 = sizeof(PS_SYSTEM_DLL_INIT_BLOCK_V3);
 
-// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
