@@ -162,7 +162,7 @@ namespace
                     }
                 }
 
-                state->context_.emit_observation(environment_access_payload{
+                state->context_.emit_observation(environment_access_event{
                     .main_access = is_main_access,
                     .offset = address - env_ptr,
                     .size = size,
@@ -196,7 +196,7 @@ namespace
         win_emu.setup_process_if_necessary();
 
         auto emit_object_access = [&c](object_access_info info) {
-            c.emit_observation(object_access_payload{
+            c.emit_observation(object_access_event{
                 .main_access = info.main_access,
                 .type_name = std::move(info.type_name),
                 .offset = info.offset,
@@ -286,12 +286,12 @@ namespace
     {
         if (c.settings->instruction_summary)
         {
-            c.emit_summary(instruction_summary_payload{.entries = build_instruction_summary(c)});
+            c.emit_summary(instruction_summary_event{.entries = build_instruction_summary(c)});
         }
 
         if (c.settings->buffer_stdout)
         {
-            c.emit_summary(buffered_stdout_payload{.data = c.output});
+            c.emit_summary(buffered_stdout_event{.data = c.output});
         }
     }
 
@@ -331,7 +331,7 @@ namespace
 
         auto emit_failure = [&](std::string message) {
             do_post_emulation_work(c);
-            c.emit_summary(run_failed_payload{
+            c.emit_summary(run_failed_event{
                 .rip = win_emu.emu().read_instruction_pointer(),
                 .message = std::move(message),
             });
@@ -355,7 +355,7 @@ namespace
             {
                 // For minidumps, don't start execution automatically; just report ready state
                 win_emu.log.print(color::green, "Minidump loaded successfully. Process state ready for analysis.\n");
-                c.emit_summary(run_finished_payload{.success = true, .exit_status = std::nullopt});
+                c.emit_summary(run_finished_event{.success = true, .exit_status = std::nullopt});
                 flush_reporters(c);
                 return true;
             }
@@ -401,7 +401,7 @@ namespace
         const auto success = *exit_status == STATUS_SUCCESS;
         do_post_emulation_work(c);
         win_emu.log.disable_output(false);
-        c.emit_summary(run_finished_payload{
+        c.emit_summary(run_finished_event{
             .success = success,
             .exit_status = static_cast<uint32_t>(*exit_status),
         });
@@ -559,7 +559,7 @@ namespace
             run_mode = "snapshot";
         }
 
-        context.emit_summary(run_started_payload{
+        context.emit_summary(run_started_event{
             .backend_name = win_emu->emu().get_name(),
             .mode = run_mode,
             .application = args.empty() ? std::string{} : std::string(args[0]),
@@ -587,7 +587,7 @@ namespace
 
             if (mod.has_value() && (!concise_logging || context.cpuid_cache.insert({rip, leaf}).second))
             {
-                context.emit_observation(cpuid_payload{.leaf = leaf});
+                context.emit_observation(cpuid_event{.leaf = leaf});
             }
 
             if (leaf == 1)
@@ -634,7 +634,7 @@ namespace
                                                 }
 
                                                 const auto* region_name = get_module_memory_region_name(*mod, address);
-                                                context.emit_observation(foreign_module_read_payload{
+                                                context.emit_observation(foreign_module_read_event{
                                                     .address = address,
                                                     .size = size,
                                                     .module_name = mod->name,
@@ -673,7 +673,7 @@ namespace
                         }
                     }
 
-                    context.emit_observation(executable_read_payload{
+                    context.emit_observation(executable_read_event{
                         .address = address,
                         .size = size,
                         .section_name = section.name,
@@ -692,7 +692,7 @@ namespace
 
                     uint64_t int_value{};
                     memcpy(&int_value, value, std::min(size, sizeof(int_value)));
-                    context.emit_observation(executable_write_payload{
+                    context.emit_observation(executable_write_event{
                         .address = address,
                         .size = size,
                         .value = int_value,

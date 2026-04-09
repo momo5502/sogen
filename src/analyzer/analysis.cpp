@@ -167,7 +167,7 @@ namespace
             decoded_instruction = get_instruction_string(c.d, c.win_emu->emu(), rip);
         }
 
-        c.emit_observation(suspicious_activity_payload{
+        c.emit_observation(suspicious_activity_event{
             .details = std::string(details),
             .decoded_instruction = std::move(decoded_instruction),
         });
@@ -175,23 +175,23 @@ namespace
 
     void handle_debug_string(const analysis_context& c, const std::string_view details)
     {
-        c.emit_observation(debug_string_payload{.details = std::string(details)});
+        c.emit_observation(debug_string_event{.details = std::string(details)});
     }
 
     void handle_generic_activity(const analysis_context& c, const std::string_view details)
     {
-        c.emit_observation(generic_activity_payload{.details = std::string(details)});
+        c.emit_observation(generic_activity_event{.details = std::string(details)});
     }
 
     void handle_generic_access(const analysis_context& c, const std::string_view type, const std::u16string_view name)
     {
-        c.emit_observation(generic_access_payload{.type = std::string(type), .name = u16_to_u8(name)});
+        c.emit_observation(generic_access_event{.type = std::string(type), .name = u16_to_u8(name)});
     }
 
     void handle_memory_allocate(const analysis_context& c, const uint64_t address, const uint64_t length,
                                 const memory_permission permission, const bool commit)
     {
-        c.emit_observation(memory_allocate_payload{
+        c.emit_observation(memory_allocate_event{
             .address = address,
             .length = length,
             .permissions = get_permission_string(permission),
@@ -201,7 +201,7 @@ namespace
 
     void handle_memory_protect(const analysis_context& c, const uint64_t address, const uint64_t length, const memory_permission permission)
     {
-        c.emit_observation(memory_protect_payload{
+        c.emit_observation(memory_protect_event{
             .address = address,
             .length = length,
             .permissions = get_permission_string(permission),
@@ -211,7 +211,7 @@ namespace
     void handle_memory_violate(const analysis_context& c, const uint64_t address, const uint64_t size, const memory_operation operation,
                                const memory_violation_type type)
     {
-        c.emit_observation(memory_violation_payload{
+        c.emit_observation(memory_violation_event{
             .address = address,
             .size = size,
             .operation = get_permission_string(operation),
@@ -237,7 +237,7 @@ namespace
 
     void handle_ioctrl(const analysis_context& c, const io_device&, const std::u16string_view device_name, const ULONG code)
     {
-        c.emit_observation(io_control_payload{.device_name = u16_to_u8(device_name), .code = static_cast<uint32_t>(code)});
+        c.emit_observation(io_control_event{.device_name = u16_to_u8(device_name), .code = static_cast<uint32_t>(code)});
     }
 
     void handle_thread_create(const analysis_context& c, handle, emulator_thread& t)
@@ -269,7 +269,7 @@ namespace
             flags.emplace_back("bypass process freeze");
         }
 
-        c.emit_observation(thread_create_payload{
+        c.emit_observation(thread_create_event{
             .created_thread_id = t.id,
             .start_address = t.start_address,
             .argument = t.argument,
@@ -279,27 +279,27 @@ namespace
 
     void handle_thread_terminated(const analysis_context& c, handle, emulator_thread& t)
     {
-        c.emit_observation(thread_terminated_payload{.terminated_thread_id = t.id});
+        c.emit_observation(thread_terminated_event{.terminated_thread_id = t.id});
     }
 
     void handle_thread_set_name(const analysis_context& c, const emulator_thread& t)
     {
-        c.emit_observation(thread_set_name_payload{.renamed_thread_id = t.id, .name = u16_to_u8(t.name)});
+        c.emit_observation(thread_set_name_event{.renamed_thread_id = t.id, .name = u16_to_u8(t.name)});
     }
 
     void handle_thread_switch(const analysis_context& c, const emulator_thread& current_thread, const emulator_thread& new_thread)
     {
-        c.emit_observation(thread_switch_payload{.previous_thread_id = current_thread.id, .next_thread_id = new_thread.id});
+        c.emit_observation(thread_switch_event{.previous_thread_id = current_thread.id, .next_thread_id = new_thread.id});
     }
 
     void handle_module_load(const analysis_context& c, const mapped_module& mod)
     {
-        c.emit_observation(module_load_payload{.path = mod.module_path.string(), .image_base = mod.image_base});
+        c.emit_observation(module_load_event{.path = mod.module_path.string(), .image_base = mod.image_base});
     }
 
     void handle_module_unload(const analysis_context& c, const mapped_module& mod)
     {
-        c.emit_observation(module_unload_payload{.path = mod.module_path.string(), .image_base = mod.image_base});
+        c.emit_observation(module_unload_event{.path = mod.module_path.string(), .image_base = mod.image_base});
     }
 
     bool is_thread_alive(const analysis_context& c, const uint32_t thread_id)
@@ -343,7 +343,7 @@ namespace
                 continue;
             }
 
-            c.emit_observation(import_read_payload{
+            c.emit_observation(import_read_event{
                 .resolved_address = a.address,
                 .import_name = a.import_name,
                 .import_module = a.import_module,
@@ -413,7 +413,7 @@ namespace
             if (!section.first_execute.has_value())
             {
                 section.first_execute = address;
-                c.emit_observation(section_first_execute_payload{
+                c.emit_observation(section_first_execute_event{
                     .module_name = binary->name,
                     .section_name = section.name,
                     .file_address = *section.first_execute - binary->image_base + binary->image_base_file,
@@ -505,7 +505,7 @@ namespace
             if (!c.settings->ignored_functions.contains(export_entry->second))
             {
                 auto details = collect_function_details(c, export_entry->second);
-                c.emit_observation(function_execution_payload{
+                c.emit_observation(function_execution_event{
                     .function_name = export_entry->second,
                     .interesting = is_interesting_call,
                     .details = std::move(details.details),
@@ -515,7 +515,7 @@ namespace
         }
         else if (address == binary->entry_point)
         {
-            c.emit_observation(entry_point_execution_payload{.interesting = is_interesting_call});
+            c.emit_observation(entry_point_execution_event{.interesting = is_interesting_call});
         }
         else if (is_previous_main_exe && binary != previous_binary && !is_return(c.d, c.win_emu->emu(), previous_ip))
         {
@@ -526,7 +526,7 @@ namespace
             }
 
             --nearest_entry;
-            c.emit_observation(foreign_code_transition_payload{
+            c.emit_observation(foreign_code_transition_event{
                 .function_name = nearest_entry->second,
                 .function_offset = address - nearest_entry->first,
                 .interesting = is_interesting_call,
@@ -547,7 +547,7 @@ namespace
             return;
         }
 
-        c.emit_observation(rdtsc_payload{});
+        c.emit_observation(rdtsc_event{});
     }
 
     void handle_rdtscp(analysis_context& c)
@@ -563,7 +563,7 @@ namespace
             return;
         }
 
-        c.emit_observation(rdtscp_payload{});
+        c.emit_observation(rdtscp_event{});
     }
 
     emulator_callbacks::continuation handle_syscall(const analysis_context& c, const uint32_t syscall_id,
@@ -584,7 +584,7 @@ namespace
 
         if (is_sus_module && !is_valid_32_bit_module)
         {
-            c.emit_observation(syscall_payload{
+            c.emit_observation(syscall_event{
                 .classification = syscall_classification::inline_syscall,
                 .syscall_id = syscall_id,
                 .syscall_name = std::string(syscall_name),
@@ -601,7 +601,7 @@ namespace
 
                 const auto* caller_mod_name = win_emu.mod_manager.find_name(return_address);
 
-                c.emit_observation(syscall_payload{
+                c.emit_observation(syscall_event{
                     .classification = syscall_classification::regular,
                     .syscall_id = syscall_id,
                     .syscall_name = std::string(syscall_name),
@@ -614,7 +614,7 @@ namespace
         {
             const auto* previous_mod = win_emu.mod_manager.find_by_address(previous_ip);
 
-            c.emit_observation(syscall_payload{
+            c.emit_observation(syscall_event{
                 .classification = syscall_classification::crafted_out_of_line,
                 .syscall_id = syscall_id,
                 .syscall_name = std::string(syscall_name),
@@ -628,7 +628,7 @@ namespace
 
     void handle_stdout(analysis_context& c, const std::string_view data)
     {
-        c.emit_observation(stdout_chunk_payload{.data = std::string(data)});
+        c.emit_observation(stdout_chunk_event{.data = std::string(data)});
 
         if (c.settings->buffer_stdout && !c.settings->silent)
         {
@@ -670,7 +670,7 @@ namespace
 
             const auto import_module = watched_module.imported_modules.at(sym->second.module_index);
 
-            c.emit_observation(import_write_payload{
+            c.emit_observation(import_write_event{
                 .size = size,
                 .value = int_value,
                 .import_name = sym->second.name,

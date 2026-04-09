@@ -1,7 +1,7 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <optional>
 #include <string>
 #include <variant>
@@ -29,22 +29,18 @@ struct execution_context
     std::optional<std::string> previous_ip_module{};
 };
 
-template <typename Payload>
 struct observation_event
 {
     event_header header{};
     execution_context execution{};
-    Payload payload{};
 };
 
-template <typename Payload>
 struct summary_event
 {
     event_header header{};
-    Payload payload{};
 };
 
-struct run_started_payload
+struct run_started_event : summary_event
 {
     std::string backend_name{};
     std::string mode{"application"};
@@ -52,13 +48,13 @@ struct run_started_payload
     std::vector<std::string> arguments{};
 };
 
-struct run_finished_payload
+struct run_finished_event : summary_event
 {
     bool success{};
     std::optional<uint32_t> exit_status{};
 };
 
-struct run_failed_payload
+struct run_failed_event : summary_event
 {
     uint64_t rip{};
     std::string message{};
@@ -70,44 +66,44 @@ struct instruction_summary_entry
     uint64_t count{};
 };
 
-struct instruction_summary_payload
+struct instruction_summary_event : summary_event
 {
     std::vector<instruction_summary_entry> entries{};
 };
 
-struct buffered_stdout_payload
+struct buffered_stdout_event : summary_event
 {
     std::string data{};
 };
 
-struct stdout_chunk_payload
+struct stdout_chunk_event : observation_event
 {
     std::string data{};
 };
 
-struct suspicious_activity_payload
+struct suspicious_activity_event : observation_event
 {
     std::string details{};
     std::string decoded_instruction{};
 };
 
-struct debug_string_payload
+struct debug_string_event : observation_event
 {
     std::string details{};
 };
 
-struct generic_activity_payload
+struct generic_activity_event : observation_event
 {
     std::string details{};
 };
 
-struct generic_access_payload
+struct generic_access_event : observation_event
 {
     std::string type{};
     std::string name{};
 };
 
-struct memory_allocate_payload
+struct memory_allocate_event : observation_event
 {
     uint64_t address{};
     uint64_t length{};
@@ -115,14 +111,14 @@ struct memory_allocate_payload
     bool commit{};
 };
 
-struct memory_protect_payload
+struct memory_protect_event : observation_event
 {
     uint64_t address{};
     uint64_t length{};
     std::string permissions{};
 };
 
-struct memory_violation_payload
+struct memory_violation_event : observation_event
 {
     uint64_t address{};
     uint64_t size{};
@@ -130,13 +126,13 @@ struct memory_violation_payload
     std::string violation_type{};
 };
 
-struct io_control_payload
+struct io_control_event : observation_event
 {
     std::string device_name{};
     uint32_t code{};
 };
 
-struct thread_create_payload
+struct thread_create_event : observation_event
 {
     uint32_t created_thread_id{};
     uint64_t start_address{};
@@ -144,43 +140,43 @@ struct thread_create_payload
     std::vector<std::string> flags{};
 };
 
-struct thread_terminated_payload
+struct thread_terminated_event : observation_event
 {
     uint32_t terminated_thread_id{};
 };
 
-struct thread_set_name_payload
+struct thread_set_name_event : observation_event
 {
     uint32_t renamed_thread_id{};
     std::string name{};
 };
 
-struct thread_switch_payload
+struct thread_switch_event : observation_event
 {
     uint32_t previous_thread_id{};
     uint32_t next_thread_id{};
 };
 
-struct module_load_payload
+struct module_load_event : observation_event
 {
     std::string path{};
     uint64_t image_base{};
 };
 
-struct module_unload_payload
+struct module_unload_event : observation_event
 {
     std::string path{};
     uint64_t image_base{};
 };
 
-struct import_read_payload
+struct import_read_event : observation_event
 {
     uint64_t resolved_address{};
     std::string import_name{};
     std::string import_module{};
 };
 
-struct import_write_payload
+struct import_write_event : observation_event
 {
     size_t size{};
     uint64_t value{};
@@ -188,7 +184,7 @@ struct import_write_payload
     std::string import_module{};
 };
 
-struct object_access_payload
+struct object_access_event : observation_event
 {
     bool main_access{};
     std::string type_name{};
@@ -197,7 +193,7 @@ struct object_access_payload
     std::optional<std::string> member_name{};
 };
 
-struct environment_access_payload
+struct environment_access_event : observation_event
 {
     bool main_access{};
     uint64_t offset{};
@@ -210,7 +206,7 @@ struct function_execution_detail
     std::string value{};
 };
 
-struct function_execution_payload
+struct function_execution_event : observation_event
 {
     std::string function_name{};
     bool interesting{};
@@ -218,39 +214,39 @@ struct function_execution_payload
     bool stubbed_win_verify_trust{};
 };
 
-struct entry_point_execution_payload
+struct entry_point_execution_event : observation_event
 {
     bool interesting{};
 };
 
-struct foreign_code_transition_payload
+struct foreign_code_transition_event : observation_event
 {
     std::string function_name{};
     uint64_t function_offset{};
     bool interesting{};
 };
 
-struct section_first_execute_payload
+struct section_first_execute_event : observation_event
 {
     std::string module_name{};
     std::string section_name{};
     uint64_t file_address{};
 };
 
-struct rdtsc_payload
+struct rdtsc_event : observation_event
 {
 };
 
-struct rdtscp_payload
+struct rdtscp_event : observation_event
 {
 };
 
-struct cpuid_payload
+struct cpuid_event : observation_event
 {
     uint32_t leaf{};
 };
 
-struct syscall_payload
+struct syscall_event : observation_event
 {
     syscall_classification classification{syscall_classification::regular};
     uint32_t syscall_id{};
@@ -259,7 +255,7 @@ struct syscall_payload
     std::optional<std::string> caller_module{};
 };
 
-struct foreign_module_read_payload
+struct foreign_module_read_event : observation_event
 {
     uint64_t address{};
     size_t size{};
@@ -267,57 +263,20 @@ struct foreign_module_read_payload
     std::string region_name{};
 };
 
-struct executable_read_payload
+struct executable_read_event : observation_event
 {
     uint64_t address{};
     size_t size{};
     std::string section_name{};
 };
 
-struct executable_write_payload
+struct executable_write_event : observation_event
 {
     uint64_t address{};
     size_t size{};
     uint64_t value{};
     std::string section_name{};
 };
-
-using run_started_event = summary_event<run_started_payload>;
-using run_finished_event = summary_event<run_finished_payload>;
-using run_failed_event = summary_event<run_failed_payload>;
-using instruction_summary_event = summary_event<instruction_summary_payload>;
-using buffered_stdout_event = summary_event<buffered_stdout_payload>;
-
-using stdout_chunk_event = observation_event<stdout_chunk_payload>;
-using suspicious_activity_event = observation_event<suspicious_activity_payload>;
-using debug_string_event = observation_event<debug_string_payload>;
-using generic_activity_event = observation_event<generic_activity_payload>;
-using generic_access_event = observation_event<generic_access_payload>;
-using memory_allocate_event = observation_event<memory_allocate_payload>;
-using memory_protect_event = observation_event<memory_protect_payload>;
-using memory_violation_event = observation_event<memory_violation_payload>;
-using io_control_event = observation_event<io_control_payload>;
-using thread_create_event = observation_event<thread_create_payload>;
-using thread_terminated_event = observation_event<thread_terminated_payload>;
-using thread_set_name_event = observation_event<thread_set_name_payload>;
-using thread_switch_event = observation_event<thread_switch_payload>;
-using module_load_event = observation_event<module_load_payload>;
-using module_unload_event = observation_event<module_unload_payload>;
-using import_read_event = observation_event<import_read_payload>;
-using import_write_event = observation_event<import_write_payload>;
-using object_access_event = observation_event<object_access_payload>;
-using environment_access_event = observation_event<environment_access_payload>;
-using function_execution_event = observation_event<function_execution_payload>;
-using entry_point_execution_event = observation_event<entry_point_execution_payload>;
-using foreign_code_transition_event = observation_event<foreign_code_transition_payload>;
-using section_first_execute_event = observation_event<section_first_execute_payload>;
-using rdtsc_event = observation_event<rdtsc_payload>;
-using rdtscp_event = observation_event<rdtscp_payload>;
-using cpuid_event = observation_event<cpuid_payload>;
-using syscall_event = observation_event<syscall_payload>;
-using foreign_module_read_event = observation_event<foreign_module_read_payload>;
-using executable_read_event = observation_event<executable_read_payload>;
-using executable_write_event = observation_event<executable_write_payload>;
 
 using analysis_event =
     std::variant<run_started_event, run_finished_event, run_failed_event, instruction_summary_event, buffered_stdout_event,

@@ -65,23 +65,23 @@ struct analysis_context
     execution_context make_execution_context() const;
     void emit_event(const analysis_event& event) const;
 
-    template <typename Payload>
-    void emit_observation(Payload payload) const
+    template <typename Event>
+    void emit_observation(Event event) const
     {
-        this->emit_event(observation_event<std::decay_t<Payload>>{
-            .header = this->make_event_header(),
-            .execution = this->make_execution_context(),
-            .payload = std::move(payload),
-        });
+        static_assert(std::is_base_of_v<observation_event, std::decay_t<Event>>);
+
+        event.header = this->make_event_header();
+        event.execution = this->make_execution_context();
+        this->emit_event(event);
     }
 
-    template <typename Payload>
-    void emit_summary(Payload payload) const
+    template <typename Event>
+    void emit_summary(Event event) const
     {
-        this->emit_event(summary_event<std::decay_t<Payload>>{
-            .header = this->make_event_header(),
-            .payload = std::move(payload),
-        });
+        static_assert(std::is_base_of_v<summary_event, std::decay_t<Event>>);
+
+        event.header = this->make_event_header();
+        this->emit_event(event);
     }
 };
 
