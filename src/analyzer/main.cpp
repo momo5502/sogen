@@ -9,6 +9,8 @@
 #include "object_watching.hpp"
 #include "snapshot.hpp"
 #include "analysis.hpp"
+#include "analysis_reporter.hpp"
+#include "jsonl_reporter.hpp"
 #include "tenet_tracer.hpp"
 
 #include <utils/finally.hpp>
@@ -34,6 +36,8 @@ namespace
         bool tenet_trace{false};
         std::filesystem::path dump{};
         std::filesystem::path minidump_path{};
+        std::filesystem::path report_path{};
+        std::string report_format{"jsonl"};
         std::string registry_path{"./registry"};
         std::string emulation_root{};
         std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
@@ -67,6 +71,7 @@ namespace
 
     struct analysis_state
     {
+        analysis_context& context_;
         windows_emulator& win_emu_;
         scoped_hook env_data_hook_;
         scoped_hook env_ptr_hook_;
@@ -79,12 +84,13 @@ namespace
         bool verbose_;
         bool concise_;
 
-        analysis_state(windows_emulator& win_emu, std::set<std::string, std::less<>> modules, const bool verbose, const bool concise)
-            : win_emu_(win_emu),
-              env_data_hook_(win_emu.emu()),
-              env_ptr_hook_(win_emu.emu()),
-              params_hook_(win_emu.emu()),
-              ldr_hook_(win_emu.emu()),
+        analysis_state(analysis_context& context, std::set<std::string, std::less<>> modules, const bool verbose, const bool concise)
+            : context_(context),
+              win_emu_(*context.win_emu),
+              env_data_hook_(context.win_emu->emu()),
+              env_ptr_hook_(context.win_emu->emu()),
+              params_hook_(context.win_emu->emu()),
+              ldr_hook_(context.win_emu->emu()),
               modules_(std::move(modules)),
               verbose_(verbose),
               concise_(concise)
@@ -150,17 +156,18 @@ namespace
 
                 if (state->concise_)
                 {
-                    const auto count = ++state->env_module_cache_[mod->name];
+                    const auto count = ++state->env_module_cache_[mod ? mod->name : "<N/A>"];
                     if (count > 100 && count % 1000 != 0)
                     {
                         return;
                     }
                 }
 
-                const auto offset = address - env_ptr;
-                const auto* mod_name = mod ? mod->name.c_str() : "<N/A>";
-                state->win_emu_.log.print(is_main_access ? color::green : color::dark_gray,
-                                          "Environment access: 0x%" PRIx64 " (0x%zX) at 0x%" PRIx64 " (%s)\n", offset, size, rip, mod_name);
+                state->context_.emit_observation<environment_access_event>([&](auto& event) {
+                    event.main_access = is_main_access;
+                    event.offset = address - env_ptr;
+                    event.size = size;
+                });
             };
 
             state->env_data_hook_ = state->win_emu_.emu().hook_memory_read(env_ptr, env_size, std::move(hook_handler));
@@ -183,19 +190,32 @@ namespace
             });
     }
 
-    void watch_system_objects(windows_emulator& win_emu, const std::set<std::string, std::less<>>& modules, const bool verbose,
+    void watch_system_objects(analysis_context& c, const std::set<std::string, std::less<>>& modules, const bool verbose,
                               const bool concise)
     {
+        auto& win_emu = *c.win_emu;
         win_emu.setup_process_if_necessary();
 
-        watch_object(win_emu, modules, *win_emu.current_thread().teb64, verbose);
-        watch_object(win_emu, modules, win_emu.process.peb64, verbose);
-        watch_object<KUSER_SHARED_DATA64>(win_emu, modules, kusd_mmio::address(), verbose);
+        auto emit_object_access = [&c](object_access_info info) {
+            c.emit_observation<object_access_event>([&](auto& event) {
+                event.main_access = info.main_access;
+                event.type_name = std::move(info.type_name);
+                event.offset = info.offset;
+                event.size = info.size;
+                event.member_name = std::move(info.member_name);
+            });
+        };
 
-        auto state = std::make_shared<analysis_state>(win_emu, modules, verbose, concise);
+        watch_object(win_emu, modules, *win_emu.current_thread().teb64, verbose, emit_object_access);
+        watch_object(win_emu, modules, win_emu.process.peb64, verbose, emit_object_access);
+        watch_object<KUSER_SHARED_DATA64>(win_emu, modules, kusd_mmio::address(), verbose, emit_object_access);
 
-        state->params_hook_ = watch_object(win_emu, modules, win_emu.process.process_params64, verbose, state->params_state_);
-        state->ldr_hook_ = watch_object<PEB_LDR_DATA64>(win_emu, modules, win_emu.process.peb64.read().Ldr, verbose, state->ldr_state_);
+        auto state = std::make_shared<analysis_state>(c, modules, verbose, concise);
+
+        state->params_hook_ =
+            watch_object(win_emu, modules, win_emu.process.process_params64, verbose, emit_object_access, state->params_state_);
+        state->ldr_hook_ = watch_object<PEB_LDR_DATA64>(win_emu, modules, win_emu.process.peb64.read().Ldr, verbose, emit_object_access,
+                                                        state->ldr_state_);
 
         const auto update_env_hook = [state] {
             state->env_ptr_hook_ = install_env_hook(state); //
@@ -203,19 +223,20 @@ namespace
 
         update_env_hook();
 
-        win_emu.emu().hook_memory_write(win_emu.process.peb64.value() + offsetof(PEB64, ProcessParameters), 0x8,
-                                        [state, update_env = std::move(update_env_hook)](const uint64_t, const void*, size_t) {
-                                            const auto new_ptr = state->win_emu_.process.peb64.read().ProcessParameters;
-                                            state->params_hook_ = watch_object<RTL_USER_PROCESS_PARAMETERS64>(
-                                                state->win_emu_, state->modules_, new_ptr, state->verbose_, state->params_state_);
-                                            update_env();
-                                        });
+        win_emu.emu().hook_memory_write(
+            win_emu.process.peb64.value() + offsetof(PEB64, ProcessParameters), 0x8,
+            [state, emit_object_access, update_env = std::move(update_env_hook)](const uint64_t, const void*, size_t) {
+                const auto new_ptr = state->win_emu_.process.peb64.read().ProcessParameters;
+                state->params_hook_ = watch_object<RTL_USER_PROCESS_PARAMETERS64>(
+                    state->win_emu_, state->modules_, new_ptr, state->verbose_, emit_object_access, state->params_state_);
+                update_env();
+            });
 
         win_emu.emu().hook_memory_write(
-            win_emu.process.peb64.value() + offsetof(PEB64, Ldr), 0x8, [state](const uint64_t, const void*, size_t) {
+            win_emu.process.peb64.value() + offsetof(PEB64, Ldr), 0x8, [state, emit_object_access](const uint64_t, const void*, size_t) {
                 const auto new_ptr = state->win_emu_.process.peb64.read().Ldr;
-                state->ldr_hook_ =
-                    watch_object<PEB_LDR_DATA64>(state->win_emu_, state->modules_, new_ptr, state->verbose_, state->ldr_state_);
+                state->ldr_hook_ = watch_object<PEB_LDR_DATA64>(state->win_emu_, state->modules_, new_ptr, state->verbose_,
+                                                                emit_object_access, state->ldr_state_);
             });
     }
 
@@ -236,7 +257,7 @@ namespace
         }
     }
 
-    void print_instruction_summary(const analysis_context& c)
+    std::vector<instruction_summary_entry> build_instruction_summary(const analysis_context& c)
     {
         std::map<uint64_t, std::vector<uint32_t>> instruction_counts{};
 
@@ -245,8 +266,7 @@ namespace
             instruction_counts[count].push_back(instruction);
         }
 
-        c.win_emu->log.print(color::white, "Instruction summary:\n");
-
+        std::vector<instruction_summary_entry> entries{};
         for (const auto& [count, instructions] : instruction_counts)
         {
             for (const auto& instruction : instructions)
@@ -256,21 +276,31 @@ namespace
                 const auto reg_cs = emu.reg<uint16_t>(x86_register::cs);
                 const auto handle = c.d.resolve_handle(emu, reg_cs);
                 const auto* mnemonic = cs_insn_name(handle, instruction);
-                c.win_emu->log.print(color::white, "%s: %" PRIu64 "\n", mnemonic, count);
+                entries.emplace_back(instruction_summary_entry{.mnemonic = mnemonic ? mnemonic : "<N/A>", .count = count});
             }
         }
+
+        return entries;
     }
 
     void do_post_emulation_work(const analysis_context& c)
     {
         if (c.settings->instruction_summary)
         {
-            print_instruction_summary(c);
+            c.emit_summary<instruction_summary_event>([&](auto& event) { event.entries = build_instruction_summary(c); });
         }
 
         if (c.settings->buffer_stdout)
         {
-            c.win_emu->log.info("%.*s%s", static_cast<int>(c.output.size()), c.output.data(), c.output.ends_with("\n") ? "" : "\n");
+            c.emit_summary<buffered_stdout_event>([&](auto& event) { event.data = c.output; });
+        }
+    }
+
+    void flush_reporters(const analysis_context& c)
+    {
+        for (auto* reporter : c.reporters)
+        {
+            reporter->flush();
         }
     }
 
@@ -300,6 +330,16 @@ namespace
         });
 #endif
 
+        auto emit_failure = [&](std::string message) {
+            do_post_emulation_work(c);
+            c.emit_summary<run_failed_event>([&](auto& event) {
+                event.rip = win_emu.emu().read_instruction_pointer();
+                event.message = std::move(message);
+            });
+            flush_reporters(c);
+            return false;
+        };
+
         try
         {
             if (options.use_gdb)
@@ -316,7 +356,12 @@ namespace
             {
                 // For minidumps, don't start execution automatically; just report ready state
                 win_emu.log.print(color::green, "Minidump loaded successfully. Process state ready for analysis.\n");
-                return true; // Return success without starting emulation
+                c.emit_summary<run_finished_event>([&](auto& event) {
+                    event.success = true;
+                    event.exit_status = std::nullopt;
+                });
+                flush_reporters(c);
+                return true;
             }
             else
             {
@@ -340,38 +385,31 @@ namespace
         {
             win_emu.log.error("Cannot bind to address %s\n", e.what());
             options.use_gdb = false;
-            return false;
+            return emit_failure("Cannot bind to address "s + e.what());
         }
         catch (const std::exception& e)
         {
-            do_post_emulation_work(c);
-            win_emu.log.error("Emulation failed at: 0x%" PRIx64 " - %s\n", win_emu.emu().read_instruction_pointer(), e.what());
-            return false;
+            return emit_failure(e.what());
         }
         catch (...)
         {
-            do_post_emulation_work(c);
-            win_emu.log.error("Emulation failed at: 0x%" PRIx64 "\n", win_emu.emu().read_instruction_pointer());
-            return false;
+            return emit_failure("Unknown exception");
         }
 
         exit_status = win_emu.process.exit_status;
         if (!exit_status.has_value())
         {
-            do_post_emulation_work(c);
-            win_emu.log.error("Emulation terminated without status at: 0x%" PRIx64 "\n", win_emu.emu().read_instruction_pointer());
-            return false;
+            return emit_failure("Emulation terminated without status");
         }
 
         const auto success = *exit_status == STATUS_SUCCESS;
-
-        if (!options.silent)
-        {
-            do_post_emulation_work(c);
-            win_emu.log.disable_output(false);
-            win_emu.log.print(success ? color::green : color::red, "Emulation terminated with status: %X\n", *exit_status);
-        }
-
+        do_post_emulation_work(c);
+        win_emu.log.disable_output(false);
+        c.emit_summary<run_finished_event>([&](auto& event) {
+            event.success = success;
+            event.exit_status = static_cast<uint32_t>(*exit_status);
+        });
+        flush_reporters(c);
         return success;
     }
 
@@ -478,16 +516,59 @@ namespace
         };
 
         const auto concise_logging = options.concise_logging;
-
         const auto win_emu = setup_emulator(options, args);
         context.win_emu = win_emu.get();
 
+        std::vector<std::unique_ptr<analysis_reporter>> reporters{};
+        reporters.emplace_back(create_console_reporter(win_emu->log, console_reporter_settings{
+                                                                         .silent = options.silent,
+                                                                         .buffer_stdout = options.buffer_stdout,
+                                                                     }));
+
+        if (!options.report_path.empty())
+        {
+            if (options.report_format != "jsonl")
+            {
+                throw std::runtime_error("Unsupported report format: " + options.report_format);
+            }
+
+            reporters.emplace_back(create_jsonl_reporter(options.report_path));
+        }
+
+        context.reporters.reserve(reporters.size());
+        for (const auto& reporter : reporters)
+        {
+            context.reporters.push_back(reporter.get());
+        }
+
         win_emu->log.disable_output(concise_logging || options.silent);
 
-        if (!options.silent)
+        std::vector<std::string> application_args{};
+        if (!args.empty())
         {
-            win_emu->log.force_print(color::gray, "Using emulator backend: %s\n", win_emu->emu().get_name().c_str());
+            application_args.reserve(args.size() - 1);
+            for (size_t i = 1; i < args.size(); ++i)
+            {
+                application_args.emplace_back(args[i]);
+            }
         }
+
+        const auto* run_mode = "application";
+        if (!options.minidump_path.empty())
+        {
+            run_mode = "minidump";
+        }
+        else if (!options.dump.empty())
+        {
+            run_mode = "snapshot";
+        }
+
+        context.emit_summary<run_started_event>([&](auto& event) {
+            event.backend_name = win_emu->emu().get_name();
+            event.mode = run_mode;
+            event.application = args.empty() ? std::string{} : std::string(args[0]);
+            event.arguments = std::move(application_args);
+        });
 
         std::optional<tenet_tracer> tenet_tracer{};
         if (options.tenet_trace)
@@ -497,7 +578,7 @@ namespace
         }
 
         register_analysis_callbacks(context);
-        watch_system_objects(*win_emu, options.modules, options.verbose_logging, options.concise_logging);
+        watch_system_objects(context, options.modules, options.verbose_logging, options.concise_logging);
 
         const auto& exe = *win_emu->mod_manager.executable;
 
@@ -510,8 +591,7 @@ namespace
 
             if (mod.has_value() && (!concise_logging || context.cpuid_cache.insert({rip, leaf}).second))
             {
-                win_emu->log.print(color::blue, "Executing CPUID instruction with leaf 0x%X at 0x%" PRIx64 " (%s)\n", leaf, rip,
-                                   (*mod) ? (*mod)->name.c_str() : "<N/A>");
+                context.emit_observation<cpuid_event>([&](auto& event) { event.leaf = leaf; });
             }
 
             if (leaf == 1)
@@ -532,36 +612,39 @@ namespace
         if (options.log_foreign_module_access)
         {
             auto module_cache = std::make_shared<std::map<std::string, uint64_t>>();
-            win_emu->emu().hook_memory_read(
-                0, std::numeric_limits<uint64_t>::max(), [&, module_cache](const uint64_t address, const void*, size_t size) {
-                    const auto rip = win_emu->emu().read_instruction_pointer();
-                    const auto accessor = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
+            win_emu->emu().hook_memory_read(0, std::numeric_limits<uint64_t>::max(),
+                                            [&, module_cache](const uint64_t address, const void*, size_t size) {
+                                                const auto rip = win_emu->emu().read_instruction_pointer();
+                                                const auto accessor = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
 
-                    if (!accessor.has_value())
-                    {
-                        return;
-                    }
+                                                if (!accessor.has_value())
+                                                {
+                                                    return;
+                                                }
 
-                    const auto* mod = win_emu->mod_manager.find_by_address(address);
-                    if (!mod || mod == *accessor)
-                    {
-                        return;
-                    }
+                                                const auto* mod = win_emu->mod_manager.find_by_address(address);
+                                                if (!mod || mod == *accessor)
+                                                {
+                                                    return;
+                                                }
 
-                    if (concise_logging)
-                    {
-                        const auto count = ++(*module_cache)[mod->name];
-                        if (count > 100 && count % 100000 != 0)
-                        {
-                            return;
-                        }
-                    }
+                                                if (concise_logging)
+                                                {
+                                                    const auto count = ++(*module_cache)[mod->name];
+                                                    if (count > 100 && count % 100000 != 0)
+                                                    {
+                                                        return;
+                                                    }
+                                                }
 
-                    const auto* region_name = get_module_memory_region_name(*mod, address);
-
-                    win_emu->log.print(color::pink, "Reading %zd bytes from module %s at 0x%" PRIx64 " (%s) via 0x%" PRIx64 " (%s)\n", size,
-                                       mod->name.c_str(), address, region_name, rip, (*accessor) ? (*accessor)->name.c_str() : "<N/A>");
-                });
+                                                const auto* region_name = get_module_memory_region_name(*mod, address);
+                                                context.emit_observation<foreign_module_read_event>([&](auto& event) {
+                                                    event.address = address;
+                                                    event.size = size;
+                                                    event.module_name = mod->name;
+                                                    event.region_name = region_name;
+                                                });
+                                            });
         }
 
         if (options.log_executable_access)
@@ -594,15 +677,14 @@ namespace
                         }
                     }
 
-                    win_emu->log.print(color::green,
-                                       "Reading %zd bytes from executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n", size,
-                                       section.name.c_str(), address, rip, (*accessor) ? (*accessor)->name.c_str() : "<N/A>");
+                    context.emit_observation<executable_read_event>([&](auto& event) {
+                        event.address = address;
+                        event.size = size;
+                        event.section_name = section.name;
+                    });
                 };
 
-                const auto write_handler = [&, section, concise_logging, write_count](const uint64_t address, const void* value,
-                                                                                      size_t size) {
-                    const auto rip = win_emu->emu().read_instruction_pointer();
-
+                auto write_handler = [&, section, concise_logging, write_count](const uint64_t address, const void* value, size_t size) {
                     if (concise_logging)
                     {
                         const auto count = ++*write_count;
@@ -614,11 +696,12 @@ namespace
 
                     uint64_t int_value{};
                     memcpy(&int_value, value, std::min(size, sizeof(int_value)));
-
-                    win_emu->log.print(color::blue,
-                                       "Writing %zd bytes with value 0x%" PRIX64 " to executable section %s at 0x%" PRIx64 " via 0x%" PRIx64
-                                       " (%s)\n",
-                                       size, int_value, section.name.c_str(), address, rip, win_emu->mod_manager.find_name(rip));
+                    context.emit_observation<executable_write_event>([&](auto& event) {
+                        event.address = address;
+                        event.size = size;
+                        event.value = int_value;
+                        event.section_name = section.name;
+                    });
                 };
 
                 win_emu->emu().hook_memory_read(section.region.start, section.region.length, std::move(read_handler));
@@ -659,6 +742,8 @@ namespace
         printf("  -e, --emulation <path>    Set emulation root path\n");
         printf("  -a, --snapshot <path>     Load snapshot dump from path\n");
         printf("  --minidump <path>         Load minidump from path\n");
+        printf("  --report <path>           Write machine-readable analysis events to a file\n");
+        printf("  --report-format <format>  Report format (supported: jsonl)\n");
         printf("  -t, --tenet-trace         Enable Tenet tracer\n");
         printf("  -i, --ignore <funcs>      Comma-separated list of functions to ignore\n");
         printf("  -p, --path <src> <dst>    Map Windows path to host path\n");
@@ -670,6 +755,7 @@ namespace
         printf("  --env <var> <value>       Set environment variable\n");
         printf("Examples:\n");
         printf("  analyzer -v -e path/to/root myapp.exe\n");
+        printf("  analyzer --report run.jsonl test-sample.exe\n");
         printf("  analyzer -e path/to/root -p c:/analysis-sample.exe /path/to/sample.exe c:/analysis-sample.exe\n");
     }
 
@@ -809,6 +895,24 @@ namespace
                 }
                 arg_it = args.erase(arg_it);
                 options.minidump_path = args[0];
+            }
+            else if (arg == "--report")
+            {
+                if (args.size() < 2)
+                {
+                    throw std::runtime_error("No report path provided after --report");
+                }
+                arg_it = args.erase(arg_it);
+                options.report_path = args[0];
+            }
+            else if (arg == "--report-format")
+            {
+                if (args.size() < 2)
+                {
+                    throw std::runtime_error("No report format provided after --report-format");
+                }
+                arg_it = args.erase(arg_it);
+                options.report_format = std::string(args[0]);
             }
             else if (arg == "-i" || arg == "--ignore")
             {

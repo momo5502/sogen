@@ -1,6 +1,7 @@
 #include "std_include.hpp"
 
 #include "analysis.hpp"
+#include "analysis_reporter.hpp"
 #include "disassembler.hpp"
 #include "windows_emulator.hpp"
 #include <utils/lazy_object.hpp>
@@ -53,73 +54,167 @@ namespace
         return std::string(inst.mnemonic) + (strlen(inst.op_str) ? " "s + inst.op_str : "");
     }
 
-    void handle_suspicious_activity(const analysis_context& c, const std::string_view details)
+    bool is_int_resource(const uint64_t address)
     {
-        std::string addition{};
-        const auto rip = c.win_emu->emu().read_instruction_pointer();
+        return (address >> 0x10) == 0;
+    }
 
-        // TODO: Pass enum?
-        if (details == "Illegal instruction")
+    template <typename CharType = char>
+    std::string read_arg_as_string(windows_emulator& win_emu, const size_t index)
+    {
+        const auto var_ptr = get_function_argument(win_emu.emu(), index);
+        if (!var_ptr || is_int_resource(var_ptr))
         {
-            const auto inst = get_instruction_string(c.d, c.win_emu->emu(), rip);
-            if (!inst.empty())
-            {
-                addition = " (" + inst + ")";
-            }
+            return {};
         }
 
-        const auto previous_ip = c.win_emu->current_thread().previous_ip;
-        c.win_emu->log.print(color::pink, "Suspicious: %.*s%.*s at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n", STR_VIEW_VA(details),
-                             STR_VIEW_VA(addition), rip, previous_ip, c.win_emu->mod_manager.find_name(previous_ip));
+        try
+        {
+            auto str = read_string<CharType>(win_emu.memory, var_ptr);
+            if constexpr (std::is_same_v<CharType, char16_t>)
+            {
+                return u16_to_u8(str);
+            }
+            else
+            {
+                return str;
+            }
+        }
+        catch (...)
+        {
+            return "[failed to read]";
+        }
+    }
+
+    std::string read_module_name(windows_emulator& win_emu, const size_t index)
+    {
+        const auto var_ptr = get_function_argument(win_emu.emu(), index);
+        if (!var_ptr)
+        {
+            return {};
+        }
+
+        return win_emu.mod_manager.find_name(var_ptr);
+    }
+
+    std::vector<function_execution_detail> collect_function_details(const analysis_context& c, const std::string_view function)
+    {
+        std::vector<function_execution_detail> details{};
+
+        const auto push_detail = [&](std::string value, std::string label = {}) {
+            if (!value.empty())
+            {
+                details.emplace_back(function_execution_detail{.label = std::move(label), .value = std::move(value)});
+            }
+        };
+
+        if (function == "GetEnvironmentVariableA"      //
+            || function == "ExpandEnvironmentStringsA" //
+            || function == "LoadLibraryA")
+        {
+            push_detail(read_arg_as_string(*c.win_emu, 0));
+        }
+        else if (function == "LoadLibraryW")
+        {
+            push_detail(read_arg_as_string<char16_t>(*c.win_emu, 0));
+        }
+        else if (function == "MessageBoxA")
+        {
+            push_detail(read_arg_as_string(*c.win_emu, 2));
+            push_detail(read_arg_as_string(*c.win_emu, 1));
+        }
+        else if (function == "MessageBoxW")
+        {
+            push_detail(read_arg_as_string<char16_t>(*c.win_emu, 2));
+            push_detail(read_arg_as_string<char16_t>(*c.win_emu, 1));
+        }
+        else if (function == "GetProcAddress")
+        {
+            push_detail(read_module_name(*c.win_emu, 0));
+            push_detail(read_arg_as_string(*c.win_emu, 1));
+        }
+        else if (function == "WinVerifyTrust")
+        {
+            auto& emu = c.win_emu->emu();
+            emu.reg(x86_register::rip, emu.read_stack(0));
+            emu.reg(x86_register::rsp, emu.reg(x86_register::rsp) + 8);
+            emu.reg(x86_register::rax, 0);
+        }
+        else if (function == "lstrcmp" || function == "lstrcmpi")
+        {
+            push_detail(read_arg_as_string(*c.win_emu, 0));
+            push_detail(read_arg_as_string(*c.win_emu, 1));
+        }
+
+        return details;
+    }
+
+    void handle_suspicious_activity(const analysis_context& c, const std::string_view details)
+    {
+        std::string decoded_instruction{};
+        const auto rip = c.win_emu->emu().read_instruction_pointer();
+
+        if (details == "Illegal instruction")
+        {
+            decoded_instruction = get_instruction_string(c.d, c.win_emu->emu(), rip);
+        }
+
+        c.emit_observation<suspicious_activity_event>([&](auto& event) {
+            event.details = std::string(details);
+            event.decoded_instruction = std::move(decoded_instruction);
+        });
     }
 
     void handle_debug_string(const analysis_context& c, const std::string_view details)
     {
-        c.win_emu->log.info("--> Debug string: %.*s\n", STR_VIEW_VA(details));
+        c.emit_observation<debug_string_event>([&](auto& event) { event.details = std::string(details); });
     }
 
     void handle_generic_activity(const analysis_context& c, const std::string_view details)
     {
-        c.win_emu->log.print(color::dark_gray, "%.*s\n", STR_VIEW_VA(details));
+        c.emit_observation<generic_activity_event>([&](auto& event) { event.details = std::string(details); });
     }
 
     void handle_generic_access(const analysis_context& c, const std::string_view type, const std::u16string_view name)
     {
-        c.win_emu->log.print(color::dark_gray, "--> %.*s: %s\n", STR_VIEW_VA(type), u16_to_u8(name).c_str()); //
+        c.emit_observation<generic_access_event>([&](auto& event) {
+            event.type = std::string(type);
+            event.name = u16_to_u8(name);
+        });
     }
 
     void handle_memory_allocate(const analysis_context& c, const uint64_t address, const uint64_t length,
                                 const memory_permission permission, const bool commit)
     {
-        const auto* action = commit ? "Committed" : "Allocating";
-
-        c.win_emu->log.print(is_executable(permission) ? color::gray : color::dark_gray, "--> %s 0x%" PRIx64 " - 0x%" PRIx64 " (%s)\n",
-                             action, address, address + length, get_permission_string(permission).c_str());
+        c.emit_observation<memory_allocate_event>([&](auto& event) {
+            event.address = address;
+            event.length = length;
+            event.permissions = get_permission_string(permission);
+            event.commit = commit;
+        });
     }
 
     void handle_memory_protect(const analysis_context& c, const uint64_t address, const uint64_t length, const memory_permission permission)
     {
-        c.win_emu->log.print(color::dark_gray, "--> Changing protection at 0x%" PRIx64 "-0x%" PRIx64 " to %s\n", address, address + length,
-                             get_permission_string(permission).c_str());
+        c.emit_observation<memory_protect_event>([&](auto& event) {
+            event.address = address;
+            event.length = length;
+            event.permissions = get_permission_string(permission);
+        });
     }
 
     void handle_memory_violate(const analysis_context& c, const uint64_t address, const uint64_t size, const memory_operation operation,
                                const memory_violation_type type)
     {
-        const auto permission = get_permission_string(operation);
-        const auto ip = c.win_emu->emu().read_instruction_pointer();
-        const char* name = c.win_emu->mod_manager.find_name(ip);
+        c.emit_observation<memory_violation_event>([&](auto& event) {
+            event.address = address;
+            event.size = size;
+            event.operation = get_permission_string(operation);
+            event.violation_type = type == memory_violation_type::protection ? "protection"s : "unmapped"s;
+        });
 
-        if (type == memory_violation_type::protection)
+        if (type == memory_violation_type::unmapped)
         {
-            c.win_emu->log.print(color::gray, "Protection violation: 0x%" PRIx64 " (%" PRIx64 ") - %s at 0x%" PRIx64 " (%s)\n", address,
-                                 size, permission.c_str(), ip, name);
-        }
-        else if (type == memory_violation_type::unmapped)
-        {
-            c.win_emu->log.print(color::gray, "Mapping violation: 0x%" PRIx64 " (%" PRIx64 ") - %s at 0x%" PRIx64 " (%s)\n", address, size,
-                                 permission.c_str(), ip, name);
-
             if (c.mapping_violation.first == address)
             {
                 if (++c.mapping_violation.second > 5)
@@ -137,7 +232,10 @@ namespace
 
     void handle_ioctrl(const analysis_context& c, const io_device&, const std::u16string_view device_name, const ULONG code)
     {
-        c.win_emu->log.print(color::dark_gray, "--> %s: 0x%X\n", u16_to_u8(device_name).c_str(), static_cast<uint32_t>(code));
+        c.emit_observation<io_control_event>([&](auto& event) {
+            event.device_name = u16_to_u8(device_name);
+            event.code = static_cast<uint32_t>(code);
+        });
     }
 
     void handle_thread_create(const analysis_context& c, handle, emulator_thread& t)
@@ -169,124 +267,49 @@ namespace
             flags.emplace_back("bypass process freeze");
         }
 
-        std::string flags_string{};
-        for (const auto& flag : flags)
-        {
-            flags_string += ", ";
-            flags_string += flag;
-        }
-
-        c.win_emu->log.print(color::gray, "Thread created: tid %d, start address 0x%" PRIx64 " (param 0x%" PRIx64 ")%s\n", t.id,
-                             t.start_address, t.argument, flags_string.c_str());
+        c.emit_observation<thread_create_event>([&](auto& event) {
+            event.created_thread_id = t.id;
+            event.start_address = t.start_address;
+            event.argument = t.argument;
+            event.flags = std::move(flags);
+        });
     }
 
     void handle_thread_terminated(const analysis_context& c, handle, emulator_thread& t)
     {
-        c.win_emu->log.print(color::gray, "Thread terminated: tid %d\n", t.id);
+        c.emit_observation<thread_terminated_event>([&](auto& event) { event.terminated_thread_id = t.id; });
     }
 
     void handle_thread_set_name(const analysis_context& c, const emulator_thread& t)
     {
-        c.win_emu->log.print(color::blue, "Setting thread (%u) name: %s\n", t.id, u16_to_u8(t.name).c_str());
+        c.emit_observation<thread_set_name_event>([&](auto& event) {
+            event.renamed_thread_id = t.id;
+            event.name = u16_to_u8(t.name);
+        });
     }
 
     void handle_thread_switch(const analysis_context& c, const emulator_thread& current_thread, const emulator_thread& new_thread)
     {
-        c.win_emu->log.print(color::dark_gray, "Performing thread switch: %X -> %X\n", current_thread.id, new_thread.id);
+        c.emit_observation<thread_switch_event>([&](auto& event) {
+            event.previous_thread_id = current_thread.id;
+            event.next_thread_id = new_thread.id;
+        });
     }
 
     void handle_module_load(const analysis_context& c, const mapped_module& mod)
     {
-        c.win_emu->log.log("Mapped %s at 0x%" PRIx64 "\n", mod.module_path.string().c_str(), mod.image_base);
+        c.emit_observation<module_load_event>([&](auto& event) {
+            event.path = mod.module_path.string();
+            event.image_base = mod.image_base;
+        });
     }
 
     void handle_module_unload(const analysis_context& c, const mapped_module& mod)
     {
-        c.win_emu->log.log("Unmapping %s (0x%" PRIx64 ")\n", mod.module_path.string().c_str(), mod.image_base);
-    }
-
-    void print_string(logger& log, const std::string_view str)
-    {
-        log.print(color::dark_gray, "--> %.*s\n", STR_VIEW_VA(str));
-    }
-
-    void print_string(logger& log, const std::u16string_view str)
-    {
-        print_string(log, u16_to_u8(str));
-    }
-
-    bool is_int_resource(const uint64_t address)
-    {
-        return (address >> 0x10) == 0;
-    }
-
-    template <typename CharType = char>
-    void print_arg_as_string(windows_emulator& win_emu, const size_t index)
-    {
-        const auto var_ptr = get_function_argument(win_emu.emu(), index);
-        if (var_ptr && !is_int_resource(var_ptr))
-        {
-            try
-            {
-                const auto str = read_string<CharType>(win_emu.memory, var_ptr);
-                print_string(win_emu.log, str);
-            }
-            catch (...)
-            {
-                print_string(win_emu.log, "[failed to read]");
-            }
-        }
-    }
-
-    void print_module_name(windows_emulator& win_emu, const size_t index)
-    {
-        const auto var_ptr = get_function_argument(win_emu.emu(), index);
-        if (var_ptr)
-        {
-            const auto* module_name = win_emu.mod_manager.find_name(var_ptr);
-            print_string(win_emu.log, module_name);
-        }
-    }
-
-    void handle_function_details(const analysis_context& c, const std::string_view function)
-    {
-        if (function == "GetEnvironmentVariableA"      //
-            || function == "ExpandEnvironmentStringsA" //
-            || function == "LoadLibraryA")
-        {
-            print_arg_as_string(*c.win_emu, 0);
-        }
-        else if (function == "LoadLibraryW")
-        {
-            print_arg_as_string<char16_t>(*c.win_emu, 0);
-        }
-        else if (function == "MessageBoxA")
-        {
-            print_arg_as_string(*c.win_emu, 2);
-            print_arg_as_string(*c.win_emu, 1);
-        }
-        else if (function == "MessageBoxW")
-        {
-            print_arg_as_string<char16_t>(*c.win_emu, 2);
-            print_arg_as_string<char16_t>(*c.win_emu, 1);
-        }
-        else if (function == "GetProcAddress")
-        {
-            print_module_name(*c.win_emu, 0);
-            print_arg_as_string(*c.win_emu, 1);
-        }
-        else if (function == "WinVerifyTrust")
-        {
-            auto& emu = c.win_emu->emu();
-            emu.reg(x86_register::rip, emu.read_stack(0));
-            emu.reg(x86_register::rsp, emu.reg(x86_register::rsp) + 8);
-            emu.reg(x86_register::rax, 0);
-        }
-        else if (function == "lstrcmp" || function == "lstrcmpi")
-        {
-            print_arg_as_string(*c.win_emu, 0);
-            print_arg_as_string(*c.win_emu, 1);
-        }
+        c.emit_observation<module_unload_event>([&](auto& event) {
+            event.path = mod.module_path.string();
+            event.image_base = mod.image_base;
+        });
     }
 
     bool is_thread_alive(const analysis_context& c, const uint32_t thread_id)
@@ -313,7 +336,7 @@ namespace
         for (auto entry = c.accessed_imports.begin(); entry != c.accessed_imports.end();)
         {
             auto& a = *entry;
-            const auto is_same_thread = t.id == a.thread_id;
+            const auto is_same_thread = t.id == a.access_context.thread_id;
 
             if (is_same_thread && address == a.address)
             {
@@ -324,14 +347,17 @@ namespace
             constexpr auto inst_delay = 100u;
             const auto execution_delay_reached = is_same_thread && a.access_inst_count + inst_delay <= t.executed_instructions;
 
-            if (!execution_delay_reached && is_thread_alive(c, a.thread_id))
+            if (!execution_delay_reached && is_thread_alive(c, a.access_context.thread_id))
             {
                 ++entry;
                 continue;
             }
 
-            c.win_emu->log.print(color::green, "Import read access: %s (%s) at 0x%" PRIx64 " (%s)\n", a.import_name.c_str(),
-                                 a.import_module.c_str(), a.access_rip, a.accessor_module.c_str());
+            c.emit_observation<import_read_event>(a.access_context, [&](auto& event) {
+                event.resolved_address = a.address;
+                event.import_name = a.import_name;
+                event.import_module = a.import_module;
+            });
 
             entry = c.accessed_imports.erase(entry);
         }
@@ -380,7 +406,7 @@ namespace
         ++c.instructions[instructions[0].id];
     }
 
-    void log_first_section_execution(windows_emulator& win_emu, mapped_module* binary, const uint64_t address)
+    void log_first_section_execution(analysis_context& c, mapped_module* binary, const uint64_t address)
     {
         if (!binary)
         {
@@ -397,9 +423,11 @@ namespace
             if (!section.first_execute.has_value())
             {
                 section.first_execute = address;
-                win_emu.log.print(color::green, "Section %s (%s) first execute at 0x%" PRIx64 " 0x%" PRIx64 " (tid: %" PRIx32 ")\n",
-                                  binary->name.c_str(), section.name.c_str(), *section.first_execute,
-                                  *section.first_execute - binary->image_base + binary->image_base_file, win_emu.current_thread().id);
+                c.emit_observation<section_first_execute_event>([&](auto& event) {
+                    event.module_name = binary->name;
+                    event.section_name = section.name;
+                    event.file_address = *section.first_execute - binary->image_base + binary->image_base_file;
+                });
             }
 
             break;
@@ -436,7 +464,7 @@ namespace
 
         if (c.settings->log_first_section_execution)
         {
-            log_first_section_execution(win_emu, binary, address);
+            log_first_section_execution(c, binary, address);
         }
 
         const auto previous_binary = utils::make_lazy([&] {
@@ -486,20 +514,17 @@ namespace
         {
             if (!c.settings->ignored_functions.contains(export_entry->second))
             {
-                win_emu.log.print(is_interesting_call ? color::yellow : color::dark_gray,
-                                  "Executing function: %s (%s) (0x%" PRIx64 ") via 0x%" PRIx64 " (%s)\n", export_entry->second.c_str(),
-                                  binary->name.c_str(), address, previous_ip, previous_binary ? previous_binary->name.c_str() : "<N/A>");
-
-                if (is_interesting_call)
-                {
-                    handle_function_details(c, export_entry->second);
-                }
+                auto details = collect_function_details(c, export_entry->second);
+                c.emit_observation<function_execution_event>([&](auto& event) {
+                    event.function_name = export_entry->second;
+                    event.interesting = is_interesting_call;
+                    event.details = std::move(details);
+                });
             }
         }
         else if (address == binary->entry_point)
         {
-            win_emu.log.print(is_interesting_call ? color::yellow : color::gray, "Executing entry point: %s (0x%" PRIx64 ")\n",
-                              binary->name.c_str(), address);
+            c.emit_observation<entry_point_execution_event>([&](auto& event) { event.interesting = is_interesting_call; });
         }
         else if (is_previous_main_exe && binary != previous_binary && !is_return(c.d, c.win_emu->emu(), previous_ip))
         {
@@ -510,11 +535,11 @@ namespace
             }
 
             --nearest_entry;
-
-            win_emu.log.print(is_interesting_call ? color::yellow : color::dark_gray,
-                              "Transition to foreign code: %s+0x%" PRIx64 " (%s) (0x%" PRIx64 ") via 0x%" PRIx64 " (%s)\n",
-                              nearest_entry->second.c_str(), address - nearest_entry->first, binary->name.c_str(), address, previous_ip,
-                              previous_binary ? previous_binary->name.c_str() : "<N/A>");
+            c.emit_observation<foreign_code_transition_event>([&](auto& event) {
+                event.function_name = nearest_entry->second;
+                event.function_offset = address - nearest_entry->first;
+                event.interesting = is_interesting_call;
+            });
         }
     }
 
@@ -531,7 +556,7 @@ namespace
             return;
         }
 
-        win_emu.log.print(color::blue, "Executing RDTSC instruction at 0x%" PRIx64 " (%s)\n", rip, (*mod) ? (*mod)->name.c_str() : "<N/A>");
+        c.emit_observation<rdtsc_event>();
     }
 
     void handle_rdtscp(analysis_context& c)
@@ -547,8 +572,7 @@ namespace
             return;
         }
 
-        win_emu.log.print(color::blue, "Executing RDTSCP instruction at 0x%" PRIx64 " (%s)\n", rip,
-                          (*mod) ? (*mod)->name.c_str() : "<N/A>");
+        c.emit_observation<rdtscp_event>();
     }
 
     emulator_callbacks::continuation handle_syscall(const analysis_context& c, const uint32_t syscall_id,
@@ -569,8 +593,11 @@ namespace
 
         if (is_sus_module && !is_valid_32_bit_module)
         {
-            win_emu.log.print(color::blue, "Executing inline syscall: %.*s (0x%X) at 0x%" PRIx64 " (%s)\n", STR_VIEW_VA(syscall_name),
-                              syscall_id, address, mod ? mod->name.c_str() : "<N/A>");
+            c.emit_observation<syscall_event>([&](auto& event) {
+                event.classification = syscall_classification::inline_syscall;
+                event.syscall_id = syscall_id;
+                event.syscall_name = std::string(syscall_name);
+            });
         }
         else if (!previous_ip || mod->contains(previous_ip))
         {
@@ -583,17 +610,26 @@ namespace
 
                 const auto* caller_mod_name = win_emu.mod_manager.find_name(return_address);
 
-                win_emu.log.print(color::dark_gray, "Executing syscall: %.*s (0x%X) at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n",
-                                  STR_VIEW_VA(syscall_name), syscall_id, address, return_address, caller_mod_name);
+                c.emit_observation<syscall_event>([&](auto& event) {
+                    event.classification = syscall_classification::regular;
+                    event.syscall_id = syscall_id;
+                    event.syscall_name = std::string(syscall_name);
+                    event.caller_rip = return_address;
+                    event.caller_module = caller_mod_name ? std::optional<std::string>{caller_mod_name} : std::nullopt;
+                });
             }
         }
         else
         {
             const auto* previous_mod = win_emu.mod_manager.find_by_address(previous_ip);
 
-            win_emu.log.print(color::blue, "Crafted out-of-line syscall: %.*s (0x%X) at 0x%" PRIx64 " (%s) via 0x%" PRIx64 " (%s)\n",
-                              STR_VIEW_VA(syscall_name), syscall_id, address, mod ? mod->name.c_str() : "<N/A>", previous_ip,
-                              previous_mod ? previous_mod->name.c_str() : "<N/A>");
+            c.emit_observation<syscall_event>([&](auto& event) {
+                event.classification = syscall_classification::crafted_out_of_line;
+                event.syscall_id = syscall_id;
+                event.syscall_name = std::string(syscall_name);
+                event.caller_rip = previous_ip;
+                event.caller_module = previous_mod ? std::optional<std::string>{previous_mod->name} : std::nullopt;
+            });
         }
 
         return instruction_hook_continuation::run_instruction;
@@ -601,17 +637,11 @@ namespace
 
     void handle_stdout(analysis_context& c, const std::string_view data)
     {
-        if (c.settings->silent)
-        {
-            (void)fwrite(data.data(), 1, data.size(), stdout);
-        }
-        else if (c.settings->buffer_stdout)
+        c.emit_observation<stdout_chunk_event>([&](auto& event) { event.data = std::string(data); });
+
+        if (c.settings->buffer_stdout && !c.settings->silent)
         {
             c.output.append(data);
-        }
-        else
-        {
-            c.win_emu->log.info("%.*s%s", static_cast<int>(data.size()), data.data(), data.ends_with("\n") ? "" : "\n");
         }
     }
 
@@ -635,7 +665,6 @@ namespace
         }
 
         c.win_emu->emu().hook_memory_write(min, max - min, [&c](const uint64_t address, const void* value, size_t size) {
-            const auto rip = c.win_emu->emu().read_instruction_pointer();
             const auto& watched_module = *c.win_emu->mod_manager.executable;
 
             const auto sym = watched_module.imports.find(address);
@@ -650,9 +679,12 @@ namespace
 
             const auto import_module = watched_module.imported_modules.at(sym->second.module_index);
 
-            c.win_emu->log.print(color::blue, "Import write access: %zd bytes with value 0x%" PRIX64 " to %s (%s) at 0x%" PRIx64 " (%s)\n",
-                                 size, int_value, sym->second.name.c_str(), import_module.c_str(), rip,
-                                 c.win_emu->mod_manager.find_name(rip));
+            c.emit_observation<import_write_event>([&](auto& event) {
+                event.size = size;
+                event.value = int_value;
+                event.import_name = sym->second.name;
+                event.import_module = import_module;
+            });
         });
 
         c.win_emu->emu().hook_memory_read(min, max - min, [&c](const uint64_t address, const void*, size_t) {
@@ -672,21 +704,61 @@ namespace
             }
 
             accessed_import access{};
-
             access.address = c.win_emu->emu().read_memory<uint64_t>(address);
-
-            access.access_rip = rip;
-            access.accessor_module = accessor_module.value() ? (*accessor_module)->name : "<N/A>";
-
+            access.access_context = c.make_execution_context();
             access.import_name = sym->second.name;
             access.import_module = watched_module.imported_modules.at(sym->second.module_index);
 
             const auto& t = c.win_emu->current_thread();
-            access.thread_id = t.id;
             access.access_inst_count = t.executed_instructions;
 
             c.accessed_imports.push_back(std::move(access));
         });
+    }
+}
+
+event_header analysis_context::make_event_header() const
+{
+    return {
+        .sequence = this->next_event_sequence++,
+        .instruction_count = this->win_emu ? this->win_emu->get_executed_instructions() : 0,
+    };
+}
+
+execution_context analysis_context::make_execution_context() const
+{
+    auto& emu = this->win_emu->emu();
+    const auto rip = emu.read_instruction_pointer();
+    const auto* rip_module = this->win_emu->mod_manager.find_name(rip);
+
+    execution_context context{
+        .thread_id = 0,
+        .rip = rip,
+        .rip_module = rip_module ? rip_module : "<N/A>",
+    };
+
+    try
+    {
+        const auto& thread = this->win_emu->current_thread();
+        const auto previous_ip = thread.previous_ip;
+        const auto* previous_module = previous_ip ? this->win_emu->mod_manager.find_name(previous_ip) : nullptr;
+        context.thread_id = thread.id;
+        context.previous_ip = previous_ip ? std::optional<uint64_t>{previous_ip} : std::nullopt;
+        context.previous_ip_module = previous_module ? std::optional<std::string>{previous_module} : std::nullopt;
+    }
+    catch (...)
+    {
+        // Some early lifecycle events fire before a thread is active.
+    }
+
+    return context;
+}
+
+void analysis_context::emit_event(const analysis_event& event) const
+{
+    for (auto* reporter : this->reporters)
+    {
+        reporter->report(event);
     }
 }
 
