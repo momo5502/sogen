@@ -34,10 +34,8 @@ struct analysis_settings
 struct accessed_import
 {
     uint64_t address{};
-    uint32_t thread_id{};
-    uint64_t access_rip{};
+    execution_context access_context{};
     uint64_t access_inst_count{};
-    std::string accessor_module{};
     std::string import_name{};
     std::string import_module{};
 };
@@ -68,12 +66,18 @@ struct analysis_context
     template <typename Event, typename Initializer>
     void emit_observation(Initializer&& initialize) const
     {
+        this->emit_observation<Event>(this->make_execution_context(), std::forward<Initializer>(initialize));
+    }
+
+    template <typename Event, typename Initializer>
+    void emit_observation(execution_context context, Initializer&& initialize) const
+    {
         static_assert(std::is_base_of_v<observation_event, Event>);
 
         Event event{};
         initialize(event);
         event.header = this->make_event_header();
-        event.execution = this->make_execution_context();
+        event.execution = std::move(context);
         this->emit_event(event);
     }
 
@@ -81,6 +85,12 @@ struct analysis_context
     void emit_observation() const
     {
         this->emit_observation<Event>([](Event&) {});
+    }
+
+    template <typename Event>
+    void emit_observation(execution_context context) const
+    {
+        this->emit_observation<Event>(std::move(context), [](Event&) {});
     }
 
     template <typename Event, typename Initializer>

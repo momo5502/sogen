@@ -344,7 +344,7 @@ namespace
         for (auto entry = c.accessed_imports.begin(); entry != c.accessed_imports.end();)
         {
             auto& a = *entry;
-            const auto is_same_thread = t.id == a.thread_id;
+            const auto is_same_thread = t.id == a.access_context.thread_id;
 
             if (is_same_thread && address == a.address)
             {
@@ -355,13 +355,13 @@ namespace
             constexpr auto inst_delay = 100u;
             const auto execution_delay_reached = is_same_thread && a.access_inst_count + inst_delay <= t.executed_instructions;
 
-            if (!execution_delay_reached && is_thread_alive(c, a.thread_id))
+            if (!execution_delay_reached && is_thread_alive(c, a.access_context.thread_id))
             {
                 ++entry;
                 continue;
             }
 
-            c.emit_observation<import_read_event>([&](auto& event) {
+            c.emit_observation<import_read_event>(a.access_context, [&](auto& event) {
                 event.resolved_address = a.address;
                 event.import_name = a.import_name;
                 event.import_module = a.import_module;
@@ -714,13 +714,11 @@ namespace
 
             accessed_import access{};
             access.address = c.win_emu->emu().read_memory<uint64_t>(address);
-            access.access_rip = rip;
-            access.accessor_module = accessor_module.value() ? (*accessor_module)->name : "<N/A>";
+            access.access_context = c.make_execution_context();
             access.import_name = sym->second.name;
             access.import_module = watched_module.imported_modules.at(sym->second.module_index);
 
             const auto& t = c.win_emu->current_thread();
-            access.thread_id = t.id;
             access.access_inst_count = t.executed_instructions;
 
             c.accessed_imports.push_back(std::move(access));
