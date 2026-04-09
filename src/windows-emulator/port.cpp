@@ -165,7 +165,8 @@ NTSTATUS rpc_port::handle_rpc_call(windows_emulator& win_emu, const lpc_request_
     NTSTATUS status = this->handle_rpc(win_emu, procedure_id, rpc_context);
     if (rpc_context.recv_buffer_length > max_payload_length)
     {
-        win_emu.log.warn("RPC reply payload too large: %u > %u\n", rpc_context.recv_buffer_length, max_payload_length);
+        win_emu.log.warn("RPC reply payload too large: %u > %u\n", static_cast<uint32_t>(rpc_context.recv_buffer_length),
+                         static_cast<uint32_t>(max_payload_length));
         return STATUS_BUFFER_TOO_SMALL;
     }
 

@@ -1,3 +1,4 @@
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -42,15 +43,15 @@ extern "C" NO_INLINE EXPORT_SYMBOL void vulnerable(const uint8_t* data, const si
         return;
     }
 
-    *(int*)1 = 1;
+    *reinterpret_cast<int*>(1) = 1;
 }
 
-uint8_t buffer[THE_SIZE] = {};
+std::array<uint8_t, THE_SIZE> buffer{};
 
 int main(int argc, const char* argv[])
 {
-    const void* input = buffer;
-    auto size = sizeof(buffer);
+    const void* input = buffer.data();
+    auto size = buffer.size();
 
     if (argc > 1)
     {
@@ -58,6 +59,6 @@ int main(int argc, const char* argv[])
         size = strlen(argv[1]);
     }
 
-    vulnerable((uint8_t*)input, size);
+    vulnerable(reinterpret_cast<uint8_t*>(const_cast<void*>(input)), size);
     return 0;
 }

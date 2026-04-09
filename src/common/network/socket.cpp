@@ -88,7 +88,7 @@ namespace network
     bool socket::set_blocking(SOCKET s, const bool blocking)
     {
 #ifdef _WIN32
-        unsigned long mode = blocking ? 0 : 1;
+        auto mode = blocking ? 0UL : 1UL;
         return ioctlsocket(s, FIONBIO, &mode) == 0;
 #else
         int flags = fcntl(s, F_GETFL, 0);

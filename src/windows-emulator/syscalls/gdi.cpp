@@ -372,12 +372,42 @@ namespace syscalls
             };
 
             constexpr std::array<stock_seed, 6> seeds = {
-                stock_seed{k_stock_white_brush_index, k_gdi_brush_type, k_gdi_brush_attr_size, false},
-                stock_seed{k_stock_black_pen_index, k_gdi_pen_type, k_gdi_pen_attr_size, false},
-                stock_seed{k_stock_system_font_index, k_gdi_font_type, k_gdi_font_attr_size, false},
-                stock_seed{k_stock_default_gui_font_index, k_gdi_font_type, k_gdi_font_attr_size, true},
-                stock_seed{k_stock_dc_brush_index, k_gdi_brush_type, k_gdi_brush_attr_size, false},
-                stock_seed{k_stock_dc_pen_index, k_gdi_pen_type, k_gdi_pen_attr_size, false},
+                stock_seed{
+                    .index = k_stock_white_brush_index,
+                    .type = k_gdi_brush_type,
+                    .attr_size = k_gdi_brush_attr_size,
+                    .mirror_to_default_gui_slot = false,
+                },
+                stock_seed{
+                    .index = k_stock_black_pen_index,
+                    .type = k_gdi_pen_type,
+                    .attr_size = k_gdi_pen_attr_size,
+                    .mirror_to_default_gui_slot = false,
+                },
+                stock_seed{
+                    .index = k_stock_system_font_index,
+                    .type = k_gdi_font_type,
+                    .attr_size = k_gdi_font_attr_size,
+                    .mirror_to_default_gui_slot = false,
+                },
+                stock_seed{
+                    .index = k_stock_default_gui_font_index,
+                    .type = k_gdi_font_type,
+                    .attr_size = k_gdi_font_attr_size,
+                    .mirror_to_default_gui_slot = true,
+                },
+                stock_seed{
+                    .index = k_stock_dc_brush_index,
+                    .type = k_gdi_brush_type,
+                    .attr_size = k_gdi_brush_attr_size,
+                    .mirror_to_default_gui_slot = false,
+                },
+                stock_seed{
+                    .index = k_stock_dc_pen_index,
+                    .type = k_gdi_pen_type,
+                    .attr_size = k_gdi_pen_attr_size,
+                    .mirror_to_default_gui_slot = false,
+                },
             };
 
             for (const auto& seed : seeds)

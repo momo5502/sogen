@@ -3,8 +3,10 @@
 #include "mapped_module.hpp"
 #include "../memory_manager.hpp"
 
+template <typename T>
 mapped_module map_module_from_data(memory_manager& memory, std::span<const uint8_t> data, std::filesystem::path file,
                                    windows_path module_path);
+
 template <typename T>
 mapped_module map_module_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path);
 template <typename T>

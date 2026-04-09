@@ -306,7 +306,7 @@ namespace network
         if (pos != std::string::npos)
         {
             const auto port = addr.substr(pos + 1);
-            port_value = static_cast<uint16_t>(atoi(port.data()));
+            port_value = static_cast<uint16_t>(atoi(std::string(port).c_str()));
             addr = addr.substr(0, pos);
         }
 

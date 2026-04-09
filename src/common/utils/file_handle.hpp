@@ -133,6 +133,7 @@ namespace utils
             }
 
 #ifdef OS_WINDOWS
+            // NOLINTNEXTLINE(google-runtime-int)
             return _chsize_s(fd, static_cast<long long>(size)) == 0;
 #else
             return ftruncate(fd, static_cast<off_t>(size)) == 0;

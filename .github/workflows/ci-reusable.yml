@@ -23,31 +23,46 @@ concurrency:
 jobs:
   clang-tidy:
     name: Run Clang Tidy
-    runs-on: ubuntu-24.04
     env:
       LLVM_VERSION: 21
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - Windows
+          - Linux
+        include:
+          - platform: Windows
+            runner: windows-2025
+            devcmd_arch: x64
+          - platform: Linux
+            runner: ubuntu-24.04
     steps:
       - name: Checkout Source
         uses: actions/checkout@v6
         with:
           submodules: recursive
 
-      - name: Install Clang
-        uses: nick-fields/retry@v4.0.0
+      - name: Install LLVM
+        uses: KyleMayes/install-llvm-action@v2
         with:
-          max_attempts: 5
-          timeout_minutes: 15
-          retry_wait_seconds: 60
-          command: |
-            wget https://apt.llvm.org/llvm.sh
-            chmod +x llvm.sh
-            sudo ./llvm.sh ${{ env.LLVM_VERSION }}
-            sudo apt install -y clang-tidy-${{ env.LLVM_VERSION }}
-            sudo apt install -y clang-${{ env.LLVM_VERSION }} lld-${{ env.LLVM_VERSION }}
-            sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang-${{ env.LLVM_VERSION }} 100
-            sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${{ env.LLVM_VERSION }} 100
-            sudo update-alternatives --set cc /usr/bin/clang-${{ env.LLVM_VERSION }}
-            sudo update-alternatives --set c++ /usr/bin/clang++-${{ env.LLVM_VERSION }}
+          version: ${{ env.LLVM_VERSION }}
+          arch: x64
+
+      - name: Enable Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        if: ${{ startsWith(matrix.platform, 'Windows') }}
+        with:
+          arch: ${{ matrix.devcmd_arch }}
+
+      - name: Setup Environment Variables
+        if: "${{ startsWith(matrix.platform, 'Windows') }}"
+        shell: bash
+        run: |
+          echo "CC=clang-cl" >> $GITHUB_ENV
+          echo "CXX=clang-cl" >> $GITHUB_ENV
+          echo "C:/Program Files/LLVM/bin" >> "$GITHUB_PATH"
 
       - name: CMake Build
         run: cmake --preset=release -DMOMO_ENABLE_CLANG_TIDY=On && cmake --build --preset=release

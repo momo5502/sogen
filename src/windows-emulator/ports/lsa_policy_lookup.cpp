@@ -47,7 +47,8 @@ namespace
                 return true;
             }
 
-            win_emu.log.warn("lsapolicylookup %s reply buffer too small: have 0x%X need 0x%X\n", operation, c.recv_buffer_length, required);
+            win_emu.log.warn("lsapolicylookup %s reply buffer too small: have 0x%X need 0x%X\n", operation,
+                             static_cast<uint32_t>(c.recv_buffer_length), static_cast<uint32_t>(required));
             return false;
         }
 

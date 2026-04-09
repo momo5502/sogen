@@ -3,7 +3,7 @@
 #include "../std_include.hpp"
 #include "../handles.hpp"
 
-// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 
 typedef LONG TDI_STATUS;
 
@@ -215,4 +215,4 @@ struct AFD_EVENT_SELECT_INFO
 #define AFD_JOIN_LEAF                   46
 #define AFD_TRANSPORT_IOCTL             47
 
-// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)

@@ -3,6 +3,7 @@
 #include "../syscall_utils.hpp"
 #include "utils/io.hpp"
 
+#include <algorithm>
 #include <iostream>
 #include <utils/finally.hpp>
 #include <utils/wildcard.hpp>
@@ -1256,7 +1257,7 @@ namespace syscalls
         // Check for console device paths
         // Convert to uppercase for case-insensitive comparison
         std::u16string filename_upper = filename;
-        std::transform(filename_upper.begin(), filename_upper.end(), filename_upper.begin(), ::towupper);
+        std::ranges::transform(filename_upper, filename_upper.begin(), ::towupper);
 
         // Handle console output device
         if (filename_upper == u"\\??\\CONOUT$" || filename_upper == u"\\DEVICE\\CONOUT$" || filename_upper == u"CONOUT$" ||
