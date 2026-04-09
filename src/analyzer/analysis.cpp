@@ -94,24 +94,17 @@ namespace
             return {};
         }
 
-        const auto* module_name = win_emu.mod_manager.find_name(var_ptr);
-        return module_name ? module_name : "<N/A>"s;
+        return win_emu.mod_manager.find_name(var_ptr);
     }
 
-    struct function_detail_result
+    std::vector<function_execution_detail> collect_function_details(const analysis_context& c, const std::string_view function)
     {
         std::vector<function_execution_detail> details{};
-        bool stubbed_win_verify_trust{};
-    };
-
-    function_detail_result collect_function_details(const analysis_context& c, const std::string_view function)
-    {
-        function_detail_result result{};
 
         const auto push_detail = [&](std::string value, std::string label = {}) {
             if (!value.empty())
             {
-                result.details.emplace_back(function_execution_detail{.label = std::move(label), .value = std::move(value)});
+                details.emplace_back(function_execution_detail{.label = std::move(label), .value = std::move(value)});
             }
         };
 
@@ -146,7 +139,6 @@ namespace
             emu.reg(x86_register::rip, emu.read_stack(0));
             emu.reg(x86_register::rsp, emu.reg(x86_register::rsp) + 8);
             emu.reg(x86_register::rax, 0);
-            result.stubbed_win_verify_trust = true;
         }
         else if (function == "lstrcmp" || function == "lstrcmpi")
         {
@@ -154,7 +146,7 @@ namespace
             push_detail(read_arg_as_string(*c.win_emu, 1));
         }
 
-        return result;
+        return details;
     }
 
     void handle_suspicious_activity(const analysis_context& c, const std::string_view details)
@@ -526,8 +518,7 @@ namespace
                 c.emit_observation<function_execution_event>([&](auto& event) {
                     event.function_name = export_entry->second;
                     event.interesting = is_interesting_call;
-                    event.details = std::move(details.details);
-                    event.stubbed_win_verify_trust = details.stubbed_win_verify_trust;
+                    event.details = std::move(details);
                 });
             }
         }

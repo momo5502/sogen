@@ -10,6 +10,7 @@
 #include "snapshot.hpp"
 #include "analysis.hpp"
 #include "analysis_reporter.hpp"
+#include "jsonl_reporter.hpp"
 #include "tenet_tracer.hpp"
 
 #include <utils/finally.hpp>

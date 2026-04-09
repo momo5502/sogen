@@ -211,7 +211,6 @@ struct function_execution_event : observation_event
     std::string function_name{};
     bool interesting{};
     std::vector<function_execution_detail> details{};
-    bool stubbed_win_verify_trust{};
 };
 
 struct entry_point_execution_event : observation_event

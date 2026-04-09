@@ -1,7 +1,9 @@
 #include "std_include.hpp"
 
+#include "analysis_reporter.hpp"
 #include "analysis_reporter_common.hpp"
 
+#include <cinttypes>
 #include <logger.hpp>
 
 using analysis_reporter_detail::make_overloaded;

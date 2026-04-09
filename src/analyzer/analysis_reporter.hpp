@@ -24,4 +24,3 @@ class analysis_reporter
 };
 
 std::unique_ptr<analysis_reporter> create_console_reporter(logger& log, console_reporter_settings settings);
-std::unique_ptr<analysis_reporter> create_jsonl_reporter(const std::filesystem::path& path);
