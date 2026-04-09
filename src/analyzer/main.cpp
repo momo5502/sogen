@@ -162,10 +162,10 @@ namespace
                     }
                 }
 
-                state->context_.emit_observation(environment_access_event{
-                    .main_access = is_main_access,
-                    .offset = address - env_ptr,
-                    .size = size,
+                state->context_.emit_observation<environment_access_event>([&](auto& event) {
+                    event.main_access = is_main_access;
+                    event.offset = address - env_ptr;
+                    event.size = size;
                 });
             };
 
@@ -196,12 +196,12 @@ namespace
         win_emu.setup_process_if_necessary();
 
         auto emit_object_access = [&c](object_access_info info) {
-            c.emit_observation(object_access_event{
-                .main_access = info.main_access,
-                .type_name = std::move(info.type_name),
-                .offset = info.offset,
-                .size = info.size,
-                .member_name = std::move(info.member_name),
+            c.emit_observation<object_access_event>([&](auto& event) {
+                event.main_access = info.main_access;
+                event.type_name = std::move(info.type_name);
+                event.offset = info.offset;
+                event.size = info.size;
+                event.member_name = std::move(info.member_name);
             });
         };
 
@@ -286,12 +286,12 @@ namespace
     {
         if (c.settings->instruction_summary)
         {
-            c.emit_summary(instruction_summary_event{.entries = build_instruction_summary(c)});
+            c.emit_summary<instruction_summary_event>([&](auto& event) { event.entries = build_instruction_summary(c); });
         }
 
         if (c.settings->buffer_stdout)
         {
-            c.emit_summary(buffered_stdout_event{.data = c.output});
+            c.emit_summary<buffered_stdout_event>([&](auto& event) { event.data = c.output; });
         }
     }
 
@@ -331,9 +331,9 @@ namespace
 
         auto emit_failure = [&](std::string message) {
             do_post_emulation_work(c);
-            c.emit_summary(run_failed_event{
-                .rip = win_emu.emu().read_instruction_pointer(),
-                .message = std::move(message),
+            c.emit_summary<run_failed_event>([&](auto& event) {
+                event.rip = win_emu.emu().read_instruction_pointer();
+                event.message = std::move(message);
             });
             flush_reporters(c);
             return false;
@@ -355,7 +355,10 @@ namespace
             {
                 // For minidumps, don't start execution automatically; just report ready state
                 win_emu.log.print(color::green, "Minidump loaded successfully. Process state ready for analysis.\n");
-                c.emit_summary(run_finished_event{.success = true, .exit_status = std::nullopt});
+                c.emit_summary<run_finished_event>([&](auto& event) {
+                    event.success = true;
+                    event.exit_status = std::nullopt;
+                });
                 flush_reporters(c);
                 return true;
             }
@@ -401,9 +404,9 @@ namespace
         const auto success = *exit_status == STATUS_SUCCESS;
         do_post_emulation_work(c);
         win_emu.log.disable_output(false);
-        c.emit_summary(run_finished_event{
-            .success = success,
-            .exit_status = static_cast<uint32_t>(*exit_status),
+        c.emit_summary<run_finished_event>([&](auto& event) {
+            event.success = success;
+            event.exit_status = static_cast<uint32_t>(*exit_status);
         });
         flush_reporters(c);
         return success;
@@ -559,11 +562,11 @@ namespace
             run_mode = "snapshot";
         }
 
-        context.emit_summary(run_started_event{
-            .backend_name = win_emu->emu().get_name(),
-            .mode = run_mode,
-            .application = args.empty() ? std::string{} : std::string(args[0]),
-            .arguments = std::move(application_args),
+        context.emit_summary<run_started_event>([&](auto& event) {
+            event.backend_name = win_emu->emu().get_name();
+            event.mode = run_mode;
+            event.application = args.empty() ? std::string{} : std::string(args[0]);
+            event.arguments = std::move(application_args);
         });
 
         std::optional<tenet_tracer> tenet_tracer{};
@@ -587,7 +590,7 @@ namespace
 
             if (mod.has_value() && (!concise_logging || context.cpuid_cache.insert({rip, leaf}).second))
             {
-                context.emit_observation(cpuid_event{.leaf = leaf});
+                context.emit_observation<cpuid_event>([&](auto& event) { event.leaf = leaf; });
             }
 
             if (leaf == 1)
@@ -634,11 +637,11 @@ namespace
                                                 }
 
                                                 const auto* region_name = get_module_memory_region_name(*mod, address);
-                                                context.emit_observation(foreign_module_read_event{
-                                                    .address = address,
-                                                    .size = size,
-                                                    .module_name = mod->name,
-                                                    .region_name = region_name,
+                                                context.emit_observation<foreign_module_read_event>([&](auto& event) {
+                                                    event.address = address;
+                                                    event.size = size;
+                                                    event.module_name = mod->name;
+                                                    event.region_name = region_name;
                                                 });
                                             });
         }
@@ -673,10 +676,10 @@ namespace
                         }
                     }
 
-                    context.emit_observation(executable_read_event{
-                        .address = address,
-                        .size = size,
-                        .section_name = section.name,
+                    context.emit_observation<executable_read_event>([&](auto& event) {
+                        event.address = address;
+                        event.size = size;
+                        event.section_name = section.name;
                     });
                 };
 
@@ -692,11 +695,11 @@ namespace
 
                     uint64_t int_value{};
                     memcpy(&int_value, value, std::min(size, sizeof(int_value)));
-                    context.emit_observation(executable_write_event{
-                        .address = address,
-                        .size = size,
-                        .value = int_value,
-                        .section_name = section.name,
+                    context.emit_observation<executable_write_event>([&](auto& event) {
+                        event.address = address;
+                        event.size = size;
+                        event.value = int_value;
+                        event.section_name = section.name;
                     });
                 };
 

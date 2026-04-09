@@ -65,23 +65,39 @@ struct analysis_context
     execution_context make_execution_context() const;
     void emit_event(const analysis_event& event) const;
 
-    template <typename Event>
-    void emit_observation(Event event) const
+    template <typename Event, typename Initializer>
+    void emit_observation(Initializer&& initialize) const
     {
-        static_assert(std::is_base_of_v<observation_event, std::decay_t<Event>>);
+        static_assert(std::is_base_of_v<observation_event, Event>);
 
+        Event event{};
+        initialize(event);
         event.header = this->make_event_header();
         event.execution = this->make_execution_context();
         this->emit_event(event);
     }
 
     template <typename Event>
-    void emit_summary(Event event) const
+    void emit_observation() const
     {
-        static_assert(std::is_base_of_v<summary_event, std::decay_t<Event>>);
+        this->emit_observation<Event>([](Event&) {});
+    }
 
+    template <typename Event, typename Initializer>
+    void emit_summary(Initializer&& initialize) const
+    {
+        static_assert(std::is_base_of_v<summary_event, Event>);
+
+        Event event{};
+        initialize(event);
         event.header = this->make_event_header();
         this->emit_event(event);
+    }
+
+    template <typename Event>
+    void emit_summary() const
+    {
+        this->emit_summary<Event>([](Event&) {});
     }
 };
 
