@@ -21,9 +21,9 @@ namespace
 
     std::string hex_string(const uint64_t value)
     {
-        char buffer[32] = {};
-        snprintf(buffer, sizeof(buffer), "0x%" PRIx64, value);
-        return buffer;
+        std::array<char, 32> buffer{};
+        snprintf(buffer.data(), buffer.size(), "0x%" PRIx64, value);
+        return buffer.data();
     }
 
     std::string escape_json(std::string_view value)
@@ -59,9 +59,9 @@ namespace
             default:
                 if (static_cast<unsigned char>(ch) < 0x20)
                 {
-                    char buffer[8] = {};
-                    snprintf(buffer, sizeof(buffer), "\\u%04x", static_cast<unsigned char>(ch));
-                    escaped += buffer;
+                    std::array<char, 8> buffer{};
+                    snprintf(buffer.data(), buffer.size(), "\\u%04x", static_cast<unsigned char>(ch));
+                    escaped += buffer.data();
                 }
                 else
                 {
@@ -551,7 +551,7 @@ namespace
             object.object_field("payload", [&](json_object_builder& payload) { this->write_payload(payload, event.payload); });
         }
 
-        void write_payload(json_object_builder& payload, const run_started_payload& value)
+        static void write_payload(json_object_builder& payload, const run_started_payload& value)
         {
             payload.field("backendName", value.backend_name);
             payload.field("mode", value.mode);
@@ -571,7 +571,7 @@ namespace
             });
         }
 
-        void write_payload(json_object_builder& payload, const run_finished_payload& value)
+        static void write_payload(json_object_builder& payload, const run_finished_payload& value)
         {
             payload.field("success", value.success);
             if (value.exit_status.has_value())
@@ -580,13 +580,13 @@ namespace
             }
         }
 
-        void write_payload(json_object_builder& payload, const run_failed_payload& value)
+        static void write_payload(json_object_builder& payload, const run_failed_payload& value)
         {
             payload.hex_field("rip", value.rip);
             payload.field("message", value.message);
         }
 
-        void write_payload(json_object_builder& payload, const instruction_summary_payload& value)
+        static void write_payload(json_object_builder& payload, const instruction_summary_payload& value)
         {
             payload.array_field("entries", [&](const auto& emit) {
                 for (const auto& entry : value.entries)
@@ -600,17 +600,17 @@ namespace
             });
         }
 
-        void write_payload(json_object_builder& payload, const buffered_stdout_payload& value)
+        static void write_payload(json_object_builder& payload, const buffered_stdout_payload& value)
         {
             payload.field("data", value.data);
         }
 
-        void write_payload(json_object_builder& payload, const stdout_chunk_payload& value)
+        static void write_payload(json_object_builder& payload, const stdout_chunk_payload& value)
         {
             payload.field("data", value.data);
         }
 
-        void write_payload(json_object_builder& payload, const suspicious_activity_payload& value)
+        static void write_payload(json_object_builder& payload, const suspicious_activity_payload& value)
         {
             payload.field("details", value.details);
             if (!value.decoded_instruction.empty())
@@ -619,23 +619,23 @@ namespace
             }
         }
 
-        void write_payload(json_object_builder& payload, const debug_string_payload& value)
+        static void write_payload(json_object_builder& payload, const debug_string_payload& value)
         {
             payload.field("details", value.details);
         }
 
-        void write_payload(json_object_builder& payload, const generic_activity_payload& value)
+        static void write_payload(json_object_builder& payload, const generic_activity_payload& value)
         {
             payload.field("details", value.details);
         }
 
-        void write_payload(json_object_builder& payload, const generic_access_payload& value)
+        static void write_payload(json_object_builder& payload, const generic_access_payload& value)
         {
             payload.field("accessType", value.type);
             payload.field("name", value.name);
         }
 
-        void write_payload(json_object_builder& payload, const memory_allocate_payload& value)
+        static void write_payload(json_object_builder& payload, const memory_allocate_payload& value)
         {
             payload.hex_field("address", value.address);
             payload.field("length", value.length);
@@ -643,14 +643,14 @@ namespace
             payload.field("commit", value.commit);
         }
 
-        void write_payload(json_object_builder& payload, const memory_protect_payload& value)
+        static void write_payload(json_object_builder& payload, const memory_protect_payload& value)
         {
             payload.hex_field("address", value.address);
             payload.field("length", value.length);
             payload.field("permissions", value.permissions);
         }
 
-        void write_payload(json_object_builder& payload, const memory_violation_payload& value)
+        static void write_payload(json_object_builder& payload, const memory_violation_payload& value)
         {
             payload.hex_field("address", value.address);
             payload.field("size", value.size);
@@ -658,13 +658,13 @@ namespace
             payload.field("violationType", value.violation_type);
         }
 
-        void write_payload(json_object_builder& payload, const io_control_payload& value)
+        static void write_payload(json_object_builder& payload, const io_control_payload& value)
         {
             payload.field("deviceName", value.device_name);
             payload.field("code", value.code);
         }
 
-        void write_payload(json_object_builder& payload, const thread_create_payload& value)
+        static void write_payload(json_object_builder& payload, const thread_create_payload& value)
         {
             payload.field("threadId", value.created_thread_id);
             payload.hex_field("startAddress", value.start_address);
@@ -681,43 +681,43 @@ namespace
             });
         }
 
-        void write_payload(json_object_builder& payload, const thread_terminated_payload& value)
+        static void write_payload(json_object_builder& payload, const thread_terminated_payload& value)
         {
             payload.field("threadId", value.terminated_thread_id);
         }
 
-        void write_payload(json_object_builder& payload, const thread_set_name_payload& value)
+        static void write_payload(json_object_builder& payload, const thread_set_name_payload& value)
         {
             payload.field("threadId", value.renamed_thread_id);
             payload.field("name", value.name);
         }
 
-        void write_payload(json_object_builder& payload, const thread_switch_payload& value)
+        static void write_payload(json_object_builder& payload, const thread_switch_payload& value)
         {
             payload.field("previousThreadId", value.previous_thread_id);
             payload.field("nextThreadId", value.next_thread_id);
         }
 
-        void write_payload(json_object_builder& payload, const module_load_payload& value)
+        static void write_payload(json_object_builder& payload, const module_load_payload& value)
         {
             payload.field("path", value.path);
             payload.hex_field("imageBase", value.image_base);
         }
 
-        void write_payload(json_object_builder& payload, const module_unload_payload& value)
+        static void write_payload(json_object_builder& payload, const module_unload_payload& value)
         {
             payload.field("path", value.path);
             payload.hex_field("imageBase", value.image_base);
         }
 
-        void write_payload(json_object_builder& payload, const import_read_payload& value)
+        static void write_payload(json_object_builder& payload, const import_read_payload& value)
         {
             payload.hex_field("resolvedAddress", value.resolved_address);
             payload.field("importName", value.import_name);
             payload.field("importModule", value.import_module);
         }
 
-        void write_payload(json_object_builder& payload, const import_write_payload& value)
+        static void write_payload(json_object_builder& payload, const import_write_payload& value)
         {
             payload.field("size", static_cast<uint64_t>(value.size));
             payload.hex_field("value", value.value);
@@ -725,7 +725,7 @@ namespace
             payload.field("importModule", value.import_module);
         }
 
-        void write_payload(json_object_builder& payload, const object_access_payload& value)
+        static void write_payload(json_object_builder& payload, const object_access_payload& value)
         {
             payload.field("mainAccess", value.main_access);
             payload.field("typeName", value.type_name);
@@ -737,14 +737,14 @@ namespace
             }
         }
 
-        void write_payload(json_object_builder& payload, const environment_access_payload& value)
+        static void write_payload(json_object_builder& payload, const environment_access_payload& value)
         {
             payload.field("mainAccess", value.main_access);
             payload.hex_field("offset", value.offset);
             payload.hex_field("size", value.size);
         }
 
-        void write_payload(json_object_builder& payload, const function_execution_payload& value)
+        static void write_payload(json_object_builder& payload, const function_execution_payload& value)
         {
             payload.field("functionName", value.function_name);
             payload.field("interesting", value.interesting);
@@ -761,39 +761,39 @@ namespace
             });
         }
 
-        void write_payload(json_object_builder& payload, const entry_point_execution_payload& value)
+        static void write_payload(json_object_builder& payload, const entry_point_execution_payload& value)
         {
             payload.field("interesting", value.interesting);
         }
 
-        void write_payload(json_object_builder& payload, const foreign_code_transition_payload& value)
+        static void write_payload(json_object_builder& payload, const foreign_code_transition_payload& value)
         {
             payload.field("functionName", value.function_name);
             payload.hex_field("functionOffset", value.function_offset);
             payload.field("interesting", value.interesting);
         }
 
-        void write_payload(json_object_builder& payload, const section_first_execute_payload& value)
+        static void write_payload(json_object_builder& payload, const section_first_execute_payload& value)
         {
             payload.field("moduleName", value.module_name);
             payload.field("sectionName", value.section_name);
             payload.hex_field("fileAddress", value.file_address);
         }
 
-        void write_payload(json_object_builder&, const rdtsc_payload&)
+        static void write_payload(json_object_builder&, const rdtsc_payload&)
         {
         }
 
-        void write_payload(json_object_builder&, const rdtscp_payload&)
+        static void write_payload(json_object_builder&, const rdtscp_payload&)
         {
         }
 
-        void write_payload(json_object_builder& payload, const cpuid_payload& value)
+        static void write_payload(json_object_builder& payload, const cpuid_payload& value)
         {
             payload.field("leaf", value.leaf);
         }
 
-        void write_payload(json_object_builder& payload, const syscall_payload& value)
+        static void write_payload(json_object_builder& payload, const syscall_payload& value)
         {
             payload.field("classification", syscall_classification_name(value.classification));
             payload.field("syscallId", value.syscall_id);
@@ -802,7 +802,7 @@ namespace
             payload.optional_string_field("callerModule", value.caller_module);
         }
 
-        void write_payload(json_object_builder& payload, const foreign_module_read_payload& value)
+        static void write_payload(json_object_builder& payload, const foreign_module_read_payload& value)
         {
             payload.hex_field("address", value.address);
             payload.field("size", static_cast<uint64_t>(value.size));
@@ -810,14 +810,14 @@ namespace
             payload.field("regionName", value.region_name);
         }
 
-        void write_payload(json_object_builder& payload, const executable_read_payload& value)
+        static void write_payload(json_object_builder& payload, const executable_read_payload& value)
         {
             payload.hex_field("address", value.address);
             payload.field("size", static_cast<uint64_t>(value.size));
             payload.field("sectionName", value.section_name);
         }
 
-        void write_payload(json_object_builder& payload, const executable_write_payload& value)
+        static void write_payload(json_object_builder& payload, const executable_write_payload& value)
         {
             payload.hex_field("address", value.address);
             payload.field("size", static_cast<uint64_t>(value.size));
