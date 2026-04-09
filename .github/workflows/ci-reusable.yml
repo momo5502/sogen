@@ -26,7 +26,6 @@ jobs:
     env:
       LLVM_VERSION: 21
     runs-on: ${{ matrix.runner }}
-    needs: [build-apiset-dumper]
     strategy:
       fail-fast: false
       matrix:
