@@ -448,19 +448,11 @@ namespace
         void report(const analysis_event& event) override
         {
             std::string line{};
-            line.reserve(1024);
+            line.reserve(768);
 
             {
                 json_object_builder object{line};
-                object.field("schemaVersion", 1U);
-
-                std::visit(make_overloaded([&](const auto& e) {
-                               object.field("sequence", e.header.sequence);
-                               object.field("instructionCount", e.header.instruction_count);
-                               this->event_type_fields(object, e);
-                               this->event_payload_field(object, e);
-                           }),
-                           event);
+                std::visit(make_overloaded([&](const auto& e) { write_record(object, e); }), event);
             }
 
             this->file_ << line << '\n';
@@ -474,42 +466,58 @@ namespace
       private:
         std::ofstream file_{};
 
-        template <typename Payload>
-        void event_type_fields(json_object_builder& object, const observation_event<Payload>& e)
+        static void write_record(json_object_builder& object, const run_started_event& event)
         {
-            object.field("category", "observation");
-            object.field("type", this->event_name(e));
-            object.object_field("execution", [&](json_object_builder& execution) {
-                execution.field("threadId", e.execution.thread_id);
-                execution.hex_field("rip", e.execution.rip);
-                execution.field("ripModule", e.execution.rip_module);
-                execution.optional_hex_field("previousIp", e.execution.previous_ip);
-                execution.optional_string_field("previousIpModule", e.execution.previous_ip_module);
-            });
+            object.field("type", "header");
+            object.field("schema", 1U);
+            write_fields(object, event.payload);
+        }
+
+        static void write_record(json_object_builder& object, const run_finished_event& event)
+        {
+            object.field("type", "footer");
+            write_fields(object, event.payload);
+        }
+
+        static void write_record(json_object_builder& object, const run_failed_event& event)
+        {
+            object.field("type", "footer");
+            object.field("success", false);
+            write_fields(object, event.payload);
         }
 
         template <typename Payload>
-        void event_type_fields(json_object_builder& object, const summary_event<Payload>& e)
+        static void write_record(json_object_builder& object, const observation_event<Payload>& event)
         {
-            object.field("category", "summary");
-            object.field("type", this->event_name(e));
+            object.field("type", event_name(event));
+            object.field("ic", event.header.instruction_count);
+            object.field("tid", event.execution.thread_id);
+            object.hex_field("rip", event.execution.rip);
+            object.field("mod", event.execution.rip_module);
+            object.optional_hex_field("prev", event.execution.previous_ip);
+            object.optional_string_field("prevMod", event.execution.previous_ip_module);
+            write_fields(object, event.payload);
+        }
+
+        template <typename Payload>
+        static void write_record(json_object_builder& object, const summary_event<Payload>& event)
+        {
+            object.field("type", event_name(event));
+            write_fields(object, event.payload);
         }
 
         template <typename Event>
-        std::string_view event_name(const Event&) const
+        static std::string_view event_name(const Event&)
         {
             return "unknown";
         }
 
-#define EVENT_NAME(TYPE, NAME)                     \
-    std::string_view event_name(const TYPE&) const \
-    {                                              \
-        return NAME;                               \
+#define EVENT_NAME(TYPE, NAME)                      \
+    static std::string_view event_name(const TYPE&) \
+    {                                               \
+        return NAME;                                \
     }
 
-        EVENT_NAME(run_started_event, "run_started");
-        EVENT_NAME(run_finished_event, "run_finished");
-        EVENT_NAME(run_failed_event, "run_failed");
         EVENT_NAME(instruction_summary_event, "instruction_summary");
         EVENT_NAME(buffered_stdout_event, "buffered_stdout");
         EVENT_NAME(stdout_chunk_event, "stdout_chunk");
@@ -545,21 +553,15 @@ namespace
 
 #undef EVENT_NAME
 
-        template <typename Event>
-        void event_payload_field(json_object_builder& object, const Event& event)
+        static void write_fields(json_object_builder& object, const run_started_payload& value)
         {
-            object.object_field("payload", [&](json_object_builder& payload) { this->write_payload(payload, event.payload); });
-        }
-
-        static void write_payload(json_object_builder& payload, const run_started_payload& value)
-        {
-            payload.field("backendName", value.backend_name);
-            payload.field("mode", value.mode);
+            object.field("backend", value.backend_name);
+            object.field("mode", value.mode);
             if (!value.application.empty())
             {
-                payload.field("application", value.application);
+                object.field("app", value.application);
             }
-            payload.array_field("arguments", [&](const auto& emit) {
+            object.array_field("args", [&](const auto& emit) {
                 for (const auto& arg : value.arguments)
                 {
                     emit([&](std::string& out) {
@@ -571,24 +573,24 @@ namespace
             });
         }
 
-        static void write_payload(json_object_builder& payload, const run_finished_payload& value)
+        static void write_fields(json_object_builder& object, const run_finished_payload& value)
         {
-            payload.field("success", value.success);
+            object.field("success", value.success);
             if (value.exit_status.has_value())
             {
-                payload.field("exitStatus", *value.exit_status);
+                object.field("exit", *value.exit_status);
             }
         }
 
-        static void write_payload(json_object_builder& payload, const run_failed_payload& value)
+        static void write_fields(json_object_builder& object, const run_failed_payload& value)
         {
-            payload.hex_field("rip", value.rip);
-            payload.field("message", value.message);
+            object.hex_field("rip", value.rip);
+            object.field("error", value.message);
         }
 
-        static void write_payload(json_object_builder& payload, const instruction_summary_payload& value)
+        static void write_fields(json_object_builder& object, const instruction_summary_payload& value)
         {
-            payload.array_field("entries", [&](const auto& emit) {
+            object.array_field("entries", [&](const auto& emit) {
                 for (const auto& entry : value.entries)
                 {
                     emit([&](std::string& out) {
@@ -600,76 +602,76 @@ namespace
             });
         }
 
-        static void write_payload(json_object_builder& payload, const buffered_stdout_payload& value)
+        static void write_fields(json_object_builder& object, const buffered_stdout_payload& value)
         {
-            payload.field("data", value.data);
+            object.field("data", value.data);
         }
 
-        static void write_payload(json_object_builder& payload, const stdout_chunk_payload& value)
+        static void write_fields(json_object_builder& object, const stdout_chunk_payload& value)
         {
-            payload.field("data", value.data);
+            object.field("data", value.data);
         }
 
-        static void write_payload(json_object_builder& payload, const suspicious_activity_payload& value)
+        static void write_fields(json_object_builder& object, const suspicious_activity_payload& value)
         {
-            payload.field("details", value.details);
+            object.field("details", value.details);
             if (!value.decoded_instruction.empty())
             {
-                payload.field("decodedInstruction", value.decoded_instruction);
+                object.field("inst", value.decoded_instruction);
             }
         }
 
-        static void write_payload(json_object_builder& payload, const debug_string_payload& value)
+        static void write_fields(json_object_builder& object, const debug_string_payload& value)
         {
-            payload.field("details", value.details);
+            object.field("details", value.details);
         }
 
-        static void write_payload(json_object_builder& payload, const generic_activity_payload& value)
+        static void write_fields(json_object_builder& object, const generic_activity_payload& value)
         {
-            payload.field("details", value.details);
+            object.field("details", value.details);
         }
 
-        static void write_payload(json_object_builder& payload, const generic_access_payload& value)
+        static void write_fields(json_object_builder& object, const generic_access_payload& value)
         {
-            payload.field("accessType", value.type);
-            payload.field("name", value.name);
+            object.field("accessType", value.type);
+            object.field("name", value.name);
         }
 
-        static void write_payload(json_object_builder& payload, const memory_allocate_payload& value)
+        static void write_fields(json_object_builder& object, const memory_allocate_payload& value)
         {
-            payload.hex_field("address", value.address);
-            payload.field("length", value.length);
-            payload.field("permissions", value.permissions);
-            payload.field("commit", value.commit);
+            object.hex_field("addr", value.address);
+            object.field("len", value.length);
+            object.field("perms", value.permissions);
+            object.field("commit", value.commit);
         }
 
-        static void write_payload(json_object_builder& payload, const memory_protect_payload& value)
+        static void write_fields(json_object_builder& object, const memory_protect_payload& value)
         {
-            payload.hex_field("address", value.address);
-            payload.field("length", value.length);
-            payload.field("permissions", value.permissions);
+            object.hex_field("addr", value.address);
+            object.field("len", value.length);
+            object.field("perms", value.permissions);
         }
 
-        static void write_payload(json_object_builder& payload, const memory_violation_payload& value)
+        static void write_fields(json_object_builder& object, const memory_violation_payload& value)
         {
-            payload.hex_field("address", value.address);
-            payload.field("size", value.size);
-            payload.field("operation", value.operation);
-            payload.field("violationType", value.violation_type);
+            object.hex_field("addr", value.address);
+            object.field("size", value.size);
+            object.field("op", value.operation);
+            object.field("violation", value.violation_type);
         }
 
-        static void write_payload(json_object_builder& payload, const io_control_payload& value)
+        static void write_fields(json_object_builder& object, const io_control_payload& value)
         {
-            payload.field("deviceName", value.device_name);
-            payload.field("code", value.code);
+            object.field("device", value.device_name);
+            object.field("code", value.code);
         }
 
-        static void write_payload(json_object_builder& payload, const thread_create_payload& value)
+        static void write_fields(json_object_builder& object, const thread_create_payload& value)
         {
-            payload.field("threadId", value.created_thread_id);
-            payload.hex_field("startAddress", value.start_address);
-            payload.hex_field("argument", value.argument);
-            payload.array_field("flags", [&](const auto& emit) {
+            object.field("createdTid", value.created_thread_id);
+            object.hex_field("start", value.start_address);
+            object.hex_field("arg", value.argument);
+            object.array_field("flags", [&](const auto& emit) {
                 for (const auto& flag : value.flags)
                 {
                     emit([&](std::string& out) {
@@ -681,75 +683,75 @@ namespace
             });
         }
 
-        static void write_payload(json_object_builder& payload, const thread_terminated_payload& value)
+        static void write_fields(json_object_builder& object, const thread_terminated_payload& value)
         {
-            payload.field("threadId", value.terminated_thread_id);
+            object.field("terminatedTid", value.terminated_thread_id);
         }
 
-        static void write_payload(json_object_builder& payload, const thread_set_name_payload& value)
+        static void write_fields(json_object_builder& object, const thread_set_name_payload& value)
         {
-            payload.field("threadId", value.renamed_thread_id);
-            payload.field("name", value.name);
+            object.field("namedTid", value.renamed_thread_id);
+            object.field("name", value.name);
         }
 
-        static void write_payload(json_object_builder& payload, const thread_switch_payload& value)
+        static void write_fields(json_object_builder& object, const thread_switch_payload& value)
         {
-            payload.field("previousThreadId", value.previous_thread_id);
-            payload.field("nextThreadId", value.next_thread_id);
+            object.field("fromTid", value.previous_thread_id);
+            object.field("toTid", value.next_thread_id);
         }
 
-        static void write_payload(json_object_builder& payload, const module_load_payload& value)
+        static void write_fields(json_object_builder& object, const module_load_payload& value)
         {
-            payload.field("path", value.path);
-            payload.hex_field("imageBase", value.image_base);
+            object.field("path", value.path);
+            object.hex_field("base", value.image_base);
         }
 
-        static void write_payload(json_object_builder& payload, const module_unload_payload& value)
+        static void write_fields(json_object_builder& object, const module_unload_payload& value)
         {
-            payload.field("path", value.path);
-            payload.hex_field("imageBase", value.image_base);
+            object.field("path", value.path);
+            object.hex_field("base", value.image_base);
         }
 
-        static void write_payload(json_object_builder& payload, const import_read_payload& value)
+        static void write_fields(json_object_builder& object, const import_read_payload& value)
         {
-            payload.hex_field("resolvedAddress", value.resolved_address);
-            payload.field("importName", value.import_name);
-            payload.field("importModule", value.import_module);
+            object.hex_field("target", value.resolved_address);
+            object.field("import", value.import_name);
+            object.field("importMod", value.import_module);
         }
 
-        static void write_payload(json_object_builder& payload, const import_write_payload& value)
+        static void write_fields(json_object_builder& object, const import_write_payload& value)
         {
-            payload.field("size", static_cast<uint64_t>(value.size));
-            payload.hex_field("value", value.value);
-            payload.field("importName", value.import_name);
-            payload.field("importModule", value.import_module);
+            object.field("size", static_cast<uint64_t>(value.size));
+            object.hex_field("value", value.value);
+            object.field("import", value.import_name);
+            object.field("importMod", value.import_module);
         }
 
-        static void write_payload(json_object_builder& payload, const object_access_payload& value)
+        static void write_fields(json_object_builder& object, const object_access_payload& value)
         {
-            payload.field("mainAccess", value.main_access);
-            payload.field("typeName", value.type_name);
-            payload.hex_field("offset", value.offset);
-            payload.hex_field("size", value.size);
+            object.field("mainAccess", value.main_access);
+            object.field("typeName", value.type_name);
+            object.hex_field("offset", value.offset);
+            object.hex_field("size", value.size);
             if (value.member_name.has_value())
             {
-                payload.field("memberName", *value.member_name);
+                object.field("member", *value.member_name);
             }
         }
 
-        static void write_payload(json_object_builder& payload, const environment_access_payload& value)
+        static void write_fields(json_object_builder& object, const environment_access_payload& value)
         {
-            payload.field("mainAccess", value.main_access);
-            payload.hex_field("offset", value.offset);
-            payload.hex_field("size", value.size);
+            object.field("mainAccess", value.main_access);
+            object.hex_field("offset", value.offset);
+            object.hex_field("size", value.size);
         }
 
-        static void write_payload(json_object_builder& payload, const function_execution_payload& value)
+        static void write_fields(json_object_builder& object, const function_execution_payload& value)
         {
-            payload.field("functionName", value.function_name);
-            payload.field("interesting", value.interesting);
-            payload.field("stubbedWinVerifyTrust", value.stubbed_win_verify_trust);
-            payload.array_field("details", [&](const auto& emit) {
+            object.field("fn", value.function_name);
+            object.field("interesting", value.interesting);
+            object.field("stubbedWinVerifyTrust", value.stubbed_win_verify_trust);
+            object.array_field("details", [&](const auto& emit) {
                 for (const auto& detail : value.details)
                 {
                     emit([&](std::string& out) {
@@ -761,70 +763,71 @@ namespace
             });
         }
 
-        static void write_payload(json_object_builder& payload, const entry_point_execution_payload& value)
+        static void write_fields(json_object_builder& object, const entry_point_execution_payload& value)
         {
-            payload.field("interesting", value.interesting);
+            object.field("interesting", value.interesting);
         }
 
-        static void write_payload(json_object_builder& payload, const foreign_code_transition_payload& value)
+        static void write_fields(json_object_builder& object, const foreign_code_transition_payload& value)
         {
-            payload.field("functionName", value.function_name);
-            payload.hex_field("functionOffset", value.function_offset);
-            payload.field("interesting", value.interesting);
+            object.field("fn", value.function_name);
+            object.hex_field("off", value.function_offset);
+            object.field("interesting", value.interesting);
         }
 
-        static void write_payload(json_object_builder& payload, const section_first_execute_payload& value)
+        static void write_fields(json_object_builder& object, const section_first_execute_payload& value)
         {
-            payload.field("moduleName", value.module_name);
-            payload.field("sectionName", value.section_name);
-            payload.hex_field("fileAddress", value.file_address);
+            object.field("moduleName", value.module_name);
+            object.field("section", value.section_name);
+            object.hex_field("fileAddr", value.file_address);
         }
 
-        static void write_payload(json_object_builder&, const rdtsc_payload&)
-        {
-        }
-
-        static void write_payload(json_object_builder&, const rdtscp_payload&)
+        static void write_fields(json_object_builder&, const rdtsc_payload&)
         {
         }
 
-        static void write_payload(json_object_builder& payload, const cpuid_payload& value)
+        static void write_fields(json_object_builder&, const rdtscp_payload&)
         {
-            payload.field("leaf", value.leaf);
         }
 
-        static void write_payload(json_object_builder& payload, const syscall_payload& value)
+        static void write_fields(json_object_builder& object, const cpuid_payload& value)
         {
-            payload.field("classification", syscall_classification_name(value.classification));
-            payload.field("syscallId", value.syscall_id);
-            payload.field("syscallName", value.syscall_name);
-            payload.optional_hex_field("callerRip", value.caller_rip);
-            payload.optional_string_field("callerModule", value.caller_module);
+            object.field("leaf", value.leaf);
         }
 
-        static void write_payload(json_object_builder& payload, const foreign_module_read_payload& value)
+        static void write_fields(json_object_builder& object, const syscall_payload& value)
         {
-            payload.hex_field("address", value.address);
-            payload.field("size", static_cast<uint64_t>(value.size));
-            payload.field("moduleName", value.module_name);
-            payload.field("regionName", value.region_name);
+            object.field("class", syscall_classification_name(value.classification));
+            object.field("id", value.syscall_id);
+            object.field("name", value.syscall_name);
+            object.optional_hex_field("callerRip", value.caller_rip);
+            object.optional_string_field("callerMod", value.caller_module);
         }
 
-        static void write_payload(json_object_builder& payload, const executable_read_payload& value)
+        static void write_fields(json_object_builder& object, const foreign_module_read_payload& value)
         {
-            payload.hex_field("address", value.address);
-            payload.field("size", static_cast<uint64_t>(value.size));
-            payload.field("sectionName", value.section_name);
+            object.hex_field("addr", value.address);
+            object.field("size", static_cast<uint64_t>(value.size));
+            object.field("moduleName", value.module_name);
+            object.field("region", value.region_name);
         }
 
-        static void write_payload(json_object_builder& payload, const executable_write_payload& value)
+        static void write_fields(json_object_builder& object, const executable_read_payload& value)
         {
-            payload.hex_field("address", value.address);
-            payload.field("size", static_cast<uint64_t>(value.size));
-            payload.hex_field("value", value.value);
-            payload.field("sectionName", value.section_name);
+            object.hex_field("addr", value.address);
+            object.field("size", static_cast<uint64_t>(value.size));
+            object.field("section", value.section_name);
+        }
+
+        static void write_fields(json_object_builder& object, const executable_write_payload& value)
+        {
+            object.hex_field("addr", value.address);
+            object.field("size", static_cast<uint64_t>(value.size));
+            object.hex_field("value", value.value);
+            object.field("section", value.section_name);
         }
     };
+
 }
 
 std::unique_ptr<analysis_reporter> create_console_reporter(logger& log, const console_reporter_settings settings)
