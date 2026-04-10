@@ -78,17 +78,24 @@
     (FILE_WRITE_THROUGH | FILE_SEQUENTIAL_ONLY | FILE_NO_INTERMEDIATE_BUFFERING | FILE_SYNCHRONOUS_IO_ALERT | \
      FILE_SYNCHRONOUS_IO_NONALERT | FILE_DELETE_ON_CLOSE)
 
-#define FILE_ATTRIBUTE_NORMAL    0x00000080
-#define FILE_ATTRIBUTE_DIRECTORY 0x00000010
+#define FILE_ATTRIBUTE_NORMAL                      0x00000080
+#define FILE_ATTRIBUTE_DIRECTORY                   0x00000010
 
-#define PS_ATTRIBUTE_NUMBER_MASK 0x0000ffff
-#define PS_ATTRIBUTE_THREAD      0x00010000 // may be used with thread creation
-#define PS_ATTRIBUTE_INPUT       0x00020000 // input only
-#define PS_ATTRIBUTE_ADDITIVE    0x00040000 // "accumulated" e.g. bitmasks, counters, etc.
+#define FILE_DISPOSITION_DO_NOT_DELETE             (0x00000000)
+#define FILE_DISPOSITION_DELETE                    (0x00000001)
+#define FILE_DISPOSITION_POSIX_SEMANTICS           (0x00000002)
+#define FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK (0x00000004)
+#define FILE_DISPOSITION_ON_CLOSE                  (0x00000008)
+#define FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE (0x00000010)
 
-#define SL_RESTART_SCAN          0x01
-#define SL_RETURN_SINGLE_ENTRY   0x02
-#define SL_NO_CURSOR_UPDATE      0x10
+#define PS_ATTRIBUTE_NUMBER_MASK                   0x0000ffff
+#define PS_ATTRIBUTE_THREAD                        0x00010000 // may be used with thread creation
+#define PS_ATTRIBUTE_INPUT                         0x00020000 // input only
+#define PS_ATTRIBUTE_ADDITIVE                      0x00040000 // "accumulated" e.g. bitmasks, counters, etc.
+
+#define SL_RESTART_SCAN                            0x01
+#define SL_RETURN_SINGLE_ENTRY                     0x02
+#define SL_NO_CURSOR_UPDATE                        0x10
 
 #ifndef SEC_IMAGE
 #define SEC_HUGE_PAGES             0x00020000
@@ -506,6 +513,11 @@ typedef struct _FILE_DISPOSITION_INFORMATION
 {
     BOOLEAN DeleteFile;
 } FILE_DISPOSITION_INFORMATION, *PFILE_DISPOSITION_INFORMATION;
+
+struct FILE_DISPOSITION_INFORMATION_EX
+{
+    ULONG Flags;
+};
 
 typedef struct _FILE_STREAM_INFORMATION
 {
