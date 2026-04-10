@@ -258,7 +258,8 @@ namespace syscalls
                                   emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> value_name, ULONG /*title_index*/, ULONG type,
                                   uint64_t data, ULONG data_size);
     NTSTATUS handle_NtNotifyChangeKey();
-    NTSTATUS handle_NtSetInformationKey();
+    NTSTATUS handle_NtSetInformationKey(const syscall_context& c, handle key_handle, KEY_SET_INFORMATION_CLASS key_information_class,
+                                        uint64_t key_information, ULONG length);
     NTSTATUS handle_NtEnumerateKey(const syscall_context& c, handle key_handle, ULONG index, KEY_INFORMATION_CLASS key_information_class,
                                    uint64_t key_information, ULONG length, emulator_object<ULONG> result_length);
     NTSTATUS handle_NtEnumerateValueKey(const syscall_context& c, handle key_handle, ULONG index,

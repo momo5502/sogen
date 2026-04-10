@@ -17,6 +17,18 @@ typedef enum _KEY_INFORMATION_CLASS
     MaxKeyInfoClass
 } KEY_INFORMATION_CLASS;
 
+enum KEY_SET_INFORMATION_CLASS
+{
+    KeyWriteTimeInformation,         // KEY_WRITE_TIME_INFORMATION
+    KeyWow64FlagsInformation,        // KEY_WOW64_FLAGS_INFORMATION
+    KeyControlFlagsInformation,      // KEY_CONTROL_FLAGS_INFORMATION
+    KeySetVirtualizationInformation, // KEY_SET_VIRTUALIZATION_INFORMATION
+    KeySetDebugInformation,          // KEY_SET_DEBUG_INFORMATION
+    KeySetHandleTagsInformation,     // KEY_HANDLE_TAGS_INFORMATION
+    KeySetLayerInformation,          // KEY_SET_LAYER_INFORMATION
+    MaxKeySetInfoClass
+};
+
 typedef enum _KEY_VALUE_INFORMATION_CLASS
 {
     KeyValueBasicInformation,   // KEY_VALUE_BASIC_INFORMATION

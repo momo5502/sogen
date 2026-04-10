@@ -137,7 +137,7 @@ namespace syscalls
             }
 
             KEY_HANDLE_TAGS_INFORMATION info{};
-            info.HandleTags = 0; // ?
+            info.HandleTags = key->tag;
 
             const emulator_object<KEY_HANDLE_TAGS_INFORMATION> info_obj{c.emu, key_information};
             info_obj.write(info);
@@ -397,9 +397,34 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtSetInformationKey()
+    NTSTATUS handle_NtSetInformationKey(const syscall_context& c, const handle key_handle,
+                                        const KEY_SET_INFORMATION_CLASS key_information_class, const uint64_t key_information,
+                                        const ULONG length)
     {
-        return STATUS_SUCCESS;
+        auto* key = c.proc.registry_keys.get(key_handle);
+        if (!key)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        if (key_information_class == KeySetHandleTagsInformation)
+        {
+            constexpr auto required_size = sizeof(KEY_HANDLE_TAGS_INFORMATION);
+
+            if (length != required_size)
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            const emulator_object<KEY_HANDLE_TAGS_INFORMATION> info_obj{c.emu, key_information};
+            info_obj.access([&](KEY_HANDLE_TAGS_INFORMATION& info) { key->tag = static_cast<uint16_t>(info.HandleTags); });
+
+            return STATUS_SUCCESS;
+        }
+
+        c.win_emu.log.warn("Unsupported registry information class: %X\n", key_information_class);
+        c.emu.stop();
+        return STATUS_NOT_SUPPORTED;
     }
 
     NTSTATUS handle_NtEnumerateKey(const syscall_context& c, const handle key_handle, const ULONG index,
