@@ -171,6 +171,42 @@ const hive_value* hive_key::get_value(std::ifstream& file, const size_t index)
     return get_value(file, values_by_index_[index]);
 }
 
+void hive_key::parse_subkey_list(std::ifstream& file, const int32_t block_offset, const bool allow_root_index)
+{
+    const auto item = read_file_object<offsets_t>(file, MAIN_ROOT_OFFSET + block_offset);
+
+    const bool simple_block = item.block_type[1] == 'f' || item.block_type[1] == 'h';
+    if (!simple_block && (!allow_root_index || (item.block_type[0] != 'r' && item.block_type[1] != 'i')))
+    {
+        return;
+    }
+
+    const auto entry_offsets = block_offset + offsetof(offsets_t, entries);
+
+    for (int16_t i = 0; i < item.count; ++i)
+    {
+        if (simple_block)
+        {
+            const auto offset_entry = read_file_object<offset_entry_t>(file, MAIN_ROOT_OFFSET + entry_offsets, i);
+            const auto subkey_block_offset = MAIN_ROOT_OFFSET + offset_entry.offset;
+            const auto subkey = read_file_object<key_block_t>(file, subkey_block_offset);
+            std::string subkey_name(subkey.name, std::min(subkey.len, static_cast<int16_t>(sizeof(subkey.name))));
+
+            const auto [it, inserted] =
+                this->sub_keys_.emplace(std::move(subkey_name), hive_key{subkey.subkeys, subkey.value_count, subkey.offsets});
+            if (inserted)
+            {
+                this->sub_keys_by_index_.emplace_back(it->first);
+            }
+        }
+        else
+        {
+            const auto offset_entry = read_file_object<int32_t>(file, MAIN_ROOT_OFFSET + entry_offsets, i);
+            parse_subkey_list(file, offset_entry, false);
+        }
+    }
+}
+
 void hive_key::parse(std::ifstream& file)
 {
     if (this->parsed_)
@@ -210,31 +246,7 @@ void hive_key::parse(std::ifstream& file)
 
     // Subkeys
 
-    const auto item = read_file_object<offsets_t>(file, MAIN_ROOT_OFFSET + this->subkey_block_offset_);
-
-    if (item.block_type[1] != 'f' && item.block_type[1] != 'h')
-    {
-        return;
-    }
-
-    const auto entry_offsets = this->subkey_block_offset_ + offsetof(offsets_t, entries);
-
-    for (int16_t i = 0; i < item.count; ++i)
-    {
-        const auto offset_entry = read_file_object<offset_entry_t>(file, MAIN_ROOT_OFFSET + entry_offsets, i);
-
-        const auto subkey_block_offset = MAIN_ROOT_OFFSET + offset_entry.offset;
-        const auto subkey = read_file_object<key_block_t>(file, subkey_block_offset);
-
-        std::string subkey_name(subkey.name, std::min(subkey.len, static_cast<int16_t>(sizeof(subkey.name))));
-
-        const auto [it, inserted] =
-            this->sub_keys_.emplace(std::move(subkey_name), hive_key{subkey.subkeys, subkey.value_count, subkey.offsets});
-        if (inserted)
-        {
-            this->sub_keys_by_index_.emplace_back(it->first);
-        }
-    }
+    parse_subkey_list(file, this->subkey_block_offset_, true);
 }
 
 hive_parser::hive_parser(const std::filesystem::path& file_path)
