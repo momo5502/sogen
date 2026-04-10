@@ -86,11 +86,12 @@ struct emulator_interfaces
 class windows_emulator
 {
     uint64_t executed_instructions_{0};
-    std::optional<application_settings> application_settings_{};
+    application_settings application_settings_{};
 
     std::unique_ptr<x86_64_emulator> emu_{};
     std::unique_ptr<utils::clock> clock_{};
     std::unique_ptr<network::socket_factory> socket_factory_{};
+    bool setup_completed_{false};
 
   public:
     const std::filesystem::path emulation_root{};
@@ -226,7 +227,7 @@ class windows_emulator
     // std::optional<process_context> process_snapshot_{};
 
     void setup_hooks();
-    void setup_process(const application_settings& app_settings);
+    void setup_process();
     void on_instruction_execution(uint64_t address);
 
     void register_factories(utils::buffer_deserializer& buffer);

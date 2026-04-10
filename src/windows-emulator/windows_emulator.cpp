@@ -336,25 +336,24 @@ windows_emulator::~windows_emulator() = default;
 
 void windows_emulator::setup_process_if_necessary()
 {
-    if (!this->application_settings_)
+    if (this->setup_completed_)
     {
         return;
     }
 
-    auto app_settings = std::move(*this->application_settings_);
-    this->application_settings_ = {};
+    this->setup_completed_ = true;
 
-    this->setup_process(app_settings);
+    this->setup_process();
 }
 
-void windows_emulator::setup_process(const application_settings& app_settings)
+void windows_emulator::setup_process()
 {
     const auto& emu = this->emu();
     auto& context = this->process;
 
     this->version.load_from_registry(this->registry, this->log);
 
-    this->mod_manager.map_main_modules(app_settings.application, this->version, context, this->log);
+    this->mod_manager.map_main_modules(this->application_settings_.application, this->version, context, this->log);
 
     const auto* executable = this->mod_manager.executable;
     const auto* ntdll = this->mod_manager.ntdll;
@@ -362,8 +361,8 @@ void windows_emulator::setup_process(const application_settings& app_settings)
 
     const auto apiset_data = apiset::obtain(this->emulation_root);
 
-    this->process.setup(this->emu(), this->memory, this->registry, this->file_sys, this->version, app_settings, *executable, *ntdll,
-                        apiset_data, this->mod_manager.wow64_modules_.ntdll32);
+    this->process.setup(this->emu(), this->memory, this->registry, this->file_sys, this->version, this->application_settings_, *executable,
+                        *ntdll, apiset_data, this->mod_manager.wow64_modules_.ntdll32);
 
     const auto ntdll_data = emu.read_memory(ntdll->image_base, static_cast<size_t>(ntdll->size_of_image));
     const auto win32u_data = emu.read_memory(win32u->image_base, static_cast<size_t>(win32u->size_of_image));
@@ -671,7 +670,8 @@ void windows_emulator::register_factories(utils::buffer_deserializer& buffer)
 
 void windows_emulator::serialize(utils::buffer_serializer& buffer) const
 {
-    buffer.write_optional(this->application_settings_);
+    buffer.write(this->application_settings_);
+    buffer.write(this->setup_completed_);
     buffer.write(this->executed_instructions_);
     buffer.write_atomic(this->switch_thread_);
     buffer.write(this->use_relative_time_);
@@ -690,7 +690,8 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
 {
     this->register_factories(buffer);
 
-    buffer.read_optional(this->application_settings_);
+    buffer.read(this->application_settings_);
+    buffer.read(this->setup_completed_);
     buffer.read(this->executed_instructions_);
     buffer.read_atomic(this->switch_thread_);
 
@@ -718,7 +719,7 @@ void windows_emulator::save_snapshot()
 {
     utils::buffer_serializer buffer{};
 
-    buffer.write_optional(this->application_settings_);
+    buffer.write(this->application_settings_);
     buffer.write(this->executed_instructions_);
     buffer.write_atomic(this->switch_thread_);
 
@@ -748,7 +749,7 @@ void windows_emulator::restore_snapshot()
 
     this->register_factories(buffer);
 
-    buffer.read_optional(this->application_settings_);
+    buffer.read(this->application_settings_);
     buffer.read(this->executed_instructions_);
     buffer.read_atomic(this->switch_thread_);
 
