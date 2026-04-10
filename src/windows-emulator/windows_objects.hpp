@@ -636,14 +636,12 @@ struct worker_factory : ref_counted_object
 
 struct private_namespace : ref_counted_object
 {
-    std::u16string name{};
     std::u16string boundary_name{};
     ACCESS_MASK access_mask{};
     bool deleted{false};
 
     void serialize_object(utils::buffer_serializer& buffer) const override
     {
-        buffer.write(this->name);
         buffer.write(this->boundary_name);
         buffer.write(this->access_mask);
         buffer.write(this->deleted);
@@ -651,7 +649,6 @@ struct private_namespace : ref_counted_object
 
     void deserialize_object(utils::buffer_deserializer& buffer) override
     {
-        buffer.read(this->name);
         buffer.read(this->boundary_name);
         buffer.read(this->access_mask);
         buffer.read(this->deleted);
