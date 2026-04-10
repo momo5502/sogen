@@ -495,7 +495,7 @@ namespace syscalls
 
         if (info_class == FileAttributeTagInformation)
         {
-            if (!f->handle)
+            if (!f->handle && !f->is_directory())
             {
                 return ret(STATUS_NOT_SUPPORTED);
             }
