@@ -56,7 +56,9 @@ namespace syscalls
         if (key_information_class == KeyNameInformation)
         {
             auto key_name = (key->hive.get() / key->path.get()).u16string();
-            while (key_name.ends_with(u'/') || key_name.ends_with(u'\\'))
+            std::ranges::replace(key_name, u'/', '\\');
+
+            while (key_name.ends_with(u'\\'))
             {
                 key_name.pop_back();
             }
@@ -91,7 +93,9 @@ namespace syscalls
         if (key_information_class == KeyCachedInformation)
         {
             auto key_name = (key->hive.get() / key->path.get()).u16string();
-            while (key_name.ends_with(u'/') || key_name.ends_with(u'\\'))
+            std::ranges::replace(key_name, u'/', '\\');
+
+            while (key_name.ends_with(u'\\'))
             {
                 key_name.pop_back();
             }
