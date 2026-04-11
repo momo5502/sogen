@@ -1013,6 +1013,43 @@ namespace syscalls
         emu.write_memory(buffer, data.data(), data.size());
     }
 
+    void write_lock_io_status(const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const NTSTATUS status,
+                              const uint64_t information = 0)
+    {
+        if (!io_status_block)
+        {
+            return;
+        }
+
+        IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+        block.Status = status;
+        block.Information = information;
+        io_status_block.write(block);
+    }
+
+    std::optional<uint64_t> get_lock_range_end(const LARGE_INTEGER& byte_offset, const LARGE_INTEGER& length)
+    {
+        if (byte_offset.QuadPart < 0 || length.QuadPart <= 0)
+        {
+            return std::nullopt;
+        }
+
+        const auto offset = static_cast<uint64_t>(byte_offset.QuadPart);
+        const auto range_length = static_cast<uint64_t>(length.QuadPart);
+        if (offset > std::numeric_limits<uint64_t>::max() - range_length)
+        {
+            return std::nullopt;
+        }
+
+        return offset + range_length;
+    }
+
+    bool does_lock_range_overlap(const file_lock_range& existing, const uint64_t offset, const uint64_t end)
+    {
+        const auto existing_end = existing.offset + existing.length;
+        return existing.offset < end && offset < existing_end;
+    }
+
     NTSTATUS handle_NtReadFile(const syscall_context& c, const handle file_handle, const uint64_t /*event*/, const uint64_t /*apc_routine*/,
                                const uint64_t /*apc_context*/,
                                const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const uint64_t buffer,
@@ -1139,6 +1176,127 @@ namespace syscalls
             io_status_block.write(block);
         }
 
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS handle_NtLockFile(const syscall_context& c, const handle file_handle, const handle /*event_handle*/,
+                               const uint64_t /*apc_routine*/, const uint64_t /*apc_context*/,
+                               const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                               const emulator_object<LARGE_INTEGER> byte_offset, const emulator_object<LARGE_INTEGER> length,
+                               const ULONG key, const BOOLEAN fail_immediately, const BOOLEAN exclusive_lock)
+    {
+        if (!io_status_block || !byte_offset || !length)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const auto* f = c.proc.files.get(file_handle);
+        if (!f || !f->is_file())
+        {
+            write_lock_io_status(io_status_block, STATUS_INVALID_HANDLE);
+            return STATUS_INVALID_HANDLE;
+        }
+
+        const auto lock_offset = byte_offset.read();
+        const auto lock_length = length.read();
+        const auto lock_end = get_lock_range_end(lock_offset, lock_length);
+        if (!lock_end)
+        {
+            write_lock_io_status(io_status_block, STATUS_INVALID_LOCK_RANGE);
+            return STATUS_INVALID_LOCK_RANGE;
+        }
+
+        const auto offset = static_cast<uint64_t>(lock_offset.QuadPart);
+        const auto range_length = static_cast<uint64_t>(lock_length.QuadPart);
+        const auto is_exclusive = exclusive_lock != FALSE;
+        const auto lock_key = f->host_path.u16string();
+
+        if (const auto lock_it = c.proc.file_locks.find(lock_key); lock_it != c.proc.file_locks.end())
+        {
+            for (const auto& existing : lock_it->second.locks)
+            {
+                if (existing.owner == file_handle || !does_lock_range_overlap(existing, offset, *lock_end))
+                {
+                    continue;
+                }
+
+                if (!existing.exclusive && !is_exclusive)
+                {
+                    continue;
+                }
+
+                // Blocking lock completion is not modeled yet; surface the conflict immediately.
+                (void)fail_immediately;
+                write_lock_io_status(io_status_block, STATUS_LOCK_NOT_GRANTED);
+                return STATUS_LOCK_NOT_GRANTED;
+            }
+        }
+
+        c.proc.file_locks[lock_key].locks.push_back(file_lock_range{
+            .offset = offset,
+            .length = range_length,
+            .key = key,
+            .exclusive = is_exclusive,
+            .owner = file_handle,
+        });
+
+        write_lock_io_status(io_status_block, STATUS_SUCCESS);
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS handle_NtUnlockFile(const syscall_context& c, const handle file_handle,
+                                 const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                                 const emulator_object<LARGE_INTEGER> byte_offset, const emulator_object<LARGE_INTEGER> length,
+                                 const ULONG key)
+    {
+        if (!io_status_block || !byte_offset || !length)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const auto* f = c.proc.files.get(file_handle);
+        if (!f || !f->is_file())
+        {
+            write_lock_io_status(io_status_block, STATUS_INVALID_HANDLE);
+            return STATUS_INVALID_HANDLE;
+        }
+
+        const auto lock_offset = byte_offset.read();
+        const auto lock_length = length.read();
+        if (!get_lock_range_end(lock_offset, lock_length))
+        {
+            write_lock_io_status(io_status_block, STATUS_INVALID_LOCK_RANGE);
+            return STATUS_INVALID_LOCK_RANGE;
+        }
+
+        const auto offset = static_cast<uint64_t>(lock_offset.QuadPart);
+        const auto range_length = static_cast<uint64_t>(lock_length.QuadPart);
+        const auto lock_key = f->host_path.u16string();
+        const auto lock_it = c.proc.file_locks.find(lock_key);
+        if (lock_it == c.proc.file_locks.end())
+        {
+            write_lock_io_status(io_status_block, STATUS_RANGE_NOT_LOCKED);
+            return STATUS_RANGE_NOT_LOCKED;
+        }
+
+        auto& locks = lock_it->second.locks;
+        const auto entry = std::ranges::find_if(locks, [&](const file_lock_range& existing) {
+            return existing.owner == file_handle && existing.offset == offset && existing.length == range_length && existing.key == key;
+        });
+
+        if (entry == locks.end())
+        {
+            write_lock_io_status(io_status_block, STATUS_RANGE_NOT_LOCKED);
+            return STATUS_RANGE_NOT_LOCKED;
+        }
+
+        locks.erase(entry);
+        if (locks.empty())
+        {
+            c.proc.file_locks.erase(lock_it);
+        }
+
+        write_lock_io_status(io_status_block, STATUS_SUCCESS);
         return STATUS_SUCCESS;
     }
 

@@ -39,6 +39,27 @@ namespace syscalls
             }
         }
 
+        if (value.type == handle_types::file)
+        {
+            auto* file = c.proc.files.get(h);
+            if (file && file->ref_count == 1)
+            {
+                for (auto it = c.proc.file_locks.begin(); it != c.proc.file_locks.end();)
+                {
+                    auto& locks = it->second.locks;
+                    std::erase_if(locks, [&](const file_lock_range& lock) { return lock.owner == h; });
+
+                    if (locks.empty())
+                    {
+                        it = c.proc.file_locks.erase(it);
+                        continue;
+                    }
+
+                    ++it;
+                }
+            }
+        }
+
         auto* handle_store = c.proc.get_handle_store(h);
         if (handle_store && handle_store->erase(h))
         {
