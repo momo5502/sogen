@@ -7,22 +7,6 @@ namespace syscalls
 {
     namespace
     {
-        constexpr std::u16string get_description(const std::u16string_view name, const std::u16string_view boundary_name)
-        {
-            std::u16string description{};
-
-            if (!name.empty())
-            {
-                description.append(name);
-                description.append(u", ");
-            }
-
-            description.append(u"boundary name ");
-            description.append(boundary_name);
-
-            return description;
-        }
-
         bool check_sid(const SID* sid)
         {
             if (sid->Revision != SID_REVISION || sid->SubAuthorityCount > SID_MAX_SUB_AUTHORITIES)
@@ -43,20 +27,12 @@ namespace syscalls
                 return STATUS_INVALID_PARAMETER;
             }
 
-            std::u16string name{};
-
             if (object_attributes.value())
             {
                 const auto attributes = object_attributes.read();
-                if (attributes.RootDirectory)
+                if (attributes.RootDirectory || attributes.ObjectName)
                 {
-                    c.win_emu.log.error("Opening or creating relative private namespace is not supported\n");
-                    return STATUS_NOT_SUPPORTED;
-                }
-
-                if (attributes.ObjectName)
-                {
-                    name = read_unicode_string(c.emu, attributes.ObjectName);
+                    return STATUS_OBJECT_NAME_INVALID;
                 }
             }
 
@@ -141,7 +117,7 @@ namespace syscalls
 
             for (auto& entry : c.proc.private_namespaces)
             {
-                if (entry.second.boundary_name == boundary_name && entry.second.name == name)
+                if (entry.second.boundary_name == boundary_name)
                 {
                     if (entry.second.deleted)
                     {
@@ -155,7 +131,7 @@ namespace syscalls
 
                     ++entry.second.ref_count;
 
-                    c.win_emu.callbacks.on_generic_access("Opening private namespace", get_description(name, boundary_name));
+                    c.win_emu.callbacks.on_generic_access("Opening private namespace", boundary_name);
                     namespace_handle.write(c.proc.private_namespaces.make_handle(entry.first));
                     return STATUS_SUCCESS;
                 }
@@ -166,10 +142,9 @@ namespace syscalls
                 return STATUS_OBJECT_PATH_NOT_FOUND;
             }
 
-            c.win_emu.callbacks.on_generic_access("Creating private namespace", get_description(name, boundary_name));
+            c.win_emu.callbacks.on_generic_access("Creating private namespace", boundary_name);
 
             private_namespace ns{};
-            ns.name = std::move(name);
             ns.boundary_name = std::move(boundary_name);
             ns.access_mask = desired_access;
 
