@@ -720,6 +720,7 @@ void windows_emulator::save_snapshot()
     utils::buffer_serializer buffer{};
 
     buffer.write(this->application_settings_);
+    buffer.write(this->setup_completed_);
     buffer.write(this->executed_instructions_);
     buffer.write_atomic(this->switch_thread_);
 
@@ -750,6 +751,7 @@ void windows_emulator::restore_snapshot()
     this->register_factories(buffer);
 
     buffer.read(this->application_settings_);
+    buffer.read(this->setup_completed_);
     buffer.read(this->executed_instructions_);
     buffer.read_atomic(this->switch_thread_);
 
