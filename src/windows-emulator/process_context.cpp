@@ -599,6 +599,7 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
     buffer.write(this->default_monitor_handle);
     buffer.write(this->events);
     buffer.write(this->files);
+    buffer.write_map(this->file_locks);
     buffer.write(this->sections);
     buffer.write(this->devices);
     buffer.write(this->semaphores);
@@ -664,6 +665,7 @@ void process_context::deserialize(utils::buffer_deserializer& buffer)
     buffer.read(this->default_monitor_handle);
     buffer.read(this->events);
     buffer.read(this->files);
+    buffer.read_map(this->file_locks);
     buffer.read(this->sections);
     buffer.read(this->devices);
     buffer.read(this->semaphores);

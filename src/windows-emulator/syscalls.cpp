@@ -66,6 +66,13 @@ namespace syscalls
                                 uint64_t /*apc_context*/, emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                 uint64_t buffer, ULONG length, emulator_object<LARGE_INTEGER> /*byte_offset*/,
                                 emulator_object<ULONG> /*key*/);
+    NTSTATUS handle_NtLockFile(const syscall_context& c, handle file_handle, handle event_handle, uint64_t apc_routine,
+                               uint64_t apc_context, emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                               emulator_object<LARGE_INTEGER> byte_offset, emulator_object<LARGE_INTEGER> length, ULONG key,
+                               BOOLEAN fail_immediately, BOOLEAN exclusive_lock);
+    NTSTATUS handle_NtUnlockFile(const syscall_context& c, handle file_handle,
+                                 emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                                 emulator_object<LARGE_INTEGER> byte_offset, emulator_object<LARGE_INTEGER> length, ULONG key);
     NTSTATUS handle_NtCreateFile(const syscall_context& c, emulator_object<handle> file_handle, ACCESS_MASK desired_access,
                                  emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                  emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> /*io_status_block*/,
@@ -902,6 +909,8 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtTerminateProcess);
     add_handler(NtFlushProcessWriteBuffers);
     add_handler(NtWriteFile);
+    add_handler(NtLockFile);
+    add_handler(NtUnlockFile);
     add_handler(NtRaiseHardError);
     add_handler(NtCreateSemaphore);
     add_handler(NtOpenSemaphore);

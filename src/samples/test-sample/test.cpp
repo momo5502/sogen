@@ -249,6 +249,54 @@ namespace
         return text == buffer;
     }
 
+    bool test_file_locking()
+    {
+        const auto filename = std::filesystem::absolute("a.txt");
+        constexpr DWORD pending_byte = 0x40000000UL;
+
+        const auto cleanup_file = utils::finally([&] { DeleteFileW(filename.c_str()); });
+
+        HANDLE first = CreateFileW(filename.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                   nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (first == INVALID_HANDLE_VALUE)
+        {
+            puts("Failed to create first lock handle");
+            return false;
+        }
+
+        const auto cleanup_first = utils::finally([&] { CloseHandle(first); });
+
+        OVERLAPPED first_lock{};
+        first_lock.Offset = pending_byte;
+        if (!LockFileEx(first, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &first_lock))
+        {
+            puts("Failed to acquire first file lock");
+            return false;
+        }
+
+        if (!UnlockFileEx(first, 0, 1, 0, &first_lock))
+        {
+            puts("Failed to unlock first file lock");
+            return false;
+        }
+
+        OVERLAPPED second_lock{};
+        second_lock.Offset = pending_byte + 1;
+        if (!LockFileEx(first, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &second_lock))
+        {
+            puts("Failed to reacquire file lock");
+            return false;
+        }
+
+        if (!UnlockFileEx(first, 0, 1, 0, &second_lock))
+        {
+            puts("Failed to unlock reacquired file lock");
+            return false;
+        }
+
+        return true;
+    }
+
     bool test_working_directory()
     {
         std::error_code ec{};
@@ -1277,6 +1325,7 @@ int main(const int argc, const char* argv[])
     bool valid = true;
 
     RUN_TEST(test_io, "I/O")
+    RUN_TEST(test_file_locking, "File Locking")
     RUN_TEST(test_dir_io, "Dir I/O")
     RUN_TEST(test_apis, "APIs")
 #ifdef _WIN64

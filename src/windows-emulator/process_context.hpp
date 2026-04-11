@@ -36,6 +36,48 @@ struct application_settings;
 class windows_version_manager;
 
 using knowndlls_map = std::map<std::u16string, section>;
+struct file_lock_range
+{
+    uint64_t offset{};
+    uint64_t length{};
+    ULONG key{};
+    bool exclusive{};
+    handle owner{};
+
+    void serialize(utils::buffer_serializer& buffer) const
+    {
+        buffer.write(this->offset);
+        buffer.write(this->length);
+        buffer.write(this->key);
+        buffer.write(this->exclusive);
+        buffer.write(this->owner);
+    }
+
+    void deserialize(utils::buffer_deserializer& buffer)
+    {
+        buffer.read(this->offset);
+        buffer.read(this->length);
+        buffer.read(this->key);
+        buffer.read(this->exclusive);
+        buffer.read(this->owner);
+    }
+};
+
+struct file_lock_ranges
+{
+    std::vector<file_lock_range> locks{};
+
+    void serialize(utils::buffer_serializer& buffer) const
+    {
+        buffer.write_vector(this->locks);
+    }
+
+    void deserialize(utils::buffer_deserializer& buffer)
+    {
+        buffer.read_vector(this->locks);
+    }
+};
+
 struct process_context
 {
     struct callbacks
@@ -159,6 +201,7 @@ struct process_context
     handle default_monitor_handle{};
     handle_store<handle_types::event, event> events{};
     handle_store<handle_types::file, file> files{};
+    utils::insensitive_u16string_map<file_lock_ranges> file_locks{};
     handle_store<handle_types::section, section> sections{};
     handle_store<handle_types::device, io_device_container> devices{};
     handle_store<handle_types::semaphore, semaphore> semaphores{};
