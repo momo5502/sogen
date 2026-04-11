@@ -295,7 +295,7 @@ namespace syscalls
             supported_arch[1].Machine = IMAGE_FILE_MACHINE_I386;
             supported_arch[1].UserMode = 1;
 
-            c.emu.write_memory(system_information, supported_arch.data(), supported_arch.size());
+            c.emu.write_memory(system_information, supported_arch);
             return STATUS_SUCCESS;
         }
 
