@@ -108,9 +108,39 @@ namespace syscalls
                 return STATUS_BUFFER_OVERFLOW;
             }
 
+            if (!(f->access_mask & DELETE))
+            {
+                return STATUS_ACCESS_DENIED;
+            }
+
             const auto info = c.emu.read_memory<FILE_DISPOSITION_INFORMATION>(file_information);
 
             f->handle.defer_delete(info.DeleteFile ? c.win_emu.file_sys.translate(f->name) : std::filesystem::path{});
+
+            return STATUS_SUCCESS;
+        }
+
+        if (info_class == FileDispositionInformationEx)
+        {
+            if (length < sizeof(FILE_DISPOSITION_INFORMATION_EX))
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            if (!(f->access_mask & DELETE))
+            {
+                return STATUS_ACCESS_DENIED;
+            }
+
+            const auto info = c.emu.read_memory<FILE_DISPOSITION_INFORMATION_EX>(file_information);
+
+            if (info.Flags & ~FILE_DISPOSITION_DELETE)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            f->handle.defer_delete((info.Flags & FILE_DISPOSITION_DELETE) ? c.win_emu.file_sys.translate(f->name)
+                                                                          : std::filesystem::path{});
 
             return STATUS_SUCCESS;
         }
@@ -465,7 +495,7 @@ namespace syscalls
 
         if (info_class == FileAttributeTagInformation)
         {
-            if (!f->handle)
+            if (!f->handle && !f->is_directory())
             {
                 return ret(STATUS_NOT_SUPPORTED);
             }
@@ -1564,6 +1594,22 @@ namespace syscalls
         }
 
         std::u16string mode = map_mode(desired_access, create_disposition);
+
+        if (mode.empty() && create_disposition == FILE_CREATE)
+        {
+            std::ofstream touch(host_path, std::ios::binary | std::ios::app);
+            if (!touch)
+            {
+                return STATUS_ACCESS_DENIED;
+            }
+
+            mode = u"rb";
+        }
+
+        if (mode.empty() && (desired_access & DELETE))
+        {
+            mode = u"rb";
+        }
 
         if (mode.empty() || path.is_relative())
         {
