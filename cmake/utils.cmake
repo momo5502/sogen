@@ -378,17 +378,52 @@ endmacro()
 ##########################################
 
 function(momo_target_enable_clang_tidy target)
-  if(MOMO_ENABLE_CLANG_TIDY)
-    set(CLANG_TIDY_COMMAND_C "clang-tidy;--use-color;--config-file=${CMAKE_CURRENT_SOURCE_DIR}/.clang-tidy")
-    set(CLANG_TIDY_COMMAND_CXX "${CLANG_TIDY_COMMAND_C}")
+  if(NOT MOMO_ENABLE_CLANG_TIDY)
+    return()
+  endif()
 
-    if(MSVC)
-      set(CLANG_TIDY_COMMAND_CXX "${CLANG_TIDY_COMMAND_CXX};--extra-arg=/EHa")
+  if(NOT CLANG_TIDY_EXECUTABLE)
+    set(_clang_tidy_hints)
+
+    if(WIN32)
+      list(APPEND _clang_tidy_hints
+        "$ENV{ProgramFiles}/LLVM/bin"
+        "C:/Program Files/LLVM/bin"
+      )
     endif()
 
-    set_target_properties(${target} PROPERTIES C_CLANG_TIDY "${CLANG_TIDY_COMMAND_C}")
-    set_target_properties(${target} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND_CXX}")
+    find_program(CLANG_TIDY_EXECUTABLE
+    NAMES clang-tidy clang-tidy.exe
+    HINTS
+      "$ENV{ProgramFiles}/LLVM/bin"
+      "C:/Program Files/LLVM/bin"
+    )
+    set(CLANG_TIDY_EXECUTABLE "${CLANG_TIDY_EXECUTABLE}" CACHE FILEPATH "Path to clang-tidy")
   endif()
+
+  if(NOT CLANG_TIDY_EXECUTABLE)
+    message(WARNING
+      "MOMO_ENABLE_CLANG_TIDY is ON, but clang-tidy was not found. "
+      "Add it to PATH or set CLANG_TIDY_EXECUTABLE manually."
+    )
+    return()
+  endif()
+
+  set(CLANG_TIDY_COMMAND_C
+    "${CLANG_TIDY_EXECUTABLE};--use-color;--config-file=${CMAKE_CURRENT_SOURCE_DIR}/.clang-tidy"
+  )
+  set(CLANG_TIDY_COMMAND_CXX "${CLANG_TIDY_COMMAND_C}")
+
+  if(MSVC)
+    set(CLANG_TIDY_COMMAND_CXX
+      "${CLANG_TIDY_COMMAND_CXX};--extra-arg=/EHa"
+    )
+  endif()
+
+  set_target_properties(${target} PROPERTIES
+    C_CLANG_TIDY   "${CLANG_TIDY_COMMAND_C}"
+    CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND_CXX}"
+  )
 endfunction()
 
 ##########################################
