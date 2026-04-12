@@ -28,17 +28,20 @@ struct registry_key : ref_counted_object
 {
     utils::path_key hive{};
     utils::path_key path{};
+    uint16_t tag{};
 
     void serialize_object(utils::buffer_serializer& buffer) const override
     {
         buffer.write(this->hive);
         buffer.write(this->path);
+        buffer.write(this->tag);
     }
 
     void deserialize_object(utils::buffer_deserializer& buffer) override
     {
         buffer.read(this->hive);
         buffer.read(this->path);
+        buffer.read(this->tag);
     }
 
     std::u16string to_string() const
