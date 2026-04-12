@@ -65,7 +65,7 @@ jobs:
           echo "C:/Program Files/LLVM/bin" >> "$GITHUB_PATH"
 
       - name: CMake Build
-        run: cmake --preset=release -DMOMO_ENABLE_CLANG_TIDY=On && cmake --build --preset=release
+        run: cmake --workflow --preset=tidy
 
   verify-formatting:
     name: Verify Formatting

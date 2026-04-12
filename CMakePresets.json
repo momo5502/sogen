@@ -36,6 +36,15 @@
                 "CMAKE_BUILD_TYPE": "Debug"
             }
         },
+		{
+            "name": "tidy",
+            "inherits": [
+                "release"
+            ],
+            "cacheVariables": {
+                "MOMO_ENABLE_CLANG_TIDY": "ON"
+            }
+        },
         {
             "name": "vs2022",
             "generator": "Visual Studio 17 2022",
@@ -55,6 +64,10 @@
         {
             "name": "debug",
             "configurePreset": "debug"
+        },
+        {
+            "name": "tidy",
+            "configurePreset": "tidy"
         }
     ],
     "workflowPresets": [
@@ -81,6 +94,19 @@
                 {
                     "type": "build",
                     "name": "debug"
+                }
+            ]
+        },
+		{
+            "name": "tidy",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "tidy"
+                },
+                {
+                    "type": "build",
+                    "name": "tidy"
                 }
             ]
         }
