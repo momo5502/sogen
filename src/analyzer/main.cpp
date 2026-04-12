@@ -558,7 +558,7 @@ namespace
             context.reporters.push_back(reporter.get());
         }
 
-        win_emu->log.disable_output(concise_logging || options.silent);
+        win_emu->log.disable_output(concise_logging);
 
         std::vector<std::string> application_args{};
         if (!args.empty())
