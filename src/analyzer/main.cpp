@@ -174,7 +174,7 @@ namespace
                 if (state->concise_)
                 {
                     const auto count = ++state->env_module_cache_[mod ? mod->name : "<N/A>"];
-                    if (count > 100 && count % 1000 != 0)
+                    if (count > 30 && count % 1000 != 0)
                     {
                         return;
                     }
@@ -648,7 +648,7 @@ namespace
                                                 if (concise_logging)
                                                 {
                                                     const auto count = ++(*module_cache)[mod->name];
-                                                    if (count > 100 && count % 100000 != 0)
+                                                    if (count > 30 && count % 100000 != 0)
                                                     {
                                                         return;
                                                     }
@@ -705,7 +705,7 @@ namespace
                     if (concise_logging)
                     {
                         const auto count = ++*write_count;
-                        if (count > 100 && count % 100000 != 0)
+                        if (count > 30 && count % 100000 != 0)
                         {
                             return;
                         }
@@ -754,6 +754,7 @@ namespace
         printf("  -b, --buffer              Buffer stdout\n");
         printf("  -f, --foreign             Log read access to foreign modules\n");
         printf("  -c, --concise             Concise logging\n");
+        printf("  -vc, --very-concise       Very concise logging\n");
         printf("  -x, --exec                Log r/w access to executable memory\n");
         printf("  -m, --module <module>     Specify module to track\n");
         printf("  -e, --emulation <path>    Set emulation root path\n");
@@ -855,6 +856,12 @@ namespace
             else if (arg == "-c" || arg == "--concise")
             {
                 options.concise_logging = true;
+            }
+            else if (arg == "-vc" || arg == "--very-concise")
+            {
+                options.concise_logging = true;
+                options.skip_syscalls = true;
+                options.skip_generic_activity = true;
             }
             else if (arg == "-t" || arg == "--tenet-trace")
             {

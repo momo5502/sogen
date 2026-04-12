@@ -1,7 +1,7 @@
 import { parse } from "shell-quote";
 
 export interface Settings {
-  logging: "verbose" | "silent" | "concise" | string;
+  logging: "verbose" | "silent" | "concise" | "very-concise" | string;
   bufferStdout: boolean;
   persist: boolean;
   execAccess: boolean;
@@ -72,6 +72,9 @@ export function translateSettings(settings: Settings): TranslatedSettings {
       break;
     case "concise":
       switches.push("-c");
+      break;
+    case "very-concise":
+      switches.push("-vc");
       break;
 
     default:
