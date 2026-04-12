@@ -105,6 +105,14 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
               />
             </div>
             <div className="flex items-center gap-4">
+              <RadioGroupItem value="very-concise" id="settings-very-concise" />
+              <SettingsLabel
+                htmlFor="settings-very-concise"
+                text={"Very Concise Logging"}
+                tooltip={"Suppress all logging except suspicious activity"}
+              />
+            </div>
+            <div className="flex items-center gap-4">
               <RadioGroupItem value="silent" id="settings-silent" />
               <SettingsLabel
                 htmlFor="settings-silent"

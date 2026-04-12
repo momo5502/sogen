@@ -172,35 +172,47 @@ namespace
 
     void handle_generic_activity(const analysis_context& c, const std::string_view details)
     {
-        c.emit_observation<generic_activity_event>([&](auto& event) { event.details = std::string(details); });
+        if (!c.settings->skip_generic_activity)
+        {
+            c.emit_observation<generic_activity_event>([&](auto& event) { event.details = std::string(details); });
+        }
     }
 
     void handle_generic_access(const analysis_context& c, const std::string_view type, const std::u16string_view name)
     {
-        c.emit_observation<generic_access_event>([&](auto& event) {
-            event.type = std::string(type);
-            event.name = u16_to_u8(name);
-        });
+        if (!c.settings->skip_generic_activity)
+        {
+            c.emit_observation<generic_access_event>([&](auto& event) {
+                event.type = std::string(type);
+                event.name = u16_to_u8(name);
+            });
+        }
     }
 
     void handle_memory_allocate(const analysis_context& c, const uint64_t address, const uint64_t length,
                                 const memory_permission permission, const bool commit)
     {
-        c.emit_observation<memory_allocate_event>([&](auto& event) {
-            event.address = address;
-            event.length = length;
-            event.permissions = get_permission_string(permission);
-            event.commit = commit;
-        });
+        if (!c.settings->skip_generic_activity)
+        {
+            c.emit_observation<memory_allocate_event>([&](auto& event) {
+                event.address = address;
+                event.length = length;
+                event.permissions = get_permission_string(permission);
+                event.commit = commit;
+            });
+        }
     }
 
     void handle_memory_protect(const analysis_context& c, const uint64_t address, const uint64_t length, const memory_permission permission)
     {
-        c.emit_observation<memory_protect_event>([&](auto& event) {
-            event.address = address;
-            event.length = length;
-            event.permissions = get_permission_string(permission);
-        });
+        if (!c.settings->skip_generic_activity)
+        {
+            c.emit_observation<memory_protect_event>([&](auto& event) {
+                event.address = address;
+                event.length = length;
+                event.permissions = get_permission_string(permission);
+            });
+        }
     }
 
     void handle_memory_violate(const analysis_context& c, const uint64_t address, const uint64_t size, const memory_operation operation,
@@ -232,14 +244,22 @@ namespace
 
     void handle_ioctrl(const analysis_context& c, const io_device&, const std::u16string_view device_name, const ULONG code)
     {
-        c.emit_observation<io_control_event>([&](auto& event) {
-            event.device_name = u16_to_u8(device_name);
-            event.code = static_cast<uint32_t>(code);
-        });
+        if (!c.settings->skip_generic_activity)
+        {
+            c.emit_observation<io_control_event>([&](auto& event) {
+                event.device_name = u16_to_u8(device_name);
+                event.code = static_cast<uint32_t>(code);
+            });
+        }
     }
 
     void handle_thread_create(const analysis_context& c, handle, emulator_thread& t)
     {
+        if (c.settings->skip_generic_activity)
+        {
+            return;
+        }
+
         std::vector<std::string> flags{};
 
         if (t.create_flags & THREAD_CREATE_FLAGS_CREATE_SUSPENDED)
@@ -277,7 +297,10 @@ namespace
 
     void handle_thread_terminated(const analysis_context& c, handle, emulator_thread& t)
     {
-        c.emit_observation<thread_terminated_event>([&](auto& event) { event.terminated_thread_id = t.id; });
+        if (!c.settings->skip_generic_activity)
+        {
+            c.emit_observation<thread_terminated_event>([&](auto& event) { event.terminated_thread_id = t.id; });
+        }
     }
 
     void handle_thread_set_name(const analysis_context& c, const emulator_thread& t)
@@ -290,10 +313,13 @@ namespace
 
     void handle_thread_switch(const analysis_context& c, const emulator_thread& current_thread, const emulator_thread& new_thread)
     {
-        c.emit_observation<thread_switch_event>([&](auto& event) {
-            event.previous_thread_id = current_thread.id;
-            event.next_thread_id = new_thread.id;
-        });
+        if (!c.settings->skip_generic_activity)
+        {
+            c.emit_observation<thread_switch_event>([&](auto& event) {
+                event.previous_thread_id = current_thread.id;
+                event.next_thread_id = new_thread.id;
+            });
+        }
     }
 
     void handle_module_load(const analysis_context& c, const mapped_module& mod)

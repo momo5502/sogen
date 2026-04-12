@@ -26,6 +26,23 @@
 
 namespace
 {
+    std::filesystem::path get_current_binary_dir()
+    {
+#ifdef _WIN32
+        std::array<wchar_t, MAX_PATH> buffer{};
+
+        const auto length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+        if (length == 0 || length == buffer.size())
+        {
+            throw std::runtime_error("Resolving module file name failed");
+        }
+
+        return std::filesystem::path(buffer.data()).parent_path();
+#else
+        return "./";
+#endif
+    }
+
     struct analysis_options : analysis_settings
     {
         mutable bool use_gdb{false};
@@ -38,8 +55,8 @@ namespace
         std::filesystem::path minidump_path{};
         std::filesystem::path report_path{};
         std::string report_format{"jsonl"};
-        std::string registry_path{"./registry"};
-        std::string emulation_root{};
+        std::filesystem::path registry_path{get_current_binary_dir() / "registry"};
+        std::filesystem::path emulation_root{};
         std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
         utils::unordered_insensitive_u16string_map<std::u16string> environment{};
     };
@@ -157,7 +174,7 @@ namespace
                 if (state->concise_)
                 {
                     const auto count = ++state->env_module_cache_[mod ? mod->name : "<N/A>"];
-                    if (count > 100 && count % 1000 != 0)
+                    if (count > 30 && count % 1000 != 0)
                     {
                         return;
                     }
@@ -631,7 +648,7 @@ namespace
                                                 if (concise_logging)
                                                 {
                                                     const auto count = ++(*module_cache)[mod->name];
-                                                    if (count > 100 && count % 100000 != 0)
+                                                    if (count > 30 && count % 100000 != 0)
                                                     {
                                                         return;
                                                     }
@@ -688,7 +705,7 @@ namespace
                     if (concise_logging)
                     {
                         const auto count = ++*write_count;
-                        if (count > 100 && count % 100000 != 0)
+                        if (count > 30 && count % 100000 != 0)
                         {
                             return;
                         }
@@ -737,6 +754,7 @@ namespace
         printf("  -b, --buffer              Buffer stdout\n");
         printf("  -f, --foreign             Log read access to foreign modules\n");
         printf("  -c, --concise             Concise logging\n");
+        printf("  -vc, --very-concise       Very concise logging\n");
         printf("  -x, --exec                Log r/w access to executable memory\n");
         printf("  -m, --module <module>     Specify module to track\n");
         printf("  -e, --emulation <path>    Set emulation root path\n");
@@ -838,6 +856,12 @@ namespace
             else if (arg == "-c" || arg == "--concise")
             {
                 options.concise_logging = true;
+            }
+            else if (arg == "-vc" || arg == "--very-concise")
+            {
+                options.concise_logging = true;
+                options.skip_syscalls = true;
+                options.skip_generic_activity = true;
             }
             else if (arg == "-t" || arg == "--tenet-trace")
             {

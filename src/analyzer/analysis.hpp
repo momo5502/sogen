@@ -24,6 +24,7 @@ struct analysis_settings
     bool buffer_stdout{false};
     bool instruction_summary{false};
     bool skip_syscalls{false};
+    bool skip_generic_activity{false};
     bool reproducible{false};
     bool log_first_section_execution{false};
 
