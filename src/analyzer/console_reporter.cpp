@@ -21,16 +21,40 @@ namespace
 
         void report(const analysis_event& event) override
         {
+            if (this->settings_.silent)
+            {
+                report_silent(event);
+            }
+            else
+            {
+                report_regular(event);
+            }
+        }
+
+        static void report_silent(const analysis_event& event)
+        {
+            std::visit(make_overloaded(
+                           [&](const run_finished_event&) {
+                               fflush(stdout); //
+                           },
+                           [&](const stdout_chunk_event& e) {
+                               (void)fwrite(e.data.data(), 1, e.data.size(), stdout); //
+                           },
+                           [&](const auto&) {
+                               // Ignore all other events in silent mode.
+                           }),
+                       event);
+        }
+
+        void report_regular(const analysis_event& event)
+        {
             std::visit(
                 make_overloaded(
                     [&](const run_started_event& e) {
-                        if (!this->settings_.silent)
-                        {
-                            this->log_.force_print(color::gray, "Using emulator backend: %s\n", e.backend_name.c_str());
-                        }
+                        this->log_.force_print(color::gray, "Using emulator backend: %s\n", e.backend_name.c_str());
                     },
                     [&](const run_finished_event& e) {
-                        if (!this->settings_.silent && e.exit_status.has_value())
+                        if (e.exit_status.has_value())
                         {
                             this->log_.print(e.success ? color::green : color::red, "Emulation terminated with status: %X\n",
                                              *e.exit_status);
@@ -47,17 +71,13 @@ namespace
                         }
                     },
                     [&](const buffered_stdout_event& e) {
-                        if (this->settings_.buffer_stdout && !this->settings_.silent && !e.data.empty())
+                        if (this->settings_.buffer_stdout && !e.data.empty())
                         {
                             this->log_.info("%.*s%s", static_cast<int>(e.data.size()), e.data.data(), e.data.ends_with("\n") ? "" : "\n");
                         }
                     },
                     [&](const stdout_chunk_event& e) {
-                        if (this->settings_.silent)
-                        {
-                            (void)fwrite(e.data.data(), 1, e.data.size(), stdout);
-                        }
-                        else if (!this->settings_.buffer_stdout)
+                        if (!this->settings_.buffer_stdout)
                         {
                             this->log_.info("%.*s%s", static_cast<int>(e.data.size()), e.data.data(), e.data.ends_with("\n") ? "" : "\n");
                         }
