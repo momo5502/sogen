@@ -18,6 +18,7 @@ namespace
     constexpr DWORD k_dns_record_flags = 0x2009;
     constexpr DWORD k_dns_record_flags_without_name = 0x0009;
     constexpr DWORD k_default_ttl = 0x91;
+    constexpr DWORD k_proc3_default_ttl = 0x12C;
     constexpr DWORD k_native_record_reserved = 1;
     constexpr DWORD k_native_record_rank = 1;
     constexpr uint64_t k_native_pointer_referent = 0x20000;
@@ -103,6 +104,78 @@ namespace
         (void)start;
         (void)request;
         (void)status;
+    }
+
+    template <typename Traits>
+    void write_proc3_record(utils::aligned_binary_writer<Traits>& writer, const resolved_dns_record& record, const DWORD flags,
+                            const DWORD reserved)
+    {
+        std::array<std::byte, 0x28> buffer{};
+        memcpy(buffer.data() + 0x00, &record.type, sizeof(record.type));
+        memcpy(buffer.data() + 0x02, &record.data_length, sizeof(record.data_length));
+        memcpy(buffer.data() + 0x04, &flags, sizeof(flags));
+        memcpy(buffer.data() + 0x08, &record.ttl, sizeof(record.ttl));
+        memcpy(buffer.data() + 0x0C, &reserved, sizeof(reserved));
+
+        const auto rank = static_cast<uint64_t>(record.type);
+        memcpy(buffer.data() + 0x10, &rank, sizeof(rank));
+        memcpy(buffer.data() + 0x18, record.data.data(), record.data_length);
+        writer.write(buffer);
+    }
+
+    template <typename Traits>
+    void write_proc3_response(utils::aligned_binary_writer<Traits>& writer, const dns_query_request& request,
+                              const std::vector<resolved_dns_record>& direct_records,
+                              const std::vector<resolved_dns_record>& mapped_records, const DWORD status)
+    {
+        writer.write(request.rpc_query_options);
+
+        if (status != ERROR_SUCCESS || (direct_records.empty() && mapped_records.empty()))
+        {
+            writer.template write<typename Traits::PVOID>(0);
+            writer.template write<typename Traits::PVOID>(0);
+            writer.template write<typename Traits::PVOID>(0);
+            return;
+        }
+
+        writer.template write<typename Traits::PVOID>(k_native_pointer_referent);
+        writer.template write<typename Traits::PVOID>(k_native_pointer_referent);
+        writer.template write<typename Traits::PVOID>(k_native_pointer_referent);
+
+        if (!direct_records.empty())
+        {
+            write_proc3_record(writer, direct_records[0], k_dns_record_flags, 1);
+        }
+
+        if (direct_records.size() > 1)
+        {
+            writer.template write<typename Traits::PVOID>(k_native_pointer_referent);
+            writer.template write<typename Traits::PVOID>(0);
+            write_proc3_record(writer, direct_records[1], k_dns_record_flags_without_name, 1);
+        }
+
+        if (!mapped_records.empty())
+        {
+            writer.template write<typename Traits::PVOID>(k_native_pointer_referent);
+            writer.template write<typename Traits::PVOID>(k_native_pointer_referent);
+            write_proc3_record(writer, mapped_records[0], k_dns_record_flags, 0);
+        }
+
+        if (mapped_records.size() > 1)
+        {
+            writer.template write<typename Traits::PVOID>(0);
+            writer.template write<typename Traits::PVOID>(k_native_pointer_referent);
+            write_proc3_record(writer, mapped_records[1], k_dns_record_flags, 0);
+        }
+
+        writer.write_ndr_u16string(direct_records.empty() ? mapped_records.front().name : direct_records.front().name);
+        writer.template write<typename Traits::SIZE_T>(12);
+
+        constexpr size_t k_native_proc3_reply_payload_size = 0x128;
+        if (writer.offset() < k_native_proc3_reply_payload_size)
+        {
+            writer.pad(k_native_proc3_reply_payload_size - writer.offset());
+        }
     }
 
     bool parse_dns_query_request(windows_emulator& win_emu, const lpc_request_context& c, dns_query_request& request)
@@ -201,6 +274,35 @@ namespace
         return records;
     }
 
+    std::vector<resolved_dns_record> build_proc3_mapped_records(const std::u16string& host)
+    {
+        const auto ipv4_records = resolve_host_addresses(host, DNS_TYPE_A);
+        std::vector<resolved_dns_record> mapped_records;
+        mapped_records.reserve(ipv4_records.size());
+
+        for (const auto& ipv4_record : ipv4_records)
+        {
+            resolved_dns_record mapped{};
+            mapped.name = host;
+            mapped.type = DNS_TYPE_AAAA;
+            mapped.data_length = 16;
+            mapped.ttl = k_proc3_default_ttl;
+            mapped.reserved = 0;
+            mapped.data.fill(std::byte{0});
+            mapped.data[10] = std::byte{0xFF};
+            mapped.data[11] = std::byte{0xFF};
+            memcpy(mapped.data.data() + 12, ipv4_record.data.data(), 4);
+            mapped_records.push_back(mapped);
+        }
+
+        std::ranges::sort(mapped_records, [](const resolved_dns_record& a, const resolved_dns_record& b)
+        {
+            return std::lexicographical_compare(b.data.begin(), b.data.end(), a.data.begin(), a.data.end());
+        });
+
+        return mapped_records;
+    }
+
     struct dns_resolver : rpc_port
     {
         NTSTATUS handle_rpc(windows_emulator& win_emu, const uint32_t procedure_id, const lpc_request_context& c) override
@@ -212,8 +314,7 @@ namespace
             case 2:
                 return handle_dns_query(win_emu, c, writer);
             case 3:
-                win_emu.log.print(color::gray, "DNSResolver procedure %u is not implemented\n", procedure_id);
-                return STATUS_NOT_SUPPORTED;
+                return handle_dns_addrinfo_query(win_emu, c, writer);
             default:
                 win_emu.log.print(color::gray, "Unexpected DNSResolver procedure: %u\n", procedure_id);
                 return STATUS_NOT_SUPPORTED;
@@ -253,6 +354,49 @@ namespace
             }
 
             write_dns_query_response(writer, request, records, status);
+            c.recv_buffer_length = static_cast<ULONG>(writer.offset());
+            return STATUS_SUCCESS;
+        }
+
+        template <typename Traits>
+        static NTSTATUS handle_dns_addrinfo_query(windows_emulator& win_emu, const lpc_request_context& c,
+                                                  utils::aligned_binary_writer<Traits>& writer)
+        {
+            dns_query_request request{};
+            if (!parse_dns_query_request(win_emu, c, request))
+            {
+                win_emu.log.warn("[dns] failed to parse proc-3 DNS query request (len=0x%X)\n", c.send_buffer_length);
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            const auto hostname = u16_to_u8(request.hostname);
+            win_emu.callbacks.on_generic_activity("DNS addrinfo query: " + hostname);
+
+            auto direct_records = resolve_host_addresses(request.hostname, DNS_TYPE_AAAA);
+            auto mapped_records = build_proc3_mapped_records(request.hostname);
+
+            std::ranges::sort(direct_records, [](const resolved_dns_record& a, const resolved_dns_record& b)
+            {
+                return std::lexicographical_compare(a.data.begin(), a.data.end(), b.data.begin(), b.data.end());
+            });
+
+            for (auto& record : direct_records)
+            {
+                record.ttl = k_proc3_default_ttl;
+                record.reserved = 1;
+            }
+
+            if (direct_records.size() > 2)
+            {
+                direct_records.resize(2);
+            }
+            if (mapped_records.size() > 2)
+            {
+                mapped_records.resize(2);
+            }
+
+            const DWORD status = direct_records.empty() && mapped_records.empty() ? DNS_ERROR_RCODE_NAME_ERROR : ERROR_SUCCESS;
+            write_proc3_response(writer, request, direct_records, mapped_records, status);
             c.recv_buffer_length = static_cast<ULONG>(writer.offset());
             return STATUS_SUCCESS;
         }
