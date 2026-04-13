@@ -25,6 +25,15 @@ namespace
             return STATUS_SUCCESS;
         }
     };
+
+    struct noop_rpc_port : rpc_port
+    {
+        NTSTATUS handle_rpc(windows_emulator& /*win_emu*/, const uint32_t /*procedure_id*/, const lpc_request_context& c) override
+        {
+            c.recv_buffer_length = 0;
+            return STATUS_SUCCESS;
+        }
+    };
 }
 
 std::unique_ptr<port> create_port(const std::u16string_view port)
@@ -49,6 +58,14 @@ std::unique_ptr<port> create_port(const std::u16string_view port)
         return std::make_unique<noop_port>();
     }
 
+    if (port == u"\\RPC Control\\ntsvcs")
+    {
+        // Service-control RPC is probed during network stack initialization.
+        // A zero-payload RPC success is enough for the current callers to continue
+        // instead of turning the probe into a hard network failure.
+        return std::make_unique<noop_rpc_port>();
+    }
+
     return std::make_unique<dummy_port>();
 }
 
@@ -68,7 +85,9 @@ NTSTATUS port::handle_message(windows_emulator& win_emu, const lpc_message_conte
     context.send_buffer = c.send_message.value() + sizeof(PORT_MESSAGE64);
     context.send_buffer_length = send_header.u1.s1.DataLength;
     context.recv_buffer = c.receive_message.value() + sizeof(PORT_MESSAGE64);
-    context.recv_buffer_length = recv_header.u1.s1.DataLength;
+    context.recv_buffer_length = c.receive_buffer_length >= sizeof(PORT_MESSAGE64)
+                                    ? static_cast<ULONG>(c.receive_buffer_length - sizeof(PORT_MESSAGE64))
+                                    : recv_header.u1.s1.DataLength;
 
     NTSTATUS status = this->handle_request(win_emu, context);
 

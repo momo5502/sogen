@@ -15,206 +15,246 @@
 
 namespace
 {
-    using IP4_ADDRESS = DWORD;
+    constexpr DWORD k_dns_record_flags = 0x2009;
+    constexpr DWORD k_dns_record_flags_without_name = 0x0009;
+    constexpr DWORD k_default_ttl = 0x91;
+    constexpr DWORD k_native_record_reserved = 1;
+    constexpr DWORD k_native_record_rank = 1;
+    constexpr uint64_t k_native_pointer_referent = 0x20000;
+    constexpr size_t k_dns_record_data_size = 16;
 
-    struct DNS_A_DATA
+    struct resolved_dns_record
     {
-        IP4_ADDRESS IpAddress;
+        std::u16string name;
+        WORD type{};
+        WORD data_length{};
+        DWORD flags{k_dns_record_flags};
+        DWORD ttl{k_default_ttl};
+        DWORD reserved{k_native_record_reserved};
+        std::array<std::byte, k_dns_record_data_size> data{};
     };
 
-    struct IP6_ADDRESS
+    struct dns_query_request
     {
-        std::array<uint64_t, 2> IP6Qword;
-    };
-
-    struct DNS_AAAA_DATA
-    {
-        IP6_ADDRESS Ip6Address;
+        std::u16string hostname;
+        WORD type{};
+        DWORD flags{};
+        uint64_t rpc_query_options{};
     };
 
     template <typename Traits>
-    struct DNS_RECORDW
+    void write_marshaled_dns_record(utils::aligned_binary_writer<Traits>& writer, const resolved_dns_record& record,
+                                    const bool include_name)
     {
-        EMULATOR_CAST(Traits::PVOID, DNS_RECORDW*) pNext;
-        EMULATOR_CAST(Traits::PVOID, const char16_t*) pName;
-        WORD wType;
-        WORD wDataLength;
-        DWORD Flags;
-        DWORD dwTtl;
-        DWORD dwReserved;
-        union
-        {
-            DNS_A_DATA A;
-            DNS_AAAA_DATA AAAA;
-        } Data;
+        constexpr size_t first_record_wire_size = 0x30;
+        constexpr size_t chained_record_wire_size = 0x20;
 
-        void write(utils::aligned_binary_writer<Traits>& writer) const
-        {
-            writer.write_ndr_pointer(this->pNext);
-            writer.write_ndr_pointer(this->pName);
-            writer.write(this->wType);
-            writer.write(this->wDataLength);
-            writer.write(this->Flags);
-            writer.write(this->dwTtl);
-            writer.write(this->dwReserved);
+        std::array<std::byte, first_record_wire_size> buffer{};
+        memcpy(buffer.data() + 0x00, &record.type, sizeof(record.type));
+        memcpy(buffer.data() + 0x02, &record.data_length, sizeof(record.data_length));
 
-            writer.write(this->wType); // union identifier
-            writer.write(&this->Data, this->wDataLength, sizeof(typename Traits::PVOID));
+        const auto wire_flags = include_name ? record.flags : k_dns_record_flags_without_name;
+        memcpy(buffer.data() + 0x04, &wire_flags, sizeof(wire_flags));
+        memcpy(buffer.data() + 0x08, &record.ttl, sizeof(record.ttl));
+        memcpy(buffer.data() + 0x0C, &record.reserved, sizeof(record.reserved));
 
-            writer.write_ndr_u16string(reinterpret_cast<const char16_t*>(this->pName));
-        }
-    };
-    static_assert(sizeof(DNS_RECORDW<EmulatorTraits<Emu64>>) == 48);
+        const auto rank = k_native_record_rank;
+        memcpy(buffer.data() + 0x10, &rank, sizeof(rank));
+        memcpy(buffer.data() + 0x18, record.data.data(), record.data_length);
 
-    template <typename Traits>
-    struct DNS_QUERY_RESPONSE
-    {
-        std::optional<DNS_RECORDW<Traits>> dns_record;
-        uint64_t error_code{};
-
-        void write(utils::aligned_binary_writer<Traits>& writer) const
-        {
-            // NOTE: The response is pretty much just an array of DNS_RECORD, marshalled using NDR64.
-            if (!this->dns_record)
-            {
-                writer.write_ndr_pointer(false);
-            }
-            else
-            {
-                writer.write_ndr_pointer(true);
-                writer.write(*this->dns_record);
-            }
-
-            writer.align_to(sizeof(typename Traits::PVOID));
-            writer.pad(24);
-            writer.write(error_code);
-            writer.pad(64);
-        }
-    };
-
-    WORD convert_socket_famity_to_dns_type(const int family)
-    {
-        switch (family)
-        {
-        case AF_INET:
-            return DNS_TYPE_A;
-        case AF_INET6:
-            return DNS_TYPE_AAAA;
-        default:
-            throw std::runtime_error("Unexpected DNS type!");
-        }
+        const auto wire_size = include_name ? first_record_wire_size : chained_record_wire_size;
+        writer.write(buffer.data(), wire_size);
     }
 
     template <typename Traits>
-    std::optional<DNS_RECORDW<Traits>> resolve_host_address(const std::u16string& host, const WORD dns_type)
+    void write_dns_query_response(utils::aligned_binary_writer<Traits>& writer, const dns_query_request& request,
+                                  const std::vector<resolved_dns_record>& records, const DWORD status)
     {
-        addrinfo hints{};
-        hints.ai_family = AF_UNSPEC;
+        const auto start = writer.offset();
 
-        DNS_RECORDW<Traits> result{};
-        result.pName = reinterpret_cast<Traits::PVOID>(host.c_str());
-        result.Flags = 0x2009;
-        result.dwTtl = 0x708;
+        writer.write(request.rpc_query_options);
 
-        addrinfo* res = nullptr;
-        int status = getaddrinfo(u16_to_u8(host).c_str(), nullptr, &hints, &res);
-        if (status == 0)
+        if (status == ERROR_SUCCESS && !records.empty())
         {
-            for (addrinfo* p = res; p != nullptr && dns_type != result.wType; p = p->ai_next)
+            writer.template write<typename Traits::PVOID>(k_native_pointer_referent);
+            writer.template write<typename Traits::PVOID>(k_native_pointer_referent);
+            writer.template write<typename Traits::PVOID>(k_native_pointer_referent);
+
+            for (size_t index = 0; index < records.size(); ++index)
             {
-                if (p->ai_family == AF_INET)
-                {
-                    auto* ipv4 = reinterpret_cast<sockaddr_in*>(p->ai_addr);
-                    memset(&result.Data, 0, 16);
-                    memcpy(&result.Data, &ipv4->sin_addr, sizeof(ipv4->sin_addr));
-                    result.wDataLength = sizeof(ipv4->sin_addr);
-                }
-                else if (p->ai_family == AF_INET6)
-                {
-                    auto* ipv6 = reinterpret_cast<sockaddr_in6*>(p->ai_addr);
-                    memset(&result.Data, 0, 16);
-                    memcpy(&result.Data, &ipv6->sin6_addr, sizeof(ipv6->sin6_addr));
-                    result.wDataLength = sizeof(ipv6->sin6_addr);
-                }
-                else
-                {
-                    continue;
-                }
-                result.wType = convert_socket_famity_to_dns_type(p->ai_family);
+                write_marshaled_dns_record(writer, records[index], index == 0);
             }
 
-            freeaddrinfo(res);
+            writer.write_ndr_u16string(records.front().name);
         }
-
-        if (result.wType == DNS_TYPE_A && dns_type == DNS_TYPE_AAAA)
+        else
         {
-            auto* addr = reinterpret_cast<uint8_t*>(&result.Data);
-            addr[10] = 0xff;
-            addr[11] = 0xff;
-            memcpy(addr + 12, addr, 4);
-            memset(addr, 0, 10);
-            result.wType = DNS_TYPE_AAAA;
+            writer.template write<typename Traits::PVOID>(0);
+            writer.template write<typename Traits::PVOID>(0);
+            writer.template write<typename Traits::PVOID>(0);
         }
 
-        if (result.wType != dns_type || result.wType == 0)
+        constexpr size_t k_native_query_reply_payload_size = 0x118;
+        if (writer.offset() < start + k_native_query_reply_payload_size)
+        {
+            writer.pad(start + k_native_query_reply_payload_size - writer.offset());
+        }
+
+        (void)start;
+        (void)request;
+        (void)status;
+    }
+
+    bool parse_dns_query_request(windows_emulator& win_emu, const lpc_request_context& c, dns_query_request& request)
+    {
+        constexpr ULONG hostname_header_offset = 0x08;
+        constexpr ULONG hostname_offset = 0x20;
+        constexpr ULONG fixed_trailer_size = 8; // query type + padding + flags
+        auto& emu = win_emu.emu();
+
+        if (c.send_buffer_length < hostname_offset + sizeof(char16_t) + fixed_trailer_size)
+        {
+            return false;
+        }
+
+        const auto hostname_length = static_cast<size_t>(emu.read_memory<uint64_t>(c.send_buffer + hostname_header_offset));
+        const auto hostname_actual_length = static_cast<size_t>(emu.read_memory<uint64_t>(c.send_buffer + 0x18));
+        if (hostname_length == 0 || hostname_actual_length != hostname_length)
+        {
+            return false;
+        }
+
+        const auto hostname_bytes = hostname_length * sizeof(char16_t);
+        if (hostname_offset + hostname_bytes + fixed_trailer_size > c.send_buffer_length)
+        {
+            return false;
+        }
+
+        std::u16string encoded_hostname(hostname_length, u'\0');
+        emu.read_memory(c.send_buffer + hostname_offset, encoded_hostname.data(), hostname_bytes);
+        if (encoded_hostname.back() != u'\0')
+        {
+            return false;
+        }
+
+        request.hostname.assign(encoded_hostname.begin(), encoded_hostname.end() - 1);
+        const auto query_type_offset = c.send_buffer + hostname_offset + hostname_bytes;
+        request.type = emu.read_memory<uint16_t>(query_type_offset);
+        request.flags = emu.read_memory<uint32_t>(query_type_offset + sizeof(uint32_t));
+        request.rpc_query_options = emu.read_memory<uint64_t>(c.send_buffer + c.send_buffer_length - sizeof(uint64_t));
+        return true;
+    }
+
+    std::vector<resolved_dns_record> resolve_host_addresses(const std::u16string& host, const WORD dns_type)
+    {
+        addrinfo hints{};
+        hints.ai_family = dns_type == DNS_TYPE_A ? AF_INET : AF_INET6;
+
+        addrinfo* results = nullptr;
+        const auto status = getaddrinfo(u16_to_u8(host).c_str(), nullptr, &hints, &results);
+        if (status != 0 || !results)
         {
             return {};
         }
 
-        return result;
+        std::vector<resolved_dns_record> records;
+        for (const auto* current = results; current != nullptr; current = current->ai_next)
+        {
+            resolved_dns_record record{};
+            record.name = host;
+
+            if (current->ai_family == AF_INET && dns_type == DNS_TYPE_A)
+            {
+                const auto* ipv4 = reinterpret_cast<const sockaddr_in*>(current->ai_addr);
+                record.type = DNS_TYPE_A;
+                record.data_length = sizeof(ipv4->sin_addr);
+                memcpy(record.data.data(), &ipv4->sin_addr, sizeof(ipv4->sin_addr));
+            }
+            else if (current->ai_family == AF_INET6 && dns_type == DNS_TYPE_AAAA)
+            {
+                const auto* ipv6 = reinterpret_cast<const sockaddr_in6*>(current->ai_addr);
+                record.type = DNS_TYPE_AAAA;
+                record.data_length = sizeof(ipv6->sin6_addr);
+                memcpy(record.data.data(), &ipv6->sin6_addr, sizeof(ipv6->sin6_addr));
+            }
+            else
+            {
+                continue;
+            }
+
+            const auto is_duplicate = std::ranges::any_of(records, [&record](const resolved_dns_record& existing) {
+                return existing.type == record.type && existing.data == record.data;
+            });
+            if (!is_duplicate)
+            {
+                records.push_back(std::move(record));
+            }
+        }
+
+        freeaddrinfo(results);
+
+        std::ranges::sort(records, [](const resolved_dns_record& a, const resolved_dns_record& b)
+        {
+            return std::lexicographical_compare(b.data.begin(), b.data.end(), a.data.begin(), a.data.end());
+        });
+
+        return records;
     }
 
     struct dns_resolver : rpc_port
     {
         NTSTATUS handle_rpc(windows_emulator& win_emu, const uint32_t procedure_id, const lpc_request_context& c) override
         {
-            std::array<uint8_t, 8> request_cookie;
-            win_emu.emu().read_memory(c.send_buffer + c.send_buffer_length - 8, request_cookie.data(), request_cookie.size());
-
             utils::aligned_binary_writer<EmulatorTraits<Emu64>> writer(win_emu.emu(), c.recv_buffer);
-            writer.write(request_cookie);
 
             switch (procedure_id)
             {
             case 2:
-                handle_dns_query(win_emu, c, writer);
-                break;
+                return handle_dns_query(win_emu, c, writer);
             case 3:
+                win_emu.log.print(color::gray, "DNSResolver procedure %u is not implemented\n", procedure_id);
                 return STATUS_NOT_SUPPORTED;
             default:
-                throw std::runtime_error("Unimplemented procedure!");
+                win_emu.log.print(color::gray, "Unexpected DNSResolver procedure: %u\n", procedure_id);
+                return STATUS_NOT_SUPPORTED;
             }
-
-            return STATUS_SUCCESS;
         }
 
         template <typename Traits>
-        static void handle_dns_query(windows_emulator& win_emu, const lpc_request_context& c, utils::aligned_binary_writer<Traits>& writer)
+        static NTSTATUS handle_dns_query(windows_emulator& win_emu, const lpc_request_context& c,
+                                         utils::aligned_binary_writer<Traits>& writer)
         {
-            auto& emu = win_emu.emu();
-
-            const auto hostname_length = static_cast<size_t>(emu.read_memory<uint64_t>(c.send_buffer + 0x08));
-            const auto hostname_offset = c.send_buffer + 0x20;
-
-            std::u16string hostname;
-            hostname.resize(hostname_length - 1);
-            emu.read_memory(hostname_offset, hostname.data(), (hostname_length - 1) * sizeof(char16_t));
-
-            const auto query_type = emu.read_memory<uint16_t>(hostname_offset + hostname_length * sizeof(char16_t));
-
-            if (query_type != DNS_TYPE_A && query_type != DNS_TYPE_AAAA)
+            dns_query_request request{};
+            if (!parse_dns_query_request(win_emu, c, request))
             {
-                throw std::runtime_error("Unexpected DNS query type!");
+                win_emu.log.warn("[dns] failed to parse DNS query request (len=0x%X)\n", c.send_buffer_length);
+                return STATUS_INVALID_PARAMETER;
             }
 
-            win_emu.callbacks.on_generic_activity("DNS query: " + u16_to_u8(hostname));
+            const auto hostname = u16_to_u8(request.hostname);
+            win_emu.callbacks.on_generic_activity("DNS query: " + hostname);
 
-            DNS_QUERY_RESPONSE<Traits> response{};
-            response.dns_record = resolve_host_address<Traits>(hostname, query_type);
-            response.error_code = response.dns_record ? ERROR_SUCCESS : DNS_ERROR_RCODE_NAME_ERROR;
-            writer.write(response);
+            DWORD status = ERROR_SUCCESS;
+            std::vector<resolved_dns_record> records;
+            switch (request.type)
+            {
+            case DNS_TYPE_A:
+            case DNS_TYPE_AAAA:
+                records = resolve_host_addresses(request.hostname, request.type);
+                if (records.size() > 2)
+                {
+                    records.resize(2);
+                }
+                status = records.empty() ? DNS_ERROR_RCODE_NAME_ERROR : ERROR_SUCCESS;
+                break;
+            default:
+                status = ERROR_INVALID_PARAMETER;
+                break;
+            }
 
+            write_dns_query_response(writer, request, records, status);
             c.recv_buffer_length = static_cast<ULONG>(writer.offset());
+            return STATUS_SUCCESS;
         }
     };
 }
