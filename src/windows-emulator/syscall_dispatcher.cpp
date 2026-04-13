@@ -68,7 +68,7 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
 
     const auto address = emu.read_instruction_pointer();
     const auto raw_syscall_id = emu.reg<uint32_t>(x86_register::eax);
-    const auto syscall_id = raw_syscall_id & 0xFFFF; // Only take low bits for WOW64 compatibility
+    const auto syscall_id = raw_syscall_id & 0x3FFF; // Only take low bits for WOW64 compatibility, (edit: match windows more faithfully as at 0x4000 syscall ids get wrapped around to beginning)
 
     const auto entry = this->handlers_.find(syscall_id);
     const auto* syscall_name = (entry != this->handlers_.end()) ? entry->second.name.c_str() : "<unknown>";
