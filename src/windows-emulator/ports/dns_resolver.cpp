@@ -168,10 +168,20 @@ namespace
             write_proc3_record(writer, mapped_records[1], k_dns_record_flags, 0);
         }
 
-        writer.write_ndr_u16string(direct_records.empty() ? mapped_records.front().name : direct_records.front().name);
-        writer.template write<typename Traits::SIZE_T>(12);
+        const auto& owner_name = direct_records.empty() ? mapped_records.front().name : direct_records.front().name;
+        writer.write_ndr_u16string(owner_name);
 
-        constexpr size_t k_native_proc3_reply_payload_size = 0x128;
+        if (!mapped_records.empty())
+        {
+            writer.write_ndr_u16string(mapped_records[0].name);
+        }
+
+        if (mapped_records.size() > 1)
+        {
+            writer.write_ndr_u16string(mapped_records[1].name);
+        }
+
+        constexpr size_t k_native_proc3_reply_payload_size = 0x1F8;
         if (writer.offset() < k_native_proc3_reply_payload_size)
         {
             writer.pad(k_native_proc3_reply_payload_size - writer.offset());
@@ -297,7 +307,7 @@ namespace
 
         std::ranges::sort(mapped_records, [](const resolved_dns_record& a, const resolved_dns_record& b)
         {
-            return std::lexicographical_compare(b.data.begin(), b.data.end(), a.data.begin(), a.data.end());
+            return std::lexicographical_compare(a.data.begin(), a.data.end(), b.data.begin(), b.data.end());
         });
 
         return mapped_records;
@@ -328,7 +338,6 @@ namespace
             dns_query_request request{};
             if (!parse_dns_query_request(win_emu, c, request))
             {
-                win_emu.log.warn("[dns] failed to parse DNS query request (len=0x%X)\n", c.send_buffer_length);
                 return STATUS_INVALID_PARAMETER;
             }
 
@@ -365,7 +374,6 @@ namespace
             dns_query_request request{};
             if (!parse_dns_query_request(win_emu, c, request))
             {
-                win_emu.log.warn("[dns] failed to parse proc-3 DNS query request (len=0x%X)\n", c.send_buffer_length);
                 return STATUS_INVALID_PARAMETER;
             }
 
