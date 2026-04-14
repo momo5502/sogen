@@ -98,7 +98,7 @@ namespace
         constexpr size_t k_native_query_reply_payload_size = 0x118;
         if (writer.offset() < start + k_native_query_reply_payload_size)
         {
-            writer.pad(start + k_native_query_reply_payload_size - writer.offset());
+            writer.pad(static_cast<size_t>(start + k_native_query_reply_payload_size - writer.offset()));
         }
 
         (void)start;
@@ -184,7 +184,7 @@ namespace
         constexpr size_t k_native_proc3_reply_payload_size = 0x1F8;
         if (writer.offset() < k_native_proc3_reply_payload_size)
         {
-            writer.pad(k_native_proc3_reply_payload_size - writer.offset());
+            writer.pad(static_cast<size_t>(k_native_proc3_reply_payload_size - writer.offset()));
         }
     }
 
