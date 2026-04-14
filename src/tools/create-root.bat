@@ -53,6 +53,7 @@ CALL :collect dbghelp.dll
 CALL :collect dbgcore.dll
 CALL :collect diagnosticdatasettings.dll
 CALL :collect dinput8.dll
+CALL :collect dnsapi.dll
 CALL :collect dsound.dll
 CALL :collect dwmapi.dll
 CALL :collect dxcore.dll
@@ -94,6 +95,7 @@ CALL :collect netmsg.dll
 CALL :collect netutils.dll
 CALL :collect nlsbres.dll
 CALL :collect normaliz.dll
+CALL :collect nsi.dll
 CALL :collect ntasn1.dll
 CALL :collect ntdll.dll
 CALL :collect ole32.dll
@@ -104,6 +106,7 @@ CALL :collect powrprof.dll
 CALL :collect profapi.dll
 CALL :collect propsys.dll
 CALL :collect psapi.dll
+CALL :collect rasadhlp.dll
 CALL :collect resampledmo.dll
 CALL :collect rpcrt4.dll
 CALL :collect rstrtmgr.dll
