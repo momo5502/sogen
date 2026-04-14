@@ -347,7 +347,7 @@ namespace
                 status = records.empty() ? DNS_ERROR_RCODE_NAME_ERROR : ERROR_SUCCESS;
                 break;
             default:
-                status = ERROR_INVALID_PARAMETER;
+                status = STATUS_INVALID_PARAMETER;
                 break;
             }
 
