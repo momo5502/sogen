@@ -228,37 +228,30 @@ namespace
         return true;
     }
 
-    std::vector<resolved_dns_record> resolve_host_addresses(const std::u16string& host, const WORD dns_type)
+    std::vector<resolved_dns_record> resolve_host_addresses(windows_emulator& win_emu, const std::u16string& host, const WORD dns_type)
     {
-        addrinfo hints{};
-        hints.ai_family = dns_type == DNS_TYPE_A ? AF_INET : AF_INET6;
-
-        addrinfo* results = nullptr;
-        const auto status = getaddrinfo(u16_to_u8(host).c_str(), nullptr, &hints, &results);
-        if (status != 0 || !results)
-        {
-            return {};
-        }
+        const auto family = dns_type == DNS_TYPE_A ? AF_INET : AF_INET6;
+        const auto results = win_emu.dns_lookup().resolve_host(u16_to_u8(host), family);
 
         std::vector<resolved_dns_record> records;
-        for (const auto* current = results; current != nullptr; current = current->ai_next)
+        for (const auto& current : results)
         {
             resolved_dns_record record{};
             record.name = host;
 
-            if (current->ai_family == AF_INET && dns_type == DNS_TYPE_A)
+            if (current.is_ipv4() && dns_type == DNS_TYPE_A)
             {
-                const auto* ipv4 = reinterpret_cast<const sockaddr_in*>(current->ai_addr);
+                const auto& ipv4 = current.get_in_addr();
                 record.type = DNS_TYPE_A;
-                record.data_length = sizeof(ipv4->sin_addr);
-                memcpy(record.data.data(), &ipv4->sin_addr, sizeof(ipv4->sin_addr));
+                record.data_length = sizeof(ipv4.sin_addr);
+                memcpy(record.data.data(), &ipv4.sin_addr, sizeof(ipv4.sin_addr));
             }
-            else if (current->ai_family == AF_INET6 && dns_type == DNS_TYPE_AAAA)
+            else if (current.is_ipv6() && dns_type == DNS_TYPE_AAAA)
             {
-                const auto* ipv6 = reinterpret_cast<const sockaddr_in6*>(current->ai_addr);
+                const auto& ipv6 = current.get_in6_addr();
                 record.type = DNS_TYPE_AAAA;
-                record.data_length = sizeof(ipv6->sin6_addr);
-                memcpy(record.data.data(), &ipv6->sin6_addr, sizeof(ipv6->sin6_addr));
+                record.data_length = sizeof(ipv6.sin6_addr);
+                memcpy(record.data.data(), &ipv6.sin6_addr, sizeof(ipv6.sin6_addr));
             }
             else
             {
@@ -274,19 +267,16 @@ namespace
             }
         }
 
-        freeaddrinfo(results);
-
-        std::ranges::sort(records, [](const resolved_dns_record& a, const resolved_dns_record& b)
-        {
+        std::ranges::sort(records, [](const resolved_dns_record& a, const resolved_dns_record& b) {
             return std::lexicographical_compare(b.data.begin(), b.data.end(), a.data.begin(), a.data.end());
         });
 
         return records;
     }
 
-    std::vector<resolved_dns_record> build_proc3_mapped_records(const std::u16string& host)
+    std::vector<resolved_dns_record> build_proc3_mapped_records(windows_emulator& win_emu, const std::u16string& host)
     {
-        const auto ipv4_records = resolve_host_addresses(host, DNS_TYPE_A);
+        const auto ipv4_records = resolve_host_addresses(win_emu, host, DNS_TYPE_A);
         std::vector<resolved_dns_record> mapped_records;
         mapped_records.reserve(ipv4_records.size());
 
@@ -305,8 +295,7 @@ namespace
             mapped_records.push_back(mapped);
         }
 
-        std::ranges::sort(mapped_records, [](const resolved_dns_record& a, const resolved_dns_record& b)
-        {
+        std::ranges::sort(mapped_records, [](const resolved_dns_record& a, const resolved_dns_record& b) {
             return std::lexicographical_compare(a.data.begin(), a.data.end(), b.data.begin(), b.data.end());
         });
 
@@ -350,7 +339,7 @@ namespace
             {
             case DNS_TYPE_A:
             case DNS_TYPE_AAAA:
-                records = resolve_host_addresses(request.hostname, request.type);
+                records = resolve_host_addresses(win_emu, request.hostname, request.type);
                 if (records.size() > 2)
                 {
                     records.resize(2);
@@ -380,11 +369,10 @@ namespace
             const auto hostname = u16_to_u8(request.hostname);
             win_emu.callbacks.on_generic_activity("DNS addrinfo query: " + hostname);
 
-            auto direct_records = resolve_host_addresses(request.hostname, DNS_TYPE_AAAA);
-            auto mapped_records = build_proc3_mapped_records(request.hostname);
+            auto direct_records = resolve_host_addresses(win_emu, request.hostname, DNS_TYPE_AAAA);
+            auto mapped_records = build_proc3_mapped_records(win_emu, request.hostname);
 
-            std::ranges::sort(direct_records, [](const resolved_dns_record& a, const resolved_dns_record& b)
-            {
+            std::ranges::sort(direct_records, [](const resolved_dns_record& a, const resolved_dns_record& b) {
                 return std::lexicographical_compare(a.data.begin(), a.data.end(), b.data.begin(), b.data.end());
             });
 

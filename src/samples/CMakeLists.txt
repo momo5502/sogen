@@ -3,7 +3,6 @@ momo_get_all_targets(EXISTING_TARGETS)
 ##########################################
 
 add_subdirectory(bad-sample)
-add_subdirectory(dns-sample)
 add_subdirectory(test-sample)
 
 ##########################################

@@ -275,6 +275,16 @@ namespace
 
         return std::make_unique<utils::clock>();
     }
+    std::unique_ptr<network::dns_lookup> get_dns_lookup(emulator_interfaces& interfaces)
+    {
+        if (interfaces.dns_lookup)
+        {
+            return std::move(interfaces.dns_lookup);
+        }
+
+        return std::make_unique<network::dns_lookup>();
+    }
+
     std::unique_ptr<network::socket_factory> get_socket_factory(emulator_interfaces& interfaces)
     {
         if (interfaces.socket_factory)
@@ -302,6 +312,7 @@ windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, const e
                                    emulator_interfaces interfaces)
     : emu_(std::move(emu)),
       clock_(get_clock(interfaces, this->executed_instructions_, settings.use_relative_time)),
+      dns_lookup_(get_dns_lookup(interfaces)),
       socket_factory_(get_socket_factory(interfaces)),
       emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
       callbacks(std::move(callbacks)),
