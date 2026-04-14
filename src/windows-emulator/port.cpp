@@ -86,8 +86,8 @@ NTSTATUS port::handle_message(windows_emulator& win_emu, const lpc_message_conte
     context.send_buffer_length = send_header.u1.s1.DataLength;
     context.recv_buffer = c.receive_message.value() + sizeof(PORT_MESSAGE64);
     context.recv_buffer_length = c.receive_buffer_length >= sizeof(PORT_MESSAGE64)
-                                    ? static_cast<ULONG>(c.receive_buffer_length - sizeof(PORT_MESSAGE64))
-                                    : recv_header.u1.s1.DataLength;
+                                     ? static_cast<ULONG>(c.receive_buffer_length - sizeof(PORT_MESSAGE64))
+                                     : recv_header.u1.s1.DataLength;
 
     NTSTATUS status = this->handle_request(win_emu, context);
 
