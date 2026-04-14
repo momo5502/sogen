@@ -35,7 +35,7 @@ namespace network
 
             address resolved{};
             resolved.set_address(current->ai_addr, static_cast<socklen_t>(current->ai_addrlen));
-            results.push_back(std::move(resolved));
+            results.push_back(resolved);
         }
 
         return results;

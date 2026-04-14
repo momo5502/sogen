@@ -268,7 +268,7 @@ namespace
         }
 
         std::ranges::sort(records, [](const resolved_dns_record& a, const resolved_dns_record& b) {
-            return std::lexicographical_compare(b.data.begin(), b.data.end(), a.data.begin(), a.data.end());
+            return std::ranges::lexicographical_compare(b.data, a.data);
         });
 
         return records;
@@ -296,7 +296,7 @@ namespace
         }
 
         std::ranges::sort(mapped_records, [](const resolved_dns_record& a, const resolved_dns_record& b) {
-            return std::lexicographical_compare(a.data.begin(), a.data.end(), b.data.begin(), b.data.end());
+            return std::ranges::lexicographical_compare(a.data, b.data);
         });
 
         return mapped_records;
@@ -373,7 +373,7 @@ namespace
             auto mapped_records = build_proc3_mapped_records(win_emu, request.hostname);
 
             std::ranges::sort(direct_records, [](const resolved_dns_record& a, const resolved_dns_record& b) {
-                return std::lexicographical_compare(a.data.begin(), a.data.end(), b.data.begin(), b.data.end());
+                return std::ranges::lexicographical_compare(a.data, b.data);
             });
 
             for (auto& record : direct_records)
