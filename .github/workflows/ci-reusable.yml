@@ -252,6 +252,8 @@ jobs:
       - name: Configure fast APT mirror
         uses: vegardit/fast-apt-mirror.sh@1.4.2
         if: "${{ startsWith(matrix.platform, 'MinGW') }}"
+        with:
+          exclude-current: true
 
       - name: Install Rust Target
         if: "${{ matrix.rust-target }}"
