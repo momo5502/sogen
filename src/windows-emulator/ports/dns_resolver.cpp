@@ -18,6 +18,7 @@ namespace
     constexpr DWORD k_dns_record_flags = 0x2009;
     constexpr DWORD k_dns_record_flags_without_name = 0x0009;
     constexpr DWORD k_default_ttl = 0x91;
+    constexpr DWORD k_proc2_aaaa_direct_ttl = 0x70;
     constexpr DWORD k_proc3_default_ttl = 0x12C;
     constexpr DWORD k_native_record_reserved = 1;
     constexpr DWORD k_native_record_rank = 1;
@@ -333,25 +334,46 @@ namespace
             const auto hostname = u16_to_u8(request.hostname);
             win_emu.callbacks.on_generic_activity("DNS query: " + hostname);
 
-            DWORD status = ERROR_SUCCESS;
-            std::vector<resolved_dns_record> records;
             switch (request.type)
             {
-            case DNS_TYPE_A:
-            case DNS_TYPE_AAAA:
-                records = resolve_host_addresses(win_emu, request.hostname, request.type);
+            case DNS_TYPE_A: {
+                auto records = resolve_host_addresses(win_emu, request.hostname, request.type);
                 if (records.size() > 2)
                 {
                     records.resize(2);
                 }
-                status = records.empty() ? DNS_ERROR_RCODE_NAME_ERROR : ERROR_SUCCESS;
-                break;
-            default:
-                status = STATUS_INVALID_PARAMETER;
+
+                const DWORD status = records.empty() ? DNS_ERROR_RCODE_NAME_ERROR : ERROR_SUCCESS;
+                write_dns_query_response(writer, request, records, status);
                 break;
             }
+            case DNS_TYPE_AAAA: {
+                auto direct_records = resolve_host_addresses(win_emu, request.hostname, DNS_TYPE_AAAA);
+                auto mapped_records = build_proc3_mapped_records(win_emu, request.hostname);
 
-            write_dns_query_response(writer, request, records, status);
+                for (auto& record : direct_records)
+                {
+                    record.ttl = k_proc2_aaaa_direct_ttl;
+                    record.reserved = 1;
+                }
+
+                if (direct_records.size() > 2)
+                {
+                    direct_records.resize(2);
+                }
+                if (mapped_records.size() > 2)
+                {
+                    mapped_records.resize(2);
+                }
+
+                const DWORD status = direct_records.empty() && mapped_records.empty() ? DNS_ERROR_RCODE_NAME_ERROR : ERROR_SUCCESS;
+                write_proc3_response(writer, request, direct_records, mapped_records, status);
+                break;
+            }
+            default:
+                write_dns_query_response(writer, request, {}, STATUS_INVALID_PARAMETER);
+                break;
+            }
             c.recv_buffer_length = static_cast<ULONG>(writer.offset());
             return STATUS_SUCCESS;
         }
