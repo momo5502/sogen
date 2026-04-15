@@ -186,6 +186,16 @@ namespace test
             .use_relative_time = true,
         };
 
+        if (!interfaces.socket_factory)
+        {
+            interfaces.socket_factory = network::create_static_socket_factory();
+        }
+
+        if (!interfaces.dns_lookup)
+        {
+            interfaces.dns_lookup = create_sample_dns_lookup();
+        }
+
         return create_emulator(std::move(settings), {}, std::move(interfaces));
     }
 
