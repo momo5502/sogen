@@ -69,7 +69,7 @@ namespace test
         {
             std::vector<network::address> resolve_host(const std::string_view hostname, const std::optional<int> family) override
             {
-                if (hostname != "example.com")
+                if (hostname != "google.com")
                 {
                     return {};
                 }

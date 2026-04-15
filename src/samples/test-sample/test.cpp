@@ -720,7 +720,7 @@ namespace
     bool test_dns()
     {
         wsa_initializer _{};
-        constexpr auto hostname = "example.com";
+        constexpr auto hostname = "google.com";
 
         PDNS_RECORDA records = nullptr;
         const auto query_status = DnsQuery_A(hostname, DNS_TYPE_A, DNS_QUERY_STANDARD, nullptr, &records, nullptr);
