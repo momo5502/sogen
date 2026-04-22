@@ -14,6 +14,7 @@ struct lpc_message_context
 {
     emulator_object<PORT_MESSAGE64> send_message;
     emulator_object<PORT_MESSAGE64> receive_message;
+    EmulatorTraits<Emu64>::SIZE_T receive_buffer_length{};
 
     lpc_message_context(x86_64_emulator& emu)
         : send_message(emu),
@@ -30,12 +31,14 @@ struct lpc_message_context
     {
         buffer.write(send_message);
         buffer.write(receive_message);
+        buffer.write(receive_buffer_length);
     }
 
     void deserialize(utils::buffer_deserializer& buffer)
     {
         buffer.read(send_message);
         buffer.read(receive_message);
+        buffer.read(receive_buffer_length);
     }
 };
 

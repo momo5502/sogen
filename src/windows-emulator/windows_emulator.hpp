@@ -11,6 +11,7 @@
 #include "file_system.hpp"
 #include "memory_manager.hpp"
 #include "module/module_manager.hpp"
+#include "network/dns_lookup.hpp"
 #include "network/socket_factory.hpp"
 #include "version/windows_version_manager.hpp"
 
@@ -80,6 +81,7 @@ struct emulator_settings
 struct emulator_interfaces
 {
     std::unique_ptr<utils::clock> clock{};
+    std::unique_ptr<network::dns_lookup> dns_lookup{};
     std::unique_ptr<network::socket_factory> socket_factory{};
 };
 
@@ -90,6 +92,7 @@ class windows_emulator
 
     std::unique_ptr<x86_64_emulator> emu_{};
     std::unique_ptr<utils::clock> clock_{};
+    std::unique_ptr<network::dns_lookup> dns_lookup_{};
     std::unique_ptr<network::socket_factory> socket_factory_{};
     bool setup_completed_{false};
 
@@ -135,6 +138,15 @@ class windows_emulator
     const utils::clock& clock() const
     {
         return *this->clock_;
+    }
+    network::dns_lookup& dns_lookup()
+    {
+        return *this->dns_lookup_;
+    }
+
+    const network::dns_lookup& dns_lookup() const
+    {
+        return *this->dns_lookup_;
     }
 
     network::socket_factory& socket_factory()

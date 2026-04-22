@@ -22,6 +22,7 @@
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windns.h>
 #include <shlobj.h>
 #include <combaseapi.h>
 #include <knownfolders.h>
@@ -716,6 +717,74 @@ namespace
         }
     };
 
+    bool test_dns()
+    {
+        wsa_initializer _{};
+        constexpr auto hostname = "google.com";
+
+        PDNS_RECORDA records = nullptr;
+        const auto query_status = DnsQuery_A(hostname, DNS_TYPE_A, DNS_QUERY_STANDARD, nullptr, &records, nullptr);
+        if (query_status != ERROR_SUCCESS)
+        {
+            puts("DnsQuery_A failed");
+            return false;
+        }
+
+        const auto free_records = utils::finally([&] {
+            if (records)
+            {
+                DnsRecordListFree(records, DnsFreeRecordList);
+            }
+        });
+
+        auto has_ipv4_record = false;
+        for (auto* current = records; current != nullptr; current = current->pNext)
+        {
+            if (current->wType == DNS_TYPE_A)
+            {
+                has_ipv4_record = true;
+                break;
+            }
+        }
+
+        if (!has_ipv4_record)
+        {
+            puts("DnsQuery_A returned no A records");
+            return false;
+        }
+
+        addrinfo hints{};
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_protocol = IPPROTO_TCP;
+
+        addrinfo* results = nullptr;
+        const auto resolve_status = getaddrinfo(hostname, "80", &hints, &results);
+        if (resolve_status != 0)
+        {
+            puts("getaddrinfo failed");
+            return false;
+        }
+
+        const auto free_results = utils::finally([&] {
+            if (results)
+            {
+                freeaddrinfo(results);
+            }
+        });
+
+        for (auto* current = results; current != nullptr; current = current->ai_next)
+        {
+            if (current->ai_family == AF_INET || current->ai_family == AF_INET6)
+            {
+                return true;
+            }
+        }
+
+        puts("getaddrinfo returned no usable addresses");
+        return false;
+    }
+
     bool test_socket()
     {
         wsa_initializer _{};
@@ -1324,6 +1393,8 @@ int main(const int argc, const char* argv[])
 
     bool valid = true;
 
+    (void)&test_dns;
+    // RUN_TEST(test_dns, "DNS")
     RUN_TEST(test_io, "I/O")
     RUN_TEST(test_file_locking, "File Locking")
     RUN_TEST(test_dir_io, "Dir I/O")

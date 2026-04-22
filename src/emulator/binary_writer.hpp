@@ -51,7 +51,14 @@ namespace utils
 
         void write_ndr_pointer(bool not_null)
         {
-            write<typename Traits::PVOID>(not_null ? 0x20000 : 0);
+            if (!not_null)
+            {
+                write<typename Traits::PVOID>(0);
+                return;
+            }
+
+            write<typename Traits::PVOID>(next_referent_id_);
+            next_referent_id_ += sizeof(typename Traits::PVOID);
         }
 
         void write_ndr_u16string(const std::u16string& str)
@@ -94,5 +101,6 @@ namespace utils
         memory_interface& memory; // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
         uint64_t base_address;
         uint64_t current_position;
+        typename Traits::PVOID next_referent_id_{0x20000};
     };
 }

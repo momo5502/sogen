@@ -50,6 +50,53 @@ namespace test
         bool print_time{false};
     };
 
+    namespace
+    {
+        network::address make_ipv6_address(const char* value)
+        {
+            in6_addr addr{};
+            if (inet_pton(AF_INET6, value, &addr) != 1)
+            {
+                throw std::runtime_error("Invalid IPv6 address");
+            }
+
+            network::address result{};
+            result.set_ipv6(addr);
+            return result;
+        }
+
+        struct sample_dns_lookup final : network::dns_lookup
+        {
+            std::vector<network::address> resolve_host(const std::string_view hostname, const std::optional<int> family) override
+            {
+                if (hostname != "google.com")
+                {
+                    return {};
+                }
+
+                std::vector<network::address> results{};
+                if (!family || *family == AF_INET)
+                {
+                    results.emplace_back("203.0.113.10", AF_INET);
+                    results.emplace_back("203.0.113.20", AF_INET);
+                }
+
+                if (!family || *family == AF_INET6)
+                {
+                    results.push_back(make_ipv6_address("2001:db8::10"));
+                    results.push_back(make_ipv6_address("2001:db8::20"));
+                }
+
+                return results;
+            }
+        };
+
+        std::unique_ptr<network::dns_lookup> create_sample_dns_lookup()
+        {
+            return std::make_unique<sample_dns_lookup>();
+        }
+    }
+
     inline application_settings get_sample_app_settings(const sample_configuration& config)
     {
         application_settings settings{.application = "C:\\test-sample.exe"};
@@ -62,7 +109,8 @@ namespace test
         return settings;
     }
 
-    inline windows_emulator create_emulator(emulator_settings settings, emulator_callbacks callbacks = {})
+    inline windows_emulator create_emulator(emulator_settings settings, emulator_callbacks callbacks = {},
+                                            emulator_interfaces interfaces = {})
     {
         const auto is_verbose = enable_verbose_logging();
 
@@ -78,18 +126,21 @@ namespace test
         settings.path_mappings["C:\\a.txt"] =
             std::filesystem::temp_directory_path() / ("emulator-test-file-" + std::to_string(getpid()) + ".txt");
 
+        if (!interfaces.socket_factory)
+        {
+            interfaces.socket_factory = network::create_static_socket_factory();
+        }
+
         return windows_emulator{
             create_x86_64_emulator(),
             settings,
             std::move(callbacks),
-            emulator_interfaces{
-                .socket_factory = network::create_static_socket_factory(),
-            },
+            std::move(interfaces),
         };
     }
 
     inline windows_emulator create_sample_emulator(emulator_settings settings, const sample_configuration& config = {},
-                                                   emulator_callbacks callbacks = {})
+                                                   emulator_callbacks callbacks = {}, emulator_interfaces interfaces = {})
     {
         const auto is_verbose = enable_verbose_logging();
 
@@ -105,14 +156,18 @@ namespace test
         settings.path_mappings["C:\\a.txt"] =
             std::filesystem::temp_directory_path() / ("emulator-test-file-" + std::to_string(getpid()) + ".txt");
 
+        if (!interfaces.socket_factory)
+        {
+            interfaces.socket_factory = network::create_static_socket_factory();
+        }
+
+        if (!interfaces.dns_lookup)
+        {
+            interfaces.dns_lookup = create_sample_dns_lookup();
+        }
+
         return windows_emulator{
-            create_x86_64_emulator(),
-            get_sample_app_settings(config),
-            settings,
-            std::move(callbacks),
-            emulator_interfaces{
-                .socket_factory = network::create_static_socket_factory(),
-            },
+            create_x86_64_emulator(), get_sample_app_settings(config), settings, std::move(callbacks), std::move(interfaces),
         };
     }
 
@@ -125,13 +180,23 @@ namespace test
         return create_sample_emulator(std::move(settings), config);
     }
 
-    inline windows_emulator create_empty_emulator()
+    inline windows_emulator create_empty_emulator(emulator_interfaces interfaces = {})
     {
         emulator_settings settings{
             .use_relative_time = true,
         };
 
-        return create_emulator(std::move(settings));
+        if (!interfaces.socket_factory)
+        {
+            interfaces.socket_factory = network::create_static_socket_factory();
+        }
+
+        if (!interfaces.dns_lookup)
+        {
+            interfaces.dns_lookup = create_sample_dns_lookup();
+        }
+
+        return create_emulator(std::move(settings), {}, std::move(interfaces));
     }
 
     inline void bisect_emulation(windows_emulator& emu)
