@@ -18,6 +18,7 @@ namespace
     constexpr DWORD k_dns_record_flags = 0x2009;
     constexpr DWORD k_dns_record_flags_without_name = 0x0009;
     constexpr DWORD k_default_ttl = 0x91;
+    constexpr DWORD k_proc2_single_record_a_ttl = 0x5E;
     constexpr DWORD k_proc2_aaaa_direct_ttl = 0x70;
     constexpr DWORD k_proc3_default_ttl = 0x12C;
     constexpr DWORD k_native_record_reserved = 1;
@@ -44,83 +45,247 @@ namespace
         uint64_t rpc_query_options{};
     };
 
-    template <typename Traits>
-    void write_marshaled_dns_record(utils::aligned_binary_writer<Traits>& writer, const resolved_dns_record& record,
-                                    const bool include_name)
+    enum class proc2_query_family
     {
-        constexpr size_t first_record_wire_size = 0x30;
-        constexpr size_t chained_record_wire_size = 0x20;
+        record_query,
+        addrinfo_compatible_query,
+        unsupported,
+    };
 
-        std::array<std::byte, first_record_wire_size> buffer{};
-        memcpy(buffer.data() + 0x00, &record.type, sizeof(record.type));
-        memcpy(buffer.data() + 0x02, &record.data_length, sizeof(record.data_length));
+    proc2_query_family classify_proc2_query_family(const dns_query_request& request)
+    {
+        switch (request.type)
+        {
+        case DNS_TYPE_A:
+            return proc2_query_family::record_query;
+        case DNS_TYPE_AAAA:
+            return proc2_query_family::addrinfo_compatible_query;
+        default:
+            return proc2_query_family::unsupported;
+        }
+    }
 
-        const auto wire_flags = include_name ? record.flags : k_dns_record_flags_without_name;
-        memcpy(buffer.data() + 0x04, &wire_flags, sizeof(wire_flags));
-        memcpy(buffer.data() + 0x08, &record.ttl, sizeof(record.ttl));
-        memcpy(buffer.data() + 0x0C, &record.reserved, sizeof(record.reserved));
+    // R_ResolverQuery() returns a marshaled PDNS_RECORD chain. The semantic
+    // structure comes from nt5src/.../resolver/idl/resrpc.h and the modern
+    // dnsapi client later runs FixupNameOwnerPointers() over the decoded list.
+    // We model that explicitly: the first record in a chain carries the owner
+    // name, later records can omit it and rely on fixup semantics.
+    struct rpc_dns_record_header
+    {
+        WORD type{};
+        WORD data_length{};
+        DWORD flags{};
+        DWORD ttl{};
+        DWORD reserved{};
+        uint64_t rank{};
+    };
 
-        const auto rank = k_native_record_rank;
-        memcpy(buffer.data() + 0x10, &rank, sizeof(rank));
-        memcpy(buffer.data() + 0x18, record.data.data(), record.data_length);
+    struct rpc_proc2_record_wire_layout
+    {
+        static constexpr size_t record_with_owner_name_size = 0x30;
+        static constexpr size_t chained_record_size = 0x20;
+        static constexpr size_t max_marshaled_size = record_with_owner_name_size;
 
-        const auto wire_size = include_name ? first_record_wire_size : chained_record_wire_size;
+        rpc_dns_record_header header{};
+        std::array<std::byte, k_dns_record_data_size> data{};
+    };
+
+    struct rpc_proc3_record_wire_layout
+    {
+        static constexpr size_t marshaled_size = 0x28;
+
+        rpc_dns_record_header header{};
+        std::array<std::byte, k_dns_record_data_size> data{};
+    };
+
+    struct rpc_proc2_record_semantics
+    {
+        const resolved_dns_record* record{};
+        bool is_owner_name_record{};
+        bool uses_embedded_owner_name{};
+    };
+
+    struct rpc_proc2_response_shape
+    {
+        bool has_result_record_list{};
+        bool has_alias_record_list{};
+        bool has_owner_name_anchor{};
+        size_t payload_size{};
+    };
+
+    template <typename Traits>
+    void write_rpc_pointer(utils::aligned_binary_writer<Traits>& writer, const bool present)
+    {
+        writer.template write<typename Traits::PVOID>(present ? k_native_pointer_referent : 0);
+    }
+
+    template <typename Traits>
+    void write_proc2_result_record_list_pointer(utils::aligned_binary_writer<Traits>& writer, const bool present)
+    {
+        write_rpc_pointer(writer, present);
+    }
+
+    template <typename Traits>
+    void write_proc2_alias_record_list_pointer(utils::aligned_binary_writer<Traits>& writer, const bool present)
+    {
+        write_rpc_pointer(writer, present);
+    }
+
+    template <typename Traits>
+    void write_proc2_name_owner_pointer(utils::aligned_binary_writer<Traits>& writer, const bool present)
+    {
+        write_rpc_pointer(writer, present);
+    }
+
+    std::vector<rpc_proc2_record_semantics> build_proc2_rpc_record_chain(const std::vector<resolved_dns_record>& records)
+    {
+        std::vector<rpc_proc2_record_semantics> chain;
+        chain.reserve(records.size());
+
+        // Mirrors the producer/client contract in the NT source:
+        // Cache_PrepareRecordList() may null owner names on later records and
+        // dnsapi later restores them with FixupNameOwnerPointers(). Native
+        // dumps additionally show that the single-record proc2 case keeps the
+        // owner name entirely out-of-line, while the multi-record case uses the
+        // larger first-record layout.
+        const bool has_multiple_records = records.size() > 1;
+        for (size_t index = 0; index < records.size(); ++index)
+        {
+            chain.push_back(rpc_proc2_record_semantics{
+                .record = &records[index],
+                .is_owner_name_record = index == 0,
+                .uses_embedded_owner_name = has_multiple_records && index == 0,
+            });
+        }
+
+        return chain;
+    }
+
+    rpc_proc2_response_shape describe_proc2_response_shape(const std::vector<rpc_proc2_record_semantics>& record_chain, const DWORD status)
+    {
+        if (status != ERROR_SUCCESS || record_chain.empty())
+        {
+            return rpc_proc2_response_shape{
+                .has_result_record_list = false,
+                .has_alias_record_list = false,
+                .has_owner_name_anchor = false,
+                .payload_size = static_cast<size_t>(0x18),
+            };
+        }
+
+        const bool has_multiple_records = record_chain.size() > 1;
+        return rpc_proc2_response_shape{
+            .has_result_record_list = true,
+            .has_alias_record_list = has_multiple_records,
+            .has_owner_name_anchor = true,
+            .payload_size = static_cast<size_t>(has_multiple_records ? 0x100 : 0xD0),
+        };
+    }
+
+    rpc_dns_record_header build_rpc_dns_record_header(const resolved_dns_record& record, const DWORD flags, const uint64_t rank,
+                                                      const DWORD reserved)
+    {
+        return rpc_dns_record_header{
+            .type = record.type,
+            .data_length = record.data_length,
+            .flags = flags,
+            .ttl = record.ttl,
+            .reserved = reserved,
+            .rank = rank,
+        };
+    }
+
+    void copy_rpc_record_to_bytes(std::array<std::byte, rpc_proc2_record_wire_layout::max_marshaled_size>& buffer,
+                                  const rpc_proc2_record_wire_layout& wire)
+    {
+        memcpy(buffer.data() + 0x00, &wire.header.type, sizeof(wire.header.type));
+        memcpy(buffer.data() + 0x02, &wire.header.data_length, sizeof(wire.header.data_length));
+        memcpy(buffer.data() + 0x04, &wire.header.flags, sizeof(wire.header.flags));
+        memcpy(buffer.data() + 0x08, &wire.header.ttl, sizeof(wire.header.ttl));
+        memcpy(buffer.data() + 0x0C, &wire.header.reserved, sizeof(wire.header.reserved));
+        memcpy(buffer.data() + 0x10, &wire.header.rank, sizeof(wire.header.rank));
+        memcpy(buffer.data() + 0x18, wire.data.data(), wire.header.data_length);
+    }
+
+    void copy_rpc_record_to_bytes(std::array<std::byte, rpc_proc3_record_wire_layout::marshaled_size>& buffer,
+                                  const rpc_proc3_record_wire_layout& wire)
+    {
+        memcpy(buffer.data() + 0x00, &wire.header.type, sizeof(wire.header.type));
+        memcpy(buffer.data() + 0x02, &wire.header.data_length, sizeof(wire.header.data_length));
+        memcpy(buffer.data() + 0x04, &wire.header.flags, sizeof(wire.header.flags));
+        memcpy(buffer.data() + 0x08, &wire.header.ttl, sizeof(wire.header.ttl));
+        memcpy(buffer.data() + 0x0C, &wire.header.reserved, sizeof(wire.header.reserved));
+        memcpy(buffer.data() + 0x10, &wire.header.rank, sizeof(wire.header.rank));
+        memcpy(buffer.data() + 0x18, wire.data.data(), wire.header.data_length);
+    }
+
+    template <typename Traits>
+    void write_proc2_marshaled_record(utils::aligned_binary_writer<Traits>& writer, const rpc_proc2_record_semantics& semantic_record)
+    {
+        const auto& record = *semantic_record.record;
+
+        rpc_proc2_record_wire_layout wire{};
+        wire.header = build_rpc_dns_record_header(record,
+                                                   semantic_record.is_owner_name_record ? record.flags
+                                                                                        : k_dns_record_flags_without_name,
+                                                   k_native_record_rank, record.reserved);
+        wire.data = record.data;
+
+        std::array<std::byte, rpc_proc2_record_wire_layout::max_marshaled_size> buffer{};
+        copy_rpc_record_to_bytes(buffer, wire);
+
+        const auto wire_size = semantic_record.uses_embedded_owner_name ? rpc_proc2_record_wire_layout::record_with_owner_name_size
+                                                                        : rpc_proc2_record_wire_layout::chained_record_size;
         writer.write(buffer.data(), wire_size);
     }
 
     template <typename Traits>
-    void write_dns_query_response(utils::aligned_binary_writer<Traits>& writer, const dns_query_request& request,
-                                  const std::vector<resolved_dns_record>& records, const DWORD status)
+    void write_proc2_record_chain(utils::aligned_binary_writer<Traits>& writer, const std::vector<rpc_proc2_record_semantics>& record_chain)
+    {
+        for (const auto& semantic_record : record_chain)
+        {
+            write_proc2_marshaled_record(writer, semantic_record);
+        }
+    }
+
+    template <typename Traits>
+    void write_proc2_query_response(utils::aligned_binary_writer<Traits>& writer, const dns_query_request& request,
+                                    const std::vector<resolved_dns_record>& records, const DWORD status)
     {
         const auto start = writer.offset();
+        const auto record_chain = build_proc2_rpc_record_chain(records);
+        const auto shape = describe_proc2_response_shape(record_chain, status);
 
         writer.write(request.rpc_query_options);
 
-        if (status == ERROR_SUCCESS && !records.empty())
+        write_proc2_result_record_list_pointer(writer, shape.has_result_record_list);
+        write_proc2_alias_record_list_pointer(writer, shape.has_alias_record_list);
+        write_proc2_name_owner_pointer(writer, shape.has_owner_name_anchor);
+
+        if (shape.has_result_record_list)
         {
-            writer.template write<typename Traits::PVOID>(k_native_pointer_referent);
-            writer.template write<typename Traits::PVOID>(k_native_pointer_referent);
-            writer.template write<typename Traits::PVOID>(k_native_pointer_referent);
-
-            for (size_t index = 0; index < records.size(); ++index)
-            {
-                write_marshaled_dns_record(writer, records[index], index == 0);
-            }
-
+            write_proc2_record_chain(writer, record_chain);
             writer.write_ndr_u16string(records.front().name);
         }
-        else
+
+        if (writer.offset() < start + shape.payload_size)
         {
-            writer.template write<typename Traits::PVOID>(0);
-            writer.template write<typename Traits::PVOID>(0);
-            writer.template write<typename Traits::PVOID>(0);
+            writer.pad(static_cast<size_t>(start + shape.payload_size - writer.offset()));
         }
 
-        constexpr size_t k_native_query_reply_payload_size = 0x118;
-        if (writer.offset() < start + k_native_query_reply_payload_size)
-        {
-            writer.pad(static_cast<size_t>(start + k_native_query_reply_payload_size - writer.offset()));
-        }
-
-        (void)start;
         (void)request;
-        (void)status;
     }
 
     template <typename Traits>
     void write_proc3_record(utils::aligned_binary_writer<Traits>& writer, const resolved_dns_record& record, const DWORD flags,
                             const DWORD reserved)
     {
-        std::array<std::byte, 0x28> buffer{};
-        memcpy(buffer.data() + 0x00, &record.type, sizeof(record.type));
-        memcpy(buffer.data() + 0x02, &record.data_length, sizeof(record.data_length));
-        memcpy(buffer.data() + 0x04, &flags, sizeof(flags));
-        memcpy(buffer.data() + 0x08, &record.ttl, sizeof(record.ttl));
-        memcpy(buffer.data() + 0x0C, &reserved, sizeof(reserved));
+        rpc_proc3_record_wire_layout wire{};
+        wire.header = build_rpc_dns_record_header(record, flags, static_cast<uint64_t>(record.type), reserved);
+        wire.data = record.data;
 
-        const auto rank = static_cast<uint64_t>(record.type);
-        memcpy(buffer.data() + 0x10, &rank, sizeof(rank));
-        memcpy(buffer.data() + 0x18, record.data.data(), record.data_length);
+        std::array<std::byte, rpc_proc3_record_wire_layout::marshaled_size> buffer{};
+        copy_rpc_record_to_bytes(buffer, wire);
         writer.write(buffer);
     }
 
@@ -133,15 +298,15 @@ namespace
 
         if (status != ERROR_SUCCESS || (direct_records.empty() && mapped_records.empty()))
         {
-            writer.template write<typename Traits::PVOID>(0);
-            writer.template write<typename Traits::PVOID>(0);
-            writer.template write<typename Traits::PVOID>(0);
+            write_rpc_pointer(writer, false);
+            write_rpc_pointer(writer, false);
+            write_rpc_pointer(writer, false);
             return;
         }
 
-        writer.template write<typename Traits::PVOID>(k_native_pointer_referent);
-        writer.template write<typename Traits::PVOID>(k_native_pointer_referent);
-        writer.template write<typename Traits::PVOID>(k_native_pointer_referent);
+        write_rpc_pointer(writer, true);
+        write_rpc_pointer(writer, true);
+        write_rpc_pointer(writer, true);
 
         if (!direct_records.empty())
         {
@@ -150,22 +315,22 @@ namespace
 
         if (direct_records.size() > 1)
         {
-            writer.template write<typename Traits::PVOID>(k_native_pointer_referent);
-            writer.template write<typename Traits::PVOID>(0);
+            write_rpc_pointer(writer, true);
+            write_rpc_pointer(writer, false);
             write_proc3_record(writer, direct_records[1], k_dns_record_flags_without_name, 1);
         }
 
         if (!mapped_records.empty())
         {
-            writer.template write<typename Traits::PVOID>(k_native_pointer_referent);
-            writer.template write<typename Traits::PVOID>(k_native_pointer_referent);
+            write_rpc_pointer(writer, true);
+            write_rpc_pointer(writer, true);
             write_proc3_record(writer, mapped_records[0], k_dns_record_flags, 0);
         }
 
         if (mapped_records.size() > 1)
         {
-            writer.template write<typename Traits::PVOID>(0);
-            writer.template write<typename Traits::PVOID>(k_native_pointer_referent);
+            write_rpc_pointer(writer, false);
+            write_rpc_pointer(writer, true);
             write_proc3_record(writer, mapped_records[1], k_dns_record_flags, 0);
         }
 
@@ -182,7 +347,7 @@ namespace
             writer.write_ndr_u16string(mapped_records[1].name);
         }
 
-        constexpr size_t k_native_proc3_reply_payload_size = 0x1F8;
+        constexpr size_t k_native_proc3_reply_payload_size = 0x1E0;
         if (writer.offset() < k_native_proc3_reply_payload_size)
         {
             writer.pad(static_cast<size_t>(k_native_proc3_reply_payload_size - writer.offset()));
@@ -334,20 +499,25 @@ namespace
             const auto hostname = u16_to_u8(request.hostname);
             win_emu.callbacks.on_generic_activity("DNS query: " + hostname);
 
-            switch (request.type)
+            switch (classify_proc2_query_family(request))
             {
-            case DNS_TYPE_A: {
-                auto records = resolve_host_addresses(win_emu, request.hostname, request.type);
+            case proc2_query_family::record_query: {
+                auto records = resolve_host_addresses(win_emu, request.hostname, DNS_TYPE_A);
                 if (records.size() > 2)
                 {
                     records.resize(2);
                 }
 
+                if (records.size() == 1)
+                {
+                    records[0].ttl = k_proc2_single_record_a_ttl;
+                }
+
                 const DWORD status = records.empty() ? DNS_ERROR_RCODE_NAME_ERROR : ERROR_SUCCESS;
-                write_dns_query_response(writer, request, records, status);
+                write_proc2_query_response(writer, request, records, status);
                 break;
             }
-            case DNS_TYPE_AAAA: {
+            case proc2_query_family::addrinfo_compatible_query: {
                 auto direct_records = resolve_host_addresses(win_emu, request.hostname, DNS_TYPE_AAAA);
                 auto mapped_records = build_proc3_mapped_records(win_emu, request.hostname);
 
@@ -370,8 +540,8 @@ namespace
                 write_proc3_response(writer, request, direct_records, mapped_records, status);
                 break;
             }
-            default:
-                write_dns_query_response(writer, request, {}, STATUS_INVALID_PARAMETER);
+            case proc2_query_family::unsupported:
+                write_proc2_query_response(writer, request, {}, STATUS_INVALID_PARAMETER);
                 break;
             }
             c.recv_buffer_length = static_cast<ULONG>(writer.offset());
