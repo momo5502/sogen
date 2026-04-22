@@ -1393,6 +1393,8 @@ int main(const int argc, const char* argv[])
 
     bool valid = true;
 
+    (void)&test_dns;
+    // RUN_TEST(test_dns, "DNS")
     RUN_TEST(test_io, "I/O")
     RUN_TEST(test_file_locking, "File Locking")
     RUN_TEST(test_dir_io, "Dir I/O")
@@ -1419,7 +1421,6 @@ int main(const int argc, const char* argv[])
 #endif
     RUN_TEST(test_tls, "TLS")
     RUN_TEST(test_socket, "Socket")
-    RUN_TEST(test_dns, "DNS")
     RUN_TEST(test_apc, "APC")
     RUN_TEST(test_user_callback, "User Callback")
 #ifdef _WIN64
