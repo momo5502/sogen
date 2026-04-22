@@ -225,10 +225,9 @@ namespace
         const auto& record = *semantic_record.record;
 
         rpc_proc2_record_wire_layout wire{};
-        wire.header = build_rpc_dns_record_header(record,
-                                                   semantic_record.is_owner_name_record ? record.flags
-                                                                                        : k_dns_record_flags_without_name,
-                                                   k_native_record_rank, record.reserved);
+        wire.header =
+            build_rpc_dns_record_header(record, semantic_record.is_owner_name_record ? record.flags : k_dns_record_flags_without_name,
+                                        k_native_record_rank, record.reserved);
         wire.data = record.data;
 
         std::array<std::byte, rpc_proc2_record_wire_layout::max_marshaled_size> buffer{};
