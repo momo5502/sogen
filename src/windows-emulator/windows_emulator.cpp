@@ -568,6 +568,8 @@ void windows_emulator::setup_hooks()
 void windows_emulator::start(size_t count)
 {
     this->should_stop = false;
+    this->last_stop_reason_ = stop_reason::none;
+    this->last_stop_detail_.clear();
     this->setup_process_if_necessary();
 
     const auto use_count = count > 0;

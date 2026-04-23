@@ -2,6 +2,8 @@
 #include "syscall_dispatcher.hpp"
 #include "syscall_utils.hpp"
 
+#include <utils/string.hpp>
+
 static void serialize(utils::buffer_serializer& buffer, const syscall_handler_entry& obj)
 {
     buffer.write(obj.name);
@@ -85,6 +87,7 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
         if (entry == this->handlers_.end())
         {
             win_emu.log.error("Unknown syscall: 0x%X (raw: 0x%X)\n", syscall_id, raw_syscall_id);
+            win_emu.record_stop(stop_reason::unknown_syscall, "0x" + utils::string::to_hex_number(syscall_id));
             c.emu.reg<uint64_t>(x86_register::rax, STATUS_NOT_SUPPORTED);
             c.emu.stop();
             return;
@@ -99,6 +102,7 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
         if (!entry->second.handler)
         {
             win_emu.log.error("Unimplemented syscall: %s - 0x%X (raw: 0x%X)\n", entry->second.name.c_str(), syscall_id, raw_syscall_id);
+            win_emu.record_stop(stop_reason::unimplemented_syscall, entry->second.name);
             c.emu.reg<uint64_t>(x86_register::rax, STATUS_NOT_SUPPORTED);
             c.emu.stop();
             return;
@@ -112,6 +116,7 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
     {
         win_emu.log.error("Syscall %s threw an exception: 0x%X (raw: 0x%X) (0x%" PRIx64 ") - %s\n", syscall_name, syscall_id,
                           raw_syscall_id, address, e.what());
+        win_emu.record_stop(stop_reason::syscall_exception, std::string(syscall_name) + ": " + e.what());
         emu.reg<uint64_t>(x86_register::rax, STATUS_UNSUCCESSFUL);
         emu.stop();
     }
@@ -119,6 +124,7 @@ void syscall_dispatcher::dispatch(windows_emulator& win_emu)
     {
         win_emu.log.error("Syscall %s threw an unknown exception: 0x%X (raw: 0x%X) (0x%" PRIx64 ")\n", syscall_name, syscall_id,
                           raw_syscall_id, address);
+        win_emu.record_stop(stop_reason::syscall_exception, std::string(syscall_name) + ": <unknown exception>");
         emu.reg<uint64_t>(x86_register::rax, STATUS_UNSUCCESSFUL);
         emu.stop();
     }
