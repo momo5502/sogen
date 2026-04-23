@@ -81,6 +81,19 @@ struct application_settings
     }
 };
 
+// Knobs for values the emulator exposes to the emulated process that don't
+// depend on the host environment. Samples (particularly anti-analysis
+// payloads) probe these to detect VM/sandbox; today they are hardcoded in
+// process_context.cpp (PEB.NumberOfProcessors = 4) and kusd_mmio.cpp
+// (KUSER_SHARED_DATA.NtProductType = NtProductWinNt). Defaults match the
+// legacy hardcoded values — behavior is unchanged when consumers leave
+// this field at its default.
+struct fake_environment_config
+{
+    uint32_t number_of_processors{4};
+    uint8_t nt_product_type{1}; // NtProductWinNt
+};
+
 struct emulator_settings
 {
     bool disable_logging{false};
@@ -91,6 +104,8 @@ struct emulator_settings
 
     std::unordered_map<uint16_t, uint16_t> port_mappings{};
     std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
+
+    fake_environment_config fake_env{};
 };
 
 struct emulator_interfaces
@@ -113,6 +128,7 @@ class windows_emulator
 
   public:
     const std::filesystem::path emulation_root{};
+    const fake_environment_config fake_env{};
     emulator_callbacks callbacks{};
     logger log{};
     file_system file_sys;
