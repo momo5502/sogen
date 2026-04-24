@@ -423,13 +423,13 @@ export class Playground extends React.Component<
                 this.state.emulator.getState() == EmulationState.Running
               }
               size="sm"
-              title="Export Logs"
+              title="Export Log"
               variant="secondary"
               className="fancy"
               onClick={() => this.exportLog()}
             >
               <FileEarmarkArrowDownFill />{" "}
-              <span className="hidden sm:inline">Export Logs</span>
+              <span className="hidden sm:inline">Export Log</span>
             </Button>
 
             {!this.state.filesystem ? (
