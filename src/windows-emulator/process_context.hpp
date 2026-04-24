@@ -80,7 +80,7 @@ struct file_lock_ranges
     }
 };
 
-struct named_pipe_messages
+struct named_pipe_message_queue
 {
     std::vector<std::string> messages{};
 
@@ -220,7 +220,7 @@ struct process_context
     handle_store<handle_types::event, event> events{};
     handle_store<handle_types::file, file> files{};
     utils::insensitive_u16string_map<file_lock_ranges> file_locks{};
-    utils::insensitive_u16string_map<named_pipe_messages> named_pipe_messages{};
+    utils::insensitive_u16string_map<named_pipe_message_queue> named_pipe_messages{};
     handle_store<handle_types::section, section> sections{};
     handle_store<handle_types::device, io_device_container> devices{};
     handle_store<handle_types::semaphore, semaphore> semaphores{};
