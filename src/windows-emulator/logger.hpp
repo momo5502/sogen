@@ -12,7 +12,7 @@ class logger : public generic_logger
     // yellow = warn, cyan = info, green = success, gray = log, pink = force-
     // print from external code (e.g. gdb bindings). Sinks run even when
     // output is disabled, so they observe all log activity.
-    using sink = std::function<void(color c, std::string_view message)>;
+    using sink = utils::optional_function<void(color c, std::string_view message)>;
 
 #ifdef OS_WINDOWS
     logger();
