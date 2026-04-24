@@ -290,14 +290,15 @@ namespace
 }
 
 void process_context::setup(x86_64_emulator& emu, memory_manager& memory, registry_manager& registry, file_system& file_system,
-                            windows_version_manager& version, const application_settings& app_settings, const mapped_module& executable,
-                            const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32)
+                            windows_version_manager& version, const fake_environment_config& fake_env,
+                            const application_settings& app_settings, const mapped_module& executable, const mapped_module& ntdll,
+                            const apiset::container& apiset_container, const mapped_module* ntdll32)
 {
     this->sid = get_sid(registry);
 
     setup_gdt(emu, memory);
 
-    this->kusd.setup(version);
+    this->kusd.setup(version, fake_env);
 
     this->base_allocator = create_allocator(memory, PEB_SEGMENT_SIZE, this->is_wow64_process);
     auto& allocator = this->base_allocator;
@@ -384,7 +385,7 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
         p.HeapDeCommitFreeBlockThreshold = 0x0000000000001000;
         p.NumberOfHeaps = 0x00000000;
         p.MaximumNumberOfHeaps = 0x00000010;
-        p.NumberOfProcessors = 4;
+        p.NumberOfProcessors = fake_env.number_of_processors;
         p.ImageSubsystemMajorVersion = 6;
 
         p.OSPlatformId = 2;
@@ -476,7 +477,7 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
             p32.HeapDeCommitFreeBlockThreshold = 0x00001000;
             p32.NumberOfHeaps = 0;
             p32.MaximumNumberOfHeaps = 0x10;
-            p32.NumberOfProcessors = 4;
+            p32.NumberOfProcessors = fake_env.number_of_processors;
             p32.ImageSubsystemMajorVersion = 6;
 
             p32.OSPlatformId = 2;

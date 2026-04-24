@@ -139,6 +139,11 @@ logger::~logger()
 
 void logger::print_message(const color c, const std::string_view message, const bool force) const
 {
+    // Sinks observe all log activity, regardless of disable_output_. That lets
+    // consumers capture a full structured log even when they've silenced the
+    // terminal (e.g. --silent, or a Python wrapper capturing via callback).
+    this->sink_(c, message);
+
     if (!force && this->disable_output_)
     {
         return;

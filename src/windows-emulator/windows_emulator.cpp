@@ -315,6 +315,7 @@ windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, const e
       dns_lookup_(get_dns_lookup(interfaces)),
       socket_factory_(get_socket_factory(interfaces)),
       emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
+      fake_env(settings.fake_env),
       callbacks(std::move(callbacks)),
       file_sys(emulation_root.empty() ? emulation_root : emulation_root / "filesys"),
       memory(*this->emu_),
@@ -372,8 +373,8 @@ void windows_emulator::setup_process()
 
     const auto apiset_data = apiset::obtain(this->emulation_root);
 
-    this->process.setup(this->emu(), this->memory, this->registry, this->file_sys, this->version, this->application_settings_, *executable,
-                        *ntdll, apiset_data, this->mod_manager.wow64_modules_.ntdll32);
+    this->process.setup(this->emu(), this->memory, this->registry, this->file_sys, this->version, this->fake_env,
+                        this->application_settings_, *executable, *ntdll, apiset_data, this->mod_manager.wow64_modules_.ntdll32);
 
     const auto ntdll_data = emu.read_memory(ntdll->image_base, static_cast<size_t>(ntdll->size_of_image));
     const auto win32u_data = emu.read_memory(win32u->image_base, static_cast<size_t>(win32u->size_of_image));
@@ -568,6 +569,8 @@ void windows_emulator::setup_hooks()
 void windows_emulator::start(size_t count)
 {
     this->should_stop = false;
+    this->last_stop_reason_ = stop_reason::none;
+    this->last_stop_detail_.clear();
     this->setup_process_if_necessary();
 
     const auto use_count = count > 0;

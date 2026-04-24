@@ -42,6 +42,21 @@ struct emulator_callbacks : module_manager::callbacks, process_context::callback
     opt_func<void(io_device& device, std::u16string_view device_name, ULONG code)> on_ioctrl{};
 };
 
+// Typed reason the most recent start() returned. Today callers can only
+// infer "why we stopped" by parsing log strings written by the syscall
+// dispatcher, which is fragile and loses context. Internal error paths
+// record a reason via windows_emulator::record_stop(); callers read it
+// with last_stop_reason() post-start(). `none` covers clean exits,
+// external stop() calls, and instruction-cap exhaustion — the caller
+// already knows about those from exit_status and its own flags.
+enum class stop_reason : uint8_t
+{
+    none,
+    unknown_syscall,
+    unimplemented_syscall,
+    syscall_exception,
+};
+
 struct application_settings
 {
     windows_path application{};
@@ -66,6 +81,19 @@ struct application_settings
     }
 };
 
+// Knobs for values the emulator exposes to the emulated process that don't
+// depend on the host environment. Samples (particularly anti-analysis
+// payloads) probe these to detect VM/sandbox; today they are hardcoded in
+// process_context.cpp (PEB.NumberOfProcessors = 4) and kusd_mmio.cpp
+// (KUSER_SHARED_DATA.NtProductType = NtProductWinNt). Defaults match the
+// legacy hardcoded values — behavior is unchanged when consumers leave
+// this field at its default.
+struct fake_environment_config
+{
+    uint32_t number_of_processors{4};
+    uint8_t nt_product_type{1}; // NtProductWinNt
+};
+
 struct emulator_settings
 {
     bool disable_logging{false};
@@ -76,6 +104,8 @@ struct emulator_settings
 
     std::unordered_map<uint16_t, uint16_t> port_mappings{};
     std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
+
+    fake_environment_config fake_env{};
 };
 
 struct emulator_interfaces
@@ -98,6 +128,7 @@ class windows_emulator
 
   public:
     const std::filesystem::path emulation_root{};
+    const fake_environment_config fake_env{};
     emulator_callbacks callbacks{};
     logger log{};
     file_system file_sys;
@@ -174,6 +205,25 @@ class windows_emulator
         return this->executed_instructions_;
     }
 
+    stop_reason last_stop_reason() const
+    {
+        return this->last_stop_reason_;
+    }
+
+    const std::string& last_stop_detail() const
+    {
+        return this->last_stop_detail_;
+    }
+
+    // Called by internal paths that force a stop due to an error (syscall
+    // dispatcher unknown/unimplemented/exception). Public so future error
+    // paths can record themselves without friending everyone.
+    void record_stop(stop_reason r, std::string detail = {})
+    {
+        this->last_stop_reason_ = r;
+        this->last_stop_detail_ = std::move(detail);
+    }
+
     void setup_process_if_necessary();
 
     void start(size_t count = 0);
@@ -237,6 +287,9 @@ class windows_emulator
 
     std::vector<std::byte> process_snapshot_{};
     // std::optional<process_context> process_snapshot_{};
+
+    stop_reason last_stop_reason_{stop_reason::none};
+    std::string last_stop_detail_{};
 
     void setup_hooks();
     void setup_process();

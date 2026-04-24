@@ -18,6 +18,8 @@
 
 #include "apiset/apiset.hpp"
 
+struct fake_environment_config;
+
 #define PEB_SEGMENT_SIZE        (20 << 20) // 20 MB
 #define GS_SEGMENT_SIZE         (1 << 20)  // 1 MB
 
@@ -133,8 +135,9 @@ struct process_context
     }
 
     void setup(x86_64_emulator& emu, memory_manager& memory, registry_manager& registry, file_system& file_system,
-               windows_version_manager& version, const application_settings& app_settings, const mapped_module& executable,
-               const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32 = nullptr);
+               windows_version_manager& version, const fake_environment_config& fake_env, const application_settings& app_settings,
+               const mapped_module& executable, const mapped_module& ntdll, const apiset::container& apiset_container,
+               const mapped_module* ntdll32 = nullptr);
 
     handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size, uint32_t create_flags,
                          bool initial_thread = false);
