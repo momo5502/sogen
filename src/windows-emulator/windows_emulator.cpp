@@ -162,6 +162,7 @@ namespace
         auto& context = win_emu.process;
 
         const auto is_ready = thread.is_thread_ready(context, win_emu.clock());
+        const auto has_pending_status = thread.pending_status.has_value();
         const auto can_dispatch_apcs = thread.apc_alertable && !thread.pending_apcs.empty();
 
         if (!is_ready && !force && !can_dispatch_apcs)
@@ -186,7 +187,7 @@ namespace
 
         thread.setup_if_necessary(emu, context);
 
-        if (can_dispatch_apcs)
+        if (can_dispatch_apcs && !has_pending_status)
         {
             thread.mark_as_ready(STATUS_USER_APC);
             dispatch_next_apc(win_emu, thread);
