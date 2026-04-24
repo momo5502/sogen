@@ -521,7 +521,10 @@ namespace syscalls
         {
             if (t.id == thread_id)
             {
-                t.alerted = true;
+                if (t.waiting_for_alert)
+                {
+                    t.alerted = true;
+                }
                 return STATUS_SUCCESS;
             }
         }
