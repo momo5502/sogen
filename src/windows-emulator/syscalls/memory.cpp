@@ -248,7 +248,7 @@ namespace syscalls
 
         if ((allocation_type & ~(MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN | MEM_WRITE_WATCH)) || (!commit && !reserve))
         {
-            throw std::runtime_error("Unsupported allocation type!");
+            return STATUS_INVALID_PARAMETER;
         }
 
         if (commit && !reserve && c.win_emu.memory.commit_memory(potential_base, static_cast<size_t>(allocation_bytes), *protection))
