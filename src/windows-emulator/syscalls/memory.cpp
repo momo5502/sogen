@@ -376,7 +376,7 @@ namespace syscalls
         }
 
         constexpr size_t page_size = 0x1000;
-        const auto bytes_until_page_boundary = [page_size](const uint64_t address) {
+        const auto bytes_until_page_boundary = [](const uint64_t address) {
             const auto offset = address % page_size;
             return static_cast<size_t>(offset == 0 ? page_size : page_size - offset);
         };
