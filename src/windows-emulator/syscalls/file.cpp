@@ -1332,49 +1332,49 @@ namespace syscalls
 
     constexpr std::u16string map_mode(const ACCESS_MASK desired_access, const ULONG create_disposition)
     {
-        std::u16string mode{};
+        const auto wants_write = (desired_access & (GENERIC_WRITE | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA)) != 0;
+        const auto wants_read = (desired_access & (GENERIC_READ | FILE_READ_DATA | FILE_READ_ATTRIBUTES | FILE_READ_EA | SYNCHRONIZE)) != 0;
+
+        if (desired_access & FILE_APPEND_DATA)
+        {
+            return u"a+b";
+        }
 
         switch (create_disposition)
         {
         case FILE_CREATE:
         case FILE_SUPERSEDE:
-            if (desired_access & GENERIC_WRITE)
+            if (wants_write)
             {
-                mode = u"wb";
+                return wants_read ? u"w+b" : u"wb";
             }
             break;
 
         case FILE_OPEN:
         case FILE_OPEN_IF:
-            if (desired_access & GENERIC_WRITE)
+            if (wants_write)
             {
-                mode = u"r+b";
+                return u"r+b";
             }
-            else if (desired_access & GENERIC_READ || desired_access & SYNCHRONIZE)
+            if (wants_read)
             {
-                mode = u"rb";
+                return u"rb";
             }
             break;
 
         case FILE_OVERWRITE:
         case FILE_OVERWRITE_IF:
-            if (desired_access & GENERIC_WRITE)
+            if (wants_write)
             {
-                mode = u"w+b";
+                return u"w+b";
             }
             break;
 
         default:
-            mode = u"";
             break;
         }
 
-        if (desired_access & FILE_APPEND_DATA)
-        {
-            mode = u"a+b";
-        }
-
-        return mode;
+        return {};
     }
 
     std::optional<std::u16string_view> get_io_device_name(const std::u16string_view filename)
