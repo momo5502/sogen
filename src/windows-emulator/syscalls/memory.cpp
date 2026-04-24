@@ -290,18 +290,20 @@ namespace syscalls
 
         if (free_type & MEM_RELEASE)
         {
-            if (!allocation_size)
+            if (allocation_size)
             {
-                const auto region_info = c.win_emu.memory.get_region_info(allocation_base);
-                if (!region_info.is_reserved)
-                {
-                    return STATUS_MEMORY_NOT_ALLOCATED;
-                }
+                return STATUS_INVALID_PARAMETER;
+            }
 
-                if (region_info.allocation_base != allocation_base)
-                {
-                    return STATUS_FREE_VM_NOT_AT_BASE;
-                }
+            const auto region_info = c.win_emu.memory.get_region_info(allocation_base);
+            if (!region_info.is_reserved)
+            {
+                return STATUS_MEMORY_NOT_ALLOCATED;
+            }
+
+            if (region_info.allocation_base != allocation_base)
+            {
+                return STATUS_FREE_VM_NOT_AT_BASE;
             }
 
             const auto region_kind = c.win_emu.memory.get_region_kind(allocation_base);
@@ -317,8 +319,8 @@ namespace syscalls
                 return STATUS_SUCCESS;
             }
 
-            const auto region_info = c.win_emu.memory.get_region_info(allocation_base);
-            if (!region_info.is_reserved)
+            const auto post_release_region_info = c.win_emu.memory.get_region_info(allocation_base);
+            if (!post_release_region_info.is_reserved)
             {
                 return STATUS_MEMORY_NOT_ALLOCATED;
             }
