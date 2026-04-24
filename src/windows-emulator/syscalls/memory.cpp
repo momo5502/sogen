@@ -356,7 +356,7 @@ namespace syscalls
             return success ? STATUS_SUCCESS : STATUS_MEMORY_NOT_ALLOCATED;
         }
 
-        throw std::runtime_error("Bad free type");
+        return STATUS_INVALID_PARAMETER_4;
     }
 
     NTSTATUS handle_NtReadVirtualMemory(const syscall_context& c, const handle process_handle, const emulator_pointer base_address,
