@@ -1,7 +1,7 @@
 #pragma once
 #include "generic_logger.hpp"
 
-#include <functional>
+#include <utils/function.hpp>
 #include <string_view>
 
 class logger : public generic_logger
