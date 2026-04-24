@@ -1111,20 +1111,21 @@ namespace syscalls
         {
             if (auto* pipe = container->get_internal_device<named_pipe>())
             {
-                if (!pipe->write_queue.empty())
+                auto& messages = c.proc.named_pipe_messages[pipe->name].messages;
+                if (!messages.empty())
                 {
-                    std::string_view data = pipe->write_queue.front();
+                    std::string_view data = messages.front();
                     const size_t to_copy = std::min<size_t>(data.size(), length);
 
                     commit_file_data(data.substr(0, to_copy), c.emu, io_status_block, buffer);
 
                     if (to_copy == data.size())
                     {
-                        pipe->write_queue.pop_front();
+                        messages.erase(messages.begin());
                     }
                     else
                     {
-                        pipe->write_queue.front().erase(0, to_copy);
+                        messages.front().erase(0, to_copy);
                     }
 
                     return STATUS_SUCCESS;
@@ -1175,10 +1176,8 @@ namespace syscalls
         {
             if (auto* pipe = container->get_internal_device<named_pipe>())
             {
-                (void)pipe; // For future use: suppressing compiler issues
-                // TODO c.win_emu.callbacks.on_named_pipe_write(pipe->name, temp_buffer);
-
-                // TODO pipe->write_queue.push_back(temp_buffer);
+                c.win_emu.callbacks.on_generic_access("Writing named pipe", pipe->name);
+                c.proc.named_pipe_messages[pipe->name].messages.push_back(temp_buffer);
 
                 if (io_status_block)
                 {

@@ -80,6 +80,21 @@ struct file_lock_ranges
     }
 };
 
+struct named_pipe_messages
+{
+    std::vector<std::string> messages{};
+
+    void serialize(utils::buffer_serializer& buffer) const
+    {
+        buffer.write_vector(this->messages);
+    }
+
+    void deserialize(utils::buffer_deserializer& buffer)
+    {
+        buffer.read_vector(this->messages);
+    }
+};
+
 struct process_context
 {
     struct callbacks
@@ -205,6 +220,7 @@ struct process_context
     handle_store<handle_types::event, event> events{};
     handle_store<handle_types::file, file> files{};
     utils::insensitive_u16string_map<file_lock_ranges> file_locks{};
+    utils::insensitive_u16string_map<named_pipe_messages> named_pipe_messages{};
     handle_store<handle_types::section, section> sections{};
     handle_store<handle_types::device, io_device_container> devices{};
     handle_store<handle_types::semaphore, semaphore> semaphores{};
