@@ -3169,21 +3169,6 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        struct EMU_CCD_PATH_INFO
-        {
-            UINT64 flags;
-            UINT64 padding1;
-            LUID adapterId;
-            UINT32 sourceId;
-            UINT32 targetId;
-            EMU_DISPLAYCONFIG_VIDEO_SIGNAL_INFO targetSignalInfo;
-            UINT32 outputTechnology;
-            UINT8 padding2[40];
-            UINT32 sourceWidth;
-            UINT32 sourceHeight;
-            UINT8 padding3[84];
-        };
-
         NTSTATUS handle_NtUserQueryDisplayConfig(const syscall_context& c, const UINT32 /*flags*/,
                                                  const emulator_object<UINT32> num_path_array_elements, const emulator_pointer path_array,
                                                  const emulator_object<UINT32> current_topology_id, const emulator_pointer /*reserved*/)
@@ -3204,7 +3189,21 @@ namespace sogen
 
             if (path_array && num_paths >= 1)
             {
-                EMU_CCD_PATH_INFO internal_path{};
+                struct EMU_CCD_PATH_INFO
+                {
+                    UINT64 flags;
+                    UINT64 padding1;
+                    LUID adapterId;
+                    UINT32 sourceId;
+                    UINT32 targetId;
+                    EMU_DISPLAYCONFIG_VIDEO_SIGNAL_INFO targetSignalInfo;
+                    UINT32 outputTechnology;
+                    UINT8 padding2[40];
+                    UINT32 sourceWidth;
+                    UINT32 sourceHeight;
+                    UINT8 padding3[84];
+                } internal_path{};
+
                 internal_path.flags = 0x2000000000020003ULL;
                 internal_path.adapterId = {0x1000, 0};
                 internal_path.sourceId = 0;
@@ -3238,204 +3237,176 @@ namespace sogen
 
             switch (header.type)
             {
-            case 1: // DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME
-            {
-                EMU_DISPLAYCONFIG_SOURCE_DEVICE_NAME sourceName{};
-                sourceName.header = header;
-                utils::string::copy(sourceName.viewGdiDeviceName, u"\\\\.\\DISPLAY1");
+            case EMU_DISPLAYCONFIG_DEVICE_INFO_TYPE::GET_SOURCE_NAME: {
+                const emulator_object<EMU_DISPLAYCONFIG_SOURCE_DEVICE_NAME> source_name{c.emu, packet};
 
-                c.emu.write_memory(packet, &sourceName, sizeof(sourceName));
+                source_name.access([&](EMU_DISPLAYCONFIG_SOURCE_DEVICE_NAME& sourceName) {
+                    sourceName.header = header;
+                    utils::string::copy(sourceName.viewGdiDeviceName, u"\\\\.\\DISPLAY1");
+                });
+
                 return STATUS_SUCCESS;
             }
 
-            case 2: // DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME
-            {
-                EMU_DISPLAYCONFIG_TARGET_DEVICE_NAME targetName{};
-                targetName.header = header;
-                targetName.flags = 0x1;          // DISPLAYCONFIG_TARGET_DEVICE_NAME_FLAGS_FRIENDLY_NAME_FROM_EDID
-                targetName.outputTechnology = 5; // HDMI
-                targetName.edidManufactureId = 0xABCD;
-                targetName.edidProductCodeId = 0x1234;
-                targetName.connectorInstance = 1;
-                utils::string::copy(targetName.monitorFriendlyDeviceName, u"Generic PnP Monitor");
-                utils::string::copy(targetName.monitorDevicePath,
-                                    u"\\\\?\\DISPLAY#GSM0001#4&1234567&0&UID0#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}");
+            case EMU_DISPLAYCONFIG_DEVICE_INFO_TYPE::GET_TARGET_NAME: {
+                const emulator_object<EMU_DISPLAYCONFIG_TARGET_DEVICE_NAME> target_name{c.emu, packet};
 
-                c.emu.write_memory(packet, &targetName, sizeof(targetName));
+                target_name.access([&](EMU_DISPLAYCONFIG_TARGET_DEVICE_NAME& targetName) {
+                    targetName.header = header;
+                    targetName.flags = 0x1;
+                    targetName.outputTechnology = 5;
+                    targetName.edidManufactureId = 0xABCD;
+                    targetName.edidProductCodeId = 0x1234;
+                    targetName.connectorInstance = 1;
+                    utils::string::copy(targetName.monitorFriendlyDeviceName, u"Generic PnP Monitor");
+                    utils::string::copy(targetName.monitorDevicePath,
+                                        u"\\\\?\\DISPLAY#GSM0001#4&1234567&0&UID0#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}");
+                });
+
                 return STATUS_SUCCESS;
             }
 
-            case 4: // DISPLAYCONFIG_DEVICE_INFO_GET_ADAPTER_NAME
-            {
-                EMU_DISPLAYCONFIG_ADAPTER_NAME adapterName{};
-                adapterName.header = header;
-                utils::string::copy(
-                    adapterName.adapterDevicePath,
-                    u"\\\\?\\PCI#VEN_10DE&DEV_1C03&SUBSYS_00000000&REV_A1#4&1234567&0&0008#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}");
+            case EMU_DISPLAYCONFIG_DEVICE_INFO_TYPE::GET_ADAPTER_NAME: {
+                const emulator_object<EMU_DISPLAYCONFIG_ADAPTER_NAME> adapter_name{c.emu, packet};
 
-                c.emu.write_memory(packet, &adapterName, sizeof(adapterName));
+                adapter_name.access([&](EMU_DISPLAYCONFIG_ADAPTER_NAME& adapterName) {
+                    adapterName.header = header;
+                    utils::string::copy(
+                        adapterName.adapterDevicePath,
+                        u"\\\\?\\PCI#VEN_10DE&DEV_1C03&SUBSYS_00000000&REV_A1#4&1234567&0&0008#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}");
+                });
+
                 return STATUS_SUCCESS;
             }
 
-            case 9: // DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO
-            {
-                EMU_DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO colorInfo{};
-                colorInfo.header = header;
-                colorInfo.u.value = 0;
-                colorInfo.colorEncoding = 0; // DISPLAYCONFIG_COLOR_ENCODING_RGB
-                colorInfo.bitsPerColorChannel = 8;
+            case EMU_DISPLAYCONFIG_DEVICE_INFO_TYPE::GET_ADVANCED_COLOR_INFO: {
+                const emulator_object<EMU_DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO> color_info{c.emu, packet};
 
-                c.emu.write_memory(packet, &colorInfo, sizeof(colorInfo));
+                color_info.access([&](EMU_DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO& colorInfo) {
+                    colorInfo.header = header;
+                    colorInfo.u.value = 0;
+                    colorInfo.colorEncoding = 0;
+                    colorInfo.bitsPerColorChannel = 8;
+                });
+
                 return STATUS_SUCCESS;
             }
 
-            case -14: { // DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_FROM_HASH (internal)
+            case EMU_DISPLAYCONFIG_DEVICE_INFO_TYPE::GET_SOURCE_FROM_HASH: {
                 struct DISPLAYCONFIG_GET_SOURCE_FROM_HASH
                 {
                     UINT32 type;
                     UINT32 size;
-                    LUID adapterId;     // Offset 8:  Output
-                    UINT32 sourceId;    // Offset 16: Output
-                    UINT32 hash;        // Offset 20: Input
-                    UINT32 reserved[4]; // Offset 24-39
+                    LUID adapterId;
+                    UINT32 sourceId;
+                    UINT32 hash;
+                    UINT32 reserved[4];
                 };
 
-                auto req = c.emu.read_memory<DISPLAYCONFIG_GET_SOURCE_FROM_HASH>(packet);
+                const emulator_object<DISPLAYCONFIG_GET_SOURCE_FROM_HASH> source_from_hash{c.emu, packet};
 
-                // The caller wants to find which adapter+source corresponds to this hash
-                // For a simple emulator with one display, always return our adapter
-                req.adapterId = {0x1000, 0}; // Must match NtGdiDdDDIEnumAdapters2!
-                req.sourceId = 0;            // Source 0
+                source_from_hash.access([](DISPLAYCONFIG_GET_SOURCE_FROM_HASH& req) {
+                    req.adapterId = {0x1000, 0}; // Must match k_dxgk_adapter_luid!
+                    req.sourceId = 0;
+                });
 
-                c.emu.write_memory(packet, &req, sizeof(req));
                 return STATUS_SUCCESS;
             }
 
-            case -21: { // _DISPLAYCONFIG_GET_DISPLAY_INFO (internal DXGI structure)
-                constexpr UINT32 STRUCT_SIZE = 2056;
+            case EMU_DISPLAYCONFIG_DEVICE_INFO_TYPE::GET_DISPLAY_INFO: {
+                struct EMU_GET_DISPLAY_INFO
+                {
+                    UINT32 type;
+                    UINT32 size;
+                    LUID adapterId;
+                    UINT32 sourceId;
 
-                if (header.size < STRUCT_SIZE)
+                    uint8_t padding_0014[836 - 20];
+
+                    UINT32 VendorID;
+                    UINT32 DeviceID;
+                    UINT32 SubSysID0;
+                    UINT32 SubSysID1;
+                    UINT32 RevisionID;
+                    UINT32 WddmVersion;
+                    char16_t AdapterDesc[128];
+
+                    uint8_t padding_045C[1644 - 1116];
+
+                    INT32 DisplayLeft;
+                    INT32 DisplayTop;
+                    INT32 DisplayWidth;
+                    INT32 DisplayHeight;
+                    char16_t DeviceName[32];
+
+                    uint8_t padding_06BC[2024 - 1724];
+
+                    UINT32 FailurePoint;
+
+                    uint8_t padding_07EC[2044 - 2028];
+
+                    UINT32 ReservedQwordLow;
+                    UINT32 ReservedQwordHigh;
+
+                    uint8_t padding_0804[2056 - 2052];
+                };
+
+                static_assert(sizeof(EMU_GET_DISPLAY_INFO) == 2056);
+                static_assert(offsetof(EMU_GET_DISPLAY_INFO, adapterId) == 8);
+                static_assert(offsetof(EMU_GET_DISPLAY_INFO, sourceId) == 16);
+                static_assert(offsetof(EMU_GET_DISPLAY_INFO, VendorID) == 836);
+                static_assert(offsetof(EMU_GET_DISPLAY_INFO, AdapterDesc) == 860);
+                static_assert(offsetof(EMU_GET_DISPLAY_INFO, DisplayLeft) == 1644);
+                static_assert(offsetof(EMU_GET_DISPLAY_INFO, DeviceName) == 1660);
+                static_assert(offsetof(EMU_GET_DISPLAY_INFO, FailurePoint) == 2024);
+                static_assert(offsetof(EMU_GET_DISPLAY_INFO, ReservedQwordLow) == 2044);
+
+                if (header.size < sizeof(EMU_GET_DISPLAY_INFO))
                 {
                     return STATUS_BUFFER_TOO_SMALL;
                 }
 
-                // Read the full buffer
-                std::vector<uint8_t> buffer(STRUCT_SIZE, 0);
-                c.emu.read_memory(packet, buffer.data(), STRUCT_SIZE);
+                const emulator_object<EMU_GET_DISPLAY_INFO> display_info{c.emu, packet};
 
-                auto get_u32 = [&](size_t offset) -> UINT32& { return *reinterpret_cast<UINT32*>(&buffer[offset]); };
-                auto get_i32 = [&](size_t offset) -> INT32& { return *reinterpret_cast<INT32*>(&buffer[offset]); };
-                auto get_u64 = [&](size_t offset) -> UINT64& { return *reinterpret_cast<UINT64*>(&buffer[offset]); };
+                display_info.access([](EMU_GET_DISPLAY_INFO& info) {
+                    const bool known_adapter =
+                        info.adapterId.LowPart == 0x1000 && info.adapterId.HighPart == 0; // Must match k_dxgk_adapter_luid!
+                    const bool known_source = info.sourceId == 0;
 
-                // Parse input
-                LUID adapterId;
-                adapterId.LowPart = get_u32(8);
-                adapterId.HighPart = get_u32(12);
-                UINT32 sourceId = get_u32(16);
+                    info.FailurePoint = 0;
 
-                // Validate adapter matches our emulated one
-                if (adapterId.LowPart != 0x1000 || adapterId.HighPart != 0)
-                {
-                    // Unknown adapter - clear everything and return
-                    get_u32(2024) = 0; // No failure point
-                    c.emu.write_memory(packet, buffer.data(), STRUCT_SIZE);
-                    return STATUS_SUCCESS;
-                }
+                    if (!known_adapter || !known_source)
+                    {
+                        return;
+                    }
 
-                // Only sourceId 0 exists (NumOfSources = 1)
-                if (sourceId >= 1)
-                {
-                    // No display for this source - leave offsets 1644-1656 as zero
-                    get_u32(2024) = 0;
-                    c.emu.write_memory(packet, buffer.data(), STRUCT_SIZE);
-                    return STATUS_SUCCESS;
-                }
+                    info.VendorID = 0x10DE;
+                    info.DeviceID = 0x1C03;
+                    info.SubSysID0 = 0;
+                    info.SubSysID1 = 0;
+                    info.RevisionID = 0xA1;
+                    info.WddmVersion = 2700;
 
-                // === Fill in adapter information ===
+                    utils::string::copy(info.AdapterDesc, u"NVIDIA GeForce GTX 1060 6GB");
 
-                // Offset 836: VendorID
-                get_u32(836) = 0x10DE; // NVIDIA
+                    info.DisplayLeft = 0;
+                    info.DisplayTop = 0;
+                    info.DisplayWidth = 1920;
+                    info.DisplayHeight = 1080;
 
-                // Offset 840: DeviceID
-                get_u32(840) = 0x1C03;
+                    utils::string::copy(info.DeviceName, u"\\\\.\\DISPLAY1");
 
-                // Offset 844: SubSysID part
-                get_u32(844) = 0;
+                    info.ReservedQwordLow = 0;
+                    info.ReservedQwordHigh = 0;
+                });
 
-                // Offset 848: SubSysID part
-                get_u32(848) = 0;
-
-                // Offset 852: RevisionID
-                get_u32(852) = 0xA1;
-
-                // Offset 856: WDDM version (copied to SAdapterDesc+384)
-                get_u32(856) = 2700; // WDDM 2.7
-
-                // Offset 860: Adapter description (wchar_t[128])
-                const char16_t* adapterDesc = u"NVIDIA GeForce GTX 1060 6GB";
-                auto* descPtr = reinterpret_cast<char16_t*>(&buffer[860]);
-                size_t i = 0;
-                while (adapterDesc[i] && i < 127)
-                {
-                    descPtr[i] = adapterDesc[i];
-                    ++i;
-                }
-                descPtr[i] = 0;
-
-                // === CRITICAL: Display detection fields ===
-                // These MUST have at least v51 or v52 non-zero for a normal display
-                // If all zero: no output created
-                // If v51=v52=0 but v53|v54!=0: headless display
-
-                // Offset 1644 (v51): Display width or rect.left - MUST BE NON-ZERO for normal display
-                get_i32(1644) = 0;
-
-                // Offset 1648 (v52): Display height or rect.top - MUST BE NON-ZERO for normal display
-                get_i32(1648) = 0;
-
-                // Offset 1652 (v53): Additional display info
-                get_i32(1652) = 1920;
-
-                // Offset 1656 (v54): Additional display info
-                get_i32(1656) = 1080;
-
-                // Offset 1660 (0x67C): Device name (wchar_t[32])
-                // Must match what GetMonitorInfoW returns: "\\.\DISPLAY1"
-                const char16_t* deviceName = u"\\\\.\\DISPLAY1";
-                auto* namePtr = reinterpret_cast<char16_t*>(&buffer[1660]);
-                i = 0;
-                while (deviceName[i] && i < 31)
-                {
-                    namePtr[i] = deviceName[i];
-                    ++i;
-                }
-                namePtr[i] = 0;
-
-                // === Output fields ===
-
-                // Offset 2024: Failure point (0 = success)
-                get_u32(2024) = 0;
-
-                // Offset 2044: Some QWORD read into adapter desc
-                get_u64(2044) = 0;
-
-                c.emu.write_memory(packet, buffer.data(), STRUCT_SIZE);
-                return STATUS_SUCCESS;
-            }
-
-            case -34: {
                 return STATUS_SUCCESS;
             }
 
             default:
-                c.win_emu.log.error("Unknown DisplayConfig Info Type: %d", header.type);
+                // c.win_emu.log.warn("Unknown DisplayConfig Info Type: %d", header.type);
                 return STATUS_SUCCESS;
             }
-        }
-
-        NTSTATUS handle_NtUserAllowSetForegroundWindow()
-        {
-            return STATUS_SUCCESS;
         }
     }
 

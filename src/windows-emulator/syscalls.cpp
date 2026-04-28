@@ -615,20 +615,20 @@ namespace sogen
         uint64_t handle_NtGdiSelectBrushLocal(const syscall_context& c, hdc dc, uint32_t brush, emulator_pointer old_brush_ptr);
         uint64_t handle_NtGdiSelectPenLocal(const syscall_context& c, hdc dc, uint32_t pen, emulator_pointer old_pen_ptr);
         NTSTATUS handle_NtGdiOpenDCW();
-        NTSTATUS handle_NtGdiDdDDIEnumAdapters2(const syscall_context& c, emulator_pointer parameters);
-        NTSTATUS handle_NtDxgkEnumAdapters3(const syscall_context& c, emulator_pointer parameters);
-        NTSTATUS handle_NtDxgkGetProperties(const syscall_context& c, emulator_pointer parameters);
+        NTSTATUS handle_NtGdiDdDDIEnumAdapters2(const syscall_context& c, emulator_object<EMU_D3DKMT_ENUMADAPTERS2> enum_adapters);
+        NTSTATUS handle_NtDxgkEnumAdapters3(const syscall_context& c, emulator_object<EMU_D3DKMT_ENUMADAPTERS3> enum_adapters);
+        NTSTATUS handle_NtDxgkGetProperties(const syscall_context& c, emulator_object<EMU_D3DKMT_GET_PROPERTIES> get_properties);
         NTSTATUS handle_NtGdiDdDDICloseAdapter();
-        NTSTATUS handle_NtGdiDdDDIQueryAdapterInfo(const syscall_context& c, emulator_pointer parameters);
-        NTSTATUS handle_NtGdiDdDDICreateDevice(const syscall_context& c, emulator_pointer parameters);
-        NTSTATUS handle_NtGdiDdDDIEscape(const syscall_context& c, emulator_pointer parameters);
-        NTSTATUS handle_NtGdiDdDDICreateContext(const syscall_context& c, emulator_pointer parameters);
-        NTSTATUS handle_NtGdiDdDDICreateAllocation(const syscall_context& c, emulator_pointer parameters);
-        NTSTATUS handle_NtGdiDdDDILock(const syscall_context& c, emulator_pointer parameters);
+        NTSTATUS handle_NtGdiDdDDIQueryAdapterInfo(const syscall_context& c, emulator_object<EMU_D3DKMT_QUERYADAPTERINFO> query_adapter);
+        NTSTATUS handle_NtGdiDdDDICreateDevice(const syscall_context& c, emulator_object<EMU_D3DKMT_CREATEDEVICE> device_desc);
+        NTSTATUS handle_NtGdiDdDDIEscape(const syscall_context& c, emulator_object<EMU_D3DKMT_ESCAPE> escape_desc);
+        NTSTATUS handle_NtGdiDdDDICreateContext(const syscall_context& c, emulator_object<EMU_D3DKMT_CREATECONTEXT> context_desc);
+        NTSTATUS handle_NtGdiDdDDICreateAllocation(const syscall_context& c, emulator_object<EMU_D3DKMT_CREATEALLOCATION> allocation_desc);
+        NTSTATUS handle_NtGdiDdDDILock(const syscall_context& c, emulator_object<EMU_D3DKMT_LOCK> lock_desc);
         NTSTATUS handle_NtGdiDdDDIUnlock();
         NTSTATUS handle_NtGdiDdDDIDestroyContext();
         NTSTATUS handle_NtGdiDdDDIDestroyDevice();
-        NTSTATUS handle_NtGdiDdDDIOpenAdapterFromHdc(const syscall_context& c, emulator_pointer parameters);
+        NTSTATUS handle_NtGdiDdDDIOpenAdapterFromHdc(const syscall_context& c, emulator_object<EMU_D3DKMT_OPENADAPTERFROMHDC> open_adapter);
 
         // syscalls/trace.cpp:
         NTSTATUS handle_NtTraceControl(const syscall_context& c, ULONG function_code, uint64_t input_buffer, ULONG input_buffer_length,

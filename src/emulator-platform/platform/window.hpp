@@ -424,9 +424,33 @@ namespace sogen
         } u;
     };
 
+    enum class EMU_DISPLAYCONFIG_DEVICE_INFO_TYPE : UINT32
+    {
+        GET_SOURCE_NAME = 1,
+        GET_TARGET_NAME = 2,
+        GET_TARGET_PREFERRED_MODE = 3,
+        GET_ADAPTER_NAME = 4,
+        SET_TARGET_PERSISTENCE = 5,
+        GET_TARGET_BASE_TYPE = 6,
+        GET_SUPPORT_VIRTUAL_RESOLUTION = 7,
+        SET_SUPPORT_VIRTUAL_RESOLUTION = 8,
+        GET_ADVANCED_COLOR_INFO = 9,
+        SET_ADVANCED_COLOR_STATE = 10,
+        GET_SDR_WHITE_LEVEL = 11,
+        GET_MONITOR_SPECIALIZATION = 12,
+        SET_MONITOR_SPECIALIZATION = 13,
+        SET_RESERVED1 = 14,
+        GET_ADVANCED_COLOR_INFO_2 = 15,
+        SET_HDR_STATE = 16,
+        SET_WCG_STATE = 17,
+
+        GET_SOURCE_FROM_HASH = static_cast<uint32_t>(-14),
+        GET_DISPLAY_INFO = static_cast<uint32_t>(-21),
+    };
+
     struct EMU_DISPLAYCONFIG_DEVICE_INFO_HEADER
     {
-        EMULATOR_CAST(int32_t, DISPLAYCONFIG_DEVICE_INFO_TYPE) type;
+        EMU_DISPLAYCONFIG_DEVICE_INFO_TYPE type;
         UINT32 size;
         LUID adapterId;
         UINT32 id;
