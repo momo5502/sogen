@@ -1183,6 +1183,12 @@ namespace sogen
             return resolve_dc_surface(c, dc, origin_x, origin_y, present_handle);
         }
 
+        NTSTATUS handle_NtDxgkIsFeatureEnabled()
+        {
+            // puts("NtDxgkIsFeatureEnabled not supported");
+            return STATUS_NOT_SUPPORTED;
+        }
+
         NTSTATUS handle_NtGdiInit(const syscall_context& c)
         {
             if (ensure_gdi_shared_table(c) == 0)
@@ -1408,7 +1414,15 @@ namespace sogen
             return allocate_gdi_dc(c, dc_attr);
         }
 
-        int32_t handle_NtGdiSaveDC(const syscall_context& c, const hdc dc)
+<<<<<<< HEAD
+        int32_t handle_NtGdiSaveDC(const syscall_context& c, const hdc dc) == == == = NTSTATUS handle_NtGdiOpenDCW()
+        {
+            return STATUS_SUCCESS;
+        }
+
+        uint64_t handle_NtGdiCreateCompatibleBitmap(const syscall_context& c, const hdc /*dc*/, const uint32_t /*width*/,
+                                                    const uint32_t /*height*/)
+>>>>>>> d0f91341 (First version of DX11 skeleton)
         {
             const auto dc_value = static_cast<uint32_t>(dc);
             auto& stack = c.proc.gdi_dc_save_states[dc_value];
@@ -2244,6 +2258,1041 @@ namespace sogen
             }
 
             c.emu.write_memory(entry_ptr, &entry, sizeof(entry));
+            return STATUS_SUCCESS;
+        }
+
+        struct EMU_D3DKMT_ADAPTERINFO
+        {
+            UINT32 hAdapter;
+            LUID AdapterLuid;
+            UINT32 NumOfSources;
+            BOOL bPrecisePresentRegionsPreferred;
+        };
+
+        struct EMU_D3DKMT_ENUMADAPTERS2
+        {
+            UINT32 NumAdapters;
+            UINT64 pAdapters;
+        };
+
+        struct EMU_D3DKMT_ENUMADAPTERS_FILTER
+        {
+            UINT64 Value;
+        };
+
+        struct EMU_D3DKMT_ENUMADAPTERS3
+        {
+            EMU_D3DKMT_ENUMADAPTERS_FILTER Filter;
+            UINT32 NumAdapters;
+            UINT32 Padding;
+            UINT64 pAdapters;
+        };
+        static_assert(sizeof(EMU_D3DKMT_ENUMADAPTERS3) == 0x18);
+
+        constexpr UINT32 k_dxgk_adapter_count = 1;
+        constexpr UINT32 k_dxgk_adapter_handle = 0x4000;
+        constexpr UINT32 k_dxgk_adapter_luid_low = 0x1000;
+        constexpr UINT32 k_dxgk_adapter_luid_high = 0;
+        constexpr UINT32 k_dxgk_adapter_source_count = 1;
+
+        EMU_D3DKMT_ADAPTERINFO make_default_dxgk_adapter_info()
+        {
+            EMU_D3DKMT_ADAPTERINFO adapter_info{};
+            adapter_info.hAdapter = k_dxgk_adapter_handle;
+            adapter_info.AdapterLuid = {k_dxgk_adapter_luid_low, k_dxgk_adapter_luid_high};
+            adapter_info.NumOfSources = k_dxgk_adapter_source_count;
+            adapter_info.bPrecisePresentRegionsPreferred = FALSE;
+            return adapter_info;
+        }
+
+        NTSTATUS write_default_dxgk_adapter_array(const syscall_context& c, const UINT32 num_adapters, const UINT64 adapters_ptr)
+        {
+            if (adapters_ptr == 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            if (num_adapters < k_dxgk_adapter_count)
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            const auto adapter_info = make_default_dxgk_adapter_info();
+            c.emu.write_memory(adapters_ptr, &adapter_info, sizeof(adapter_info));
+
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtGdiDdDDIEnumAdapters2(const syscall_context& c, const emulator_pointer parameters)
+        {
+            if (!parameters)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            auto desc = c.emu.read_memory<EMU_D3DKMT_ENUMADAPTERS2>(parameters);
+
+            if (desc.pAdapters == 0)
+            {
+                desc.NumAdapters = k_dxgk_adapter_count;
+                c.emu.write_memory(parameters, &desc, sizeof(desc));
+                return STATUS_SUCCESS;
+            }
+
+            const NTSTATUS status = write_default_dxgk_adapter_array(c, desc.NumAdapters, desc.pAdapters);
+            if (status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
+            desc.NumAdapters = k_dxgk_adapter_count;
+            c.emu.write_memory(parameters, &desc, sizeof(desc));
+
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtDxgkEnumAdapters3(const syscall_context& c, const emulator_pointer parameters)
+        {
+            if (!parameters)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            auto desc = c.emu.read_memory<EMU_D3DKMT_ENUMADAPTERS3>(parameters);
+
+            if (desc.pAdapters == 0)
+            {
+                desc.NumAdapters = k_dxgk_adapter_count;
+                c.emu.write_memory(parameters, &desc, sizeof(desc));
+                return STATUS_SUCCESS;
+            }
+
+            const NTSTATUS status = write_default_dxgk_adapter_array(c, desc.NumAdapters, desc.pAdapters);
+            if (status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
+            desc.NumAdapters = k_dxgk_adapter_count;
+            c.emu.write_memory(parameters, &desc, sizeof(desc));
+
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtDxgkGetProperties(const syscall_context& c, const emulator_pointer parameters)
+        {
+            // Structure inferred from GetKernelCachedAdapterId stack layout:
+            // v7[0] = PropertyId (4 bytes)
+            // v7[1] = Size (4 bytes)
+            // v8    = Reserved/Padding (8 bytes)
+            // v9    = pBuffer (8 bytes)
+            // v10   = Reserved (16 bytes)
+            struct EMU_D3DKMT_GET_PROPERTIES
+            {
+                UINT32 PropertyId;
+                UINT32 Size;
+                UINT64 Reserved;
+                UINT64 pBuffer;
+                UINT64 Reserved2[2];
+            };
+
+            if (!parameters)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            auto props = c.emu.read_memory<EMU_D3DKMT_GET_PROPERTIES>(parameters);
+
+            // PropertyId 1 and 2 seem to correspond to querying the "Kernel Cached Adapter Id".
+            // 1 = Per-App preference?
+            // 2 = Global preference?
+            // The code checks if the returned data has a valid flag (4th DWORD LOBYTE).
+            if (props.PropertyId == 1 || props.PropertyId == 2)
+            {
+                if (props.Size < 16 || !props.pBuffer)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                // Inferred output structure:
+                // struct UserPreferredAdapterId {
+                //   UINT32 LuidLow;
+                //   UINT32 LuidHigh;
+                //   UINT32 VidPnSourceId;
+                //   UINT32 Valid; // Checked via LOBYTE(v[3])
+                // };
+                struct EMU_PREFERRED_ADAPTER_INFO
+                {
+                    UINT32 LuidLow;
+                    UINT32 LuidHigh;
+                    UINT32 SourceId;
+                    UINT32 Flags;
+                } info{};
+
+                // Return the LUID of the emulated adapter defined in EnumAdapters2 (e.g. {0x1000, 0}).
+                // This ensures the helper library "finds" our emulated GPU.
+                info.LuidLow = 0x1000;
+                info.LuidHigh = 0;
+                info.SourceId = 0; // Default source (Monitor 0)
+                info.Flags = 1;    // Mark as valid
+
+                c.emu.write_memory(props.pBuffer, &info, sizeof(info));
+                return STATUS_SUCCESS;
+            }
+
+            c.win_emu.log.error("Unknown PropertyId %d", props.PropertyId);
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        NTSTATUS handle_NtGdiDdDDICloseAdapter()
+        {
+            return STATUS_SUCCESS;
+        }
+
+        enum class KMTQAITYPE : UINT32
+        {
+            KMTQAITYPE_UMDRIVERPRIVATE = 0,
+            KMTQAITYPE_UMDRIVERNAME = 1,
+            KMTQAITYPE_UMOPENGLINFO = 2,
+            KMTQAITYPE_GETSEGMENTSIZE = 3,
+            KMTQAITYPE_ADAPTERGUID = 4,
+            KMTQAITYPE_FLIPQUEUEINFO = 5,
+            KMTQAITYPE_ADAPTERADDRESS = 6,
+            KMTQAITYPE_SETWORKINGSETINFO = 7,
+            KMTQAITYPE_ADAPTERREGISTRYINFO = 8,
+            KMTQAITYPE_CURRENTDISPLAYMODE = 9,
+            KMTQAITYPE_MODELIST = 10,
+            KMTQAITYPE_CHECKDRIVERUPDATESTATUS = 11,
+            KMTQAITYPE_VIRTUALADDRESSINFO = 12, // _ADVSCH_
+            KMTQAITYPE_DRIVERVERSION = 13,
+            KMTQAITYPE_ADAPTERTYPE = 15,
+            KMTQAITYPE_OUTPUTDUPLCONTEXTSCOUNT = 16,
+            KMTQAITYPE_WDDM_1_2_CAPS = 17,
+            KMTQAITYPE_UMD_DRIVER_VERSION = 18,
+            KMTQAITYPE_DIRECTFLIP_SUPPORT = 19,
+            KMTQAITYPE_MULTIPLANEOVERLAY_SUPPORT = 20,
+            KMTQAITYPE_DLIST_DRIVER_NAME = 21,
+            KMTQAITYPE_WDDM_1_3_CAPS = 22,
+            KMTQAITYPE_MULTIPLANEOVERLAY_HUD_SUPPORT = 23,
+            KMTQAITYPE_WDDM_2_0_CAPS = 24,
+            KMTQAITYPE_NODEMETADATA = 25,
+            KMTQAITYPE_CPDRIVERNAME = 26,
+            KMTQAITYPE_XBOX = 27,
+            KMTQAITYPE_INDEPENDENTFLIP_SUPPORT = 28,
+            KMTQAITYPE_MIRACASTCOMPANIONDRIVERNAME = 29,
+            KMTQAITYPE_PHYSICALADAPTERCOUNT = 30,
+            KMTQAITYPE_PHYSICALADAPTERDEVICEIDS = 31,
+            KMTQAITYPE_DRIVERCAPS_EXT = 32,
+            KMTQAITYPE_QUERY_MIRACAST_DRIVER_TYPE = 33,
+            KMTQAITYPE_QUERY_GPUMMU_CAPS = 34,
+            KMTQAITYPE_QUERY_MULTIPLANEOVERLAY_DECODE_SUPPORT = 35,
+            KMTQAITYPE_QUERY_HW_PROTECTION_TEARDOWN_COUNT = 36,
+            KMTQAITYPE_QUERY_ISBADDRIVERFORHWPROTECTIONDISABLED = 37,
+            KMTQAITYPE_MULTIPLANEOVERLAY_SECONDARY_SUPPORT = 38,
+            KMTQAITYPE_INDEPENDENTFLIP_SECONDARY_SUPPORT = 39,
+            KMTQAITYPE_PANELFITTER_SUPPORT = 40,
+            KMTQAITYPE_PHYSICALADAPTERPNPKEY = 41,
+            KMTQAITYPE_GETSEGMENTGROUPSIZE = 42,
+            KMTQAITYPE_MPO3DDI_SUPPORT = 43,
+            KMTQAITYPE_HWDRM_SUPPORT = 44,
+            KMTQAITYPE_MPOKERNELCAPS_SUPPORT = 45,
+            KMTQAITYPE_MULTIPLANEOVERLAY_STRETCH_SUPPORT = 46,
+            KMTQAITYPE_GET_DEVICE_VIDPN_OWNERSHIP_INFO = 47,
+            KMTQAITYPE_QUERYREGISTRY = 48,
+            KMTQAITYPE_KMD_DRIVER_VERSION = 49,
+            KMTQAITYPE_BLOCKLIST_KERNEL = 50,
+            KMTQAITYPE_BLOCKLIST_RUNTIME = 51,
+            KMTQAITYPE_ADAPTERGUID_RENDER = 52,
+            KMTQAITYPE_ADAPTERADDRESS_RENDER = 53,
+            KMTQAITYPE_ADAPTERREGISTRYINFO_RENDER = 54,
+            KMTQAITYPE_CHECKDRIVERUPDATESTATUS_RENDER = 55,
+            KMTQAITYPE_DRIVERVERSION_RENDER = 56,
+            KMTQAITYPE_ADAPTERTYPE_RENDER = 57,
+            KMTQAITYPE_WDDM_1_2_CAPS_RENDER = 58,
+            KMTQAITYPE_WDDM_1_3_CAPS_RENDER = 59,
+            KMTQAITYPE_QUERY_ADAPTER_UNIQUE_GUID = 60,
+            KMTQAITYPE_NODEPERFDATA = 61,
+            KMTQAITYPE_ADAPTERPERFDATA = 62,
+            KMTQAITYPE_ADAPTERPERFDATA_CAPS = 63,
+            KMTQUITYPE_GPUVERSION = 64,
+            KMTQAITYPE_DRIVER_DESCRIPTION = 65,
+            KMTQAITYPE_DRIVER_DESCRIPTION_RENDER = 66,
+            KMTQAITYPE_SCANOUT_CAPS = 67,
+            KMTQAITYPE_DISPLAY_UMDRIVERNAME = 71, // Added in 19H2
+            KMTQAITYPE_PARAVIRTUALIZATION_RENDER = 68,
+            KMTQAITYPE_SERVICENAME = 69,
+            KMTQAITYPE_WDDM_2_7_CAPS = 70,
+            KMTQAITYPE_TRACKEDWORKLOAD_SUPPORT = 72,
+            KMTQAITYPE_HYBRID_DLIST_DLL_SUPPORT = 73,
+            KMTQAITYPE_DISPLAY_CAPS = 74,
+            KMTQAITYPE_WDDM_2_9_CAPS = 75,
+            KMTQAITYPE_CROSSADAPTERRESOURCE_SUPPORT = 76,
+            KMTQAITYPE_WDDM_3_0_CAPS = 77,
+        };
+
+        struct EMU_D3DKMT_QUERYADAPTERINFO
+        {
+            UINT32 hAdapter;
+            KMTQAITYPE Type;
+            UINT64 pPrivateDriverData;
+            UINT32 PrivateDriverDataSize;
+        };
+
+        NTSTATUS handle_NtGdiDdDDIQueryAdapterInfo(const syscall_context& c, const emulator_pointer parameters)
+        {
+            if (!parameters)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            auto query = c.emu.read_memory<EMU_D3DKMT_QUERYADAPTERINFO>(parameters);
+
+            if (!query.pPrivateDriverData)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            // Optional: Enforce handle check
+            if (query.hAdapter != 0x4000)
+            {
+                c.win_emu.log.warn("NtGdiDdDDIQueryAdapterInfo: Querying unknown adapter handle 0x%X", query.hAdapter);
+            }
+
+            switch (query.Type)
+            {
+            case KMTQAITYPE::KMTQAITYPE_UMDRIVERPRIVATE: // 0
+            {
+                // The runtime/UMD is asking for private driver data.
+                // Since we don't have a real KMD, we just zero the buffer
+                // to indicate no specific state is required.
+                if (query.PrivateDriverDataSize > 0)
+                {
+                    std::vector<uint8_t> zeros(query.PrivateDriverDataSize, 0);
+                    c.emu.write_memory(query.pPrivateDriverData, zeros.data(), zeros.size());
+                }
+                return STATUS_SUCCESS;
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_UMDRIVERNAME: // 1
+            {
+                if (query.PrivateDriverDataSize < 520) // MAX_PATH * 2
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                struct EMU_D3DKMT_UMDRIVERNAME
+                {
+                    uint32_t Version; // KMTUMDVERSION
+                    char16_t UhDriverName[260];
+                } driverName{};
+
+                utils::string::copy(driverName.UhDriverName, u"d3d10warp.dll");
+
+                c.emu.write_memory(query.pPrivateDriverData, &driverName, sizeof(driverName));
+                return STATUS_SUCCESS;
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_GETSEGMENTSIZE: // 3
+            {
+                // Handle both legacy (24 byte) and modern (32+ byte) structures
+                if (query.PrivateDriverDataSize == 24)
+                {
+                    struct EMU_D3DKMT_SEGMENTSIZEINFO_ONLY
+                    {
+                        UINT64 DedicatedVideoMemorySize;
+                        UINT64 DedicatedSystemMemorySize;
+                        UINT64 SharedSystemMemorySize;
+                    } segInfo{};
+                    segInfo.DedicatedVideoMemorySize = 4ull * 1024 * 1024 * 1024;
+                    segInfo.DedicatedSystemMemorySize = 0;
+                    segInfo.SharedSystemMemorySize = 8ull * 1024 * 1024 * 1024;
+                    c.emu.write_memory(query.pPrivateDriverData, &segInfo, sizeof(segInfo));
+                    return STATUS_SUCCESS;
+                }
+                else if (query.PrivateDriverDataSize >= 32)
+                {
+                    struct EMU_D3DKMT_QUERYSEGMENT
+                    {
+                        UINT32 PhysicalAdapterIndex;
+                        UINT32 Padding;
+                        UINT64 DedicatedVideoMemorySize;
+                        UINT64 DedicatedSystemMemorySize;
+                        UINT64 SharedSystemMemorySize;
+                    } segData{};
+                    segData.DedicatedVideoMemorySize = 4ull * 1024 * 1024 * 1024;
+                    segData.DedicatedSystemMemorySize = 0;
+                    segData.SharedSystemMemorySize = 8ull * 1024 * 1024 * 1024;
+                    c.emu.write_memory(query.pPrivateDriverData, &segData, sizeof(segData));
+                    return STATUS_SUCCESS;
+                }
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_ADAPTERGUID: // 4
+            {
+                if (query.PrivateDriverDataSize < sizeof(GUID))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+                GUID adapterGuid = {0x5b45201d, 0xf2f2, 0x4f3b, {0x85, 0xbb, 0x30, 0xff, 0x1f, 0x95, 0x35, 0x99}};
+                c.emu.write_memory(query.pPrivateDriverData, &adapterGuid, sizeof(GUID));
+                return STATUS_SUCCESS;
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_CHECKDRIVERUPDATESTATUS: // 11
+            {
+                if (query.PrivateDriverDataSize < sizeof(UINT32))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+                UINT32 status = 0; // 0 = No update pending
+                c.emu.write_memory(query.pPrivateDriverData, &status, sizeof(UINT32));
+                return STATUS_SUCCESS;
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_DRIVERVERSION: // 13
+            {
+                if (query.PrivateDriverDataSize < sizeof(UINT32))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+                UINT32 wddmVersion = 2700; // WDDM 2.7
+                c.emu.write_memory(query.pPrivateDriverData, &wddmVersion, sizeof(UINT32));
+                return STATUS_SUCCESS;
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_ADAPTERTYPE: // 15
+            {
+                if (query.PrivateDriverDataSize < sizeof(UINT32))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+                UINT32 adapterType = 0x3; // Render + Display
+                c.emu.write_memory(query.pPrivateDriverData, &adapterType, sizeof(UINT32));
+                return STATUS_SUCCESS;
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_OUTPUTDUPLCONTEXTSCOUNT: // 16
+            {
+                if (query.PrivateDriverDataSize < sizeof(UINT32))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+                UINT32 contexts = 0;
+                c.emu.write_memory(query.pPrivateDriverData, &contexts, sizeof(UINT32));
+                return STATUS_SUCCESS;
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_UMD_DRIVER_VERSION: // 18
+            {
+                if (query.PrivateDriverDataSize < sizeof(UINT64))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+                UINT64 version = 0; // Or a specific driver version number
+                c.emu.write_memory(query.pPrivateDriverData, &version, sizeof(UINT64));
+                return STATUS_SUCCESS;
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_DIRECTFLIP_SUPPORT:            // 19
+            case KMTQAITYPE::KMTQAITYPE_MULTIPLANEOVERLAY_HUD_SUPPORT: // 23
+            {
+                if (query.PrivateDriverDataSize < sizeof(BOOL))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+                BOOL supported = FALSE;
+                c.emu.write_memory(query.pPrivateDriverData, &supported, sizeof(BOOL));
+                return STATUS_SUCCESS;
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_WDDM_1_3_CAPS: // 22
+            {
+                // Just zero out the buffer to indicate no specific WDDM 1.3 capabilities are claimed
+                if (query.PrivateDriverDataSize > 0)
+                {
+                    std::vector<uint8_t> zeros(query.PrivateDriverDataSize, 0);
+                    c.emu.write_memory(query.pPrivateDriverData, zeros.data(), zeros.size());
+                }
+                return STATUS_SUCCESS;
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_NODEMETADATA: // 25
+            {
+                // Input: NodeOrdinal (UINT32) at start of buffer.
+                // Output: NodeType (D3DKMT_NODETYPE, UINT32) at offset 4.
+                if (query.PrivateDriverDataSize < sizeof(UINT32) * 2)
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                // D3DKMT_NODETYPE_3D = 0
+                UINT32 nodeType = 0;
+                // Write to offset 4 (after NodeOrdinal)
+                c.emu.write_memory(query.pPrivateDriverData + 4, &nodeType, sizeof(UINT32));
+                return STATUS_SUCCESS;
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_CPDRIVERNAME: // 26
+            {
+                if (query.PrivateDriverDataSize < 520) // MAX_PATH * 2
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                struct EMU_D3DKMT_CPDRIVERNAME
+                {
+                    char16_t ContentProtectionFileName[260];
+                } cpName{};
+
+                // We don't emulate a specific Content Protection driver.
+                // Returning an empty string/zeroed buffer usually signals this to the runtime
+                // without causing a crash, or implies built-in software handling.
+                c.emu.write_memory(query.pPrivateDriverData, &cpName, sizeof(cpName));
+                return STATUS_SUCCESS;
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_INDEPENDENTFLIP_SUPPORT: // 28
+            {
+                if (query.PrivateDriverDataSize < sizeof(BOOL))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                // D3DKMT_INDEPENDENTFLIP_SUPPORT
+                // Set to FALSE to disable advanced independent flip optimization.
+                BOOL supported = FALSE;
+                c.emu.write_memory(query.pPrivateDriverData, &supported, sizeof(BOOL));
+                return STATUS_SUCCESS;
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_PHYSICALADAPTERCOUNT: // 30
+            {
+                if (query.PrivateDriverDataSize < sizeof(UINT32))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+                UINT32 count = 1; // Single physical adapter
+                c.emu.write_memory(query.pPrivateDriverData, &count, sizeof(UINT32));
+                return STATUS_SUCCESS;
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_PHYSICALADAPTERDEVICEIDS: // 31
+            {
+                struct EMU_D3DKMT_PHYSICAL_ADAPTER_DEVICE_IDS
+                {
+                    UINT32 VendorID;
+                    UINT32 DeviceID;
+                    UINT32 SubSystemID;
+                    UINT32 RevisionID;
+                    UINT32 BusNumber;
+                    UINT32 DeviceNumber;
+                    UINT32 FunctionNumber;
+                };
+
+                if (query.PrivateDriverDataSize < sizeof(EMU_D3DKMT_PHYSICAL_ADAPTER_DEVICE_IDS))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                EMU_D3DKMT_PHYSICAL_ADAPTER_DEVICE_IDS ids{};
+
+                // Adapter Name: PCI#VEN_10DE&DEV_1C03...
+                ids.VendorID = 0x10DE; // NVIDIA
+                ids.DeviceID = 0x1C03; // Example Device
+                ids.SubSystemID = 0;
+                ids.RevisionID = 0xA1;
+                ids.BusNumber = 0;
+                ids.DeviceNumber = 0;
+                ids.FunctionNumber = 0;
+
+                c.emu.write_memory(query.pPrivateDriverData, &ids, sizeof(ids));
+                return STATUS_SUCCESS;
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_MPOKERNELCAPS_SUPPORT: // 45
+            {
+                if (query.PrivateDriverDataSize < sizeof(BOOL))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+                // Multi-Plane Overlay support: False
+                BOOL supported = FALSE;
+                c.emu.write_memory(query.pPrivateDriverData, &supported, sizeof(BOOL));
+                return STATUS_SUCCESS;
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_ADAPTERTYPE_RENDER: // 57
+            {
+                if (query.PrivateDriverDataSize < sizeof(UINT32))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+                // D3DKMT_ADAPTERTYPE bitfield. Bit 0 = RenderSupported.
+                UINT32 renderType = 1;
+                c.emu.write_memory(query.pPrivateDriverData, &renderType, sizeof(UINT32));
+                return STATUS_SUCCESS;
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_QUERY_ADAPTER_UNIQUE_GUID: // 60
+            {
+                if (query.PrivateDriverDataSize < sizeof(GUID))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+                // Use the same GUID defined in KMTQAITYPE_ADAPTERGUID (Type 4) for consistency
+                GUID uniqueGuid = {0x5b45201d, 0xf2f2, 0x4f3b, {0x85, 0xbb, 0x30, 0xff, 0x1f, 0x95, 0x35, 0x99}};
+                c.emu.write_memory(query.pPrivateDriverData, &uniqueGuid, sizeof(GUID));
+                return STATUS_SUCCESS;
+            }
+
+            // --- WDDM CAPS and Support ---
+            case KMTQAITYPE::KMTQAITYPE_NODEPERFDATA:              // 61
+            case KMTQAITYPE::KMTQAITYPE_PARAVIRTUALIZATION_RENDER: // 68
+            case KMTQAITYPE::KMTQAITYPE_WDDM_2_7_CAPS:             // 70
+            case KMTQAITYPE::KMTQAITYPE_WDDM_3_0_CAPS:             // 77
+            {
+                std::vector<uint8_t> zeros(query.PrivateDriverDataSize, 0);
+                c.emu.write_memory(query.pPrivateDriverData, zeros.data(), zeros.size());
+                return STATUS_SUCCESS;
+            }
+
+            default:
+                c.win_emu.log.error("NtGdiDdDDIQueryAdapterInfo: Unhandled query Type %d", (UINT32)query.Type);
+                return STATUS_SUCCESS;
+            }
+        }
+
+        struct EMU_D3DKMT_CREATEDEVICE
+        {
+            UINT64 hAdapter;
+            UINT32 Flags; // D3DKMT_CREATEDEVICEFLAGS
+            UINT32 hDevice;
+            UINT64 pCommandBuffer;
+            UINT32 CommandBufferSize;
+            UINT64 pAllocationList;
+            UINT32 AllocationListSize;
+            UINT64 pPatchLocationList;
+            UINT32 PatchLocationListSize;
+        };
+
+        NTSTATUS handle_NtGdiDdDDICreateDevice(const syscall_context& c, const emulator_pointer parameters)
+        {
+            if (!parameters)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            auto create_device = c.emu.read_memory<EMU_D3DKMT_CREATEDEVICE>(parameters);
+
+            // Verify the adapter handle matches the one we issued in EnumAdapters2 (0x4000)
+            if (create_device.hAdapter != 0x4000)
+            {
+                c.win_emu.log.warn("NtGdiDdDDICreateDevice: Invalid Adapter Handle 0x%X (Expected 0x4000)", create_device.hAdapter);
+                // In strict emulation we might return STATUS_INVALID_PARAMETER,
+                // but for now, we proceed to keep the app alive.
+            }
+
+            // Generate a new handle for this device.
+            // In a real kernel this tracks an object. We use a static handle for the emulator.
+            // We use 0x5000 to clearly distinguish it from the adapter handle.
+            create_device.hDevice = 0x5000;
+
+            // pCommandBuffer is for legacy DirectX 9 era "Legacy Mode".
+            // For WDDM (DX10+), this is typically unused/null.
+            create_device.pCommandBuffer = 0;
+            create_device.CommandBufferSize = 0;
+
+            // pAllocationList/pPatchLocationList:
+            // This is data passed from the User Mode Driver (d3d10warp.dll) to the Kernel Mode Driver.
+            // Since we don't have a real KMD logic to configure hardware, we leave this untouched.
+            // The UMD assumes the KMD processed it.
+
+            // Write the new handle and cleared command buffer info back to guest memory
+            c.emu.write_memory(parameters, &create_device, sizeof(create_device));
+
+            c.win_emu.log.info("NtGdiDdDDICreateDevice: Created Device Handle 0x%X on Adapter 0x%X", create_device.hDevice,
+                               create_device.hAdapter);
+
+            return STATUS_SUCCESS;
+        }
+
+        struct EMU_D3DKMT_ESCAPE
+        {
+            UINT32 hAdapter;
+            UINT32 hDevice;
+            UINT32 Type;  // D3DKMT_ESCAPETYPE
+            UINT32 Flags; // D3DDDI_ESCAPEFLAGS
+            UINT64 pPrivateDriverData;
+            UINT32 PrivateDriverDataSize;
+            UINT32 hContext;
+        };
+
+        NTSTATUS handle_NtGdiDdDDIEscape(const syscall_context& c, const emulator_pointer parameters)
+        {
+            if (!parameters)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            auto escape = c.emu.read_memory<EMU_D3DKMT_ESCAPE>(parameters);
+
+            // Filter by Adapter 0x4000 (The one we created in EnumAdapters2)
+            if (escape.hAdapter != 0x4000)
+            {
+                c.win_emu.log.warn("NtGdiDdDDIEscape: Unknown Adapter 0x%X", escape.hAdapter);
+            }
+
+            // Type 0 is D3DKMT_ESCAPE_DRIVERPRIVATE.
+            // The format of pPrivateDriverData is defined by the User Mode Driver (d3d10warp.dll).
+            if (escape.Type == 0 && escape.pPrivateDriverData != 0 && escape.PrivateDriverDataSize >= 4)
+            {
+                // Read the first DWORD to identify the proprietary command
+                const uint32_t command = c.emu.read_memory<uint32_t>(escape.pPrivateDriverData);
+
+                // Log details for debugging
+                c.win_emu.log.info("NtGdiDdDDIEscape: Cmd 0x%X, Size %d", command, escape.PrivateDriverDataSize);
+
+                switch (command)
+                {
+                case 1: // WARP: Get Adapter Info / Handshake
+                {
+                    // Input:  [Cmd (4)][0 (4)][0 (8)]
+                    // Output: [Cmd (4)][Status (4)][LUID (8)]
+                    if (escape.PrivateDriverDataSize >= 16)
+                    {
+                        struct WARP_CMD_GET_INFO
+                        {
+                            UINT32 Command;
+                            UINT32 Status; // 0 = Success
+                            UINT32 LuidLow;
+                            UINT32 LuidHigh;
+                        } info{};
+
+                        info.Command = command;
+                        info.Status = 0; // Success
+                        info.LuidLow = 5;
+                        info.LuidHigh = 1;
+
+                        c.emu.write_memory(escape.pPrivateDriverData, &info, sizeof(info));
+                        return STATUS_SUCCESS;
+                    }
+                    break;
+                }
+
+                case 3: // WARP: Set Driver Version
+                {
+                    // Usually just informs the kernel of the version.
+                    // We just need to ensure we don't return an error in the buffer if expected.
+                    // Input size is 8 bytes: [Cmd][Version].
+                    // No status field fits here, so we just return STATUS_SUCCESS for the syscall.
+                    return STATUS_SUCCESS;
+                }
+
+                case 4: // WARP: Create Private Context Data
+                {
+                    // Input:  [Cmd (4)][Unk (4)][Args...]
+                    // Output: [Cmd (4)][Status (4)][Args...]
+                    // We simply acknowledge the command by writing Status = 0 (Success) at offset 4.
+                    if (escape.PrivateDriverDataSize >= 8)
+                    {
+                        // Read the existing data to preserve arguments
+                        auto buffer = c.emu.read_memory(escape.pPrivateDriverData, escape.PrivateDriverDataSize);
+
+                        // Write Status = 0 (Success) at offset 4
+                        uint32_t status = 0;
+                        if (buffer.size() >= 8)
+                        {
+                            std::memcpy(&buffer[4], &status, sizeof(status));
+                            c.emu.write_memory(escape.pPrivateDriverData, buffer.data(), buffer.size());
+                        }
+                    }
+                    return STATUS_SUCCESS;
+                }
+
+                case 0: // WARP: Capability Check / Reserved
+                    if (escape.PrivateDriverDataSize >= 56)
+                    {
+                        int one = 1;
+                        c.emu.write_memory(escape.pPrivateDriverData + 28, &one, sizeof(one));
+                        return STATUS_SUCCESS;
+                    }
+                    break;
+
+                default: {
+                    // For unknown commands, we often just need to write Status = 0 at offset 4
+                    // if the buffer is large enough to contain a header.
+                    if (escape.PrivateDriverDataSize >= 8)
+                    {
+                        uint32_t current_val = c.emu.read_memory<uint32_t>(escape.pPrivateDriverData + 4);
+                        if (current_val != 0)
+                        {
+                            uint32_t success = 0;
+                            c.emu.write_memory(escape.pPrivateDriverData + 4, &success, sizeof(success));
+                        }
+                    }
+                    break;
+                }
+                }
+            }
+
+            return STATUS_SUCCESS;
+        }
+
+        struct EMU_D3DKMT_CREATECONTEXT
+        {
+            UINT32 hDevice;
+            UINT32 NodeOrdinal;
+            UINT32 EngineAffinity;
+            UINT32 Flags; // D3DKMT_CREATECONTEXTFLAGS
+            UINT64 pPrivateDriverData;
+            UINT32 PrivateDriverDataSize;
+            UINT32 ClientHint;            // D3DKMT_CLIENTHINT
+            UINT32 hContext;              // OUT
+            UINT64 pCommandBuffer;        // OUT
+            UINT32 CommandBufferSize;     // OUT
+            UINT64 pAllocationList;       // OUT
+            UINT32 AllocationListSize;    // OUT
+            UINT64 pPatchLocationList;    // OUT
+            UINT32 PatchLocationListSize; // OUT
+            UINT64 CommandBuffer;         // OUT (GPU Virtual Address)
+        };
+
+        NTSTATUS handle_NtGdiDdDDICreateContext(const syscall_context& c, const emulator_pointer parameters)
+        {
+            if (!parameters)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            auto create_context = c.emu.read_memory<EMU_D3DKMT_CREATECONTEXT>(parameters);
+
+            if (create_context.hDevice != 0x5000)
+            {
+                c.win_emu.log.warn("NtGdiDdDDICreateContext: Invalid Device Handle 0x%X (Expected 0x5000)", create_context.hDevice);
+            }
+
+            // 1. Generate a Context Handle
+            create_context.hContext = 0x6000;
+
+            // 2. Allocate a Command Buffer in Guest Memory
+            // The driver expects the kernel to provide an initial buffer to write GPU commands into.
+            // Even though we (the emulator) won't execute them, the UMD will crash if this pointer is null.
+            const uint32_t cmdBufSize = 0x1000; // 16KB is a safe default size
+            const auto cmdBufPtr = c.win_emu.memory.allocate_memory(cmdBufSize, memory_permission::read_write);
+
+            // Zero out the allocated memory to be safe
+            std::vector<uint8_t> zeros(cmdBufSize, 0);
+            c.win_emu.memory.write_memory(cmdBufPtr, zeros.data(), cmdBufSize);
+
+            // 3. Fill Output Fields
+            create_context.pCommandBuffer = cmdBufPtr;
+            create_context.CommandBufferSize = cmdBufSize;
+
+            // Allocation List and Patch Location List are used for resource binding/relocation.
+            // For WARP/Software emulation, we can usually leave these blank (0).
+            // If the app crashes, we might need to allocate buffers for these too.
+            create_context.pAllocationList = 0;
+            create_context.AllocationListSize = 0;
+            create_context.pPatchLocationList = 0;
+            create_context.PatchLocationListSize = 0;
+
+            // 4. Write back the result
+            c.emu.write_memory(parameters, &create_context, sizeof(create_context));
+
+            c.win_emu.log.info("NtGdiDdDDICreateContext: Created Context 0x%X on Device 0x%X (CmdBuf: 0x%llX)", create_context.hContext,
+                               create_context.hDevice, cmdBufPtr);
+
+            return STATUS_SUCCESS;
+        }
+
+        struct EMU_D3DDDI_ALLOCATIONINFO
+        {
+            UINT32 hAllocation;
+            UINT64 pSystemMem;
+            UINT64 pPrivateDriverData;
+            UINT32 PrivateDriverDataSize;
+            UINT32 VidPnSourceId;
+            UINT32 Flags;
+        };
+
+        struct EMU_D3DKMT_CREATEALLOCATION
+        {
+            UINT32 hDevice;
+            UINT32 hResource;
+            UINT32 hGlobalShare;
+            UINT64 pPrivateRuntimeData;
+            UINT32 PrivateRuntimeDataSize;
+            UINT64 pPrivateDriverData;
+            UINT32 PrivateDriverDataSize;
+            UINT32 NumAllocations;
+            UINT64 pAllocationInfo;
+            UINT32 Flags;
+            UINT64 hPrivateRuntimeResourceHandle;
+        };
+
+        NTSTATUS handle_NtGdiDdDDICreateAllocation(const syscall_context& c, const emulator_pointer parameters)
+        {
+            if (!parameters)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            auto create_alloc = c.emu.read_memory<EMU_D3DKMT_CREATEALLOCATION>(parameters);
+
+            if (create_alloc.hDevice != 0x5000)
+            {
+                c.win_emu.log.warn("NtGdiDdDDICreateAllocation: Unexpected Device Handle 0x%X", create_alloc.hDevice);
+            }
+
+            // Static counters to ensure unique handles during the session
+            static UINT32 s_resource_handle_counter = 0x8000;
+            static UINT32 s_alloc_handle_counter = 0x9000;
+
+            // If the caller didn't provide an existing resource handle (grouping), create one.
+            // D3DKMT can group multiple allocations (e.g., surfaces in a mip chain) under one resource.
+            if (create_alloc.hResource == 0)
+            {
+                create_alloc.hResource = ++s_resource_handle_counter;
+            }
+
+            if (create_alloc.NumAllocations > 0 && create_alloc.pAllocationInfo != 0)
+            {
+                const size_t info_size = sizeof(EMU_D3DDDI_ALLOCATIONINFO);
+
+                for (UINT32 i = 0; i < create_alloc.NumAllocations; ++i)
+                {
+                    const emulator_pointer current_info_ptr = create_alloc.pAllocationInfo + (i * info_size);
+                    auto alloc_info = c.emu.read_memory<EMU_D3DDDI_ALLOCATIONINFO>(current_info_ptr);
+
+                    // Generate a unique kernel-mode handle for this allocation
+                    alloc_info.hAllocation = ++s_alloc_handle_counter;
+
+                    // If the driver provided system memory, we generally leave it alone.
+                    // If it didn't, and it's a primary surface, we might need to back it.
+                    // For now, we rely on the GpuVirtualAddress assignment above.
+
+                    c.emu.write_memory(current_info_ptr, &alloc_info, info_size);
+
+                    c.win_emu.log.info("NtGdiDdDDICreateAllocation: Alloc %d/%d -> Handle 0x%X", i + 1, create_alloc.NumAllocations,
+                                       alloc_info.hAllocation);
+                }
+            }
+
+            // Write back the modified struct (specifically the hResource)
+            c.emu.write_memory(parameters, &create_alloc, sizeof(create_alloc));
+
+            return STATUS_SUCCESS;
+        }
+
+        struct EMU_D3DKMT_LOCK
+        {
+            UINT32 hDevice;
+            UINT32 hAllocation;
+            UINT32 PrivateDriverData;
+            UINT32 NumPages;
+            UINT64 pPages;
+            UINT64 pData;             // OUT: CPU Virtual Address
+            UINT32 Flags;             // D3DDDI_LOCKFLAGS
+            UINT64 GpuVirtualAddress; // OUT: GPU Virtual Address
+        };
+
+        std::unordered_map<UINT32, uint64_t> g_allocation_map;
+
+        NTSTATUS handle_NtGdiDdDDILock(const syscall_context& c, const emulator_pointer parameters)
+        {
+            if (!parameters)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            auto lock_params = c.emu.read_memory<EMU_D3DKMT_LOCK>(parameters);
+
+            if (lock_params.hDevice != 0x5000 && lock_params.hDevice != 0)
+            {
+                c.win_emu.log.warn("NtGdiDdDDILock: Locking on unknown device 0x%X", lock_params.hDevice);
+            }
+
+            uint64_t backing_memory = 0;
+
+            // 1. Try to find the allocation in our tracking map
+            auto it = g_allocation_map.find(lock_params.hAllocation);
+            if (it != g_allocation_map.end())
+            {
+                backing_memory = it->second;
+            }
+            else
+            {
+                // 2. Fallback: If we didn't track it (or it was created implicitly), allocate it now.
+                // This prevents the application from crashing on a null pointer dereference.
+                c.win_emu.log.warn("NtGdiDdDDILock: Request to lock unknown handle 0x%X. Allocating lazy buffer.", lock_params.hAllocation);
+
+                // Allocate a safe default size (e.g., 64KB) to handle generic surface data.
+                // In a real scenario, we would parse PrivateDriverData to find the sub-resource size.
+                constexpr size_t fallback_size = 64 * 1024;
+                backing_memory = c.win_emu.memory.allocate_memory(fallback_size, memory_permission::read_write);
+
+                // Register it so subsequent locks work
+                g_allocation_map[lock_params.hAllocation] = backing_memory;
+            }
+
+            // 3. Handle Offset (Optional)
+            // D3DKMT_LOCK usually locks the whole allocation, but PrivateDriverData *can* imply an offset.
+            // For WARP/Generic emulation, simply returning the base address is usually sufficient.
+
+            // 4. Update the Output Parameters
+            // In our emulation, the "System Memory" pointer (pData) and the "GPU Address"
+            // are the same guest virtual address.
+            lock_params.pData = backing_memory;
+            lock_params.GpuVirtualAddress = backing_memory;
+
+            c.emu.write_memory(parameters, &lock_params, sizeof(lock_params));
+
+            c.win_emu.log.info("NtGdiDdDDILock: Handle 0x%X -> Address 0x%llX", lock_params.hAllocation, backing_memory);
+
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtGdiDdDDIUnlock()
+        {
+            // Unlock is generally a no-op in this type of emulation
+            // because we aren't actually locking physical pages or managing contention.
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtGdiDdDDIDestroyContext()
+        {
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtGdiDdDDIDestroyDevice()
+        {
+            return STATUS_SUCCESS;
+        }
+
+        struct EMU_D3DKMT_OPENADAPTERFROMHDC
+        {
+            HDC hDc;
+            UINT32 hAdapter;
+            LUID AdapterLuid;
+            UINT VidPnSourceId;
+        };
+
+        NTSTATUS handle_NtGdiDdDDIOpenAdapterFromHdc(const syscall_context& c, const emulator_pointer parameters)
+        {
+            if (!parameters)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            auto open_params = c.emu.read_memory<EMU_D3DKMT_OPENADAPTERFROMHDC>(parameters);
+
+            open_params.hAdapter = 0x4000;
+            open_params.AdapterLuid = {0x1000, 0};
+            open_params.VidPnSourceId = 0;
+
+            c.emu.write_memory(parameters, &open_params, sizeof(open_params));
+
             return STATUS_SUCCESS;
         }
     }

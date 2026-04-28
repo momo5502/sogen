@@ -292,5 +292,188 @@ namespace sogen
         DWORD dmPanningHeight;
     };
 
+#ifndef OS_WINDOWS
+    struct LUID
+    {
+        DWORD LowPart;
+        LONG HighPart;
+    };
+
+    struct POINTL
+    {
+        LONG x;
+        LONG y;
+    };
+
+    struct RECTL
+    {
+        LONG left;
+        LONG top;
+        LONG right;
+        LONG bottom;
+    };
+
+    struct DISPLAYCONFIG_PATH_SOURCE_INFO
+    {
+        LUID adapterId;
+        UINT32 id;
+        union
+        {
+            UINT32 modeInfoIdx;
+            struct
+            {
+                UINT32 cloneGroupId : 16;
+                UINT32 sourceModeInfoIdx : 16;
+            } s;
+        } u;
+        UINT32 statusFlags;
+    };
+
+    struct DISPLAYCONFIG_RATIONAL
+    {
+        UINT32 Numerator;
+        UINT32 Denominator;
+    };
+
+    struct DISPLAYCONFIG_2DREGION
+    {
+        UINT32 cx;
+        UINT32 cy;
+    };
+
+    struct DISPLAYCONFIG_DESKTOP_IMAGE_INFO
+    {
+        POINTL PathSourceSize;
+        RECTL DesktopImageRegion;
+        RECTL DesktopImageClip;
+    };
+#endif
+
+    struct EMU_DISPLAYCONFIG_PATH_TARGET_INFO
+    {
+        LUID adapterId;
+        UINT32 id;
+        union
+        {
+            UINT32 modeInfoIdx;
+            struct
+            {
+                UINT32 desktopModeInfoIdx : 16;
+                UINT32 targetModeInfoIdx : 16;
+            } s;
+        } u;
+        EMULATOR_CAST(uint32_t, DISPLAYCONFIG_VIDEO_OUTPUT_TECHNOLOGY) outputTechnology;
+        EMULATOR_CAST(uint32_t, DISPLAYCONFIG_ROTATION) rotation;
+        EMULATOR_CAST(uint32_t, DISPLAYCONFIG_SCALING) scaling;
+        DISPLAYCONFIG_RATIONAL refreshRate;
+        EMULATOR_CAST(uint32_t, DISPLAYCONFIG_SCANLINE_ORDERING) scanLineOrdering;
+        BOOL targetAvailable;
+        UINT32 statusFlags;
+    };
+
+    struct EMU_DISPLAYCONFIG_PATH_INFO
+    {
+        DISPLAYCONFIG_PATH_SOURCE_INFO sourceInfo;
+        EMU_DISPLAYCONFIG_PATH_TARGET_INFO targetInfo;
+        UINT32 flags;
+    };
+
+    struct EMU_DISPLAYCONFIG_VIDEO_SIGNAL_INFO
+    {
+        UINT64 pixelRate;
+        DISPLAYCONFIG_RATIONAL hSyncFreq;
+        DISPLAYCONFIG_RATIONAL vSyncFreq;
+        DISPLAYCONFIG_2DREGION activeSize;
+        DISPLAYCONFIG_2DREGION totalSize;
+        union
+        {
+            struct
+            {
+                UINT32 videoStandard : 16;
+                UINT32 vSyncFreqDivider : 6;
+                UINT32 reserved : 10;
+            } AdditionalSignalInfo;
+            UINT32 videoStandard;
+        } u;
+        uint32_t scanLineOrdering;
+    };
+
+    struct EMU_DISPLAYCONFIG_TARGET_MODE
+    {
+        EMU_DISPLAYCONFIG_VIDEO_SIGNAL_INFO targetVideoSignalInfo;
+    };
+
+    struct EMU_DISPLAYCONFIG_SOURCE_MODE
+    {
+        UINT32 width;
+        UINT32 height;
+        uint32_t pixelFormat;
+        POINTL position;
+    };
+
+    struct EMU_DISPLAYCONFIG_MODE_INFO
+    {
+        uint32_t infoType;
+        UINT32 id;
+        LUID adapterId;
+        union
+        {
+            EMU_DISPLAYCONFIG_TARGET_MODE targetMode;
+            EMU_DISPLAYCONFIG_SOURCE_MODE sourceMode;
+            DISPLAYCONFIG_DESKTOP_IMAGE_INFO desktopImageInfo;
+        } u;
+    };
+
+    struct EMU_DISPLAYCONFIG_DEVICE_INFO_HEADER
+    {
+        EMULATOR_CAST(int32_t, DISPLAYCONFIG_DEVICE_INFO_TYPE) type;
+        UINT32 size;
+        LUID adapterId;
+        UINT32 id;
+    };
+
+    struct EMU_DISPLAYCONFIG_SOURCE_DEVICE_NAME
+    {
+        EMU_DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+        char16_t viewGdiDeviceName[32];
+    };
+
+    struct EMU_DISPLAYCONFIG_TARGET_DEVICE_NAME
+    {
+        EMU_DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+        EMULATOR_CAST(uint32_t, DISPLAYCONFIG_TARGET_DEVICE_NAME_FLAGS) flags;
+        EMULATOR_CAST(uint32_t, DISPLAYCONFIG_VIDEO_OUTPUT_TECHNOLOGY) outputTechnology;
+        UINT16 edidManufactureId;
+        UINT16 edidProductCodeId;
+        UINT32 connectorInstance;
+        char16_t monitorFriendlyDeviceName[64];
+        char16_t monitorDevicePath[128];
+    };
+
+    struct EMU_DISPLAYCONFIG_ADAPTER_NAME
+    {
+        EMU_DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+        char16_t adapterDevicePath[128];
+    };
+
+    struct EMU_DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO
+    {
+        EMU_DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+        union
+        {
+            struct
+            {
+                UINT32 advancedColorSupported : 1;     // A type of advanced color is supported
+                UINT32 advancedColorEnabled : 1;       // A type of advanced color is enabled
+                UINT32 wideColorEnforced : 1;          // Wide color gamut is enabled
+                UINT32 advancedColorForceDisabled : 1; // Advanced color is force disabled due to system/OS policy
+                UINT32 reserved : 28;
+            } s;
+            UINT32 value;
+        } u;
+        EMULATOR_CAST(uint32_t, DISPLAYCONFIG_COLOR_ENCODING) colorEncoding;
+        UINT32 bitsPerColorChannel;
+    };
+
     // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 } // namespace sogen
