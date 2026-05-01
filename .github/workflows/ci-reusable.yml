@@ -318,7 +318,7 @@ jobs:
           retention-days: 1
 
       - name: Upload Test Configuration
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
           path: "build/${{matrix.preset}}/**/CTestTestfile.cmake"
@@ -370,7 +370,7 @@ jobs:
           retention-days: 1
 
       - name: Upload Test Configuration
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: Temp Isolate ${{ matrix.platform }} ${{matrix.configuration}} Test Config
           path: "build/${{matrix.preset}}/**/CTestTestfile.cmake"
