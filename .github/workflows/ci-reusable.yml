@@ -261,7 +261,7 @@ jobs:
 
       - name: Install Emscripten
         if: "${{ startsWith(matrix.platform, 'Emscripten') }}"
-        uses: mymindstorm/setup-emsdk@v14
+        uses: mymindstorm/setup-emsdk@v16
 
       - name: Install Clang
         uses: nick-fields/retry@v4.0.0
