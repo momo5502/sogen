@@ -158,6 +158,7 @@ CALL :collect wtsapi32.dll
 CALL :collect x3daudio1_7.dll
 CALL :collect xapofx1_5.dll
 CALL :collect xinput1_3.dll
+CALL :collect xinput1_4.dll
 CALL :collect xinput9_1_0.dll
 
 CALL :collect locale.nls
