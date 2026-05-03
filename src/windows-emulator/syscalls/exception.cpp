@@ -11,18 +11,25 @@ namespace syscalls
     {
         if (response)
         {
-            response.write(ResponseAbort);
+            response.try_write(ResponseAbort);
         }
 
         if (error_status & STATUS_SERVICE_NOTIFICATION && number_of_parameters >= 3)
         {
             std::array<uint64_t, 3> params = {0, 0, 0};
 
-            if (c.emu.try_read_memory(parameters, &params, sizeof(params)))
+            try
             {
-                std::u16string message =
-                    read_unicode_string(c.emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, params[0]});
-                c.win_emu.log.error("Error Message: %s\n", u16_to_u8(message).c_str());
+                if (c.emu.try_read_memory(parameters, &params, sizeof(params)))
+                {
+                    const auto message =
+                        read_unicode_string(c.emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, params[0]});
+                    c.win_emu.log.error("Error Message: %s\n", u16_to_u8(message).c_str());
+                }
+            }
+            catch (...)
+            {
+                // ignore
             }
         }
 
