@@ -974,7 +974,7 @@ namespace whp
 
                         page->owned_page = backing;
                         page->host_page = backing_base + offset;
-                        page->guest_physical_address = this->allocate_guest_physical_page();
+                        this->assign_guest_physical_page(guest_address, *page);
                         page->permissions = memory_permission::none;
                         this->ensure_virtual_mapping(guest_address);
                     }
@@ -998,7 +998,7 @@ namespace whp
                         auto backing = allocate_backing_memory(page_size);
                         page->owned_page = std::move(backing);
                         page->host_page = page->owned_page.get();
-                        page->guest_physical_address = this->allocate_guest_physical_page();
+                        this->assign_guest_physical_page(guest_address, *page);
                     }
 
                     page->permissions = memory_permission::none;
@@ -1044,7 +1044,7 @@ namespace whp
 
                         page->owned_page = backing;
                         page->host_page = backing_base + offset;
-                        page->guest_physical_address = this->allocate_guest_physical_page();
+                        this->assign_guest_physical_page(guest_address, *page);
                         page->permissions = permissions;
                         this->ensure_virtual_mapping(guest_address);
                     }
@@ -1067,7 +1067,7 @@ namespace whp
                         auto backing = allocate_backing_memory(page_size);
                         page->owned_page = std::move(backing);
                         page->host_page = page->owned_page.get();
-                        page->guest_physical_address = this->allocate_guest_physical_page();
+                        this->assign_guest_physical_page(guest_address, *page);
                     }
 
                     page->permissions = permissions;
@@ -1097,6 +1097,7 @@ namespace whp
                         WHP_CHECK_HR(WHvUnmapGpaRange(this->partition_, entry->second->guest_physical_address, page_size));
                     }
 
+                    this->guest_pages_by_gpa_.erase(entry->second->guest_physical_address);
                     this->mapped_pages_.erase(entry);
                 }
 
@@ -1489,6 +1490,7 @@ namespace whp
             WHV_PROCESSOR_XSAVE_FEATURES supported_xsave_features_{};
             bool has_supported_xsave_features_ = false;
             std::unordered_map<uint64_t, std::unique_ptr<mapped_page>> mapped_pages_{};
+            std::unordered_map<uint64_t, uint64_t> guest_pages_by_gpa_{};
             std::unordered_map<uint64_t, uint64_t*> page_table_views_{};
             uint64_t pml4_gpa_ = 0;
             uint64_t next_guest_gpa_ = 0x100000000ull;
@@ -1714,6 +1716,24 @@ namespace whp
                 }
 
                 return page_gpa;
+            }
+
+            void assign_guest_physical_page(const uint64_t guest_address, mapped_page& page)
+            {
+                page.guest_physical_address = this->allocate_guest_physical_page();
+                this->guest_pages_by_gpa_[page.guest_physical_address] = align_down_to_page(guest_address);
+            }
+
+            std::optional<uint64_t> translate_guest_physical_address(const uint64_t guest_physical_address) const
+            {
+                const auto page_base = align_down_to_page(guest_physical_address);
+                const auto entry = this->guest_pages_by_gpa_.find(page_base);
+                if (entry == this->guest_pages_by_gpa_.end())
+                {
+                    return std::nullopt;
+                }
+
+                return entry->second + (guest_physical_address - page_base);
             }
 
             void remap_page(mapped_page& page)
@@ -2204,11 +2224,15 @@ namespace whp
 
             bool handle_memory_access(const WHV_MEMORY_ACCESS_CONTEXT& memory_access)
             {
-                const auto mmio_address = memory_access.AccessInfo.GvaValid ? memory_access.Gva : memory_access.Gpa;
+                const auto access_type = static_cast<WHV_MEMORY_ACCESS_TYPE>(memory_access.AccessInfo.AccessType);
+                const auto resolved_address =
+                    memory_access.AccessInfo.GvaValid ? memory_access.Gva : this->translate_guest_physical_address(memory_access.Gpa).value_or(memory_access.Gpa);
+
+                const auto mmio_address = resolved_address;
                 if (auto* region = this->find_mmio_region(mmio_address))
                 {
                     const auto page_base = align_down_to_page(mmio_address);
-                    const auto operation = map_memory_operation(static_cast<WHV_MEMORY_ACCESS_TYPE>(memory_access.AccessInfo.AccessType));
+                    const auto operation = map_memory_operation(access_type);
                     const auto is_write = operation == memory_operation::write;
 
                     this->refresh_mmio_page(*region, page_base);
@@ -2235,7 +2259,7 @@ namespace whp
                     throw std::runtime_error("Unhandled WHP memory access violation");
                 }
 
-                const auto operation = map_memory_operation(static_cast<WHV_MEMORY_ACCESS_TYPE>(memory_access.AccessInfo.AccessType));
+                const auto operation = map_memory_operation(access_type);
                 const auto type =
                     memory_access.AccessInfo.GpaUnmapped ? memory_violation_type::unmapped : memory_violation_type::protection;
 
