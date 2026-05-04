@@ -51,6 +51,7 @@ CALL :collect d3dcompiler_43.dll
 CALL :collect d3dcompiler_47.dll
 CALL :collect dbghelp.dll
 CALL :collect dbgcore.dll
+CALL :collect devobj.dll
 CALL :collect diagnosticdatasettings.dll
 CALL :collect dinput8.dll
 CALL :collect dnsapi.dll
@@ -75,6 +76,7 @@ CALL :collect kernel32.dll
 CALL :collect kernelbase.dll
 CALL :collect ktmw32.dll
 CALL :collect mfplat.dll
+CALL :collect mfreadwrite.dll
 CALL :collect mobilenetworking.dll
 CALL :collect mpr.dll
 CALL :collect msacm32.dll
