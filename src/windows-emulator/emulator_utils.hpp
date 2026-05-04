@@ -397,15 +397,16 @@ inline std::u16string read_unicode_string(const emulator& emu, const UNICODE_STR
     return result;
 }
 
-inline std::u16string read_unicode_string(const emulator& emu, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> uc_string)
+inline std::u16string read_unicode_string(const emulator& emu, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> uc_string,
+                                          const size_t index = 0)
 {
-    const auto ucs = uc_string.read();
+    const auto ucs = uc_string.read(index);
     return read_unicode_string(emu, ucs);
 }
 
-inline std::u16string read_unicode_string(emulator& emu, const uint64_t uc_string)
+inline std::u16string read_unicode_string(emulator& emu, const uint64_t uc_string, const size_t index = 0)
 {
-    return read_unicode_string(emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{emu, uc_string});
+    return read_unicode_string(emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{emu, uc_string}, index);
 }
 
 /// Retrieves function arguments from registers or stack memory. This function assumes the stack pointer currently points to the

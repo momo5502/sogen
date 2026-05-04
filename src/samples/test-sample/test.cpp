@@ -1373,6 +1373,24 @@ namespace
 
         return true;
     }
+
+    bool test_actctx()
+    {
+        ACTCTXA actctx{};
+        actctx.cbSize = sizeof(actctx);
+        actctx.dwFlags = ACTCTX_FLAG_HMODULE_VALID | ACTCTX_FLAG_RESOURCE_NAME_VALID;
+        actctx.hModule = GetModuleHandleW(nullptr);
+        actctx.lpResourceName = CREATEPROCESS_MANIFEST_RESOURCE_ID;
+
+        auto* ctx = CreateActCtxA(&actctx);
+        if (ctx == INVALID_HANDLE_VALUE)
+        {
+            return false;
+        }
+
+        ReleaseActCtx(ctx);
+        return true;
+    }
 }
 
 #define RUN_TEST(func, name)                 \
@@ -1427,6 +1445,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_message_queue, "Message Queue")
 #endif
     RUN_TEST(test_private_namespace, "Private Namespace")
+    RUN_TEST(test_actctx, "Activation Context")
 
     return valid ? 0 : 1;
 }
