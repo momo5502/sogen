@@ -344,9 +344,23 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
         // EFlags - standard initial flags
         ctx.Context.EFlags = 0x202; // IF (Interrupt Flag) set
 
-        // Extended state - initialize to zero
+        // Seed WOW64 floating-point state with sane defaults
         memset(&ctx.Context.FloatSave, 0, sizeof(ctx.Context.FloatSave));
+        ctx.Context.FloatSave.ControlWord = 0x037F;
+        ctx.Context.FloatSave.StatusWord = 0;
+        ctx.Context.FloatSave.TagWord = 0xFFFF;
+        ctx.Context.FloatSave.Cr0NpxState = 0;
+
+        XMM_SAVE_AREA32 xmm_state{};
+        xmm_state.ControlWord = 0x037F;
+        xmm_state.StatusWord = 0;
+        xmm_state.TagWord = 0xFF;
+        xmm_state.MxCsr = 0x1F80;
+        xmm_state.MxCsr_Mask = 0xFFFFFFFF;
+
         memset(&ctx.Context.ExtendedRegisters, 0, sizeof(ctx.Context.ExtendedRegisters));
+        static_assert(sizeof(xmm_state) <= sizeof(ctx.Context.ExtendedRegisters));
+        memcpy(ctx.Context.ExtendedRegisters, &xmm_state, sizeof(xmm_state));
     });
 }
 
