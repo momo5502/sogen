@@ -121,6 +121,7 @@ namespace whp
             };
 
             void* host_page = nullptr;
+            uint64_t guest_physical_address = 0;
             uint32_t map_flags = 0;
             memory_permission permissions = memory_permission::none;
             std::shared_ptr<uint8_t> owned_page{};
@@ -973,6 +974,7 @@ namespace whp
 
                         page->owned_page = backing;
                         page->host_page = backing_base + offset;
+                        page->guest_physical_address = this->allocate_guest_physical_page();
                         page->permissions = memory_permission::none;
                         this->ensure_virtual_mapping(guest_address);
                     }
@@ -996,10 +998,11 @@ namespace whp
                         auto backing = allocate_backing_memory(page_size);
                         page->owned_page = std::move(backing);
                         page->host_page = page->owned_page.get();
+                        page->guest_physical_address = this->allocate_guest_physical_page();
                     }
 
                     page->permissions = memory_permission::none;
-                    this->remap_page(guest_address, *page);
+                    this->remap_page(*page);
                     this->ensure_virtual_mapping(guest_address);
                 }
 
@@ -1041,6 +1044,7 @@ namespace whp
 
                         page->owned_page = backing;
                         page->host_page = backing_base + offset;
+                        page->guest_physical_address = this->allocate_guest_physical_page();
                         page->permissions = permissions;
                         this->ensure_virtual_mapping(guest_address);
                     }
@@ -1063,10 +1067,11 @@ namespace whp
                         auto backing = allocate_backing_memory(page_size);
                         page->owned_page = std::move(backing);
                         page->host_page = page->owned_page.get();
+                        page->guest_physical_address = this->allocate_guest_physical_page();
                     }
 
                     page->permissions = permissions;
-                    this->remap_page(guest_address, *page);
+                    this->remap_page(*page);
                     this->ensure_virtual_mapping(guest_address);
                 }
             }
@@ -1089,7 +1094,7 @@ namespace whp
 
                     if (entry->second->map_flags != 0)
                     {
-                        WHP_CHECK_HR(WHvUnmapGpaRange(this->partition_, guest_address, page_size));
+                        WHP_CHECK_HR(WHvUnmapGpaRange(this->partition_, entry->second->guest_physical_address, page_size));
                     }
 
                     this->mapped_pages_.erase(entry);
@@ -1486,6 +1491,7 @@ namespace whp
             std::unordered_map<uint64_t, std::unique_ptr<mapped_page>> mapped_pages_{};
             std::unordered_map<uint64_t, uint64_t*> page_table_views_{};
             uint64_t pml4_gpa_ = 0;
+            uint64_t next_guest_gpa_ = 0x100000000ull;
             uint64_t next_internal_gpa_ = internal_page_table_base;
             std::atomic_bool stop_requested_ = false;
             std::atomic_bool run_active_ = false;
@@ -1683,10 +1689,11 @@ namespace whp
                 auto page = std::make_unique<mapped_page>();
                 page->owned_page = std::move(backing);
                 page->host_page = raw_page;
+                page->guest_physical_address = page_gpa;
                 page->permissions = executable ? memory_permission::all : memory_permission::read_write;
 
                 this->mapped_pages_[page_gpa] = std::move(page);
-                this->remap_page(page_gpa, *this->mapped_pages_[page_gpa]);
+                this->remap_page(*this->mapped_pages_[page_gpa]);
                 this->page_table_views_[page_gpa] = reinterpret_cast<uint64_t*>(raw_page);
 
                 if (map_into_guest)
@@ -1697,11 +1704,23 @@ namespace whp
                 return page_gpa;
             }
 
-            void remap_page(const uint64_t guest_address, mapped_page& page)
+            uint64_t allocate_guest_physical_page()
+            {
+                const auto page_gpa = this->next_guest_gpa_;
+                this->next_guest_gpa_ += page_size;
+                if (this->next_guest_gpa_ >= internal_page_table_base)
+                {
+                    throw std::runtime_error("WHP guest physical address space exhausted");
+                }
+
+                return page_gpa;
+            }
+
+            void remap_page(mapped_page& page)
             {
                 if (page.map_flags != 0)
                 {
-                    WHP_CHECK_HR(WHvUnmapGpaRange(this->partition_, guest_address, page_size));
+                    WHP_CHECK_HR(WHvUnmapGpaRange(this->partition_, page.guest_physical_address, page_size));
                 }
 
                 page.map_flags = to_whp_map_flags(page.permissions);
@@ -1710,7 +1729,7 @@ namespace whp
                     return;
                 }
 
-                WHP_CHECK_HR(WHvMapGpaRange(this->partition_, page.host_page, guest_address, page_size,
+                WHP_CHECK_HR(WHvMapGpaRange(this->partition_, page.host_page, page.guest_physical_address, page_size,
                                             static_cast<WHV_MAP_GPA_RANGE_FLAGS>(page.map_flags)));
             }
 
@@ -1733,6 +1752,7 @@ namespace whp
                     }
 
                     auto* const run_host_base = static_cast<uint8_t*>(entry->second->host_page);
+                    const auto run_gpa = entry->second->guest_physical_address;
                     const auto run_flags = to_whp_map_flags(entry->second->permissions);
                     const auto run_had_mapping = entry->second->map_flags != 0;
 
@@ -1749,8 +1769,9 @@ namespace whp
                         const auto next_flags = to_whp_map_flags(next_entry->second->permissions);
                         const auto next_had_mapping = next_entry->second->map_flags != 0;
                         auto* const expected_host = run_host_base + run_size;
+                        const auto expected_gpa = run_gpa + run_size;
                         if (next_entry->second->host_page != expected_host || next_flags != run_flags ||
-                            next_had_mapping != run_had_mapping)
+                            next_had_mapping != run_had_mapping || next_entry->second->guest_physical_address != expected_gpa)
                         {
                             break;
                         }
@@ -1758,7 +1779,7 @@ namespace whp
                         run_size += page_size;
                     }
 
-                    this->remap_page_range(run_address, run_size, run_host_base, run_flags, run_had_mapping);
+                    this->remap_page_range(run_gpa, run_size, run_host_base, run_flags, run_had_mapping);
                     for (size_t run_offset = 0; run_offset < run_size; run_offset += page_size)
                     {
                         this->mapped_pages_.at(run_address + run_offset)->map_flags = run_flags;
@@ -1768,18 +1789,18 @@ namespace whp
                 }
             }
 
-            void remap_page_range(const uint64_t guest_address, const size_t size, void* host_base, const uint32_t map_flags,
+            void remap_page_range(const uint64_t guest_physical_address, const size_t size, void* host_base, const uint32_t map_flags,
                                   const bool had_mapping)
             {
                 if (had_mapping)
                 {
-                    WHP_CHECK_HR(WHvUnmapGpaRange(this->partition_, guest_address, size));
+                    WHP_CHECK_HR(WHvUnmapGpaRange(this->partition_, guest_physical_address, size));
                 }
 
                 if (map_flags != 0)
                 {
-                    WHP_CHECK_HR(
-                        WHvMapGpaRange(this->partition_, host_base, guest_address, size, static_cast<WHV_MAP_GPA_RANGE_FLAGS>(map_flags)));
+                    WHP_CHECK_HR(WHvMapGpaRange(this->partition_, host_base, guest_physical_address, size,
+                                                static_cast<WHV_MAP_GPA_RANGE_FLAGS>(map_flags)));
                 }
             }
 
@@ -1916,7 +1937,7 @@ namespace whp
                 }
 
                 entry->second->permissions = memory_permission::none;
-                this->remap_page(state.page_base, *entry->second);
+                this->remap_page(*entry->second);
 
                 WHV_REGISTER_VALUE rflags{};
                 rflags.Reg64 = state.original_rflags;
@@ -1948,6 +1969,12 @@ namespace whp
             void ensure_virtual_mapping(const uint64_t guest_address)
             {
                 const auto page_base = align_down_to_page(guest_address);
+                const auto mapped_page = this->mapped_pages_.find(page_base);
+                if (mapped_page == this->mapped_pages_.end() || !mapped_page->second)
+                {
+                    throw std::runtime_error("WHP virtual mapping requested for missing page");
+                }
+
                 const auto pml4_index = static_cast<size_t>((page_base >> 39) & 0x1FF);
                 const auto pdpt_index = static_cast<size_t>((page_base >> 30) & 0x1FF);
                 const auto pd_index = static_cast<size_t>((page_base >> 21) & 0x1FF);
@@ -1958,7 +1985,8 @@ namespace whp
                 const auto pt_gpa = this->ensure_child_table(pd_gpa, pd_index);
 
                 auto* const pt_entries = this->get_page_table_entries(pt_gpa);
-                pt_entries[pt_index] = page_base | page_table_entry_present | page_table_entry_writable | page_table_entry_user;
+                pt_entries[pt_index] = mapped_page->second->guest_physical_address | page_table_entry_present | page_table_entry_writable |
+                                       page_table_entry_user;
             }
 
             bool access_memory(const uint64_t address, void* data, size_t size, const bool is_write) const
@@ -2192,7 +2220,7 @@ namespace whp
                     }
 
                     page_it->second->permissions = is_write ? memory_permission::read_write : memory_permission::read;
-                    this->remap_page(page_base, *page_it->second);
+                    this->remap_page(*page_it->second);
 
                     if (is_write && !this->arm_mmio_single_step(page_base, true))
                     {
