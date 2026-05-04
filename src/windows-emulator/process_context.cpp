@@ -205,7 +205,7 @@ namespace
                                                                                          const windows_version_manager& version,
                                                                                          const application_settings& app_settings)
     {
-        utils::unordered_insensitive_u16string_map<std::u16string> env_map = app_settings.environment;
+        utils::unordered_insensitive_u16string_map<std::u16string> env_map;
         std::unordered_set<std::u16string_view> keys_to_expand;
 
         const auto env_key = registry.get_key({R"(\Registry\Machine\System\CurrentControlSet\Control\Session Manager\Environment)"});
@@ -271,6 +271,11 @@ namespace
         env_map[u"TMP"] = u"C:\\Users\\momo\\AppData\\Temp";
         env_map[u"TEMP"] = u"C:\\Users\\momo\\AppData\\Temp";
         env_map[u"USERPROFILE"] = u"C:\\Users\\momo";
+
+        for (const auto& [key, value] : app_settings.environment)
+        {
+            env_map[key] = value;
+        }
 
         for (const auto& key : keys_to_expand)
         {
