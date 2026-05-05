@@ -1396,8 +1396,19 @@ namespace
     bool test_mmio()
     {
         const auto t0 = timeGetTime();
-        Sleep(16);
-        return timeGetTime() - t0 >= 16;
+
+        // waste a bit of time
+        auto dummy = std::thread([] {
+            for (int i = 0; i < 1024; i++)
+            {
+                std::this_thread::yield();
+            }
+        });
+        dummy.join();
+
+        const auto t1 = timeGetTime();
+
+        return t1 != t0;
     }
 }
 
