@@ -31,7 +31,7 @@ jobs:
     steps:
       - name: Detect Open PR For Branch
         id: detect
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             if (context.eventName !== "push") {
