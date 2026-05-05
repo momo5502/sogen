@@ -29,8 +29,6 @@
 #include <knownfolders.h>
 #include <sddl.h>
 
-#pragma comment(lib, "winmm.lib")
-
 using namespace std::literals;
 
 // Externally visible and potentially modifiable state
