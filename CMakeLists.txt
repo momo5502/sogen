@@ -11,12 +11,6 @@ option(MOMO_EMSCRIPTEN_MEMORY64 "Enable memory 64 support for emscripten builds"
 option(MOMO_EMSCRIPTEN_SUPPORT_NODEJS "Enable Node.js filesystem for emscripten compilation" OFF)
 
 set(MOMO_REFLECTION_LEVEL "0" CACHE STRING "Reflection level for the build")
-message(STATUS "Reflection level is set to: ${MOMO_REFLECTION_LEVEL}")
-add_compile_definitions(MOMO_REFLECTION_LEVEL=${MOMO_REFLECTION_LEVEL})
-
-if(MOMO_ENABLE_REFLECTION)
-  add_compile_definitions(MOMO_ENABLE_REFLECTION=1)
-endif()
 
 ##########################################
 
@@ -38,6 +32,16 @@ set(ENV{ARCHFLAGS} "nope")
 
 project(sogen LANGUAGES C CXX)
 enable_testing()
+
+include(cmake/reflection-check.cmake)
+momo_check_reflection_support()
+
+message(STATUS "Reflection level is set to: ${MOMO_REFLECTION_LEVEL}")
+add_compile_definitions(MOMO_REFLECTION_LEVEL=${MOMO_REFLECTION_LEVEL})
+
+if(MOMO_ENABLE_REFLECTION)
+  add_compile_definitions(MOMO_ENABLE_REFLECTION=1)
+endif()
 
 ##########################################
 
