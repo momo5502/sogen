@@ -308,9 +308,16 @@ namespace
             }
         }
 
-        if ((socket_events & (POLLHUP | POLLERR)) == (POLLHUP | POLLERR) && afd_poll_events & (AFD_POLL_CONNECT_FAIL | AFD_POLL_ABORT))
+        if ((socket_events & (POLLHUP | POLLERR)) == (POLLHUP | POLLERR))
         {
-            afd_events |= (AFD_POLL_CONNECT_FAIL | AFD_POLL_ABORT);
+            if (afd_poll_events & AFD_POLL_CONNECT_FAIL)
+            {
+                afd_events |= AFD_POLL_CONNECT_FAIL;
+            }
+            if (afd_poll_events & AFD_POLL_ABORT)
+            {
+                afd_events |= AFD_POLL_ABORT;
+            }
         }
         else if (socket_events & POLLHUP && afd_poll_events & AFD_POLL_DISCONNECT)
         {
