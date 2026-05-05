@@ -816,6 +816,7 @@ namespace whp
 
                 while (!this->stop_requested_)
                 {
+                    this->expire_mmio_read_grace_pages();
                     WHV_RUN_VP_EXIT_CONTEXT exit_context{};
                     const auto start_rip = this->read_instruction_pointer();
                     this->run_active_ = true;
@@ -1090,6 +1091,9 @@ namespace whp
                 for (size_t offset = size; offset > 0; offset -= page_size)
                 {
                     const auto guest_address = address + offset - page_size;
+
+                    this->revoke_mmio_read_grace(guest_address);
+
                     const auto entry = this->mapped_pages_.find(guest_address);
                     if (entry == this->mapped_pages_.end())
                     {
@@ -1519,6 +1523,7 @@ namespace whp
             std::unordered_map<emulator_hook*, memory_access_hook_entry> memory_write_hooks_{};
             std::unordered_map<uint64_t, mmio_region> mmio_regions_{};
             std::optional<pending_mmio_step> pending_mmio_step_{};
+            std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> mmio_read_grace_deadlines_{};
             instruction_hook_entry* syscall_hook_ = nullptr;
             void ensure_platform_support()
             {
@@ -1934,6 +1939,51 @@ namespace whp
                 return nullptr;
             }
 
+            void grant_mmio_read_grace(const uint64_t page_base)
+            {
+                constexpr std::chrono::milliseconds mmio_read_grace_period_{4};
+                this->mmio_read_grace_deadlines_[page_base] = std::chrono::steady_clock::now() + mmio_read_grace_period_;
+            }
+
+            void revoke_mmio_read_grace(const uint64_t page_base)
+            {
+                this->mmio_read_grace_deadlines_.erase(page_base);
+            }
+
+            void expire_mmio_read_grace_pages()
+            {
+                if (this->pending_mmio_step_.has_value())
+                {
+                    return;
+                }
+
+                const auto now = std::chrono::steady_clock::now();
+
+                for (auto it = this->mmio_read_grace_deadlines_.begin(); it != this->mmio_read_grace_deadlines_.end();)
+                {
+                    const auto page_base = it->first;
+                    const auto deadline = it->second;
+
+                    if (deadline > now)
+                    {
+                        ++it;
+                        continue;
+                    }
+
+                    auto page_it = this->mapped_pages_.find(page_base);
+                    if (page_it != this->mapped_pages_.end() && page_it->second)
+                    {
+                        if (this->find_mmio_region(page_base) != nullptr)
+                        {
+                            page_it->second->permissions = memory_permission::none;
+                            this->remap_page(*page_it->second);
+                        }
+                    }
+
+                    it = this->mmio_read_grace_deadlines_.erase(it);
+                }
+            }
+
             void refresh_mmio_page(const mmio_region& region, const uint64_t page_base)
             {
                 auto entry = this->mapped_pages_.find(page_base);
@@ -2025,6 +2075,7 @@ namespace whp
 
                 const auto state = std::move(*this->pending_mmio_step_);
                 this->pending_mmio_step_.reset();
+                this->revoke_mmio_read_grace(state.page_base);
 
                 const auto entry = this->mapped_pages_.find(state.page_base);
                 if (entry == this->mapped_pages_.end() || !entry->second)
@@ -2043,8 +2094,17 @@ namespace whp
                 entry->second->permissions = memory_permission::none;
                 this->remap_page(*entry->second);
 
-                WHV_REGISTER_VALUE rflags{};
-                rflags.Reg64 = state.original_rflags;
+                auto rflags = this->get_register(WHvX64RegisterRflags);
+
+                if (state.had_trap_flag)
+                {
+                    rflags.Reg64 |= 0x100ull;
+                }
+                else
+                {
+                    rflags.Reg64 &= ~0x100ull;
+                }
+
                 this->set_register(WHvX64RegisterRflags, rflags);
 
                 return !state.allow_debug_delivery;
@@ -2373,10 +2433,25 @@ namespace whp
                         throw std::runtime_error("MMIO page backing is missing");
                     }
 
-                    page_it->second->permissions = is_write ? memory_permission::read_write : memory_permission::read;
+                    if (is_write)
+                    {
+                        this->revoke_mmio_read_grace(page_base);
+                        page_it->second->permissions = memory_permission::read_write;
+                    }
+                    else
+                    {
+                        page_it->second->permissions = memory_permission::read;
+                    }
+
                     this->remap_page(*page_it->second);
 
-                    if (is_write && !this->arm_mmio_single_step(page_base, true))
+                    if (!is_write)
+                    {
+                        this->grant_mmio_read_grace(page_base);
+                        return true;
+                    }
+
+                    if (!this->arm_mmio_single_step(page_base, is_write))
                     {
                         throw std::runtime_error("Nested WHP MMIO single-step state is not supported");
                     }

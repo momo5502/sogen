@@ -20,6 +20,7 @@
 #include <intrin.h>
 
 #include <windows.h>
+#include <timeapi.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windns.h>
@@ -27,6 +28,8 @@
 #include <combaseapi.h>
 #include <knownfolders.h>
 #include <sddl.h>
+
+#pragma comment(lib, "winmm.lib")
 
 using namespace std::literals;
 
@@ -1391,6 +1394,13 @@ namespace
         ReleaseActCtx(ctx);
         return true;
     }
+
+    bool test_mmio()
+    {
+        const auto t0 = timeGetTime();
+        Sleep(16);
+        return timeGetTime() - t0 >= 16;
+    }
 }
 
 #define RUN_TEST(func, name)                 \
@@ -1446,6 +1456,7 @@ int main(const int argc, const char* argv[])
 #endif
     RUN_TEST(test_private_namespace, "Private Namespace")
     RUN_TEST(test_actctx, "Activation Context")
+    RUN_TEST(test_mmio, "MMIO")
 
     return valid ? 0 : 1;
 }
