@@ -52,7 +52,7 @@
     "@types/shell-quote": "^1.7.5",
     "@vitejs/plugin-react": "^5.1.4",
     "baseline-browser-mapping": "^2.10.25",
-    "eslint": "^9.39.2",
+    "eslint": "^10.3.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
