@@ -19,6 +19,15 @@
 #ifndef POLLHUP
 #define POLLHUP 0x0010
 #endif
+#ifndef POLLRDNORM
+#define POLLRDNORM 0x0040
+#endif
+#ifndef POLLRDBAND
+#define POLLRDBAND 0x0080
+#endif
+#ifndef POLLWRNORM
+#define POLLWRNORM 0x0100
+#endif
 
 namespace network
 {
@@ -98,7 +107,25 @@ namespace network
                     a.set_port(++f.port);
                 }
 
-                ~static_socket() override = default;
+                ~static_socket() override
+                {
+                    if (this->pipe)
+                    {
+                        if (this->is_server_side)
+                        {
+                            this->pipe->server_closed = true;
+                        }
+                        else
+                        {
+                            this->pipe->client_closed = true;
+                        }
+                    }
+                }
+
+                static_socket(const static_socket&) = delete;
+                static_socket& operator=(const static_socket&) = delete;
+                static_socket(static_socket&&) = delete;
+                static_socket& operator=(static_socket&&) = delete;
 
                 void log_op(std::string_view op, std::string_view detail = {}) const
                 {
@@ -168,16 +195,19 @@ namespace network
                 {
                     this->log_op("connect", "peer=" + addr.to_string());
                     this->peer_addr = addr;
-                    this->error = 0;
 
                     auto& queues = this->factory->state->listen_queues;
                     auto it = queues.find(addr);
-                    if (it != queues.end())
+                    if (it == queues.end())
                     {
-                        this->pipe = std::make_shared<pipe_state>();
-                        this->is_server_side = false;
-                        it->second.emplace_back(pending_connection{.client_addr = this->a, .p = this->pipe});
+                        this->error = SERR(ECONNREFUSED);
+                        return false;
                     }
+
+                    this->pipe = std::make_shared<pipe_state>();
+                    this->is_server_side = false;
+                    it->second.emplace_back(pending_connection{.client_addr = this->a, .p = this->pipe});
+                    this->error = 0;
                     return true;
                 }
 
@@ -318,44 +348,43 @@ namespace network
                         continue;
                     }
 
-                    int16_t revents = 0;
+                    constexpr int16_t read_mask = static_cast<int16_t>(POLLIN | POLLRDNORM | POLLRDBAND);
+                    constexpr int16_t write_mask = static_cast<int16_t>(POLLOUT | POLLWRNORM);
 
-                    if (entry.events & POLLIN)
+                    int16_t revents = 0;
+                    bool readable = false;
+                    bool peer_closed = false;
+
+                    if (s->listening)
                     {
-                        if (s->listening)
-                        {
-                            auto it = this->state->listen_queues.find(s->a);
-                            if (it != this->state->listen_queues.end() && !it->second.empty())
-                            {
-                                revents = static_cast<int16_t>(revents | POLLIN);
-                            }
-                        }
-                        else if (s->pipe)
-                        {
-                            auto& q = s->is_server_side ? s->pipe->client_to_server : s->pipe->server_to_client;
-                            bool peer_closed = s->is_server_side ? s->pipe->client_closed : s->pipe->server_closed;
-                            if (!q.empty())
-                            {
-                                revents = static_cast<int16_t>(revents | POLLIN);
-                            }
-                            if (peer_closed)
-                            {
-                                revents = static_cast<int16_t>(revents | POLLHUP);
-                            }
-                        }
-                        else
-                        {
-                            auto packet_it = this->state->packets.find(s->a);
-                            if (packet_it != this->state->packets.end() && !packet_it->second.empty())
-                            {
-                                revents = static_cast<int16_t>(revents | POLLIN);
-                            }
-                        }
+                        auto it = this->state->listen_queues.find(s->a);
+                        readable = it != this->state->listen_queues.end() && !it->second.empty();
+                    }
+                    else if (s->pipe)
+                    {
+                        auto& q = s->is_server_side ? s->pipe->client_to_server : s->pipe->server_to_client;
+                        peer_closed = s->is_server_side ? s->pipe->client_closed : s->pipe->server_closed;
+                        readable = !q.empty();
+                    }
+                    else
+                    {
+                        auto packet_it = this->state->packets.find(s->a);
+                        readable = packet_it != this->state->packets.end() && !packet_it->second.empty();
                     }
 
-                    if (entry.events & POLLOUT)
+                    if (readable && (entry.events & read_mask))
                     {
-                        revents = static_cast<int16_t>(revents | POLLOUT);
+                        revents = static_cast<int16_t>(revents | (entry.events & read_mask));
+                    }
+
+                    if (peer_closed)
+                    {
+                        revents = static_cast<int16_t>(revents | POLLHUP);
+                    }
+
+                    if (entry.events & write_mask)
+                    {
+                        revents = static_cast<int16_t>(revents | (entry.events & write_mask));
                     }
 
                     entry.revents = revents;
