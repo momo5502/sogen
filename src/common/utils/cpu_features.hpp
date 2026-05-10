@@ -20,8 +20,8 @@ namespace utils::cpu_features
             CpuidRegs regs{};
 
 #if defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64))
-            int out[4]{};
-            __cpuidex(out, static_cast<int>(leaf), static_cast<int>(subleaf));
+            std::array<int, 4> out{};
+            __cpuidex(out.data(), static_cast<int>(leaf), static_cast<int>(subleaf));
 
             regs[0] = static_cast<std::uint32_t>(out[0]); // EAX
             regs[1] = static_cast<std::uint32_t>(out[1]); // EBX
