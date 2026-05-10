@@ -342,6 +342,11 @@ windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, const e
         this->map_port(mapping.first, mapping.second);
     }
 
+    if (this->socket_factory_)
+    {
+        network::set_static_socket_factory_logger(*this->socket_factory_, &this->log);
+    }
+
     this->setup_hooks();
 }
 
