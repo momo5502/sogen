@@ -242,8 +242,7 @@ namespace network
                 {
                     this->log_op("sendto", "dest=" + destination.to_string() + " len=" + std::to_string(data.size()));
                     this->error = 0;
-                    this->factory->state->packets[destination].emplace(
-                        this->a, shared_state::packet_data{data.begin(), data.end()});
+                    this->factory->state->packets[destination].emplace(this->a, shared_state::packet_data{data.begin(), data.end()});
                     return static_cast<sent_size>(data.size());
                 }
 
@@ -304,8 +303,8 @@ namespace network
 
             std::unique_ptr<i_socket> create_socket(const int af, const int type, const int protocol) override
             {
-                this->log_call("[static_socket_factory] create_socket af=" + std::to_string(af) +
-                               " type=" + std::to_string(type) + " protocol=" + std::to_string(protocol) + "\n");
+                this->log_call("[static_socket_factory] create_socket af=" + std::to_string(af) + " type=" + std::to_string(type) +
+                               " protocol=" + std::to_string(protocol) + "\n");
                 return std::make_unique<static_socket>(*this, af);
             }
 
