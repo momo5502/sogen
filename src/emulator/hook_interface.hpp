@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cassert>
 #include <functional>
+#include <stdexcept>
 
 struct emulator_hook;
 
@@ -53,6 +54,20 @@ class hook_interface
 {
   public:
     virtual ~hook_interface() = default;
+
+    enum class memory_execution_hook_mode
+    {
+        automatic,
+        int3,
+    };
+
+    virtual void set_memory_execution_hook_mode(const memory_execution_hook_mode mode)
+    {
+        if (mode == memory_execution_hook_mode::int3)
+        {
+            throw std::runtime_error("The selected emulator backend does not support int3 memory execution hooks");
+        }
+    }
 
     virtual emulator_hook* hook_memory_execution(memory_execution_hook_callback callback) = 0;
     virtual emulator_hook* hook_memory_execution(uint64_t address, memory_execution_hook_callback callback) = 0;

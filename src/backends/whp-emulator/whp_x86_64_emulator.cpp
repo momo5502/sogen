@@ -4,6 +4,7 @@
 #include <WinHvPlatform.h>
 #include <windows.h>
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <iomanip>
@@ -13,6 +14,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <utils/object.hpp>
@@ -23,6 +25,7 @@ namespace whp
     {
         constexpr UINT32 vp_index = 0;
         constexpr uint64_t page_size = 0x1000;
+        constexpr uint64_t trap_flag_bit = 0x100ull;
         constexpr uint64_t page_table_entry_present = 1ull << 0;
         constexpr uint64_t page_table_entry_writable = 1ull << 1;
         constexpr uint64_t page_table_entry_user = 1ull << 2;
@@ -125,7 +128,9 @@ namespace whp
 
             void* host_page = nullptr;
             uint64_t guest_physical_address = unmapped_guest_page;
+            uint64_t guest_page_base = unmapped_guest_page;
             uint32_t map_flags = 0;
+            size_t page_execution_hook_count = 0;
             memory_permission permissions = memory_permission::none;
             std::shared_ptr<uint8_t> owned_page{};
         };
@@ -149,7 +154,10 @@ namespace whp
             table,
             fp,
             fp_control,
+            fp_last_instruction,
+            fp_last_data,
             xmm_control,
+            zero,
             reg128,
         };
 
@@ -617,7 +625,17 @@ namespace whp
                     .logical_size = sizeof(uint64_t),
                 };
             case x86_register::flags:
+                return {
+                    .name = WHvX64RegisterRflags,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint16_t),
+                };
             case x86_register::eflags:
+                return {
+                    .name = WHvX64RegisterRflags,
+                    .kind = register_kind::reg64,
+                    .logical_size = sizeof(uint32_t),
+                };
             case x86_register::rflags:
                 return {
                     .name = WHvX64RegisterRflags,
@@ -649,18 +667,28 @@ namespace whp
                     .logical_size = sizeof(uint16_t),
                 };
             case x86_register::fs:
-            case x86_register::fs_base:
                 return {
                     .name = WHvX64RegisterFs,
                     .kind = register_kind::segment,
                     .logical_size = sizeof(uint16_t),
                 };
+            case x86_register::fs_base:
+                return {
+                    .name = WHvX64RegisterFs,
+                    .kind = register_kind::segment,
+                    .logical_size = sizeof(uint64_t),
+                };
             case x86_register::gs:
-            case x86_register::gs_base:
                 return {
                     .name = WHvX64RegisterGs,
                     .kind = register_kind::segment,
                     .logical_size = sizeof(uint16_t),
+                };
+            case x86_register::gs_base:
+                return {
+                    .name = WHvX64RegisterGs,
+                    .kind = register_kind::segment,
+                    .logical_size = sizeof(uint64_t),
                 };
             case x86_register::gdtr:
                 return {
@@ -742,6 +770,21 @@ namespace whp
                     .kind = register_kind::fp_control,
                     .logical_size = sizeof(uint16_t),
                 };
+            case x86_register::fip:
+            case x86_register::fcs:
+            case x86_register::fop:
+                return {
+                    .name = WHvX64RegisterFpControlStatus,
+                    .kind = register_kind::fp_last_instruction,
+                    .logical_size = sizeof(uint32_t),
+                };
+            case x86_register::fdp:
+            case x86_register::fds:
+                return {
+                    .name = WHvX64RegisterXmmControlStatus,
+                    .kind = register_kind::fp_last_data,
+                    .logical_size = sizeof(uint32_t),
+                };
             case x86_register::mxcsr:
                 return {
                     .name = WHvX64RegisterXmmControlStatus,
@@ -768,13 +811,25 @@ namespace whp
                 };
             }
 
+            // WHP's AVX register layout does not match the debugger-facing YMM register
+            // layout. Until we translate it explicitly, expose YMM as synthetic zero-filled
+            // state rather than returning malformed data.
+            if (reg >= x86_register::ymm0 && reg <= x86_register::ymm15)
+            {
+                return {
+                    .name = {}, // no WHV_REGISTER_NAME exists for this
+                    .kind = register_kind::zero,
+                    .logical_size = 32,
+                };
+            }
+
             if (reg >= x86_register::st0 && reg <= x86_register::st7)
             {
                 const auto index = static_cast<int>(reg) - static_cast<int>(x86_register::st0);
                 return {
                     .name = static_cast<WHV_REGISTER_NAME>(WHvX64RegisterFpMmx0 + index),
                     .kind = register_kind::fp,
-                    .logical_size = sizeof(WHV_X64_FP_REGISTER),
+                    .logical_size = 10,
                 };
             }
 
@@ -805,14 +860,57 @@ namespace whp
                 utils::reset_object_with_delayed_destruction(this->instruction_hooks_);
             }
 
+            void set_memory_execution_hook_mode(const memory_execution_hook_mode mode) override
+            {
+                if (!this->memory_execution_hooks_.empty())
+                {
+                    throw std::runtime_error("Can't change execution hook mode while hooks are applied");
+                }
+                this->memory_execution_hook_mode_ = mode;
+            }
+
             void start(const size_t count) override
             {
-                if (count != 0)
+                if (count != 0 && count != 1)
                 {
                     throw std::runtime_error("WHP backend does not support exact instruction counts yet");
                 }
 
                 this->stop_requested_ = false;
+                bool armed_single_step = false;
+                if (this->deferred_patched_breakpoint_)
+                {
+                    if (this->read_instruction_pointer() == *this->deferred_patched_breakpoint_)
+                    {
+                        if (!this->arm_patched_breakpoint_single_step(*this->deferred_patched_breakpoint_, count == 1))
+                        {
+                            throw std::runtime_error("Nested WHP execution single-step state is not supported");
+                        }
+
+                        armed_single_step = true;
+                    }
+                    else
+                    {
+                        this->set_patched_execution_breakpoint_state(*this->deferred_patched_breakpoint_, true);
+                        this->deferred_patched_breakpoint_.reset();
+                    }
+                }
+
+                if (!armed_single_step && this->deferred_execution_page_)
+                {
+                    if (!this->arm_execution_single_step(*this->deferred_execution_page_, count == 1))
+                    {
+                        throw std::runtime_error("Nested WHP execution single-step state is not supported");
+                    }
+
+                    this->deferred_execution_page_.reset();
+                    armed_single_step = true;
+                }
+
+                if (!armed_single_step && count == 1 && !this->arm_execution_single_step(std::nullopt, true))
+                {
+                    throw std::runtime_error("Nested WHP execution single-step state is not supported");
+                }
 
                 while (!this->stop_requested_)
                 {
@@ -829,6 +927,11 @@ namespace whp
                     switch (exit_context.ExitReason)
                     {
                     case WHvRunVpExitReasonCanceled: {
+                        if (this->stop_requested_)
+                        {
+                            return;
+                        }
+
                         // If rip has not changed, we _probably_ executed nothing.
                         // Could be that the execution was cancelled while it was not running.
                         // Just restart it.
@@ -1124,7 +1227,13 @@ namespace whp
 
             bool try_read_memory(const uint64_t address, void* data, const size_t size) const override
             {
-                return this->access_memory(address, data, size, false);
+                if (!this->access_memory(address, data, size, false))
+                {
+                    return false;
+                }
+
+                this->overlay_patched_breakpoints(address, data, size);
+                return true;
             }
 
             void read_memory(const uint64_t address, void* data, const size_t size) const override
@@ -1137,7 +1246,13 @@ namespace whp
 
             bool try_write_memory(const uint64_t address, const void* data, const size_t size) override
             {
-                return this->access_memory(address, const_cast<void*>(data), size, true);
+                if (!this->access_memory(address, const_cast<void*>(data), size, true))
+                {
+                    return false;
+                }
+
+                this->overlay_patched_breakpoints(address, data, size);
+                return true;
             }
 
             void write_memory(const uint64_t address, const void* data, const size_t size) override
@@ -1235,10 +1350,36 @@ namespace whp
                         current.FpControlStatus.FpTag = static_cast<UINT8>(fp_tag);
                     }
                     break;
+                case register_kind::fp_last_instruction:
+                    if (static_cast<x86_register>(reg) == x86_register::fip)
+                    {
+                        std::memcpy(&current.FpControlStatus.LastFpEip, value, (std::min)(size, sizeof(current.FpControlStatus.LastFpEip)));
+                    }
+                    else if (static_cast<x86_register>(reg) == x86_register::fcs)
+                    {
+                        std::memcpy(&current.FpControlStatus.LastFpCs, value, (std::min)(size, sizeof(current.FpControlStatus.LastFpCs)));
+                    }
+                    else
+                    {
+                        std::memcpy(&current.FpControlStatus.LastFpOp, value, (std::min)(size, sizeof(current.FpControlStatus.LastFpOp)));
+                    }
+                    break;
+                case register_kind::fp_last_data:
+                    if (static_cast<x86_register>(reg) == x86_register::fdp)
+                    {
+                        std::memcpy(&current.XmmControlStatus.LastFpDp, value, (std::min)(size, sizeof(current.XmmControlStatus.LastFpDp)));
+                    }
+                    else
+                    {
+                        std::memcpy(&current.XmmControlStatus.LastFpDs, value, (std::min)(size, sizeof(current.XmmControlStatus.LastFpDs)));
+                    }
+                    break;
                 case register_kind::xmm_control:
                     std::memcpy(&current.XmmControlStatus.XmmStatusControl, value,
                                 (std::min)(size, sizeof(current.XmmControlStatus.XmmStatusControl)));
                     current.XmmControlStatus.XmmStatusControlMask = 0xFFFFFFFF;
+                    break;
+                case register_kind::zero:
                     break;
                 case register_kind::reg128:
                     std::memcpy(&current.Reg128, value, (std::min)(size, sizeof(current.Reg128)));
@@ -1298,16 +1439,46 @@ namespace whp
                         std::memcpy(value, &fp_tag, (std::min)(size, sizeof(fp_tag)));
                     }
                     break;
+                case register_kind::fp_last_instruction:
+                    if (static_cast<x86_register>(reg) == x86_register::fip)
+                    {
+                        std::memcpy(value, &current.FpControlStatus.LastFpEip, (std::min)(size, sizeof(current.FpControlStatus.LastFpEip)));
+                    }
+                    else if (static_cast<x86_register>(reg) == x86_register::fcs)
+                    {
+                        uint32_t fp_cs = current.FpControlStatus.LastFpCs;
+                        std::memcpy(value, &fp_cs, (std::min)(size, sizeof(fp_cs)));
+                    }
+                    else
+                    {
+                        uint32_t fp_op = current.FpControlStatus.LastFpOp;
+                        std::memcpy(value, &fp_op, (std::min)(size, sizeof(fp_op)));
+                    }
+                    break;
+                case register_kind::fp_last_data:
+                    if (static_cast<x86_register>(reg) == x86_register::fdp)
+                    {
+                        std::memcpy(value, &current.XmmControlStatus.LastFpDp, (std::min)(size, sizeof(current.XmmControlStatus.LastFpDp)));
+                    }
+                    else
+                    {
+                        uint32_t fp_ds = current.XmmControlStatus.LastFpDs;
+                        std::memcpy(value, &fp_ds, (std::min)(size, sizeof(fp_ds)));
+                    }
+                    break;
                 case register_kind::xmm_control:
                     std::memcpy(value, &current.XmmControlStatus.XmmStatusControl,
                                 (std::min)(size, sizeof(current.XmmControlStatus.XmmStatusControl)));
+                    break;
+                case register_kind::zero:
+                    std::memset(value, 0, (std::min)(size, mapping.logical_size));
                     break;
                 case register_kind::reg128:
                     std::memcpy(value, &current.Reg128, (std::min)(size, sizeof(current.Reg128)));
                     break;
                 }
 
-                return size;
+                return mapping.logical_size;
             }
 
             bool read_descriptor_table(const int reg, descriptor_table_register& table) override
@@ -1362,6 +1533,7 @@ namespace whp
 
             emulator_hook* hook_memory_execution(memory_execution_hook_callback callback) override
             {
+                // NOTE: Global memory execution hooks are registered but not currently honored.
                 auto* hook = this->make_hook();
                 this->memory_execution_hooks_[hook] = execution_hook_entry{.address = std::nullopt, .callback = std::move(callback)};
                 return hook;
@@ -1370,8 +1542,27 @@ namespace whp
             emulator_hook* hook_memory_execution(const uint64_t address, memory_execution_hook_callback callback) override
             {
                 auto* hook = this->make_hook();
-                this->memory_execution_hooks_[hook] = execution_hook_entry{.address = address, .callback = std::move(callback)};
-                return hook;
+
+                switch (this->memory_execution_hook_mode_)
+                {
+                case memory_execution_hook_mode::automatic:
+                    this->memory_execution_hooks_[hook] = execution_hook_entry{.address = address, .callback = std::move(callback)};
+                    if (const auto entry = this->mapped_pages_.find(align_down_to_page(address));
+                        entry != this->mapped_pages_.end() && entry->second)
+                    {
+                        ++entry->second->page_execution_hook_count;
+                    }
+
+                    this->remap_hook_page(address);
+                    return hook;
+
+                case memory_execution_hook_mode::int3:
+                    this->install_patched_execution_breakpoint(address);
+                    this->memory_execution_hooks_[hook] = execution_hook_entry{.address = address, .callback = std::move(callback)};
+                    return hook;
+                }
+
+                throw std::runtime_error("Unknown memory execution hook mode");
             }
 
             emulator_hook* hook_memory_read(const uint64_t address, const uint64_t size, memory_access_hook_callback callback) override
@@ -1402,7 +1593,33 @@ namespace whp
                 this->basic_block_hooks_.erase(hook);
                 this->interrupt_hooks_.erase(hook);
                 this->memory_violation_hooks_.erase(hook);
-                this->memory_execution_hooks_.erase(hook);
+
+                if (const auto execution_it = this->memory_execution_hooks_.find(hook); execution_it != this->memory_execution_hooks_.end())
+                {
+                    const auto execution_address = execution_it->second.address;
+                    this->memory_execution_hooks_.erase(execution_it);
+
+                    if (execution_address)
+                    {
+                        switch (this->memory_execution_hook_mode_)
+                        {
+                        case memory_execution_hook_mode::automatic: {
+                            if (const auto entry = this->mapped_pages_.find(align_down_to_page(*execution_address));
+                                entry != this->mapped_pages_.end() && entry->second && entry->second->page_execution_hook_count != 0)
+                            {
+                                --entry->second->page_execution_hook_count;
+                            }
+
+                            this->remap_hook_page(*execution_address);
+                            break;
+                        }
+                        case memory_execution_hook_mode::int3:
+                            this->uninstall_patched_execution_breakpoint(*execution_address);
+                            break;
+                        }
+                    }
+                }
+
                 this->memory_read_hooks_.erase(hook);
                 this->memory_write_hooks_.erase(hook);
             }
@@ -1498,6 +1715,20 @@ namespace whp
                 std::vector<std::byte> old_page{};
             };
 
+            struct pending_execution_step
+            {
+                std::optional<uint64_t> page_base{};
+                std::optional<uint64_t> patched_breakpoint{};
+                bool had_trap_flag{};
+                bool stop_after_step{};
+            };
+
+            struct patched_execution_breakpoint
+            {
+                std::byte original_byte{};
+                size_t hook_count{};
+            };
+
             partition_handle partition_{};
             std::unique_ptr<virtual_processor_handle> vp_{};
             WHV_EXTENDED_VM_EXITS supported_exits_{};
@@ -1511,6 +1742,7 @@ namespace whp
             uint64_t next_internal_gpa_ = internal_page_table_base;
             std::atomic_bool stop_requested_ = false;
             std::atomic_bool run_active_ = false;
+            std::optional<pending_execution_step> pending_execution_step_{};
             uint64_t syscall_hook_page_ = 0;
             size_t next_hook_id_ = 1;
 
@@ -1521,10 +1753,14 @@ namespace whp
             std::unordered_map<emulator_hook*, execution_hook_entry> memory_execution_hooks_{};
             std::unordered_map<emulator_hook*, memory_access_hook_entry> memory_read_hooks_{};
             std::unordered_map<emulator_hook*, memory_access_hook_entry> memory_write_hooks_{};
+            std::unordered_map<uint64_t, patched_execution_breakpoint> patched_execution_breakpoints_{};
+            std::optional<uint64_t> deferred_patched_breakpoint_{};
+            std::optional<uint64_t> deferred_execution_page_{};
             std::unordered_map<uint64_t, mmio_region> mmio_regions_{};
             std::optional<pending_mmio_step> pending_mmio_step_{};
             std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> mmio_read_grace_deadlines_{};
             instruction_hook_entry* syscall_hook_ = nullptr;
+            memory_execution_hook_mode memory_execution_hook_mode_ = memory_execution_hook_mode::automatic;
             void ensure_platform_support()
             {
                 BOOL hypervisor_present = FALSE;
@@ -1561,6 +1797,16 @@ namespace whp
 
                 WHP_CHECK_HR(WHvSetPartitionProperty(this->partition_, WHvPartitionPropertyCodeExtendedVmExits, &enabled_exits,
                                                      sizeof(enabled_exits)));
+
+                if (enabled_exits.ExceptionExit)
+                {
+                    WHV_PARTITION_PROPERTY exception_exit_bitmap{};
+                    exception_exit_bitmap.ExceptionExitBitmap =
+                        (1ull << WHvX64ExceptionTypeDebugTrapOrFault) | (1ull << WHvX64ExceptionTypeBreakpointTrap);
+
+                    WHP_CHECK_HR(WHvSetPartitionProperty(this->partition_, WHvPartitionPropertyCodeExceptionExitBitmap,
+                                                         &exception_exit_bitmap, sizeof(exception_exit_bitmap)));
+                }
 
                 WHP_CHECK_HR(WHvSetupPartition(this->partition_));
             }
@@ -1755,8 +2001,13 @@ namespace whp
                     throw std::runtime_error("WHP guest physical page already assigned");
                 }
 
+                page.guest_page_base = align_down_to_page(guest_address);
                 page.guest_physical_address = this->allocate_guest_physical_page();
-                this->guest_pages_by_gpa_[this->guest_physical_page_index(page.guest_physical_address)] = align_down_to_page(guest_address);
+                page.page_execution_hook_count = std::ranges::count_if(this->memory_execution_hooks_, [&](const auto& entry) {
+                    return entry.second.address && !this->patched_execution_breakpoints_.contains(*entry.second.address) &&
+                           align_down_to_page(*entry.second.address) == page.guest_page_base;
+                });
+                this->guest_pages_by_gpa_[this->guest_physical_page_index(page.guest_physical_address)] = page.guest_page_base;
             }
 
             void release_guest_physical_page(const uint64_t guest_physical_address)
@@ -1820,6 +2071,18 @@ namespace whp
                 return page_index;
             }
 
+            memory_permission effective_page_permissions(const mapped_page& page) const
+            {
+                auto permissions = page.permissions;
+                const auto stepped_page = this->pending_execution_step_ ? this->pending_execution_step_->page_base : std::nullopt;
+                if (page.page_execution_hook_count != 0 && stepped_page != page.guest_page_base)
+                {
+                    permissions &= ~memory_permission::exec;
+                }
+
+                return permissions;
+            }
+
             void remap_page(mapped_page& page)
             {
                 if (page.guest_physical_address == unmapped_guest_page)
@@ -1832,7 +2095,7 @@ namespace whp
                     WHP_CHECK_HR(WHvUnmapGpaRange(this->partition_, page.guest_physical_address, page_size));
                 }
 
-                page.map_flags = to_whp_map_flags(page.permissions);
+                page.map_flags = to_whp_map_flags(this->effective_page_permissions(page));
                 if (page.map_flags == 0)
                 {
                     return;
@@ -1862,7 +2125,7 @@ namespace whp
 
                     auto* const run_host_base = static_cast<uint8_t*>(entry->second->host_page);
                     const auto run_gpa = entry->second->guest_physical_address;
-                    const auto run_flags = to_whp_map_flags(entry->second->permissions);
+                    const auto run_flags = to_whp_map_flags(this->effective_page_permissions(*entry->second));
                     const auto run_had_mapping = entry->second->map_flags != 0;
 
                     size_t run_size = page_size;
@@ -1875,7 +2138,7 @@ namespace whp
                             break;
                         }
 
-                        const auto next_flags = to_whp_map_flags(next_entry->second->permissions);
+                        const auto next_flags = to_whp_map_flags(this->effective_page_permissions(*next_entry->second));
                         const auto next_had_mapping = next_entry->second->map_flags != 0;
                         auto* const expected_host = run_host_base + run_size;
                         const auto expected_gpa = run_gpa + run_size;
@@ -1911,6 +2174,163 @@ namespace whp
                     WHP_CHECK_HR(WHvMapGpaRange(this->partition_, host_base, guest_physical_address, size,
                                                 static_cast<WHV_MAP_GPA_RANGE_FLAGS>(map_flags)));
                 }
+            }
+
+            void remap_hook_page(const uint64_t address)
+            {
+                const auto page_base = align_down_to_page(address);
+                const auto entry = this->mapped_pages_.find(page_base);
+                if (entry != this->mapped_pages_.end() && entry->second && entry->second->host_page != nullptr)
+                {
+                    this->remap_page(*entry->second);
+                }
+            }
+
+            void install_patched_execution_breakpoint(const uint64_t address)
+            {
+                auto existing = this->patched_execution_breakpoints_.find(address);
+                if (existing != this->patched_execution_breakpoints_.end())
+                {
+                    ++existing->second.hook_count;
+                    return;
+                }
+
+                std::byte original{};
+                if (!this->access_memory(address, &original, sizeof(original), false))
+                {
+                    throw std::runtime_error("Failed to read memory");
+                }
+
+                auto int3 = std::byte{0xCC};
+                if (!this->access_memory(address, &int3, sizeof(int3), true))
+                {
+                    throw std::runtime_error("Failed to write memory");
+                }
+
+                this->patched_execution_breakpoints_[address] = patched_execution_breakpoint{.original_byte = original, .hook_count = 1};
+            }
+
+            void uninstall_patched_execution_breakpoint(const uint64_t address)
+            {
+                auto existing = this->patched_execution_breakpoints_.find(address);
+                if (existing == this->patched_execution_breakpoints_.end())
+                {
+                    return;
+                }
+
+                if (existing->second.hook_count > 1)
+                {
+                    --existing->second.hook_count;
+                    return;
+                }
+
+                auto original = existing->second.original_byte;
+                if (!this->access_memory(address, &original, sizeof(original), true))
+                {
+                    throw std::runtime_error("Failed to write memory");
+                }
+
+                this->patched_execution_breakpoints_.erase(existing);
+            }
+
+            void set_patched_execution_breakpoint_state(const uint64_t address, const bool applied)
+            {
+                const auto existing = this->patched_execution_breakpoints_.find(address);
+                if (existing == this->patched_execution_breakpoints_.end())
+                {
+                    return;
+                }
+
+                auto value = applied ? std::byte{0xCC} : existing->second.original_byte;
+                if (!this->access_memory(address, &value, sizeof(value), true))
+                {
+                    throw std::runtime_error("Failed to write memory");
+                }
+            }
+
+            bool arm_execution_single_step(const std::optional<uint64_t> page_base, const bool stop_after_step)
+            {
+                if (this->pending_execution_step_)
+                {
+                    if (!page_base || this->pending_execution_step_->page_base)
+                    {
+                        return false;
+                    }
+
+                    this->pending_execution_step_->page_base = page_base;
+                }
+                else
+                {
+                    auto rflags = this->get_register(WHvX64RegisterRflags);
+                    pending_execution_step state{};
+                    state.page_base = page_base;
+                    state.had_trap_flag = (rflags.Reg64 & trap_flag_bit) != 0;
+                    state.stop_after_step = stop_after_step;
+
+                    rflags.Reg64 |= trap_flag_bit;
+                    this->set_register(WHvX64RegisterRflags, rflags);
+                    this->pending_execution_step_ = state;
+                }
+
+                if (page_base)
+                {
+                    const auto entry = this->mapped_pages_.find(*page_base);
+                    if (entry != this->mapped_pages_.end() && entry->second)
+                    {
+                        this->remap_page(*entry->second);
+                    }
+                }
+
+                return true;
+            }
+
+            bool arm_patched_breakpoint_single_step(const uint64_t address, const bool stop_after_step)
+            {
+                if (!this->arm_execution_single_step(std::nullopt, stop_after_step))
+                {
+                    return false;
+                }
+
+                this->pending_execution_step_->patched_breakpoint = address;
+                this->deferred_patched_breakpoint_.reset();
+                return true;
+            }
+
+            bool complete_execution_step()
+            {
+                if (!this->pending_execution_step_)
+                {
+                    return false;
+                }
+
+                const auto state = std::exchange(this->pending_execution_step_, std::nullopt);
+
+                auto rflags = this->get_register(WHvX64RegisterRflags);
+                if (state->had_trap_flag)
+                {
+                    rflags.Reg64 |= trap_flag_bit;
+                }
+                else
+                {
+                    rflags.Reg64 &= ~trap_flag_bit;
+                }
+                this->set_register(WHvX64RegisterRflags, rflags);
+
+                if (state->page_base)
+                {
+                    this->remap_hook_page(*state->page_base);
+                }
+                if (state->patched_breakpoint)
+                {
+                    this->set_patched_execution_breakpoint_state(*state->patched_breakpoint, true);
+                }
+
+                if (state->stop_after_step)
+                {
+                    this->stop_requested_ = true;
+                }
+
+                return !state->had_trap_flag;
             }
 
             mmio_region* find_mmio_region(const uint64_t address)
@@ -2233,6 +2653,72 @@ namespace whp
                 return true;
             }
 
+            void overlay_patched_breakpoints(const uint64_t address, void* data, const size_t size) const
+            {
+                auto current_address = address;
+                auto* cursor = static_cast<std::byte*>(data);
+                auto remaining = size;
+
+                while (remaining > 0)
+                {
+                    const auto page_base = align_down_to_page(current_address);
+                    const auto offset = static_cast<size_t>(current_address - page_base);
+                    const auto chunk = (std::min)(remaining, static_cast<size_t>(page_size - offset));
+
+                    for (const auto& [breakpoint_address, breakpoint] : this->patched_execution_breakpoints_)
+                    {
+                        if (breakpoint_address < current_address || breakpoint_address >= current_address + chunk)
+                        {
+                            continue;
+                        }
+
+                        const auto breakpoint_offset = static_cast<size_t>(breakpoint_address - current_address);
+                        cursor[breakpoint_offset] = breakpoint.original_byte;
+                    }
+
+                    current_address += chunk;
+                    cursor += chunk;
+                    remaining -= chunk;
+                }
+            }
+
+            void overlay_patched_breakpoints(const uint64_t address, const void* data, const size_t size)
+            {
+                auto current_address = address;
+                const auto* cursor = static_cast<const std::byte*>(data);
+                auto remaining = size;
+
+                while (remaining > 0)
+                {
+                    const auto page_base = align_down_to_page(current_address);
+                    const auto entry = this->mapped_pages_.find(page_base);
+                    if (entry == this->mapped_pages_.end() || !entry->second || entry->second->host_page == nullptr)
+                    {
+                        return;
+                    }
+
+                    const auto offset = static_cast<size_t>(current_address - page_base);
+                    const auto chunk = (std::min)(remaining, static_cast<size_t>(page_size - offset));
+                    auto* page_ptr = static_cast<std::byte*>(entry->second->host_page) + offset;
+
+                    for (auto& [breakpoint_address, breakpoint] : this->patched_execution_breakpoints_)
+                    {
+                        if (breakpoint_address < current_address || breakpoint_address >= current_address + chunk)
+                        {
+                            continue;
+                        }
+
+                        const auto breakpoint_offset = static_cast<size_t>(breakpoint_address - current_address);
+                        breakpoint.original_byte = cursor[breakpoint_offset];
+                        page_ptr[breakpoint_offset] = std::byte{0xCC};
+                    }
+
+                    current_address += chunk;
+                    cursor += chunk;
+                    remaining -= chunk;
+                }
+            }
+
             WHV_REGISTER_VALUE get_register(const WHV_REGISTER_NAME name) const
             {
                 WHV_REGISTER_VALUE value{};
@@ -2411,12 +2897,62 @@ namespace whp
                 return false;
             }
 
+            bool handle_execution_hook(const uint64_t address)
+            {
+                const auto page_base = align_down_to_page(address);
+                const auto entry = this->mapped_pages_.find(page_base);
+                if (entry == this->mapped_pages_.end() || !entry->second || !is_executable(entry->second->permissions) ||
+                    entry->second->page_execution_hook_count == 0)
+                {
+                    return false;
+                }
+
+                std::vector<memory_execution_hook_callback> callbacks{};
+                for (const auto& [_, hook] : this->memory_execution_hooks_)
+                {
+                    if (hook.address && *hook.address == address)
+                    {
+                        callbacks.push_back(hook.callback);
+                    }
+                }
+
+                for (const auto& callback : callbacks)
+                {
+                    callback(address);
+                }
+
+                if (this->stop_requested_)
+                {
+                    this->deferred_execution_page_ = page_base;
+                    return true;
+                }
+
+                const auto current_entry = this->mapped_pages_.find(page_base);
+                if (current_entry == this->mapped_pages_.end() || !current_entry->second ||
+                    !is_executable(current_entry->second->permissions) || current_entry->second->page_execution_hook_count == 0)
+                {
+                    return true;
+                }
+
+                if (!this->arm_execution_single_step(page_base, false))
+                {
+                    throw std::runtime_error("Nested WHP execution single-step state is not supported");
+                }
+
+                return true;
+            }
+
             bool handle_memory_access(const WHV_MEMORY_ACCESS_CONTEXT& memory_access)
             {
                 const auto access_type = static_cast<WHV_MEMORY_ACCESS_TYPE>(memory_access.AccessInfo.AccessType);
                 const auto resolved_address = memory_access.AccessInfo.GvaValid
                                                   ? memory_access.Gva
                                                   : this->translate_guest_physical_address(memory_access.Gpa).value_or(memory_access.Gpa);
+
+                if (access_type == WHvMemoryAccessExecute && this->handle_execution_hook(resolved_address))
+                {
+                    return true;
+                }
 
                 const auto mmio_address = resolved_address;
                 if (auto* region = this->find_mmio_region(mmio_address))
@@ -2480,25 +3016,79 @@ namespace whp
                 return false;
             }
 
+            bool handle_patched_execution_breakpoint(const uint64_t address)
+            {
+                if (!this->patched_execution_breakpoints_.contains(address))
+                {
+                    return false;
+                }
+
+                auto rip_value = this->get_register(WHvX64RegisterRip);
+                rip_value.Reg64 = address;
+                this->set_register(WHvX64RegisterRip, rip_value);
+                this->set_patched_execution_breakpoint_state(address, false);
+
+                std::vector<memory_execution_hook_callback> callbacks{};
+                for (const auto& [_, hook] : this->memory_execution_hooks_)
+                {
+                    if (hook.address && *hook.address == address)
+                    {
+                        callbacks.push_back(hook.callback);
+                    }
+                }
+
+                for (const auto& callback : callbacks)
+                {
+                    callback(address);
+                }
+
+                this->deferred_patched_breakpoint_ = address;
+                if (!this->stop_requested_)
+                {
+                    if (!this->arm_patched_breakpoint_single_step(address, false))
+                    {
+                        throw std::runtime_error("Nested WHP execution single-step state is not supported");
+                    }
+                }
+
+                return true;
+            }
+
             bool handle_exception(const WHV_RUN_VP_EXIT_CONTEXT& exit_context)
             {
                 const auto& exception = exit_context.VpException;
 
-                if (exception.ExceptionType == WHvX64ExceptionTypeDebugTrapOrFault && this->pending_mmio_step_.has_value())
+                if (exception.ExceptionType == WHvX64ExceptionTypeDebugTrapOrFault)
                 {
-                    const auto swallow = this->complete_pending_mmio_step();
-                    if (swallow)
+                    if (this->complete_execution_step())
                     {
                         return true;
                     }
+
+                    if (this->pending_mmio_step_.has_value())
+                    {
+                        const auto swallow = this->complete_pending_mmio_step();
+                        if (swallow)
+                        {
+                            return true;
+                        }
+                    }
                 }
 
-                if (exception.ExceptionType == WHvX64ExceptionTypeBreakpointTrap && this->syscall_hook_ != nullptr)
+                if (exception.ExceptionType == WHvX64ExceptionTypeBreakpointTrap)
                 {
-                    const auto rip = exit_context.VpContext.Rip;
-                    if (rip == this->syscall_hook_page_ || rip == (this->syscall_hook_page_ + 1))
+                    if (this->handle_patched_execution_breakpoint(exit_context.VpContext.Rip - 1))
                     {
-                        return this->handle_syscall_halt();
+                        return true;
+                    }
+
+                    if (this->syscall_hook_ != nullptr)
+                    {
+                        const auto rip = exit_context.VpContext.Rip;
+                        if (rip == this->syscall_hook_page_ || rip == (this->syscall_hook_page_ + 1))
+                        {
+                            return this->handle_syscall_halt();
+                        }
                     }
                 }
 
