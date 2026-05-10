@@ -348,8 +348,8 @@ namespace network
                         continue;
                     }
 
-                    constexpr int16_t read_mask = static_cast<int16_t>(POLLIN | POLLRDNORM | POLLRDBAND);
-                    constexpr int16_t write_mask = static_cast<int16_t>(POLLOUT | POLLWRNORM);
+                    constexpr auto read_mask = static_cast<int16_t>(POLLIN | POLLRDNORM | POLLRDBAND);
+                    constexpr auto write_mask = static_cast<int16_t>(POLLOUT | POLLWRNORM);
 
                     int16_t revents = 0;
                     bool readable = false;
