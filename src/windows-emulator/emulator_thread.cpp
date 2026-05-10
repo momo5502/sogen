@@ -152,6 +152,7 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
 
             teb_obj.ClientId.UniqueProcess = 1ul;
             teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
+            teb_obj.DeallocationStack = this->stack_base;
             teb_obj.NtTib.StackLimit = this->stack_base;
             teb_obj.NtTib.StackBase = this->stack_base + this->stack_size;
             teb_obj.NtTib.Self = this->teb64->value();
@@ -215,6 +216,7 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
         teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
 
         // Native 64-bit stack
+        teb_obj.DeallocationStack = this->stack_base;
         teb_obj.NtTib.StackLimit = this->stack_base;
         teb_obj.NtTib.StackBase = wow64_cpureserved_base;
         teb_obj.NtTib.Self = this->teb64->value();
