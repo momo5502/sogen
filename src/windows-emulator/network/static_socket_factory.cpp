@@ -72,9 +72,7 @@ namespace network
                 address peer_addr{};
                 std::shared_ptr<pipe_state> pipe{};
                 bool listening{false};
-                bool connected{false};
                 bool is_server_side{false};
-                int backlog{0};
 
                 explicit static_socket(static_socket_factory_impl& f)
                     : factory(&f)
@@ -178,12 +176,7 @@ namespace network
                     {
                         this->pipe = std::make_shared<pipe_state>();
                         this->is_server_side = false;
-                        this->connected = true;
                         it->second.emplace_back(pending_connection{this->a, this->pipe});
-                    }
-                    else
-                    {
-                        this->connected = true;
                     }
                     return true;
                 }
@@ -192,7 +185,6 @@ namespace network
                 {
                     this->log_op("listen", "backlog=" + std::to_string(backlog_value));
                     this->listening = true;
-                    this->backlog = backlog_value;
                     this->factory->state->listen_queues.try_emplace(this->a);
                     this->error = 0;
                     return true;
@@ -217,7 +209,6 @@ namespace network
                     sock->peer_addr = pending.client_addr;
                     sock->pipe = pending.p;
                     sock->is_server_side = true;
-                    sock->connected = true;
 
                     out_addr = pending.client_addr;
                     this->error = 0;
@@ -336,7 +327,7 @@ namespace network
                             auto it = this->state->listen_queues.find(s->a);
                             if (it != this->state->listen_queues.end() && !it->second.empty())
                             {
-                                revents |= POLLIN;
+                                revents = static_cast<int16_t>(revents | POLLIN);
                             }
                         }
                         else if (s->pipe)
@@ -345,11 +336,11 @@ namespace network
                             bool peer_closed = s->is_server_side ? s->pipe->client_closed : s->pipe->server_closed;
                             if (!q.empty())
                             {
-                                revents |= POLLIN;
+                                revents = static_cast<int16_t>(revents | POLLIN);
                             }
                             if (peer_closed)
                             {
-                                revents |= POLLHUP;
+                                revents = static_cast<int16_t>(revents | POLLHUP);
                             }
                         }
                         else
@@ -357,14 +348,14 @@ namespace network
                             auto packet_it = this->state->packets.find(s->a);
                             if (packet_it != this->state->packets.end() && !packet_it->second.empty())
                             {
-                                revents |= POLLIN;
+                                revents = static_cast<int16_t>(revents | POLLIN);
                             }
                         }
                     }
 
                     if (entry.events & POLLOUT)
                     {
-                        revents |= POLLOUT;
+                        revents = static_cast<int16_t>(revents | POLLOUT);
                     }
 
                     entry.revents = revents;
