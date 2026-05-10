@@ -1,12 +1,11 @@
 #include "static_socket_factory.hpp"
 #include "../logger.hpp"
 
-#include <cstdarg>
-#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <queue>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
 
 #include <network/socket.hpp>
@@ -57,22 +56,12 @@ namespace network
             uint16_t port{0};
             logger* log{nullptr};
 
-            void log_call(const char* fmt, ...)
+            void log_call(std::string_view message) const
             {
-                if (!this->log)
+                if (this->log)
                 {
-                    return;
+                    this->log->print(color::cyan, message);
                 }
-                va_list args;
-                va_start(args, fmt);
-                char buffer[512];
-#ifdef _MSC_VER
-                vsnprintf_s(buffer, sizeof(buffer), _TRUNCATE, fmt, args);
-#else
-                vsnprintf(buffer, sizeof(buffer), fmt, args);
-#endif
-                va_end(args);
-                this->log->print(color::cyan, std::string_view{buffer});
             }
 
             struct static_socket : i_socket
@@ -113,14 +102,21 @@ namespace network
 
                 ~static_socket() override = default;
 
-                void log_op(const char* op, const std::string& detail = {})
+                void log_op(std::string_view op, std::string_view detail = {}) const
                 {
                     if (!this->factory)
                     {
                         return;
                     }
-                    this->factory->log_call("[static_socket] %s local=%s%s%s\n", op, this->a.to_string().c_str(),
-                                            detail.empty() ? "" : " ", detail.c_str());
+                    std::string msg = "[static_socket] ";
+                    msg.append(op);
+                    msg.append(" local=").append(this->a.to_string());
+                    if (!detail.empty())
+                    {
+                        msg.append(" ").append(detail);
+                    }
+                    msg.append("\n");
+                    this->factory->log_call(msg);
                 }
 
                 void set_blocking(const bool blocking) override
@@ -183,7 +179,7 @@ namespace network
                         this->pipe = std::make_shared<pipe_state>();
                         this->is_server_side = false;
                         this->connected = true;
-                        it->second.push_back({this->a, this->pipe});
+                        it->second.emplace_back(pending_connection{this->a, this->pipe});
                     }
                     else
                     {
@@ -197,7 +193,7 @@ namespace network
                     this->log_op("listen", "backlog=" + std::to_string(backlog_value));
                     this->listening = true;
                     this->backlog = backlog_value;
-                    this->factory->state->listen_queues[this->a];
+                    this->factory->state->listen_queues.try_emplace(this->a);
                     this->error = 0;
                     return true;
                 }
@@ -216,7 +212,7 @@ namespace network
                     auto pending = std::move(it->second.front());
                     it->second.pop_front();
 
-                    auto sock = std::unique_ptr<static_socket>(new static_socket(*this->factory));
+                    auto sock = std::make_unique<static_socket>(*this->factory);
                     sock->a = this->a;
                     sock->peer_addr = pending.client_addr;
                     sock->pipe = pending.p;
@@ -308,13 +304,14 @@ namespace network
 
             std::unique_ptr<i_socket> create_socket(const int af, const int type, const int protocol) override
             {
-                this->log_call("[static_socket_factory] create_socket af=%d type=%d protocol=%d\n", af, type, protocol);
+                this->log_call("[static_socket_factory] create_socket af=" + std::to_string(af) +
+                               " type=" + std::to_string(type) + " protocol=" + std::to_string(protocol) + "\n");
                 return std::make_unique<static_socket>(*this, af);
             }
 
             int poll_sockets(std::span<poll_entry> entries) override
             {
-                this->log_call("[static_socket_factory] poll_sockets count=%zu\n", entries.size());
+                this->log_call("[static_socket_factory] poll_sockets count=" + std::to_string(entries.size()) + "\n");
 
                 int ready_count = 0;
                 for (auto& entry : entries)
@@ -358,8 +355,8 @@ namespace network
                         }
                         else
                         {
-                            auto& q = this->state->packets[s->a];
-                            if (!q.empty())
+                            auto packet_it = this->state->packets.find(s->a);
+                            if (packet_it != this->state->packets.end() && !packet_it->second.empty())
                             {
                                 revents |= POLLIN;
                             }
