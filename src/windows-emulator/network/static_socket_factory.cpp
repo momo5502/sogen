@@ -89,17 +89,17 @@ namespace network
 
                 bool listen(int) override
                 {
-                    throw std::runtime_error("Not implemented");
+                    throw std::runtime_error("static_socket::listen not implemented");
                 }
 
                 std::unique_ptr<i_socket> accept(address&) override
                 {
-                    throw std::runtime_error("Not implemented");
+                    throw std::runtime_error("static_socket::accept not implemented");
                 }
 
                 sent_size send(std::span<const std::byte>) override
                 {
-                    throw std::runtime_error("Not implemented");
+                    throw std::runtime_error("static_socket::send not implemented");
                 }
 
                 sent_size sendto(const address& destination, std::span<const std::byte> data) override
@@ -111,7 +111,7 @@ namespace network
 
                 sent_size recv(std::span<std::byte>) override
                 {
-                    throw std::runtime_error("Not implemented");
+                    throw std::runtime_error("static_socket::recv not implemented");
                 }
 
                 sent_size recvfrom(address& source, std::span<std::byte> data) override
@@ -143,7 +143,7 @@ namespace network
 
             int poll_sockets(std::span<poll_entry>) override
             {
-                throw std::runtime_error("Not implemented");
+                throw std::runtime_error("static_socket_factory::poll_sockets not implemented");
             }
         };
     }
