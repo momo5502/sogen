@@ -176,7 +176,7 @@ namespace network
                     {
                         this->pipe = std::make_shared<pipe_state>();
                         this->is_server_side = false;
-                        it->second.emplace_back(pending_connection{this->a, this->pipe});
+                        it->second.emplace_back(pending_connection{.client_addr = this->a, .p = this->pipe});
                     }
                     return true;
                 }
