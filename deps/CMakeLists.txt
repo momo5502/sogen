@@ -31,6 +31,13 @@ add_subdirectory(minidump_cpp)
 
 ##########################################
 
+if(SOGEN_ENABLE_PYTHON_BINDINGS)
+  set(PYBIND11_TEST OFF CACHE BOOL "" FORCE)
+  set(PYBIND11_INSTALL OFF CACHE BOOL "" FORCE)
+  add_subdirectory(pybind11)
+endif()
+
+##########################################
 
 option(CAPSTONE_BUILD_MACOS_THIN "" ON)
 option(CAPSTONE_X86_SUPPORT "" ON)
