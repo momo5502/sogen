@@ -870,7 +870,7 @@ jobs:
   deploy-page:
     name: Deploy Page
     runs-on: ubuntu-latest
-    needs: [summary]
+    needs: [build-page, summary]
     if: ${{ inputs.enable_deploy }}
     permissions:
       contents: read
@@ -931,7 +931,7 @@ jobs:
   deploy-python-package:
     name: Deploy Python Package
     runs-on: ubuntu-24.04
-    needs: [summary]
+    needs: [build-python-wheel, build-python-sdist, summary]
     if: ${{ inputs.enable_deploy }}
     permissions:
       contents: read
