@@ -183,9 +183,204 @@ namespace
         return nb::cast<bool>(cb(std::forward<Args>(args)...));
     }
 
+    struct hook_handle
+    {
+        windows_emulator* emu{};
+        emulator_hook* hook{};
+        nb::object owner = nb::none();
+
+        hook_handle() = default;
+
+        hook_handle(windows_emulator& emulator, emulator_hook* hook, nb::object owner)
+            : emu(&emulator),
+              hook(hook),
+              owner(std::move(owner))
+        {
+        }
+
+        ~hook_handle()
+        {
+            remove();
+        }
+
+        hook_handle(const hook_handle&) = delete;
+        hook_handle& operator=(const hook_handle&) = delete;
+
+        hook_handle(hook_handle&& other) noexcept
+            : emu(other.emu),
+              hook(other.hook),
+              owner(std::move(other.owner))
+        {
+            other.emu = nullptr;
+            other.hook = nullptr;
+        }
+
+        hook_handle& operator=(hook_handle&& other) noexcept
+        {
+            if (this != &other)
+            {
+                remove();
+                emu = other.emu;
+                hook = other.hook;
+                owner = std::move(other.owner);
+                other.emu = nullptr;
+                other.hook = nullptr;
+            }
+
+            return *this;
+        }
+
+        bool active() const
+        {
+            return this->hook != nullptr;
+        }
+
+        void remove()
+        {
+            if (!this->emu || !this->hook)
+            {
+                return;
+            }
+
+            try
+            {
+                this->emu->emu().delete_hook(this->hook);
+            }
+            catch (...)
+            {
+            }
+
+            this->hook = nullptr;
+        }
+    };
+
+    struct hook_registry
+    {
+        windows_emulator* emu{};
+
+        explicit hook_registry(windows_emulator& emulator)
+            : emu(&emulator)
+        {
+        }
+
+        hook_handle make_hook(emulator_hook* hook)
+        {
+            return hook_handle(*this->emu, hook, nb::cast(this, nb::rv_policy::reference_internal));
+        }
+
+        static instruction_hook_continuation coerce_instruction_continuation(nb::handle result)
+        {
+            if (result.is_none())
+            {
+                return instruction_hook_continuation::run_instruction;
+            }
+
+            if (nb::isinstance<nb::bool_>(result))
+            {
+                return nb::cast<bool>(result) ? instruction_hook_continuation::skip_instruction
+                                              : instruction_hook_continuation::run_instruction;
+            }
+
+            return nb::cast<instruction_hook_continuation>(result);
+        }
+
+        static memory_violation_continuation coerce_memory_violation_continuation(nb::handle result)
+        {
+            if (result.is_none())
+            {
+                return memory_violation_continuation::resume;
+            }
+
+            if (nb::isinstance<nb::bool_>(result))
+            {
+                return nb::cast<bool>(result) ? memory_violation_continuation::resume : memory_violation_continuation::stop;
+            }
+
+            return nb::cast<memory_violation_continuation>(result);
+        }
+
+        hook_handle memory_execution(nb::object callback)
+        {
+            auto* hook = this->emu->emu().hook_memory_execution([cb = std::move(callback)](uint64_t address) {
+                nb::gil_scoped_acquire gil{};
+                cb(address);
+            });
+            return make_hook(hook);
+        }
+
+        hook_handle memory_execution_at(uint64_t address, nb::object callback)
+        {
+            auto* hook = this->emu->emu().hook_memory_execution(address, [cb = std::move(callback)](uint64_t addr) {
+                nb::gil_scoped_acquire gil{};
+                cb(addr);
+            });
+            return make_hook(hook);
+        }
+
+        hook_handle memory_read(uint64_t address, uint64_t size, nb::object callback)
+        {
+            auto* hook = this->emu->emu().hook_memory_read(
+                address, size, [cb = std::move(callback)](uint64_t addr, const void* data, size_t length) {
+                    nb::gil_scoped_acquire gil{};
+                    cb(addr, nb::bytes(static_cast<const char*>(data), static_cast<nb::ssize_t>(length)));
+                });
+            return make_hook(hook);
+        }
+
+        hook_handle memory_write(uint64_t address, uint64_t size, nb::object callback)
+        {
+            auto* hook = this->emu->emu().hook_memory_write(
+                address, size, [cb = std::move(callback)](uint64_t addr, const void* data, size_t length) {
+                    nb::gil_scoped_acquire gil{};
+                    cb(addr, nb::bytes(static_cast<const char*>(data), static_cast<nb::ssize_t>(length)));
+                });
+            return make_hook(hook);
+        }
+
+        hook_handle instruction(int instruction_type, nb::object callback)
+        {
+            auto* hook = this->emu->emu().hook_instruction(static_cast<x86_hookable_instructions>(instruction_type),
+                                                           [cb = std::move(callback)](uint64_t data) {
+                                                               nb::gil_scoped_acquire gil{};
+                                                               return coerce_instruction_continuation(cb(data));
+                                                           });
+            return make_hook(hook);
+        }
+
+        hook_handle interrupt(nb::object callback)
+        {
+            auto* hook = this->emu->emu().hook_interrupt([cb = std::move(callback)](int interrupt) {
+                nb::gil_scoped_acquire gil{};
+                cb(interrupt);
+            });
+            return make_hook(hook);
+        }
+
+        hook_handle memory_violation(nb::object callback)
+        {
+            auto* hook = this->emu->emu().hook_memory_violation(
+                [cb = std::move(callback)](uint64_t address, size_t size, memory_operation operation, memory_violation_type type) {
+                    nb::gil_scoped_acquire gil{};
+                    return coerce_memory_violation_continuation(cb(address, size, operation, type));
+                });
+            return make_hook(hook);
+        }
+
+        hook_handle basic_block(nb::object callback)
+        {
+            auto* hook = this->emu->emu().hook_basic_block([cb = std::move(callback)](const ::basic_block& block) {
+                nb::gil_scoped_acquire gil{};
+                cb(block);
+            });
+            return make_hook(hook);
+        }
+    };
+
     struct callback_registry
     {
         windows_emulator* emu{};
+        nb::object module_load_cb = nb::none();
+        nb::object module_unload_cb = nb::none();
         nb::object stdout_cb = nb::none();
         nb::object syscall_cb = nb::none();
         nb::object generic_access_cb = nb::none();
@@ -208,6 +403,8 @@ namespace
         explicit callback_registry(windows_emulator& emulator)
             : emu(&emulator)
         {
+            this->emu->callbacks.on_module_load.add([this](mapped_module& mod) { invoke_callback(this->module_load_cb, mod); });
+            this->emu->callbacks.on_module_unload.add([this](mapped_module& mod) { invoke_callback(this->module_unload_cb, mod); });
             this->emu->callbacks.on_stdout = [this](std::string_view data) { invoke_callback(this->stdout_cb, std::string(data)); };
             this->emu->callbacks.on_syscall = [this](const uint32_t syscall_id, const std::string_view syscall_name) {
                 return invoke_bool_callback(this->syscall_cb, syscall_id, std::string(syscall_name))
@@ -262,6 +459,8 @@ namespace
 
         void set(const std::string_view name, nb::object callable)
         {
+            const std::string key = name.starts_with("on_") ? std::string(name.substr(3)) : std::string(name);
+
             if (callable.is_valid() && !callable.is_none() && !PyCallable_Check(callable.ptr()))
             {
                 throw std::runtime_error("callback must be callable or None");
@@ -269,81 +468,89 @@ namespace
 
             const auto assign = [&](nb::object& slot) { slot = std::move(callable); };
 
-            if (name == "stdout")
+            if (key == "module_load")
+            {
+                assign(this->module_load_cb);
+            }
+            else if (key == "module_unload")
+            {
+                assign(this->module_unload_cb);
+            }
+            else if (key == "stdout")
             {
                 assign(this->stdout_cb);
             }
-            else if (name == "syscall")
+            else if (key == "syscall")
             {
                 assign(this->syscall_cb);
             }
-            else if (name == "generic_access")
+            else if (key == "generic_access")
             {
                 assign(this->generic_access_cb);
             }
-            else if (name == "generic_activity")
+            else if (key == "generic_activity")
             {
                 assign(this->generic_activity_cb);
             }
-            else if (name == "suspicious_activity")
+            else if (key == "suspicious_activity")
             {
                 assign(this->suspicious_activity_cb);
             }
-            else if (name == "exception")
+            else if (key == "exception")
             {
                 assign(this->exception_cb);
             }
-            else if (name == "instruction")
+            else if (key == "instruction")
             {
                 assign(this->instruction_cb);
             }
-            else if (name == "memory_protect")
+            else if (key == "memory_protect")
             {
                 assign(this->memory_protect_cb);
             }
-            else if (name == "memory_allocate")
+            else if (key == "memory_allocate")
             {
                 assign(this->memory_allocate_cb);
             }
-            else if (name == "memory_violate")
+            else if (key == "memory_violate")
             {
                 assign(this->memory_violate_cb);
             }
-            else if (name == "rdtsc")
+            else if (key == "rdtsc")
             {
                 assign(this->rdtsc_cb);
             }
-            else if (name == "rdtscp")
+            else if (key == "rdtscp")
             {
                 assign(this->rdtscp_cb);
             }
-            else if (name == "ioctrl")
+            else if (key == "ioctrl")
             {
                 assign(this->ioctrl_cb);
             }
-            else if (name == "debug_string")
+            else if (key == "debug_string")
             {
                 assign(this->debug_string_cb);
             }
-            else if (name == "thread_create")
+            else if (key == "thread_create")
             {
                 assign(this->thread_create_cb);
             }
-            else if (name == "thread_terminated")
+            else if (key == "thread_terminated")
             {
                 assign(this->thread_terminated_cb);
             }
-            else if (name == "thread_set_name")
+            else if (key == "thread_set_name")
             {
                 assign(this->thread_set_name_cb);
             }
-            else if (name == "thread_switch")
+            else if (key == "thread_switch")
             {
                 assign(this->thread_switch_cb);
             }
             else
             {
-                throw std::runtime_error("Unknown callback name: " + std::string(name));
+                throw std::runtime_error("Unknown callback name: " + key);
             }
         }
 
@@ -353,14 +560,63 @@ namespace
         }
     };
 
+    struct sogen_process_context
+    {
+        process_context* ctx{};
+        std::shared_ptr<callback_registry> callbacks{};
+
+        explicit sogen_process_context(process_context& context, std::shared_ptr<callback_registry> callback_registry)
+            : ctx(&context),
+              callbacks(std::move(callback_registry))
+        {
+        }
+
+        bool is_wow64_process() const
+        {
+            return this->ctx->is_wow64_process;
+        }
+
+        std::optional<NTSTATUS> exit_status() const
+        {
+            return this->ctx->exit_status;
+        }
+
+        size_t live_thread_count() const
+        {
+            return this->ctx->get_live_thread_count();
+        }
+
+        uint32_t spawned_thread_count() const
+        {
+            return this->ctx->spawned_thread_count;
+        }
+
+        nb::object active_thread()
+        {
+            if (!this->ctx->active_thread)
+            {
+                return nb::none();
+            }
+
+            return nb::cast(this->ctx->active_thread, nb::rv_policy::reference_internal);
+        }
+
+        callback_registry& callback_view()
+        {
+            return *this->callbacks;
+        }
+    };
+
     struct sogen_windows_emulator
     {
         std::unique_ptr<windows_emulator> emu{};
         std::shared_ptr<callback_registry> callbacks{};
+        std::shared_ptr<hook_registry> hooks{};
 
         explicit sogen_windows_emulator(std::unique_ptr<windows_emulator> emulator)
             : emu(std::move(emulator)),
-              callbacks(std::make_shared<callback_registry>(*this->emu))
+              callbacks(std::make_shared<callback_registry>(*this->emu)),
+              hooks(std::make_shared<hook_registry>(*this->emu))
         {
         }
 
@@ -409,9 +665,9 @@ namespace
             return this->emu->activate_thread(id);
         }
 
-        nb::object process()
+        sogen_process_context process()
         {
-            return nb::cast(&this->emu->process, nb::rv_policy::reference_internal);
+            return sogen_process_context(this->emu->process, this->callbacks);
         }
 
         nb::object memory()
@@ -474,6 +730,7 @@ namespace
             this->emu->map_port(emulator_port, host_port);
         }
     };
+
 }
 
 NB_MODULE(sogen, m)
@@ -581,6 +838,52 @@ NB_MODULE(sogen, m)
         .def_prop_ro("initial_permissions", [](const region_info& self) { return self.initial_permissions; })
         .def_prop_ro("kind", [](const region_info& self) { return self.kind; });
 
+    nb::enum_<instruction_hook_continuation>(m, "HookContinuation")
+        .value("run", instruction_hook_continuation::run_instruction)
+        .value("skip", instruction_hook_continuation::skip_instruction)
+        .export_values();
+
+    nb::enum_<memory_violation_continuation>(m, "MemoryViolationContinuation")
+        .value("stop", memory_violation_continuation::stop)
+        .value("resume", memory_violation_continuation::resume)
+        .value("restart", memory_violation_continuation::restart)
+        .export_values();
+
+    nb::enum_<x86_hookable_instructions>(m, "Instruction")
+        .value("invalid", x86_hookable_instructions::invalid)
+        .value("syscall", x86_hookable_instructions::syscall)
+        .value("cpuid", x86_hookable_instructions::cpuid)
+        .value("rdtsc", x86_hookable_instructions::rdtsc)
+        .value("rdtscp", x86_hookable_instructions::rdtscp)
+        .export_values();
+
+    nb::class_<basic_block>(m, "BasicBlock")
+        .def_prop_ro("address", [](const basic_block& self) { return self.address; })
+        .def_prop_ro("instruction_count", [](const basic_block& self) { return self.instruction_count; })
+        .def_prop_ro("size", [](const basic_block& self) { return self.size; });
+
+    nb::class_<mapped_module>(m, "MappedModule")
+        .def_prop_ro("name", [](const mapped_module& self) { return self.name; })
+        .def_prop_ro("path", [](const mapped_module& self) { return self.path; })
+        .def_prop_ro("module_path", [](const mapped_module& self) { return self.module_path.string(); })
+        .def_prop_ro("image_base", [](const mapped_module& self) { return self.image_base; })
+        .def_prop_ro("image_base_file", [](const mapped_module& self) { return self.image_base_file; })
+        .def_prop_ro("size_of_image", [](const mapped_module& self) { return self.size_of_image; })
+        .def_prop_ro("entry_point", [](const mapped_module& self) { return self.entry_point; })
+        .def_prop_ro("is_static", [](const mapped_module& self) { return self.is_static; });
+
+    nb::class_<hook_handle>(m, "Hook").def("remove", &hook_handle::remove).def_prop_ro("active", &hook_handle::active);
+
+    nb::class_<hook_registry>(m, "Hooks")
+        .def("memory_execution", &hook_registry::memory_execution)
+        .def("memory_execution_at", &hook_registry::memory_execution_at)
+        .def("memory_read", &hook_registry::memory_read)
+        .def("memory_write", &hook_registry::memory_write)
+        .def("instruction", &hook_registry::instruction)
+        .def("interrupt", &hook_registry::interrupt)
+        .def("memory_violation", &hook_registry::memory_violation)
+        .def("basic_block", &hook_registry::basic_block);
+
     nb::class_<memory_manager>(m, "MemoryManager")
         .def("read_memory",
              [](const memory_manager& self, uint64_t address, size_t size) { return read_memory_bytes(self, address, size); })
@@ -626,31 +929,85 @@ NB_MODULE(sogen, m)
             return nb::int_(*self.exit_status);
         });
 
-    nb::class_<process_context>(m, "ProcessContext")
-        .def_prop_ro("is_wow64_process", [](const process_context& self) { return self.is_wow64_process; })
+    nb::class_<callback_registry>(m, "Callbacks")
+        .def("set", [](callback_registry& self, const std::string& name, nb::object callback) { self.set(name, std::move(callback)); })
+        .def("clear", [](callback_registry& self, const std::string& name) { self.clear(name); })
+        .def_prop_rw(
+            "on_module_load", [](callback_registry& self) { return self.module_load_cb; },
+            [](callback_registry& self, nb::object callback) { self.set("module_load", std::move(callback)); })
+        .def_prop_rw(
+            "on_module_unload", [](callback_registry& self) { return self.module_unload_cb; },
+            [](callback_registry& self, nb::object callback) { self.set("module_unload", std::move(callback)); })
+        .def_prop_rw(
+            "on_stdout", [](callback_registry& self) { return self.stdout_cb; },
+            [](callback_registry& self, nb::object callback) { self.set("stdout", std::move(callback)); })
+        .def_prop_rw(
+            "on_syscall", [](callback_registry& self) { return self.syscall_cb; },
+            [](callback_registry& self, nb::object callback) { self.set("syscall", std::move(callback)); })
+        .def_prop_rw(
+            "on_generic_access", [](callback_registry& self) { return self.generic_access_cb; },
+            [](callback_registry& self, nb::object callback) { self.set("generic_access", std::move(callback)); })
+        .def_prop_rw(
+            "on_generic_activity", [](callback_registry& self) { return self.generic_activity_cb; },
+            [](callback_registry& self, nb::object callback) { self.set("generic_activity", std::move(callback)); })
+        .def_prop_rw(
+            "on_suspicious_activity", [](callback_registry& self) { return self.suspicious_activity_cb; },
+            [](callback_registry& self, nb::object callback) { self.set("suspicious_activity", std::move(callback)); })
+        .def_prop_rw(
+            "on_exception", [](callback_registry& self) { return self.exception_cb; },
+            [](callback_registry& self, nb::object callback) { self.set("exception", std::move(callback)); })
+        .def_prop_rw(
+            "on_instruction", [](callback_registry& self) { return self.instruction_cb; },
+            [](callback_registry& self, nb::object callback) { self.set("instruction", std::move(callback)); })
+        .def_prop_rw(
+            "on_memory_protect", [](callback_registry& self) { return self.memory_protect_cb; },
+            [](callback_registry& self, nb::object callback) { self.set("memory_protect", std::move(callback)); })
+        .def_prop_rw(
+            "on_memory_allocate", [](callback_registry& self) { return self.memory_allocate_cb; },
+            [](callback_registry& self, nb::object callback) { self.set("memory_allocate", std::move(callback)); })
+        .def_prop_rw(
+            "on_memory_violate", [](callback_registry& self) { return self.memory_violate_cb; },
+            [](callback_registry& self, nb::object callback) { self.set("memory_violate", std::move(callback)); })
+        .def_prop_rw(
+            "on_rdtsc", [](callback_registry& self) { return self.rdtsc_cb; },
+            [](callback_registry& self, nb::object callback) { self.set("rdtsc", std::move(callback)); })
+        .def_prop_rw(
+            "on_rdtscp", [](callback_registry& self) { return self.rdtscp_cb; },
+            [](callback_registry& self, nb::object callback) { self.set("rdtscp", std::move(callback)); })
+        .def_prop_rw(
+            "on_ioctrl", [](callback_registry& self) { return self.ioctrl_cb; },
+            [](callback_registry& self, nb::object callback) { self.set("ioctrl", std::move(callback)); })
+        .def_prop_rw(
+            "on_debug_string", [](callback_registry& self) { return self.debug_string_cb; },
+            [](callback_registry& self, nb::object callback) { self.set("debug_string", std::move(callback)); })
+        .def_prop_rw(
+            "on_thread_create", [](callback_registry& self) { return self.thread_create_cb; },
+            [](callback_registry& self, nb::object callback) { self.set("thread_create", std::move(callback)); })
+        .def_prop_rw(
+            "on_thread_terminated", [](callback_registry& self) { return self.thread_terminated_cb; },
+            [](callback_registry& self, nb::object callback) { self.set("thread_terminated", std::move(callback)); })
+        .def_prop_rw(
+            "on_thread_set_name", [](callback_registry& self) { return self.thread_set_name_cb; },
+            [](callback_registry& self, nb::object callback) { self.set("thread_set_name", std::move(callback)); })
+        .def_prop_rw(
+            "on_thread_switch", [](callback_registry& self) { return self.thread_switch_cb; },
+            [](callback_registry& self, nb::object callback) { self.set("thread_switch", std::move(callback)); });
+
+    nb::class_<sogen_process_context>(m, "ProcessContext")
+        .def_prop_ro("is_wow64_process", [](const sogen_process_context& self) { return self.is_wow64_process(); })
         .def_prop_ro("exit_status",
-                     [](const process_context& self) -> nb::object {
-                         if (!self.exit_status.has_value())
+                     [](const sogen_process_context& self) -> nb::object {
+                         if (!self.exit_status().has_value())
                          {
                              return nb::none();
                          }
 
-                         return nb::int_(*self.exit_status);
+                         return nb::int_(*self.exit_status());
                      })
-        .def_prop_ro("live_thread_count", &process_context::get_live_thread_count)
-        .def_prop_ro("spawned_thread_count", [](const process_context& self) { return self.spawned_thread_count; })
-        .def_prop_ro("active_thread", [](process_context& self) -> nb::object {
-            if (!self.active_thread)
-            {
-                return nb::none();
-            }
-
-            return nb::cast(self.active_thread, nb::rv_policy::reference_internal);
-        });
-
-    nb::class_<callback_registry>(m, "Callbacks")
-        .def("set", [](callback_registry& self, const std::string& name, nb::object callback) { self.set(name, std::move(callback)); })
-        .def("clear", [](callback_registry& self, const std::string& name) { self.clear(name); });
+        .def_prop_ro("live_thread_count", &sogen_process_context::live_thread_count)
+        .def_prop_ro("spawned_thread_count", &sogen_process_context::spawned_thread_count)
+        .def_prop_ro("active_thread", &sogen_process_context::active_thread, nb::rv_policy::reference_internal)
+        .def_prop_ro("callbacks", &sogen_process_context::callback_view, nb::rv_policy::reference_internal);
 
     nb::class_<sogen_windows_emulator>(m, "WindowsEmulator")
         .def("start", &sogen_windows_emulator::start, nb::arg("count") = 0, nb::call_guard<nb::gil_scoped_release>())
@@ -684,6 +1041,8 @@ NB_MODULE(sogen, m)
         .def_prop_ro(
             "callbacks", [](sogen_windows_emulator& self) -> callback_registry& { return *self.callbacks; },
             nb::rv_policy::reference_internal)
+        .def_prop_ro(
+            "hooks", [](sogen_windows_emulator& self) -> hook_registry& { return *self.hooks; }, nb::rv_policy::reference_internal)
         .def("read_memory", &sogen_windows_emulator::read_memory)
         .def("write_memory", &sogen_windows_emulator::write_memory)
         .def("read_register", &sogen_windows_emulator::read_register)
