@@ -568,26 +568,85 @@ uint64_t memory_manager::allocate_memory(const size_t size, const nt_memory_perm
 
 uint64_t memory_manager::find_free_allocation_base(const size_t size, const uint64_t start) const
 {
-    uint64_t start_address = std::max(static_cast<uint64_t>(MIN_ALLOCATION_ADDRESS), start ? start : this->default_allocation_address_);
-    start_address = align_up(start_address, ALLOCATION_GRANULARITY);
+    return this->find_free_allocation_base(size, start, ALLOCATION_GRANULARITY, MIN_ALLOCATION_ADDRESS, MAX_ALLOCATION_END_EXCL - 1);
+}
+
+namespace
+{
+    bool is_power_of_two(const uint64_t value)
+    {
+        return value != 0 && (value & (value - 1)) == 0;
+    }
+
+    std::optional<uint64_t> checked_align_up(const uint64_t value, const uint64_t alignment)
+    {
+        if (!is_power_of_two(alignment) || value > UINT64_MAX - (alignment - 1))
+        {
+            return std::nullopt;
+        }
+
+        return align_up(value, alignment);
+    }
+}
+
+uint64_t memory_manager::find_free_allocation_base(const size_t size, const uint64_t start, uint64_t alignment, uint64_t lowest_address,
+                                                   uint64_t highest_address) const
+{
+    if (!is_power_of_two(alignment) || alignment < ALLOCATION_GRANULARITY || size == 0)
+    {
+        return 0;
+    }
+
+    lowest_address = std::max<uint64_t>(lowest_address, MIN_ALLOCATION_ADDRESS);
+    highest_address = std::min<uint64_t>(highest_address ? highest_address : MAX_ALLOCATION_END_EXCL - 1, MAX_ALLOCATION_END_EXCL - 1);
+    if (lowest_address > highest_address)
+    {
+        return 0;
+    }
+
+    auto candidate = start ? start : this->default_allocation_address_;
+    if (candidate < lowest_address || candidate > highest_address)
+    {
+        candidate = lowest_address;
+    }
+
+    auto aligned_start = checked_align_up(candidate, alignment);
+    if (!aligned_start.has_value())
+    {
+        return 0;
+    }
+
+    uint64_t start_address = *aligned_start;
 
     // Since reserved_regions_ is a sorted map, we can iterate through it
     // and find gaps between regions
-    while (start_address + size <= MAX_ALLOCATION_END_EXCL)
+    while (start_address <= highest_address)
     {
+        const auto end_address = start_address + size;
+        if (end_address < start_address || end_address > MAX_ALLOCATION_END_EXCL || end_address - 1 > highest_address)
+        {
+            return 0;
+        }
+
         bool conflict = false;
 
         // Check if the proposed range [start_address, start_address+size) conflicts with any existing region
         for (const auto& region : this->reserved_regions_)
         {
+            const auto region_end = region.first + region.second.length;
+            if (region_end < region.first)
+            {
+                return 0;
+            }
+
             // If this region ends before our start, skip it
-            if (region.first + region.second.length <= start_address)
+            if (region_end <= start_address)
             {
                 continue;
             }
 
             // If this region starts after our end, we're done checking (map is sorted)
-            if (region.first >= start_address + size)
+            if (region.first >= end_address)
             {
                 break;
             }
@@ -595,7 +654,13 @@ uint64_t memory_manager::find_free_allocation_base(const size_t size, const uint
             // Otherwise, we have a conflict
             conflict = true;
             // Move start_address past this conflicting region
-            start_address = align_up(region.first + region.second.length, ALLOCATION_GRANULARITY);
+            aligned_start = checked_align_up(region_end, alignment);
+            if (!aligned_start.has_value())
+            {
+                return 0;
+            }
+
+            start_address = *aligned_start;
             break;
         }
 
@@ -612,7 +677,7 @@ uint64_t memory_manager::find_free_allocation_base(const size_t size, const uint
 region_info memory_manager::get_region_info(const uint64_t address)
 {
     region_info result{};
-    result.start = MIN_ALLOCATION_ADDRESS;
+    result.start = page_align_down(address);
     result.length = static_cast<size_t>(MAX_ALLOCATION_END_EXCL - result.start);
     result.permissions = nt_memory_permission();
     result.initial_permissions = nt_memory_permission();
@@ -634,25 +699,29 @@ region_info memory_manager::get_region_info(const uint64_t address)
     }
 
     const auto entry = --upper_bound;
-    const auto lower_end = entry->first + entry->second.length;
-    if (lower_end <= address)
+    const auto reserved_end = entry->first + entry->second.length;
+
+    if (reserved_end <= address)
     {
-        result.start = lower_end;
-        result.length = static_cast<size_t>(MAX_ALLOCATION_END_EXCL - result.start);
+        auto next = std::next(entry);
+
+        result.start = page_align_down(address);
+        result.length = next == this->reserved_regions_.end() ? static_cast<size_t>(MAX_ALLOCATION_END_EXCL - result.start)
+                                                              : static_cast<size_t>(next->first - result.start);
+
         return result;
     }
 
-    // We have a reserved region
     const auto& reserved_region = entry->second;
     const auto& committed_regions = reserved_region.committed_regions;
 
     result.is_reserved = true;
     result.allocation_base = entry->first;
     result.allocation_length = reserved_region.length;
-    result.start = result.allocation_base;
-    result.length = result.allocation_length;
-    result.initial_permissions = entry->second.initial_permission;
+    result.initial_permissions = reserved_region.initial_permission;
     result.kind = reserved_region.kind;
+    result.start = page_align_down(address);
+    result.length = static_cast<size_t>(reserved_end - result.start);
 
     if (committed_regions.empty())
     {
@@ -667,18 +736,21 @@ region_info memory_manager::get_region_info(const uint64_t address)
     }
 
     const auto committed_entry = --committed_bound;
-    const auto committed_lower_end = committed_entry->first + committed_entry->second.length;
-    if (committed_lower_end <= address)
+    const auto committed_end = committed_entry->first + committed_entry->second.length;
+
+    if (committed_end <= address)
     {
-        result.start = committed_lower_end;
-        result.length = static_cast<size_t>(lower_end - result.start);
+        auto next_committed = std::next(committed_entry);
+
+        result.length = next_committed == committed_regions.end() ? static_cast<size_t>(reserved_end - result.start)
+                                                                  : static_cast<size_t>(next_committed->first - result.start);
+
         return result;
     }
 
     result.is_committed = true;
-    result.start = committed_entry->first;
-    result.length = committed_entry->second.length;
     result.permissions = committed_entry->second.permissions;
+    result.length = static_cast<size_t>(committed_end - result.start);
 
     return result;
 }

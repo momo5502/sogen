@@ -95,6 +95,8 @@ class memory_manager : public memory_interface
                              memory_region_kind kind = memory_region_kind::private_allocation);
 
     uint64_t find_free_allocation_base(size_t size, uint64_t start = 0) const;
+    uint64_t find_free_allocation_base(size_t size, uint64_t start, uint64_t alignment, uint64_t lowest_address,
+                                       uint64_t highest_address) const;
 
     region_info get_region_info(uint64_t address);
 
