@@ -1,5 +1,6 @@
 #include "../std_include.hpp"
 #include "registry_manager.hpp"
+#include "registry_utils.hpp"
 
 #include <serialization_helper.hpp>
 
@@ -77,6 +78,7 @@ void registry_manager::setup()
 
     const std::filesystem::path root = R"(\registry)";
     const std::filesystem::path machine = root / "machine";
+    const std::filesystem::path user = root / "user";
 
     register_hive(this->hives_, machine / "system", this->hive_path_ / "SYSTEM");
     register_hive(this->hives_, machine / "security", this->hive_path_ / "SECURITY");
@@ -86,6 +88,9 @@ void registry_manager::setup()
     register_optional_hive(this->hives_, machine / "hardware", this->hive_path_ / "HARDWARE");
 
     register_hive(this->hives_, root / "user", this->hive_path_ / "NTUSER.DAT");
+
+    this->add_path_mapping(user / get_user_sid_string(*this), user);
+    this->add_path_mapping(user / ".Default", user);
 
     this->add_path_mapping(machine / "system" / "CurrentControlSet", machine / "system" / "ControlSet001");
     this->add_path_mapping(machine / "system" / "ControlSet001" / "Control" / "ComputerName" / "ActiveComputerName",
@@ -263,7 +268,7 @@ std::optional<registry_key> registry_manager::get_key(const utils::path_key& key
 {
     const auto normal_key = this->normalize_path(key);
 
-    if (is_subpath(normal_key, utils::path_key{"\\registry\\machine"}))
+    if (is_subpath(normal_key, utils::path_key{"\\registry\\machine"}) || is_subpath(normal_key, utils::path_key{"\\registry\\user"}))
     {
         registry_key reg_key{};
         reg_key.hive = normal_key;

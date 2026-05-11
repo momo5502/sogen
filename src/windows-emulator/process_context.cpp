@@ -2,6 +2,7 @@
 #include "process_context.hpp"
 
 #include "emulator_utils.hpp"
+#include "registry/registry_utils.hpp"
 #include "syscall_utils.hpp"
 #include "windows_emulator.hpp"
 #include "version/windows_version_manager.hpp"
@@ -58,40 +59,6 @@ namespace
         }
 
         return result;
-    }
-
-    std::string get_user_sid_string(registry_manager& registry)
-    {
-        const std::filesystem::path profile_list_path = R"(\Registry\Machine\Software\Microsoft\Windows NT\CurrentVersion\ProfileList)";
-
-        const auto profile_list_key = registry.get_key(profile_list_path);
-        if (!profile_list_key)
-        {
-            throw std::runtime_error("Failed to get ProfileList registry key");
-        }
-
-        for (size_t i = 0;; ++i)
-        {
-            const auto value = registry.get_sub_key_name(*profile_list_key, i);
-            if (!value.has_value())
-            {
-                break;
-            }
-
-            const auto profile_key = registry.get_key(profile_list_path / *value);
-            if (!profile_key.has_value())
-            {
-                continue;
-            }
-
-            const auto full_profile = registry.get_value(*profile_key, "FullProfile");
-            if (full_profile && full_profile->as_dword().value_or(0) == 1)
-            {
-                return std::string(*value);
-            }
-        }
-
-        return "S-1-5-18";
     }
 
     std::vector<uint8_t> get_sid(registry_manager& registry)
