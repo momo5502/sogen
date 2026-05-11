@@ -1083,6 +1083,7 @@ namespace whp
                         page->host_page = backing_base + offset;
                         this->assign_guest_physical_page(guest_address, *page);
                         page->permissions = memory_permission::none;
+                        this->apply_patched_execution_breakpoints(guest_address);
                         this->ensure_virtual_mapping(guest_address);
                     }
 
@@ -1106,6 +1107,7 @@ namespace whp
                         page->owned_page = std::move(backing);
                         page->host_page = page->owned_page.get();
                         this->assign_guest_physical_page(guest_address, *page);
+                        this->apply_patched_execution_breakpoints(guest_address);
                     }
 
                     page->permissions = memory_permission::none;
@@ -1153,6 +1155,7 @@ namespace whp
                         page->host_page = backing_base + offset;
                         this->assign_guest_physical_page(guest_address, *page);
                         page->permissions = permissions;
+                        this->apply_patched_execution_breakpoints(guest_address);
                         this->ensure_virtual_mapping(guest_address);
                     }
 
@@ -1175,6 +1178,7 @@ namespace whp
                         page->owned_page = std::move(backing);
                         page->host_page = page->owned_page.get();
                         this->assign_guest_physical_page(guest_address, *page);
+                        this->apply_patched_execution_breakpoints(guest_address);
                     }
 
                     page->permissions = permissions;
@@ -1209,6 +1213,7 @@ namespace whp
                     }
 
                     flushed_virtual_mappings = this->clear_virtual_mapping(guest_address) || flushed_virtual_mappings;
+                    this->mark_patched_execution_breakpoints_unmapped(guest_address);
                     this->release_guest_physical_page(entry->second->guest_physical_address);
                     this->mapped_pages_.erase(entry);
                 }
@@ -1725,8 +1730,9 @@ namespace whp
 
             struct patched_execution_breakpoint
             {
-                std::byte original_byte{};
+                std::optional<std::byte> original_byte{};
                 size_t hook_count{};
+                bool applied{};
             };
 
             partition_handle partition_{};
@@ -2186,28 +2192,67 @@ namespace whp
                 }
             }
 
+            void try_apply_patched_execution_breakpoint(const uint64_t address, patched_execution_breakpoint& breakpoint)
+            {
+                const auto page_base = align_down_to_page(address);
+                const auto entry = this->mapped_pages_.find(page_base);
+                if (entry == this->mapped_pages_.end() || !entry->second || entry->second->host_page == nullptr)
+                {
+                    breakpoint.applied = false;
+                    return;
+                }
+
+                const auto offset = static_cast<size_t>(address - page_base);
+                auto* page = static_cast<std::byte*>(entry->second->host_page);
+                if (breakpoint.applied && page[offset] == std::byte{0xCC})
+                {
+                    return;
+                }
+
+                breakpoint.original_byte = page[offset];
+                page[offset] = std::byte{0xCC};
+                breakpoint.applied = true;
+            }
+
+            void apply_patched_execution_breakpoints(const uint64_t page_base)
+            {
+                for (auto& [address, breakpoint] : this->patched_execution_breakpoints_)
+                {
+                    if (align_down_to_page(address) == page_base)
+                    {
+                        this->try_apply_patched_execution_breakpoint(address, breakpoint);
+                    }
+                }
+            }
+
+            void mark_patched_execution_breakpoints_unmapped(const uint64_t page_base)
+            {
+                for (auto& [address, breakpoint] : this->patched_execution_breakpoints_)
+                {
+                    if (align_down_to_page(address) == page_base)
+                    {
+                        breakpoint.original_byte.reset();
+                        breakpoint.applied = false;
+                    }
+                }
+            }
+
             void install_patched_execution_breakpoint(const uint64_t address)
             {
                 auto existing = this->patched_execution_breakpoints_.find(address);
                 if (existing != this->patched_execution_breakpoints_.end())
                 {
                     ++existing->second.hook_count;
+                    if (!existing->second.applied)
+                    {
+                        this->try_apply_patched_execution_breakpoint(address, existing->second);
+                    }
                     return;
                 }
 
-                std::byte original{};
-                if (!this->access_memory(address, &original, sizeof(original), false))
-                {
-                    throw std::runtime_error("Failed to read memory");
-                }
-
-                auto int3 = std::byte{0xCC};
-                if (!this->access_memory(address, &int3, sizeof(int3), true))
-                {
-                    throw std::runtime_error("Failed to write memory");
-                }
-
-                this->patched_execution_breakpoints_[address] = patched_execution_breakpoint{.original_byte = original, .hook_count = 1};
+                auto breakpoint = patched_execution_breakpoint{.hook_count = 1};
+                this->try_apply_patched_execution_breakpoint(address, breakpoint);
+                this->patched_execution_breakpoints_[address] = breakpoint;
             }
 
             void uninstall_patched_execution_breakpoint(const uint64_t address)
@@ -2224,10 +2269,10 @@ namespace whp
                     return;
                 }
 
-                auto original = existing->second.original_byte;
-                if (!this->access_memory(address, &original, sizeof(original), true))
+                if (existing->second.applied && existing->second.original_byte)
                 {
-                    throw std::runtime_error("Failed to write memory");
+                    auto original = *existing->second.original_byte;
+                    (void)this->access_memory(address, &original, sizeof(original), true);
                 }
 
                 this->patched_execution_breakpoints_.erase(existing);
@@ -2241,11 +2286,26 @@ namespace whp
                     return;
                 }
 
-                auto value = applied ? std::byte{0xCC} : existing->second.original_byte;
+                if (applied && !existing->second.original_byte)
+                {
+                    this->try_apply_patched_execution_breakpoint(address, existing->second);
+                    return;
+                }
+
+                if (!existing->second.original_byte)
+                {
+                    return;
+                }
+
+                auto value = applied ? std::byte{0xCC} : *existing->second.original_byte;
                 if (!this->access_memory(address, &value, sizeof(value), true))
                 {
-                    throw std::runtime_error("Failed to write memory");
+                    existing->second.applied = false;
+                    existing->second.original_byte.reset();
+                    return;
                 }
+
+                existing->second.applied = applied;
             }
 
             bool arm_execution_single_step(const std::optional<uint64_t> page_base, const bool stop_after_step)
@@ -2667,13 +2727,14 @@ namespace whp
 
                     for (const auto& [breakpoint_address, breakpoint] : this->patched_execution_breakpoints_)
                     {
-                        if (breakpoint_address < current_address || breakpoint_address >= current_address + chunk)
+                        if (!breakpoint.original_byte || breakpoint_address < current_address ||
+                            breakpoint_address >= current_address + chunk)
                         {
                             continue;
                         }
 
                         const auto breakpoint_offset = static_cast<size_t>(breakpoint_address - current_address);
-                        cursor[breakpoint_offset] = breakpoint.original_byte;
+                        cursor[breakpoint_offset] = *breakpoint.original_byte;
                     }
 
                     current_address += chunk;
@@ -2711,6 +2772,7 @@ namespace whp
                         const auto breakpoint_offset = static_cast<size_t>(breakpoint_address - current_address);
                         breakpoint.original_byte = cursor[breakpoint_offset];
                         page_ptr[breakpoint_offset] = std::byte{0xCC};
+                        breakpoint.applied = true;
                     }
 
                     current_address += chunk;
