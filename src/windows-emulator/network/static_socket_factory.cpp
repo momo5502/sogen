@@ -1,21 +1,13 @@
 #include "static_socket_factory.hpp"
-#include "../logger.hpp"
 
 #include <cstring>
 #include <deque>
 #include <queue>
 #include <stdexcept>
-#include <string>
 #include <unordered_map>
 
 #include <network/socket.hpp>
 
-#ifndef POLLIN
-#define POLLIN 0x0001
-#endif
-#ifndef POLLOUT
-#define POLLOUT 0x0004
-#endif
 #ifndef POLLHUP
 #define POLLHUP 0x0010
 #endif
@@ -63,15 +55,6 @@ namespace network
         {
             std::shared_ptr<shared_state> state = std::make_shared<shared_state>();
             uint16_t port{0};
-            logger* log{nullptr};
-
-            void log_call(std::string_view message) const
-            {
-                if (this->log)
-                {
-                    this->log->print(color::cyan, message);
-                }
-            }
 
             struct static_socket : i_socket
             {
@@ -127,26 +110,8 @@ namespace network
                 static_socket(static_socket&&) = delete;
                 static_socket& operator=(static_socket&&) = delete;
 
-                void log_op(std::string_view op, std::string_view detail = {}) const
-                {
-                    if (!this->factory)
-                    {
-                        return;
-                    }
-                    std::string msg = "[static_socket] ";
-                    msg.append(op);
-                    msg.append(" local=").append(this->a.to_string());
-                    if (!detail.empty())
-                    {
-                        msg.append(" ").append(detail);
-                    }
-                    msg.append("\n");
-                    this->factory->log_call(msg);
-                }
-
                 void set_blocking(const bool blocking) override
                 {
-                    this->log_op("set_blocking", blocking ? "blocking=true" : "blocking=false");
                     if (blocking)
                     {
                         throw std::runtime_error("Blocking sockets not supported yet!");
@@ -186,14 +151,12 @@ namespace network
 
                 bool bind(const address& addr) override
                 {
-                    this->log_op("bind", "addr=" + addr.to_string());
                     this->a = addr;
                     return true;
                 }
 
                 bool connect(const address& addr) override
                 {
-                    this->log_op("connect", "peer=" + addr.to_string());
                     this->peer_addr = addr;
 
                     auto& queues = this->factory->state->listen_queues;
@@ -211,9 +174,8 @@ namespace network
                     return true;
                 }
 
-                bool listen(int backlog_value) override
+                bool listen(int /*backlog*/) override
                 {
-                    this->log_op("listen", "backlog=" + std::to_string(backlog_value));
                     this->listening = true;
                     this->factory->state->listen_queues.try_emplace(this->a);
                     this->error = 0;
@@ -222,7 +184,6 @@ namespace network
 
                 std::unique_ptr<i_socket> accept(address& out_addr) override
                 {
-                    this->log_op("accept");
                     auto& queues = this->factory->state->listen_queues;
                     auto it = queues.find(this->a);
                     if (it == queues.end() || it->second.empty())
@@ -247,7 +208,6 @@ namespace network
 
                 sent_size send(std::span<const std::byte> data) override
                 {
-                    this->log_op("send", "len=" + std::to_string(data.size()));
                     if (!this->pipe)
                     {
                         this->error = SERR(ENOTCONN);
@@ -261,7 +221,6 @@ namespace network
 
                 sent_size sendto(const address& destination, std::span<const std::byte> data) override
                 {
-                    this->log_op("sendto", "dest=" + destination.to_string() + " len=" + std::to_string(data.size()));
                     this->error = 0;
                     this->factory->state->packets[destination].emplace(this->a, shared_state::packet_data{data.begin(), data.end()});
                     return static_cast<sent_size>(data.size());
@@ -269,7 +228,6 @@ namespace network
 
                 sent_size recv(std::span<std::byte> data) override
                 {
-                    this->log_op("recv", "buf=" + std::to_string(data.size()));
                     if (!this->pipe)
                     {
                         this->error = SERR(ENOTCONN);
@@ -301,7 +259,6 @@ namespace network
 
                 sent_size recvfrom(address& source, std::span<std::byte> data) override
                 {
-                    this->log_op("recvfrom", "buf=" + std::to_string(data.size()));
                     this->error = 0;
 
                     auto& q = this->factory->state->packets[this->a];
@@ -322,17 +279,13 @@ namespace network
                 }
             };
 
-            std::unique_ptr<i_socket> create_socket(const int af, const int type, const int protocol) override
+            std::unique_ptr<i_socket> create_socket(const int af, const int /*type*/, const int /*protocol*/) override
             {
-                this->log_call("[static_socket_factory] create_socket af=" + std::to_string(af) + " type=" + std::to_string(type) +
-                               " protocol=" + std::to_string(protocol) + "\n");
                 return std::make_unique<static_socket>(*this, af);
             }
 
             int poll_sockets(std::span<poll_entry> entries) override
             {
-                this->log_call("[static_socket_factory] poll_sockets count=" + std::to_string(entries.size()) + "\n");
-
                 int ready_count = 0;
                 for (auto& entry : entries)
                 {
@@ -402,13 +355,5 @@ namespace network
     std::unique_ptr<socket_factory> create_static_socket_factory()
     {
         return std::make_unique<static_socket_factory_impl>();
-    }
-
-    void set_static_socket_factory_logger(socket_factory& factory, logger* log)
-    {
-        if (auto* impl = dynamic_cast<static_socket_factory_impl*>(&factory))
-        {
-            impl->log = log;
-        }
     }
 }
