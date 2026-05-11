@@ -1,0 +1,119 @@
+name: Python Package
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+  id-token: write
+
+concurrency:
+  group: python-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-wheel:
+    name: Build wheel (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - windows-latest
+          - macos-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: python -m pip install --upgrade pip build
+
+      - name: Build wheel
+        run: python -m build "${{ github.workspace }}" --wheel --outdir dist
+
+      - name: Install wheel
+        shell: bash
+        run: |
+          python -m pip install dist/*.whl
+
+      - name: Smoke import
+        run: python -c "import sogen; print(sogen.__name__)"
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sogen-wheel-${{ matrix.os }}
+          path: dist/*.whl
+          retention-days: 7
+
+  build-sdist:
+    name: Build sdist
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: python -m pip install --upgrade pip build
+
+      - name: Build sdist
+        run: python -m build "${{ github.workspace }}" --sdist --outdir dist
+
+      - name: Upload sdist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sogen-sdist
+          path: dist/*.tar.gz
+          retention-days: 7
+
+  publish:
+    name: Publish to PyPI
+    runs-on: ubuntu-24.04
+    needs: [build-wheel, build-sdist]
+    if: ${{ github.repository_owner == 'momo5502' && github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sogen-wheel-*
+          path: dist
+          merge-multiple: true
+
+      - name: Download sdist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sogen-sdist
+          path: dist
+
+      - name: List distributions
+        run: ls -la dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
