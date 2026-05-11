@@ -974,7 +974,7 @@ jobs:
   deploy-python-package:
     name: Deploy Python Package
     runs-on: ubuntu-24.04
-    needs: [build-python-wheel, build-python-sdist, summary]
+    needs: [build-python-wheel, build-python-sdist, test-python-wheel, summary]
     if: ${{ inputs.enable_deploy }}
     permissions:
       contents: read
