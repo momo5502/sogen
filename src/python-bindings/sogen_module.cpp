@@ -183,6 +183,37 @@ namespace
         return nb::cast<bool>(cb(std::forward<Args>(args)...));
     }
 
+    instruction_hook_continuation coerce_instruction_continuation(nb::handle result)
+    {
+        if (result.is_none())
+        {
+            return instruction_hook_continuation::run_instruction;
+        }
+
+        if (nb::isinstance<nb::bool_>(result))
+        {
+            return nb::cast<bool>(result) ? instruction_hook_continuation::skip_instruction
+                                          : instruction_hook_continuation::run_instruction;
+        }
+
+        return nb::cast<instruction_hook_continuation>(result);
+    }
+
+    memory_violation_continuation coerce_memory_violation_continuation(nb::handle result)
+    {
+        if (result.is_none())
+        {
+            return memory_violation_continuation::resume;
+        }
+
+        if (nb::isinstance<nb::bool_>(result))
+        {
+            return nb::cast<bool>(result) ? memory_violation_continuation::resume : memory_violation_continuation::stop;
+        }
+
+        return nb::cast<memory_violation_continuation>(result);
+    }
+
     struct hook_handle
     {
         windows_emulator* emu{};
@@ -266,37 +297,6 @@ namespace
         hook_handle make_hook(emulator_hook* hook)
         {
             return hook_handle(*this->emu, hook, nb::cast(this, nb::rv_policy::reference_internal));
-        }
-
-        static instruction_hook_continuation coerce_instruction_continuation(nb::handle result)
-        {
-            if (result.is_none())
-            {
-                return instruction_hook_continuation::run_instruction;
-            }
-
-            if (nb::isinstance<nb::bool_>(result))
-            {
-                return nb::cast<bool>(result) ? instruction_hook_continuation::skip_instruction
-                                              : instruction_hook_continuation::run_instruction;
-            }
-
-            return nb::cast<instruction_hook_continuation>(result);
-        }
-
-        static memory_violation_continuation coerce_memory_violation_continuation(nb::handle result)
-        {
-            if (result.is_none())
-            {
-                return memory_violation_continuation::resume;
-            }
-
-            if (nb::isinstance<nb::bool_>(result))
-            {
-                return nb::cast<bool>(result) ? memory_violation_continuation::resume : memory_violation_continuation::stop;
-            }
-
-            return nb::cast<memory_violation_continuation>(result);
         }
 
         hook_handle memory_execution(nb::object callback)
@@ -407,9 +407,14 @@ namespace
             this->emu->callbacks.on_module_unload.add([this](mapped_module& mod) { invoke_callback(this->module_unload_cb, mod); });
             this->emu->callbacks.on_stdout = [this](std::string_view data) { invoke_callback(this->stdout_cb, std::string(data)); };
             this->emu->callbacks.on_syscall = [this](const uint32_t syscall_id, const std::string_view syscall_name) {
-                return invoke_bool_callback(this->syscall_cb, syscall_id, std::string(syscall_name))
-                           ? instruction_hook_continuation::skip_instruction
-                           : instruction_hook_continuation::run_instruction;
+                if (this->syscall_cb.is_none())
+                {
+                    return instruction_hook_continuation::run_instruction;
+                }
+
+                nb::gil_scoped_acquire gil{};
+                const auto result = this->syscall_cb(syscall_id, std::string(syscall_name));
+                return coerce_instruction_continuation(result);
             };
             this->emu->callbacks.on_generic_access = [this](std::string_view type, std::u16string_view name) {
                 invoke_callback(this->generic_access_cb, std::string(type), u16_to_u8(name));
@@ -430,7 +435,14 @@ namespace
             };
             this->emu->callbacks.on_memory_violate = [this](uint64_t address, uint64_t length, memory_operation operation,
                                                             memory_violation_type type) {
-                invoke_callback(this->memory_violate_cb, address, length, operation, type);
+                if (this->memory_violate_cb.is_none())
+                {
+                    return memory_violation_continuation::resume;
+                }
+
+                nb::gil_scoped_acquire gil{};
+                const auto result = this->memory_violate_cb(address, length, operation, type);
+                return coerce_memory_violation_continuation(result);
             };
             this->emu->callbacks.on_rdtsc = [this] { invoke_callback(this->rdtsc_cb); };
             this->emu->callbacks.on_rdtscp = [this] { invoke_callback(this->rdtscp_cb); };
