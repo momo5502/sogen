@@ -213,21 +213,17 @@ jobs:
             cmake-options: "-DMOMO_ENABLE_SANITIZER=On"
           - platform: Linux x86_64 GCC
             runner: ubuntu-24.04
-            cmake-options: "-DSOGEN_ENABLE_PYTHON_BINDINGS=ON"
           - platform: Linux x86_64 Clang
             runner: ubuntu-24.04
             clang-version: 21
-            cmake-options: "-DSOGEN_ENABLE_PYTHON_BINDINGS=ON"
           - platform: iOS arm64
             runner: macos-latest
             rust-target: aarch64-apple-ios
             cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/ios.cmake"
           - platform: macOS arm64
             runner: macos-latest
-            cmake-options: "-DSOGEN_ENABLE_PYTHON_BINDINGS=ON"
           - platform: macOS x86_64
             runner: macos-15-intel
-            cmake-options: "-DSOGEN_ENABLE_PYTHON_BINDINGS=ON"
           - platform: Android x86_64
             runner: ubuntu-24.04
             abi: x86_64
@@ -347,7 +343,6 @@ jobs:
             preset: debug
           - configuration: Release
             preset: release
-            cmake-options: "-DSOGEN_ENABLE_PYTHON_BINDINGS=ON"
           - platform: Windows x86_64
             runner: windows-latest
             devcmd_arch: x64
@@ -826,19 +821,66 @@ jobs:
       - name: Build wheel
         run: python -m build "${{ github.workspace }}" --wheel --outdir dist
 
-      - name: Install wheel
-        shell: bash
-        run: python -m pip install dist/*.whl
-
-      - name: Smoke import
-        run: python -c "import sogen; print(sogen.__name__)"
-
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
           name: sogen-wheel-${{ matrix.os }}
           path: dist/*.whl
           retention-days: 7
+
+  test-python-wheel:
+    name: Test Python Wheel (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: [build-python-wheel, build, create-emulation-root]
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - windows-latest
+          - macos-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sogen-wheel-${{ matrix.os }}
+          path: dist
+
+      - name: Install wheel
+        shell: bash
+        run: python -m pip install --upgrade pip && python -m pip install --force-reinstall --no-deps dist/*.whl
+
+      - name: Download Release Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows x86_64 Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Emulation Root
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows 2022 Emulation Root
+          path: build/release/artifacts/root
+
+      - name: Copy Test Sample
+        run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
+
+      - name: Run Python Test Script
+        run: python src/python-bindings/test.py
+        env:
+          EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
+          EMULATOR_VERBOSE: ${{ inputs.verbose }}
+          ANALYSIS_SAMPLE: ${{github.workspace}}/build/release/artifacts/test-sample.exe
 
   build-python-sdist:
     name: Build Python Sdist
@@ -903,6 +945,7 @@ jobs:
       [
         build-page,
         build-python-wheel,
+        test-python-wheel,
         build-python-sdist,
         clang-tidy,
         build-apiset-dumper,

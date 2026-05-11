@@ -30,10 +30,12 @@ nanobind_add_stub(
   DEPENDS sogen
 )
 
-install(TARGETS sogen LIBRARY DESTINATION . RUNTIME DESTINATION .)
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/sogen.pyi" "${CMAKE_CURRENT_BINARY_DIR}/py.typed" DESTINATION .)
-
-add_test(NAME sogen-python-smoke COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test.py")
-set_tests_properties(sogen-python-smoke PROPERTIES WORKING_DIRECTORY "$<TARGET_FILE_DIR:sogen>")
+if(SKBUILD)
+  install(TARGETS sogen LIBRARY DESTINATION "${SKBUILD_PLATLIB_DIR}" RUNTIME DESTINATION "${SKBUILD_PLATLIB_DIR}")
+  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/sogen.pyi" "${CMAKE_CURRENT_BINARY_DIR}/py.typed" DESTINATION "${SKBUILD_PLATLIB_DIR}")
+else()
+  install(TARGETS sogen LIBRARY DESTINATION . RUNTIME DESTINATION .)
+  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/sogen.pyi" "${CMAKE_CURRENT_BINARY_DIR}/py.typed" DESTINATION .)
+endif()
 
 momo_targets_set_folder("bindings" sogen sogen_stub)

@@ -59,8 +59,13 @@ if (MOMO_IS_SUBPROJECT OR SKBUILD)
 else()
   set(SOGEN_BUILD_TOOLS_DEFAULT ON)
 endif()
+if(SKBUILD)
+  set(SOGEN_ENABLE_PYTHON_BINDINGS_DEFAULT ON)
+else()
+  set(SOGEN_ENABLE_PYTHON_BINDINGS_DEFAULT OFF)
+endif()
 option(SOGEN_BUILD_TOOLS "Build Sogen standalone tools (analyzer, debugger, fuzzer, etc.)" ${SOGEN_BUILD_TOOLS_DEFAULT})
-option(SOGEN_ENABLE_PYTHON_BINDINGS "Configure nanobind-based Python bindings" ${SKBUILD})
+option(SOGEN_ENABLE_PYTHON_BINDINGS "Configure nanobind-based Python bindings" ${SOGEN_ENABLE_PYTHON_BINDINGS_DEFAULT})
 
 ##########################################
 
