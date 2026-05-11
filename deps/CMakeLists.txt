@@ -32,9 +32,26 @@ add_subdirectory(minidump_cpp)
 ##########################################
 
 if(SOGEN_ENABLE_PYTHON_BINDINGS)
-  set(PYBIND11_TEST OFF CACHE BOOL "" FORCE)
-  set(PYBIND11_INSTALL OFF CACHE BOOL "" FORCE)
-  add_subdirectory(pybind11)
+  if (NOT TARGET Python::Module)
+    if(CMAKE_VERSION VERSION_LESS 3.18)
+      set(_SOGEN_PYTHON_DEV_MODULE Development)
+    else()
+      set(_SOGEN_PYTHON_DEV_MODULE Development.Module)
+    endif()
+
+    find_package(Python 3.9 REQUIRED COMPONENTS Interpreter ${_SOGEN_PYTHON_DEV_MODULE} OPTIONAL_COMPONENTS Development.SABIModule)
+  endif()
+
+  if (NOT TARGET Python::Module)
+    add_library(Python::Module INTERFACE IMPORTED)
+    if (TARGET Python::SABIModule)
+      set_property(TARGET Python::Module PROPERTY INTERFACE_LINK_LIBRARIES Python::SABIModule)
+    elseif (TARGET Python::Python)
+      set_property(TARGET Python::Module PROPERTY INTERFACE_LINK_LIBRARIES Python::Python)
+    endif()
+  endif()
+
+  add_subdirectory(nanobind)
 endif()
 
 ##########################################

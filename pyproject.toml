@@ -1,0 +1,22 @@
+[build-system]
+requires = ["scikit-build-core>=0.10"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "sogen"
+version = "0.0.0"
+description = "Sogen Windows user-space emulator bindings"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "GPL-2.0-only" }
+authors = [{ name = "momo5502" }]
+classifiers = [
+  "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: C++",
+]
+
+[tool.scikit-build]
+minimum-version = "0.10"
+build-dir = "build/{wheel_tag}"
+wheel.py-api = "cp312"
