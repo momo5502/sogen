@@ -343,6 +343,7 @@ jobs:
             preset: debug
           - configuration: Release
             preset: release
+            cmake-options: "-DSOGEN_ENABLE_PYTHON_BINDINGS=ON"
           - platform: Windows x86_64
             runner: windows-latest
             devcmd_arch: x64
