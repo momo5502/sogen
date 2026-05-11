@@ -176,6 +176,32 @@ namespace syscalls
                     i.CheckSum = optional_header.CheckSum;
                 });
 
+        case ProcessVmCounters: {
+            constexpr uint32_t vm_counters_size = 88;
+            constexpr uint32_t vm_counters_ex_size = 96;
+            constexpr uint32_t vm_counters_ex2_size = 112;
+
+            if (process_information_length != vm_counters_size && process_information_length != vm_counters_ex_size &&
+                process_information_length != vm_counters_ex2_size)
+            {
+                if (return_length)
+                {
+                    return_length.write(vm_counters_ex_size);
+                }
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            const std::vector<std::byte> zeroed(process_information_length, std::byte{0});
+            c.emu.write_memory(process_information, zeroed.data(), zeroed.size());
+
+            if (return_length)
+            {
+                return_length.write(process_information_length);
+            }
+
+            return STATUS_SUCCESS;
+        }
+
         case ProcessImageFileNameWin32: {
             const auto peb = c.proc.peb64.read();
             emulator_object<RTL_USER_PROCESS_PARAMETERS64> proc_params{c.emu, peb.ProcessParameters};
