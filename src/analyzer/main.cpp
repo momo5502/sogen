@@ -55,6 +55,7 @@ namespace
         std::filesystem::path minidump_path{};
         std::filesystem::path report_path{};
         std::string report_format{"jsonl"};
+        std::string whp_execution_hook_mode{"auto"};
         std::filesystem::path registry_path{get_current_binary_dir() / "registry"};
         std::filesystem::path emulation_root{};
         std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
@@ -454,10 +455,32 @@ namespace
         };
     }
 
+    hook_interface::memory_execution_hook_mode parse_memory_execution_hook_mode(const std::string_view mode)
+    {
+        if (mode == "auto")
+        {
+            return hook_interface::memory_execution_hook_mode::automatic;
+        }
+
+        if (mode == "int3")
+        {
+            return hook_interface::memory_execution_hook_mode::int3;
+        }
+
+        throw std::runtime_error("WHP memory execution hook mode must be auto or int3");
+    }
+
+    std::unique_ptr<x86_64_emulator> create_configured_backend(const analysis_options& options)
+    {
+        auto emu = create_x86_64_emulator();
+        emu->set_memory_execution_hook_mode(parse_memory_execution_hook_mode(options.whp_execution_hook_mode));
+        return emu;
+    }
+
     std::unique_ptr<windows_emulator> create_empty_emulator(const analysis_options& options)
     {
         const auto settings = create_emulator_settings(options);
-        return std::make_unique<windows_emulator>(create_x86_64_emulator(), settings);
+        return std::make_unique<windows_emulator>(create_configured_backend(options), settings);
     }
 
     std::unique_ptr<windows_emulator> create_application_emulator(const analysis_options& options,
@@ -475,7 +498,7 @@ namespace
         };
 
         const auto settings = create_emulator_settings(options);
-        return std::make_unique<windows_emulator>(create_x86_64_emulator(), std::move(app_settings), settings);
+        return std::make_unique<windows_emulator>(create_configured_backend(options), std::move(app_settings), settings);
     }
 
     std::unique_ptr<windows_emulator> setup_emulator(const analysis_options& options, const std::span<const std::string_view> args)
@@ -763,6 +786,7 @@ namespace
         printf("  --minidump <path>         Load minidump from path\n");
         printf("  --report <path>           Write machine-readable analysis events to a file\n");
         printf("  --report-format <format>  Report format (supported: jsonl)\n");
+        printf("  --whp-exec-hook <mode>    WHP memory execution hook mode: auto or int3 (default: auto)\n");
         printf("  -t, --tenet-trace         Enable Tenet tracer\n");
         printf("  -i, --ignore <funcs>      Comma-separated list of functions to ignore\n");
         printf("  -p, --path <src> <dst>    Map Windows path to host path\n");
@@ -938,6 +962,20 @@ namespace
                 }
                 arg_it = args.erase(arg_it);
                 options.report_format = std::string(args[0]);
+            }
+            else if (arg == "--whp-exec-hook")
+            {
+                if (args.size() < 2)
+                {
+                    throw std::runtime_error("No WHP memory execution hook mode provided after --whp-exec-hook");
+                }
+
+                arg_it = args.erase(arg_it);
+                options.whp_execution_hook_mode = std::string(args[0]);
+                if (options.whp_execution_hook_mode != "auto" && options.whp_execution_hook_mode != "int3")
+                {
+                    throw std::runtime_error("WHP memory execution hook mode must be auto or int3");
+                }
             }
             else if (arg == "-i" || arg == "--ignore")
             {
