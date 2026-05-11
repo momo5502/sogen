@@ -313,6 +313,10 @@ namespace syscalls
 
             const emulator_object<THREAD_BASIC_INFORMATION64> info{c.emu, thread_information};
             info.access([&](THREAD_BASIC_INFORMATION64& i) {
+                if (thread->exit_status)
+                {
+                    i.ExitStatus = *thread->exit_status;
+                }
                 i.TebBaseAddress = thread->teb64->value();
                 i.ClientId = thread->teb64->read().ClientId;
             });
