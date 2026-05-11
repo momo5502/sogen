@@ -213,17 +213,21 @@ jobs:
             cmake-options: "-DMOMO_ENABLE_SANITIZER=On"
           - platform: Linux x86_64 GCC
             runner: ubuntu-24.04
+            cmake-options: "-DSOGEN_ENABLE_PYTHON_BINDINGS=ON"
           - platform: Linux x86_64 Clang
             runner: ubuntu-24.04
             clang-version: 21
+            cmake-options: "-DSOGEN_ENABLE_PYTHON_BINDINGS=ON"
           - platform: iOS arm64
             runner: macos-latest
             rust-target: aarch64-apple-ios
             cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/ios.cmake"
           - platform: macOS arm64
             runner: macos-latest
+            cmake-options: "-DSOGEN_ENABLE_PYTHON_BINDINGS=ON"
           - platform: macOS x86_64
             runner: macos-15-intel
+            cmake-options: "-DSOGEN_ENABLE_PYTHON_BINDINGS=ON"
           - platform: Android x86_64
             runner: ubuntu-24.04
             abi: x86_64

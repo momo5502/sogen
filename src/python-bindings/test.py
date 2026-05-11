@@ -1,6 +1,7 @@
 import importlib
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, os.getcwd())
@@ -40,6 +41,8 @@ assert hasattr(emu, "callbacks")
 assert hasattr(emu, "hooks")
 assert hasattr(emu.process, "callbacks")
 assert hasattr(emu.callbacks, "on_stdout")
+assert hasattr(emu.callbacks, "on_syscall")
+assert hasattr(emu.callbacks, "on_memory_violate")
 assert hasattr(emu.callbacks, "on_module_load")
 assert hasattr(emu.callbacks, "on_module_unload")
 assert hasattr(emu.callbacks, "set")
@@ -54,10 +57,32 @@ emu.callbacks.on_module_unload = lambda m: None
 
 test_sample = Path(analysis_sample)
 assert test_sample.exists()
-app = mod.create_application(r"C:\test-sample.exe", None, emulation_root=emulator_root)
-app.start()
-assert app.process.exit_status is not None
+counts = {"blocks": 0, "syscalls": 0}
 
+with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
+    mapped_file = Path(temp_dir) / "a.txt"
+    app = mod.create_application(
+        r"C:\test-sample.exe",
+        None,
+        emulation_root=emulator_root,
+        path_mappings={r"C:\a.txt": mapped_file},
+        port_mappings={28970: 28980},
+    )
+
+    block_hook = app.hooks.basic_block(lambda block: counts.__setitem__("blocks", counts["blocks"] + 1))
+    app.callbacks.on_syscall = lambda syscall_id, name: (
+        counts.__setitem__("syscalls", counts["syscalls"] + 1) or mod.HookContinuation.run
+    )
+
+    app.start()
+    assert app.process.exit_status is not None
+    assert counts["blocks"] > 0
+    assert counts["syscalls"] > 0
+    assert block_hook.active
+    block_hook.remove()
+    assert not block_hook.active
+
+del block_hook
 emu = None
 app = None
 mod = None
