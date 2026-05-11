@@ -16,6 +16,7 @@
 #include <vector>
 
 #include <utils/object.hpp>
+#include <utils/cpu_features.hpp>
 
 namespace whp
 {
@@ -1609,6 +1610,10 @@ namespace whp
                     names.push_back(WHvX64RegisterXCr0);
                     WHV_REGISTER_VALUE xcr0{};
                     xcr0.Reg64 = 0x3ull;
+                    if (utils::cpu_features::avx_enabled())
+                    {
+                        xcr0.Reg64 |= 0x4ull; // Enable YMM state
+                    }
                     values.push_back(xcr0);
                 }
 

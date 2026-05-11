@@ -598,6 +598,7 @@ namespace
         watch_system_objects(context, options.modules, options.verbose_logging, options.concise_logging);
 
         const auto& exe = *win_emu->mod_manager.executable;
+        const auto is_whp = win_emu->emu().get_name() == "Windows Hypervisor Platform";
 
         win_emu->emu().hook_instruction(x86_hookable_instructions::cpuid, [&] {
             auto& emu = win_emu->emu();
@@ -611,7 +612,7 @@ namespace
                 context.emit_observation<cpuid_event>([&](auto& event) { event.leaf = leaf; });
             }
 
-            if (leaf == 1)
+            if (leaf == 1 && !is_whp)
             {
                 // NOTE: We hard-code these values to disable SSE4.x and AVX
                 //       See: https://github.com/momo5502/sogen/issues/560
