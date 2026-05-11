@@ -31,7 +31,7 @@ assert hasattr(mod, "MemoryViolationType")
 assert hasattr(mod, "create_empty")
 assert hasattr(mod, "create_application")
 
-emu = mod.create_empty(registry_directory=str(repo_artifacts / "registry"))
+emu = mod.create_empty(emulation_root=emulator_root)
 assert hasattr(emu, "read_memory")
 assert hasattr(emu, "write_memory")
 assert hasattr(emu, "read_register")
