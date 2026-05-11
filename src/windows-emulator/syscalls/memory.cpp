@@ -360,9 +360,15 @@ namespace syscalls
             const auto reset_size = requested_allocation_bytes;
 
             const auto region_info = c.win_emu.memory.get_region_info(reset_base);
-            const auto region_end = checked_add(region_info.start, region_info.length);
-            if (!region_info.is_reserved || region_info.kind != memory_region_kind::private_allocation || region_info.start > reset_base ||
-                !region_end.has_value() || *region_end < *reset_end)
+            const auto is_valid_kind =
+                region_info.kind == memory_region_kind::private_allocation || region_info.kind == memory_region_kind::pagefile_section_view;
+            if (!region_info.is_reserved || !is_valid_kind || region_info.allocation_base > reset_base)
+            {
+                return STATUS_MEMORY_NOT_ALLOCATED;
+            }
+
+            const auto allocation_end = checked_add(region_info.allocation_base, region_info.allocation_length);
+            if (!allocation_end.has_value() || *allocation_end < *reset_end)
             {
                 return STATUS_MEMORY_NOT_ALLOCATED;
             }

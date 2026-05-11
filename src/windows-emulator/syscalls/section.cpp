@@ -189,7 +189,7 @@ namespace syscalls
 
             const auto address = c.win_emu.memory.find_free_allocation_base(shared_section_size);
             c.win_emu.memory.allocate_memory(address, shared_section_size, memory_permission::read_write, false,
-                                             memory_region_kind::section_view);
+                                             memory_region_kind::pagefile_section_view);
             c.proc.shared_section_address = address;
             c.proc.shared_section_size = shared_section_size;
 
@@ -203,7 +203,7 @@ namespace syscalls
 
             const auto address = c.win_emu.memory.find_free_allocation_base(dbwin_buffer_section_size);
             c.win_emu.memory.allocate_memory(address, dbwin_buffer_section_size, memory_permission::read_write, false,
-                                             memory_region_kind::section_view);
+                                             memory_region_kind::pagefile_section_view);
             c.proc.dbwin_buffer = address;
             c.proc.dbwin_buffer_size = dbwin_buffer_section_size;
 
@@ -386,7 +386,9 @@ namespace syscalls
         const auto aligned_size = static_cast<size_t>(page_align_up(size));
         const auto reserve_only = section_entry->allocation_attributes == SEC_RESERVE;
         const auto protection = map_nt_to_emulator_protection(section_entry->section_page_protection);
-        const auto address = c.win_emu.memory.allocate_memory(aligned_size, protection, reserve_only, 0, memory_region_kind::section_view);
+        const auto region_kind =
+            section_entry->file_name.empty() ? memory_region_kind::pagefile_section_view : memory_region_kind::file_section_view;
+        const auto address = c.win_emu.memory.allocate_memory(aligned_size, protection, reserve_only, 0, region_kind);
 
         if (!reserve_only && !file_data.empty())
         {
