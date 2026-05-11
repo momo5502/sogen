@@ -146,7 +146,7 @@ struct process_context
     uint16_t add_or_find_atom(std::u16string name);
     bool delete_atom(const std::u16string& name);
     bool delete_atom(uint16_t atom_id);
-    const std::u16string* get_atom_name(uint16_t atom_id) const;
+    std::optional<std::u16string> get_atom_name(uint16_t atom_id) const;
 
     template <typename T>
     void build_knowndlls_section_table(registry_manager& registry, const file_system& file_system, const apiset_map& apiset,
@@ -202,6 +202,7 @@ struct process_context
 
     user_handle_table user_handles;
     handle default_monitor_handle{};
+    handle default_desktop_window_handle{};
     handle_store<handle_types::event, event> events{};
     handle_store<handle_types::file, file> files{};
     utils::insensitive_u16string_map<file_lock_ranges> file_locks{};

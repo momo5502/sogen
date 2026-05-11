@@ -512,10 +512,10 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
 
     this->user_handles.setup(is_wow64_process);
 
-    auto [h, monitor_obj] = this->user_handles.allocate_object<USER_MONITOR>(handle_types::monitor);
-    this->default_monitor_handle = h;
+    auto [mh, monitor_obj] = this->user_handles.allocate_object<USER_MONITOR>(handle_types::monitor);
+    this->default_monitor_handle = mh;
     monitor_obj.access([&](USER_MONITOR& monitor) {
-        monitor.hmon = h.bits;
+        monitor.hmon = mh.bits;
         monitor.rcMonitor = {.left = 0, .top = 0, .right = 1920, .bottom = 1080};
         monitor.rcWork = monitor.rcMonitor;
         if (version.is_build_before(26040))
@@ -530,6 +530,18 @@ void process_context::setup(x86_64_emulator& emu, memory_manager& memory, regist
             monitor.b26.monitorDpi = 96;
             monitor.b26.nativeDpi = monitor.b26.monitorDpi;
         }
+    });
+
+    auto [wh, desktop_win] = this->windows.create(memory);
+    this->default_desktop_window_handle = wh;
+    desktop_win.handle = wh.bits;
+    desktop_win.style = WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
+    desktop_win.guest.access([&](USER_WINDOW& window) {
+        window.hWnd = wh.bits;
+        window.ptrBase = desktop_win.guest.value();
+        window.dwStyle = desktop_win.style;
+        window.fnid = 0x29D;   // FNID_DESKTOP
+        window.windowBand = 1; // ZBID_DESKTOP
     });
 
     const auto user_display_info = this->user_handles.get_display_info();
@@ -570,6 +582,7 @@ void process_context::serialize(utils::buffer_serializer& buffer) const
 
     buffer.write(this->user_handles);
     buffer.write(this->default_monitor_handle);
+    buffer.write(this->default_desktop_window_handle);
     buffer.write(this->events);
     buffer.write(this->files);
     buffer.write_map(this->file_locks);
@@ -636,6 +649,7 @@ void process_context::deserialize(utils::buffer_deserializer& buffer)
 
     buffer.read(this->user_handles);
     buffer.read(this->default_monitor_handle);
+    buffer.read(this->default_desktop_window_handle);
     buffer.read(this->events);
     buffer.read(this->files);
     buffer.read_map(this->file_locks);
@@ -746,15 +760,18 @@ std::optional<uint16_t> process_context::find_atom(const std::u16string_view nam
 
 uint16_t process_context::add_or_find_atom(std::u16string name)
 {
-    uint16_t index = 1;
-    if (!this->atoms.empty())
+    constexpr uint32_t max_atom = std::numeric_limits<uint16_t>::max();
+
+    uint32_t index = MAXINTATOM;
+    if (this->atoms.lower_bound(MAXINTATOM) != this->atoms.end())
     {
         auto i = this->atoms.end();
         --i;
-        index = i->first + 1;
+        index = static_cast<uint32_t>(i->first) + 1;
     }
 
     std::optional<uint16_t> last_entry{};
+
     for (auto& entry : this->atoms)
     {
         if (utils::string::equals_ignore_case(entry.second.name, name))
@@ -763,28 +780,37 @@ uint16_t process_context::add_or_find_atom(std::u16string name)
             return entry.first;
         }
 
-        if (entry.first > 0)
+        if (entry.first >= MAXINTATOM)
         {
             if (!last_entry)
             {
-                index = 1;
+                if (entry.first > MAXINTATOM)
+                {
+                    index = MAXINTATOM;
+                }
             }
             else
             {
                 const auto diff = entry.first - *last_entry;
                 if (diff > 1)
                 {
-                    index = *last_entry + 1;
+                    index = static_cast<uint32_t>(*last_entry) + 1;
                 }
             }
-        }
 
-        last_entry = entry.first;
+            last_entry = entry.first;
+        }
     }
 
-    atoms[index] = {.name = std::move(name), .ref_count = 1};
+    if (index > max_atom)
+    {
+        throw std::runtime_error("No slots are available for adding new atoms");
+    }
 
-    return index;
+    const auto atom = static_cast<uint16_t>(index);
+    atoms[atom] = {.name = std::move(name), .ref_count = 1};
+
+    return atom;
 }
 
 bool process_context::delete_atom(const std::u16string& name)
@@ -820,15 +846,27 @@ bool process_context::delete_atom(const uint16_t atom_id)
     return true;
 }
 
-const std::u16string* process_context::get_atom_name(const uint16_t atom_id) const
+std::optional<std::u16string> process_context::get_atom_name(const uint16_t atom_id) const
 {
+    if (atom_id && atom_id < MAXINTATOM)
+    {
+        std::u16string name = u"#";
+
+        for (const char ch : std::to_string(atom_id))
+        {
+            name.push_back(static_cast<char16_t>(ch));
+        }
+
+        return name;
+    }
+
     const auto it = atoms.find(atom_id);
     if (it == atoms.end())
     {
-        return nullptr;
+        return std::nullopt;
     }
 
-    return &it->second.name;
+    return it->second.name;
 }
 
 template <typename T>

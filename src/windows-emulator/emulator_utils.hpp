@@ -409,6 +409,23 @@ inline std::u16string read_unicode_string(emulator& emu, const uint64_t uc_strin
     return read_unicode_string(emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{emu, uc_string}, index);
 }
 
+inline std::u16string read_large_string(const emulator_object<LARGE_STRING> str_obj, const size_t index = 0)
+{
+    if (!str_obj)
+    {
+        return {};
+    }
+
+    const auto str = str_obj.read(index);
+    if (!str.bAnsi)
+    {
+        return read_string<char16_t>(*str_obj.get_memory_interface(), str.Buffer, str.Length / 2);
+    }
+
+    const auto ansi_string = read_string<char>(*str_obj.get_memory_interface(), str.Buffer, str.Length);
+    return u8_to_u16(ansi_string);
+}
+
 /// Retrieves function arguments from registers or stack memory. This function assumes the stack pointer currently points to the
 /// return address.
 inline uint64_t get_function_argument(x86_64_emulator& emu, const size_t index, const bool is_syscall = false)

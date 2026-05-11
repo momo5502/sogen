@@ -474,11 +474,14 @@ namespace syscalls
     emulator_pointer handle_NtUserSetWindowLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
                                                    BOOL Ansi);
     uint32_t handle_NtUserSetWindowLong(const syscall_context& c, handle hWnd, int nIndex, uint32_t dwNewLong, BOOL Ansi);
+    uint64_t handle_NtUserGetAncestor(const syscall_context& c, hwnd child_hwnd, UINT flags);
     NTSTATUS handle_NtUserRedrawWindow();
     NTSTATUS handle_NtUserGetCPD();
     NTSTATUS handle_NtUserSetWindowFNID();
     NTSTATUS handle_NtUserEnableWindow();
     NTSTATUS handle_NtUserGetSystemMenu();
+    ULONG handle_NtUserGetAtomName(const syscall_context& c, RTL_ATOM atom,
+                                   emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> atom_name);
     NTSTATUS handle_NtQueryLicenseValue(const syscall_context& c, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> value_name,
                                         emulator_object<uint32_t> type, uint64_t data, uint64_t data_size,
                                         emulator_object<uint32_t> result_data_size);
@@ -721,33 +724,6 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtUserGetAtomName(const syscall_context& c, const RTL_ATOM atom,
-                                      const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> atom_name)
-    {
-        const auto* name = c.proc.get_atom_name(atom);
-        if (!name)
-        {
-            return STATUS_INVALID_PARAMETER;
-        }
-
-        const size_t name_length = name->size() * 2;
-        const size_t max_length = name_length + 2;
-
-        bool too_small = false;
-        atom_name.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& str) {
-            if (str.MaximumLength < max_length)
-            {
-                too_small = true;
-                return;
-            }
-
-            str.Length = static_cast<USHORT>(name_length);
-            c.emu.write_memory(str.Buffer, name->data(), max_length);
-        });
-
-        return too_small ? STATUS_BUFFER_TOO_SMALL : STATUS_SUCCESS;
-    }
-
     NTSTATUS handle_NtQueryDebugFilterState()
     {
         return FALSE;
@@ -839,6 +815,7 @@ namespace syscalls
     }
 }
 
+// NOLINTNEXTLINE(readability-function-size,hicpp-function-size)
 void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& handler_mapping)
 {
 #define add_handler(syscall)                                                            \
@@ -1103,6 +1080,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserGetForegroundWindow);
     add_handler(NtUserSetWindowLongPtr);
     add_handler(NtUserSetWindowLong);
+    add_handler(NtUserGetAncestor);
     add_handler(NtUserPostMessage);
     add_handler(NtUserRedrawWindow);
     add_handler(NtUserGetCPD);
