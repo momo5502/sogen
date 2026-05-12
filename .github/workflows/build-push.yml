@@ -71,6 +71,11 @@ jobs:
       actions: read
       id-token: write
     steps:
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
       - name: Download wheel artifacts
         uses: actions/download-artifact@v4
         with:
@@ -89,6 +94,25 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ needs.ci.outputs.run_id }}
+
+      - name: Install auditwheel
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y patchelf
+          python -m pip install --upgrade auditwheel
+
+      - name: Repair Linux wheels
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for whl in dist/*linux_x86_64.whl; do
+            python -m auditwheel repair "$whl" -w dist/repaired
+          done
+          if [ -d dist/repaired ]; then
+            rm -f dist/*linux_x86_64.whl
+            mv dist/repaired/*.whl dist/
+          fi
 
       - name: List distributions
         run: ls -la dist
