@@ -54,6 +54,33 @@ Try it out: <a href="https://sogen.dev">sogen.dev</a>
 
 Click <a href="https://docs.google.com/presentation/d/1pha4tFfDMpVzJ_ehJJ21SA_HAWkufQBVYQvh1IFhVls/edit">here</a> for the slides.
 
+## Python Bindings
+
+Install with:
+
+```bash
+pip install sogen
+```
+
+Example:
+
+```python
+import sogen
+
+emu = sogen.create_application("c:/test-sample.exe", None, emulation_root="./root")
+
+
+def on_module_load(module):
+    if module.name.lower() == "test-sample.exe":
+        emu.hooks.memory_execution_at(module.entry_point, lambda address: print(f"hit entry point: 0x{address:x}"))
+
+emu.callbacks.on_module_load = on_module_load
+emu.start()
+print(emu.process.exit_status)
+```
+
+See `examples/python/README.md` for a slightly larger example.
+
 ## Quick Start (Windows + Visual Studio)
 
 > [!TIP]  

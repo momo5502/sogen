@@ -20,6 +20,7 @@ classifiers = [
 minimum-version = "0.10"
 build-dir = "build/{wheel_tag}"
 metadata.version.provider = "scikit_build_core.metadata.setuptools_scm"
+sdist.include = ["deps/**"]
 
 [tool.setuptools_scm]
 local_scheme = "no-local-version"

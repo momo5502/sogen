@@ -42,7 +42,12 @@ endif()
 
 set(MOMO_ENABLE_RUST OFF)
 if(MOMO_ENABLE_RUST_CODE AND NOT MINGW AND NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
-  set(MOMO_ENABLE_RUST ON)
+  find_program(CARGO cargo)
+  if(CARGO)
+    set(MOMO_ENABLE_RUST ON)
+  else()
+    message(STATUS "cargo not found; disabling Rust-backed components")
+  endif()
 endif()
 
 ##########################################

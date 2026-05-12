@@ -1,0 +1,4 @@
+graft deps
+include deps/zstd/build/cmake/CMakeLists.txt
+include deps/zstd/build/cmake/README.md
+include deps/zstd/build/cmake/zstdConfig.cmake.in

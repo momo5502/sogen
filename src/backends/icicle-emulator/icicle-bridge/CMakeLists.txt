@@ -57,6 +57,10 @@ add_custom_command(
     COMMENT "Copying Ghidra Processor Specification"
 )
 
+if(SKBUILD)
+  install(DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/data/Ghidra" DESTINATION "${SKBUILD_PLATLIB_DIR}")
+endif()
+
 add_library(icicle-bridge INTERFACE)
 add_dependencies(icicle-bridge icicle-rust-project)
 target_link_libraries(icicle-bridge INTERFACE ${ICICLE_RUST_LIB})
