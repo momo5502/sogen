@@ -9,7 +9,9 @@ if(NOT TARGET Python::Module)
   endif()
 endif()
 
-nanobind_add_module(sogen NB_SUPPRESS_WARNINGS sogen_module.cpp sogen_bindings.cpp)
+file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+
+nanobind_add_module(sogen NB_SUPPRESS_WARNINGS ${SRC_FILES})
 
 target_link_libraries(sogen PRIVATE windows-emulator backend-selection)
 
