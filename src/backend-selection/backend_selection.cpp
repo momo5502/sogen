@@ -34,6 +34,9 @@ namespace
         case backend_type::whp:
             return whp::create_x86_64_emulator();
 #endif
+
+        default:
+            break;
         }
 
         throw std::runtime_error("Requested backend is not available on this platform");
@@ -49,7 +52,6 @@ std::unique_ptr<x86_64_emulator> create_x86_64_emulator_from_environment()
 {
     auto backend = backend_type::unicorn;
 
-#if defined(_WIN64) && !defined(__MINGW64__)
     {
         const auto* env = getenv("EMULATOR_WHP");
         if (env && (env == "1"sv || env == "true"sv))
@@ -57,9 +59,7 @@ std::unique_ptr<x86_64_emulator> create_x86_64_emulator_from_environment()
             backend = backend_type::whp;
         }
     }
-#endif
 
-#if MOMO_ENABLE_RUST_CODE
     {
         const auto* env = getenv("EMULATOR_ICICLE");
         if (env && (env == "1"sv || env == "true"sv))
@@ -70,7 +70,6 @@ std::unique_ptr<x86_64_emulator> create_x86_64_emulator_from_environment()
             backend = backend_type::icicle;
         }
     }
-#endif
 
     return create_x86_64_emulator(backend);
 }
