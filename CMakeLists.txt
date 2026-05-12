@@ -53,13 +53,24 @@ endif()
 
 ##########################################
 
-option(SOGEN_BUILD_STATIC "Build sogen as static libraries for embedding (e.g., IDA plugins)" ${MOMO_IS_SUBPROJECT})
-if (MOMO_IS_SUBPROJECT)
+if(SKBUILD)
+  set(SOGEN_BUILD_STATIC_DEFAULT ON)
+else()
+  set(SOGEN_BUILD_STATIC_DEFAULT ${MOMO_IS_SUBPROJECT})
+endif()
+option(SOGEN_BUILD_STATIC "Build sogen as static libraries for embedding (e.g., IDA plugins)" ${SOGEN_BUILD_STATIC_DEFAULT})
+if (MOMO_IS_SUBPROJECT OR SKBUILD)
   set(SOGEN_BUILD_TOOLS_DEFAULT OFF)
 else()
   set(SOGEN_BUILD_TOOLS_DEFAULT ON)
 endif()
+if(SKBUILD)
+  set(SOGEN_ENABLE_PYTHON_BINDINGS_DEFAULT ON)
+else()
+  set(SOGEN_ENABLE_PYTHON_BINDINGS_DEFAULT OFF)
+endif()
 option(SOGEN_BUILD_TOOLS "Build Sogen standalone tools (analyzer, debugger, fuzzer, etc.)" ${SOGEN_BUILD_TOOLS_DEFAULT})
+option(SOGEN_ENABLE_PYTHON_BINDINGS "Configure nanobind-based Python bindings" ${SOGEN_ENABLE_PYTHON_BINDINGS_DEFAULT})
 
 ##########################################
 

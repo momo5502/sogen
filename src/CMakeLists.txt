@@ -5,6 +5,10 @@ add_subdirectory(windows-emulator)
 add_subdirectory(windows-gdb-stub)
 add_subdirectory(backend-selection)
 
+if(SOGEN_ENABLE_PYTHON_BINDINGS)
+  add_subdirectory(python-bindings)
+endif()
+
 momo_add_subdirectory_and_get_targets("backends" BACKEND_TARGETS)
 momo_targets_set_folder("backends" ${BACKEND_TARGETS})
 

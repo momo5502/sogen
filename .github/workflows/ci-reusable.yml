@@ -794,6 +794,133 @@ jobs:
           path: "*"
           retention-days: 1
 
+  build-python-wheel:
+    name: Build Python Wheel (${{ matrix.display }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            display: Linux x86_64
+            artifact: linux-x86_64
+          - runner: windows-latest
+            display: Windows x86_64
+            artifact: windows-x86_64
+          - runner: macos-latest
+            display: macOS arm64
+            artifact: macos-arm64
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: python -m pip install --upgrade pip build setuptools-scm
+
+      - name: Build wheel
+        run: python -m build "${{ github.workspace }}" --wheel --outdir dist
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sogen-wheel-${{ matrix.artifact }}
+          path: dist/*.whl
+          retention-days: 7
+
+  test-python-wheel:
+    name: Test Python Wheel (${{ matrix.display }})
+    runs-on: ${{ matrix.runner }}
+    needs: [build-python-wheel, build, create-emulation-root]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            display: Linux x86_64
+            artifact: linux-x86_64
+          - runner: windows-latest
+            display: Windows x86_64
+            artifact: windows-x86_64
+          - runner: macos-latest
+            display: macOS arm64
+            artifact: macos-arm64
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sogen-wheel-${{ matrix.artifact }}
+          path: dist
+
+      - name: Install wheel
+        shell: bash
+        run: python -m pip install --upgrade pip && python -m pip install --force-reinstall --no-deps dist/*.whl
+
+      - name: Download Release Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows x86_64 Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Emulation Root
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows 2022 Emulation Root
+          path: build/release/artifacts/root
+
+      - name: Copy Test Sample
+        run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
+
+      - name: Run Python Test Script
+        run: python src/python-bindings/test.py
+        env:
+          EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
+          EMULATOR_VERBOSE: ${{ inputs.verbose }}
+          ANALYSIS_SAMPLE: ${{github.workspace}}/build/release/artifacts/test-sample.exe
+
+  build-python-sdist:
+    name: Build Python Sdist
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: python -m pip install --upgrade pip build setuptools-scm
+
+      - name: Build sdist
+        run: python -m build "${{ github.workspace }}" --sdist --outdir dist
+
+      - name: Upload sdist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sogen-sdist
+          path: dist/*.tar.gz
+          retention-days: 7
+
   deploy-page:
     name: Deploy Page
     runs-on: ubuntu-latest
@@ -829,6 +956,9 @@ jobs:
     needs:
       [
         build-page,
+        build-python-wheel,
+        test-python-wheel,
+        build-python-sdist,
         clang-tidy,
         build-apiset-dumper,
         smoke-test-whp,
@@ -852,3 +982,33 @@ jobs:
       - name: Pipeline failed
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: exit 1
+
+  deploy-python-package:
+    name: Deploy Python Package
+    runs-on: ubuntu-24.04
+    needs: [build-python-wheel, build-python-sdist, test-python-wheel, summary]
+    if: ${{ inputs.enable_deploy }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sogen-wheel-*
+          path: dist
+          merge-multiple: true
+
+      - name: Download sdist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sogen-sdist
+          path: dist
+
+      - name: List distributions
+        run: ls -la dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
