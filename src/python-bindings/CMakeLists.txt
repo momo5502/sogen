@@ -20,8 +20,8 @@ if(MSVC)
     target_compile_options(nanobind-static PRIVATE /wd4714)
   endif()
 elseif(UNIX AND NOT APPLE)
-  # Keep Python C API symbols unresolved until import time on Linux wheels.
-  target_link_options(sogen PRIVATE -Wl,--allow-shlib-undefined)
+  # Override the global -z defs / --no-undefined for the Python extension.
+  target_link_options(sogen PRIVATE -Wl,-z,undefs)
 endif()
 
 nanobind_add_stub(

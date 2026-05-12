@@ -92,6 +92,7 @@ if(LINUX OR APPLE)
   
   if(LINUX)
     add_link_options(
+      -Wl,--no-undefined
       -Wl,-z,now
       -Wl,-z,noexecstack
       -static-libstdc++
