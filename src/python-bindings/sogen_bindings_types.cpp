@@ -5,7 +5,6 @@
 void register_sogen_types_bindings(nb::module_& m)
 {
     nb::enum_<backend_type>(m, "Backend")
-        .value("auto_select", backend_type::auto_select)
         .value("unicorn", backend_type::unicorn)
         .value("icicle", backend_type::icicle)
         .value("whp", backend_type::whp)
