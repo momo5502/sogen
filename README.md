@@ -66,7 +66,20 @@ Example:
 
 ```python
 import sogen
+
 emu = sogen.create_application(r"C:\test-sample.exe", None, emulation_root=r"C:\sogen-root")
+
+entry_point = {"value": None}
+
+
+def on_module_load(module):
+    if module.name.lower() == "test-sample.exe" and entry_point["value"] is None:
+        entry_point["value"] = module.entry_point
+        emu.hooks.memory_execution_at(module.entry_point, lambda address: print(f"hit entry point: 0x{address:x}"))
+
+emu.callbacks.on_module_load = on_module_load
+emu.start()
+print(emu.process.exit_status)
 ```
 
 See `examples/python/README.md` for a slightly larger example.
