@@ -19,6 +19,9 @@ if(MSVC)
   if(TARGET nanobind-static)
     target_compile_options(nanobind-static PRIVATE /wd4714)
   endif()
+elseif(UNIX AND NOT APPLE)
+  # Keep Python C API symbols unresolved until import time on Linux wheels.
+  target_link_options(sogen PRIVATE -Wl,--allow-shlib-undefined)
 endif()
 
 nanobind_add_stub(
