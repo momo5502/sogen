@@ -810,6 +810,9 @@ jobs:
           - runner: macos-latest
             display: macOS arm64
             artifact: macos-arm64
+          - runner: macos-15-intel
+            display: macOS x86_64
+            artifact: macos-x86_64
     steps:
       - name: Checkout Source
         uses: actions/checkout@v6
@@ -851,6 +854,9 @@ jobs:
           - runner: macos-latest
             display: macOS arm64
             artifact: macos-arm64
+          - runner: macos-15-intel
+            display: macOS x86_64
+            artifact: macos-x86_64
     steps:
       - name: Checkout Source
         uses: actions/checkout@v6
