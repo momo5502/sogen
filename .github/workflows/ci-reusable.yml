@@ -830,6 +830,7 @@ jobs:
       - name: Checkout Source
         uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           submodules: recursive
 
       - name: Set up Python
@@ -920,6 +921,7 @@ jobs:
       - name: Checkout Source
         uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           submodules: recursive
 
       - name: Set up Python
@@ -1001,4 +1003,3 @@ jobs:
       - name: Pipeline failed
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: exit 1
-
