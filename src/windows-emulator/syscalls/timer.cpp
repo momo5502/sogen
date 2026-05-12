@@ -73,6 +73,47 @@ namespace syscalls
         return handle_NtCreateTimer2(c, timer_handle, 0, object_attributes, timer_type, desired_access);
     }
 
+    NTSTATUS handle_NtOpenTimer(const syscall_context& c, const emulator_object<handle> timer_handle, ACCESS_MASK /*desired_access*/,
+                                const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
+    {
+        if (!timer_handle)
+        {
+            return STATUS_ACCESS_VIOLATION;
+        }
+
+        if (!object_attributes)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const auto attributes = object_attributes.read();
+
+        if (!attributes.ObjectName)
+        {
+            return STATUS_OBJECT_NAME_NOT_FOUND;
+        }
+
+        auto name = read_unicode_string(c.emu, attributes.ObjectName);
+        c.win_emu.callbacks.on_generic_access("Opening timer", name);
+
+        if (name.empty())
+        {
+            return STATUS_OBJECT_NAME_NOT_FOUND;
+        }
+
+        for (auto& entry : c.proc.timers)
+        {
+            if (entry.second.name == name)
+            {
+                ++entry.second.ref_count;
+                timer_handle.write(c.proc.timers.make_handle(entry.first));
+                return STATUS_SUCCESS;
+            }
+        }
+
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+    }
+
     NTSTATUS handle_NtSetTimer()
     {
         return STATUS_SUCCESS;

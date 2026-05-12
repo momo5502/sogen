@@ -378,6 +378,8 @@ namespace syscalls
                                    ACCESS_MASK desired_access);
     NTSTATUS handle_NtCreateTimer(const syscall_context& c, emulator_object<handle> timer_handle, ACCESS_MASK desired_access,
                                   emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, ULONG timer_type);
+    NTSTATUS handle_NtOpenTimer(const syscall_context& c, emulator_object<handle> timer_handle, ACCESS_MASK desired_access,
+                                emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes);
     NTSTATUS handle_NtSetTimer();
     NTSTATUS handle_NtSetTimer2();
     NTSTATUS handle_NtSetTimerEx(const syscall_context& c, handle timer_handle, uint32_t timer_set_info_class,
@@ -1054,6 +1056,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtQueryInformationByName);
     add_handler(NtUserSetCursor);
     add_handler(NtOpenMutant);
+    add_handler(NtOpenTimer);
     add_handler(NtCreateTimer);
     add_handler(NtCreateTimer2);
     add_handler(NtSetTimer);
