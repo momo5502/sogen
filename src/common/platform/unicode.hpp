@@ -1,5 +1,9 @@
 #pragma once
 
+#ifdef OS_WINDOWS
+#include <share.h>
+#endif
+
 #include <string>
 #include <filesystem>
 #include <type_traits>
@@ -442,8 +446,13 @@ inline int open_unicode(FILE** handle, const std::filesystem::path& fileName, co
     return errno;
 }
 #else
-inline auto open_unicode(FILE** handle, const std::filesystem::path& fileName, const std::u16string& mode)
+inline int open_unicode(FILE** handle, const std::filesystem::path& fileName, const std::u16string& mode)
 {
-    return _wfopen_s(handle, fileName.wstring().c_str(), u16_to_w(mode).c_str());
+    *handle = _wfsopen(fileName.wstring().c_str(), u16_to_w(mode).c_str(), _SH_DENYNO);
+    if (*handle)
+    {
+        return 0;
+    }
+    return errno ? errno : EACCES;
 }
 #endif
