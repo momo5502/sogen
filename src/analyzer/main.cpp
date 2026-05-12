@@ -472,7 +472,7 @@ namespace
 
     std::unique_ptr<x86_64_emulator> create_configured_backend(const analysis_options& options)
     {
-        auto emu = create_x86_64_emulator();
+        auto emu = create_x86_64_emulator_from_environment();
         emu->set_memory_execution_hook_mode(parse_memory_execution_hook_mode(options.whp_execution_hook_mode));
         return emu;
     }
