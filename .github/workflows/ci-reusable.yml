@@ -795,15 +795,21 @@ jobs:
           retention-days: 1
 
   build-python-wheel:
-    name: Build Python Wheel (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Build Python Wheel (${{ matrix.display }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-24.04
-          - windows-latest
-          - macos-latest
+        include:
+          - runner: ubuntu-24.04
+            display: Linux x86_64
+            artifact: linux-x86_64
+          - runner: windows-latest
+            display: Windows x86_64
+            artifact: windows-x86_64
+          - runner: macos-latest
+            display: macOS arm64
+            artifact: macos-arm64
     steps:
       - name: Checkout Source
         uses: actions/checkout@v6
@@ -824,21 +830,27 @@ jobs:
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sogen-wheel-${{ matrix.os }}
+          name: sogen-wheel-${{ matrix.artifact }}
           path: dist/*.whl
           retention-days: 7
 
   test-python-wheel:
-    name: Test Python Wheel (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Test Python Wheel (${{ matrix.display }})
+    runs-on: ${{ matrix.runner }}
     needs: [build-python-wheel, build, create-emulation-root]
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-24.04
-          - windows-latest
-          - macos-latest
+        include:
+          - runner: ubuntu-24.04
+            display: Linux x86_64
+            artifact: linux-x86_64
+          - runner: windows-latest
+            display: Windows x86_64
+            artifact: windows-x86_64
+          - runner: macos-latest
+            display: macOS arm64
+            artifact: macos-arm64
     steps:
       - name: Checkout Source
         uses: actions/checkout@v6
@@ -853,7 +865,7 @@ jobs:
       - name: Download wheel artifact
         uses: actions/download-artifact@v4
         with:
-          name: sogen-wheel-${{ matrix.os }}
+          name: sogen-wheel-${{ matrix.artifact }}
           path: dist
 
       - name: Install wheel
