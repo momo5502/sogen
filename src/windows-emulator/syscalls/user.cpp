@@ -583,9 +583,9 @@ namespace syscalls
         return index;
     }
 
-    NTSTATUS handle_NtUserUnregisterClass(const syscall_context& c, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
-                                          const emulator_pointer /*instance*/,
-                                          const emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> class_menu_name)
+    BOOL handle_NtUserUnregisterClass(const syscall_context& c, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
+                                      const emulator_pointer /*instance*/,
+                                      const emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> class_menu_name)
     {
         const auto cls_name = read_unicode_string_or_atom(c, class_name);
 
@@ -902,6 +902,11 @@ namespace syscalls
         }
 
         auto prop = read_unicode_string_or_atom(c, str);
+        if (prop.empty())
+        {
+            return FALSE;
+        }
+
         win->props[std::move(prop)] = data;
 
         return TRUE;

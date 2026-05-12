@@ -815,6 +815,11 @@ uint16_t process_context::add_or_find_atom(std::u16string name)
 
 bool process_context::delete_atom(const std::u16string& name)
 {
+    if (name.empty())
+    {
+        return false;
+    }
+
     for (auto it = atoms.begin(); it != atoms.end(); ++it)
     {
         if (utils::string::equals_ignore_case(it->second.name, name))

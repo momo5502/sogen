@@ -425,8 +425,8 @@ namespace syscalls
                                              emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_version,
                                              emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> class_menu_name, DWORD function_id,
                                              DWORD flags, emulator_pointer wow);
-    NTSTATUS handle_NtUserUnregisterClass(const syscall_context& c, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
-                                          emulator_pointer instance, emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> class_menu_name);
+    BOOL handle_NtUserUnregisterClass(const syscall_context& c, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
+                                      emulator_pointer instance, emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> class_menu_name);
     BOOL handle_NtUserGetClassInfoEx(const syscall_context& c, hinstance /*instance*/,
                                      emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                      emulator_object<EMU_WNDCLASSEX> wnd_class_ex, emulator_pointer menu_name, BOOL /*ansi*/);
