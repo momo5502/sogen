@@ -9,20 +9,11 @@ import sogen
 
 
 EMULATOR_ROOT = os.getenv("EMULATOR_ROOT")
-ANALYSIS_SAMPLE = os.getenv("ANALYSIS_SAMPLE")
 
 
 def main() -> None:
-    emu = sogen.create_empty(
-        emulation_root=EMULATOR_ROOT or r"C:\sogen-root",
-        backend=sogen.Backend.unicorn,
-    )
-
-    print("backend:", emu.backend_name)
-    print("executed instructions:", emu.executed_instructions)
-
-    if not (EMULATOR_ROOT and ANALYSIS_SAMPLE):
-        return
+    if not EMULATOR_ROOT:
+        raise SystemExit("Set EMULATOR_ROOT to the extracted root.zip directory")
 
     app = sogen.create_application(
         r"C:\test-sample.exe",
@@ -32,22 +23,8 @@ def main() -> None:
         port_mappings={28970: 28980},
     )
 
-    entry_point = {"value": None}
-    entry_hook = {"value": None}
-
-    def on_module_load(module: sogen.MappedModule) -> None:
-        if module.name.lower() != Path(ANALYSIS_SAMPLE).name.lower():
-            return
-        if entry_point["value"] is None:
-            entry_point["value"] = module.entry_point
-            entry_hook["value"] = app.hooks.memory_execution_at(
-                module.entry_point,
-                lambda address: print(f"hit entry point: 0x{address:x}"),
-            )
-
-    app.callbacks.on_module_load = on_module_load
     app.callbacks.on_stdout = lambda text: print(text, end="")
-
+    app.callbacks.on_module_load = lambda module: print(f"loaded: {module.name} @ 0x{module.entry_point:x}")
     app.start()
     print("exit status:", app.process.exit_status)
 

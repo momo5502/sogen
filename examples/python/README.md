@@ -1,19 +1,14 @@
 # Python example
 
-`examples/python/basic_usage.py` shows the Python bindings in a minimal way:
-
-- create an emulator
-- select a backend explicitly
-- hook module load / entry-point execution
-- run the bundled sample when `EMULATOR_ROOT` and `ANALYSIS_SAMPLE` are set
-
-Run it from a built wheel or an installed package:
+`examples/python/basic_usage.py` shows how to run the bundled `test-sample.exe`:
 
 ```bash
+pip install sogen
 python examples/python/basic_usage.py
 ```
 
-Environment variables used by the sample path:
+Download the emulation root from:
 
-- `EMULATOR_ROOT`
-- `ANALYSIS_SAMPLE`
+https://sogen.dev/root.zip
+
+Set `EMULATOR_ROOT` to the extracted directory before running the script.
