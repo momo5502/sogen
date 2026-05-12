@@ -54,6 +54,32 @@ Try it out: <a href="https://sogen.dev">sogen.dev</a>
 
 Click <a href="https://docs.google.com/presentation/d/1pha4tFfDMpVzJ_ehJJ21SA_HAWkufQBVYQvh1IFhVls/edit">here</a> for the slides.
 
+## Python Bindings
+
+Sogen ships typed Python bindings via nanobind.
+
+- `sogen.create_empty(...)`
+- `sogen.create_application(...)`
+- `sogen.WindowsEmulator`
+- `sogen.Backend`
+- `callbacks` for high-level events
+- `hooks` for low-level execution/memory instrumentation
+
+The wheel includes generated type stubs (`.pyi`) and `py.typed`, so editors and type checkers can understand the API.
+
+Example:
+
+```python
+import sogen
+
+emu = sogen.create_empty(emulation_root=r"C:\sogen-root", backend=sogen.Backend.unicorn)
+print(emu.backend_name)
+```
+
+For a slightly larger example, see `examples/python/README.md`.
+
+Icicle wheels also bundle the required Ghidra sleigh semantics under `Ghidra/`.
+
 ## Quick Start (Windows + Visual Studio)
 
 > [!TIP]  
