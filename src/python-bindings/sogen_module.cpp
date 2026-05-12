@@ -137,15 +137,21 @@ namespace
         return settings;
     }
 
+    backend_type get_backend_type(const nb::kwargs& kwargs)
+    {
+        return get_kwarg<backend_type>(kwargs, "backend", backend_type::unicorn);
+    }
+
     std::unique_ptr<windows_emulator> create_empty_emulator(const nb::kwargs& kwargs)
     {
-        return std::make_unique<windows_emulator>(create_x86_64_emulator(), make_emulator_settings(kwargs));
+        return std::make_unique<windows_emulator>(create_x86_64_emulator(get_backend_type(kwargs)), make_emulator_settings(kwargs));
     }
 
     std::unique_ptr<windows_emulator> create_application_emulator(nb::object application, nb::object args, const nb::kwargs& kwargs)
     {
         auto app_settings = make_application_settings(application, args, kwargs);
-        return std::make_unique<windows_emulator>(create_x86_64_emulator(), std::move(app_settings), make_emulator_settings(kwargs));
+        return std::make_unique<windows_emulator>(create_x86_64_emulator(get_backend_type(kwargs)), std::move(app_settings),
+                                                  make_emulator_settings(kwargs));
     }
 
     nb::bytes read_memory_bytes(const memory_interface& memory, const uint64_t address, const size_t size)
@@ -751,6 +757,13 @@ NB_MODULE(sogen, m)
 {
     m.doc() = "Sogen Python bindings";
 
+    nb::enum_<backend_type>(m, "Backend")
+        .value("auto_select", backend_type::auto_select)
+        .value("unicorn", backend_type::unicorn)
+        .value("icicle", backend_type::icicle)
+        .value("whp", backend_type::whp)
+        .export_values();
+
     nb::enum_<memory_permission>(m, "MemoryPermission")
         .value("none", memory_permission::none)
         .value("read", memory_permission::read)
@@ -1068,10 +1081,8 @@ NB_MODULE(sogen, m)
         .def("map_port", &sogen_windows_emulator::map_port);
 
     m.def("create_empty", [](nb::kwargs kwargs) { return sogen_windows_emulator(create_empty_emulator(kwargs)); });
-    m.def(
-        "create_application",
-        [](nb::object application, nb::object args, nb::kwargs kwargs) {
-            return sogen_windows_emulator(create_application_emulator(application, args, kwargs));
-        },
-        nb::arg("application"), nb::arg("args") = nb::none(), nb::arg("kwargs"));
+    m.def("create_application",
+          [](nb::object application, nb::object args, nb::kwargs kwargs) {
+              return sogen_windows_emulator(create_application_emulator(application, args, kwargs));
+          });
 }
