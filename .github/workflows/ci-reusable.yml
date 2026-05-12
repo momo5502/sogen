@@ -970,12 +970,13 @@ jobs:
         run: python -m pip install --upgrade pip && python -m pip install --force-reinstall dist/*.tar.gz
 
       - name: Verify import
-        run: python - <<'PY'
-import sogen
-assert hasattr(sogen, "create_application")
-assert hasattr(sogen, "Backend")
-print("ok")
-PY
+        run: |
+          python - <<'PY'
+          import sogen
+          assert hasattr(sogen, "create_application")
+          assert hasattr(sogen, "Backend")
+          print("ok")
+          PY
 
   deploy-page:
     name: Deploy Page
