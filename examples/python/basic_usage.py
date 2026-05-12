@@ -12,14 +12,13 @@ EMULATOR_ROOT = os.getenv("EMULATOR_ROOT")
 
 
 def main() -> None:
-    if not EMULATOR_ROOT:
-        raise SystemExit("Set EMULATOR_ROOT to the extracted root.zip directory")
+    emulation_root = EMULATOR_ROOT or "./root"
 
     app = sogen.create_application(
-        r"C:\test-sample.exe",
+        "c:/test-sample.exe",
         None,
-        emulation_root=EMULATOR_ROOT,
-        path_mappings={r"C:\a.txt": Path(os.getenv("TEMP", ".")) / "sogen-example.txt"},
+        emulation_root=emulation_root,
+        path_mappings={"c:/a.txt": Path("./sogen-example.txt")},
         port_mappings={28970: 28980},
     )
 

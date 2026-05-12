@@ -67,7 +67,7 @@ Example:
 ```python
 import sogen
 
-emu = sogen.create_application(r"C:\test-sample.exe", None, emulation_root=r"C:\sogen-root")
+emu = sogen.create_application("c:/test-sample.exe", None, emulation_root="./root")
 
 
 def on_module_load(module):
