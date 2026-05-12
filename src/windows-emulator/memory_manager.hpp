@@ -21,7 +21,8 @@ enum class memory_region_kind : uint8_t
 {
     free = 0,
     private_allocation,
-    section_view,
+    file_section_view,
+    pagefile_section_view,
     section_image,
     mmio,
 };
@@ -95,6 +96,8 @@ class memory_manager : public memory_interface
                              memory_region_kind kind = memory_region_kind::private_allocation);
 
     uint64_t find_free_allocation_base(size_t size, uint64_t start = 0) const;
+    uint64_t find_free_allocation_base(size_t size, uint64_t start, uint64_t alignment, uint64_t lowest_address,
+                                       uint64_t highest_address) const;
 
     region_info get_region_info(uint64_t address);
 
@@ -147,7 +150,8 @@ namespace memory_region_policy
 {
     constexpr bool is_section_kind(const memory_region_kind kind)
     {
-        return kind == memory_region_kind::section_view || kind == memory_region_kind::section_image;
+        return kind == memory_region_kind::pagefile_section_view || kind == memory_region_kind::file_section_view ||
+               kind == memory_region_kind::section_image;
     }
 
     constexpr bool is_mapped_memory_kind(const memory_region_kind kind)
@@ -161,7 +165,8 @@ namespace memory_region_policy
         {
         case memory_region_kind::section_image:
             return MEM_IMAGE;
-        case memory_region_kind::section_view:
+        case memory_region_kind::pagefile_section_view:
+        case memory_region_kind::file_section_view:
             return MEM_MAPPED;
         case memory_region_kind::mmio:
             return MEM_MAPPED;

@@ -133,7 +133,8 @@ namespace syscalls
                                            emulator_object<uint32_t> old_protection);
     NTSTATUS handle_NtAllocateVirtualMemoryEx(const syscall_context& c, handle process_handle, emulator_object<uint64_t> base_address,
                                               emulator_object<uint64_t> bytes_to_allocate, uint32_t allocation_type,
-                                              uint32_t page_protection);
+                                              uint32_t page_protection, emulator_object<MEM_EXTENDED_PARAMETER64> extended_parameters,
+                                              ULONG extended_parameter_count);
     NTSTATUS handle_NtAllocateVirtualMemory(const syscall_context& c, handle process_handle, emulator_object<uint64_t> base_address,
                                             uint64_t zero_bits, emulator_object<uint64_t> bytes_to_allocate, uint32_t allocation_type,
                                             uint32_t page_protection);
