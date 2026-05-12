@@ -68,6 +68,11 @@ namespace syscalls
                                       const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                       const ULONG initial_count, const ULONG maximum_count)
     {
+        if (maximum_count <= 0 || initial_count > maximum_count)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
         semaphore s{};
         s.current_count = initial_count;
         s.max_count = maximum_count;
