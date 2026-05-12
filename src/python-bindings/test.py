@@ -1,3 +1,4 @@
+import gc
 import importlib
 import os
 import sys
@@ -104,11 +105,16 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
     assert not entry_hook["value"].active
     assert not block_hook.active
 
-del block_hook
+    app.callbacks.on_module_load = None
+    app.callbacks.on_syscall = None
+    entry_hook["value"] = None
+    main_entry_point["value"] = None
+    block_hook = None
+    app = None
+    gc.collect()
+
 emu = None
-app = None
 mod = None
-import gc
 
 gc.collect()
 print("ok")
