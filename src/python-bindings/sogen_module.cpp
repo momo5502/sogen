@@ -1081,8 +1081,7 @@ NB_MODULE(sogen, m)
         .def("map_port", &sogen_windows_emulator::map_port);
 
     m.def("create_empty", [](nb::kwargs kwargs) { return sogen_windows_emulator(create_empty_emulator(kwargs)); });
-    m.def("create_application",
-          [](nb::object application, nb::object args, nb::kwargs kwargs) {
-              return sogen_windows_emulator(create_application_emulator(application, args, kwargs));
-          });
+    m.def("create_application", [](nb::object application, nb::object args, nb::kwargs kwargs) {
+        return sogen_windows_emulator(create_application_emulator(application, args, kwargs));
+    });
 }
