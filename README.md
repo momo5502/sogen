@@ -66,7 +66,7 @@ Example:
 
 ```python
 import sogen
-emu = sogen.create_empty(emulation_root=r"C:\sogen-root")
+emu = sogen.create_application(r"C:\test-sample.exe", None, emulation_root=r"C:\sogen-root")
 ```
 
 See `examples/python/README.md` for a slightly larger example.
