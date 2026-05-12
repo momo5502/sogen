@@ -9,7 +9,7 @@ if(NOT TARGET Python::Module)
   endif()
 endif()
 
-nanobind_add_module(sogen NB_SUPPRESS_WARNINGS sogen_module.cpp)
+nanobind_add_module(sogen NB_SUPPRESS_WARNINGS sogen_module.cpp sogen_bindings.cpp)
 
 target_link_libraries(sogen PRIVATE windows-emulator backend-selection)
 
