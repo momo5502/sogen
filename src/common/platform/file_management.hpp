@@ -63,6 +63,9 @@
 #define FILE_CREATE_TREE_CONNECTION    0x00000080
 #define FILE_DELETE_ON_CLOSE           0x00001000
 
+#define FILE_USE_FILE_POINTER_POSITION 0xfffffffe
+#define FILE_WRITE_TO_END_OF_FILE      0xffffffff
+
 #define FILE_BYTE_ALIGNMENT            ((1 << (1 - 1)) - 1)
 #define FILE_WORD_ALIGNMENT            ((1 << (2 - 1)) - 1)
 #define FILE_LONG_ALIGNMENT            ((1 << (3 - 1)) - 1)

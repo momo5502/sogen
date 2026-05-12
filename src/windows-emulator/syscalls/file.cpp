@@ -1083,8 +1083,7 @@ namespace syscalls
     NTSTATUS handle_NtReadFile(const syscall_context& c, const handle file_handle, const uint64_t /*event*/, const uint64_t /*apc_routine*/,
                                const uint64_t /*apc_context*/,
                                const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const uint64_t buffer,
-                               const ULONG length, const emulator_object<LARGE_INTEGER> /*byte_offset*/,
-                               const emulator_object<ULONG> /*key*/)
+                               const ULONG length, const emulator_object<LARGE_INTEGER> byte_offset, const emulator_object<ULONG> /*key*/)
     {
         std::string temp_buffer{};
         temp_buffer.resize(length);
@@ -1152,17 +1151,50 @@ namespace syscalls
             return STATUS_INVALID_HANDLE;
         }
 
-        const auto bytes_read = fread(temp_buffer.data(), 1, temp_buffer.size(), f->handle);
-        commit_file_data(std::string_view(temp_buffer.data(), bytes_read), c.emu, io_status_block, buffer);
+        if (byte_offset)
+        {
+            const auto offset = byte_offset.read();
+            const bool use_current_file_pointer = offset.LowPart == FILE_USE_FILE_POINTER_POSITION && offset.HighPart == -1;
 
-        return STATUS_SUCCESS;
+            if (!use_current_file_pointer)
+            {
+                if (offset.QuadPart < 0)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (!f->handle.seek_to(offset.QuadPart))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+            }
+        }
+
+        const auto bytes_read = fread(temp_buffer.data(), 1, temp_buffer.size(), f->handle);
+
+        if (bytes_read > 0)
+        {
+            commit_file_data(std::string_view(temp_buffer.data(), bytes_read), c.emu, io_status_block, buffer);
+            return STATUS_SUCCESS;
+        }
+
+        const auto status = length > 0 ? STATUS_END_OF_FILE : STATUS_SUCCESS;
+
+        if (io_status_block)
+        {
+            IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+            block.Status = status;
+            block.Information = 0;
+            io_status_block.write(block);
+        }
+
+        return status;
     }
 
     NTSTATUS handle_NtWriteFile(const syscall_context& c, const handle file_handle, const uint64_t /*event*/,
                                 const uint64_t /*apc_routine*/, const uint64_t /*apc_context*/,
                                 const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const uint64_t buffer,
-                                const ULONG length, const emulator_object<LARGE_INTEGER> /*byte_offset*/,
-                                const emulator_object<ULONG> /*key*/)
+                                const ULONG length, const emulator_object<LARGE_INTEGER> byte_offset, const emulator_object<ULONG> /*key*/)
     {
         std::string temp_buffer{};
         temp_buffer.resize(length);
@@ -1219,6 +1251,33 @@ namespace syscalls
         if (!f)
         {
             return STATUS_INVALID_HANDLE;
+        }
+
+        if (byte_offset)
+        {
+            const auto offset = byte_offset.read();
+            const bool use_end_of_file = offset.LowPart == FILE_WRITE_TO_END_OF_FILE && offset.HighPart == -1;
+            const bool use_current_file_pointer = offset.LowPart == FILE_USE_FILE_POINTER_POSITION && offset.HighPart == -1;
+
+            if (use_end_of_file)
+            {
+                if (!f->handle.seek_to(0, SEEK_END))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+            }
+            else if (!use_current_file_pointer)
+            {
+                if (offset.QuadPart < 0)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (!f->handle.seek_to(offset.QuadPart))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+            }
         }
 
         const auto bytes_written = fwrite(temp_buffer.data(), 1, temp_buffer.size(), f->handle);
