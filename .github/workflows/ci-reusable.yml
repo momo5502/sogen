@@ -2,6 +2,10 @@ name: Reusable Build
 
 on:
   workflow_call:
+    outputs:
+      run_id:
+        description: "Reusable workflow run id"
+        value: ${{ jobs.workflow_metadata.outputs.run_id }}
     inputs:
       enable_deploy:
         required: false
@@ -21,6 +25,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  workflow_metadata:
+    name: Workflow Metadata
+    runs-on: ubuntu-24.04
+    outputs:
+      run_id: ${{ steps.meta.outputs.run_id }}
+    steps:
+      - id: meta
+        run: echo "run_id=${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+
   clang-tidy:
     name: Run Clang Tidy
     env:
@@ -989,32 +1002,3 @@ jobs:
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: exit 1
 
-  deploy-python-package:
-    name: Deploy Python Package
-    runs-on: ubuntu-24.04
-    needs: [build-python-wheel, build-python-sdist, test-python-wheel, summary]
-    if: ${{ inputs.enable_deploy }}
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - name: Download wheel artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: sogen-wheel-*
-          path: dist
-          merge-multiple: true
-
-      - name: Download sdist artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: sogen-sdist
-          path: dist
-
-      - name: List distributions
-        run: ls -la dist
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist
