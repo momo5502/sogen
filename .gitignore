@@ -162,3 +162,4 @@ page/public/64/analyzer.wasm
 
 __pycache__/
 devdocs/
+dist_local/
