@@ -403,6 +403,11 @@ namespace syscalls
     NTSTATUS handle_NtFlushInstructionCache(const syscall_context& c, handle process_handle, emulator_object<uint64_t> base_address,
                                             uint64_t region_size);
 
+    // syscalls/license.cpp
+    NTSTATUS handle_NtQueryLicenseValue(const syscall_context& c, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> value_name,
+                                        emulator_object<uint32_t> type, uint64_t data, uint64_t data_size,
+                                        emulator_object<uint32_t> result_data_size);
+
     // syscalls/user.cpp:
     NTSTATUS handle_NtUserTraceLoggingSendMixedModeTelemetry();
     NTSTATUS handle_NtUserDisplayConfigGetDeviceInfo();
@@ -490,9 +495,8 @@ namespace syscalls
     BOOL handle_NtUserAllowSetForegroundWindow();
     ULONG handle_NtUserGetAtomName(const syscall_context& c, RTL_ATOM atom,
                                    emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> atom_name);
-    NTSTATUS handle_NtQueryLicenseValue(const syscall_context& c, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> value_name,
-                                        emulator_object<uint32_t> type, uint64_t data, uint64_t data_size,
-                                        emulator_object<uint32_t> result_data_size);
+
+    // syscalls/gdi.cpp:
     NTSTATUS handle_NtGdiInit(const syscall_context& c);
     NTSTATUS handle_NtGdiInit2(const syscall_context& c);
     uint32_t handle_NtGdiGetDeviceCaps(const syscall_context& c, hdc dc, uint32_t index);
