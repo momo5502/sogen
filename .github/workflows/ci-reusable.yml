@@ -1024,6 +1024,7 @@ jobs:
         test,
         win-test,
         verify-formatting,
+        workflow_metadata,
       ]
     steps:
       - uses: geekyeggo/delete-artifact@v6
