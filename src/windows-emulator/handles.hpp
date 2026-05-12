@@ -442,6 +442,7 @@ constexpr auto LSA_AUTHENTICATION_INITIALIZED = make_pseudo_handle(0x5, handle_t
 constexpr auto CONSOLE_HANDLE = make_pseudo_handle(0x1, handle_types::file);
 constexpr auto STDOUT_HANDLE = make_pseudo_handle(0x2, handle_types::file);
 constexpr auto STDIN_HANDLE = make_pseudo_handle(0x3, handle_types::file);
+constexpr auto NUL_HANDLE = make_pseudo_handle(0x4, handle_types::file);
 
 constexpr auto DUMMY_IMPERSONATION_TOKEN = make_pseudo_handle(0x1, handle_types::token);
 

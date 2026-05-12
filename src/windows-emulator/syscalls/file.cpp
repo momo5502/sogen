@@ -1106,6 +1106,18 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
+        if (file_handle == NUL_HANDLE)
+        {
+            if (io_status_block)
+            {
+                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                block.Information = 0;
+                io_status_block.write(block);
+            }
+
+            return STATUS_SUCCESS;
+        }
+
         const auto* container = c.proc.devices.get(file_handle);
         if (container)
         {
@@ -1166,6 +1178,18 @@ namespace syscalls
             }
 
             c.win_emu.callbacks.on_stdout(temp_buffer);
+
+            return STATUS_SUCCESS;
+        }
+
+        if (file_handle == NUL_HANDLE)
+        {
+            if (io_status_block)
+            {
+                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                block.Information = length;
+                io_status_block.write(block);
+            }
 
             return STATUS_SUCCESS;
         }
@@ -1461,6 +1485,14 @@ namespace syscalls
         {
             c.win_emu.callbacks.on_generic_access("Opening console input", filename);
             file_handle.write(STDIN_HANDLE);
+            return STATUS_SUCCESS;
+        }
+
+        // Handle NUL device
+        if (filename_upper == u"\\??\\NUL" || filename_upper == u"NUL")
+        {
+            c.win_emu.callbacks.on_generic_access("Opening NUL", filename);
+            file_handle.write(NUL_HANDLE);
             return STATUS_SUCCESS;
         }
 
