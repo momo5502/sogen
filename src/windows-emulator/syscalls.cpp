@@ -148,7 +148,10 @@ namespace syscalls
                                          emulator_object<ULONG> number_of_bytes_write);
     NTSTATUS handle_NtSetInformationVirtualMemory();
     BOOL handle_NtLockVirtualMemory();
-    NTSTATUS handle_NtFlushVirtualMemory();
+    NTSTATUS handle_NtUnlockVirtualMemory();
+    NTSTATUS handle_NtFlushVirtualMemory(const syscall_context& c, handle process_handle, emulator_object<uint64_t> base_address,
+                                         emulator_object<uint64_t> region_size,
+                                         emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block);
 
     // syscalls/mutant.cpp:
     NTSTATUS handle_NtReleaseMutant(const syscall_context& c, handle mutant_handle, emulator_object<LONG> previous_count);
@@ -843,6 +846,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtCreateEvent);
     add_handler(NtProtectVirtualMemory);
     add_handler(NtLockVirtualMemory);
+    add_handler(NtUnlockVirtualMemory);
     add_handler(NtFlushVirtualMemory);
     add_handler(NtOpenDirectoryObject);
     add_handler(NtCreateDirectoryObject);
