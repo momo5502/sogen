@@ -3,6 +3,7 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 
+#include <algorithm>
 #include <utils/finally.hpp>
 
 namespace
@@ -661,7 +662,12 @@ namespace syscalls
                                     const ACCESS_MASK /*desired_access*/, const ULONG /*handle_attributes*/, const ULONG flags,
                                     const emulator_object<handle> new_thread_handle)
     {
-        if (process_handle != CURRENT_PROCESS || thread_handle.value.type != handle_types::thread)
+        if (process_handle != CURRENT_PROCESS)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        if (thread_handle != NULL_HANDLE && thread_handle.value.type != handle_types::thread)
         {
             return STATUS_INVALID_HANDLE;
         }
@@ -760,8 +766,7 @@ namespace syscalls
 
     NTSTATUS handle_NtCreateThreadEx(const syscall_context& c, const emulator_object<handle> thread_handle,
                                      const ACCESS_MASK /*desired_access*/,
-                                     const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>>
-                                     /*object_attributes*/,
+                                     const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
                                      const handle process_handle, const uint64_t start_routine, const uint64_t argument,
                                      const ULONG create_flags, const EmulatorTraits<Emu64>::SIZE_T /*zero_bits*/,
                                      const EmulatorTraits<Emu64>::SIZE_T stack_size, const EmulatorTraits<Emu64>::SIZE_T maximum_stack_size,
@@ -772,18 +777,49 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
         }
 
-        if (stack_size > maximum_stack_size)
+        if (maximum_stack_size != 0 && stack_size > maximum_stack_size)
         {
             return STATUS_INVALID_PARAMETER;
         }
 
+        constexpr auto entry_size = sizeof(PS_ATTRIBUTE<EmulatorTraits<Emu64>>);
+        constexpr auto header_size = sizeof(PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>) - entry_size;
+
+        size_t attribute_count = 0;
+
+        if (attribute_list)
+        {
+            const auto total_length = attribute_list.read().TotalLength;
+
+            if (total_length < header_size)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            if ((total_length - header_size) % entry_size != 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            attribute_count = static_cast<size_t>((total_length - header_size) / entry_size);
+        }
+
         uint64_t actual_stack_size = maximum_stack_size;
-        if (maximum_stack_size == 0)
+        if (actual_stack_size == 0)
         {
             actual_stack_size = c.win_emu.mod_manager.executable->size_of_stack_reserve;
         }
 
+        if (actual_stack_size == 0)
+        {
+            actual_stack_size = STACK_SIZE;
+        }
+
+        actual_stack_size = std::max(stack_size, actual_stack_size);
+        actual_stack_size = align_up(actual_stack_size, ALLOCATION_GRANULARITY);
+
         const auto h = c.proc.create_thread(c.win_emu.memory, start_routine, argument, actual_stack_size, create_flags);
+
         thread_handle.write(h);
 
         if (!attribute_list)
@@ -795,12 +831,6 @@ namespace syscalls
 
         const emulator_object<PS_ATTRIBUTE<EmulatorTraits<Emu64>>> attributes{
             c.emu, attribute_list.value() + offsetof(PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>, Attributes)};
-
-        const auto total_length = attribute_list.read().TotalLength;
-
-        constexpr auto entry_size = sizeof(PS_ATTRIBUTE<EmulatorTraits<Emu64>>);
-        constexpr auto header_size = sizeof(PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>) - entry_size;
-        const auto attribute_count = (total_length - header_size) / entry_size;
 
         for (size_t i = 0; i < attribute_count; ++i)
         {
