@@ -59,7 +59,9 @@ emu.callbacks.on_module_unload = lambda m: None
 
 test_sample = Path(analysis_sample)
 assert test_sample.exists()
-counts = {"blocks": 0, "syscalls": 0}
+counts = {"blocks": 0, "syscalls": 0, "entry_point": 0}
+main_entry_point = {"value": None}
+entry_hook = {"value": None}
 
 with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
     mapped_file = Path(temp_dir) / "a.txt"
@@ -76,12 +78,30 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
         counts.__setitem__("syscalls", counts["syscalls"] + 1) or mod.HookContinuation.run
     )
 
+    def on_module_load(module):
+        if module.name.lower() != test_sample.name.lower():
+            return
+        if main_entry_point["value"] is None:
+            main_entry_point["value"] = module.entry_point
+            entry_hook["value"] = app.hooks.memory_execution_at(
+                module.entry_point,
+                lambda address: counts.__setitem__("entry_point", counts["entry_point"] + 1),
+            )
+
+    app.callbacks.on_module_load = on_module_load
+
     app.start()
     assert app.process.exit_status is not None
     assert counts["blocks"] > 0
     assert counts["syscalls"] > 0
+    assert main_entry_point["value"] is not None
+    assert counts["entry_point"] > 0
+    assert entry_hook["value"] is not None
+    assert entry_hook["value"].active
     assert block_hook.active
+    entry_hook["value"].remove()
     block_hook.remove()
+    assert not entry_hook["value"].active
     assert not block_hook.active
 
 del block_hook
