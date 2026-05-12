@@ -58,6 +58,11 @@ namespace syscalls
             return STATUS_INVALID_HANDLE;
         }
 
+        if (info_class == FileBasicInformation)
+        {
+            return STATUS_SUCCESS;
+        }
+
         if (info_class == FileRenameInformation)
         {
             if (length < sizeof(FILE_RENAME_INFORMATION))
@@ -138,11 +143,6 @@ namespace syscalls
             f->handle.defer_delete(wants_delete ? c.win_emu.file_sys.translate(f->name) : std::filesystem::path{});
 
             return STATUS_SUCCESS;
-        }
-
-        if (info_class == FileBasicInformation)
-        {
-            return STATUS_NOT_SUPPORTED;
         }
 
         if (info_class == FilePositionInformation)
@@ -238,6 +238,16 @@ namespace syscalls
                                                               info.TotalAllocationUnits.QuadPart = 0x10000;
                                                               info.AvailableAllocationUnits.QuadPart = 0x1000;
                                                           });
+
+        case FileFsFullSizeInformation:
+            return handle_query<FILE_FS_FULL_SIZE_INFORMATION>(c.emu, fs_information, length, io_status_block,
+                                                               [&](FILE_FS_FULL_SIZE_INFORMATION& info) {
+                                                                   info.BytesPerSector = 0x1000;
+                                                                   info.SectorsPerAllocationUnit = 0x1000;
+                                                                   info.TotalAllocationUnits.QuadPart = 0x10000;
+                                                                   info.CallerAvailableAllocationUnits.QuadPart = 0x1000;
+                                                                   info.ActualAvailableAllocationUnits.QuadPart = 0x1000;
+                                                               });
 
         case FileFsVolumeInformation:
             return handle_query<FILE_FS_VOLUME_INFORMATION>(c.emu, fs_information, length, io_status_block,
@@ -536,6 +546,11 @@ namespace syscalls
             return ret(STATUS_SUCCESS, required_length);
         }
 
+        if (info_class == FileRemoteProtocolInformation)
+        {
+            return ret(STATUS_INVALID_PARAMETER);
+        }
+
         if (info_class == FileIdInformation)
         {
             if (!f->handle)
@@ -649,9 +664,12 @@ namespace syscalls
             }
 
             struct compat_stat file_stat{};
-            if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
+            if (f->handle)
             {
-                return STATUS_INVALID_HANDLE;
+                if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
             }
 
             auto address = file_information;
@@ -666,7 +684,8 @@ namespace syscalls
             i.LastAccessTime = convert_timespec_to_filetime(file_stat.st_atimespec);
             i.LastWriteTime = convert_timespec_to_filetime(file_stat.st_mtimespec);
             i.ChangeTime = i.LastWriteTime;
-            i.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+            i.FileAttributes =
+                (f->handle ? (file_stat.st_mode & S_IFDIR) : f->is_directory()) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
 
             info.write(i);
 
@@ -726,9 +745,12 @@ namespace syscalls
             }
 
             struct compat_stat file_stat{};
-            if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
+            if (f->handle)
             {
-                return STATUS_INVALID_HANDLE;
+                if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
             }
 
             auto address = file_information;
@@ -816,11 +838,6 @@ namespace syscalls
 
         if (info_class == FilePositionInformation || all_info)
         {
-            if (!f->handle)
-            {
-                return ret(STATUS_NOT_SUPPORTED);
-            }
-
             constexpr auto required_length = sizeof(FILE_POSITION_INFORMATION);
 
             if (length < required_length)
@@ -837,7 +854,7 @@ namespace syscalls
             const emulator_object<FILE_POSITION_INFORMATION> info{c.emu, address};
             FILE_POSITION_INFORMATION i{};
 
-            i.CurrentByteOffset.QuadPart = f->handle.tell();
+            i.CurrentByteOffset.QuadPart = f->handle ? f->handle.tell() : 0;
 
             info.write(i);
 
@@ -1006,13 +1023,19 @@ namespace syscalls
                 return STATUS_INVALID_HANDLE;
             }
 
+            const auto is_directory = (file_stat.st_mode & S_IFDIR) != 0;
+
             EMU_FILE_STAT_BASIC_INFORMATION i{};
 
             i.CreationTime = convert_timespec_to_filetime(file_stat.st_ctimespec);
             i.LastAccessTime = convert_timespec_to_filetime(file_stat.st_atimespec);
             i.LastWriteTime = convert_timespec_to_filetime(file_stat.st_mtimespec);
             i.ChangeTime = i.LastWriteTime;
-            i.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+            i.FileAttributes = is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+
+            const auto file_size = is_directory ? 0LL : file_stat.st_size;
+            i.EndOfFile.QuadPart = file_size;
+            i.AllocationSize.QuadPart = static_cast<LONGLONG>(align_up(file_size, 512));
 
             c.emu.write_memory(file_information, i);
 
