@@ -944,6 +944,39 @@ jobs:
           path: dist/*.tar.gz
           retention-days: 7
 
+  test-python-sdist:
+    name: Test Python Sdist
+    runs-on: ubuntu-24.04
+    needs: [build-python-sdist]
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Download sdist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sogen-sdist
+          path: dist
+
+      - name: Install sdist
+        run: python -m pip install --upgrade pip && python -m pip install --force-reinstall dist/*.tar.gz
+
+      - name: Verify import
+        run: python - <<'PY'
+import sogen
+assert hasattr(sogen, "create_application")
+assert hasattr(sogen, "Backend")
+print("ok")
+PY
+
   deploy-page:
     name: Deploy Page
     runs-on: ubuntu-latest
@@ -982,6 +1015,7 @@ jobs:
         build-python-wheel,
         test-python-wheel,
         build-python-sdist,
+        test-python-sdist,
         clang-tidy,
         build-apiset-dumper,
         smoke-test-whp,
