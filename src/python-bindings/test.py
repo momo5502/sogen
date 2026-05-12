@@ -34,7 +34,7 @@ assert hasattr(mod, "create_empty")
 assert hasattr(mod, "create_application")
 
 emu = mod.create_empty(emulation_root=emulator_root)
-assert emu.backend_name in {"unicorn", "icicle", "whp"}
+assert emu.backend_name in {"Unicorn Engine", "icicle-emu", "Windows Hypervisor Platform"}
 assert hasattr(emu, "read_memory")
 assert hasattr(emu, "write_memory")
 assert hasattr(emu, "read_register")
