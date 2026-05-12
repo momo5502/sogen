@@ -837,7 +837,7 @@ jobs:
   test-python-wheel:
     name: Test Python Wheel (${{ matrix.display }})
     runs-on: ${{ matrix.runner }}
-    needs: [build-python-wheel, build, create-emulation-root]
+    needs: [build-python-wheel, build-isolate, create-emulation-root]
     strategy:
       fail-fast: false
       matrix:
@@ -875,7 +875,7 @@ jobs:
       - name: Download Release Artifacts
         uses: pyTooling/download-artifact@v8
         with:
-          name: Windows x86_64 Release Artifacts
+          name: Temp Isolate Windows x86_64 Release Artifacts
           path: build/release/artifacts
 
       - name: Download Emulation Root
