@@ -185,7 +185,14 @@ void register_sogen_runtime_bindings(nb::module_& m)
         .def("map_port", &sogen_windows_emulator::map_port);
 
     m.def("create_empty", [](nb::kwargs kwargs) { return sogen_windows_emulator(create_empty_emulator(kwargs)); });
-    m.def("create_application", [](nb::object application, nb::object args, nb::kwargs kwargs) {
-        return sogen_windows_emulator(create_application_emulator(application, args, kwargs));
+    m.def("create_application", [](nb::args args, nb::kwargs kwargs) {
+        if (nb::len(args) < 1)
+        {
+            throw std::runtime_error("create_application() requires an application path");
+        }
+
+        const nb::object application = args[0];
+        const nb::object application_args = nb::len(args) > 1 ? args[1] : nb::none();
+        return sogen_windows_emulator(create_application_emulator(application, application_args, kwargs));
     });
 }
