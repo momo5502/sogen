@@ -420,13 +420,14 @@ namespace syscalls
     BOOL handle_NtUserReleaseDC();
     NTSTATUS handle_NtUserGetCursorPos();
     NTSTATUS handle_NtUserSetCursor();
+    uint64_t handle_NtUserGetCursor();
     NTSTATUS handle_NtUserFindExistingCursorIcon();
-    NTSTATUS handle_NtUserFindWindowEx(const syscall_context& c, hwnd parent, hwnd child_after,
+    uint64_t handle_NtUserFindWindowEx(const syscall_context& c, hwnd parent, hwnd child_after,
                                        emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                        emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> window_name);
-    NTSTATUS handle_NtUserMoveWindow();
-    NTSTATUS handle_NtUserGetProcessWindowStation();
-    NTSTATUS handle_NtUserRegisterClassExWOW(const syscall_context& c, emulator_object<EMU_WNDCLASSEX> wnd_class_ex,
+    BOOL handle_NtUserMoveWindow();
+    uint64_t handle_NtUserGetProcessWindowStation();
+    uint16_t handle_NtUserRegisterClassExWOW(const syscall_context& c, emulator_object<EMU_WNDCLASSEX> wnd_class_ex,
                                              emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                              emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_version,
                                              emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> class_menu_name, DWORD function_id,
@@ -474,18 +475,19 @@ namespace syscalls
     BOOL handle_NtUserGetHDevName(const syscall_context& c, handle hdev, emulator_pointer device_name);
     emulator_pointer handle_NtUserMapDesktopObject(const syscall_context& c, handle handle);
     NTSTATUS handle_NtUserTransformRect();
-    NTSTATUS handle_NtUserSetWindowPos();
+    BOOL handle_NtUserSetWindowPos();
     NTSTATUS handle_NtUserSetForegroundWindow();
     hwnd handle_NtUserGetForegroundWindow();
     emulator_pointer handle_NtUserSetWindowLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
                                                    BOOL Ansi);
     uint32_t handle_NtUserSetWindowLong(const syscall_context& c, handle hWnd, int nIndex, uint32_t dwNewLong, BOOL Ansi);
     uint64_t handle_NtUserGetAncestor(const syscall_context& c, hwnd child_hwnd, UINT flags);
-    NTSTATUS handle_NtUserRedrawWindow();
+    BOOL handle_NtUserRedrawWindow();
     NTSTATUS handle_NtUserGetCPD();
     NTSTATUS handle_NtUserSetWindowFNID();
-    NTSTATUS handle_NtUserEnableWindow();
-    NTSTATUS handle_NtUserGetSystemMenu();
+    BOOL handle_NtUserEnableWindow();
+    uint64_t handle_NtUserGetSystemMenu();
+    BOOL handle_NtUserAllowSetForegroundWindow();
     ULONG handle_NtUserGetAtomName(const syscall_context& c, RTL_ATOM atom,
                                    emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> atom_name);
     NTSTATUS handle_NtQueryLicenseValue(const syscall_context& c, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> value_name,
@@ -1055,6 +1057,7 @@ void syscall_dispatcher::add_handlers(std::map<std::string, syscall_handler>& ha
     add_handler(NtUserDestroyWindow);
     add_handler(NtQueryInformationByName);
     add_handler(NtUserSetCursor);
+    add_handler(NtUserGetCursor);
     add_handler(NtOpenMutant);
     add_handler(NtOpenTimer);
     add_handler(NtCreateTimer);

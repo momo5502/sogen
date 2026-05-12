@@ -519,12 +519,17 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
+    uint64_t handle_NtUserGetCursor()
+    {
+        return 0;
+    }
+
     NTSTATUS handle_NtUserFindExistingCursorIcon()
     {
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtUserFindWindowEx(const syscall_context& c, const hwnd, const hwnd,
+    uint64_t handle_NtUserFindWindowEx(const syscall_context& c, const hwnd, const hwnd,
                                        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> window_name)
     {
@@ -549,17 +554,17 @@ namespace syscalls
         return 0;
     }
 
-    NTSTATUS handle_NtUserMoveWindow()
+    BOOL handle_NtUserMoveWindow()
+    {
+        return TRUE;
+    }
+
+    uint64_t handle_NtUserGetProcessWindowStation()
     {
         return 0;
     }
 
-    NTSTATUS handle_NtUserGetProcessWindowStation()
-    {
-        return 0;
-    }
-
-    NTSTATUS handle_NtUserRegisterClassExWOW(const syscall_context& c, const emulator_object<EMU_WNDCLASSEX> wnd_class_ex,
+    uint16_t handle_NtUserRegisterClassExWOW(const syscall_context& c, const emulator_object<EMU_WNDCLASSEX> wnd_class_ex,
                                              const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                              const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*class_version*/,
                                              const emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> class_menu_name,
@@ -567,7 +572,8 @@ namespace syscalls
     {
         if (!wnd_class_ex)
         {
-            return STATUS_INVALID_PARAMETER;
+            set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+            return 0;
         }
 
         const auto class_name_str = read_unicode_string(c.emu, class_name);
@@ -1161,9 +1167,9 @@ namespace syscalls
     {
         if (dev_mode && (mode_num == ENUM_CURRENT_SETTINGS || mode_num == 0))
         {
-            const auto dev_name = read_unicode_string(c.emu, device_name);
+            const auto dev_name = device_name ? read_unicode_string(c.emu, device_name) : u"";
 
-            if (dev_name == u"\\\\.\\DISPLAY1")
+            if (dev_name.empty() || dev_name == u"\\\\.\\DISPLAY1")
             {
                 dev_mode.access([](EMU_DEVMODEW& dm) {
                     dm.dmFields = 0x5C0000; // DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY
@@ -1310,9 +1316,9 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtUserSetWindowPos()
+    BOOL handle_NtUserSetWindowPos()
     {
-        return STATUS_SUCCESS;
+        return TRUE;
     }
 
     NTSTATUS handle_NtUserSetForegroundWindow()
@@ -1463,9 +1469,9 @@ namespace syscalls
         }
     }
 
-    NTSTATUS handle_NtUserRedrawWindow()
+    BOOL handle_NtUserRedrawWindow()
     {
-        return STATUS_SUCCESS;
+        return TRUE;
     }
 
     NTSTATUS handle_NtUserGetCPD()
@@ -1478,14 +1484,19 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtUserEnableWindow()
+    BOOL handle_NtUserEnableWindow()
     {
-        return STATUS_SUCCESS;
+        return TRUE;
     }
 
-    NTSTATUS handle_NtUserGetSystemMenu()
+    uint64_t handle_NtUserGetSystemMenu()
     {
-        return STATUS_SUCCESS;
+        return 0;
+    }
+
+    BOOL handle_NtUserAllowSetForegroundWindow()
+    {
+        return TRUE;
     }
 
     ULONG handle_NtUserGetAtomName(const syscall_context& c, const RTL_ATOM atom,
