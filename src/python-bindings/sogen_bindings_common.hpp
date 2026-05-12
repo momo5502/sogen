@@ -18,7 +18,7 @@ namespace nb = nanobind;
 
 namespace
 {
-    std::string stop_reason_to_string(const stop_reason reason)
+    [[maybe_unused]] std::string stop_reason_to_string(const stop_reason reason)
     {
         switch (reason)
         {
@@ -144,12 +144,13 @@ namespace
         return get_kwarg<backend_type>(kwargs, "backend", backend_type::unicorn);
     }
 
-    std::unique_ptr<windows_emulator> create_empty_emulator(const nb::kwargs& kwargs)
+    [[maybe_unused]] std::unique_ptr<windows_emulator> create_empty_emulator(const nb::kwargs& kwargs)
     {
         return std::make_unique<windows_emulator>(create_x86_64_emulator(get_backend_type(kwargs)), make_emulator_settings(kwargs));
     }
 
-    std::unique_ptr<windows_emulator> create_application_emulator(nb::object application, nb::object args, const nb::kwargs& kwargs)
+    [[maybe_unused]] std::unique_ptr<windows_emulator> create_application_emulator(nb::object application, nb::object args,
+                                                                                   const nb::kwargs& kwargs)
     {
         auto app_settings = make_application_settings(application, args, kwargs);
         return std::make_unique<windows_emulator>(create_x86_64_emulator(get_backend_type(kwargs)), std::move(app_settings),

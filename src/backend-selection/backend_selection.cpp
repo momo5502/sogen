@@ -37,6 +37,8 @@ namespace
 
         case backend_type::auto_select:
             break;
+        default:
+            break;
         }
 
         throw std::runtime_error("Requested backend is not available on this platform");
