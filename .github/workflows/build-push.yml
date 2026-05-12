@@ -60,3 +60,40 @@ jobs:
     with:
       enable_deploy: ${{ github.repository_owner == 'momo5502' && github.ref == 'refs/heads/main' }}
       verbose: ${{ inputs.verbose || 'false' }}
+
+  publish-python-package:
+    name: Publish Python Package
+    needs: [ci]
+    if: ${{ github.repository_owner == 'momo5502' && github.ref == 'refs/heads/main' && needs.ci.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Download wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sogen-wheel-*
+          path: dist
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.ci.outputs.run_id }}
+
+      - name: Download sdist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sogen-sdist
+          path: dist
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.ci.outputs.run_id }}
+
+      - name: List distributions
+        run: ls -la dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist

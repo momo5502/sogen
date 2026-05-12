@@ -576,10 +576,12 @@ namespace
     {
         process_context* ctx{};
         std::shared_ptr<callback_registry> callbacks{};
+        nb::object owner = nb::none();
 
-        explicit sogen_process_context(process_context& context, std::shared_ptr<callback_registry> callback_registry)
+        explicit sogen_process_context(process_context& context, std::shared_ptr<callback_registry> callback_registry, nb::object owner)
             : ctx(&context),
-              callbacks(std::move(callback_registry))
+              callbacks(std::move(callback_registry)),
+              owner(std::move(owner))
         {
         }
 
@@ -679,7 +681,7 @@ namespace
 
         sogen_process_context process()
         {
-            return sogen_process_context(this->emu->process, this->callbacks);
+            return sogen_process_context(this->emu->process, this->callbacks, nb::cast(this, nb::rv_policy::reference_internal));
         }
 
         nb::object memory()
