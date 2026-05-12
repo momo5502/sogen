@@ -106,12 +106,14 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
+          repair_dir="${RUNNER_TEMP}/auditwheel-repaired"
+          mkdir -p "$repair_dir"
           for whl in dist/*linux_x86_64.whl; do
-            python -m auditwheel repair "$whl" -w dist/repaired
+            python -m auditwheel repair "$whl" -w "$repair_dir"
           done
-          if [ -d dist/repaired ]; then
+          if compgen -G "$repair_dir/*.whl" > /dev/null; then
             rm -f dist/*linux_x86_64.whl
-            mv dist/repaired/*.whl dist/
+            mv "$repair_dir"/*.whl dist/
           fi
 
       - name: List distributions
