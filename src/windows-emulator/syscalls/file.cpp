@@ -127,20 +127,15 @@ namespace syscalls
                 return STATUS_INFO_LENGTH_MISMATCH;
             }
 
-            if (!(f->access_mask & DELETE))
+            const auto info = c.emu.read_memory<FILE_DISPOSITION_INFORMATION_EX>(file_information);
+            const bool wants_delete = (info.Flags & FILE_DISPOSITION_DELETE) != 0;
+
+            if (wants_delete && !(f->access_mask & DELETE))
             {
                 return STATUS_ACCESS_DENIED;
             }
 
-            const auto info = c.emu.read_memory<FILE_DISPOSITION_INFORMATION_EX>(file_information);
-
-            if (info.Flags & ~FILE_DISPOSITION_DELETE)
-            {
-                return STATUS_NOT_SUPPORTED;
-            }
-
-            f->handle.defer_delete((info.Flags & FILE_DISPOSITION_DELETE) ? c.win_emu.file_sys.translate(f->name)
-                                                                          : std::filesystem::path{});
+            f->handle.defer_delete(wants_delete ? c.win_emu.file_sys.translate(f->name) : std::filesystem::path{});
 
             return STATUS_SUCCESS;
         }
@@ -1522,6 +1517,11 @@ namespace syscalls
                                  ULONG /*share_access*/, ULONG create_disposition, ULONG create_options, uint64_t ea_buffer,
                                  ULONG ea_length)
     {
+        if (create_options & FILE_DELETE_ON_CLOSE && !(desired_access & DELETE))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
         const auto attributes = object_attributes.read();
         auto filename = read_unicode_string(c.emu, attributes.ObjectName);
 
@@ -1716,6 +1716,11 @@ namespace syscalls
         f.handle = std::move(native_file_handle);
         f.open_mode = mode;
         f.host_path = host_path;
+
+        if (create_options & FILE_DELETE_ON_CLOSE)
+        {
+            f.handle.defer_delete(host_path);
+        }
 
         const auto handle = c.proc.files.store(std::move(f));
         file_handle.write(handle);
