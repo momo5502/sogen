@@ -1625,35 +1625,62 @@ namespace syscalls
         f.drive_number = path.get_drive().value() - 'a' + 1;
 
         const auto host_path = c.win_emu.file_sys.translate(path);
-        const bool is_directory = std::filesystem::is_directory(host_path, ec);
+        const bool file_exists = std::filesystem::exists(host_path, ec);
 
-        if (is_directory || create_options & FILE_DIRECTORY_FILE)
+        if (file_exists && std::filesystem::is_directory(host_path, ec))
+        {
+            if (create_options & FILE_NON_DIRECTORY_FILE)
+            {
+                return STATUS_FILE_IS_A_DIRECTORY;
+            }
+
+            if (create_disposition == FILE_CREATE)
+            {
+                return STATUS_OBJECT_NAME_COLLISION;
+            }
+
+            if (create_disposition != FILE_OPEN && create_disposition != FILE_OPEN_IF)
+            {
+                return STATUS_ACCESS_DENIED;
+            }
+
+            c.win_emu.callbacks.on_generic_access("Opening folder", f.name);
+
+            f.host_path = host_path;
+
+            const auto handle = c.proc.files.store(std::move(f));
+            file_handle.write(handle);
+
+            return STATUS_SUCCESS;
+        }
+
+        if (create_options & FILE_DIRECTORY_FILE)
         {
             c.win_emu.callbacks.on_generic_access("Opening folder", f.name);
 
-            if (create_disposition == FILE_CREATE || create_disposition == FILE_OPEN_IF)
+            if (file_exists)
             {
-                if (create_disposition == FILE_CREATE && std::filesystem::exists(host_path))
-                {
-                    return STATUS_OBJECT_NAME_COLLISION;
-                }
-
-                if (!std::filesystem::is_directory(host_path.parent_path()))
-                {
-                    return STATUS_OBJECT_PATH_NOT_FOUND;
-                }
-
-                create_directory(host_path, ec);
-
-                if (ec)
-                {
-                    return STATUS_ACCESS_DENIED;
-                }
+                return STATUS_NOT_A_DIRECTORY;
             }
-            else if (!is_directory)
+
+            if (create_disposition != FILE_CREATE && create_disposition != FILE_OPEN_IF)
             {
                 return STATUS_OBJECT_NAME_NOT_FOUND;
             }
+
+            if (!std::filesystem::is_directory(host_path.parent_path(), ec))
+            {
+                return STATUS_OBJECT_PATH_NOT_FOUND;
+            }
+
+            create_directory(host_path, ec);
+
+            if (ec)
+            {
+                return STATUS_ACCESS_DENIED;
+            }
+
+            f.host_path = host_path;
 
             const auto handle = c.proc.files.store(std::move(f));
             file_handle.write(handle);
@@ -1662,8 +1689,6 @@ namespace syscalls
         }
 
         c.win_emu.callbacks.on_generic_access("Opening file", f.name);
-
-        const bool file_exists = std::filesystem::exists(host_path, ec);
 
         if (create_disposition == FILE_CREATE && file_exists)
         {
