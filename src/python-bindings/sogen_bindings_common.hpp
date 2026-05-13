@@ -179,9 +179,8 @@ namespace
 
     void deserialize_state_bytes(windows_emulator& emulator, const nb::bytes& buffer)
     {
-        const auto data = nb::cast<std::string>(buffer);
-        const auto* begin = reinterpret_cast<const std::byte*>(data.data());
-        const auto* end = begin + data.size();
+        const auto* begin = reinterpret_cast<const std::byte*>(buffer.data());
+        const auto* end = begin + buffer.size();
         utils::buffer_deserializer deserializer{std::vector<std::byte>(begin, end)};
         emulator.deserialize(deserializer);
     }
