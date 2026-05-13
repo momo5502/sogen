@@ -46,7 +46,7 @@ namespace
         return nb::cast<T>(kwargs[name]);
     }
 
-    std::vector<std::u16string> parse_arguments(nb::object object)
+    std::vector<std::u16string> parse_arguments(const nb::object& object)
     {
         std::vector<std::u16string> result{};
         if (object.is_none())
@@ -54,7 +54,7 @@ namespace
             return result;
         }
 
-        const nb::sequence seq = nb::cast<nb::sequence>(object);
+        const auto seq = nb::cast<nb::sequence>(object);
         result.reserve(static_cast<size_t>(nb::len(seq)));
         for (const auto& item : seq)
         {
@@ -64,7 +64,7 @@ namespace
         return result;
     }
 
-    utils::unordered_insensitive_u16string_map<std::u16string> parse_environment(nb::object object)
+    utils::unordered_insensitive_u16string_map<std::u16string> parse_environment(const nb::object& object)
     {
         utils::unordered_insensitive_u16string_map<std::u16string> result{};
         if (object.is_none())
@@ -72,7 +72,7 @@ namespace
             return result;
         }
 
-        const nb::dict dict = nb::cast<nb::dict>(object);
+        const auto dict = nb::cast<nb::dict>(object);
         for (const auto& item : dict)
         {
             result.emplace(u8_to_u16(nb::cast<std::string>(item.first)), u8_to_u16(nb::cast<std::string>(item.second)));
@@ -81,7 +81,7 @@ namespace
         return result;
     }
 
-    std::unordered_map<windows_path, std::filesystem::path> parse_path_mappings(nb::object object)
+    std::unordered_map<windows_path, std::filesystem::path> parse_path_mappings(const nb::object& object)
     {
         std::unordered_map<windows_path, std::filesystem::path> result{};
         if (object.is_none())
@@ -89,7 +89,7 @@ namespace
             return result;
         }
 
-        const nb::dict dict = nb::cast<nb::dict>(object);
+        const auto dict = nb::cast<nb::dict>(object);
         for (const auto& item : dict)
         {
             result.emplace(nb::cast<std::filesystem::path>(item.first), nb::cast<std::filesystem::path>(item.second));
@@ -98,7 +98,7 @@ namespace
         return result;
     }
 
-    std::unordered_map<uint16_t, uint16_t> parse_port_mappings(nb::object object)
+    std::unordered_map<uint16_t, uint16_t> parse_port_mappings(const nb::object& object)
     {
         std::unordered_map<uint16_t, uint16_t> result{};
         if (object.is_none())
@@ -106,7 +106,7 @@ namespace
             return result;
         }
 
-        const nb::dict dict = nb::cast<nb::dict>(object);
+        const auto dict = nb::cast<nb::dict>(object);
         for (const auto& item : dict)
         {
             result.emplace(nb::cast<uint16_t>(item.first), nb::cast<uint16_t>(item.second));
@@ -129,7 +129,7 @@ namespace
         return settings;
     }
 
-    application_settings make_application_settings(nb::object application, nb::object args, const nb::kwargs& kwargs)
+    application_settings make_application_settings(const nb::object& application, const nb::object& args, const nb::kwargs& kwargs)
     {
         application_settings settings{};
         settings.application = nb::cast<std::filesystem::path>(application);
@@ -149,7 +149,7 @@ namespace
         return std::make_unique<windows_emulator>(create_x86_64_emulator(get_backend_type(kwargs)), make_emulator_settings(kwargs));
     }
 
-    [[maybe_unused]] std::unique_ptr<windows_emulator> create_application_emulator(nb::object application, nb::object args,
+    [[maybe_unused]] std::unique_ptr<windows_emulator> create_application_emulator(const nb::object& application, const nb::object& args,
                                                                                    const nb::kwargs& kwargs)
     {
         auto app_settings = make_application_settings(application, args, kwargs);
@@ -305,7 +305,7 @@ namespace
 
         hook_handle make_hook(emulator_hook* hook)
         {
-            return hook_handle(*this->emu, hook, nb::cast(this, nb::rv_policy::reference_internal));
+            return {*this->emu, hook, nb::cast(this, nb::rv_policy::reference_internal)};
         }
 
         hook_handle memory_execution(nb::object callback)
@@ -614,7 +614,7 @@ namespace
             return this->ctx->spawned_thread_count;
         }
 
-        nb::object active_thread()
+        nb::object active_thread() const
         {
             if (!this->ctx->active_thread)
             {
@@ -624,7 +624,7 @@ namespace
             return nb::cast(this->ctx->active_thread, nb::rv_policy::reference_internal);
         }
 
-        callback_registry& callback_view()
+        callback_registry& callback_view() const
         {
             return *this->callbacks;
         }
@@ -643,47 +643,42 @@ namespace
         {
         }
 
-        windows_emulator& native()
+        windows_emulator& native() const
         {
             return *this->emu;
         }
 
-        const windows_emulator& native() const
-        {
-            return *this->emu;
-        }
-
-        void start(size_t count = 0)
+        void start(size_t count = 0) const
         {
             this->emu->start(count);
         }
 
-        void run(size_t count = 0)
+        void run(size_t count = 0) const
         {
             this->emu->start(count);
         }
 
-        void stop()
+        void stop() const
         {
             this->emu->stop();
         }
 
-        void setup_process_if_necessary()
+        void setup_process_if_necessary() const
         {
             this->emu->setup_process_if_necessary();
         }
 
-        void yield_thread(bool alertable = false)
+        void yield_thread(bool alertable = false) const
         {
             this->emu->yield_thread(alertable);
         }
 
-        bool perform_thread_switch()
+        bool perform_thread_switch() const
         {
             return this->emu->perform_thread_switch();
         }
 
-        bool activate_thread(uint32_t id)
+        bool activate_thread(uint32_t id) const
         {
             return this->emu->activate_thread(id);
         }
@@ -693,12 +688,12 @@ namespace
             return sogen_process_context(this->emu->process, this->callbacks, nb::cast(this, nb::rv_policy::reference_internal));
         }
 
-        nb::object memory()
+        nb::object memory() const
         {
             return nb::cast(&this->emu->memory, nb::rv_policy::reference_internal);
         }
 
-        nb::object current_thread()
+        nb::object current_thread() const
         {
             if (!this->emu->process.active_thread)
             {
@@ -723,7 +718,7 @@ namespace
             return read_memory_bytes(this->emu->memory, address, size);
         }
 
-        void write_memory(const uint64_t address, const nb::bytes& buffer)
+        void write_memory(const uint64_t address, const nb::bytes& buffer) const
         {
             write_memory_bytes(this->emu->memory, address, buffer);
         }
@@ -733,7 +728,7 @@ namespace
             return this->emu->emu().reg<uint64_t>(reg);
         }
 
-        void write_register(const x86_register reg, const uint64_t value)
+        void write_register(const x86_register reg, const uint64_t value) const
         {
             this->emu->emu().reg<uint64_t>(reg, value);
         }
@@ -748,7 +743,7 @@ namespace
             return this->emu->get_emulator_port(host_port);
         }
 
-        void map_port(const uint16_t emulator_port, const uint16_t host_port)
+        void map_port(const uint16_t emulator_port, const uint16_t host_port) const
         {
             this->emu->map_port(emulator_port, host_port);
         }

@@ -101,3 +101,26 @@ momo_targets_disable_warnings(${EXTERNAL_TARGETS})
 momo_targets_expose_includes(${OWN_TARGETS})
 momo_targets_set_warnings_as_errors(${OWN_TARGETS})
 momo_targets_enable_clang_tidy(${OWN_TARGETS})
+
+if(SOGEN_ENABLE_PYTHON_BINDINGS)
+  foreach(_nanobind_target
+    nanobind
+    nanobind-static
+    nanobind-abi3
+    nanobind-ft
+    nanobind-abi3-ft
+  )
+    if(TARGET ${_nanobind_target})
+      set_target_properties(${_nanobind_target} PROPERTIES
+        C_CLANG_TIDY ""
+        CXX_CLANG_TIDY ""
+      )
+
+      if(MSVC)
+        target_compile_options(${_nanobind_target} PRIVATE /W0)
+      else()
+        target_compile_options(${_nanobind_target} PRIVATE -w)
+      endif()
+    endif()
+  endforeach()
+endif()

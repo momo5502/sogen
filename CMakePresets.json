@@ -42,7 +42,8 @@
                 "release"
             ],
             "cacheVariables": {
-                "MOMO_ENABLE_CLANG_TIDY": "ON"
+                "MOMO_ENABLE_CLANG_TIDY": "ON",
+                "SOGEN_ENABLE_PYTHON_BINDINGS": "ON"
             }
         },
         {
