@@ -53,10 +53,25 @@ assert hasattr(emu.callbacks, "clear")
 assert hasattr(emu.hooks, "memory_execution")
 assert hasattr(emu.hooks, "memory_read")
 assert hasattr(emu.hooks, "instruction")
+assert hasattr(emu, "save_snapshot")
+assert hasattr(emu, "restore_snapshot")
+assert hasattr(emu, "serialize_state")
+assert hasattr(emu, "deserialize_state")
 emu.callbacks.on_stdout = lambda s: None
 emu.process.callbacks.on_thread_create = lambda h, t: None
 emu.callbacks.on_module_load = lambda m: None
 emu.callbacks.on_module_unload = lambda m: None
+
+state_base = emu.memory.allocate_memory(0x1000, mod.MemoryPermission.read_write)
+emu.write_memory(state_base, b"ABCD")
+state_bytes = emu.serialize_state()
+emu.write_memory(state_base, b"WXYZ")
+emu.deserialize_state(state_bytes)
+assert emu.read_memory(state_base, 4) == b"ABCD"
+emu.save_snapshot()
+emu.write_memory(state_base, b"1234")
+emu.restore_snapshot()
+assert emu.read_memory(state_base, 4) == b"ABCD"
 
 test_sample = Path(analysis_sample)
 assert test_sample.exists()

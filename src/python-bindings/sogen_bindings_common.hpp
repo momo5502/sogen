@@ -168,6 +168,24 @@ namespace
         memory.write_memory(address, buffer.data(), buffer.size());
     }
 
+    nb::bytes serialize_state_bytes(const windows_emulator& emulator)
+    {
+        utils::buffer_serializer serializer{};
+        emulator.serialize(serializer);
+
+        const auto data = serializer.move_buffer();
+        return nb::bytes(reinterpret_cast<const char*>(data.data()), static_cast<nb::ssize_t>(data.size()));
+    }
+
+    void deserialize_state_bytes(windows_emulator& emulator, const nb::bytes& buffer)
+    {
+        const auto data = nb::cast<std::string>(buffer);
+        const auto* begin = reinterpret_cast<const std::byte*>(data.data());
+        const auto* end = begin + data.size();
+        utils::buffer_deserializer deserializer{std::vector<std::byte>(begin, end)};
+        emulator.deserialize(deserializer);
+    }
+
     template <typename... Args>
     void invoke_callback(const nb::object& cb, Args&&... args)
     {
@@ -661,6 +679,26 @@ namespace
         void stop() const
         {
             this->emu->stop();
+        }
+
+        void save_snapshot() const
+        {
+            this->emu->save_snapshot();
+        }
+
+        void restore_snapshot() const
+        {
+            this->emu->restore_snapshot();
+        }
+
+        nb::bytes serialize_state() const
+        {
+            return serialize_state_bytes(*this->emu);
+        }
+
+        void deserialize_state(const nb::bytes& buffer) const
+        {
+            deserialize_state_bytes(*this->emu, buffer);
         }
 
         void setup_process_if_necessary() const

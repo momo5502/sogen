@@ -757,8 +757,7 @@ void windows_emulator::restore_snapshot()
 {
     if (this->process_snapshot_.empty())
     {
-        assert(false);
-        return;
+        throw std::runtime_error("No snapshot saved");
     }
 
     utils::buffer_deserializer buffer{this->process_snapshot_};
