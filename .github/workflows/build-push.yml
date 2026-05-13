@@ -71,6 +71,11 @@ jobs:
       actions: read
       id-token: write
     steps:
+      - name: Configure fast APT mirror
+        uses: vegardit/fast-apt-mirror.sh@1.4.4
+        with:
+          exclude-current: true
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
