@@ -181,7 +181,7 @@ namespace
     {
         const auto* begin = reinterpret_cast<const std::byte*>(buffer.data());
         const auto* end = begin + buffer.size();
-        utils::buffer_deserializer deserializer{std::vector<std::byte>(begin, end)};
+        utils::buffer_deserializer deserializer{std::span(begin, end)};
         emulator.deserialize(deserializer);
     }
 
