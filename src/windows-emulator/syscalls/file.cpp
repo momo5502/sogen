@@ -596,12 +596,9 @@ namespace syscalls
             }
 
             struct compat_stat file_stat{};
-            if (f->handle)
+            if (f->handle && !compat_fstat(f->handle.file_descriptor(), &file_stat))
             {
-                if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
-                {
-                    return ret(STATUS_INVALID_HANDLE);
-                }
+                return ret(STATUS_INVALID_HANDLE);
             }
 
             FILE_STREAM_INFORMATION info{};
@@ -664,13 +661,12 @@ namespace syscalls
             }
 
             struct compat_stat file_stat{};
-            if (f->handle)
+            if (f->handle && !compat_fstat(f->handle.file_descriptor(), &file_stat))
             {
-                if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
-                {
-                    return STATUS_INVALID_HANDLE;
-                }
+                return STATUS_INVALID_HANDLE;
             }
+
+            const bool is_directory = f->handle ? (file_stat.st_mode & S_IFDIR) != 0 : f->is_directory();
 
             auto address = file_information;
             if (all_info)
@@ -684,8 +680,7 @@ namespace syscalls
             i.LastAccessTime = convert_timespec_to_filetime(file_stat.st_atimespec);
             i.LastWriteTime = convert_timespec_to_filetime(file_stat.st_mtimespec);
             i.ChangeTime = i.LastWriteTime;
-            i.FileAttributes =
-                (f->handle ? (file_stat.st_mode & S_IFDIR) : f->is_directory()) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+            i.FileAttributes = is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
 
             info.write(i);
 
@@ -745,12 +740,9 @@ namespace syscalls
             }
 
             struct compat_stat file_stat{};
-            if (f->handle)
+            if (f->handle && !compat_fstat(f->handle.file_descriptor(), &file_stat))
             {
-                if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
-                {
-                    return STATUS_INVALID_HANDLE;
-                }
+                return STATUS_INVALID_HANDLE;
             }
 
             auto address = file_information;
