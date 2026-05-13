@@ -168,6 +168,23 @@ namespace
         memory.write_memory(address, buffer.data(), buffer.size());
     }
 
+    nb::bytes serialize_state_bytes(const windows_emulator& emulator)
+    {
+        utils::buffer_serializer serializer{};
+        emulator.serialize(serializer);
+
+        const auto data = serializer.move_buffer();
+        return nb::bytes(reinterpret_cast<const char*>(data.data()), static_cast<nb::ssize_t>(data.size()));
+    }
+
+    void deserialize_state_bytes(windows_emulator& emulator, const nb::bytes& buffer)
+    {
+        const auto* begin = reinterpret_cast<const std::byte*>(buffer.data());
+        const auto* end = begin + buffer.size();
+        utils::buffer_deserializer deserializer{std::span(begin, end)};
+        emulator.deserialize(deserializer);
+    }
+
     template <typename... Args>
     void invoke_callback(const nb::object& cb, Args&&... args)
     {
@@ -614,14 +631,9 @@ namespace
             return this->ctx->spawned_thread_count;
         }
 
-        nb::object active_thread() const
+        emulator_thread* active_thread() const
         {
-            if (!this->ctx->active_thread)
-            {
-                return nb::none();
-            }
-
-            return nb::cast(this->ctx->active_thread, nb::rv_policy::reference_internal);
+            return this->ctx->active_thread;
         }
 
         callback_registry& callback_view() const
@@ -663,6 +675,26 @@ namespace
             this->emu->stop();
         }
 
+        void save_snapshot() const
+        {
+            this->emu->save_snapshot();
+        }
+
+        void restore_snapshot() const
+        {
+            this->emu->restore_snapshot();
+        }
+
+        nb::bytes serialize_state() const
+        {
+            return serialize_state_bytes(*this->emu);
+        }
+
+        void deserialize_state(const nb::bytes& buffer) const
+        {
+            deserialize_state_bytes(*this->emu, buffer);
+        }
+
         void setup_process_if_necessary() const
         {
             this->emu->setup_process_if_necessary();
@@ -688,19 +720,14 @@ namespace
             return sogen_process_context(this->emu->process, this->callbacks, nb::cast(this, nb::rv_policy::reference_internal));
         }
 
-        nb::object memory() const
+        memory_manager& memory() const
         {
-            return nb::cast(&this->emu->memory, nb::rv_policy::reference_internal);
+            return this->emu->memory;
         }
 
-        nb::object current_thread() const
+        emulator_thread* current_thread() const
         {
-            if (!this->emu->process.active_thread)
-            {
-                return nb::none();
-            }
-
-            return nb::cast(this->emu->process.active_thread, nb::rv_policy::reference_internal);
+            return this->emu->process.active_thread;
         }
 
         std::optional<uint32_t> current_thread_id() const

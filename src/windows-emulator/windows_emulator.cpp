@@ -694,6 +694,7 @@ void windows_emulator::serialize(utils::buffer_serializer& buffer) const
     this->version.serialize(buffer);
     this->registry.serialize_runtime_state(buffer);
 
+    // Backend snapshot mode is not used here; Unicorn's in-place snapshot path is broken.
     this->emu().serialize_state(buffer, false);
     this->memory.serialize_memory_state(buffer, false);
     this->mod_manager.serialize(buffer);
@@ -723,6 +724,7 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
 
     this->memory.unmap_all_memory();
 
+    // Match raw serialize() above; do not use backend snapshot mode here.
     this->emu().deserialize_state(buffer, false);
     this->memory.deserialize_memory_state(buffer, false);
     this->mod_manager.deserialize(buffer);
@@ -734,7 +736,6 @@ void windows_emulator::save_snapshot()
 {
     utils::buffer_serializer buffer{};
 
-    buffer.write(this->application_settings_);
     buffer.write(this->setup_completed_);
     buffer.write(this->executed_instructions_);
     buffer.write_atomic(this->switch_thread_);
@@ -742,30 +743,28 @@ void windows_emulator::save_snapshot()
     this->version.serialize(buffer);
     this->registry.serialize_runtime_state(buffer);
 
-    this->emu().serialize_state(buffer, true);
-    this->memory.serialize_memory_state(buffer, true);
+    // Snapshot path still uses regular backend state serialization.
+    // Backend snapshot mode (is_snapshot=true) is not reliable yet.
+    this->emu().serialize_state(buffer, false);
+    this->memory.serialize_memory_state(buffer, false);
     this->mod_manager.serialize(buffer);
+    this->dispatcher.serialize(buffer);
     this->process.serialize(buffer);
 
     this->process_snapshot_ = buffer.move_buffer();
-
-    // TODO: Make process copyable
-    // this->process_snapshot_ = this->process;
 }
 
 void windows_emulator::restore_snapshot()
 {
     if (this->process_snapshot_.empty())
     {
-        assert(false);
-        return;
+        throw std::runtime_error("No snapshot saved");
     }
 
     utils::buffer_deserializer buffer{this->process_snapshot_};
 
     this->register_factories(buffer);
 
-    buffer.read(this->application_settings_);
     buffer.read(this->setup_completed_);
     buffer.read(this->executed_instructions_);
     buffer.read_atomic(this->switch_thread_);
@@ -773,9 +772,11 @@ void windows_emulator::restore_snapshot()
     this->version.deserialize(buffer);
     this->registry.deserialize_runtime_state(buffer);
 
-    this->emu().deserialize_state(buffer, true);
-    this->memory.deserialize_memory_state(buffer, true);
+    this->memory.unmap_all_memory();
+
+    this->emu().deserialize_state(buffer, false);
+    this->memory.deserialize_memory_state(buffer, false);
     this->mod_manager.deserialize(buffer);
+    this->dispatcher.deserialize(buffer);
     this->process.deserialize(buffer);
-    // this->process = *this->process_snapshot_;
 }
