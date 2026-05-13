@@ -74,7 +74,11 @@ namespace utils
             {
                 this->release();
                 this->file_ = obj.file_;
+                this->deferred_rename_ = obj.deferred_rename_;
+                this->deferred_delete_ = obj.deferred_delete_;
                 obj.file_ = {};
+                obj.deferred_rename_ = {};
+                obj.deferred_delete_ = {};
             }
 
             return *this;

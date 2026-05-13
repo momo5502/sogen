@@ -260,7 +260,7 @@ namespace syscalls
 
         for (auto& [handle, section] : c.proc.sections)
         {
-            if (section.is_image() && utils::string::equals_ignore_case(section.name, filename))
+            if (!section.name.empty() && utils::string::equals_ignore_case(section.name, filename))
             {
                 section_handle.write(c.proc.sections.make_handle(handle));
                 return STATUS_SUCCESS;

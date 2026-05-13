@@ -628,8 +628,58 @@ namespace syscalls
         return TRUE;
     }
 
-    NTSTATUS handle_NtFlushVirtualMemory()
+    NTSTATUS handle_NtUnlockVirtualMemory()
     {
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS handle_NtFlushVirtualMemory(const syscall_context& c, const handle process_handle,
+                                         const emulator_object<uint64_t> base_address, const emulator_object<uint64_t> region_size,
+                                         const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block)
+    {
+        if (process_handle != CURRENT_PROCESS)
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        if (!base_address || !region_size)
+        {
+            return STATUS_ACCESS_VIOLATION;
+        }
+
+        const auto address = base_address.read();
+        const auto size = region_size.read();
+
+        if (!address || !size)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const auto aligned_start = page_align_down(address);
+        const auto aligned_end = page_align_up(address + size);
+
+        if (aligned_end <= aligned_start)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const auto region_info = c.win_emu.memory.get_region_info(aligned_start);
+        if (!region_info.is_committed || region_info.start > aligned_start || region_info.start + region_info.length < aligned_end)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        base_address.write(aligned_start);
+        region_size.write(aligned_end - aligned_start);
+
+        if (io_status_block)
+        {
+            IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+            block.Status = STATUS_SUCCESS;
+            block.Information = aligned_end - aligned_start;
+            io_status_block.write(block);
+        }
+
         return STATUS_SUCCESS;
     }
 }

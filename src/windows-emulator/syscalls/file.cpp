@@ -58,6 +58,11 @@ namespace syscalls
             return STATUS_INVALID_HANDLE;
         }
 
+        if (info_class == FileBasicInformation)
+        {
+            return STATUS_SUCCESS;
+        }
+
         if (info_class == FileRenameInformation)
         {
             if (length < sizeof(FILE_RENAME_INFORMATION))
@@ -127,27 +132,17 @@ namespace syscalls
                 return STATUS_INFO_LENGTH_MISMATCH;
             }
 
-            if (!(f->access_mask & DELETE))
+            const auto info = c.emu.read_memory<FILE_DISPOSITION_INFORMATION_EX>(file_information);
+            const bool wants_delete = (info.Flags & FILE_DISPOSITION_DELETE) != 0;
+
+            if (wants_delete && !(f->access_mask & DELETE))
             {
                 return STATUS_ACCESS_DENIED;
             }
 
-            const auto info = c.emu.read_memory<FILE_DISPOSITION_INFORMATION_EX>(file_information);
-
-            if (info.Flags & ~FILE_DISPOSITION_DELETE)
-            {
-                return STATUS_NOT_SUPPORTED;
-            }
-
-            f->handle.defer_delete((info.Flags & FILE_DISPOSITION_DELETE) ? c.win_emu.file_sys.translate(f->name)
-                                                                          : std::filesystem::path{});
+            f->handle.defer_delete(wants_delete ? c.win_emu.file_sys.translate(f->name) : std::filesystem::path{});
 
             return STATUS_SUCCESS;
-        }
-
-        if (info_class == FileBasicInformation)
-        {
-            return STATUS_NOT_SUPPORTED;
         }
 
         if (info_class == FilePositionInformation)
@@ -243,6 +238,16 @@ namespace syscalls
                                                               info.TotalAllocationUnits.QuadPart = 0x10000;
                                                               info.AvailableAllocationUnits.QuadPart = 0x1000;
                                                           });
+
+        case FileFsFullSizeInformation:
+            return handle_query<FILE_FS_FULL_SIZE_INFORMATION>(c.emu, fs_information, length, io_status_block,
+                                                               [&](FILE_FS_FULL_SIZE_INFORMATION& info) {
+                                                                   info.BytesPerSector = 0x1000;
+                                                                   info.SectorsPerAllocationUnit = 0x1000;
+                                                                   info.TotalAllocationUnits.QuadPart = 0x10000;
+                                                                   info.CallerAvailableAllocationUnits.QuadPart = 0x1000;
+                                                                   info.ActualAvailableAllocationUnits.QuadPart = 0x1000;
+                                                               });
 
         case FileFsVolumeInformation:
             return handle_query<FILE_FS_VOLUME_INFORMATION>(c.emu, fs_information, length, io_status_block,
@@ -541,6 +546,11 @@ namespace syscalls
             return ret(STATUS_SUCCESS, required_length);
         }
 
+        if (info_class == FileRemoteProtocolInformation)
+        {
+            return ret(STATUS_INVALID_PARAMETER);
+        }
+
         if (info_class == FileIdInformation)
         {
             if (!f->handle)
@@ -586,12 +596,9 @@ namespace syscalls
             }
 
             struct compat_stat file_stat{};
-            if (f->handle)
+            if (f->handle && !compat_fstat(f->handle.file_descriptor(), &file_stat))
             {
-                if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
-                {
-                    return ret(STATUS_INVALID_HANDLE);
-                }
+                return ret(STATUS_INVALID_HANDLE);
             }
 
             FILE_STREAM_INFORMATION info{};
@@ -654,10 +661,12 @@ namespace syscalls
             }
 
             struct compat_stat file_stat{};
-            if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
+            if (f->handle && !compat_fstat(f->handle.file_descriptor(), &file_stat))
             {
                 return STATUS_INVALID_HANDLE;
             }
+
+            const bool is_directory = f->handle ? (file_stat.st_mode & S_IFDIR) != 0 : f->is_directory();
 
             auto address = file_information;
             if (all_info)
@@ -671,7 +680,7 @@ namespace syscalls
             i.LastAccessTime = convert_timespec_to_filetime(file_stat.st_atimespec);
             i.LastWriteTime = convert_timespec_to_filetime(file_stat.st_mtimespec);
             i.ChangeTime = i.LastWriteTime;
-            i.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+            i.FileAttributes = is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
 
             info.write(i);
 
@@ -731,7 +740,7 @@ namespace syscalls
             }
 
             struct compat_stat file_stat{};
-            if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
+            if (f->handle && !compat_fstat(f->handle.file_descriptor(), &file_stat))
             {
                 return STATUS_INVALID_HANDLE;
             }
@@ -821,11 +830,6 @@ namespace syscalls
 
         if (info_class == FilePositionInformation || all_info)
         {
-            if (!f->handle)
-            {
-                return ret(STATUS_NOT_SUPPORTED);
-            }
-
             constexpr auto required_length = sizeof(FILE_POSITION_INFORMATION);
 
             if (length < required_length)
@@ -842,7 +846,7 @@ namespace syscalls
             const emulator_object<FILE_POSITION_INFORMATION> info{c.emu, address};
             FILE_POSITION_INFORMATION i{};
 
-            i.CurrentByteOffset.QuadPart = f->handle.tell();
+            i.CurrentByteOffset.QuadPart = f->handle ? f->handle.tell() : 0;
 
             info.write(i);
 
@@ -1011,13 +1015,19 @@ namespace syscalls
                 return STATUS_INVALID_HANDLE;
             }
 
+            const auto is_directory = (file_stat.st_mode & S_IFDIR) != 0;
+
             EMU_FILE_STAT_BASIC_INFORMATION i{};
 
             i.CreationTime = convert_timespec_to_filetime(file_stat.st_ctimespec);
             i.LastAccessTime = convert_timespec_to_filetime(file_stat.st_atimespec);
             i.LastWriteTime = convert_timespec_to_filetime(file_stat.st_mtimespec);
             i.ChangeTime = i.LastWriteTime;
-            i.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+            i.FileAttributes = is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+
+            const auto file_size = is_directory ? 0LL : file_stat.st_size;
+            i.EndOfFile.QuadPart = file_size;
+            i.AllocationSize.QuadPart = static_cast<LONGLONG>(align_up(file_size, 512));
 
             c.emu.write_memory(file_information, i);
 
@@ -1083,8 +1093,7 @@ namespace syscalls
     NTSTATUS handle_NtReadFile(const syscall_context& c, const handle file_handle, const uint64_t /*event*/, const uint64_t /*apc_routine*/,
                                const uint64_t /*apc_context*/,
                                const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const uint64_t buffer,
-                               const ULONG length, const emulator_object<LARGE_INTEGER> /*byte_offset*/,
-                               const emulator_object<ULONG> /*key*/)
+                               const ULONG length, const emulator_object<LARGE_INTEGER> byte_offset, const emulator_object<ULONG> /*key*/)
     {
         std::string temp_buffer{};
         temp_buffer.resize(length);
@@ -1103,6 +1112,18 @@ namespace syscalls
             const auto count = std::max(read_count, static_cast<std::streamsize>(0));
 
             commit_file_data(std::string_view(temp_buffer.data(), static_cast<size_t>(count)), c.emu, io_status_block, buffer);
+            return STATUS_SUCCESS;
+        }
+
+        if (file_handle == NUL_HANDLE)
+        {
+            if (io_status_block)
+            {
+                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                block.Information = 0;
+                io_status_block.write(block);
+            }
+
             return STATUS_SUCCESS;
         }
 
@@ -1140,17 +1161,50 @@ namespace syscalls
             return STATUS_INVALID_HANDLE;
         }
 
-        const auto bytes_read = fread(temp_buffer.data(), 1, temp_buffer.size(), f->handle);
-        commit_file_data(std::string_view(temp_buffer.data(), bytes_read), c.emu, io_status_block, buffer);
+        if (byte_offset)
+        {
+            const auto offset = byte_offset.read();
+            const bool use_current_file_pointer = offset.LowPart == FILE_USE_FILE_POINTER_POSITION && offset.HighPart == -1;
 
-        return STATUS_SUCCESS;
+            if (!use_current_file_pointer)
+            {
+                if (offset.QuadPart < 0)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (!f->handle.seek_to(offset.QuadPart))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+            }
+        }
+
+        const auto bytes_read = fread(temp_buffer.data(), 1, temp_buffer.size(), f->handle);
+
+        if (bytes_read > 0)
+        {
+            commit_file_data(std::string_view(temp_buffer.data(), bytes_read), c.emu, io_status_block, buffer);
+            return STATUS_SUCCESS;
+        }
+
+        const auto status = length > 0 ? STATUS_END_OF_FILE : STATUS_SUCCESS;
+
+        if (io_status_block)
+        {
+            IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+            block.Status = status;
+            block.Information = 0;
+            io_status_block.write(block);
+        }
+
+        return status;
     }
 
     NTSTATUS handle_NtWriteFile(const syscall_context& c, const handle file_handle, const uint64_t /*event*/,
                                 const uint64_t /*apc_routine*/, const uint64_t /*apc_context*/,
                                 const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const uint64_t buffer,
-                                const ULONG length, const emulator_object<LARGE_INTEGER> /*byte_offset*/,
-                                const emulator_object<ULONG> /*key*/)
+                                const ULONG length, const emulator_object<LARGE_INTEGER> byte_offset, const emulator_object<ULONG> /*key*/)
     {
         std::string temp_buffer{};
         temp_buffer.resize(length);
@@ -1166,6 +1220,18 @@ namespace syscalls
             }
 
             c.win_emu.callbacks.on_stdout(temp_buffer);
+
+            return STATUS_SUCCESS;
+        }
+
+        if (file_handle == NUL_HANDLE)
+        {
+            if (io_status_block)
+            {
+                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                block.Information = length;
+                io_status_block.write(block);
+            }
 
             return STATUS_SUCCESS;
         }
@@ -1195,6 +1261,33 @@ namespace syscalls
         if (!f)
         {
             return STATUS_INVALID_HANDLE;
+        }
+
+        if (byte_offset)
+        {
+            const auto offset = byte_offset.read();
+            const bool use_end_of_file = offset.LowPart == FILE_WRITE_TO_END_OF_FILE && offset.HighPart == -1;
+            const bool use_current_file_pointer = offset.LowPart == FILE_USE_FILE_POINTER_POSITION && offset.HighPart == -1;
+
+            if (use_end_of_file)
+            {
+                if (!f->handle.seek_to(0, SEEK_END))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+            }
+            else if (!use_current_file_pointer)
+            {
+                if (offset.QuadPart < 0)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (!f->handle.seek_to(offset.QuadPart))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+            }
         }
 
         const auto bytes_written = fwrite(temp_buffer.data(), 1, temp_buffer.size(), f->handle);
@@ -1439,6 +1532,11 @@ namespace syscalls
                                  ULONG /*share_access*/, ULONG create_disposition, ULONG create_options, uint64_t ea_buffer,
                                  ULONG ea_length)
     {
+        if (create_options & FILE_DELETE_ON_CLOSE && !(desired_access & DELETE))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
         const auto attributes = object_attributes.read();
         auto filename = read_unicode_string(c.emu, attributes.ObjectName);
 
@@ -1461,6 +1559,14 @@ namespace syscalls
         {
             c.win_emu.callbacks.on_generic_access("Opening console input", filename);
             file_handle.write(STDIN_HANDLE);
+            return STATUS_SUCCESS;
+        }
+
+        // Handle NUL device
+        if (filename_upper == u"\\??\\NUL" || filename_upper == u"NUL")
+        {
+            c.win_emu.callbacks.on_generic_access("Opening NUL", filename);
+            file_handle.write(NUL_HANDLE);
             return STATUS_SUCCESS;
         }
 
@@ -1534,35 +1640,62 @@ namespace syscalls
         f.drive_number = path.get_drive().value() - 'a' + 1;
 
         const auto host_path = c.win_emu.file_sys.translate(path);
-        const bool is_directory = std::filesystem::is_directory(host_path, ec);
+        const bool file_exists = std::filesystem::exists(host_path, ec);
 
-        if (is_directory || create_options & FILE_DIRECTORY_FILE)
+        if (file_exists && std::filesystem::is_directory(host_path, ec))
+        {
+            if (create_options & FILE_NON_DIRECTORY_FILE)
+            {
+                return STATUS_FILE_IS_A_DIRECTORY;
+            }
+
+            if (create_disposition == FILE_CREATE)
+            {
+                return STATUS_OBJECT_NAME_COLLISION;
+            }
+
+            if (create_disposition != FILE_OPEN && create_disposition != FILE_OPEN_IF)
+            {
+                return STATUS_ACCESS_DENIED;
+            }
+
+            c.win_emu.callbacks.on_generic_access("Opening folder", f.name);
+
+            f.host_path = host_path;
+
+            const auto handle = c.proc.files.store(std::move(f));
+            file_handle.write(handle);
+
+            return STATUS_SUCCESS;
+        }
+
+        if (create_options & FILE_DIRECTORY_FILE)
         {
             c.win_emu.callbacks.on_generic_access("Opening folder", f.name);
 
-            if (create_disposition == FILE_CREATE || create_disposition == FILE_OPEN_IF)
+            if (file_exists)
             {
-                if (create_disposition == FILE_CREATE && std::filesystem::exists(host_path))
-                {
-                    return STATUS_OBJECT_NAME_COLLISION;
-                }
-
-                if (!std::filesystem::is_directory(host_path.parent_path()))
-                {
-                    return STATUS_OBJECT_PATH_NOT_FOUND;
-                }
-
-                create_directory(host_path, ec);
-
-                if (ec)
-                {
-                    return STATUS_ACCESS_DENIED;
-                }
+                return STATUS_NOT_A_DIRECTORY;
             }
-            else if (!is_directory)
+
+            if (create_disposition != FILE_CREATE && create_disposition != FILE_OPEN_IF)
             {
                 return STATUS_OBJECT_NAME_NOT_FOUND;
             }
+
+            if (!std::filesystem::is_directory(host_path.parent_path(), ec))
+            {
+                return STATUS_OBJECT_PATH_NOT_FOUND;
+            }
+
+            create_directory(host_path, ec);
+
+            if (ec)
+            {
+                return STATUS_ACCESS_DENIED;
+            }
+
+            f.host_path = host_path;
 
             const auto handle = c.proc.files.store(std::move(f));
             file_handle.write(handle);
@@ -1571,8 +1704,6 @@ namespace syscalls
         }
 
         c.win_emu.callbacks.on_generic_access("Opening file", f.name);
-
-        const bool file_exists = std::filesystem::exists(host_path, ec);
 
         if (create_disposition == FILE_CREATE && file_exists)
         {
@@ -1625,6 +1756,11 @@ namespace syscalls
         f.handle = std::move(native_file_handle);
         f.open_mode = mode;
         f.host_path = host_path;
+
+        if (create_options & FILE_DELETE_ON_CLOSE)
+        {
+            f.handle.defer_delete(host_path);
+        }
 
         const auto handle = c.proc.files.store(std::move(f));
         file_handle.write(handle);

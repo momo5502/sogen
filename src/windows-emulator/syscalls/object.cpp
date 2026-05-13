@@ -468,6 +468,11 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
         }
 
+        if (count == 0 || count > 64) // MAXIMUM_WAIT_OBJECTS
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
         auto& t = c.win_emu.current_thread();
         t.await_objects = {};
         t.await_any = false;
@@ -510,6 +515,11 @@ namespace syscalls
             c.win_emu.log.error("Wait type not supported!\n");
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
+        }
+
+        if (count == 0 || count > 64) // MAXIMUM_WAIT_OBJECTS
+        {
+            return STATUS_INVALID_PARAMETER;
         }
 
         auto& t = c.win_emu.current_thread();
