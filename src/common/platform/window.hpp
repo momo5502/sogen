@@ -108,7 +108,15 @@ struct EMU_CREATESTRUCT
 };
 
 #ifndef OS_WINDOWS
+#define MAXINTATOM           0xC000
+
+#define HWND_MESSAGE         ((hwnd) - 3)
+
+#define WS_POPUP             0x80000000L
+#define WS_CHILD             0x40000000L
 #define WS_VISIBLE           0x10000000L
+#define WS_CLIPSIBLINGS      0x04000000L
+#define WS_CLIPCHILDREN      0x02000000L
 
 #define SWP_SHOWWINDOW       0x0040
 #define SWP_HIDEWINDOW       0x0080

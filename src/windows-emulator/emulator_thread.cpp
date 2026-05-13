@@ -164,6 +164,12 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
             teb_obj.SameTebFlags.SkipLoaderInit = (create_flags & THREAD_CREATE_FLAGS_SKIP_LOADER_INIT) ? 1 : 0;
 
             const auto desktop_info_obj = this->gs_segment->reserve<USER_DESKTOPINFO>();
+            desktop_info_obj.access([&](USER_DESKTOPINFO& info) {
+                if (const auto* wnd = context.windows.get(context.default_desktop_window_handle))
+                {
+                    info.spwndDesktop = wnd->guest.value();
+                }
+            });
             teb_obj.Win32ClientInfo.arr[4] = desktop_info_obj.value();
         });
 

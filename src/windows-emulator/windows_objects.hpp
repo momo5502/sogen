@@ -82,6 +82,8 @@ struct window : user_object<USER_WINDOW>
 {
     uint32_t thread_id{};
     hwnd handle{};
+    hwnd parent_handle{};
+    hwnd owner_handle{};
     std::u16string name{};
     std::u16string class_name{};
     int32_t width{};
@@ -103,6 +105,8 @@ struct window : user_object<USER_WINDOW>
         user_object::serialize_object(buffer);
         buffer.write(this->thread_id);
         buffer.write(this->handle);
+        buffer.write(this->parent_handle);
+        buffer.write(this->owner_handle);
         buffer.write(this->name);
         buffer.write(this->class_name);
         buffer.write(this->width);
@@ -120,6 +124,8 @@ struct window : user_object<USER_WINDOW>
         user_object::deserialize_object(buffer);
         buffer.read(this->thread_id);
         buffer.read(this->handle);
+        buffer.read(this->parent_handle);
+        buffer.read(this->owner_handle);
         buffer.read(this->name);
         buffer.read(this->class_name);
         buffer.read(this->width);

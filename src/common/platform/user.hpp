@@ -167,29 +167,41 @@ struct USER_WINDOW
     uint32_t dwExStyle;
     uint32_t dwStyle;
     uint64_t hInstance;
-    uint8_t pad_028[8];
+    uint8_t pad_028[2];
+    uint16_t fnid;
+    uint8_t pad_02C[4];
     uint64_t spwndParent;
-    uint8_t pad_038[64];
+    uint8_t pad_038[8];
+    uint64_t spwndOwner;
+    uint8_t pad_048[48];
     uint64_t lpfnWndProc;
     uint64_t pcls;
     uint8_t pad_088[16];
     uint64_t spmenu;
-    uint8_t pad_0A0[40];
+    uint8_t pad_0A0[24];
+    uint32_t dwTextLengthBytes;
+    uint8_t pad_0BC[4];
+    uint64_t strText;
     uint32_t cbWndExtra;
     uint8_t pad_0CC[12];
     uint64_t userData;
     uint64_t pActCtx;
-    uint8_t pad_0E8[16];
+    uint8_t pad_0E8[4];
+    uint32_t windowBand;
+    uint8_t pad_0F0[8];
     uint32_t wndExtraOffset;
     uint8_t pad_0FC[44];
     uint64_t pExtraBytes;
     uint8_t pad_130[16];
     uint64_t wID;
 };
+static_assert(sizeof(USER_WINDOW) == 328);
 
 struct USER_DESKTOPINFO
 {
-    uint8_t unknown[0xFF];
+    uint8_t unknown0[0x8];
+    uint64_t spwndDesktop;
+    uint8_t unknown10[0xEF];
 };
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)

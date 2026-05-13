@@ -289,6 +289,37 @@ namespace
         return schedule_wow64_callback(c, thread, k_wow64_client_setup_callback_id, 0, 0);
     }
 
+    std::u16string read_unicode_string_or_atom(const syscall_context& c,
+                                               const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> uc_string,
+                                               const size_t index = 0)
+    {
+        if (!uc_string)
+        {
+            return {};
+        }
+
+        if (uc_string.value() <= std::numeric_limits<uint16_t>::max())
+        {
+            return c.proc.get_atom_name(static_cast<uint16_t>(uc_string.value())).value_or(u"");
+        }
+
+        return read_unicode_string(c.emu, uc_string, index);
+    }
+
+    std::u16string read_large_string_or_atom(const syscall_context& c, const emulator_object<LARGE_STRING> str_obj, const size_t index = 0)
+    {
+        if (!str_obj)
+        {
+            return {};
+        }
+
+        if (str_obj.value() <= std::numeric_limits<uint16_t>::max())
+        {
+            return c.proc.get_atom_name(static_cast<uint16_t>(str_obj.value())).value_or(u"");
+        }
+
+        return read_large_string(str_obj, index);
+    }
 }
 
 namespace syscalls
@@ -504,7 +535,7 @@ namespace syscalls
 
             if (class_name)
             {
-                class_name_str = u16_to_u8(read_unicode_string(c.emu, class_name));
+                class_name_str = u16_to_u8(read_unicode_string_or_atom(c, class_name));
             }
 
             if (window_name)
@@ -552,11 +583,11 @@ namespace syscalls
         return index;
     }
 
-    NTSTATUS handle_NtUserUnregisterClass(const syscall_context& c, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
-                                          const emulator_pointer /*instance*/,
-                                          const emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> class_menu_name)
+    BOOL handle_NtUserUnregisterClass(const syscall_context& c, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
+                                      const emulator_pointer /*instance*/,
+                                      const emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> class_menu_name)
     {
-        const auto cls_name = read_unicode_string(c.emu, class_name);
+        const auto cls_name = read_unicode_string_or_atom(c, class_name);
 
         if (const auto it = c.proc.classes.find(cls_name); it != c.proc.classes.end())
         {
@@ -577,7 +608,7 @@ namespace syscalls
                                      const emulator_object<EMU_WNDCLASSEX> wnd_class_ex, const emulator_pointer /*menu_name*/,
                                      const BOOL /*ansi*/)
     {
-        std::u16string name_str = read_unicode_string(c.emu, class_name);
+        std::u16string name_str = read_unicode_string_or_atom(c, class_name);
 
         auto it = c.proc.classes.find(name_str);
         if (it == c.proc.classes.end())
@@ -603,36 +634,40 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    std::u16string read_large_string(const emulator_object<LARGE_STRING> str_obj)
-    {
-        if (!str_obj)
-        {
-            return {};
-        }
-
-        const auto str = str_obj.read();
-        if (!str.bAnsi)
-        {
-            return read_string<char16_t>(*str_obj.get_memory_interface(), str.Buffer, str.Length / 2);
-        }
-
-        const auto ansi_string = read_string<char>(*str_obj.get_memory_interface(), str.Buffer, str.Length);
-        return u8_to_u16(ansi_string);
-    }
-
     hwnd handle_NtUserCreateWindowEx(const syscall_context& c, const DWORD ex_style, const emulator_object<LARGE_STRING> class_name,
                                      const emulator_object<LARGE_STRING> /*cls_version*/, const emulator_object<LARGE_STRING> window_name,
-                                     const DWORD style, const int x, const int y, const int width, const int height, const hwnd /*parent*/,
+                                     const DWORD style, const int x, const int y, const int width, const int height, const hwnd parent,
                                      const hmenu /*menu*/, const hinstance /*instance*/, const pointer l_param, const DWORD /*flags*/,
                                      const pointer /*acbi_buffer*/)
     {
-        const auto cls_name = read_large_string(class_name);
+        const auto cls_name = read_large_string_or_atom(c, class_name);
         const auto cls_it = c.proc.classes.find(cls_name);
 
         if (cls_it == c.proc.classes.end())
         {
             set_guest_last_error(c, 1407); // ERROR_CANNOT_FIND_WND_CLASS
             return 0;
+        }
+
+        const bool is_message_only = parent == reinterpret_cast<pointer>(HWND_MESSAGE);
+        const bool has_child_parent = (style & WS_CHILD) != 0 && (style & WS_POPUP) == 0;
+        const bool has_owner = parent != 0 && !is_message_only && !has_child_parent;
+
+        if (has_child_parent && !parent)
+        {
+            set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+            return 0;
+        }
+
+        window* parent_win = nullptr;
+        if (parent && !is_message_only)
+        {
+            parent_win = c.proc.windows.get(parent);
+            if (!parent_win)
+            {
+                set_guest_last_error(c, 6); // ERROR_INVALID_HANDLE
+                return 0;
+            }
         }
 
         const auto class_obj_addr = cls_it->second.guest_obj_addr;
@@ -647,6 +682,11 @@ namespace syscalls
         win.height = height;
         win.thread_id = c.win_emu.current_thread().id;
         win.handle = handle.bits;
+        if (!is_message_only)
+        {
+            win.parent_handle = has_child_parent ? parent : c.proc.default_desktop_window_handle.bits;
+            win.owner_handle = has_owner ? parent : 0;
+        }
         win.class_name = cls_name;
         win.name = read_large_string(window_name);
         win.wnd_proc = wnd_class->lpfnWndProc;
@@ -656,9 +696,23 @@ namespace syscalls
             guest_win.ptrBase = win.guest.value();
             guest_win.dwExStyle = ex_style;
             guest_win.dwStyle = style;
+            if (parent_win && has_child_parent)
+            {
+                guest_win.spwndParent = parent_win->guest.value();
+            }
+            else if (is_message_only)
+            {
+                guest_win.spwndParent = 0;
+            }
+            else if (const auto* wnd = c.proc.windows.get(c.proc.default_desktop_window_handle))
+            {
+                guest_win.spwndParent = wnd->guest.value();
+            }
+            guest_win.spwndOwner = parent_win && has_owner ? parent_win->guest.value() : 0;
             guest_win.lpfnWndProc = win.wnd_proc;
             guest_win.pcls = class_obj_addr;
             guest_win.cbWndExtra = wnd_class->cbWndExtra;
+            guest_win.windowBand = 1; // ZBID_DESKTOP
 
             if (wnd_class->cbWndExtra > 0)
             {
@@ -826,7 +880,7 @@ namespace syscalls
     BOOL handle_NtUserSetProp(const syscall_context& c, const hwnd window, const uint16_t atom, const uint64_t data)
     {
         auto* win = c.proc.windows.get(window);
-        const auto* prop = c.proc.get_atom_name(atom);
+        const auto prop = c.proc.get_atom_name(atom);
 
         if (!win || !prop)
         {
@@ -847,7 +901,12 @@ namespace syscalls
             return FALSE;
         }
 
-        auto prop = read_unicode_string(c.emu, str);
+        auto prop = read_unicode_string_or_atom(c, str);
+        if (prop.empty())
+        {
+            return FALSE;
+        }
+
         win->props[std::move(prop)] = data;
 
         return TRUE;
@@ -1322,6 +1381,88 @@ namespace syscalls
         return static_cast<uint32_t>(oldValue);
     }
 
+    uint64_t handle_NtUserGetAncestor(const syscall_context& c, const hwnd child_hwnd, const UINT flags)
+    {
+        const auto* win = c.proc.windows.get(child_hwnd);
+        if (!win)
+        {
+            return 0;
+        }
+
+        const hwnd desktop = c.proc.default_desktop_window_handle.bits;
+
+        const auto get_root = [&](const hwnd start) -> hwnd {
+            if (!start || start == desktop)
+            {
+                return 0;
+            }
+
+            hwnd current = start;
+
+            for (;;)
+            {
+                const auto* current_win = c.proc.windows.get(current);
+                if (!current_win)
+                {
+                    return 0;
+                }
+
+                const hwnd parent = current_win->parent_handle;
+                if (!parent || parent == desktop)
+                {
+                    return current;
+                }
+
+                current = parent;
+            }
+        };
+
+        switch (flags)
+        {
+        case 1: // GA_PARENT
+            if (child_hwnd == desktop)
+            {
+                return 0;
+            }
+
+            return win->parent_handle;
+
+        case 2: // GA_ROOT
+            return get_root(child_hwnd);
+
+        case 3: { // GA_ROOTOWNER
+            hwnd current = get_root(child_hwnd);
+
+            while (current)
+            {
+                const auto* current_win = c.proc.windows.get(current);
+                if (!current_win || !current_win->owner_handle)
+                {
+                    return current;
+                }
+
+                if ((current_win->style & WS_POPUP) == 0)
+                {
+                    return current;
+                }
+
+                const hwnd owner_root = get_root(current_win->owner_handle);
+                if (!owner_root || owner_root == current)
+                {
+                    return current;
+                }
+
+                current = owner_root;
+            }
+
+            return 0;
+        }
+
+        default:
+            return 0;
+        }
+    }
+
     NTSTATUS handle_NtUserRedrawWindow()
     {
         return STATUS_SUCCESS;
@@ -1345,5 +1486,51 @@ namespace syscalls
     NTSTATUS handle_NtUserGetSystemMenu()
     {
         return STATUS_SUCCESS;
+    }
+
+    ULONG handle_NtUserGetAtomName(const syscall_context& c, const RTL_ATOM atom,
+                                   const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> atom_name)
+    {
+        const auto name = c.proc.get_atom_name(atom);
+        if (!name || !atom_name)
+        {
+            return 0;
+        }
+
+        const size_t name_length_bytes = name->size() * sizeof(char16_t);
+
+        bool too_small = false;
+        ULONG result = 0;
+
+        atom_name.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& str) {
+            if (str.MaximumLength < sizeof(char16_t) || !str.Buffer)
+            {
+                str.Length = 0;
+                too_small = true;
+                return;
+            }
+
+            const auto max_copy_bytes = static_cast<size_t>(str.MaximumLength - sizeof(char16_t)) & ~size_t{1};
+            const auto copy_bytes = std::min(name_length_bytes, max_copy_bytes);
+
+            if (copy_bytes)
+            {
+                c.emu.write_memory(str.Buffer, name->data(), copy_bytes);
+            }
+
+            constexpr char16_t terminator = 0;
+            c.emu.write_memory(str.Buffer + copy_bytes, &terminator, sizeof(terminator));
+
+            str.Length = static_cast<USHORT>(copy_bytes);
+            result = static_cast<ULONG>(copy_bytes / sizeof(char16_t));
+        });
+
+        if (too_small)
+        {
+            set_guest_last_error(c, 122); // ERROR_INSUFFICIENT_BUFFER
+            return 0;
+        }
+
+        return result;
     }
 }

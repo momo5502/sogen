@@ -205,7 +205,27 @@ class user_handle_store : public generic_handle_store
         return &it->second;
     }
 
+    const T* get_by_index(const uint32_t index) const
+    {
+        const auto it = this->store_.find(index);
+        if (it == this->store_.end())
+        {
+            return nullptr;
+        }
+        return &it->second;
+    }
+
     T* get(const handle_value h)
+    {
+        if (h.type != Type || h.is_pseudo)
+        {
+            return nullptr;
+        }
+
+        return this->get_by_index(static_cast<uint32_t>(h.id));
+    }
+
+    const T* get(const handle_value h) const
     {
         if (h.type != Type || h.is_pseudo)
         {
@@ -220,7 +240,19 @@ class user_handle_store : public generic_handle_store
         return this->get(h.value);
     }
 
+    const T* get(const handle h) const
+    {
+        return this->get(h.value);
+    }
+
     T* get(const uint64_t h)
+    {
+        handle hh{};
+        hh.bits = h;
+        return this->get(hh);
+    }
+
+    const T* get(const uint64_t h) const
     {
         handle hh{};
         hh.bits = h;
