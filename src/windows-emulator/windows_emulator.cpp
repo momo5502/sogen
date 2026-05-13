@@ -738,6 +738,7 @@ void windows_emulator::save_snapshot()
     buffer.write(this->setup_completed_);
     buffer.write(this->executed_instructions_);
     buffer.write_atomic(this->switch_thread_);
+    buffer.write(this->use_relative_time_);
 
     this->version.serialize(buffer);
     this->registry.serialize_runtime_state(buffer);
