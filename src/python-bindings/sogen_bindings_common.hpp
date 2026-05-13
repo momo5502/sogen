@@ -632,14 +632,9 @@ namespace
             return this->ctx->spawned_thread_count;
         }
 
-        nb::object active_thread() const
+        emulator_thread* active_thread() const
         {
-            if (!this->ctx->active_thread)
-            {
-                return nb::none();
-            }
-
-            return nb::cast(this->ctx->active_thread, nb::rv_policy::reference_internal);
+            return this->ctx->active_thread;
         }
 
         callback_registry& callback_view() const
@@ -731,14 +726,9 @@ namespace
             return this->emu->memory;
         }
 
-        nb::object current_thread() const
+        emulator_thread* current_thread() const
         {
-            if (!this->emu->process.active_thread)
-            {
-                return nb::none();
-            }
-
-            return nb::cast(this->emu->process.active_thread, nb::rv_policy::reference_internal);
+            return this->emu->process.active_thread;
         }
 
         std::optional<uint32_t> current_thread_id() const
