@@ -726,9 +726,9 @@ namespace
             return sogen_process_context(this->emu->process, this->callbacks, nb::cast(this, nb::rv_policy::reference_internal));
         }
 
-        nb::object memory() const
+        memory_manager& memory() const
         {
-            return nb::cast(&this->emu->memory, nb::rv_policy::reference_internal);
+            return this->emu->memory;
         }
 
         nb::object current_thread() const
