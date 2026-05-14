@@ -112,7 +112,7 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
     app.hooks.apis["Sleep"] = on_sleep
     app.start()
     assert sleep_hits["count"] > 0
-    assert app.process.exit_status is not None
+    assert app.process.exit_status == 0
     assert all(arg == 1 for arg in sleep_hits["args"])
 
     app = None
