@@ -11,6 +11,7 @@
 #include <nanobind/stl/unordered_map.h>
 #include <nanobind/stl/vector.h>
 
+#include <disassembler.hpp>
 #include <backend_selection.hpp>
 #include <windows_emulator.hpp>
 #include <x86_register.hpp>

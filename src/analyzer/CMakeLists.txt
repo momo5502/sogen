@@ -16,6 +16,7 @@ endif()
 
 target_link_libraries(analyzer PRIVATE
   debugger
+  disassembler
   capstone
   windows-emulator
   windows-gdb-stub
@@ -36,8 +37,8 @@ set(ENV_PREFIX "$")
 set(ENV_SUFFIX "")
 
 if(WIN)
-set(ENV_PREFIX "%")
-set(ENV_SUFFIX "%")
+  set(ENV_PREFIX "%")
+  set(ENV_SUFFIX "%")
 endif()
 
 add_test(NAME analyzer-test

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <disassembler.hpp>
+
 enum class api_call_continuation
 {
     run_original,
@@ -311,107 +313,6 @@ struct api_hook_registry
         catch (...)
         {
         }
-    }
-
-    static size_t instruction_prefix_length(const std::array<uint8_t, 16>& bytes)
-    {
-        size_t prefix = 0;
-        while (prefix < bytes.size())
-        {
-            const auto b = bytes[prefix];
-            if (b == 0xF0 || b == 0xF2 || b == 0xF3 || b == 0x2E || b == 0x36 || b == 0x3E || b == 0x26 || b == 0x64 || b == 0x65 ||
-                b == 0x66 || b == 0x67 || (b >= 0x40 && b <= 0x4F))
-            {
-                ++prefix;
-                continue;
-            }
-            break;
-        }
-        return prefix;
-    }
-
-    static bool resolve_jump_target(x86_64_emulator& backend, uint64_t& target)
-    {
-        for (size_t depth = 0; depth < 8; ++depth)
-        {
-            std::array<uint8_t, 16> bytes{};
-            if (!backend.try_read_memory(target, bytes.data(), bytes.size()))
-            {
-                return false;
-            }
-
-            const auto prefix = instruction_prefix_length(bytes);
-            const auto opcode = bytes[prefix];
-            if (opcode == 0xE9)
-            {
-                int32_t rel{};
-                std::memcpy(&rel, bytes.data() + prefix + 1, sizeof(rel));
-                target += prefix + 5 + rel;
-                continue;
-            }
-
-            if (opcode == 0xFF)
-            {
-                const auto modrm = bytes[prefix + 1];
-                const auto reg = (modrm >> 3) & 0x7;
-                const auto mod = (modrm >> 6) & 0x3;
-                const auto rm = modrm & 0x7;
-                if (reg != 4)
-                {
-                    return true;
-                }
-
-                if (mod == 0 && rm == 5)
-                {
-                    int32_t disp{};
-                    std::memcpy(&disp, bytes.data() + prefix + 2, sizeof(disp));
-                    const auto ptr_addr = target + prefix + 6 + disp;
-                    if (!backend.try_read_memory(ptr_addr, &target, sizeof(target)))
-                    {
-                        return false;
-                    }
-                    continue;
-                }
-
-                if (mod == 3)
-                {
-                    switch (rm)
-                    {
-                    case 0:
-                        target = backend.reg<uint64_t>(x86_register::rax);
-                        break;
-                    case 1:
-                        target = backend.reg<uint64_t>(x86_register::rcx);
-                        break;
-                    case 2:
-                        target = backend.reg<uint64_t>(x86_register::rdx);
-                        break;
-                    case 3:
-                        target = backend.reg<uint64_t>(x86_register::rbx);
-                        break;
-                    case 4:
-                        target = backend.reg<uint64_t>(x86_register::rsp);
-                        break;
-                    case 5:
-                        target = backend.reg<uint64_t>(x86_register::rbp);
-                        break;
-                    case 6:
-                        target = backend.reg<uint64_t>(x86_register::rsi);
-                        break;
-                    case 7:
-                        target = backend.reg<uint64_t>(x86_register::rdi);
-                        break;
-                    default:
-                        return false;
-                    }
-                    continue;
-                }
-            }
-
-            return true;
-        }
-
-        return true;
     }
 
     void refresh_index()
