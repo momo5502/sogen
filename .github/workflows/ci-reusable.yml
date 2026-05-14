@@ -77,6 +77,12 @@ jobs:
           echo "CXX=clang-cl" >> $GITHUB_ENV
           echo "C:/Program Files/LLVM/bin" >> "$GITHUB_PATH"
 
+      - name: Set Clang Tidy Parallelism
+        shell: bash
+        run: |
+          jobs="$(python -c 'import os; print(max(1, (os.cpu_count() or 1) * 2))')"
+          echo "CMAKE_BUILD_PARALLEL_LEVEL=$jobs" >> "$GITHUB_ENV"
+
       - name: CMake Build
         run: cmake --workflow --preset=tidy
 
