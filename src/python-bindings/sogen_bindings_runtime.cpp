@@ -4,7 +4,24 @@
 
 void register_sogen_runtime_bindings(nb::module_& m)
 {
+    m.def(
+        "api_call",
+        [](function_calling_convention cc, nb::object params, nb::object restype) {
+            return nb::cpp_function([cc, params = std::move(params), restype = std::move(restype)](nb::handle fn) -> nb::object {
+                nb::setattr(fn, "_sogen_api_cc", nb::cast(cc));
+                nb::setattr(fn, "_sogen_api_params", params);
+                nb::setattr(fn, "_sogen_api_restype", restype);
+                return nb::borrow<nb::object>(fn);
+            });
+        },
+        nb::arg("cc"), nb::arg("params") = nb::none(), nb::arg("restype") = nb::none());
+
     nb::class_<hook_handle>(m, "Hook").def("remove", &hook_handle::remove).def_prop_ro("active", &hook_handle::active);
+
+    nb::class_<api_hook_registry>(m, "ApiHooks")
+        .def("__setitem__", &api_hook_registry::set_item)
+        .def("__delitem__", &api_hook_registry::del_item)
+        .def("clear", &api_hook_registry::clear);
 
     nb::class_<hook_registry>(m, "Hooks")
         .def("memory_execution", &hook_registry::memory_execution)
@@ -14,7 +31,8 @@ void register_sogen_runtime_bindings(nb::module_& m)
         .def("instruction", &hook_registry::instruction)
         .def("interrupt", &hook_registry::interrupt)
         .def("memory_violation", &hook_registry::memory_violation)
-        .def("basic_block", &hook_registry::basic_block);
+        .def("basic_block", &hook_registry::basic_block)
+        .def_prop_ro("apis", [](hook_registry& self) -> api_hook_registry& { return *self.apis; }, nb::rv_policy::reference_internal);
 
     nb::class_<memory_manager>(m, "MemoryManager")
         .def("read_memory",

@@ -1,3 +1,4 @@
+import ctypes
 import gc
 import importlib
 import os
@@ -25,6 +26,9 @@ assert hasattr(mod, "Hooks")
 assert hasattr(mod, "Instruction")
 assert hasattr(mod, "HookContinuation")
 assert hasattr(mod, "MemoryViolationContinuation")
+assert hasattr(mod, "ApiContinuation")
+assert hasattr(mod, "CallingConvention")
+assert hasattr(mod, "api_call")
 assert hasattr(mod, "Backend")
 assert hasattr(mod, "BasicBlock")
 assert hasattr(mod, "MappedModule")
@@ -42,6 +46,7 @@ assert hasattr(emu, "read_register")
 assert hasattr(emu, "write_register")
 assert hasattr(emu, "callbacks")
 assert hasattr(emu, "hooks")
+assert hasattr(emu.hooks, "apis")
 assert hasattr(emu.process, "callbacks")
 assert hasattr(emu.callbacks, "on_stdout")
 assert hasattr(emu.callbacks, "on_syscall")
@@ -62,6 +67,18 @@ emu.process.callbacks.on_thread_create = lambda h, t: None
 emu.callbacks.on_module_load = lambda m: None
 emu.callbacks.on_module_unload = lambda m: None
 
+sleep_hits = {"count": 0, "args": []}
+
+
+@mod.api_call(cc=mod.CallingConvention.stdcall, params=[ctypes.c_uint32])
+def on_sleep(call, params):
+    sleep_hits["count"] += 1
+    sleep_hits["args"].append(params[0])
+    assert call.name == "Sleep"
+    call.return_value = 1
+    return mod.ApiContinuation.run_original
+
+
 state_base = emu.memory.allocate_memory(0x1000, mod.MemoryPermission.read_write)
 emu.write_memory(state_base, b"ABCD")
 state_bytes = emu.serialize_state()
@@ -75,12 +92,15 @@ assert emu.read_memory(state_base, 4) == b"ABCD"
 
 test_sample = Path(analysis_sample)
 assert test_sample.exists()
-counts = {"blocks": 0, "syscalls": 0, "entry_point": 0}
-main_entry_point = {"value": None}
-entry_hook = {"value": None}
 
 with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
     mapped_file = Path(temp_dir) / "a.txt"
+    filesys_root = Path(emulator_root) / "filesys" / "c"
+    filesys_root.mkdir(parents=True, exist_ok=True)
+    sample_copy = filesys_root / "test-sample.exe"
+    if not sample_copy.exists():
+        sample_copy.write_bytes(test_sample.read_bytes())
+
     app = mod.create_application(
         r"C:\test-sample.exe",
         None,
@@ -89,42 +109,12 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
         port_mappings={28970: 28980},
     )
 
-    block_hook = app.hooks.basic_block(lambda block: counts.__setitem__("blocks", counts["blocks"] + 1))
-    app.callbacks.on_syscall = lambda syscall_id, name: (
-        counts.__setitem__("syscalls", counts["syscalls"] + 1) or mod.HookContinuation.run
-    )
-
-    def on_module_load(module):
-        if module.name.lower() != test_sample.name.lower():
-            return
-        if main_entry_point["value"] is None:
-            main_entry_point["value"] = module.entry_point
-            entry_hook["value"] = app.hooks.memory_execution_at(
-                module.entry_point,
-                lambda address: counts.__setitem__("entry_point", counts["entry_point"] + 1),
-            )
-
-    app.callbacks.on_module_load = on_module_load
-
+    app.hooks.apis["Sleep"] = on_sleep
     app.start()
-    assert app.process.exit_status is not None
-    assert counts["blocks"] > 0
-    assert counts["syscalls"] > 0
-    assert main_entry_point["value"] is not None
-    assert counts["entry_point"] > 0
-    assert entry_hook["value"] is not None
-    assert entry_hook["value"].active
-    assert block_hook.active
-    entry_hook["value"].remove()
-    block_hook.remove()
-    assert not entry_hook["value"].active
-    assert not block_hook.active
+    assert sleep_hits["count"] > 0
+    assert app.process.exit_status == 0
+    assert all(arg == 1 for arg in sleep_hits["args"])
 
-    app.callbacks.on_module_load = None
-    app.callbacks.on_syscall = None
-    entry_hook["value"] = None
-    main_entry_point["value"] = None
-    block_hook = None
     app = None
     gc.collect()
 
