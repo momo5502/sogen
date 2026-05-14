@@ -363,6 +363,14 @@ namespace
         }
     };
 
+    struct api_hook_hit
+    {
+        std::string key{};
+        std::string module_name{};
+        std::string export_name{};
+        uint64_t address{};
+    };
+
     struct api_hook_entry
     {
         std::optional<std::string> module_filter{};
@@ -370,7 +378,6 @@ namespace
         api_calling_convention cc{api_calling_convention::x64_fastcall};
         nb::object params = nb::none();
         nb::object callback = nb::none();
-        std::vector<std::pair<uint64_t, hook_handle>> hooks{};
 
         api_hook_entry() = default;
         api_hook_entry(const api_hook_entry&) = delete;
@@ -398,6 +405,8 @@ namespace
     {
         windows_emulator* win_emu{};
         std::map<std::string, api_hook_entry, std::less<>> entries{};
+        std::map<uint64_t, std::vector<api_hook_hit>> address_index{};
+        std::optional<hook_handle> execution_hook{};
         utils::callback_id_type module_load_id{};
         utils::callback_id_type module_unload_id{};
 
@@ -410,15 +419,8 @@ namespace
         explicit api_hook_registry(windows_emulator& emulator)
             : win_emu(&emulator)
         {
-            this->module_load_id =
-                this->win_emu->callbacks.on_module_load.add([this](mapped_module& mod) { this->install_for_module(mod); });
-            this->module_unload_id =
-                this->win_emu->callbacks.on_module_unload.add([this](mapped_module& mod) { this->remove_for_module(mod); });
-
-            for (auto& [_, module] : this->win_emu->mod_manager.modules())
-            {
-                this->install_for_module(module);
-            }
+            this->module_load_id = this->win_emu->callbacks.on_module_load.add([this](mapped_module&) { this->refresh_index(); });
+            this->module_unload_id = this->win_emu->callbacks.on_module_unload.add([this](mapped_module&) { this->refresh_index(); });
         }
 
         ~api_hook_registry()
@@ -430,20 +432,16 @@ namespace
 
         void clear()
         {
-            for (auto& [_, entry] : this->entries)
-            {
-                this->remove_entry_hooks(entry);
-            }
-
             this->entries.clear();
+            this->address_index.clear();
+            this->remove_execution_hook();
         }
 
         void del_item(const std::string& key)
         {
-            if (auto it = this->entries.find(key); it != this->entries.end())
+            if (this->entries.erase(key) != 0)
             {
-                this->remove_entry_hooks(it->second);
-                this->entries.erase(it);
+                this->refresh_index();
             }
         }
 
@@ -457,13 +455,12 @@ namespace
 
             auto target = parse_api_hook_target(key);
             auto& entry = this->entries[key];
-            this->remove_entry_hooks(entry);
 
             entry.module_filter = std::move(target.module);
             entry.name = std::move(target.name);
             entry.callback = std::move(callback);
             this->read_signature(entry);
-            this->install_for_entry(key, entry);
+            this->refresh_index();
         }
 
       private:
@@ -556,9 +553,9 @@ namespace
             backend.reg<uint64_t>(x86_register::rip, call.return_address);
         }
 
-        void invoke_hook(const std::string& key, const std::string& module_name, const std::string& export_name, const uint64_t address)
+        void invoke_hook(const api_hook_hit& hit)
         {
-            auto it = this->entries.find(key);
+            auto it = this->entries.find(hit.key);
             if (it == this->entries.end())
             {
                 return;
@@ -566,9 +563,9 @@ namespace
 
             auto& entry = it->second;
             auto call = std::make_shared<api_call_info>();
-            call->module = module_name;
-            call->name = export_name;
-            call->address = address;
+            call->module = hit.module_name;
+            call->name = hit.export_name;
+            call->address = hit.address;
             call->stack_pointer = this->win_emu->emu().reg<uint64_t>(x86_register::rsp);
             call->return_address = this->win_emu->emu().read_memory<uint64_t>(call->stack_pointer);
 
@@ -581,23 +578,58 @@ namespace
             }
         }
 
-        void install_for_entry(const std::string& key, api_hook_entry& entry)
+        void refresh_index()
         {
+            this->address_index.clear();
+
+            if (this->entries.empty())
+            {
+                this->remove_execution_hook();
+                return;
+            }
+
+            this->ensure_execution_hook();
+
             for (auto& [_, module] : this->win_emu->mod_manager.modules())
             {
-                this->install_for_module(key, entry, module);
+                for (auto& [key, entry] : this->entries)
+                {
+                    this->add_entry_for_module(key, entry, module);
+                }
             }
         }
 
-        void install_for_module(const mapped_module& module)
+        void ensure_execution_hook()
         {
-            for (auto& [key, entry] : this->entries)
+            if (this->execution_hook.has_value())
             {
-                this->install_for_module(key, entry, module);
+                return;
             }
+
+            auto* hook = this->win_emu->emu().hook_memory_execution([this](uint64_t address) {
+                try
+                {
+                    this->dispatch_address(address);
+                }
+                catch (...)
+                {
+                }
+            });
+            this->execution_hook.emplace(*this->win_emu, hook, nb::none());
         }
 
-        void install_for_module(const std::string& key, api_hook_entry& entry, const mapped_module& module)
+        void remove_execution_hook()
+        {
+            if (!this->execution_hook.has_value())
+            {
+                return;
+            }
+
+            this->execution_hook->remove();
+            this->execution_hook.reset();
+        }
+
+        void add_entry_for_module(const std::string& key, const api_hook_entry& entry, const mapped_module& module)
         {
             if (!this->matches_module(entry, module))
             {
@@ -611,38 +643,101 @@ namespace
                     continue;
                 }
 
-                if (std::ranges::any_of(entry.hooks, [&](const auto& item) { return item.first == export_symbol.address; }))
-                {
-                    continue;
-                }
-
-                auto* hook = this->win_emu->emu().hook_memory_execution(
-                    export_symbol.address, [this, key, module_name = module.name, export_name = export_symbol.name](uint64_t address) {
-                        this->invoke_hook(key, module_name, export_name, address);
-                    });
-                entry.hooks.emplace_back(export_symbol.address, hook_handle{*this->win_emu, hook, nb::none()});
+                this->address_index[export_symbol.address].push_back(
+                    api_hook_hit{key, module.name, export_symbol.name, export_symbol.address});
             }
         }
 
-        void remove_for_module(const mapped_module& module)
+        void dispatch_address(const uint64_t address)
         {
-            for (auto& [key, entry] : this->entries)
+            std::array<uint8_t, 16> bytes{};
+            if (!this->win_emu->emu().try_read_memory(address, bytes.data(), bytes.size()))
             {
-                if (!this->matches_module(entry, module))
+                return;
+            }
+
+            uint64_t target{};
+            const auto opcode = bytes[0];
+            if (opcode == 0xE8)
+            {
+                int32_t rel{};
+                std::memcpy(&rel, bytes.data() + 1, sizeof(rel));
+                target = address + 5 + rel;
+            }
+            else if (opcode == 0xFF)
+            {
+                const auto modrm = bytes[1];
+                const auto reg = (modrm >> 3) & 0x7;
+                const auto mod = (modrm >> 6) & 0x3;
+                const auto rm = modrm & 0x7;
+                if (reg != 2)
                 {
-                    continue;
+                    return;
                 }
 
-                for (const auto& export_symbol : module.exports)
+                if (mod == 0 && rm == 5)
                 {
-                    std::erase_if(entry.hooks, [&](const auto& item) { return item.first == export_symbol.address; });
+                    int32_t disp{};
+                    std::memcpy(&disp, bytes.data() + 2, sizeof(disp));
+                    const auto ptr_addr = address + 6 + disp;
+                    if (!this->win_emu->emu().try_read_memory(ptr_addr, &target, sizeof(target)))
+                    {
+                        return;
+                    }
+                }
+                else if (mod == 3)
+                {
+                    switch (rm)
+                    {
+                    case 0:
+                        target = this->win_emu->emu().reg<uint64_t>(x86_register::rax);
+                        break;
+                    case 1:
+                        target = this->win_emu->emu().reg<uint64_t>(x86_register::rcx);
+                        break;
+                    case 2:
+                        target = this->win_emu->emu().reg<uint64_t>(x86_register::rdx);
+                        break;
+                    case 3:
+                        target = this->win_emu->emu().reg<uint64_t>(x86_register::rbx);
+                        break;
+                    case 4:
+                        target = this->win_emu->emu().reg<uint64_t>(x86_register::rsp);
+                        break;
+                    case 5:
+                        target = this->win_emu->emu().reg<uint64_t>(x86_register::rbp);
+                        break;
+                    case 6:
+                        target = this->win_emu->emu().reg<uint64_t>(x86_register::rsi);
+                        break;
+                    case 7:
+                        target = this->win_emu->emu().reg<uint64_t>(x86_register::rdi);
+                        break;
+                    default:
+                        return;
+                    }
+                }
+                else
+                {
+                    return;
                 }
             }
-        }
+            else
+            {
+                return;
+            }
 
-        void remove_entry_hooks(api_hook_entry& entry)
-        {
-            entry.hooks.clear();
+            auto it = this->address_index.find(target);
+            if (it == this->address_index.end())
+            {
+                return;
+            }
+
+            const auto hits = it->second;
+            for (const auto& hit : hits)
+            {
+                this->invoke_hook(hit);
+            }
         }
     };
 

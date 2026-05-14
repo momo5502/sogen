@@ -73,8 +73,7 @@ sleep_hits = {"count": 0, "args": []}
 def on_sleep(call, params):
     sleep_hits["count"] += 1
     sleep_hits["args"].append(params[0])
-    call.return_value = 0
-    return mod.ApiContinuation.intercept
+    return mod.ApiContinuation.run_original
 
 state_base = emu.memory.allocate_memory(0x1000, mod.MemoryPermission.read_write)
 emu.write_memory(state_base, b"ABCD")
@@ -89,7 +88,6 @@ assert emu.read_memory(state_base, 4) == b"ABCD"
 
 test_sample = Path(analysis_sample)
 assert test_sample.exists()
-sleep_addr = {"value": None}
 
 with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
     mapped_file = Path(temp_dir) / "a.txt"
@@ -107,23 +105,12 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
         port_mappings={28970: 28980},
     )
 
-    def on_module_load(module):
-        if sleep_addr["value"] is not None:
-            return
-        if module.name.lower() != "kernelbase.dll":
-            return
-        for export in module.exports:
-            if export.name.lower() == "sleep":
-                sleep_addr["value"] = export.address
-                app.stop()
-                break
-
-    app.callbacks.on_module_load = on_module_load
     app.hooks.apis["Sleep"] = on_sleep
     app.start()
-    assert sleep_addr["value"] is not None
+    assert sleep_hits["count"] > 0
+    assert app.process.exit_status == 0
+    assert all(arg == 1 for arg in sleep_hits["args"])
 
-    app.callbacks.on_module_load = None
     app = None
     gc.collect()
 
