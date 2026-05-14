@@ -459,7 +459,7 @@ namespace
             entry.module_filter = std::move(target.module);
             entry.name = std::move(target.name);
             entry.callback = std::move(callback);
-            this->read_signature(entry);
+            api_hook_registry::read_signature(entry);
             this->refresh_index();
         }
 
@@ -477,14 +477,14 @@ namespace
             return signature;
         }
 
-        void read_signature(api_hook_entry& entry)
+        static void read_signature(api_hook_entry& entry)
         {
             auto signature = read_signature(entry.callback);
             entry.cc = signature.cc;
             entry.params = std::move(signature.params);
         }
 
-        bool matches_module(const api_hook_entry& entry, const mapped_module& module) const
+        static bool matches_module(const api_hook_entry& entry, const mapped_module& module)
         {
             if (!entry.module_filter.has_value())
             {
@@ -590,7 +590,7 @@ namespace
 
             this->ensure_execution_hook();
 
-            for (auto& [_, module] : this->win_emu->mod_manager.modules())
+            for (const auto& [_, module] : this->win_emu->mod_manager.modules())
             {
                 for (auto& [key, entry] : this->entries)
                 {
@@ -631,7 +631,7 @@ namespace
 
         void add_entry_for_module(const std::string& key, const api_hook_entry& entry, const mapped_module& module)
         {
-            if (!this->matches_module(entry, module))
+            if (!api_hook_registry::matches_module(entry, module))
             {
                 return;
             }
@@ -644,7 +644,7 @@ namespace
                 }
 
                 this->address_index[export_symbol.address].push_back(
-                    api_hook_hit{key, module.name, export_symbol.name, export_symbol.address});
+                    api_hook_hit{.key = key, .module_name = module.name, .export_name = export_symbol.name, .address = export_symbol.address});
             }
         }
 
