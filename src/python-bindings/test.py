@@ -67,14 +67,25 @@ emu.process.callbacks.on_thread_create = lambda h, t: None
 emu.callbacks.on_module_load = lambda m: None
 emu.callbacks.on_module_unload = lambda m: None
 
-env_hits = {"count": 0}
+sleep_hits = {"count": 0, "args": []}
+time_hits = {"count": 0, "values": []}
 
 
-@mod.api_call(cc=mod.CallingConvention.stdcall, params=[ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32])
-def on_get_environment_variable(call, params):
-    env_hits["count"] += 1
-    assert call.name == "GetEnvironmentVariableA"
+@mod.api_call(cc=mod.CallingConvention.stdcall, params=[ctypes.c_uint32])
+def on_sleep(call, params):
+    sleep_hits["count"] += 1
+    sleep_hits["args"].append(params[0])
+    assert call.name == "Sleep"
     return mod.ApiContinuation.run_original
+
+
+@mod.api_call(cc=mod.CallingConvention.stdcall, params=[])
+def on_time_get_time(call, params):
+    time_hits["count"] += 1
+    time_hits["values"].append(time_hits["count"])
+    assert call.name == "timeGetTime"
+    call.return_value = time_hits["count"]
+    return mod.ApiContinuation.intercept
 
 
 state_base = emu.memory.allocate_memory(0x1000, mod.MemoryPermission.read_write)
@@ -107,10 +118,14 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
         port_mappings={28970: 28980},
     )
 
-    app.hooks.apis["GetEnvironmentVariableA"] = on_get_environment_variable
+    app.hooks.apis["Sleep"] = on_sleep
+    app.hooks.apis["timeGetTime"] = on_time_get_time
     app.start()
-    assert env_hits["count"] > 0
+    assert sleep_hits["count"] > 0
+    assert time_hits["count"] >= 2
+    assert time_hits["values"][0] != time_hits["values"][1]
     assert app.process.exit_status == 0
+    assert all(arg == 1 for arg in sleep_hits["args"])
 
     app = None
     gc.collect()
