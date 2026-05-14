@@ -459,7 +459,7 @@ namespace
             entry.module_filter = std::move(target.module);
             entry.name = std::move(target.name);
             entry.callback = std::move(callback);
-            this->read_signature(entry);
+            api_hook_registry::read_signature(entry);
             this->refresh_index();
         }
 
@@ -559,8 +559,8 @@ namespace
             }
         }
 
-        static bool decode_call_target(x86_64_emulator& backend, const mapped_module* caller_module, const uint64_t address, uint64_t& target,
-                                        uint64_t& return_address)
+        static bool decode_call_target(x86_64_emulator& backend, const mapped_module* caller_module, const uint64_t address,
+                                       uint64_t& target, uint64_t& return_address)
         {
             std::array<uint8_t, 16> bytes{};
             if (!backend.try_read_memory(address, bytes.data(), bytes.size()))
@@ -821,7 +821,8 @@ namespace
                     continue;
                 }
 
-                const api_hook_hit hit{.key = key, .module_name = module.name, .export_name = export_symbol.name, .address = export_symbol.address};
+                const api_hook_hit hit{
+                    .key = key, .module_name = module.name, .export_name = export_symbol.name, .address = export_symbol.address};
                 this->address_index[export_symbol.address].push_back(hit);
 
                 uint64_t resolved = export_symbol.address;
