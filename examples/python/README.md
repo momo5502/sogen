@@ -1,14 +1,21 @@
 # Python example
 
-`examples/python/basic_usage.py` shows how to run the bundled `test-sample.exe`:
+`examples/python/basic_usage.py` shows how to run bundled `test-sample.exe`.
+
+Install:
 
 ```bash
 pip install sogen
-python examples/python/basic_usage.py
 ```
 
-Download the emulation root from:
+Get emulation root:
 
 https://sogen.dev/root.zip
 
-Set `EMULATOR_ROOT` to the extracted directory before running the script.
+Then run:
+
+```bash
+python examples/python/basic_usage.py
+```
+
+Set `EMULATOR_ROOT` to extracted root. If unset, script uses `./root`.
