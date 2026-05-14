@@ -62,7 +62,7 @@ Install with:
 pip install sogen
 ```
 
-Python bindings need an emulation root. Download a ready-to-use root [here](https://sogen.dev/root.zip) or create your own by following the instructions in the [wiki](https://github.com/momo5502/sogen/wiki/Run-The-Emulator#emulation-root-environment).
+Python bindings require an emulation root. You can download a ready-made root [here](https://sogen.dev/root.zip), or create your own by following the instructions in the [wiki](https://github.com/momo5502/sogen/wiki/Run-The-Emulator#emulation-root-environment).
 
 Example:
 
@@ -81,7 +81,7 @@ emu.start()
 print(emu.process.exit_status)
 ```
 
-See `examples/python/README.md` for emulation root setup and larger example.
+See `examples/python/README.md` for setup details and a larger example.
 
 ## Quick Start (Windows + Visual Studio)
 

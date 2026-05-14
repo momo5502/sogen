@@ -1,7 +1,7 @@
 """Small Sogen Python bindings example.
 
-Download emulation root from https://sogen.dev/root.zip and set EMULATOR_ROOT
-or place extracted root at ./root.
+Download an emulation root from https://sogen.dev/root.zip and set EMULATOR_ROOT,
+or place the extracted root at ./root.
 """
 
 from __future__ import annotations
