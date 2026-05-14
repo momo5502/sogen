@@ -76,7 +76,7 @@ def on_sleep(call, params):
     sleep_hits["args"].append(params[0])
     assert call.name == "Sleep"
     call.return_value = 1
-    return mod.ApiContinuation.intercept
+    return mod.ApiContinuation.run_original
 
 
 state_base = emu.memory.allocate_memory(0x1000, mod.MemoryPermission.read_write)
