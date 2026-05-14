@@ -240,6 +240,58 @@ namespace
         return nb::cast<memory_violation_continuation>(result);
     }
 
+    enum class api_calling_convention
+    {
+        cdecl_cc,
+        stdcall_cc,
+        x64_fastcall,
+    };
+
+    enum class api_call_continuation
+    {
+        run_original,
+        intercept,
+    };
+
+    struct api_call_info
+    {
+        std::string module{};
+        std::string name{};
+        uint64_t address{};
+        uint64_t return_address{};
+        uint64_t stack_pointer{};
+        uint64_t return_value{0};
+    };
+
+    struct api_hook_target
+    {
+        std::optional<std::string> module{};
+        std::string name{};
+    };
+
+    struct api_hook_signature
+    {
+        api_calling_convention cc{api_calling_convention::x64_fastcall};
+        nb::object params = nb::none();
+    };
+
+    [[maybe_unused]] std::string to_lower_ascii(std::string value)
+    {
+        std::ranges::transform(value, value.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return value;
+    }
+
+    [[maybe_unused]] api_hook_target parse_api_hook_target(const std::string& key)
+    {
+        const auto pos = key.find('!');
+        if (pos == std::string::npos)
+        {
+            return {.module = std::nullopt, .name = key};
+        }
+
+        return {.module = key.substr(0, pos), .name = key.substr(pos + 1)};
+    }
+
     struct hook_handle
     {
         windows_emulator* emu{};
@@ -311,12 +363,295 @@ namespace
         }
     };
 
+    struct api_hook_entry
+    {
+        std::optional<std::string> module_filter{};
+        std::string name{};
+        api_calling_convention cc{api_calling_convention::x64_fastcall};
+        nb::object params = nb::none();
+        nb::object callback = nb::none();
+        std::vector<std::pair<uint64_t, hook_handle>> hooks{};
+
+        api_hook_entry() = default;
+        api_hook_entry(const api_hook_entry&) = delete;
+        api_hook_entry& operator=(const api_hook_entry&) = delete;
+        api_hook_entry(api_hook_entry&&) noexcept = default;
+        api_hook_entry& operator=(api_hook_entry&&) noexcept = default;
+    };
+
+    [[maybe_unused]] api_call_continuation coerce_api_continuation(nb::handle result)
+    {
+        if (result.is_none())
+        {
+            return api_call_continuation::run_original;
+        }
+
+        if (nb::isinstance<nb::bool_>(result))
+        {
+            return nb::cast<bool>(result) ? api_call_continuation::intercept : api_call_continuation::run_original;
+        }
+
+        return nb::cast<api_call_continuation>(result);
+    }
+
+    struct api_hook_registry
+    {
+        windows_emulator* win_emu{};
+        std::map<std::string, api_hook_entry, std::less<>> entries{};
+        utils::callback_id_type module_load_id{};
+        utils::callback_id_type module_unload_id{};
+
+        api_hook_registry() = delete;
+        api_hook_registry(const api_hook_registry&) = delete;
+        api_hook_registry& operator=(const api_hook_registry&) = delete;
+        api_hook_registry(api_hook_registry&&) = delete;
+        api_hook_registry& operator=(api_hook_registry&&) = delete;
+
+        explicit api_hook_registry(windows_emulator& emulator)
+            : win_emu(&emulator)
+        {
+            this->module_load_id = this->win_emu->callbacks.on_module_load.add([this](mapped_module& mod) { this->install_for_module(mod); });
+            this->module_unload_id = this->win_emu->callbacks.on_module_unload.add([this](mapped_module& mod) { this->remove_for_module(mod); });
+
+            for (auto& [_, module] : this->win_emu->mod_manager.modules())
+            {
+                this->install_for_module(module);
+            }
+        }
+
+        ~api_hook_registry()
+        {
+            this->clear();
+            this->win_emu->callbacks.on_module_load.remove(this->module_load_id);
+            this->win_emu->callbacks.on_module_unload.remove(this->module_unload_id);
+        }
+
+        void clear()
+        {
+            for (auto& [_, entry] : this->entries)
+            {
+                this->remove_entry_hooks(entry);
+            }
+
+            this->entries.clear();
+        }
+
+        void del_item(const std::string& key)
+        {
+            if (auto it = this->entries.find(key); it != this->entries.end())
+            {
+                this->remove_entry_hooks(it->second);
+                this->entries.erase(it);
+            }
+        }
+
+        void set_item(const std::string& key, nb::object callback)
+        {
+            if (callback.is_none())
+            {
+                this->del_item(key);
+                return;
+            }
+
+            auto target = parse_api_hook_target(key);
+            auto& entry = this->entries[key];
+            this->remove_entry_hooks(entry);
+
+            entry.module_filter = std::move(target.module);
+            entry.name = std::move(target.name);
+            entry.callback = std::move(callback);
+            this->read_signature(entry);
+            this->install_for_entry(key, entry);
+        }
+
+      private:
+        static api_hook_signature read_signature(const nb::object& callback)
+        {
+            if (!nb::hasattr(callback, "_sogen_api_cc") || !nb::hasattr(callback, "_sogen_api_params"))
+            {
+                throw std::runtime_error("API hook callback must be decorated with sogen.api_call()");
+            }
+
+            api_hook_signature signature{};
+            signature.cc = nb::cast<api_calling_convention>(nb::getattr(callback, "_sogen_api_cc"));
+            signature.params = nb::getattr(callback, "_sogen_api_params");
+            return signature;
+        }
+
+        void read_signature(api_hook_entry& entry)
+        {
+            auto signature = read_signature(entry.callback);
+            entry.cc = signature.cc;
+            entry.params = std::move(signature.params);
+        }
+
+        bool matches_module(const api_hook_entry& entry, const mapped_module& module) const
+        {
+            if (!entry.module_filter.has_value())
+            {
+                return true;
+            }
+
+            const auto expected = to_lower_ascii(*entry.module_filter);
+            const auto name = to_lower_ascii(module.name);
+            auto stem = name;
+            if (const auto dot = stem.rfind('.'); dot != std::string::npos)
+            {
+                stem.erase(dot);
+            }
+
+            return expected == name || expected == stem;
+        }
+
+        nb::list resolve_params(const api_hook_entry& entry) const
+        {
+            nb::list params{};
+            size_t count = 0;
+
+            if (!entry.params.is_none())
+            {
+                count = static_cast<size_t>(nb::len(nb::cast<nb::sequence>(entry.params)));
+            }
+
+            auto& backend = this->win_emu->emu();
+            const auto rsp = backend.reg<uint64_t>(x86_register::rsp);
+
+            for (size_t i = 0; i < count; ++i)
+            {
+                uint64_t value{};
+                if (i == 0)
+                {
+                    value = backend.reg<uint64_t>(x86_register::rcx);
+                }
+                else if (i == 1)
+                {
+                    value = backend.reg<uint64_t>(x86_register::rdx);
+                }
+                else if (i == 2)
+                {
+                    value = backend.reg<uint64_t>(x86_register::r8);
+                }
+                else if (i == 3)
+                {
+                    value = backend.reg<uint64_t>(x86_register::r9);
+                }
+                else
+                {
+                    value = backend.read_memory<uint64_t>(rsp + 0x28 + ((i - 4) * sizeof(uint64_t)));
+                }
+
+                params.append(value);
+            }
+
+            return params;
+        }
+
+        void return_from_api(const api_call_info& call) const
+        {
+            auto& backend = this->win_emu->emu();
+            backend.reg<uint64_t>(x86_register::rax, call.return_value);
+            backend.reg<uint64_t>(x86_register::rsp, call.stack_pointer + sizeof(uint64_t));
+            backend.reg<uint64_t>(x86_register::rip, call.return_address);
+        }
+
+        void invoke_hook(const std::string& key, const std::string& module_name, const std::string& export_name, const uint64_t address)
+        {
+            auto it = this->entries.find(key);
+            if (it == this->entries.end())
+            {
+                return;
+            }
+
+            auto& entry = it->second;
+            auto call = std::make_shared<api_call_info>();
+            call->module = module_name;
+            call->name = export_name;
+            call->address = address;
+            call->stack_pointer = this->win_emu->emu().reg<uint64_t>(x86_register::rsp);
+            call->return_address = this->win_emu->emu().read_memory<uint64_t>(call->stack_pointer);
+
+            const auto params = this->resolve_params(entry);
+            nb::gil_scoped_acquire gil{};
+            const auto result = coerce_api_continuation(entry.callback(nb::cast(call.get(), nb::rv_policy::reference_internal), params));
+            if (result == api_call_continuation::intercept)
+            {
+                this->return_from_api(*call);
+            }
+        }
+
+        void install_for_entry(const std::string& key, api_hook_entry& entry)
+        {
+            for (auto& [_, module] : this->win_emu->mod_manager.modules())
+            {
+                this->install_for_module(key, entry, module);
+            }
+        }
+
+        void install_for_module(const mapped_module& module)
+        {
+            for (auto& [key, entry] : this->entries)
+            {
+                this->install_for_module(key, entry, module);
+            }
+        }
+
+        void install_for_module(const std::string& key, api_hook_entry& entry, const mapped_module& module)
+        {
+            if (!this->matches_module(entry, module))
+            {
+                return;
+            }
+
+            for (const auto& export_symbol : module.exports)
+            {
+                if (export_symbol.name != entry.name)
+                {
+                    continue;
+                }
+
+                if (std::ranges::any_of(entry.hooks, [&](const auto& item) { return item.first == export_symbol.address; }))
+                {
+                    continue;
+                }
+
+                auto* hook = this->win_emu->emu().hook_memory_execution(export_symbol.address, [this, key, module_name = module.name,
+                                                                                            export_name = export_symbol.name](uint64_t address) {
+                    this->invoke_hook(key, module_name, export_name, address);
+                });
+                entry.hooks.emplace_back(export_symbol.address, hook_handle{*this->win_emu, hook, nb::none()});
+            }
+        }
+
+        void remove_for_module(const mapped_module& module)
+        {
+            for (auto& [key, entry] : this->entries)
+            {
+                if (!this->matches_module(entry, module))
+                {
+                    continue;
+                }
+
+                for (const auto& export_symbol : module.exports)
+                {
+                    std::erase_if(entry.hooks, [&](const auto& item) { return item.first == export_symbol.address; });
+                }
+            }
+        }
+
+        void remove_entry_hooks(api_hook_entry& entry)
+        {
+            entry.hooks.clear();
+        }
+    };
+
     struct hook_registry
     {
         windows_emulator* emu{};
+        std::shared_ptr<api_hook_registry> apis{};
 
         explicit hook_registry(windows_emulator& emulator)
-            : emu(&emulator)
+            : emu(&emulator),
+              apis(std::make_shared<api_hook_registry>(emulator))
         {
         }
 
