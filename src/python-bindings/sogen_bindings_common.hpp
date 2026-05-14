@@ -4,6 +4,7 @@
 #include <nanobind/stl/filesystem.h>
 #include <nanobind/stl/map.h>
 #include <nanobind/stl/optional.h>
+#include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/set.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/string_view.h>
@@ -517,8 +518,9 @@ namespace
         void return_from_api(const api_call_info& call, const bool entered_from_call) const
         {
             auto& backend = this->win_emu->emu();
+            const auto stack_adjust = is_32bit_code_segment(backend) ? sizeof(uint32_t) : sizeof(uint64_t);
             backend.reg<uint64_t>(x86_register::rax, call.return_value);
-            backend.reg<uint64_t>(x86_register::rsp, call.stack_pointer + (entered_from_call ? sizeof(uint64_t) : 0));
+            backend.reg<uint64_t>(x86_register::rsp, call.stack_pointer + (entered_from_call ? stack_adjust : 0));
             backend.reg<uint64_t>(x86_register::rip, call.return_address);
         }
 
@@ -540,15 +542,9 @@ namespace
             nb::gil_scoped_acquire gil{};
 
             const auto params = this->resolve_params(entry);
-            nb::dict call_view;
-            call_view["module"] = call->module;
-            call_view["name"] = call->name;
-            call_view["address"] = call->address;
-            call_view["return_address"] = call->return_address;
-            call_view["return_value"] = call->return_value;
             try
             {
-                const auto result = coerce_api_continuation(entry.callback(call_view, params));
+                const auto result = coerce_api_continuation(entry.callback(nb::cast(call), params));
                 if (result == api_call_continuation::intercept)
                 {
                     this->return_from_api(*call, hit.entered_from_call);
