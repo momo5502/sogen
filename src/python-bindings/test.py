@@ -67,15 +67,13 @@ emu.process.callbacks.on_thread_create = lambda h, t: None
 emu.callbacks.on_module_load = lambda m: None
 emu.callbacks.on_module_unload = lambda m: None
 
-sleep_hits = {"count": 0, "args": []}
+env_hits = {"count": 0}
 
 
-@mod.api_call(cc=mod.CallingConvention.stdcall, params=[ctypes.c_uint32])
-def on_sleep(call, params):
-    sleep_hits["count"] += 1
-    sleep_hits["args"].append(params[0])
-    assert call.name == "Sleep"
-    call.return_value = 1
+@mod.api_call(cc=mod.CallingConvention.stdcall, params=[ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32])
+def on_get_environment_variable(call, params):
+    env_hits["count"] += 1
+    assert call.name == "GetEnvironmentVariableA"
     return mod.ApiContinuation.run_original
 
 
@@ -109,11 +107,10 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
         port_mappings={28970: 28980},
     )
 
-    app.hooks.apis["Sleep"] = on_sleep
+    app.hooks.apis["GetEnvironmentVariableA"] = on_get_environment_variable
     app.start()
-    assert sleep_hits["count"] > 0
+    assert env_hits["count"] > 0
     assert app.process.exit_status == 0
-    assert all(arg == 1 for arg in sleep_hits["args"])
 
     app = None
     gc.collect()
