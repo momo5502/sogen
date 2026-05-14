@@ -4,14 +4,17 @@
 
 void register_sogen_runtime_bindings(nb::module_& m)
 {
-    m.def("api_call", [](api_calling_convention cc, nb::object params, nb::object restype) {
-        return nb::cpp_function([cc, params = std::move(params), restype = std::move(restype)](nb::handle fn) -> nb::object {
-            nb::setattr(fn, "_sogen_api_cc", nb::cast(cc));
-            nb::setattr(fn, "_sogen_api_params", params);
-            nb::setattr(fn, "_sogen_api_restype", restype);
-            return nb::borrow<nb::object>(fn);
-        });
-    }, nb::arg("cc"), nb::arg("params") = nb::none(), nb::arg("restype") = nb::none());
+    m.def(
+        "api_call",
+        [](api_calling_convention cc, nb::object params, nb::object restype) {
+            return nb::cpp_function([cc, params = std::move(params), restype = std::move(restype)](nb::handle fn) -> nb::object {
+                nb::setattr(fn, "_sogen_api_cc", nb::cast(cc));
+                nb::setattr(fn, "_sogen_api_params", params);
+                nb::setattr(fn, "_sogen_api_restype", restype);
+                return nb::borrow<nb::object>(fn);
+            });
+        },
+        nb::arg("cc"), nb::arg("params") = nb::none(), nb::arg("restype") = nb::none());
 
     nb::class_<hook_handle>(m, "Hook").def("remove", &hook_handle::remove).def_prop_ro("active", &hook_handle::active);
 

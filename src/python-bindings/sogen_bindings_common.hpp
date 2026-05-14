@@ -410,8 +410,10 @@ namespace
         explicit api_hook_registry(windows_emulator& emulator)
             : win_emu(&emulator)
         {
-            this->module_load_id = this->win_emu->callbacks.on_module_load.add([this](mapped_module& mod) { this->install_for_module(mod); });
-            this->module_unload_id = this->win_emu->callbacks.on_module_unload.add([this](mapped_module& mod) { this->remove_for_module(mod); });
+            this->module_load_id =
+                this->win_emu->callbacks.on_module_load.add([this](mapped_module& mod) { this->install_for_module(mod); });
+            this->module_unload_id =
+                this->win_emu->callbacks.on_module_unload.add([this](mapped_module& mod) { this->remove_for_module(mod); });
 
             for (auto& [_, module] : this->win_emu->mod_manager.modules())
             {
@@ -614,10 +616,10 @@ namespace
                     continue;
                 }
 
-                auto* hook = this->win_emu->emu().hook_memory_execution(export_symbol.address, [this, key, module_name = module.name,
-                                                                                            export_name = export_symbol.name](uint64_t address) {
-                    this->invoke_hook(key, module_name, export_name, address);
-                });
+                auto* hook = this->win_emu->emu().hook_memory_execution(
+                    export_symbol.address, [this, key, module_name = module.name, export_name = export_symbol.name](uint64_t address) {
+                        this->invoke_hook(key, module_name, export_name, address);
+                    });
                 entry.hooks.emplace_back(export_symbol.address, hook_handle{*this->win_emu, hook, nb::none()});
             }
         }

@@ -148,8 +148,9 @@ void register_sogen_types_bindings(nb::module_& m)
         .def_prop_ro("name", [](const api_call_info& self) { return self.name; })
         .def_prop_ro("address", [](const api_call_info& self) { return self.address; })
         .def_prop_ro("return_address", [](const api_call_info& self) { return self.return_address; })
-        .def_prop_rw("return_value", [](const api_call_info& self) { return self.return_value; },
-                     [](api_call_info& self, uint64_t value) { self.return_value = value; });
+        .def_prop_rw(
+            "return_value", [](const api_call_info& self) { return self.return_value; },
+            [](api_call_info& self, uint64_t value) { self.return_value = value; });
 
     nb::class_<basic_block>(m, "BasicBlock")
         .def_prop_ro("address", [](const basic_block& self) { return self.address; })
@@ -170,6 +171,7 @@ void register_sogen_types_bindings(nb::module_& m)
         .def_prop_ro("image_base_file", [](const mapped_module& self) { return self.image_base_file; })
         .def_prop_ro("size_of_image", [](const mapped_module& self) { return self.size_of_image; })
         .def_prop_ro("entry_point", [](const mapped_module& self) { return self.entry_point; })
-        .def_prop_ro("exports", [](const mapped_module& self) -> const exported_symbols& { return self.exports; }, nb::rv_policy::reference_internal)
+        .def_prop_ro(
+            "exports", [](const mapped_module& self) -> const exported_symbols& { return self.exports; }, nb::rv_policy::reference_internal)
         .def_prop_ro("is_static", [](const mapped_module& self) { return self.is_static; });
 }
