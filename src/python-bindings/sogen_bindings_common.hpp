@@ -240,13 +240,6 @@ namespace
         return nb::cast<memory_violation_continuation>(result);
     }
 
-    enum class api_calling_convention
-    {
-        cdecl_cc,
-        stdcall_cc,
-        x64_fastcall,
-    };
-
     enum class api_call_continuation
     {
         run_original,
@@ -271,7 +264,7 @@ namespace
 
     struct api_hook_signature
     {
-        api_calling_convention cc{api_calling_convention::x64_fastcall};
+        function_calling_convention cc{function_calling_convention::x64_fastcall};
         nb::object params = nb::none();
     };
 
@@ -369,15 +362,18 @@ namespace
         std::string module_name{};
         std::string export_name{};
         uint64_t address{};
+        uint64_t return_address{};
+        bool entered_from_call{false};
     };
 
     struct api_hook_entry
     {
         std::optional<std::string> module_filter{};
         std::string name{};
-        api_calling_convention cc{api_calling_convention::x64_fastcall};
+        function_calling_convention cc{function_calling_convention::x64_fastcall};
         nb::object params = nb::none();
         nb::object callback = nb::none();
+        std::vector<std::pair<uint64_t, hook_handle>> hooks{};
 
         api_hook_entry() = default;
         api_hook_entry(const api_hook_entry&) = delete;
@@ -432,6 +428,10 @@ namespace
 
         void clear()
         {
+            for (auto& [_, entry] : this->entries)
+            {
+                entry.hooks.clear();
+            }
             this->entries.clear();
             this->address_index.clear();
             this->remove_execution_hook();
@@ -459,7 +459,7 @@ namespace
             entry.module_filter = std::move(target.module);
             entry.name = std::move(target.name);
             entry.callback = std::move(callback);
-            api_hook_registry::read_signature(entry);
+            this->read_signature(entry);
             this->refresh_index();
         }
 
@@ -472,7 +472,7 @@ namespace
             }
 
             api_hook_signature signature{};
-            signature.cc = nb::cast<api_calling_convention>(nb::getattr(callback, "_sogen_api_cc"));
+            signature.cc = nb::cast<function_calling_convention>(nb::getattr(callback, "_sogen_api_cc"));
             signature.params = nb::getattr(callback, "_sogen_api_params");
             return signature;
         }
@@ -505,51 +505,20 @@ namespace
         nb::list resolve_params(const api_hook_entry& entry) const
         {
             nb::list params{};
-            size_t count = 0;
-
-            if (!entry.params.is_none())
+            const auto count = entry.params.is_none() ? size_t{} : static_cast<size_t>(nb::len(entry.params));
+            const auto cc = is_32bit_code_segment(this->win_emu->emu()) ? entry.cc : function_calling_convention::x64_fastcall;
+            for (const auto value : get_function_arguments(this->win_emu->emu(), cc, count))
             {
-                count = static_cast<size_t>(nb::len(nb::cast<nb::sequence>(entry.params)));
-            }
-
-            auto& backend = this->win_emu->emu();
-            const auto rsp = backend.reg<uint64_t>(x86_register::rsp);
-
-            for (size_t i = 0; i < count; ++i)
-            {
-                uint64_t value{};
-                if (i == 0)
-                {
-                    value = backend.reg<uint64_t>(x86_register::rcx);
-                }
-                else if (i == 1)
-                {
-                    value = backend.reg<uint64_t>(x86_register::rdx);
-                }
-                else if (i == 2)
-                {
-                    value = backend.reg<uint64_t>(x86_register::r8);
-                }
-                else if (i == 3)
-                {
-                    value = backend.reg<uint64_t>(x86_register::r9);
-                }
-                else
-                {
-                    value = backend.read_memory<uint64_t>(rsp + 0x28 + ((i - 4) * sizeof(uint64_t)));
-                }
-
                 params.append(value);
             }
-
             return params;
         }
 
-        void return_from_api(const api_call_info& call) const
+        void return_from_api(const api_call_info& call, const bool entered_from_call) const
         {
             auto& backend = this->win_emu->emu();
             backend.reg<uint64_t>(x86_register::rax, call.return_value);
-            backend.reg<uint64_t>(x86_register::rsp, call.stack_pointer + sizeof(uint64_t));
+            backend.reg<uint64_t>(x86_register::rsp, call.stack_pointer + (entered_from_call ? sizeof(uint64_t) : 0));
             backend.reg<uint64_t>(x86_register::rip, call.return_address);
         }
 
@@ -566,21 +535,230 @@ namespace
             call->module = hit.module_name;
             call->name = hit.export_name;
             call->address = hit.address;
+            call->return_address = hit.return_address;
             call->stack_pointer = this->win_emu->emu().reg<uint64_t>(x86_register::rsp);
-            call->return_address = this->win_emu->emu().read_memory<uint64_t>(call->stack_pointer);
+            nb::gil_scoped_acquire gil{};
 
             const auto params = this->resolve_params(entry);
-            nb::gil_scoped_acquire gil{};
-            const auto result = coerce_api_continuation(entry.callback(nb::cast(call.get(), nb::rv_policy::reference_internal), params));
-            if (result == api_call_continuation::intercept)
+            nb::dict call_view;
+            call_view["module"] = call->module;
+            call_view["name"] = call->name;
+            call_view["address"] = call->address;
+            call_view["return_address"] = call->return_address;
+            call_view["return_value"] = call->return_value;
+            try
             {
-                this->return_from_api(*call);
+                const auto result = coerce_api_continuation(entry.callback(call_view, params));
+                if (result == api_call_continuation::intercept)
+                {
+                    this->return_from_api(*call, hit.entered_from_call);
+                }
             }
+            catch (...)
+            {
+            }
+        }
+
+        static bool decode_call_target(x86_64_emulator& backend, const mapped_module* caller_module, const uint64_t address, uint64_t& target,
+                                        uint64_t& return_address)
+        {
+            std::array<uint8_t, 16> bytes{};
+            if (!backend.try_read_memory(address, bytes.data(), bytes.size()))
+            {
+                return false;
+            }
+
+            const auto prefix = instruction_prefix_length(bytes);
+            const auto opcode = bytes[prefix];
+            if (opcode == 0xE8)
+            {
+                int32_t rel{};
+                std::memcpy(&rel, bytes.data() + 1, sizeof(rel));
+                target = address + 5 + rel;
+                return_address = address + 5;
+                return true;
+            }
+
+            if (opcode == 0xFF)
+            {
+                const auto modrm = bytes[1];
+                const auto reg = (modrm >> 3) & 0x7;
+                const auto mod = (modrm >> 6) & 0x3;
+                const auto rm = modrm & 0x7;
+                if (reg != 2)
+                {
+                    return false;
+                }
+
+                if (mod == 0 && rm == 5)
+                {
+                    int32_t disp{};
+                    std::memcpy(&disp, bytes.data() + 2, sizeof(disp));
+                    const auto ptr_addr = address + 6 + disp;
+                    if (!backend.try_read_memory(ptr_addr, &target, sizeof(target)))
+                    {
+                        return false;
+                    }
+                    if (caller_module && target < caller_module->size_of_image)
+                    {
+                        const auto relocated_target = caller_module->image_base + target;
+                        std::array<uint8_t, 1> probe{};
+                        if (backend.try_read_memory(relocated_target, probe.data(), probe.size()))
+                        {
+                            target = relocated_target;
+                        }
+                    }
+                    return_address = address + 6;
+                    return true;
+                }
+
+                if (mod == 3)
+                {
+                    switch (rm)
+                    {
+                    case 0:
+                        target = backend.reg<uint64_t>(x86_register::rax);
+                        break;
+                    case 1:
+                        target = backend.reg<uint64_t>(x86_register::rcx);
+                        break;
+                    case 2:
+                        target = backend.reg<uint64_t>(x86_register::rdx);
+                        break;
+                    case 3:
+                        target = backend.reg<uint64_t>(x86_register::rbx);
+                        break;
+                    case 4:
+                        target = backend.reg<uint64_t>(x86_register::rsp);
+                        break;
+                    case 5:
+                        target = backend.reg<uint64_t>(x86_register::rbp);
+                        break;
+                    case 6:
+                        target = backend.reg<uint64_t>(x86_register::rsi);
+                        break;
+                    case 7:
+                        target = backend.reg<uint64_t>(x86_register::rdi);
+                        break;
+                    default:
+                        return false;
+                    }
+                    return_address = address + 2;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        static size_t instruction_prefix_length(const std::array<uint8_t, 16>& bytes)
+        {
+            size_t prefix = 0;
+            while (prefix < bytes.size())
+            {
+                const auto b = bytes[prefix];
+                if (b == 0xF0 || b == 0xF2 || b == 0xF3 || b == 0x2E || b == 0x36 || b == 0x3E || b == 0x26 || b == 0x64 || b == 0x65 ||
+                    b == 0x66 || b == 0x67 || (b >= 0x40 && b <= 0x4F))
+                {
+                    ++prefix;
+                    continue;
+                }
+                break;
+            }
+            return prefix;
+        }
+
+        static bool resolve_jump_target(x86_64_emulator& backend, uint64_t& target)
+        {
+            for (size_t depth = 0; depth < 8; ++depth)
+            {
+                std::array<uint8_t, 16> bytes{};
+                if (!backend.try_read_memory(target, bytes.data(), bytes.size()))
+                {
+                    return false;
+                }
+
+                const auto prefix = instruction_prefix_length(bytes);
+                const auto opcode = bytes[prefix];
+                if (opcode == 0xE9)
+                {
+                    int32_t rel{};
+                    std::memcpy(&rel, bytes.data() + prefix + 1, sizeof(rel));
+                    target += prefix + 5 + rel;
+                    continue;
+                }
+
+                if (opcode == 0xFF)
+                {
+                    const auto modrm = bytes[prefix + 1];
+                    const auto reg = (modrm >> 3) & 0x7;
+                    const auto mod = (modrm >> 6) & 0x3;
+                    const auto rm = modrm & 0x7;
+                    if (reg != 4)
+                    {
+                        return true;
+                    }
+
+                    if (mod == 0 && rm == 5)
+                    {
+                        int32_t disp{};
+                        std::memcpy(&disp, bytes.data() + prefix + 2, sizeof(disp));
+                        const auto ptr_addr = target + prefix + 6 + disp;
+                        if (!backend.try_read_memory(ptr_addr, &target, sizeof(target)))
+                        {
+                            return false;
+                        }
+                        continue;
+                    }
+
+                    if (mod == 3)
+                    {
+                        switch (rm)
+                        {
+                        case 0:
+                            target = backend.reg<uint64_t>(x86_register::rax);
+                            break;
+                        case 1:
+                            target = backend.reg<uint64_t>(x86_register::rcx);
+                            break;
+                        case 2:
+                            target = backend.reg<uint64_t>(x86_register::rdx);
+                            break;
+                        case 3:
+                            target = backend.reg<uint64_t>(x86_register::rbx);
+                            break;
+                        case 4:
+                            target = backend.reg<uint64_t>(x86_register::rsp);
+                            break;
+                        case 5:
+                            target = backend.reg<uint64_t>(x86_register::rbp);
+                            break;
+                        case 6:
+                            target = backend.reg<uint64_t>(x86_register::rsi);
+                            break;
+                        case 7:
+                            target = backend.reg<uint64_t>(x86_register::rdi);
+                            break;
+                        default:
+                            return false;
+                        }
+                        continue;
+                    }
+                }
+
+                return true;
+            }
+
+            return true;
         }
 
         void refresh_index()
         {
             this->address_index.clear();
+            for (auto& [_, entry] : this->entries)
+            {
+                entry.hooks.clear();
+            }
 
             if (this->entries.empty())
             {
@@ -629,7 +807,7 @@ namespace
             this->execution_hook.reset();
         }
 
-        void add_entry_for_module(const std::string& key, const api_hook_entry& entry, const mapped_module& module)
+        void add_entry_for_module(const std::string& key, api_hook_entry& entry, const mapped_module& module)
         {
             if (!api_hook_registry::matches_module(entry, module))
             {
@@ -643,99 +821,39 @@ namespace
                     continue;
                 }
 
-                this->address_index[export_symbol.address].push_back(api_hook_hit{
-                    .key = key, .module_name = module.name, .export_name = export_symbol.name, .address = export_symbol.address});
+                const api_hook_hit hit{.key = key, .module_name = module.name, .export_name = export_symbol.name, .address = export_symbol.address};
+                this->address_index[export_symbol.address].push_back(hit);
+
+                uint64_t resolved = export_symbol.address;
+                if (resolve_jump_target(this->win_emu->emu(), resolved) && resolved != export_symbol.address)
+                {
+                    auto resolved_hit = hit;
+                    resolved_hit.address = resolved;
+                    this->address_index[resolved].push_back(resolved_hit);
+                }
             }
         }
 
         void dispatch_address(const uint64_t address)
         {
-            std::array<uint8_t, 16> bytes{};
-            if (!this->win_emu->emu().try_read_memory(address, bytes.data(), bytes.size()))
-            {
-                return;
-            }
-
-            uint64_t target{};
-            const auto opcode = bytes[0];
-            if (opcode == 0xE8)
-            {
-                int32_t rel{};
-                std::memcpy(&rel, bytes.data() + 1, sizeof(rel));
-                target = address + 5 + rel;
-            }
-            else if (opcode == 0xFF)
-            {
-                const auto modrm = bytes[1];
-                const auto reg = (modrm >> 3) & 0x7;
-                const auto mod = (modrm >> 6) & 0x3;
-                const auto rm = modrm & 0x7;
-                if (reg != 2)
-                {
-                    return;
-                }
-
-                if (mod == 0 && rm == 5)
-                {
-                    int32_t disp{};
-                    std::memcpy(&disp, bytes.data() + 2, sizeof(disp));
-                    const auto ptr_addr = address + 6 + disp;
-                    if (!this->win_emu->emu().try_read_memory(ptr_addr, &target, sizeof(target)))
-                    {
-                        return;
-                    }
-                }
-                else if (mod == 3)
-                {
-                    switch (rm)
-                    {
-                    case 0:
-                        target = this->win_emu->emu().reg<uint64_t>(x86_register::rax);
-                        break;
-                    case 1:
-                        target = this->win_emu->emu().reg<uint64_t>(x86_register::rcx);
-                        break;
-                    case 2:
-                        target = this->win_emu->emu().reg<uint64_t>(x86_register::rdx);
-                        break;
-                    case 3:
-                        target = this->win_emu->emu().reg<uint64_t>(x86_register::rbx);
-                        break;
-                    case 4:
-                        target = this->win_emu->emu().reg<uint64_t>(x86_register::rsp);
-                        break;
-                    case 5:
-                        target = this->win_emu->emu().reg<uint64_t>(x86_register::rbp);
-                        break;
-                    case 6:
-                        target = this->win_emu->emu().reg<uint64_t>(x86_register::rsi);
-                        break;
-                    case 7:
-                        target = this->win_emu->emu().reg<uint64_t>(x86_register::rdi);
-                        break;
-                    default:
-                        return;
-                    }
-                }
-                else
-                {
-                    return;
-                }
-            }
-            else
-            {
-                return;
-            }
-
-            auto it = this->address_index.find(target);
+            auto it = this->address_index.find(address);
             if (it == this->address_index.end())
             {
                 return;
             }
 
-            const auto hits = it->second;
-            for (const auto& hit : hits)
+            auto& backend = this->win_emu->emu();
+            uint64_t return_address{};
+            if (!backend.try_read_memory(backend.reg<uint64_t>(x86_register::rsp), &return_address, sizeof(return_address)))
             {
+                return;
+            }
+
+            auto hits = it->second;
+            for (auto& hit : hits)
+            {
+                hit.return_address = return_address;
+                hit.entered_from_call = true;
                 this->invoke_hook(hit);
             }
         }

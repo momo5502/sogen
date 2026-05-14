@@ -9,6 +9,7 @@
 #include "common/segment_utils.hpp"
 
 #include <utils/time.hpp>
+#include <vector>
 
 namespace network
 {
@@ -201,6 +202,14 @@ class emulator_object
 
         this->write(obj, index);
     }
+};
+
+enum class function_calling_convention
+{
+    x86_cdecl,
+    x86_stdcall,
+    x64_fastcall,
+    x64_syscall,
 };
 
 // TODO: warning emulator_utils is hardcoded for 64bit unicode_string usage
@@ -426,30 +435,12 @@ inline std::u16string read_large_string(const emulator_object<LARGE_STRING> str_
     return u8_to_u16(ansi_string);
 }
 
-/// Retrieves function arguments from registers or stack memory. This function assumes the stack pointer currently points to the
-/// return address.
-inline uint64_t get_function_argument(x86_64_emulator& emu, const size_t index, const bool is_syscall = false)
+inline uint64_t get_function_argument_x64_fastcall(x86_64_emulator& emu, const size_t index)
 {
-    bool use_32bit_stack = false;
-
-    if (!is_syscall)
-    {
-        const auto cs_selector = emu.reg<uint16_t>(x86_register::cs);
-        const auto bitness = segment_utils::get_segment_bitness(emu, cs_selector);
-        use_32bit_stack = bitness && *bitness == segment_utils::segment_bitness::bit32;
-    }
-
-    if (use_32bit_stack)
-    {
-        const auto esp = emu.reg<uint32_t>(x86_register::esp);
-        const auto address = static_cast<uint64_t>(esp) + static_cast<uint64_t>((index + 1) * sizeof(uint32_t));
-        return static_cast<uint64_t>(emu.read_memory<uint32_t>(address));
-    }
-
     switch (index)
     {
     case 0:
-        return emu.reg(is_syscall ? x86_register::r10 : x86_register::rcx);
+        return emu.reg(x86_register::rcx);
     case 1:
         return emu.reg(x86_register::rdx);
     case 2:
@@ -461,30 +452,82 @@ inline uint64_t get_function_argument(x86_64_emulator& emu, const size_t index, 
     }
 }
 
-/// Sets function arguments in registers or stack memory. This function does not modify RSP and assumes the caller has already allocated
-/// stack space and that RSP currently points to the return address.
-inline void set_function_argument(x86_64_emulator& emu, const size_t index, const uint64_t value, const bool is_syscall = false)
+inline uint64_t get_function_argument_x64_syscall(x86_64_emulator& emu, const size_t index)
 {
-    bool use_32bit_stack = false;
-    if (!is_syscall)
+    if (index == 0)
     {
-        const auto cs_selector = emu.reg<uint16_t>(x86_register::cs);
-        const auto bitness = segment_utils::get_segment_bitness(emu, cs_selector);
-        use_32bit_stack = bitness && *bitness == segment_utils::segment_bitness::bit32;
+        return emu.reg(x86_register::r10);
     }
 
-    if (use_32bit_stack)
+    return get_function_argument_x64_fastcall(emu, index);
+}
+
+inline bool is_32bit_code_segment(x86_64_emulator& emu)
+{
+    const auto cs_selector = emu.reg<uint16_t>(x86_register::cs);
+    const auto bitness = segment_utils::get_segment_bitness(emu, cs_selector);
+    return bitness && *bitness == segment_utils::segment_bitness::bit32;
+}
+
+inline uint64_t get_function_argument_x86_stack(x86_64_emulator& emu, const size_t index)
+{
+    const auto esp = emu.reg<uint32_t>(x86_register::esp);
+    const auto address = static_cast<uint64_t>(esp) + static_cast<uint64_t>((index + 1) * sizeof(uint32_t));
+    return static_cast<uint64_t>(emu.read_memory<uint32_t>(address));
+}
+
+inline uint64_t get_function_argument(x86_64_emulator& emu, const function_calling_convention cc, const size_t index)
+{
+    using enum function_calling_convention;
+
+    switch (cc)
     {
-        const auto esp = emu.reg<uint32_t>(x86_register::esp);
-        const auto address = static_cast<uint64_t>(esp) + static_cast<uint64_t>((index + 1) * sizeof(uint32_t));
-        emu.write_memory<uint32_t>(address, static_cast<uint32_t>(value));
-        return;
+    case x86_cdecl:
+    case x86_stdcall:
+        return get_function_argument_x86_stack(emu, index);
+    case x64_syscall:
+        return get_function_argument_x64_syscall(emu, index);
+    case x64_fastcall:
+        return get_function_argument_x64_fastcall(emu, index);
+    default:
+        throw std::runtime_error("Unsupported calling convention");
+    }
+}
+
+inline uint64_t get_function_argument(x86_64_emulator& emu, const size_t index, const bool is_syscall = false)
+{
+    if (is_syscall)
+    {
+        return get_function_argument_x64_syscall(emu, index);
     }
 
+    if (is_32bit_code_segment(emu))
+    {
+        return get_function_argument_x86_stack(emu, index);
+    }
+
+    return get_function_argument_x64_fastcall(emu, index);
+}
+
+inline std::vector<uint64_t> get_function_arguments(x86_64_emulator& emu, const function_calling_convention cc, const size_t count)
+{
+    std::vector<uint64_t> args{};
+    args.reserve(count);
+
+    for (size_t i = 0; i < count; ++i)
+    {
+        args.emplace_back(get_function_argument(emu, cc, i));
+    }
+
+    return args;
+}
+
+inline void set_function_argument_x64_fastcall(x86_64_emulator& emu, const size_t index, const uint64_t value)
+{
     switch (index)
     {
     case 0:
-        emu.reg(is_syscall ? x86_register::r10 : x86_register::rcx, value);
+        emu.reg(x86_register::rcx, value);
         break;
     case 1:
         emu.reg(x86_register::rdx, value);
@@ -498,6 +541,70 @@ inline void set_function_argument(x86_64_emulator& emu, const size_t index, cons
     default:
         emu.write_stack(index + 1, value);
         break;
+    }
+}
+
+inline void set_function_argument_x64_syscall(x86_64_emulator& emu, const size_t index, const uint64_t value)
+{
+    if (index == 0)
+    {
+        emu.reg(x86_register::r10, value);
+        return;
+    }
+
+    set_function_argument_x64_fastcall(emu, index, value);
+}
+
+inline void set_function_argument_x86_stack(x86_64_emulator& emu, const size_t index, const uint64_t value)
+{
+    const auto esp = emu.reg<uint32_t>(x86_register::esp);
+    const auto address = static_cast<uint64_t>(esp) + static_cast<uint64_t>((index + 1) * sizeof(uint32_t));
+    emu.write_memory<uint32_t>(address, static_cast<uint32_t>(value));
+}
+
+inline void set_function_argument(x86_64_emulator& emu, const function_calling_convention cc, const size_t index, const uint64_t value)
+{
+    using enum function_calling_convention;
+
+    switch (cc)
+    {
+    case x86_cdecl:
+    case x86_stdcall:
+        set_function_argument_x86_stack(emu, index, value);
+        return;
+    case x64_syscall:
+        set_function_argument_x64_syscall(emu, index, value);
+        return;
+    case x64_fastcall:
+        set_function_argument_x64_fastcall(emu, index, value);
+        return;
+    default:
+        throw std::runtime_error("Unsupported calling convention");
+    }
+}
+
+inline void set_function_argument(x86_64_emulator& emu, const size_t index, const uint64_t value, const bool is_syscall = false)
+{
+    if (is_32bit_code_segment(emu))
+    {
+        set_function_argument_x86_stack(emu, index, value);
+        return;
+    }
+
+    if (is_syscall)
+    {
+        set_function_argument_x64_syscall(emu, index, value);
+        return;
+    }
+
+    set_function_argument_x64_fastcall(emu, index, value);
+}
+
+inline void set_function_arguments(x86_64_emulator& emu, const function_calling_convention cc, const std::span<const uint64_t> values)
+{
+    for (size_t i = 0; i < values.size(); ++i)
+    {
+        set_function_argument(emu, cc, i, values[i]);
     }
 }
 

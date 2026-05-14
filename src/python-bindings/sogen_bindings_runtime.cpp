@@ -6,7 +6,7 @@ void register_sogen_runtime_bindings(nb::module_& m)
 {
     m.def(
         "api_call",
-        [](api_calling_convention cc, nb::object params, nb::object restype) {
+        [](function_calling_convention cc, nb::object params, nb::object restype) {
             return nb::cpp_function([cc, params = std::move(params), restype = std::move(restype)](nb::handle fn) -> nb::object {
                 nb::setattr(fn, "_sogen_api_cc", nb::cast(cc));
                 nb::setattr(fn, "_sogen_api_params", params);

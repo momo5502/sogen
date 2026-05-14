@@ -131,10 +131,11 @@ void register_sogen_types_bindings(nb::module_& m)
         .value("rdtscp", x86_hookable_instructions::rdtscp)
         .export_values();
 
-    nb::enum_<api_calling_convention>(m, "CallingConvention")
-        .value("cdecl", api_calling_convention::cdecl_cc)
-        .value("stdcall", api_calling_convention::stdcall_cc)
-        .value("fastcall", api_calling_convention::x64_fastcall)
+    nb::enum_<function_calling_convention>(m, "CallingConvention")
+        .value("cdecl", function_calling_convention::x86_cdecl)
+        .value("stdcall", function_calling_convention::x86_stdcall)
+        .value("fastcall", function_calling_convention::x64_fastcall)
+        .value("syscall", function_calling_convention::x64_syscall)
         .export_values();
 
     nb::enum_<api_call_continuation>(m, "ApiContinuation")
