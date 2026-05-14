@@ -123,7 +123,6 @@ struct api_hook_hit
     std::string export_name{};
     uint64_t address{};
     uint64_t return_address{};
-    bool entered_from_call{false};
 };
 
 struct api_hook_entry
@@ -274,12 +273,12 @@ struct api_hook_registry
         return params;
     }
 
-    void return_from_api(const api_call_info& call, const bool entered_from_call) const
+    void return_from_api(const api_call_info& call) const
     {
         auto& backend = this->win_emu->emu();
         const auto stack_adjust = is_32bit_code_segment(backend) ? sizeof(uint32_t) : sizeof(uint64_t);
         backend.reg<uint64_t>(x86_register::rax, call.return_value);
-        backend.reg<uint64_t>(x86_register::rsp, call.stack_pointer + (entered_from_call ? stack_adjust : 0));
+        backend.reg<uint64_t>(x86_register::rsp, call.stack_pointer + stack_adjust);
         backend.reg<uint64_t>(x86_register::rip, call.return_address);
     }
 
@@ -306,104 +305,12 @@ struct api_hook_registry
             const auto result = coerce_api_continuation(entry.callback(nb::cast(call), params));
             if (result == api_call_continuation::intercept)
             {
-                this->return_from_api(*call, hit.entered_from_call);
+                this->return_from_api(*call);
             }
         }
         catch (...)
         {
         }
-    }
-
-    static bool decode_call_target(x86_64_emulator& backend, const mapped_module* caller_module, const uint64_t address, uint64_t& target,
-                                   uint64_t& return_address)
-    {
-        std::array<uint8_t, 16> bytes{};
-        if (!backend.try_read_memory(address, bytes.data(), bytes.size()))
-        {
-            return false;
-        }
-
-        const auto prefix = instruction_prefix_length(bytes);
-        const auto opcode = bytes[prefix];
-        if (opcode == 0xE8)
-        {
-            int32_t rel{};
-            std::memcpy(&rel, bytes.data() + 1, sizeof(rel));
-            target = address + 5 + rel;
-            return_address = address + 5;
-            return true;
-        }
-
-        if (opcode == 0xFF)
-        {
-            const auto modrm = bytes[1];
-            const auto reg = (modrm >> 3) & 0x7;
-            const auto mod = (modrm >> 6) & 0x3;
-            const auto rm = modrm & 0x7;
-            if (reg != 2)
-            {
-                return false;
-            }
-
-            if (mod == 0 && rm == 5)
-            {
-                int32_t disp{};
-                std::memcpy(&disp, bytes.data() + 2, sizeof(disp));
-                const auto ptr_addr = address + 6 + disp;
-                if (!backend.try_read_memory(ptr_addr, &target, sizeof(target)))
-                {
-                    return false;
-                }
-                if (caller_module && target < caller_module->size_of_image)
-                {
-                    const auto relocated_target = caller_module->image_base + target;
-                    std::array<uint8_t, 1> probe{};
-                    if (backend.try_read_memory(relocated_target, probe.data(), probe.size()))
-                    {
-                        target = relocated_target;
-                    }
-                }
-                return_address = address + 6;
-                return true;
-            }
-
-            if (mod == 3)
-            {
-                switch (rm)
-                {
-                case 0:
-                    target = backend.reg<uint64_t>(x86_register::rax);
-                    break;
-                case 1:
-                    target = backend.reg<uint64_t>(x86_register::rcx);
-                    break;
-                case 2:
-                    target = backend.reg<uint64_t>(x86_register::rdx);
-                    break;
-                case 3:
-                    target = backend.reg<uint64_t>(x86_register::rbx);
-                    break;
-                case 4:
-                    target = backend.reg<uint64_t>(x86_register::rsp);
-                    break;
-                case 5:
-                    target = backend.reg<uint64_t>(x86_register::rbp);
-                    break;
-                case 6:
-                    target = backend.reg<uint64_t>(x86_register::rsi);
-                    break;
-                case 7:
-                    target = backend.reg<uint64_t>(x86_register::rdi);
-                    break;
-                default:
-                    return false;
-                }
-                return_address = address + 2;
-                return true;
-            }
-        }
-
-        return false;
     }
 
     static size_t instruction_prefix_length(const std::array<uint8_t, 16>& bytes)
@@ -609,7 +516,6 @@ struct api_hook_registry
         for (auto& hit : hits)
         {
             hit.return_address = return_address;
-            hit.entered_from_call = true;
             this->invoke_hook(hit);
         }
     }
