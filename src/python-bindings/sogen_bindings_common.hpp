@@ -643,8 +643,8 @@ namespace
                     continue;
                 }
 
-                this->address_index[export_symbol.address].push_back(
-                    api_hook_hit{.key = key, .module_name = module.name, .export_name = export_symbol.name, .address = export_symbol.address});
+                this->address_index[export_symbol.address].push_back(api_hook_hit{
+                    .key = key, .module_name = module.name, .export_name = export_symbol.name, .address = export_symbol.address});
             }
         }
 
