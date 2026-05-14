@@ -365,6 +365,7 @@ jobs:
           - platform: Windows x86_64
             runner: windows-latest
             devcmd_arch: x64
+            cmake-options: "-DSOGEN_ENABLE_LTO=Off"
     steps:
       - name: Checkout Source
         uses: actions/checkout@v6
