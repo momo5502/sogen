@@ -883,8 +883,6 @@ jobs:
     steps:
       - name: Checkout Source
         uses: actions/checkout@v6
-        with:
-          submodules: recursive
 
       - name: Set up Python
         uses: actions/setup-python@v6
