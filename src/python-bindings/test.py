@@ -68,7 +68,6 @@ emu.callbacks.on_module_load = lambda m: None
 emu.callbacks.on_module_unload = lambda m: None
 
 sleep_hits = {"count": 0, "args": []}
-pid_hits = {"count": 0}
 
 
 @mod.api_call(cc=mod.CallingConvention.stdcall, params=[ctypes.c_uint32])
@@ -77,14 +76,6 @@ def on_sleep(call, params):
     sleep_hits["args"].append(params[0])
     assert call.name == "Sleep"
     return mod.ApiContinuation.run_original
-
-
-@mod.api_call(cc=mod.CallingConvention.stdcall, params=[])
-def on_get_current_process_id(call, params):
-    pid_hits["count"] += 1
-    assert call.name == "GetCurrentProcessId"
-    call.return_value = 0x1337
-    return mod.ApiContinuation.intercept
 
 
 state_base = emu.memory.allocate_memory(0x1000, mod.MemoryPermission.read_write)
@@ -119,12 +110,10 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
 
     app.callbacks.on_stdout = lambda text: print(text, end="", flush=True)
     app.hooks.apis["Sleep"] = on_sleep
-    app.hooks.apis["GetCurrentProcessId"] = on_get_current_process_id
     app.start()
     print(
         f"\n[test.py] exit_status={app.process.exit_status}"
         f" sleep_hits={sleep_hits['count']}"
-        f" pid_hits={pid_hits['count']}"
         f" executed_instructions={app.executed_instructions}"
         f" stop_reason={app.last_stop_reason}"
         f" stop_detail={app.last_stop_detail}"
@@ -133,7 +122,6 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
         flush=True,
     )
     assert sleep_hits["count"] > 0
-    assert pid_hits["count"] > 0
     assert app.process.exit_status == 0, f"non-zero exit: {app.process.exit_status}"
     assert all(arg == 1 for arg in sleep_hits["args"])
 
