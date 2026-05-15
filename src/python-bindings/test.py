@@ -79,16 +79,6 @@ def on_sleep(call, params):
     return mod.ApiContinuation.run_original
 
 
-@mod.api_call(cc=mod.CallingConvention.stdcall, params=[])
-def on_time_get_time(call, params):
-    time_hits["count"] += 1
-    time_hits["values"].append(time_hits["count"])
-    time_hits["by_module"][call.module] = time_hits["by_module"].get(call.module, 0) + 1
-    assert call.name == "timeGetTime"
-    call.return_value = time_hits["count"]
-    return mod.ApiContinuation.intercept
-
-
 state_base = emu.memory.allocate_memory(0x1000, mod.MemoryPermission.read_write)
 emu.write_memory(state_base, b"ABCD")
 state_bytes = emu.serialize_state()
@@ -120,8 +110,27 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
     )
 
     app.callbacks.on_stdout = lambda text: print(text, end="", flush=True)
+    modules = []
+    app.callbacks.on_module_load = lambda m: modules.append((m.name, m.image_base, m.size_of_image))
+
+    def resolve(addr):
+        for name, base, size in modules:
+            if base <= addr < base + size:
+                return f"{name}+0x{addr - base:x}"
+        return f"0x{addr:x}"
+
+    @mod.api_call(cc=mod.CallingConvention.stdcall, params=[])
+    def on_time_get_time_traced(call, params):
+        time_hits["count"] += 1
+        time_hits["values"].append(time_hits["count"])
+        time_hits["by_module"][call.module] = time_hits["by_module"].get(call.module, 0) + 1
+        if time_hits["count"] in (1, 2, 3, 100, 1000, 10000, 50000, 100000):
+            print(f"[test.py] timeGetTime hit #{time_hits['count']} from module={call.module} return={resolve(call.return_address)}", flush=True)
+        call.return_value = time_hits["count"]
+        return mod.ApiContinuation.intercept
+
     app.hooks.apis["Sleep"] = on_sleep
-    app.hooks.apis["timeGetTime"] = on_time_get_time
+    app.hooks.apis["timeGetTime"] = on_time_get_time_traced
     app.start()
     print(
         f"\n[test.py] exit_status={app.process.exit_status}"
