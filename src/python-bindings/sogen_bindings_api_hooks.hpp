@@ -377,24 +377,22 @@ struct api_hook_registry
             return;
         }
 
-        for (const auto& export_symbol : module.exports)
+        // Mirror analyzer behavior: rely on per-module address_names so that thunks/forwarders
+        // (e.g. kernel32!Sleep jmp into KERNELBASE!Sleep) are dispatched naturally because both
+        // modules expose their own export entries with the same name.
+        for (const auto& [address, name] : module.address_names)
         {
-            if (export_symbol.name != entry.name)
+            if (name != entry.name)
             {
                 continue;
             }
 
-            const api_hook_hit hit{
-                .key = key, .module_name = module.name, .export_name = export_symbol.name, .address = export_symbol.address};
-            this->address_index[export_symbol.address].push_back(hit);
-
-            uint64_t resolved = export_symbol.address;
-            if (resolve_jump_target(this->win_emu->emu(), resolved) && resolved != export_symbol.address)
-            {
-                auto resolved_hit = hit;
-                resolved_hit.address = resolved;
-                this->address_index[resolved].push_back(resolved_hit);
-            }
+            this->address_index[address].push_back(api_hook_hit{
+                .key = key,
+                .module_name = module.name,
+                .export_name = name,
+                .address = address,
+            });
         }
     }
 
