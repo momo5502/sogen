@@ -4,6 +4,8 @@
 #include "binary_writer.hpp"
 #include "../windows_emulator.hpp"
 
+#include <cstring>
+
 #define DNS_TYPE_A     0x01
 #define DNS_TYPE_CNAME 0x05
 #define DNS_TYPE_AAAA  0x1C
@@ -433,7 +435,7 @@ namespace
         }
 
         std::ranges::sort(records, [](const resolved_dns_record& a, const resolved_dns_record& b) {
-            return std::ranges::lexicographical_compare(b.data, a.data);
+            return std::memcmp(b.data.data(), a.data.data(), k_dns_record_data_size) < 0;
         });
 
         return records;
@@ -461,7 +463,7 @@ namespace
         }
 
         std::ranges::sort(mapped_records, [](const resolved_dns_record& a, const resolved_dns_record& b) {
-            return std::ranges::lexicographical_compare(a.data, b.data);
+            return std::memcmp(a.data.data(), b.data.data(), k_dns_record_data_size) < 0;
         });
 
         return mapped_records;
@@ -564,7 +566,7 @@ namespace
             auto mapped_records = build_proc3_mapped_records(win_emu, request.hostname);
 
             std::ranges::sort(direct_records, [](const resolved_dns_record& a, const resolved_dns_record& b) {
-                return std::ranges::lexicographical_compare(a.data, b.data);
+                return std::memcmp(a.data.data(), b.data.data(), k_dns_record_data_size) < 0;
             });
 
             for (auto& record : direct_records)
