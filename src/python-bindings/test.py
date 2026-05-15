@@ -68,7 +68,7 @@ emu.callbacks.on_module_load = lambda m: None
 emu.callbacks.on_module_unload = lambda m: None
 
 sleep_hits = {"count": 0, "args": []}
-time_hits = {"count": 0, "values": []}
+time_hits = {"count": 0, "values": [], "by_module": {}}
 
 
 @mod.api_call(cc=mod.CallingConvention.stdcall, params=[ctypes.c_uint32])
@@ -83,6 +83,7 @@ def on_sleep(call, params):
 def on_time_get_time(call, params):
     time_hits["count"] += 1
     time_hits["values"].append(time_hits["count"])
+    time_hits["by_module"][call.module] = time_hits["by_module"].get(call.module, 0) + 1
     assert call.name == "timeGetTime"
     call.return_value = time_hits["count"]
     return mod.ApiContinuation.intercept
@@ -122,7 +123,18 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
     app.hooks.apis["Sleep"] = on_sleep
     app.hooks.apis["timeGetTime"] = on_time_get_time
     app.start()
-    print(f"\n[test.py] exit_status={app.process.exit_status} sleep_hits={sleep_hits['count']} time_hits={time_hits['count']}", flush=True)
+    print(
+        f"\n[test.py] exit_status={app.process.exit_status}"
+        f" sleep_hits={sleep_hits['count']}"
+        f" time_hits={time_hits['count']}"
+        f" time_hits_by_module={time_hits['by_module']}"
+        f" executed_instructions={app.executed_instructions}"
+        f" stop_reason={app.last_stop_reason}"
+        f" stop_detail={app.last_stop_detail}"
+        f" current_thread_id={app.current_thread_id}"
+        f" backend={app.backend_name}",
+        flush=True,
+    )
     assert sleep_hits["count"] > 0
     assert time_hits["count"] >= 2
     assert time_hits["values"][0] != time_hits["values"][1]
