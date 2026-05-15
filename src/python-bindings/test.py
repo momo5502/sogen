@@ -118,13 +118,15 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
         port_mappings={28970: 28980},
     )
 
+    app.callbacks.on_stdout = lambda text: print(text, end="", flush=True)
     app.hooks.apis["Sleep"] = on_sleep
     app.hooks.apis["timeGetTime"] = on_time_get_time
     app.start()
+    print(f"\n[test.py] exit_status={app.process.exit_status} sleep_hits={sleep_hits['count']} time_hits={time_hits['count']}", flush=True)
     assert sleep_hits["count"] > 0
     assert time_hits["count"] >= 2
     assert time_hits["values"][0] != time_hits["values"][1]
-    assert app.process.exit_status == 0
+    assert app.process.exit_status == 0, f"non-zero exit: {app.process.exit_status}"
     assert all(arg == 1 for arg in sleep_hits["args"])
 
     app = None
