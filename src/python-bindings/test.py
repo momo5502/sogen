@@ -13,8 +13,12 @@ if repo_artifacts.exists():
 
 emulator_root = os.getenv("EMULATOR_ROOT")
 analysis_sample = os.getenv("ANALYSIS_SAMPLE")
+hook_sample_env = os.getenv("HOOK_SAMPLE")
 assert emulator_root
 assert analysis_sample
+
+# hook-sample is built next to test-sample by default; allow override via env.
+hook_sample = Path(hook_sample_env) if hook_sample_env else Path(analysis_sample).with_name("hook-sample.exe")
 
 mod = importlib.import_module("sogen")
 assert hasattr(mod, "WindowsEmulator")
@@ -125,6 +129,55 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
 
     app = None
     gc.collect()
+
+# ----- intercept smoke test against a controlled minimal sample -----
+#
+# hook-sample.exe returns 0 only when GetCurrentProcessId() returns the magic
+# value below. The runtime never sees a real PID because our hook intercepts
+# the call. This isolates the intercept code path from any DLL behavior that
+# may rely on a genuine PID.
+
+EXPECTED_PID = 0xC0FFEE01
+hook_pid_hits = {"count": 0}
+
+
+@mod.api_call(cc=mod.CallingConvention.stdcall, params=[])
+def on_hook_sample_pid(call, params):
+    hook_pid_hits["count"] += 1
+    assert call.name == "GetCurrentProcessId"
+    call.return_value = EXPECTED_PID
+    return mod.ApiContinuation.intercept
+
+
+if hook_sample.exists():
+    filesys_root = Path(emulator_root) / "filesys" / "c"
+    filesys_root.mkdir(parents=True, exist_ok=True)
+    hook_sample_copy = filesys_root / "hook-sample.exe"
+    hook_sample_copy.write_bytes(hook_sample.read_bytes())
+
+    hook_app = mod.create_application(
+        r"C:\hook-sample.exe",
+        None,
+        emulation_root=emulator_root,
+    )
+    hook_app.callbacks.on_stdout = lambda text: print(text, end="", flush=True)
+    hook_app.hooks.apis["GetCurrentProcessId"] = on_hook_sample_pid
+    hook_app.start()
+    print(
+        f"[test.py:hook-sample] exit_status={hook_app.process.exit_status}"
+        f" pid_hits={hook_pid_hits['count']}"
+        f" executed_instructions={hook_app.executed_instructions}"
+        f" stop_reason={hook_app.last_stop_reason}",
+        flush=True,
+    )
+    assert hook_pid_hits["count"] >= 1, "GetCurrentProcessId hook never fired"
+    assert hook_app.process.exit_status == 0, (
+        f"hook-sample exited {hook_app.process.exit_status}; intercept did not redirect to {EXPECTED_PID:#x}"
+    )
+    hook_app = None
+    gc.collect()
+else:
+    print(f"[test.py] hook-sample not found at {hook_sample}; skipping intercept smoke", flush=True)
 
 emu = None
 mod = None
