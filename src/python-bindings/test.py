@@ -172,7 +172,9 @@ if hook_sample.exists():
     )
     assert hook_pid_hits["count"] >= 1, "GetCurrentProcessId hook never fired"
     assert hook_app.process.exit_status == 0, (
-        f"hook-sample exited {hook_app.process.exit_status}; intercept did not redirect to {EXPECTED_PID:#x}"
+        f"hook-sample exited {hook_app.process.exit_status}; intercept did not redirect to {EXPECTED_PID:#x} "
+        f"(pid_hits={hook_pid_hits['count']}, stop_reason={hook_app.last_stop_reason}, "
+        f"stop_detail={hook_app.last_stop_detail!r}, executed={hook_app.executed_instructions})"
     )
     hook_app = None
     gc.collect()
