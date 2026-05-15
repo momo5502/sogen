@@ -1,6 +1,22 @@
 #include <nanobind/nanobind.h>
 
-#include "sogen_bindings_common.hpp"
+#include "sogen_internal.hpp"
+
+using namespace sogen_py;
+
+namespace
+{
+    // Build a property accessor pair for a callback slot. Pairs nicely with
+    // callback_registry::slot_for so all callback wiring lives in one table.
+    template <auto Member>
+    void bind_callback_property(nb::class_<callback_registry>& c, const char* name, const char* slot_name)
+    {
+        c.def_prop_rw(
+            name, [](callback_registry& self) { return self.*Member; },
+            [slot_name](callback_registry& self, nb::object callback) { self.set(slot_name, std::move(callback)); },
+            nb::arg("callback").none());
+    }
+}
 
 void register_sogen_runtime_bindings(nb::module_& m)
 {
@@ -80,82 +96,27 @@ void register_sogen_runtime_bindings(nb::module_& m)
             return nb::int_(*self.exit_status);
         });
 
-    nb::class_<callback_registry>(m, "Callbacks")
-        .def(
-            "set", [](callback_registry& self, const std::string& name, nb::object callback) { self.set(name, std::move(callback)); },
-            nb::arg("name"), nb::arg("callback").none())
-        .def("clear", [](callback_registry& self, const std::string& name) { self.clear(name); })
-        .def_prop_rw(
-            "on_module_load", [](callback_registry& self) { return self.module_load_cb; },
-            [](callback_registry& self, nb::object callback) { self.set("module_load", std::move(callback)); }, nb::arg("callback").none())
-        .def_prop_rw(
-            "on_module_unload", [](callback_registry& self) { return self.module_unload_cb; },
-            [](callback_registry& self, nb::object callback) { self.set("module_unload", std::move(callback)); },
-            nb::arg("callback").none())
-        .def_prop_rw(
-            "on_stdout", [](callback_registry& self) { return self.stdout_cb; },
-            [](callback_registry& self, nb::object callback) { self.set("stdout", std::move(callback)); }, nb::arg("callback").none())
-        .def_prop_rw(
-            "on_syscall", [](callback_registry& self) { return self.syscall_cb; },
-            [](callback_registry& self, nb::object callback) { self.set("syscall", std::move(callback)); }, nb::arg("callback").none())
-        .def_prop_rw(
-            "on_generic_access", [](callback_registry& self) { return self.generic_access_cb; },
-            [](callback_registry& self, nb::object callback) { self.set("generic_access", std::move(callback)); },
-            nb::arg("callback").none())
-        .def_prop_rw(
-            "on_generic_activity", [](callback_registry& self) { return self.generic_activity_cb; },
-            [](callback_registry& self, nb::object callback) { self.set("generic_activity", std::move(callback)); },
-            nb::arg("callback").none())
-        .def_prop_rw(
-            "on_suspicious_activity", [](callback_registry& self) { return self.suspicious_activity_cb; },
-            [](callback_registry& self, nb::object callback) { self.set("suspicious_activity", std::move(callback)); },
-            nb::arg("callback").none())
-        .def_prop_rw(
-            "on_exception", [](callback_registry& self) { return self.exception_cb; },
-            [](callback_registry& self, nb::object callback) { self.set("exception", std::move(callback)); }, nb::arg("callback").none())
-        .def_prop_rw(
-            "on_instruction", [](callback_registry& self) { return self.instruction_cb; },
-            [](callback_registry& self, nb::object callback) { self.set("instruction", std::move(callback)); }, nb::arg("callback").none())
-        .def_prop_rw(
-            "on_memory_protect", [](callback_registry& self) { return self.memory_protect_cb; },
-            [](callback_registry& self, nb::object callback) { self.set("memory_protect", std::move(callback)); },
-            nb::arg("callback").none())
-        .def_prop_rw(
-            "on_memory_allocate", [](callback_registry& self) { return self.memory_allocate_cb; },
-            [](callback_registry& self, nb::object callback) { self.set("memory_allocate", std::move(callback)); },
-            nb::arg("callback").none())
-        .def_prop_rw(
-            "on_memory_violate", [](callback_registry& self) { return self.memory_violate_cb; },
-            [](callback_registry& self, nb::object callback) { self.set("memory_violate", std::move(callback)); },
-            nb::arg("callback").none())
-        .def_prop_rw(
-            "on_rdtsc", [](callback_registry& self) { return self.rdtsc_cb; },
-            [](callback_registry& self, nb::object callback) { self.set("rdtsc", std::move(callback)); }, nb::arg("callback").none())
-        .def_prop_rw(
-            "on_rdtscp", [](callback_registry& self) { return self.rdtscp_cb; },
-            [](callback_registry& self, nb::object callback) { self.set("rdtscp", std::move(callback)); }, nb::arg("callback").none())
-        .def_prop_rw(
-            "on_ioctrl", [](callback_registry& self) { return self.ioctrl_cb; },
-            [](callback_registry& self, nb::object callback) { self.set("ioctrl", std::move(callback)); }, nb::arg("callback").none())
-        .def_prop_rw(
-            "on_debug_string", [](callback_registry& self) { return self.debug_string_cb; },
-            [](callback_registry& self, nb::object callback) { self.set("debug_string", std::move(callback)); }, nb::arg("callback").none())
-        .def_prop_rw(
-            "on_thread_create", [](callback_registry& self) { return self.thread_create_cb; },
-            [](callback_registry& self, nb::object callback) { self.set("thread_create", std::move(callback)); },
-            nb::arg("callback").none())
-        .def_prop_rw(
-            "on_thread_terminated", [](callback_registry& self) { return self.thread_terminated_cb; },
-            [](callback_registry& self, nb::object callback) { self.set("thread_terminated", std::move(callback)); },
-            nb::arg("callback").none())
-        .def_prop_rw(
-            "on_thread_set_name", [](callback_registry& self) { return self.thread_set_name_cb; },
-            [](callback_registry& self, nb::object callback) { self.set("thread_set_name", std::move(callback)); },
-            nb::arg("callback").none())
-        .def_prop_rw(
-            "on_thread_switch", [](callback_registry& self) { return self.thread_switch_cb; },
-            [](callback_registry& self, nb::object callback) { self.set("thread_switch", std::move(callback)); },
-            nb::arg("callback").none());
+    auto callbacks_class = nb::class_<callback_registry>(m, "Callbacks");
+    bind_callback_property<&callback_registry::module_load_cb>(callbacks_class, "on_module_load", "module_load");
+    bind_callback_property<&callback_registry::module_unload_cb>(callbacks_class, "on_module_unload", "module_unload");
+    bind_callback_property<&callback_registry::stdout_cb>(callbacks_class, "on_stdout", "stdout");
+    bind_callback_property<&callback_registry::syscall_cb>(callbacks_class, "on_syscall", "syscall");
+    bind_callback_property<&callback_registry::generic_access_cb>(callbacks_class, "on_generic_access", "generic_access");
+    bind_callback_property<&callback_registry::generic_activity_cb>(callbacks_class, "on_generic_activity", "generic_activity");
+    bind_callback_property<&callback_registry::suspicious_activity_cb>(callbacks_class, "on_suspicious_activity", "suspicious_activity");
+    bind_callback_property<&callback_registry::exception_cb>(callbacks_class, "on_exception", "exception");
+    bind_callback_property<&callback_registry::instruction_cb>(callbacks_class, "on_instruction", "instruction");
+    bind_callback_property<&callback_registry::memory_protect_cb>(callbacks_class, "on_memory_protect", "memory_protect");
+    bind_callback_property<&callback_registry::memory_allocate_cb>(callbacks_class, "on_memory_allocate", "memory_allocate");
+    bind_callback_property<&callback_registry::memory_violate_cb>(callbacks_class, "on_memory_violate", "memory_violate");
+    bind_callback_property<&callback_registry::rdtsc_cb>(callbacks_class, "on_rdtsc", "rdtsc");
+    bind_callback_property<&callback_registry::rdtscp_cb>(callbacks_class, "on_rdtscp", "rdtscp");
+    bind_callback_property<&callback_registry::ioctrl_cb>(callbacks_class, "on_ioctrl", "ioctrl");
+    bind_callback_property<&callback_registry::debug_string_cb>(callbacks_class, "on_debug_string", "debug_string");
+    bind_callback_property<&callback_registry::thread_create_cb>(callbacks_class, "on_thread_create", "thread_create");
+    bind_callback_property<&callback_registry::thread_terminated_cb>(callbacks_class, "on_thread_terminated", "thread_terminated");
+    bind_callback_property<&callback_registry::thread_set_name_cb>(callbacks_class, "on_thread_set_name", "thread_set_name");
+    bind_callback_property<&callback_registry::thread_switch_cb>(callbacks_class, "on_thread_switch", "thread_switch");
 
     nb::class_<sogen_process_context>(m, "ProcessContext")
         .def_prop_ro("is_wow64_process", [](const sogen_process_context& self) { return self.is_wow64_process(); })
@@ -175,7 +136,6 @@ void register_sogen_runtime_bindings(nb::module_& m)
 
     nb::class_<sogen_windows_emulator>(m, "WindowsEmulator")
         .def("start", &sogen_windows_emulator::start, nb::arg("count") = 0, nb::call_guard<nb::gil_scoped_release>())
-        .def("run", &sogen_windows_emulator::run, nb::arg("count") = 0, nb::call_guard<nb::gil_scoped_release>())
         .def("stop", &sogen_windows_emulator::stop)
         .def("save_snapshot", &sogen_windows_emulator::save_snapshot)
         .def("restore_snapshot", &sogen_windows_emulator::restore_snapshot)

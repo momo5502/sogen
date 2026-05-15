@@ -1,6 +1,9 @@
 #include <nanobind/nanobind.h>
 
-#include "sogen_bindings_common.hpp"
+#include "sogen_internal.hpp"
+
+using sogen_py::api_call_continuation;
+using sogen_py::api_call_info;
 
 void register_sogen_types_bindings(nb::module_& m)
 {
