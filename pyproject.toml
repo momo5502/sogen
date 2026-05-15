@@ -7,7 +7,7 @@ name = "sogen"
 dynamic = ["version"]
 description = "Sogen Windows user-space emulator bindings"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.9"
 license = { text = "GPL-2.0-only" }
 authors = [{ name = "momo5502" }]
 classifiers = [
