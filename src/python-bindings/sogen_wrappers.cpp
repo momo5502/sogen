@@ -112,7 +112,7 @@ namespace sogen_py
 
     sogen_process_context sogen_windows_emulator::process()
     {
-        return sogen_process_context(this->emu->process, this->callbacks, nb::cast(this, nb::rv_policy::reference_internal));
+        return {this->emu->process, this->callbacks, nb::cast(this, nb::rv_policy::reference_internal)};
     }
 
     std::optional<uint32_t> sogen_windows_emulator::current_thread_id() const

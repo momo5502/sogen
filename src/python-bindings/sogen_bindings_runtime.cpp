@@ -2,7 +2,17 @@
 
 #include "sogen_internal.hpp"
 
-using namespace sogen_py;
+using sogen_py::api_hook_registry;
+using sogen_py::callback_registry;
+using sogen_py::create_application_emulator;
+using sogen_py::create_empty_emulator;
+using sogen_py::hook_handle;
+using sogen_py::hook_registry;
+using sogen_py::read_memory_bytes;
+using sogen_py::sogen_process_context;
+using sogen_py::sogen_windows_emulator;
+using sogen_py::stop_reason_to_string;
+using sogen_py::write_memory_bytes;
 
 namespace
 {
