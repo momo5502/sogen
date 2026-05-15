@@ -83,8 +83,9 @@ def on_sleep(call, params):
 def on_get_current_process_id(call, params):
     pid_hits["count"] += 1
     assert call.name == "GetCurrentProcessId"
-    call.return_value = 0x1337
-    return mod.ApiContinuation.intercept
+    # Observe only — do not intercept. Intercepting can perturb runtime
+    # initialization paths that depend on a real process id.
+    return mod.ApiContinuation.run_original
 
 
 state_base = emu.memory.allocate_memory(0x1000, mod.MemoryPermission.read_write)
