@@ -1,4 +1,5 @@
 add_subdirectory(common)
+add_subdirectory(disassembler)
 add_subdirectory(emulator)
 add_subdirectory(gdb-stub)
 add_subdirectory(windows-emulator)
@@ -13,12 +14,12 @@ momo_add_subdirectory_and_get_targets("backends" BACKEND_TARGETS)
 momo_targets_set_folder("backends" ${BACKEND_TARGETS})
 
 set(_SOGEN_BUILD_STANDALONE_TARGETS ON)
-if (SOGEN_BUILD_STATIC)
+if(SOGEN_BUILD_STATIC)
   # if static build, tools are opt in
   set(_SOGEN_BUILD_STANDALONE_TARGETS ${SOGEN_BUILD_TOOLS})
 endif()
 
-if (_SOGEN_BUILD_STANDALONE_TARGETS)
+if(_SOGEN_BUILD_STANDALONE_TARGETS)
   add_subdirectory(analyzer)
   add_subdirectory(debugger)
   add_subdirectory(fuzzing-engine)

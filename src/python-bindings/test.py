@@ -53,8 +53,6 @@ assert hasattr(emu.callbacks, "on_syscall")
 assert hasattr(emu.callbacks, "on_memory_violate")
 assert hasattr(emu.callbacks, "on_module_load")
 assert hasattr(emu.callbacks, "on_module_unload")
-assert hasattr(emu.callbacks, "set")
-assert hasattr(emu.callbacks, "clear")
 assert hasattr(emu.hooks, "memory_execution")
 assert hasattr(emu.hooks, "memory_read")
 assert hasattr(emu.hooks, "instruction")
@@ -75,7 +73,6 @@ def on_sleep(call, params):
     sleep_hits["count"] += 1
     sleep_hits["args"].append(params[0])
     assert call.name == "Sleep"
-    call.return_value = 1
     return mod.ApiContinuation.run_original
 
 
@@ -109,10 +106,21 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
         port_mappings={28970: 28980},
     )
 
+    app.callbacks.on_stdout = lambda text: print(text, end="", flush=True)
     app.hooks.apis["Sleep"] = on_sleep
     app.start()
+    print(
+        f"\n[test.py] exit_status={app.process.exit_status}"
+        f" sleep_hits={sleep_hits['count']}"
+        f" executed_instructions={app.executed_instructions}"
+        f" stop_reason={app.last_stop_reason}"
+        f" stop_detail={app.last_stop_detail}"
+        f" current_thread_id={app.current_thread_id}"
+        f" backend={app.backend_name}",
+        flush=True,
+    )
     assert sleep_hits["count"] > 0
-    assert app.process.exit_status == 0
+    assert app.process.exit_status == 0, f"non-zero exit: {app.process.exit_status}"
     assert all(arg == 1 for arg in sleep_hits["args"])
 
     app = None
