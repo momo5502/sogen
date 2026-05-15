@@ -310,8 +310,17 @@ struct api_hook_registry
                 this->return_from_api(*call);
             }
         }
+        catch (const std::exception& e)
+        {
+            PyErr_Clear();
+            std::fprintf(stderr, "[sogen] api hook '%s' raised: %s\n", hit.export_name.c_str(), e.what());
+            std::fflush(stderr);
+        }
         catch (...)
         {
+            PyErr_Clear();
+            std::fprintf(stderr, "[sogen] api hook '%s' raised an unknown exception\n", hit.export_name.c_str());
+            std::fflush(stderr);
         }
     }
 
