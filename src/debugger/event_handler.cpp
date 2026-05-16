@@ -4,6 +4,10 @@
 
 #include <base64.hpp>
 
+#include <cstdio>
+#include <string>
+#include <string_view>
+
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4244)
@@ -83,6 +87,155 @@ namespace debugger
             response.state = translate_state(c.state);
 
             send_event(response);
+        }
+
+        std::string permission_string(const memory_permission perm)
+        {
+            std::string result{};
+            result += is_readable(perm) ? 'R' : '-';
+            result += is_writable(perm) ? 'W' : '-';
+            result += is_executable(perm) ? 'X' : '-';
+            return result;
+        }
+
+        const char* region_kind_string(const memory_region_kind kind)
+        {
+            switch (kind)
+            {
+            case memory_region_kind::free:
+                return "free";
+            case memory_region_kind::private_allocation:
+                return "private";
+            case memory_region_kind::file_section_view:
+                return "file";
+            case memory_region_kind::pagefile_section_view:
+                return "pagefile";
+            case memory_region_kind::section_image:
+                return "image";
+            case memory_region_kind::mmio:
+                return "mmio";
+            default:
+                return "unknown";
+            }
+        }
+
+        void append_json_string(std::string& out, const std::string_view value)
+        {
+            out += '"';
+            for (const char ch : value)
+            {
+                switch (ch)
+                {
+                case '"':
+                    out += "\\\"";
+                    break;
+                case '\\':
+                    out += "\\\\";
+                    break;
+                case '\n':
+                    out += "\\n";
+                    break;
+                case '\r':
+                    out += "\\r";
+                    break;
+                case '\t':
+                    out += "\\t";
+                    break;
+                default:
+                    if (static_cast<unsigned char>(ch) < 0x20)
+                    {
+                        char buf[8];
+                        (void)snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned int>(ch));
+                        out += buf;
+                    }
+                    else
+                    {
+                        out += ch;
+                    }
+                    break;
+                }
+            }
+            out += '"';
+        }
+
+        void append_region(std::string& out, bool& first, const uint64_t base, const uint64_t size,
+                            const std::string_view protection, const char* state, const char* kind,
+                            const std::string_view module)
+        {
+            char num[32];
+
+            if (!first)
+            {
+                out += ',';
+            }
+            first = false;
+
+            out += "{\"base\":\"";
+            (void)snprintf(num, sizeof(num), "0x%llx", static_cast<unsigned long long>(base));
+            out += num;
+            out += "\",\"size\":";
+            (void)snprintf(num, sizeof(num), "%llu", static_cast<unsigned long long>(size));
+            out += num;
+            out += ",\"protection\":";
+            append_json_string(out, protection);
+            out += ",\"state\":\"";
+            out += state;
+            out += "\",\"kind\":\"";
+            out += kind;
+            out += "\",\"module\":";
+            if (module.empty())
+            {
+                out += "null";
+            }
+            else
+            {
+                append_json_string(out, module);
+            }
+            out += '}';
+        }
+
+        // Read-only enumeration of the emulated virtual address space. The layout
+        // is snapshotted from the paused emulator state and serialized as JSON so
+        // the payload stays trivially forward/backward compatible.
+        void handle_get_memory_regions(const event_context& c)
+        {
+            auto& memory = c.win_emu.memory;
+            auto& modules = c.win_emu.mod_manager;
+            const auto& reserved_regions = memory.get_reserved_regions();
+
+            std::string json{};
+            json.reserve(reserved_regions.size() * 128 + 2);
+            json += '[';
+
+            bool first = true;
+            for (const auto& [base, region] : reserved_regions)
+            {
+                const auto* module_name = modules.find_name(base);
+                const std::string_view module =
+                    (!module_name || std::string_view(module_name) == "<N/A>") ? std::string_view{} : module_name;
+
+                append_region(json, first, base, region.length, permission_string(region.initial_permission), "reserve",
+                               region_kind_string(region.kind), module);
+
+                for (const auto& [committed_base, committed] : region.committed_regions)
+                {
+                    auto protection = permission_string(committed.permissions.common);
+                    if (committed.permissions.is_guarded())
+                    {
+                        protection += 'G';
+                    }
+
+                    append_region(json, first, committed_base, committed.length, protection, "commit",
+                                   region_kind_string(region.kind), module);
+                }
+            }
+
+            json += ']';
+
+            Debugger::GetMemoryRegionsResponseT response{};
+            response.regions.assign(json.begin(), json.end());
+
+            send_event(std::move(response));
         }
 
         void handle_read_memory(const event_context& c, const Debugger::ReadMemoryRequestT& request)
@@ -176,6 +329,10 @@ namespace debugger
 
             case Debugger::Event_GetStateRequest:
                 handle_get_state(c);
+                break;
+
+            case Debugger::Event_GetMemoryRegionsRequest:
+                handle_get_memory_regions(c);
                 break;
 
             case Debugger::Event_ReadMemoryRequest:

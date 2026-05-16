@@ -20,6 +20,31 @@ export interface EmulationStatus {
   executedInstructions: BigInt;
 }
 
+/**
+ * A single virtual memory region as reported by the paused emulator backend.
+ * `base` is a hex string (e.g. "0x140000000") so 64-bit values survive JSON.
+ */
+export interface MemoryRegion {
+  base: string;
+  size: number;
+  protection: string;
+  state: "reserve" | "commit";
+  kind: string;
+  module: string | null;
+}
+
+/** Result of a read-only memory read against a paused snapshot. */
+export interface MemoryReadResult {
+  address: bigint;
+  data: Uint8Array;
+}
+
+type MemoryReadResolver = (result: Uint8Array | null) => void;
+type RegionsResolver = (regions: MemoryRegion[] | null) => void;
+
+const MEMORY_READ_TIMEOUT_MS = 8000;
+const MEMORY_REGIONS_TIMEOUT_MS = 4000;
+
 function createDefaultEmulationStatus(): EmulationStatus {
   return {
     executedInstructions: BigInt(0),
@@ -89,6 +114,11 @@ export class Emulator {
   pause_time: Date | null = null;
   paused_time: number = 0;
 
+  // Outstanding read-only memory requests, keyed by requested address (hex).
+  // The paused backend answers in FIFO order per address.
+  private pendingMemoryReads: Map<string, MemoryReadResolver[]> = new Map();
+  private pendingRegionRequests: RegionsResolver[] = [];
+
   constructor(
     logHandler: LogHandler,
     stateChangeHandler: StateChangeHandler,
@@ -148,6 +178,7 @@ export class Emulator {
 
   stop() {
     this.worker.terminate();
+    this._flushPendingMemoryRequests();
     this._setState(EmulationState.Stopped);
     this.terminateResolve(null);
   }
@@ -190,6 +221,118 @@ export class Emulator {
     this.updateState();
   }
 
+  /**
+   * Read-only read of `size` bytes at `address` from the paused snapshot.
+   * Resolves `null` if the range is unmapped, the read fails, or the backend
+   * does not answer (e.g. emulation is not paused). Never mutates emulator
+   * state.
+   */
+  readMemory(address: bigint, size: number): Promise<Uint8Array | null> {
+    if (size <= 0 || this.state !== EmulationState.Paused) {
+      return Promise.resolve(null);
+    }
+
+    const key = address.toString(16);
+
+    return new Promise<Uint8Array | null>((resolve) => {
+      let settled = false;
+      const finish = (value: Uint8Array | null) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+
+        const queue = this.pendingMemoryReads.get(key);
+        if (queue) {
+          const idx = queue.indexOf(resolver);
+          if (idx >= 0) {
+            queue.splice(idx, 1);
+          }
+          if (queue.length === 0) {
+            this.pendingMemoryReads.delete(key);
+          }
+        }
+
+        resolve(value);
+      };
+
+      const resolver: MemoryReadResolver = (data) => finish(data);
+      const timer = setTimeout(() => finish(null), MEMORY_READ_TIMEOUT_MS);
+
+      const queue = this.pendingMemoryReads.get(key);
+      if (queue) {
+        queue.push(resolver);
+      } else {
+        this.pendingMemoryReads.set(key, [resolver]);
+      }
+
+      this.sendEvent(
+        new fbDebugger.DebugEventT(
+          fbDebugger.Event.ReadMemoryRequest,
+          new fbDebugger.ReadMemoryRequestT(address, size),
+        ),
+      );
+    });
+  }
+
+  /**
+   * Enumerate the emulated virtual memory layout from the paused snapshot.
+   * Resolves `null` when the backend does not support region enumeration
+   * (older emulator builds) so callers can degrade gracefully.
+   */
+  getMemoryRegions(): Promise<MemoryRegion[] | null> {
+    if (this.state !== EmulationState.Paused) {
+      return Promise.resolve(null);
+    }
+
+    return new Promise<MemoryRegion[] | null>((resolve) => {
+      let settled = false;
+      const finish = (value: MemoryRegion[] | null) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+
+        const idx = this.pendingRegionRequests.indexOf(resolver);
+        if (idx >= 0) {
+          this.pendingRegionRequests.splice(idx, 1);
+        }
+
+        resolve(value);
+      };
+
+      const resolver: RegionsResolver = (regions) => finish(regions);
+      const timer = setTimeout(() => finish(null), MEMORY_REGIONS_TIMEOUT_MS);
+
+      this.pendingRegionRequests.push(resolver);
+
+      this.sendEvent(
+        new fbDebugger.DebugEventT(
+          fbDebugger.Event.GetMemoryRegionsRequest,
+          new fbDebugger.GetMemoryRegionsRequestT(),
+        ),
+      );
+    });
+  }
+
+  private _flushPendingMemoryRequests() {
+    const reads = this.pendingMemoryReads;
+    this.pendingMemoryReads = new Map();
+    for (const queue of reads.values()) {
+      for (const resolver of queue) {
+        resolver(null);
+      }
+    }
+
+    const regions = this.pendingRegionRequests;
+    this.pendingRegionRequests = [];
+    for (const resolver of regions) {
+      resolver(null);
+    }
+  }
+
   getExecutionTime() {
     const endTime = this.pause_time ? this.pause_time : new Date();
     const totalTime = endTime.getTime() - this.start_time.getTime();
@@ -206,6 +349,7 @@ export class Emulator {
     } catch (e) {}
 
     this.logError(`Emulator encountered fatal error: ${ev.message}`);
+    this._flushPendingMemoryRequests();
     this._setState(EmulationState.Failed);
     this.terminateResolve(-1);
   }
@@ -216,6 +360,7 @@ export class Emulator {
     } else if (event.data.message == "event") {
       this._onEvent(decodeEvent(event.data.data));
     } else if (event.data.message == "end") {
+      this._flushPendingMemoryRequests();
       this._setState(
         this.exit_status === 0 ? EmulationState.Success : EmulationState.Failed,
       );
@@ -240,7 +385,54 @@ export class Emulator {
           event.event as fbDebugger.EmulationStatusT,
         );
         break;
+      case fbDebugger.Event.ReadMemoryResponse:
+        this._handle_read_memory_response(
+          event.event as fbDebugger.ReadMemoryResponseT,
+        );
+        break;
+      case fbDebugger.Event.GetMemoryRegionsResponse:
+        this._handle_memory_regions_response(
+          event.event as fbDebugger.GetMemoryRegionsResponseT,
+        );
+        break;
     }
+  }
+
+  _handle_read_memory_response(response: fbDebugger.ReadMemoryResponseT) {
+    const key = response.address.toString(16);
+    const queue = this.pendingMemoryReads.get(key);
+    if (!queue || queue.length === 0) {
+      return;
+    }
+
+    const resolver = queue.shift()!;
+    if (queue.length === 0) {
+      this.pendingMemoryReads.delete(key);
+    }
+
+    // The backend only fills `data` when the whole range was readable.
+    const data = response.data;
+    resolver(data.length > 0 ? Uint8Array.from(data) : null);
+  }
+
+  _handle_memory_regions_response(
+    response: fbDebugger.GetMemoryRegionsResponseT,
+  ) {
+    const resolver = this.pendingRegionRequests.shift();
+    if (!resolver) {
+      return;
+    }
+
+    let regions: MemoryRegion[] | null = null;
+    try {
+      const text = new TextDecoder().decode(Uint8Array.from(response.regions));
+      regions = JSON.parse(text) as MemoryRegion[];
+    } catch (e) {
+      console.log(e);
+      regions = null;
+    }
+
+    resolver(regions);
   }
 
   _setState(state: EmulationState) {
