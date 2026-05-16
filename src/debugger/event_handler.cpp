@@ -4,7 +4,7 @@
 
 #include <base64.hpp>
 
-#include <cstdio>
+#include <algorithm>
 #include <string>
 #include <string_view>
 
@@ -119,8 +119,25 @@ namespace debugger
             }
         }
 
+        std::string to_hex(uint64_t value)
+        {
+            constexpr std::string_view digits = "0123456789abcdef";
+
+            std::string out{};
+            do
+            {
+                out += digits[value & 0xF];
+                value >>= 4;
+            } while (value != 0);
+
+            std::reverse(out.begin(), out.end());
+            return "0x" + out;
+        }
+
         void append_json_string(std::string& out, const std::string_view value)
         {
+            constexpr std::string_view digits = "0123456789abcdef";
+
             out += '"';
             for (const char ch : value)
             {
@@ -141,12 +158,13 @@ namespace debugger
                 case '\t':
                     out += "\\t";
                     break;
-                default:
-                    if (static_cast<unsigned char>(ch) < 0x20)
+                default: {
+                    const auto byte = static_cast<unsigned char>(ch);
+                    if (byte < 0x20)
                     {
-                        char buf[8];
-                        (void)snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned int>(ch));
-                        out += buf;
+                        out += "\\u00";
+                        out += digits[(byte >> 4) & 0xF];
+                        out += digits[byte & 0xF];
                     }
                     else
                     {
@@ -154,16 +172,14 @@ namespace debugger
                     }
                     break;
                 }
+                }
             }
             out += '"';
         }
 
-        void append_region(std::string& out, bool& first, const uint64_t base, const uint64_t size,
-                            const std::string_view protection, const char* state, const char* kind,
-                            const std::string_view module)
+        void append_region(std::string& out, bool& first, const uint64_t base, const uint64_t size, const std::string_view protection,
+                           const char* state, const char* kind, const std::string_view module)
         {
-            char num[32];
-
             if (!first)
             {
                 out += ',';
@@ -171,11 +187,9 @@ namespace debugger
             first = false;
 
             out += "{\"base\":\"";
-            (void)snprintf(num, sizeof(num), "0x%llx", static_cast<unsigned long long>(base));
-            out += num;
+            out += to_hex(base);
             out += "\",\"size\":";
-            (void)snprintf(num, sizeof(num), "%llu", static_cast<unsigned long long>(size));
-            out += num;
+            out += std::to_string(size);
             out += ",\"protection\":";
             append_json_string(out, protection);
             out += ",\"state\":\"";
@@ -215,7 +229,7 @@ namespace debugger
                     (!module_name || std::string_view(module_name) == "<N/A>") ? std::string_view{} : module_name;
 
                 append_region(json, first, base, region.length, permission_string(region.initial_permission), "reserve",
-                               region_kind_string(region.kind), module);
+                              region_kind_string(region.kind), module);
 
                 for (const auto& [committed_base, committed] : region.committed_regions)
                 {
@@ -225,8 +239,8 @@ namespace debugger
                         protection += 'G';
                     }
 
-                    append_region(json, first, committed_base, committed.length, protection, "commit",
-                                   region_kind_string(region.kind), module);
+                    append_region(json, first, committed_base, committed.length, protection, "commit", region_kind_string(region.kind),
+                                  module);
                 }
             }
 

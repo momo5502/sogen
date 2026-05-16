@@ -31,7 +31,10 @@ type ChunkState = Uint8Array | "pending" | "error";
 type ChunkMap = Map<string, ChunkState>;
 
 function parseAddress(value: string): bigint | null {
-  const trimmed = value.trim().replace(/^0x/i, "").replace(/[`_\s]/g, "");
+  const trimmed = value
+    .trim()
+    .replace(/^0x/i, "")
+    .replace(/[`_\s]/g, "");
   if (trimmed.length === 0 || !/^[0-9a-fA-F]+$/.test(trimmed)) {
     return null;
   }
@@ -167,7 +170,9 @@ export function MemoryRegionsPanel({
 
   if (regions.length === 0) {
     return (
-      <div className="p-3 text-xs text-muted-foreground">No memory regions.</div>
+      <div className="p-3 text-xs text-muted-foreground">
+        No memory regions.
+      </div>
     );
   }
 

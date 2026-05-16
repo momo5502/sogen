@@ -451,8 +451,7 @@ export class Playground extends React.Component<
                 this.setState({ memoryViewOpen: !this.state.memoryViewOpen })
               }
             >
-              <Memory />{" "}
-              <span className="hidden sm:inline">Memory View</span>
+              <Memory /> <span className="hidden sm:inline">Memory View</span>
             </Button>
 
             {!this.state.filesystem ? (
