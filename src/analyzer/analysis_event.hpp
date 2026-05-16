@@ -277,6 +277,11 @@ struct executable_write_event : observation_event
     std::string section_name{};
 };
 
+struct fast_fail_event : observation_event
+{
+    uint32_t fail_code{};
+};
+
 using analysis_event =
     std::variant<run_started_event, run_finished_event, run_failed_event, instruction_summary_event, buffered_stdout_event,
                  stdout_chunk_event, suspicious_activity_event, debug_string_event, generic_activity_event, generic_access_event,
@@ -284,4 +289,4 @@ using analysis_event =
                  thread_terminated_event, thread_set_name_event, thread_switch_event, module_load_event, module_unload_event,
                  import_read_event, import_write_event, object_access_event, environment_access_event, function_execution_event,
                  entry_point_execution_event, foreign_code_transition_event, section_first_execute_event, rdtsc_event, rdtscp_event,
-                 cpuid_event, syscall_event, foreign_module_read_event, executable_read_event, executable_write_event>;
+                 cpuid_event, syscall_event, foreign_module_read_event, executable_read_event, executable_write_event, fast_fail_event>;
