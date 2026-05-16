@@ -16,6 +16,9 @@ const ROW_BYTES = 16;
 const CHUNK_BYTES = 1024;
 const ROW_HEIGHT = 22;
 const FALLBACK_VIEW_SIZE = 0x1000;
+// Hex window size slider: powers of two from 256 B to 16 MiB.
+const MIN_WINDOW_EXP = 8;
+const MAX_WINDOW_EXP = 24;
 
 export interface HexViewerSelection {
   // Byte offsets relative to the current view base. `anchor` is where the
@@ -575,6 +578,19 @@ export function MemoryView({ emulator, paused, onClose }: MemoryViewProps) {
     [regions],
   );
 
+  const resizeWindow = React.useCallback((exp: number) => {
+    setView((v) => ({
+      base: v.base,
+      size: Math.pow(2, exp),
+      scrollToOffset: 0,
+    }));
+  }, []);
+
+  const sizeExp = Math.min(
+    MAX_WINDOW_EXP,
+    Math.max(MIN_WINDOW_EXP, Math.round(Math.log2(view.size))),
+  );
+
   const loading = regionsGen !== generation;
 
   return (
@@ -582,6 +598,25 @@ export function MemoryView({ emulator, paused, onClose }: MemoryViewProps) {
       <div className="flex items-center justify-between gap-2 border-b p-2">
         <span className="text-sm font-medium">Memory View</span>
         <div className="flex-1" />
+        <div className="hidden items-center gap-2 sm:flex">
+          <span className="text-[11px] whitespace-nowrap text-muted-foreground">
+            Window
+          </span>
+          <input
+            type="range"
+            min={MIN_WINDOW_EXP}
+            max={MAX_WINDOW_EXP}
+            step={1}
+            value={sizeExp}
+            disabled={!paused}
+            title="Hex window size"
+            onChange={(e) => resizeWindow(parseInt(e.target.value, 10))}
+            className="h-1 w-28 cursor-pointer accent-primary disabled:opacity-50"
+          />
+          <span className="w-14 text-right font-mono text-[11px] text-muted-foreground">
+            {formatSize(view.size)}
+          </span>
+        </div>
         <AddressInput onJump={jumpTo} disabled={!paused} />
         <Button
           size="sm"

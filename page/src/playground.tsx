@@ -499,12 +499,14 @@ export class Playground extends React.Component<
             </div>
           </header>
           <div className="flex flex-1 min-h-0">
-            <EmulationSummary
-              status={this.state.emulationStatus}
-              executionTimeFetcher={this.fetchExecutionTime}
-            />
-            <div className="flex flex-1 flex-col pl-1 overflow-auto min-w-0">
-              <Output ref={this.output} />
+            <div className="relative flex flex-1 flex-col min-w-0">
+              <EmulationSummary
+                status={this.state.emulationStatus}
+                executionTimeFetcher={this.fetchExecutionTime}
+              />
+              <div className="flex flex-1 flex-col pl-1 overflow-auto min-w-0">
+                <Output ref={this.output} />
+              </div>
             </div>
             {this.state.memoryViewOpen && this.state.emulator && (
               <MemoryView

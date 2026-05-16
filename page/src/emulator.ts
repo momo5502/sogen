@@ -278,10 +278,27 @@ export class Emulator {
 
   /**
    * Enumerate the emulated virtual memory layout from the paused snapshot.
-   * Resolves `null` when the backend does not support region enumeration
-   * (older emulator builds) so callers can degrade gracefully.
+   *
+   * Prefers the native backend enumeration (accurate protection flags and
+   * module names). If the running emulator build does not implement it, falls
+   * back to probing the address space with read-only reads so the feature
+   * still works (approximate ranges, no protection/module metadata).
+   * Resolves `null` only when emulation is not paused.
    */
-  getMemoryRegions(): Promise<MemoryRegion[] | null> {
+  async getMemoryRegions(): Promise<MemoryRegion[] | null> {
+    if (this.state !== EmulationState.Paused) {
+      return null;
+    }
+
+    const native = await this._requestMemoryRegions();
+    if (native) {
+      return native;
+    }
+
+    return this._probeMemoryRegions();
+  }
+
+  private _requestMemoryRegions(): Promise<MemoryRegion[] | null> {
     if (this.state !== EmulationState.Paused) {
       return Promise.resolve(null);
     }
@@ -315,6 +332,99 @@ export class Emulator {
         ),
       );
     });
+  }
+
+  /**
+   * Fallback used when the backend has no region-enumeration support: walk the
+   * user address space with read-only 1-byte reads, galloping over unmapped
+   * gaps and binary-searching region edges at allocation granularity. Bounded
+   * by a read budget and a wall-clock deadline so it never hangs the UI.
+   */
+  private async _probeMemoryRegions(): Promise<MemoryRegion[]> {
+    const GRAN = BigInt(0x10000); // allocation granularity (64 KiB)
+    const MIN = BigInt(0x10000);
+    const MAX = BigInt("0x7fffffffffff");
+    const MAX_READS = 6000;
+    const deadline = Date.now() + 20000;
+
+    const regions: MemoryRegion[] = [];
+    let reads = 0;
+
+    const readable = async (addr: bigint): Promise<boolean> => {
+      reads++;
+      return (await this.readMemory(addr, 1)) !== null;
+    };
+    const budgetLeft = () => reads < MAX_READS && Date.now() < deadline;
+
+    let pos = MIN;
+    while (pos < MAX && this.state === EmulationState.Paused && budgetLeft()) {
+      if (await readable(pos)) {
+        // Found a mapped granule: gallop to find an unreadable bound.
+        let lastOk = pos;
+        let step = GRAN;
+        let hi = pos + step;
+        while (hi < MAX && budgetLeft() && (await readable(hi))) {
+          lastOk = hi;
+          step *= BigInt(2);
+          hi = pos + step;
+        }
+        let bad = hi < MAX ? hi : MAX;
+        // Binary search the end down to granule precision.
+        while (bad - lastOk > GRAN && budgetLeft()) {
+          const mid = lastOk + ((bad - lastOk) / GRAN / BigInt(2)) * GRAN;
+          if (mid <= lastOk) {
+            break;
+          }
+          if (await readable(mid)) {
+            lastOk = mid;
+          } else {
+            bad = mid;
+          }
+        }
+        const end = lastOk + GRAN;
+        regions.push({
+          base: "0x" + pos.toString(16),
+          size: Number(end - pos),
+          protection: "",
+          state: "commit",
+          kind: "probed",
+          module: null,
+        });
+        pos = end;
+      } else {
+        // Unmapped: gallop forward to find the next mapped granule.
+        let step = GRAN;
+        let probe = pos + step;
+        let found: bigint | null = null;
+        while (probe < MAX && budgetLeft()) {
+          if (await readable(probe)) {
+            found = probe;
+            break;
+          }
+          step *= BigInt(2);
+          probe = pos + step;
+        }
+        if (found === null) {
+          break;
+        }
+        let bad = pos;
+        let ok = found;
+        while (ok - bad > GRAN && budgetLeft()) {
+          const mid = bad + ((ok - bad) / GRAN / BigInt(2)) * GRAN;
+          if (mid <= bad) {
+            break;
+          }
+          if (await readable(mid)) {
+            ok = mid;
+          } else {
+            bad = mid;
+          }
+        }
+        pos = ok;
+      }
+    }
+
+    return regions;
   }
 
   private _flushPendingMemoryRequests() {
