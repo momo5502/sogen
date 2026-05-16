@@ -19,6 +19,14 @@ const FALLBACK_VIEW_SIZE = 0x1000;
 // Hex window size slider: powers of two from 256 B to 16 MiB.
 const MIN_WINDOW_EXP = 8;
 const MAX_WINDOW_EXP = 24;
+// Cap the rendered window so huge free/reserved ranges don't overflow the
+// virtual list (rowCount * rowHeight must stay within CSS limits). Navigate
+// large regions via the address jump or the size slider.
+const MAX_VIEW_SIZE = Math.pow(2, MAX_WINDOW_EXP);
+
+function clampViewSize(size: number): number {
+  return Math.min(Math.max(ROW_BYTES, size), MAX_VIEW_SIZE);
+}
 
 export interface HexViewerSelection {
   // Byte offsets relative to the current view base. `anchor` is where the
@@ -517,7 +525,7 @@ export function MemoryView({ emulator, paused, onClose }: MemoryViewProps) {
     setSelectedRegion(region);
     setView({
       base: BigInt(region.base),
-      size: Math.max(ROW_BYTES, region.size),
+      size: clampViewSize(region.size),
       scrollToOffset: 0,
     });
   }, []);
@@ -566,13 +574,24 @@ export function MemoryView({ emulator, paused, onClose }: MemoryViewProps) {
         });
 
       if (containing) {
-        const base = BigInt(containing.base);
+        const regionBase = BigInt(containing.base);
         setSelectedRegion(containing);
-        setView({
-          base,
-          size: Math.max(ROW_BYTES, containing.size),
-          scrollToOffset: Number(address - base),
-        });
+        if (containing.size <= MAX_VIEW_SIZE) {
+          setView({
+            base: regionBase,
+            size: clampViewSize(containing.size),
+            scrollToOffset: Number(address - regionBase),
+          });
+        } else {
+          // Region too large to render whole: open a capped window at the
+          // target address (still aligned within the region).
+          const aligned = address - (address % BigInt(ROW_BYTES));
+          setView({
+            base: aligned,
+            size: MAX_VIEW_SIZE,
+            scrollToOffset: 0,
+          });
+        }
       } else {
         // No known region: open an ad-hoc window around the address.
         const aligned = address - (address % BigInt(ROW_BYTES));

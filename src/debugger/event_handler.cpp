@@ -130,7 +130,7 @@ namespace debugger
                 value >>= 4;
             } while (value != 0);
 
-            std::reverse(out.begin(), out.end());
+            std::ranges::reverse(out);
             return "0x" + out;
         }
 
@@ -144,25 +144,25 @@ namespace debugger
                 switch (ch)
                 {
                 case '"':
-                    out += "\\\"";
+                    out += R"(\")";
                     break;
                 case '\\':
-                    out += "\\\\";
+                    out += R"(\\)";
                     break;
                 case '\n':
-                    out += "\\n";
+                    out += R"(\n)";
                     break;
                 case '\r':
-                    out += "\\r";
+                    out += R"(\r)";
                     break;
                 case '\t':
-                    out += "\\t";
+                    out += R"(\t)";
                     break;
                 default: {
                     const auto byte = static_cast<unsigned char>(ch);
                     if (byte < 0x20)
                     {
-                        out += "\\u00";
+                        out += R"(\u00)";
                         out += digits[(byte >> 4) & 0xF];
                         out += digits[byte & 0xF];
                     }
@@ -186,17 +186,17 @@ namespace debugger
             }
             first = false;
 
-            out += "{\"base\":\"";
+            out += R"({"base":")";
             out += to_hex(base);
-            out += "\",\"size\":";
+            out += R"(","size":)";
             out += std::to_string(size);
-            out += ",\"protection\":";
+            out += R"(,"protection":)";
             append_json_string(out, protection);
-            out += ",\"state\":\"";
+            out += R"(,"state":")";
             out += state;
-            out += "\",\"kind\":\"";
+            out += R"(","kind":")";
             out += kind;
-            out += "\",\"module\":";
+            out += R"(","module":)";
             if (module.empty())
             {
                 out += "null";
@@ -208,9 +208,11 @@ namespace debugger
             out += '}';
         }
 
-        // Read-only enumeration of the emulated virtual address space. The layout
-        // is snapshotted from the paused emulator state and serialized as JSON so
-        // the payload stays trivially forward/backward compatible.
+        // Read-only enumeration of the *entire* emulated virtual address space:
+        // free gaps, reserved ranges and committed sub-ranges (with their real
+        // protection, including non-readable / guard pages). Snapshotted from
+        // the paused state and serialized as JSON so the payload stays trivially
+        // forward/backward compatible. Reading the maps never mutates state.
         void handle_get_memory_regions(const event_context& c)
         {
             auto& memory = c.win_emu.memory;
@@ -218,12 +220,20 @@ namespace debugger
             const auto& reserved_regions = memory.get_reserved_regions();
 
             std::string json{};
-            json.reserve(reserved_regions.size() * 128 + 2);
+            json.reserve(reserved_regions.size() * 192 + 2);
             json += '[';
 
             bool first = true;
+            uint64_t cursor = MIN_ALLOCATION_ADDRESS;
+
             for (const auto& [base, region] : reserved_regions)
             {
+                // Unallocated hole before this reservation.
+                if (base > cursor)
+                {
+                    append_region(json, first, cursor, base - cursor, "---", "free", "free", {});
+                }
+
                 const auto* module_name = modules.find_name(base);
                 const std::string_view module =
                     (!module_name || std::string_view(module_name) == "<N/A>") ? std::string_view{} : module_name;
@@ -242,6 +252,14 @@ namespace debugger
                     append_region(json, first, committed_base, committed.length, protection, "commit", region_kind_string(region.kind),
                                   module);
                 }
+
+                cursor = base + region.length;
+            }
+
+            // Trailing unallocated space up to the end of the user address range.
+            if (cursor < MAX_ALLOCATION_END_EXCL)
+            {
+                append_region(json, first, cursor, MAX_ALLOCATION_END_EXCL - cursor, "---", "free", "free", {});
             }
 
             json += ']';
