@@ -29,8 +29,10 @@ import {
   HouseFill,
   FileEarmarkArrowDownFill,
   Memory,
+  BugFill,
 } from "react-bootstrap-icons";
 import { MemoryView } from "./components/memory-view";
+import { DebuggerView } from "./components/debugger-view";
 import { StatusIndicator } from "@/components/status-indicator";
 import { Header } from "./Header";
 
@@ -65,6 +67,7 @@ export interface PlaygroundState {
   application?: string;
   drawerOpen: boolean;
   memoryViewOpen: boolean;
+  debuggerOpen: boolean;
   allowWasm64: boolean;
   file?: PlaygroundFile;
 }
@@ -153,6 +156,7 @@ export class Playground extends React.Component<
       settings: loadSettings(),
       drawerOpen: false,
       memoryViewOpen: false,
+      debuggerOpen: false,
       allowWasm64: false,
       file: decodeFileData(getEmulateData()),
     };
@@ -314,7 +318,7 @@ export class Playground extends React.Component<
     this.output.current?.clear();
 
     this.setDrawerOpen(false);
-    this.setState({ memoryViewOpen: false });
+    this.setState({ memoryViewOpen: false, debuggerOpen: false });
 
     if (this.state.filesystemPromise) {
       await this.state.filesystemPromise;
@@ -454,6 +458,23 @@ export class Playground extends React.Component<
               <Memory /> <span className="hidden sm:inline">Memory View</span>
             </Button>
 
+            <Button
+              disabled={!this.state.emulator || !this.isEmulatorPaused()}
+              size="sm"
+              title={
+                this.isEmulatorPaused()
+                  ? "Debugger"
+                  : "Pause emulation to debug"
+              }
+              variant={this.state.debuggerOpen ? "default" : "secondary"}
+              className="fancy"
+              onClick={() =>
+                this.setState({ debuggerOpen: !this.state.debuggerOpen })
+              }
+            >
+              <BugFill /> <span className="hidden sm:inline">Debugger</span>
+            </Button>
+
             {!this.state.filesystem ? (
               <></>
             ) : (
@@ -512,6 +533,13 @@ export class Playground extends React.Component<
                 emulator={this.state.emulator}
                 paused={!!this.isEmulatorPaused()}
                 onClose={() => this.setState({ memoryViewOpen: false })}
+              />
+            )}
+            {this.state.debuggerOpen && this.state.emulator && (
+              <DebuggerView
+                emulator={this.state.emulator}
+                paused={!!this.isEmulatorPaused()}
+                onClose={() => this.setState({ debuggerOpen: false })}
               />
             )}
           </div>
