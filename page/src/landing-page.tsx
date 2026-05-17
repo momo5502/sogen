@@ -321,8 +321,8 @@ export function LandingPage() {
                 </h2>
                 <p className="text-xl text-neutral-400 leading-relaxed mb-6">
                   Script emulator runs, register callbacks, and intercept WinAPI
-                  calls without rebuilding C++. Install from PyPI, then point
-                  the bindings at an emulation root and start exploring.
+                  calls directly from Python. Install from PyPI, load your
+                  target, and start exploring.
                 </p>
 
                 <div className="mb-8 inline-flex items-center rounded-lg border border-neutral-700 bg-neutral-900/80 px-4 py-3 font-mono text-sm text-neutral-200">
