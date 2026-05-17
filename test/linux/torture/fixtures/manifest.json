@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "generated_by": "test/linux/torture/tools/gen_elf_fixtures.py",
+  "entries": [
+    {
+      "path": "valid/base_hello.elf",
+      "expected": "run",
+      "rationale": "Known-good control fixture copied from test/linux/hello."
+    },
+    {
+      "path": "malformed/truncated_ehdr.elf",
+      "expected": "reject",
+      "rationale": "ELF header is intentionally truncated."
+    },
+    {
+      "path": "malformed/truncated_phdr_table.elf",
+      "expected": "reject",
+      "rationale": "Program header table is intentionally truncated."
+    },
+    {
+      "path": "malformed/malformed_pt_dynamic.elf",
+      "expected": "reject",
+      "rationale": "PT_DYNAMIC points beyond file bounds."
+    },
+    {
+      "path": "malformed/wrong_class.elf",
+      "expected": "reject",
+      "rationale": "EI_CLASS changed from ELFCLASS64 to ELFCLASS32."
+    },
+    {
+      "path": "malformed/wrong_data_endianness.elf",
+      "expected": "reject",
+      "rationale": "EI_DATA changed from little-endian to big-endian."
+    },
+    {
+      "path": "malformed/wrong_machine.elf",
+      "expected": "reject",
+      "rationale": "e_machine changed from EM_X86_64 to EM_AARCH64."
+    },
+    {
+      "path": "near-valid/pt_load_overlap_conflict.elf",
+      "expected": "run",
+      "rationale": "Two PT_LOAD segments overlap same page with conflicting flags; used to validate deterministic merge behavior."
+    },
+    {
+      "path": "near-valid/sparse_bss_extreme.elf",
+      "expected": "run",
+      "rationale": "One PT_LOAD segment has p_memsz >> p_filesz to stress BSS zero-fill behavior."
+    },
+    {
+      "path": "near-valid/alignment_edge_mismatch.elf",
+      "expected": "reject",
+      "rationale": "PT_LOAD p_align/p_vaddr mismatch violates expected segment alignment invariants."
+    }
+  ]
+}

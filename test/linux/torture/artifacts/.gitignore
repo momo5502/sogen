@@ -1,0 +1,11 @@
+# Keep directory structure, ignore generated artifacts.
+*
+!.gitignore
+!seed/
+!binary/
+!root/
+!trace/
+!seed/.gitkeep
+!binary/.gitkeep
+!root/.gitkeep
+!trace/.gitkeep

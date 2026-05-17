@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "description": "Deterministic native-vs-emulated differential suite for Phase 10 sprint exit criteria.",
+  "defaults": {
+    "timeout": 120
+  },
+  "cases": [
+    { "name": "hello_basic", "binary": "test/linux/hello", "args": [] },
+    { "name": "hello_arg_one", "binary": "test/linux/hello", "args": ["alpha"] },
+    { "name": "hello_arg_two", "binary": "test/linux/hello", "args": ["alpha", "beta"] },
+
+    { "name": "exit42_basic", "binary": "test/linux/exit42", "args": [] },
+
+    { "name": "multitest_basic", "binary": "test/linux/multitest", "args": [] },
+    { "name": "multitest_arg_one", "binary": "test/linux/multitest", "args": ["x"] },
+    { "name": "multitest_arg_two", "binary": "test/linux/multitest", "args": ["x", "y"] },
+
+    { "name": "hello_musl_basic", "binary": "test/linux/musl-tests/hello_musl", "args": [] },
+    { "name": "hello_musl_arg_one", "binary": "test/linux/musl-tests/hello_musl", "args": ["foo"] },
+    { "name": "hello_musl_arg_two", "binary": "test/linux/musl-tests/hello_musl", "args": ["foo", "bar"] },
+
+    { "name": "test_strings_basic", "binary": "test/linux/musl-tests/test_strings", "args": [] },
+    { "name": "test_strings_arg_one", "binary": "test/linux/musl-tests/test_strings", "args": ["x"] },
+
+    { "name": "test_math_basic", "binary": "test/linux/musl-tests/test_math", "args": [] },
+    { "name": "test_math_arg_one", "binary": "test/linux/musl-tests/test_math", "args": ["x"] },
+
+    { "name": "test_fileio_basic", "binary": "test/linux/musl-tests/test_fileio", "args": [] },
+    { "name": "test_fileio_arg_one", "binary": "test/linux/musl-tests/test_fileio", "args": ["arg1"] },
+
+    { "name": "fd_pipe_torture_basic", "binary": "test/linux/torture/bin/fd_pipe_torture", "args": [] },
+    { "name": "fd_pipe_torture_arg_one", "binary": "test/linux/torture/bin/fd_pipe_torture", "args": ["a"] },
+
+    { "name": "openat_getdents_basic", "binary": "test/linux/torture/bin/openat_getdents_torture", "args": [] },
+    { "name": "openat_getdents_arg_one", "binary": "test/linux/torture/bin/openat_getdents_torture", "args": ["a"] },
+
+    { "name": "mmap_brk_basic", "binary": "test/linux/torture/bin/mmap_brk_torture", "args": [] },
+    { "name": "mmap_brk_arg_one", "binary": "test/linux/torture/bin/mmap_brk_torture", "args": ["a"] },
+
+    { "name": "signals_futex_basic", "binary": "test/linux/torture/bin/signals_futex_torture", "args": [] },
+    { "name": "signals_futex_arg_one", "binary": "test/linux/torture/bin/signals_futex_torture", "args": ["a"] },
+
+    {
+      "name": "poll_select_epoll_known_gap",
+      "binary": "test/linux/torture/bin/poll_select_epoll_torture",
+      "args": [],
+      "expected": "mismatch",
+      "note": "Native Linux poll/epoll semantics for regular files diverge from emulator readiness model (known gap)."
+    },
+
+    { "name": "loader_valid_base_hello", "binary": "test/linux/torture/fixtures/elf/valid/base_hello.elf", "args": [] },
+    { "name": "loader_overlap_conflict", "binary": "test/linux/torture/fixtures/elf/near-valid/pt_load_overlap_conflict.elf", "args": [] },
+    { "name": "loader_sparse_bss", "binary": "test/linux/torture/fixtures/elf/near-valid/sparse_bss_extreme.elf", "args": [] }
+  ]
+}
