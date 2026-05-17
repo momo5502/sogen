@@ -254,6 +254,86 @@ export function LandingPage() {
           </div>
         </section>
 
+        {/* Python Bindings Section */}
+        <section className="py-24 bg-linear-to-b from-neutral-900/0 to-neutral-800/40">
+          <div className="container mx-auto px-6">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-12 items-center max-w-6xl mx-auto">
+              <div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-800/60 px-4 py-2 text-sm text-neutral-300 mb-6">
+                  <BookOpen className="h-4 w-4" />
+                  Python bindings
+                </div>
+                <h2 className="text-4xl font-bold text-white mb-6">
+                  Automate Sogen from Python
+                </h2>
+                <p className="text-xl text-neutral-400 leading-relaxed mb-8">
+                  Script emulator runs, register callbacks, and intercept WinAPI
+                  calls without rebuilding C++. Install from PyPI, then point
+                  the bindings at an emulation root and start exploring.
+                </p>
+
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <a href="https://pypi.org/project/sogen/" target="_blank">
+                    <Button
+                      asChild
+                      size="lg"
+                      className="rounded-lg bg-linear-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100 w-full flex"
+                    >
+                      <span>
+                        <BookOpen className="mr-2 h-5 w-5 transition-transform" />
+                        <span className="flex-1">View on PyPI</span>
+                        <ExternalLink className="ml-2 h-4 w-4" />
+                      </span>
+                    </Button>
+                  </a>
+                  <a
+                    href="https://github.com/momo5502/sogen/blob/main/docs/python/README.md"
+                    target="_blank"
+                  >
+                    <Button
+                      asChild
+                      size="lg"
+                      variant="outline"
+                      className="rounded-lg border-neutral-600 text-neutral-300 hover:bg-neutral-800/50 px-8 py-6 text-lg font-semibold group transition-all duration-300 w-full flex"
+                    >
+                      <span>
+                        <Code className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
+                        <span className="flex-1">Read Python Docs</span>
+                        <ExternalLink className="ml-2 h-4 w-4" />
+                      </span>
+                    </Button>
+                  </a>
+                </div>
+              </div>
+
+              <div className="relative">
+                <div className="absolute -inset-4 bg-linear-to-r from-yellow-500/10 to-cyan-500/10 rounded-3xl blur-md"></div>
+                <div className="relative rounded-3xl border border-neutral-700 bg-neutral-900/90 overflow-hidden shadow-2xl">
+                  <div className="flex items-center gap-2 border-b border-neutral-800 px-5 py-4 text-sm text-neutral-500">
+                    <div className="h-3 w-3 rounded-full bg-red-400/80"></div>
+                    <div className="h-3 w-3 rounded-full bg-yellow-400/80"></div>
+                    <div className="h-3 w-3 rounded-full bg-green-400/80"></div>
+                    <span className="ml-3">basic_usage.py</span>
+                  </div>
+                  <pre className="overflow-x-auto p-5 text-sm leading-7 text-neutral-200">
+                    <code>{`import sogen
+
+app = sogen.create_application(
+    "c:/test-sample.exe",
+    None,
+    emulation_root="./root",
+)
+
+app.callbacks.on_stdout = lambda text: print(text, end="")
+app.start()
+print(app.process.exit_status)`}</code>
+                  </pre>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* Video Section */}
         <section className="py-24">
           <div className="container mx-auto px-6">
