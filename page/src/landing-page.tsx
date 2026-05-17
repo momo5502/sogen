@@ -72,37 +72,37 @@ app.start()`;
 
 const landingPythonTheme: PrismTheme = {
   plain: {
-    color: "#e5e5e5",
+    color: "#e6e6e6",
     backgroundColor: "transparent",
   },
   styles: [
     {
       types: ["comment"],
-      style: { color: "#737373", fontStyle: "italic" },
+      style: { color: "#8a8a8a", fontStyle: "italic" },
     },
     {
-      types: ["keyword", "builtin", "decorator", "important"],
-      style: { color: "#ffcb00" },
+      types: ["keyword", "builtin", "decorator", "important", "atrule"],
+      style: { color: "#F3A71F" },
     },
     {
-      types: ["function"],
-      style: { color: "#00c4e9" },
+      types: ["function", "property", "namespace", "symbol"],
+      style: { color: "#2AA8F5" },
     },
     {
       types: ["string"],
-      style: { color: "#aee703" },
+      style: { color: "#9ABB28" },
     },
     {
       types: ["number", "boolean"],
-      style: { color: "#f76548" },
+      style: { color: "#E25A48" },
     },
     {
       types: ["operator", "punctuation"],
-      style: { color: "#a3a3a3" },
+      style: { color: "#9a9a9a" },
     },
     {
       types: ["class-name", "constant"],
-      style: { color: "#67e8f9" },
+      style: { color: "#2AA8F5" },
     },
   ],
 };
