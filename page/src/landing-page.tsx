@@ -14,7 +14,8 @@ import {
   Layers,
   Code,
 } from "lucide-react";
-import { Highlight, themes } from "prism-react-renderer";
+import { Highlight } from "prism-react-renderer";
+import type { PrismTheme } from "prism-react-renderer";
 
 import { Header } from "./Header";
 import { YoutubeVideo } from "@/components/youtube-video";
@@ -58,19 +59,53 @@ function generateButtons(additionalClasses: string = "") {
 const pythonBindingsSample = `import ctypes
 import sogen
 
-app = sogen.create_application(
-    "c:/test-sample.exe",
-    None,
-    emulation_root="./root",
-)
+app = sogen.create_application("c:/test-sample.exe",
+                               emulation_root="./root")
 
 @sogen.api_call(cc=sogen.CallingConvention.stdcall,
                 params=[ctypes.c_uint32])
 def on_sleep(call, params):
     print(f"Sleep({params[0]})")
-    return sogen.ApiContinuation.run_original
 
-app.hooks.apis["Sleep"] = on_sleep`;
+app.hooks.apis["Sleep"] = on_sleep
+app.start()`;
+
+const landingPythonTheme: PrismTheme = {
+  plain: {
+    color: "#e5e5e5",
+    backgroundColor: "transparent",
+  },
+  styles: [
+    {
+      types: ["comment"],
+      style: { color: "#737373", fontStyle: "italic" },
+    },
+    {
+      types: ["keyword", "builtin", "decorator", "important"],
+      style: { color: "#ffcb00" },
+    },
+    {
+      types: ["function"],
+      style: { color: "#00c4e9" },
+    },
+    {
+      types: ["string"],
+      style: { color: "#aee703" },
+    },
+    {
+      types: ["number", "boolean"],
+      style: { color: "#f76548" },
+    },
+    {
+      types: ["operator", "punctuation"],
+      style: { color: "#a3a3a3" },
+    },
+    {
+      types: ["class-name", "constant"],
+      style: { color: "#67e8f9" },
+    },
+  ],
+};
 
 export function LandingPage() {
   const features = [
@@ -286,13 +321,13 @@ export function LandingPage() {
                 </h2>
                 <p className="text-xl text-neutral-400 leading-relaxed mb-6">
                   Script emulator runs, register callbacks, and intercept WinAPI
-                  calls without rebuilding C++. Install from PyPI, then point
-                  the bindings at an emulation root and start exploring.
+                  calls directly from Python. Install from PyPI, load your
+                  target, and start exploring.
                 </p>
 
                 <div className="mb-8 inline-flex items-center rounded-lg border border-neutral-700 bg-neutral-900/80 px-4 py-3 font-mono text-sm text-neutral-200">
-                  <span className="text-neutral-500 mr-3">$</span>
-                  <span>pip install sogen</span>
+                  <span className="text-neutral-500 mr-3 select-none">$</span>
+                  <span className="select-all">pip install sogen</span>
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-4">
@@ -339,7 +374,7 @@ export function LandingPage() {
                     <span className="ml-3">api_hooks.py</span>
                   </div>
                   <Highlight
-                    theme={themes.oneDark}
+                    theme={landingPythonTheme}
                     code={pythonBindingsSample}
                     language="python"
                   >

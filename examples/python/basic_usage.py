@@ -20,7 +20,6 @@ def main() -> None:
 
     app = sogen.create_application(
         "c:/test-sample.exe",
-        None,
         emulation_root=emulation_root,
         path_mappings={"c:/a.txt": Path("./sogen-example.txt")},
         port_mappings={28970: 28980},
