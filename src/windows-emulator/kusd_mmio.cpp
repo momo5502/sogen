@@ -13,7 +13,7 @@ constexpr auto KUSD_BUFFER_SIZE = page_align_up(KUSD_SIZE);
 
 namespace
 {
-    void setup_kusd(KUSER_SHARED_DATA64& kusd, const windows_version_manager& version)
+    void setup_kusd(KUSER_SHARED_DATA64& kusd, const windows_version_manager& version, const fake_environment_config& fake_env)
     {
         memset(reinterpret_cast<void*>(&kusd), 0, sizeof(kusd));
 
@@ -32,7 +32,7 @@ namespace
         kusd.RNGSeedVersion = 0;
         kusd.TimeZoneBiasStamp = 0x00000004;
         kusd.NtBuildNumber = version.get_windows_build_number();
-        kusd.NtProductType = NtProductWinNt;
+        kusd.NtProductType = static_cast<NT_PRODUCT_TYPE>(fake_env.nt_product_type);
         kusd.ProductTypeIsValid = 0x01;
         kusd.NativeProcessorArchitecture = 0x0009;
         kusd.NtMajorVersion = version.get_major_version();
@@ -121,9 +121,9 @@ kusd_mmio::kusd_mmio(utils::buffer_deserializer& buffer)
 {
 }
 
-void kusd_mmio::setup(const windows_version_manager& version)
+void kusd_mmio::setup(const windows_version_manager& version, const fake_environment_config& fake_env)
 {
-    setup_kusd(this->kusd_, version);
+    setup_kusd(this->kusd_, version, fake_env);
     this->register_mmio();
 }
 

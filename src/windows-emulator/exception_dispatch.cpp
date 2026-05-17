@@ -214,7 +214,9 @@ void dispatch_exception(windows_emulator& win_emu, const DWORD status, const std
     CONTEXT64 ctx{};
     ctx.ContextFlags = CONTEXT64_ALL;
     cpu_context::save(win_emu.emu(), ctx);
-    ctx.Rip = win_emu.current_thread().current_ip;
+    ctx.Rip = win_emu.emu().supports_instruction_counting() //
+                  ? win_emu.current_thread().current_ip
+                  : win_emu.emu().read_instruction_pointer();
 
     exception_record record{};
     memset(&record, 0, sizeof(record));

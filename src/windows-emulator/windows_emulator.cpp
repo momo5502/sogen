@@ -4,6 +4,7 @@
 #include "cpu_context.hpp"
 
 #include <utils/io.hpp>
+#include <utils/timer.hpp>
 #include <utils/finally.hpp>
 #include <utils/lazy_object.hpp>
 
@@ -161,6 +162,7 @@ namespace
         auto& context = win_emu.process;
 
         const auto is_ready = thread.is_thread_ready(context, win_emu.clock());
+        const auto has_pending_status = thread.pending_status.has_value();
         const auto can_dispatch_apcs = thread.apc_alertable && !thread.pending_apcs.empty();
 
         if (!is_ready && !force && !can_dispatch_apcs)
@@ -185,7 +187,7 @@ namespace
 
         thread.setup_if_necessary(emu, context);
 
-        if (can_dispatch_apcs)
+        if (can_dispatch_apcs && !has_pending_status)
         {
             thread.mark_as_ready(STATUS_USER_APC);
             dispatch_next_apc(win_emu, thread);
@@ -274,6 +276,16 @@ namespace
 
         return std::make_unique<utils::clock>();
     }
+    std::unique_ptr<network::dns_lookup> get_dns_lookup(emulator_interfaces& interfaces)
+    {
+        if (interfaces.dns_lookup)
+        {
+            return std::move(interfaces.dns_lookup);
+        }
+
+        return std::make_unique<network::dns_lookup>();
+    }
+
     std::unique_ptr<network::socket_factory> get_socket_factory(emulator_interfaces& interfaces)
     {
         if (interfaces.socket_factory)
@@ -301,8 +313,10 @@ windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, const e
                                    emulator_interfaces interfaces)
     : emu_(std::move(emu)),
       clock_(get_clock(interfaces, this->executed_instructions_, settings.use_relative_time)),
+      dns_lookup_(get_dns_lookup(interfaces)),
       socket_factory_(get_socket_factory(interfaces)),
       emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
+      fake_env(settings.fake_env),
       callbacks(std::move(callbacks)),
       file_sys(emulation_root.empty() ? emulation_root : emulation_root / "filesys"),
       memory(*this->emu_),
@@ -335,25 +349,24 @@ windows_emulator::~windows_emulator() = default;
 
 void windows_emulator::setup_process_if_necessary()
 {
-    if (!this->application_settings_)
+    if (this->setup_completed_)
     {
         return;
     }
 
-    auto app_settings = std::move(*this->application_settings_);
-    this->application_settings_ = {};
+    this->setup_completed_ = true;
 
-    this->setup_process(app_settings);
+    this->setup_process();
 }
 
-void windows_emulator::setup_process(const application_settings& app_settings)
+void windows_emulator::setup_process()
 {
     const auto& emu = this->emu();
     auto& context = this->process;
 
     this->version.load_from_registry(this->registry, this->log);
 
-    this->mod_manager.map_main_modules(app_settings.application, this->version, context, this->log);
+    this->mod_manager.map_main_modules(this->application_settings_.application, this->version, context, this->log);
 
     const auto* executable = this->mod_manager.executable;
     const auto* ntdll = this->mod_manager.ntdll;
@@ -361,8 +374,8 @@ void windows_emulator::setup_process(const application_settings& app_settings)
 
     const auto apiset_data = apiset::obtain(this->emulation_root);
 
-    this->process.setup(this->emu(), this->memory, this->registry, this->file_sys, this->version, app_settings, *executable, *ntdll,
-                        apiset_data, this->mod_manager.wow64_modules_.ntdll32);
+    this->process.setup(this->emu(), this->memory, this->registry, this->file_sys, this->version, this->fake_env,
+                        this->application_settings_, *executable, *ntdll, apiset_data, this->mod_manager.wow64_modules_.ntdll32);
 
     const auto ntdll_data = emu.read_memory(ntdll->image_base, static_cast<size_t>(ntdll->size_of_image));
     const auto win32u_data = emu.read_memory(win32u->image_base, static_cast<size_t>(win32u->size_of_image));
@@ -384,7 +397,7 @@ void windows_emulator::yield_thread(const bool alertable)
 
 bool windows_emulator::perform_thread_switch()
 {
-    const auto needed_switch = std::exchange(this->switch_thread_, false);
+    const auto needed_switch = this->switch_thread_.exchange(false);
 
     this->switch_thread_ = false;
     while (!switch_to_next_thread(*this))
@@ -422,6 +435,11 @@ bool windows_emulator::activate_thread(const uint32_t id)
 void windows_emulator::on_instruction_execution(const uint64_t address)
 {
     auto& thread = this->current_thread();
+
+    if (!thread.callback_stack.empty() && address == this->process.zw_callback_return)
+    {
+        thread.callback_return_rax = this->emu().reg<uint64_t>(x86_register::rax);
+    }
 
     ++this->executed_instructions_;
     const auto thread_insts = ++thread.executed_instructions;
@@ -500,6 +518,11 @@ void windows_emulator::setup_hooks()
             this->callbacks.on_suspicious_activity("Illegal instruction");
             dispatch_illegal_instruction_violation(*this);
             return;
+        case 41:
+            this->callbacks.on_fast_fail(this->emu().reg<uint32_t>(x86_register::ecx));
+            this->process.exit_status = STATUS_FAIL_FAST_EXCEPTION;
+            this->stop();
+            return;
         case 45:
             this->callbacks.on_suspicious_activity("DbgPrint");
             dispatch_breakpoint(*this);
@@ -552,11 +575,50 @@ void windows_emulator::setup_hooks()
 void windows_emulator::start(size_t count)
 {
     this->should_stop = false;
+    this->last_stop_reason_ = stop_reason::none;
+    this->last_stop_detail_.clear();
     this->setup_process_if_necessary();
 
     const auto use_count = count > 0;
     const auto start_instructions = this->executed_instructions_;
     const auto target_instructions = start_instructions + count;
+
+    std::mutex interrupt_mutex{};
+    std::condition_variable interrupt_cond{};
+    std::thread interrupt_thread{};
+
+    const auto _ = utils::finally([&] {
+        {
+            std::unique_lock lock{interrupt_mutex};
+            this->should_stop = true;
+        }
+
+        interrupt_cond.notify_all();
+
+        if (interrupt_thread.joinable())
+        {
+            interrupt_thread.join();
+        }
+    });
+
+    if (!this->emu().supports_instruction_counting())
+    {
+        interrupt_thread = std::thread([&] {
+            while (!this->should_stop)
+            {
+                std::unique_lock lock{interrupt_mutex};
+                interrupt_cond.wait_for(lock, std::chrono::seconds(1), [&] {
+                    return this->should_stop.load(); //
+                });
+
+                if (!this->should_stop)
+                {
+                    this->switch_thread_ = true;
+                    this->emu().stop();
+                }
+            }
+        });
+    }
 
     while (!this->should_stop)
     {
@@ -628,13 +690,16 @@ void windows_emulator::register_factories(utils::buffer_deserializer& buffer)
 
 void windows_emulator::serialize(utils::buffer_serializer& buffer) const
 {
-    buffer.write_optional(this->application_settings_);
+    buffer.write(this->application_settings_);
+    buffer.write(this->setup_completed_);
     buffer.write(this->executed_instructions_);
-    buffer.write(this->switch_thread_);
+    buffer.write_atomic(this->switch_thread_);
     buffer.write(this->use_relative_time_);
 
     this->version.serialize(buffer);
+    this->registry.serialize_runtime_state(buffer);
 
+    // Backend snapshot mode is not used here; Unicorn's in-place snapshot path is broken.
     this->emu().serialize_state(buffer, false);
     this->memory.serialize_memory_state(buffer, false);
     this->mod_manager.serialize(buffer);
@@ -646,9 +711,10 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
 {
     this->register_factories(buffer);
 
-    buffer.read_optional(this->application_settings_);
+    buffer.read(this->application_settings_);
+    buffer.read(this->setup_completed_);
     buffer.read(this->executed_instructions_);
-    buffer.read(this->switch_thread_);
+    buffer.read_atomic(this->switch_thread_);
 
     const auto old_relative_time = this->use_relative_time_;
     buffer.read(this->use_relative_time_);
@@ -659,9 +725,11 @@ void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
     }
 
     this->version.deserialize(buffer);
+    this->registry.deserialize_runtime_state(buffer);
 
     this->memory.unmap_all_memory();
 
+    // Match raw serialize() above; do not use backend snapshot mode here.
     this->emu().deserialize_state(buffer, false);
     this->memory.deserialize_memory_state(buffer, false);
     this->mod_manager.deserialize(buffer);
@@ -673,44 +741,47 @@ void windows_emulator::save_snapshot()
 {
     utils::buffer_serializer buffer{};
 
-    buffer.write_optional(this->application_settings_);
+    buffer.write(this->setup_completed_);
     buffer.write(this->executed_instructions_);
-    buffer.write(this->switch_thread_);
+    buffer.write_atomic(this->switch_thread_);
 
     this->version.serialize(buffer);
+    this->registry.serialize_runtime_state(buffer);
 
-    this->emu().serialize_state(buffer, true);
-    this->memory.serialize_memory_state(buffer, true);
+    // Snapshot path still uses regular backend state serialization.
+    // Backend snapshot mode (is_snapshot=true) is not reliable yet.
+    this->emu().serialize_state(buffer, false);
+    this->memory.serialize_memory_state(buffer, false);
     this->mod_manager.serialize(buffer);
+    this->dispatcher.serialize(buffer);
     this->process.serialize(buffer);
 
     this->process_snapshot_ = buffer.move_buffer();
-
-    // TODO: Make process copyable
-    // this->process_snapshot_ = this->process;
 }
 
 void windows_emulator::restore_snapshot()
 {
     if (this->process_snapshot_.empty())
     {
-        assert(false);
-        return;
+        throw std::runtime_error("No snapshot saved");
     }
 
     utils::buffer_deserializer buffer{this->process_snapshot_};
 
     this->register_factories(buffer);
 
-    buffer.read_optional(this->application_settings_);
+    buffer.read(this->setup_completed_);
     buffer.read(this->executed_instructions_);
-    buffer.read(this->switch_thread_);
+    buffer.read_atomic(this->switch_thread_);
 
     this->version.deserialize(buffer);
+    this->registry.deserialize_runtime_state(buffer);
 
-    this->emu().deserialize_state(buffer, true);
-    this->memory.deserialize_memory_state(buffer, true);
+    this->memory.unmap_all_memory();
+
+    this->emu().deserialize_state(buffer, false);
+    this->memory.deserialize_memory_state(buffer, false);
     this->mod_manager.deserialize(buffer);
+    this->dispatcher.deserialize(buffer);
     this->process.deserialize(buffer);
-    // this->process = *this->process_snapshot_;
 }

@@ -43,21 +43,17 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
         }
 
-        // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-        const uint8_t sid[] = {
-            0x01, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x15, 0x00, 0x00, 0x00, 0x84, 0x94,
-            0xD4, 0x04, 0x4B, 0x68, 0x42, 0x34, 0x23, 0xBE, 0x69, 0x4E, 0xE9, 0x03, 0x00, 0x00,
-        };
-
         if (token_information_class == TokenAppContainerSid)
         {
             return STATUS_NOT_SUPPORTED;
         }
 
+        const auto& sid = c.proc.sid;
+
         if (token_information_class == TokenUser)
         {
-            constexpr auto required_size = sizeof(TOKEN_USER64) + sizeof(sid);
-            return_length.write(required_size);
+            const auto required_size = sizeof(TOKEN_USER64) + sid.size();
+            return_length.write(static_cast<ULONG>(required_size));
 
             if (required_size > token_information_length)
             {
@@ -69,14 +65,14 @@ namespace syscalls
             user.User.Sid = token_information + sizeof(TOKEN_USER64);
 
             emulator_object<TOKEN_USER64>{c.emu, token_information}.write(user);
-            c.emu.write_memory(token_information + sizeof(TOKEN_USER64), sid, sizeof(sid));
+            c.emu.write_memory(token_information + sizeof(TOKEN_USER64), sid.data(), sid.size());
             return STATUS_SUCCESS;
         }
 
         if (token_information_class == TokenGroups)
         {
-            constexpr auto required_size = sizeof(TOKEN_GROUPS64) + sizeof(sid);
-            return_length.write(required_size);
+            const auto required_size = sizeof(TOKEN_GROUPS64) + sid.size();
+            return_length.write(static_cast<ULONG>(required_size));
 
             if (required_size > token_information_length)
             {
@@ -89,14 +85,14 @@ namespace syscalls
             groups.Groups[0].Sid = token_information + sizeof(TOKEN_GROUPS64);
 
             emulator_object<TOKEN_GROUPS64>{c.emu, token_information}.write(groups);
-            c.emu.write_memory(token_information + sizeof(TOKEN_GROUPS64), sid, sizeof(sid));
+            c.emu.write_memory(token_information + sizeof(TOKEN_GROUPS64), sid.data(), sid.size());
             return STATUS_SUCCESS;
         }
 
         if (token_information_class == TokenOwner)
         {
-            constexpr auto required_size = sizeof(sid) + sizeof(TOKEN_OWNER64);
-            return_length.write(required_size);
+            const auto required_size = sizeof(TOKEN_OWNER64) + sid.size();
+            return_length.write(static_cast<ULONG>(required_size));
 
             if (required_size > token_information_length)
             {
@@ -107,14 +103,14 @@ namespace syscalls
             owner.Owner = token_information + sizeof(TOKEN_OWNER64);
 
             emulator_object<TOKEN_OWNER64>{c.emu, token_information}.write(owner);
-            c.emu.write_memory(token_information + sizeof(TOKEN_OWNER64), sid, sizeof(sid));
+            c.emu.write_memory(token_information + sizeof(TOKEN_OWNER64), sid.data(), sid.size());
             return STATUS_SUCCESS;
         }
 
         if (token_information_class == TokenPrimaryGroup)
         {
-            constexpr auto required_size = sizeof(sid) + sizeof(TOKEN_PRIMARY_GROUP64);
-            return_length.write(required_size);
+            const auto required_size = sizeof(TOKEN_PRIMARY_GROUP64) + sid.size();
+            return_length.write(static_cast<ULONG>(required_size));
 
             if (required_size > token_information_length)
             {
@@ -125,15 +121,15 @@ namespace syscalls
             primary_group.PrimaryGroup = token_information + sizeof(TOKEN_PRIMARY_GROUP64);
 
             emulator_object<TOKEN_PRIMARY_GROUP64>{c.emu, token_information}.write(primary_group);
-            c.emu.write_memory(token_information + sizeof(TOKEN_PRIMARY_GROUP64), sid, sizeof(sid));
+            c.emu.write_memory(token_information + sizeof(TOKEN_PRIMARY_GROUP64), sid.data(), sid.size());
             return STATUS_SUCCESS;
         }
 
         if (token_information_class == TokenDefaultDacl)
         {
-            constexpr auto acl_size = sizeof(ACL) + sizeof(ACCESS_ALLOWED_ACE) + sizeof(sid) - sizeof(ULONG);
-            constexpr auto required_size = sizeof(TOKEN_DEFAULT_DACL64) + acl_size;
-            return_length.write(required_size);
+            const auto acl_size = sizeof(ACL) + sizeof(ACCESS_ALLOWED_ACE) + sid.size() - sizeof(ULONG);
+            const auto required_size = sizeof(TOKEN_DEFAULT_DACL64) + acl_size;
+            return_length.write(static_cast<ULONG>(required_size));
 
             if (required_size > token_information_length)
             {
@@ -159,13 +155,13 @@ namespace syscalls
             ACCESS_ALLOWED_ACE ace{};
             ace.Header.AceType = 0; // ACCESS_ALLOWED_ACE_TYPE
             ace.Header.AceFlags = 0;
-            ace.Header.AceSize = static_cast<USHORT>(sizeof(ACCESS_ALLOWED_ACE) + sizeof(sid) - sizeof(ULONG));
+            ace.Header.AceSize = static_cast<USHORT>(sizeof(ACCESS_ALLOWED_ACE) + sid.size() - sizeof(ULONG));
             ace.Mask = GENERIC_ALL;
 
             c.emu.write_memory(ace_offset, ace);
 
             const auto sid_offset = ace_offset + sizeof(ACCESS_ALLOWED_ACE) - sizeof(ULONG);
-            c.emu.write_memory(sid_offset, sid, sizeof(sid));
+            c.emu.write_memory(sid_offset, sid.data(), sid.size());
 
             return STATUS_SUCCESS;
         }
@@ -361,15 +357,92 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtQuerySecurityAttributesToken()
+    NTSTATUS handle_NtQuerySecurityAttributesToken(const syscall_context& c, const handle token_handle,
+                                                   const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> attributes,
+                                                   const ULONG number_of_attributes, const uint64_t buffer, const ULONG buffer_length,
+                                                   const emulator_object<ULONG> return_length)
     {
-        // puts("NtQuerySecurityAttributesToken not supported");
-        return STATUS_NOT_SUPPORTED;
+        if (token_handle != CURRENT_PROCESS_TOKEN && token_handle != CURRENT_THREAD_TOKEN &&
+            token_handle != CURRENT_THREAD_EFFECTIVE_TOKEN && token_handle != DUMMY_IMPERSONATION_TOKEN)
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        if (number_of_attributes == 2)
+        {
+            const auto attribute_name_1 = read_unicode_string(c.emu, attributes, 0);
+            const auto attribute_name_2 = read_unicode_string(c.emu, attributes, 1);
+            if (attribute_name_1 == u"WIN://SYSAPPID" && attribute_name_2 == u"WIN://PKG")
+            {
+                constexpr auto attrs_offset = sizeof(TOKEN_SECURITY_ATTRIBUTES_INFORMATION);
+                constexpr auto claims_offset = attrs_offset + 2 * sizeof(TOKEN_SECURITY_ATTRIBUTE_V1);
+                constexpr auto required_size = claims_offset + sizeof(uint64_t);
+
+                if (return_length.value())
+                {
+                    return_length.write(required_size);
+                }
+
+                if (buffer == 0 || buffer_length < required_size)
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                const auto attrs_ptr = buffer + attrs_offset;
+                const auto claims_ptr = buffer + claims_offset;
+
+                TOKEN_SECURITY_ATTRIBUTES_INFORMATION info{};
+                info.Version = 1;
+                info.Reserved = 0;
+                info.AttributeCount = 2;
+                info.Attribute.pAttributeV1 = attrs_ptr;
+
+                std::array<TOKEN_SECURITY_ATTRIBUTE_V1, 2> attrs{};
+
+                attrs[0].ValueType = 3; // STRING
+                attrs[0].ValueCount = 0;
+                attrs[0].Values = 0;
+
+                attrs[1].ValueType = 2; // UINT64
+                attrs[1].ValueCount = 1;
+                attrs[1].Values = claims_ptr;
+
+                c.emu.write_memory(buffer, info);
+                c.emu.write_memory(attrs_ptr, attrs);
+                c.emu.write_memory(claims_ptr, 0);
+
+                return STATUS_SUCCESS;
+            }
+        }
+
+        constexpr auto required_size = sizeof(TOKEN_SECURITY_ATTRIBUTES_INFORMATION);
+        if (return_length.value())
+        {
+            return_length.write(required_size);
+        }
+
+        if (buffer == 0)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        if (buffer_length < required_size)
+        {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        c.emu.write_memory(buffer, TOKEN_SECURITY_ATTRIBUTES_INFORMATION{
+                                       .Version = 0,
+                                       .Reserved = {},
+                                       .AttributeCount = 0,
+                                       .Attribute = {},
+                                   });
+
+        return STATUS_SUCCESS;
     }
 
     NTSTATUS handle_NtAdjustPrivilegesToken()
     {
-        // puts("NtQuerySecurityAttributesToken not supported");
         return STATUS_NOT_SUPPORTED;
     }
 }

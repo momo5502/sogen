@@ -1,10 +1,38 @@
 #include "../std_include.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
+#include "../win32k_userconnect.hpp"
+#include "common/segment_utils.hpp"
 #include "windows-emulator/user_callback_dispatch.hpp"
+#include <limits>
+#include <utils/string.hpp>
 
 namespace
 {
+    constexpr ULONG k_thread_state_win32_thread_info = 0xE;
+    constexpr size_t k_win32_thread_info_slab_size = 0x2000;
+    constexpr uint64_t k_win32_thread_info_bias = 0x800;
+    // callback id used by wow64.dll!Wow64KiUserCallbackDispatcher
+    constexpr uint32_t k_wow64_client_setup_callback_id = 0x54;
+    // user32 callback id for ___ClientMonitorEnumProc@4
+    constexpr uint32_t k_wow64_enum_display_monitors_callback_id = 0x57;
+    constexpr size_t k_wow64_callback_context_buffer_size = 0x140;
+
+    struct wow64_enum_display_monitors_callback_args
+    {
+        uint32_t monitor{};
+        uint32_t dc{};
+        RECT rect{};
+        uint32_t param{};
+        uint32_t callback{};
+    };
+    static_assert(offsetof(wow64_enum_display_monitors_callback_args, monitor) == 0x0);
+    static_assert(offsetof(wow64_enum_display_monitors_callback_args, dc) == 0x4);
+    static_assert(offsetof(wow64_enum_display_monitors_callback_args, rect) == 0x8);
+    static_assert(offsetof(wow64_enum_display_monitors_callback_args, param) == 0x18);
+    static_assert(offsetof(wow64_enum_display_monitors_callback_args, callback) == 0x1C);
+    static_assert(sizeof(wow64_enum_display_monitors_callback_args) == 0x20);
+
     void set_guest_last_error(const syscall_context& c, uint32_t last_error)
     {
         c.proc.active_thread->teb64->access([&](TEB64& teb) {
@@ -12,14 +40,75 @@ namespace
         });
     }
 
+    void set_thread_window_context(const syscall_context& c, const uint64_t active_handle, const uint64_t active_window_ptr)
+    {
+        if (c.proc.active_thread && c.proc.active_thread->teb64)
+        {
+            c.proc.active_thread->teb64->access([&](TEB64& teb) {
+                teb.Win32ClientInfo.arr[8] = active_handle;
+                teb.Win32ClientInfo.arr[9] = active_window_ptr;
+            });
+        }
+
+        if (c.proc.is_wow64_process && c.proc.active_thread && c.proc.active_thread->teb32)
+        {
+            uint32_t active_handle32{};
+            uint32_t active_window_ptr32{};
+
+            if (active_handle <= std::numeric_limits<uint32_t>::max())
+            {
+                active_handle32 = static_cast<uint32_t>(active_handle);
+            }
+
+            if (active_window_ptr <= std::numeric_limits<uint32_t>::max())
+            {
+                active_window_ptr32 = static_cast<uint32_t>(active_window_ptr);
+            }
+
+            c.proc.active_thread->teb32->access([&](TEB32& teb) {
+                teb.Win32ClientInfo[8] = active_handle32;
+                teb.Win32ClientInfo[9] = active_window_ptr32;
+            });
+        }
+    }
+
+    void set_thread_window_context(const syscall_context& c, const hwnd hwnd)
+    {
+        const auto* win = c.proc.windows.get(hwnd);
+
+        uint64_t active_handle{};
+        uint64_t active_window_ptr{};
+
+        if (win)
+        {
+            active_handle = win->handle;
+            active_window_ptr = win->guest.value();
+        }
+
+        set_thread_window_context(c, active_handle, active_window_ptr);
+    }
+
+    void set_user_handle_owner(const syscall_context& c, const handle h, const uint64_t owner)
+    {
+        if (owner == 0)
+        {
+            return;
+        }
+
+        const auto index = static_cast<uint32_t>(h.value.id);
+        if (index == 0 || index >= user_handle_table::MAX_HANDLES)
+        {
+            return;
+        }
+
+        c.proc.user_handles.get_handle_table().access([&](USER_HANDLEENTRY& entry) { entry.pOwner = owner; }, index);
+    }
+
     template <typename T>
     void dispatch_window_message(const syscall_context& c, callback_id id, T&& state, const window& win, uint32_t message,
                                  uint64_t w_param = 0, uint64_t l_param = 0)
     {
-        c.proc.active_thread->teb64->access([&](TEB64& teb) {
-            teb.Win32ClientInfo.arr[8] = win.handle;
-            teb.Win32ClientInfo.arr[9] = win.guest.value();
-        });
+        set_thread_window_context(c, win.handle, win.guest.value());
 
         dispatch_user_callback(c, id, std::forward<T>(state), c.proc.dispatch_client_message, win.guest.value(),
                                static_cast<uint64_t>(message), w_param, l_param, win.wnd_proc);
@@ -33,10 +122,215 @@ namespace
 
         dispatch_window_message(c, id, std::forward<T>(state), win, m.message, m.wParam, m.lParam);
     }
+
+    uint64_t ensure_win32_thread_info(const syscall_context& c)
+    {
+        auto* thread = c.proc.active_thread;
+        if (!thread || !thread->teb64)
+        {
+            return 0;
+        }
+
+        if (thread->win32k_thread_info != 0)
+        {
+            return thread->win32k_thread_info;
+        }
+
+        uint64_t thread_info{};
+        thread->teb64->access([&](const TEB64& teb) { thread_info = teb.Win32ThreadInfo; });
+
+        if (thread_info != 0)
+        {
+            thread->win32k_thread_info = thread_info;
+            return thread_info;
+        }
+
+        const auto slab_base = c.proc.base_allocator.reserve(k_win32_thread_info_slab_size, 0x10);
+        std::vector<std::byte> zero_slab(k_win32_thread_info_slab_size);
+        c.emu.write_memory(slab_base, zero_slab.data(), zero_slab.size());
+        thread->win32k_thread_info = slab_base + k_win32_thread_info_bias;
+        return thread->win32k_thread_info;
+    }
+
+    void publish_win32_thread_info(const syscall_context& c, const uint64_t thread_info)
+    {
+        auto* thread = c.proc.active_thread;
+        if (!thread || !thread->teb64 || thread_info == 0)
+        {
+            return;
+        }
+
+        const auto low = static_cast<ULONG>(thread_info & 0xFFFFFFFFull);
+        const auto high = static_cast<ULONG>((thread_info >> 32) & 0xFFFFFFFFull);
+
+        thread->teb64->access([&](TEB64& teb64) {
+            teb64.Win32ThreadInfo = thread_info;
+            teb64.User32Reserved.arr[13] = low;
+            teb64.User32Reserved.arr[14] = high;
+        });
+
+        if (c.proc.is_wow64_process && thread->teb32)
+        {
+            thread->teb32->access([&](TEB32& teb32) {
+                teb32.Win32ThreadInfo = low;
+                teb32.User32Reserved[13] = low;
+                teb32.User32Reserved[14] = high;
+            });
+        }
+    }
+
+    NTSTATUS ensure_user_shared_info_ptr(const syscall_context& c, uint64_t& user_shared_info_ptr)
+    {
+        user_shared_info_ptr = 0;
+
+        if (!c.proc.peb32)
+        {
+            return STATUS_SUCCESS;
+        }
+
+        c.proc.peb32->access([&](const PEB32& peb) { user_shared_info_ptr = peb.UserSharedInfoPtr; });
+
+        if (user_shared_info_ptr != 0)
+        {
+            return STATUS_SUCCESS;
+        }
+
+        user_shared_info_ptr = c.proc.base_allocator.reserve(sizeof(WIN32K_USERCONNECT32), alignof(WIN32K_USERCONNECT32));
+        std::array<std::byte, sizeof(WIN32K_USERCONNECT32)> zeros{};
+        c.emu.write_memory(user_shared_info_ptr, zeros.data(), zeros.size());
+
+        uint32_t user_shared_info_ptr32{};
+        const auto narrow_status = win32k_userconnect::narrow_wow64_address(user_shared_info_ptr, user_shared_info_ptr32);
+        if (narrow_status != STATUS_SUCCESS)
+        {
+            return narrow_status;
+        }
+
+        c.proc.peb32->access([&](PEB32& peb) { peb.UserSharedInfoPtr = user_shared_info_ptr32; });
+        return STATUS_SUCCESS;
+    }
+
+    uint64_t resolve_wow64_callback_dispatcher(const syscall_context& c)
+    {
+        if (c.proc.wow64_ki_user_callback_dispatcher != 0)
+        {
+            return c.proc.wow64_ki_user_callback_dispatcher;
+        }
+
+        for (const auto& [_, mod] : c.win_emu.mod_manager.modules())
+        {
+            if (!utils::string::equals_ignore_case(std::string_view{mod.name}, std::string_view{"wow64.dll"}))
+            {
+                continue;
+            }
+
+            const auto dispatcher = mod.find_export("Wow64KiUserCallbackDispatcher");
+            if (dispatcher != 0)
+            {
+                c.proc.wow64_ki_user_callback_dispatcher = dispatcher;
+                return dispatcher;
+            }
+        }
+
+        return 0;
+    }
+
+    uint64_t ensure_wow64_callback_buffer(const syscall_context& c, emulator_thread& thread)
+    {
+        if (thread.win32k_callback_buffer != 0)
+        {
+            return thread.win32k_callback_buffer;
+        }
+
+        thread.win32k_callback_buffer = c.proc.base_allocator.reserve(k_wow64_callback_context_buffer_size, 0x10);
+        std::array<std::byte, k_wow64_callback_context_buffer_size> zeros{};
+        c.emu.write_memory(thread.win32k_callback_buffer, zeros.data(), zeros.size());
+        return thread.win32k_callback_buffer;
+    }
+
+    bool schedule_wow64_callback(const syscall_context& c, emulator_thread& thread, const uint32_t callback_id, const uint64_t arg_buffer,
+                                 const uint32_t arg_length, const std::optional<pending_wow64_callback>& pending_callback = std::nullopt)
+    {
+        if (!c.proc.is_wow64_process)
+        {
+            return false;
+        }
+
+        thread.win32k_pending_wow64_callback.reset();
+
+        const auto dispatcher = resolve_wow64_callback_dispatcher(c);
+        if (dispatcher == 0)
+        {
+            return false;
+        }
+
+        const auto cs_selector = c.emu.reg<uint16_t>(x86_register::cs);
+        const auto bitness = segment_utils::get_segment_bitness(c.emu, cs_selector);
+        if (!bitness || *bitness != segment_utils::segment_bitness::bit64)
+        {
+            return false;
+        }
+
+        const auto callback_buffer = ensure_wow64_callback_buffer(c, thread);
+        std::array<std::byte, k_wow64_callback_context_buffer_size> zeros{};
+        c.emu.write_memory(callback_buffer, zeros.data(), zeros.size());
+
+        c.emu.reg(x86_register::rcx, callback_buffer);
+        c.emu.reg(x86_register::rdx, static_cast<uint64_t>(callback_id));
+        c.emu.reg(x86_register::r8, arg_buffer);
+        c.emu.reg(x86_register::r9, static_cast<uint64_t>(arg_length));
+        c.emu.reg(x86_register::rip, dispatcher);
+        thread.win32k_pending_wow64_callback = pending_callback;
+        return true;
+    }
+
+    bool schedule_wow64_client_callback(const syscall_context& c, emulator_thread& thread)
+    {
+        return schedule_wow64_callback(c, thread, k_wow64_client_setup_callback_id, 0, 0);
+    }
+
+    std::u16string read_unicode_string_or_atom(const syscall_context& c,
+                                               const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> uc_string,
+                                               const size_t index = 0)
+    {
+        if (!uc_string)
+        {
+            return {};
+        }
+
+        if (uc_string.value() <= std::numeric_limits<uint16_t>::max())
+        {
+            return c.proc.get_atom_name(static_cast<uint16_t>(uc_string.value())).value_or(u"");
+        }
+
+        return read_unicode_string(c.emu, uc_string, index);
+    }
+
+    std::u16string read_large_string_or_atom(const syscall_context& c, const emulator_object<LARGE_STRING> str_obj, const size_t index = 0)
+    {
+        if (!str_obj)
+        {
+            return {};
+        }
+
+        if (str_obj.value() <= std::numeric_limits<uint16_t>::max())
+        {
+            return c.proc.get_atom_name(static_cast<uint16_t>(str_obj.value())).value_or(u"");
+        }
+
+        return read_large_string(str_obj, index);
+    }
 }
 
 namespace syscalls
 {
+    hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, handle bitmap);
+
+    NTSTATUS handle_NtUserTraceLoggingSendMixedModeTelemetry()
+    {
+        return STATUS_SUCCESS;
+    }
+
     NTSTATUS handle_NtUserDisplayConfigGetDeviceInfo()
     {
         return STATUS_NOT_SUPPORTED;
@@ -47,14 +341,157 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtUserGetThreadState()
+    NTSTATUS handle_NtUserGetThreadState(const syscall_context& c, const ULONG routine)
     {
-        return 0;
+        if (routine != k_thread_state_win32_thread_info)
+        {
+            return STATUS_SUCCESS;
+        }
+
+        const auto thread_info = ensure_win32_thread_info(c);
+        if (thread_info == 0)
+        {
+            return STATUS_UNSUCCESSFUL;
+        }
+
+        publish_win32_thread_info(c, thread_info);
+
+        if (c.proc.is_wow64_process && c.proc.active_thread && !c.proc.active_thread->win32k_thread_setup_done &&
+            !c.proc.active_thread->win32k_thread_setup_pending)
+        {
+            if (!schedule_wow64_client_callback(c, *c.proc.active_thread))
+            {
+                return STATUS_UNSUCCESSFUL;
+            }
+
+            c.proc.active_thread->win32k_thread_setup_pending = true;
+        }
+
+        return STATUS_SUCCESS;
     }
 
-    hdc handle_NtUserGetDCEx(const syscall_context& /*c*/, const hwnd window, const uint64_t /*clip_region*/, const ULONG /*flags*/)
+    NTSTATUS handle_NtUserProcessConnect(const syscall_context& c, const handle process_handle, const ULONG length,
+                                         const emulator_pointer user_connect)
     {
-        return window;
+        if (!c.proc.is_wow64_process)
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        if (process_handle != CURRENT_PROCESS)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        uint32_t connect_destination{};
+        const auto destination_status = win32k_userconnect::resolve_wow64_destination(user_connect, length, connect_destination);
+        if (destination_status != STATUS_SUCCESS)
+        {
+            return destination_status;
+        }
+
+        WIN32K_USERCONNECT32 connect_info{};
+        const auto connect_status = win32k_userconnect::build_wow64_userconnect(c.proc, connect_info);
+        if (connect_status != STATUS_SUCCESS)
+        {
+            return connect_status;
+        }
+
+        if (!win32k_userconnect::try_write_wow64_userconnect(c.emu, connect_destination, connect_info))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        uint64_t user_shared_info_ptr{};
+        const auto shared_info_status = ensure_user_shared_info_ptr(c, user_shared_info_ptr);
+        if (shared_info_status != STATUS_SUCCESS)
+        {
+            return shared_info_status;
+        }
+
+        if (user_shared_info_ptr != 0)
+        {
+            if (!win32k_userconnect::try_write_wow64_userconnect(c.emu, user_shared_info_ptr, connect_info))
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+        }
+
+        if (c.proc.active_thread)
+        {
+            c.proc.active_thread->win32k_thread_setup_pending = false;
+            c.proc.active_thread->win32k_thread_setup_done = true;
+        }
+
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS handle_NtUserInitializeClientPfnArrays(const syscall_context& c, const emulator_pointer apfn_client_a,
+                                                    const emulator_pointer apfn_client_w, const emulator_pointer apfn_client_worker,
+                                                    const emulator_pointer /*hmod_user*/)
+    {
+        if (c.proc.active_thread)
+        {
+            c.proc.active_thread->win32k_thread_setup_pending = false;
+            c.proc.active_thread->win32k_thread_setup_done = true;
+        }
+
+        if (!win32k_userconnect::try_update_client_pfn_arrays_from_addresses(c.win_emu.memory, c.proc, apfn_client_a, apfn_client_w,
+                                                                             apfn_client_worker))
+        {
+            return STATUS_UNSUCCESSFUL;
+        }
+
+        return STATUS_SUCCESS;
+    }
+
+    uint64_t handle_NtUserRemoteConnectState(const syscall_context&)
+    {
+        return 1;
+    }
+
+    hdesk handle_NtUserGetThreadDesktop(const syscall_context& c, const ULONG thread_id)
+    {
+        emulator_thread* target = nullptr;
+        if (thread_id == 0 || (c.proc.active_thread && c.proc.active_thread->id == thread_id))
+        {
+            target = c.proc.active_thread;
+        }
+        else
+        {
+            for (auto& [_, thread] : c.proc.threads)
+            {
+                if (thread.id == thread_id)
+                {
+                    target = &thread;
+                    break;
+                }
+            }
+        }
+
+        if (!target)
+        {
+            return 0;
+        }
+
+        if (target->win32k_desktop.bits == 0)
+        {
+            if (c.proc.default_desktop.bits == 0)
+            {
+                desktop desk{};
+                desk.name = u"Default";
+                c.proc.default_desktop = c.proc.desktops.store(std::move(desk));
+            }
+
+            target->win32k_desktop = c.proc.default_desktop;
+        }
+
+        return target->win32k_desktop.bits;
+    }
+
+    hdc handle_NtUserGetDCEx(const syscall_context& c, const hwnd /*window*/, const uint64_t /*clip_region*/, const ULONG /*flags*/)
+    {
+        return handle_NtGdiGetDCforBitmap(c, {});
     }
 
     hdc handle_NtUserGetDC(const syscall_context& c, const hwnd window)
@@ -62,14 +499,14 @@ namespace syscalls
         return handle_NtUserGetDCEx(c, window, 0, 0);
     }
 
-    NTSTATUS handle_NtUserGetWindowDC()
+    hdc handle_NtUserGetWindowDC(const syscall_context& c, const hwnd /*window*/)
     {
-        return 1;
+        return handle_NtGdiGetDCforBitmap(c, {});
     }
 
-    NTSTATUS handle_NtUserReleaseDC()
+    BOOL handle_NtUserReleaseDC()
     {
-        return STATUS_SUCCESS;
+        return TRUE;
     }
 
     NTSTATUS handle_NtUserGetCursorPos()
@@ -82,12 +519,17 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
+    uint64_t handle_NtUserGetCursor()
+    {
+        return 0;
+    }
+
     NTSTATUS handle_NtUserFindExistingCursorIcon()
     {
         return STATUS_NOT_SUPPORTED;
     }
 
-    NTSTATUS handle_NtUserFindWindowEx(const syscall_context& c, const hwnd, const hwnd,
+    uint64_t handle_NtUserFindWindowEx(const syscall_context& c, const hwnd, const hwnd,
                                        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> window_name)
     {
@@ -98,7 +540,7 @@ namespace syscalls
 
             if (class_name)
             {
-                class_name_str = u16_to_u8(read_unicode_string(c.emu, class_name));
+                class_name_str = u16_to_u8(read_unicode_string_or_atom(c, class_name));
             }
 
             if (window_name)
@@ -112,17 +554,17 @@ namespace syscalls
         return 0;
     }
 
-    NTSTATUS handle_NtUserMoveWindow()
+    BOOL handle_NtUserMoveWindow()
+    {
+        return TRUE;
+    }
+
+    uint64_t handle_NtUserGetProcessWindowStation()
     {
         return 0;
     }
 
-    NTSTATUS handle_NtUserGetProcessWindowStation()
-    {
-        return 0;
-    }
-
-    NTSTATUS handle_NtUserRegisterClassExWOW(const syscall_context& c, const emulator_object<EMU_WNDCLASSEX> wnd_class_ex,
+    uint16_t handle_NtUserRegisterClassExWOW(const syscall_context& c, const emulator_object<EMU_WNDCLASSEX> wnd_class_ex,
                                              const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                              const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*class_version*/,
                                              const emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> class_menu_name,
@@ -130,7 +572,8 @@ namespace syscalls
     {
         if (!wnd_class_ex)
         {
-            return STATUS_INVALID_PARAMETER;
+            set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+            return 0;
         }
 
         const auto class_name_str = read_unicode_string(c.emu, class_name);
@@ -146,11 +589,11 @@ namespace syscalls
         return index;
     }
 
-    NTSTATUS handle_NtUserUnregisterClass(const syscall_context& c, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
-                                          const emulator_pointer /*instance*/,
-                                          const emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> class_menu_name)
+    BOOL handle_NtUserUnregisterClass(const syscall_context& c, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
+                                      const emulator_pointer /*instance*/,
+                                      const emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> class_menu_name)
     {
-        const auto cls_name = read_unicode_string(c.emu, class_name);
+        const auto cls_name = read_unicode_string_or_atom(c, class_name);
 
         if (const auto it = c.proc.classes.find(cls_name); it != c.proc.classes.end())
         {
@@ -171,7 +614,7 @@ namespace syscalls
                                      const emulator_object<EMU_WNDCLASSEX> wnd_class_ex, const emulator_pointer /*menu_name*/,
                                      const BOOL /*ansi*/)
     {
-        std::u16string name_str = read_unicode_string(c.emu, class_name);
+        std::u16string name_str = read_unicode_string_or_atom(c, class_name);
 
         auto it = c.proc.classes.find(name_str);
         if (it == c.proc.classes.end())
@@ -197,36 +640,40 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 
-    std::u16string read_large_string(const emulator_object<LARGE_STRING> str_obj)
-    {
-        if (!str_obj)
-        {
-            return {};
-        }
-
-        const auto str = str_obj.read();
-        if (!str.bAnsi)
-        {
-            return read_string<char16_t>(*str_obj.get_memory_interface(), str.Buffer, str.Length / 2);
-        }
-
-        const auto ansi_string = read_string<char>(*str_obj.get_memory_interface(), str.Buffer, str.Length);
-        return u8_to_u16(ansi_string);
-    }
-
     hwnd handle_NtUserCreateWindowEx(const syscall_context& c, const DWORD ex_style, const emulator_object<LARGE_STRING> class_name,
                                      const emulator_object<LARGE_STRING> /*cls_version*/, const emulator_object<LARGE_STRING> window_name,
-                                     const DWORD style, const int x, const int y, const int width, const int height, const hwnd /*parent*/,
+                                     const DWORD style, const int x, const int y, const int width, const int height, const hwnd parent,
                                      const hmenu /*menu*/, const hinstance /*instance*/, const pointer l_param, const DWORD /*flags*/,
                                      const pointer /*acbi_buffer*/)
     {
-        const auto cls_name = read_large_string(class_name);
+        const auto cls_name = read_large_string_or_atom(c, class_name);
         const auto cls_it = c.proc.classes.find(cls_name);
 
         if (cls_it == c.proc.classes.end())
         {
             set_guest_last_error(c, 1407); // ERROR_CANNOT_FIND_WND_CLASS
             return 0;
+        }
+
+        const bool is_message_only = parent == reinterpret_cast<pointer>(HWND_MESSAGE);
+        const bool has_child_parent = (style & WS_CHILD) != 0 && (style & WS_POPUP) == 0;
+        const bool has_owner = parent != 0 && !is_message_only && !has_child_parent;
+
+        if (has_child_parent && !parent)
+        {
+            set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+            return 0;
+        }
+
+        window* parent_win = nullptr;
+        if (parent && !is_message_only)
+        {
+            parent_win = c.proc.windows.get(parent);
+            if (!parent_win)
+            {
+                set_guest_last_error(c, 6); // ERROR_INVALID_HANDLE
+                return 0;
+            }
         }
 
         const auto class_obj_addr = cls_it->second.guest_obj_addr;
@@ -241,6 +688,11 @@ namespace syscalls
         win.height = height;
         win.thread_id = c.win_emu.current_thread().id;
         win.handle = handle.bits;
+        if (!is_message_only)
+        {
+            win.parent_handle = has_child_parent ? parent : c.proc.default_desktop_window_handle.bits;
+            win.owner_handle = has_owner ? parent : 0;
+        }
         win.class_name = cls_name;
         win.name = read_large_string(window_name);
         win.wnd_proc = wnd_class->lpfnWndProc;
@@ -250,9 +702,23 @@ namespace syscalls
             guest_win.ptrBase = win.guest.value();
             guest_win.dwExStyle = ex_style;
             guest_win.dwStyle = style;
+            if (parent_win && has_child_parent)
+            {
+                guest_win.spwndParent = parent_win->guest.value();
+            }
+            else if (is_message_only)
+            {
+                guest_win.spwndParent = 0;
+            }
+            else if (const auto* wnd = c.proc.windows.get(c.proc.default_desktop_window_handle))
+            {
+                guest_win.spwndParent = wnd->guest.value();
+            }
+            guest_win.spwndOwner = parent_win && has_owner ? parent_win->guest.value() : 0;
             guest_win.lpfnWndProc = win.wnd_proc;
             guest_win.pcls = class_obj_addr;
             guest_win.cbWndExtra = wnd_class->cbWndExtra;
+            guest_win.windowBand = 1; // ZBID_DESKTOP
 
             if (wnd_class->cbWndExtra > 0)
             {
@@ -260,6 +726,10 @@ namespace syscalls
                 guest_win.pExtraBytes = c.win_emu.memory.allocate_memory(extra_size, memory_permission::read);
             }
         });
+
+        const auto thread_info = ensure_win32_thread_info(c);
+        publish_win32_thread_info(c, thread_info);
+        set_user_handle_owner(c, handle, thread_info);
 
         window_create_state state{};
         state.handle = handle.bits;
@@ -416,7 +886,7 @@ namespace syscalls
     BOOL handle_NtUserSetProp(const syscall_context& c, const hwnd window, const uint16_t atom, const uint64_t data)
     {
         auto* win = c.proc.windows.get(window);
-        const auto* prop = c.proc.get_atom_name(atom);
+        const auto prop = c.proc.get_atom_name(atom);
 
         if (!win || !prop)
         {
@@ -437,7 +907,12 @@ namespace syscalls
             return FALSE;
         }
 
-        auto prop = read_unicode_string(c.emu, str);
+        auto prop = read_unicode_string_or_atom(c, str);
+        if (prop.empty())
+        {
+            return FALSE;
+        }
+
         win->props[std::move(prop)] = data;
 
         return TRUE;
@@ -540,6 +1015,31 @@ namespace syscalls
         return s.was_visible ? TRUE : FALSE;
     }
 
+    uint64_t handle_NtUserMessageCall(const syscall_context& c, const hwnd hwnd, const UINT msg, const uint64_t w_param,
+                                      const uint64_t l_param, const uint64_t /*result_info*/, const DWORD /*type*/, const BOOL /*ansi*/)
+    {
+        const auto* win = c.proc.windows.get(hwnd);
+        if (!win)
+        {
+            return 0;
+        }
+
+        if (win->thread_id != c.proc.active_thread->id)
+        {
+            return 0;
+        }
+
+        dispatch_window_message(c, callback_id::NtUserMessageCall, nullptr, *win, msg, w_param, l_param);
+        return {};
+    }
+
+    uint64_t completion_NtUserMessageCall(const syscall_context& c, const hwnd /*hwnd*/, const UINT /*msg*/, const uint64_t /*w_param*/,
+                                          const uint64_t /*l_param*/, const uint64_t /*result_info*/, const DWORD /*type*/,
+                                          const BOOL /*ansi*/)
+    {
+        return c.get_callback_result<uint64_t>();
+    }
+
     BOOL handle_NtUserGetMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd, const UINT msg_filter_min,
                                  const UINT msg_filter_max)
     {
@@ -548,6 +1048,7 @@ namespace syscalls
         if (auto pending_msg = t.peek_pending_message(hwnd, msg_filter_min, msg_filter_max, true))
         {
             message.write(*pending_msg);
+            set_thread_window_context(c, pending_msg->window);
             return pending_msg->message != WM_QUIT ? TRUE : FALSE;
         }
 
@@ -568,6 +1069,7 @@ namespace syscalls
         if (pending_msg)
         {
             message.write(*pending_msg);
+            set_thread_window_context(c, pending_msg->window);
             return TRUE;
         }
 
@@ -665,9 +1167,9 @@ namespace syscalls
     {
         if (dev_mode && (mode_num == ENUM_CURRENT_SETTINGS || mode_num == 0))
         {
-            const auto dev_name = read_unicode_string(c.emu, device_name);
+            const auto dev_name = device_name ? read_unicode_string(c.emu, device_name) : u"";
 
-            if (dev_name == u"\\\\.\\DISPLAY1")
+            if (dev_name.empty() || dev_name == u"\\\\.\\DISPLAY1")
             {
                 dev_mode.access([](EMU_DEVMODEW& dm) {
                     dm.dmFields = 0x5C0000; // DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY
@@ -694,16 +1196,20 @@ namespace syscalls
 
         const auto hmon = c.win_emu.process.default_monitor_handle.bits;
         const auto display_info = c.proc.user_handles.get_display_info().read();
+        const emulator_object<USER_MONITOR> monitor_obj(c.emu, display_info.pPrimaryMonitor);
+        if (!monitor_obj)
+        {
+            return FALSE;
+        }
+
+        const auto monitor = monitor_obj.read();
+        auto effective_rc = monitor.rcMonitor;
 
         if (clip_rect_ptr)
         {
             RECT clip{};
             c.emu.read_memory(clip_rect_ptr, &clip, sizeof(clip));
 
-            const emulator_object<USER_MONITOR> monitor_obj(c.emu, display_info.pPrimaryMonitor);
-            const auto monitor = monitor_obj.read();
-
-            auto effective_rc{monitor.rcMonitor};
             effective_rc.left = std::max(effective_rc.left, clip.left);
             effective_rc.top = std::max(effective_rc.top, clip.top);
             effective_rc.right = std::min(effective_rc.right, clip.right);
@@ -712,6 +1218,42 @@ namespace syscalls
             {
                 return TRUE;
             }
+        }
+
+        if (c.proc.is_wow64_process)
+        {
+            if (!c.proc.active_thread)
+            {
+                return FALSE;
+            }
+
+            if (hmon > std::numeric_limits<uint32_t>::max() || hdc_in > std::numeric_limits<uint32_t>::max() ||
+                callback > std::numeric_limits<uint32_t>::max() || param > std::numeric_limits<uint32_t>::max())
+            {
+                return FALSE;
+            }
+
+            wow64_enum_display_monitors_callback_args args{};
+            args.monitor = static_cast<uint32_t>(hmon);
+            args.dc = static_cast<uint32_t>(hdc_in);
+            args.param = static_cast<uint32_t>(param);
+            args.callback = static_cast<uint32_t>(callback);
+            args.rect = effective_rc;
+
+            const auto arg_buffer = c.proc.base_allocator.reserve(sizeof(args), alignof(uint32_t));
+            emulator_object<wow64_enum_display_monitors_callback_args>{c.emu, arg_buffer}.write(args);
+
+            pending_wow64_callback pending_callback{};
+            pending_callback.callback_id = k_wow64_enum_display_monitors_callback_id;
+            pending_callback.postprocess = wow64_callback_postprocess::bool_result_to_status;
+
+            if (!schedule_wow64_callback(c, *c.proc.active_thread, k_wow64_enum_display_monitors_callback_id, arg_buffer,
+                                         static_cast<uint32_t>(sizeof(args)), pending_callback))
+            {
+                return FALSE;
+            }
+
+            return TRUE;
         }
 
         const uint64_t rect_ptr = display_info.pPrimaryMonitor + offsetof(USER_MONITOR, rcMonitor);
@@ -740,6 +1282,24 @@ namespace syscalls
 
     emulator_pointer handle_NtUserMapDesktopObject(const syscall_context& c, handle handle)
     {
+        if (handle.value.type == handle_types::desktop && !handle.value.is_pseudo)
+        {
+            auto* desktop = c.proc.desktops.get(handle);
+            if (!desktop)
+            {
+                return 0;
+            }
+
+            if (desktop->mapped_object == 0)
+            {
+                desktop->mapped_object = c.proc.base_allocator.reserve(sizeof(USER_DESKTOPINFO), alignof(USER_DESKTOPINFO));
+                std::array<std::byte, sizeof(USER_DESKTOPINFO)> zeros{};
+                c.emu.write_memory(desktop->mapped_object, zeros.data(), zeros.size());
+            }
+
+            return desktop->mapped_object;
+        }
+
         const auto index = handle.value.id;
 
         if (index == 0 || index >= user_handle_table::MAX_HANDLES)
@@ -756,14 +1316,19 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtUserSetWindowPos()
+    BOOL handle_NtUserSetWindowPos()
     {
-        return STATUS_SUCCESS;
+        return TRUE;
     }
 
     NTSTATUS handle_NtUserSetForegroundWindow()
     {
         return STATUS_SUCCESS;
+    }
+
+    hwnd handle_NtUserGetForegroundWindow()
+    {
+        return 0;
     }
 
     emulator_pointer handle_NtUserSetWindowLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
@@ -822,9 +1387,91 @@ namespace syscalls
         return static_cast<uint32_t>(oldValue);
     }
 
-    NTSTATUS handle_NtUserRedrawWindow()
+    uint64_t handle_NtUserGetAncestor(const syscall_context& c, const hwnd child_hwnd, const UINT flags)
     {
-        return STATUS_SUCCESS;
+        const auto* win = c.proc.windows.get(child_hwnd);
+        if (!win)
+        {
+            return 0;
+        }
+
+        const hwnd desktop = c.proc.default_desktop_window_handle.bits;
+
+        const auto get_root = [&](const hwnd start) -> hwnd {
+            if (!start || start == desktop)
+            {
+                return 0;
+            }
+
+            hwnd current = start;
+
+            for (;;)
+            {
+                const auto* current_win = c.proc.windows.get(current);
+                if (!current_win)
+                {
+                    return 0;
+                }
+
+                const hwnd parent = current_win->parent_handle;
+                if (!parent || parent == desktop)
+                {
+                    return current;
+                }
+
+                current = parent;
+            }
+        };
+
+        switch (flags)
+        {
+        case 1: // GA_PARENT
+            if (child_hwnd == desktop)
+            {
+                return 0;
+            }
+
+            return win->parent_handle;
+
+        case 2: // GA_ROOT
+            return get_root(child_hwnd);
+
+        case 3: { // GA_ROOTOWNER
+            hwnd current = get_root(child_hwnd);
+
+            while (current)
+            {
+                const auto* current_win = c.proc.windows.get(current);
+                if (!current_win || !current_win->owner_handle)
+                {
+                    return current;
+                }
+
+                if ((current_win->style & WS_POPUP) == 0)
+                {
+                    return current;
+                }
+
+                const hwnd owner_root = get_root(current_win->owner_handle);
+                if (!owner_root || owner_root == current)
+                {
+                    return current;
+                }
+
+                current = owner_root;
+            }
+
+            return 0;
+        }
+
+        default:
+            return 0;
+        }
+    }
+
+    BOOL handle_NtUserRedrawWindow()
+    {
+        return TRUE;
     }
 
     NTSTATUS handle_NtUserGetCPD()
@@ -837,13 +1484,64 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtUserEnableWindow()
+    BOOL handle_NtUserEnableWindow()
     {
-        return STATUS_SUCCESS;
+        return TRUE;
     }
 
-    NTSTATUS handle_NtUserGetSystemMenu()
+    uint64_t handle_NtUserGetSystemMenu()
     {
-        return STATUS_SUCCESS;
+        return 0;
+    }
+
+    BOOL handle_NtUserAllowSetForegroundWindow()
+    {
+        return TRUE;
+    }
+
+    ULONG handle_NtUserGetAtomName(const syscall_context& c, const RTL_ATOM atom,
+                                   const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> atom_name)
+    {
+        const auto name = c.proc.get_atom_name(atom);
+        if (!name || !atom_name)
+        {
+            return 0;
+        }
+
+        const size_t name_length_bytes = name->size() * sizeof(char16_t);
+
+        bool too_small = false;
+        ULONG result = 0;
+
+        atom_name.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& str) {
+            if (str.MaximumLength < sizeof(char16_t) || !str.Buffer)
+            {
+                str.Length = 0;
+                too_small = true;
+                return;
+            }
+
+            const auto max_copy_bytes = static_cast<size_t>(str.MaximumLength - sizeof(char16_t)) & ~size_t{1};
+            const auto copy_bytes = std::min(name_length_bytes, max_copy_bytes);
+
+            if (copy_bytes)
+            {
+                c.emu.write_memory(str.Buffer, name->data(), copy_bytes);
+            }
+
+            constexpr char16_t terminator = 0;
+            c.emu.write_memory(str.Buffer + copy_bytes, &terminator, sizeof(terminator));
+
+            str.Length = static_cast<USHORT>(copy_bytes);
+            result = static_cast<ULONG>(copy_bytes / sizeof(char16_t));
+        });
+
+        if (too_small)
+        {
+            set_guest_last_error(c, 122); // ERROR_INSUFFICIENT_BUFFER
+            return 0;
+        }
+
+        return result;
     }
 }

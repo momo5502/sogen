@@ -9,6 +9,9 @@
 #include <optional>
 #include <filesystem>
 #include <string_view>
+#include <array>
+
+#include "../../common/utils/finally.hpp"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -16,15 +19,15 @@
 #define WIN32_LEAN_AND_MEAN
 #include <intrin.h>
 
-#ifdef __MINGW64__
 #include <windows.h>
+#include <timeapi.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#else
-#include <Windows.h>
-#include <WinSock2.h>
-#include <WS2tcpip.h>
-#endif
+#include <windns.h>
+#include <shlobj.h>
+#include <combaseapi.h>
+#include <knownfolders.h>
+#include <sddl.h>
 
 using namespace std::literals;
 
@@ -49,13 +52,13 @@ namespace
     // getenv is broken right now :(
     std::string read_env(const char* env)
     {
-        char buffer[0x1000] = {};
-        if (!GetEnvironmentVariableA(env, buffer, sizeof(buffer)))
+        std::array<char, 0x1000> buffer{};
+        if (!GetEnvironmentVariableA(env, buffer.data(), static_cast<DWORD>(buffer.size())))
         {
             return {};
         }
 
-        return buffer;
+        return buffer.data();
     }
 
     bool test_threads()
@@ -106,12 +109,12 @@ namespace
         };
 
         constexpr int thread_count = 5;
-        HANDLE threads[thread_count] = {nullptr};
-        ctx_t ctxs[thread_count] = {};
+        std::array<HANDLE, thread_count> threads = {};
+        std::array<ctx_t, thread_count> ctxs = {};
 
         for (int i = 0; i < thread_count; i++)
         {
-            ctxs[i] = {5 * (i + 1), 0};
+            ctxs[i] = {.iterations = 5 * (i + 1), .result = 0};
             threads[i] = CreateThread(nullptr, 0, thread_proc, &ctxs[i], 0, nullptr);
             if (!threads[i])
             {
@@ -119,9 +122,9 @@ namespace
             }
         }
 
-        WaitForMultipleObjects(thread_count, threads, TRUE, INFINITE);
+        WaitForMultipleObjects(thread_count, threads.data(), TRUE, INFINITE);
 
-        const int expected_results[thread_count] = {5, 10, 15, 20, 25};
+        const std::array<int, thread_count> expected_results = {5, 10, 15, 20, 25};
         for (int i = 0; i < thread_count; i++)
         {
             if (ctxs[i].result != expected_results[i])
@@ -143,6 +146,7 @@ namespace
         std::vector<std::thread> ts{};
         kill = false;
 
+        ts.reserve(thread_count);
         for (size_t i = 0; i < thread_count; ++i)
         {
             ts.emplace_back([&] {
@@ -193,6 +197,7 @@ namespace
     {
         std::error_code ec{};
         const auto absolute_file = absolute(filename, ec);
+        (void)absolute_file;
 
         if (ec)
         {
@@ -238,12 +243,60 @@ namespace
 
         std::ifstream t(filename2);
         t.seekg(0, std::ios::end);
-        const size_t size = t.tellg();
+        const size_t size = static_cast<size_t>(t.tellg());
         std::string buffer(size, ' ');
         t.seekg(0);
         t.read(buffer.data(), static_cast<std::streamsize>(size));
 
         return text == buffer;
+    }
+
+    bool test_file_locking()
+    {
+        const auto filename = std::filesystem::absolute("a.txt");
+        constexpr DWORD pending_byte = 0x40000000UL;
+
+        const auto cleanup_file = utils::finally([&] { DeleteFileW(filename.c_str()); });
+
+        HANDLE first = CreateFileW(filename.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                   nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (first == INVALID_HANDLE_VALUE)
+        {
+            puts("Failed to create first lock handle");
+            return false;
+        }
+
+        const auto cleanup_first = utils::finally([&] { CloseHandle(first); });
+
+        OVERLAPPED first_lock{};
+        first_lock.Offset = pending_byte;
+        if (!LockFileEx(first, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &first_lock))
+        {
+            puts("Failed to acquire first file lock");
+            return false;
+        }
+
+        if (!UnlockFileEx(first, 0, 1, 0, &first_lock))
+        {
+            puts("Failed to unlock first file lock");
+            return false;
+        }
+
+        OVERLAPPED second_lock{};
+        second_lock.Offset = pending_byte + 1;
+        if (!LockFileEx(first, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &second_lock))
+        {
+            puts("Failed to reacquire file lock");
+            return false;
+        }
+
+        if (!UnlockFileEx(first, 0, 1, 0, &second_lock))
+        {
+            puts("Failed to unlock reacquired file lock");
+            return false;
+        }
+
+        return true;
     }
 
     bool test_working_directory()
@@ -307,9 +360,9 @@ namespace
             return std::nullopt;
         }
 
-        char data[MAX_PATH]{};
-        DWORD length = sizeof(data);
-        const auto res = RegQueryValueExA(key, value, nullptr, nullptr, reinterpret_cast<uint8_t*>(data), &length);
+        std::array<char, MAX_PATH> data{};
+        auto length = static_cast<DWORD>(data.size());
+        const auto res = RegQueryValueExA(key, value, nullptr, nullptr, reinterpret_cast<uint8_t*>(data.data()), &length);
 
         if (RegCloseKey(key) != ERROR_SUCCESS)
         {
@@ -326,7 +379,7 @@ namespace
             return "";
         }
 
-        return {std::string(data, std::min(static_cast<size_t>(length - 1), sizeof(data)))};
+        return {std::string(data.data(), std::min(static_cast<size_t>(length - 1), data.size()))};
     }
 
     std::optional<std::vector<std::string>> get_all_registry_keys(const HKEY root, const char* path)
@@ -419,10 +472,16 @@ namespace
 
     bool test_registry()
     {
+#ifdef _WIN64
+        const std::string_view progDir = "C:\\Program Files";
+#else
+        const std::string_view progDir = "C:\\Program Files (x86)";
+#endif
+
         // Basic Reading Test
         const auto prog_files_dir =
             read_registry_string(HKEY_LOCAL_MACHINE, R"(SOFTWARE\Microsoft\Windows\CurrentVersion)", "ProgramFilesDir");
-        if (!prog_files_dir || *prog_files_dir != "C:\\Program Files")
+        if (!prog_files_dir || *prog_files_dir != progDir)
         {
             return false;
         }
@@ -451,10 +510,14 @@ namespace
                 break;
             }
         }
+
+        (void)found_fonts;
+#ifdef _WIN64
         if (!found_fonts)
         {
             return false;
         }
+#endif
 
         // Key Values Enumeration Test
         const auto values_opt = get_all_registry_values(HKEY_LOCAL_MACHINE, R"(SOFTWARE\Microsoft\Windows NT\CurrentVersion)");
@@ -482,12 +545,12 @@ namespace
 
     bool test_system_info()
     {
-        char sys_dir[MAX_PATH];
-        if (GetSystemDirectoryA(sys_dir, sizeof(sys_dir)) == 0)
+        std::array<char, MAX_PATH> sys_dir{};
+        if (GetSystemDirectoryA(sys_dir.data(), static_cast<DWORD>(sys_dir.size())) == 0)
         {
             return false;
         }
-        if (strlen(sys_dir) != 19)
+        if (strlen(sys_dir.data()) != 19)
         {
             return false;
         }
@@ -532,7 +595,7 @@ namespace
     bool test_monitor_info()
     {
         const POINT pt = {0, 0};
-        const auto hMonitor = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
+        auto* const hMonitor = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
         if (!hMonitor)
         {
             return false;
@@ -655,6 +718,74 @@ namespace
         }
     };
 
+    bool test_dns()
+    {
+        wsa_initializer _{};
+        constexpr auto hostname = "google.com";
+
+        PDNS_RECORDA records = nullptr;
+        const auto query_status = DnsQuery_A(hostname, DNS_TYPE_A, DNS_QUERY_STANDARD, nullptr, &records, nullptr);
+        if (query_status != ERROR_SUCCESS)
+        {
+            puts("DnsQuery_A failed");
+            return false;
+        }
+
+        const auto free_records = utils::finally([&] {
+            if (records)
+            {
+                DnsRecordListFree(records, DnsFreeRecordList);
+            }
+        });
+
+        auto has_ipv4_record = false;
+        for (auto* current = records; current != nullptr; current = current->pNext)
+        {
+            if (current->wType == DNS_TYPE_A)
+            {
+                has_ipv4_record = true;
+                break;
+            }
+        }
+
+        if (!has_ipv4_record)
+        {
+            puts("DnsQuery_A returned no A records");
+            return false;
+        }
+
+        addrinfo hints{};
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_protocol = IPPROTO_TCP;
+
+        addrinfo* results = nullptr;
+        const auto resolve_status = getaddrinfo(hostname, "80", &hints, &results);
+        if (resolve_status != 0)
+        {
+            puts("getaddrinfo failed");
+            return false;
+        }
+
+        const auto free_results = utils::finally([&] {
+            if (results)
+            {
+                freeaddrinfo(results);
+            }
+        });
+
+        for (auto* current = results; current != nullptr; current = current->ai_next)
+        {
+            if (current->ai_family == AF_INET || current->ai_family == AF_INET6)
+            {
+                return true;
+            }
+        }
+
+        puts("getaddrinfo returned no usable addresses");
+        return false;
+    }
+
     bool test_socket()
     {
         wsa_initializer _{};
@@ -688,19 +819,21 @@ namespace
             return false;
         }
 
-        char buffer[100] = {};
+        std::array<char, 100> buffer = {};
         sockaddr_in sender_addr{};
         int sender_length = sizeof(sender_addr);
 
-        const auto len = recvfrom(receiver, buffer, sizeof(buffer), 0, reinterpret_cast<sockaddr*>(&sender_addr), &sender_length);
+        const auto len = recvfrom(receiver, buffer.data(), static_cast<int>(buffer.size()), 0, reinterpret_cast<sockaddr*>(&sender_addr),
+                                  &sender_length);
+        const auto ulen = static_cast<size_t>(len);
 
-        if (len != send_data.size())
+        if (ulen != send_data.size())
         {
             puts("Failed to receive data!");
             return false;
         }
 
-        return send_data == std::string_view(buffer, len);
+        return send_data == std::string_view(buffer.data(), ulen);
     }
 
 #ifndef __MINGW64__
@@ -743,10 +876,16 @@ namespace
         thread_local bool caught{};
         caught = false;
 
-        auto* old = SetUnhandledExceptionFilter(+[](struct _EXCEPTION_POINTERS* ExceptionInfo) -> LONG {
+        auto* old = SetUnhandledExceptionFilter([](struct _EXCEPTION_POINTERS* info) -> LONG {
             caught = true;
-            ExceptionInfo->ContextRecord->Rip += 1;
-            return EXCEPTION_CONTINUE_EXECUTION; //
+
+#ifdef _WIN64
+            info->ContextRecord->Rip += 1;
+#else
+            info->ContextRecord->Eip += 1;
+#endif
+
+            return EXCEPTION_CONTINUE_EXECUTION;
         });
 
         DebugBreak();
@@ -757,7 +896,7 @@ namespace
 
     bool test_illegal_instruction_exception()
     {
-        const auto address = VirtualAlloc(nullptr, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+        auto* const address = VirtualAlloc(nullptr, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
         if (!address)
         {
             return false;
@@ -801,7 +940,7 @@ namespace
 
         // The second array element specifies the virtual address of the
         // inaccessible data.
-        if (exception_information[1] != (ULONG_PTR)address)
+        if (exception_information[1] != reinterpret_cast<ULONG_PTR>(address))
         {
             return EXCEPTION_CONTINUE_SEARCH;
         }
@@ -873,11 +1012,15 @@ namespace
         return test_access_violation_exception()       //
                && test_illegal_instruction_exception() //
                && test_unhandled_exception()           //
+#ifdef _WIN64
                && test_guard_page_exception();
+#else
+            ;
+#endif
     }
 #endif
 
-    bool trap_flag_cleared = false;
+    thread_local bool trap_flag_cleared = false;
     constexpr DWORD TRAP_FLAG_MASK = 0x100;
 
     LONG NTAPI single_step_handler(PEXCEPTION_POINTERS exception_info)
@@ -894,9 +1037,13 @@ namespace
 
     bool test_interrupts()
     {
+        trap_flag_cleared = false;
+
         PVOID veh_handle = AddVectoredExceptionHandler(1, single_step_handler);
         if (!veh_handle)
+        {
             return false;
+        }
 
         __writeeflags(__readeflags() | TRAP_FLAG_MASK);
 
@@ -924,16 +1071,29 @@ namespace
             return false;
         }
 
-        wchar_t buffer[0x100];
-        DWORD size = sizeof(buffer) / 2;
-        return GetComputerNameExW(ComputerNameNetBIOS, buffer, &size);
+        std::array<wchar_t, 0x100> buffer{};
+        auto size = static_cast<DWORD>(buffer.size() / 2);
+        if (!GetComputerNameExW(ComputerNameNetBIOS, buffer.data(), &size))
+        {
+            return false;
+        }
+
+        PWSTR path{};
+        const auto hr = SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &path);
+        if (FAILED(hr))
+        {
+            return false;
+        }
+
+        CoTaskMemFree(path);
+        return true;
     }
 
     bool test_apc()
     {
         int executions = 0;
 
-        auto* apc_func = +[](const ULONG_PTR param) {
+        PAPCFUNC apc_func = [](const ULONG_PTR param) {
             *reinterpret_cast<int*>(param) += 1; //
         };
 
@@ -953,17 +1113,17 @@ namespace
 
     bool test_message_queue()
     {
-        static UINT wnd_proc_num = 0;
+        static thread_local UINT wnd_proc_num = 0;
         static const UINT wnd_msg_id = WM_APP + 2;
 
         WNDCLASSEXA wc = {};
         wc.cbSize = sizeof(wc);
         wc.lpszClassName = "TestMsgQueueClass";
         wc.hInstance = GetModuleHandleA(nullptr);
-        wc.lpfnWndProc = +[](HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) -> LRESULT {
+        wc.lpfnWndProc = [](HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) -> LRESULT {
             if (msg == WM_CREATE)
             {
-                const auto cs = reinterpret_cast<CREATESTRUCTA*>(lp);
+                auto* const cs = reinterpret_cast<CREATESTRUCTA*>(lp);
                 if (cs->lpCreateParams == reinterpret_cast<void*>(0x1337))
                 {
                     wnd_proc_num += 1;
@@ -1074,6 +1234,182 @@ namespace
         UnregisterClassA(wc.lpszClassName, wc.hInstance);
         return true;
     }
+
+    bool test_private_namespace()
+    {
+        auto create_boundary_descriptor = [](const wchar_t* name) -> HANDLE {
+            auto* hBoundaryDescriptor = CreateBoundaryDescriptorW(name, 0);
+            if (hBoundaryDescriptor == nullptr)
+            {
+                puts("Failed to create boundary descriptor");
+                return nullptr;
+            }
+
+            PSID pLocalAdmin{};
+            if (ConvertStringSidToSidW(L"S-1-1-0", &pLocalAdmin) == FALSE)
+            {
+                puts("ConvertStringSidToSid failed");
+                return nullptr;
+            }
+
+            auto res = AddSIDToBoundaryDescriptor(&hBoundaryDescriptor, pLocalAdmin);
+            LocalFree(pLocalAdmin);
+
+            if (res == FALSE)
+            {
+                puts("AddSIDToBoundaryDescriptor failed");
+                return nullptr;
+            }
+
+            return hBoundaryDescriptor;
+        };
+
+        std::array<HANDLE, 2> boundary{};
+        std::array<HANDLE, 5> ns{};
+
+        const auto _ = utils::finally([&]() {
+            for (auto* elem : boundary)
+            {
+                if (elem)
+                {
+                    DeleteBoundaryDescriptor(elem);
+                }
+            }
+
+            for (auto* elem : ns)
+            {
+                if (elem)
+                {
+                    ClosePrivateNamespace(elem, 0);
+                }
+            }
+        });
+
+        boundary[0] = create_boundary_descriptor(L"boundary1");
+        if (boundary[0] == nullptr)
+        {
+            return false;
+        }
+
+        ns[0] = CreatePrivateNamespaceW(nullptr, boundary[0], L"ns");
+        if (ns[0] == nullptr)
+        {
+            puts("CreatePrivateNamespaceW failed");
+            return false;
+        }
+
+        ns[1] = CreatePrivateNamespaceW(nullptr, boundary[0], L"alt_ns");
+        if (ns[1] != nullptr)
+        {
+            puts("CreatePrivateNamespaceW did not refuse to associate another prefix with existing namespace");
+            return false;
+        }
+
+        if (GetLastError() != ERROR_ALREADY_EXISTS)
+        {
+            puts("GetLastError did not return ERROR_ALREADY_EXISTS");
+            return false;
+        }
+
+        boundary[1] = create_boundary_descriptor(L"boundary2");
+        if (boundary[1] == nullptr)
+        {
+            return false;
+        }
+
+        ns[2] = CreatePrivateNamespaceW(nullptr, boundary[1], L"ns");
+        if (ns[2] != nullptr)
+        {
+            puts("CreatePrivateNamespaceW did not refuse to create another namespace associated with existing prefix");
+            return false;
+        }
+
+        if (GetLastError() != ERROR_DUP_NAME)
+        {
+            puts("GetLastError did not return ERROR_DUP_NAME");
+            return false;
+        }
+
+        auto* mutex = CreateMutexW(nullptr, FALSE, L"ns\\mutex");
+        if (mutex == nullptr)
+        {
+            puts("CreateMutex failed to create mutex in private namespace");
+            return false;
+        }
+
+        CloseHandle(mutex);
+
+        ns[3] = OpenPrivateNamespaceW(boundary[0], L"alt_ns");
+        if (ns[3] == nullptr)
+        {
+            puts("OpenPrivateNamespaceW failed to open existing namespace and associate it with different prefix");
+            return false;
+        }
+
+        ns[4] = OpenPrivateNamespaceW(boundary[0], L"ns");
+        if (ns[4])
+        {
+            puts("OpenPrivateNamespaceW did not refuse to open existing namespace and associate it with existing prefix");
+            return false;
+        }
+
+        DeleteBoundaryDescriptor(boundary[0]);
+        boundary[0] = nullptr;
+
+        if (!ClosePrivateNamespace(ns[3], 0))
+        {
+            puts("ClosePrivateNamespace failed");
+            return false;
+        }
+
+        ns[3] = nullptr;
+
+        if (!ClosePrivateNamespace(ns[0], PRIVATE_NAMESPACE_FLAG_DESTROY))
+        {
+            puts("ClosePrivateNamespace (with destroy flag) failed");
+            return false;
+        }
+
+        ns[0] = nullptr;
+
+        return true;
+    }
+
+    bool test_actctx()
+    {
+        ACTCTXA actctx{};
+        actctx.cbSize = sizeof(actctx);
+        actctx.dwFlags = ACTCTX_FLAG_HMODULE_VALID | ACTCTX_FLAG_RESOURCE_NAME_VALID;
+        actctx.hModule = GetModuleHandleW(nullptr);
+        actctx.lpResourceName = CREATEPROCESS_MANIFEST_RESOURCE_ID;
+
+        auto* ctx = CreateActCtxA(&actctx);
+        if (ctx == INVALID_HANDLE_VALUE)
+        {
+            return false;
+        }
+
+        ReleaseActCtx(ctx);
+        return true;
+    }
+
+    bool test_mmio()
+    {
+        const auto t0 = timeGetTime();
+
+        // waste a bit of time
+        auto dummy = std::thread([] {
+            for (int i = 0; i < 1024; i++)
+            {
+                std::this_thread::yield();
+            }
+        });
+        dummy.join();
+
+        const auto t1 = timeGetTime();
+
+        return t1 != t0;
+    }
 }
 
 #define RUN_TEST(func, name)                 \
@@ -1094,10 +1430,15 @@ int main(const int argc, const char* argv[])
 
     bool valid = true;
 
+    (void)&test_dns;
+    // RUN_TEST(test_dns, "DNS")
     RUN_TEST(test_io, "I/O")
+    RUN_TEST(test_file_locking, "File Locking")
     RUN_TEST(test_dir_io, "Dir I/O")
     RUN_TEST(test_apis, "APIs")
+#ifdef _WIN64
     RUN_TEST(test_working_directory, "Working Directory")
+#endif
     RUN_TEST(test_registry, "Registry")
     RUN_TEST(test_system_info, "System Info")
     RUN_TEST(test_monitor_info, "Monitor Info")
@@ -1109,15 +1450,22 @@ int main(const int argc, const char* argv[])
 #ifndef __MINGW64__
     RUN_TEST(test_native_exceptions, "Native Exceptions")
 #endif
+#ifdef _WIN64
     if (!getenv("EMULATOR_ICICLE"))
     {
         RUN_TEST(test_interrupts, "Interrupts")
     }
+#endif
     RUN_TEST(test_tls, "TLS")
     RUN_TEST(test_socket, "Socket")
     RUN_TEST(test_apc, "APC")
     RUN_TEST(test_user_callback, "User Callback")
+#ifdef _WIN64
     RUN_TEST(test_message_queue, "Message Queue")
+#endif
+    RUN_TEST(test_private_namespace, "Private Namespace")
+    RUN_TEST(test_actctx, "Activation Context")
+    RUN_TEST(test_mmio, "MMIO")
 
     return valid ? 0 : 1;
 }

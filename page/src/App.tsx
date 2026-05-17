@@ -2,6 +2,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { HashRouter, Route, Routes, Navigate } from "react-router-dom";
 import { Playground, storeEmulateData } from "./playground";
+import { InstallPrompt } from "./components/install-prompt";
 import { LandingPage } from "./landing-page";
 import { useParams } from "react-router-dom";
 import Loader from "./Loader";
@@ -43,6 +44,7 @@ function App() {
           </Routes>
         </HashRouter>
         <Spinner />
+        <InstallPrompt />
       </TooltipProvider>
     </ThemeProvider>
   );

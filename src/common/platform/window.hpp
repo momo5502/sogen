@@ -2,7 +2,7 @@
 
 #include "kernel_mapped.hpp"
 
-// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 
 using pointer = uint64_t;
 
@@ -28,6 +28,7 @@ typedef struct _LARGE_STRING
 
 using hdc = pointer;
 using hwnd = pointer;
+using hdesk = pointer;
 using hmenu = pointer;
 using hinstance = pointer;
 using hicon = pointer;
@@ -107,7 +108,15 @@ struct EMU_CREATESTRUCT
 };
 
 #ifndef OS_WINDOWS
+#define MAXINTATOM           0xC000
+
+#define HWND_MESSAGE         ((hwnd) - 3)
+
+#define WS_POPUP             0x80000000L
+#define WS_CHILD             0x40000000L
 #define WS_VISIBLE           0x10000000L
+#define WS_CLIPSIBLINGS      0x04000000L
+#define WS_CLIPCHILDREN      0x02000000L
 
 #define SWP_SHOWWINDOW       0x0040
 #define SWP_HIDEWINDOW       0x0080
@@ -211,4 +220,4 @@ struct EMU_DEVMODEW
     DWORD dmPanningHeight;
 };
 
-// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)

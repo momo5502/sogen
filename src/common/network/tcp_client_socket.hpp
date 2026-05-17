@@ -11,7 +11,7 @@ namespace network
     class tcp_client_socket : public socket
     {
       public:
-        tcp_client_socket(int af);
+        explicit tcp_client_socket(int af);
 
         tcp_client_socket() = default;
         ~tcp_client_socket() override;
@@ -26,6 +26,7 @@ namespace network
         std::optional<address> get_target() const;
 
         bool connect(const address& target);
+        void close() override;
 
       private:
         friend tcp_server_socket;

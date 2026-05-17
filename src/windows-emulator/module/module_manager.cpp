@@ -9,8 +9,6 @@
 
 #include <serialization_helper.hpp>
 #include <cinttypes>
-#include <random>
-#include <algorithm>
 #include <vector>
 
 namespace
@@ -71,12 +69,14 @@ namespace utils
 
     static void serialize(buffer_serializer& buffer, const mapped_section& mod)
     {
+        buffer.write_optional(mod.first_execute);
         buffer.write(mod.name);
         buffer.write(mod.region);
     }
 
     static void deserialize(buffer_deserializer& buffer, mapped_section& mod)
     {
+        buffer.read_optional(mod.first_execute);
         buffer.read(mod.name);
         buffer.read(mod.region);
     }
@@ -85,6 +85,7 @@ namespace utils
     {
         buffer.write(mod.name);
         buffer.write(mod.path);
+        buffer.write(mod.module_path);
 
         buffer.write(mod.image_base);
         buffer.write(mod.image_base_file);
@@ -109,6 +110,7 @@ namespace utils
     {
         buffer.read(mod.name);
         buffer.read(mod.path);
+        buffer.read(mod.module_path);
 
         buffer.read(mod.image_base);
         buffer.read(mod.image_base_file);
@@ -130,7 +132,6 @@ namespace utils
     }
 }
 
-// PE Architecture Detector Implementation
 pe_detection_result pe_architecture_detector::detect_from_file(const std::filesystem::path& file)
 {
     auto variant_result = winpe::get_pe_arch(file);
@@ -138,7 +139,8 @@ pe_detection_result pe_architecture_detector::detect_from_file(const std::filesy
     if (std::holds_alternative<std::error_code>(variant_result))
     {
         pe_detection_result result;
-        result.error_message = "Failed to detect PE architecture from file: " + file.string();
+        const auto error_code = std::get<std::error_code>(variant_result);
+        result.error_message = error_code.message();
         return result;
     }
 
@@ -181,30 +183,29 @@ execution_mode pe_architecture_detector::determine_execution_mode(winpe::pe_arch
 }
 
 // PE32 Mapping Strategy Implementation
-mapped_module pe32_mapping_strategy::map_from_file(memory_manager& memory, std::filesystem::path file)
+mapped_module pe32_mapping_strategy::map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path)
 {
-    return map_module_from_file<std::uint32_t>(memory, std::move(file));
+    return map_module_from_file<std::uint32_t>(memory, std::move(file), std::move(module_path));
 }
 
 mapped_module pe32_mapping_strategy::map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
-                                                     const std::string& module_name)
+                                                     windows_path module_path)
 {
-    return map_module_from_memory<std::uint32_t>(memory, base_address, image_size, module_name);
+    return map_module_from_memory<std::uint32_t>(memory, base_address, image_size, std::move(module_path));
 }
 
 // PE64 Mapping Strategy Implementation
-mapped_module pe64_mapping_strategy::map_from_file(memory_manager& memory, std::filesystem::path file)
+mapped_module pe64_mapping_strategy::map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path)
 {
-    return map_module_from_file<std::uint64_t>(memory, std::move(file));
+    return map_module_from_file<std::uint64_t>(memory, std::move(file), std::move(module_path));
 }
 
 mapped_module pe64_mapping_strategy::map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
-                                                     const std::string& module_name)
+                                                     windows_path module_path)
 {
-    return map_module_from_memory<std::uint64_t>(memory, base_address, image_size, module_name);
+    return map_module_from_memory<std::uint64_t>(memory, base_address, image_size, module_path);
 }
 
-// Mapping Strategy Factory Implementation
 mapping_strategy_factory::mapping_strategy_factory()
     : pe32_strategy_(std::make_unique<pe32_mapping_strategy>()),
       pe64_strategy_(std::make_unique<pe64_mapping_strategy>())
@@ -231,13 +232,12 @@ module_manager::module_manager(memory_manager& memory, file_system& file_sys, ca
 {
 }
 
-// Core mapping logic to eliminate code duplication
 mapped_module* module_manager::map_module_core(const pe_detection_result& detection_result, const std::function<mapped_module()>& mapper,
                                                const logger& logger, bool is_static)
 {
     if (!detection_result.is_valid())
     {
-        logger.error("%s", detection_result.error_message.c_str());
+        logger.error("Cannot map module: %s\n", detection_result.error_message.c_str());
         return nullptr;
     }
 
@@ -260,46 +260,41 @@ mapped_module* module_manager::map_module_core(const pe_detection_result& detect
     }
     catch (const std::exception& e)
     {
-        logger.error("Failed to map module: %s", e.what());
+        logger.error("Failed to map module: %s\n", e.what());
         return nullptr;
     }
 }
 
-// Execution mode detection
 execution_mode module_manager::detect_execution_mode(const windows_path& executable_path, const logger& logger)
 {
-    auto detection_result = pe_architecture_detector::detect_from_file(this->file_sys_->translate(executable_path));
+    const auto local_file = this->file_sys_->translate(executable_path);
+    auto detection_result = pe_architecture_detector::detect_from_file(local_file);
 
     if (!detection_result.is_valid())
     {
-        logger.error("Failed to detect executable architecture: %s", detection_result.error_message.c_str());
+        logger.error("Failed to detect executable architecture of file %s: %s\n", local_file.string().c_str(),
+                     detection_result.error_message.c_str());
         return execution_mode::unknown;
     }
 
     return detection_result.suggested_mode;
 }
 
-// Native 64-bit module loading
 void module_manager::load_native_64bit_modules(const windows_path& executable_path, const windows_path& ntdll_path,
                                                const windows_path& win32u_path, const logger& logger)
 {
-    this->executable = this->map_module(executable_path, logger, true);
-    this->ntdll = this->map_module(ntdll_path, logger, true);
-    this->win32u = this->map_module(win32u_path, logger, true);
+    this->executable = this->map_module_or_throw(executable_path, logger, true);
+    this->ntdll = this->map_module_or_throw(ntdll_path, logger, true);
+    this->win32u = this->map_module_or_throw(win32u_path, logger, true);
 }
 
-// WOW64 module loading
 void module_manager::load_wow64_modules(const windows_path& executable_path, const windows_path& ntdll_path,
                                         const windows_path& win32u_path, const windows_path& ntdll32_path, windows_version_manager& version,
                                         const logger& logger)
 {
-    logger.info("Loading WOW64 modules for 32-bit application\n");
+    load_native_64bit_modules(executable_path, ntdll_path, win32u_path, logger);
 
-    this->executable = this->map_module(executable_path, logger, true);
-    this->ntdll = this->map_module(ntdll_path, logger, true);
-    this->win32u = this->map_module(win32u_path, logger, true);
-
-    this->wow64_modules_.ntdll32 = this->map_module(ntdll32_path, logger, true);
+    this->wow64_modules_.ntdll32 = this->map_module_or_throw(ntdll32_path, logger, true);
 
     const auto ntdll32_original_imagebase = this->wow64_modules_.ntdll32->get_image_base_file();
     const auto ntdll64_original_imagebase = this->ntdll->get_image_base_file();
@@ -371,8 +366,6 @@ void module_manager::load_wow64_modules(const windows_path& executable_path, con
 
     this->memory_->write_memory(ldr_init_block_addr, &init_block, static_cast<size_t>(init_block_size));
 
-    logger.info("Successfully initialized LdrSystemDllInitBlock at 0x%" PRIx64 "\n", ldr_init_block_addr);
-
     // Install the WOW64 Heaven's Gate trampoline used for compat-mode -> 64-bit transitions.
     this->install_wow64_heaven_gate(logger);
 }
@@ -414,7 +407,7 @@ void module_manager::install_wow64_heaven_gate(const logger& logger)
             code_initialized = true;
         }
 
-        if (code_initialized && this->modules_.find(kCodeBase) == this->modules_.end())
+        if (code_initialized && this->modules_.contains(kCodeBase))
         {
             mapped_module module{};
             module.name = "wow64_heaven_gate";
@@ -485,27 +478,37 @@ std::optional<uint64_t> module_manager::get_module_load_count_by_path(const wind
     return {};
 }
 
-mapped_module* module_manager::map_module(const windows_path& file, const logger& logger, const bool is_static, bool allow_duplicate)
+mapped_module* module_manager::map_module(windows_path file, const logger& logger, const bool is_static, bool allow_duplicate)
 {
     auto local_file = this->file_sys_->translate(file);
 
     if (local_file.filename() == "win32u.dll")
     {
-        return this->map_local_module(local_file, logger, is_static, false);
+        return this->map_local_module(local_file, std::move(file), logger, is_static, false);
     }
 
-    return this->map_local_module(local_file, logger, is_static, allow_duplicate);
+    return this->map_local_module(local_file, std::move(file), logger, is_static, allow_duplicate);
 }
 
-// Refactored map_local_module using the new architecture
-mapped_module* module_manager::map_local_module(const std::filesystem::path& file, const logger& logger, const bool is_static,
-                                                bool allow_duplicate)
+mapped_module* module_manager::map_module_or_throw(const windows_path& file, const logger& logger, const bool is_static,
+                                                   bool allow_duplicate)
+{
+    auto* mapped_module = this->map_module(file, logger, is_static, allow_duplicate);
+    if (mapped_module == nullptr)
+    {
+        throw std::runtime_error{"Cannot map " + file.string()};
+    }
+
+    return mapped_module;
+}
+
+mapped_module* module_manager::map_local_module(const std::filesystem::path& file, windows_path module_path, const logger& logger,
+                                                const bool is_static, bool allow_duplicate)
 {
     auto local_file = weakly_canonical(absolute(file));
 
     if (!allow_duplicate)
     {
-        // Check if module is already loaded
         for (auto& mod : this->modules_ | std::views::values)
         {
             if (mod.path == local_file)
@@ -515,26 +518,22 @@ mapped_module* module_manager::map_local_module(const std::filesystem::path& fil
         }
     }
 
-    // Detect PE architecture
     auto detection_result = pe_architecture_detector::detect_from_file(local_file);
 
-    // Use core mapping logic to eliminate code duplication
     return map_module_core(
         detection_result,
         [&]() {
             auto& strategy = strategy_factory_.get_strategy(detection_result.architecture);
-            return strategy.map_from_file(*this->memory_, std::move(local_file));
+            return strategy.map_from_file(*this->memory_, std::move(local_file), std::move(module_path));
         },
         logger, is_static);
 }
 
-// Refactored map_memory_module using the new architecture
-mapped_module* module_manager::map_memory_module(uint64_t base_address, uint64_t image_size, const std::string& module_name,
-                                                 const logger& logger, bool is_static, bool allow_duplicate)
+mapped_module* module_manager::map_memory_module(uint64_t base_address, uint64_t image_size, windows_path module_path, const logger& logger,
+                                                 bool is_static, bool allow_duplicate)
 {
     if (!allow_duplicate)
     {
-        // Check if module is already loaded at this address
         for (auto& mod : this->modules_ | std::views::values)
         {
             if (mod.image_base == base_address)
@@ -544,15 +543,13 @@ mapped_module* module_manager::map_memory_module(uint64_t base_address, uint64_t
         }
     }
 
-    // Detect PE architecture from memory
     auto detection_result = pe_architecture_detector::detect_from_memory(base_address, image_size);
 
-    // Use core mapping logic to eliminate code duplication
     return map_module_core(
         detection_result,
         [&]() {
             auto& strategy = strategy_factory_.get_strategy(detection_result.architecture);
-            return strategy.map_from_memory(*this->memory_, base_address, image_size, module_name);
+            return strategy.map_from_memory(*this->memory_, base_address, image_size, std::move(module_path));
         },
         logger, is_static);
 }

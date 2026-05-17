@@ -77,11 +77,11 @@ export function StatusIndicator(props: StatusIndicatorProps) {
       <CircleFill
         className={
           getStateColor(props.state) +
-          " rounded-full mr-1 n  duration-200 ease-in-out"
+          " rounded-full mt-1 mb-1 duration-200 ease-in-out"
         }
         color="transparent"
       />
-      {getStateName(props.state)}
+      <span className="ml-1 hidden sm:inline">{getStateName(props.state)}</span>
     </Badge>
   );
 }

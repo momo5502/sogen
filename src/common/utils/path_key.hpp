@@ -37,6 +37,11 @@ namespace utils
             return !this->operator==(other);
         }
 
+        bool operator<(const path_key& other) const
+        {
+            return this->get() < other.get();
+        }
+
         static std::filesystem::path canonicalize_path(const std::filesystem::path& key)
         {
             auto key_string = key.u16string();

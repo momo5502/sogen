@@ -16,6 +16,8 @@ namespace gdb_stub
 {
     namespace
     {
+        constexpr size_t max_data_size = 128 * 1024;
+
         void rt_assert(const bool condition)
         {
             (void)condition;
@@ -40,7 +42,7 @@ namespace gdb_stub
             network::tcp_server_socket server{bind_address.get_family()};
             if (!server.bind(bind_address))
             {
-                return false;
+                throw binding_error(bind_address.to_string());
             }
 
             server.set_blocking(false);
@@ -55,6 +57,73 @@ namespace gdb_stub
             }
 
             return server.accept();
+        }
+
+        constexpr std::string escape(const std::string_view data, size_t max_size, size_t* total_copied = nullptr)
+        {
+            std::string result;
+            result.reserve(data.size());
+
+            size_t count = 0;
+
+            for (auto ch : data)
+            {
+                if (ch == '$' || ch == '#' || ch == '}' || ch == '*')
+                {
+                    if (max_size < 2)
+                    {
+                        break;
+                    }
+
+                    max_size--;
+                    result.push_back('}');
+                    ch ^= 0x20;
+                }
+
+                if (!max_size)
+                {
+                    break;
+                }
+
+                max_size--;
+                count++;
+                result.push_back(ch);
+            }
+
+            if (total_copied)
+            {
+                *total_copied = count;
+            }
+
+            return result;
+        }
+
+        std::string unescape(const std::string_view data)
+        {
+            std::string result{};
+            result.reserve(data.size());
+
+            bool xor_next = false;
+
+            for (auto value : data)
+            {
+                if (xor_next)
+                {
+                    value ^= 0x20;
+                    xor_next = false;
+                }
+                else if (value == '}')
+                {
+                    xor_next = true;
+                    continue;
+                }
+
+                result.push_back(value);
+            }
+
+            rt_assert(!xor_next);
+
+            return result;
         }
 
         std::pair<std::string_view, std::string_view> split_string(const std::string_view payload, const char separator)
@@ -73,6 +142,33 @@ namespace gdb_stub
             return {name, args};
         }
 
+        void send_output(const debugging_context& c, const std::string_view output)
+        {
+            auto length = output.length();
+            size_t chunk_length{};
+            size_t offset = 0;
+
+            while (length > 0)
+            {
+                if ((2 * length) + 1 > max_data_size)
+                {
+                    chunk_length = (max_data_size - 1) / 2;
+                }
+                else
+                {
+                    chunk_length = length;
+                }
+
+                length -= chunk_length;
+
+                std::string reply{"O"};
+                const auto chunk = output.substr(offset, chunk_length);
+                offset += chunk_length;
+                reply.append(utils::string::to_hex_string(chunk));
+                c.connection.send_reply(reply);
+            }
+        }
+
         void send_xfer_data(connection_handler& connection, const std::string& args, const std::string_view data)
         {
             size_t offset{};
@@ -88,12 +184,16 @@ namespace gdb_stub
 
             const auto remaining = data.size() - offset;
             const auto real_length = std::min(remaining, length);
-            const auto is_end = real_length == remaining;
 
             const auto sub_region = data.substr(offset, real_length);
 
+            size_t num_copied = 0;
+            const auto max_size = std::max(real_length, max_data_size - 1);
+            const auto escaped_data = escape(sub_region, max_size, &num_copied);
+            const auto is_end = num_copied == remaining;
+
             std::string reply = is_end ? "l" : "m";
-            reply.append(sub_region);
+            reply.append(escaped_data);
 
             connection.send_reply(reply);
         }
@@ -151,6 +251,8 @@ namespace gdb_stub
                 return;
             }
 
+            c.handler.reset_library_stop();
+
             const auto [annex, data] = split_string(args, ':');
             (void)annex; // annex is empty for libraries
 
@@ -187,6 +289,37 @@ namespace gdb_stub
             send_xfer_data(c.connection, std::string(data), exec_path);
         }
 
+        void handle_threads(const debugging_context& c, const std::string_view payload)
+        {
+            const auto [command, args] = split_string(payload, ':');
+            if (command != "read")
+            {
+                c.connection.send_reply({});
+                return;
+            }
+
+            const auto [annex, data] = split_string(args, ':');
+            if (!annex.empty())
+            {
+                c.connection.send_reply({});
+                return;
+            }
+
+            std::string xml = "<threads>\n";
+
+            for (const auto& thread : c.handler.get_thread_list())
+            {
+                xml += "<thread id=\"";
+                xml += utils::string::to_hex_number(thread.id);
+                xml += "\" name=\"";
+                xml += escape_xml(thread.name);
+                xml += "\"/>\n";
+            }
+            xml += "</threads>";
+
+            send_xfer_data(c.connection, std::string(data), xml);
+        }
+
         void process_xfer(const debugging_context& c, const std::string_view payload)
         {
             auto [name, args] = split_string(payload, ':');
@@ -203,6 +336,10 @@ namespace gdb_stub
             {
                 handle_exec_file(c, args);
             }
+            else if (name == "threads")
+            {
+                handle_threads(c, args);
+            }
             else
             {
                 c.connection.send_reply({});
@@ -215,7 +352,15 @@ namespace gdb_stub
 
             if (name == "Supported")
             {
-                c.connection.send_reply("PacketSize=1024;qXfer:features:read+;qXfer:libraries:read+;qXfer:exec-file:read+");
+                std::string reply = "PacketSize=";
+                reply.append(utils::string::to_hex_number(max_data_size));
+                reply.append(";qXfer:features:read+"
+                             ";qXfer:libraries:read+"
+                             ";qXfer:exec-file:read+"
+                             ";qXfer:threads:read+"
+                             ";binary-upload+");
+
+                c.connection.send_reply(reply);
             }
             else if (name == "Attached")
             {
@@ -251,17 +396,161 @@ namespace gdb_stub
 
                 c.connection.send_reply(reply);
             }
+            else if (name == "GetTIBAddr")
+            {
+                uint32_t thread_id{};
+                rt_assert(sscanf_s(std::string(args).c_str(), "%" PRIx32, &thread_id) == 1);
+
+                const auto address = c.handler.get_thread_teb_addr(thread_id);
+                c.connection.send_reply(utils::string::to_hex_number(address));
+            }
             else
             {
                 c.connection.send_reply({});
             }
         }
 
-        void process_action(const connection_handler& connection, const action a)
+        void send_file_result(const debugging_context& c, uint32_t result)
         {
-            if (a == action::shutdown)
+            c.connection.send_reply("F" + utils::string::to_hex_number(result));
+        }
+
+        void send_file_error(const debugging_context& c, uint32_t error)
+        {
+            c.connection.send_reply("F-1," + utils::string::to_hex_number(error));
+        }
+
+        void send_file_attachment(const debugging_context& c, const std::string_view data)
+        {
+            const auto hex_size = utils::string::to_hex_number(data.size()).size() + 1;
+
+            size_t total_copied = 0;
+            const auto attachment = escape(data, max_data_size - 1 - hex_size - 1, &total_copied);
+            c.connection.send_reply("F" + utils::string::to_hex_number(total_copied) + ";" + attachment);
+        }
+
+        void process_file_open(const debugging_context& c, const std::string_view payload)
+        {
+            const auto& [hex_name, args] = split_string(payload, ',');
+
+            uint32_t flags{};
+            uint32_t mode{};
+            rt_assert(sscanf_s(std::string(args).c_str(), "%x,%x", &flags, &mode) == 2);
+
+            const auto file_path = utils::string::from_hex_string<std::string>(hex_name);
+            if (file_path.empty())
             {
-                connection.close();
+                send_file_error(c, ENOENT);
+                return;
+            }
+
+            const auto fd = c.handler.get_filesystem()->open(file_path, flags, mode);
+            if (fd == 0)
+            {
+                send_file_error(c, ENOENT);
+                return;
+            }
+
+            send_file_result(c, fd);
+        }
+
+        void process_file_close(const debugging_context& c, const std::string_view payload)
+        {
+            uint32_t fd{};
+            rt_assert(sscanf_s(std::string(payload).c_str(), "%x", &fd) == 1);
+
+            c.handler.get_filesystem()->close(fd);
+            send_file_result(c, 0);
+        }
+
+        void process_file_read(const debugging_context& c, const std::string_view payload)
+        {
+            uint32_t fd{};
+            size_t count{};
+            uint64_t offset{};
+            rt_assert(sscanf_s(std::string(payload).c_str(), "%x,%zx,%" PRIx64, &fd, &count, &offset) == 3);
+
+            count = std::min(count, max_data_size);
+
+            const auto data = c.handler.get_filesystem()->read(fd, count, offset);
+            send_file_attachment(c, data);
+        }
+
+        void process_file_write(const debugging_context& c, const std::string_view payload)
+        {
+            const auto [fd_str, remainder] = split_string(payload, ',');
+
+            uint32_t fd{};
+            rt_assert(sscanf_s(std::string(fd_str).c_str(), "%x", &fd) == 1);
+
+            const auto [offset_str, encoded_data] = split_string(remainder, ',');
+
+            uint64_t offset{};
+            rt_assert(sscanf_s(std::string(offset_str).c_str(), "%" PRIx64, &offset) == 1);
+
+            const auto data = unescape(encoded_data);
+            const auto n = c.handler.get_filesystem()->write(fd, offset, data.data(), data.size());
+            send_file_result(c, static_cast<uint32_t>(n));
+        }
+
+        void process_file_fstat(const debugging_context& c, const std::string_view payload)
+        {
+            uint32_t fd{};
+            rt_assert(sscanf_s(std::string(payload).c_str(), "%x", &fd) == 1);
+
+            const auto data = c.handler.get_filesystem()->fstat(fd);
+            if (data.empty())
+            {
+                send_file_error(c, ENOENT);
+                return;
+            }
+            send_file_attachment(c, data);
+        }
+
+        void process_file_unlink(const debugging_context& c, const std::string_view payload)
+        {
+            const auto file_path = utils::string::from_hex_string<std::string>(payload);
+            const auto r = c.handler.get_filesystem()->unlink(file_path);
+
+            if (r == 0)
+            {
+                send_file_result(c, 0);
+            }
+            else
+            {
+                send_file_error(c, ENOENT);
+            }
+        }
+
+        void process_file_operation(const debugging_context& c, const std::string_view operation, const std::string_view payload)
+        {
+            if (operation == "open")
+            {
+                process_file_open(c, payload);
+            }
+            else if (operation == "close")
+            {
+                process_file_close(c, payload);
+            }
+            else if (operation == "pread")
+            {
+                process_file_read(c, payload);
+            }
+            else if (operation == "pwrite")
+            {
+                process_file_write(c, payload);
+            }
+            else if (operation == "fstat")
+            {
+                process_file_fstat(c, payload);
+            }
+            else if (operation == "unlink")
+            {
+                process_file_unlink(c, payload);
+            }
+            else
+            {
+                c.connection.send_reply({});
             }
         }
 
@@ -311,8 +600,7 @@ namespace gdb_stub
 
             std::string reply = "T05";
 
-            // Include "library:" when this stop was triggered by a library load/unload
-            if (c.handler.consume_library_stop())
+            if (c.handler.should_signal_library())
             {
                 reply += "library:;";
             }
@@ -331,25 +619,50 @@ namespace gdb_stub
             }
         }
 
+        bool process_action(const debugging_context& c, const action a)
+        {
+            bool continue_execution = false;
+
+            if (a == action::shutdown)
+            {
+                c.connection.close();
+            }
+            else if (a == action::output)
+            {
+                const auto message = c.handler.consume_debug_output();
+                send_output(c, message);
+                continue_execution = true;
+            }
+            else
+            {
+                signal_stop(c);
+            }
+
+            return continue_execution;
+        }
+
         void resume_execution(const debugging_context& c, const bool single_step)
         {
             apply_continuation_thread(c);
 
             action a{};
+            bool continue_execution = false;
 
-            if (single_step)
+            do
             {
-                a = c.handler.singlestep();
-            }
-            else
-            {
-                c.async.run();
-                a = c.handler.run();
-                c.async.pause();
-            }
+                if (single_step)
+                {
+                    a = c.handler.singlestep();
+                }
+                else
+                {
+                    c.async.run();
+                    a = c.handler.run();
+                    c.async.pause();
+                }
 
-            process_action(c.connection, a);
-            signal_stop(c);
+                continue_execution = process_action(c, a);
+            } while (continue_execution);
         }
 
         void store_continuation_thread(const debugging_context& c, const std::string_view thread_string)
@@ -379,6 +692,18 @@ namespace gdb_stub
 
                 store_continuation_thread(c, thread);
                 resume_execution(c, singlestep);
+            }
+            else if (name == "File")
+            {
+                if (c.handler.get_filesystem())
+                {
+                    const auto [operation, payload] = split_string(args, ':');
+                    process_file_operation(c, operation, payload);
+                }
+                else
+                {
+                    c.connection.send_reply({});
+                }
             }
             else
             {
@@ -481,7 +806,7 @@ namespace gdb_stub
             size_t size{};
             rt_assert(sscanf_s(payload.c_str(), "%" PRIx64 ",%zx", &address, &size) == 2);
 
-            if (size > 0x1000)
+            if (size > max_data_size / 2)
             {
                 c.connection.send_reply("E01");
                 return;
@@ -508,7 +833,7 @@ namespace gdb_stub
             uint64_t address{};
             rt_assert(sscanf_s(std::string(info).c_str(), "%" PRIx64 ",%zx", &address, &size) == 2);
 
-            if (size > 0x1000)
+            if (size > max_data_size)
             {
                 c.connection.send_reply("E01");
                 return;
@@ -521,32 +846,6 @@ namespace gdb_stub
             c.connection.send_reply(res ? "OK" : "E01");
         }
 
-        std::string decode_x_memory(const std::string_view payload)
-        {
-            std::string result{};
-            result.reserve(payload.size());
-
-            bool xor_next = false;
-
-            for (auto value : payload)
-            {
-                if (xor_next)
-                {
-                    value ^= 0x20;
-                    xor_next = false;
-                }
-                else if (value == '}')
-                {
-                    xor_next = true;
-                    continue;
-                }
-
-                result.push_back(value);
-            }
-
-            return result;
-        }
-
         void write_x_memory(const debugging_context& c, const std::string_view payload)
         {
             const auto [info, encoded_data] = split_string(payload, ':');
@@ -555,13 +854,13 @@ namespace gdb_stub
             uint64_t address{};
             rt_assert(sscanf_s(std::string(info).c_str(), "%" PRIx64 ",%zx", &address, &size) == 2);
 
-            if (size > 0x1000)
+            if (size > max_data_size)
             {
                 c.connection.send_reply("E01");
                 return;
             }
 
-            auto data = decode_x_memory(encoded_data);
+            auto data = unescape(encoded_data);
             data.resize(size);
 
             const auto res = c.handler.write_memory(address, data.data(), data.size());
@@ -572,6 +871,27 @@ namespace gdb_stub
             }
 
             c.connection.send_reply("OK");
+        }
+
+        void read_x_memory(const debugging_context& c, const std::string_view payload)
+        {
+            uint64_t address{};
+            size_t size{};
+            rt_assert(sscanf_s(std::string(payload).c_str(), "%" PRIx64 ",%zx", &address, &size) == 2);
+
+            size = std::min(size, max_data_size - 1);
+
+            std::string data{"b"};
+            data.resize(size + 1);
+
+            if (const auto res = c.handler.read_memory(address, data.data() + 1, size); !res)
+            {
+                c.connection.send_reply("E01");
+                return;
+            }
+
+            const auto encoded_data = escape(data, max_data_size - 1);
+            c.connection.send_reply(encoded_data);
         }
 
         void switch_to_thread(const debugging_context& c, const std::string_view payload)
@@ -602,6 +922,23 @@ namespace gdb_stub
             }
         }
 
+        void check_thread_alive(const debugging_context& c, const std::string_view payload)
+        {
+            if (payload.empty())
+            {
+                c.connection.send_reply({});
+                return;
+            }
+
+            uint32_t id{};
+            rt_assert(sscanf_s(std::string(payload).c_str(), "%x", &id) == 1);
+
+            const auto ids = c.handler.get_thread_ids();
+            const auto is_alive = std::ranges::find(ids, id) != ids.cend();
+
+            c.connection.send_reply(is_alive ? "OK" : "E01");
+        }
+
         void handle_command(const debugging_context& c, const uint8_t command, const std::string_view data)
         {
             // printf("GDB command: %c -> %.*s\n", command, static_cast<int>(data.size()), data.data());
@@ -622,6 +959,7 @@ namespace gdb_stub
                 break;
 
             case 'D':
+                c.connection.send_reply("OK");
                 c.connection.close();
                 break;
 
@@ -666,8 +1004,16 @@ namespace gdb_stub
                 write_x_memory(c, data);
                 break;
 
+            case 'x':
+                read_x_memory(c, data);
+                break;
+
             case 'H':
                 switch_to_thread(c, data);
+                break;
+
+            case 'T':
+                check_thread_alive(c, data);
                 break;
 
             default:

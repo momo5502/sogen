@@ -45,6 +45,12 @@ namespace network
         this->parse(addr, family);
     }
 
+    address::address(const std::string& addr, const uint16_t port)
+    {
+        this->resolve(addr, std::nullopt);
+        this->set_port(port);
+    }
+
     address::address(const sockaddr_in6& addr)
         : address()
     {
@@ -300,7 +306,7 @@ namespace network
         if (pos != std::string::npos)
         {
             const auto port = addr.substr(pos + 1);
-            port_value = static_cast<uint16_t>(atoi(port.data()));
+            port_value = static_cast<uint16_t>(atoi(std::string(port).c_str()));
             addr = addr.substr(0, pos);
         }
 

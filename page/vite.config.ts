@@ -33,12 +33,15 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
+      injectRegister: false,
       registerType: "autoUpdate",
       manifest: {
         theme_color: "#0279E8",
         background_color: "#141416",
       },
       workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
         maximumFileSizeToCacheInBytes: 100 * mb,
         cleanupOutdatedCaches: true,
         globPatterns: ["**/*.{js,css,html,woff,woff2,wasm}"],

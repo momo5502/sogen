@@ -1,24 +1,8 @@
 #pragma once
-#include <cstddef>
-#include <optional>
-#include <x86_register.hpp>
+#include "register_entry.hpp"
+#include <vector>
 
-struct register_entry
-{
-    x86_register reg;
-    std::optional<size_t> expected_size;
-    std::optional<size_t> offset;
-
-    register_entry(const x86_register reg = x86_register::invalid, const std::optional<size_t> expected_size = std::nullopt,
-                   const std::optional<size_t> offset = std::nullopt)
-        : reg(reg),
-          expected_size(expected_size),
-          offset(offset)
-    {
-    }
-};
-
-inline std::vector<register_entry> gdb_registers{
+inline std::vector<register_entry> x64_gdb_registers{
     x86_register::rax,
     x86_register::rbx,
     x86_register::rcx,

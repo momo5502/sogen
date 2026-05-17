@@ -147,6 +147,18 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
             </div>
             <div className="flex items-center gap-4">
               <RadioGroupItem
+                value="very-concise"
+                id="settings-very-concise"
+                disabled={isLinux}
+              />
+              <SettingsLabel
+                htmlFor="settings-very-concise"
+                text={"Very Concise Logging"}
+                tooltip={"Suppress all logging except suspicious activity"}
+              />
+            </div>
+            <div className="flex items-center gap-4">
+              <RadioGroupItem
                 value="silent"
                 id="settings-silent"
                 disabled={isLinux}
@@ -290,6 +302,7 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
               <PopoverContent className="shadow-2xl">
                 <ItemList
                   title="Ignored Functions"
+                  trim
                   items={this.state.ignoredFunctions}
                   onChange={(items) => this.setState({ ignoredFunctions: items })}
                 />
@@ -310,6 +323,7 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
               <PopoverContent className="shadow-2xl">
                 <ItemList
                   title="Interesting Modules"
+                  trim
                   items={this.state.interestingModules}
                   onChange={(items) => this.setState({ interestingModules: items })}
                 />

@@ -19,10 +19,7 @@ namespace network
 
     tcp_client_socket::~tcp_client_socket()
     {
-        if (*this && this->get_target())
-        {
-            ::shutdown(this->get_socket(), SHUT_RDWR);
-        }
+        tcp_client_socket::close();
     }
 
     bool tcp_client_socket::send(const void* data, const size_t size) const
@@ -98,4 +95,14 @@ namespace network
         const auto error = GET_SOCKET_ERROR();
         return error == SERR(EWOULDBLOCK);
     }
+
+    void tcp_client_socket::close()
+    {
+        if (*this && this->get_target())
+        {
+            ::shutdown(this->get_socket(), SHUT_RDWR);
+            socket::close();
+        }
+    }
+
 }

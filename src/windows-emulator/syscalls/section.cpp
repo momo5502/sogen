@@ -9,6 +9,114 @@ namespace syscalls
 {
     using namespace std::string_view_literals;
 
+    namespace
+    {
+        // From syswow64 kernel32:
+        // - _BaseDllInitialize reads ReadOnlyStaticServerData[2]
+        // - _BaseDllInitializeIniFileMappings / BaseDllCaptureIniFileParameters read +0x170 and +0x9e8
+        constexpr uint64_t k_base_static_server_data_table_index = 2;
+        constexpr uint64_t k_base_static_server_data_ini_file_mapping_offset = 0x170;
+        constexpr uint64_t k_base_static_server_data_bias_offset = 0x9e8;
+        constexpr uint64_t k_base_static_server_data_legacy_time_zone_id_offset = 0x9c8;
+        constexpr uint64_t k_base_static_server_data_win2019_time_zone_id_offset = 0xa70;
+        constexpr uint32_t k_time_zone_id_invalid = 0xFFFFFFFF;
+
+        struct ini_file_mapping64
+        {
+            uint64_t file_names;
+            uint64_t default_file_name_mapping;
+            uint64_t win_ini_file_mapping;
+            uint32_t reserved;
+            uint32_t padding;
+        };
+
+        static_assert(sizeof(ini_file_mapping64) == 0x20);
+
+        NTSTATUS initialize_shared_section_base_static_server_data_mapping(const syscall_context& c, const uint64_t shared_section_address,
+                                                                           const uint64_t shared_section_size, uint64_t& obj_address)
+        {
+            // BaseStaticServerData starts after shared pointer table entries
+            const auto base_static_server_data_offset =
+                align_up((k_base_static_server_data_table_index + 1) * sizeof(uint32_t), sizeof(uint64_t));
+
+            // Emulator-owned ini mapping object at the end
+            const auto ini_file_mapping_offset = align_up(shared_section_size - sizeof(ini_file_mapping64), alignof(ini_file_mapping64));
+
+            const auto has_room = [&](const uint64_t offset, const uint64_t size) {
+                return size <= shared_section_size && offset <= shared_section_size - size;
+            };
+
+            const bool table_index_has_room = has_room(sizeof(uint32_t) * k_base_static_server_data_table_index, sizeof(uint32_t));
+            const bool ini_mapping_has_room =
+                has_room(base_static_server_data_offset + k_base_static_server_data_ini_file_mapping_offset, sizeof(uint64_t));
+            const bool bias_has_room = has_room(base_static_server_data_offset + k_base_static_server_data_bias_offset, sizeof(uint64_t));
+            const bool legacy_tz_id_has_room =
+                has_room(base_static_server_data_offset + k_base_static_server_data_legacy_time_zone_id_offset, sizeof(uint32_t));
+            const bool win2019_tz_id_has_room =
+                has_room(base_static_server_data_offset + k_base_static_server_data_win2019_time_zone_id_offset, sizeof(uint32_t));
+            const bool ini_file_mapping_has_room = has_room(ini_file_mapping_offset, sizeof(ini_file_mapping64));
+
+            if (!table_index_has_room || !ini_mapping_has_room || !bias_has_room || !legacy_tz_id_has_room || !win2019_tz_id_has_room ||
+                !ini_file_mapping_has_room)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            c.emu.write_memory<uint32_t>(shared_section_address + (sizeof(uint32_t) * k_base_static_server_data_table_index),
+                                         static_cast<uint32_t>(base_static_server_data_offset));
+
+            // BaseStaticServerData (BASE_STATIC_SERVER_DATA)
+            obj_address = shared_section_address + base_static_server_data_offset;
+
+            const auto ini_file_mapping_address = shared_section_address + ini_file_mapping_offset;
+            const auto ini_file_mapping_relative = ini_file_mapping_address - obj_address;
+
+            c.emu.write_memory<uint64_t>(obj_address + k_base_static_server_data_ini_file_mapping_offset, ini_file_mapping_relative);
+            c.emu.write_memory<uint64_t>(obj_address + k_base_static_server_data_bias_offset, 0);
+
+            c.emu.write_memory<uint32_t>(obj_address + k_base_static_server_data_legacy_time_zone_id_offset, k_time_zone_id_invalid);
+            c.emu.write_memory<uint32_t>(obj_address + k_base_static_server_data_win2019_time_zone_id_offset, k_time_zone_id_invalid);
+
+            const ini_file_mapping64 zero_ini_file_mapping{};
+            c.emu.write_memory(ini_file_mapping_address, &zero_ini_file_mapping, sizeof(zero_ini_file_mapping));
+
+            return STATUS_SUCCESS;
+        }
+
+        void initialize_shared_section_base_static_server_data_paths(const syscall_context& c, const uint64_t obj_address,
+                                                                     std::u16string_view windows_dir)
+        {
+            const auto windows_dir_size = windows_dir.size() * 2;
+            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> windir_obj{c.emu, obj_address};
+            windir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs) {
+                const auto dir_address = kusd_mmio::address() + offsetof(KUSER_SHARED_DATA64, NtSystemRoot);
+
+                ucs.Buffer = dir_address - obj_address;
+                ucs.Length = static_cast<uint16_t>(windows_dir_size);
+                ucs.MaximumLength = ucs.Length;
+            });
+
+            std::u16string system32_path{windows_dir};
+            if (!system32_path.empty() && system32_path.back() != u'\\')
+            {
+                system32_path.push_back(u'\\');
+            }
+            system32_path += u"System32";
+
+            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> sysdir_obj{c.emu, windir_obj.value() + windir_obj.size()};
+            sysdir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs) {
+                c.proc.base_allocator.make_unicode_string(ucs, system32_path);
+                ucs.Buffer = ucs.Buffer - obj_address;
+            });
+
+            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> base_dir_obj{c.emu, sysdir_obj.value() + sysdir_obj.size()};
+            base_dir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs) {
+                c.proc.base_allocator.make_unicode_string(ucs, u"\\Sessions\\1\\BaseNamedObjects");
+                ucs.Buffer = ucs.Buffer - obj_address;
+            });
+        }
+    }
+
     NTSTATUS handle_NtCreateSection(const syscall_context& c, const emulator_object<handle> section_handle,
                                     const ACCESS_MASK /*desired_access*/,
                                     const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
@@ -81,7 +189,7 @@ namespace syscalls
 
             const auto address = c.win_emu.memory.find_free_allocation_base(shared_section_size);
             c.win_emu.memory.allocate_memory(address, shared_section_size, memory_permission::read_write, false,
-                                             memory_region_kind::section_view);
+                                             memory_region_kind::pagefile_section_view);
             c.proc.shared_section_address = address;
             c.proc.shared_section_size = shared_section_size;
 
@@ -95,7 +203,7 @@ namespace syscalls
 
             const auto address = c.win_emu.memory.find_free_allocation_base(dbwin_buffer_section_size);
             c.win_emu.memory.allocate_memory(address, dbwin_buffer_section_size, memory_permission::read_write, false,
-                                             memory_region_kind::section_view);
+                                             memory_region_kind::pagefile_section_view);
             c.proc.dbwin_buffer = address;
             c.proc.dbwin_buffer_size = dbwin_buffer_section_size;
 
@@ -152,7 +260,7 @@ namespace syscalls
 
         for (auto& [handle, section] : c.proc.sections)
         {
-            if (section.is_image() && utils::string::equals_ignore_case(section.name, filename))
+            if (!section.name.empty() && utils::string::equals_ignore_case(section.name, filename))
             {
                 section_handle.write(c.proc.sections.make_handle(handle));
                 return STATUS_SUCCESS;
@@ -182,39 +290,15 @@ namespace syscalls
             const auto address = c.proc.shared_section_address;
 
             const std::u16string_view windows_dir = c.proc.kusd.get().NtSystemRoot.arr;
-            const auto windows_dir_size = windows_dir.size() * 2;
 
-            constexpr auto windows_dir_offset = 0x10;
-            c.emu.write_memory(address + 8, windows_dir_offset);
+            uint64_t obj_address{};
+            if (const auto status = initialize_shared_section_base_static_server_data_mapping(c, address, shared_section_size, obj_address);
+                !NT_SUCCESS(status))
+            {
+                return status;
+            }
 
-            // aka. BaseStaticServerData (BASE_STATIC_SERVER_DATA)
-            const auto obj_address = address + windows_dir_offset;
-
-            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> windir_obj{c.emu, obj_address};
-            windir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs) {
-                const auto dir_address = kusd_mmio::address() + offsetof(KUSER_SHARED_DATA64, NtSystemRoot);
-
-                ucs.Buffer = dir_address - obj_address;
-                ucs.Length = static_cast<uint16_t>(windows_dir_size);
-                ucs.MaximumLength = ucs.Length;
-            });
-
-            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> sysdir_obj{c.emu, windir_obj.value() + windir_obj.size()};
-            sysdir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs) {
-                c.proc.base_allocator.make_unicode_string(ucs, u"C:\\WINDOWS\\System32");
-                ucs.Buffer = ucs.Buffer - obj_address;
-            });
-
-            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> base_dir_obj{c.emu, sysdir_obj.value() + sysdir_obj.size()};
-            base_dir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs) {
-                c.proc.base_allocator.make_unicode_string(ucs, u"\\Sessions\\1\\BaseNamedObjects");
-                ucs.Buffer = ucs.Buffer - obj_address;
-            });
-
-            c.emu.write_memory(obj_address + 0x9C8, 0xFFFFFFFF); // TIME_ZONE_ID_INVALID
-
-            // Windows 2019 offset!
-            c.emu.write_memory(obj_address + 0xA70, 0xFFFFFFFF); // TIME_ZONE_ID_INVALID
+            initialize_shared_section_base_static_server_data_paths(c, obj_address, windows_dir);
 
             if (view_size)
             {
@@ -302,7 +386,9 @@ namespace syscalls
         const auto aligned_size = static_cast<size_t>(page_align_up(size));
         const auto reserve_only = section_entry->allocation_attributes == SEC_RESERVE;
         const auto protection = map_nt_to_emulator_protection(section_entry->section_page_protection);
-        const auto address = c.win_emu.memory.allocate_memory(aligned_size, protection, reserve_only, 0, memory_region_kind::section_view);
+        const auto region_kind =
+            section_entry->file_name.empty() ? memory_region_kind::pagefile_section_view : memory_region_kind::file_section_view;
+        const auto address = c.win_emu.memory.allocate_memory(aligned_size, protection, reserve_only, 0, region_kind);
 
         if (!reserve_only && !file_data.empty())
         {
@@ -325,7 +411,6 @@ namespace syscalls
                                          const uint64_t extended_parameters, // PMEM_EXTENDED_PARAMETER
                                          const ULONG extended_parameter_count)
     {
-        // Process extended parameters if present
         struct ExtendedParamsInfo
         {
             uint64_t numa_node = 0;
@@ -342,28 +427,22 @@ namespace syscalls
 
         if (extended_parameters && extended_parameter_count > 0)
         {
-            c.win_emu.log.info("NtMapViewOfSectionEx: Processing %u extended parameters\n", extended_parameter_count);
-
-            // Read and process each extended parameter
             for (ULONG i = 0; i < extended_parameter_count; i++)
             {
                 const auto param_addr = extended_parameters + (i * sizeof(MEM_EXTENDED_PARAMETER64));
                 MEM_EXTENDED_PARAMETER64 param{};
 
-                // Read the extended parameter structure
                 if (!c.emu.try_read_memory(param_addr, &param, sizeof(param)))
                 {
-                    c.win_emu.log.error("NtMapViewOfSectionEx: Failed to read extended parameter %u\n", i);
+                    c.win_emu.log.error("NtMapViewOfSectionEx: Failed to read extended parameter %u\n", static_cast<uint32_t>(i));
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                // Extract the type (lower 8 bits)
                 const auto param_type = static_cast<MEM_EXTENDED_PARAMETER_TYPE>(param.Type & 0xFF);
 
                 switch (param_type)
                 {
                 case MemExtendedParameterAddressRequirements: {
-                    // Read the MEM_ADDRESS_REQUIREMENTS structure
                     MEM_ADDRESS_REQUIREMENTS64 addr_req{};
                     if (!c.emu.try_read_memory(param.Pointer, &addr_req, sizeof(addr_req)))
                     {
@@ -375,51 +454,28 @@ namespace syscalls
                     ext_info.highest_address = addr_req.HighestEndingAddress;
                     ext_info.alignment = addr_req.Alignment;
                     ext_info.has_address_requirements = true;
-
-                    c.win_emu.log.info("NtMapViewOfSectionEx: Address requirements - Low: 0x%" PRIX64 ", High: 0x%" PRIX64
-                                       ", Align: 0x%" PRIX64 "\n",
-                                       ext_info.lowest_address, ext_info.highest_address, ext_info.alignment);
                 }
                 break;
 
                 case MemExtendedParameterNumaNode:
                     ext_info.numa_node = param.ULong64;
                     ext_info.has_numa_node = true;
-                    c.win_emu.log.info("NtMapViewOfSectionEx: NUMA node: %" PRIu64 "\n", ext_info.numa_node);
                     break;
 
                 case MemExtendedParameterAttributeFlags:
                     ext_info.attribute_flags = static_cast<uint32_t>(param.ULong64);
                     ext_info.has_attributes = true;
-                    c.win_emu.log.info("NtMapViewOfSectionEx: Attribute flags: 0x%X\n", ext_info.attribute_flags);
-
-                    // Log specific attribute flags
-                    if (ext_info.attribute_flags & MEM_EXTENDED_PARAMETER_GRAPHICS)
-                    {
-                        c.win_emu.log.info("  - Graphics memory requested\n");
-                    }
-                    if (ext_info.attribute_flags & MEM_EXTENDED_PARAMETER_NONPAGED)
-                    {
-                        c.win_emu.log.info("  - Non-paged memory requested\n");
-                    }
-                    if (ext_info.attribute_flags & MEM_EXTENDED_PARAMETER_EC_CODE)
-                    {
-                        c.win_emu.log.info("  - EC code memory requested\n");
-                    }
                     break;
 
                 case MemExtendedParameterImageMachine:
                     ext_info.image_machine = static_cast<uint16_t>(param.ULong);
                     ext_info.has_image_machine = true;
-                    c.win_emu.log.info("NtMapViewOfSectionEx: Image machine: 0x%X\n", ext_info.image_machine);
                     break;
 
                 case MemExtendedParameterPartitionHandle:
-                    c.win_emu.log.info("NtMapViewOfSectionEx: Partition handle parameter (not supported)\n");
                     break;
 
                 case MemExtendedParameterUserPhysicalHandle:
-                    c.win_emu.log.info("NtMapViewOfSectionEx: User physical handle parameter (not supported)\n");
                     break;
 
                 default:
@@ -434,27 +490,6 @@ namespace syscalls
             c.proc.last_extended_params_attributes = ext_info.attribute_flags;
         }
 
-        // Call the existing NtMapViewOfSection implementation
-        // For WOW64 processes with image machine parameter, validate architecture compatibility
-        if (ext_info.has_image_machine && c.proc.is_wow64_process)
-        {
-            c.win_emu.log.info("NtMapViewOfSectionEx: WOW64 process mapping with machine type 0x%X\n", ext_info.image_machine);
-
-            // Special handling for IMAGE_FILE_MACHINE_I386 (0x014c) on WOW64
-            if (ext_info.image_machine == IMAGE_FILE_MACHINE_I386)
-            {
-                // This indicates the caller wants to map a 32-bit view
-                // Store this for the module manager to use
-                c.win_emu.log.info("NtMapViewOfSectionEx: Mapping 32-bit view for WOW64 process\n");
-            }
-            else if (ext_info.image_machine == IMAGE_FILE_MACHINE_AMD64)
-            {
-                // This indicates the caller wants to map a 64-bit view
-                c.win_emu.log.info("NtMapViewOfSectionEx: Mapping 64-bit view for WOW64 process\n");
-            }
-        }
-
-        // Store extended parameters for other syscalls to use
         if (ext_info.has_numa_node)
         {
             c.proc.last_extended_params_numa_node = ext_info.numa_node;
@@ -468,30 +503,16 @@ namespace syscalls
             c.proc.last_extended_params_image_machine = ext_info.image_machine;
         }
 
-        // Perform the actual mapping
-        const auto status = handle_NtMapViewOfSection(c, section_handle, process_handle, base_address,
-                                                      0,                // zero_bits (not in Ex)
-                                                      0,                // commit_size (not in Ex)
-                                                      section_offset,   // section_offset
-                                                      view_size,        // view_size
-                                                      ViewUnmap,        // inherit_disposition (default)
-                                                      allocation_type,  // allocation_type
-                                                      page_protection); // page_protection
+        return handle_NtMapViewOfSection(c, section_handle, process_handle, base_address,
+                                         0,                // zero_bits (not in Ex)
+                                         0,                // commit_size (not in Ex)
+                                         section_offset,   // section_offset
+                                         view_size,        // view_size
+                                         ViewUnmap,        // inherit_disposition (default)
+                                         allocation_type,  // allocation_type
+                                         page_protection); // page_protection
 
-        // If mapping succeeded and this is a WOW64 image section with specific machine type
-        if (NT_SUCCESS(status) && ext_info.has_image_machine && c.proc.is_wow64_process)
-        {
-            // Check if this was an image section (DLL/EXE)
-            auto* section_entry = c.proc.sections.get(section_handle);
-            if (section_entry && section_entry->is_image())
-            {
-                c.win_emu.log.info("NtMapViewOfSectionEx: Successfully mapped image section for WOW64 with machine type 0x%X\n",
-                                   ext_info.image_machine);
-                // Note: In a full WOW64 implementation, we would check for Wow64Transition export here
-            }
-        }
-
-        return status;
+        // Note: In a full WOW64 implementation, we would check for Wow64Transition export here
     }
 
     NTSTATUS handle_NtUnmapViewOfSection(const syscall_context& c, const handle process_handle, const uint64_t base_address)

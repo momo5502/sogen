@@ -1,11 +1,16 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
-// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 
 #define FNID_START      0x29A
 #define FNID_ARRAY_SIZE 24
+
+constexpr size_t USER_NUM_SYSCOLORS = 31;
+constexpr size_t USER_SERVERINFO_BRUSH_SLOT_COUNT = 32;
+constexpr size_t USER_SERVERINFO_BRUSH_TRAILING_BYTES = 0x78;
 
 struct USER_SERVERINFO
 {
@@ -15,8 +20,14 @@ struct USER_SERVERINFO
     uint64_t apfnClientA[FNID_ARRAY_SIZE];
     uint64_t apfnClientW[FNID_ARRAY_SIZE];
     uint64_t apfnClientWorker[FNID_ARRAY_SIZE];
-    uint8_t unknown2[0x1000];
+    uint8_t unknown2[0xE90];
+    uint64_t ahbrSystem[USER_SERVERINFO_BRUSH_SLOT_COUNT];
+    uint8_t unknown3[USER_SERVERINFO_BRUSH_TRAILING_BYTES];
 };
+static_assert(offsetof(USER_SERVERINFO, apfnClientA) == 0x188);
+static_assert(offsetof(USER_SERVERINFO, ahbrSystem) == 0x1258);
+static_assert(offsetof(USER_SERVERINFO, unknown3) == 0x1358);
+static_assert(sizeof(USER_SERVERINFO) == 0x13D0);
 
 struct USER_DISPINFO
 {
@@ -44,6 +55,40 @@ struct USER_SHAREDINFO
     EMULATOR_CAST(uint64_t, USER_DISPINFO*) pDispInfo;
     uint8_t unknown[0xFF];
 };
+
+// user32 reads fields after copying 0x238 payload to _gSharedInfo
+struct WIN32K_USERCONNECT32
+{
+    uint32_t psi;
+    uint32_t reserved0;
+    uint32_t ahe_list;
+    uint32_t reserved1;
+    uint32_t he_entry_size;
+    uint32_t reserved2;
+    uint32_t disp_info_low;
+    uint32_t reserved3;
+    uint8_t reserved4[0x10];
+    uint32_t monitor_info_low;
+    uint32_t reserved5;
+    uint32_t shared_delta_low;
+    uint32_t shared_delta_high;
+    uint8_t wndmsg_table[0xC8];
+    uint32_t wndmsg_count;
+    uint32_t reserved6;
+    uint32_t wndmsg_bits;
+    uint32_t reserved7;
+    uint32_t ime_msg_count;
+    uint32_t reserved8;
+    uint32_t ime_msg_bits;
+    uint8_t reserved9[0x114];
+};
+static_assert(offsetof(WIN32K_USERCONNECT32, ahe_list) == 0x8);
+static_assert(offsetof(WIN32K_USERCONNECT32, he_entry_size) == 0x10);
+static_assert(offsetof(WIN32K_USERCONNECT32, disp_info_low) == 0x18);
+static_assert(offsetof(WIN32K_USERCONNECT32, monitor_info_low) == 0x30);
+static_assert(offsetof(WIN32K_USERCONNECT32, wndmsg_count) == 0x108);
+static_assert(offsetof(WIN32K_USERCONNECT32, ime_msg_count) == 0x118);
+static_assert(sizeof(WIN32K_USERCONNECT32) == 0x238);
 
 enum USER_HANDLETYPE : uint8_t
 {
@@ -122,29 +167,41 @@ struct USER_WINDOW
     uint32_t dwExStyle;
     uint32_t dwStyle;
     uint64_t hInstance;
-    uint8_t pad_028[8];
+    uint8_t pad_028[2];
+    uint16_t fnid;
+    uint8_t pad_02C[4];
     uint64_t spwndParent;
-    uint8_t pad_038[64];
+    uint8_t pad_038[8];
+    uint64_t spwndOwner;
+    uint8_t pad_048[48];
     uint64_t lpfnWndProc;
     uint64_t pcls;
     uint8_t pad_088[16];
     uint64_t spmenu;
-    uint8_t pad_0A0[40];
+    uint8_t pad_0A0[24];
+    uint32_t dwTextLengthBytes;
+    uint8_t pad_0BC[4];
+    uint64_t strText;
     uint32_t cbWndExtra;
     uint8_t pad_0CC[12];
     uint64_t userData;
     uint64_t pActCtx;
-    uint8_t pad_0E8[16];
+    uint8_t pad_0E8[4];
+    uint32_t windowBand;
+    uint8_t pad_0F0[8];
     uint32_t wndExtraOffset;
     uint8_t pad_0FC[44];
     uint64_t pExtraBytes;
     uint8_t pad_130[16];
     uint64_t wID;
 };
+static_assert(sizeof(USER_WINDOW) == 328);
 
 struct USER_DESKTOPINFO
 {
-    uint8_t unknown[0xFF];
+    uint8_t unknown0[0x8];
+    uint64_t spwndDesktop;
+    uint8_t unknown10[0xEF];
 };
 
-// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)

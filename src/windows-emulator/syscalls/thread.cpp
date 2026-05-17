@@ -3,7 +3,68 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 
+#include <algorithm>
 #include <utils/finally.hpp>
+
+namespace
+{
+    struct wow64_callback_context
+    {
+        std::array<std::byte, 0x108> reserved0{};
+        uint64_t output_pointer{};
+        uint32_t output_length{};
+        uint32_t status{};
+        std::array<std::byte, 0x28> reserved1{};
+    };
+    static_assert(offsetof(wow64_callback_context, output_pointer) == 0x108);
+    static_assert(offsetof(wow64_callback_context, output_length) == 0x110);
+    static_assert(offsetof(wow64_callback_context, status) == 0x114);
+    static_assert(sizeof(wow64_callback_context) == 0x140);
+
+    void apply_pending_wow64_callback_postprocess(const syscall_context& c)
+    {
+        auto* thread = c.proc.active_thread;
+        if (!thread || !thread->win32k_pending_wow64_callback.has_value())
+        {
+            return;
+        }
+
+        const auto postprocess = thread->win32k_pending_wow64_callback->postprocess;
+        thread->win32k_pending_wow64_callback.reset();
+
+        if (postprocess != wow64_callback_postprocess::bool_result_to_status)
+        {
+            return;
+        }
+
+        if (thread->win32k_callback_buffer == 0)
+        {
+            return;
+        }
+
+        wow64_callback_context callback_context{};
+        if (!c.win_emu.memory.try_read_memory(thread->win32k_callback_buffer, &callback_context, sizeof(callback_context)))
+        {
+            return;
+        }
+
+        if (!NT_SUCCESS(static_cast<NTSTATUS>(callback_context.status)) || callback_context.output_pointer == 0 ||
+            callback_context.output_length < sizeof(uint32_t))
+        {
+            return;
+        }
+
+        uint32_t callback_result{};
+        if (!c.win_emu.memory.try_read_memory(callback_context.output_pointer, &callback_result, sizeof(callback_result)))
+        {
+            return;
+        }
+
+        callback_context.status = callback_result;
+        c.win_emu.memory.try_write_memory(thread->win32k_callback_buffer + offsetof(wow64_callback_context, status),
+                                          &callback_context.status, sizeof(callback_context.status));
+    }
+}
 
 namespace syscalls
 {
@@ -253,6 +314,10 @@ namespace syscalls
 
             const emulator_object<THREAD_BASIC_INFORMATION64> info{c.emu, thread_information};
             info.access([&](THREAD_BASIC_INFORMATION64& i) {
+                if (thread->exit_status)
+                {
+                    i.ExitStatus = *thread->exit_status;
+                }
                 i.TebBaseAddress = thread->teb64->value();
                 i.ClientId = thread->teb64->read().ClientId;
             });
@@ -273,7 +338,7 @@ namespace syscalls
             }
 
             const emulator_object<ULONG> info{c.emu, thread_information};
-            info.write(c.proc.threads.size() <= 1);
+            info.write(c.proc.get_live_thread_count() <= 1);
 
             return STATUS_SUCCESS;
         }
@@ -316,11 +381,6 @@ namespace syscalls
 
         if (info_class == ThreadHideFromDebugger)
         {
-            if (return_length)
-            {
-                return_length.write(sizeof(BOOLEAN));
-            }
-
             if (thread_information != 0 && thread_information % 4 != 0)
             {
                 return STATUS_DATATYPE_MISALIGNMENT;
@@ -331,8 +391,13 @@ namespace syscalls
                 return STATUS_INFO_LENGTH_MISMATCH;
             }
 
+            if (return_length)
+            {
+                return_length.try_write(sizeof(BOOLEAN));
+            }
+
             const emulator_object<BOOLEAN> info{c.emu, thread_information};
-            info.write(cur_emulator_thread.debugger_hide);
+            info.try_write(cur_emulator_thread.debugger_hide);
 
             c.win_emu.callbacks.on_suspicious_activity("Checking if the thread is hidden from the debugger");
 
@@ -461,7 +526,10 @@ namespace syscalls
         {
             if (t.id == thread_id)
             {
-                t.alerted = true;
+                if (t.waiting_for_alert)
+                {
+                    t.alerted = true;
+                }
                 return STATUS_SUCCESS;
             }
         }
@@ -573,6 +641,7 @@ namespace syscalls
             argument = c.emu.read_memory<KCONTINUE_ARGUMENT>(continue_argument);
         }
 
+        apply_pending_wow64_callback_postprocess(c);
         const auto context = thread_context.read();
         cpu_context::restore(c.emu, context);
 
@@ -593,7 +662,12 @@ namespace syscalls
                                     const ACCESS_MASK /*desired_access*/, const ULONG /*handle_attributes*/, const ULONG flags,
                                     const emulator_object<handle> new_thread_handle)
     {
-        if (process_handle != CURRENT_PROCESS || thread_handle.value.type != handle_types::thread)
+        if (process_handle != CURRENT_PROCESS)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        if (thread_handle != NULL_HANDLE && thread_handle.value.type != handle_types::thread)
         {
             return STATUS_INVALID_HANDLE;
         }
@@ -692,8 +766,7 @@ namespace syscalls
 
     NTSTATUS handle_NtCreateThreadEx(const syscall_context& c, const emulator_object<handle> thread_handle,
                                      const ACCESS_MASK /*desired_access*/,
-                                     const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>>
-                                     /*object_attributes*/,
+                                     const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
                                      const handle process_handle, const uint64_t start_routine, const uint64_t argument,
                                      const ULONG create_flags, const EmulatorTraits<Emu64>::SIZE_T /*zero_bits*/,
                                      const EmulatorTraits<Emu64>::SIZE_T stack_size, const EmulatorTraits<Emu64>::SIZE_T maximum_stack_size,
@@ -704,18 +777,49 @@ namespace syscalls
             return STATUS_NOT_SUPPORTED;
         }
 
-        if (stack_size > maximum_stack_size)
+        if (maximum_stack_size != 0 && stack_size > maximum_stack_size)
         {
             return STATUS_INVALID_PARAMETER;
         }
 
+        constexpr auto entry_size = sizeof(PS_ATTRIBUTE<EmulatorTraits<Emu64>>);
+        constexpr auto header_size = sizeof(PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>) - entry_size;
+
+        size_t attribute_count = 0;
+
+        if (attribute_list)
+        {
+            const auto total_length = attribute_list.read().TotalLength;
+
+            if (total_length < header_size)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            if ((total_length - header_size) % entry_size != 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            attribute_count = static_cast<size_t>((total_length - header_size) / entry_size);
+        }
+
         uint64_t actual_stack_size = maximum_stack_size;
-        if (maximum_stack_size == 0)
+        if (actual_stack_size == 0)
         {
             actual_stack_size = c.win_emu.mod_manager.executable->size_of_stack_reserve;
         }
 
+        if (actual_stack_size == 0)
+        {
+            actual_stack_size = STACK_SIZE;
+        }
+
+        actual_stack_size = std::max(stack_size, actual_stack_size);
+        actual_stack_size = align_up(actual_stack_size, ALLOCATION_GRANULARITY);
+
         const auto h = c.proc.create_thread(c.win_emu.memory, start_routine, argument, actual_stack_size, create_flags);
+
         thread_handle.write(h);
 
         if (!attribute_list)
@@ -727,12 +831,6 @@ namespace syscalls
 
         const emulator_object<PS_ATTRIBUTE<EmulatorTraits<Emu64>>> attributes{
             c.emu, attribute_list.value() + offsetof(PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>, Attributes)};
-
-        const auto total_length = attribute_list.read().TotalLength;
-
-        constexpr auto entry_size = sizeof(PS_ATTRIBUTE<EmulatorTraits<Emu64>>);
-        constexpr auto header_size = sizeof(PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>) - entry_size;
-        const auto attribute_count = (total_length - header_size) / entry_size;
 
         for (size_t i = 0; i < attribute_count; ++i)
         {
@@ -824,7 +922,8 @@ namespace syscalls
         return handle_NtQueueApcThreadEx(c, thread_handle, make_handle(0), apc_routine, apc_argument1, apc_argument2, apc_argument3);
     }
 
-    NTSTATUS handle_NtCallbackReturn(const syscall_context& c)
+    NTSTATUS handle_NtCallbackReturn(const syscall_context& c, const emulator_pointer callback_result_ptr,
+                                     const ULONG callback_result_length, const NTSTATUS /*callback_status*/)
     {
         auto& t = c.win_emu.current_thread();
 
@@ -833,7 +932,18 @@ namespace syscalls
             throw std::runtime_error("Unexpected callback return");
         }
 
-        const uint64_t callback_result = c.emu.reg(x86_register::rax);
+        uint64_t callback_result = t.callback_return_rax.value_or(c.emu.reg<uint64_t>(x86_register::rax));
+        t.callback_return_rax.reset();
+
+        if (callback_result_ptr != 0 && callback_result_length != 0 && callback_result_length <= sizeof(callback_result))
+        {
+            std::array<std::byte, sizeof(callback_result)> result_bytes{};
+            if (c.win_emu.memory.try_read_memory(callback_result_ptr, result_bytes.data(), callback_result_length))
+            {
+                callback_result = 0;
+                memcpy(&callback_result, result_bytes.data(), callback_result_length);
+            }
+        }
 
         const auto frame = std::move(t.callback_stack.back());
         t.callback_stack.pop_back();

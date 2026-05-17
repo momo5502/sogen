@@ -5,13 +5,13 @@ cmake_minimum_required(VERSION 3.26.4)
 option(MOMO_ENABLE_AVX2 "Enable AVX2 support" ON)
 option(MOMO_ENABLE_SANITIZER "Enable sanitizer" OFF)
 option(MOMO_ENABLE_CLANG_TIDY "Enable clang-tidy checks" OFF)
+option(SOGEN_ENABLE_LTO "Enable interprocedural optimization (LTO/IPO)" ON)
 option(MOMO_ENABLE_RUST_CODE "Enable code parts written in rust" ON)
+option(MOMO_ENABLE_REFLECTION "Enable reflection using the reflect library" ON)
 option(MOMO_EMSCRIPTEN_MEMORY64 "Enable memory 64 support for emscripten builds" OFF)
 option(MOMO_EMSCRIPTEN_SUPPORT_NODEJS "Enable Node.js filesystem for emscripten compilation" OFF)
 
 set(MOMO_REFLECTION_LEVEL "0" CACHE STRING "Reflection level for the build")
-message(STATUS "Reflection level is set to: ${MOMO_REFLECTION_LEVEL}")
-add_compile_definitions(MOMO_REFLECTION_LEVEL=${MOMO_REFLECTION_LEVEL})
 
 ##########################################
 
@@ -34,6 +34,16 @@ set(ENV{ARCHFLAGS} "nope")
 project(sogen LANGUAGES C CXX)
 enable_testing()
 
+include(cmake/reflection-check.cmake)
+momo_check_reflection_support()
+
+message(STATUS "Reflection level is set to: ${MOMO_REFLECTION_LEVEL}")
+add_compile_definitions(MOMO_REFLECTION_LEVEL=${MOMO_REFLECTION_LEVEL})
+
+if(MOMO_ENABLE_REFLECTION)
+  add_compile_definitions(MOMO_ENABLE_REFLECTION=1)
+endif()
+
 ##########################################
 
 if(PROJECT_IS_TOP_LEVEL)
@@ -44,7 +54,25 @@ endif()
 
 ##########################################
 
-option(SOGEN_BUILD_STATIC "Build sogen as static libraries for embedding (e.g., IDA plugins)" ${MOMO_IS_SUBPROJECT})
+if(SKBUILD)
+  set(SOGEN_BUILD_STATIC_DEFAULT ON)
+else()
+  set(SOGEN_BUILD_STATIC_DEFAULT ${MOMO_IS_SUBPROJECT})
+endif()
+option(SOGEN_BUILD_STATIC "Build sogen as static libraries for embedding (e.g., IDA plugins)" ${SOGEN_BUILD_STATIC_DEFAULT})
+option(SOGEN_DISABLE_NANOBIND_LEAK_WARNINGS "Disable nanobind leak warnings in the Python module" OFF)
+if (MOMO_IS_SUBPROJECT OR SKBUILD)
+  set(SOGEN_BUILD_TOOLS_DEFAULT OFF)
+else()
+  set(SOGEN_BUILD_TOOLS_DEFAULT ON)
+endif()
+if(SKBUILD)
+  set(SOGEN_ENABLE_PYTHON_BINDINGS_DEFAULT ON)
+else()
+  set(SOGEN_ENABLE_PYTHON_BINDINGS_DEFAULT OFF)
+endif()
+option(SOGEN_BUILD_TOOLS "Build Sogen standalone tools (analyzer, debugger, fuzzer, etc.)" ${SOGEN_BUILD_TOOLS_DEFAULT})
+option(SOGEN_ENABLE_PYTHON_BINDINGS "Configure nanobind-based Python bindings" ${SOGEN_ENABLE_PYTHON_BINDINGS_DEFAULT})
 
 ##########################################
 
@@ -74,3 +102,26 @@ momo_targets_disable_warnings(${EXTERNAL_TARGETS})
 momo_targets_expose_includes(${OWN_TARGETS})
 momo_targets_set_warnings_as_errors(${OWN_TARGETS})
 momo_targets_enable_clang_tidy(${OWN_TARGETS})
+
+if(SOGEN_ENABLE_PYTHON_BINDINGS)
+  foreach(_nanobind_target
+    nanobind
+    nanobind-static
+    nanobind-abi3
+    nanobind-ft
+    nanobind-abi3-ft
+  )
+    if(TARGET ${_nanobind_target})
+      set_target_properties(${_nanobind_target} PROPERTIES
+        C_CLANG_TIDY ""
+        CXX_CLANG_TIDY ""
+      )
+
+      if(MSVC)
+        target_compile_options(${_nanobind_target} PRIVATE /W0)
+      else()
+        target_compile_options(${_nanobind_target} PRIVATE -w)
+      endif()
+    endif()
+  endforeach()
+endif()

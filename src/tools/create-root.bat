@@ -20,6 +20,8 @@ MKDIR %EMU_SYSDIR%
 MKDIR %EMU_SYSDIR_WOW64%
 MKDIR %EMU_REGDIR%
 
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0create-profile-dirs.ps1" "%EMU_FILESYS%"
+
 REG SAVE HKLM\HARDWARE %EMU_REGDIR%\HARDWARE /Y
 REG SAVE HKLM\SAM %EMU_REGDIR%\SAM /Y
 REG SAVE HKLM\SECURITY %EMU_REGDIR%\SECURITY /Y
@@ -49,8 +51,10 @@ CALL :collect d3dcompiler_43.dll
 CALL :collect d3dcompiler_47.dll
 CALL :collect dbghelp.dll
 CALL :collect dbgcore.dll
+CALL :collect devobj.dll
 CALL :collect diagnosticdatasettings.dll
 CALL :collect dinput8.dll
+CALL :collect dnsapi.dll
 CALL :collect dsound.dll
 CALL :collect dwmapi.dll
 CALL :collect dxcore.dll
@@ -72,6 +76,7 @@ CALL :collect kernel32.dll
 CALL :collect kernelbase.dll
 CALL :collect ktmw32.dll
 CALL :collect mfplat.dll
+CALL :collect mfreadwrite.dll
 CALL :collect mobilenetworking.dll
 CALL :collect mpr.dll
 CALL :collect msacm32.dll
@@ -92,6 +97,7 @@ CALL :collect netmsg.dll
 CALL :collect netutils.dll
 CALL :collect nlsbres.dll
 CALL :collect normaliz.dll
+CALL :collect nsi.dll
 CALL :collect ntasn1.dll
 CALL :collect ntdll.dll
 CALL :collect ole32.dll
@@ -99,8 +105,10 @@ CALL :collect oleaut32.dll
 CALL :collect opengl32.dll
 CALL :collect pdh.dll
 CALL :collect powrprof.dll
+CALL :collect profapi.dll
 CALL :collect propsys.dll
 CALL :collect psapi.dll
+CALL :collect rasadhlp.dll
 CALL :collect resampledmo.dll
 CALL :collect rpcrt4.dll
 CALL :collect rstrtmgr.dll
@@ -121,6 +129,7 @@ CALL :collect umpdc.dll
 CALL :collect urlmon.dll
 CALL :collect user32.dll
 CALL :collect userenv.dll
+CALL :collect usp10.dll
 CALL :collect uxtheme.dll
 CALL :collect vcruntime140.dll
 CALL :collect vcruntime140_1.dll
@@ -151,6 +160,7 @@ CALL :collect wtsapi32.dll
 CALL :collect x3daudio1_7.dll
 CALL :collect xapofx1_5.dll
 CALL :collect xinput1_3.dll
+CALL :collect xinput1_4.dll
 CALL :collect xinput9_1_0.dll
 
 CALL :collect locale.nls

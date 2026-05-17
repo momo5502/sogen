@@ -11,15 +11,17 @@
 #include "file_system.hpp"
 #include "memory_manager.hpp"
 #include "module/module_manager.hpp"
+#include "network/dns_lookup.hpp"
 #include "network/socket_factory.hpp"
 #include "version/windows_version_manager.hpp"
 
 struct io_device;
 
-#define opt_func utils::optional_function
-
 struct emulator_callbacks : module_manager::callbacks, process_context::callbacks
 {
+    template <typename T>
+    using opt_func = utils::optional_function<T>;
+
     using continuation = instruction_hook_continuation;
 
     opt_func<void()> on_exception{};
@@ -35,9 +37,25 @@ struct emulator_callbacks : module_manager::callbacks, process_context::callback
     opt_func<void(std::string_view type, std::u16string_view name)> on_generic_access{};
     opt_func<void(std::string_view description)> on_generic_activity{};
     opt_func<void(std::string_view description)> on_suspicious_activity{};
-    opt_func<void(std::string_view message)> on_debug_string{};
+    utils::callback_list<void(std::string_view message)> on_debug_string{};
     opt_func<void(uint64_t address)> on_instruction{};
     opt_func<void(io_device& device, std::u16string_view device_name, ULONG code)> on_ioctrl{};
+    opt_func<void(uint32_t fail_code)> on_fast_fail{};
+};
+
+// Typed reason the most recent start() returned. Today callers can only
+// infer "why we stopped" by parsing log strings written by the syscall
+// dispatcher, which is fragile and loses context. Internal error paths
+// record a reason via windows_emulator::record_stop(); callers read it
+// with last_stop_reason() post-start(). `none` covers clean exits,
+// external stop() calls, and instruction-cap exhaustion — the caller
+// already knows about those from exit_status and its own flags.
+enum class stop_reason : uint8_t
+{
+    none,
+    unknown_syscall,
+    unimplemented_syscall,
+    syscall_exception,
 };
 
 struct application_settings
@@ -45,12 +63,14 @@ struct application_settings
     windows_path application{};
     windows_path working_directory{};
     std::vector<std::u16string> arguments{};
+    utils::unordered_insensitive_u16string_map<std::u16string> environment{};
 
     void serialize(utils::buffer_serializer& buffer) const
     {
         buffer.write(this->application);
         buffer.write(this->working_directory);
         buffer.write_vector(this->arguments);
+        buffer.write_map(this->environment);
     }
 
     void deserialize(utils::buffer_deserializer& buffer)
@@ -58,7 +78,21 @@ struct application_settings
         buffer.read(this->application);
         buffer.read(this->working_directory);
         buffer.read_vector(this->arguments);
+        buffer.read_map(this->environment);
     }
+};
+
+// Knobs for values the emulator exposes to the emulated process that don't
+// depend on the host environment. Samples (particularly anti-analysis
+// payloads) probe these to detect VM/sandbox; today they are hardcoded in
+// process_context.cpp (PEB.NumberOfProcessors = 4) and kusd_mmio.cpp
+// (KUSER_SHARED_DATA.NtProductType = NtProductWinNt). Defaults match the
+// legacy hardcoded values — behavior is unchanged when consumers leave
+// this field at its default.
+struct fake_environment_config
+{
+    uint32_t number_of_processors{4};
+    uint8_t nt_product_type{1}; // NtProductWinNt
 };
 
 struct emulator_settings
@@ -71,25 +105,31 @@ struct emulator_settings
 
     std::unordered_map<uint16_t, uint16_t> port_mappings{};
     std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
+
+    fake_environment_config fake_env{};
 };
 
 struct emulator_interfaces
 {
     std::unique_ptr<utils::clock> clock{};
+    std::unique_ptr<network::dns_lookup> dns_lookup{};
     std::unique_ptr<network::socket_factory> socket_factory{};
 };
 
 class windows_emulator
 {
     uint64_t executed_instructions_{0};
-    std::optional<application_settings> application_settings_{};
+    application_settings application_settings_{};
 
     std::unique_ptr<x86_64_emulator> emu_{};
     std::unique_ptr<utils::clock> clock_{};
+    std::unique_ptr<network::dns_lookup> dns_lookup_{};
     std::unique_ptr<network::socket_factory> socket_factory_{};
+    bool setup_completed_{false};
 
   public:
-    std::filesystem::path emulation_root{};
+    const std::filesystem::path emulation_root{};
+    const fake_environment_config fake_env{};
     emulator_callbacks callbacks{};
     logger log{};
     file_system file_sys;
@@ -131,6 +171,15 @@ class windows_emulator
     {
         return *this->clock_;
     }
+    network::dns_lookup& dns_lookup()
+    {
+        return *this->dns_lookup_;
+    }
+
+    const network::dns_lookup& dns_lookup() const
+    {
+        return *this->dns_lookup_;
+    }
 
     network::socket_factory& socket_factory()
     {
@@ -155,6 +204,25 @@ class windows_emulator
     uint64_t get_executed_instructions() const
     {
         return this->executed_instructions_;
+    }
+
+    stop_reason last_stop_reason() const
+    {
+        return this->last_stop_reason_;
+    }
+
+    const std::string& last_stop_detail() const
+    {
+        return this->last_stop_detail_;
+    }
+
+    // Called by internal paths that force a stop due to an error (syscall
+    // dispatcher unknown/unimplemented/exception). Public so future error
+    // paths can record themselves without friending everyone.
+    void record_stop(stop_reason r, std::string detail = {})
+    {
+        this->last_stop_reason_ = r;
+        this->last_stop_detail_ = std::move(detail);
     }
 
     void setup_process_if_necessary();
@@ -212,7 +280,7 @@ class windows_emulator
     bool activate_thread(uint32_t id);
 
   private:
-    bool switch_thread_{false};
+    std::atomic_bool switch_thread_{false};
     bool use_relative_time_{false}; // TODO: Get rid of that
     std::atomic_bool should_stop{false};
 
@@ -221,8 +289,11 @@ class windows_emulator
     std::vector<std::byte> process_snapshot_{};
     // std::optional<process_context> process_snapshot_{};
 
+    stop_reason last_stop_reason_{stop_reason::none};
+    std::string last_stop_detail_{};
+
     void setup_hooks();
-    void setup_process(const application_settings& app_settings);
+    void setup_process();
     void on_instruction_execution(uint64_t address);
 
     void register_factories(utils::buffer_deserializer& buffer);

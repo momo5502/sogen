@@ -488,6 +488,11 @@ namespace icicle
             return false;
         }
 
+        bool supports_instruction_counting() const override
+        {
+            return true;
+        }
+
         std::string get_name() const override
         {
             return "icicle-emu";

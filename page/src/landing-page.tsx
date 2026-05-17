@@ -5,16 +5,18 @@ import {
   Cpu,
   Terminal,
   ExternalLink,
-  Github,
   Play,
   ArrowRight,
   BookOpen,
-  Download,
   Lock,
   Bug,
   Split,
   Layers,
+  Code,
 } from "lucide-react";
+import { Highlight } from "prism-react-renderer";
+import type { PrismTheme } from "prism-react-renderer";
+
 import { Header } from "./Header";
 import { YoutubeVideo } from "@/components/youtube-video";
 
@@ -31,7 +33,7 @@ function generateButtons(additionalClasses: string = "") {
         >
           <span>
             <Play className="mr-2 h-5 w-5 transition-transform" />
-            <span className="flex-1">Try Online</span>
+            <span className="flex-1 text-center">Try Online</span>
             <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
           </span>
         </Button>
@@ -44,8 +46,8 @@ function generateButtons(additionalClasses: string = "") {
           className="rounded-lg border-neutral-600 text-neutral-300 hover:bg-neutral-800/50 px-8 py-6 text-lg font-semibold group transition-all duration-300 w-full flex"
         >
           <span>
-            <Github className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
-            <span className="flex-1">Get Source</span>
+            <Code className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
+            <span className="flex-1 text-center">Get Source</span>
             <ExternalLink className="ml-2 h-4 w-4" />
           </span>
         </Button>
@@ -53,6 +55,57 @@ function generateButtons(additionalClasses: string = "") {
     </div>
   );
 }
+
+const pythonBindingsSample = `import ctypes
+import sogen
+
+app = sogen.create_application("c:/test-sample.exe",
+                               emulation_root="./root")
+
+@sogen.api_call(cc=sogen.CallingConvention.stdcall,
+                params=[ctypes.c_uint32])
+def on_sleep(call, params):
+    print(f"Sleep({params[0]})")
+
+app.hooks.apis["Sleep"] = on_sleep
+app.start()`;
+
+const landingPythonTheme: PrismTheme = {
+  plain: {
+    color: "#e6e6e6",
+    backgroundColor: "transparent",
+  },
+  styles: [
+    {
+      types: ["comment"],
+      style: { color: "#8a8a8a", fontStyle: "italic" },
+    },
+    {
+      types: ["keyword", "builtin", "decorator", "important", "atrule"],
+      style: { color: "#F3A71F" },
+    },
+    {
+      types: ["function", "property", "namespace", "symbol"],
+      style: { color: "#2AA8F5" },
+    },
+    {
+      types: ["string"],
+      style: { color: "#9ABB28" },
+    },
+    {
+      types: ["number", "boolean"],
+      style: { color: "#E25A48" },
+    },
+    {
+      types: ["operator", "punctuation"],
+      style: { color: "#9a9a9a" },
+    },
+    {
+      types: ["class-name", "constant"],
+      style: { color: "#2AA8F5" },
+    },
+  ],
+};
 
 export function LandingPage() {
   const features = [
@@ -111,7 +164,7 @@ export function LandingPage() {
     { value: "100%", label: "Open Source" },
     { value: "14", label: "Platforms" },
     { value: "2", label: "OS Targets" },
-    { value: "2", label: "Backends" },
+    { value: "3", label: "Backends" },
     { value: "100%", label: "Deterministic" },
   ];
 
@@ -162,11 +215,33 @@ export function LandingPage() {
           </div>
         </section>
 
-        {/* Features Section with Hover Effects */}
+        {/* Preview Section */}
+        <section className="py-24 bg-linear-to-b from-neutral-900/0 to-neutral-800/40">
+          <div className="container mx-auto px-6">
+            <div className="text-center mb-16">
+              <h2 className="text-4xl font-bold text-white mb-6">
+                Understand Your Applications
+              </h2>
+              <p className="text-xl text-neutral-400">
+                Analyze application semantics and uncover how programs truly
+                behave.
+              </p>
+            </div>
+
+            <div className="mx-auto w-full gap-12 flex items-center justify-center flex-col lg:flex-row">
+              <img
+                className="mx-auto -my-8"
+                src="https://momo5502.com/sogen/preview.svg"
+              />
+            </div>
+          </div>
+        </section>
+
+        {/* Features Section */}
         <section className="py-24 relative">
           <div className="container mx-auto px-6">
             <div className="text-center mb-16">
-              <h2 className="text-4xl md:text-5xl font-bold text-white mb-6">
+              <h2 className="text-4xl font-bold text-white mb-6">
                 Powerful Features
               </h2>
               <p className="text-xl text-neutral-400 max-w-2xl mx-auto">
@@ -174,7 +249,7 @@ export function LandingPage() {
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-8 lg:m-32">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-8 lg:mx-32">
               {features.map((feature, index) => (
                 <Card
                   key={index}
@@ -233,7 +308,111 @@ export function LandingPage() {
           </div>
         </section>
 
-        {/* Video Section with Modern Design */}
+        {/* Python Bindings Section */}
+        <section className="py-24 bg-linear-to-b from-neutral-900/0 to-neutral-800/40">
+          <div className="container mx-auto px-6">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-12 items-center max-w-6xl mx-auto">
+              <div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-800/60 px-4 py-2 text-sm text-neutral-300 mb-6">
+                  <BookOpen className="h-4 w-4" />
+                  Python bindings
+                </div>
+                <h2 className="text-4xl font-bold text-white mb-6">
+                  Automate Sogen from Python
+                </h2>
+                <p className="text-xl text-neutral-400 leading-relaxed mb-6">
+                  Script emulator runs, register callbacks, and intercept WinAPI
+                  calls directly from Python. Install from PyPI, load your
+                  target, and start exploring.
+                </p>
+
+                <div className="mb-8 inline-flex items-center rounded-lg border border-neutral-700 bg-neutral-900/80 px-4 py-3 font-mono text-sm text-neutral-200">
+                  <span className="text-neutral-500 mr-3 select-none">$</span>
+                  <span className="select-all">pip install sogen</span>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <a href="https://pypi.org/project/sogen/" target="_blank">
+                    <Button
+                      asChild
+                      size="lg"
+                      className="rounded-lg bg-linear-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100 w-full flex"
+                    >
+                      <span>
+                        <BookOpen className="mr-2 h-5 w-5 transition-transform" />
+                        <span className="flex-1 text-center">View on PyPI</span>
+                        <ExternalLink className="ml-2 h-4 w-4" />
+                      </span>
+                    </Button>
+                  </a>
+                  <a
+                    href="https://github.com/momo5502/sogen/blob/main/docs/python/README.md"
+                    target="_blank"
+                  >
+                    <Button
+                      asChild
+                      size="lg"
+                      variant="outline"
+                      className="rounded-lg border-neutral-600 text-neutral-300 hover:bg-neutral-800/50 px-8 py-6 text-lg font-semibold group transition-all duration-300 w-full flex"
+                    >
+                      <span>
+                        <Code className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
+                        <span className="flex-1 text-center">
+                          Read Python Docs
+                        </span>
+                        <ExternalLink className="ml-2 h-4 w-4" />
+                      </span>
+                    </Button>
+                  </a>
+                </div>
+              </div>
+
+              <div className="relative">
+                <div className="absolute -inset-4 bg-linear-to-r from-yellow-500/10 to-cyan-500/10 rounded-2xl blur-md"></div>
+                <div className="relative rounded-2xl border border-neutral-700 bg-neutral-900/90 overflow-hidden shadow-2xl">
+                  <div className="flex items-center gap-2 border-b border-neutral-800 px-5 py-4 text-sm text-neutral-500">
+                    <div className="h-3 w-3 rounded-full bg-red-400/80"></div>
+                    <div className="h-3 w-3 rounded-full bg-yellow-400/80"></div>
+                    <div className="h-3 w-3 rounded-full bg-green-400/80"></div>
+                    <span className="ml-3">api_hooks.py</span>
+                  </div>
+                  <Highlight
+                    theme={landingPythonTheme}
+                    code={pythonBindingsSample}
+                    language="python"
+                  >
+                    {({
+                      className,
+                      style,
+                      tokens,
+                      getLineProps,
+                      getTokenProps,
+                    }) => (
+                      <pre
+                        className={`${className} overflow-x-auto p-5 text-sm leading-7`}
+                        style={{
+                          ...style,
+                          margin: 0,
+                          backgroundColor: "transparent",
+                        }}
+                      >
+                        {tokens.map((line, i) => (
+                          <div key={i} {...getLineProps({ line })}>
+                            {line.map((token, key) => (
+                              <span key={key} {...getTokenProps({ token })} />
+                            ))}
+                          </div>
+                        ))}
+                      </pre>
+                    )}
+                  </Highlight>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Video Section */}
         <section className="py-24">
           <div className="container mx-auto px-6">
             <div className="text-center mb-16">
@@ -310,7 +489,7 @@ export function LandingPage() {
                   title="Soure Code"
                   className="text-neutral-400 hover:text-blue-400 transition-colors p-2 rounded-lg hover:bg-neutral-800/50"
                 >
-                  <Github className="h-6 w-6" />
+                  <Code className="h-6 w-6" />
                 </a>
                 <a
                   href="#/playground"

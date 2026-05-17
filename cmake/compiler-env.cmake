@@ -25,8 +25,9 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 ##########################################
 
-if(NOT MINGW AND NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
+if(SOGEN_ENABLE_LTO AND NOT MOMO_ENABLE_CLANG_TIDY AND NOT MINGW AND NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF)
 endif()
 
 ##########################################
@@ -41,7 +42,12 @@ endif()
 
 set(MOMO_ENABLE_RUST OFF)
 if(MOMO_ENABLE_RUST_CODE AND NOT MINGW AND NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
-  set(MOMO_ENABLE_RUST ON)
+  find_program(CARGO cargo)
+  if(CARGO)
+    set(MOMO_ENABLE_RUST ON)
+  else()
+    message(STATUS "cargo not found; disabling Rust-backed components")
+  endif()
 endif()
 
 ##########################################

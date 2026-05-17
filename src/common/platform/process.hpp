@@ -1,6 +1,6 @@
 #pragma once
 
-// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 
 #ifndef OS_WINDOWS
 #define CREATE_SUSPENDED 0x00000004
@@ -767,6 +767,36 @@ typedef struct _SYSTEM_KERNEL_DEBUGGER_INFORMATION
     BOOLEAN KernelDebuggerNotPresent;
 } SYSTEM_KERNEL_DEBUGGER_INFORMATION, *PSYSTEM_KERNEL_DEBUGGER_INFORMATION;
 
+#ifndef OS_WINDOWS
+struct SYSTEM_SUPPORTED_PROCESSOR_ARCHITECTURES_INFORMATION
+{
+    DWORD Machine : 16;
+    DWORD KernelMode : 1;
+    DWORD UserMode : 1;
+    DWORD Native : 1;
+    DWORD Process : 1;
+    DWORD WoW64Container : 1;
+    DWORD ReservedZero0 : 11;
+};
+
+struct SID_IDENTIFIER_AUTHORITY
+{
+    BYTE Value[6];
+};
+
+#define SID_REVISION                    (1)
+#define SID_MAX_SUB_AUTHORITIES         (15)
+#define SID_RECOMMENDED_SUB_AUTHORITIES (1)
+
+struct SID
+{
+    BYTE Revision;
+    BYTE SubAuthorityCount;
+    SID_IDENTIFIER_AUTHORITY IdentifierAuthority;
+    DWORD SubAuthority[ANYSIZE_ARRAY];
+};
+#endif
+
 struct SID_AND_ATTRIBUTES64
 {
     EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, PSID) Sid;
@@ -897,6 +927,16 @@ typedef struct _TOKEN_SECURITY_ATTRIBUTES_INFORMATION
         EmulatorTraits<Emu64>::PVOID pAttributeV1;
     } Attribute;
 } TOKEN_SECURITY_ATTRIBUTES_INFORMATION, *PTOKEN_SECURITY_ATTRIBUTES_INFORMATION;
+
+typedef struct _TOKEN_SECURITY_ATTRIBUTE_V1
+{
+    UNICODE_STRING<EmulatorTraits<Emu64>> Name;
+    USHORT ValueType;
+    USHORT Reserved;
+    ULONG Flags;
+    ULONG ValueCount;
+    uint64_t Values;
+} TOKEN_SECURITY_ATTRIBUTE_V1, *PTOKEN_SECURITY_ATTRIBUTE_V1;
 
 #ifndef OS_WINDOWS
 #define SECURITY_DESCRIPTOR_REVISION  1
@@ -1130,4 +1170,4 @@ struct PROCESS_INSTRUMENTATION_CALLBACK_INFORMATION
     ULONG Reserved;
     uint64_t Callback;
 };
-// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)

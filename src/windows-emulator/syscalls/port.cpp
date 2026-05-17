@@ -101,7 +101,7 @@ namespace syscalls
                                               const emulator_object<ALPC_MESSAGE_ATTRIBUTES>
                                               /*send_message_attributes*/,
                                               const emulator_object<PORT_MESSAGE64> receive_message,
-                                              const emulator_object<EmulatorTraits<Emu64>::SIZE_T> /*buffer_length*/,
+                                              const emulator_object<EmulatorTraits<Emu64>::SIZE_T> buffer_length,
                                               const emulator_object<ALPC_MESSAGE_ATTRIBUTES>
                                               /*receive_message_attributes*/,
                                               const emulator_object<LARGE_INTEGER> /*timeout*/)
@@ -115,8 +115,16 @@ namespace syscalls
         lpc_message_context context{c.emu};
         context.send_message = send_message;
         context.receive_message = receive_message;
+        context.receive_buffer_length = buffer_length ? buffer_length.read() : 0;
 
-        return port->handle_message(c.win_emu, context);
+        const auto status = port->handle_message(c.win_emu, context);
+
+        if (receive_message && buffer_length)
+        {
+            buffer_length.write(static_cast<typename EmulatorTraits<Emu64>::SIZE_T>(receive_message.read().u1.s1.TotalLength));
+        }
+
+        return status;
     }
 
     NTSTATUS handle_NtAlpcQueryInformation()

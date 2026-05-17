@@ -16,9 +16,35 @@ namespace
             return STATUS_SUCCESS;
         }
     };
+
+    struct transport_stub_device : stateless_device
+    {
+        NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
+        {
+            if (context.output_buffer && context.output_buffer_length)
+            {
+                std::vector<std::byte> output(context.output_buffer_length, std::byte{0});
+                win_emu.emu().write_memory(context.output_buffer, output.data(), output.size());
+            }
+
+            if (context.io_status_block)
+            {
+                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                block.Information = context.output_buffer_length;
+                context.io_status_block.write(block);
+            }
+
+            return STATUS_SUCCESS;
+        }
+    };
 }
 
-std::unique_ptr<io_device> create_device(const std::u16string_view device)
+bool needs_32_bit_devices(const windows_emulator& win_emu)
+{
+    return win_emu.process.is_wow64_process;
+}
+
+std::unique_ptr<io_device> create_device(const std::u16string_view device, const bool is_32_bit)
 {
     if (device == u"CNG"                    //
         || device == u"Nsi"                 //
@@ -33,12 +59,12 @@ std::unique_ptr<io_device> create_device(const std::u16string_view device)
 
     if (device == u"Afd\\Endpoint")
     {
-        return create_afd_endpoint();
+        return create_afd_endpoint(is_32_bit);
     }
 
     if (device == u"Afd\\AsyncConnectHlp")
     {
-        return create_afd_async_connect_hlp();
+        return create_afd_async_connect_hlp(is_32_bit);
     }
 
     if (device == u"MountPointManager")
@@ -54,6 +80,11 @@ std::unique_ptr<io_device> create_device(const std::u16string_view device)
     if (device == u"NamedPipe")
     {
         return std::make_unique<named_pipe>();
+    }
+
+    if (device == u"Tcp" || device == u"Tcp6" || device == u"Udp" || device == u"RawIp")
+    {
+        return std::make_unique<transport_stub_device>();
     }
 
     throw std::runtime_error("Unsupported device: " + u16_to_u8(device));
@@ -76,13 +107,16 @@ void io_device_container::serialize_object(utils::buffer_serializer& buffer) con
 {
     this->assert_validity();
 
+    buffer.write(this->is_32_bit_);
     buffer.write_string(this->device_name_);
     this->device_->serialize(buffer);
 }
 
 void io_device_container::deserialize_object(utils::buffer_deserializer& buffer)
 {
+    buffer.read(this->is_32_bit_);
     buffer.read_string(this->device_name_);
+
     this->setup();
     this->device_->deserialize(buffer);
 }

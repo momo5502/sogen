@@ -1,6 +1,6 @@
 #pragma once
 
-// NOLINTBEGIN(modernize-use-using)
+// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-use-enum-class)
 
 #define PAGE_EXECUTE           0x10
 #define PAGE_EXECUTE_READ      0x20
@@ -137,4 +137,4 @@ typedef struct _MEMORY_REGION_INFORMATION
     // DWORD64 NodePreference; // 20H1
 } MEMORY_REGION_INFORMATION64, *PMEMORY_REGION_INFORMATION64;
 
-// NOLINTEND(modernize-use-using)
+// NOLINTEND(modernize-use-using,cppcoreguidelines-use-enum-class)

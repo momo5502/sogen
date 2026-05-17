@@ -3,7 +3,7 @@ import { parse } from "shell-quote";
 export type EmulatorMode = "windows" | "linux";
 
 export interface Settings {
-  logging: "verbose" | "silent" | "concise" | string;
+  logging: "verbose" | "silent" | "concise" | "very-concise" | string;
   bufferStdout: boolean;
   persist: boolean;
   execAccess: boolean;
@@ -68,12 +68,10 @@ export function translateSettings(settings: Settings): TranslatedSettings {
   const options: string[] = [];
 
   if (settings.mode === "linux") {
-    // Linux emulator only supports --verbose
     if (settings.logging === "verbose") {
       switches.push("--verbose");
     }
   } else {
-    // Windows emulator options
     switch (settings.logging) {
       case "verbose":
         switches.push("-v");
@@ -83,6 +81,9 @@ export function translateSettings(settings: Settings): TranslatedSettings {
         break;
       case "concise":
         switches.push("-c");
+        break;
+      case "very-concise":
+        switches.push("-vc");
         break;
 
       default:

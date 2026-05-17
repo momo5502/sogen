@@ -93,6 +93,7 @@ class hive_key
     const int value_count_{};
     const int value_offsets_{};
 
+    void parse_subkey_list(std::ifstream& file, int32_t block_offset, bool allow_root_index);
     void parse(std::ifstream& file);
 };
 

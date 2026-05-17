@@ -56,7 +56,9 @@ namespace syscalls
         if (key_information_class == KeyNameInformation)
         {
             auto key_name = (key->hive.get() / key->path.get()).u16string();
-            while (key_name.ends_with(u'/') || key_name.ends_with(u'\\'))
+            std::ranges::replace(key_name, u'/', '\\');
+
+            while (key_name.ends_with(u'\\'))
             {
                 key_name.pop_back();
             }
@@ -91,7 +93,9 @@ namespace syscalls
         if (key_information_class == KeyCachedInformation)
         {
             auto key_name = (key->hive.get() / key->path.get()).u16string();
-            while (key_name.ends_with(u'/') || key_name.ends_with(u'\\'))
+            std::ranges::replace(key_name, u'/', '\\');
+
+            while (key_name.ends_with(u'\\'))
             {
                 key_name.pop_back();
             }
@@ -133,7 +137,7 @@ namespace syscalls
             }
 
             KEY_HANDLE_TAGS_INFORMATION info{};
-            info.HandleTags = 0; // ?
+            info.HandleTags = key->tag;
 
             const emulator_object<KEY_HANDLE_TAGS_INFORMATION> info_obj{c.emu, key_information};
             info_obj.write(info);
@@ -356,14 +360,71 @@ namespace syscalls
         return result;
     }
 
+    NTSTATUS handle_NtSetValueKey(const syscall_context& c, const handle key_handle,
+                                  const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> value_name, const ULONG /*title_index*/,
+                                  const ULONG type, const uint64_t data, const ULONG data_size)
+    {
+        const auto* key = c.proc.registry_keys.get(key_handle);
+        if (!key)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        std::vector<std::byte> data_buffer{};
+        data_buffer.resize(data_size);
+
+        if (data_size > 0)
+        {
+            if (!data || !c.emu.try_read_memory(data, data_buffer.data(), data_size))
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+        }
+
+        std::string name{};
+        if (value_name.value())
+        {
+            name = u16_to_u8(read_unicode_string(c.emu, value_name));
+        }
+
+        c.win_emu.registry.set_value(*key, std::move(name), type, std::span<const std::byte>{data_buffer});
+
+        return STATUS_SUCCESS;
+    }
+
     NTSTATUS handle_NtNotifyChangeKey()
     {
         return STATUS_SUCCESS;
     }
 
-    NTSTATUS handle_NtSetInformationKey()
+    NTSTATUS handle_NtSetInformationKey(const syscall_context& c, const handle key_handle,
+                                        const KEY_SET_INFORMATION_CLASS key_information_class, const uint64_t key_information,
+                                        const ULONG length)
     {
-        return STATUS_SUCCESS;
+        auto* key = c.proc.registry_keys.get(key_handle);
+        if (!key)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        if (key_information_class == KeySetHandleTagsInformation)
+        {
+            constexpr auto required_size = sizeof(KEY_HANDLE_TAGS_INFORMATION);
+
+            if (length != required_size)
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            const emulator_object<KEY_HANDLE_TAGS_INFORMATION> info_obj{c.emu, key_information};
+            info_obj.access([&](KEY_HANDLE_TAGS_INFORMATION& info) { key->tag = static_cast<uint16_t>(info.HandleTags); });
+
+            return STATUS_SUCCESS;
+        }
+
+        c.win_emu.log.warn("Unsupported registry information class: %X\n", key_information_class);
+        c.emu.stop();
+        return STATUS_NOT_SUPPORTED;
     }
 
     NTSTATUS handle_NtEnumerateKey(const syscall_context& c, const handle key_handle, const ULONG index,

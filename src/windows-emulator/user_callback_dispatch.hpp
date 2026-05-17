@@ -50,6 +50,7 @@ void dispatch_user_callback(const syscall_context& c, callback_id completion_id,
 
     callback_frame frame(completion_id, std::move(state));
     frame.save_registers(c.emu);
+    c.proc.active_thread->callback_return_rax.reset();
     c.proc.active_thread->callback_stack.emplace_back(std::move(frame));
 
     prepare_call_stack(c.emu, c.proc.zw_callback_return, args...);

@@ -24,7 +24,11 @@ namespace network
         }
 
         int optval = 1;
+#ifdef _WIN32
+        setsockopt(this->socket_, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<char*>(&optval), static_cast<int>(sizeof(optval)));
+#else
         setsockopt(this->socket_, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<char*>(&optval), static_cast<int>(sizeof(optval)));
+#endif
     }
 
     socket::~socket()
@@ -84,7 +88,7 @@ namespace network
     bool socket::set_blocking(SOCKET s, const bool blocking)
     {
 #ifdef _WIN32
-        unsigned long mode = blocking ? 0 : 1;
+        auto mode = blocking ? 0UL : 1UL;
         return ioctlsocket(s, FIONBIO, &mode) == 0;
 #else
         int flags = fcntl(s, F_GETFL, 0);

@@ -3,6 +3,7 @@
 
 #include "cpu_context.hpp"
 #include "process_context.hpp"
+#include "io_completion_wait.hpp"
 #include "syscall_utils.hpp"
 
 namespace
@@ -151,6 +152,7 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
 
             teb_obj.ClientId.UniqueProcess = 1ul;
             teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
+            teb_obj.DeallocationStack = this->stack_base;
             teb_obj.NtTib.StackLimit = this->stack_base;
             teb_obj.NtTib.StackBase = this->stack_base + this->stack_size;
             teb_obj.NtTib.Self = this->teb64->value();
@@ -162,6 +164,12 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
             teb_obj.SameTebFlags.SkipLoaderInit = (create_flags & THREAD_CREATE_FLAGS_SKIP_LOADER_INIT) ? 1 : 0;
 
             const auto desktop_info_obj = this->gs_segment->reserve<USER_DESKTOPINFO>();
+            desktop_info_obj.access([&](USER_DESKTOPINFO& info) {
+                if (const auto* wnd = context.windows.get(context.default_desktop_window_handle))
+                {
+                    info.spwndDesktop = wnd->guest.value();
+                }
+            });
             teb_obj.Win32ClientInfo.arr[4] = desktop_info_obj.value();
         });
 
@@ -214,6 +222,7 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
         teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
 
         // Native 64-bit stack
+        teb_obj.DeallocationStack = this->stack_base;
         teb_obj.NtTib.StackLimit = this->stack_base;
         teb_obj.NtTib.StackBase = wow64_cpureserved_base;
         teb_obj.NtTib.Self = this->teb64->value();
@@ -343,9 +352,23 @@ emulator_thread::emulator_thread(memory_manager& memory, const process_context& 
         // EFlags - standard initial flags
         ctx.Context.EFlags = 0x202; // IF (Interrupt Flag) set
 
-        // Extended state - initialize to zero
+        // Seed WOW64 floating-point state with sane defaults
         memset(&ctx.Context.FloatSave, 0, sizeof(ctx.Context.FloatSave));
+        ctx.Context.FloatSave.ControlWord = 0x037F;
+        ctx.Context.FloatSave.StatusWord = 0;
+        ctx.Context.FloatSave.TagWord = 0xFFFF;
+        ctx.Context.FloatSave.Cr0NpxState = 0;
+
+        XMM_SAVE_AREA32 xmm_state{};
+        xmm_state.ControlWord = 0x037F;
+        xmm_state.StatusWord = 0;
+        xmm_state.TagWord = 0xFF;
+        xmm_state.MxCsr = 0x1F80;
+        xmm_state.MxCsr_Mask = 0xFFFFFFFF;
+
         memset(&ctx.Context.ExtendedRegisters, 0, sizeof(ctx.Context.ExtendedRegisters));
+        static_assert(sizeof(xmm_state) <= sizeof(ctx.Context.ExtendedRegisters));
+        memcpy(ctx.Context.ExtendedRegisters, &xmm_state, sizeof(xmm_state));
     });
 }
 
@@ -355,6 +378,7 @@ void emulator_thread::mark_as_ready(const NTSTATUS status)
     this->await_time = {};
     this->await_objects = {};
     this->await_msg = {};
+    this->await_io_completion = {};
 
     // TODO: Find out if this is correct
     if (this->waiting_for_alert)
@@ -470,6 +494,71 @@ bool emulator_thread::is_thread_ready(process_context& process, utils::clock& cl
         return false;
     }
 
+    if (this->await_io_completion.has_value())
+    {
+        auto timeout_expired = [&](const pending_io_completion_wait& wait) {
+            constexpr auto infinite = std::chrono::steady_clock::time_point::min();
+            return wait.timeout.has_value() && wait.timeout.value() != infinite && wait.timeout.value() < clock.steady_now();
+        };
+
+        const auto& wait = *this->await_io_completion;
+        if (!process.io_completions.get(wait.io_completion_handle))
+        {
+            this->mark_as_ready(STATUS_INVALID_HANDLE);
+            return true;
+        }
+
+        if (wait.type == io_completion_wait_type::remove_single)
+        {
+            io_completion_message message{};
+            if (io_completion_wait::dequeue_io_completion_message(process, wait.io_completion_handle, message))
+            {
+                emulator_object<emulator_pointer>{*this->memory_ptr, wait.key_context_ptr}.write_if_valid(message.key_context);
+                emulator_object<emulator_pointer>{*this->memory_ptr, wait.apc_context_ptr}.write_if_valid(message.apc_context);
+                emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>>{*this->memory_ptr, wait.io_status_block_ptr}.write_if_valid(
+                    message.io_status_block);
+
+                this->mark_as_ready(STATUS_SUCCESS);
+                return true;
+            }
+
+            if (timeout_expired(wait))
+            {
+                this->mark_as_ready(STATUS_TIMEOUT);
+                return true;
+            }
+
+            return false;
+        }
+
+        if (wait.type == io_completion_wait_type::remove_multiple)
+        {
+            const auto removed = io_completion_wait::dequeue_io_completion_entries(
+                process, wait.io_completion_handle,
+                emulator_object<FILE_IO_COMPLETION_INFORMATION<EmulatorTraits<Emu64>>>{*this->memory_ptr, wait.completion_entries_ptr},
+                wait.max_entries);
+
+            if (removed > 0)
+            {
+                emulator_object<ULONG>{*this->memory_ptr, wait.entries_removed_ptr}.write_if_valid(removed);
+                this->mark_as_ready(STATUS_SUCCESS);
+                return true;
+            }
+
+            if (timeout_expired(wait))
+            {
+                emulator_object<ULONG>{*this->memory_ptr, wait.entries_removed_ptr}.write_if_valid(0);
+                this->mark_as_ready(STATUS_TIMEOUT);
+                return true;
+            }
+
+            return false;
+        }
+
+        this->mark_as_ready(STATUS_INVALID_PARAMETER);
+        return true;
+    }
+
     if (this->await_msg.has_value())
     {
         if (const auto m =
@@ -576,6 +665,12 @@ void callback_frame::save_registers(x86_64_emulator& emu)
     this->rdx = emu.reg(x86_register::rdx);
     this->r8 = emu.reg(x86_register::r8);
     this->r9 = emu.reg(x86_register::r9);
+    this->cs = emu.reg<uint16_t>(x86_register::cs);
+    this->ss = emu.reg<uint16_t>(x86_register::ss);
+    this->ds = emu.reg<uint16_t>(x86_register::ds);
+    this->es = emu.reg<uint16_t>(x86_register::es);
+    this->fs = emu.reg<uint16_t>(x86_register::fs);
+    this->gs = emu.reg<uint16_t>(x86_register::gs);
 }
 
 void callback_frame::restore_registers(x86_64_emulator& emu) const
@@ -585,6 +680,12 @@ void callback_frame::restore_registers(x86_64_emulator& emu) const
         throw std::runtime_error("Attempt to restore registers from an uninitialized callback frame");
     }
 
+    emu.reg<uint16_t>(x86_register::cs, this->cs);
+    emu.reg<uint16_t>(x86_register::ss, this->ss);
+    emu.reg<uint16_t>(x86_register::ds, this->ds);
+    emu.reg<uint16_t>(x86_register::es, this->es);
+    emu.reg<uint16_t>(x86_register::fs, this->fs);
+    emu.reg<uint16_t>(x86_register::gs, this->gs);
     emu.reg(x86_register::rip, this->rip);
     emu.reg(x86_register::rsp, this->rsp);
     emu.reg(x86_register::r10, this->r10);
@@ -604,6 +705,12 @@ void callback_frame::serialize(utils::buffer_serializer& buffer) const
     buffer.write(this->rdx);
     buffer.write(this->r8);
     buffer.write(this->r9);
+    buffer.write(this->cs);
+    buffer.write(this->ss);
+    buffer.write(this->ds);
+    buffer.write(this->es);
+    buffer.write(this->fs);
+    buffer.write(this->gs);
 
     buffer.write(static_cast<bool>(this->state));
     if (this->state)
@@ -622,6 +729,12 @@ void callback_frame::deserialize(utils::buffer_deserializer& buffer)
     buffer.read(this->rdx);
     buffer.read(this->r8);
     buffer.read(this->r9);
+    buffer.read(this->cs);
+    buffer.read(this->ss);
+    buffer.read(this->ds);
+    buffer.read(this->es);
+    buffer.read(this->fs);
+    buffer.read(this->gs);
 
     bool has_state{};
     buffer.read(has_state);

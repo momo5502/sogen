@@ -18,6 +18,8 @@
 
 #include "apiset/apiset.hpp"
 
+struct fake_environment_config;
+
 #define PEB_SEGMENT_SIZE        (20 << 20) // 20 MB
 #define GS_SEGMENT_SIZE         (1 << 20)  // 1 MB
 
@@ -36,6 +38,48 @@ struct application_settings;
 class windows_version_manager;
 
 using knowndlls_map = std::map<std::u16string, section>;
+struct file_lock_range
+{
+    uint64_t offset{};
+    uint64_t length{};
+    ULONG key{};
+    bool exclusive{};
+    handle owner{};
+
+    void serialize(utils::buffer_serializer& buffer) const
+    {
+        buffer.write(this->offset);
+        buffer.write(this->length);
+        buffer.write(this->key);
+        buffer.write(this->exclusive);
+        buffer.write(this->owner);
+    }
+
+    void deserialize(utils::buffer_deserializer& buffer)
+    {
+        buffer.read(this->offset);
+        buffer.read(this->length);
+        buffer.read(this->key);
+        buffer.read(this->exclusive);
+        buffer.read(this->owner);
+    }
+};
+
+struct file_lock_ranges
+{
+    std::vector<file_lock_range> locks{};
+
+    void serialize(utils::buffer_serializer& buffer) const
+    {
+        buffer.write_vector(this->locks);
+    }
+
+    void deserialize(utils::buffer_deserializer& buffer)
+    {
+        buffer.read_vector(this->locks);
+    }
+};
+
 struct process_context
 {
     struct callbacks
@@ -91,8 +135,9 @@ struct process_context
     }
 
     void setup(x86_64_emulator& emu, memory_manager& memory, registry_manager& registry, file_system& file_system,
-               windows_version_manager& version, const application_settings& app_settings, const mapped_module& executable,
-               const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32 = nullptr);
+               windows_version_manager& version, const fake_environment_config& fake_env, const application_settings& app_settings,
+               const mapped_module& executable, const mapped_module& ntdll, const apiset::container& apiset_container,
+               const mapped_module* ntdll32 = nullptr);
 
     handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size, uint32_t create_flags,
                          bool initial_thread = false);
@@ -101,10 +146,11 @@ struct process_context
     uint16_t add_or_find_atom(std::u16string name);
     bool delete_atom(const std::u16string& name);
     bool delete_atom(uint16_t atom_id);
-    const std::u16string* get_atom_name(uint16_t atom_id) const;
+    std::optional<std::u16string> get_atom_name(uint16_t atom_id) const;
 
     template <typename T>
-    void build_knowndlls_section_table(registry_manager& registry, const file_system& file_system, const apiset_map& apiset, bool is_32bit);
+    void build_knowndlls_section_table(registry_manager& registry, const file_system& file_system, const apiset_map& apiset,
+                                       const windows_path& system_root, bool is_32bit);
 
     std::optional<section> get_knowndll_section_by_name(const std::u16string& name, bool is_32bit) const;
     void add_knowndll_section(const std::u16string& name, const section& section, bool is_32bit);
@@ -115,10 +161,14 @@ struct process_context
 
     generic_handle_store* get_handle_store(handle handle);
 
+    size_t get_live_thread_count() const;
+
     // WOW64 support flag - set during process setup based on executable architecture
     bool is_wow64_process{false};
 
     callbacks* callbacks_{};
+
+    std::vector<uint8_t> sid{};
 
     uint64_t shared_section_address{0};
     uint64_t shared_section_size{0};
@@ -139,8 +189,11 @@ struct process_context
     uint64_t ki_user_apc_dispatcher{};
     uint64_t ki_user_exception_dispatcher{};
     uint64_t instrumentation_callback{};
+    uint64_t wow64_ki_user_callback_dispatcher{};
     uint64_t zw_callback_return{};
     uint64_t dispatch_client_message{};
+    uint32_t gdi_default_dc_handle{};
+    std::optional<handle> etw_notification_event{};
 
     // For WOW64 processes
     std::optional<emulator_object<PEB32>> peb32;
@@ -149,13 +202,21 @@ struct process_context
 
     user_handle_table user_handles;
     handle default_monitor_handle{};
+    handle default_desktop_window_handle{};
     handle_store<handle_types::event, event> events{};
     handle_store<handle_types::file, file> files{};
+    utils::insensitive_u16string_map<file_lock_ranges> file_locks{};
     handle_store<handle_types::section, section> sections{};
     handle_store<handle_types::device, io_device_container> devices{};
     handle_store<handle_types::semaphore, semaphore> semaphores{};
+    handle_store<handle_types::io_completion, io_completion> io_completions{};
+    handle_store<handle_types::wait_completion_packet, wait_completion_packet> wait_completion_packets{};
+    handle_store<handle_types::worker_factory, worker_factory> worker_factories{};
     handle_store<handle_types::port, port_container> ports{};
     handle_store<handle_types::mutant, mutant> mutants{};
+    handle_store<handle_types::private_namespace, private_namespace> private_namespaces{};
+    handle default_desktop{};
+    handle_store<handle_types::desktop, desktop> desktops{};
     user_handle_store<handle_types::window, window> windows{user_handles};
     handle_store<handle_types::timer, timer> timers{};
     handle_store<handle_types::registry, registry_key, 2> registry_keys{};

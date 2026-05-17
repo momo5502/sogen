@@ -8,7 +8,7 @@ namespace network
     class tcp_server_socket : public socket
     {
       public:
-        tcp_server_socket(int af);
+        explicit tcp_server_socket(int af);
 
         tcp_server_socket() = default;
         ~tcp_server_socket() override = default;

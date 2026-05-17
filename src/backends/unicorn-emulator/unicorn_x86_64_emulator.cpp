@@ -705,6 +705,11 @@ namespace unicorn
                 return this->violation_ip_.has_value();
             }
 
+            bool supports_instruction_counting() const override
+            {
+                return true;
+            }
+
             std::string get_name() const override
             {
                 return "Unicorn Engine";

@@ -132,7 +132,8 @@ struct stateless_device : io_device
     }
 };
 
-std::unique_ptr<io_device> create_device(std::u16string_view device);
+bool needs_32_bit_devices(const windows_emulator& win_emu);
+std::unique_ptr<io_device> create_device(std::u16string_view device, bool is_32_bit);
 
 class io_device_container : public io_device
 {
@@ -140,7 +141,8 @@ class io_device_container : public io_device
     io_device_container() = default;
 
     io_device_container(std::u16string device, windows_emulator& win_emu, const io_device_creation_data& data)
-        : device_name_(std::move(device))
+        : is_32_bit_(needs_32_bit_devices(win_emu)),
+          device_name_(std::move(device))
     {
         this->setup();
         this->device_->create(win_emu, data);
@@ -174,12 +176,13 @@ class io_device_container : public io_device
     }
 
   private:
+    bool is_32_bit_{};
     std::u16string device_name_{};
     std::unique_ptr<io_device> device_{};
 
     void setup()
     {
-        this->device_ = create_device(this->device_name_);
+        this->device_ = create_device(this->device_name_, this->is_32_bit_);
     }
 
     void assert_validity() const

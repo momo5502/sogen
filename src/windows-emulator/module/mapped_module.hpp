@@ -1,5 +1,6 @@
 #pragma once
 #include <memory_region.hpp>
+#include "../windows_path.hpp"
 
 struct exported_symbol
 {
@@ -22,6 +23,7 @@ using address_name_mapping = std::map<uint64_t, std::string>;
 
 struct mapped_section
 {
+    std::optional<uint64_t> first_execute{};
     std::string name{};
     basic_memory_region<> region{};
 };
@@ -30,6 +32,7 @@ struct mapped_module
 {
     std::string name{};
     std::filesystem::path path{};
+    windows_path module_path{};
 
     uint64_t image_base{};
     uint64_t image_base_file{};

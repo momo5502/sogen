@@ -74,7 +74,11 @@ namespace utils
             {
                 this->release();
                 this->file_ = obj.file_;
+                this->deferred_rename_ = obj.deferred_rename_;
+                this->deferred_delete_ = obj.deferred_delete_;
                 obj.file_ = {};
+                obj.deferred_rename_ = {};
+                obj.deferred_delete_ = {};
             }
 
             return *this;
@@ -133,6 +137,7 @@ namespace utils
             }
 
 #ifdef OS_WINDOWS
+            // NOLINTNEXTLINE(google-runtime-int)
             return _chsize_s(fd, static_cast<long long>(size)) == 0;
 #else
             return ftruncate(fd, static_cast<off_t>(size)) == 0;
