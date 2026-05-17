@@ -152,10 +152,30 @@ layer is a thin client, not a parallel engine.
 
 ## Phase plan
 
-1. **Core abstraction + this document.** ← current
-2. Generic `DebugCommand` protocol + dispatch + read-only introspection
-   (registers/disassemble/modules/threads/callstack).
-3. Breakpoint + step engine (into/over/out/run-to), event-driven stops.
-4. Web UI debugger shell + panels + hotkeys (F5/F10/F11/Shift+F11/Ctrl+G).
-5. CFG view (React Flow), incremental from decoded blocks.
-6. Monaco Python tab + scripting bridge to `debug_session`.
+1. **[done]** Core abstraction + this document.
+2. **[done]** Generic `DebugCommand` protocol + dispatch + read-only
+   introspection (registers/disassemble/modules/threads/callstack).
+3. **[done]** Breakpoint + step engine (into/over/out/run-to),
+   event-driven stops via the persistent control hook.
+4. **[done]** Web UI debugger shell + panels + hotkeys
+   (F5/F10/F11/Shift+F11/Ctrl+G).
+5. **[done]** CFG view (self-contained SVG, incremental from decoded
+   blocks).
+6. **[done]** Monaco editor scripting tab + `emu.debug.*` bridge to the
+   real `debug_session`.
+
+## Scripting tab — honest scope
+
+The scripting tab uses the Monaco editor and exposes an `emu` object
+whose method names/behaviour mirror the existing nanobind `sogen`
+model (`emu.debug.breakpoint/step_into/step_over/continue_execution`,
+`emu.debug.registers()`, `emu.debug.disassemble(addr, n)`,
+`emu.memory.read`). Every call drives the **real** emulator through the
+same generic command channel / `debug_session` — it is not a mock.
+
+The host language is JavaScript (async), not CPython: running the real
+nanobind `sogen` module in the browser needs a Python-in-WASM runtime
+(pyodide + nanobind-wasm). That runtime is a future drop-in that mounts
+behind the *identical* `emu` facade — no protocol, `debug_session`, or
+UI changes required. This keeps the integration real and correct today
+instead of shipping a fake Python interpreter.

@@ -20,6 +20,7 @@ import {
 import { Emulator } from "@/emulator";
 import { HexViewer } from "@/components/memory-view";
 import { CfgView } from "@/components/cfg-view";
+import { ScriptConsole } from "@/components/script-console";
 import * as dbg from "@/debugger/api";
 
 const ROW_HEIGHT = 20;
@@ -392,6 +393,7 @@ export function DebuggerView({ emulator, paused, onClose }: DebuggerViewProps) {
           <TabsTrigger value="modules">Modules</TabsTrigger>
           <TabsTrigger value="cfg">CFG</TabsTrigger>
           <TabsTrigger value="memory">Memory</TabsTrigger>
+          <TabsTrigger value="script">Script</TabsTrigger>
         </TabsList>
 
         <div className="relative flex flex-1 min-h-0">
@@ -539,6 +541,10 @@ export function DebuggerView({ emulator, paused, onClose }: DebuggerViewProps) {
               paused={paused}
               scrollToOffset={0}
             />
+          </TabsContent>
+
+          <TabsContent value="script" className="absolute inset-0">
+            <ScriptConsole emulator={emulator} />
           </TabsContent>
         </div>
       </Tabs>
