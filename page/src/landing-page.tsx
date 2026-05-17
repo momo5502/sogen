@@ -326,8 +326,8 @@ export function LandingPage() {
                 </p>
 
                 <div className="mb-8 inline-flex items-center rounded-lg border border-neutral-700 bg-neutral-900/80 px-4 py-3 font-mono text-sm text-neutral-200">
-                  <span className="text-neutral-500 mr-3">$</span>
-                  <span>pip install sogen</span>
+                  <span className="text-neutral-500 mr-3 select-none">$</span>
+                  <span className="select-all">pip install sogen</span>
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-4">
