@@ -39,7 +39,15 @@ export interface MemoryReadResult {
   data: Uint8Array;
 }
 
-type MemoryReadResolver = (result: Uint8Array | null) => void;
+// One outstanding read. The entry stays in its per-address queue even after it
+// settles (timeout) so the strict 1:1 positional mapping between sequential
+// backend responses and requests is preserved (a timed-out request becomes a
+// tombstone that absorbs its own late response instead of stealing another's).
+interface PendingRead {
+  settle: (result: Uint8Array | null) => void;
+  settled: boolean;
+}
+
 type RegionsResolver = (regions: MemoryRegion[] | null) => void;
 
 const MEMORY_READ_TIMEOUT_MS = 8000;
@@ -116,7 +124,7 @@ export class Emulator {
 
   // Outstanding read-only memory requests, keyed by requested address (hex).
   // The paused backend answers in FIFO order per address.
-  private pendingMemoryReads: Map<string, MemoryReadResolver[]> = new Map();
+  private pendingMemoryReads: Map<string, PendingRead[]> = new Map();
   private pendingRegionRequests: RegionsResolver[] = [];
 
   constructor(
@@ -235,36 +243,28 @@ export class Emulator {
     const key = address.toString(16);
 
     return new Promise<Uint8Array | null>((resolve) => {
-      let settled = false;
+      const entry: PendingRead = { settled: false, settle: () => {} };
+
+      // On timeout we do NOT remove the entry from the queue; it is left as a
+      // tombstone so later responses still line up positionally with their
+      // originating requests.
       const finish = (value: Uint8Array | null) => {
-        if (settled) {
+        if (entry.settled) {
           return;
         }
-        settled = true;
+        entry.settled = true;
         clearTimeout(timer);
-
-        const queue = this.pendingMemoryReads.get(key);
-        if (queue) {
-          const idx = queue.indexOf(resolver);
-          if (idx >= 0) {
-            queue.splice(idx, 1);
-          }
-          if (queue.length === 0) {
-            this.pendingMemoryReads.delete(key);
-          }
-        }
-
         resolve(value);
       };
+      entry.settle = finish;
 
-      const resolver: MemoryReadResolver = (data) => finish(data);
       const timer = setTimeout(() => finish(null), MEMORY_READ_TIMEOUT_MS);
 
       const queue = this.pendingMemoryReads.get(key);
       if (queue) {
-        queue.push(resolver);
+        queue.push(entry);
       } else {
-        this.pendingMemoryReads.set(key, [resolver]);
+        this.pendingMemoryReads.set(key, [entry]);
       }
 
       this.sendEvent(
@@ -335,95 +335,119 @@ export class Emulator {
   }
 
   /**
-   * Fallback used when the backend has no region-enumeration support: walk the
-   * user address space with read-only 1-byte reads, galloping over unmapped
-   * gaps and binary-searching region edges at allocation granularity. Bounded
-   * by a read budget and a wall-clock deadline so it never hangs the UI.
+   * Fallback used when the backend has no region-enumeration support: discover
+   * mapped memory with read-only 1-byte reads.
+   *
+   * Unmapped gaps are scanned *exhaustively* at allocation granularity (no
+   * exponential stride that could jump over a whole region, and no early abort
+   * that could return an empty list). Well-known base addresses are probed
+   * first so the main image/heap is found even when it sits far above the
+   * scan start and the read budget would otherwise be exhausted by the gap.
+   * Bounded by a read budget and a wall-clock deadline so it never hangs the
+   * UI; returns whatever was found so far when the budget runs out.
    */
   private async _probeMemoryRegions(): Promise<MemoryRegion[]> {
     const GRAN = BigInt(0x10000); // allocation granularity (64 KiB)
+    const ALIGN_MASK = ~(GRAN - BigInt(1));
     const MIN = BigInt(0x10000);
     const MAX = BigInt("0x7fffffffffff");
-    const MAX_READS = 6000;
+    const END_STEP_CAP = GRAN * BigInt(64); // cap region-end stride at 4 MiB
+    const MAX_READS = 8000;
     const deadline = Date.now() + 20000;
 
+    // Likely allocation bases (low 32-bit space, 64-bit defaults, common PE
+    // image bases) so a far-away first mapping is still discovered.
+    const SEEDS = [
+      0x10000, 0x40000, 0x400000, 0x10000000, 0x70000000, 0x100000000,
+      0x140000000, 0x180000000, 0x200000000, 0x1000000000,
+    ];
+
     const regions: MemoryRegion[] = [];
+    const recorded: { start: bigint; end: bigint }[] = [];
     let reads = 0;
 
     const readable = async (addr: bigint): Promise<boolean> => {
       reads++;
       return (await this.readMemory(addr, 1)) !== null;
     };
-    const budgetLeft = () => reads < MAX_READS && Date.now() < deadline;
+    const budgetLeft = () =>
+      reads < MAX_READS &&
+      Date.now() < deadline &&
+      this.state === EmulationState.Paused;
+    const coveringRegion = (addr: bigint) =>
+      recorded.find((r) => addr >= r.start && addr < r.end);
 
-    let pos = MIN;
-    while (pos < MAX && this.state === EmulationState.Paused && budgetLeft()) {
-      if (await readable(pos)) {
-        // Found a mapped granule: gallop to find an unreadable bound.
-        let lastOk = pos;
-        let step = GRAN;
-        let hi = pos + step;
-        while (hi < MAX && budgetLeft() && (await readable(hi))) {
-          lastOk = hi;
-          step *= BigInt(2);
-          hi = pos + step;
-        }
-        let bad = hi < MAX ? hi : MAX;
-        // Binary search the end down to granule precision.
-        while (bad - lastOk > GRAN && budgetLeft()) {
-          const mid = lastOk + ((bad - lastOk) / GRAN / BigInt(2)) * GRAN;
-          if (mid <= lastOk) {
-            break;
-          }
-          if (await readable(mid)) {
-            lastOk = mid;
-          } else {
-            bad = mid;
-          }
-        }
-        const end = lastOk + GRAN;
-        regions.push({
-          base: "0x" + pos.toString(16),
-          size: Number(end - pos),
-          protection: "",
-          state: "commit",
-          kind: "probed",
-          module: null,
-        });
-        pos = end;
-      } else {
-        // Unmapped: gallop forward to find the next mapped granule.
-        let step = GRAN;
-        let probe = pos + step;
-        let found: bigint | null = null;
-        while (probe < MAX && budgetLeft()) {
-          if (await readable(probe)) {
-            found = probe;
-            break;
-          }
-          step *= BigInt(2);
-          probe = pos + step;
-        }
-        if (found === null) {
+    // Maps the contiguous readable run starting at the (granule-aligned,
+    // readable) `start`, records it, and returns the address just past it.
+    const mapFrom = async (start: bigint): Promise<bigint> => {
+      let lastOk = start;
+      let step = GRAN;
+      let hi = start + step;
+      while (hi < MAX && budgetLeft() && (await readable(hi))) {
+        lastOk = hi;
+        step = step < END_STEP_CAP ? step * BigInt(2) : step;
+        hi = start + step;
+      }
+      let bad = hi < MAX ? hi : MAX;
+      while (bad - lastOk > GRAN && budgetLeft()) {
+        const mid = lastOk + ((bad - lastOk) / GRAN / BigInt(2)) * GRAN;
+        if (mid <= lastOk) {
           break;
         }
-        let bad = pos;
-        let ok = found;
-        while (ok - bad > GRAN && budgetLeft()) {
-          const mid = bad + ((ok - bad) / GRAN / BigInt(2)) * GRAN;
-          if (mid <= bad) {
-            break;
-          }
-          if (await readable(mid)) {
-            ok = mid;
-          } else {
-            bad = mid;
-          }
+        if (await readable(mid)) {
+          lastOk = mid;
+        } else {
+          bad = mid;
         }
-        pos = ok;
+      }
+      const end = lastOk + GRAN;
+      regions.push({
+        base: "0x" + start.toString(16),
+        size: Number(end - start),
+        protection: "",
+        state: "commit",
+        kind: "probed",
+        module: null,
+      });
+      recorded.push({ start, end });
+      return end;
+    };
+
+    for (const seed of SEEDS) {
+      if (!budgetLeft()) {
+        break;
+      }
+      const addr = BigInt(seed) & ALIGN_MASK;
+      if (addr < MIN || addr >= MAX || coveringRegion(addr)) {
+        continue;
+      }
+      if (await readable(addr)) {
+        await mapFrom(addr);
       }
     }
 
+    // Exhaustive granule sweep: never skips a granule-aligned region.
+    let pos = MIN;
+    while (pos < MAX && budgetLeft()) {
+      const covered = coveringRegion(pos);
+      if (covered) {
+        pos = covered.end;
+        continue;
+      }
+      if (await readable(pos)) {
+        pos = await mapFrom(pos);
+      } else {
+        pos += GRAN;
+      }
+    }
+
+    regions.sort((a, b) =>
+      BigInt(a.base) < BigInt(b.base)
+        ? -1
+        : BigInt(a.base) > BigInt(b.base)
+          ? 1
+          : 0,
+    );
     return regions;
   }
 
@@ -431,8 +455,10 @@ export class Emulator {
     const reads = this.pendingMemoryReads;
     this.pendingMemoryReads = new Map();
     for (const queue of reads.values()) {
-      for (const resolver of queue) {
-        resolver(null);
+      for (const entry of queue) {
+        if (!entry.settled) {
+          entry.settle(null);
+        }
       }
     }
 
@@ -515,14 +541,22 @@ export class Emulator {
       return;
     }
 
-    const resolver = queue.shift()!;
+    // Exactly one response per request, delivered in request order, so the
+    // head entry is this response's originator.
+    const entry = queue.shift()!;
     if (queue.length === 0) {
       this.pendingMemoryReads.delete(key);
     }
 
+    // Already timed out: this is that request's orphaned late response. Its
+    // tombstone consumed it; do not mis-deliver to a live read.
+    if (entry.settled) {
+      return;
+    }
+
     // The backend only fills `data` when the whole range was readable.
     const data = response.data;
-    resolver(data.length > 0 ? Uint8Array.from(data) : null);
+    entry.settle(data.length > 0 ? Uint8Array.from(data) : null);
   }
 
   _handle_memory_regions_response(
