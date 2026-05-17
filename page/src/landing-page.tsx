@@ -64,16 +64,13 @@ app = sogen.create_application(
     emulation_root="./root",
 )
 
-@sogen.api_call(
-    cc=sogen.CallingConvention.stdcall,
-    params=[ctypes.c_uint32],
-)
+@sogen.api_call(cc=sogen.CallingConvention.stdcall,
+                params=[ctypes.c_uint32])
 def on_sleep(call, params):
     print(f"Sleep({params[0]})")
     return sogen.ApiContinuation.run_original
 
-app.hooks.apis["Sleep"] = on_sleep
-app.start()`;
+app.hooks.apis["Sleep"] = on_sleep`;
 
 export function LandingPage() {
   const features = [
@@ -333,8 +330,8 @@ export function LandingPage() {
               </div>
 
               <div className="relative">
-                <div className="absolute -inset-4 bg-linear-to-r from-yellow-500/10 to-cyan-500/10 rounded-3xl blur-md"></div>
-                <div className="relative rounded-3xl border border-neutral-700 bg-neutral-900/90 overflow-hidden shadow-2xl">
+                <div className="absolute -inset-4 bg-linear-to-r from-yellow-500/10 to-cyan-500/10 rounded-2xl blur-md"></div>
+                <div className="relative rounded-2xl border border-neutral-700 bg-neutral-900/90 overflow-hidden shadow-2xl">
                   <div className="flex items-center gap-2 border-b border-neutral-800 px-5 py-4 text-sm text-neutral-500">
                     <div className="h-3 w-3 rounded-full bg-red-400/80"></div>
                     <div className="h-3 w-3 rounded-full bg-yellow-400/80"></div>
@@ -342,7 +339,7 @@ export function LandingPage() {
                     <span className="ml-3">api_hooks.py</span>
                   </div>
                   <Highlight
-                    theme={themes.vsDark}
+                    theme={themes.oneDark}
                     code={pythonBindingsSample}
                     language="python"
                   >
