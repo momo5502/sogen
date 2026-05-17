@@ -20,6 +20,39 @@ export interface EmulationStatus {
   executedInstructions: BigInt;
 }
 
+/**
+ * A single virtual memory region as reported by the paused emulator backend.
+ * `base` is a hex string (e.g. "0x140000000") so 64-bit values survive JSON.
+ */
+export interface MemoryRegion {
+  base: string;
+  size: number;
+  protection: string;
+  state: "reserve" | "commit";
+  kind: string;
+  module: string | null;
+}
+
+/** Result of a read-only memory read against a paused snapshot. */
+export interface MemoryReadResult {
+  address: bigint;
+  data: Uint8Array;
+}
+
+// One outstanding read. The entry stays in its per-address queue even after it
+// settles (timeout) so the strict 1:1 positional mapping between sequential
+// backend responses and requests is preserved (a timed-out request becomes a
+// tombstone that absorbs its own late response instead of stealing another's).
+interface PendingRead {
+  settle: (result: Uint8Array | null) => void;
+  settled: boolean;
+}
+
+type RegionsResolver = (regions: MemoryRegion[] | null) => void;
+
+const MEMORY_READ_TIMEOUT_MS = 8000;
+const MEMORY_REGIONS_TIMEOUT_MS = 4000;
+
 function createDefaultEmulationStatus(): EmulationStatus {
   return {
     executedInstructions: BigInt(0),
@@ -89,6 +122,11 @@ export class Emulator {
   pause_time: Date | null = null;
   paused_time: number = 0;
 
+  // Outstanding read-only memory requests, keyed by requested address (hex).
+  // The paused backend answers in FIFO order per address.
+  private pendingMemoryReads: Map<string, PendingRead[]> = new Map();
+  private pendingRegionRequests: RegionsResolver[] = [];
+
   constructor(
     logHandler: LogHandler,
     stateChangeHandler: StateChangeHandler,
@@ -148,6 +186,7 @@ export class Emulator {
 
   stop() {
     this.worker.terminate();
+    this._flushPendingMemoryRequests();
     this._setState(EmulationState.Stopped);
     this.terminateResolve(null);
   }
@@ -190,6 +229,246 @@ export class Emulator {
     this.updateState();
   }
 
+  /**
+   * Read-only read of `size` bytes at `address` from the paused snapshot.
+   * Resolves `null` if the range is unmapped, the read fails, or the backend
+   * does not answer (e.g. emulation is not paused). Never mutates emulator
+   * state.
+   */
+  readMemory(address: bigint, size: number): Promise<Uint8Array | null> {
+    if (size <= 0 || this.state !== EmulationState.Paused) {
+      return Promise.resolve(null);
+    }
+
+    const key = address.toString(16);
+
+    return new Promise<Uint8Array | null>((resolve) => {
+      const entry: PendingRead = { settled: false, settle: () => {} };
+
+      // On timeout we do NOT remove the entry from the queue; it is left as a
+      // tombstone so later responses still line up positionally with their
+      // originating requests.
+      const finish = (value: Uint8Array | null) => {
+        if (entry.settled) {
+          return;
+        }
+        entry.settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      };
+      entry.settle = finish;
+
+      const timer = setTimeout(() => finish(null), MEMORY_READ_TIMEOUT_MS);
+
+      const queue = this.pendingMemoryReads.get(key);
+      if (queue) {
+        queue.push(entry);
+      } else {
+        this.pendingMemoryReads.set(key, [entry]);
+      }
+
+      this.sendEvent(
+        new fbDebugger.DebugEventT(
+          fbDebugger.Event.ReadMemoryRequest,
+          new fbDebugger.ReadMemoryRequestT(address, size),
+        ),
+      );
+    });
+  }
+
+  /**
+   * Enumerate the emulated virtual memory layout from the paused snapshot.
+   *
+   * Prefers the native backend enumeration (accurate protection flags and
+   * module names). If the running emulator build does not implement it, falls
+   * back to probing the address space with read-only reads so the feature
+   * still works (approximate ranges, no protection/module metadata).
+   * Resolves `null` only when emulation is not paused.
+   */
+  async getMemoryRegions(): Promise<MemoryRegion[] | null> {
+    if (this.state !== EmulationState.Paused) {
+      return null;
+    }
+
+    const native = await this._requestMemoryRegions();
+    if (native) {
+      return native;
+    }
+
+    return this._probeMemoryRegions();
+  }
+
+  private _requestMemoryRegions(): Promise<MemoryRegion[] | null> {
+    if (this.state !== EmulationState.Paused) {
+      return Promise.resolve(null);
+    }
+
+    return new Promise<MemoryRegion[] | null>((resolve) => {
+      let settled = false;
+      const finish = (value: MemoryRegion[] | null) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+
+        const idx = this.pendingRegionRequests.indexOf(resolver);
+        if (idx >= 0) {
+          this.pendingRegionRequests.splice(idx, 1);
+        }
+
+        resolve(value);
+      };
+
+      const resolver: RegionsResolver = (regions) => finish(regions);
+      const timer = setTimeout(() => finish(null), MEMORY_REGIONS_TIMEOUT_MS);
+
+      this.pendingRegionRequests.push(resolver);
+
+      this.sendEvent(
+        new fbDebugger.DebugEventT(
+          fbDebugger.Event.GetMemoryRegionsRequest,
+          new fbDebugger.GetMemoryRegionsRequestT(),
+        ),
+      );
+    });
+  }
+
+  /**
+   * Fallback used when the backend has no region-enumeration support: discover
+   * mapped memory with read-only 1-byte reads.
+   *
+   * Unmapped gaps are scanned *exhaustively* at allocation granularity (no
+   * exponential stride that could jump over a whole region, and no early abort
+   * that could return an empty list). Well-known base addresses are probed
+   * first so the main image/heap is found even when it sits far above the
+   * scan start and the read budget would otherwise be exhausted by the gap.
+   * Bounded by a read budget and a wall-clock deadline so it never hangs the
+   * UI; returns whatever was found so far when the budget runs out.
+   */
+  private async _probeMemoryRegions(): Promise<MemoryRegion[]> {
+    const GRAN = BigInt(0x10000); // allocation granularity (64 KiB)
+    const ALIGN_MASK = ~(GRAN - BigInt(1));
+    const MIN = BigInt(0x10000);
+    const MAX = BigInt("0x7fffffffffff");
+    const END_STEP_CAP = GRAN * BigInt(64); // cap region-end stride at 4 MiB
+    const MAX_READS = 8000;
+    const deadline = Date.now() + 20000;
+
+    // Likely allocation bases (low 32-bit space, 64-bit defaults, common PE
+    // image bases) so a far-away first mapping is still discovered.
+    const SEEDS = [
+      0x10000, 0x40000, 0x400000, 0x10000000, 0x70000000, 0x100000000,
+      0x140000000, 0x180000000, 0x200000000, 0x1000000000,
+    ];
+
+    const regions: MemoryRegion[] = [];
+    const recorded: { start: bigint; end: bigint }[] = [];
+    let reads = 0;
+
+    const readable = async (addr: bigint): Promise<boolean> => {
+      reads++;
+      return (await this.readMemory(addr, 1)) !== null;
+    };
+    const budgetLeft = () =>
+      reads < MAX_READS &&
+      Date.now() < deadline &&
+      this.state === EmulationState.Paused;
+    const coveringRegion = (addr: bigint) =>
+      recorded.find((r) => addr >= r.start && addr < r.end);
+
+    // Maps the contiguous readable run starting at the (granule-aligned,
+    // readable) `start`, records it, and returns the address just past it.
+    const mapFrom = async (start: bigint): Promise<bigint> => {
+      let lastOk = start;
+      let step = GRAN;
+      let hi = start + step;
+      while (hi < MAX && budgetLeft() && (await readable(hi))) {
+        lastOk = hi;
+        step = step < END_STEP_CAP ? step * BigInt(2) : step;
+        hi = start + step;
+      }
+      let bad = hi < MAX ? hi : MAX;
+      while (bad - lastOk > GRAN && budgetLeft()) {
+        const mid = lastOk + ((bad - lastOk) / GRAN / BigInt(2)) * GRAN;
+        if (mid <= lastOk) {
+          break;
+        }
+        if (await readable(mid)) {
+          lastOk = mid;
+        } else {
+          bad = mid;
+        }
+      }
+      const end = lastOk + GRAN;
+      regions.push({
+        base: "0x" + start.toString(16),
+        size: Number(end - start),
+        protection: "",
+        state: "commit",
+        kind: "probed",
+        module: null,
+      });
+      recorded.push({ start, end });
+      return end;
+    };
+
+    for (const seed of SEEDS) {
+      if (!budgetLeft()) {
+        break;
+      }
+      const addr = BigInt(seed) & ALIGN_MASK;
+      if (addr < MIN || addr >= MAX || coveringRegion(addr)) {
+        continue;
+      }
+      if (await readable(addr)) {
+        await mapFrom(addr);
+      }
+    }
+
+    // Exhaustive granule sweep: never skips a granule-aligned region.
+    let pos = MIN;
+    while (pos < MAX && budgetLeft()) {
+      const covered = coveringRegion(pos);
+      if (covered) {
+        pos = covered.end;
+        continue;
+      }
+      if (await readable(pos)) {
+        pos = await mapFrom(pos);
+      } else {
+        pos += GRAN;
+      }
+    }
+
+    regions.sort((a, b) =>
+      BigInt(a.base) < BigInt(b.base)
+        ? -1
+        : BigInt(a.base) > BigInt(b.base)
+          ? 1
+          : 0,
+    );
+    return regions;
+  }
+
+  private _flushPendingMemoryRequests() {
+    const reads = this.pendingMemoryReads;
+    this.pendingMemoryReads = new Map();
+    for (const queue of reads.values()) {
+      for (const entry of queue) {
+        if (!entry.settled) {
+          entry.settle(null);
+        }
+      }
+    }
+
+    const regions = this.pendingRegionRequests;
+    this.pendingRegionRequests = [];
+    for (const resolver of regions) {
+      resolver(null);
+    }
+  }
+
   getExecutionTime() {
     const endTime = this.pause_time ? this.pause_time : new Date();
     const totalTime = endTime.getTime() - this.start_time.getTime();
@@ -206,6 +485,7 @@ export class Emulator {
     } catch (e) {}
 
     this.logError(`Emulator encountered fatal error: ${ev.message}`);
+    this._flushPendingMemoryRequests();
     this._setState(EmulationState.Failed);
     this.terminateResolve(-1);
   }
@@ -216,6 +496,7 @@ export class Emulator {
     } else if (event.data.message == "event") {
       this._onEvent(decodeEvent(event.data.data));
     } else if (event.data.message == "end") {
+      this._flushPendingMemoryRequests();
       this._setState(
         this.exit_status === 0 ? EmulationState.Success : EmulationState.Failed,
       );
@@ -240,7 +521,62 @@ export class Emulator {
           event.event as fbDebugger.EmulationStatusT,
         );
         break;
+      case fbDebugger.Event.ReadMemoryResponse:
+        this._handle_read_memory_response(
+          event.event as fbDebugger.ReadMemoryResponseT,
+        );
+        break;
+      case fbDebugger.Event.GetMemoryRegionsResponse:
+        this._handle_memory_regions_response(
+          event.event as fbDebugger.GetMemoryRegionsResponseT,
+        );
+        break;
     }
+  }
+
+  _handle_read_memory_response(response: fbDebugger.ReadMemoryResponseT) {
+    const key = response.address.toString(16);
+    const queue = this.pendingMemoryReads.get(key);
+    if (!queue || queue.length === 0) {
+      return;
+    }
+
+    // Exactly one response per request, delivered in request order, so the
+    // head entry is this response's originator.
+    const entry = queue.shift()!;
+    if (queue.length === 0) {
+      this.pendingMemoryReads.delete(key);
+    }
+
+    // Already timed out: this is that request's orphaned late response. Its
+    // tombstone consumed it; do not mis-deliver to a live read.
+    if (entry.settled) {
+      return;
+    }
+
+    // The backend only fills `data` when the whole range was readable.
+    const data = response.data;
+    entry.settle(data.length > 0 ? Uint8Array.from(data) : null);
+  }
+
+  _handle_memory_regions_response(
+    response: fbDebugger.GetMemoryRegionsResponseT,
+  ) {
+    const resolver = this.pendingRegionRequests.shift();
+    if (!resolver) {
+      return;
+    }
+
+    let regions: MemoryRegion[] | null = null;
+    try {
+      const text = new TextDecoder().decode(Uint8Array.from(response.regions));
+      regions = JSON.parse(text) as MemoryRegion[];
+    } catch (e) {
+      console.log(e);
+      regions = null;
+    }
+
+    resolver(regions);
   }
 
   _setState(state: EmulationState) {

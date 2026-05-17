@@ -6,6 +6,8 @@ export { ApplicationExit, ApplicationExitT } from './debugger/application-exit.j
 export { DebugEvent, DebugEventT } from './debugger/debug-event.js';
 export { EmulationStatus, EmulationStatusT } from './debugger/emulation-status.js';
 export { Event } from './debugger/event.js';
+export { GetMemoryRegionsRequest, GetMemoryRegionsRequestT } from './debugger/get-memory-regions-request.js';
+export { GetMemoryRegionsResponse, GetMemoryRegionsResponseT } from './debugger/get-memory-regions-response.js';
 export { GetStateRequest, GetStateRequestT } from './debugger/get-state-request.js';
 export { GetStateResponse, GetStateResponseT } from './debugger/get-state-response.js';
 export { PauseRequest, PauseRequestT } from './debugger/pause-request.js';

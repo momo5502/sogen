@@ -4,6 +4,8 @@
 
 import { ApplicationExit, ApplicationExitT } from '../debugger/application-exit.js';
 import { EmulationStatus, EmulationStatusT } from '../debugger/emulation-status.js';
+import { GetMemoryRegionsRequest, GetMemoryRegionsRequestT } from '../debugger/get-memory-regions-request.js';
+import { GetMemoryRegionsResponse, GetMemoryRegionsResponseT } from '../debugger/get-memory-regions-response.js';
 import { GetStateRequest, GetStateRequestT } from '../debugger/get-state-request.js';
 import { GetStateResponse, GetStateResponseT } from '../debugger/get-state-response.js';
 import { PauseRequest, PauseRequestT } from '../debugger/pause-request.js';
@@ -33,13 +35,15 @@ export enum Event {
   ReadRegisterRequest = 11,
   ReadRegisterResponse = 12,
   ApplicationExit = 13,
-  EmulationStatus = 14
+  EmulationStatus = 14,
+  GetMemoryRegionsRequest = 15,
+  GetMemoryRegionsResponse = 16
 }
 
 export function unionToEvent(
   type: Event,
-  accessor: (obj:ApplicationExit|EmulationStatus|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse) => ApplicationExit|EmulationStatus|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null
-): ApplicationExit|EmulationStatus|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null {
+  accessor: (obj:ApplicationExit|EmulationStatus|GetMemoryRegionsRequest|GetMemoryRegionsResponse|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse) => ApplicationExit|EmulationStatus|GetMemoryRegionsRequest|GetMemoryRegionsResponse|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null
+): ApplicationExit|EmulationStatus|GetMemoryRegionsRequest|GetMemoryRegionsResponse|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null {
   switch(Event[type]) {
     case 'NONE': return null; 
     case 'PauseRequest': return accessor(new PauseRequest())! as PauseRequest;
@@ -56,15 +60,17 @@ export function unionToEvent(
     case 'ReadRegisterResponse': return accessor(new ReadRegisterResponse())! as ReadRegisterResponse;
     case 'ApplicationExit': return accessor(new ApplicationExit())! as ApplicationExit;
     case 'EmulationStatus': return accessor(new EmulationStatus())! as EmulationStatus;
+    case 'GetMemoryRegionsRequest': return accessor(new GetMemoryRegionsRequest())! as GetMemoryRegionsRequest;
+    case 'GetMemoryRegionsResponse': return accessor(new GetMemoryRegionsResponse())! as GetMemoryRegionsResponse;
     default: return null;
   }
 }
 
 export function unionListToEvent(
   type: Event, 
-  accessor: (index: number, obj:ApplicationExit|EmulationStatus|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse) => ApplicationExit|EmulationStatus|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null, 
+  accessor: (index: number, obj:ApplicationExit|EmulationStatus|GetMemoryRegionsRequest|GetMemoryRegionsResponse|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse) => ApplicationExit|EmulationStatus|GetMemoryRegionsRequest|GetMemoryRegionsResponse|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null, 
   index: number
-): ApplicationExit|EmulationStatus|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null {
+): ApplicationExit|EmulationStatus|GetMemoryRegionsRequest|GetMemoryRegionsResponse|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null {
   switch(Event[type]) {
     case 'NONE': return null; 
     case 'PauseRequest': return accessor(index, new PauseRequest())! as PauseRequest;
@@ -81,6 +87,8 @@ export function unionListToEvent(
     case 'ReadRegisterResponse': return accessor(index, new ReadRegisterResponse())! as ReadRegisterResponse;
     case 'ApplicationExit': return accessor(index, new ApplicationExit())! as ApplicationExit;
     case 'EmulationStatus': return accessor(index, new EmulationStatus())! as EmulationStatus;
+    case 'GetMemoryRegionsRequest': return accessor(index, new GetMemoryRegionsRequest())! as GetMemoryRegionsRequest;
+    case 'GetMemoryRegionsResponse': return accessor(index, new GetMemoryRegionsResponse())! as GetMemoryRegionsResponse;
     default: return null;
   }
 }

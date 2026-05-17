@@ -28,7 +28,9 @@ import {
   PauseFill,
   HouseFill,
   FileEarmarkArrowDownFill,
+  Memory,
 } from "react-bootstrap-icons";
+import { MemoryView } from "./components/memory-view";
 import { StatusIndicator } from "@/components/status-indicator";
 import { Header } from "./Header";
 
@@ -62,6 +64,7 @@ export interface PlaygroundState {
   emulationStatus?: EmulationStatus;
   application?: string;
   drawerOpen: boolean;
+  memoryViewOpen: boolean;
   allowWasm64: boolean;
   file?: PlaygroundFile;
 }
@@ -149,6 +152,7 @@ export class Playground extends React.Component<
     this.state = {
       settings: loadSettings(),
       drawerOpen: false,
+      memoryViewOpen: false,
       allowWasm64: false,
       file: decodeFileData(getEmulateData()),
     };
@@ -310,6 +314,7 @@ export class Playground extends React.Component<
     this.output.current?.clear();
 
     this.setDrawerOpen(false);
+    this.setState({ memoryViewOpen: false });
 
     if (this.state.filesystemPromise) {
       await this.state.filesystemPromise;
@@ -432,6 +437,23 @@ export class Playground extends React.Component<
               <span className="hidden sm:inline">Export Log</span>
             </Button>
 
+            <Button
+              disabled={!this.state.emulator || !this.isEmulatorPaused()}
+              size="sm"
+              title={
+                this.isEmulatorPaused()
+                  ? "Memory View"
+                  : "Pause emulation to inspect memory"
+              }
+              variant={this.state.memoryViewOpen ? "default" : "secondary"}
+              className="fancy"
+              onClick={() =>
+                this.setState({ memoryViewOpen: !this.state.memoryViewOpen })
+              }
+            >
+              <Memory /> <span className="hidden sm:inline">Memory View</span>
+            </Button>
+
             {!this.state.filesystem ? (
               <></>
             ) : (
@@ -475,14 +497,23 @@ export class Playground extends React.Component<
               />
             </div>
           </header>
-          <div className="flex flex-1">
-            <EmulationSummary
-              status={this.state.emulationStatus}
-              executionTimeFetcher={this.fetchExecutionTime}
-            />
-            <div className="flex flex-1 flex-col pl-1 overflow-auto">
-              <Output ref={this.output} />
+          <div className="flex flex-1 min-h-0">
+            <div className="relative flex flex-1 flex-col min-w-0">
+              <EmulationSummary
+                status={this.state.emulationStatus}
+                executionTimeFetcher={this.fetchExecutionTime}
+              />
+              <div className="flex flex-1 flex-col pl-1 overflow-auto min-w-0">
+                <Output ref={this.output} />
+              </div>
             </div>
+            {this.state.memoryViewOpen && this.state.emulator && (
+              <MemoryView
+                emulator={this.state.emulator}
+                paused={!!this.isEmulatorPaused()}
+                onClose={() => this.setState({ memoryViewOpen: false })}
+              />
+            )}
           </div>
         </div>
       </>

@@ -71,6 +71,14 @@ struct EmulationStatus;
 struct EmulationStatusBuilder;
 struct EmulationStatusT;
 
+struct GetMemoryRegionsRequest;
+struct GetMemoryRegionsRequestBuilder;
+struct GetMemoryRegionsRequestT;
+
+struct GetMemoryRegionsResponse;
+struct GetMemoryRegionsResponseBuilder;
+struct GetMemoryRegionsResponseT;
+
 struct DebugEvent;
 struct DebugEventBuilder;
 struct DebugEventT;
@@ -124,11 +132,13 @@ enum Event : uint8_t {
   Event_ReadRegisterResponse = 12,
   Event_ApplicationExit = 13,
   Event_EmulationStatus = 14,
+  Event_GetMemoryRegionsRequest = 15,
+  Event_GetMemoryRegionsResponse = 16,
   Event_MIN = Event_NONE,
-  Event_MAX = Event_EmulationStatus
+  Event_MAX = Event_GetMemoryRegionsResponse
 };
 
-inline const Event (&EnumValuesEvent())[15] {
+inline const Event (&EnumValuesEvent())[17] {
   static const Event values[] = {
     Event_NONE,
     Event_PauseRequest,
@@ -144,13 +154,15 @@ inline const Event (&EnumValuesEvent())[15] {
     Event_ReadRegisterRequest,
     Event_ReadRegisterResponse,
     Event_ApplicationExit,
-    Event_EmulationStatus
+    Event_EmulationStatus,
+    Event_GetMemoryRegionsRequest,
+    Event_GetMemoryRegionsResponse
   };
   return values;
 }
 
 inline const char * const *EnumNamesEvent() {
-  static const char * const names[16] = {
+  static const char * const names[18] = {
     "NONE",
     "PauseRequest",
     "RunRequest",
@@ -166,13 +178,15 @@ inline const char * const *EnumNamesEvent() {
     "ReadRegisterResponse",
     "ApplicationExit",
     "EmulationStatus",
+    "GetMemoryRegionsRequest",
+    "GetMemoryRegionsResponse",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameEvent(Event e) {
-  if (::flatbuffers::IsOutRange(e, Event_NONE, Event_EmulationStatus)) return "";
+  if (::flatbuffers::IsOutRange(e, Event_NONE, Event_GetMemoryRegionsResponse)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesEvent()[index];
 }
@@ -237,6 +251,14 @@ template<> struct EventTraits<Debugger::EmulationStatus> {
   static const Event enum_value = Event_EmulationStatus;
 };
 
+template<> struct EventTraits<Debugger::GetMemoryRegionsRequest> {
+  static const Event enum_value = Event_GetMemoryRegionsRequest;
+};
+
+template<> struct EventTraits<Debugger::GetMemoryRegionsResponse> {
+  static const Event enum_value = Event_GetMemoryRegionsResponse;
+};
+
 template<typename T> struct EventUnionTraits {
   static const Event enum_value = Event_NONE;
 };
@@ -295,6 +317,14 @@ template<> struct EventUnionTraits<Debugger::ApplicationExitT> {
 
 template<> struct EventUnionTraits<Debugger::EmulationStatusT> {
   static const Event enum_value = Event_EmulationStatus;
+};
+
+template<> struct EventUnionTraits<Debugger::GetMemoryRegionsRequestT> {
+  static const Event enum_value = Event_GetMemoryRegionsRequest;
+};
+
+template<> struct EventUnionTraits<Debugger::GetMemoryRegionsResponseT> {
+  static const Event enum_value = Event_GetMemoryRegionsResponse;
 };
 
 struct EventUnion {
@@ -439,6 +469,22 @@ struct EventUnion {
     return type == Event_EmulationStatus ?
       reinterpret_cast<const Debugger::EmulationStatusT *>(value) : nullptr;
   }
+  Debugger::GetMemoryRegionsRequestT *AsGetMemoryRegionsRequest() {
+    return type == Event_GetMemoryRegionsRequest ?
+      reinterpret_cast<Debugger::GetMemoryRegionsRequestT *>(value) : nullptr;
+  }
+  const Debugger::GetMemoryRegionsRequestT *AsGetMemoryRegionsRequest() const {
+    return type == Event_GetMemoryRegionsRequest ?
+      reinterpret_cast<const Debugger::GetMemoryRegionsRequestT *>(value) : nullptr;
+  }
+  Debugger::GetMemoryRegionsResponseT *AsGetMemoryRegionsResponse() {
+    return type == Event_GetMemoryRegionsResponse ?
+      reinterpret_cast<Debugger::GetMemoryRegionsResponseT *>(value) : nullptr;
+  }
+  const Debugger::GetMemoryRegionsResponseT *AsGetMemoryRegionsResponse() const {
+    return type == Event_GetMemoryRegionsResponse ?
+      reinterpret_cast<const Debugger::GetMemoryRegionsResponseT *>(value) : nullptr;
+  }
 };
 
 template <bool B = false>
@@ -485,6 +531,112 @@ inline ::flatbuffers::Offset<GetStateRequest> CreateGetStateRequest(
 }
 
 ::flatbuffers::Offset<GetStateRequest> CreateGetStateRequest(::flatbuffers::FlatBufferBuilder &_fbb, const GetStateRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct GetMemoryRegionsRequestT : public ::flatbuffers::NativeTable {
+  typedef GetMemoryRegionsRequest TableType;
+};
+
+struct GetMemoryRegionsRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef GetMemoryRegionsRequestT NativeTableType;
+  typedef GetMemoryRegionsRequestBuilder Builder;
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           verifier.EndTable();
+  }
+  GetMemoryRegionsRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(GetMemoryRegionsRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<GetMemoryRegionsRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const GetMemoryRegionsRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct GetMemoryRegionsRequestBuilder {
+  typedef GetMemoryRegionsRequest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  explicit GetMemoryRegionsRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<GetMemoryRegionsRequest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<GetMemoryRegionsRequest>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<GetMemoryRegionsRequest> CreateGetMemoryRegionsRequest(
+    ::flatbuffers::FlatBufferBuilder &_fbb) {
+  GetMemoryRegionsRequestBuilder builder_(_fbb);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<GetMemoryRegionsRequest> CreateGetMemoryRegionsRequest(::flatbuffers::FlatBufferBuilder &_fbb, const GetMemoryRegionsRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct GetMemoryRegionsResponseT : public ::flatbuffers::NativeTable {
+  typedef GetMemoryRegionsResponse TableType;
+  std::vector<uint8_t> regions{};
+};
+
+struct GetMemoryRegionsResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef GetMemoryRegionsResponseT NativeTableType;
+  typedef GetMemoryRegionsResponseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_REGIONS = 4
+  };
+  const ::flatbuffers::Vector<uint8_t> *regions() const {
+    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_REGIONS);
+  }
+  ::flatbuffers::Vector<uint8_t> *mutable_regions() {
+    return GetPointer<::flatbuffers::Vector<uint8_t> *>(VT_REGIONS);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffset(verifier, VT_REGIONS) &&
+           verifier.VerifyVector(regions()) &&
+           verifier.EndTable();
+  }
+  GetMemoryRegionsResponseT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(GetMemoryRegionsResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<GetMemoryRegionsResponse> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const GetMemoryRegionsResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct GetMemoryRegionsResponseBuilder {
+  typedef GetMemoryRegionsResponse Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_regions(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> regions) {
+    fbb_.AddOffset(GetMemoryRegionsResponse::VT_REGIONS, regions);
+  }
+  explicit GetMemoryRegionsResponseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<GetMemoryRegionsResponse> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<GetMemoryRegionsResponse>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<GetMemoryRegionsResponse> CreateGetMemoryRegionsResponse(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> regions = 0) {
+  GetMemoryRegionsResponseBuilder builder_(_fbb);
+  builder_.add_regions(regions);
+  return builder_.Finish();
+}
+
+inline ::flatbuffers::Offset<GetMemoryRegionsResponse> CreateGetMemoryRegionsResponseDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<uint8_t> *regions = nullptr) {
+  auto regions__ = regions ? _fbb.CreateVector<uint8_t>(*regions) : 0;
+  return Debugger::CreateGetMemoryRegionsResponse(
+      _fbb,
+      regions__);
+}
+
+::flatbuffers::Offset<GetMemoryRegionsResponse> CreateGetMemoryRegionsResponse(::flatbuffers::FlatBufferBuilder &_fbb, const GetMemoryRegionsResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
 struct GetStateResponseT : public ::flatbuffers::NativeTable {
   typedef GetStateResponse TableType;
@@ -1475,6 +1627,12 @@ struct DebugEvent FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const Debugger::EmulationStatus *event_as_EmulationStatus() const {
     return event_type() == Debugger::Event_EmulationStatus ? static_cast<const Debugger::EmulationStatus *>(event()) : nullptr;
   }
+  const Debugger::GetMemoryRegionsRequest *event_as_GetMemoryRegionsRequest() const {
+    return event_type() == Debugger::Event_GetMemoryRegionsRequest ? static_cast<const Debugger::GetMemoryRegionsRequest *>(event()) : nullptr;
+  }
+  const Debugger::GetMemoryRegionsResponse *event_as_GetMemoryRegionsResponse() const {
+    return event_type() == Debugger::Event_GetMemoryRegionsResponse ? static_cast<const Debugger::GetMemoryRegionsResponse *>(event()) : nullptr;
+  }
   template<typename T> T *mutable_event_as();
   Debugger::PauseRequest *mutable_event_as_PauseRequest() {
     return event_type() == Debugger::Event_PauseRequest ? static_cast<Debugger::PauseRequest *>(mutable_event()) : nullptr;
@@ -1517,6 +1675,12 @@ struct DebugEvent FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   Debugger::EmulationStatus *mutable_event_as_EmulationStatus() {
     return event_type() == Debugger::Event_EmulationStatus ? static_cast<Debugger::EmulationStatus *>(mutable_event()) : nullptr;
+  }
+  Debugger::GetMemoryRegionsRequest *mutable_event_as_GetMemoryRegionsRequest() {
+    return event_type() == Debugger::Event_GetMemoryRegionsRequest ? static_cast<Debugger::GetMemoryRegionsRequest *>(mutable_event()) : nullptr;
+  }
+  Debugger::GetMemoryRegionsResponse *mutable_event_as_GetMemoryRegionsResponse() {
+    return event_type() == Debugger::Event_GetMemoryRegionsResponse ? static_cast<Debugger::GetMemoryRegionsResponse *>(mutable_event()) : nullptr;
   }
   void *mutable_event() {
     return GetPointer<void *>(VT_EVENT);
@@ -1646,6 +1810,22 @@ template<> inline Debugger::EmulationStatus *DebugEvent::mutable_event_as<Debugg
   return mutable_event_as_EmulationStatus();
 }
 
+template<> inline const Debugger::GetMemoryRegionsRequest *DebugEvent::event_as<Debugger::GetMemoryRegionsRequest>() const {
+  return event_as_GetMemoryRegionsRequest();
+}
+
+template<> inline Debugger::GetMemoryRegionsRequest *DebugEvent::mutable_event_as<Debugger::GetMemoryRegionsRequest>() {
+  return mutable_event_as_GetMemoryRegionsRequest();
+}
+
+template<> inline const Debugger::GetMemoryRegionsResponse *DebugEvent::event_as<Debugger::GetMemoryRegionsResponse>() const {
+  return event_as_GetMemoryRegionsResponse();
+}
+
+template<> inline Debugger::GetMemoryRegionsResponse *DebugEvent::mutable_event_as<Debugger::GetMemoryRegionsResponse>() {
+  return mutable_event_as_GetMemoryRegionsResponse();
+}
+
 struct DebugEventBuilder {
   typedef DebugEvent Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
@@ -1700,6 +1880,55 @@ inline ::flatbuffers::Offset<GetStateRequest> GetStateRequest::Pack(::flatbuffer
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const GetStateRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   return Debugger::CreateGetStateRequest(
       _fbb);
+}
+
+inline GetMemoryRegionsRequestT *GetMemoryRegionsRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<GetMemoryRegionsRequestT>(new GetMemoryRegionsRequestT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void GetMemoryRegionsRequest::UnPackTo(GetMemoryRegionsRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+}
+
+inline ::flatbuffers::Offset<GetMemoryRegionsRequest> CreateGetMemoryRegionsRequest(::flatbuffers::FlatBufferBuilder &_fbb, const GetMemoryRegionsRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return GetMemoryRegionsRequest::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<GetMemoryRegionsRequest> GetMemoryRegionsRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const GetMemoryRegionsRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const GetMemoryRegionsRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  return Debugger::CreateGetMemoryRegionsRequest(
+      _fbb);
+}
+
+inline GetMemoryRegionsResponseT *GetMemoryRegionsResponse::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<GetMemoryRegionsResponseT>(new GetMemoryRegionsResponseT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void GetMemoryRegionsResponse::UnPackTo(GetMemoryRegionsResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = regions(); if (_e) { _o->regions.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->regions.begin()); } }
+}
+
+inline ::flatbuffers::Offset<GetMemoryRegionsResponse> CreateGetMemoryRegionsResponse(::flatbuffers::FlatBufferBuilder &_fbb, const GetMemoryRegionsResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return GetMemoryRegionsResponse::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<GetMemoryRegionsResponse> GetMemoryRegionsResponse::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const GetMemoryRegionsResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const GetMemoryRegionsResponseT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _regions = _o->regions.size() ? _fbb.CreateVector(_o->regions) : 0;
+  return Debugger::CreateGetMemoryRegionsResponse(
+      _fbb,
+      _regions);
 }
 
 inline GetStateResponseT *GetStateResponse::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
@@ -2164,6 +2393,14 @@ inline bool VerifyEvent(::flatbuffers::VerifierTemplate<B> &verifier, const void
       auto ptr = reinterpret_cast<const Debugger::EmulationStatus *>(obj);
       return verifier.VerifyTable(ptr);
     }
+    case Event_GetMemoryRegionsRequest: {
+      auto ptr = reinterpret_cast<const Debugger::GetMemoryRegionsRequest *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case Event_GetMemoryRegionsResponse: {
+      auto ptr = reinterpret_cast<const Debugger::GetMemoryRegionsResponse *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
     default: return true;
   }
 }
@@ -2240,6 +2477,14 @@ inline void *EventUnion::UnPack(const void *obj, Event type, const ::flatbuffers
       auto ptr = reinterpret_cast<const Debugger::EmulationStatus *>(obj);
       return ptr->UnPack(resolver);
     }
+    case Event_GetMemoryRegionsRequest: {
+      auto ptr = reinterpret_cast<const Debugger::GetMemoryRegionsRequest *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case Event_GetMemoryRegionsResponse: {
+      auto ptr = reinterpret_cast<const Debugger::GetMemoryRegionsResponse *>(obj);
+      return ptr->UnPack(resolver);
+    }
     default: return nullptr;
   }
 }
@@ -2303,6 +2548,14 @@ inline ::flatbuffers::Offset<void> EventUnion::Pack(::flatbuffers::FlatBufferBui
       auto ptr = reinterpret_cast<const Debugger::EmulationStatusT *>(value);
       return CreateEmulationStatus(_fbb, ptr, _rehasher).Union();
     }
+    case Event_GetMemoryRegionsRequest: {
+      auto ptr = reinterpret_cast<const Debugger::GetMemoryRegionsRequestT *>(value);
+      return CreateGetMemoryRegionsRequest(_fbb, ptr, _rehasher).Union();
+    }
+    case Event_GetMemoryRegionsResponse: {
+      auto ptr = reinterpret_cast<const Debugger::GetMemoryRegionsResponseT *>(value);
+      return CreateGetMemoryRegionsResponse(_fbb, ptr, _rehasher).Union();
+    }
     default: return 0;
   }
 }
@@ -2363,6 +2616,14 @@ inline EventUnion::EventUnion(const EventUnion &u) : type(u.type), value(nullptr
     }
     case Event_EmulationStatus: {
       value = new Debugger::EmulationStatusT(*reinterpret_cast<Debugger::EmulationStatusT *>(u.value));
+      break;
+    }
+    case Event_GetMemoryRegionsRequest: {
+      value = new Debugger::GetMemoryRegionsRequestT(*reinterpret_cast<Debugger::GetMemoryRegionsRequestT *>(u.value));
+      break;
+    }
+    case Event_GetMemoryRegionsResponse: {
+      value = new Debugger::GetMemoryRegionsResponseT(*reinterpret_cast<Debugger::GetMemoryRegionsResponseT *>(u.value));
       break;
     }
     default:
@@ -2439,6 +2700,16 @@ inline void EventUnion::Reset() {
     }
     case Event_EmulationStatus: {
       auto ptr = reinterpret_cast<Debugger::EmulationStatusT *>(value);
+      delete ptr;
+      break;
+    }
+    case Event_GetMemoryRegionsRequest: {
+      auto ptr = reinterpret_cast<Debugger::GetMemoryRegionsRequestT *>(value);
+      delete ptr;
+      break;
+    }
+    case Event_GetMemoryRegionsResponse: {
+      auto ptr = reinterpret_cast<Debugger::GetMemoryRegionsResponseT *>(value);
       delete ptr;
       break;
     }
