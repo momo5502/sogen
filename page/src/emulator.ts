@@ -369,13 +369,11 @@ export class Emulator {
    * Fallback used when the backend has no region-enumeration support: discover
    * mapped memory with read-only 1-byte reads.
    *
-   * Unmapped gaps are scanned *exhaustively* at allocation granularity (no
-   * exponential stride that could jump over a whole region, and no early abort
-   * that could return an empty list). Well-known base addresses are probed
-   * first so the main image/heap is found even when it sits far above the
-   * scan start and the read budget would otherwise be exhausted by the gap.
-   * Bounded by a read budget and a wall-clock deadline so it never hangs the
-   * UI; returns whatever was found so far when the budget runs out.
+   * Optimised for responsiveness: probe well-known base addresses, then
+   * gallop over unmapped gaps with an exponentially growing (capped) stride
+   * and binary-narrow each transition. This trades exhaustiveness (a tiny
+   * region between gallop probes may be missed) for a sub-second result.
+   * Strictly bounded by a small read budget and a short deadline.
    */
   private async _probeMemoryRegions(): Promise<MemoryRegion[]> {
     const GRAN = BigInt(0x10000); // allocation granularity (64 KiB)
@@ -383,8 +381,9 @@ export class Emulator {
     const MIN = BigInt(0x10000);
     const MAX = BigInt("0x7fffffffffff");
     const END_STEP_CAP = GRAN * BigInt(64); // cap region-end stride at 4 MiB
-    const MAX_READS = 8000;
-    const deadline = Date.now() + 20000;
+    const GAP_STEP_CAP = GRAN * BigInt(0x400); // cap gap stride at 64 MiB
+    const MAX_READS = 2000;
+    const deadline = Date.now() + 6000;
 
     // Likely allocation bases (low 32-bit space, 64-bit defaults, common PE
     // image bases) so a far-away first mapping is still discovered.
@@ -457,7 +456,8 @@ export class Emulator {
       }
     }
 
-    // Exhaustive granule sweep: never skips a granule-aligned region.
+    // Galloping sweep: map readable runs, exponentially skip unmapped gaps,
+    // then binary-narrow each gap->mapped transition. Bounded and fast.
     let pos = MIN;
     while (pos < MAX && budgetLeft()) {
       const covered = coveringRegion(pos);
@@ -467,9 +467,38 @@ export class Emulator {
       }
       if (await readable(pos)) {
         pos = await mapFrom(pos);
-      } else {
-        pos += GRAN;
+        continue;
       }
+
+      let step = GRAN;
+      let probe = pos + step;
+      let found: bigint | null = null;
+      while (probe < MAX && budgetLeft()) {
+        if (await readable(probe)) {
+          found = probe;
+          break;
+        }
+        step = step < GAP_STEP_CAP ? step * BigInt(2) : step;
+        probe = pos + step;
+      }
+      if (found === null) {
+        break;
+      }
+
+      let lo = pos;
+      let hi = found;
+      while (hi - lo > GRAN && budgetLeft()) {
+        const mid = lo + ((hi - lo) / GRAN / BigInt(2)) * GRAN;
+        if (mid <= lo) {
+          break;
+        }
+        if (await readable(mid)) {
+          hi = mid;
+        } else {
+          lo = mid;
+        }
+      }
+      pos = hi;
     }
 
     regions.sort((a, b) =>

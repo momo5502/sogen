@@ -121,6 +121,11 @@ namespace debugger
         void step(step_kind kind);
         void run_to(uint64_t address); // temporary breakpoint + continue
 
+        // Lazily installs the single generic per-instruction hook used to
+        // enforce stepping. Called the first time the user steps so that
+        // read-only debugging never adds per-instruction overhead.
+        void ensure_step_hook();
+
         // --- read-only introspection (valid while paused) ---
         uint64_t instruction_pointer() const;
         std::vector<register_value> registers() const;
@@ -130,8 +135,6 @@ namespace debugger
         std::vector<stack_frame> call_stack(std::optional<uint32_t> thread_id = std::nullopt) const;
 
       private:
-        bool should_break(uint64_t address) const;
-
         struct impl;
         windows_emulator* emu_{};
         std::unique_ptr<impl> impl_; // breakpoint set + persistent control hook
