@@ -14,7 +14,8 @@ import {
   Layers,
   Code,
 } from "lucide-react";
-import { Highlight, themes } from "prism-react-renderer";
+import { Highlight } from "prism-react-renderer";
+import type { PrismTheme } from "prism-react-renderer";
 
 import { Header } from "./Header";
 import { YoutubeVideo } from "@/components/youtube-video";
@@ -68,6 +69,43 @@ def on_sleep(call, params):
 
 app.hooks.apis["Sleep"] = on_sleep
 app.start()`;
+
+const landingPythonTheme: PrismTheme = {
+  plain: {
+    color: "#e5e5e5",
+    backgroundColor: "transparent",
+  },
+  styles: [
+    {
+      types: ["comment"],
+      style: { color: "#737373", fontStyle: "italic" },
+    },
+    {
+      types: ["keyword", "builtin", "decorator", "important"],
+      style: { color: "#ffcb00" },
+    },
+    {
+      types: ["function"],
+      style: { color: "#00c4e9" },
+    },
+    {
+      types: ["string"],
+      style: { color: "#aee703" },
+    },
+    {
+      types: ["number", "boolean"],
+      style: { color: "#f76548" },
+    },
+    {
+      types: ["operator", "punctuation"],
+      style: { color: "#a3a3a3" },
+    },
+    {
+      types: ["class-name", "constant"],
+      style: { color: "#67e8f9" },
+    },
+  ],
+};
 
 export function LandingPage() {
   const features = [
@@ -336,7 +374,7 @@ export function LandingPage() {
                     <span className="ml-3">api_hooks.py</span>
                   </div>
                   <Highlight
-                    theme={themes.okaidia}
+                    theme={landingPythonTheme}
                     code={pythonBindingsSample}
                     language="python"
                   >
