@@ -2,6 +2,11 @@ import { parse } from "shell-quote";
 
 export type EmulatorMode = "windows" | "linux";
 
+export interface EnvironmentVariable {
+  name: string;
+  value: string;
+}
+
 export interface Settings {
   logging: "verbose" | "silent" | "concise" | "very-concise" | string;
   bufferStdout: boolean;
@@ -12,6 +17,7 @@ export interface Settings {
   instructionSummary: boolean;
   ignoredFunctions: string[];
   interestingModules: string[];
+  environmentVariables: EnvironmentVariable[];
   commandLine: string;
   mode: EmulatorMode;
 }
@@ -32,6 +38,7 @@ export function createDefaultSettings(): Settings {
     instructionSummary: false,
     ignoredFunctions: [],
     interestingModules: [],
+    environmentVariables: [],
     commandLine: "",
     mode: "windows",
   };
@@ -117,6 +124,18 @@ export function translateSettings(settings: Settings): TranslatedSettings {
     });
   }
 
+  if (settings.mode !== "linux") {
+    settings.environmentVariables.forEach((variable) => {
+      const name = variable.name.trim();
+      if (!name) {
+        return;
+      }
+
+      switches.push("--env");
+      switches.push(name);
+      switches.push(variable.value);
+    });
+  }
   try {
     const argv = parse(settings.commandLine) as string[];
     options.push(...argv);
