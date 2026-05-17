@@ -46,4 +46,8 @@ namespace debugger
     // Set by the DebugCommand step/continue handlers (and RunRequest) to
     // release a blocked break loop with the requested motion.
     void request_resume(step_request request, uint64_t run_to_address = 0);
+
+    // Consulted by the debug_session control hook on every instruction;
+    // returns true exactly once when the armed step motion completes.
+    bool step_should_break(uint64_t address);
 }
