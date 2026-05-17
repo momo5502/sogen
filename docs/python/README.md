@@ -41,7 +41,6 @@ import sogen
 
 app = sogen.create_application(
     "c:/test-sample.exe",
-    None,
     emulation_root="./root",
 )
 
@@ -58,7 +57,6 @@ import sogen
 
 app = sogen.create_application(
     "c:/test-sample.exe",
-    None,
     emulation_root="./root",
     path_mappings={"c:/a.txt": Path("./a.txt")},
     port_mappings={28970: 28980},
@@ -124,7 +122,6 @@ import sogen
 
 app = sogen.create_application(
     "c:/test-sample.exe",
-    None,
     emulation_root="./root",
 )
 
@@ -159,7 +156,6 @@ import sogen
 
 app = sogen.create_application(
     "c:/test-sample.exe",
-    None,
     emulation_root="./root",
 )
 
@@ -167,7 +163,6 @@ app = sogen.create_application(
 @sogen.api_call(cc=sogen.CallingConvention.stdcall, params=[ctypes.c_uint32])
 def on_sleep(call, params):
     print(f"Sleep({params[0]})")
-    return sogen.ApiContinuation.run_original
 
 
 app.hooks.apis["Sleep"] = on_sleep
@@ -181,7 +176,6 @@ import sogen
 
 app = sogen.create_application(
     "c:/hook-sample.exe",
-    None,
     emulation_root="./root",
 )
 

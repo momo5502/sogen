@@ -77,7 +77,6 @@ def on_sleep(call, params):
     sleep_hits["count"] += 1
     sleep_hits["args"].append(params[0])
     assert call.name == "Sleep"
-    return mod.ApiContinuation.run_original
 
 
 state_base = emu.memory.allocate_memory(0x1000, mod.MemoryPermission.read_write)
@@ -104,7 +103,6 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
 
     app = mod.create_application(
         r"C:\test-sample.exe",
-        None,
         emulation_root=emulator_root,
         path_mappings={r"C:\a.txt": mapped_file},
         port_mappings={28970: 28980},
@@ -157,7 +155,6 @@ if hook_sample.exists():
 
     hook_app = mod.create_application(
         r"C:\hook-sample.exe",
-        None,
         emulation_root=emulator_root,
     )
     hook_app.callbacks.on_stdout = lambda text: print(text, end="", flush=True)

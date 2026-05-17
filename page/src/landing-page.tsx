@@ -58,19 +58,16 @@ function generateButtons(additionalClasses: string = "") {
 const pythonBindingsSample = `import ctypes
 import sogen
 
-app = sogen.create_application(
-    "c:/test-sample.exe",
-    None,
-    emulation_root="./root",
-)
+app = sogen.create_application("c:/test-sample.exe",
+                               emulation_root="./root")
 
 @sogen.api_call(cc=sogen.CallingConvention.stdcall,
                 params=[ctypes.c_uint32])
 def on_sleep(call, params):
     print(f"Sleep({params[0]})")
-    return sogen.ApiContinuation.run_original
 
-app.hooks.apis["Sleep"] = on_sleep`;
+app.hooks.apis["Sleep"] = on_sleep
+app.start()`;
 
 export function LandingPage() {
   const features = [

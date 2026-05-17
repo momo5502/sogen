@@ -192,15 +192,10 @@ void register_sogen_runtime_bindings(nb::module_& m)
     m.def("create_empty", [](nb::kwargs kwargs) { // NOLINT(performance-unnecessary-value-param)
         return sogen_windows_emulator(create_empty_emulator(kwargs));
     });
-    m.def("create_application", [](nb::args args, nb::kwargs kwargs) { // NOLINT(performance-unnecessary-value-param)
-        const auto argc = nb::len(static_cast<const nb::tuple&>(args));
-        if (argc < 1)
-        {
-            throw std::runtime_error("create_application() requires an application path");
-        }
-
-        const auto application = args[0];
-        const auto application_args = argc > 1 ? args[1] : nb::none();
-        return sogen_windows_emulator(create_application_emulator(application, application_args, kwargs));
-    });
+    m.def(
+        "create_application",
+        [](nb::object application, nb::object application_args, nb::kwargs kwargs) { // NOLINT(performance-unnecessary-value-param)
+            return sogen_windows_emulator(create_application_emulator(application, application_args, kwargs));
+        },
+        nb::arg("application"), nb::arg("args").none() = nb::none());
 }
