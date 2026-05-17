@@ -2,11 +2,14 @@
 #include "message_transmitter.hpp"
 #include "windows_emulator.hpp"
 #include "memory_utils.hpp"
+#include "debug_session.hpp"
 
 #include <base64.hpp>
 
 #include <utils/string.hpp>
 
+#include <cstring>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -311,6 +314,285 @@ namespace debugger
             send_event(response);
         }
 
+        // --- generic debugger command channel (see ARCHITECTURE.md) ---
+        //
+        // Request `payload` carries packed little-endian args (documented per
+        // kind); response `payload` is UTF-8 JSON. This keeps a JSON serializer
+        // (already present) on the hot path and avoids a JSON *parser* in C++.
+
+        enum class debug_command : uint32_t
+        {
+            get_registers = 0,
+            disassemble = 1,
+            get_modules = 2,
+            get_threads = 3,
+            get_callstack = 4,
+            set_breakpoint = 5,
+            clear_breakpoint = 6,
+            list_breakpoints = 7,
+        };
+
+        template <typename T>
+        bool read_le(const std::vector<uint8_t>& buf, size_t offset, T& out)
+        {
+            if (offset + sizeof(T) > buf.size())
+            {
+                return false;
+            }
+            std::memcpy(&out, buf.data() + offset, sizeof(T));
+            return true;
+        }
+
+        debug_session& get_debug_session(windows_emulator& win_emu)
+        {
+            static windows_emulator* bound = nullptr;
+            static std::optional<debug_session> session{};
+            if (bound != &win_emu)
+            {
+                session.emplace(win_emu);
+                bound = &win_emu;
+            }
+            return *session;
+        }
+
+        std::string build_registers_json(const std::vector<register_value>& regs)
+        {
+            std::string json = R"({"registers":[)";
+            bool first = true;
+            for (const auto& r : regs)
+            {
+                if (!first)
+                {
+                    json += ',';
+                }
+                first = false;
+                json += R"({"name":)";
+                append_json_string(json, r.name);
+                json += R"(,"value":"0x)";
+                json += utils::string::to_hex_number(r.value);
+                json += R"(","size":)";
+                json += std::to_string(r.size);
+                json += '}';
+            }
+            json += "]}";
+            return json;
+        }
+
+        std::string build_disassembly_json(const std::vector<disassembled_instruction>& insns)
+        {
+            std::string json = R"({"instructions":[)";
+            bool first = true;
+            for (const auto& i : insns)
+            {
+                if (!first)
+                {
+                    json += ',';
+                }
+                first = false;
+                json += R"({"address":"0x)";
+                json += utils::string::to_hex_number(i.address);
+                json += R"(","mnemonic":)";
+                append_json_string(json, i.mnemonic);
+                json += R"(,"operands":)";
+                append_json_string(json, i.operands);
+                json += R"(,"symbol":)";
+                append_json_string(json, i.symbol);
+                json += R"(,"size":)";
+                json += std::to_string(i.bytes.size());
+                json += R"(,"isCall":)";
+                json += i.is_call ? "true" : "false";
+                json += R"(,"isJump":)";
+                json += i.is_jump ? "true" : "false";
+                json += R"(,"isReturn":)";
+                json += i.is_return ? "true" : "false";
+                if (i.branch)
+                {
+                    json += R"(,"branch":"0x)";
+                    json += utils::string::to_hex_number(*i.branch);
+                    json += '"';
+                }
+                json += '}';
+            }
+            json += "]}";
+            return json;
+        }
+
+        std::string build_modules_json(const std::vector<module_info>& mods)
+        {
+            std::string json = R"({"modules":[)";
+            bool first = true;
+            for (const auto& m : mods)
+            {
+                if (!first)
+                {
+                    json += ',';
+                }
+                first = false;
+                json += R"({"name":)";
+                append_json_string(json, m.name);
+                json += R"(,"base":"0x)";
+                json += utils::string::to_hex_number(m.base);
+                json += R"(","size":)";
+                json += std::to_string(m.size);
+                json += R"(,"entry":"0x)";
+                json += utils::string::to_hex_number(m.entry_point);
+                json += R"("})";
+            }
+            json += "]}";
+            return json;
+        }
+
+        std::string build_threads_json(const std::vector<thread_info>& threads)
+        {
+            std::string json = R"({"threads":[)";
+            bool first = true;
+            for (const auto& t : threads)
+            {
+                if (!first)
+                {
+                    json += ',';
+                }
+                first = false;
+                json += R"({"id":)";
+                json += std::to_string(t.id);
+                json += R"(,"ip":"0x)";
+                json += utils::string::to_hex_number(t.instruction_pointer);
+                json += R"(","active":)";
+                json += t.active ? "true" : "false";
+                json += '}';
+            }
+            json += "]}";
+            return json;
+        }
+
+        std::string build_callstack_json(const std::vector<stack_frame>& frames)
+        {
+            std::string json = R"({"frames":[)";
+            bool first = true;
+            for (const auto& f : frames)
+            {
+                if (!first)
+                {
+                    json += ',';
+                }
+                first = false;
+                json += R"({"ip":"0x)";
+                json += utils::string::to_hex_number(f.instruction_pointer);
+                json += R"(","sp":"0x)";
+                json += utils::string::to_hex_number(f.stack_pointer);
+                json += R"(","module":)";
+                append_json_string(json, f.module);
+                json += '}';
+            }
+            json += "]}";
+            return json;
+        }
+
+        std::string build_breakpoints_json(const std::vector<breakpoint>& bps)
+        {
+            std::string json = R"({"breakpoints":[)";
+            bool first = true;
+            for (const auto& b : bps)
+            {
+                if (!first)
+                {
+                    json += ',';
+                }
+                first = false;
+                json += R"({"address":"0x)";
+                json += utils::string::to_hex_number(b.address);
+                json += R"(","type":)";
+                json += std::to_string(static_cast<uint32_t>(b.type));
+                json += R"(,"enabled":)";
+                json += b.enabled ? "true" : "false";
+                json += '}';
+            }
+            json += "]}";
+            return json;
+        }
+
+        void handle_debug_command(const event_context& c, const Debugger::DebugCommandRequestT& request)
+        {
+            auto& session = get_debug_session(c.win_emu);
+            const auto& in = request.payload;
+
+            Debugger::DebugCommandResponseT response{};
+            response.id = request.id;
+            response.ok = true;
+
+            std::string json{};
+
+            switch (static_cast<debug_command>(request.kind))
+            {
+            case debug_command::get_registers:
+                json = build_registers_json(session.registers());
+                break;
+
+            case debug_command::disassemble: {
+                uint64_t address = 0;
+                uint32_t count = 0;
+                if (!read_le(in, 0, address) || !read_le(in, sizeof(uint64_t), count) || count == 0)
+                {
+                    response.ok = false;
+                    break;
+                }
+                json = build_disassembly_json(session.disassemble(address, count));
+                break;
+            }
+
+            case debug_command::get_modules:
+                json = build_modules_json(session.modules());
+                break;
+
+            case debug_command::get_threads:
+                json = build_threads_json(session.threads());
+                break;
+
+            case debug_command::get_callstack:
+                json = build_callstack_json(session.call_stack());
+                break;
+
+            case debug_command::set_breakpoint: {
+                uint64_t address = 0;
+                uint8_t type = 0;
+                if (!read_le(in, 0, address))
+                {
+                    response.ok = false;
+                    break;
+                }
+                (void)read_le(in, sizeof(uint64_t), type);
+                response.ok = session.add_breakpoint(address, static_cast<breakpoint_type>(type));
+                json = build_breakpoints_json(session.list_breakpoints());
+                break;
+            }
+
+            case debug_command::clear_breakpoint: {
+                uint64_t address = 0;
+                if (!read_le(in, 0, address))
+                {
+                    response.ok = false;
+                    break;
+                }
+                response.ok = session.remove_breakpoint(address);
+                json = build_breakpoints_json(session.list_breakpoints());
+                break;
+            }
+
+            case debug_command::list_breakpoints:
+                json = build_breakpoints_json(session.list_breakpoints());
+                break;
+
+            default:
+                // Stepping / continue / pause are Phase 3.
+                response.ok = false;
+                json = R"({"error":"unsupported"})";
+                break;
+            }
+
+            response.payload.assign(json.begin(), json.end());
+            send_event(std::move(response));
+        }
+
         void handle_event(event_context& c, const Debugger::DebugEventT& e)
         {
             switch (e.event.type)
@@ -329,6 +611,10 @@ namespace debugger
 
             case Debugger::Event_GetMemoryRegionsRequest:
                 handle_get_memory_regions(c);
+                break;
+
+            case Debugger::Event_DebugCommandRequest:
+                handle_debug_command(c, *e.event.AsDebugCommandRequest());
                 break;
 
             case Debugger::Event_ReadMemoryRequest:
