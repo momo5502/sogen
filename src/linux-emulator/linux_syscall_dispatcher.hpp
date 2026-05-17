@@ -100,7 +100,7 @@ class linux_syscall_dispatcher
             return nullptr;
         }
 
-        return &this->handlers_[id];
+        return &this->handlers_[static_cast<std::array<linux_syscall_handler_entry, 512>::size_type>(id)];
     }
 
   private:
