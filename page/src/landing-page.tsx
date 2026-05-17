@@ -14,6 +14,7 @@ import {
   Layers,
   Code,
 } from "lucide-react";
+import { Highlight, themes } from "prism-react-renderer";
 
 import { Header } from "./Header";
 import { YoutubeVideo } from "@/components/youtube-video";
@@ -53,6 +54,26 @@ function generateButtons(additionalClasses: string = "") {
     </div>
   );
 }
+
+const pythonBindingsSample = `import ctypes
+import sogen
+
+app = sogen.create_application(
+    "c:/test-sample.exe",
+    None,
+    emulation_root="./root",
+)
+
+@sogen.api_call(
+    cc=sogen.CallingConvention.stdcall,
+    params=[ctypes.c_uint32],
+)
+def on_sleep(call, params):
+    print(f"Sleep({params[0]})")
+    return sogen.ApiContinuation.run_original
+
+app.hooks.apis["Sleep"] = on_sleep
+app.start()`;
 
 export function LandingPage() {
   const features = [
@@ -266,11 +287,16 @@ export function LandingPage() {
                 <h2 className="text-4xl font-bold text-white mb-6">
                   Automate Sogen from Python
                 </h2>
-                <p className="text-xl text-neutral-400 leading-relaxed mb-8">
+                <p className="text-xl text-neutral-400 leading-relaxed mb-6">
                   Script emulator runs, register callbacks, and intercept WinAPI
                   calls without rebuilding C++. Install from PyPI, then point
                   the bindings at an emulation root and start exploring.
                 </p>
+
+                <div className="mb-8 inline-flex items-center rounded-lg border border-neutral-700 bg-neutral-900/80 px-4 py-3 font-mono text-sm text-neutral-200">
+                  <span className="text-neutral-500 mr-3">$</span>
+                  <span>pip install sogen</span>
+                </div>
 
                 <div className="flex flex-col sm:flex-row gap-4">
                   <a href="https://pypi.org/project/sogen/" target="_blank">
@@ -313,21 +339,32 @@ export function LandingPage() {
                     <div className="h-3 w-3 rounded-full bg-red-400/80"></div>
                     <div className="h-3 w-3 rounded-full bg-yellow-400/80"></div>
                     <div className="h-3 w-3 rounded-full bg-green-400/80"></div>
-                    <span className="ml-3">basic_usage.py</span>
+                    <span className="ml-3">api_hooks.py</span>
                   </div>
-                  <pre className="overflow-x-auto p-5 text-sm leading-7 text-neutral-200">
-                    <code>{`import sogen
-
-app = sogen.create_application(
-    "c:/test-sample.exe",
-    None,
-    emulation_root="./root",
-)
-
-app.callbacks.on_stdout = lambda text: print(text, end="")
-app.start()
-print(app.process.exit_status)`}</code>
-                  </pre>
+                  <Highlight
+                    theme={themes.vsDark}
+                    code={pythonBindingsSample}
+                    language="python"
+                  >
+                    {({ className, style, tokens, getLineProps, getTokenProps }) => (
+                      <pre
+                        className={`${className} overflow-x-auto p-5 text-sm leading-7`}
+                        style={{
+                          ...style,
+                          margin: 0,
+                          backgroundColor: "transparent",
+                        }}
+                      >
+                        {tokens.map((line, i) => (
+                          <div key={i} {...getLineProps({ line })}>
+                            {line.map((token, key) => (
+                              <span key={key} {...getTokenProps({ token })} />
+                            ))}
+                          </div>
+                        ))}
+                      </pre>
+                    )}
+                  </Highlight>
                 </div>
               </div>
             </div>
