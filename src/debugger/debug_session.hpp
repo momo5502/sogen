@@ -22,6 +22,8 @@
 
 #include <windows_emulator.hpp>
 
+#include "event_handler.hpp"
+
 namespace debugger
 {
     enum class breakpoint_type : uint8_t
@@ -128,8 +130,10 @@ namespace debugger
         std::vector<stack_frame> call_stack(std::optional<uint32_t> thread_id = std::nullopt) const;
 
       private:
+        bool should_break(uint64_t address) const;
+
         struct impl;
         windows_emulator* emu_{};
-        std::unique_ptr<impl> impl_; // breakpoint registry + RAII hooks (Phase 3)
+        std::unique_ptr<impl> impl_; // breakpoint set + persistent control hook
     };
 }

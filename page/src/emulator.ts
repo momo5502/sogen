@@ -61,6 +61,11 @@ export enum DebugCommandKind {
   SetBreakpoint = 5,
   ClearBreakpoint = 6,
   ListBreakpoints = 7,
+  StepInto = 8,
+  StepOver = 9,
+  StepOut = 10,
+  RunTo = 11,
+  Continue = 12,
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

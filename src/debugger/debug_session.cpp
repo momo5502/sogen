@@ -2,8 +2,10 @@
 
 #include <array>
 #include <span>
+#include <unordered_set>
 
 #include <disassembler.hpp>
+#include <scoped_hook.hpp>
 
 // Phase 2 implements the read-only introspection surface by reusing existing,
 // proven primitives (the Capstone `disassembler`, `emu().reg`, `mod_manager`,
@@ -16,26 +18,48 @@ namespace debugger
     struct debug_session::impl
     {
         std::vector<breakpoint> breakpoints{};
+        std::unordered_set<uint64_t> breakpoint_addrs{};
+
+        // A single per-instruction execute hook drives both breakpoints and
+        // stepping. It lives exactly as long as the debug_session, so it is
+        // never created/destroyed from inside its own callback (no
+        // delete-in-callback UB, no nested emu().start()).
+        scoped_hook control_hook{};
     };
 
     debug_session::debug_session(windows_emulator& emu)
         : emu_(&emu),
           impl_(std::make_unique<impl>())
     {
+        auto& cpu = this->emu_->emu();
+        this->impl_->control_hook = scoped_hook(cpu, cpu.hook_memory_execution([this](const uint64_t address) {
+            if (this->should_break(address))
+            {
+                debugger::enter_breakpoint(*this->emu_, address);
+            }
+        }));
     }
 
     debug_session::~debug_session() = default;
 
-    // --- breakpoints (Phase 3: wire scoped_hook execute hooks like the GDB stub) ---
+    bool debug_session::should_break(const uint64_t address) const
+    {
+        return this->impl_->breakpoint_addrs.contains(address) || debugger::step_should_break(address);
+    }
+
+    // --- breakpoints (just a set; the persistent control hook does the work) ---
 
     bool debug_session::add_breakpoint(const uint64_t address, const breakpoint_type type, const size_t size)
     {
+        std::erase_if(this->impl_->breakpoints, [&](const breakpoint& b) { return b.address == address; });
         this->impl_->breakpoints.push_back({address, size, type, true, false});
+        this->impl_->breakpoint_addrs.insert(address);
         return true;
     }
 
     bool debug_session::remove_breakpoint(const uint64_t address)
     {
+        this->impl_->breakpoint_addrs.erase(address);
         auto& bps = this->impl_->breakpoints;
         const auto before = bps.size();
         std::erase_if(bps, [&](const breakpoint& b) { return b.address == address; });
@@ -44,6 +68,7 @@ namespace debugger
 
     void debug_session::clear_breakpoints()
     {
+        this->impl_->breakpoint_addrs.clear();
         this->impl_->breakpoints.clear();
     }
 
@@ -52,17 +77,28 @@ namespace debugger
         return this->impl_->breakpoints;
     }
 
-    // --- stepping (Phase 3) ---
+    // --- stepping: just record the request; the break loop resolves and the
+    // persistent control hook enforces it. Never nests emu().start(). ---
 
-    void debug_session::step(step_kind /*kind*/)
+    void debug_session::step(const step_kind kind)
     {
-        // Phase 3: emu().start(1) for `into`; temporary scoped_hook breakpoints
-        // for `over`/`out` (see ARCHITECTURE.md).
+        switch (kind)
+        {
+        case step_kind::into:
+            debugger::request_resume(step_request::into);
+            break;
+        case step_kind::over:
+            debugger::request_resume(step_request::over);
+            break;
+        case step_kind::out:
+            debugger::request_resume(step_request::step_out);
+            break;
+        }
     }
 
-    void debug_session::run_to(uint64_t /*address*/)
+    void debug_session::run_to(const uint64_t address)
     {
-        // Phase 3: temporary breakpoint + continue.
+        debugger::request_resume(step_request::cont, address);
     }
 
     // --- read-only introspection ---

@@ -330,6 +330,11 @@ namespace debugger
             set_breakpoint = 5,
             clear_breakpoint = 6,
             list_breakpoints = 7,
+            step_into = 8,
+            step_over = 9,
+            step_out = 10,
+            run_to = 11,
+            continue_execution = 12,
         };
 
         template <typename T>
@@ -353,6 +358,26 @@ namespace debugger
                 bound = &win_emu;
             }
             return *session;
+        }
+
+        // Shared break/step controller. The break loop blocks here; debug
+        // commands (and RunRequest) release it with a requested motion that is
+        // then enforced by the persistent control hook in debug_session.
+        struct break_controller
+        {
+            bool resume{false};
+            step_request request{step_request::none};
+            uint64_t run_to_address{0};
+
+            int mode{0}; // 0: free, 1: single-step, 2: run-to-target
+            uint64_t origin{0};
+            uint64_t target{0};
+        };
+
+        break_controller& controller()
+        {
+            static break_controller instance{};
+            return instance;
         }
 
         std::string build_registers_json(const std::vector<register_value>& regs)
@@ -582,8 +607,39 @@ namespace debugger
                 json = build_breakpoints_json(session.list_breakpoints());
                 break;
 
+            case debug_command::step_into:
+                debugger::request_resume(step_request::into);
+                json = "{}";
+                break;
+
+            case debug_command::step_over:
+                debugger::request_resume(step_request::over);
+                json = "{}";
+                break;
+
+            case debug_command::step_out:
+                debugger::request_resume(step_request::step_out);
+                json = "{}";
+                break;
+
+            case debug_command::run_to: {
+                uint64_t address = 0;
+                if (!read_le(in, 0, address))
+                {
+                    response.ok = false;
+                    break;
+                }
+                debugger::request_resume(step_request::cont, address);
+                json = "{}";
+                break;
+            }
+
+            case debug_command::continue_execution:
+                debugger::request_resume(step_request::cont);
+                json = "{}";
+                break;
+
             default:
-                // Stepping / continue / pause are Phase 3.
                 response.ok = false;
                 json = R"({"error":"unsupported"})";
                 break;
@@ -603,6 +659,7 @@ namespace debugger
 
             case Debugger::Event_RunRequest:
                 c.state = emulation_state::running;
+                debugger::request_resume(step_request::cont);
                 break;
 
             case Debugger::Event_GetStateRequest:
@@ -691,5 +748,122 @@ namespace debugger
         Debugger::ApplicationExitT response{};
         response.exit_status = exit_status;
         send_event(response);
+    }
+
+    void request_resume(const step_request request, const uint64_t run_to_address)
+    {
+        auto& ctrl = controller();
+        ctrl.request = request;
+        ctrl.run_to_address = run_to_address;
+        ctrl.resume = true;
+    }
+
+    // Consulted by the persistent control hook on every instruction. Returns
+    // true exactly once when the armed step motion completes; breakpoints are
+    // matched separately by debug_session.
+    bool step_should_break(const uint64_t address)
+    {
+        auto& ctrl = controller();
+        if (ctrl.mode == 1) // single-step: stop on the next distinct instruction
+        {
+            if (address != ctrl.origin)
+            {
+                ctrl.mode = 0;
+                return true;
+            }
+            return false;
+        }
+        if (ctrl.mode == 2) // run-to-target
+        {
+            if (address == ctrl.target)
+            {
+                ctrl.mode = 0;
+                return true;
+            }
+            return false;
+        }
+        return false;
+    }
+
+    void enter_breakpoint(windows_emulator& win_emu, const uint64_t address)
+    {
+        // Stop: tell the UI, then block here draining debug commands using the
+        // exact same primitive PauseRequest uses, until a resume/step arrives.
+        {
+            Debugger::GetStateResponseT stopped{};
+            stopped.state = Debugger::State_Paused;
+            send_event(stopped);
+        }
+        update_emulation_status(win_emu);
+
+        auto& ctrl = controller();
+        ctrl.resume = false;
+
+        event_context lc{.win_emu = win_emu, .state = emulation_state::paused};
+        while (!ctrl.resume)
+        {
+            handle_events_once(lc);
+            if (ctrl.resume)
+            {
+                break;
+            }
+            suspend_execution(2ms);
+        }
+        ctrl.resume = false;
+
+        // Resolve the requested motion into the control-hook plan.
+        auto& session = get_debug_session(win_emu);
+        ctrl.mode = 0;
+        ctrl.origin = address;
+        ctrl.target = 0;
+
+        switch (ctrl.request)
+        {
+        case step_request::into:
+            ctrl.mode = 1;
+            break;
+        case step_request::over: {
+            const auto insns = session.disassemble(address, 1);
+            if (!insns.empty() && insns[0].is_call)
+            {
+                ctrl.mode = 2;
+                ctrl.target = address + insns[0].bytes.size();
+            }
+            else
+            {
+                ctrl.mode = 1;
+            }
+            break;
+        }
+        case step_request::step_out: {
+            const auto frames = session.call_stack();
+            if (frames.size() >= 2)
+            {
+                ctrl.mode = 2;
+                ctrl.target = frames[1].instruction_pointer;
+            }
+            else
+            {
+                ctrl.mode = 1;
+            }
+            break;
+        }
+        case step_request::cont:
+            if (ctrl.run_to_address != 0)
+            {
+                ctrl.mode = 2;
+                ctrl.target = ctrl.run_to_address;
+            }
+            break;
+        case step_request::none:
+            break;
+        }
+
+        ctrl.request = step_request::none;
+        ctrl.run_to_address = 0;
+
+        Debugger::GetStateResponseT running{};
+        running.state = Debugger::State_Running;
+        send_event(running);
     }
 }
