@@ -19,6 +19,7 @@ import {
 
 import { Emulator } from "@/emulator";
 import { HexViewer } from "@/components/memory-view";
+import { CfgView } from "@/components/cfg-view";
 import * as dbg from "@/debugger/api";
 
 const ROW_HEIGHT = 20;
@@ -389,6 +390,7 @@ export function DebuggerView({ emulator, paused, onClose }: DebuggerViewProps) {
           <TabsTrigger value="breakpoints">Breakpoints</TabsTrigger>
           <TabsTrigger value="threads">Threads</TabsTrigger>
           <TabsTrigger value="modules">Modules</TabsTrigger>
+          <TabsTrigger value="cfg">CFG</TabsTrigger>
           <TabsTrigger value="memory">Memory</TabsTrigger>
         </TabsList>
 
@@ -515,6 +517,17 @@ export function DebuggerView({ emulator, paused, onClose }: DebuggerViewProps) {
                 </span>
               </button>
             ))}
+          </TabsContent>
+
+          <TabsContent value="cfg" className="absolute inset-0">
+            <CfgView
+              emulator={emulator}
+              paused={paused}
+              entry={selected ?? rip}
+              rip={rip}
+              generation={generation}
+              onSelect={followAddress}
+            />
           </TabsContent>
 
           <TabsContent value="memory" className="absolute inset-0 flex">
