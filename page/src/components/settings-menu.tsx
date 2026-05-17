@@ -3,6 +3,7 @@ import { Checkbox } from "./ui/checkbox";
 import { Label } from "./ui/label";
 
 import { Settings } from "@/settings";
+import { EnvironmentVariableList } from "./environment-variable-list";
 import { TextTooltip } from "./text-tooltip";
 import { ItemList } from "./item-list";
 
@@ -230,6 +231,27 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
             onChange={(e) => this.updateArgv(e.target.value)}
           />
         </div>
+
+        <Popover>
+          <PopoverTrigger>
+            <div className="w-full">
+              <div className="flex items-center mb-2">
+                <Label className="flex-1 text-left cursor-pointer">
+                  Environment Variables
+                </Label>
+                <ChevronDown />
+              </div>
+            </div>
+          </PopoverTrigger>
+          <PopoverContent className="shadow-2xl">
+            <EnvironmentVariableList
+              items={this.state.environmentVariables}
+              onChange={(items) =>
+                this.setState({ environmentVariables: items })
+              }
+            />
+          </PopoverContent>
+        </Popover>
 
         <Popover>
           <PopoverTrigger>
