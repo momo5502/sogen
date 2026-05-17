@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <fcntl.h>
 #include <limits>
 #include <sys/stat.h>
 #if defined(_WIN32)
@@ -21,13 +22,13 @@ namespace
 {
     constexpr int AT_FDCWD = -100;
 
-    constexpr int O_WRONLY = 1;
-    constexpr int O_RDWR = 2;
-    constexpr int O_CREAT = 0100;
-    constexpr int O_TRUNC = 01000;
-    constexpr int O_APPEND = 02000;
-    constexpr int O_DIRECTORY = 0200000;
-    constexpr int O_CLOEXEC = 02000000;
+    constexpr int LINUX_O_WRONLY = 1;
+    constexpr int LINUX_O_RDWR = 2;
+    constexpr int LINUX_O_CREAT = 0100;
+    constexpr int LINUX_O_TRUNC = 01000;
+    constexpr int LINUX_O_APPEND = 02000;
+    constexpr int LINUX_O_DIRECTORY = 0200000;
+    constexpr int LINUX_O_CLOEXEC = 02000000;
 
     struct cached_dir_entry
     {
@@ -236,42 +237,120 @@ namespace
     };
 #pragma pack(pop)
 
-    const char* translate_open_flags(int flags)
+    const char* translate_open_mode(const int flags, const bool file_existed)
     {
         const auto access = flags & 3;
 
-        if (flags & O_CREAT)
+        if (flags & LINUX_O_APPEND)
         {
-            if (flags & O_TRUNC)
-            {
-                return (access == O_RDWR) ? "w+b" : "wb";
-            }
-            if (flags & O_APPEND)
-            {
-                return (access == O_RDWR) ? "a+b" : "ab";
-            }
-            return (access == O_RDWR) ? "w+b" : "wb";
+            return (access == LINUX_O_RDWR) ? "a+b" : "ab";
         }
 
-        if (flags & O_APPEND)
+        if ((flags & LINUX_O_TRUNC) || ((flags & LINUX_O_CREAT) && !file_existed))
         {
-            return (access == O_RDWR) ? "a+b" : "ab";
-        }
-
-        if (flags & O_TRUNC)
-        {
-            return (access == O_RDWR) ? "w+b" : "wb";
+            return (access == LINUX_O_RDWR) ? "w+b" : "wb";
         }
 
         switch (access)
         {
-        case O_WRONLY:
-            return "wb";
-        case O_RDWR:
+        case LINUX_O_WRONLY:
+            return "r+b";
+        case LINUX_O_RDWR:
             return "r+b";
         default:
             return "rb";
         }
+    }
+
+    FILE* open_host_file(const std::filesystem::path& host_path, const int flags)
+    {
+        const auto path_str = host_path.string();
+        const auto access = flags & 3;
+        const auto file_existed = std::filesystem::exists(host_path);
+
+#if defined(_WIN32)
+        int host_flags = _O_BINARY;
+        switch (access)
+        {
+        case LINUX_O_WRONLY:
+            host_flags |= _O_RDWR;
+            break;
+        case LINUX_O_RDWR:
+            host_flags |= _O_RDWR;
+            break;
+        default:
+            host_flags |= _O_RDONLY;
+            break;
+        }
+
+        if (flags & LINUX_O_CREAT)
+        {
+            host_flags |= _O_CREAT;
+        }
+        if (flags & LINUX_O_TRUNC)
+        {
+            host_flags |= _O_TRUNC;
+        }
+        if (flags & LINUX_O_APPEND)
+        {
+            host_flags |= _O_APPEND;
+        }
+
+        const auto host_fd = _open(path_str.c_str(), host_flags, _S_IREAD | _S_IWRITE);
+        if (host_fd < 0)
+        {
+            return nullptr;
+        }
+
+        auto* handle = _fdopen(host_fd, translate_open_mode(flags, file_existed));
+#else
+        int host_flags = 0;
+        switch (access)
+        {
+        case LINUX_O_WRONLY:
+            host_flags |= O_RDWR;
+            break;
+        case LINUX_O_RDWR:
+            host_flags |= O_RDWR;
+            break;
+        default:
+            host_flags |= O_RDONLY;
+            break;
+        }
+
+        if (flags & LINUX_O_CREAT)
+        {
+            host_flags |= O_CREAT;
+        }
+        if (flags & LINUX_O_TRUNC)
+        {
+            host_flags |= O_TRUNC;
+        }
+        if (flags & LINUX_O_APPEND)
+        {
+            host_flags |= O_APPEND;
+        }
+
+        const auto host_fd = open(path_str.c_str(), host_flags, 0666);
+        if (host_fd < 0)
+        {
+            return nullptr;
+        }
+
+        auto* handle = fdopen(host_fd, translate_open_mode(flags, file_existed));
+#endif
+        if (!handle)
+        {
+#if defined(_WIN32)
+            _close(host_fd);
+#else
+            close(host_fd);
+#endif
+            return nullptr;
+        }
+
+        setvbuf(handle, nullptr, _IONBF, 0);
+        return handle;
     }
 
     void fill_linux_stat_from_host(linux_stat& ls, const struct stat& host_stat)
@@ -491,7 +570,7 @@ void sys_open(const linux_syscall_context& c)
 
     const auto host_path = c.emu_ref.file_sys.translate(guest_path);
 
-    if (flags & O_DIRECTORY)
+    if (flags & LINUX_O_DIRECTORY)
     {
         if (!std::filesystem::exists(host_path))
         {
@@ -509,7 +588,7 @@ void sys_open(const linux_syscall_context& c)
         new_fd.type = fd_type::directory;
         new_fd.host_path = host_path.string();
         new_fd.flags = flags;
-        new_fd.close_on_exec = (flags & O_CLOEXEC) != 0;
+        new_fd.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
 
         const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
         init_directory_fd_state(fd_num, host_path);
@@ -517,7 +596,7 @@ void sys_open(const linux_syscall_context& c)
         return;
     }
 
-    auto* handle = fopen(host_path.string().c_str(), translate_open_flags(flags));
+    auto* handle = open_host_file(host_path, flags);
     if (!handle)
     {
         write_linux_syscall_result(c, -LINUX_ENOENT);
@@ -529,7 +608,7 @@ void sys_open(const linux_syscall_context& c)
     new_fd.host_path = host_path.string();
     new_fd.handle = handle;
     new_fd.flags = flags;
-    new_fd.close_on_exec = (flags & O_CLOEXEC) != 0;
+    new_fd.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
 
     const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
     write_linux_syscall_result(c, fd_num);
@@ -678,7 +757,7 @@ void sys_openat(const linux_syscall_context& c)
 
     const auto host_path = *resolved;
 
-    if (flags & O_DIRECTORY)
+    if (flags & LINUX_O_DIRECTORY)
     {
         if (!std::filesystem::exists(host_path))
         {
@@ -696,7 +775,7 @@ void sys_openat(const linux_syscall_context& c)
         new_fd.type = fd_type::directory;
         new_fd.host_path = host_path.string();
         new_fd.flags = flags;
-        new_fd.close_on_exec = (flags & O_CLOEXEC) != 0;
+        new_fd.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
 
         const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
         init_directory_fd_state(fd_num, host_path);
@@ -704,7 +783,7 @@ void sys_openat(const linux_syscall_context& c)
         return;
     }
 
-    auto* handle = fopen(host_path.string().c_str(), translate_open_flags(flags));
+    auto* handle = open_host_file(host_path, flags);
     if (!handle)
     {
         write_linux_syscall_result(c, -LINUX_ENOENT);
@@ -716,7 +795,7 @@ void sys_openat(const linux_syscall_context& c)
     new_fd.host_path = host_path.string();
     new_fd.handle = handle;
     new_fd.flags = flags;
-    new_fd.close_on_exec = (flags & O_CLOEXEC) != 0;
+    new_fd.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
 
     const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
     write_linux_syscall_result(c, fd_num);
@@ -958,15 +1037,35 @@ void sys_fcntl(const linux_syscall_context& c)
     constexpr int F_SETFL = 4;
     constexpr int F_DUPFD_CLOEXEC = 1030;
 
+    if ((cmd == F_DUPFD || cmd == F_DUPFD_CLOEXEC) && arg > static_cast<uint64_t>(std::numeric_limits<int>::max()))
+    {
+        write_linux_syscall_result(c, -LINUX_EINVAL);
+        return;
+    }
+
     switch (cmd)
     {
     case F_DUPFD: {
-        const auto new_fd = c.proc.fds.dup_fd(fd);
+        const auto minimum_fd = static_cast<int>(arg);
+        if (minimum_fd < 0)
+        {
+            write_linux_syscall_result(c, -LINUX_EINVAL);
+            break;
+        }
+
+        const auto new_fd = c.proc.fds.dup_fd(fd, minimum_fd);
         write_linux_syscall_result(c, new_fd >= 0 ? new_fd : -LINUX_EMFILE);
         break;
     }
     case F_DUPFD_CLOEXEC: {
-        const auto new_fd = c.proc.fds.dup_fd(fd);
+        const auto minimum_fd = static_cast<int>(arg);
+        if (minimum_fd < 0)
+        {
+            write_linux_syscall_result(c, -LINUX_EINVAL);
+            break;
+        }
+
+        const auto new_fd = c.proc.fds.dup_fd(fd, minimum_fd);
         if (new_fd >= 0)
         {
             c.proc.fds.set_close_on_exec(new_fd, true);
