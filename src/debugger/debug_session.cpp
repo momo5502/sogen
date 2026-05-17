@@ -2,17 +2,16 @@
 
 #include <array>
 #include <span>
-#include <unordered_map>
 #include <unordered_set>
 
 #include <disassembler.hpp>
 #include <scoped_hook.hpp>
 
-// Read-only introspection reuses proven primitives (Capstone `disassembler`,
-// `emu().reg`, `mod_manager`, `process.threads`) and installs NO hooks, so
-// opening the debugger never perturbs or slows execution. Breakpoints use
-// cheap per-address execute hooks; the single generic per-instruction hook
-// (stepping) is installed lazily only once the user actually steps.
+// Phase 2 implements the read-only introspection surface by reusing existing,
+// proven primitives (the Capstone `disassembler`, `emu().reg`, `mod_manager`,
+// `process.threads`). Breakpoints and the stepping engine are Phase 3 — their
+// methods are defined as documented no-ops so the class stays complete and
+// linkable, and the protocol layer can already advertise them.
 
 namespace debugger
 {
@@ -21,72 +20,45 @@ namespace debugger
         std::vector<breakpoint> breakpoints{};
         std::unordered_set<uint64_t> breakpoint_addrs{};
 
-        // Per-address execute hooks: they only fire at their breakpoint, so
-        // there is ZERO per-instruction cost. They are never destroyed while
-        // emulation runs (removal just clears the address from the set, the
-        // hook then no-ops) -> no delete-in-callback UB.
-        std::unordered_map<uint64_t, scoped_hook> bp_hooks{};
-
-        // A single generic per-instruction hook, installed lazily only once
-        // the user actually steps. Read-only introspection never installs any
-        // hook, so opening the debugger does not slow emulation at all.
-        scoped_hook step_hook{};
-        bool step_hook_installed{false};
+        // A single per-instruction execute hook drives both breakpoints and
+        // stepping. It lives exactly as long as the debug_session, so it is
+        // never created/destroyed from inside its own callback (no
+        // delete-in-callback UB, no nested emu().start()).
+        scoped_hook control_hook{};
     };
 
     debug_session::debug_session(windows_emulator& emu)
         : emu_(&emu),
           impl_(std::make_unique<impl>())
     {
-        // Intentionally installs no hooks: registers/disassembly/modules/
-        // threads/call-stack are pure reads and must not perturb execution.
-    }
-
-    debug_session::~debug_session() = default;
-
-    void debug_session::ensure_step_hook()
-    {
-        if (this->impl_->step_hook_installed)
-        {
-            return;
-        }
         auto& cpu = this->emu_->emu();
-        this->impl_->step_hook = scoped_hook(cpu, cpu.hook_memory_execution([this](const uint64_t address) {
-            if (debugger::step_should_break(address))
+        this->impl_->control_hook = scoped_hook(cpu, cpu.hook_memory_execution([this](const uint64_t address) {
+            if (this->should_break(address))
             {
                 debugger::enter_breakpoint(*this->emu_, address);
             }
         }));
-        this->impl_->step_hook_installed = true;
     }
 
-    // --- breakpoints: cheap per-address execute hooks ---
+    debug_session::~debug_session() = default;
+
+    bool debug_session::should_break(const uint64_t address) const
+    {
+        return this->impl_->breakpoint_addrs.contains(address) || debugger::step_should_break(address);
+    }
+
+    // --- breakpoints (just a set; the persistent control hook does the work) ---
 
     bool debug_session::add_breakpoint(const uint64_t address, const breakpoint_type type, const size_t size)
     {
         std::erase_if(this->impl_->breakpoints, [&](const breakpoint& b) { return b.address == address; });
         this->impl_->breakpoints.push_back({address, size, type, true, false});
         this->impl_->breakpoint_addrs.insert(address);
-
-        if (!this->impl_->bp_hooks.contains(address))
-        {
-            auto& cpu = this->emu_->emu();
-            this->impl_->bp_hooks.emplace(address, scoped_hook(cpu, cpu.hook_memory_execution(address, [this, address](const uint64_t hit) {
-                                              // Honor live enable/remove without
-                                              // destroying the hook mid-callback.
-                                              if (this->impl_->breakpoint_addrs.contains(address))
-                                              {
-                                                  debugger::enter_breakpoint(*this->emu_, hit);
-                                              }
-                                          })));
-        }
         return true;
     }
 
     bool debug_session::remove_breakpoint(const uint64_t address)
     {
-        // Only drop it from the active set; the hook stays installed (it now
-        // no-ops) so we never destroy a hook from inside its own callback.
         this->impl_->breakpoint_addrs.erase(address);
         auto& bps = this->impl_->breakpoints;
         const auto before = bps.size();
@@ -105,12 +77,11 @@ namespace debugger
         return this->impl_->breakpoints;
     }
 
-    // --- stepping: record the request; enter_breakpoint resolves it and the
-    // lazily-installed generic hook enforces it. Never nests emu().start(). ---
+    // --- stepping: just record the request; the break loop resolves and the
+    // persistent control hook enforces it. Never nests emu().start(). ---
 
     void debug_session::step(const step_kind kind)
     {
-        this->ensure_step_hook();
         switch (kind)
         {
         case step_kind::into:
@@ -127,7 +98,6 @@ namespace debugger
 
     void debug_session::run_to(const uint64_t address)
     {
-        this->ensure_step_hook();
         debugger::request_resume(step_request::cont, address);
     }
 

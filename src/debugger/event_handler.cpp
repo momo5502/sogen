@@ -608,19 +608,16 @@ namespace debugger
                 break;
 
             case debug_command::step_into:
-                session.ensure_step_hook();
                 debugger::request_resume(step_request::into);
                 json = "{}";
                 break;
 
             case debug_command::step_over:
-                session.ensure_step_hook();
                 debugger::request_resume(step_request::over);
                 json = "{}";
                 break;
 
             case debug_command::step_out:
-                session.ensure_step_hook();
                 debugger::request_resume(step_request::step_out);
                 json = "{}";
                 break;
@@ -632,7 +629,6 @@ namespace debugger
                     response.ok = false;
                     break;
                 }
-                session.ensure_step_hook();
                 debugger::request_resume(step_request::cont, address);
                 json = "{}";
                 break;
