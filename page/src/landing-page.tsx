@@ -33,7 +33,7 @@ function generateButtons(additionalClasses: string = "") {
         >
           <span>
             <Play className="mr-2 h-5 w-5 transition-transform" />
-            <span className="flex-1">Try Online</span>
+            <span className="flex-1 text-center">Try Online</span>
             <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
           </span>
         </Button>
@@ -47,7 +47,7 @@ function generateButtons(additionalClasses: string = "") {
         >
           <span>
             <Code className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
-            <span className="flex-1">Get Source</span>
+            <span className="flex-1 text-center">Get Source</span>
             <ExternalLink className="ml-2 h-4 w-4" />
           </span>
         </Button>
@@ -339,7 +339,7 @@ export function LandingPage() {
                     >
                       <span>
                         <BookOpen className="mr-2 h-5 w-5 transition-transform" />
-                        <span className="flex-1">View on PyPI</span>
+                        <span className="flex-1 text-center">View on PyPI</span>
                         <ExternalLink className="ml-2 h-4 w-4" />
                       </span>
                     </Button>
@@ -356,7 +356,9 @@ export function LandingPage() {
                     >
                       <span>
                         <Code className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
-                        <span className="flex-1">Read Python Docs</span>
+                        <span className="flex-1 text-center">
+                          Read Python Docs
+                        </span>
                         <ExternalLink className="ml-2 h-4 w-4" />
                       </span>
                     </Button>
