@@ -13,7 +13,7 @@ description = "Sogen Windows user-space emulator bindings"
 dynamic = ["version"]
 license = {text = "GPL-2.0-only"}
 name = "sogen"
-readme = "README.md"
+readme = "docs/python/README.md"
 requires-python = ">=3.9"
 
 [tool.scikit-build]

@@ -40,6 +40,7 @@ struct emulator_callbacks : module_manager::callbacks, process_context::callback
     utils::callback_list<void(std::string_view message)> on_debug_string{};
     opt_func<void(uint64_t address)> on_instruction{};
     opt_func<void(io_device& device, std::u16string_view device_name, ULONG code)> on_ioctrl{};
+    opt_func<void(uint32_t fail_code)> on_fast_fail{};
 };
 
 // Typed reason the most recent start() returned. Today callers can only
