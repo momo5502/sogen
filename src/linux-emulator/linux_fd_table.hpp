@@ -250,7 +250,7 @@ class linux_fd_table
 #if defined(_WIN32)
             _close(duplicated_fd);
 #else
-            close(duplicated_fd);
+            ::close(duplicated_fd);
 #endif
             return nullptr;
         }
