@@ -21,6 +21,7 @@ import { Emulator } from "@/emulator";
 import { HexViewer } from "@/components/memory-view";
 import { CfgView } from "@/components/cfg-view";
 import { ScriptConsole } from "@/components/script-console";
+import { ErrorBoundary } from "@/components/error-boundary";
 import * as dbg from "@/debugger/api";
 
 const ROW_HEIGHT = 20;
@@ -63,10 +64,15 @@ function DisasmRow({
   onFollow,
 }: RowComponentProps<DisasmRowProps>) {
   const insn = insns[index];
+  let address: bigint;
+  try {
+    address = insn ? BigInt(insn.address) : BigInt(0);
+  } catch {
+    address = BigInt(0);
+  }
   if (!insn) {
     return <div style={style} />;
   }
-  const address = BigInt(insn.address);
   const isCurrent = address === rip;
   const hasBp = breakpoints.has(address.toString(16));
 
@@ -397,155 +403,162 @@ export function DebuggerView({ emulator, paused, onClose }: DebuggerViewProps) {
         </TabsList>
 
         <div className="relative flex flex-1 min-h-0">
-          <TabsContent value="disasm" className="absolute inset-0">
-            {insns.length > 0 ? (
-              <List
-                rowCount={insns.length}
-                rowHeight={ROW_HEIGHT}
-                className="h-full"
-                style={{ height: "100%" }}
-                rowComponent={DisasmRow}
-                rowProps={{
-                  insns,
-                  rip,
-                  breakpoints: bpSet,
-                  onToggleBreakpoint: toggleBreakpoint,
-                  onFollow: followAddress,
-                }}
-              />
-            ) : (
-              <div className="p-3 text-xs text-muted-foreground">
-                {paused ? "No disassembly." : "Pause to debug."}
-              </div>
-            )}
-          </TabsContent>
+          <ErrorBoundary label="Debugger panel">
+            <TabsContent value="disasm" className="absolute inset-0">
+              {insns.length > 0 ? (
+                <List
+                  rowCount={insns.length}
+                  rowHeight={ROW_HEIGHT}
+                  className="h-full"
+                  style={{ height: "100%" }}
+                  rowComponent={DisasmRow}
+                  rowProps={{
+                    insns,
+                    rip,
+                    breakpoints: bpSet,
+                    onToggleBreakpoint: toggleBreakpoint,
+                    onFollow: followAddress,
+                  }}
+                />
+              ) : (
+                <div className="p-3 text-xs text-muted-foreground">
+                  {paused ? "No disassembly." : "Pause to debug."}
+                </div>
+              )}
+            </TabsContent>
 
-          <TabsContent
-            value="registers"
-            className="absolute inset-0 overflow-auto p-2"
-          >
-            <div className="grid grid-cols-2 gap-x-6 gap-y-0.5 font-mono text-xs">
-              {registers.map((r) => (
-                <div key={r.name} className="flex justify-between">
-                  <span className="text-muted-foreground">{r.name}</span>
-                  <span>{r.value}</span>
+            <TabsContent
+              value="registers"
+              className="absolute inset-0 overflow-auto p-2"
+            >
+              <div className="grid grid-cols-2 gap-x-6 gap-y-0.5 font-mono text-xs">
+                {registers.map((r) => (
+                  <div key={r.name} className="flex justify-between">
+                    <span className="text-muted-foreground">{r.name}</span>
+                    <span>{r.value}</span>
+                  </div>
+                ))}
+              </div>
+            </TabsContent>
+
+            <TabsContent
+              value="stack"
+              className="absolute inset-0 overflow-auto font-mono text-xs"
+            >
+              {frames.map((f, i) => (
+                <button
+                  key={i}
+                  onClick={() => followAddress(BigInt(f.ip))}
+                  className="flex w-full justify-between border-b border-border/50 px-3 py-1 text-left hover:bg-accent/50"
+                >
+                  <span>{fmt(BigInt(f.ip))}</span>
+                  <span className="text-muted-foreground">
+                    {f.module || "?"}
+                  </span>
+                </button>
+              ))}
+            </TabsContent>
+
+            <TabsContent
+              value="breakpoints"
+              className="absolute inset-0 overflow-auto font-mono text-xs"
+            >
+              {breakpoints.length === 0 ? (
+                <div className="p-3 text-muted-foreground">No breakpoints.</div>
+              ) : (
+                breakpoints.map((b) => (
+                  <div
+                    key={b.address}
+                    className="flex items-center justify-between border-b border-border/50 px-3 py-1"
+                  >
+                    <button
+                      className="hover:underline"
+                      onClick={() => followAddress(BigInt(b.address))}
+                    >
+                      {fmt(BigInt(b.address))}
+                    </button>
+                    <button
+                      className="text-red-400 hover:underline"
+                      onClick={async () =>
+                        setBreakpoints(
+                          await dbg.clearBreakpoint(
+                            emulator,
+                            BigInt(b.address),
+                          ),
+                        )
+                      }
+                    >
+                      remove
+                    </button>
+                  </div>
+                ))
+              )}
+            </TabsContent>
+
+            <TabsContent
+              value="threads"
+              className="absolute inset-0 overflow-auto font-mono text-xs"
+            >
+              {threads.map((t) => (
+                <div
+                  key={t.id}
+                  className={cn(
+                    "flex justify-between border-b border-border/50 px-3 py-1",
+                    t.active && "bg-accent",
+                  )}
+                >
+                  <span>tid {t.id}</span>
+                  <span className="text-muted-foreground">
+                    {fmt(BigInt(t.ip))}
+                  </span>
                 </div>
               ))}
-            </div>
-          </TabsContent>
+            </TabsContent>
 
-          <TabsContent
-            value="stack"
-            className="absolute inset-0 overflow-auto font-mono text-xs"
-          >
-            {frames.map((f, i) => (
-              <button
-                key={i}
-                onClick={() => followAddress(BigInt(f.ip))}
-                className="flex w-full justify-between border-b border-border/50 px-3 py-1 text-left hover:bg-accent/50"
-              >
-                <span>{fmt(BigInt(f.ip))}</span>
-                <span className="text-muted-foreground">{f.module || "?"}</span>
-              </button>
-            ))}
-          </TabsContent>
-
-          <TabsContent
-            value="breakpoints"
-            className="absolute inset-0 overflow-auto font-mono text-xs"
-          >
-            {breakpoints.length === 0 ? (
-              <div className="p-3 text-muted-foreground">No breakpoints.</div>
-            ) : (
-              breakpoints.map((b) => (
-                <div
-                  key={b.address}
-                  className="flex items-center justify-between border-b border-border/50 px-3 py-1"
+            <TabsContent
+              value="modules"
+              className="absolute inset-0 overflow-auto font-mono text-xs"
+            >
+              {modules.map((m) => (
+                <button
+                  key={m.base}
+                  onClick={() => followAddress(BigInt(m.entry || m.base))}
+                  className="flex w-full justify-between border-b border-border/50 px-3 py-1 text-left hover:bg-accent/50"
                 >
-                  <button
-                    className="hover:underline"
-                    onClick={() => followAddress(BigInt(b.address))}
-                  >
-                    {fmt(BigInt(b.address))}
-                  </button>
-                  <button
-                    className="text-red-400 hover:underline"
-                    onClick={async () =>
-                      setBreakpoints(
-                        await dbg.clearBreakpoint(emulator, BigInt(b.address)),
-                      )
-                    }
-                  >
-                    remove
-                  </button>
-                </div>
-              ))
-            )}
-          </TabsContent>
+                  <span className="truncate">{m.name}</span>
+                  <span className="text-muted-foreground">
+                    {fmt(BigInt(m.base))}
+                  </span>
+                </button>
+              ))}
+            </TabsContent>
 
-          <TabsContent
-            value="threads"
-            className="absolute inset-0 overflow-auto font-mono text-xs"
-          >
-            {threads.map((t) => (
-              <div
-                key={t.id}
-                className={cn(
-                  "flex justify-between border-b border-border/50 px-3 py-1",
-                  t.active && "bg-accent",
-                )}
-              >
-                <span>tid {t.id}</span>
-                <span className="text-muted-foreground">
-                  {fmt(BigInt(t.ip))}
-                </span>
-              </div>
-            ))}
-          </TabsContent>
+            <TabsContent value="cfg" className="absolute inset-0">
+              <CfgView
+                emulator={emulator}
+                paused={paused}
+                entry={selected ?? rip}
+                rip={rip}
+                generation={generation}
+                onSelect={followAddress}
+              />
+            </TabsContent>
 
-          <TabsContent
-            value="modules"
-            className="absolute inset-0 overflow-auto font-mono text-xs"
-          >
-            {modules.map((m) => (
-              <button
-                key={m.base}
-                onClick={() => followAddress(BigInt(m.entry || m.base))}
-                className="flex w-full justify-between border-b border-border/50 px-3 py-1 text-left hover:bg-accent/50"
-              >
-                <span className="truncate">{m.name}</span>
-                <span className="text-muted-foreground">
-                  {fmt(BigInt(m.base))}
-                </span>
-              </button>
-            ))}
-          </TabsContent>
+            <TabsContent value="memory" className="absolute inset-0 flex">
+              <HexViewer
+                key={`${generation}|${tab === "memory"}`}
+                emulator={emulator}
+                viewBase={rsp !== BigInt(0) ? rsp : rip}
+                viewSize={0x1000}
+                paused={paused}
+                scrollToOffset={0}
+              />
+            </TabsContent>
 
-          <TabsContent value="cfg" className="absolute inset-0">
-            <CfgView
-              emulator={emulator}
-              paused={paused}
-              entry={selected ?? rip}
-              rip={rip}
-              generation={generation}
-              onSelect={followAddress}
-            />
-          </TabsContent>
-
-          <TabsContent value="memory" className="absolute inset-0 flex">
-            <HexViewer
-              key={`${generation}|${tab === "memory"}`}
-              emulator={emulator}
-              viewBase={rsp !== BigInt(0) ? rsp : rip}
-              viewSize={0x1000}
-              paused={paused}
-              scrollToOffset={0}
-            />
-          </TabsContent>
-
-          <TabsContent value="script" className="absolute inset-0">
-            <ScriptConsole emulator={emulator} />
-          </TabsContent>
+            <TabsContent value="script" className="absolute inset-0">
+              <ScriptConsole emulator={emulator} />
+            </TabsContent>
+          </ErrorBoundary>
         </div>
       </Tabs>
     </div>

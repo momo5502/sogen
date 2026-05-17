@@ -14,6 +14,19 @@ const NODE_PAD = 8;
 const H_GAP = 60;
 const V_GAP = 40;
 
+// Never throw during render: a malformed address from the decode stream must
+// not blank the whole UI.
+function toBig(value: string | undefined | null): bigint | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    return BigInt(value);
+  } catch {
+    return null;
+  }
+}
+
 interface BasicBlock {
   start: string; // hex address of first instruction
   insns: dbg.Instruction[];
@@ -201,7 +214,7 @@ export function CfgView({
   }, [blocks]);
 
   const containsRip = (b: BasicBlock) =>
-    b.insns.some((i) => BigInt(i.address).toString(16) === ripKey);
+    b.insns.some((i) => toBig(i.address)?.toString(16) === ripKey);
 
   if (blocks.length === 0) {
     return (
@@ -270,9 +283,12 @@ export function CfgView({
               <g
                 key={b.start}
                 transform={`translate(${b.x},${b.y})`}
-                onClick={() =>
-                  onSelect(BigInt("0x" + b.start.replace(/^0x/, "")))
-                }
+                onClick={() => {
+                  const a = toBig(b.start);
+                  if (a !== null) {
+                    onSelect(a);
+                  }
+                }}
                 className="cursor-pointer"
               >
                 <rect
@@ -293,7 +309,7 @@ export function CfgView({
                     y={NODE_PAD + (idx + 1) * LINE_HEIGHT - 3}
                     className={
                       "fill-foreground font-mono " +
-                      (BigInt(i.address).toString(16) === ripKey
+                      (toBig(i.address)?.toString(16) === ripKey
                         ? "font-bold"
                         : "")
                     }
