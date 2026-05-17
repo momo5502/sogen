@@ -192,10 +192,11 @@ void register_sogen_runtime_bindings(nb::module_& m)
     m.def("create_empty", [](nb::kwargs kwargs) { // NOLINT(performance-unnecessary-value-param)
         return sogen_windows_emulator(create_empty_emulator(kwargs));
     });
-    m.def(
-        "create_application",
-        [](nb::object application, nb::object application_args, nb::kwargs kwargs) { // NOLINT(performance-unnecessary-value-param)
-            return sogen_windows_emulator(create_application_emulator(application, application_args, kwargs));
-        },
-        nb::arg("application"), nb::arg("args").none() = nb::none());
+    m.def("create_application", [](nb::object application, nb::kwargs kwargs) { // NOLINT(performance-unnecessary-value-param)
+        return sogen_windows_emulator(create_application_emulator(application, nb::none(), kwargs));
+    });
+    m.def("create_application",
+          [](nb::object application, nb::object application_args, nb::kwargs kwargs) { // NOLINT(performance-unnecessary-value-param)
+              return sogen_windows_emulator(create_application_emulator(application, application_args, kwargs));
+          });
 }
