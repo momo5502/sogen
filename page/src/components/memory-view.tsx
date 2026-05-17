@@ -511,6 +511,34 @@ export function MemoryView({ emulator, paused, onClose }: MemoryViewProps) {
   const [generation, setGeneration] = React.useState(0);
   const wasPaused = React.useRef(false);
 
+  // Resizable docked width (drag the left edge).
+  const [width, setWidth] = React.useState(() =>
+    Math.min(760, Math.round(window.innerWidth * 0.6)),
+  );
+  const dragging = React.useRef(false);
+
+  React.useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!dragging.current) {
+        return;
+      }
+      const next = window.innerWidth - e.clientX;
+      setWidth(Math.min(Math.max(next, 360), window.innerWidth - 160));
+    };
+    const onUp = () => {
+      if (dragging.current) {
+        dragging.current = false;
+        document.body.style.userSelect = "";
+      }
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
+
   // Each fresh entry into the paused state is a new snapshot of process
   // memory: bump `generation` so regions are refetched and the hex cache
   // (keyed by generation) is dropped.
@@ -618,7 +646,19 @@ export function MemoryView({ emulator, paused, onClose }: MemoryViewProps) {
   const loading = regionsGen !== generation;
 
   return (
-    <div className="flex h-full w-full flex-col border-l bg-background md:w-[640px] lg:w-[760px]">
+    <div
+      className="relative flex h-full shrink-0 flex-col border-l bg-background"
+      style={{ width: `${width}px`, maxWidth: "100vw" }}
+    >
+      <div
+        onMouseDown={(e) => {
+          e.preventDefault();
+          dragging.current = true;
+          document.body.style.userSelect = "none";
+        }}
+        title="Drag to resize"
+        className="absolute inset-y-0 left-0 z-20 w-1.5 cursor-col-resize hover:bg-primary/40"
+      />
       <div className="flex items-center justify-between gap-2 border-b p-2">
         <span className="text-sm font-medium">Memory View</span>
         <div className="flex-1" />
