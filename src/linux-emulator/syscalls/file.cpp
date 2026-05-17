@@ -1008,7 +1008,6 @@ void sys_dup3(const linux_syscall_context& c)
         return;
     }
 
-    constexpr int LINUX_O_CLOEXEC = 02000000;
     if (flags & LINUX_O_CLOEXEC)
     {
         c.proc.fds.set_close_on_exec(newfd, true);
