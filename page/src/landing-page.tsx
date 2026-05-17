@@ -343,7 +343,13 @@ export function LandingPage() {
                     code={pythonBindingsSample}
                     language="python"
                   >
-                    {({ className, style, tokens, getLineProps, getTokenProps }) => (
+                    {({
+                      className,
+                      style,
+                      tokens,
+                      getLineProps,
+                      getTokenProps,
+                    }) => (
                       <pre
                         className={`${className} overflow-x-auto p-5 text-sm leading-7`}
                         style={{
