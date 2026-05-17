@@ -60,7 +60,7 @@ export function LandingPage() {
       icon: <Cpu className="h-6 w-6" />,
       title: "Syscall Emulation",
       description:
-        "Operates at syscall level, leveraging existing system DLLs instead of reimplementing Windows APIs",
+        "Operates at syscall level for Windows NT and Linux x86-64 binaries, minimizing API reimplementation overhead",
       accent: "from-[#f76548] to-[#b00101]",
     },
     {
@@ -110,6 +110,7 @@ export function LandingPage() {
   const stats = [
     { value: "100%", label: "Open Source" },
     { value: "14", label: "Platforms" },
+    { value: "2", label: "OS Targets" },
     { value: "2", label: "Backends" },
     { value: "100%", label: "Deterministic" },
   ];
@@ -118,7 +119,7 @@ export function LandingPage() {
     <>
       <Header
         title="Sogen"
-        description="A high-performance Windows user space emulator."
+        description="A high-performance Windows and Linux user space emulator."
       />
       <div className="flex flex-col min-h-screen bg-linear-to-br from-zinc-900 via-neutral-900 to-black overflow-x-hidden">
         {/* Hero Section with Animated Background */}
@@ -138,7 +139,7 @@ export function LandingPage() {
               </h1>
 
               <p className="text-xl md:text-2xl text-neutral-300 font-light leading-relaxed">
-                A high-performance Windows user space emulator.
+                A high-performance Windows and Linux user space emulator.
               </p>
 
               {
@@ -208,8 +209,8 @@ export function LandingPage() {
                 Perfect For Your Research
               </h2>
               <p className="text-xl text-neutral-400">
-                Designed for researchers who need precise control over Windows
-                process execution.
+                Designed for researchers who need precise control over user-space
+                process execution on Windows and Linux.
               </p>
             </div>
 

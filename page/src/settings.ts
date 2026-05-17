@@ -1,5 +1,7 @@
 import { parse } from "shell-quote";
 
+export type EmulatorMode = "windows" | "linux";
+
 export interface Settings {
   logging: "verbose" | "silent" | "concise" | string;
   bufferStdout: boolean;
@@ -11,6 +13,7 @@ export interface Settings {
   ignoredFunctions: string[];
   interestingModules: string[];
   commandLine: string;
+  mode: EmulatorMode;
 }
 
 export interface TranslatedSettings {
@@ -30,6 +33,7 @@ export function createDefaultSettings(): Settings {
     ignoredFunctions: [],
     interestingModules: [],
     commandLine: "",
+    mode: "windows",
   };
 }
 
@@ -63,46 +67,54 @@ export function translateSettings(settings: Settings): TranslatedSettings {
   const switches: string[] = [];
   const options: string[] = [];
 
-  switch (settings.logging) {
-    case "verbose":
-      switches.push("-v");
-      break;
-    case "silent":
-      switches.push("-s");
-      break;
-    case "concise":
-      switches.push("-c");
-      break;
+  if (settings.mode === "linux") {
+    // Linux emulator only supports --verbose
+    if (settings.logging === "verbose") {
+      switches.push("--verbose");
+    }
+  } else {
+    // Windows emulator options
+    switch (settings.logging) {
+      case "verbose":
+        switches.push("-v");
+        break;
+      case "silent":
+        switches.push("-s");
+        break;
+      case "concise":
+        switches.push("-c");
+        break;
 
-    default:
-      break;
+      default:
+        break;
+    }
+
+    if (settings.bufferStdout) {
+      switches.push("-b");
+    }
+
+    if (settings.execAccess) {
+      switches.push("-x");
+    }
+
+    if (settings.foreignAccess) {
+      switches.push("-f");
+    }
+
+    if (settings.instructionSummary) {
+      switches.push("-is");
+    }
+
+    settings.ignoredFunctions.forEach((f) => {
+      switches.push("-i");
+      switches.push(f);
+    });
+
+    settings.interestingModules.forEach((m) => {
+      switches.push("-m");
+      switches.push(m);
+    });
   }
-
-  if (settings.bufferStdout) {
-    switches.push("-b");
-  }
-
-  if (settings.execAccess) {
-    switches.push("-x");
-  }
-
-  if (settings.foreignAccess) {
-    switches.push("-f");
-  }
-
-  if (settings.instructionSummary) {
-    switches.push("-is");
-  }
-
-  settings.ignoredFunctions.forEach((f) => {
-    switches.push("-i");
-    switches.push(f);
-  });
-
-  settings.interestingModules.forEach((m) => {
-    switches.push("-m");
-    switches.push(m);
-  });
 
   try {
     const argv = parse(settings.commandLine) as string[];
