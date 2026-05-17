@@ -308,6 +308,7 @@ namespace
         EVENT_NAME(foreign_module_read_event, "foreign_module_read");
         EVENT_NAME(executable_read_event, "executable_read");
         EVENT_NAME(executable_write_event, "executable_write");
+        EVENT_NAME(fast_fail_event, "fast_fail");
 
 #undef EVENT_NAME
 
@@ -583,6 +584,11 @@ namespace
             object.field("size", static_cast<uint64_t>(event.size));
             object.hex_field("value", event.value);
             object.field("section", event.section_name);
+        }
+
+        static void write_fields(json_object_builder& object, const fast_fail_event& event)
+        {
+            object.field("fail_code", static_cast<uint64_t>(event.fail_code));
         }
     };
 }

@@ -338,6 +338,11 @@ namespace
         });
     }
 
+    void handle_fast_fail(const analysis_context& c, const uint32_t fail_code)
+    {
+        c.emit_observation<fast_fail_event>([&](auto& event) { event.fail_code = fail_code; });
+    }
+
     bool is_thread_alive(const analysis_context& c, const uint32_t thread_id)
     {
         for (const auto& t : c.win_emu->process.threads | std::views::values)
@@ -815,6 +820,7 @@ void register_analysis_callbacks(analysis_context& c)
     cb.on_generic_access = make_callback(c, handle_generic_access);
     cb.on_generic_activity = make_callback(c, handle_generic_activity);
     cb.on_suspicious_activity = make_callback(c, handle_suspicious_activity);
+    cb.on_fast_fail = make_callback(c, handle_fast_fail);
 
     watch_import_table(c);
 }

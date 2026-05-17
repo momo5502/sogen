@@ -231,6 +231,9 @@ namespace
                             color::blue,
                             "Writing %zd bytes with value 0x%" PRIX64 " to executable section %s at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n",
                             e.size, e.value, e.section_name.c_str(), e.address, e.execution.rip, e.execution.rip_module.c_str());
+                    },
+                    [&](const fast_fail_event& e) {
+                        this->log_.print(color::red, "Process requested fast fail with code %d\n", e.fail_code);
                     }),
                 event);
         }

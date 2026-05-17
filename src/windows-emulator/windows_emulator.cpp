@@ -518,6 +518,11 @@ void windows_emulator::setup_hooks()
             this->callbacks.on_suspicious_activity("Illegal instruction");
             dispatch_illegal_instruction_violation(*this);
             return;
+        case 41:
+            this->callbacks.on_fast_fail(this->emu().reg<uint32_t>(x86_register::ecx));
+            this->process.exit_status = STATUS_FAIL_FAST_EXCEPTION;
+            this->stop();
+            return;
         case 45:
             this->callbacks.on_suspicious_activity("DbgPrint");
             dispatch_breakpoint(*this);
