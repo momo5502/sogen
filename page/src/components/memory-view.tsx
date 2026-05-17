@@ -156,6 +156,22 @@ export interface MemoryRegionsPanelProps {
   onSelect: (region: MemoryRegion) => void;
 }
 
+// Well-known fixed addresses in the Windows user address space.
+const KNOWN_ADDRESSES: { address: bigint; label: string }[] = [
+  { address: BigInt("0x7ffe0000"), label: "KUSER_SHARED_DATA" },
+];
+
+function knownRegionMarker(region: MemoryRegion): string | null {
+  const base = BigInt(region.base);
+  const end = base + BigInt(region.size);
+  for (const known of KNOWN_ADDRESSES) {
+    if (known.address >= base && known.address < end) {
+      return known.label;
+    }
+  }
+  return null;
+}
+
 export function MemoryRegionsPanel({
   regions,
   selected,
@@ -191,6 +207,7 @@ export function MemoryRegionsPanel({
           selected !== null &&
           selected.base === region.base &&
           selected.state === region.state;
+        const marker = knownRegionMarker(region);
         return (
           <button
             key={`${region.base}-${region.state}-${index}`}
@@ -201,8 +218,18 @@ export function MemoryRegionsPanel({
             )}
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="font-medium">
-                {formatAddress(BigInt(region.base))}
+              <span className="flex items-center gap-1.5">
+                <span className="font-medium">
+                  {formatAddress(BigInt(region.base))}
+                </span>
+                {marker && (
+                  <span
+                    className="rounded bg-primary/15 px-1 py-0.5 text-[9px] tracking-wide text-primary"
+                    title={marker}
+                  >
+                    {marker}
+                  </span>
+                )}
               </span>
               <span className="text-muted-foreground">
                 {formatSize(region.size)}
