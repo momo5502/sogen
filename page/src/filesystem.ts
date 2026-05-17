@@ -196,11 +196,7 @@ export async function setupLinuxFilesystem() {
   const fs = new Filesystem(idbfs);
 
   // Ensure basic Linux root structure exists
-  const dirs = [
-    "/root/bin",
-    "/root/lib",
-    "/root/tmp",
-  ];
+  const dirs = ["/root/bin", "/root/lib", "/root/tmp"];
 
   for (const dir of dirs) {
     if (!idbfs.FS.analyzePath(dir, false).exists) {

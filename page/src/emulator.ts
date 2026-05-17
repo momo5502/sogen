@@ -147,9 +147,8 @@ export class Emulator {
 
     const busterParams = cacheBuster ? `?${cacheBuster}` : "";
 
-    const workerScript = mode === "linux"
-      ? "./linux-emulator-worker.js"
-      : "./emulator-worker.js";
+    const workerScript =
+      mode === "linux" ? "./linux-emulator-worker.js" : "./emulator-worker.js";
 
     this.worker = new Worker(workerScript + busterParams);
     this.worker.onerror = this._onError.bind(this);

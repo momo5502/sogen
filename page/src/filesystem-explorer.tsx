@@ -311,7 +311,8 @@ export class FilesystemExplorer extends React.Component<
   _onElementSelect(element: FolderElement) {
     if (element.type != FolderElementType.Folder) {
       if (this.props.linuxMode) {
-        const file = "./root/" + makeRelativePathWithState(this.state, element.name);
+        const file =
+          "./root/" + makeRelativePathWithState(this.state, element.name);
         this.props.runFile(file);
       } else if (element.name.endsWith(".exe")) {
         const file = makeWindowsPathWithState(this.state, element.name);
@@ -350,7 +351,11 @@ export class FilesystemExplorer extends React.Component<
       return;
     }
 
-    const oldPath = makeFullPathWithState(this.state, file, this.props.linuxMode);
+    const oldPath = makeFullPathWithState(
+      this.state,
+      file,
+      this.props.linuxMode,
+    );
     const newPath = makeFullPathWithState(
       this.state,
       newFile,
@@ -381,7 +386,11 @@ export class FilesystemExplorer extends React.Component<
       return false;
     }
 
-    if (!this.props.linuxMode && this.state.path.length == 0 && name.length > 1) {
+    if (
+      !this.props.linuxMode &&
+      this.state.path.length == 0 &&
+      name.length > 1
+    ) {
       this._showError("Drives must be a single letter");
       return false;
     }

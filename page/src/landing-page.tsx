@@ -284,8 +284,8 @@ export function LandingPage() {
                 Perfect For Your Research
               </h2>
               <p className="text-xl text-neutral-400">
-                Designed for researchers who need precise control over user-space
-                process execution on Windows and Linux.
+                Designed for researchers who need precise control over
+                user-space process execution on Windows and Linux.
               </p>
             </div>
 
