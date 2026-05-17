@@ -20,7 +20,7 @@ using namespace linux_errno;
 
 namespace
 {
-    constexpr int AT_FDCWD = -100;
+    constexpr int LINUX_AT_FDCWD = -100;
 
     constexpr int LINUX_O_WRONLY = 1;
     constexpr int LINUX_O_RDWR = 2;
@@ -207,7 +207,7 @@ namespace
             return c.emu_ref.file_sys.translate(guest_path);
         }
 
-        if (dirfd == AT_FDCWD)
+        if (dirfd == LINUX_AT_FDCWD)
         {
             return c.emu_ref.file_sys.translate(guest_path);
         }
@@ -1029,14 +1029,14 @@ void sys_fcntl(const linux_syscall_context& c)
         return;
     }
 
-    constexpr int F_DUPFD = 0;
-    constexpr int F_GETFD = 1;
-    constexpr int F_SETFD = 2;
-    constexpr int F_GETFL = 3;
-    constexpr int F_SETFL = 4;
-    constexpr int F_DUPFD_CLOEXEC = 1030;
+    constexpr int LINUX_F_DUPFD = 0;
+    constexpr int LINUX_F_GETFD = 1;
+    constexpr int LINUX_F_SETFD = 2;
+    constexpr int LINUX_F_GETFL = 3;
+    constexpr int LINUX_F_SETFL = 4;
+    constexpr int LINUX_F_DUPFD_CLOEXEC = 1030;
 
-    if ((cmd == F_DUPFD || cmd == F_DUPFD_CLOEXEC) && arg > static_cast<uint64_t>(std::numeric_limits<int>::max()))
+    if ((cmd == LINUX_F_DUPFD || cmd == LINUX_F_DUPFD_CLOEXEC) && arg > static_cast<uint64_t>(std::numeric_limits<int>::max()))
     {
         write_linux_syscall_result(c, -LINUX_EINVAL);
         return;
@@ -1044,7 +1044,7 @@ void sys_fcntl(const linux_syscall_context& c)
 
     switch (cmd)
     {
-    case F_DUPFD: {
+    case LINUX_F_DUPFD: {
         const auto minimum_fd = static_cast<int>(arg);
         if (minimum_fd < 0)
         {
@@ -1056,7 +1056,7 @@ void sys_fcntl(const linux_syscall_context& c)
         write_linux_syscall_result(c, new_fd >= 0 ? new_fd : -LINUX_EMFILE);
         break;
     }
-    case F_DUPFD_CLOEXEC: {
+    case LINUX_F_DUPFD_CLOEXEC: {
         const auto minimum_fd = static_cast<int>(arg);
         if (minimum_fd < 0)
         {
@@ -1072,17 +1072,17 @@ void sys_fcntl(const linux_syscall_context& c)
         write_linux_syscall_result(c, new_fd >= 0 ? new_fd : -LINUX_EMFILE);
         break;
     }
-    case F_GETFD:
+    case LINUX_F_GETFD:
         write_linux_syscall_result(c, fd_entry->close_on_exec ? 1 : 0);
         break;
-    case F_SETFD:
+    case LINUX_F_SETFD:
         fd_entry->close_on_exec = (arg & 1) != 0;
         write_linux_syscall_result(c, 0);
         break;
-    case F_GETFL:
+    case LINUX_F_GETFL:
         write_linux_syscall_result(c, fd_entry->flags);
         break;
-    case F_SETFL:
+    case LINUX_F_SETFL:
         fd_entry->flags = static_cast<int>(arg);
         write_linux_syscall_result(c, 0);
         break;
@@ -1294,9 +1294,9 @@ void sys_newfstatat(const linux_syscall_context& c)
 
     const auto guest_path = read_string<char>(c.emu, path_addr);
 
-    constexpr int AT_EMPTY_PATH = 0x1000;
-    constexpr int AT_SYMLINK_NOFOLLOW = 0x100;
-    if (guest_path.empty() && (flags & AT_EMPTY_PATH))
+    constexpr int LINUX_AT_EMPTY_PATH = 0x1000;
+    constexpr int LINUX_AT_SYMLINK_NOFOLLOW = 0x100;
+    if (guest_path.empty() && (flags & LINUX_AT_EMPTY_PATH))
     {
         auto* fd_entry = c.proc.fds.get(dirfd);
         if (!fd_entry)
@@ -1354,7 +1354,7 @@ void sys_newfstatat(const linux_syscall_context& c)
 
     linux_stat ls{};
 
-    if (flags & AT_SYMLINK_NOFOLLOW)
+    if (flags & LINUX_AT_SYMLINK_NOFOLLOW)
     {
         struct stat host_stat{};
         if (host_lstat(host_path.string().c_str(), &host_stat) != 0)
@@ -1459,10 +1459,10 @@ void sys_unlinkat(const linux_syscall_context& c)
 
     const auto host_path = *resolved;
 
-    constexpr int AT_REMOVEDIR = 0x200;
+    constexpr int LINUX_AT_REMOVEDIR = 0x200;
 
     std::error_code ec{};
-    if (flags & AT_REMOVEDIR)
+    if (flags & LINUX_AT_REMOVEDIR)
     {
         if (!std::filesystem::remove(host_path, ec))
         {
