@@ -1,10 +1,12 @@
 #include "event_handler.hpp"
 #include "message_transmitter.hpp"
 #include "windows_emulator.hpp"
+#include "memory_utils.hpp"
 
 #include <base64.hpp>
 
-#include <algorithm>
+#include <utils/string.hpp>
+
 #include <string>
 #include <string_view>
 
@@ -89,15 +91,6 @@ namespace debugger
             send_event(response);
         }
 
-        std::string permission_string(const memory_permission perm)
-        {
-            std::string result{};
-            result += is_readable(perm) ? 'R' : '-';
-            result += is_writable(perm) ? 'W' : '-';
-            result += is_executable(perm) ? 'X' : '-';
-            return result;
-        }
-
         const char* region_kind_string(const memory_region_kind kind)
         {
             switch (kind)
@@ -117,21 +110,6 @@ namespace debugger
             default:
                 return "unknown";
             }
-        }
-
-        std::string to_hex(uint64_t value)
-        {
-            constexpr std::string_view digits = "0123456789abcdef";
-
-            std::string out{};
-            do
-            {
-                out += digits[value & 0xF];
-                value >>= 4;
-            } while (value != 0);
-
-            std::ranges::reverse(out);
-            return "0x" + out;
         }
 
         void append_json_string(std::string& out, const std::string_view value)
@@ -186,8 +164,8 @@ namespace debugger
             }
             first = false;
 
-            out += R"({"base":")";
-            out += to_hex(base);
+            out += R"({"base":"0x)";
+            out += utils::string::to_hex_number(base);
             out += R"(","size":)";
             out += std::to_string(size);
             out += R"(,"protection":)";
@@ -232,15 +210,15 @@ namespace debugger
                 const std::string_view module =
                     (!module_name || std::string_view(module_name) == "<N/A>") ? std::string_view{} : module_name;
 
-                append_region(json, first, base, region.length, permission_string(region.initial_permission), "reserve",
+                append_region(json, first, base, region.length, get_permission_string(region.initial_permission), "reserve",
                               region_kind_string(region.kind), module);
 
                 for (const auto& [committed_base, committed] : region.committed_regions)
                 {
-                    auto protection = permission_string(committed.permissions.common);
+                    auto protection = get_permission_string(committed.permissions.common);
                     if (committed.permissions.is_guarded())
                     {
-                        protection += 'G';
+                        protection += 'g';
                     }
 
                     append_region(json, first, committed_base, committed.length, protection, "commit", region_kind_string(region.kind),
