@@ -336,7 +336,7 @@ export function LandingPage() {
                     <span className="ml-3">api_hooks.py</span>
                   </div>
                   <Highlight
-                    theme={themes.oneDark}
+                    theme={themes.okaidia}
                     code={pythonBindingsSample}
                     language="python"
                   >
