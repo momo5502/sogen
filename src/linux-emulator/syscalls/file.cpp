@@ -11,7 +11,7 @@
 #include <limits>
 #include <sys/stat.h>
 #if defined(_WIN32)
-#include <Windows.h>
+#include <windows.h>
 #include <io.h>
 #else
 #include <unistd.h>
