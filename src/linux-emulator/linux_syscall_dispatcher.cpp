@@ -175,7 +175,7 @@ void linux_syscall_dispatcher::dispatch(linux_emulator& emu_ref)
         return;
     }
 
-    const auto& entry = this->handlers_[syscall_id];
+    const auto& entry = this->handlers_[static_cast<size_t>(syscall_id)];
     if (!entry.handler)
     {
         emu_ref.log.warn("Unimplemented syscall: %" PRIu64 " (%s)\n", syscall_id, entry.name.empty() ? "unknown" : entry.name.c_str());
