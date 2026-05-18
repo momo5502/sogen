@@ -4,7 +4,7 @@
 
 #include <cstring>
 
-using namespace linux_signals;
+using namespace linux_signals; // NOLINT(google-build-using-namespace)
 
 void signal_dispatcher::setup_trampoline(linux_emulator& emu)
 {
@@ -32,6 +32,7 @@ void signal_dispatcher::setup_trampoline(linux_emulator& emu)
     }
 
     // Write the trampoline code
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
     const uint8_t trampoline_code[] = {
         0x48, 0xC7, 0xC0, 0x0F, 0x00, 0x00, 0x00, // mov rax, 15 (SYS_rt_sigreturn)
         0x0F, 0x05,                               // syscall
@@ -78,8 +79,7 @@ bool signal_dispatcher::deliver_signal(linux_emulator& emu, const int signum, co
 
         default:
             // Default action: terminate
-            emu.log.error("Signal %d: default action is terminate (fault_addr=0x%llx)\n", signum,
-                          static_cast<unsigned long long>(fault_addr));
+            emu.log.error("Signal %d: default action is terminate (fault_addr=0x%" PRIx64 ")\n", signum, fault_addr);
             emu.process.exit_status = 128 + signum;
             emu.stop();
             return false;

@@ -139,7 +139,7 @@ class linux_fd_table
             return -1;
         }
 
-        auto duplicate = this->duplicate_entry(*existing);
+        auto duplicate = duplicate_entry(*existing);
         if (!duplicate.has_value())
         {
             return -1;
@@ -163,7 +163,7 @@ class linux_fd_table
             return -1;
         }
 
-        auto duplicate = this->duplicate_entry(*existing);
+        auto duplicate = duplicate_entry(*existing);
         if (!duplicate.has_value())
         {
             return -1;
@@ -259,7 +259,7 @@ class linux_fd_table
         return duplicated_handle;
     }
 
-    std::optional<linux_fd> duplicate_entry(const linux_fd& existing) const
+    static std::optional<linux_fd> duplicate_entry(const linux_fd& existing)
     {
         linux_fd new_entry{};
         new_entry.type = existing.type;
@@ -279,7 +279,7 @@ class linux_fd_table
     int find_lowest_available(const int start) const
     {
         int fd = start;
-        while (this->fds_.count(fd) > 0)
+        while (this->fds_.contains(fd))
         {
             ++fd;
         }

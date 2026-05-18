@@ -4,7 +4,7 @@
 
 #include <cstring>
 
-using namespace linux_errno;
+using namespace linux_errno; // NOLINT(google-build-using-namespace)
 
 // --- Phase 4b: Threading syscalls ---
 
@@ -41,7 +41,7 @@ void sys_clone(const linux_syscall_context& c)
     if (!(flags & LINUX_CLONE_THREAD))
     {
         // fork()-style clone is not yet supported
-        c.emu_ref.log.warn("clone() without CLONE_THREAD not supported (flags=0x%llx)\n", static_cast<unsigned long long>(flags));
+        c.emu_ref.log.warn("clone() without CLONE_THREAD not supported (flags=0x%" PRIx64 ")\n", flags);
         write_linux_syscall_result(c, -LINUX_ENOSYS);
         return;
     }
@@ -101,7 +101,7 @@ void sys_clone(const linux_syscall_context& c)
     }
 
     // Insert the thread
-    c.proc.threads.emplace(new_tid, std::move(new_thread));
+    c.proc.threads.emplace(new_tid, new_thread);
 
     // Parent returns the child's tid
     write_linux_syscall_result(c, static_cast<int64_t>(new_tid));

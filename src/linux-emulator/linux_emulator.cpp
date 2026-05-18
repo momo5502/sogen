@@ -72,7 +72,8 @@ namespace
 }
 
 linux_emulator::linux_emulator(std::unique_ptr<x86_64_emulator> emu, const std::filesystem::path& emulation_root,
-                               const std::filesystem::path& executable, std::vector<std::string> argv, std::vector<std::string> envp)
+                               const std::filesystem::path& executable, std::vector<std::string> argv,
+                               const std::vector<std::string>& envp)
     : emu_(std::move(emu)),
       emulation_root(emulation_root),
       file_sys(emulation_root),
@@ -192,14 +193,13 @@ linux_emulator::linux_emulator(std::unique_ptr<x86_64_emulator> emu, const std::
 
     this->log.info("Linux emulator initialized\n");
     this->log.info("  Executable: %s\n", executable.string().c_str());
-    this->log.info("  Entry point: 0x%llx\n", static_cast<unsigned long long>(this->mod_manager.executable->entry_point));
-    this->log.info("  Image base: 0x%llx\n", static_cast<unsigned long long>(this->mod_manager.executable->image_base));
+    this->log.info("  Entry point: 0x%" PRIx64 "\n", this->mod_manager.executable->entry_point);
+    this->log.info("  Image base: 0x%" PRIx64 "\n", this->mod_manager.executable->image_base);
 
     if (this->mod_manager.interpreter)
     {
-        this->log.info("  Interpreter: %s (loaded at 0x%llx, entry 0x%llx)\n", this->mod_manager.interpreter_path.c_str(),
-                       static_cast<unsigned long long>(this->mod_manager.interpreter->image_base),
-                       static_cast<unsigned long long>(this->mod_manager.interpreter->entry_point));
+        this->log.info("  Interpreter: %s (loaded at 0x%" PRIx64 ", entry 0x%" PRIx64 ")\n", this->mod_manager.interpreter_path.c_str(),
+                       this->mod_manager.interpreter->image_base, this->mod_manager.interpreter->entry_point);
     }
 }
 
@@ -243,8 +243,7 @@ void linux_emulator::setup_hooks()
         }
 
         // No handler — default action: terminate
-        this->log.error("Memory violation at 0x%llx: %s %s (size=%zu, rip=0x%llx)\n", static_cast<unsigned long long>(address), type_str,
-                        op_str, size, static_cast<unsigned long long>(rip));
+        this->log.error("Memory violation at 0x%" PRIx64 ": %s %s (size=%zu, rip=0x%" PRIx64 ")\n", address, type_str, op_str, size, rip);
 
         this->stop();
         return memory_violation_continuation::stop;
@@ -356,9 +355,13 @@ void linux_emulator::resolve_irelative_relocations()
     {
         this->log.warn("Failed to allocate scratch pages for IRELATIVE resolvers\n");
         if (ok1)
+        {
             this->memory.release_memory(SENTINEL_PAGE, IRELATIVE_PAGE_SIZE);
+        }
         if (ok2)
+        {
             this->memory.release_memory(RESOLVER_STACK_PAGE, IRELATIVE_PAGE_SIZE);
+        }
         return;
     }
 
@@ -410,8 +413,7 @@ void linux_emulator::resolve_irelative_relocations()
         }
         else
         {
-            this->log.warn("IRELATIVE resolver at 0x%llx returned 0 for GOT 0x%llx\n", static_cast<unsigned long long>(entry.resolver_addr),
-                           static_cast<unsigned long long>(entry.got_addr));
+            this->log.warn("IRELATIVE resolver at 0x%" PRIx64 " returned 0 for GOT 0x%" PRIx64 "\n", entry.resolver_addr, entry.got_addr);
         }
     }
 

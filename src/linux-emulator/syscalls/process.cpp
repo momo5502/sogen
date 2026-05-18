@@ -4,7 +4,7 @@
 
 #include <cstring>
 
-using namespace linux_errno;
+using namespace linux_errno; // NOLINT(google-build-using-namespace)
 
 namespace
 {
@@ -14,6 +14,7 @@ namespace
     constexpr int ARCH_GET_GS = 0x1004;
 
     // Linux utsname structure
+    // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
     struct linux_utsname
     {
         char sysname[65];
@@ -23,6 +24,7 @@ namespace
         char machine[65];
         char domainname[65];
     };
+    // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
     static_assert(sizeof(linux_utsname) == 390);
 
@@ -396,7 +398,7 @@ void sys_rt_sigreturn(const linux_syscall_context& c)
 {
     // Restore context from the rt_sigframe on the stack.
     // This is called when the signal handler returns via the sigreturn trampoline.
-    c.emu_ref.signals.sigreturn(c.emu_ref);
+    signal_dispatcher::sigreturn(c.emu_ref);
     // Don't write a syscall result — the restored context provides all register values.
     // Note: sigreturn() adjusts RIP by -2 to compensate for the backend advancing
     // past the syscall instruction after this hook returns.
@@ -457,7 +459,7 @@ void sys_tgkill(const linux_syscall_context& c)
     (void)tgid;
 
     const auto tid_exists =
-        (tid >= 0 && static_cast<uint32_t>(tid) == c.proc.pid) || (tid >= 0 && c.proc.threads.count(static_cast<uint32_t>(tid)) > 0);
+        (tid >= 0 && static_cast<uint32_t>(tid) == c.proc.pid) || (tid >= 0 && c.proc.threads.contains(static_cast<uint32_t>(tid)));
 
     // Signal 0 is existence check
     if (sig == 0)
@@ -530,6 +532,7 @@ void sys_prctl(const linux_syscall_context& c)
     case PR_GET_NAME: {
         // Return "emulated" as the thread name
         const auto addr = get_linux_syscall_argument(c.emu, 1);
+        // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
         const char name[] = "emulated";
         c.emu.write_memory(addr, name, sizeof(name));
         write_linux_syscall_result(c, 0);
@@ -597,6 +600,7 @@ void sys_sysinfo(const linux_syscall_context& c)
     const auto info_addr = get_linux_syscall_argument(c.emu, 0);
 
     // Linux struct sysinfo
+// NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 #pragma pack(push, 1)
     struct linux_sysinfo
     {
@@ -617,6 +621,7 @@ void sys_sysinfo(const linux_syscall_context& c)
         char padding[4]; // padding to 112 bytes
     };
 #pragma pack(pop)
+// NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
     linux_sysinfo si{};
     si.uptime = 3600;

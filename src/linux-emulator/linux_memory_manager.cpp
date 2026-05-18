@@ -56,7 +56,7 @@ bool linux_memory_manager::allocate_memory(const uint64_t address, const size_t 
     }
 
     this->map_memory(address, size, permissions);
-    this->mapped_regions_[address] = mapped_region{size, permissions};
+    this->mapped_regions_[address] = mapped_region{.length = size, .permissions = permissions};
 
     return true;
 }
@@ -106,7 +106,7 @@ bool linux_memory_manager::protect_memory(const uint64_t address, const size_t s
         if (base < prot_start)
         {
             const auto before_len = static_cast<size_t>(prot_start - base);
-            to_add.push_back({base, {before_len, region.permissions}});
+            to_add.push_back({base, {.length = before_len, .permissions = region.permissions}});
         }
 
         // The protected part
@@ -114,13 +114,13 @@ bool linux_memory_manager::protect_memory(const uint64_t address, const size_t s
         const auto overlap_end = std::min(region_end, prot_end);
         const auto overlap_len = static_cast<size_t>(overlap_end - overlap_start);
         this->apply_memory_protection(overlap_start, overlap_len, permissions);
-        to_add.push_back({overlap_start, {overlap_len, permissions}});
+        to_add.push_back({overlap_start, {.length = overlap_len, .permissions = permissions}});
 
         // Part after the protected range
         if (region_end > prot_end)
         {
             const auto after_len = static_cast<size_t>(region_end - prot_end);
-            to_add.push_back({prot_end, {after_len, region.permissions}});
+            to_add.push_back({prot_end, {.length = after_len, .permissions = region.permissions}});
         }
     }
 
@@ -131,7 +131,7 @@ bool linux_memory_manager::protect_memory(const uint64_t address, const size_t s
 
     for (auto& [addr, region] : to_add)
     {
-        this->mapped_regions_[addr] = std::move(region);
+        this->mapped_regions_[addr] = region;
     }
 
     return true;
@@ -159,34 +159,34 @@ bool linux_memory_manager::release_memory(const uint64_t address, const size_t s
     std::vector<std::pair<uint64_t, mapped_region>> to_add{};
     std::vector<uint64_t> to_remove{};
 
-    for (auto it = this->mapped_regions_.begin(); it != this->mapped_regions_.end(); ++it)
+    for (const auto& [base, region] : this->mapped_regions_)
     {
-        const auto region_end = it->first + it->second.length;
+        const auto region_end = base + region.length;
 
         // No overlap
-        if (it->first >= aligned_end || region_end <= aligned_start)
+        if (base >= aligned_end || region_end <= aligned_start)
         {
             continue;
         }
 
-        to_remove.push_back(it->first);
+        to_remove.push_back(base);
 
         // Region extends before the unmapped range — keep the prefix
-        if (it->first < aligned_start)
+        if (base < aligned_start)
         {
-            const auto before_len = static_cast<size_t>(aligned_start - it->first);
-            to_add.push_back({it->first, {before_len, it->second.permissions}});
+            const auto before_len = static_cast<size_t>(aligned_start - base);
+            to_add.push_back({base, {.length = before_len, .permissions = region.permissions}});
         }
 
         // Region extends after the unmapped range — keep the suffix
         if (region_end > aligned_end)
         {
             const auto after_len = static_cast<size_t>(region_end - aligned_end);
-            to_add.push_back({aligned_end, {after_len, it->second.permissions}});
+            to_add.push_back({aligned_end, {.length = after_len, .permissions = region.permissions}});
         }
 
         // Unmap the overlapping portion
-        const auto unmap_start = std::max(it->first, aligned_start);
+        const auto unmap_start = std::max(base, aligned_start);
         const auto unmap_end = std::min(region_end, aligned_end);
         this->unmap_memory(unmap_start, static_cast<size_t>(unmap_end - unmap_start));
     }
@@ -198,7 +198,7 @@ bool linux_memory_manager::release_memory(const uint64_t address, const size_t s
 
     for (auto& [addr, region] : to_add)
     {
-        this->mapped_regions_[addr] = std::move(region);
+        this->mapped_regions_[addr] = region;
     }
 
     return true;

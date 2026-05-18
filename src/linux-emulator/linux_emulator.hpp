@@ -33,7 +33,7 @@ class linux_emulator
     linux_vdso vdso{};
 
     linux_emulator(std::unique_ptr<x86_64_emulator> emu, const std::filesystem::path& emulation_root,
-                   const std::filesystem::path& executable, std::vector<std::string> argv, std::vector<std::string> envp);
+                   const std::filesystem::path& executable, std::vector<std::string> argv, const std::vector<std::string>& envp);
 
     linux_emulator(const linux_emulator&) = delete;
     linux_emulator& operator=(const linux_emulator&) = delete;

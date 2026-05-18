@@ -5,7 +5,7 @@
 
 #include <cstring>
 
-using namespace elf;
+using namespace elf; // NOLINT(google-build-using-namespace)
 
 // ============================================================================
 // Synthetic vDSO builder
@@ -104,14 +104,14 @@ uint64_t linux_vdso::setup(linux_memory_manager& memory)
         uint32_t syscall_nr;
     };
 
-    const vdso_func funcs[] = {
-        {"__vdso_clock_gettime", "clock_gettime", SYS_CLOCK_GETTIME},
-        {"__vdso_gettimeofday", "gettimeofday", SYS_GETTIMEOFDAY},
-        {"__vdso_time", "time", SYS_TIME},
-        {"__vdso_getcpu", "getcpu", SYS_GETCPU},
-    };
-
     constexpr size_t NUM_FUNCS = 4;
+
+    const std::array<vdso_func, NUM_FUNCS> funcs = {
+        vdso_func{.vdso_name = "__vdso_clock_gettime", .alias_name = "clock_gettime", .syscall_nr = SYS_CLOCK_GETTIME},
+        vdso_func{.vdso_name = "__vdso_gettimeofday", .alias_name = "gettimeofday", .syscall_nr = SYS_GETTIMEOFDAY},
+        vdso_func{.vdso_name = "__vdso_time", .alias_name = "time", .syscall_nr = SYS_TIME},
+        vdso_func{.vdso_name = "__vdso_getcpu", .alias_name = "getcpu", .syscall_nr = SYS_GETCPU},
+    };
 
     // ---- Plan layout ----
     //
@@ -141,8 +141,8 @@ uint64_t linux_vdso::setup(linux_memory_manager& memory)
     dynstr += '\0'; // index 0 = empty string
 
     // Record string table indices for each name
-    uint32_t vdso_name_idx[NUM_FUNCS]{};
-    uint32_t alias_name_idx[NUM_FUNCS]{};
+    std::array<uint32_t, NUM_FUNCS> vdso_name_idx{};
+    std::array<uint32_t, NUM_FUNCS> alias_name_idx{};
     uint32_t soname_idx{};
 
     // Add soname

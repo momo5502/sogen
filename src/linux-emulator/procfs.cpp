@@ -6,6 +6,9 @@
 #include <cinttypes>
 #include <ctime>
 
+// procfs assembles text via snprintf into fixed-size local buffers.
+// NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+
 bool procfs::is_procfs_path(const std::string_view path)
 {
     return path.starts_with("/proc/self/") || path == "/proc/self" || path.starts_with("/proc/sys/") ||
@@ -33,44 +36,44 @@ bool procfs::is_procfs_symlink(const std::string_view path)
     return false;
 }
 
-std::optional<std::string> procfs::generate_content(const linux_emulator& emu, const std::string_view path) const
+std::optional<std::string> procfs::generate_content(const linux_emulator& emu, const std::string_view path)
 {
     // Normalize: /proc/<pid>/ is treated as /proc/self/ if pid matches
     std::string_view effective_path = path;
 
     if (effective_path == "/proc/self/maps")
     {
-        return this->generate_maps(emu);
+        return procfs::generate_maps(emu);
     }
     if (effective_path == "/proc/self/cmdline")
     {
-        return this->generate_cmdline(emu);
+        return procfs::generate_cmdline(emu);
     }
     if (effective_path == "/proc/self/environ")
     {
-        return this->generate_environ(emu);
+        return procfs::generate_environ(emu);
     }
     if (effective_path == "/proc/self/status")
     {
-        return this->generate_status(emu);
+        return procfs::generate_status(emu);
     }
     if (effective_path == "/proc/self/auxv")
     {
-        return this->generate_auxv(emu);
+        return procfs::generate_auxv(emu);
     }
     if (effective_path == "/proc/self/stat")
     {
-        return this->generate_proc_stat(emu);
+        return procfs::generate_proc_stat(emu);
     }
     if (effective_path == "/proc/sys/kernel/osrelease")
     {
-        return this->generate_osrelease();
+        return procfs::generate_osrelease();
     }
 
     return std::nullopt;
 }
 
-std::optional<std::string> procfs::resolve_symlink(const linux_emulator& emu, const std::string_view path) const
+std::optional<std::string> procfs::resolve_symlink(const linux_emulator& emu, const std::string_view path)
 {
     if (path == "/proc/self/exe")
     {
@@ -124,9 +127,9 @@ std::optional<std::string> procfs::resolve_symlink(const linux_emulator& emu, co
     return std::nullopt;
 }
 
-FILE* procfs::open_procfs_file(const linux_emulator& emu, const std::string_view path) const
+FILE* procfs::open_procfs_file(const linux_emulator& emu, const std::string_view path)
 {
-    auto content = this->generate_content(emu, path);
+    auto content = procfs::generate_content(emu, path);
     if (!content)
     {
         return nullptr;
@@ -148,7 +151,7 @@ FILE* procfs::open_procfs_file(const linux_emulator& emu, const std::string_view
     return fp;
 }
 
-bool procfs::stat_procfs(const linux_emulator& emu, const std::string_view path, linux_stat& st) const
+bool procfs::stat_procfs(const linux_emulator& emu, const std::string_view path, linux_stat& st)
 {
     memset(&st, 0, sizeof(st));
 
@@ -179,7 +182,7 @@ bool procfs::stat_procfs(const linux_emulator& emu, const std::string_view path,
     }
 
     // Regular files (readable)
-    auto content = this->generate_content(emu, path);
+    auto content = procfs::generate_content(emu, path);
     if (content)
     {
         st.st_mode = 0100444; // S_IFREG | 0444
@@ -198,7 +201,7 @@ bool procfs::stat_procfs(const linux_emulator& emu, const std::string_view path,
 
 // ---- Content generators ----
 
-std::string procfs::generate_maps(const linux_emulator& emu) const
+std::string procfs::generate_maps(const linux_emulator& emu)
 {
     // Format: start-end perms offset dev inode pathname
     std::string result;
@@ -264,7 +267,7 @@ std::string procfs::generate_maps(const linux_emulator& emu) const
     return result;
 }
 
-std::string procfs::generate_cmdline(const linux_emulator& emu) const
+std::string procfs::generate_cmdline(const linux_emulator& emu)
 {
     // /proc/self/cmdline: null-separated argv
     std::string result;
@@ -276,7 +279,7 @@ std::string procfs::generate_cmdline(const linux_emulator& emu) const
     return result;
 }
 
-std::string procfs::generate_environ(const linux_emulator& emu) const
+std::string procfs::generate_environ(const linux_emulator& emu)
 {
     // /proc/self/environ: null-separated envp
     std::string result;
@@ -288,7 +291,7 @@ std::string procfs::generate_environ(const linux_emulator& emu) const
     return result;
 }
 
-std::string procfs::generate_status(const linux_emulator& emu) const
+std::string procfs::generate_status(const linux_emulator& emu)
 {
     // /proc/self/status: key-value pairs
     std::string result;
@@ -361,17 +364,17 @@ std::string procfs::generate_status(const linux_emulator& emu) const
     return result;
 }
 
-std::string procfs::generate_auxv(const linux_emulator& emu) const
+std::string procfs::generate_auxv(const linux_emulator& emu)
 {
     // /proc/self/auxv: raw binary auxiliary vector
     // For now, return an empty auxv (just AT_NULL terminator)
     // A real implementation would read the auxv from the initial stack.
     (void)emu;
     uint64_t null_entry[2] = {0, 0};
-    return std::string(reinterpret_cast<const char*>(null_entry), sizeof(null_entry));
+    return {reinterpret_cast<const char*>(null_entry), sizeof(null_entry)};
 }
 
-std::string procfs::generate_proc_stat(const linux_emulator& emu) const
+std::string procfs::generate_proc_stat(const linux_emulator& emu)
 {
     // /proc/self/stat: single line of process statistics
     // Format: pid (comm) state ppid pgrp session tty_nr tpgid flags ...
@@ -392,7 +395,8 @@ std::string procfs::generate_proc_stat(const linux_emulator& emu) const
     return buf;
 }
 
-std::string procfs::generate_osrelease() const
+std::string procfs::generate_osrelease()
 {
     return "5.15.0-sogen\n";
 }
+// NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)

@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <cstdlib>
+#include <cinttypes>
 #include <string>
 #include <vector>
 #include <filesystem>
@@ -37,6 +38,7 @@ namespace
         fprintf(stderr, "  --help           Show this help message\n");
     }
 
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
     cli_options parse_args(const int argc, char* argv[])
     {
         cli_options opts{};
@@ -154,7 +156,7 @@ int main(const int argc, char* argv[])
 
         printf("\n--- Emulation finished ---\n");
         printf("Exit status: %d\n", final_exit_status);
-        printf("Instructions executed: %llu\n", static_cast<unsigned long long>(instructions));
+        printf("Instructions executed: %" PRIu64 "\n", instructions);
 
         return final_exit_status;
     }

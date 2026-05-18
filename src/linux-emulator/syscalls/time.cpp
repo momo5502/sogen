@@ -2,7 +2,7 @@
 #include "../linux_emulator.hpp"
 #include "../linux_syscall_dispatcher.hpp"
 
-using namespace linux_errno;
+using namespace linux_errno; // NOLINT(google-build-using-namespace)
 
 namespace
 {

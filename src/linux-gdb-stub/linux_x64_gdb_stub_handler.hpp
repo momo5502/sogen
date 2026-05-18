@@ -129,7 +129,7 @@ class linux_x64_gdb_stub_handler : public x64_gdb_stub_handler
 
         for (const auto& [base_addr, mod] : modules)
         {
-            libs.push_back({mod.path.string(), base_addr});
+            libs.push_back({.name = mod.path.string(), .segment_address = base_addr});
         }
 
         return libs;

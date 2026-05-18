@@ -7,8 +7,8 @@ class linux_file_system
   public:
     linux_file_system() = default;
 
-    explicit linux_file_system(const std::filesystem::path& root)
-        : root_(root)
+    explicit linux_file_system(std::filesystem::path root)
+        : root_(std::move(root))
     {
     }
 
@@ -20,17 +20,17 @@ class linux_file_system
         }
 
         // Handle special paths that should not be translated
-        if (this->is_dev_null(guest_path))
+        if (is_dev_null(guest_path))
         {
             return "/dev/null";
         }
 
-        if (this->is_dev_zero(guest_path))
+        if (is_dev_zero(guest_path))
         {
             return "/dev/zero";
         }
 
-        if (this->is_dev_urandom(guest_path))
+        if (is_dev_urandom(guest_path))
         {
             return "/dev/urandom";
         }
@@ -38,14 +38,14 @@ class linux_file_system
         // /proc/self/* paths are handled by the procfs emulation layer,
         // not by the file system translator. Return the path as-is so
         // upper layers can detect and intercept it.
-        if (this->is_proc_self(guest_path))
+        if (is_proc_self(guest_path))
         {
-            return std::filesystem::path(guest_path);
+            return std::filesystem::path{guest_path};
         }
 
         if (this->root_.empty())
         {
-            return std::filesystem::path(guest_path);
+            return std::filesystem::path{guest_path};
         }
 
         // If the guest path is already a host path under one of our explicit
@@ -63,7 +63,7 @@ class linux_file_system
 
                 const auto prefix_str = prefix.string();
                 const auto host_str = host_path.string();
-                if (!prefix_str.empty() && host_str.size() > prefix_str.size() && host_str.rfind(prefix_str, 0) == 0 &&
+                if (!prefix_str.empty() && host_str.size() > prefix_str.size() && host_str.starts_with(prefix_str) &&
                     host_str[prefix_str.size()] == '/')
                 {
                     return host_path;
@@ -74,7 +74,7 @@ class linux_file_system
             // (e.g. root='/foo', path='/foo/bar' should remain '/foo/bar').
             const auto root_str = this->root_.string();
             const auto host_str = host_path.string();
-            if (!root_str.empty() && host_str.rfind(root_str, 0) == 0)
+            if (!root_str.empty() && host_str.starts_with(root_str))
             {
                 if (host_str.size() == root_str.size() || host_str[root_str.size()] == '/')
                 {
@@ -92,7 +92,7 @@ class linux_file_system
         // Relative path: prefer emulation-root path by default.
         // If the target does not exist there, allow lookup under passthrough
         // prefixes (useful for executable-adjacent host files).
-        const auto rooted = this->root_ / guest_path;
+        auto rooted = this->root_ / guest_path;
         if (std::filesystem::exists(rooted))
         {
             return rooted;
@@ -100,7 +100,7 @@ class linux_file_system
 
         for (const auto& prefix : this->passthrough_prefixes_)
         {
-            const auto candidate = prefix / guest_path;
+            auto candidate = prefix / guest_path;
             if (std::filesystem::exists(candidate))
             {
                 return candidate;
@@ -135,9 +135,9 @@ class linux_file_system
         this->passthrough_prefixes_.push_back(std::move(normalized));
     }
 
-    bool is_special_path(const std::string_view path) const
+    static bool is_special_path(const std::string_view path)
     {
-        return this->is_proc_self(path) || this->is_dev_null(path) || this->is_dev_zero(path) || this->is_dev_urandom(path);
+        return is_proc_self(path) || is_dev_null(path) || is_dev_zero(path) || is_dev_urandom(path);
     }
 
     const std::filesystem::path& root() const

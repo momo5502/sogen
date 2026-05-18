@@ -71,6 +71,7 @@ namespace linux_signals
 
 // Linux kernel sigaction structure (as seen by the kernel on x86-64)
 // Field names use linux_ prefix to avoid macOS sa_handler macro
+// NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 struct linux_kernel_sigaction
 {
     uint64_t linux_sa_handler{}; // handler address (SIG_DFL=0, SIG_IGN=1, or function pointer)
@@ -168,6 +169,7 @@ struct linux_rt_sigframe
     linux_ucontext_t uc;  // ucontext
 };
 #pragma pack(pop)
+// NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
 // Signal dispatch engine
 class signal_dispatcher
@@ -191,5 +193,5 @@ class signal_dispatcher
     bool deliver_signal(linux_emulator& emu, int signum, uint64_t fault_addr = 0, int si_code = 0);
 
     // Restore context from a signal frame on the stack (called by sys_rt_sigreturn).
-    void sigreturn(linux_emulator& emu);
+    static void sigreturn(linux_emulator& emu);
 };

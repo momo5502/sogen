@@ -152,6 +152,7 @@ namespace elf
     constexpr uint16_t SHN_ABS = 0xFFF1;
     constexpr uint16_t SHN_COMMON = 0xFFF2;
 
+    // NOLINTBEGIN(readability-redundant-inline-specifier)
     inline constexpr uint8_t elf64_st_bind(uint8_t info)
     {
         return info >> 4;
@@ -166,6 +167,7 @@ namespace elf
     {
         return static_cast<uint8_t>((bind << 4) + (type & 0x0F));
     }
+    // NOLINTEND(readability-redundant-inline-specifier)
 
     // ---- x86-64 Relocation types -------------------------------------------
 
@@ -186,6 +188,7 @@ namespace elf
     constexpr uint32_t R_X86_64_TPOFF64 = 18;
     constexpr uint32_t R_X86_64_IRELATIVE = 37;
 
+    // NOLINTBEGIN(readability-redundant-inline-specifier)
     inline constexpr uint32_t elf64_r_sym(uint64_t info)
     {
         return static_cast<uint32_t>(info >> 32);
@@ -200,6 +203,7 @@ namespace elf
     {
         return (static_cast<uint64_t>(sym) << 32) | type;
     }
+    // NOLINTEND(readability-redundant-inline-specifier)
 
     // ---- Auxiliary vector types (for initial stack) -------------------------
 

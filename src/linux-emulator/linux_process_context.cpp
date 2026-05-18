@@ -5,7 +5,7 @@
 #include <address_utils.hpp>
 #include <platform/elf.hpp>
 
-using namespace elf;
+using namespace elf; // NOLINT(google-build-using-namespace)
 
 namespace
 {
@@ -53,10 +53,7 @@ void linux_process_context::setup(x86_64_emulator& emu, linux_memory_manager& me
         for (const auto& sec : exe.sections)
         {
             const auto sec_end = sec.start + sec.length;
-            if (sec_end > highest_end)
-            {
-                highest_end = sec_end;
-            }
+            highest_end = std::max(highest_end, sec_end);
         }
 
         if (highest_end == 0)
@@ -89,6 +86,7 @@ void linux_process_context::setup(x86_64_emulator& emu, linux_memory_manager& me
 
     // Write argv strings
     std::vector<uint64_t> argv_addrs{};
+    argv_addrs.reserve(argv_values.size());
     for (const auto& arg : argv_values)
     {
         argv_addrs.push_back(write_string_to_memory(memory, string_cursor, arg));
@@ -96,6 +94,7 @@ void linux_process_context::setup(x86_64_emulator& emu, linux_memory_manager& me
 
     // Write envp strings
     std::vector<uint64_t> envp_addrs{};
+    envp_addrs.reserve(envp_values.size());
     for (const auto& env : envp_values)
     {
         envp_addrs.push_back(write_string_to_memory(memory, string_cursor, env));
@@ -104,14 +103,14 @@ void linux_process_context::setup(x86_64_emulator& emu, linux_memory_manager& me
     // Write 16 random bytes for AT_RANDOM
     const auto random_addr = string_cursor;
     {
-        uint8_t random_bytes[16]{};
+        std::array<uint8_t, 16> random_bytes{};
         // Fill with deterministic pseudo-random data
-        for (int i = 0; i < 16; ++i)
+        for (size_t i = 0; i < random_bytes.size(); ++i)
         {
             random_bytes[i] = static_cast<uint8_t>((i * 73 + 0xAB) & 0xFF);
         }
-        memory.write_memory(string_cursor, random_bytes, 16);
-        string_cursor += 16;
+        memory.write_memory(string_cursor, random_bytes.data(), random_bytes.size());
+        string_cursor += random_bytes.size();
     }
 
     // Now build the stack from the bottom up (we push items onto a stack pointer
@@ -142,25 +141,25 @@ void linux_process_context::setup(x86_64_emulator& emu, linux_memory_manager& me
     };
 
     std::vector<auxv_entry> auxv{};
-    auxv.push_back({AT_PHDR, exe.phdr_vaddr});
-    auxv.push_back({AT_PHENT, exe.phdr_entry_size});
-    auxv.push_back({AT_PHNUM, exe.phdr_count});
-    auxv.push_back({AT_PAGESZ, 4096});
-    auxv.push_back({AT_BASE, interpreter_base}); // Interpreter load address (0 if static)
-    auxv.push_back({AT_ENTRY, exe.entry_point});
-    auxv.push_back({AT_UID, this->uid});
-    auxv.push_back({AT_EUID, this->euid});
-    auxv.push_back({AT_GID, this->gid});
-    auxv.push_back({AT_EGID, this->egid});
-    auxv.push_back({AT_SECURE, 0});
-    auxv.push_back({AT_RANDOM, random_addr});
-    auxv.push_back({AT_PLATFORM, platform_addr});
-    auxv.push_back({AT_CLKTCK, 100});
+    auxv.push_back({.type = AT_PHDR, .value = exe.phdr_vaddr});
+    auxv.push_back({.type = AT_PHENT, .value = exe.phdr_entry_size});
+    auxv.push_back({.type = AT_PHNUM, .value = exe.phdr_count});
+    auxv.push_back({.type = AT_PAGESZ, .value = 4096});
+    auxv.push_back({.type = AT_BASE, .value = interpreter_base}); // Interpreter load address (0 if static)
+    auxv.push_back({.type = AT_ENTRY, .value = exe.entry_point});
+    auxv.push_back({.type = AT_UID, .value = this->uid});
+    auxv.push_back({.type = AT_EUID, .value = this->euid});
+    auxv.push_back({.type = AT_GID, .value = this->gid});
+    auxv.push_back({.type = AT_EGID, .value = this->egid});
+    auxv.push_back({.type = AT_SECURE, .value = 0});
+    auxv.push_back({.type = AT_RANDOM, .value = random_addr});
+    auxv.push_back({.type = AT_PLATFORM, .value = platform_addr});
+    auxv.push_back({.type = AT_CLKTCK, .value = 100});
     if (vdso_base != 0)
     {
-        auxv.push_back({AT_SYSINFO_EHDR, vdso_base});
+        auxv.push_back({.type = AT_SYSINFO_EHDR, .value = vdso_base});
     }
-    auxv.push_back({AT_NULL, 0});
+    auxv.push_back({.type = AT_NULL, .value = 0});
 
     // Total stack frame size (in uint64_t units):
     // 1 (argc) + argc (argv ptrs) + 1 (null) + envp.size() (envp ptrs) + 1 (null) + auxv.size()*2

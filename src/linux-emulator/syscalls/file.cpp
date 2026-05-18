@@ -16,7 +16,7 @@
 #include <unistd.h>
 #endif
 
-using namespace linux_errno;
+using namespace linux_errno; // NOLINT(google-build-using-namespace)
 
 namespace
 {
@@ -120,10 +120,10 @@ namespace
         std::vector<cached_dir_entry> entries{};
 
         // Include "." and ".." first to match Linux behavior.
-        entries.push_back({get_inode_for_path(dir_path), file_type_to_d_type(std::filesystem::file_type::directory), "."});
+        entries.push_back({.ino = get_inode_for_path(dir_path), .d_type = file_type_to_d_type(std::filesystem::file_type::directory), .name = "."});
 
         const auto parent = dir_path.parent_path().empty() ? dir_path : dir_path.parent_path();
-        entries.push_back({get_inode_for_path(parent), file_type_to_d_type(std::filesystem::file_type::directory), ".."});
+        entries.push_back({.ino = get_inode_for_path(parent), .d_type = file_type_to_d_type(std::filesystem::file_type::directory), .name = ".."});
 
         std::error_code ec{};
         for (const auto& de : std::filesystem::directory_iterator(dir_path, ec))
@@ -133,7 +133,7 @@ namespace
                 break;
             }
 
-            const auto p = de.path();
+            const auto& p = de.path();
             const auto type = de.symlink_status(ec).type();
             if (ec)
             {
@@ -550,7 +550,7 @@ void sys_open(const linux_syscall_context& c)
     // Intercept procfs paths
     if (procfs::is_procfs_path(guest_path))
     {
-        auto* handle = c.emu_ref.proc_fs.open_procfs_file(c.emu_ref, guest_path);
+        auto* handle = procfs::open_procfs_file(c.emu_ref, guest_path);
         if (!handle)
         {
             write_linux_syscall_result(c, -LINUX_ENOENT);
@@ -682,7 +682,7 @@ void sys_lseek(const linux_syscall_context& c)
         origin = SEEK_END;
     }
 
-    if (fseek(fd_entry->handle, static_cast<long>(offset), origin) != 0)
+    if (fseek(fd_entry->handle, static_cast<long>(offset), origin) /* NOLINT(google-runtime-int) */ != 0)
     {
         write_linux_syscall_result(c, -LINUX_EINVAL);
         return;
@@ -730,7 +730,7 @@ void sys_openat(const linux_syscall_context& c)
     // Intercept procfs paths
     if (procfs::is_procfs_path(guest_path))
     {
-        auto* handle = c.emu_ref.proc_fs.open_procfs_file(c.emu_ref, guest_path);
+        auto* handle = procfs::open_procfs_file(c.emu_ref, guest_path);
         if (!handle)
         {
             write_linux_syscall_result(c, -LINUX_ENOENT);
@@ -755,7 +755,7 @@ void sys_openat(const linux_syscall_context& c)
         return;
     }
 
-    const auto host_path = *resolved;
+    const auto& host_path = *resolved;
 
     if (flags & LINUX_O_DIRECTORY)
     {
@@ -814,7 +814,7 @@ void sys_stat(const linux_syscall_context& c)
     if (procfs::is_procfs_path(guest_path))
     {
         linux_stat ls{};
-        if (c.emu_ref.proc_fs.stat_procfs(c.emu_ref, guest_path, ls))
+        if (procfs::stat_procfs(c.emu_ref, guest_path, ls))
         {
             c.emu.write_memory(buf_addr, &ls, sizeof(ls));
             write_linux_syscall_result(c, 0);
@@ -852,7 +852,7 @@ void sys_lstat(const linux_syscall_context& c)
     if (procfs::is_procfs_path(guest_path) || procfs::is_procfs_symlink(guest_path))
     {
         linux_stat ls{};
-        if (c.emu_ref.proc_fs.stat_procfs(c.emu_ref, guest_path, ls))
+        if (procfs::stat_procfs(c.emu_ref, guest_path, ls))
         {
             c.emu.write_memory(buf_addr, &ls, sizeof(ls));
             write_linux_syscall_result(c, 0);
@@ -895,7 +895,7 @@ void sys_pread64(const linux_syscall_context& c)
     }
 
     const auto saved_pos = ftell(fd_entry->handle);
-    fseek(fd_entry->handle, static_cast<long>(offset), SEEK_SET);
+    fseek(fd_entry->handle, static_cast<long>(offset), SEEK_SET); // NOLINT(google-runtime-int)
 
     std::vector<uint8_t> buffer(count);
     const auto bytes_read = fread(buffer.data(), 1, count, fd_entry->handle);
@@ -1121,7 +1121,7 @@ void sys_readlink(const linux_syscall_context& c)
     // Intercept procfs symlinks
     if (procfs::is_procfs_symlink(guest_path))
     {
-        auto target = c.emu_ref.proc_fs.resolve_symlink(c.emu_ref, guest_path);
+        auto target = procfs::resolve_symlink(c.emu_ref, guest_path);
         if (!target)
         {
             write_linux_syscall_result(c, -LINUX_ENOENT);
@@ -1160,7 +1160,7 @@ void sys_readlinkat(const linux_syscall_context& c)
     // Intercept procfs symlinks
     if (procfs::is_procfs_symlink(guest_path))
     {
-        auto target = c.emu_ref.proc_fs.resolve_symlink(c.emu_ref, guest_path);
+        auto target = procfs::resolve_symlink(c.emu_ref, guest_path);
         if (!target)
         {
             write_linux_syscall_result(c, -LINUX_ENOENT);
@@ -1208,7 +1208,7 @@ void sys_getdents64(const linux_syscall_context& c)
     }
 
     // Lazily initialize cache if missing.
-    if (g_directory_entries.count(fd) == 0)
+    if (!g_directory_entries.contains(fd))
     {
         init_directory_fd_state(fd, fd_entry->host_path);
     }
@@ -1325,7 +1325,7 @@ void sys_newfstatat(const linux_syscall_context& c)
     if (procfs::is_procfs_path(guest_path))
     {
         linux_stat ls{};
-        if (c.emu_ref.proc_fs.stat_procfs(c.emu_ref, guest_path, ls))
+        if (procfs::stat_procfs(c.emu_ref, guest_path, ls))
         {
             c.emu.write_memory(buf_addr, &ls, sizeof(ls));
             write_linux_syscall_result(c, 0);
@@ -1344,7 +1344,7 @@ void sys_newfstatat(const linux_syscall_context& c)
         return;
     }
 
-    const auto host_path = *resolved;
+    const auto& host_path = *resolved;
 
     if (!std::filesystem::exists(host_path))
     {
@@ -1457,7 +1457,7 @@ void sys_unlinkat(const linux_syscall_context& c)
         return;
     }
 
-    const auto host_path = *resolved;
+    const auto& host_path = *resolved;
 
     constexpr int LINUX_AT_REMOVEDIR = 0x200;
 
@@ -1753,7 +1753,7 @@ void sys_pwrite64(const linux_syscall_context& c)
     }
 
     const auto saved_pos = ftell(fd_entry->handle);
-    fseek(fd_entry->handle, static_cast<long>(offset), SEEK_SET);
+    fseek(fd_entry->handle, static_cast<long>(offset), SEEK_SET); // NOLINT(google-runtime-int)
 
     std::vector<uint8_t> buffer(count);
     c.emu.read_memory(buf_addr, buffer.data(), count);
@@ -1845,7 +1845,7 @@ void sys_faccessat(const linux_syscall_context& c)
         return;
     }
 
-    const auto host_path = *resolved;
+    const auto& host_path = *resolved;
 
     if (std::filesystem::exists(host_path))
     {
@@ -1872,6 +1872,7 @@ void sys_statfs(const linux_syscall_context& c)
     }
 
     // Linux struct statfs (120 bytes on x86-64)
+    // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 #pragma pack(push, 1)
     struct linux_statfs
     {
@@ -1889,6 +1890,7 @@ void sys_statfs(const linux_syscall_context& c)
         int64_t f_spare[4];
     };
 #pragma pack(pop)
+    // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
     linux_statfs sfs{};
     sfs.f_type = 0xEF53; // EXT4_SUPER_MAGIC
@@ -1916,6 +1918,7 @@ void sys_fstatfs(const linux_syscall_context& c)
         return;
     }
 
+    // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 #pragma pack(push, 1)
     struct linux_statfs
     {
@@ -1933,6 +1936,7 @@ void sys_fstatfs(const linux_syscall_context& c)
         int64_t f_spare[4];
     };
 #pragma pack(pop)
+    // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
     linux_statfs sfs{};
     sfs.f_type = 0xEF53;

@@ -78,7 +78,7 @@ namespace linux_test
     inline std::filesystem::path get_linux_torture_fixture_root()
     {
 #ifdef LINUX_TORTURE_FIXTURE_ROOT
-        return std::filesystem::path(LINUX_TORTURE_FIXTURE_ROOT);
+        return {LINUX_TORTURE_FIXTURE_ROOT};
 #else
         return get_linux_test_root() / "test" / "linux" / "torture" / "fixtures";
 #endif

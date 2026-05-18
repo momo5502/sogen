@@ -4,7 +4,7 @@
 
 #include <address_utils.hpp>
 
-using namespace linux_errno;
+using namespace linux_errno; // NOLINT(google-build-using-namespace)
 
 namespace
 {
@@ -131,7 +131,7 @@ void sys_mmap(const linux_syscall_context& c)
 
         // Save current file position, seek to offset, read data, restore position
         const auto saved_pos = ftell(fd_entry->handle);
-        fseek(fd_entry->handle, static_cast<long>(offset), SEEK_SET);
+        fseek(fd_entry->handle, static_cast<long>(offset), SEEK_SET); // NOLINT(google-runtime-int)
 
         // Read min(length, file_remaining) bytes — don't read beyond the file
         const auto bytes_to_read = length; // length (not aligned_length) — the rest is zero-fill

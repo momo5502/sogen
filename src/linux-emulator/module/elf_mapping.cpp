@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cstring>
 
-using namespace elf;
+using namespace elf; // NOLINT(google-build-using-namespace)
 
 namespace
 {
@@ -25,7 +25,7 @@ namespace
             ++len;
         }
 
-        return std::string(str, len);
+        return std::string{str, len};
     }
 
     void parse_dynamic_section(const std::span<const std::byte> data, const Elf64_Phdr& dyn_phdr, linux_mapped_module& mod,
@@ -324,10 +324,7 @@ linux_mapped_module map_elf_from_data(linux_memory_manager& memory, const std::s
 
         // If this segment's page-aligned start overlaps the previous segment's
         // page-aligned end, skip the already-mapped region
-        if (seg_vaddr < mapped_up_to)
-        {
-            seg_vaddr = mapped_up_to;
-        }
+        seg_vaddr = std::max(seg_vaddr, mapped_up_to);
 
         if (seg_vaddr < seg_end)
         {
@@ -370,10 +367,7 @@ linux_mapped_module map_elf_from_data(linux_memory_manager& memory, const std::s
 
         // BSS: the area between filesz and memsz is already zero (freshly mapped)
 
-        if (seg_end > mapped_up_to)
-        {
-            mapped_up_to = seg_end;
-        }
+        mapped_up_to = std::max(mapped_up_to, seg_end);
     }
 
     // Build the mapped module info

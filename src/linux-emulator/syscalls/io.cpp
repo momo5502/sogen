@@ -9,7 +9,9 @@
 #include <unistd.h>
 #endif
 
-using namespace linux_errno;
+using namespace linux_errno; // NOLINT(google-build-using-namespace)
+
+// NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
 // --- Phase 4b: I/O syscalls (pipe, eventfd) ---
 
@@ -312,7 +314,7 @@ void sys_epoll_ctl(const linux_syscall_context& c)
     }
     case EPOLL_CTL_DEL: {
         auto& entries = it->second;
-        entries.erase(std::remove_if(entries.begin(), entries.end(), [fd](const epoll_entry& e) { return e.fd == fd; }), entries.end());
+        entries.erase(std::ranges::remove_if(entries, [fd](const epoll_entry& e) { return e.fd == fd; }).begin(), entries.end());
         write_linux_syscall_result(c, 0);
         break;
     }
@@ -545,7 +547,9 @@ void sys_select(const linux_syscall_context& c)
         }
     };
 
-    std::vector<uint8_t> read_bits, write_bits, except_bits;
+    std::vector<uint8_t> read_bits;
+    std::vector<uint8_t> write_bits;
+    std::vector<uint8_t> except_bits;
     read_fd_set(readfds_addr, read_bits);
     read_fd_set(writefds_addr, write_bits);
     read_fd_set(exceptfds_addr, except_bits);
@@ -614,3 +618,4 @@ void sys_pselect6(const linux_syscall_context& c)
     // We ignore the signal mask and delegate to select logic
     sys_select(c);
 }
+// NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)

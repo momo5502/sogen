@@ -24,16 +24,16 @@ namespace linux_test
         const auto emulation_root = get_linux_test_root();
 
         const std::array<fixture_expectation, 10> fixtures = {{
-            {"valid/base_hello.elf", true},
-            {"malformed/truncated_ehdr.elf", false},
-            {"malformed/truncated_phdr_table.elf", false},
-            {"malformed/malformed_pt_dynamic.elf", false},
-            {"malformed/wrong_class.elf", false},
-            {"malformed/wrong_data_endianness.elf", false},
-            {"malformed/wrong_machine.elf", false},
-            {"near-valid/pt_load_overlap_conflict.elf", true},
-            {"near-valid/sparse_bss_extreme.elf", true},
-            {"near-valid/alignment_edge_mismatch.elf", false},
+            {.relative_path = "valid/base_hello.elf", .should_run = true},
+            {.relative_path = "malformed/truncated_ehdr.elf", .should_run = false},
+            {.relative_path = "malformed/truncated_phdr_table.elf", .should_run = false},
+            {.relative_path = "malformed/malformed_pt_dynamic.elf", .should_run = false},
+            {.relative_path = "malformed/wrong_class.elf", .should_run = false},
+            {.relative_path = "malformed/wrong_data_endianness.elf", .should_run = false},
+            {.relative_path = "malformed/wrong_machine.elf", .should_run = false},
+            {.relative_path = "near-valid/pt_load_overlap_conflict.elf", .should_run = true},
+            {.relative_path = "near-valid/sparse_bss_extreme.elf", .should_run = true},
+            {.relative_path = "near-valid/alignment_edge_mismatch.elf", .should_run = false},
         }};
 
         for (const auto& fixture : fixtures)

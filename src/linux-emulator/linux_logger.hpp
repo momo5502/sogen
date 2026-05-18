@@ -15,7 +15,7 @@ class linux_logger
             return;
         }
 
-        va_list ap;
+        va_list ap; // NOLINT(cppcoreguidelines-init-variables)
         va_start(ap, fmt);
         fprintf(stdout, "[INFO] ");
         vfprintf(stdout, fmt, ap);
@@ -30,17 +30,18 @@ class linux_logger
             return;
         }
 
-        va_list ap;
+        va_list ap; // NOLINT(cppcoreguidelines-init-variables)
         va_start(ap, fmt);
         fprintf(stderr, "[WARN] ");
         vfprintf(stderr, fmt, ap);
         va_end(ap);
     }
 
-    // NOLINTNEXTLINE(cert-dcl50-cpp)
+    // Errors are always printed, regardless of disable_output_.
+    // NOLINTNEXTLINE(cert-dcl50-cpp,readability-convert-member-functions-to-static)
     void error(const char* fmt, ...) const
     {
-        va_list ap;
+        va_list ap; // NOLINT(cppcoreguidelines-init-variables)
         va_start(ap, fmt);
         fprintf(stderr, "[ERROR] ");
         vfprintf(stderr, fmt, ap);
@@ -55,7 +56,7 @@ class linux_logger
             return;
         }
 
-        va_list ap;
+        va_list ap; // NOLINT(cppcoreguidelines-init-variables)
         va_start(ap, fmt);
         vfprintf(stdout, fmt, ap);
         va_end(ap);

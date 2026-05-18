@@ -4,7 +4,7 @@
 
 #include <cstring>
 
-using namespace linux_errno;
+using namespace linux_errno; // NOLINT(google-build-using-namespace)
 
 // Linux socket constants
 namespace
@@ -44,6 +44,7 @@ namespace
     // constexpr int MSG_DONTWAIT = 0x40;
 
     // Linux sockaddr_in (16 bytes)
+    // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 #pragma pack(push, 1)
     struct linux_sockaddr_in
     {
@@ -53,6 +54,7 @@ namespace
         uint8_t sin_zero[8];
     };
 #pragma pack(pop)
+    // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
     static_assert(sizeof(linux_sockaddr_in) == 16);
 
@@ -479,6 +481,7 @@ void sys_socketpair(const linux_syscall_context& c)
     ss2.connected = true;
     g_socket_states[fd2_num] = ss2;
 
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
     int32_t sv[2] = {fd1_num, fd2_num};
     c.emu.write_memory(sv_addr, sv, sizeof(sv));
 
@@ -520,7 +523,7 @@ void sys_getsockname(const linux_syscall_context& c)
     else
     {
         // Return a minimal sockaddr with just the family
-        uint16_t family = static_cast<uint16_t>(it->second.domain);
+        auto family = static_cast<uint16_t>(it->second.domain);
         c.emu.write_memory(addr_ptr, &family, sizeof(family));
 
         uint32_t len = sizeof(uint16_t);
@@ -566,7 +569,7 @@ void sys_getpeername(const linux_syscall_context& c)
     }
     else
     {
-        uint16_t family = static_cast<uint16_t>(it->second.domain);
+        auto family = static_cast<uint16_t>(it->second.domain);
         c.emu.write_memory(addr_ptr, &family, sizeof(family));
 
         uint32_t len = sizeof(uint16_t);

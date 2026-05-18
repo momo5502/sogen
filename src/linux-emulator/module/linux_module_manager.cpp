@@ -5,7 +5,7 @@
 #include <platform/elf.hpp>
 #include <utils/io.hpp>
 
-using namespace elf;
+using namespace elf; // NOLINT(google-build-using-namespace)
 
 linux_mapped_module* linux_module_manager::insert_module(linux_mapped_module mod)
 {
@@ -60,7 +60,7 @@ void linux_module_manager::map_main_modules(const std::filesystem::path& executa
                     --interp_len;
                 }
 
-                this->interpreter_path = std::string(interp_str, interp_len);
+                this->interpreter_path = std::string(interp_str, static_cast<size_t>(interp_len));
             }
 
             break;
@@ -195,7 +195,7 @@ std::filesystem::path linux_module_manager::resolve_library(const std::string& n
     // If the name contains a slash, treat it as a path (absolute or relative)
     if (name.find('/') != std::string::npos)
     {
-        const auto translated = file_sys.translate(name);
+        auto translated = file_sys.translate(name);
         if (std::filesystem::exists(translated))
         {
             return translated;
@@ -248,7 +248,7 @@ std::filesystem::path linux_module_manager::resolve_library(const std::string& n
     }
 
     // 4. Default search paths under the emulation root
-    static const std::string_view default_paths[] = {
+    static constexpr std::array<std::string_view, 7> default_paths = {
         "/lib", "/lib64", "/usr/lib", "/usr/lib64", "/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu", "/usr/local/lib",
     };
 
