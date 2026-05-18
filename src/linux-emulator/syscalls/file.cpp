@@ -120,10 +120,12 @@ namespace
         std::vector<cached_dir_entry> entries{};
 
         // Include "." and ".." first to match Linux behavior.
-        entries.push_back({.ino = get_inode_for_path(dir_path), .d_type = file_type_to_d_type(std::filesystem::file_type::directory), .name = "."});
+        entries.push_back(
+            {.ino = get_inode_for_path(dir_path), .d_type = file_type_to_d_type(std::filesystem::file_type::directory), .name = "."});
 
         const auto parent = dir_path.parent_path().empty() ? dir_path : dir_path.parent_path();
-        entries.push_back({.ino = get_inode_for_path(parent), .d_type = file_type_to_d_type(std::filesystem::file_type::directory), .name = ".."});
+        entries.push_back(
+            {.ino = get_inode_for_path(parent), .d_type = file_type_to_d_type(std::filesystem::file_type::directory), .name = ".."});
 
         std::error_code ec{};
         for (const auto& de : std::filesystem::directory_iterator(dir_path, ec))

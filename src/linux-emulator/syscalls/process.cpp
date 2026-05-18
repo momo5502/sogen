@@ -621,7 +621,7 @@ void sys_sysinfo(const linux_syscall_context& c)
         char padding[4]; // padding to 112 bytes
     };
 #pragma pack(pop)
-// NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+    // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
     linux_sysinfo si{};
     si.uptime = 3600;

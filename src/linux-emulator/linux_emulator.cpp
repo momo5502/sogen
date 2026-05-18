@@ -72,8 +72,7 @@ namespace
 }
 
 linux_emulator::linux_emulator(std::unique_ptr<x86_64_emulator> emu, const std::filesystem::path& emulation_root,
-                               const std::filesystem::path& executable, std::vector<std::string> argv,
-                               const std::vector<std::string>& envp)
+                               const std::filesystem::path& executable, std::vector<std::string> argv, const std::vector<std::string>& envp)
     : emu_(std::move(emu)),
       emulation_root(emulation_root),
       file_sys(emulation_root),

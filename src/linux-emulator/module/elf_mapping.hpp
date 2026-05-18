@@ -80,12 +80,11 @@ struct elf_irelative_entry
 };
 
 // Map a statically-linked ELF binary from file data into emulated memory
-linux_mapped_module map_elf_from_data(linux_memory_manager& memory, std::span<const std::byte> data,
-                                      const std::filesystem::path& path, uint64_t forced_base = 0);
+linux_mapped_module map_elf_from_data(linux_memory_manager& memory, std::span<const std::byte> data, const std::filesystem::path& path,
+                                      uint64_t forced_base = 0);
 
 // Apply relocations to a mapped ELF module
-void apply_elf_relocations(linux_memory_manager& memory, linux_mapped_module& mod, std::span<const std::byte> data,
-                           int64_t base_delta);
+void apply_elf_relocations(linux_memory_manager& memory, linux_mapped_module& mod, std::span<const std::byte> data, int64_t base_delta);
 
 // Collect R_X86_64_IRELATIVE relocations from an ELF binary.
 // These need to be resolved by running each resolver function in the emulator
