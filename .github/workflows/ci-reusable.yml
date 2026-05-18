@@ -844,6 +844,8 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.9"
+        env:
+          PIP_NO_CACHE_DIR: 1
 
       - name: Install build tools
         run: python -m pip install --upgrade pip build setuptools-scm
@@ -888,6 +890,8 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.9"
+        env:
+          PIP_NO_CACHE_DIR: 1
 
       - name: Download wheel artifact
         uses: actions/download-artifact@v8
@@ -935,6 +939,8 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.9"
+        env:
+          PIP_NO_CACHE_DIR: 1
 
       - name: Install build tools
         run: python -m pip install --upgrade pip build setuptools-scm
@@ -958,6 +964,8 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.9"
+        env:
+          PIP_NO_CACHE_DIR: 1
 
       - name: Download sdist artifact
         uses: actions/download-artifact@v8
