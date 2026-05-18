@@ -2,6 +2,7 @@
 #include "../linux_emulator.hpp"
 #include "../linux_syscall_dispatcher.hpp"
 
+#include <algorithm>
 #include <fcntl.h>
 #if defined(_WIN32)
 #include <io.h>
