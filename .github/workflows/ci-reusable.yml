@@ -337,7 +337,7 @@ jobs:
           retention-days: 1
 
       - name: Upload Test Configuration
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
           path: "build/${{matrix.preset}}/**/CTestTestfile.cmake"
@@ -390,7 +390,7 @@ jobs:
           retention-days: 1
 
       - name: Upload Test Configuration
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: Temp Isolate ${{ matrix.platform }} ${{matrix.configuration}} Test Config
           path: "build/${{matrix.preset}}/**/CTestTestfile.cmake"
@@ -854,7 +854,7 @@ jobs:
           CMAKE_ARGS: ${{ inputs.enable_deploy && '-DSOGEN_DISABLE_NANOBIND_LEAK_WARNINGS=ON' || '' }}
 
       - name: Upload wheel artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sogen-wheel-${{ matrix.artifact }}
           path: dist/*.whl
@@ -943,7 +943,7 @@ jobs:
         run: python -m build "${{ github.workspace }}" --sdist --outdir dist
 
       - name: Upload sdist artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sogen-sdist
           path: dist/*.tar.gz
