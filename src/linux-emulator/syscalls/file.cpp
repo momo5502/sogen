@@ -940,12 +940,12 @@ void sys_writev(const linux_syscall_context& c)
             continue;
         }
 
-        std::vector<uint8_t> buffer(iov_len);
-        c.emu.read_memory(iov_base, buffer.data(), iov_len);
+        std::vector<uint8_t> buffer(static_cast<size_t>(iov_len));
+        c.emu.read_memory(iov_base, buffer.data(), static_cast<size_t>(iov_len));
 
         if (fd == 1 || fd == 2)
         {
-            const auto sv = std::string_view(reinterpret_cast<const char*>(buffer.data()), iov_len);
+            const auto sv = std::string_view(reinterpret_cast<const char*>(buffer.data()), static_cast<size_t>(iov_len));
             auto& callback = (fd == 1) ? c.emu_ref.on_stdout : c.emu_ref.on_stderr;
 
             if (callback)
@@ -955,7 +955,7 @@ void sys_writev(const linux_syscall_context& c)
             else
             {
                 auto* target = (fd == 1) ? stdout : stderr;
-                fwrite(buffer.data(), 1, iov_len, target);
+                fwrite(buffer.data(), 1, static_cast<size_t>(iov_len), target);
                 fflush(target);
             }
 
@@ -963,7 +963,7 @@ void sys_writev(const linux_syscall_context& c)
         }
         else if (fd_entry->handle)
         {
-            const auto written = fwrite(buffer.data(), 1, iov_len, fd_entry->handle);
+            const auto written = fwrite(buffer.data(), 1, static_cast<size_t>(iov_len), fd_entry->handle);
             total_written += static_cast<int64_t>(written);
         }
         else
@@ -1806,8 +1806,8 @@ void sys_readv(const linux_syscall_context& c)
             return;
         }
 
-        std::vector<uint8_t> buffer(iov_len);
-        const auto bytes_read = fread(buffer.data(), 1, iov_len, fd_entry->handle);
+        std::vector<uint8_t> buffer(static_cast<size_t>(iov_len));
+        const auto bytes_read = fread(buffer.data(), 1, static_cast<size_t>(iov_len), fd_entry->handle);
 
         if (bytes_read > 0)
         {

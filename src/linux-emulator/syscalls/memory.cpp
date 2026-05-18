@@ -52,7 +52,7 @@ void sys_mmap(const linux_syscall_context& c)
         return;
     }
 
-    const auto aligned_length = page_align_up(length);
+    const auto aligned_length = static_cast<size_t>(page_align_up(length));
     const auto perms = prot_to_permission(prot);
     const bool is_anonymous = (flags & MAP_ANONYMOUS) != 0;
 
@@ -168,7 +168,7 @@ void sys_mprotect(const linux_syscall_context& c)
         return;
     }
 
-    const auto aligned_length = page_align_up(length);
+    const auto aligned_length = static_cast<size_t>(page_align_up(length));
 
     const auto perms = prot_to_permission(prot);
 
@@ -193,7 +193,7 @@ void sys_munmap(const linux_syscall_context& c)
         return;
     }
 
-    const auto aligned_length = page_align_up(length);
+    const auto aligned_length = static_cast<size_t>(page_align_up(length));
 
     if (c.emu_ref.memory.release_memory(addr, aligned_length))
     {
@@ -261,8 +261,8 @@ void sys_mremap(const linux_syscall_context& c)
         return;
     }
 
-    const auto aligned_old_size = page_align_up(old_size);
-    const auto aligned_new_size = page_align_up(new_size);
+    const auto aligned_old_size = static_cast<size_t>(page_align_up(old_size));
+    const auto aligned_new_size = static_cast<size_t>(page_align_up(new_size));
 
     if (aligned_new_size <= aligned_old_size)
     {
@@ -326,7 +326,7 @@ void sys_madvise(const linux_syscall_context& c)
         // Zero out the pages (simulates the kernel discarding them)
         const auto aligned_addr = page_align_down(addr);
         const auto aligned_end = page_align_up(addr + length);
-        const auto clear_size = aligned_end - aligned_addr;
+        const auto clear_size = static_cast<size_t>(aligned_end - aligned_addr);
 
         std::vector<uint8_t> zeros(clear_size, 0);
         c.emu.try_write_memory(aligned_addr, zeros.data(), clear_size);
