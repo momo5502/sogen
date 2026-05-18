@@ -13,8 +13,7 @@ namespace utils::string
 #ifdef __clang__
     __attribute__((__format__(__printf__, 1, 2)))
 #endif
-    const char*
-    va(const char* format, ...);
+    const char* va(const char* format, ...);
 
     template <typename T, size_t Size>
         requires(std::is_trivially_copyable_v<T>)
