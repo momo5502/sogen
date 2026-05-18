@@ -512,7 +512,7 @@ void apply_elf_relocations(linux_memory_manager& memory, linux_mapped_module& /*
             if (symsh.sh_offset + symsh.sh_size <= data.size())
             {
                 symtab = reinterpret_cast<const Elf64_Sym*>(data.data() + symsh.sh_offset);
-                symcount = symsh.sh_size / sizeof(Elf64_Sym);
+                symcount = static_cast<size_t>(symsh.sh_size / sizeof(Elf64_Sym));
             }
         }
 
