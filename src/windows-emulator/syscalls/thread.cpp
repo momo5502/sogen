@@ -422,6 +422,27 @@ namespace syscalls
             return STATUS_SUCCESS;
         }
 
+        if (info_class == ThreadPriority)
+        {
+            if (return_length)
+            {
+                return_length.write(sizeof(LONG));
+            }
+
+            if (thread_information_length < sizeof(LONG))
+            {
+                return STATUS_BUFFER_OVERFLOW;
+            }
+
+            // THREAD_PRIORITY_NORMAL base priority for the default NORMAL_PRIORITY_CLASS
+            constexpr LONG normal_priority = 8;
+
+            const emulator_object<LONG> info{c.emu, thread_information};
+            info.write(normal_priority);
+
+            return STATUS_SUCCESS;
+        }
+
         c.win_emu.log.error("Unsupported thread query info class: %X\n", info_class);
         c.emu.stop();
 
