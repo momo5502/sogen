@@ -7,6 +7,7 @@ import {
   Filesystem,
   setupFilesystem,
   windowsToInternalPath,
+  setupLinuxFilesystem,
 } from "./filesystem";
 
 import { memory64 } from "wasm-feature-detect";
@@ -214,22 +215,28 @@ export class Playground extends React.Component<
       return this.state.filesystemPromise;
     }
 
+    const isLinux = this.state.settings.mode === "linux";
+
     const promise = new Promise<Filesystem>((resolve, reject) => {
       if (!force) {
         this.output.current?.clear();
         this.logLine("Loading filesystem...");
       }
 
-      setupFilesystem(
-        (current, total, file) => {
-          this.logLine(`Processing filesystem (${current}/${total}): ${file}`);
-        },
-        (percent) => {
-          this.logLine(`Downloading filesystem: ${percent}%`);
-        },
-      )
-        .then(resolve)
-        .catch(reject);
+      const setup = isLinux
+        ? setupLinuxFilesystem()
+        : setupFilesystem(
+            (current, total, file) => {
+              this.logLine(
+                `Processing filesystem (${current}/${total}): ${file}`,
+              );
+            },
+            (percent) => {
+              this.logLine(`Downloading filesystem: ${percent}%`);
+            },
+          );
+
+      setup.then(resolve).catch(reject);
     });
 
     promise.then((filesystem) => this.setState({ filesystem }));
@@ -259,9 +266,14 @@ export class Playground extends React.Component<
       },
     );
 
+    const isLinux = this.state.settings.mode === "linux";
+    const internalPath = isLinux
+      ? `/root/${file.file}`
+      : windowsToInternalPath(file.file);
+
     await fs.storeFiles([
       {
-        name: windowsToInternalPath(file.file),
+        name: internalPath,
         data: fileData,
       },
     ]);
@@ -322,10 +334,12 @@ export class Playground extends React.Component<
 
     const persistFs = this.state.settings.persist;
 
+    const mode = this.state.settings.mode;
     const new_emulator = new Emulator(
       (l) => this.logLines(l),
       (s) => this._onEmulatorStateChanged(s, persistFs),
       (s) => this._onEmulatorStatusChanged(s),
+      mode,
     );
     //new_emulator.onTerminate().then(() => this.setState({ emulator: null }));
 
@@ -339,7 +353,7 @@ export class Playground extends React.Component<
       <>
         <Header
           title="Sogen - Playground"
-          description="Playground to test and run Sogen, a Windows user space emulator, right in your browser."
+          description="Playground to test and run Sogen, a Windows and Linux user space emulator, right in your browser."
         />
         <div className="h-dvh flex flex-col">
           <header className="flex shrink-0 items-center gap-2 border-b p-2 overflow-y-auto">
@@ -476,7 +490,8 @@ export class Playground extends React.Component<
                       iconCache={this.iconCache}
                       runFile={this.startEmulator}
                       resetFilesys={this.resetFilesys}
-                      path={["c"]}
+                      path={this.state.settings.mode === "linux" ? [] : ["c"]}
+                      linuxMode={this.state.settings.mode === "linux"}
                     />
                   </DrawerFooter>
                 </DrawerContent>

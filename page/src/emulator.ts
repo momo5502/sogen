@@ -1,4 +1,4 @@
-import { Settings, translateSettings } from "./settings";
+import { Settings, EmulatorMode, translateSettings } from "./settings";
 
 import * as flatbuffers from "flatbuffers";
 import * as fbDebugger from "@/fb/debugger";
@@ -116,6 +116,7 @@ export class Emulator {
   terminateResolve: (value: number | null) => void;
   terminateReject: (reason?: any) => void;
   worker: Worker;
+  mode: EmulatorMode;
   state: EmulationState = EmulationState.Stopped;
   exit_status: number | null = null;
   start_time: Date = new Date();
@@ -131,10 +132,12 @@ export class Emulator {
     logHandler: LogHandler,
     stateChangeHandler: StateChangeHandler,
     stautsUpdateHandler: StatusUpdateHandler,
+    mode: EmulatorMode = "windows",
   ) {
     this.logHandler = logHandler;
     this.stateChangeHandler = stateChangeHandler;
     this.stautsUpdateHandler = stautsUpdateHandler;
+    this.mode = mode;
     this.terminateResolve = () => {};
     this.terminateReject = () => {};
     this.terminatePromise = new Promise((resolve, reject) => {
@@ -144,7 +147,10 @@ export class Emulator {
 
     const busterParams = cacheBuster ? `?${cacheBuster}` : "";
 
-    this.worker = new Worker("./emulator-worker.js" + busterParams);
+    const workerScript =
+      mode === "linux" ? "./linux-emulator-worker.js" : "./emulator-worker.js";
+
+    this.worker = new Worker(workerScript + busterParams);
     this.worker.onerror = this._onError.bind(this);
     this.worker.onmessage = (e) => queueMicrotask(() => this._onMessage(e));
   }
