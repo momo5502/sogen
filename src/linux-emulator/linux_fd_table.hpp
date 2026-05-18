@@ -213,7 +213,7 @@ class linux_fd_table
         switch (fd.flags & 3)
         {
         case 1:
-            return "r+b";
+            return "wb";
         case 2:
             return "r+b";
         default:

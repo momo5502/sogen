@@ -45,26 +45,18 @@ class linux_file_system
 
         if (this->root_.empty())
         {
-            return std::filesystem::path{guest_path};
+            return std::filesystem::path{guest_path}.lexically_normal();
         }
 
         // If the guest path is already a host path under one of our explicit
         // passthrough prefixes, allow it as-is.
         if (!guest_path.empty() && guest_path[0] == '/')
         {
-            const std::filesystem::path host_path(guest_path);
+            const auto host_path = std::filesystem::path{guest_path}.lexically_normal();
 
             for (const auto& prefix : this->passthrough_prefixes_)
             {
-                if (host_path == prefix)
-                {
-                    return host_path;
-                }
-
-                const auto prefix_str = prefix.string();
-                const auto host_str = host_path.string();
-                if (!prefix_str.empty() && host_str.size() > prefix_str.size() && host_str.starts_with(prefix_str) &&
-                    host_str[prefix_str.size()] == '/')
+                if (is_within(host_path, prefix))
                 {
                     return host_path;
                 }
@@ -72,27 +64,18 @@ class linux_file_system
 
             // If this is already inside the emulation root, avoid double-prefixing
             // (e.g. root='/foo', path='/foo/bar' should remain '/foo/bar').
-            const auto root_str = this->root_.string();
-            const auto host_str = host_path.string();
-            if (!root_str.empty() && host_str.starts_with(root_str))
+            if (is_within(host_path, this->root_))
             {
-                if (host_str.size() == root_str.size() || host_str[root_str.size()] == '/')
-                {
-                    return host_path;
-                }
+                return host_path;
             }
-        }
 
-        // Translate absolute paths by prepending the emulation root
-        if (!guest_path.empty() && guest_path[0] == '/')
-        {
-            return this->root_ / guest_path.substr(1);
+            return this->translate_relative_to(this->root_, guest_path.substr(1));
         }
 
         // Relative path: prefer emulation-root path by default.
         // If the target does not exist there, allow lookup under passthrough
         // prefixes (useful for executable-adjacent host files).
-        auto rooted = this->root_ / guest_path;
+        auto rooted = this->translate_relative_to(this->root_, guest_path);
         if (std::filesystem::exists(rooted))
         {
             return rooted;
@@ -100,7 +83,7 @@ class linux_file_system
 
         for (const auto& prefix : this->passthrough_prefixes_)
         {
-            auto candidate = prefix / guest_path;
+            auto candidate = this->translate_relative_to(prefix, guest_path);
             if (std::filesystem::exists(candidate))
             {
                 return candidate;
@@ -108,6 +91,45 @@ class linux_file_system
         }
 
         return rooted;
+    }
+
+    std::filesystem::path translate_relative_to(const std::filesystem::path& base, const std::string_view guest_path) const
+    {
+        auto normalized_base = base.lexically_normal();
+        auto candidate = (normalized_base / std::filesystem::path{guest_path}).lexically_normal();
+
+        if (this->root_.empty())
+        {
+            return candidate;
+        }
+
+        if (is_within(normalized_base, this->root_))
+        {
+            auto relative = candidate.lexically_relative(this->root_);
+            if (relative.empty() || relative == "." || *relative.begin() == "..")
+            {
+                auto normalized_guest = (std::filesystem::path{"/"} / std::filesystem::path{guest_path}).lexically_normal();
+                relative = normalized_guest.lexically_relative("/");
+            }
+
+            return (this->root_ / relative).lexically_normal();
+        }
+
+        for (const auto& prefix : this->passthrough_prefixes_)
+        {
+            if (is_within(normalized_base, prefix))
+            {
+                auto relative = candidate.lexically_relative(prefix);
+                if (!relative.empty() && relative != "." && *relative.begin() != "..")
+                {
+                    return (prefix / relative).lexically_normal();
+                }
+
+                return normalized_base;
+            }
+        }
+
+        return candidate;
     }
 
     void add_passthrough_prefix(const std::filesystem::path& prefix)
@@ -148,6 +170,24 @@ class linux_file_system
   private:
     std::filesystem::path root_{};
     std::vector<std::filesystem::path> passthrough_prefixes_{};
+
+    static bool is_within(const std::filesystem::path& path, const std::filesystem::path& prefix)
+    {
+        auto normalized_path = path.lexically_normal();
+        auto normalized_prefix = prefix.lexically_normal();
+
+        auto path_it = normalized_path.begin();
+        auto prefix_it = normalized_prefix.begin();
+        for (; prefix_it != normalized_prefix.end(); ++prefix_it, ++path_it)
+        {
+            if (path_it == normalized_path.end() || *path_it != *prefix_it)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     static bool is_proc_self(const std::string_view path)
     {

@@ -260,7 +260,7 @@ namespace
             base = base.parent_path();
         }
 
-        return (base / guest_path).lexically_normal();
+        return c.emu_ref.file_sys.translate_relative_to(base, guest_path);
     }
 
 #pragma pack(push, 1)
@@ -290,7 +290,7 @@ namespace
         switch (access)
         {
         case LINUX_O_WRONLY:
-            return "r+b";
+            return "wb";
         case LINUX_O_RDWR:
             return "r+b";
         default:
@@ -310,8 +310,8 @@ namespace
         switch (access)
         {
         case LINUX_O_WRONLY:
-            desired_access = GENERIC_READ | GENERIC_WRITE;
-            host_flags |= _O_RDWR;
+            desired_access = GENERIC_WRITE;
+            host_flags |= _O_WRONLY;
             break;
         case LINUX_O_RDWR:
             desired_access = GENERIC_READ | GENERIC_WRITE;
@@ -362,7 +362,7 @@ namespace
         switch (access)
         {
         case LINUX_O_WRONLY:
-            host_flags |= O_RDWR;
+            host_flags |= O_WRONLY;
             break;
         case LINUX_O_RDWR:
             host_flags |= O_RDWR;
@@ -1213,6 +1213,7 @@ void sys_readlink(const linux_syscall_context& c)
 
 void sys_readlinkat(const linux_syscall_context& c)
 {
+    const auto dirfd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
     const auto path_addr = get_linux_syscall_argument(c.emu, 1);
     const auto buf_addr = get_linux_syscall_argument(c.emu, 2);
     const auto bufsiz = static_cast<size_t>(get_linux_syscall_argument(c.emu, 3));
@@ -1234,10 +1235,15 @@ void sys_readlinkat(const linux_syscall_context& c)
         return;
     }
 
-    const auto host_path = c.emu_ref.file_sys.translate(guest_path);
+    auto resolved = resolve_guest_path_at(c, dirfd, guest_path);
+    if (!resolved.has_value())
+    {
+        write_linux_syscall_result(c, -LINUX_EBADF);
+        return;
+    }
 
     std::error_code ec{};
-    const auto target = std::filesystem::read_symlink(host_path, ec);
+    const auto target = std::filesystem::read_symlink(*resolved, ec);
     if (ec)
     {
         write_linux_syscall_result(c, -LINUX_EINVAL);
