@@ -242,7 +242,11 @@ void linux_emulator::setup_hooks()
         }
 
         // No handler — default action: terminate
-        this->log.error("Memory violation at 0x%" PRIx64 ": %s %s (size=%zu, rip=0x%" PRIx64 ")\n", address, type_str, op_str, size, rip);
+        if (!this->log.is_output_disabled())
+        {
+            this->log.error("Memory violation at 0x%" PRIx64 ": %s %s (size=%zu, rip=0x%" PRIx64 ")\n", address, type_str, op_str, size,
+                            rip);
+        }
 
         this->stop();
         return memory_violation_continuation::stop;

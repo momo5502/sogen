@@ -79,7 +79,10 @@ bool signal_dispatcher::deliver_signal(linux_emulator& emu, const int signum, co
 
         default:
             // Default action: terminate
-            emu.log.error("Signal %d: default action is terminate (fault_addr=0x%" PRIx64 ")\n", signum, fault_addr);
+            if (!emu.log.is_output_disabled())
+            {
+                emu.log.error("Signal %d: default action is terminate (fault_addr=0x%" PRIx64 ")\n", signum, fault_addr);
+            }
             emu.process.exit_status = 128 + signum;
             emu.stop();
             return false;
