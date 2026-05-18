@@ -348,16 +348,36 @@ namespace debugger
             return true;
         }
 
+        // The session owns a `scoped_hook` whose destructor calls back into the
+        // emulator's cpu. It MUST therefore be destroyed while its emulator is
+        // still alive. A process-lifetime cache keyed only by raw pointer fails
+        // both ways: a freed emulator's address can be reused (stale session
+        // returned), and `emplace` over an old session unhooks through a
+        // dangling cpu. Lifetime is instead coupled to the emulator run via
+        // reset_debug_session(), called from handle_exit() while the emulator
+        // is guaranteed live (see event_handler.hpp / analyzer run loop).
+        struct debug_session_holder
+        {
+            const windows_emulator* bound{nullptr};
+            std::optional<debug_session> session{};
+        };
+
+        debug_session_holder& debug_session_storage()
+        {
+            static debug_session_holder holder{};
+            return holder;
+        }
+
         debug_session& get_debug_session(windows_emulator& win_emu)
         {
-            static windows_emulator* bound = nullptr;
-            static std::optional<debug_session> session{};
-            if (bound != &win_emu)
+            auto& holder = debug_session_storage();
+            if (!holder.session || holder.bound != &win_emu)
             {
-                session.emplace(win_emu);
-                bound = &win_emu;
+                holder.session.reset();
+                holder.session.emplace(win_emu);
+                holder.bound = &win_emu;
             }
-            return *session;
+            return *holder.session;
         }
 
         // Shared break/step controller. The break loop blocks here; debug
@@ -741,6 +761,17 @@ namespace debugger
         send_event(status);
     }
 
+    // Destroy the cached session (and reset step state) while the emulator is
+    // still alive, so the persistent control hook is removed against a live
+    // cpu. Idempotent; safe to call when no session exists.
+    void reset_debug_session() noexcept
+    {
+        auto& holder = debug_session_storage();
+        holder.session.reset();
+        holder.bound = nullptr;
+        controller() = break_controller{};
+    }
+
     void handle_exit(const windows_emulator& win_emu, std::optional<NTSTATUS> exit_status)
     {
         update_emulation_status(win_emu);
@@ -748,6 +779,8 @@ namespace debugger
         Debugger::ApplicationExitT response{};
         response.exit_status = exit_status;
         send_event(response);
+
+        reset_debug_session();
     }
 
     void request_resume(const step_request request, const uint64_t run_to_address)

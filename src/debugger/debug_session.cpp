@@ -1,5 +1,6 @@
 #include "debug_session.hpp"
 
+#include <algorithm>
 #include <array>
 #include <span>
 #include <unordered_set>
@@ -149,9 +150,15 @@ namespace debugger
 
         auto& cpu = this->emu_->emu();
 
+        // Clamp before sizing the buffer: `count` comes straight from an
+        // untrusted debug command (scripting console), and an unbounded
+        // `count * 16` resize is a trivial OOM / hang vector for the worker.
+        static constexpr size_t max_instruction_count = 4096;
+        const auto clamped_count = std::min(count, max_instruction_count);
+
         // Generous upper bound: x86 instructions are at most 15 bytes.
         std::vector<uint8_t> bytes{};
-        bytes.resize(count * 16);
+        bytes.resize(clamped_count * 16);
         if (!this->emu_->memory.try_read_memory(address, bytes.data(), bytes.size()))
         {
             // Shrink until a readable window is found (we may be near an edge).
@@ -164,7 +171,8 @@ namespace debugger
 
         disassembler dis{};
         const auto cs_selector = cpu.reg<uint16_t>(x86_register::cs);
-        const auto insns = dis.disassemble(cpu, cs_selector, std::span<const uint8_t>(bytes.data(), bytes.size()), count, address);
+        const auto insns =
+            dis.disassemble(cpu, cs_selector, std::span<const uint8_t>(bytes.data(), bytes.size()), clamped_count, address);
 
         for (const auto& insn : insns)
         {

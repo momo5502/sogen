@@ -19,6 +19,12 @@ namespace debugger
 
     void handle_events(event_context& c);
     void handle_exit(const windows_emulator& win_emu, std::optional<NTSTATUS> exit_status);
+
+    // Tears down the cached debug_session and its persistent control hook.
+    // Called from handle_exit() while the emulator is still alive so the
+    // hook is removed against a live cpu, coupling session lifetime to the
+    // emulator run instead of the process.
+    void reset_debug_session() noexcept;
     void update_emulation_status(const windows_emulator& win_emu);
 
     // --- Phase 3: breakpoint / step control ---
