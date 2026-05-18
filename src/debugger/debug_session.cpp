@@ -53,7 +53,7 @@ namespace debugger
     bool debug_session::add_breakpoint(const uint64_t address, const breakpoint_type type, const size_t size)
     {
         std::erase_if(this->impl_->breakpoints, [&](const breakpoint& b) { return b.address == address; });
-        this->impl_->breakpoints.push_back({address, size, type, true, false});
+        this->impl_->breakpoints.push_back({.address = address, .size = size, .type = type, .enabled = true, .temporary = false});
         this->impl_->breakpoint_addrs.insert(address);
         return true;
     }
@@ -130,11 +130,11 @@ namespace debugger
 
         for (const auto& [name, reg] : gpr)
         {
-            result.push_back({name, cpu.reg<uint64_t>(reg), sizeof(uint64_t)});
+            result.push_back({.name = name, .value = cpu.reg<uint64_t>(reg), .size = sizeof(uint64_t)});
         }
         for (const auto& [name, reg] : seg)
         {
-            result.push_back({name, cpu.reg<uint16_t>(reg), sizeof(uint16_t)});
+            result.push_back({.name = name, .value = cpu.reg<uint16_t>(reg), .size = sizeof(uint16_t)});
         }
 
         return result;
@@ -227,7 +227,7 @@ namespace debugger
         std::vector<module_info> result{};
         for (const auto& mod : this->emu_->mod_manager.modules() | std::views::values)
         {
-            result.push_back({mod.name, mod.image_base, mod.size_of_image, mod.entry_point});
+            result.push_back({.name = mod.name, .base = mod.image_base, .size = mod.size_of_image, .entry_point = mod.entry_point});
         }
         return result;
     }
@@ -238,7 +238,7 @@ namespace debugger
         const auto* active = this->emu_->process.active_thread;
         for (auto& thread : this->emu_->process.threads | std::views::values)
         {
-            result.push_back({thread.id, thread.current_ip, &thread == active});
+            result.push_back({.id = thread.id, .instruction_pointer = thread.current_ip, .active = &thread == active});
         }
         return result;
     }
@@ -259,7 +259,7 @@ namespace debugger
 
         const auto rip = cpu.reg<uint64_t>(x86_register::rip);
         const auto rsp = cpu.reg<uint64_t>(x86_register::rsp);
-        frames.push_back({rip, rsp, name_of(rip), name_of(rip)});
+        frames.push_back({.instruction_pointer = rip, .stack_pointer = rsp, .symbol = name_of(rip), .module = name_of(rip)});
 
         auto frame_pointer = cpu.reg<uint64_t>(x86_register::rbp);
         for (size_t depth = 0; depth < 64 && frame_pointer != 0; ++depth)
@@ -277,7 +277,10 @@ namespace debugger
                 break;
             }
 
-            frames.push_back({return_address, frame_pointer, name_of(return_address), name_of(return_address)});
+            frames.push_back({.instruction_pointer = return_address,
+                              .stack_pointer = frame_pointer,
+                              .symbol = name_of(return_address),
+                              .module = name_of(return_address)});
             frame_pointer = saved_rbp;
         }
 
