@@ -343,7 +343,7 @@ namespace
         }
 
         auto* const host_handle = CreateFileA(path_str.c_str(), desired_access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                                             nullptr, creation_disposition, FILE_ATTRIBUTE_NORMAL, nullptr);
+                                              nullptr, creation_disposition, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (host_handle == INVALID_HANDLE_VALUE)
         {
             return nullptr;
