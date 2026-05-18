@@ -62,7 +62,7 @@ namespace linux_test
         }
 
 #ifdef LINUX_EMULATION_ROOT_DEFAULT
-        const std::filesystem::path default_root{LINUX_EMULATION_ROOT_DEFAULT};
+        std::filesystem::path default_root{LINUX_EMULATION_ROOT_DEFAULT};
         if (std::filesystem::exists(default_root))
         {
             return default_root;

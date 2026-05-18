@@ -52,7 +52,7 @@ class linux_file_system
         // passthrough prefixes, allow it as-is.
         if (!guest_path.empty() && guest_path[0] == '/')
         {
-            const auto host_path = std::filesystem::path{guest_path}.lexically_normal();
+            auto host_path = std::filesystem::path{guest_path}.lexically_normal();
 
             for (const auto& prefix : this->passthrough_prefixes_)
             {

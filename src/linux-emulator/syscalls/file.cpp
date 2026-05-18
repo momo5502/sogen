@@ -64,7 +64,7 @@ namespace
 #if defined(_WIN32)
     bool host_pipe_would_block(const int fd)
     {
-        const auto os_handle = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
+        auto* const os_handle = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
         if (os_handle == INVALID_HANDLE_VALUE)
         {
             errno = EBADF;
@@ -342,7 +342,7 @@ namespace
             creation_disposition = TRUNCATE_EXISTING;
         }
 
-        const auto host_handle = CreateFileA(path_str.c_str(), desired_access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        auto* const host_handle = CreateFileA(path_str.c_str(), desired_access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                              nullptr, creation_disposition, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (host_handle == INVALID_HANDLE_VALUE)
         {
