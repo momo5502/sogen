@@ -141,7 +141,7 @@ export function DebuggerView({ emulator, paused, onClose }: DebuggerViewProps) {
   const dragging = React.useRef(false);
 
   const [generation, setGeneration] = React.useState(0);
-  const wasPaused = React.useRef(false);
+  const lastPauseCount = React.useRef(-1);
 
   const [registers, setRegisters] = React.useState<dbg.RegisterValue[]>([]);
   const [insns, setInsns] = React.useState<dbg.Instruction[]>([]);
@@ -156,6 +156,11 @@ export function DebuggerView({ emulator, paused, onClose }: DebuggerViewProps) {
   const [selected, setSelected] = React.useState<bigint | null>(null);
   const [tab, setTab] = React.useState("disasm");
   const addressInput = React.useRef<HTMLInputElement>(null);
+  // Upward auto-extend only after the user has actually scrolled into the
+  // list. Without this the very first render (start index 0) immediately
+  // prepends instructions decoded before rip, jerking the viewport and
+  // starving downward extension while pinned at the top.
+  const engagedRef = React.useRef(false);
 
   const bpSet = React.useMemo(
     () => new Set(breakpoints.map((b) => BigInt(b.address).toString(16))),
@@ -183,13 +188,19 @@ export function DebuggerView({ emulator, paused, onClose }: DebuggerViewProps) {
     };
   }, []);
 
-  // Each fresh pause is a new snapshot: refetch everything.
+  // Each fresh pause is a new snapshot: refetch everything. A step is
+  // Running -> Paused on the backend, but React coalesces the transient
+  // Running so a `paused` false->true edge is unreliable. The emulator bumps
+  // `pauseCount` on every entry into the paused state instead; the parent
+  // force-updates on each backend state change, so polling it here (no dep
+  // array, runs after every render) catches every step.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   React.useEffect(() => {
-    if (paused && !wasPaused.current) {
+    if (paused && emulator.pauseCount !== lastPauseCount.current) {
+      lastPauseCount.current = emulator.pauseCount;
       setGeneration((g) => g + 1);
     }
-    wasPaused.current = paused;
-  }, [paused]);
+  });
 
   const refresh = React.useCallback(async () => {
     const regs = await dbg.getRegisters(emulator);
@@ -201,6 +212,7 @@ export function DebuggerView({ emulator, paused, onClose }: DebuggerViewProps) {
     setRip(ripVal);
     setRsp(rspVal);
     setSelected(ripVal);
+    engagedRef.current = false;
     setInsns(await dbg.disassemble(emulator, ripVal, DISASM_COUNT));
     setModules(await dbg.getModules(emulator));
     setThreads(await dbg.getThreads(emulator));
@@ -222,6 +234,7 @@ export function DebuggerView({ emulator, paused, onClose }: DebuggerViewProps) {
     async (address: bigint) => {
       setSelected(address);
       setTab("disasm");
+      engagedRef.current = false;
       setInsns(await dbg.disassemble(emulator, address, DISASM_COUNT));
     },
     [emulator],
@@ -294,9 +307,12 @@ export function DebuggerView({ emulator, paused, onClose }: DebuggerViewProps) {
   const onRowsRendered = React.useCallback(
     (rows: { startIndex: number; stopIndex: number }) => {
       visibleRange.current = { start: rows.startIndex, stop: rows.stopIndex };
+      if (rows.startIndex > EDGE_ROWS) {
+        engagedRef.current = true;
+      }
       if (loadingRef.current || insns.length === 0) return;
       const nearBottom = rows.stopIndex >= insns.length - EDGE_ROWS;
-      const nearTop = rows.startIndex <= EDGE_ROWS;
+      const nearTop = engagedRef.current && rows.startIndex <= EDGE_ROWS;
       if (!nearBottom && !nearTop) return;
       loadingRef.current = true;
       (nearBottom ? extendDown() : extendUp()).finally(() => {

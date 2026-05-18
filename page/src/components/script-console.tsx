@@ -8,9 +8,11 @@ import { cn } from "@/lib/utils";
 import { PlayFill, StopFill, PlusLg, Trash } from "react-bootstrap-icons";
 
 import { Emulator } from "@/emulator";
-import { runScript, type ScriptHandle } from "@/debugger/scripting";
+import { runPythonScript, type ScriptHandle } from "@/debugger/scripting";
 
-const STORAGE_KEY = "sogen.debugger.scripts";
+// Bumped suffix: previously stored scripts were JavaScript and would not run
+// as Python; start the Python console from a clean default set.
+const STORAGE_KEY = "sogen.debugger.scripts.py";
 
 interface Script {
   id: string;
@@ -18,17 +20,18 @@ interface Script {
   source: string;
 }
 
-const DEFAULT_SOURCE = `// Scripting bridge — drives the REAL emulator via the debugger backend.
-// 'emu' mirrors the sogen / emu.debug object model.
-const regs = await emu.debug.registers();
-print("rip = " + regs.rip);
+const DEFAULT_SOURCE = `# Python scripting — drives the REAL emulator via the debugger backend.
+# 'emu' mirrors the sogen Python bindings (emu.debug.*, emu.memory.*).
+# Emulator calls are coroutines: use 'await'. Top-level await is supported.
 
-for (const insn of await emu.debug.disassemble(BigInt(regs.rip), 5)) {
-  print(insn.address + "  " + insn.mnemonic + " " + insn.operands);
-}
+regs = await emu.debug.registers()
+print("rip =", regs["rip"])
 
-// await emu.debug.breakpoint(0x140001000n);
-// await emu.debug.step_into();
+for insn in await emu.debug.disassemble(int(regs["rip"], 16), 5):
+    print(insn["address"], " ", insn["mnemonic"], insn["operands"])
+
+# await emu.debug.breakpoint(0x140001000)
+# await emu.debug.step_into()
 `;
 
 function loadScripts(): Script[] {
@@ -96,7 +99,7 @@ export function ScriptConsole({ emulator }: ScriptConsoleProps) {
     setRunning(true);
     setOutput([`> running ${active.name}…`]);
 
-    const result = await runScript(emulator, source, appendLine, handle);
+    const result = await runPythonScript(emulator, source, appendLine, handle);
     if (!result.ok) {
       appendLine("--- traceback ---");
       appendLine(result.error ?? "unknown error");
@@ -130,7 +133,7 @@ export function ScriptConsole({ emulator }: ScriptConsoleProps) {
       prev.concat({
         id,
         name: `script ${prev.length + 1}`,
-        source: "// new script\n",
+        source: "# new script\n",
       }),
     );
     setActiveId(id);
@@ -235,7 +238,7 @@ export function ScriptConsole({ emulator }: ScriptConsoleProps) {
       <div className="min-h-0 flex-1">
         <Editor
           height="100%"
-          language="javascript"
+          language="python"
           theme="vs-dark"
           value={active.source}
           onChange={(v) => updateSource(v ?? "")}
@@ -254,8 +257,8 @@ export function ScriptConsole({ emulator }: ScriptConsoleProps) {
       <div className="h-40 shrink-0 overflow-auto border-t bg-black/30 p-2 font-mono text-[11px] whitespace-pre-wrap">
         {output.length === 0 ? (
           <span className="text-muted-foreground">
-            Output. `emu.debug.*` drives the live emulator (mirrors the sogen
-            Python API; runs as JS).
+            Output. `emu.debug.*` drives the live emulator (Python via
+            Pyodide; mirrors the sogen Python API). Use `await`.
           </span>
         ) : (
           output.map((l, i) => <div key={i}>{l}</div>)

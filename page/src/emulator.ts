@@ -139,6 +139,11 @@ export class Emulator {
   terminateReject: (reason?: any) => void;
   worker: Worker;
   state: EmulationState = EmulationState.Stopped;
+  // Monotonic counter bumped every time the backend (re-)enters the paused
+  // state. A single step is Running -> Paused; React may coalesce the
+  // intermediate Running away, so a false->true `paused` prop transition is
+  // NOT observable. UI refreshes off this counter instead.
+  pauseCount: number = 0;
   exit_status: number | null = null;
   start_time: Date = new Date();
   pause_time: Date | null = null;
@@ -720,7 +725,12 @@ export class Emulator {
   }
 
   _setState(state: EmulationState) {
+    const previous = this.state;
     this.state = state;
+
+    if (state === EmulationState.Paused && previous !== EmulationState.Paused) {
+      this.pauseCount++;
+    }
 
     if (isFinalState(this.state) || this.state === EmulationState.Paused) {
       this.pause_time = new Date();
