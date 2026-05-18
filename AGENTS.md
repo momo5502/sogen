@@ -28,3 +28,4 @@ Other applications can also be executed in the emulator:
 ## Development notes
 
 - Run clang-format on changed files to ensure consistent formatting
+- Do not generate code comments unless they add important information not otherwise deducible from code itself
