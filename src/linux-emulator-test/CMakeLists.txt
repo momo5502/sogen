@@ -18,8 +18,8 @@ target_link_libraries(linux-emulator-test PRIVATE
 )
 
 target_compile_definitions(linux-emulator-test PRIVATE
-  LINUX_TEST_ROOT_DEFAULT="${PROJECT_SOURCE_DIR}/external/sogen-linux-files/test/linux"
-  LINUX_TORTURE_FIXTURE_ROOT="${PROJECT_SOURCE_DIR}/external/sogen-linux-files/test/linux/torture/fixtures"
+  LINUX_TEST_ROOT_DEFAULT="${PROJECT_SOURCE_DIR}/deps/sogen-linux-files/test/linux"
+  LINUX_TORTURE_FIXTURE_ROOT="${PROJECT_SOURCE_DIR}/deps/sogen-linux-files/test/linux/torture/fixtures"
 )
 
 add_test(NAME linux-emulator-test

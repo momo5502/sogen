@@ -39,7 +39,7 @@
 	path = deps/nanobind
 	url = https://github.com/wjakob/nanobind.git
 	shallow = true
-[submodule "external/sogen-linux-files"]
-	path = external/sogen-linux-files
+[submodule "deps/sogen-linux-files"]
+	path = deps/sogen-linux-files
 	url = https://github.com/momo5502/sogen-linux-files.git
 	shallow = true

@@ -488,7 +488,7 @@ jobs:
           EMULATOR_ROOT: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/root
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
           ANALYSIS_SAMPLE: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/test-sample.exe
-          LINUX_TEST_ROOT: ${{github.workspace}}/external/sogen-linux-files/test/linux
+          LINUX_TEST_ROOT: ${{github.workspace}}/deps/sogen-linux-files/test/linux
 
   win-test:
     name: Windows Test
@@ -796,7 +796,7 @@ jobs:
         run: cd ./build/release/artifacts && zip -r "${{github.workspace}}/page/public/root.zip" ./root
 
       - name: Create Linux Emulation Root zip
-        run: cd ./external/sogen-linux-files && zip -r "${{github.workspace}}/page/public/linux-root.zip" ./root
+        run: cd ./deps/sogen-linux-files && zip -r "${{github.workspace}}/page/public/linux-root.zip" ./root
 
       - name: Copy Files
         run: |
