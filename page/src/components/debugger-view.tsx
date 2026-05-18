@@ -1,10 +1,6 @@
 import React from "react";
 
-import {
-  List,
-  useListRef,
-  type RowComponentProps,
-} from "react-window";
+import { List, useListRef, type RowComponentProps } from "react-window";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
