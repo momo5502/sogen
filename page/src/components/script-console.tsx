@@ -257,8 +257,8 @@ export function ScriptConsole({ emulator }: ScriptConsoleProps) {
       <div className="h-40 shrink-0 overflow-auto border-t bg-black/30 p-2 font-mono text-[11px] whitespace-pre-wrap">
         {output.length === 0 ? (
           <span className="text-muted-foreground">
-            Output. `emu.debug.*` drives the live emulator (Python via
-            Pyodide; mirrors the sogen Python API). Use `await`.
+            Output. `emu.debug.*` drives the live emulator (Python via Pyodide;
+            mirrors the sogen Python API). Use `await`.
           </span>
         ) : (
           output.map((l, i) => <div key={i}>{l}</div>)
