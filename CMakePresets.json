@@ -1,189 +1,189 @@
 {
-  "version": 6,
-  "cmakeMinimumRequired": {
-    "major": 3,
-    "minor": 26,
-    "patch": 4
-  },
-  "configurePresets": [
-    {
-      "name": "build",
-      "hidden": true,
-      "binaryDir": "${sourceDir}/build/${presetName}"
+    "version": 6,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 26,
+        "patch": 4
     },
-    {
-      "name": "ninja",
-      "hidden": true,
-      "generator": "Ninja"
-    },
-    {
-      "name": "release",
-      "inherits": [
-        "ninja",
-        "build"
-      ],
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
-      }
-    },
-    {
-      "name": "debug",
-      "inherits": [
-        "ninja",
-        "build"
-      ],
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
-      }
-    },
-    {
-      "name": "tidy",
-      "inherits": [
-        "release"
-      ],
-      "cacheVariables": {
-        "MOMO_ENABLE_CLANG_TIDY": "ON",
-        "SOGEN_ENABLE_PYTHON_BINDINGS": "ON"
-      }
-    },
-    {
-      "name": "emscripten-base",
-      "hidden": true,
-      "inherits": [
-        "ninja"
-      ],
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "CMAKE_TOOLCHAIN_FILE": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
-        "MOMO_ENABLE_RUST_CODE": "OFF"
-      },
-      "environment": {
-        "EMSDK_QUIET": "1"
-      }
-    },
-    {
-      "name": "emscripten32",
-      "inherits": [
-        "emscripten-base"
-      ],
-      "binaryDir": "${sourceDir}/build/emscripten32"
-    },
-    {
-      "name": "emscripten64",
-      "inherits": [
-        "emscripten-base"
-      ],
-      "binaryDir": "${sourceDir}/build/emscripten64",
-      "cacheVariables": {
-        "MOMO_EMSCRIPTEN_MEMORY64": "ON"
-      }
-    },
-    {
-      "name": "vs2022",
-      "generator": "Visual Studio 17 2022",
-      "inherits": "build"
-    },
-    {
-      "name": "vs2026",
-      "generator": "Visual Studio 18 2026",
-      "inherits": "build"
-    }
-  ],
-  "buildPresets": [
-    {
-      "name": "release",
-      "configurePreset": "release"
-    },
-    {
-      "name": "debug",
-      "configurePreset": "debug"
-    },
-    {
-      "name": "tidy",
-      "configurePreset": "tidy"
-    },
-    {
-      "name": "emscripten32",
-      "configurePreset": "emscripten32",
-      "targets": [
-        "analyzer",
-        "linux-analyzer"
-      ]
-    },
-    {
-      "name": "emscripten64",
-      "configurePreset": "emscripten64",
-      "targets": [
-        "analyzer",
-        "linux-analyzer"
-      ]
-    }
-  ],
-  "workflowPresets": [
-    {
-      "name": "release",
-      "steps": [
+    "configurePresets": [
         {
-          "type": "configure",
-          "name": "release"
+            "name": "build",
+            "hidden": true,
+            "binaryDir": "${sourceDir}/build/${presetName}"
         },
         {
-          "type": "build",
-          "name": "release"
-        }
-      ]
-    },
-    {
-      "name": "debug",
-      "steps": [
-        {
-          "type": "configure",
-          "name": "debug"
+            "name": "ninja",
+            "hidden": true,
+            "generator": "Ninja"
         },
         {
-          "type": "build",
-          "name": "debug"
-        }
-      ]
-    },
-    {
-      "name": "tidy",
-      "steps": [
-        {
-          "type": "configure",
-          "name": "tidy"
+            "name": "release",
+            "inherits": [
+                "ninja",
+                "build"
+            ],
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+            }
         },
         {
-          "type": "build",
-          "name": "tidy"
-        }
-      ]
-    },
-    {
-      "name": "emscripten32",
-      "steps": [
-        {
-          "type": "configure",
-          "name": "emscripten32"
+            "name": "debug",
+            "inherits": [
+                "ninja",
+                "build"
+            ],
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
         },
         {
-          "type": "build",
-          "name": "emscripten32"
-        }
-      ]
-    },
-    {
-      "name": "emscripten64",
-      "steps": [
-        {
-          "type": "configure",
-          "name": "emscripten64"
+            "name": "tidy",
+            "inherits": [
+                "release"
+            ],
+            "cacheVariables": {
+                "MOMO_ENABLE_CLANG_TIDY": "ON",
+                "SOGEN_ENABLE_PYTHON_BINDINGS": "ON"
+            }
         },
         {
-          "type": "build",
-          "name": "emscripten64"
+            "name": "emscripten-base",
+            "hidden": true,
+            "inherits": [
+                "ninja"
+            ],
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_TOOLCHAIN_FILE": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+                "MOMO_ENABLE_RUST_CODE": "OFF"
+            },
+            "environment": {
+                "EMSDK_QUIET": "1"
+            }
+        },
+        {
+            "name": "emscripten32",
+            "inherits": [
+                "emscripten-base"
+            ],
+            "binaryDir": "${sourceDir}/build/emscripten32"
+        },
+        {
+            "name": "emscripten64",
+            "inherits": [
+                "emscripten-base"
+            ],
+            "binaryDir": "${sourceDir}/build/emscripten64",
+            "cacheVariables": {
+                "MOMO_EMSCRIPTEN_MEMORY64": "ON"
+            }
+        },
+        {
+            "name": "vs2022",
+            "generator": "Visual Studio 17 2022",
+            "inherits": "build"
+        },
+        {
+            "name": "vs2026",
+            "generator": "Visual Studio 18 2026",
+            "inherits": "build"
         }
-      ]
-    }
-  ]
+    ],
+    "buildPresets": [
+        {
+            "name": "release",
+            "configurePreset": "release"
+        },
+        {
+            "name": "debug",
+            "configurePreset": "debug"
+        },
+        {
+            "name": "tidy",
+            "configurePreset": "tidy"
+        },
+        {
+            "name": "emscripten32",
+            "configurePreset": "emscripten32",
+            "targets": [
+                "analyzer",
+                "linux-analyzer"
+            ]
+        },
+        {
+            "name": "emscripten64",
+            "configurePreset": "emscripten64",
+            "targets": [
+                "analyzer",
+                "linux-analyzer"
+            ]
+        }
+    ],
+    "workflowPresets": [
+        {
+            "name": "release",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "release"
+                },
+                {
+                    "type": "build",
+                    "name": "release"
+                }
+            ]
+        },
+        {
+            "name": "debug",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "debug"
+                },
+                {
+                    "type": "build",
+                    "name": "debug"
+                }
+            ]
+        },
+        {
+            "name": "tidy",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "tidy"
+                },
+                {
+                    "type": "build",
+                    "name": "tidy"
+                }
+            ]
+        },
+        {
+            "name": "emscripten32",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "emscripten32"
+                },
+                {
+                    "type": "build",
+                    "name": "emscripten32"
+                }
+            ]
+        },
+        {
+            "name": "emscripten64",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "emscripten64"
+                },
+                {
+                    "type": "build",
+                    "name": "emscripten64"
+                }
+            ]
+        }
+    ]
 }
