@@ -53,6 +53,25 @@ namespace linux_test
         throw std::runtime_error("No LINUX_TEST_ROOT set and no default Linux test root found!");
     }
 
+    inline std::filesystem::path get_linux_emulation_root()
+    {
+        const auto* env = getenv("LINUX_EMULATION_ROOT");
+        if (env)
+        {
+            return env;
+        }
+
+#ifdef LINUX_EMULATION_ROOT_DEFAULT
+        const std::filesystem::path default_root{LINUX_EMULATION_ROOT_DEFAULT};
+        if (std::filesystem::exists(default_root))
+        {
+            return default_root;
+        }
+#endif
+
+        return {};
+    }
+
     inline std::vector<std::string> default_envp()
     {
         return {
@@ -93,7 +112,7 @@ namespace linux_test
     }
 
     inline linux_emulator_result run_linux_binary(const std::filesystem::path& binary, std::vector<std::string> argv = {},
-                                                  std::vector<std::string> envp = {}, const std::filesystem::path& emulation_root = {})
+                                                  std::vector<std::string> envp = {}, std::filesystem::path emulation_root = {})
     {
         if (argv.empty())
         {
@@ -103,6 +122,11 @@ namespace linux_test
         if (envp.empty())
         {
             envp = default_envp();
+        }
+
+        if (emulation_root.empty())
+        {
+            emulation_root = get_linux_emulation_root();
         }
 
         auto emu_backend = create_x86_64_emulator();
@@ -129,13 +153,18 @@ namespace linux_test
     }
 
     inline linux_loader_fixture_result run_linux_loader_fixture(const std::filesystem::path& fixture,
-                                                                const std::filesystem::path& emulation_root = {},
+                                                                std::filesystem::path emulation_root = {},
                                                                 const size_t instruction_budget = 200000)
     {
         linux_loader_fixture_result result{};
 
         try
         {
+            if (emulation_root.empty())
+            {
+                emulation_root = get_linux_emulation_root();
+            }
+
             auto emu_backend = create_x86_64_emulator();
             linux_emulator linux_emu(std::move(emu_backend), emulation_root, fixture, {fixture.string()}, default_envp());
             linux_emu.log.disable_output(true);
