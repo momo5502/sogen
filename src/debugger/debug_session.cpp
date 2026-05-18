@@ -171,8 +171,7 @@ namespace debugger
 
         disassembler dis{};
         const auto cs_selector = cpu.reg<uint16_t>(x86_register::cs);
-        const auto insns =
-            dis.disassemble(cpu, cs_selector, std::span<const uint8_t>(bytes.data(), bytes.size()), clamped_count, address);
+        const auto insns = dis.disassemble(cpu, cs_selector, std::span<const uint8_t>(bytes.data(), bytes.size()), clamped_count, address);
 
         for (const auto& insn : insns)
         {
