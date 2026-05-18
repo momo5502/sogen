@@ -101,8 +101,8 @@ namespace syscalls
             m.ImageSize = FAKE_KERNEL_SIZE;
             m.LoadCount = 1;
 
-            constexpr std::string_view directory = "\\SystemRoot\\system32\\";
-            constexpr std::string_view full_path = "\\SystemRoot\\system32\\ntoskrnl.exe";
+            constexpr std::string_view directory = R"(\SystemRoot\system32\)";
+            constexpr std::string_view full_path = R"(\SystemRoot\system32\ntoskrnl.exe)";
             m.OffsetToFileName = static_cast<USHORT>(directory.size());
             memcpy(m.FullPathName, full_path.data(), full_path.size() + 1); // incl. NUL
         }
