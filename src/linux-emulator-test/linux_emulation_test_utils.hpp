@@ -37,12 +37,20 @@ namespace linux_test
     inline std::filesystem::path get_linux_test_root()
     {
         const auto* env = getenv("LINUX_TEST_ROOT");
-        if (!env)
+        if (env)
         {
-            throw std::runtime_error("No LINUX_TEST_ROOT set!");
+            return env;
         }
 
-        return env;
+#ifdef LINUX_TEST_ROOT_DEFAULT
+        const std::filesystem::path default_root{LINUX_TEST_ROOT_DEFAULT};
+        if (std::filesystem::exists(default_root))
+        {
+            return default_root;
+        }
+#endif
+
+        throw std::runtime_error("No LINUX_TEST_ROOT set and no default Linux test root found!");
     }
 
     inline std::vector<std::string> default_envp()
@@ -80,7 +88,7 @@ namespace linux_test
 #ifdef LINUX_TORTURE_FIXTURE_ROOT
         return {LINUX_TORTURE_FIXTURE_ROOT};
 #else
-        return get_linux_test_root() / "test" / "linux" / "torture" / "fixtures";
+        return get_linux_test_root() / "torture" / "fixtures";
 #endif
     }
 
