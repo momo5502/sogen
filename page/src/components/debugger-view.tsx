@@ -1,6 +1,10 @@
 import React from "react";
 
-import { List, type RowComponentProps } from "react-window";
+import {
+  List,
+  useListRef,
+  type RowComponentProps,
+} from "react-window";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,6 +30,11 @@ import * as dbg from "@/debugger/api";
 
 const ROW_HEIGHT = 20;
 const DISASM_COUNT = 256;
+// Infinite-scroll tuning.
+const DISASM_BATCH = 128; // instructions fetched per extension
+const EDGE_ROWS = 12; // start fetching when this close to either edge
+const BACK_WINDOWS = [48, 64, 96, 128, 192]; // byte look-back probes for upward decode
+const MAX_INSNS = 20000; // hard cap so the buffer cannot grow without bound
 
 function parseAddress(value: string): bigint | null {
   const t = value
@@ -222,6 +231,85 @@ export function DebuggerView({ emulator, paused, onClose }: DebuggerViewProps) {
     [emulator],
   );
 
+  // ---- infinite scroll (disassembly) ----
+  const listRef = useListRef(null);
+  const visibleRange = React.useRef({ start: 0, stop: 0 });
+  const loadingRef = React.useRef(false);
+  // When we prepend instructions the indices of everything shift down; remember
+  // by how much so a layout effect can keep the viewport visually anchored.
+  const pendingPrepend = React.useRef<number | null>(null);
+
+  React.useLayoutEffect(() => {
+    const shift = pendingPrepend.current;
+    if (shift == null) return;
+    pendingPrepend.current = null;
+    listRef.current?.scrollToRow({
+      index: visibleRange.current.start + shift,
+      align: "start",
+      behavior: "instant",
+    });
+  }, [insns, listRef]);
+
+  const extendDown = React.useCallback(async () => {
+    const last = insns[insns.length - 1];
+    if (!last) return;
+    const nextAddr = BigInt(last.address) + BigInt(last.size || 1);
+    const fetched = await dbg.disassemble(emulator, nextAddr, DISASM_BATCH);
+    const fresh = fetched.filter((i) => BigInt(i.address) >= nextAddr);
+    if (fresh.length === 0) return;
+    setInsns((prev) => {
+      const merged = [...prev, ...fresh];
+      // Trim from the far (top) side if we blew past the cap.
+      return merged.length > MAX_INSNS
+        ? merged.slice(merged.length - MAX_INSNS)
+        : merged;
+    });
+  }, [emulator, insns]);
+
+  const extendUp = React.useCallback(async () => {
+    const first = insns[0];
+    if (!first) return;
+    const firstAddr = BigInt(first.address);
+    if (firstAddr === BigInt(0)) return;
+
+    // x86 has no reliable backward decode: probe a few byte windows before the
+    // current top and accept the one whose instruction stream lands exactly on
+    // firstAddr (self-synchronising). Anything that does not align is discarded.
+    let preceding: dbg.Instruction[] | null = null;
+    for (const win of BACK_WINDOWS) {
+      const probe = firstAddr - BigInt(win);
+      if (probe < BigInt(0)) continue;
+      const fetched = await dbg.disassemble(emulator, probe, win);
+      const hit = fetched.findIndex((i) => BigInt(i.address) === firstAddr);
+      if (hit > 0) {
+        preceding = fetched.slice(0, hit);
+        break;
+      }
+    }
+    if (!preceding || preceding.length === 0) return;
+
+    pendingPrepend.current = preceding.length;
+    setInsns((prev) => {
+      const merged = [...preceding, ...prev];
+      return merged.length > MAX_INSNS ? merged.slice(0, MAX_INSNS) : merged;
+    });
+  }, [emulator, insns]);
+
+  const onRowsRendered = React.useCallback(
+    (rows: { startIndex: number; stopIndex: number }) => {
+      visibleRange.current = { start: rows.startIndex, stop: rows.stopIndex };
+      if (loadingRef.current || insns.length === 0) return;
+      const nearBottom = rows.stopIndex >= insns.length - EDGE_ROWS;
+      const nearTop = rows.startIndex <= EDGE_ROWS;
+      if (!nearBottom && !nearTop) return;
+      loadingRef.current = true;
+      (nearBottom ? extendDown() : extendUp()).finally(() => {
+        loadingRef.current = false;
+      });
+    },
+    [insns.length, extendDown, extendUp],
+  );
+
   const toggleBreakpoint = React.useCallback(
     async (address: bigint) => {
       const key = address.toString(16);
@@ -407,8 +495,11 @@ export function DebuggerView({ emulator, paused, onClose }: DebuggerViewProps) {
             <TabsContent value="disasm" className="absolute inset-0">
               {insns.length > 0 ? (
                 <List
+                  listRef={listRef}
                   rowCount={insns.length}
                   rowHeight={ROW_HEIGHT}
+                  overscanCount={EDGE_ROWS}
+                  onRowsRendered={onRowsRendered}
                   className="h-full"
                   style={{ height: "100%" }}
                   rowComponent={DisasmRow}
