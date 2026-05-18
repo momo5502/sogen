@@ -242,5 +242,6 @@ enum class x86_register
     fdp,
     fds,
     fop,
+    xcr0,
     end, // Must be last
 };
