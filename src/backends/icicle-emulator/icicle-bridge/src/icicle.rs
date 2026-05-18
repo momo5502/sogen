@@ -49,6 +49,7 @@ enum HookType {
     Write,
     ExecuteGeneric,
     ExecuteSpecific,
+    ExecuteRange,
     Violation,
     Interrupt,
     Block,
@@ -70,6 +71,10 @@ fn qualify_hook_id(hook_id: u32, hook_type: HookType) -> u32 {
     let hook_type: u32 = (hook_type as u8).into();
     let hook_type_mask: u32 = hook_type << 24;
     return (hook_id | hook_type_mask).into();
+}
+
+fn is_within_start_and_length(value: u64, start: u64, length: u64) -> bool {
+    return value >= start && value < start.wrapping_add(length);
 }
 
 pub struct HookContainer<Func: ?Sized> {
@@ -220,6 +225,7 @@ impl icicle_vm::CodeInjector for InstructionHookInjector {
 struct ExecutionHooks {
     stop: Rc<RefCell<bool>>,
     generic_hooks: HookContainer<dyn Fn(u64)>,
+    ranged_hooks: HookContainer<dyn Fn(u64)>,
     specific_hooks: HookContainer<dyn Fn(u64)>,
     block_hooks: HookContainer<dyn Fn(u64, u64)>,
     address_mapping: HashMap<u64, Vec<u32>>,
@@ -231,6 +237,7 @@ impl ExecutionHooks {
         Self {
             stop: stop_value,
             generic_hooks: HookContainer::new(),
+            ranged_hooks: HookContainer::new(),
             specific_hooks: HookContainer::new(),
             block_hooks: HookContainer::new(),
             address_mapping: HashMap::new(),
@@ -247,6 +254,10 @@ impl ExecutionHooks {
         }
 
         self.generic_hooks.for_each_hook(|func| {
+            func(address);
+        });
+
+        self.ranged_hooks.for_each_hook(|func| {
             func(address);
         });
 
@@ -289,9 +300,17 @@ impl ExecutionHooks {
         self.generic_hooks.add_hook(callback)
     }
 
+    pub fn add_range_hook(&mut self, start: u64, size: u64, callback: Box<dyn Fn(u64)>) -> u32 {
+        self.ranged_hooks
+            .add_hook(Box::new(move |address: u64| {
+                if size != 0 && is_within_start_and_length(address, start, size) {
+                    callback(address);
+                }
+            }))
+    }
+
     pub fn add_specific_hook(&mut self, address: u64, callback: Box<dyn Fn(u64)>) -> u32 {
         let id = self.specific_hooks.add_hook(callback);
-
         let mapping = self.address_mapping.entry(address).or_insert_with(Vec::new);
         mapping.push(id);
 
@@ -304,6 +323,10 @@ impl ExecutionHooks {
 
     pub fn remove_generic_hook(&mut self, id: u32) {
         self.generic_hooks.remove_hook(id);
+    }
+
+    pub fn remove_range_hook(&mut self, id: u32) {
+        self.ranged_hooks.remove_hook(id);
     }
 
     pub fn remove_specific_hook(&mut self, id: u32) {
@@ -537,6 +560,19 @@ impl IcicleEmulator {
         return qualify_hook_id(hook_id, HookType::ExecuteGeneric);
     }
 
+    pub fn add_ranged_execution_hook(
+        &mut self,
+        start: u64,
+        size: u64,
+        callback: Box<dyn Fn(u64)>,
+    ) -> u32 {
+        let hook_id = self
+            .execution_hooks
+            .borrow_mut()
+            .add_range_hook(start, size, callback);
+        return qualify_hook_id(hook_id, HookType::ExecuteRange);
+    }
+
     pub fn add_syscall_hook(&mut self, callback: Box<dyn Fn()>) -> u32 {
         let hook_id = self.syscall_hooks.add_hook(callback);
         return qualify_hook_id(hook_id, HookType::Syscall);
@@ -594,6 +630,7 @@ impl IcicleEmulator {
                 .execution_hooks
                 .borrow_mut()
                 .remove_specific_hook(hook_id),
+            HookType::ExecuteRange => self.execution_hooks.borrow_mut().remove_range_hook(hook_id),
             HookType::Block => self.execution_hooks.borrow_mut().remove_block_hook(hook_id),
             HookType::Read => {
                 self.get_mem().remove_read_after_hook(hook_id);

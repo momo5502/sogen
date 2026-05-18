@@ -300,6 +300,24 @@ pub fn icicle_add_execution_hook(
 }
 
 #[unsafe(no_mangle)]
+pub fn icicle_add_ranged_execution_hook(
+    ptr: *mut c_void,
+    address: u64,
+    size: u64,
+    callback: PtrFunction,
+    data: *mut c_void,
+) -> u32 {
+    unsafe {
+        let emulator = &mut *(ptr as *mut IcicleEmulator);
+        return emulator.add_ranged_execution_hook(
+            address,
+            size,
+            Box::new(move |ptr: u64| callback(data, ptr)),
+        );
+    }
+}
+
+#[unsafe(no_mangle)]
 pub fn icicle_remove_hook(ptr: *mut c_void, id: u32) {
     unsafe {
         let emulator = &mut *(ptr as *mut IcicleEmulator);

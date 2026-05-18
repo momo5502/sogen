@@ -17,6 +17,7 @@
 #include <utility>
 #include <vector>
 
+#include <address_utils.hpp>
 #include <utils/object.hpp>
 #include <utils/cpu_features.hpp>
 
@@ -863,10 +864,6 @@ namespace sogen::whp
 
             void set_memory_execution_hook_mode(const memory_execution_hook_mode mode) override
             {
-                if (!this->memory_execution_hooks_.empty())
-                {
-                    throw std::runtime_error("Can't change execution hook mode while hooks are applied");
-                }
                 this->memory_execution_hook_mode_ = mode;
             }
 
@@ -1545,6 +1542,22 @@ namespace sogen::whp
                 return hook;
             }
 
+            emulator_hook* hook_memory_range_execution(const uint64_t address, const uint64_t size,
+                                                       memory_execution_hook_callback callback) override
+            {
+                if (size == 1)
+                {
+                    return this->hook_memory_execution(address, std::move(callback));
+                }
+
+                auto* hook = this->make_hook();
+                this->memory_execution_hooks_[hook] =
+                    execution_hook_entry{.address = address, .size = size, .callback = std::move(callback)};
+                this->increment_execution_hook_count(address, size);
+                this->remap_hook_pages(address, size);
+                return hook;
+            }
+
             emulator_hook* hook_memory_execution(const uint64_t address, memory_execution_hook_callback callback) override
             {
                 auto* hook = this->make_hook();
@@ -1564,7 +1577,8 @@ namespace sogen::whp
 
                 case memory_execution_hook_mode::int3:
                     this->install_patched_execution_breakpoint(address);
-                    this->memory_execution_hooks_[hook] = execution_hook_entry{.address = address, .callback = std::move(callback)};
+                    this->memory_execution_hooks_[hook] =
+                        execution_hook_entry{.address = address, .patched_breakpoint = true, .callback = std::move(callback)};
                     return hook;
                 }
 
@@ -1602,28 +1616,8 @@ namespace sogen::whp
 
                 if (const auto execution_it = this->memory_execution_hooks_.find(hook); execution_it != this->memory_execution_hooks_.end())
                 {
-                    const auto execution_address = execution_it->second.address;
+                    this->deactivate_execution_hook(hook);
                     this->memory_execution_hooks_.erase(execution_it);
-
-                    if (execution_address)
-                    {
-                        switch (this->memory_execution_hook_mode_)
-                        {
-                        case memory_execution_hook_mode::automatic: {
-                            if (const auto entry = this->mapped_pages_.find(align_down_to_page(*execution_address));
-                                entry != this->mapped_pages_.end() && entry->second && entry->second->page_execution_hook_count != 0)
-                            {
-                                --entry->second->page_execution_hook_count;
-                            }
-
-                            this->remap_hook_page(*execution_address);
-                            break;
-                        }
-                        case memory_execution_hook_mode::int3:
-                            this->uninstall_patched_execution_breakpoint(*execution_address);
-                            break;
-                        }
-                    }
                 }
 
                 this->memory_read_hooks_.erase(hook);
@@ -1683,6 +1677,11 @@ namespace sogen::whp
                 return false;
             }
 
+            bool supports_global_memory_execution_hooks() const override
+            {
+                return false;
+            }
+
           private:
             struct instruction_hook_entry
             {
@@ -1693,6 +1692,8 @@ namespace sogen::whp
             struct execution_hook_entry
             {
                 std::optional<uint64_t> address{};
+                uint64_t size{1};
+                bool patched_breakpoint{false};
                 memory_execution_hook_callback callback{};
             };
 
@@ -2015,8 +2016,9 @@ namespace sogen::whp
                 page.guest_page_base = align_down_to_page(guest_address);
                 page.guest_physical_address = this->allocate_guest_physical_page();
                 page.page_execution_hook_count = std::ranges::count_if(this->memory_execution_hooks_, [&](const auto& entry) {
-                    return entry.second.address && !this->patched_execution_breakpoints_.contains(*entry.second.address) &&
-                           align_down_to_page(*entry.second.address) == page.guest_page_base;
+                    const auto& hook = entry.second;
+                    return hook.address && !hook.patched_breakpoint && hook.size != 0 &&
+                           regions_with_length_intersect(*hook.address, hook.size, page.guest_page_base, page_size);
                 });
                 this->guest_pages_by_gpa_[this->guest_physical_page_index(page.guest_physical_address)] = page.guest_page_base;
             }
@@ -2194,6 +2196,91 @@ namespace sogen::whp
                 if (entry != this->mapped_pages_.end() && entry->second && entry->second->host_page != nullptr)
                 {
                     this->remap_page(*entry->second);
+                }
+            }
+
+            void remap_hook_pages(const uint64_t address, const uint64_t size)
+            {
+                if (size == 0)
+                {
+                    return;
+                }
+
+                const auto start = align_down_to_page(address);
+                const auto end = align_up(address + size, page_size);
+                for (auto page = start; page < end; page += page_size)
+                {
+                    this->remap_hook_page(page);
+                }
+            }
+
+            void increment_execution_hook_count(const uint64_t address, const uint64_t size)
+            {
+                if (size == 0)
+                {
+                    return;
+                }
+
+                const auto start = align_down_to_page(address);
+                const auto end = align_up(address + size, page_size);
+                for (auto page = start; page < end; page += page_size)
+                {
+                    const auto entry = this->mapped_pages_.find(page);
+                    if (entry == this->mapped_pages_.end() || !entry->second)
+                    {
+                        continue;
+                    }
+
+                    ++entry->second->page_execution_hook_count;
+                }
+            }
+
+            void decrement_execution_hook_count(const uint64_t address, const uint64_t size)
+            {
+                if (size == 0)
+                {
+                    return;
+                }
+
+                const auto start = align_down_to_page(address);
+                const auto end = align_up(address + size, page_size);
+                for (auto page = start; page < end; page += page_size)
+                {
+                    const auto entry = this->mapped_pages_.find(page);
+                    if (entry == this->mapped_pages_.end() || !entry->second)
+                    {
+                        continue;
+                    }
+
+                    if (entry->second->page_execution_hook_count != 0)
+                    {
+                        --entry->second->page_execution_hook_count;
+                    }
+                }
+            }
+
+            void deactivate_execution_hook(emulator_hook* hook)
+            {
+                const auto execution_it = this->memory_execution_hooks_.find(hook);
+                if (execution_it == this->memory_execution_hooks_.end())
+                {
+                    return;
+                }
+
+                auto& execution = execution_it->second;
+                if (!execution.address)
+                {
+                    return;
+                }
+
+                if (execution.patched_breakpoint)
+                {
+                    this->uninstall_patched_execution_breakpoint(*execution.address);
+                }
+                else
+                {
+                    this->decrement_execution_hook_count(*execution.address, execution.size);
+                    this->remap_hook_pages(*execution.address, execution.size);
                 }
             }
 
@@ -2977,7 +3064,8 @@ namespace sogen::whp
                 std::vector<memory_execution_hook_callback> callbacks{};
                 for (const auto& [_, hook] : this->memory_execution_hooks_)
                 {
-                    if (hook.address && *hook.address == address)
+                    if (hook.address && !hook.patched_breakpoint && hook.size != 0 &&
+                        is_within_start_and_length(address, *hook.address, hook.size))
                     {
                         callbacks.push_back(hook.callback);
                     }
@@ -3098,7 +3186,7 @@ namespace sogen::whp
                 std::vector<memory_execution_hook_callback> callbacks{};
                 for (const auto& [_, hook] : this->memory_execution_hooks_)
                 {
-                    if (hook.address && *hook.address == address)
+                    if (hook.address && hook.patched_breakpoint && *hook.address == address)
                     {
                         callbacks.push_back(hook.callback);
                     }

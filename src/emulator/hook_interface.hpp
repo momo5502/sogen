@@ -72,8 +72,14 @@ namespace sogen
             }
         }
 
+        virtual bool supports_global_memory_execution_hooks() const
+        {
+            return true;
+        }
+
         virtual emulator_hook* hook_memory_execution(memory_execution_hook_callback callback) = 0;
         virtual emulator_hook* hook_memory_execution(uint64_t address, memory_execution_hook_callback callback) = 0;
+        virtual emulator_hook* hook_memory_range_execution(uint64_t address, uint64_t size, memory_execution_hook_callback callback) = 0;
         virtual emulator_hook* hook_memory_read(uint64_t address, uint64_t size, memory_access_hook_callback callback) = 0;
         virtual emulator_hook* hook_memory_write(uint64_t address, uint64_t size, memory_access_hook_callback callback) = 0;
 

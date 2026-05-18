@@ -559,7 +559,8 @@ namespace sogen::unicorn
                 return result;
             }
 
-            emulator_hook* hook_memory_execution(const uint64_t address, const uint64_t size, memory_execution_hook_callback callback)
+            emulator_hook* hook_memory_range_execution(const uint64_t address, const uint64_t size,
+                                                       memory_execution_hook_callback callback) override
             {
                 auto exec_wrapper = [c = std::move(callback)](uc_engine*, const uint64_t address, const uint32_t /*size*/) {
                     c(address); //
@@ -579,12 +580,12 @@ namespace sogen::unicorn
 
             emulator_hook* hook_memory_execution(memory_execution_hook_callback callback) override
             {
-                return this->hook_memory_execution(0, std::numeric_limits<uint64_t>::max(), std::move(callback));
+                return this->hook_memory_range_execution(0, std::numeric_limits<uint64_t>::max(), std::move(callback));
             }
 
             emulator_hook* hook_memory_execution(const uint64_t address, memory_execution_hook_callback callback) override
             {
-                return this->hook_memory_execution(address, 1, std::move(callback));
+                return this->hook_memory_range_execution(address, 1, std::move(callback));
             }
 
             emulator_hook* hook_memory_read(const uint64_t address, const uint64_t size, memory_access_hook_callback callback) override

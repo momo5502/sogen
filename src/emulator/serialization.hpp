@@ -36,6 +36,16 @@ namespace sogen
         {
         };
 
+        template <typename T>
+        struct is_vector : std::false_type
+        {
+        };
+
+        template <typename... Args>
+        struct is_vector<std::vector<Args...>> : std::true_type
+        {
+        };
+
         namespace detail
         {
             template <typename, typename = void>
@@ -110,6 +120,10 @@ namespace sogen
                 else if constexpr (detail::has_serialize_function<T>::value)
                 {
                     serialize(*this, object);
+                }
+                else if constexpr (is_vector<T>::value)
+                {
+                    write_vector(object);
                 }
                 else if constexpr (is_trivially_copyable)
                 {
@@ -344,6 +358,10 @@ namespace sogen
                 else if constexpr (detail::has_deserialize_function<T>::value)
                 {
                     deserialize(*this, object);
+                }
+                else if constexpr (is_vector<T>::value)
+                {
+                    read_vector(object);
                 }
                 else if constexpr (is_trivially_copyable)
                 {
