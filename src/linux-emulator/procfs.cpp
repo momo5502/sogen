@@ -94,8 +94,9 @@ std::optional<std::string> procfs::resolve_symlink(const linux_emulator& emu, co
     if (path.starts_with("/proc/self/fd/"))
     {
         const auto fd_str = path.substr(14);
+        const std::string fd_string(fd_str);
         char* end = nullptr;
-        const auto fd_num = static_cast<int>(strtol(std::string(fd_str).c_str(), &end, 10));
+        const auto fd_num = static_cast<int>(strtol(fd_string.c_str(), &end, 10));
         if (end && *end == '\0')
         {
             const auto& fds = emu.process.fds.get_fds();

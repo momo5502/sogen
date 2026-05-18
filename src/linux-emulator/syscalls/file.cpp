@@ -11,6 +11,7 @@
 #include <limits>
 #include <sys/stat.h>
 #if defined(_WIN32)
+#include <Windows.h>
 #include <io.h>
 #else
 #include <unistd.h>
@@ -59,6 +60,39 @@ namespace
         return static_cast<int64_t>(::read(fd, buffer, count));
 #endif
     }
+
+#if defined(_WIN32)
+    bool host_pipe_would_block(const int fd)
+    {
+        const auto os_handle = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
+        if (os_handle == INVALID_HANDLE_VALUE)
+        {
+            errno = EBADF;
+            return false;
+        }
+
+        DWORD available = 0;
+        if (PeekNamedPipe(os_handle, nullptr, 0, nullptr, &available, nullptr) != 0)
+        {
+            if (available == 0)
+            {
+                errno = EAGAIN;
+                return true;
+            }
+
+            return false;
+        }
+
+        const auto error = GetLastError();
+        if (error == ERROR_BROKEN_PIPE)
+        {
+            return false;
+        }
+
+        errno = EIO;
+        return false;
+    }
+#endif
 
     int64_t host_write_fd(const int fd, const void* buffer, const size_t count)
     {
@@ -272,35 +306,53 @@ namespace
 
 #if defined(_WIN32)
         int host_flags = _O_BINARY;
+        DWORD desired_access = 0;
         switch (access)
         {
         case LINUX_O_WRONLY:
+            desired_access = GENERIC_READ | GENERIC_WRITE;
             host_flags |= _O_RDWR;
             break;
         case LINUX_O_RDWR:
+            desired_access = GENERIC_READ | GENERIC_WRITE;
             host_flags |= _O_RDWR;
             break;
         default:
+            desired_access = GENERIC_READ;
             host_flags |= _O_RDONLY;
             break;
         }
 
-        if (flags & LINUX_O_CREAT)
-        {
-            host_flags |= _O_CREAT;
-        }
-        if (flags & LINUX_O_TRUNC)
-        {
-            host_flags |= _O_TRUNC;
-        }
         if (flags & LINUX_O_APPEND)
         {
             host_flags |= _O_APPEND;
         }
 
-        const auto host_fd = _open(path_str.c_str(), host_flags, _S_IREAD | _S_IWRITE);
+        DWORD creation_disposition = OPEN_EXISTING;
+        if ((flags & LINUX_O_CREAT) && (flags & LINUX_O_TRUNC))
+        {
+            creation_disposition = CREATE_ALWAYS;
+        }
+        else if (flags & LINUX_O_CREAT)
+        {
+            creation_disposition = OPEN_ALWAYS;
+        }
+        else if (flags & LINUX_O_TRUNC)
+        {
+            creation_disposition = TRUNCATE_EXISTING;
+        }
+
+        const auto host_handle = CreateFileA(path_str.c_str(), desired_access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                             nullptr, creation_disposition, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (host_handle == INVALID_HANDLE_VALUE)
+        {
+            return nullptr;
+        }
+
+        const auto host_fd = _open_osfhandle(reinterpret_cast<intptr_t>(host_handle), host_flags);
         if (host_fd < 0)
         {
+            CloseHandle(host_handle);
             return nullptr;
         }
 
@@ -451,6 +503,14 @@ void sys_read(const linux_syscall_context& c)
     if (fd_entry->type == fd_type::pipe_read)
     {
         const auto host_fd = fileno(fd_entry->handle);
+#if defined(_WIN32)
+        constexpr int LINUX_O_NONBLOCK = 04000;
+        if ((fd_entry->flags & LINUX_O_NONBLOCK) != 0 && host_pipe_would_block(host_fd))
+        {
+            write_linux_syscall_result(c, -LINUX_EAGAIN);
+            return;
+        }
+#endif
         errno = 0;
         bytes_read = host_read_fd(host_fd, buffer.data(), count);
         if (bytes_read < 0)
