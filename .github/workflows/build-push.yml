@@ -82,7 +82,7 @@ jobs:
           python-version: "3.9"
 
       - name: Download wheel artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: sogen-wheel-*
           path: dist
@@ -92,7 +92,7 @@ jobs:
           run-id: ${{ needs.ci.outputs.run_id }}
 
       - name: Download sdist artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: sogen-sdist
           path: dist
