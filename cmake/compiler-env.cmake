@@ -137,7 +137,6 @@ if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
 
   add_link_options(
     -fexceptions
-    --minify=0
     -sALLOW_MEMORY_GROWTH=1
     $<$<CONFIG:Debug>:-sASSERTIONS>
     -sWASM_BIGINT
