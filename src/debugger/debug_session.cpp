@@ -113,17 +113,34 @@ namespace debugger
     {
         auto& cpu = this->emu_->emu();
 
-        static constexpr std::pair<const char*, x86_register> gpr[] = {
-            {"rax", x86_register::rax}, {"rbx", x86_register::rbx},       {"rcx", x86_register::rcx}, {"rdx", x86_register::rdx},
-            {"rsi", x86_register::rsi}, {"rdi", x86_register::rdi},       {"rbp", x86_register::rbp}, {"rsp", x86_register::rsp},
-            {"r8", x86_register::r8},   {"r9", x86_register::r9},         {"r10", x86_register::r10}, {"r11", x86_register::r11},
-            {"r12", x86_register::r12}, {"r13", x86_register::r13},       {"r14", x86_register::r14}, {"r15", x86_register::r15},
-            {"rip", x86_register::rip}, {"rflags", x86_register::eflags},
-        };
-        static constexpr std::pair<const char*, x86_register> seg[] = {
-            {"cs", x86_register::cs}, {"ss", x86_register::ss}, {"ds", x86_register::ds},
-            {"es", x86_register::es}, {"fs", x86_register::fs}, {"gs", x86_register::gs},
-        };
+        static constexpr auto gpr = std::to_array<std::pair<const char*, x86_register>>({
+            {"rax", x86_register::rax},
+            {"rbx", x86_register::rbx},
+            {"rcx", x86_register::rcx},
+            {"rdx", x86_register::rdx},
+            {"rsi", x86_register::rsi},
+            {"rdi", x86_register::rdi},
+            {"rbp", x86_register::rbp},
+            {"rsp", x86_register::rsp},
+            {"r8", x86_register::r8},
+            {"r9", x86_register::r9},
+            {"r10", x86_register::r10},
+            {"r11", x86_register::r11},
+            {"r12", x86_register::r12},
+            {"r13", x86_register::r13},
+            {"r14", x86_register::r14},
+            {"r15", x86_register::r15},
+            {"rip", x86_register::rip},
+            {"rflags", x86_register::eflags},
+        });
+        static constexpr auto seg = std::to_array<std::pair<const char*, x86_register>>({
+            {"cs", x86_register::cs},
+            {"ss", x86_register::ss},
+            {"ds", x86_register::ds},
+            {"es", x86_register::es},
+            {"fs", x86_register::fs},
+            {"gs", x86_register::gs},
+        });
 
         std::vector<register_value> result{};
         result.reserve(std::size(gpr) + std::size(seg));

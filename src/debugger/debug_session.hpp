@@ -118,8 +118,8 @@ namespace debugger
         // --- stepping (must not desync emulator state) ---
         // `step` executes the requested motion on the active thread and
         // returns when the emulator is paused again.
-        void step(step_kind kind);
-        void run_to(uint64_t address); // temporary breakpoint + continue
+        static void step(step_kind kind);
+        static void run_to(uint64_t address); // temporary breakpoint + continue
 
         // --- read-only introspection (valid while paused) ---
         uint64_t instruction_pointer() const;
