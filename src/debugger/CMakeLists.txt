@@ -8,7 +8,7 @@ list(SORT SRC_FILES)
 
 add_library(debugger ${SRC_FILES})
 
-momo_assign_source_group(${SRC_FILES})
+sogen_assign_source_group(${SRC_FILES})
 
 target_link_libraries(debugger PRIVATE
   windows-emulator

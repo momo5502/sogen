@@ -21,7 +21,7 @@
 #if defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection)
 #define HAS_NATIVE_REFLECTION
 #include <meta>
-#elif defined(MOMO_ENABLE_REFLECTION) && (!defined(__GNUC__) || defined(__clang__))
+#elif defined(SOGEN_ENABLE_REFLECTION) && (!defined(__GNUC__) || defined(__clang__))
 #define HAS_CUSTOM_REFLECTION
 #include "reflect_extension.hpp"
 #include <reflect>

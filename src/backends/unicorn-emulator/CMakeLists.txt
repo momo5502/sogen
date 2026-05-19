@@ -17,4 +17,4 @@ target_include_directories(unicorn-emulator INTERFACE "${CMAKE_CURRENT_LIST_DIR}
 target_link_libraries(unicorn-emulator PUBLIC emulator)
 target_link_libraries(unicorn-emulator PRIVATE unicorn emulator-common)
 
-momo_strip_target(unicorn-emulator)
+sogen_strip_target(unicorn-emulator)

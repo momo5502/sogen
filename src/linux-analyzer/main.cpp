@@ -11,7 +11,7 @@
 #include <network/address.hpp>
 #include <backend_selection.hpp>
 
-#if defined(OS_EMSCRIPTEN) && !defined(MOMO_EMSCRIPTEN_SUPPORT_NODEJS)
+#if defined(OS_EMSCRIPTEN) && !defined(SOGEN_EMSCRIPTEN_SUPPORT_NODEJS)
 #include <linux_event_handler.hpp>
 #include <utils/finally.hpp>
 #endif
@@ -125,7 +125,7 @@ int main(const int argc, char* argv[])
             linux_emu.log.disable_output(true);
         }
 
-#if defined(OS_EMSCRIPTEN) && !defined(MOMO_EMSCRIPTEN_SUPPORT_NODEJS)
+#if defined(OS_EMSCRIPTEN) && !defined(SOGEN_EMSCRIPTEN_SUPPORT_NODEJS)
         std::optional<int> exit_status{};
         const auto exit_handler = utils::finally([&] { linux_debugger::handle_exit(linux_emu, exit_status); });
 
@@ -147,7 +147,7 @@ int main(const int argc, char* argv[])
             linux_emu.start();
         }
 
-#if defined(OS_EMSCRIPTEN) && !defined(MOMO_EMSCRIPTEN_SUPPORT_NODEJS)
+#if defined(OS_EMSCRIPTEN) && !defined(SOGEN_EMSCRIPTEN_SUPPORT_NODEJS)
         exit_status = linux_emu.process.exit_status;
 #endif
 

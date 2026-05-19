@@ -25,7 +25,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 ##########################################
 
-if(SOGEN_ENABLE_LTO AND NOT MOMO_ENABLE_CLANG_TIDY AND NOT MINGW AND NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
+if(SOGEN_ENABLE_LTO AND NOT SOGEN_ENABLE_CLANG_TIDY AND NOT MINGW AND NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF)
 endif()
@@ -40,11 +40,11 @@ endif()
 
 ##########################################
 
-set(MOMO_ENABLE_RUST OFF)
-if(MOMO_ENABLE_RUST_CODE AND NOT MINGW AND NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
+set(SOGEN_ENABLE_RUST OFF)
+if(SOGEN_ENABLE_RUST_CODE AND NOT MINGW AND NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
   find_program(CARGO cargo)
   if(CARGO)
-    set(MOMO_ENABLE_RUST ON)
+    set(SOGEN_ENABLE_RUST ON)
   else()
     message(STATUS "cargo not found; disabling Rust-backed components")
   endif()
@@ -52,16 +52,16 @@ endif()
 
 ##########################################
 
-if(MOMO_ENABLE_RUST)
-  add_compile_definitions(MOMO_ENABLE_RUST_CODE=1)
+if(SOGEN_ENABLE_RUST)
+  add_compile_definitions(SOGEN_ENABLE_RUST_CODE=1)
 else()
-  add_compile_definitions(MOMO_ENABLE_RUST_CODE=0)
+  add_compile_definitions(SOGEN_ENABLE_RUST_CODE=0)
 endif()
 
 ##########################################
 
 if(UNIX)
-  momo_add_c_and_cxx_compile_options(
+  sogen_add_c_and_cxx_compile_options(
     -fvisibility=hidden
     -ftrivial-auto-var-init=zero
   )
@@ -77,7 +77,7 @@ if(MINGW)
     -lwinpthread
   )
 
-  momo_add_c_and_cxx_compile_options(
+  sogen_add_c_and_cxx_compile_options(
     -Wno-array-bounds
   )
 endif()
@@ -85,11 +85,11 @@ endif()
 ##########################################
 
 if(LINUX OR APPLE)
-  momo_add_c_and_cxx_compile_options(
+  sogen_add_c_and_cxx_compile_options(
     -fdiagnostics-color=always
   )
 
-  momo_add_c_and_cxx_release_compile_options(
+  sogen_add_c_and_cxx_release_compile_options(
     -ffunction-sections
     -fdata-sections
     -fstack-protector-strong
@@ -103,11 +103,11 @@ if(LINUX OR APPLE)
       -static-libstdc++
     )
 
-    momo_add_release_link_options(
+    sogen_add_release_link_options(
       -Wl,--gc-sections
     )
   else()
-    momo_add_release_link_options(
+    sogen_add_release_link_options(
       -dead_strip
     )
   endif()
@@ -117,7 +117,7 @@ if(LINUX OR APPLE)
     _THREAD_SAFE
   )
 
-  if(NOT MOMO_ENABLE_SANITIZER)
+  if(NOT SOGEN_ENABLE_SANITIZER)
     add_compile_definitions(
       _FORTIFY_SOURCE=2
     )
@@ -129,7 +129,7 @@ endif()
 ##########################################
 
 if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
-  momo_add_c_and_cxx_compile_options(
+  sogen_add_c_and_cxx_compile_options(
     -fexceptions
     -ftrivial-auto-var-init=zero
     -Wno-dollar-in-identifier-extension
@@ -146,8 +146,8 @@ if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
     -sASYNCIFY
   )
 
-  if(MOMO_EMSCRIPTEN_MEMORY64)
-    momo_add_c_and_cxx_compile_options(
+  if(SOGEN_EMSCRIPTEN_MEMORY64)
+    sogen_add_c_and_cxx_compile_options(
       -sMEMORY64
     )
 
@@ -161,9 +161,9 @@ if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
     )
   endif()
 
-  if(MOMO_EMSCRIPTEN_SUPPORT_NODEJS)
+  if(SOGEN_EMSCRIPTEN_SUPPORT_NODEJS)
     add_compile_definitions(
-      MOMO_EMSCRIPTEN_SUPPORT_NODEJS=1
+      SOGEN_EMSCRIPTEN_SUPPORT_NODEJS=1
     )
 
     add_link_options(
@@ -187,7 +187,7 @@ if(MSVC)
   string(REPLACE "/EHsc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
   string(REPLACE "/EHs" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 
-  momo_add_c_and_cxx_compile_options(
+  sogen_add_c_and_cxx_compile_options(
     /sdl
     /GS
     /Gy
@@ -195,15 +195,15 @@ if(MSVC)
     #/guard:cf
   )
 
-  momo_add_compile_options(CXX
+  sogen_add_compile_options(CXX
     /Zc:__cplusplus
   )
 
-  momo_add_c_and_cxx_release_compile_options(
+  sogen_add_c_and_cxx_release_compile_options(
     /Gw
   )
 
-  momo_add_release_link_options(
+  sogen_add_release_link_options(
     /OPT:REF
     /OPT:ICF
   )
@@ -220,7 +220,7 @@ endif()
 
 ##########################################
 
-if(MOMO_ENABLE_AVX2 AND NOT (CMAKE_SYSTEM_NAME STREQUAL "Android"))
+if(SOGEN_ENABLE_AVX2 AND NOT (CMAKE_SYSTEM_NAME STREQUAL "Android"))
   set(CMAKE_REQUIRED_FLAGS -Werror)
   check_cxx_compiler_flag(-mavx2 COMPILER_SUPPORTS_MAVX2)
   set(CMAKE_REQUIRED_FLAGS "")
@@ -228,18 +228,18 @@ if(MOMO_ENABLE_AVX2 AND NOT (CMAKE_SYSTEM_NAME STREQUAL "Android"))
   check_cxx_compiler_flag(/arch:AVX2 COMPILER_SUPPORTS_ARCH_AVX2)
 
   if(COMPILER_SUPPORTS_MAVX2)
-    momo_add_c_and_cxx_compile_options(-mavx2)
+    sogen_add_c_and_cxx_compile_options(-mavx2)
   endif()
 
   if (COMPILER_SUPPORTS_ARCH_AVX2)
-    momo_add_c_and_cxx_compile_options(/arch:AVX2)
+    sogen_add_c_and_cxx_compile_options(/arch:AVX2)
   endif()
 endif()
 
 ##########################################
 
-if(MOMO_ENABLE_SANITIZER)
-  momo_add_c_and_cxx_compile_options(-fsanitize=address)
+if(SOGEN_ENABLE_SANITIZER)
+  sogen_add_c_and_cxx_compile_options(-fsanitize=address)
   add_link_options(-fsanitize=address)
 endif()
 
@@ -286,5 +286,5 @@ endif()
 ##########################################
 
 if(CMAKE_GENERATOR MATCHES "Visual Studio")
-  momo_add_c_and_cxx_compile_options(/MP)
+  sogen_add_c_and_cxx_compile_options(/MP)
 endif()

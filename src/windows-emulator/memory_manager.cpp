@@ -98,7 +98,7 @@ namespace utils
 
 void memory_manager::update_layout_version()
 {
-#if MOMO_REFLECTION_LEVEL > 0
+#if SOGEN_REFLECTION_LEVEL > 0
     this->layout_version_.fetch_add(1, std::memory_order_relaxed);
 #endif
 }

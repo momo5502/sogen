@@ -5,7 +5,7 @@ file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
 
 add_library(emulator-common ${SRC_FILES})
 
-momo_assign_source_group(${SRC_FILES})
+sogen_assign_source_group(${SRC_FILES})
 
 target_include_directories(emulator-common INTERFACE "${CMAKE_CURRENT_LIST_DIR}")
 

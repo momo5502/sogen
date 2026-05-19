@@ -3,7 +3,7 @@
 #include <string_view>
 #include <unicorn_x86_64_emulator.hpp>
 
-#if MOMO_ENABLE_RUST_CODE
+#if SOGEN_ENABLE_RUST_CODE
 #include <icicle_x86_64_emulator.hpp>
 #endif
 
@@ -22,7 +22,7 @@ namespace
         case backend_type::unicorn:
             return unicorn::create_x86_64_emulator();
 
-#if MOMO_ENABLE_RUST_CODE
+#if SOGEN_ENABLE_RUST_CODE
         case backend_type::icicle:
             // TODO: Add proper handling for WOW64 case (x64 -> x86 emulation is not supported yet).
             // icicle does not support automatic cross-architecture conversion from x64 to x86.

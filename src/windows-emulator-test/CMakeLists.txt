@@ -8,7 +8,7 @@ list(SORT SRC_FILES)
 
 add_executable(windows-emulator-test ${SRC_FILES})
 
-momo_assign_source_group(${SRC_FILES})
+sogen_assign_source_group(${SRC_FILES})
 
 target_link_libraries(windows-emulator-test PRIVATE
   gtest
@@ -25,6 +25,6 @@ add_test(NAME windows-emulator-test
          COMMAND ${CMAKE_COMMAND} -E env "LD_LIBRARY_PATH=." -- "${PYTHON3_EXE}" "${PROJECT_SOURCE_DIR}/deps/gtest-parallel/gtest_parallel.py" ./windows-emulator-test
          WORKING_DIRECTORY "$<TARGET_FILE_DIR:windows-emulator-test>")
 
-momo_targets_set_folder("tests" windows-emulator-test)
+sogen_targets_set_folder("tests" windows-emulator-test)
 
-momo_strip_target(windows-emulator-test)
+sogen_strip_target(windows-emulator-test)
