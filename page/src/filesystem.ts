@@ -84,8 +84,7 @@ function unlinkRecursive(idbfs: MainModule, element: string) {
     return;
   }
 
-  idbfs.FS
-    .readdir(element)
+  idbfs.FS.readdir(element)
     .filter(filterPseudoDir)
     .forEach((e: string) => {
       unlinkRecursive(idbfs, `${element}/${e}`);
@@ -99,8 +98,7 @@ function clearDirectory(idbfs: MainModule, root: string) {
     return;
   }
 
-  idbfs.FS
-    .readdir(root)
+  idbfs.FS.readdir(root)
     .filter(filterPseudoDir)
     .forEach((e: string) => {
       unlinkRecursive(idbfs, `${root}/${e}`);
@@ -111,8 +109,7 @@ function copyRecursive(idbfs: MainModule, source: string, target: string) {
   if (isFolder(idbfs, source)) {
     ensureDirectory(idbfs, target);
 
-    idbfs.FS
-      .readdir(source)
+    idbfs.FS.readdir(source)
       .filter(filterPseudoDir)
       .forEach((e: string) => {
         copyRecursive(idbfs, `${source}/${e}`, `${target}/${e}`);
@@ -128,12 +125,15 @@ function copyRecursive(idbfs: MainModule, source: string, target: string) {
   idbfs.FS.writeFile(target, data);
 }
 
-function copyDirectoryContents(idbfs: MainModule, sourceRoot: string, targetRoot: string) {
+function copyDirectoryContents(
+  idbfs: MainModule,
+  sourceRoot: string,
+  targetRoot: string,
+) {
   ensureDirectory(idbfs, sourceRoot);
   ensureDirectory(idbfs, targetRoot);
 
-  idbfs.FS
-    .readdir(sourceRoot)
+  idbfs.FS.readdir(sourceRoot)
     .filter(filterPseudoDir)
     .forEach((e: string) => {
       copyRecursive(idbfs, `${sourceRoot}/${e}`, `${targetRoot}/${e}`);
@@ -243,7 +243,11 @@ export async function setupLinuxFilesystem() {
   const fs = new Filesystem(idbfs, persistenceRoot);
 
   // Ensure basic Linux root structure exists
-  const dirs = [`${runtimeRoot}/bin`, `${runtimeRoot}/lib`, `${runtimeRoot}/tmp`];
+  const dirs = [
+    `${runtimeRoot}/bin`,
+    `${runtimeRoot}/lib`,
+    `${runtimeRoot}/tmp`,
+  ];
 
   for (const dir of dirs) {
     if (!idbfs.FS.analyzePath(dir, false).exists) {
