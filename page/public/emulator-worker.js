@@ -2,6 +2,13 @@ var logLines = [];
 var lastFlush = new Date().getTime();
 
 var msgQueue = [];
+const runtimeRoot = "/root-windows";
+
+function ensureDirectory(path) {
+  if (!FS.analyzePath(path).exists) {
+    FS.mkdirTree(path, 0o777);
+  }
+}
 
 onmessage = async (event) => {
   const data = event.data;
@@ -80,7 +87,13 @@ function runEmulation(
   wasm64,
   cacheBuster,
 ) {
-  const mainArguments = [...options, "-e", "./root", file, ...appArguments];
+  const mainArguments = [
+    ...options,
+    "-e",
+    "." + runtimeRoot,
+    file,
+    ...appArguments,
+  ];
 
   globalThis.Module = {
     arguments: mainArguments,
@@ -91,8 +104,8 @@ function runEmulation(
       return `${scriptDirectory}${bitness}/${path}${busterParams}`;
     },
     onRuntimeInitialized: function () {
-      FS.mkdir("/root");
-      FS.mount(IDBFS, {}, "/root");
+      ensureDirectory(runtimeRoot);
+      FS.mount(IDBFS, {}, runtimeRoot);
       FS.syncfs(true, function (_) {
         setTimeout(() => {
           Module.callMain(mainArguments);

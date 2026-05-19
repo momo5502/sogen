@@ -5,7 +5,7 @@ import {
   FolderElementType,
   trimFilename,
 } from "./components/folder";
-import { Filesystem } from "./filesystem";
+import { Filesystem, runtimeRoots } from "./filesystem";
 
 import {
   Dialog,
@@ -50,7 +50,9 @@ export interface FilesystemExplorerState {
 }
 
 function makeFullPath(path: string[], linuxMode: boolean = false) {
-  const root = linuxMode ? "/root" : "/root/filesys";
+  const root = linuxMode
+    ? runtimeRoots.linux
+    : `${runtimeRoots.windows}/filesys`;
   if (path.length === 0) {
     return root;
   }
@@ -312,7 +314,10 @@ export class FilesystemExplorer extends React.Component<
     if (element.type != FolderElementType.Folder) {
       if (this.props.linuxMode) {
         const file =
-          "./root/" + makeRelativePathWithState(this.state, element.name);
+          "." +
+          runtimeRoots.linux +
+          "/" +
+          makeRelativePathWithState(this.state, element.name);
         this.props.runFile(file);
       } else if (element.name.endsWith(".exe")) {
         const file = makeWindowsPathWithState(this.state, element.name);

@@ -35,14 +35,14 @@ function synchronizeIDBFS(idbfs: MainModule, populate: boolean) {
   });
 }
 
-const runtimeRoot = "/root";
-const windowsFilesystemPrefix = `${runtimeRoot}/filesys/`;
-const persistenceRoots = {
-  windows: "/persist-windows",
-  linux: "/persist-linux",
+export const runtimeRoots = {
+  windows: "/root-windows",
+  linux: "/root-linux",
 } as const;
 
-type FilesystemMode = keyof typeof persistenceRoots;
+const windowsFilesystemPrefix = `${runtimeRoots.windows}/filesys/`;
+
+export type FilesystemMode = keyof typeof runtimeRoots;
 
 export function internalToWindowsPath(internalPath: string): string {
   if (
@@ -142,16 +142,14 @@ function copyDirectoryContents(
 
 async function initializeIDBFS(mode: FilesystemMode) {
   const idbfs = await idbfsModule();
-  const persistenceRoot = persistenceRoots[mode];
+  const runtimeRoot = runtimeRoots[mode];
 
   ensureDirectory(idbfs, runtimeRoot);
-  ensureDirectory(idbfs, persistenceRoot);
-  idbfs.FS.mount(idbfs.IDBFS, {}, persistenceRoot);
+  idbfs.FS.mount(idbfs.IDBFS, {}, runtimeRoot);
 
   await synchronizeIDBFS(idbfs, true);
-  copyDirectoryContents(idbfs, persistenceRoot, runtimeRoot);
 
-  return { idbfs, persistenceRoot };
+  return { idbfs, runtimeRoot };
 }
 
 export interface FileWithData {
@@ -161,11 +159,11 @@ export interface FileWithData {
 
 export class Filesystem {
   private idbfs: MainModule;
-  private persistenceRoot: string;
+  private runtimeRoot: string;
 
-  constructor(idbfs: MainModule, persistenceRoot: string) {
+  constructor(idbfs: MainModule, runtimeRoot: string) {
     this.idbfs = idbfs;
-    this.persistenceRoot = persistenceRoot;
+    this.runtimeRoot = runtimeRoot;
   }
 
   _storeFile(file: FileWithData) {
@@ -214,8 +212,6 @@ export class Filesystem {
   }
 
   async sync() {
-    clearDirectory(this.idbfs, this.persistenceRoot);
-    copyDirectoryContents(this.idbfs, runtimeRoot, this.persistenceRoot);
     await synchronizeIDBFS(this.idbfs, false);
   }
 
@@ -232,15 +228,14 @@ export class Filesystem {
   }
 
   async delete() {
-    clearDirectory(this.idbfs, runtimeRoot);
-    clearDirectory(this.idbfs, this.persistenceRoot);
+    clearDirectory(this.idbfs, this.runtimeRoot);
     await synchronizeIDBFS(this.idbfs, false);
   }
 }
 
 export async function setupLinuxFilesystem() {
-  const { idbfs, persistenceRoot } = await initializeIDBFS("linux");
-  const fs = new Filesystem(idbfs, persistenceRoot);
+  const { idbfs, runtimeRoot } = await initializeIDBFS("linux");
+  const fs = new Filesystem(idbfs, runtimeRoot);
 
   // Ensure basic Linux root structure exists
   const dirs = [
@@ -322,8 +317,8 @@ export async function setupFilesystem(
   progressHandler: ProgressHandler,
   downloadProgressHandler: DownloadPercentHandler,
 ) {
-  const { idbfs, persistenceRoot } = await initializeIDBFS("windows");
-  const fs = new Filesystem(idbfs, persistenceRoot);
+  const { idbfs, runtimeRoot } = await initializeIDBFS("windows");
+  const fs = new Filesystem(idbfs, runtimeRoot);
 
   if (idbfs.FS.analyzePath(`${runtimeRoot}/api-set.bin`, false).exists) {
     return fs;
@@ -335,15 +330,42 @@ export async function setupFilesystem(
   );
 
   filesystem.forEach((e) => {
-    if (idbfs.FS.analyzePath("/" + e.name, false).exists) {
+    let relativePath = e.name.replace(/\\/g, "/");
+
+    while (relativePath.startsWith("./")) {
+      relativePath = relativePath.substring(2);
+    }
+
+    if (relativePath.startsWith("/")) {
+      relativePath = relativePath.substring(1);
+    }
+
+    if (relativePath.startsWith("root/")) {
+      relativePath = relativePath.substring("root/".length);
+    }
+
+    if (
+      relativePath.length === 0 ||
+      relativePath === "." ||
+      relativePath.startsWith("__MACOSX/")
+    ) {
+      return;
+    }
+
+    const fullPath = `${runtimeRoot}/${relativePath}`;
+
+    if (idbfs.FS.analyzePath(fullPath, false).exists) {
       return;
     }
 
     if (e.name.endsWith("/")) {
-      idbfs.FS.mkdir("/" + e.name.slice(0, -1));
+      idbfs.FS.mkdirTree(fullPath, 0o777);
     } else {
+      const slash = fullPath.lastIndexOf("/");
+      const parent = slash > 0 ? fullPath.substring(0, slash) : runtimeRoot;
+      ensureDirectory(idbfs, parent);
       const buffer = new Uint8Array(e.data);
-      idbfs.FS.writeFile("/" + e.name, buffer);
+      idbfs.FS.writeFile(fullPath, buffer);
     }
   });
 

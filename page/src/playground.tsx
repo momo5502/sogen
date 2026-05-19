@@ -8,6 +8,7 @@ import {
   setupFilesystem,
   windowsToInternalPath,
   setupLinuxFilesystem,
+  runtimeRoots,
 } from "./filesystem";
 
 import { memory64 } from "wasm-feature-detect";
@@ -268,7 +269,7 @@ export class Playground extends React.Component<
 
     const isLinux = this.state.settings.mode === "linux";
     const internalPath = isLinux
-      ? `/root/${file.file}`
+      ? `${runtimeRoots.linux}/${file.file}`
       : windowsToInternalPath(file.file);
 
     await fs.storeFiles([
