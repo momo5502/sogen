@@ -804,8 +804,12 @@ jobs:
           mkdir -p ./page/public/64/
           cp ./build/release/artifacts/32/analyzer.js ./page/public/32/
           cp ./build/release/artifacts/32/analyzer.wasm ./page/public/32/
+          cp ./build/release/artifacts/32/linux-analyzer.js ./page/public/32/
+          cp ./build/release/artifacts/32/linux-analyzer.wasm ./page/public/32/
           cp ./build/release/artifacts/64/analyzer.js ./page/public/64/
           cp ./build/release/artifacts/64/analyzer.wasm ./page/public/64/
+          cp ./build/release/artifacts/64/linux-analyzer.js ./page/public/64/
+          cp ./build/release/artifacts/64/linux-analyzer.wasm ./page/public/64/
 
       - name: Build Page
         run: cd ./page && npm ci && npm run build
