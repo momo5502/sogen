@@ -140,7 +140,9 @@ namespace
                                FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
 
         if (h == INVALID_HANDLE_VALUE)
+        {
             return false;
+        }
 
         BY_HANDLE_FILE_INFORMATION info{};
         if (!GetFileInformationByHandle(h, &info))
