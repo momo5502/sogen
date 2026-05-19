@@ -86,7 +86,7 @@ function runEmulation(
     arguments: mainArguments,
     noInitialRun: true,
     locateFile: (path, scriptDirectory) => {
-      const bitness = wasm64 ? "linux64" : "linux32";
+      const bitness = wasm64 ? "64" : "32";
       const busterParams = cacheBuster ? `?${cacheBuster}` : "";
       return `${scriptDirectory}${bitness}/${path}${busterParams}`;
     },
@@ -109,8 +109,8 @@ function runEmulation(
   const busterParams = cacheBuster ? `?${cacheBuster}` : "";
 
   if (wasm64) {
-    importScripts("./linux64/linux-analyzer.js" + busterParams);
+    importScripts("./64/linux-analyzer.js" + busterParams);
   } else {
-    importScripts("./linux32/linux-analyzer.js" + busterParams);
+    importScripts("./32/linux-analyzer.js" + busterParams);
   }
 }
