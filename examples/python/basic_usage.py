@@ -18,7 +18,7 @@ EMULATOR_ROOT = os.getenv("EMULATOR_ROOT")
 def main() -> None:
     emulation_root = EMULATOR_ROOT or "./root"
 
-    app = sogen.create_application(
+    app = sogen.windows.create_application(
         "c:/test-sample.exe",
         emulation_root=emulation_root,
         path_mappings={"c:/a.txt": Path("./sogen-example.txt")},

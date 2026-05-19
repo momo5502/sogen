@@ -26,21 +26,31 @@ namespace
             [slot_name](callback_registry& self, nb::object callback) { self.set(slot_name, std::move(callback)); },
             nb::arg("callback").none());
     }
+
+    void register_api_call_decorator(nb::module_& m)
+    {
+        m.def(
+            "api_call",
+            [](function_calling_convention cc, nb::object params, nb::object restype) {
+                return nb::cpp_function([cc, params = std::move(params), restype = std::move(restype)](nb::handle fn) -> nb::object {
+                    nb::setattr(fn, "_sogen_api_cc", nb::cast(cc));
+                    nb::setattr(fn, "_sogen_api_params", params);
+                    nb::setattr(fn, "_sogen_api_restype", restype);
+                    return nb::borrow<nb::object>(fn);
+                });
+            },
+            nb::arg("cc"), nb::arg("params") = nb::none(), nb::arg("restype") = nb::none());
+    }
+
+    void alias_windows_symbol(nb::module_& root, nb::module_& windows, const char* name)
+    {
+        nb::setattr(root, name, windows.attr(name));
+    }
 }
 
-void register_sogen_runtime_bindings(nb::module_& m)
+void register_sogen_windows_runtime_bindings(nb::module_& m)
 {
-    m.def(
-        "api_call",
-        [](function_calling_convention cc, nb::object params, nb::object restype) {
-            return nb::cpp_function([cc, params = std::move(params), restype = std::move(restype)](nb::handle fn) -> nb::object {
-                nb::setattr(fn, "_sogen_api_cc", nb::cast(cc));
-                nb::setattr(fn, "_sogen_api_params", params);
-                nb::setattr(fn, "_sogen_api_restype", restype);
-                return nb::borrow<nb::object>(fn);
-            });
-        },
-        nb::arg("cc"), nb::arg("params") = nb::none(), nb::arg("restype") = nb::none());
+    register_api_call_decorator(m);
 
     nb::class_<hook_handle>(m, "Hook").def("remove", &hook_handle::remove).def_prop_ro("active", &hook_handle::active);
 
@@ -144,7 +154,7 @@ void register_sogen_runtime_bindings(nb::module_& m)
         .def_prop_ro("active_thread", &sogen_process_context::active_thread, nb::rv_policy::reference_internal)
         .def_prop_ro("callbacks", &sogen_process_context::callback_view, nb::rv_policy::reference_internal);
 
-    nb::class_<sogen_windows_emulator>(m, "WindowsEmulator")
+    nb::class_<sogen_windows_emulator>(m, "Emulator")
         .def("start", &sogen_windows_emulator::start, nb::arg("count") = 0, nb::call_guard<nb::gil_scoped_release>())
         .def("stop", &sogen_windows_emulator::stop)
         .def("save_snapshot", &sogen_windows_emulator::save_snapshot)
@@ -189,6 +199,8 @@ void register_sogen_runtime_bindings(nb::module_& m)
         .def("get_emulator_port", &sogen_windows_emulator::get_emulator_port)
         .def("map_port", &sogen_windows_emulator::map_port);
 
+    nb::setattr(m, "WindowsEmulator", m.attr("Emulator"));
+
     m.def("create_empty", [](nb::kwargs kwargs) { // NOLINT(performance-unnecessary-value-param)
         return sogen_windows_emulator(create_empty_emulator(kwargs));
     });
@@ -199,4 +211,23 @@ void register_sogen_runtime_bindings(nb::module_& m)
           [](nb::object application, nb::object application_args, nb::kwargs kwargs) { // NOLINT(performance-unnecessary-value-param)
               return sogen_windows_emulator(create_application_emulator(application, application_args, kwargs));
           });
+}
+
+void register_sogen_runtime_bindings(nb::module_& m)
+{
+    auto windows = nb::borrow<nb::module_>(m.attr("windows"));
+
+    register_api_call_decorator(m);
+
+    alias_windows_symbol(m, windows, "Hook");
+    alias_windows_symbol(m, windows, "ApiHooks");
+    alias_windows_symbol(m, windows, "Hooks");
+    alias_windows_symbol(m, windows, "MemoryManager");
+    alias_windows_symbol(m, windows, "Thread");
+    alias_windows_symbol(m, windows, "Callbacks");
+    alias_windows_symbol(m, windows, "ProcessContext");
+    alias_windows_symbol(m, windows, "Emulator");
+    alias_windows_symbol(m, windows, "WindowsEmulator");
+    alias_windows_symbol(m, windows, "create_empty");
+    alias_windows_symbol(m, windows, "create_application");
 }
