@@ -989,34 +989,6 @@ jobs:
           print("ok")
           PY
 
-  deploy-page:
-    name: Deploy Page
-    runs-on: ubuntu-latest
-    needs: [build-page, summary]
-    if: ${{ inputs.enable_deploy }}
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    steps:
-      - name: Download Page Artifacts
-        uses: pyTooling/download-artifact@v8
-        with:
-          name: Page Artifacts
-          path: ./page/dist/
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v6
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: ./page/dist
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
-
   summary:
     name: Pipeline Summary
     if: ${{ always() }}

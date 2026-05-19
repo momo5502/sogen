@@ -61,6 +61,38 @@ jobs:
       enable_deploy: ${{ github.repository_owner == 'momo5502' && github.ref == 'refs/heads/main' }}
       verbose: ${{ inputs.verbose || 'false' }}
 
+  deploy-page:
+    name: Deploy Page
+    needs: [ci]
+    if: ${{ github.repository_owner == 'momo5502' && github.ref == 'refs/heads/main' && needs.ci.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      pages: write
+      id-token: write
+    steps:
+      - name: Download Page Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Page Artifacts
+          path: ./page/dist/
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.ci.outputs.run_id }}
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: ./page/dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
+
   publish-python-package:
     name: Publish Python Package
     needs: [ci]
