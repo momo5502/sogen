@@ -19,6 +19,10 @@
 
 using namespace linux_errno; // NOLINT(google-build-using-namespace)
 
+#ifdef _WIN32
+#define lstat stat
+#endif
+
 namespace
 {
     constexpr int LINUX_AT_FDCWD = -100;
@@ -40,15 +44,6 @@ namespace
 
     std::map<int, std::vector<cached_dir_entry>> g_directory_entries{};
     std::map<int, size_t> g_directory_offsets{};
-
-    int host_lstat(const char* path, struct stat* st)
-    {
-#if defined(_WIN32)
-        return ::stat(path, st);
-#else
-        return ::lstat(path, st);
-#endif
-    }
 
     int64_t host_read_fd(const int fd, void* buffer, const size_t count)
     {
@@ -138,13 +133,48 @@ namespace
         }
     }
 
+#if defined(_WIN32)
+    bool get_windows_file_id(const std::filesystem::path& path, uint64_t& dev, uint64_t& ino)
+    {
+        HANDLE h = CreateFileW(path.wstring().c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                               FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+
+        if (h == INVALID_HANDLE_VALUE)
+        {
+            return false;
+        }
+
+        BY_HANDLE_FILE_INFORMATION info{};
+        if (!GetFileInformationByHandle(h, &info))
+        {
+            CloseHandle(h);
+            return false;
+        }
+
+        dev = static_cast<uint64_t>(info.dwVolumeSerialNumber);
+        ino = (static_cast<uint64_t>(info.nFileIndexHigh) << 32) | static_cast<uint64_t>(info.nFileIndexLow);
+
+        CloseHandle(h);
+        return true;
+    }
+#endif
+
     uint64_t get_inode_for_path(const std::filesystem::path& path)
     {
+#if defined(_WIN32)
+        uint64_t dev = 0;
+        uint64_t ino = 0;
+        if (get_windows_file_id(path, dev, ino))
+        {
+            return ino;
+        }
+#else
         struct stat st{};
-        if (host_lstat(path.string().c_str(), &st) == 0)
+        if (lstat(path.string().c_str(), &st) == 0)
         {
             return static_cast<uint64_t>(st.st_ino);
         }
+#endif
 
         return 0;
     }
@@ -446,16 +476,41 @@ namespace
 #endif
     }
 
-    void fill_linux_stat(linux_stat& ls, const std::filesystem::path& host_path)
+    bool fill_linux_stat(linux_stat& ls, const std::filesystem::path& host_path, const bool follow_symlinks = true)
     {
         struct stat host_stat{};
-        if (stat(host_path.string().c_str(), &host_stat) != 0)
+
+        if (follow_symlinks)
         {
-            memset(&ls, 0, sizeof(ls));
-            return;
+            if (stat(host_path.string().c_str(), &host_stat) != 0)
+            {
+                memset(&ls, 0, sizeof(ls));
+                return false;
+            }
+        }
+        else
+        {
+            if (lstat(host_path.string().c_str(), &host_stat) != 0)
+            {
+                memset(&ls, 0, sizeof(ls));
+                return false;
+            }
         }
 
         fill_linux_stat_from_host(ls, host_stat);
+
+#if defined(_WIN32)
+        uint64_t dev = 0;
+        uint64_t ino = 0;
+
+        if (get_windows_file_id(host_path, dev, ino))
+        {
+            ls.st_dev = dev;
+            ls.st_ino = ino;
+        }
+#endif
+
+        return true;
     }
 }
 
@@ -890,14 +945,12 @@ void sys_stat(const linux_syscall_context& c)
 
     const auto host_path = c.emu_ref.file_sys.translate(guest_path);
 
-    if (!std::filesystem::exists(host_path))
+    linux_stat ls{};
+    if (!fill_linux_stat(ls, host_path))
     {
         write_linux_syscall_result(c, -LINUX_ENOENT);
         return;
     }
-
-    linux_stat ls{};
-    fill_linux_stat(ls, host_path);
 
     c.emu.write_memory(buf_addr, &ls, sizeof(ls));
     write_linux_syscall_result(c, 0);
@@ -928,15 +981,12 @@ void sys_lstat(const linux_syscall_context& c)
 
     const auto host_path = c.emu_ref.file_sys.translate(guest_path);
 
-    struct stat host_stat{};
-    if (host_lstat(host_path.string().c_str(), &host_stat) != 0)
+    linux_stat ls{};
+    if (!fill_linux_stat(ls, host_path, false))
     {
         write_linux_syscall_result(c, -LINUX_ENOENT);
         return;
     }
-
-    linux_stat ls{};
-    fill_linux_stat_from_host(ls, host_stat);
 
     c.emu.write_memory(buf_addr, &ls, sizeof(ls));
     write_linux_syscall_result(c, 0);
@@ -1421,21 +1471,12 @@ void sys_newfstatat(const linux_syscall_context& c)
     }
 
     linux_stat ls{};
+    const bool follow_symlinks = (flags & LINUX_AT_SYMLINK_NOFOLLOW) == 0;
 
-    if (flags & LINUX_AT_SYMLINK_NOFOLLOW)
+    if (!fill_linux_stat(ls, host_path, follow_symlinks))
     {
-        struct stat host_stat{};
-        if (host_lstat(host_path.string().c_str(), &host_stat) != 0)
-        {
-            write_linux_syscall_result(c, -LINUX_ENOENT);
-            return;
-        }
-
-        fill_linux_stat_from_host(ls, host_stat);
-    }
-    else
-    {
-        fill_linux_stat(ls, host_path);
+        write_linux_syscall_result(c, -LINUX_ENOENT);
+        return;
     }
 
     c.emu.write_memory(buf_addr, &ls, sizeof(ls));
