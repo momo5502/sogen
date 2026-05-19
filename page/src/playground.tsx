@@ -429,6 +429,18 @@ export class Playground extends React.Component<
                   allowWasm64={this.state.allowWasm64}
                   onChange={(s) => {
                     saveSettings(s);
+
+                    if (this.state.settings.mode !== s.mode) {
+                      this.state.emulator?.stop();
+                      this.resetFilesystemState();
+                      this.setState({
+                        settings: s,
+                        emulator: undefined,
+                        emulationStatus: undefined,
+                      });
+                      return;
+                    }
+
                     this.setState({ settings: s });
                   }}
                 />
