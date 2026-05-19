@@ -42,7 +42,7 @@
                 "release"
             ],
             "cacheVariables": {
-                "MOMO_ENABLE_CLANG_TIDY": "ON",
+                "SOGEN_ENABLE_CLANG_TIDY": "ON",
                 "SOGEN_ENABLE_PYTHON_BINDINGS": "ON"
             }
         },
@@ -55,7 +55,7 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo",
                 "CMAKE_TOOLCHAIN_FILE": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
-                "MOMO_ENABLE_RUST_CODE": "OFF"
+                "SOGEN_ENABLE_RUST_CODE": "OFF"
             },
             "environment": {
                 "EMSDK_QUIET": "1"
@@ -75,7 +75,7 @@
             ],
             "binaryDir": "${sourceDir}/build/emscripten64",
             "cacheVariables": {
-                "MOMO_EMSCRIPTEN_MEMORY64": "ON"
+                "SOGEN_EMSCRIPTEN_MEMORY64": "ON"
             }
         },
         {

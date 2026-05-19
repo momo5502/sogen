@@ -5,7 +5,7 @@
 
 #include <utils/finally.hpp>
 
-#if MOMO_ENABLE_RUST_CODE
+#if SOGEN_ENABLE_RUST_CODE
 #include <icicle_x86_64_emulator.hpp>
 #endif
 
@@ -19,7 +19,7 @@ namespace
 {
     std::unique_ptr<x86_64_emulator> create_emulator_backend()
     {
-#if MOMO_ENABLE_RUST_CODE
+#if SOGEN_ENABLE_RUST_CODE
         return icicle::create_x86_64_emulator();
 #else
         throw std::runtime_error("Fuzzer requires rust code to be enabled");

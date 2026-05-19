@@ -8,9 +8,9 @@ list(SORT SRC_FILES)
 
 add_executable(analyzer ${SRC_FILES})
 
-momo_assign_source_group(${SRC_FILES})
+sogen_assign_source_group(${SRC_FILES})
 
-if(NOT MOMO_ENABLE_CLANG_TIDY)
+if(NOT SOGEN_ENABLE_CLANG_TIDY)
   target_precompile_headers(analyzer PRIVATE std_include.hpp)
 endif()
 
@@ -23,7 +23,7 @@ target_link_libraries(analyzer PRIVATE
   backend-selection
 )
 
-if(MOMO_ENABLE_REFLECTION)
+if(SOGEN_ENABLE_REFLECTION)
   target_link_libraries(analyzer PRIVATE
     reflect
   )
@@ -31,7 +31,7 @@ endif()
 
 set_property(GLOBAL PROPERTY VS_STARTUP_PROJECT analyzer)
 
-momo_strip_target(analyzer)
+sogen_strip_target(analyzer)
 
 set(ENV_PREFIX "$")
 set(ENV_SUFFIX "")

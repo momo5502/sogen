@@ -17,4 +17,4 @@ target_include_directories(whp-emulator INTERFACE "${CMAKE_CURRENT_LIST_DIR}")
 target_link_libraries(whp-emulator PUBLIC emulator)
 target_link_libraries(whp-emulator PRIVATE WinHvPlatform emulator-common)
 
-momo_strip_target(whp-emulator)
+sogen_strip_target(whp-emulator)
