@@ -172,7 +172,7 @@ export function LandingPage() {
     <>
       <Header
         title="Sogen"
-        description="A high-performance Windows and Linux user space emulator."
+        description="A high-performance Windows and Linux userspace emulator."
       />
       <div className="flex flex-col min-h-screen bg-linear-to-br from-zinc-900 via-neutral-900 to-black overflow-x-hidden">
         {/* Hero Section with Animated Background */}
