@@ -55,4 +55,5 @@ namespace sogen_py
 }
 
 void register_sogen_types_bindings(nb::module_& m);
+void register_sogen_windows_runtime_bindings(nb::module_& m);
 void register_sogen_runtime_bindings(nb::module_& m);

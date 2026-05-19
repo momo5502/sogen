@@ -10,6 +10,9 @@ namespace
     {
         m.doc() = "Sogen Python bindings";
         register_sogen_types_bindings(m);
+
+        auto windows = m.def_submodule("windows", "Windows emulator bindings");
+        register_sogen_windows_runtime_bindings(windows);
         register_sogen_runtime_bindings(m);
     }
 }
