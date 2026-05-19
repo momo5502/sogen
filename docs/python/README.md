@@ -2,7 +2,7 @@
   <a href="https://github.com/momo5502/sogen"><img src="https://momo5502.com/sogen/banner.png" height="220" alt="Sogen" /></a>
 </p>
 
-Sogen exposes Python bindings for its Windows user-space emulator. The Python API is meant for scripting runs, building small analysis helpers, and quickly iterating on callbacks and hooks without rebuilding C++.
+Sogen exposes Python bindings for its Windows userspace emulator. The Python API is meant for scripting runs, building small analysis helpers, and quickly iterating on callbacks and hooks without rebuilding C++.
 
 Install from PyPI:
 
