@@ -27,10 +27,10 @@
 
 #define ASSERT_LINUX_TERMINATED_SUCCESSFULLY(linux_emu) ASSERT_LINUX_TERMINATED_WITH_STATUS(linux_emu, 0)
 
-using namespace std::literals;
-
 namespace sogen::linux_test
 {
+    using namespace std::literals;
+
     inline bool enable_verbose_logging()
     {
         const auto* env = getenv("EMULATOR_VERBOSE");

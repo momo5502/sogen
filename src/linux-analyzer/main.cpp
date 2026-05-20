@@ -41,7 +41,7 @@ namespace sogen
         }
 
         // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-        cli_options parse_args(const int argc, char* argv[])
+        cli_options parse_args(const int argc, char** argv)
         {
             cli_options opts{};
 
@@ -99,7 +99,7 @@ namespace sogen
         }
     }
 
-    int run_main(const int argc, char* argv[])
+    int run_main(const int argc, char** argv)
     {
         auto opts = parse_args(argc, argv);
 

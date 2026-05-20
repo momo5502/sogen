@@ -30,6 +30,7 @@
 #include <sddl.h>
 
 using namespace std::literals;
+
 // Externally visible and potentially modifiable state
 // to trick compiler optimizations
 __declspec(dllexport) bool do_the_task = true;
