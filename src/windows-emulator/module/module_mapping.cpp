@@ -506,7 +506,7 @@ namespace
         binary.address_names.clear();
 
         const auto image_size = static_cast<size_t>(binary.size_of_image);
-        if (!memory.allocate_memory(binary.image_base, image_size, memory_permission::read_write, true))
+        if (!memory.allocate_memory(binary.image_base, image_size, memory_permission::all, true))
         {
             return false;
         }
