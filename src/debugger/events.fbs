@@ -72,16 +72,10 @@ table EmulationStatus {
 
 table GetMemoryRegionsRequest {}
 
-// `regions` carries a UTF-8 JSON array describing the virtual memory layout.
-// JSON is used (instead of a dedicated flatbuffer table) so the payload stays
-// read-only and trivially forward/backward compatible with older frontends.
 table GetMemoryRegionsResponse {
     regions: [ubyte];
 }
 
-// Generic, extensible debugger channel. `kind` selects the sub-command and
-// `payload` is UTF-8 JSON. New debugger features add a new `kind` only — no
-// schema/codegen churn. `id` correlates a response to its request.
 table DebugCommandRequest {
     id: uint32;
     kind: uint32;

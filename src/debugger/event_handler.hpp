@@ -15,6 +15,7 @@ namespace debugger
     {
         windows_emulator& win_emu;
         emulation_state state{emulation_state::none};
+        bool in_break_loop{false};
     };
 
     void handle_events(event_context& c);

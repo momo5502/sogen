@@ -380,16 +380,13 @@ namespace debugger
             return *holder.session;
         }
 
-        // Shared break/step controller. The break loop blocks here; debug
-        // commands (and RunRequest) release it with a requested motion that is
-        // then enforced by the persistent control hook in debug_session.
         struct break_controller
         {
             bool resume{false};
             step_request request{step_request::none};
             uint64_t run_to_address{0};
 
-            int mode{0}; // 0: free, 1: single-step, 2: run-to-target
+            int mode{0};
             uint64_t origin{0};
             uint64_t target{0};
         };
@@ -556,7 +553,73 @@ namespace debugger
             return json;
         }
 
-        void handle_debug_command(const event_context& c, const Debugger::DebugCommandRequestT& request)
+        void arm_resume_from_pause(event_context& c, const step_request request, const uint64_t run_to_address = 0)
+        {
+            auto& ctrl = controller();
+            ctrl.mode = 0;
+            ctrl.origin = 0;
+            ctrl.target = 0;
+            ctrl.request = step_request::none;
+            ctrl.run_to_address = 0;
+
+            if (request != step_request::cont || run_to_address != 0)
+            {
+                auto& session = get_debug_session(c.win_emu);
+                const auto address = session.instruction_pointer();
+                ctrl.origin = address;
+
+                switch (request)
+                {
+                case step_request::into:
+                    ctrl.mode = 1;
+                    break;
+
+                case step_request::over: {
+                    const auto insns = session.disassemble(address, 1);
+                    if (!insns.empty() && insns[0].is_call)
+                    {
+                        ctrl.mode = 2;
+                        ctrl.target = address + insns[0].bytes.size();
+                    }
+                    else
+                    {
+                        ctrl.mode = 1;
+                    }
+                    break;
+                }
+
+                case step_request::step_out: {
+                    const auto frames = session.call_stack();
+                    if (frames.size() >= 2)
+                    {
+                        ctrl.mode = 2;
+                        ctrl.target = frames[1].instruction_pointer;
+                    }
+                    else
+                    {
+                        ctrl.mode = 1;
+                    }
+                    break;
+                }
+
+                case step_request::cont:
+                    ctrl.mode = 2;
+                    ctrl.target = run_to_address;
+                    break;
+
+                case step_request::none:
+                    break;
+                }
+            }
+
+            c.state = emulation_state::running;
+
+            Debugger::GetStateResponseT running{};
+            running.state = Debugger::State_Running;
+            send_event(running);
+        }
+
+        void handle_debug_command(event_context& c, const Debugger::DebugCommandRequestT& request)
         {
             auto& session = get_debug_session(c.win_emu);
             const auto& in = request.payload;
@@ -628,17 +691,38 @@ namespace debugger
                 break;
 
             case debug_command::step_into:
-                debugger::request_resume(step_request::into);
+                if (c.state == emulation_state::paused && !c.in_break_loop)
+                {
+                    arm_resume_from_pause(c, step_request::into);
+                }
+                else
+                {
+                    debugger::request_resume(step_request::into);
+                }
                 json = "{}";
                 break;
 
             case debug_command::step_over:
-                debugger::request_resume(step_request::over);
+                if (c.state == emulation_state::paused && !c.in_break_loop)
+                {
+                    arm_resume_from_pause(c, step_request::over);
+                }
+                else
+                {
+                    debugger::request_resume(step_request::over);
+                }
                 json = "{}";
                 break;
 
             case debug_command::step_out:
-                debugger::request_resume(step_request::step_out);
+                if (c.state == emulation_state::paused && !c.in_break_loop)
+                {
+                    arm_resume_from_pause(c, step_request::step_out);
+                }
+                else
+                {
+                    debugger::request_resume(step_request::step_out);
+                }
                 json = "{}";
                 break;
 
@@ -649,13 +733,27 @@ namespace debugger
                     response.ok = false;
                     break;
                 }
-                debugger::request_resume(step_request::cont, address);
+                if (c.state == emulation_state::paused && !c.in_break_loop)
+                {
+                    arm_resume_from_pause(c, step_request::cont, address);
+                }
+                else
+                {
+                    debugger::request_resume(step_request::cont, address);
+                }
                 json = "{}";
                 break;
             }
 
             case debug_command::continue_execution:
-                debugger::request_resume(step_request::cont);
+                if (c.state == emulation_state::paused && !c.in_break_loop)
+                {
+                    arm_resume_from_pause(c, step_request::cont);
+                }
+                else
+                {
+                    debugger::request_resume(step_request::cont);
+                }
                 json = "{}";
                 break;
 
@@ -832,7 +930,7 @@ namespace debugger
         auto& ctrl = controller();
         ctrl.resume = false;
 
-        event_context lc{.win_emu = win_emu, .state = emulation_state::paused};
+        event_context lc{.win_emu = win_emu, .state = emulation_state::paused, .in_break_loop = true};
         while (!ctrl.resume)
         {
             handle_events_once(lc);
