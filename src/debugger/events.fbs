@@ -79,6 +79,21 @@ table GetMemoryRegionsResponse {
     regions: [ubyte];
 }
 
+// Generic, extensible debugger channel. `kind` selects the sub-command and
+// `payload` is UTF-8 JSON. New debugger features add a new `kind` only — no
+// schema/codegen churn. `id` correlates a response to its request.
+table DebugCommandRequest {
+    id: uint32;
+    kind: uint32;
+    payload: [ubyte];
+}
+
+table DebugCommandResponse {
+    id: uint32;
+    ok: bool;
+    payload: [ubyte];
+}
+
 union Event {
     PauseRequest, 
     RunRequest,
@@ -96,6 +111,8 @@ union Event {
     EmulationStatus,
     GetMemoryRegionsRequest,
     GetMemoryRegionsResponse,
+    DebugCommandRequest,
+    DebugCommandResponse,
 }
 
 table DebugEvent {

@@ -2,11 +2,14 @@
 #include "message_transmitter.hpp"
 #include "windows_emulator.hpp"
 #include "memory_utils.hpp"
+#include "debug_session.hpp"
 
 #include <base64.hpp>
 
 #include <utils/string.hpp>
 
+#include <cstring>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -311,6 +314,361 @@ namespace debugger
             send_event(response);
         }
 
+        // --- generic debugger command channel (see ARCHITECTURE.md) ---
+        //
+        // Request `payload` carries packed little-endian args (documented per
+        // kind); response `payload` is UTF-8 JSON. This keeps a JSON serializer
+        // (already present) on the hot path and avoids a JSON *parser* in C++.
+
+        enum class debug_command : uint32_t
+        {
+            get_registers = 0,
+            disassemble = 1,
+            get_modules = 2,
+            get_threads = 3,
+            get_callstack = 4,
+            set_breakpoint = 5,
+            clear_breakpoint = 6,
+            list_breakpoints = 7,
+            step_into = 8,
+            step_over = 9,
+            step_out = 10,
+            run_to = 11,
+            continue_execution = 12,
+        };
+
+        template <typename T>
+        bool read_le(const std::vector<uint8_t>& buf, size_t offset, T& out)
+        {
+            if (offset + sizeof(T) > buf.size())
+            {
+                return false;
+            }
+            std::memcpy(&out, buf.data() + offset, sizeof(T));
+            return true;
+        }
+
+        // The session owns a `scoped_hook` whose destructor calls back into the
+        // emulator's cpu. It MUST therefore be destroyed while its emulator is
+        // still alive. A process-lifetime cache keyed only by raw pointer fails
+        // both ways: a freed emulator's address can be reused (stale session
+        // returned), and `emplace` over an old session unhooks through a
+        // dangling cpu. Lifetime is instead coupled to the emulator run via
+        // reset_debug_session(), called from handle_exit() while the emulator
+        // is guaranteed live (see event_handler.hpp / analyzer run loop).
+        struct debug_session_holder
+        {
+            const windows_emulator* bound{nullptr};
+            std::optional<debug_session> session{};
+        };
+
+        debug_session_holder& debug_session_storage()
+        {
+            static debug_session_holder holder{};
+            return holder;
+        }
+
+        debug_session& get_debug_session(windows_emulator& win_emu)
+        {
+            auto& holder = debug_session_storage();
+            if (!holder.session || holder.bound != &win_emu)
+            {
+                holder.session.reset();
+                holder.session.emplace(win_emu);
+                holder.bound = &win_emu;
+            }
+            return *holder.session;
+        }
+
+        // Shared break/step controller. The break loop blocks here; debug
+        // commands (and RunRequest) release it with a requested motion that is
+        // then enforced by the persistent control hook in debug_session.
+        struct break_controller
+        {
+            bool resume{false};
+            step_request request{step_request::none};
+            uint64_t run_to_address{0};
+
+            int mode{0}; // 0: free, 1: single-step, 2: run-to-target
+            uint64_t origin{0};
+            uint64_t target{0};
+        };
+
+        break_controller& controller()
+        {
+            static break_controller instance{};
+            return instance;
+        }
+
+        std::string build_registers_json(const std::vector<register_value>& regs)
+        {
+            std::string json = R"({"registers":[)";
+            bool first = true;
+            for (const auto& r : regs)
+            {
+                if (!first)
+                {
+                    json += ',';
+                }
+                first = false;
+                json += R"({"name":)";
+                append_json_string(json, r.name);
+                json += R"(,"value":"0x)";
+                json += utils::string::to_hex_number(r.value);
+                json += R"(","size":)";
+                json += std::to_string(r.size);
+                json += '}';
+            }
+            json += "]}";
+            return json;
+        }
+
+        std::string build_disassembly_json(const std::vector<disassembled_instruction>& insns)
+        {
+            std::string json = R"({"instructions":[)";
+            bool first = true;
+            for (const auto& i : insns)
+            {
+                if (!first)
+                {
+                    json += ',';
+                }
+                first = false;
+                json += R"({"address":"0x)";
+                json += utils::string::to_hex_number(i.address);
+                json += R"(","mnemonic":)";
+                append_json_string(json, i.mnemonic);
+                json += R"(,"operands":)";
+                append_json_string(json, i.operands);
+                json += R"(,"symbol":)";
+                append_json_string(json, i.symbol);
+                json += R"(,"size":)";
+                json += std::to_string(i.bytes.size());
+                json += R"(,"isCall":)";
+                json += i.is_call ? "true" : "false";
+                json += R"(,"isJump":)";
+                json += i.is_jump ? "true" : "false";
+                json += R"(,"isReturn":)";
+                json += i.is_return ? "true" : "false";
+                if (i.branch)
+                {
+                    json += R"(,"branch":"0x)";
+                    json += utils::string::to_hex_number(*i.branch);
+                    json += '"';
+                }
+                json += '}';
+            }
+            json += "]}";
+            return json;
+        }
+
+        std::string build_modules_json(const std::vector<module_info>& mods)
+        {
+            std::string json = R"({"modules":[)";
+            bool first = true;
+            for (const auto& m : mods)
+            {
+                if (!first)
+                {
+                    json += ',';
+                }
+                first = false;
+                json += R"({"name":)";
+                append_json_string(json, m.name);
+                json += R"(,"base":"0x)";
+                json += utils::string::to_hex_number(m.base);
+                json += R"(","size":)";
+                json += std::to_string(m.size);
+                json += R"(,"entry":"0x)";
+                json += utils::string::to_hex_number(m.entry_point);
+                json += R"("})";
+            }
+            json += "]}";
+            return json;
+        }
+
+        std::string build_threads_json(const std::vector<thread_info>& threads)
+        {
+            std::string json = R"({"threads":[)";
+            bool first = true;
+            for (const auto& t : threads)
+            {
+                if (!first)
+                {
+                    json += ',';
+                }
+                first = false;
+                json += R"({"id":)";
+                json += std::to_string(t.id);
+                json += R"(,"ip":"0x)";
+                json += utils::string::to_hex_number(t.instruction_pointer);
+                json += R"(","active":)";
+                json += t.active ? "true" : "false";
+                json += '}';
+            }
+            json += "]}";
+            return json;
+        }
+
+        std::string build_callstack_json(const std::vector<stack_frame>& frames)
+        {
+            std::string json = R"({"frames":[)";
+            bool first = true;
+            for (const auto& f : frames)
+            {
+                if (!first)
+                {
+                    json += ',';
+                }
+                first = false;
+                json += R"({"ip":"0x)";
+                json += utils::string::to_hex_number(f.instruction_pointer);
+                json += R"(","sp":"0x)";
+                json += utils::string::to_hex_number(f.stack_pointer);
+                json += R"(","module":)";
+                append_json_string(json, f.module);
+                json += '}';
+            }
+            json += "]}";
+            return json;
+        }
+
+        std::string build_breakpoints_json(const std::vector<breakpoint>& bps)
+        {
+            std::string json = R"({"breakpoints":[)";
+            bool first = true;
+            for (const auto& b : bps)
+            {
+                if (!first)
+                {
+                    json += ',';
+                }
+                first = false;
+                json += R"({"address":"0x)";
+                json += utils::string::to_hex_number(b.address);
+                json += R"(","type":)";
+                json += std::to_string(static_cast<uint32_t>(b.type));
+                json += R"(,"enabled":)";
+                json += b.enabled ? "true" : "false";
+                json += '}';
+            }
+            json += "]}";
+            return json;
+        }
+
+        void handle_debug_command(const event_context& c, const Debugger::DebugCommandRequestT& request)
+        {
+            auto& session = get_debug_session(c.win_emu);
+            const auto& in = request.payload;
+
+            Debugger::DebugCommandResponseT response{};
+            response.id = request.id;
+            response.ok = true;
+
+            std::string json{};
+
+            switch (static_cast<debug_command>(request.kind))
+            {
+            case debug_command::get_registers:
+                json = build_registers_json(session.registers());
+                break;
+
+            case debug_command::disassemble: {
+                uint64_t address = 0;
+                uint32_t count = 0;
+                if (!read_le(in, 0, address) || !read_le(in, sizeof(uint64_t), count) || count == 0)
+                {
+                    response.ok = false;
+                    break;
+                }
+                json = build_disassembly_json(session.disassemble(address, count));
+                break;
+            }
+
+            case debug_command::get_modules:
+                json = build_modules_json(session.modules());
+                break;
+
+            case debug_command::get_threads:
+                json = build_threads_json(session.threads());
+                break;
+
+            case debug_command::get_callstack:
+                json = build_callstack_json(session.call_stack());
+                break;
+
+            case debug_command::set_breakpoint: {
+                uint64_t address = 0;
+                uint8_t type = 0;
+                if (!read_le(in, 0, address))
+                {
+                    response.ok = false;
+                    break;
+                }
+                (void)read_le(in, sizeof(uint64_t), type);
+                response.ok = session.add_breakpoint(address, static_cast<breakpoint_type>(type));
+                json = build_breakpoints_json(session.list_breakpoints());
+                break;
+            }
+
+            case debug_command::clear_breakpoint: {
+                uint64_t address = 0;
+                if (!read_le(in, 0, address))
+                {
+                    response.ok = false;
+                    break;
+                }
+                response.ok = session.remove_breakpoint(address);
+                json = build_breakpoints_json(session.list_breakpoints());
+                break;
+            }
+
+            case debug_command::list_breakpoints:
+                json = build_breakpoints_json(session.list_breakpoints());
+                break;
+
+            case debug_command::step_into:
+                debugger::request_resume(step_request::into);
+                json = "{}";
+                break;
+
+            case debug_command::step_over:
+                debugger::request_resume(step_request::over);
+                json = "{}";
+                break;
+
+            case debug_command::step_out:
+                debugger::request_resume(step_request::step_out);
+                json = "{}";
+                break;
+
+            case debug_command::run_to: {
+                uint64_t address = 0;
+                if (!read_le(in, 0, address))
+                {
+                    response.ok = false;
+                    break;
+                }
+                debugger::request_resume(step_request::cont, address);
+                json = "{}";
+                break;
+            }
+
+            case debug_command::continue_execution:
+                debugger::request_resume(step_request::cont);
+                json = "{}";
+                break;
+
+            default:
+                response.ok = false;
+                json = R"({"error":"unsupported"})";
+                break;
+            }
+
+            response.payload.assign(json.begin(), json.end());
+            send_event(std::move(response));
+        }
+
         void handle_event(event_context& c, const Debugger::DebugEventT& e)
         {
             switch (e.event.type)
@@ -321,6 +679,7 @@ namespace debugger
 
             case Debugger::Event_RunRequest:
                 c.state = emulation_state::running;
+                debugger::request_resume(step_request::cont);
                 break;
 
             case Debugger::Event_GetStateRequest:
@@ -329,6 +688,10 @@ namespace debugger
 
             case Debugger::Event_GetMemoryRegionsRequest:
                 handle_get_memory_regions(c);
+                break;
+
+            case Debugger::Event_DebugCommandRequest:
+                handle_debug_command(c, *e.event.AsDebugCommandRequest());
                 break;
 
             case Debugger::Event_ReadMemoryRequest:
@@ -398,6 +761,17 @@ namespace debugger
         send_event(status);
     }
 
+    // Destroy the cached session (and reset step state) while the emulator is
+    // still alive, so the persistent control hook is removed against a live
+    // cpu. Idempotent; safe to call when no session exists.
+    void reset_debug_session() noexcept
+    {
+        auto& holder = debug_session_storage();
+        holder.session.reset();
+        holder.bound = nullptr;
+        controller() = break_controller{};
+    }
+
     void handle_exit(const windows_emulator& win_emu, std::optional<NTSTATUS> exit_status)
     {
         update_emulation_status(win_emu);
@@ -405,5 +779,124 @@ namespace debugger
         Debugger::ApplicationExitT response{};
         response.exit_status = exit_status;
         send_event(response);
+
+        reset_debug_session();
+    }
+
+    void request_resume(const step_request request, const uint64_t run_to_address)
+    {
+        auto& ctrl = controller();
+        ctrl.request = request;
+        ctrl.run_to_address = run_to_address;
+        ctrl.resume = true;
+    }
+
+    // Consulted by the persistent control hook on every instruction. Returns
+    // true exactly once when the armed step motion completes; breakpoints are
+    // matched separately by debug_session.
+    bool step_should_break(const uint64_t address)
+    {
+        auto& ctrl = controller();
+        if (ctrl.mode == 1) // single-step: stop on the next distinct instruction
+        {
+            if (address != ctrl.origin)
+            {
+                ctrl.mode = 0;
+                return true;
+            }
+            return false;
+        }
+        if (ctrl.mode == 2) // run-to-target
+        {
+            if (address == ctrl.target)
+            {
+                ctrl.mode = 0;
+                return true;
+            }
+            return false;
+        }
+        return false;
+    }
+
+    void enter_breakpoint(windows_emulator& win_emu, const uint64_t address)
+    {
+        // Stop: tell the UI, then block here draining debug commands using the
+        // exact same primitive PauseRequest uses, until a resume/step arrives.
+        {
+            Debugger::GetStateResponseT stopped{};
+            stopped.state = Debugger::State_Paused;
+            send_event(stopped);
+        }
+        update_emulation_status(win_emu);
+
+        auto& ctrl = controller();
+        ctrl.resume = false;
+
+        event_context lc{.win_emu = win_emu, .state = emulation_state::paused};
+        while (!ctrl.resume)
+        {
+            handle_events_once(lc);
+            if (ctrl.resume)
+            {
+                break;
+            }
+            suspend_execution(2ms);
+        }
+        ctrl.resume = false;
+
+        // Resolve the requested motion into the control-hook plan.
+        auto& session = get_debug_session(win_emu);
+        ctrl.mode = 0;
+        ctrl.origin = address;
+        ctrl.target = 0;
+
+        switch (ctrl.request)
+        {
+        case step_request::into:
+            ctrl.mode = 1;
+            break;
+        case step_request::over: {
+            const auto insns = session.disassemble(address, 1);
+            if (!insns.empty() && insns[0].is_call)
+            {
+                ctrl.mode = 2;
+                ctrl.target = address + insns[0].bytes.size();
+            }
+            else
+            {
+                ctrl.mode = 1;
+            }
+            break;
+        }
+        case step_request::step_out: {
+            const auto frames = session.call_stack();
+            if (frames.size() >= 2)
+            {
+                ctrl.mode = 2;
+                ctrl.target = frames[1].instruction_pointer;
+            }
+            else
+            {
+                ctrl.mode = 1;
+            }
+            break;
+        }
+        case step_request::cont:
+            if (ctrl.run_to_address != 0)
+            {
+                ctrl.mode = 2;
+                ctrl.target = ctrl.run_to_address;
+            }
+            break;
+        case step_request::none:
+            break;
+        }
+
+        ctrl.request = step_request::none;
+        ctrl.run_to_address = 0;
+
+        Debugger::GetStateResponseT running{};
+        running.state = Debugger::State_Running;
+        send_event(running);
     }
 }

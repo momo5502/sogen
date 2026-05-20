@@ -1129,6 +1129,41 @@ _Struct_size_bytes_(Size) struct EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64
     };
 };
 
+// ntdll: RTL_PROCESS_MODULES (SystemModuleInformation) and
+// RTL_PROCESS_MODULE_INFORMATION_EX (SystemModuleInformationEx, since Vista).
+// Natural alignment matches the real ntdll layout (no explicit packing).
+template <typename Traits>
+struct RTL_PROCESS_MODULE_INFORMATION
+{
+    typename Traits::HANDLE Section;
+    typename Traits::PVOID MappedBase;
+    typename Traits::PVOID ImageBase;
+    ULONG ImageSize;
+    ULONG Flags;
+    USHORT LoadOrderIndex;
+    USHORT InitOrderIndex;
+    USHORT LoadCount;
+    USHORT OffsetToFileName;
+    UCHAR FullPathName[256];
+};
+
+template <typename Traits>
+struct RTL_PROCESS_MODULES
+{
+    ULONG NumberOfModules;
+    RTL_PROCESS_MODULE_INFORMATION<Traits> Modules[ANYSIZE_ARRAY];
+};
+
+template <typename Traits>
+struct RTL_PROCESS_MODULE_INFORMATION_EX
+{
+    USHORT NextOffset;
+    RTL_PROCESS_MODULE_INFORMATION<Traits> BaseInfo;
+    ULONG ImageChecksum;
+    ULONG TimeDateStamp;
+    typename Traits::PVOID DefaultBase;
+};
+
 struct EMU_CACHE_DESCRIPTOR
 {
     BYTE Level;

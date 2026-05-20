@@ -99,7 +99,7 @@ class disassembler
 
     using segment_bitness = segment_utils::segment_bitness;
 
-    instructions disassemble(emulator& cpu, uint16_t cs_selector, std::span<const uint8_t> data, size_t count) const;
+    instructions disassemble(emulator& cpu, uint16_t cs_selector, std::span<const uint8_t> data, size_t count, uint64_t address = 0) const;
     static std::optional<segment_bitness> get_segment_bitness(emulator& cpu, uint16_t cs_selector);
     csh resolve_handle(emulator& cpu, uint16_t cs_selector) const;
 
@@ -196,7 +196,7 @@ inline bool resolve_jump_target(x86_64_emulator& cpu, uint64_t& target)
             return false;
         }
 
-        const auto insts = d.disassemble(cpu, cs_selector, std::span<const uint8_t>(bytes.data(), bytes.size()), 1);
+        const auto insts = d.disassemble(cpu, cs_selector, std::span<const uint8_t>(bytes.data(), bytes.size()), 1, target);
         if (insts.empty())
         {
             return false;

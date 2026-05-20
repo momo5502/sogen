@@ -44,7 +44,7 @@ namespace
         uint16_t reg_cs = 0;
         auto& emu_ref = const_cast<emulator&>(emu);
         emu_ref.read_raw_register(static_cast<int>(x86_register::cs), &reg_cs, sizeof(reg_cs));
-        const auto instructions = d.disassemble(emu_ref, reg_cs, instruction_bytes, 1);
+        const auto instructions = d.disassemble(emu_ref, reg_cs, instruction_bytes, 1, address);
         if (instructions.empty())
         {
             return {};
@@ -406,7 +406,7 @@ namespace
         uint16_t reg_cs = 0;
         auto& emu_ref = const_cast<emulator&>(emu);
         emu_ref.read_raw_register(static_cast<int>(x86_register::cs), &reg_cs, sizeof(reg_cs));
-        const auto instructions = d.disassemble(emu_ref, reg_cs, instruction_bytes, 1);
+        const auto instructions = d.disassemble(emu_ref, reg_cs, instruction_bytes, 1, address);
         if (instructions.empty())
         {
             return false;
@@ -428,7 +428,7 @@ namespace
 
         const auto reg_cs = emu.reg<uint16_t>(x86_register::cs);
         disassembler disasm{};
-        const auto instructions = disasm.disassemble(emu, reg_cs, instruction_bytes, 1);
+        const auto instructions = disasm.disassemble(emu, reg_cs, instruction_bytes, 1, address);
         if (instructions.empty())
         {
             return;

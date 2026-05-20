@@ -3,6 +3,8 @@
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
 import { ApplicationExit, ApplicationExitT } from '../debugger/application-exit.js';
+import { DebugCommandRequest, DebugCommandRequestT } from '../debugger/debug-command-request.js';
+import { DebugCommandResponse, DebugCommandResponseT } from '../debugger/debug-command-response.js';
 import { EmulationStatus, EmulationStatusT } from '../debugger/emulation-status.js';
 import { GetMemoryRegionsRequest, GetMemoryRegionsRequestT } from '../debugger/get-memory-regions-request.js';
 import { GetMemoryRegionsResponse, GetMemoryRegionsResponseT } from '../debugger/get-memory-regions-response.js';
@@ -37,13 +39,15 @@ export enum Event {
   ApplicationExit = 13,
   EmulationStatus = 14,
   GetMemoryRegionsRequest = 15,
-  GetMemoryRegionsResponse = 16
+  GetMemoryRegionsResponse = 16,
+  DebugCommandRequest = 17,
+  DebugCommandResponse = 18
 }
 
 export function unionToEvent(
   type: Event,
-  accessor: (obj:ApplicationExit|EmulationStatus|GetMemoryRegionsRequest|GetMemoryRegionsResponse|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse) => ApplicationExit|EmulationStatus|GetMemoryRegionsRequest|GetMemoryRegionsResponse|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null
-): ApplicationExit|EmulationStatus|GetMemoryRegionsRequest|GetMemoryRegionsResponse|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null {
+  accessor: (obj:ApplicationExit|DebugCommandRequest|DebugCommandResponse|EmulationStatus|GetMemoryRegionsRequest|GetMemoryRegionsResponse|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse) => ApplicationExit|DebugCommandRequest|DebugCommandResponse|EmulationStatus|GetMemoryRegionsRequest|GetMemoryRegionsResponse|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null
+): ApplicationExit|DebugCommandRequest|DebugCommandResponse|EmulationStatus|GetMemoryRegionsRequest|GetMemoryRegionsResponse|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null {
   switch(Event[type]) {
     case 'NONE': return null; 
     case 'PauseRequest': return accessor(new PauseRequest())! as PauseRequest;
@@ -62,15 +66,17 @@ export function unionToEvent(
     case 'EmulationStatus': return accessor(new EmulationStatus())! as EmulationStatus;
     case 'GetMemoryRegionsRequest': return accessor(new GetMemoryRegionsRequest())! as GetMemoryRegionsRequest;
     case 'GetMemoryRegionsResponse': return accessor(new GetMemoryRegionsResponse())! as GetMemoryRegionsResponse;
+    case 'DebugCommandRequest': return accessor(new DebugCommandRequest())! as DebugCommandRequest;
+    case 'DebugCommandResponse': return accessor(new DebugCommandResponse())! as DebugCommandResponse;
     default: return null;
   }
 }
 
 export function unionListToEvent(
   type: Event, 
-  accessor: (index: number, obj:ApplicationExit|EmulationStatus|GetMemoryRegionsRequest|GetMemoryRegionsResponse|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse) => ApplicationExit|EmulationStatus|GetMemoryRegionsRequest|GetMemoryRegionsResponse|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null, 
+  accessor: (index: number, obj:ApplicationExit|DebugCommandRequest|DebugCommandResponse|EmulationStatus|GetMemoryRegionsRequest|GetMemoryRegionsResponse|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse) => ApplicationExit|DebugCommandRequest|DebugCommandResponse|EmulationStatus|GetMemoryRegionsRequest|GetMemoryRegionsResponse|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null, 
   index: number
-): ApplicationExit|EmulationStatus|GetMemoryRegionsRequest|GetMemoryRegionsResponse|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null {
+): ApplicationExit|DebugCommandRequest|DebugCommandResponse|EmulationStatus|GetMemoryRegionsRequest|GetMemoryRegionsResponse|GetStateRequest|GetStateResponse|PauseRequest|ReadMemoryRequest|ReadMemoryResponse|ReadRegisterRequest|ReadRegisterResponse|RunRequest|WriteMemoryRequest|WriteMemoryResponse|WriteRegisterRequest|WriteRegisterResponse|null {
   switch(Event[type]) {
     case 'NONE': return null; 
     case 'PauseRequest': return accessor(index, new PauseRequest())! as PauseRequest;
@@ -89,6 +95,8 @@ export function unionListToEvent(
     case 'EmulationStatus': return accessor(index, new EmulationStatus())! as EmulationStatus;
     case 'GetMemoryRegionsRequest': return accessor(index, new GetMemoryRegionsRequest())! as GetMemoryRegionsRequest;
     case 'GetMemoryRegionsResponse': return accessor(index, new GetMemoryRegionsResponse())! as GetMemoryRegionsResponse;
+    case 'DebugCommandRequest': return accessor(index, new DebugCommandRequest())! as DebugCommandRequest;
+    case 'DebugCommandResponse': return accessor(index, new DebugCommandResponse())! as DebugCommandResponse;
     default: return null;
   }
 }

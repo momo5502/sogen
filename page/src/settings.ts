@@ -1,5 +1,10 @@
 import { parse } from "shell-quote";
 
+export interface EnvironmentVariable {
+  name: string;
+  value: string;
+}
+
 export interface Settings {
   logging: "verbose" | "silent" | "concise" | "very-concise" | string;
   bufferStdout: boolean;
@@ -10,6 +15,7 @@ export interface Settings {
   instructionSummary: boolean;
   ignoredFunctions: string[];
   interestingModules: string[];
+  environmentVariables: EnvironmentVariable[];
   commandLine: string;
 }
 
@@ -29,6 +35,7 @@ export function createDefaultSettings(): Settings {
     instructionSummary: false,
     ignoredFunctions: [],
     interestingModules: [],
+    environmentVariables: [],
     commandLine: "",
   };
 }
@@ -105,6 +112,17 @@ export function translateSettings(settings: Settings): TranslatedSettings {
   settings.interestingModules.forEach((m) => {
     switches.push("-m");
     switches.push(m);
+  });
+
+  settings.environmentVariables.forEach((variable) => {
+    const name = variable.name.trim();
+    if (!name) {
+      return;
+    }
+
+    switches.push("--env");
+    switches.push(name);
+    switches.push(variable.value);
   });
 
   try {
