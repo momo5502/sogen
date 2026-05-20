@@ -2,7 +2,7 @@
 
 #include <chrono>
 
-#include "../platform/platform.hpp"
+#include <platform/platform.hpp>
 #if defined(_MSC_VER)
 #include <intrin.h>
 #pragma intrinsic(__rdtsc)

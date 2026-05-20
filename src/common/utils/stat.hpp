@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../platform/platform.hpp"
+#include <platform/platform.hpp>
 
 struct compat_stat
 {

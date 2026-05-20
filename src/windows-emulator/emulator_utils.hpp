@@ -6,7 +6,7 @@
 #include "memory_utils.hpp"
 #include "address_utils.hpp"
 #include "x86_register.hpp"
-#include "common/segment_utils.hpp"
+#include "segment_utils.hpp"
 
 #include <utils/time.hpp>
 #include <vector>

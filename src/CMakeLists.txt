@@ -1,4 +1,5 @@
 add_subdirectory(common)
+add_subdirectory(emulator-platform)
 add_subdirectory(disassembler)
 add_subdirectory(emulator)
 add_subdirectory(gdb-stub)

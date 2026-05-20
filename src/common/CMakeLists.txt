@@ -13,6 +13,7 @@ set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
 target_link_libraries(emulator-common PUBLIC
+  emulator-platform
   Threads::Threads
   libzstd_static
   minidump::minidump

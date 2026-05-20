@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "common/platform/platform.hpp"
+#include <platform/platform.hpp>
 #include <cstring>
 
 namespace test

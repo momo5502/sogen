@@ -1,7 +1,7 @@
 #pragma once
 
-#include "common/platform/process.hpp"
-#include "common/platform/user.hpp"
+#include "platform/process.hpp"
+#include "platform/user.hpp"
 #include "emulator_utils.hpp"
 
 struct process_context;
