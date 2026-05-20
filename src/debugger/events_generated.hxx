@@ -79,6 +79,14 @@ struct GetMemoryRegionsResponse;
 struct GetMemoryRegionsResponseBuilder;
 struct GetMemoryRegionsResponseT;
 
+struct DebugCommandRequest;
+struct DebugCommandRequestBuilder;
+struct DebugCommandRequestT;
+
+struct DebugCommandResponse;
+struct DebugCommandResponseBuilder;
+struct DebugCommandResponseT;
+
 struct DebugEvent;
 struct DebugEventBuilder;
 struct DebugEventT;
@@ -134,11 +142,13 @@ enum Event : uint8_t {
   Event_EmulationStatus = 14,
   Event_GetMemoryRegionsRequest = 15,
   Event_GetMemoryRegionsResponse = 16,
+  Event_DebugCommandRequest = 17,
+  Event_DebugCommandResponse = 18,
   Event_MIN = Event_NONE,
-  Event_MAX = Event_GetMemoryRegionsResponse
+  Event_MAX = Event_DebugCommandResponse
 };
 
-inline const Event (&EnumValuesEvent())[17] {
+inline const Event (&EnumValuesEvent())[19] {
   static const Event values[] = {
     Event_NONE,
     Event_PauseRequest,
@@ -156,13 +166,15 @@ inline const Event (&EnumValuesEvent())[17] {
     Event_ApplicationExit,
     Event_EmulationStatus,
     Event_GetMemoryRegionsRequest,
-    Event_GetMemoryRegionsResponse
+    Event_GetMemoryRegionsResponse,
+    Event_DebugCommandRequest,
+    Event_DebugCommandResponse
   };
   return values;
 }
 
 inline const char * const *EnumNamesEvent() {
-  static const char * const names[18] = {
+  static const char * const names[20] = {
     "NONE",
     "PauseRequest",
     "RunRequest",
@@ -180,13 +192,15 @@ inline const char * const *EnumNamesEvent() {
     "EmulationStatus",
     "GetMemoryRegionsRequest",
     "GetMemoryRegionsResponse",
+    "DebugCommandRequest",
+    "DebugCommandResponse",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameEvent(Event e) {
-  if (::flatbuffers::IsOutRange(e, Event_NONE, Event_GetMemoryRegionsResponse)) return "";
+  if (::flatbuffers::IsOutRange(e, Event_NONE, Event_DebugCommandResponse)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesEvent()[index];
 }
@@ -259,6 +273,14 @@ template<> struct EventTraits<Debugger::GetMemoryRegionsResponse> {
   static const Event enum_value = Event_GetMemoryRegionsResponse;
 };
 
+template<> struct EventTraits<Debugger::DebugCommandRequest> {
+  static const Event enum_value = Event_DebugCommandRequest;
+};
+
+template<> struct EventTraits<Debugger::DebugCommandResponse> {
+  static const Event enum_value = Event_DebugCommandResponse;
+};
+
 template<typename T> struct EventUnionTraits {
   static const Event enum_value = Event_NONE;
 };
@@ -325,6 +347,14 @@ template<> struct EventUnionTraits<Debugger::GetMemoryRegionsRequestT> {
 
 template<> struct EventUnionTraits<Debugger::GetMemoryRegionsResponseT> {
   static const Event enum_value = Event_GetMemoryRegionsResponse;
+};
+
+template<> struct EventUnionTraits<Debugger::DebugCommandRequestT> {
+  static const Event enum_value = Event_DebugCommandRequest;
+};
+
+template<> struct EventUnionTraits<Debugger::DebugCommandResponseT> {
+  static const Event enum_value = Event_DebugCommandResponse;
 };
 
 struct EventUnion {
@@ -485,6 +515,22 @@ struct EventUnion {
     return type == Event_GetMemoryRegionsResponse ?
       reinterpret_cast<const Debugger::GetMemoryRegionsResponseT *>(value) : nullptr;
   }
+  Debugger::DebugCommandRequestT *AsDebugCommandRequest() {
+    return type == Event_DebugCommandRequest ?
+      reinterpret_cast<Debugger::DebugCommandRequestT *>(value) : nullptr;
+  }
+  const Debugger::DebugCommandRequestT *AsDebugCommandRequest() const {
+    return type == Event_DebugCommandRequest ?
+      reinterpret_cast<const Debugger::DebugCommandRequestT *>(value) : nullptr;
+  }
+  Debugger::DebugCommandResponseT *AsDebugCommandResponse() {
+    return type == Event_DebugCommandResponse ?
+      reinterpret_cast<Debugger::DebugCommandResponseT *>(value) : nullptr;
+  }
+  const Debugger::DebugCommandResponseT *AsDebugCommandResponse() const {
+    return type == Event_DebugCommandResponse ?
+      reinterpret_cast<const Debugger::DebugCommandResponseT *>(value) : nullptr;
+  }
 };
 
 template <bool B = false>
@@ -637,6 +683,202 @@ inline ::flatbuffers::Offset<GetMemoryRegionsResponse> CreateGetMemoryRegionsRes
 }
 
 ::flatbuffers::Offset<GetMemoryRegionsResponse> CreateGetMemoryRegionsResponse(::flatbuffers::FlatBufferBuilder &_fbb, const GetMemoryRegionsResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct DebugCommandRequestT : public ::flatbuffers::NativeTable {
+  typedef DebugCommandRequest TableType;
+  uint32_t id = 0;
+  uint32_t kind = 0;
+  std::vector<uint8_t> payload{};
+};
+
+struct DebugCommandRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef DebugCommandRequestT NativeTableType;
+  typedef DebugCommandRequestBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ID = 4,
+    VT_KIND = 6,
+    VT_PAYLOAD = 8
+  };
+  uint32_t id() const {
+    return GetField<uint32_t>(VT_ID, 0);
+  }
+  bool mutate_id(uint32_t _id = 0) {
+    return SetField<uint32_t>(VT_ID, _id, 0);
+  }
+  uint32_t kind() const {
+    return GetField<uint32_t>(VT_KIND, 0);
+  }
+  bool mutate_kind(uint32_t _kind = 0) {
+    return SetField<uint32_t>(VT_KIND, _kind, 0);
+  }
+  const ::flatbuffers::Vector<uint8_t> *payload() const {
+    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_PAYLOAD);
+  }
+  ::flatbuffers::Vector<uint8_t> *mutable_payload() {
+    return GetPointer<::flatbuffers::Vector<uint8_t> *>(VT_PAYLOAD);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_ID, 4) &&
+           VerifyField<uint32_t>(verifier, VT_KIND, 4) &&
+           VerifyOffset(verifier, VT_PAYLOAD) &&
+           verifier.VerifyVector(payload()) &&
+           verifier.EndTable();
+  }
+  DebugCommandRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(DebugCommandRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<DebugCommandRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DebugCommandRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct DebugCommandRequestBuilder {
+  typedef DebugCommandRequest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_id(uint32_t id) {
+    fbb_.AddElement<uint32_t>(DebugCommandRequest::VT_ID, id, 0);
+  }
+  void add_kind(uint32_t kind) {
+    fbb_.AddElement<uint32_t>(DebugCommandRequest::VT_KIND, kind, 0);
+  }
+  void add_payload(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> payload) {
+    fbb_.AddOffset(DebugCommandRequest::VT_PAYLOAD, payload);
+  }
+  explicit DebugCommandRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<DebugCommandRequest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<DebugCommandRequest>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<DebugCommandRequest> CreateDebugCommandRequest(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t id = 0,
+    uint32_t kind = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> payload = 0) {
+  DebugCommandRequestBuilder builder_(_fbb);
+  builder_.add_payload(payload);
+  builder_.add_kind(kind);
+  builder_.add_id(id);
+  return builder_.Finish();
+}
+
+inline ::flatbuffers::Offset<DebugCommandRequest> CreateDebugCommandRequestDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t id = 0,
+    uint32_t kind = 0,
+    const std::vector<uint8_t> *payload = nullptr) {
+  auto payload__ = payload ? _fbb.CreateVector<uint8_t>(*payload) : 0;
+  return Debugger::CreateDebugCommandRequest(
+      _fbb,
+      id,
+      kind,
+      payload__);
+}
+
+::flatbuffers::Offset<DebugCommandRequest> CreateDebugCommandRequest(::flatbuffers::FlatBufferBuilder &_fbb, const DebugCommandRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct DebugCommandResponseT : public ::flatbuffers::NativeTable {
+  typedef DebugCommandResponse TableType;
+  uint32_t id = 0;
+  bool ok = false;
+  std::vector<uint8_t> payload{};
+};
+
+struct DebugCommandResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef DebugCommandResponseT NativeTableType;
+  typedef DebugCommandResponseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ID = 4,
+    VT_OK = 6,
+    VT_PAYLOAD = 8
+  };
+  uint32_t id() const {
+    return GetField<uint32_t>(VT_ID, 0);
+  }
+  bool mutate_id(uint32_t _id = 0) {
+    return SetField<uint32_t>(VT_ID, _id, 0);
+  }
+  bool ok() const {
+    return GetField<uint8_t>(VT_OK, 0) != 0;
+  }
+  bool mutate_ok(bool _ok = 0) {
+    return SetField<uint8_t>(VT_OK, static_cast<uint8_t>(_ok), 0);
+  }
+  const ::flatbuffers::Vector<uint8_t> *payload() const {
+    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_PAYLOAD);
+  }
+  ::flatbuffers::Vector<uint8_t> *mutable_payload() {
+    return GetPointer<::flatbuffers::Vector<uint8_t> *>(VT_PAYLOAD);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_ID, 4) &&
+           VerifyField<uint8_t>(verifier, VT_OK, 1) &&
+           VerifyOffset(verifier, VT_PAYLOAD) &&
+           verifier.VerifyVector(payload()) &&
+           verifier.EndTable();
+  }
+  DebugCommandResponseT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(DebugCommandResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<DebugCommandResponse> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DebugCommandResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct DebugCommandResponseBuilder {
+  typedef DebugCommandResponse Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_id(uint32_t id) {
+    fbb_.AddElement<uint32_t>(DebugCommandResponse::VT_ID, id, 0);
+  }
+  void add_ok(bool ok) {
+    fbb_.AddElement<uint8_t>(DebugCommandResponse::VT_OK, static_cast<uint8_t>(ok), 0);
+  }
+  void add_payload(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> payload) {
+    fbb_.AddOffset(DebugCommandResponse::VT_PAYLOAD, payload);
+  }
+  explicit DebugCommandResponseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<DebugCommandResponse> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<DebugCommandResponse>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<DebugCommandResponse> CreateDebugCommandResponse(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t id = 0,
+    bool ok = false,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> payload = 0) {
+  DebugCommandResponseBuilder builder_(_fbb);
+  builder_.add_payload(payload);
+  builder_.add_id(id);
+  builder_.add_ok(ok);
+  return builder_.Finish();
+}
+
+inline ::flatbuffers::Offset<DebugCommandResponse> CreateDebugCommandResponseDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t id = 0,
+    bool ok = false,
+    const std::vector<uint8_t> *payload = nullptr) {
+  auto payload__ = payload ? _fbb.CreateVector<uint8_t>(*payload) : 0;
+  return Debugger::CreateDebugCommandResponse(
+      _fbb,
+      id,
+      ok,
+      payload__);
+}
+
+::flatbuffers::Offset<DebugCommandResponse> CreateDebugCommandResponse(::flatbuffers::FlatBufferBuilder &_fbb, const DebugCommandResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
 struct GetStateResponseT : public ::flatbuffers::NativeTable {
   typedef GetStateResponse TableType;
@@ -1633,6 +1875,12 @@ struct DebugEvent FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const Debugger::GetMemoryRegionsResponse *event_as_GetMemoryRegionsResponse() const {
     return event_type() == Debugger::Event_GetMemoryRegionsResponse ? static_cast<const Debugger::GetMemoryRegionsResponse *>(event()) : nullptr;
   }
+  const Debugger::DebugCommandRequest *event_as_DebugCommandRequest() const {
+    return event_type() == Debugger::Event_DebugCommandRequest ? static_cast<const Debugger::DebugCommandRequest *>(event()) : nullptr;
+  }
+  const Debugger::DebugCommandResponse *event_as_DebugCommandResponse() const {
+    return event_type() == Debugger::Event_DebugCommandResponse ? static_cast<const Debugger::DebugCommandResponse *>(event()) : nullptr;
+  }
   template<typename T> T *mutable_event_as();
   Debugger::PauseRequest *mutable_event_as_PauseRequest() {
     return event_type() == Debugger::Event_PauseRequest ? static_cast<Debugger::PauseRequest *>(mutable_event()) : nullptr;
@@ -1681,6 +1929,12 @@ struct DebugEvent FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   Debugger::GetMemoryRegionsResponse *mutable_event_as_GetMemoryRegionsResponse() {
     return event_type() == Debugger::Event_GetMemoryRegionsResponse ? static_cast<Debugger::GetMemoryRegionsResponse *>(mutable_event()) : nullptr;
+  }
+  Debugger::DebugCommandRequest *mutable_event_as_DebugCommandRequest() {
+    return event_type() == Debugger::Event_DebugCommandRequest ? static_cast<Debugger::DebugCommandRequest *>(mutable_event()) : nullptr;
+  }
+  Debugger::DebugCommandResponse *mutable_event_as_DebugCommandResponse() {
+    return event_type() == Debugger::Event_DebugCommandResponse ? static_cast<Debugger::DebugCommandResponse *>(mutable_event()) : nullptr;
   }
   void *mutable_event() {
     return GetPointer<void *>(VT_EVENT);
@@ -1826,6 +2080,22 @@ template<> inline Debugger::GetMemoryRegionsResponse *DebugEvent::mutable_event_
   return mutable_event_as_GetMemoryRegionsResponse();
 }
 
+template<> inline const Debugger::DebugCommandRequest *DebugEvent::event_as<Debugger::DebugCommandRequest>() const {
+  return event_as_DebugCommandRequest();
+}
+
+template<> inline Debugger::DebugCommandRequest *DebugEvent::mutable_event_as<Debugger::DebugCommandRequest>() {
+  return mutable_event_as_DebugCommandRequest();
+}
+
+template<> inline const Debugger::DebugCommandResponse *DebugEvent::event_as<Debugger::DebugCommandResponse>() const {
+  return event_as_DebugCommandResponse();
+}
+
+template<> inline Debugger::DebugCommandResponse *DebugEvent::mutable_event_as<Debugger::DebugCommandResponse>() {
+  return mutable_event_as_DebugCommandResponse();
+}
+
 struct DebugEventBuilder {
   typedef DebugEvent Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
@@ -1929,6 +2199,70 @@ inline ::flatbuffers::Offset<GetMemoryRegionsResponse> GetMemoryRegionsResponse:
   return Debugger::CreateGetMemoryRegionsResponse(
       _fbb,
       _regions);
+}
+
+inline DebugCommandRequestT *DebugCommandRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<DebugCommandRequestT>(new DebugCommandRequestT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void DebugCommandRequest::UnPackTo(DebugCommandRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = id(); _o->id = _e; }
+  { auto _e = kind(); _o->kind = _e; }
+  { auto _e = payload(); if (_e) { _o->payload.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->payload.begin()); } }
+}
+
+inline ::flatbuffers::Offset<DebugCommandRequest> CreateDebugCommandRequest(::flatbuffers::FlatBufferBuilder &_fbb, const DebugCommandRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return DebugCommandRequest::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<DebugCommandRequest> DebugCommandRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DebugCommandRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const DebugCommandRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _id = _o->id;
+  auto _kind = _o->kind;
+  auto _payload = _o->payload.size() ? _fbb.CreateVector(_o->payload) : 0;
+  return Debugger::CreateDebugCommandRequest(
+      _fbb,
+      _id,
+      _kind,
+      _payload);
+}
+
+inline DebugCommandResponseT *DebugCommandResponse::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<DebugCommandResponseT>(new DebugCommandResponseT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void DebugCommandResponse::UnPackTo(DebugCommandResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = id(); _o->id = _e; }
+  { auto _e = ok(); _o->ok = _e; }
+  { auto _e = payload(); if (_e) { _o->payload.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->payload.begin()); } }
+}
+
+inline ::flatbuffers::Offset<DebugCommandResponse> CreateDebugCommandResponse(::flatbuffers::FlatBufferBuilder &_fbb, const DebugCommandResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return DebugCommandResponse::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<DebugCommandResponse> DebugCommandResponse::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DebugCommandResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const DebugCommandResponseT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _id = _o->id;
+  auto _ok = _o->ok;
+  auto _payload = _o->payload.size() ? _fbb.CreateVector(_o->payload) : 0;
+  return Debugger::CreateDebugCommandResponse(
+      _fbb,
+      _id,
+      _ok,
+      _payload);
 }
 
 inline GetStateResponseT *GetStateResponse::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
@@ -2401,6 +2735,14 @@ inline bool VerifyEvent(::flatbuffers::VerifierTemplate<B> &verifier, const void
       auto ptr = reinterpret_cast<const Debugger::GetMemoryRegionsResponse *>(obj);
       return verifier.VerifyTable(ptr);
     }
+    case Event_DebugCommandRequest: {
+      auto ptr = reinterpret_cast<const Debugger::DebugCommandRequest *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case Event_DebugCommandResponse: {
+      auto ptr = reinterpret_cast<const Debugger::DebugCommandResponse *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
     default: return true;
   }
 }
@@ -2485,6 +2827,14 @@ inline void *EventUnion::UnPack(const void *obj, Event type, const ::flatbuffers
       auto ptr = reinterpret_cast<const Debugger::GetMemoryRegionsResponse *>(obj);
       return ptr->UnPack(resolver);
     }
+    case Event_DebugCommandRequest: {
+      auto ptr = reinterpret_cast<const Debugger::DebugCommandRequest *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case Event_DebugCommandResponse: {
+      auto ptr = reinterpret_cast<const Debugger::DebugCommandResponse *>(obj);
+      return ptr->UnPack(resolver);
+    }
     default: return nullptr;
   }
 }
@@ -2556,6 +2906,14 @@ inline ::flatbuffers::Offset<void> EventUnion::Pack(::flatbuffers::FlatBufferBui
       auto ptr = reinterpret_cast<const Debugger::GetMemoryRegionsResponseT *>(value);
       return CreateGetMemoryRegionsResponse(_fbb, ptr, _rehasher).Union();
     }
+    case Event_DebugCommandRequest: {
+      auto ptr = reinterpret_cast<const Debugger::DebugCommandRequestT *>(value);
+      return CreateDebugCommandRequest(_fbb, ptr, _rehasher).Union();
+    }
+    case Event_DebugCommandResponse: {
+      auto ptr = reinterpret_cast<const Debugger::DebugCommandResponseT *>(value);
+      return CreateDebugCommandResponse(_fbb, ptr, _rehasher).Union();
+    }
     default: return 0;
   }
 }
@@ -2624,6 +2982,14 @@ inline EventUnion::EventUnion(const EventUnion &u) : type(u.type), value(nullptr
     }
     case Event_GetMemoryRegionsResponse: {
       value = new Debugger::GetMemoryRegionsResponseT(*reinterpret_cast<Debugger::GetMemoryRegionsResponseT *>(u.value));
+      break;
+    }
+    case Event_DebugCommandRequest: {
+      value = new Debugger::DebugCommandRequestT(*reinterpret_cast<Debugger::DebugCommandRequestT *>(u.value));
+      break;
+    }
+    case Event_DebugCommandResponse: {
+      value = new Debugger::DebugCommandResponseT(*reinterpret_cast<Debugger::DebugCommandResponseT *>(u.value));
       break;
     }
     default:
@@ -2710,6 +3076,16 @@ inline void EventUnion::Reset() {
     }
     case Event_GetMemoryRegionsResponse: {
       auto ptr = reinterpret_cast<Debugger::GetMemoryRegionsResponseT *>(value);
+      delete ptr;
+      break;
+    }
+    case Event_DebugCommandRequest: {
+      auto ptr = reinterpret_cast<Debugger::DebugCommandRequestT *>(value);
+      delete ptr;
+      break;
+    }
+    case Event_DebugCommandResponse: {
+      auto ptr = reinterpret_cast<Debugger::DebugCommandResponseT *>(value);
       delete ptr;
       break;
     }

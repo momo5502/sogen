@@ -72,11 +72,20 @@ table EmulationStatus {
 
 table GetMemoryRegionsRequest {}
 
-// `regions` carries a UTF-8 JSON array describing the virtual memory layout.
-// JSON is used (instead of a dedicated flatbuffer table) so the payload stays
-// read-only and trivially forward/backward compatible with older frontends.
 table GetMemoryRegionsResponse {
     regions: [ubyte];
+}
+
+table DebugCommandRequest {
+    id: uint32;
+    kind: uint32;
+    payload: [ubyte];
+}
+
+table DebugCommandResponse {
+    id: uint32;
+    ok: bool;
+    payload: [ubyte];
 }
 
 union Event {
@@ -96,6 +105,8 @@ union Event {
     EmulationStatus,
     GetMemoryRegionsRequest,
     GetMemoryRegionsResponse,
+    DebugCommandRequest,
+    DebugCommandResponse,
 }
 
 table DebugEvent {

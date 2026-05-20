@@ -89,6 +89,85 @@ namespace sogen
             }
         }
 
+        constexpr uint64_t FAKE_KERNEL_BASE = 0xFFFFF80000000000ULL;
+        constexpr uint32_t FAKE_KERNEL_SIZE = 0x00A00000;
+
+        template <typename Traits>
+        void fill_ntoskrnl_module(RTL_PROCESS_MODULE_INFORMATION<Traits>& m)
+        {
+            memset(&m, 0, sizeof(m));
+            m.ImageBase = static_cast<typename Traits::PVOID>(FAKE_KERNEL_BASE);
+            m.MappedBase = m.ImageBase;
+            m.ImageSize = FAKE_KERNEL_SIZE;
+            m.LoadCount = 1;
+
+            constexpr std::string_view directory = R"(\SystemRoot\system32\)";
+            constexpr std::string_view full_path = R"(\SystemRoot\system32\ntoskrnl.exe)";
+            m.OffsetToFileName = static_cast<USHORT>(directory.size());
+            memcpy(m.FullPathName, full_path.data(), full_path.size() + 1);
+        }
+
+        NTSTATUS handle_system_module_information(const syscall_context& c, const uint64_t system_information,
+                                                  const uint32_t system_information_length, const emulator_object<uint32_t> return_length)
+        {
+            using Traits = EmulatorTraits<Emu64>;
+            using modules_t = RTL_PROCESS_MODULES<Traits>;
+            using module_t = RTL_PROCESS_MODULE_INFORMATION<Traits>;
+
+            constexpr auto header_size = offsetof(modules_t, Modules);
+            constexpr auto required = static_cast<uint32_t>(header_size + sizeof(module_t));
+
+            if (return_length)
+            {
+                return_length.write(required);
+            }
+
+            if (system_information_length < required)
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            modules_t header{};
+            memset(&header, 0, sizeof(header));
+            header.NumberOfModules = 1;
+            c.emu.write_memory(system_information, &header, header_size);
+
+            module_t mod{};
+            fill_ntoskrnl_module<Traits>(mod);
+            c.emu.write_memory(system_information + header_size, &mod, sizeof(mod));
+
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_system_module_information_ex(const syscall_context& c, const uint64_t system_information,
+                                                     const uint32_t system_information_length,
+                                                     const emulator_object<uint32_t> return_length)
+        {
+            using Traits = EmulatorTraits<Emu64>;
+            using module_ex_t = RTL_PROCESS_MODULE_INFORMATION_EX<Traits>;
+
+            constexpr auto required = static_cast<uint32_t>(sizeof(module_ex_t));
+
+            if (return_length)
+            {
+                return_length.write(required);
+            }
+
+            if (system_information_length < required)
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            module_ex_t entry{};
+            memset(&entry, 0, sizeof(entry));
+            entry.NextOffset = 0;
+            fill_ntoskrnl_module<Traits>(entry.BaseInfo);
+            entry.DefaultBase = entry.BaseInfo.ImageBase;
+
+            c.emu.write_memory(system_information, &entry, sizeof(entry));
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtQuerySystemInformationEx(const syscall_context& c, const uint32_t info_class, const uint64_t input_buffer,
                                                    const uint32_t input_buffer_length, const uint64_t system_information,
                                                    const uint32_t system_information_length, const emulator_object<uint32_t> return_length)
@@ -97,7 +176,6 @@ namespace sogen
             {
             case 250: // Build 27744
             case SystemFlushInformation:
-            case SystemModuleInformation:
             case SystemProcessInformation:
             case SystemMemoryUsageInformation:
             case SystemCodeIntegrityPolicyInformation:
@@ -111,6 +189,12 @@ namespace sogen
             case SystemControlFlowTransition:
                 c.win_emu.callbacks.on_suspicious_activity("Warbird control flow transition");
                 return STATUS_NOT_SUPPORTED;
+
+            case SystemModuleInformation:
+                return handle_system_module_information(c, system_information, system_information_length, return_length);
+
+            case SystemModuleInformationEx:
+                return handle_system_module_information_ex(c, system_information, system_information_length, return_length);
 
             case SystemTimeOfDayInformation:
                 return handle_query<SYSTEM_TIMEOFDAY_INFORMATION64>(c.emu, system_information, system_information_length, return_length,

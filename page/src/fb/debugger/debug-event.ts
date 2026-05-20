@@ -5,6 +5,8 @@
 import * as flatbuffers from 'flatbuffers';
 
 import { ApplicationExit, ApplicationExitT } from '../debugger/application-exit.js';
+import { DebugCommandRequest, DebugCommandRequestT } from '../debugger/debug-command-request.js';
+import { DebugCommandResponse, DebugCommandResponseT } from '../debugger/debug-command-response.js';
 import { EmulationStatus, EmulationStatusT } from '../debugger/emulation-status.js';
 import { Event, unionToEvent, unionListToEvent } from '../debugger/event.js';
 import { GetMemoryRegionsRequest, GetMemoryRegionsRequestT } from '../debugger/get-memory-regions-request.js';
@@ -108,7 +110,7 @@ unpackTo(_o: DebugEventT): void {
 export class DebugEventT implements flatbuffers.IGeneratedObject {
 constructor(
   public eventType: Event = Event.NONE,
-  public event: ApplicationExitT|EmulationStatusT|GetMemoryRegionsRequestT|GetMemoryRegionsResponseT|GetStateRequestT|GetStateResponseT|PauseRequestT|ReadMemoryRequestT|ReadMemoryResponseT|ReadRegisterRequestT|ReadRegisterResponseT|RunRequestT|WriteMemoryRequestT|WriteMemoryResponseT|WriteRegisterRequestT|WriteRegisterResponseT|null = null
+  public event: ApplicationExitT|DebugCommandRequestT|DebugCommandResponseT|EmulationStatusT|GetMemoryRegionsRequestT|GetMemoryRegionsResponseT|GetStateRequestT|GetStateResponseT|PauseRequestT|ReadMemoryRequestT|ReadMemoryResponseT|ReadRegisterRequestT|ReadRegisterResponseT|RunRequestT|WriteMemoryRequestT|WriteMemoryResponseT|WriteRegisterRequestT|WriteRegisterResponseT|null = null
 ){}
 
 

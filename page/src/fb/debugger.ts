@@ -3,6 +3,8 @@
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
 export { ApplicationExit, ApplicationExitT } from './debugger/application-exit.js';
+export { DebugCommandRequest, DebugCommandRequestT } from './debugger/debug-command-request.js';
+export { DebugCommandResponse, DebugCommandResponseT } from './debugger/debug-command-response.js';
 export { DebugEvent, DebugEventT } from './debugger/debug-event.js';
 export { EmulationStatus, EmulationStatusT } from './debugger/emulation-status.js';
 export { Event } from './debugger/event.js';

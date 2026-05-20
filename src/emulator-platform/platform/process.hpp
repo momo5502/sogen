@@ -1160,6 +1160,38 @@ namespace sogen
         } DUMMYUNIONNAME;
     };
 
+    template <typename Traits>
+    struct RTL_PROCESS_MODULE_INFORMATION
+    {
+        typename Traits::HANDLE Section;
+        typename Traits::PVOID MappedBase;
+        typename Traits::PVOID ImageBase;
+        ULONG ImageSize;
+        ULONG Flags;
+        USHORT LoadOrderIndex;
+        USHORT InitOrderIndex;
+        USHORT LoadCount;
+        USHORT OffsetToFileName;
+        UCHAR FullPathName[256];
+    };
+
+    template <typename Traits>
+    struct RTL_PROCESS_MODULES
+    {
+        ULONG NumberOfModules;
+        RTL_PROCESS_MODULE_INFORMATION<Traits> Modules[ANYSIZE_ARRAY];
+    };
+
+    template <typename Traits>
+    struct RTL_PROCESS_MODULE_INFORMATION_EX
+    {
+        USHORT NextOffset;
+        RTL_PROCESS_MODULE_INFORMATION<Traits> BaseInfo;
+        ULONG ImageChecksum;
+        ULONG TimeDateStamp;
+        typename Traits::PVOID DefaultBase;
+    };
+
     struct PROCESS_PRIORITY_CLASS
     {
         BOOLEAN Foreground;

@@ -79,13 +79,12 @@ namespace sogen
     }
 
     instructions disassembler::disassemble(emulator& cpu, const uint16_t cs_selector, const std::span<const uint8_t> data,
-                                           const size_t count) const
+                                           const size_t count, const uint64_t address) const
     {
-        // Select the handle by decoding the code segment descriptor as documented in Intel 64 and IA-32 Architectures SDM Vol. 3.
         const csh handle_to_use = this->resolve_handle(cpu, cs_selector);
 
         cs_insn* insts{};
-        const auto inst_count = cs_disasm(handle_to_use, data.data(), data.size(), count, 0, &insts);
+        const auto inst_count = cs_disasm(handle_to_use, data.data(), data.size(), address, count, &insts);
         return instructions{std::span(insts, inst_count)};
     }
 

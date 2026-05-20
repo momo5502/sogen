@@ -12,6 +12,7 @@ sogen_assign_source_group(${SRC_FILES})
 
 target_link_libraries(debugger PRIVATE
   windows-emulator
+  disassembler
   flatbuffers
   base64
 )
