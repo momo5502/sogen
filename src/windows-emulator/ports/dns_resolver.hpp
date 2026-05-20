@@ -4,6 +4,6 @@
 namespace sogen
 {
 
-std::unique_ptr<port> create_dns_resolver();
+    std::unique_ptr<port> create_dns_resolver();
 
 } // namespace sogen

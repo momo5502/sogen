@@ -36,4 +36,3 @@ namespace sogen::fuzzer
 
     void run(fuzzing_handler& handler, size_t concurrency = std::thread::hardware_concurrency());
 } // namespace sogen::fuzzer
-

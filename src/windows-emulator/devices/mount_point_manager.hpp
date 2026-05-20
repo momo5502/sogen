@@ -4,6 +4,6 @@
 namespace sogen
 {
 
-std::unique_ptr<io_device> create_mount_point_manager();
+    std::unique_ptr<io_device> create_mount_point_manager();
 
 } // namespace sogen

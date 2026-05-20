@@ -7,23 +7,23 @@
 namespace sogen
 {
 
-namespace network
-{
-    struct poll_entry
+    namespace network
     {
-        i_socket* s{};
-        int16_t events{};
-        int16_t revents{};
-    };
+        struct poll_entry
+        {
+            i_socket* s{};
+            int16_t events{};
+            int16_t revents{};
+        };
 
-    struct socket_factory
-    {
-        socket_factory();
-        virtual ~socket_factory() = default;
+        struct socket_factory
+        {
+            socket_factory();
+            virtual ~socket_factory() = default;
 
-        virtual std::unique_ptr<i_socket> create_socket(int af, int type, int protocol);
-        virtual int poll_sockets(std::span<poll_entry> entries);
-    };
-}
+            virtual std::unique_ptr<i_socket> create_socket(int af, int type, int protocol);
+            virtual int poll_sockets(std::span<poll_entry> entries);
+        };
+    }
 
 } // namespace sogen

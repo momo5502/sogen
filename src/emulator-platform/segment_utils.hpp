@@ -179,4 +179,3 @@ namespace sogen::segment_utils
         return segment_bitness::bit16;
     }
 } // namespace sogen::segment_utils
-

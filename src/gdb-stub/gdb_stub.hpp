@@ -135,4 +135,3 @@ namespace sogen::gdb_stub
 
     bool run_gdb_stub(const network::address& bind_address, debugging_handler& handler);
 } // namespace sogen::gdb_stub
-

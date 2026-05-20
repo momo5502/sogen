@@ -9,36 +9,36 @@
 namespace sogen
 {
 
-using apiset_map = std::map<std::u16string, std::u16string>;
-namespace apiset
-{
-    enum class location : uint8_t
+    using apiset_map = std::map<std::u16string, std::u16string>;
+    namespace apiset
     {
-        host,
-        file,
-        default_windows_10,
-        default_windows_11
-    };
-
-    struct container
-    {
-        std::vector<std::byte> data{};
-
-        const API_SET_NAMESPACE& get() const
+        enum class location : uint8_t
         {
-            return *reinterpret_cast<const API_SET_NAMESPACE*>(data.data());
-        }
-    };
+            host,
+            file,
+            default_windows_10,
+            default_windows_11
+        };
 
-    container obtain(location location, const std::filesystem::path& root);
-    container obtain(const std::filesystem::path& root);
+        struct container
+        {
+            std::vector<std::byte> data{};
 
-    emulator_object<API_SET_NAMESPACE> clone(x86_64_emulator& emu, emulator_allocator& allocator,
-                                             const API_SET_NAMESPACE& orig_api_set_map);
+            const API_SET_NAMESPACE& get() const
+            {
+                return *reinterpret_cast<const API_SET_NAMESPACE*>(data.data());
+            }
+        };
 
-    emulator_object<API_SET_NAMESPACE> clone(x86_64_emulator& emu, emulator_allocator& allocator, const container& container);
+        container obtain(location location, const std::filesystem::path& root);
+        container obtain(const std::filesystem::path& root);
 
-    apiset_map get_namespace_table(const API_SET_NAMESPACE* apiset_ns_data);
-}
+        emulator_object<API_SET_NAMESPACE> clone(x86_64_emulator& emu, emulator_allocator& allocator,
+                                                 const API_SET_NAMESPACE& orig_api_set_map);
+
+        emulator_object<API_SET_NAMESPACE> clone(x86_64_emulator& emu, emulator_allocator& allocator, const container& container);
+
+        apiset_map get_namespace_table(const API_SET_NAMESPACE* apiset_ns_data);
+    }
 
 } // namespace sogen

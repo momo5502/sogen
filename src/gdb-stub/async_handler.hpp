@@ -36,4 +36,3 @@ namespace sogen::gdb_stub
         void work();
     };
 } // namespace sogen::gdb_stub
-

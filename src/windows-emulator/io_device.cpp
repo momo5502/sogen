@@ -10,118 +10,118 @@
 namespace sogen
 {
 
-namespace
-{
-    struct dummy_device : stateless_device
+    namespace
     {
-        NTSTATUS io_control(windows_emulator&, const io_device_context&) override
+        struct dummy_device : stateless_device
         {
-            return STATUS_SUCCESS;
-        }
-    };
+            NTSTATUS io_control(windows_emulator&, const io_device_context&) override
+            {
+                return STATUS_SUCCESS;
+            }
+        };
 
-    struct transport_stub_device : stateless_device
-    {
-        NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
+        struct transport_stub_device : stateless_device
         {
-            if (context.output_buffer && context.output_buffer_length)
+            NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
             {
-                std::vector<std::byte> output(context.output_buffer_length, std::byte{0});
-                win_emu.emu().write_memory(context.output_buffer, output.data(), output.size());
-            }
+                if (context.output_buffer && context.output_buffer_length)
+                {
+                    std::vector<std::byte> output(context.output_buffer_length, std::byte{0});
+                    win_emu.emu().write_memory(context.output_buffer, output.data(), output.size());
+                }
 
-            if (context.io_status_block)
-            {
-                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                block.Information = context.output_buffer_length;
-                context.io_status_block.write(block);
-            }
+                if (context.io_status_block)
+                {
+                    IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                    block.Information = context.output_buffer_length;
+                    context.io_status_block.write(block);
+                }
 
-            return STATUS_SUCCESS;
+                return STATUS_SUCCESS;
+            }
+        };
+    }
+
+    bool needs_32_bit_devices(const windows_emulator& win_emu)
+    {
+        return win_emu.process.is_wow64_process;
+    }
+
+    std::unique_ptr<io_device> create_device(const std::u16string_view device, const bool is_32_bit)
+    {
+        if (device == u"CNG"                    //
+            || device == u"Nsi"                 //
+            || device == u"RasAcd"              //
+            || device == u"PcwDrv"              //
+            || device == u"DeviceApi\\CMApi"    //
+            || device == u"DeviceApi\\CMNotify" //
+            || device == u"ConDrv\\Server")
+        {
+            return std::make_unique<dummy_device>();
         }
-    };
-}
 
-bool needs_32_bit_devices(const windows_emulator& win_emu)
-{
-    return win_emu.process.is_wow64_process;
-}
+        if (device == u"Afd\\Endpoint")
+        {
+            return create_afd_endpoint(is_32_bit);
+        }
 
-std::unique_ptr<io_device> create_device(const std::u16string_view device, const bool is_32_bit)
-{
-    if (device == u"CNG"                    //
-        || device == u"Nsi"                 //
-        || device == u"RasAcd"              //
-        || device == u"PcwDrv"              //
-        || device == u"DeviceApi\\CMApi"    //
-        || device == u"DeviceApi\\CMNotify" //
-        || device == u"ConDrv\\Server")
-    {
-        return std::make_unique<dummy_device>();
+        if (device == u"Afd\\AsyncConnectHlp")
+        {
+            return create_afd_async_connect_hlp(is_32_bit);
+        }
+
+        if (device == u"MountPointManager")
+        {
+            return create_mount_point_manager();
+        }
+
+        if (device == u"KsecDD")
+        {
+            return create_security_support_provider();
+        }
+
+        if (device == u"NamedPipe")
+        {
+            return std::make_unique<named_pipe>();
+        }
+
+        if (device == u"Tcp" || device == u"Tcp6" || device == u"Udp" || device == u"RawIp")
+        {
+            return std::make_unique<transport_stub_device>();
+        }
+
+        throw std::runtime_error("Unsupported device: " + u16_to_u8(device));
     }
 
-    if (device == u"Afd\\Endpoint")
+    NTSTATUS io_device_container::io_control(windows_emulator& win_emu, const io_device_context& context)
     {
-        return create_afd_endpoint(is_32_bit);
+        this->assert_validity();
+        win_emu.callbacks.on_ioctrl(*this->device_, this->device_name_, context.io_control_code);
+        return this->device_->io_control(win_emu, context);
     }
 
-    if (device == u"Afd\\AsyncConnectHlp")
+    void io_device_container::work(windows_emulator& win_emu)
     {
-        return create_afd_async_connect_hlp(is_32_bit);
+        this->assert_validity();
+        this->device_->work(win_emu);
     }
 
-    if (device == u"MountPointManager")
+    void io_device_container::serialize_object(utils::buffer_serializer& buffer) const
     {
-        return create_mount_point_manager();
+        this->assert_validity();
+
+        buffer.write(this->is_32_bit_);
+        buffer.write_string(this->device_name_);
+        this->device_->serialize(buffer);
     }
 
-    if (device == u"KsecDD")
+    void io_device_container::deserialize_object(utils::buffer_deserializer& buffer)
     {
-        return create_security_support_provider();
+        buffer.read(this->is_32_bit_);
+        buffer.read_string(this->device_name_);
+
+        this->setup();
+        this->device_->deserialize(buffer);
     }
-
-    if (device == u"NamedPipe")
-    {
-        return std::make_unique<named_pipe>();
-    }
-
-    if (device == u"Tcp" || device == u"Tcp6" || device == u"Udp" || device == u"RawIp")
-    {
-        return std::make_unique<transport_stub_device>();
-    }
-
-    throw std::runtime_error("Unsupported device: " + u16_to_u8(device));
-}
-
-NTSTATUS io_device_container::io_control(windows_emulator& win_emu, const io_device_context& context)
-{
-    this->assert_validity();
-    win_emu.callbacks.on_ioctrl(*this->device_, this->device_name_, context.io_control_code);
-    return this->device_->io_control(win_emu, context);
-}
-
-void io_device_container::work(windows_emulator& win_emu)
-{
-    this->assert_validity();
-    this->device_->work(win_emu);
-}
-
-void io_device_container::serialize_object(utils::buffer_serializer& buffer) const
-{
-    this->assert_validity();
-
-    buffer.write(this->is_32_bit_);
-    buffer.write_string(this->device_name_);
-    this->device_->serialize(buffer);
-}
-
-void io_device_container::deserialize_object(utils::buffer_deserializer& buffer)
-{
-    buffer.read(this->is_32_bit_);
-    buffer.read_string(this->device_name_);
-
-    this->setup();
-    this->device_->deserialize(buffer);
-}
 
 } // namespace sogen

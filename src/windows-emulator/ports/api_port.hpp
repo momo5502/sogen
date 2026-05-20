@@ -4,6 +4,6 @@
 namespace sogen
 {
 
-std::unique_ptr<port> create_api_port();
+    std::unique_ptr<port> create_api_port();
 
 } // namespace sogen

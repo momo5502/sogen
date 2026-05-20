@@ -51,4 +51,3 @@ namespace sogen::unicorn
         throw_if_unicorn_error(error_code);
     }
 } // namespace sogen::unicorn
-

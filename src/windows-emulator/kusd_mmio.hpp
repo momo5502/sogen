@@ -10,55 +10,55 @@
 namespace sogen
 {
 
-struct process_context;
-struct fake_environment_config;
-class windows_emulator;
-class windows_version_manager;
+    struct process_context;
+    struct fake_environment_config;
+    class windows_emulator;
+    class windows_version_manager;
 
-class kusd_mmio
-{
-  public:
-    kusd_mmio(memory_manager& memory, utils::clock& clock);
-    ~kusd_mmio();
-
-    kusd_mmio(utils::buffer_deserializer& buffer);
-
-    kusd_mmio(kusd_mmio&&) = delete;
-    kusd_mmio(const kusd_mmio&) = delete;
-    kusd_mmio& operator=(kusd_mmio&& obj) = delete;
-    kusd_mmio& operator=(const kusd_mmio&) = delete;
-
-    void serialize(utils::buffer_serializer& buffer) const;
-    void deserialize(utils::buffer_deserializer& buffer);
-
-    KUSER_SHARED_DATA64& get()
+    class kusd_mmio
     {
-        return this->kusd_;
-    }
+      public:
+        kusd_mmio(memory_manager& memory, utils::clock& clock);
+        ~kusd_mmio();
 
-    const KUSER_SHARED_DATA64& get() const
-    {
-        return this->kusd_;
-    }
+        kusd_mmio(utils::buffer_deserializer& buffer);
 
-    static uint64_t address();
+        kusd_mmio(kusd_mmio&&) = delete;
+        kusd_mmio(const kusd_mmio&) = delete;
+        kusd_mmio& operator=(kusd_mmio&& obj) = delete;
+        kusd_mmio& operator=(const kusd_mmio&) = delete;
 
-    void setup(const windows_version_manager& version, const fake_environment_config& fake_env);
+        void serialize(utils::buffer_serializer& buffer) const;
+        void deserialize(utils::buffer_deserializer& buffer);
 
-  private:
-    memory_manager* memory_{};
-    utils::clock* clock_{};
+        KUSER_SHARED_DATA64& get()
+        {
+            return this->kusd_;
+        }
 
-    bool registered_{};
+        const KUSER_SHARED_DATA64& get() const
+        {
+            return this->kusd_;
+        }
 
-    KUSER_SHARED_DATA64 kusd_{};
+        static uint64_t address();
 
-    void read(uint64_t addr, void* data, size_t size);
+        void setup(const windows_version_manager& version, const fake_environment_config& fake_env);
 
-    void update();
+      private:
+        memory_manager* memory_{};
+        utils::clock* clock_{};
 
-    void register_mmio();
-    void deregister_mmio();
-};
+        bool registered_{};
+
+        KUSER_SHARED_DATA64 kusd_{};
+
+        void read(uint64_t addr, void* data, size_t size);
+
+        void update();
+
+        void register_mmio();
+        void deregister_mmio();
+    };
 
 } // namespace sogen

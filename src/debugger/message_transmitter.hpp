@@ -9,4 +9,3 @@ namespace sogen::debugger
     void send_message(const std::string& message);
     std::string receive_message();
 } // namespace sogen::debugger
-

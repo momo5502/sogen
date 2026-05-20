@@ -74,4 +74,3 @@ namespace sogen::unicorn
         uc_hook hook_{};
     };
 } // namespace sogen::unicorn
-

@@ -64,4 +64,3 @@ namespace sogen::unicorn
         }
     };
 } // namespace sogen::unicorn
-

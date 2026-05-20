@@ -8,122 +8,122 @@
 namespace sogen
 {
 
-typedef LONG TDI_STATUS;
+    typedef LONG TDI_STATUS;
 
-struct win_sockaddr
-{
-    USHORT sa_family;
-    CHAR sa_data[14];
-};
-
-struct AFD_LISTEN_INFO
-{
-    BOOLEAN SanActive;
-    ULONG MaximumConnectionQueue;
-    BOOLEAN UseDelayedAcceptance;
-};
-
-struct AFD_LISTEN_RESPONSE_INFO
-{
-    LONG Sequence;
-    win_sockaddr RemoteAddress;
-};
-
-struct AFD_ACCEPT_INFO
-{
-    BOOLEAN SanActive;
-    LONG Sequence;
-    handle AcceptHandle;
-};
-
-template <typename Traits>
-struct TDI_CONNECTION_INFORMATION
-{
-    LONG UserDataLength;
-    typename Traits::PVOID UserData;
-    LONG OptionsLength;
-    typename Traits::PVOID Options;
-    LONG RemoteAddressLength;
-    typename Traits::PVOID RemoteAddress;
-};
-
-template <typename Traits>
-struct TDI_REQUEST
-{
-    union
+    struct win_sockaddr
     {
-        typename Traits::HANDLE AddressHandle;
-        EMULATOR_CAST(typename Traits::PVOID, CONNECTION_CONTEXT) ConnectionContext;
-        typename Traits::HANDLE ControlChannel;
-    } Handle;
+        USHORT sa_family;
+        CHAR sa_data[14];
+    };
 
-    typename Traits::PVOID RequestNotifyObject;
-    typename Traits::PVOID RequestContext;
-    TDI_STATUS TdiStatus;
-};
+    struct AFD_LISTEN_INFO
+    {
+        BOOLEAN SanActive;
+        ULONG MaximumConnectionQueue;
+        BOOLEAN UseDelayedAcceptance;
+    };
 
-template <typename Traits>
-struct TDI_REQUEST_SEND_DATAGRAM
-{
-    TDI_REQUEST<Traits> Request;
-    EMULATOR_CAST(typename Traits::PVOID, PTDI_CONNECTION_INFORMATION) SendDatagramInformation;
-};
+    struct AFD_LISTEN_RESPONSE_INFO
+    {
+        LONG Sequence;
+        win_sockaddr RemoteAddress;
+    };
 
-template <typename Traits>
-struct AFD_SEND_INFO
-{
-    EMULATOR_CAST(typename Traits::PVOID, LPWSABUF) BufferArray;
-    ULONG BufferCount;
-    ULONG AfdFlags;
-    ULONG TdiFlags;
-};
+    struct AFD_ACCEPT_INFO
+    {
+        BOOLEAN SanActive;
+        LONG Sequence;
+        handle AcceptHandle;
+    };
 
-template <typename Traits>
-struct AFD_SEND_DATAGRAM_INFO
-{
-    EMULATOR_CAST(typename Traits::PVOID, LPWSABUF) BufferArray;
-    ULONG BufferCount;
-    ULONG AfdFlags;
-    TDI_REQUEST_SEND_DATAGRAM<Traits> TdiRequest;
-    TDI_CONNECTION_INFORMATION<Traits> TdiConnInfo;
-};
+    template <typename Traits>
+    struct TDI_CONNECTION_INFORMATION
+    {
+        LONG UserDataLength;
+        typename Traits::PVOID UserData;
+        LONG OptionsLength;
+        typename Traits::PVOID Options;
+        LONG RemoteAddressLength;
+        typename Traits::PVOID RemoteAddress;
+    };
 
-template <typename Traits>
-struct AFD_RECV_INFO
-{
-    EMULATOR_CAST(typename Traits::PVOID, LPWSABUF) BufferArray;
-    ULONG BufferCount;
-    ULONG AfdFlags;
-    ULONG TdiFlags;
-};
+    template <typename Traits>
+    struct TDI_REQUEST
+    {
+        union
+        {
+            typename Traits::HANDLE AddressHandle;
+            EMULATOR_CAST(typename Traits::PVOID, CONNECTION_CONTEXT) ConnectionContext;
+            typename Traits::HANDLE ControlChannel;
+        } Handle;
 
-template <typename Traits>
-struct AFD_RECV_DATAGRAM_INFO
-{
-    EMULATOR_CAST(typename Traits::PVOID, LPWSABUF) BufferArray;
-    ULONG BufferCount;
-    ULONG AfdFlags;
-    ULONG TdiFlags;
-    typename Traits::PVOID Address;
-    EMULATOR_CAST(typename Traits::PVOID, PULONG) AddressLength;
-};
+        typename Traits::PVOID RequestNotifyObject;
+        typename Traits::PVOID RequestContext;
+        TDI_STATUS TdiStatus;
+    };
 
-template <typename Traits>
-struct AFD_POLL_HANDLE_INFO
-{
-    Traits::HANDLE Handle;
-    ULONG PollEvents;
-    NTSTATUS Status;
-};
+    template <typename Traits>
+    struct TDI_REQUEST_SEND_DATAGRAM
+    {
+        TDI_REQUEST<Traits> Request;
+        EMULATOR_CAST(typename Traits::PVOID, PTDI_CONNECTION_INFORMATION) SendDatagramInformation;
+    };
 
-template <typename Traits>
-struct AFD_POLL_INFO
-{
-    LARGE_INTEGER Timeout;
-    ULONG NumberOfHandles;
-    BOOLEAN Unique;
-    AFD_POLL_HANDLE_INFO<Traits> Handles[1];
-};
+    template <typename Traits>
+    struct AFD_SEND_INFO
+    {
+        EMULATOR_CAST(typename Traits::PVOID, LPWSABUF) BufferArray;
+        ULONG BufferCount;
+        ULONG AfdFlags;
+        ULONG TdiFlags;
+    };
+
+    template <typename Traits>
+    struct AFD_SEND_DATAGRAM_INFO
+    {
+        EMULATOR_CAST(typename Traits::PVOID, LPWSABUF) BufferArray;
+        ULONG BufferCount;
+        ULONG AfdFlags;
+        TDI_REQUEST_SEND_DATAGRAM<Traits> TdiRequest;
+        TDI_CONNECTION_INFORMATION<Traits> TdiConnInfo;
+    };
+
+    template <typename Traits>
+    struct AFD_RECV_INFO
+    {
+        EMULATOR_CAST(typename Traits::PVOID, LPWSABUF) BufferArray;
+        ULONG BufferCount;
+        ULONG AfdFlags;
+        ULONG TdiFlags;
+    };
+
+    template <typename Traits>
+    struct AFD_RECV_DATAGRAM_INFO
+    {
+        EMULATOR_CAST(typename Traits::PVOID, LPWSABUF) BufferArray;
+        ULONG BufferCount;
+        ULONG AfdFlags;
+        ULONG TdiFlags;
+        typename Traits::PVOID Address;
+        EMULATOR_CAST(typename Traits::PVOID, PULONG) AddressLength;
+    };
+
+    template <typename Traits>
+    struct AFD_POLL_HANDLE_INFO
+    {
+        Traits::HANDLE Handle;
+        ULONG PollEvents;
+        NTSTATUS Status;
+    };
+
+    template <typename Traits>
+    struct AFD_POLL_INFO
+    {
+        LARGE_INTEGER Timeout;
+        ULONG NumberOfHandles;
+        BOOLEAN Unique;
+        AFD_POLL_HANDLE_INFO<Traits> Handles[1];
+    };
 
 #define AFD_POLL_RECEIVE_BIT           0
 #define AFD_POLL_RECEIVE               (1 << AFD_POLL_RECEIVE_BIT)
@@ -151,11 +151,11 @@ struct AFD_POLL_INFO
 #define AFD_NUM_POLL_EVENTS            11
 #define AFD_POLL_ALL                   ((1 << AFD_NUM_POLL_EVENTS) - 1)
 
-struct AFD_EVENT_SELECT_INFO
-{
-    handle Event;
-    ULONG PollEvents;
-};
+    struct AFD_EVENT_SELECT_INFO
+    {
+        handle Event;
+        ULONG PollEvents;
+    };
 
 #define _AFD_REQUEST(ioctl)             ((((ULONG)(ioctl)) >> 2) & 0x03FF)
 #define _AFD_BASE(ioctl)                ((((ULONG)(ioctl)) >> 12) & 0xFFFFF)
@@ -218,6 +218,6 @@ struct AFD_EVENT_SELECT_INFO
 #define AFD_JOIN_LEAF                   46
 #define AFD_TRANSPORT_IOCTL             47
 
-// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
+    // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 
 } // namespace sogen

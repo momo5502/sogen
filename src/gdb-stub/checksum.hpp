@@ -17,4 +17,3 @@ namespace sogen::gdb_stub
         return checksum;
     }
 } // namespace sogen::gdb_stub
-

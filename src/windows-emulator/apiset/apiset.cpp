@@ -13,199 +13,201 @@
 namespace sogen
 {
 
-namespace apiset
-{
-    namespace
+    namespace apiset
     {
-        uint64_t copy_string(x86_64_emulator& emu, emulator_allocator& allocator, const void* base_ptr, const uint64_t offset,
-                             const size_t length)
+        namespace
         {
-            if (!length)
+            uint64_t copy_string(x86_64_emulator& emu, emulator_allocator& allocator, const void* base_ptr, const uint64_t offset,
+                                 const size_t length)
             {
-                return 0;
+                if (!length)
+                {
+                    return 0;
+                }
+
+                const auto length_to_allocate = length + 2;
+                const auto str_obj = allocator.reserve(length_to_allocate);
+                emu.write_memory(str_obj, static_cast<const uint8_t*>(base_ptr) + offset, length);
+
+                return str_obj;
             }
 
-            const auto length_to_allocate = length + 2;
-            const auto str_obj = allocator.reserve(length_to_allocate);
-            emu.write_memory(str_obj, static_cast<const uint8_t*>(base_ptr) + offset, length);
-
-            return str_obj;
-        }
-
-        ULONG copy_string_as_relative(x86_64_emulator& emu, emulator_allocator& allocator, const uint64_t result_base, const void* base_ptr,
-                                      const uint64_t offset, const size_t length)
-        {
-            const auto address = copy_string(emu, allocator, base_ptr, offset, length);
-            if (!address)
+            ULONG copy_string_as_relative(x86_64_emulator& emu, emulator_allocator& allocator, const uint64_t result_base,
+                                          const void* base_ptr, const uint64_t offset, const size_t length)
             {
-                return 0;
+                const auto address = copy_string(emu, allocator, base_ptr, offset, length);
+                if (!address)
+                {
+                    return 0;
+                }
+
+                assert(address > result_base);
+                return static_cast<ULONG>(address - result_base);
             }
 
-            assert(address > result_base);
-            return static_cast<ULONG>(address - result_base);
-        }
-
-        std::vector<std::byte> decompress_apiset(const std::vector<std::byte>& apiset)
-        {
-            auto buffer = utils::compression::zstd::decompress(apiset);
-            if (buffer.empty())
+            std::vector<std::byte> decompress_apiset(const std::vector<std::byte>& apiset)
             {
-                throw std::runtime_error("Failed to decompress API-SET");
+                auto buffer = utils::compression::zstd::decompress(apiset);
+                if (buffer.empty())
+                {
+                    throw std::runtime_error("Failed to decompress API-SET");
+                }
+
+                return buffer;
             }
 
-            return buffer;
-        }
-
-        std::vector<std::byte> obtain_data(const location location, const std::filesystem::path& root)
-        {
-            switch (location)
+            std::vector<std::byte> obtain_data(const location location, const std::filesystem::path& root)
             {
+                switch (location)
+                {
 #ifdef OS_WINDOWS_64
-            case location::host: {
-                const auto* teb = NtCurrentTeb64();
-                const auto* peb = reinterpret_cast<PEB64*>(teb->ProcessEnvironmentBlock);
-                const auto* api_set_map = reinterpret_cast<const API_SET_NAMESPACE*>(peb->ApiSetMap);
-                const auto* data_ptr = reinterpret_cast<const std::byte*>(api_set_map);
-                return {data_ptr, data_ptr + api_set_map->Size};
-            }
-#else
-            case location::host:
-                throw std::runtime_error("The APISET host location is not supported on this platform");
-#endif
-            case location::file: {
-                const auto apiset = utils::io::read_file(root / "api-set.bin");
-                if (apiset.empty())
-                {
-                    throw std::runtime_error("Failed to read file api-set.bin");
+                case location::host: {
+                    const auto* teb = NtCurrentTeb64();
+                    const auto* peb = reinterpret_cast<PEB64*>(teb->ProcessEnvironmentBlock);
+                    const auto* api_set_map = reinterpret_cast<const API_SET_NAMESPACE*>(peb->ApiSetMap);
+                    const auto* data_ptr = reinterpret_cast<const std::byte*>(api_set_map);
+                    return {data_ptr, data_ptr + api_set_map->Size};
                 }
+#else
+                case location::host:
+                    throw std::runtime_error("The APISET host location is not supported on this platform");
+#endif
+                case location::file: {
+                    const auto apiset = utils::io::read_file(root / "api-set.bin");
+                    if (apiset.empty())
+                    {
+                        throw std::runtime_error("Failed to read file api-set.bin");
+                    }
 
-                return decompress_apiset(apiset);
-            }
-            case location::default_windows_10: {
-                const auto* byte_apiset = reinterpret_cast<const std::byte*>(apiset_w10);
-                const std::vector<std::byte> apiset{byte_apiset, byte_apiset + sizeof(apiset_w10)};
-                return decompress_apiset(apiset);
-            }
-            case location::default_windows_11: {
-                const auto* byte_apiset = reinterpret_cast<const std::byte*>(apiset_w11);
-                const std::vector<std::byte> apiset{byte_apiset, byte_apiset + sizeof(apiset_w11)};
-                return decompress_apiset(apiset);
-            }
-            default:
-                throw std::runtime_error("Bad API set location");
+                    return decompress_apiset(apiset);
+                }
+                case location::default_windows_10: {
+                    const auto* byte_apiset = reinterpret_cast<const std::byte*>(apiset_w10);
+                    const std::vector<std::byte> apiset{byte_apiset, byte_apiset + sizeof(apiset_w10)};
+                    return decompress_apiset(apiset);
+                }
+                case location::default_windows_11: {
+                    const auto* byte_apiset = reinterpret_cast<const std::byte*>(apiset_w11);
+                    const std::vector<std::byte> apiset{byte_apiset, byte_apiset + sizeof(apiset_w11)};
+                    return decompress_apiset(apiset);
+                }
+                default:
+                    throw std::runtime_error("Bad API set location");
+                }
             }
         }
-    }
 
-    container obtain(const location location, const std::filesystem::path& root)
-    {
-        return {.data = obtain_data(location, root)};
-    }
-
-    container obtain(const std::filesystem::path& root)
-    {
-        auto apiset_loc = location::file;
-
-        if (root.empty())
+        container obtain(const location location, const std::filesystem::path& root)
         {
+            return {.data = obtain_data(location, root)};
+        }
+
+        container obtain(const std::filesystem::path& root)
+        {
+            auto apiset_loc = location::file;
+
+            if (root.empty())
+            {
 #ifdef OS_WINDOWS
-            apiset_loc = location::host;
+                apiset_loc = location::host;
 #else
-            apiset_loc = location::default_windows_11;
+                apiset_loc = location::default_windows_11;
 #endif
-        }
-
-        return obtain(apiset_loc, root);
-    }
-
-    emulator_object<API_SET_NAMESPACE> clone(x86_64_emulator& emu, emulator_allocator& allocator, const container& container)
-    {
-        return clone(emu, allocator, container.get());
-    }
-
-    emulator_object<API_SET_NAMESPACE> clone(x86_64_emulator& emu, emulator_allocator& allocator, const API_SET_NAMESPACE& orig_api_set_map)
-    {
-        const auto api_set_map_obj = allocator.reserve<API_SET_NAMESPACE>();
-        const auto ns_entries_obj = allocator.reserve<API_SET_NAMESPACE_ENTRY>(orig_api_set_map.Count);
-        const auto hash_entries_obj = allocator.reserve<API_SET_HASH_ENTRY>(orig_api_set_map.Count);
-
-        api_set_map_obj.access([&](API_SET_NAMESPACE& api_set) {
-            api_set = orig_api_set_map;
-            api_set.EntryOffset = static_cast<ULONG>(ns_entries_obj.value() - api_set_map_obj.value());
-            api_set.HashOffset = static_cast<ULONG>(hash_entries_obj.value() - api_set_map_obj.value());
-        });
-
-        const auto* orig_ns_entries = offset_pointer<API_SET_NAMESPACE_ENTRY>(&orig_api_set_map, orig_api_set_map.EntryOffset);
-        const auto* orig_hash_entries = offset_pointer<API_SET_HASH_ENTRY>(&orig_api_set_map, orig_api_set_map.HashOffset);
-
-        for (ULONG i = 0; i < orig_api_set_map.Count; ++i)
-        {
-            auto ns_entry = orig_ns_entries[i];
-            const auto hash_entry = orig_hash_entries[i];
-
-            ns_entry.NameOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(), &orig_api_set_map, ns_entry.NameOffset,
-                                                          ns_entry.NameLength);
-
-            if (!ns_entry.ValueCount)
-            {
-                continue;
             }
 
-            const auto values_obj = allocator.reserve<API_SET_VALUE_ENTRY>(ns_entry.ValueCount);
-            const auto* orig_values = offset_pointer<API_SET_VALUE_ENTRY>(&orig_api_set_map, ns_entry.ValueOffset);
+            return obtain(apiset_loc, root);
+        }
 
-            ns_entry.ValueOffset = static_cast<ULONG>(values_obj.value() - api_set_map_obj.value());
+        emulator_object<API_SET_NAMESPACE> clone(x86_64_emulator& emu, emulator_allocator& allocator, const container& container)
+        {
+            return clone(emu, allocator, container.get());
+        }
 
-            for (ULONG j = 0; j < ns_entry.ValueCount; ++j)
+        emulator_object<API_SET_NAMESPACE> clone(x86_64_emulator& emu, emulator_allocator& allocator,
+                                                 const API_SET_NAMESPACE& orig_api_set_map)
+        {
+            const auto api_set_map_obj = allocator.reserve<API_SET_NAMESPACE>();
+            const auto ns_entries_obj = allocator.reserve<API_SET_NAMESPACE_ENTRY>(orig_api_set_map.Count);
+            const auto hash_entries_obj = allocator.reserve<API_SET_HASH_ENTRY>(orig_api_set_map.Count);
+
+            api_set_map_obj.access([&](API_SET_NAMESPACE& api_set) {
+                api_set = orig_api_set_map;
+                api_set.EntryOffset = static_cast<ULONG>(ns_entries_obj.value() - api_set_map_obj.value());
+                api_set.HashOffset = static_cast<ULONG>(hash_entries_obj.value() - api_set_map_obj.value());
+            });
+
+            const auto* orig_ns_entries = offset_pointer<API_SET_NAMESPACE_ENTRY>(&orig_api_set_map, orig_api_set_map.EntryOffset);
+            const auto* orig_hash_entries = offset_pointer<API_SET_HASH_ENTRY>(&orig_api_set_map, orig_api_set_map.HashOffset);
+
+            for (ULONG i = 0; i < orig_api_set_map.Count; ++i)
             {
-                auto value = orig_values[j];
+                auto ns_entry = orig_ns_entries[i];
+                const auto hash_entry = orig_hash_entries[i];
 
-                value.ValueOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(), &orig_api_set_map, value.ValueOffset,
-                                                            value.ValueLength);
+                ns_entry.NameOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(), &orig_api_set_map,
+                                                              ns_entry.NameOffset, ns_entry.NameLength);
 
-                if (value.NameLength)
+                if (!ns_entry.ValueCount)
                 {
-                    value.NameOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(), &orig_api_set_map, value.NameOffset,
-                                                               value.NameLength);
+                    continue;
                 }
 
-                values_obj.write(value, j);
+                const auto values_obj = allocator.reserve<API_SET_VALUE_ENTRY>(ns_entry.ValueCount);
+                const auto* orig_values = offset_pointer<API_SET_VALUE_ENTRY>(&orig_api_set_map, ns_entry.ValueOffset);
+
+                ns_entry.ValueOffset = static_cast<ULONG>(values_obj.value() - api_set_map_obj.value());
+
+                for (ULONG j = 0; j < ns_entry.ValueCount; ++j)
+                {
+                    auto value = orig_values[j];
+
+                    value.ValueOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(), &orig_api_set_map,
+                                                                value.ValueOffset, value.ValueLength);
+
+                    if (value.NameLength)
+                    {
+                        value.NameOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(), &orig_api_set_map,
+                                                                   value.NameOffset, value.NameLength);
+                    }
+
+                    values_obj.write(value, j);
+                }
+
+                ns_entries_obj.write(ns_entry, i);
+                hash_entries_obj.write(hash_entry, i);
             }
 
-            ns_entries_obj.write(ns_entry, i);
-            hash_entries_obj.write(hash_entry, i);
+            return api_set_map_obj;
         }
 
-        return api_set_map_obj;
-    }
-
-    apiset_map get_namespace_table(const API_SET_NAMESPACE* apiset_ns_data)
-    {
-        std::map<std::u16string, std::u16string> apiset;
-
-        for (size_t i = 0; i < apiset_ns_data->Count; i++)
+        apiset_map get_namespace_table(const API_SET_NAMESPACE* apiset_ns_data)
         {
-            const auto* entry = reinterpret_cast<const API_SET_NAMESPACE_ENTRY*>(
-                reinterpret_cast<uint64_t>(apiset_ns_data) + apiset_ns_data->EntryOffset + i * sizeof(API_SET_NAMESPACE_ENTRY));
+            std::map<std::u16string, std::u16string> apiset;
 
-            std::u16string name(reinterpret_cast<const char16_t*>(reinterpret_cast<uint64_t>(apiset_ns_data) + entry->NameOffset),
-                                entry->NameLength / sizeof(char16_t));
-
-            if (!entry->ValueCount)
+            for (size_t i = 0; i < apiset_ns_data->Count; i++)
             {
-                continue;
+                const auto* entry = reinterpret_cast<const API_SET_NAMESPACE_ENTRY*>(
+                    reinterpret_cast<uint64_t>(apiset_ns_data) + apiset_ns_data->EntryOffset + i * sizeof(API_SET_NAMESPACE_ENTRY));
+
+                std::u16string name(reinterpret_cast<const char16_t*>(reinterpret_cast<uint64_t>(apiset_ns_data) + entry->NameOffset),
+                                    entry->NameLength / sizeof(char16_t));
+
+                if (!entry->ValueCount)
+                {
+                    continue;
+                }
+
+                const auto* value =
+                    reinterpret_cast<const API_SET_VALUE_ENTRY*>(reinterpret_cast<uint64_t>(apiset_ns_data) + entry->ValueOffset +
+                                                                 (entry->ValueCount - 1) * sizeof(API_SET_VALUE_ENTRY));
+                std::u16string base_name(reinterpret_cast<const char16_t*>(reinterpret_cast<uint64_t>(apiset_ns_data) + value->ValueOffset),
+                                         value->ValueLength / sizeof(char16_t));
+
+                apiset[name + u".dll"] = base_name;
             }
 
-            const auto* value = reinterpret_cast<const API_SET_VALUE_ENTRY*>(
-                reinterpret_cast<uint64_t>(apiset_ns_data) + entry->ValueOffset + (entry->ValueCount - 1) * sizeof(API_SET_VALUE_ENTRY));
-            std::u16string base_name(reinterpret_cast<const char16_t*>(reinterpret_cast<uint64_t>(apiset_ns_data) + value->ValueOffset),
-                                     value->ValueLength / sizeof(char16_t));
-
-            apiset[name + u".dll"] = base_name;
+            return apiset;
         }
-
-        return apiset;
     }
-}
 
 } // namespace sogen

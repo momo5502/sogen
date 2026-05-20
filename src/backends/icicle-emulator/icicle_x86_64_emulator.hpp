@@ -17,4 +17,3 @@ namespace sogen::icicle
 #endif
     std::unique_ptr<x86_64_emulator> create_x86_64_emulator();
 } // namespace sogen::icicle
-

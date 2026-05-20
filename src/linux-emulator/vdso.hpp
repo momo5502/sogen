@@ -35,30 +35,30 @@
 namespace sogen
 {
 
-class linux_vdso
-{
-  public:
-    linux_vdso() = default;
-
-    // Build and map the synthetic vDSO into emulated memory.
-    // Returns the base address (AT_SYSINFO_EHDR value) or 0 on failure.
-    uint64_t setup(linux_memory_manager& memory);
-
-    // Get the base address of the mapped vDSO.
-    uint64_t get_base() const
+    class linux_vdso
     {
-        return this->base_address_;
-    }
+      public:
+        linux_vdso() = default;
 
-    // Get the total size of the vDSO image in bytes.
-    size_t get_size() const
-    {
-        return this->image_size_;
-    }
+        // Build and map the synthetic vDSO into emulated memory.
+        // Returns the base address (AT_SYSINFO_EHDR value) or 0 on failure.
+        uint64_t setup(linux_memory_manager& memory);
 
-  private:
-    uint64_t base_address_{};
-    size_t image_size_{};
-};
+        // Get the base address of the mapped vDSO.
+        uint64_t get_base() const
+        {
+            return this->base_address_;
+        }
+
+        // Get the total size of the vDSO image in bytes.
+        size_t get_size() const
+        {
+            return this->image_size_;
+        }
+
+      private:
+        uint64_t base_address_{};
+        size_t image_size_{};
+    };
 
 } // namespace sogen

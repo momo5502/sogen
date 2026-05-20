@@ -21,4 +21,3 @@ namespace sogen::linux_debugger
     void handle_exit(const linux_emulator& linux_emu, std::optional<int> exit_status);
     void update_emulation_status(const linux_emulator& linux_emu);
 } // namespace sogen::linux_debugger
-

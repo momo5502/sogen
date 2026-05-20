@@ -5,7 +5,7 @@
 namespace sogen
 {
 
-using NTSTATUS = std::uint32_t;
+    using NTSTATUS = std::uint32_t;
 
 #ifndef OS_WINDOWS
 #define STATUS_WAIT_0                 ((NTSTATUS)0x00000000L)

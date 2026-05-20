@@ -47,4 +47,3 @@ namespace sogen::gdb_stub
         std::string get_next_data_to_transmit();
     };
 } // namespace sogen::gdb_stub
-

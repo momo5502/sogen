@@ -5,9 +5,9 @@
 namespace sogen
 {
 
-namespace network
-{
-    std::unique_ptr<socket_factory> create_static_socket_factory();
-}
+    namespace network
+    {
+        std::unique_ptr<socket_factory> create_static_socket_factory();
+    }
 
 } // namespace sogen

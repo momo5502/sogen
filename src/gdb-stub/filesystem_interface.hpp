@@ -17,4 +17,3 @@ namespace sogen::gdb_stub
         virtual int unlink(const std::string& file_path) = 0;
     };
 } // namespace sogen::gdb_stub
-

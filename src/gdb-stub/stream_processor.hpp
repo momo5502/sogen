@@ -19,4 +19,3 @@ namespace sogen::gdb_stub
         void enqueue_packet(std::string packet);
     };
 } // namespace sogen::gdb_stub
-

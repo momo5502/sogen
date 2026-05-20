@@ -44,101 +44,101 @@
 namespace sogen
 {
 
-template <typename T>
-class reflect_type_info
-{
-  public:
-    reflect_type_info()
+    template <typename T>
+    class reflect_type_info
     {
+      public:
+        reflect_type_info()
+        {
 #if defined(HAS_NATIVE_REFLECTION)
-        this->type_name_ = std::meta::identifier_of(^^T);
+            this->type_name_ = std::meta::identifier_of(^^T);
 
-        constexpr std::meta::info members_info =
-            std::meta::reflect_constant_array(std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unchecked()));
+            constexpr std::meta::info members_info =
+                std::meta::reflect_constant_array(std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unchecked()));
 
-        template for (constexpr std::meta::info member : [:members_info:])
-        {
-            const auto member_name = std::meta::identifier_of(member);
-            const auto member_offset = std::meta::offset_of(member).bytes;
-            const auto member_size = std::meta::size_of(member);
-
-            this->members_[member_offset] = std::make_pair(std::string(member_name), member_size);
-        }
-#elif defined(HAS_CUSTOM_REFLECTION)
-        this->type_name_ = reflect::type_name<T>();
-
-        reflect::for_each<T>([this](auto I) {
-            const auto member_name = reflect::member_name<I, T>();
-            const auto member_offset = reflect::offset_of<I, T>();
-            const auto member_size = reflect::size_of<I, T>();
-
-            this->members_[member_offset] = std::make_pair(std::string(member_name), member_size);
-        });
-#else
-        this->type_name_ = typeid(T).name();
-        this->members_[0] = std::make_pair("?", sizeof(T));
-#endif
-    }
-
-    std::string get_member_name(const size_t offset) const
-    {
-        const auto info = this->get_member_info(offset);
-        if (!info.has_value())
-        {
-            return "<N/A>";
-        }
-
-        return info->get_diff_name(offset);
-    }
-
-    struct member_info
-    {
-        std::string name{};
-        size_t offset{};
-        size_t size{};
-
-        std::string get_diff_name(const size_t access) const
-        {
-            const auto diff = access - this->offset;
-            if (diff == 0)
+            template for (constexpr std::meta::info member : [:members_info:])
             {
-                return this->name;
+                const auto member_name = std::meta::identifier_of(member);
+                const auto member_offset = std::meta::offset_of(member).bytes;
+                const auto member_size = std::meta::size_of(member);
+
+                this->members_[member_offset] = std::make_pair(std::string(member_name), member_size);
+            }
+#elif defined(HAS_CUSTOM_REFLECTION)
+            this->type_name_ = reflect::type_name<T>();
+
+            reflect::for_each<T>([this](auto I) {
+                const auto member_name = reflect::member_name<I, T>();
+                const auto member_offset = reflect::offset_of<I, T>();
+                const auto member_size = reflect::size_of<I, T>();
+
+                this->members_[member_offset] = std::make_pair(std::string(member_name), member_size);
+            });
+#else
+            this->type_name_ = typeid(T).name();
+            this->members_[0] = std::make_pair("?", sizeof(T));
+#endif
+        }
+
+        std::string get_member_name(const size_t offset) const
+        {
+            const auto info = this->get_member_info(offset);
+            if (!info.has_value())
+            {
+                return "<N/A>";
             }
 
-            return this->name + utils::string::va("+0x%zX", this->offset);
+            return info->get_diff_name(offset);
         }
-    };
 
-    std::optional<member_info> get_member_info(const size_t offset) const
-    {
-        auto entry = this->members_.upper_bound(offset);
-        if (entry == this->members_.begin())
+        struct member_info
         {
-            return std::nullopt;
-        }
+            std::string name{};
+            size_t offset{};
+            size_t size{};
 
-        --entry;
+            std::string get_diff_name(const size_t access) const
+            {
+                const auto diff = access - this->offset;
+                if (diff == 0)
+                {
+                    return this->name;
+                }
 
-        if (entry->first + entry->second.second <= offset)
-        {
-            return std::nullopt;
-        }
-
-        return member_info{
-            .name = entry->second.first,
-            .offset = entry->first,
-            .size = entry->second.second,
+                return this->name + utils::string::va("+0x%zX", this->offset);
+            }
         };
-    }
 
-    const std::string& get_type_name() const
-    {
-        return this->type_name_;
-    }
+        std::optional<member_info> get_member_info(const size_t offset) const
+        {
+            auto entry = this->members_.upper_bound(offset);
+            if (entry == this->members_.begin())
+            {
+                return std::nullopt;
+            }
 
-  private:
-    std::string type_name_{};
-    std::map<size_t, std::pair<std::string, size_t>> members_{};
-};
+            --entry;
+
+            if (entry->first + entry->second.second <= offset)
+            {
+                return std::nullopt;
+            }
+
+            return member_info{
+                .name = entry->second.first,
+                .offset = entry->first,
+                .size = entry->second.second,
+            };
+        }
+
+        const std::string& get_type_name() const
+        {
+            return this->type_name_;
+        }
+
+      private:
+        std::string type_name_{};
+        std::map<size_t, std::pair<std::string, size_t>> members_{};
+    };
 
 } // namespace sogen

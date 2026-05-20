@@ -20,65 +20,65 @@
 namespace sogen
 {
 
-struct PORT_MESSAGE64
-{
-    union
+    struct PORT_MESSAGE64
     {
-        struct
+        union
         {
-            CSHORT DataLength;
-            CSHORT TotalLength;
-        } s1;
+            struct
+            {
+                CSHORT DataLength;
+                CSHORT TotalLength;
+            } s1;
 
-        ULONG Length;
-    } u1;
+            ULONG Length;
+        } u1;
 
-    union
-    {
-        struct
+        union
         {
-            CSHORT Type;
-            CSHORT DataInfoOffset;
-        } s2;
+            struct
+            {
+                CSHORT Type;
+                CSHORT DataInfoOffset;
+            } s2;
 
-        ULONG ZeroInit;
-    } u2;
+            ULONG ZeroInit;
+        } u2;
 
-    union
-    {
-        CLIENT_ID64 ClientId;
-        double DoNotUseThisField;
+        union
+        {
+            CLIENT_ID64 ClientId;
+            double DoNotUseThisField;
+        };
+
+        ULONG MessageId;
+
+        union
+        {
+            EmulatorTraits<Emu64>::SIZE_T ClientViewSize; // only valid for LPC_CONNECTION_REQUEST messages
+            ULONG CallbackId;                             // only valid for LPC_REQUEST messages
+        };
     };
 
-    ULONG MessageId;
-
-    union
+    struct ALPC_MESSAGE_ATTRIBUTES
     {
-        EmulatorTraits<Emu64>::SIZE_T ClientViewSize; // only valid for LPC_CONNECTION_REQUEST messages
-        ULONG CallbackId;                             // only valid for LPC_REQUEST messages
+        ULONG AllocatedAttributes;
+        ULONG ValidAttributes;
     };
-};
 
-struct ALPC_MESSAGE_ATTRIBUTES
-{
-    ULONG AllocatedAttributes;
-    ULONG ValidAttributes;
-};
+    template <typename Traits>
+    struct PORT_DATA_ENTRY
+    {
+        typename Traits::PVOID Base;
+        ULONG Size;
+    };
 
-template <typename Traits>
-struct PORT_DATA_ENTRY
-{
-    typename Traits::PVOID Base;
-    ULONG Size;
-};
+    template <typename Traits>
+    struct ALPC_SECURITY_ATTR
+    {
+        ULONG Flags;
+        typename Traits::PVOID SecurityQos;
+        typename Traits::HANDLE ContextHandle;
+    };
 
-template <typename Traits>
-struct ALPC_SECURITY_ATTR
-{
-    ULONG Flags;
-    typename Traits::PVOID SecurityQos;
-    typename Traits::HANDLE ContextHandle;
-};
-
-// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
+    // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 } // namespace sogen

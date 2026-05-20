@@ -6,8 +6,8 @@
 namespace sogen
 {
 
-class analysis_reporter;
+    class analysis_reporter;
 
-std::unique_ptr<analysis_reporter> create_jsonl_reporter(const std::filesystem::path& path);
+    std::unique_ptr<analysis_reporter> create_jsonl_reporter(const std::filesystem::path& path);
 
 } // namespace sogen
