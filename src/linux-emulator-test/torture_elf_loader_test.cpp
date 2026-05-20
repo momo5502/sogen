@@ -2,7 +2,7 @@
 
 #include <array>
 
-namespace linux_test
+namespace sogen::linux_test
 {
     namespace
     {

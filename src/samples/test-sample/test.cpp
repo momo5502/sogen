@@ -256,7 +256,7 @@ namespace
         const auto filename = std::filesystem::absolute("a.txt");
         constexpr DWORD pending_byte = 0x40000000UL;
 
-        const auto cleanup_file = utils::finally([&] { DeleteFileW(filename.c_str()); });
+        const auto cleanup_file = sogen::utils::finally([&] { DeleteFileW(filename.c_str()); });
 
         HANDLE first = CreateFileW(filename.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                    nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -266,7 +266,7 @@ namespace
             return false;
         }
 
-        const auto cleanup_first = utils::finally([&] { CloseHandle(first); });
+        const auto cleanup_first = sogen::utils::finally([&] { CloseHandle(first); });
 
         OVERLAPPED first_lock{};
         first_lock.Offset = pending_byte;
@@ -731,7 +731,7 @@ namespace
             return false;
         }
 
-        const auto free_records = utils::finally([&] {
+        const auto free_records = sogen::utils::finally([&] {
             if (records)
             {
                 DnsRecordListFree(records, DnsFreeRecordList);
@@ -767,7 +767,7 @@ namespace
             return false;
         }
 
-        const auto free_results = utils::finally([&] {
+        const auto free_results = sogen::utils::finally([&] {
             if (results)
             {
                 freeaddrinfo(results);
@@ -1267,7 +1267,7 @@ namespace
         std::array<HANDLE, 2> boundary{};
         std::array<HANDLE, 5> ns{};
 
-        const auto _ = utils::finally([&]() {
+        const auto _ = sogen::utils::finally([&]() {
             for (auto* elem : boundary)
             {
                 if (elem)

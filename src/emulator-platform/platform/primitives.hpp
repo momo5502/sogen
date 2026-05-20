@@ -18,47 +18,50 @@
 #define ANYSIZE_ARRAY 1
 
 #define DWORD         std::uint32_t
-using LONG = std::int32_t;
-using ULONG = DWORD;
-using DWORD64 = std::uint64_t;
-using ULONG64 = std::uint64_t;
-using ULONGLONG = DWORD64;
-using LONGLONG = std::int64_t;
-using UINT = std::uint32_t;
-using BOOL = std::int32_t;
-
-typedef union _ULARGE_INTEGER
+namespace sogen
 {
-    struct
+
+    using LONG = std::int32_t;
+    using ULONG = DWORD;
+    using DWORD64 = std::uint64_t;
+    using ULONG64 = std::uint64_t;
+    using ULONGLONG = DWORD64;
+    using LONGLONG = std::int64_t;
+    using UINT = std::uint32_t;
+    using BOOL = std::int32_t;
+
+    typedef union _ULARGE_INTEGER
     {
-        DWORD LowPart;
-        DWORD HighPart;
-    };
+        struct
+        {
+            DWORD LowPart;
+            DWORD HighPart;
+        };
 
-    ULONGLONG QuadPart;
-} ULARGE_INTEGER;
+        ULONGLONG QuadPart;
+    } ULARGE_INTEGER;
 
-typedef union _LARGE_INTEGER
-{
-    struct
+    typedef union _LARGE_INTEGER
     {
-        DWORD LowPart;
-        LONG HighPart;
-    };
+        struct
+        {
+            DWORD LowPart;
+            LONG HighPart;
+        };
 
-    LONGLONG QuadPart;
-} LARGE_INTEGER;
+        LONGLONG QuadPart;
+    } LARGE_INTEGER;
 
-using BYTE = std::uint8_t;
+    using BYTE = std::uint8_t;
 #define CHAR          BYTE
 
-typedef struct _RECT
-{
-    LONG left;
-    LONG top;
-    LONG right;
-    LONG bottom;
-} RECT;
+    typedef struct _RECT
+    {
+        LONG left;
+        LONG top;
+        LONG right;
+        LONG bottom;
+    } RECT;
 #endif
 
 using WORD = std::uint16_t;
@@ -83,3 +86,6 @@ static_assert(sizeof(int) == 4);
 static_assert(sizeof(BOOLEAN) == 1);
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-use-enum-class)
+#ifndef OS_WINDOWS
+} // namespace sogen
+#endif

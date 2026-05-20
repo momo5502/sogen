@@ -7,7 +7,7 @@
 
 using namespace std::literals;
 
-namespace network
+namespace sogen::network
 {
     void initialize_wsa()
     {
@@ -361,25 +361,28 @@ namespace network
     }
 }
 
-std::size_t std::hash<network::address>::operator()(const network::address& a) const noexcept
+namespace std
 {
-    const uint32_t family = a.get_addr().sa_family;
-    const uint32_t port = a.get_port();
-
-    std::size_t hash = std::hash<uint32_t>{}(family);
-    hash ^= std::hash<uint32_t>{}(port);
-    switch (a.get_addr().sa_family)
+    std::size_t hash<sogen::network::address>::operator()(const sogen::network::address& a) const noexcept
     {
-    case AF_INET:
-        hash ^= std::hash<decltype(a.get_in_addr().sin_addr.s_addr)>{}(a.get_in_addr().sin_addr.s_addr);
-        break;
-    case AF_INET6:
-        hash ^= std::hash<std::string_view>{}(std::string_view{reinterpret_cast<const char*>(a.get_in6_addr().sin6_addr.s6_addr),
-                                                               sizeof(a.get_in6_addr().sin6_addr.s6_addr)});
-        break;
-    default:
-        break;
-    }
+        const uint32_t family = a.get_addr().sa_family;
+        const uint32_t port = a.get_port();
 
-    return hash;
+        std::size_t hash = std::hash<uint32_t>{}(family);
+        hash ^= std::hash<uint32_t>{}(port);
+        switch (a.get_addr().sa_family)
+        {
+        case AF_INET:
+            hash ^= std::hash<decltype(a.get_in_addr().sin_addr.s_addr)>{}(a.get_in_addr().sin_addr.s_addr);
+            break;
+        case AF_INET6:
+            hash ^= std::hash<std::string_view>{}(std::string_view{reinterpret_cast<const char*>(a.get_in6_addr().sin6_addr.s6_addr),
+                                                                   sizeof(a.get_in6_addr().sin6_addr.s6_addr)});
+            break;
+        default:
+            break;
+        }
+
+        return hash;
+    }
 }

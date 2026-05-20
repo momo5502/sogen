@@ -2,7 +2,10 @@
 
 #include <cstdint>
 
-using NTSTATUS = std::uint32_t;
+namespace sogen
+{
+
+    using NTSTATUS = std::uint32_t;
 
 #ifndef OS_WINDOWS
 #define STATUS_WAIT_0                 ((NTSTATUS)0x00000000L)
@@ -106,3 +109,4 @@ using NTSTATUS = std::uint32_t;
 
 #define FILE_DEVICE_NETWORK                0x00000012
 #define FSCTL_AFD_BASE                     FILE_DEVICE_NETWORK
+} // namespace sogen

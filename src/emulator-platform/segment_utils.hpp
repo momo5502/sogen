@@ -6,7 +6,7 @@
 #include "emulator.hpp"
 #include "x86_register.hpp"
 
-namespace segment_utils
+namespace sogen::segment_utils
 {
     enum class segment_bitness
     {
@@ -178,4 +178,4 @@ namespace segment_utils
 
         return segment_bitness::bit16;
     }
-}
+} // namespace sogen::segment_utils

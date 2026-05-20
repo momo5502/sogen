@@ -6,20 +6,25 @@
 
 #include "serialization.hpp"
 
-class emulator : public cpu_interface, public memory_interface, public hook_interface
+namespace sogen
 {
-  public:
-    emulator() = default;
-    ~emulator() override = default;
 
-    emulator(const emulator&) = delete;
-    emulator& operator=(const emulator&) = delete;
+    class emulator : public cpu_interface, public memory_interface, public hook_interface
+    {
+      public:
+        emulator() = default;
+        ~emulator() override = default;
 
-    emulator(emulator&&) = delete;
-    emulator& operator=(emulator&&) = delete;
+        emulator(const emulator&) = delete;
+        emulator& operator=(const emulator&) = delete;
 
-    virtual std::string get_name() const = 0;
+        emulator(emulator&&) = delete;
+        emulator& operator=(emulator&&) = delete;
 
-    virtual void serialize_state(utils::buffer_serializer& buffer, bool is_snapshot) const = 0;
-    virtual void deserialize_state(utils::buffer_deserializer& buffer, bool is_snapshot) = 0;
-};
+        virtual std::string get_name() const = 0;
+
+        virtual void serialize_state(utils::buffer_serializer& buffer, bool is_snapshot) const = 0;
+        virtual void deserialize_state(utils::buffer_deserializer& buffer, bool is_snapshot) = 0;
+    };
+
+} // namespace sogen

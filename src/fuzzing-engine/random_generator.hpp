@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <cstring>
 
-namespace fuzzer
+namespace sogen::fuzzer
 {
     class random_generator
     {
@@ -67,4 +67,4 @@ namespace fuzzer
     {
         return (this->generate_number() & 1) != 0;
     }
-}
+} // namespace sogen::fuzzer

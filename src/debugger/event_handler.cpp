@@ -21,7 +21,7 @@
 #pragma warning(pop)
 #endif
 
-namespace debugger
+namespace sogen::debugger
 {
     namespace
     {
@@ -406,4 +406,4 @@ namespace debugger
         response.exit_status = exit_status;
         send_event(response);
     }
-}
+} // namespace sogen::debugger

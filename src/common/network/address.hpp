@@ -36,7 +36,7 @@
 using socklen_t = int;
 #endif
 
-namespace network
+namespace sogen::network
 {
     void initialize_wsa();
 
@@ -112,8 +112,8 @@ namespace network
 namespace std
 {
     template <>
-    struct hash<network::address>
+    struct hash<sogen::network::address>
     {
-        std::size_t operator()(const network::address& a) const noexcept;
+        std::size_t operator()(const sogen::network::address& a) const noexcept;
     };
 }

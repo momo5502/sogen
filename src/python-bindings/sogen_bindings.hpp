@@ -18,8 +18,26 @@
 
 namespace nb = nanobind;
 
-namespace sogen_py
+namespace sogen::py
 {
+    using sogen::backend_type;
+    using sogen::emulator_hook;
+    using sogen::emulator_thread;
+    using sogen::function_calling_convention;
+    using sogen::instruction_hook_continuation;
+    using sogen::mapped_module;
+    using sogen::memory_interface;
+    using sogen::memory_manager;
+    using sogen::memory_permission;
+    using sogen::memory_region_kind;
+    using sogen::memory_violation_continuation;
+    using sogen::nt_memory_permission;
+    using sogen::process_context;
+    using sogen::stop_reason;
+    using sogen::u16_to_u8;
+    using sogen::windows_emulator;
+    using sogen::x86_register;
+
     // ----- continuation enums (custom to bindings) -----
     enum class api_call_continuation
     {
@@ -52,8 +70,8 @@ namespace sogen_py
     std::unique_ptr<windows_emulator> create_empty_emulator(const nb::kwargs& kwargs);
     std::unique_ptr<windows_emulator> create_application_emulator(const nb::object& application, const nb::object& args,
                                                                   const nb::kwargs& kwargs);
-}
 
-void register_sogen_types_bindings(nb::module_& m);
-void register_sogen_windows_runtime_bindings(nb::module_& m);
-void register_sogen_runtime_bindings(nb::module_& m);
+    void register_types_bindings(nb::module_& m);
+    void register_windows_runtime_bindings(nb::module_& m);
+    void register_runtime_bindings(nb::module_& m);
+}

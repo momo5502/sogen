@@ -102,229 +102,232 @@
 #define PROCESSOR_ARCHITECTURE_INTEL 0
 #define PROCESSOR_ARCHITECTURE_AMD64 9
 
-enum class PEMachineType : std::uint16_t
+namespace sogen
 {
-    UNKNOWN = 0,
-    I386 = 0x014c,      // Intel 386.
-    R3000 = 0x0162,     // MIPS little-endian, 0x160 big-endian
-    R4000 = 0x0166,     // MIPS little-endian
-    R10000 = 0x0168,    // MIPS little-endian
-    WCEMIPSV2 = 0x0169, // MIPS little-endian WCE v2
-    ALPHA = 0x0184,     // Alpha_AXP
-    SH3 = 0x01a2,       // SH3 little-endian
-    SH3DSP = 0x01a3,
-    SH3E = 0x01a4,  // SH3E little-endian
-    SH4 = 0x01a6,   // SH4 little-endian
-    SH5 = 0x01a8,   // SH5
-    ARM = 0x01c0,   // ARM Little-Endian
-    THUMB = 0x01c2, // ARM Thumb/Thumb-2 Little-Endian
-    ARMNT = 0x01c4, // ARM Thumb-2 Little-Endian
-    AM33 = 0x01d3,
-    POWERPC = 0x01F0, // IBM PowerPC Little-Endian
-    POWERPCFP = 0x01f1,
-    IA64 = 0x0200,      // Intel 64
-    MIPS16 = 0x0266,    // MIPS
-    ALPHA64 = 0x0284,   // ALPHA64
-    MIPSFPU = 0x0366,   // MIPS
-    MIPSFPU16 = 0x0466, // MIPS
-    AXP64 = ALPHA64,
-    TRICORE = 0x0520, // Infineon
-    CEF = 0x0CEF,
-    EBC = 0x0EBC,   // EFI Byte Code
-    AMD64 = 0x8664, // AMD64 (K8)
-    M32R = 0x9041,  // M32R little-endian
-    CEE = 0xC0EE,
-};
+
+    enum class PEMachineType : std::uint16_t
+    {
+        UNKNOWN = 0,
+        I386 = 0x014c,      // Intel 386.
+        R3000 = 0x0162,     // MIPS little-endian, 0x160 big-endian
+        R4000 = 0x0166,     // MIPS little-endian
+        R10000 = 0x0168,    // MIPS little-endian
+        WCEMIPSV2 = 0x0169, // MIPS little-endian WCE v2
+        ALPHA = 0x0184,     // Alpha_AXP
+        SH3 = 0x01a2,       // SH3 little-endian
+        SH3DSP = 0x01a3,
+        SH3E = 0x01a4,  // SH3E little-endian
+        SH4 = 0x01a6,   // SH4 little-endian
+        SH5 = 0x01a8,   // SH5
+        ARM = 0x01c0,   // ARM Little-Endian
+        THUMB = 0x01c2, // ARM Thumb/Thumb-2 Little-Endian
+        ARMNT = 0x01c4, // ARM Thumb-2 Little-Endian
+        AM33 = 0x01d3,
+        POWERPC = 0x01F0, // IBM PowerPC Little-Endian
+        POWERPCFP = 0x01f1,
+        IA64 = 0x0200,      // Intel 64
+        MIPS16 = 0x0266,    // MIPS
+        ALPHA64 = 0x0284,   // ALPHA64
+        MIPSFPU = 0x0366,   // MIPS
+        MIPSFPU16 = 0x0466, // MIPS
+        AXP64 = ALPHA64,
+        TRICORE = 0x0520, // Infineon
+        CEF = 0x0CEF,
+        EBC = 0x0EBC,   // EFI Byte Code
+        AMD64 = 0x8664, // AMD64 (K8)
+        M32R = 0x9041,  // M32R little-endian
+        CEE = 0xC0EE,
+    };
 
 #pragma pack(push, 4)
 
-template <typename T>
-struct PEOptionalHeaderBasePart2_t
-{
-};
-
-template <>
-struct PEOptionalHeaderBasePart2_t<std::uint32_t>
-{
-    std::uint32_t BaseOfData;
-    std::uint32_t ImageBase;
-};
-
-template <>
-struct PEOptionalHeaderBasePart2_t<std::uint64_t>
-{
-    std::uint64_t ImageBase;
-};
-
-template <typename T>
-struct PEOptionalHeaderBasePart1_t
-{
-    enum
+    template <typename T>
+    struct PEOptionalHeaderBasePart2_t
     {
-        k_NumberOfDataDirectors = 16
     };
 
-    uint16_t Magic;
-    uint8_t MajorLinkerVersion;
-    uint8_t MinorLinkerVersion;
-    uint32_t SizeOfCode;
-    uint32_t SizeOfInitializedData;
-    uint32_t SizeOfUninitializedData;
-    uint32_t AddressOfEntryPoint;
-    uint32_t BaseOfCode;
-};
-
-struct PEDirectory_t2
-{
-    std::uint32_t VirtualAddress;
-    std::uint32_t Size;
-};
-
-template <typename T>
-struct PEOptionalHeaderBasePart3_t : PEOptionalHeaderBasePart1_t<T>, PEOptionalHeaderBasePart2_t<T>
-{
-    uint32_t SectionAlignment;
-    uint32_t FileAlignment;
-    uint16_t MajorOperatingSystemVersion;
-    uint16_t MinorOperatingSystemVersion;
-    uint16_t MajorImageVersion;
-    uint16_t MinorImageVersion;
-    uint16_t MajorSubsystemVersion;
-    uint16_t MinorSubsystemVersion;
-    uint32_t Win32VersionValue;
-    uint32_t SizeOfImage;
-    uint32_t SizeOfHeaders;
-    uint32_t CheckSum;
-    uint16_t Subsystem;
-    uint16_t DllCharacteristics;
-    T SizeOfStackReserve;
-    T SizeOfStackCommit;
-    T SizeOfHeapReserve;
-    T SizeOfHeapCommit;
-    uint32_t LoaderFlags;
-    uint32_t NumberOfRvaAndSizes;
-    PEDirectory_t2 DataDirectory[PEOptionalHeaderBasePart1_t<T>::k_NumberOfDataDirectors];
-};
-
-template <typename T>
-struct PEOptionalHeader_t
-{
-};
-
-template <>
-struct PEOptionalHeader_t<std::uint32_t> : PEOptionalHeaderBasePart3_t<std::uint32_t>
-{
-    enum
+    template <>
+    struct PEOptionalHeaderBasePart2_t<std::uint32_t>
     {
-        k_Magic = 0x10b, // IMAGE_NT_OPTIONAL_HDR32_MAGIC
-    };
-};
-
-template <>
-struct PEOptionalHeader_t<std::uint64_t> : PEOptionalHeaderBasePart3_t<std::uint64_t>
-{
-    enum
-    {
-        k_Magic = 0x20b, // IMAGE_NT_OPTIONAL_HDR64_MAGIC
-    };
-};
-
-struct PEFileHeader_t
-{
-    PEMachineType Machine;
-    std::uint16_t NumberOfSections;
-    std::uint32_t TimeDateStamp;
-    std::uint32_t PointerToSymbolTable;
-    std::uint32_t NumberOfSymbols;
-    std::uint16_t SizeOfOptionalHeader;
-    std::uint16_t Characteristics;
-};
-
-template <typename T>
-struct PENTHeaders_t
-{
-    enum
-    {
-        k_Signature = 0x00004550, // IMAGE_NT_SIGNATURE
+        std::uint32_t BaseOfData;
+        std::uint32_t ImageBase;
     };
 
-    uint32_t Signature;
-    PEFileHeader_t FileHeader;
-    PEOptionalHeader_t<T> OptionalHeader;
-};
-
-struct PEDosHeader_t
-{
-    enum
+    template <>
+    struct PEOptionalHeaderBasePart2_t<std::uint64_t>
     {
-        k_Magic = 0x5A4D
+        std::uint64_t ImageBase;
     };
 
-    std::uint16_t e_magic;    // Magic number ( k_Magic )
-    std::uint16_t e_cblp;     // Bytes on last page of file
-    std::uint16_t e_cp;       // Pages in file
-    std::uint16_t e_crlc;     // Relocations
-    std::uint16_t e_cparhdr;  // Size of header in paragraphs
-    std::uint16_t e_minalloc; // Minimum extra paragraphs needed
-    std::uint16_t e_maxalloc; // Maximum extra paragraphs needed
-    std::uint16_t e_ss;       // Initial (relative) SS value
-    std::uint16_t e_sp;       // Initial SP value
-    std::uint16_t e_csum;     // Checksum
-    std::uint16_t e_ip;       // Initial IP value
-    std::uint16_t e_cs;       // Initial (relative) CS value
-    std::uint16_t e_lfarlc;   // File address of relocation table
-    std::uint16_t e_ovno;     // Overlay number
-    std::uint16_t e_res[4];   // Reserved words
-    std::uint16_t e_oemid;    // OEM identifier (for e_oeminfo)
-    std::uint16_t e_oeminfo;  // OEM information; e_oemid specific
-    std::uint16_t e_res2[10]; // Reserved words
-    std::uint32_t e_lfanew;   // File address of new exe header
-};
+    template <typename T>
+    struct PEOptionalHeaderBasePart1_t
+    {
+        enum
+        {
+            k_NumberOfDataDirectors = 16
+        };
+
+        uint16_t Magic;
+        uint8_t MajorLinkerVersion;
+        uint8_t MinorLinkerVersion;
+        uint32_t SizeOfCode;
+        uint32_t SizeOfInitializedData;
+        uint32_t SizeOfUninitializedData;
+        uint32_t AddressOfEntryPoint;
+        uint32_t BaseOfCode;
+    };
+
+    struct PEDirectory_t2
+    {
+        std::uint32_t VirtualAddress;
+        std::uint32_t Size;
+    };
+
+    template <typename T>
+    struct PEOptionalHeaderBasePart3_t : PEOptionalHeaderBasePart1_t<T>, PEOptionalHeaderBasePart2_t<T>
+    {
+        uint32_t SectionAlignment;
+        uint32_t FileAlignment;
+        uint16_t MajorOperatingSystemVersion;
+        uint16_t MinorOperatingSystemVersion;
+        uint16_t MajorImageVersion;
+        uint16_t MinorImageVersion;
+        uint16_t MajorSubsystemVersion;
+        uint16_t MinorSubsystemVersion;
+        uint32_t Win32VersionValue;
+        uint32_t SizeOfImage;
+        uint32_t SizeOfHeaders;
+        uint32_t CheckSum;
+        uint16_t Subsystem;
+        uint16_t DllCharacteristics;
+        T SizeOfStackReserve;
+        T SizeOfStackCommit;
+        T SizeOfHeapReserve;
+        T SizeOfHeapCommit;
+        uint32_t LoaderFlags;
+        uint32_t NumberOfRvaAndSizes;
+        PEDirectory_t2 DataDirectory[PEOptionalHeaderBasePart1_t<T>::k_NumberOfDataDirectors];
+    };
+
+    template <typename T>
+    struct PEOptionalHeader_t
+    {
+    };
+
+    template <>
+    struct PEOptionalHeader_t<std::uint32_t> : PEOptionalHeaderBasePart3_t<std::uint32_t>
+    {
+        enum
+        {
+            k_Magic = 0x10b, // IMAGE_NT_OPTIONAL_HDR32_MAGIC
+        };
+    };
+
+    template <>
+    struct PEOptionalHeader_t<std::uint64_t> : PEOptionalHeaderBasePart3_t<std::uint64_t>
+    {
+        enum
+        {
+            k_Magic = 0x20b, // IMAGE_NT_OPTIONAL_HDR64_MAGIC
+        };
+    };
+
+    struct PEFileHeader_t
+    {
+        PEMachineType Machine;
+        std::uint16_t NumberOfSections;
+        std::uint32_t TimeDateStamp;
+        std::uint32_t PointerToSymbolTable;
+        std::uint32_t NumberOfSymbols;
+        std::uint16_t SizeOfOptionalHeader;
+        std::uint16_t Characteristics;
+    };
+
+    template <typename T>
+    struct PENTHeaders_t
+    {
+        enum
+        {
+            k_Signature = 0x00004550, // IMAGE_NT_SIGNATURE
+        };
+
+        uint32_t Signature;
+        PEFileHeader_t FileHeader;
+        PEOptionalHeader_t<T> OptionalHeader;
+    };
+
+    struct PEDosHeader_t
+    {
+        enum
+        {
+            k_Magic = 0x5A4D
+        };
+
+        std::uint16_t e_magic;    // Magic number ( k_Magic )
+        std::uint16_t e_cblp;     // Bytes on last page of file
+        std::uint16_t e_cp;       // Pages in file
+        std::uint16_t e_crlc;     // Relocations
+        std::uint16_t e_cparhdr;  // Size of header in paragraphs
+        std::uint16_t e_minalloc; // Minimum extra paragraphs needed
+        std::uint16_t e_maxalloc; // Maximum extra paragraphs needed
+        std::uint16_t e_ss;       // Initial (relative) SS value
+        std::uint16_t e_sp;       // Initial SP value
+        std::uint16_t e_csum;     // Checksum
+        std::uint16_t e_ip;       // Initial IP value
+        std::uint16_t e_cs;       // Initial (relative) CS value
+        std::uint16_t e_lfarlc;   // File address of relocation table
+        std::uint16_t e_ovno;     // Overlay number
+        std::uint16_t e_res[4];   // Reserved words
+        std::uint16_t e_oemid;    // OEM identifier (for e_oeminfo)
+        std::uint16_t e_oeminfo;  // OEM information; e_oemid specific
+        std::uint16_t e_res2[10]; // Reserved words
+        std::uint32_t e_lfanew;   // File address of new exe header
+    };
 
 #pragma pack(pop)
 
 #define IMAGE_SIZEOF_SHORT_NAME 8
 
 #ifndef OS_WINDOWS
-typedef struct _IMAGE_SECTION_HEADER
-{
-    std::uint8_t Name[IMAGE_SIZEOF_SHORT_NAME];
-    union
+    typedef struct _IMAGE_SECTION_HEADER
     {
-        std::uint32_t PhysicalAddress;
-        std::uint32_t VirtualSize;
-    } Misc;
-    std::uint32_t VirtualAddress;
-    std::uint32_t SizeOfRawData;
-    std::uint32_t PointerToRawData;
-    std::uint32_t PointerToRelocations;
-    std::uint32_t PointerToLinenumbers;
-    std::uint16_t NumberOfRelocations;
-    std::uint16_t NumberOfLinenumbers;
-    std::uint32_t Characteristics;
-} IMAGE_SECTION_HEADER, *PIMAGE_SECTION_HEADER;
+        std::uint8_t Name[IMAGE_SIZEOF_SHORT_NAME];
+        union
+        {
+            std::uint32_t PhysicalAddress;
+            std::uint32_t VirtualSize;
+        } Misc;
+        std::uint32_t VirtualAddress;
+        std::uint32_t SizeOfRawData;
+        std::uint32_t PointerToRawData;
+        std::uint32_t PointerToRelocations;
+        std::uint32_t PointerToLinenumbers;
+        std::uint16_t NumberOfRelocations;
+        std::uint16_t NumberOfLinenumbers;
+        std::uint32_t Characteristics;
+    } IMAGE_SECTION_HEADER, *PIMAGE_SECTION_HEADER;
 
-typedef struct _IMAGE_EXPORT_DIRECTORY
-{
-    DWORD Characteristics;
-    DWORD TimeDateStamp;
-    WORD MajorVersion;
-    WORD MinorVersion;
-    DWORD Name;
-    DWORD Base;
-    DWORD NumberOfFunctions;
-    DWORD NumberOfNames;
-    DWORD AddressOfFunctions;
-    DWORD AddressOfNames;
-    DWORD AddressOfNameOrdinals;
-} IMAGE_EXPORT_DIRECTORY, *PIMAGE_EXPORT_DIRECTORY;
+    typedef struct _IMAGE_EXPORT_DIRECTORY
+    {
+        DWORD Characteristics;
+        DWORD TimeDateStamp;
+        WORD MajorVersion;
+        WORD MinorVersion;
+        DWORD Name;
+        DWORD Base;
+        DWORD NumberOfFunctions;
+        DWORD NumberOfNames;
+        DWORD AddressOfFunctions;
+        DWORD AddressOfNames;
+        DWORD AddressOfNameOrdinals;
+    } IMAGE_EXPORT_DIRECTORY, *PIMAGE_EXPORT_DIRECTORY;
 
-typedef struct _IMAGE_BASE_RELOCATION
-{
-    DWORD VirtualAddress;
-    DWORD SizeOfBlock;
-    // WORD TypeOffset[1];
-} IMAGE_BASE_RELOCATION, *PIMAGE_BASE_RELOCATION;
+    typedef struct _IMAGE_BASE_RELOCATION
+    {
+        DWORD VirtualAddress;
+        DWORD SizeOfBlock;
+        // WORD TypeOffset[1];
+    } IMAGE_BASE_RELOCATION, *PIMAGE_BASE_RELOCATION;
 
 #define IMAGE_ORDINAL_FLAG64             0x8000000000000000
 #define IMAGE_ORDINAL_FLAG32             0x80000000
@@ -333,411 +336,413 @@ typedef struct _IMAGE_BASE_RELOCATION
 #define IMAGE_SNAP_BY_ORDINAL64(Ordinal) ((Ordinal & IMAGE_ORDINAL_FLAG64) != 0)
 #define IMAGE_SNAP_BY_ORDINAL32(Ordinal) ((Ordinal & IMAGE_ORDINAL_FLAG32) != 0)
 
-typedef struct _IMAGE_IMPORT_BY_NAME
-{
-    WORD Hint;
-    CHAR Name[1];
-} IMAGE_IMPORT_BY_NAME, *PIMAGE_IMPORT_BY_NAME;
-
-typedef struct _IMAGE_IMPORT_DESCRIPTOR
-{
-    // union
-    //{
-    //     DWORD Characteristics;    // 0 for terminating null import descriptor
-    DWORD OriginalFirstThunk; // RVA to original unbound IAT (PIMAGE_THUNK_DATA)
-    //} DUMMYUNIONNAME;
-    DWORD TimeDateStamp; // 0 if not bound,
-                         // -1 if bound, and real date\time stamp
-                         //     in IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT (new BIND)
-                         // O.W. date/time stamp of DLL bound to (Old BIND)
-
-    DWORD ForwarderChain; // -1 if no forwarders
-    DWORD Name;
-    DWORD FirstThunk; // RVA to IAT (if bound this IAT has actual addresses)
-} IMAGE_IMPORT_DESCRIPTOR, *PIMAGE_IMPORT_DESCRIPTOR;
-
-typedef struct _IMAGE_THUNK_DATA64
-{
-    union
+    typedef struct _IMAGE_IMPORT_BY_NAME
     {
-        ULONGLONG ForwarderString; // PBYTE
-        ULONGLONG Function;        // PDWORD
-        ULONGLONG Ordinal;
-        ULONGLONG AddressOfData; // PIMAGE_IMPORT_BY_NAME
-    } u1;
-} IMAGE_THUNK_DATA64, *PIMAGE_THUNK_DATA64;
+        WORD Hint;
+        CHAR Name[1];
+    } IMAGE_IMPORT_BY_NAME, *PIMAGE_IMPORT_BY_NAME;
 
-typedef struct _IMAGE_THUNK_DATA32
-{
-    union
+    typedef struct _IMAGE_IMPORT_DESCRIPTOR
     {
-        DWORD ForwarderString; // PBYTE
-        DWORD Function;        // PDWORD
-        DWORD Ordinal;
-        DWORD AddressOfData; // PIMAGE_IMPORT_BY_NAME
-    } u1;
-} IMAGE_THUNK_DATA32, *PIMAGE_THUNK_DATA32;
+        // union
+        //{
+        //     DWORD Characteristics;    // 0 for terminating null import descriptor
+        DWORD OriginalFirstThunk; // RVA to original unbound IAT (PIMAGE_THUNK_DATA)
+        //} DUMMYUNIONNAME;
+        DWORD TimeDateStamp; // 0 if not bound,
+                             // -1 if bound, and real date\time stamp
+                             //     in IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT (new BIND)
+                             // O.W. date/time stamp of DLL bound to (Old BIND)
+
+        DWORD ForwarderChain; // -1 if no forwarders
+        DWORD Name;
+        DWORD FirstThunk; // RVA to IAT (if bound this IAT has actual addresses)
+    } IMAGE_IMPORT_DESCRIPTOR, *PIMAGE_IMPORT_DESCRIPTOR;
+
+    typedef struct _IMAGE_THUNK_DATA64
+    {
+        union
+        {
+            ULONGLONG ForwarderString; // PBYTE
+            ULONGLONG Function;        // PDWORD
+            ULONGLONG Ordinal;
+            ULONGLONG AddressOfData; // PIMAGE_IMPORT_BY_NAME
+        } u1;
+    } IMAGE_THUNK_DATA64, *PIMAGE_THUNK_DATA64;
+
+    typedef struct _IMAGE_THUNK_DATA32
+    {
+        union
+        {
+            DWORD ForwarderString; // PBYTE
+            DWORD Function;        // PDWORD
+            DWORD Ordinal;
+            DWORD AddressOfData; // PIMAGE_IMPORT_BY_NAME
+        } u1;
+    } IMAGE_THUNK_DATA32, *PIMAGE_THUNK_DATA32;
 
 #endif
 
-// Template type definitions for architecture-specific thunk data
-template <typename T>
-struct thunk_data_traits;
+    // Template type definitions for architecture-specific thunk data
+    template <typename T>
+    struct thunk_data_traits;
 
-template <>
-struct thunk_data_traits<std::uint32_t>
-{
-    using type = IMAGE_THUNK_DATA32;
-    static constexpr DWORD ordinal_flag = IMAGE_ORDINAL_FLAG32;
-
-    static constexpr WORD ordinal_mask(DWORD ordinal)
+    template <>
+    struct thunk_data_traits<std::uint32_t>
     {
-        return IMAGE_ORDINAL32(ordinal);
-    }
-    static constexpr bool snap_by_ordinal(DWORD ordinal)
-    {
-        return IMAGE_SNAP_BY_ORDINAL32(ordinal);
-    }
-};
+        using type = IMAGE_THUNK_DATA32;
+        static constexpr DWORD ordinal_flag = IMAGE_ORDINAL_FLAG32;
 
-template <>
-struct thunk_data_traits<std::uint64_t>
-{
-    using type = IMAGE_THUNK_DATA64;
-    static constexpr ULONGLONG ordinal_flag = IMAGE_ORDINAL_FLAG64;
-
-    static constexpr WORD ordinal_mask(ULONGLONG ordinal)
-    {
-        return IMAGE_ORDINAL64(ordinal);
-    }
-    static constexpr bool snap_by_ordinal(ULONGLONG ordinal)
-    {
-        return IMAGE_SNAP_BY_ORDINAL64(ordinal);
-    }
-};
-
-template <typename Traits>
-struct SECTION_BASIC_INFORMATION
-{
-    typename Traits::PVOID BaseAddress;
-    ULONG Attributes;
-    LARGE_INTEGER Size;
-};
-
-template <typename Traits>
-struct SECTION_IMAGE_INFORMATION
-{
-    typename Traits::PVOID TransferAddress;
-    ULONG ZeroBits;
-    typename Traits::SIZE_T MaximumStackSize;
-    typename Traits::SIZE_T CommittedStackSize;
-    ULONG SubSystemType;
-
-    union
-    {
-        struct
+        static constexpr WORD ordinal_mask(DWORD ordinal)
         {
-            USHORT SubSystemMinorVersion;
-            USHORT SubSystemMajorVersion;
+            return IMAGE_ORDINAL32(ordinal);
+        }
+        static constexpr bool snap_by_ordinal(DWORD ordinal)
+        {
+            return IMAGE_SNAP_BY_ORDINAL32(ordinal);
+        }
+    };
+
+    template <>
+    struct thunk_data_traits<std::uint64_t>
+    {
+        using type = IMAGE_THUNK_DATA64;
+        static constexpr ULONGLONG ordinal_flag = IMAGE_ORDINAL_FLAG64;
+
+        static constexpr WORD ordinal_mask(ULONGLONG ordinal)
+        {
+            return IMAGE_ORDINAL64(ordinal);
+        }
+        static constexpr bool snap_by_ordinal(ULONGLONG ordinal)
+        {
+            return IMAGE_SNAP_BY_ORDINAL64(ordinal);
+        }
+    };
+
+    template <typename Traits>
+    struct SECTION_BASIC_INFORMATION
+    {
+        typename Traits::PVOID BaseAddress;
+        ULONG Attributes;
+        LARGE_INTEGER Size;
+    };
+
+    template <typename Traits>
+    struct SECTION_IMAGE_INFORMATION
+    {
+        typename Traits::PVOID TransferAddress;
+        ULONG ZeroBits;
+        typename Traits::SIZE_T MaximumStackSize;
+        typename Traits::SIZE_T CommittedStackSize;
+        ULONG SubSystemType;
+
+        union
+        {
+            struct
+            {
+                USHORT SubSystemMinorVersion;
+                USHORT SubSystemMajorVersion;
+            };
+
+            ULONG SubSystemVersion;
         };
 
-        ULONG SubSystemVersion;
-    };
-
-    union
-    {
-        struct
+        union
         {
-            USHORT MajorOperatingSystemVersion;
-            USHORT MinorOperatingSystemVersion;
+            struct
+            {
+                USHORT MajorOperatingSystemVersion;
+                USHORT MinorOperatingSystemVersion;
+            };
+
+            ULONG OperatingSystemVersion;
         };
 
-        ULONG OperatingSystemVersion;
-    };
+        USHORT ImageCharacteristics;
+        USHORT DllCharacteristics;
+        PEMachineType Machine;
+        BOOLEAN ImageContainsCode;
 
-    USHORT ImageCharacteristics;
-    USHORT DllCharacteristics;
-    PEMachineType Machine;
-    BOOLEAN ImageContainsCode;
-
-    union
-    {
-        UCHAR ImageFlags;
-
-        struct
+        union
         {
-            UCHAR ComPlusNativeReady : 1;
-            UCHAR ComPlusILOnly : 1;
-            UCHAR ImageDynamicallyRelocated : 1;
-            UCHAR ImageMappedFlat : 1;
-            UCHAR BaseBelow4gb : 1;
-            UCHAR ComPlusPrefer32bit : 1;
-            UCHAR Reserved : 2;
-        };
-    };
+            UCHAR ImageFlags;
 
-    ULONG LoaderFlags;
-    ULONG ImageFileSize;
-    ULONG CheckSum;
-};
-
-namespace winpe
-{
-    struct pe_image_basic_info
-    {
-        uint64_t entry_point_rva{};
-        uint64_t image_base{};
-        uint64_t size_of_stack_reserve{};
-        uint64_t size_of_stack_commit{};
-        uint32_t size_of_code{};
-        uint32_t loader_flags{};
-        uint32_t checksum{};
-        uint16_t machine{};
-        uint16_t subsystem{};
-        uint16_t subsystem_major_version{};
-        uint16_t subsystem_minor_version{};
-        uint16_t image_characteristics{};
-        uint16_t dll_characteristics{};
-        bool has_code{false};
-        std::array<char, 7> _padding{};
-    };
-
-    enum class pe_arch
-    {
-        pe32,
-        pe64
-    };
-
-    template <typename T>
-    inline uint64_t get_first_section_offset(const PENTHeaders_t<T>& nt_headers, const uint64_t nt_headers_offset)
-    {
-        const auto* nt_headers_addr = reinterpret_cast<const uint8_t*>(&nt_headers);
-        const size_t optional_header_offset =
-            reinterpret_cast<uintptr_t>(&(nt_headers.OptionalHeader)) - reinterpret_cast<uintptr_t>(&nt_headers);
-        const size_t optional_header_size = nt_headers.FileHeader.SizeOfOptionalHeader;
-        const auto* first_section_addr = nt_headers_addr + optional_header_offset + optional_header_size;
-
-        const auto first_section_absolute = reinterpret_cast<uint64_t>(first_section_addr);
-        const auto absolute_base = reinterpret_cast<uint64_t>(&nt_headers);
-        return nt_headers_offset + (first_section_absolute - absolute_base);
-    }
-
-    template <typename T>
-    inline PEDirectory_t2 get_data_directory_by_index(const PENTHeaders_t<T>& nt_headers, uint64_t directory_index)
-    {
-        return nt_headers.OptionalHeader.DataDirectory[directory_index];
-    }
-
-    template <typename T>
-    IMAGE_SECTION_HEADER get_section_header_by_rva(const utils::safe_buffer_accessor<const std::byte>& buffer,
-                                                   const PENTHeaders_t<T>& nt_headers, uint64_t nt_headers_offset, uint64_t rva)
-    {
-        IMAGE_SECTION_HEADER section_header = {};
-
-        auto next_section_offset = winpe::get_first_section_offset(nt_headers, nt_headers_offset);
-        for (size_t i = 0; i < nt_headers.FileHeader.NumberOfSections; i++)
-        {
-            const auto section = buffer.as<IMAGE_SECTION_HEADER>(static_cast<size_t>(next_section_offset)).get();
-            auto section_va_start = section.VirtualAddress;
-            auto section_va_end = section.VirtualAddress + section.Misc.VirtualSize;
-
-            if (section_va_start <= rva && rva <= section_va_end)
+            struct
             {
-                section_header = section;
-                break;
-            }
-
-            next_section_offset += sizeof(IMAGE_SECTION_HEADER);
-        }
-
-        return section_header;
-    }
-
-    inline std::variant<pe_arch, std::error_code> get_pe_arch(const std::filesystem::path& file)
-    {
-        std::ifstream f(file, std::ios::binary);
-        if (!f)
-        {
-            return std::make_error_code(std::errc::no_such_file_or_directory);
-        }
-
-        PEDosHeader_t dos{};
-        f.read(reinterpret_cast<char*>(&dos), sizeof(dos));
-        if (!f || dos.e_magic != PEDosHeader_t::k_Magic)
-        {
-            return std::make_error_code(std::errc::executable_format_error);
-        }
-
-        f.seekg(dos.e_lfanew, std::ios::beg);
-        uint32_t nt_signature = 0;
-        f.read(reinterpret_cast<char*>(&nt_signature), sizeof(nt_signature));
-        if (!f || nt_signature != PENTHeaders_t<std::uint32_t>::k_Signature)
-        {
-            return std::make_error_code(std::errc::executable_format_error);
-        }
-
-        PEFileHeader_t file_header{};
-        f.read(reinterpret_cast<char*>(&file_header), sizeof(file_header));
-        if (!f)
-        {
-            return std::make_error_code(std::errc::executable_format_error);
-        }
-
-        uint16_t magic = 0;
-        f.read(reinterpret_cast<char*>(&magic), sizeof(magic));
-        if (!f)
-        {
-            return std::make_error_code(std::errc::executable_format_error);
-        }
-
-        if (magic == PEOptionalHeader_t<std::uint32_t>::k_Magic)
-        {
-            return pe_arch::pe32;
-        }
-        if (magic == PEOptionalHeader_t<std::uint64_t>::k_Magic)
-        {
-            return pe_arch::pe64;
-        }
-
-        return std::make_error_code(std::errc::executable_format_error);
-    }
-
-    inline std::variant<pe_arch, std::error_code> get_pe_arch(uint64_t base_address, uint64_t image_size)
-    {
-        const auto* base = reinterpret_cast<const std::byte*>(reinterpret_cast<const void*>(static_cast<uintptr_t>(base_address)));
-        const uint64_t size = image_size;
-
-        auto read = [&](uint64_t off, void* dst, size_t n) -> bool {
-            if (off > size)
-            {
-                return false;
-            }
-            if (n > size - off)
-            {
-                return false;
-            }
-            memcpy(dst, base + off, n);
-            return true;
+                UCHAR ComPlusNativeReady : 1;
+                UCHAR ComPlusILOnly : 1;
+                UCHAR ImageDynamicallyRelocated : 1;
+                UCHAR ImageMappedFlat : 1;
+                UCHAR BaseBelow4gb : 1;
+                UCHAR ComPlusPrefer32bit : 1;
+                UCHAR Reserved : 2;
+            };
         };
 
-        PEDosHeader_t dos{};
-        if (!read(0, &dos, sizeof(dos)) || dos.e_magic != PEDosHeader_t::k_Magic)
-        {
-            return std::make_error_code(std::errc::executable_format_error);
-        }
+        ULONG LoaderFlags;
+        ULONG ImageFileSize;
+        ULONG CheckSum;
+    };
 
-        const auto nt_off = static_cast<uint64_t>(dos.e_lfanew);
-        uint32_t nt_signature = 0;
-        if (!read(nt_off, &nt_signature, sizeof(nt_signature)) || nt_signature != PENTHeaders_t<std::uint32_t>::k_Signature)
-        {
-            return std::make_error_code(std::errc::executable_format_error);
-        }
-
-        PEFileHeader_t file_header{};
-        const uint64_t fh_off = nt_off + sizeof(nt_signature);
-        if (!read(fh_off, &file_header, sizeof(file_header)))
-        {
-            return std::make_error_code(std::errc::executable_format_error);
-        }
-
-        uint16_t magic = 0;
-        const uint64_t opt_magic_off = fh_off + sizeof(file_header);
-        if (!read(opt_magic_off, &magic, sizeof(magic)))
-        {
-            return std::make_error_code(std::errc::executable_format_error);
-        }
-
-        if (magic == PEOptionalHeader_t<std::uint32_t>::k_Magic)
-        {
-            return pe_arch::pe32;
-        }
-        if (magic == PEOptionalHeader_t<std::uint64_t>::k_Magic)
-        {
-            return pe_arch::pe64;
-        }
-
-        return std::make_error_code(std::errc::executable_format_error);
-    }
-
-    template <typename T>
-    inline bool parse_pe_headers(const std::vector<std::byte>& file_data, pe_image_basic_info& info)
+    namespace winpe
     {
-        if (file_data.size() < sizeof(PEDosHeader_t))
+        struct pe_image_basic_info
         {
-            return false;
+            uint64_t entry_point_rva{};
+            uint64_t image_base{};
+            uint64_t size_of_stack_reserve{};
+            uint64_t size_of_stack_commit{};
+            uint32_t size_of_code{};
+            uint32_t loader_flags{};
+            uint32_t checksum{};
+            uint16_t machine{};
+            uint16_t subsystem{};
+            uint16_t subsystem_major_version{};
+            uint16_t subsystem_minor_version{};
+            uint16_t image_characteristics{};
+            uint16_t dll_characteristics{};
+            bool has_code{false};
+            std::array<char, 7> _padding{};
+        };
+
+        enum class pe_arch
+        {
+            pe32,
+            pe64
+        };
+
+        template <typename T>
+        inline uint64_t get_first_section_offset(const PENTHeaders_t<T>& nt_headers, const uint64_t nt_headers_offset)
+        {
+            const auto* nt_headers_addr = reinterpret_cast<const uint8_t*>(&nt_headers);
+            const size_t optional_header_offset =
+                reinterpret_cast<uintptr_t>(&(nt_headers.OptionalHeader)) - reinterpret_cast<uintptr_t>(&nt_headers);
+            const size_t optional_header_size = nt_headers.FileHeader.SizeOfOptionalHeader;
+            const auto* first_section_addr = nt_headers_addr + optional_header_offset + optional_header_size;
+
+            const auto first_section_absolute = reinterpret_cast<uint64_t>(first_section_addr);
+            const auto absolute_base = reinterpret_cast<uint64_t>(&nt_headers);
+            return nt_headers_offset + (first_section_absolute - absolute_base);
         }
 
-        const auto* dos_header = reinterpret_cast<const PEDosHeader_t*>(file_data.data());
-        if (dos_header->e_magic != PEDosHeader_t::k_Magic)
+        template <typename T>
+        inline PEDirectory_t2 get_data_directory_by_index(const PENTHeaders_t<T>& nt_headers, uint64_t directory_index)
         {
-            return false;
+            return nt_headers.OptionalHeader.DataDirectory[directory_index];
         }
 
-        if (file_data.size() < dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t) + sizeof(uint16_t))
+        template <typename T>
+        IMAGE_SECTION_HEADER get_section_header_by_rva(const sogen::utils::safe_buffer_accessor<const std::byte>& buffer,
+                                                       const PENTHeaders_t<T>& nt_headers, uint64_t nt_headers_offset, uint64_t rva)
         {
-            return false;
-        }
+            IMAGE_SECTION_HEADER section_header = {};
 
-        const auto* magic_ptr =
-            reinterpret_cast<const uint16_t*>(file_data.data() + dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t));
-        const uint16_t magic = *magic_ptr;
-
-        constexpr uint16_t expected_magic = (sizeof(T) == sizeof(uint32_t))
-                                                ? static_cast<uint16_t>(PEOptionalHeader_t<std::uint32_t>::k_Magic)
-                                                : static_cast<uint16_t>(PEOptionalHeader_t<std::uint64_t>::k_Magic);
-
-        if (magic != expected_magic)
-        {
-            return false;
-        }
-
-        if (file_data.size() < dos_header->e_lfanew + sizeof(PENTHeaders_t<T>))
-        {
-            return false;
-        }
-
-        const auto* nt_headers = reinterpret_cast<const PENTHeaders_t<T>*>(file_data.data() + dos_header->e_lfanew);
-        if (nt_headers->Signature != PENTHeaders_t<T>::k_Signature)
-        {
-            return false;
-        }
-
-        const auto& file_header = nt_headers->FileHeader;
-        const auto& optional_header = nt_headers->OptionalHeader;
-
-        info.machine = static_cast<uint16_t>(file_header.Machine);
-        info.image_characteristics = file_header.Characteristics;
-
-        info.entry_point_rva = optional_header.AddressOfEntryPoint;
-        info.image_base = optional_header.ImageBase;
-        info.subsystem = optional_header.Subsystem;
-        info.subsystem_major_version = optional_header.MajorSubsystemVersion;
-        info.subsystem_minor_version = optional_header.MinorSubsystemVersion;
-        info.dll_characteristics = optional_header.DllCharacteristics;
-        info.size_of_stack_reserve = optional_header.SizeOfStackReserve;
-        info.size_of_stack_commit = optional_header.SizeOfStackCommit;
-        info.size_of_code = optional_header.SizeOfCode;
-        info.loader_flags = optional_header.LoaderFlags;
-        info.checksum = optional_header.CheckSum;
-
-        info.has_code = (optional_header.SizeOfCode > 0) || (optional_header.AddressOfEntryPoint != 0);
-
-        const auto sections_offset = dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t) + file_header.SizeOfOptionalHeader;
-        if (file_data.size() >= sections_offset + sizeof(IMAGE_SECTION_HEADER) * file_header.NumberOfSections)
-        {
-            const auto* sections = reinterpret_cast<const IMAGE_SECTION_HEADER*>(file_data.data() + sections_offset);
-            for (uint16_t i = 0; i < file_header.NumberOfSections; ++i)
+            auto next_section_offset = winpe::get_first_section_offset(nt_headers, nt_headers_offset);
+            for (size_t i = 0; i < nt_headers.FileHeader.NumberOfSections; i++)
             {
-                if (sections[i].Characteristics & IMAGE_SCN_CNT_CODE)
+                const auto section = buffer.as<IMAGE_SECTION_HEADER>(static_cast<size_t>(next_section_offset)).get();
+                auto section_va_start = section.VirtualAddress;
+                auto section_va_end = section.VirtualAddress + section.Misc.VirtualSize;
+
+                if (section_va_start <= rva && rva <= section_va_end)
                 {
-                    info.has_code = true;
+                    section_header = section;
                     break;
                 }
+
+                next_section_offset += sizeof(IMAGE_SECTION_HEADER);
             }
+
+            return section_header;
         }
 
-        return true;
-    }
-}
+        inline std::variant<pe_arch, std::error_code> get_pe_arch(const std::filesystem::path& file)
+        {
+            std::ifstream f(file, std::ios::binary);
+            if (!f)
+            {
+                return std::make_error_code(std::errc::no_such_file_or_directory);
+            }
 
-// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
+            PEDosHeader_t dos{};
+            f.read(reinterpret_cast<char*>(&dos), sizeof(dos));
+            if (!f || dos.e_magic != PEDosHeader_t::k_Magic)
+            {
+                return std::make_error_code(std::errc::executable_format_error);
+            }
+
+            f.seekg(dos.e_lfanew, std::ios::beg);
+            uint32_t nt_signature = 0;
+            f.read(reinterpret_cast<char*>(&nt_signature), sizeof(nt_signature));
+            if (!f || nt_signature != PENTHeaders_t<std::uint32_t>::k_Signature)
+            {
+                return std::make_error_code(std::errc::executable_format_error);
+            }
+
+            PEFileHeader_t file_header{};
+            f.read(reinterpret_cast<char*>(&file_header), sizeof(file_header));
+            if (!f)
+            {
+                return std::make_error_code(std::errc::executable_format_error);
+            }
+
+            uint16_t magic = 0;
+            f.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+            if (!f)
+            {
+                return std::make_error_code(std::errc::executable_format_error);
+            }
+
+            if (magic == PEOptionalHeader_t<std::uint32_t>::k_Magic)
+            {
+                return pe_arch::pe32;
+            }
+            if (magic == PEOptionalHeader_t<std::uint64_t>::k_Magic)
+            {
+                return pe_arch::pe64;
+            }
+
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        inline std::variant<pe_arch, std::error_code> get_pe_arch(uint64_t base_address, uint64_t image_size)
+        {
+            const auto* base = reinterpret_cast<const std::byte*>(reinterpret_cast<const void*>(static_cast<uintptr_t>(base_address)));
+            const uint64_t size = image_size;
+
+            auto read = [&](uint64_t off, void* dst, size_t n) -> bool {
+                if (off > size)
+                {
+                    return false;
+                }
+                if (n > size - off)
+                {
+                    return false;
+                }
+                memcpy(dst, base + off, n);
+                return true;
+            };
+
+            PEDosHeader_t dos{};
+            if (!read(0, &dos, sizeof(dos)) || dos.e_magic != PEDosHeader_t::k_Magic)
+            {
+                return std::make_error_code(std::errc::executable_format_error);
+            }
+
+            const auto nt_off = static_cast<uint64_t>(dos.e_lfanew);
+            uint32_t nt_signature = 0;
+            if (!read(nt_off, &nt_signature, sizeof(nt_signature)) || nt_signature != PENTHeaders_t<std::uint32_t>::k_Signature)
+            {
+                return std::make_error_code(std::errc::executable_format_error);
+            }
+
+            PEFileHeader_t file_header{};
+            const uint64_t fh_off = nt_off + sizeof(nt_signature);
+            if (!read(fh_off, &file_header, sizeof(file_header)))
+            {
+                return std::make_error_code(std::errc::executable_format_error);
+            }
+
+            uint16_t magic = 0;
+            const uint64_t opt_magic_off = fh_off + sizeof(file_header);
+            if (!read(opt_magic_off, &magic, sizeof(magic)))
+            {
+                return std::make_error_code(std::errc::executable_format_error);
+            }
+
+            if (magic == PEOptionalHeader_t<std::uint32_t>::k_Magic)
+            {
+                return pe_arch::pe32;
+            }
+            if (magic == PEOptionalHeader_t<std::uint64_t>::k_Magic)
+            {
+                return pe_arch::pe64;
+            }
+
+            return std::make_error_code(std::errc::executable_format_error);
+        }
+
+        template <typename T>
+        inline bool parse_pe_headers(const std::vector<std::byte>& file_data, pe_image_basic_info& info)
+        {
+            if (file_data.size() < sizeof(PEDosHeader_t))
+            {
+                return false;
+            }
+
+            const auto* dos_header = reinterpret_cast<const PEDosHeader_t*>(file_data.data());
+            if (dos_header->e_magic != PEDosHeader_t::k_Magic)
+            {
+                return false;
+            }
+
+            if (file_data.size() < dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t) + sizeof(uint16_t))
+            {
+                return false;
+            }
+
+            const auto* magic_ptr =
+                reinterpret_cast<const uint16_t*>(file_data.data() + dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t));
+            const uint16_t magic = *magic_ptr;
+
+            constexpr uint16_t expected_magic = (sizeof(T) == sizeof(uint32_t))
+                                                    ? static_cast<uint16_t>(PEOptionalHeader_t<std::uint32_t>::k_Magic)
+                                                    : static_cast<uint16_t>(PEOptionalHeader_t<std::uint64_t>::k_Magic);
+
+            if (magic != expected_magic)
+            {
+                return false;
+            }
+
+            if (file_data.size() < dos_header->e_lfanew + sizeof(PENTHeaders_t<T>))
+            {
+                return false;
+            }
+
+            const auto* nt_headers = reinterpret_cast<const PENTHeaders_t<T>*>(file_data.data() + dos_header->e_lfanew);
+            if (nt_headers->Signature != PENTHeaders_t<T>::k_Signature)
+            {
+                return false;
+            }
+
+            const auto& file_header = nt_headers->FileHeader;
+            const auto& optional_header = nt_headers->OptionalHeader;
+
+            info.machine = static_cast<uint16_t>(file_header.Machine);
+            info.image_characteristics = file_header.Characteristics;
+
+            info.entry_point_rva = optional_header.AddressOfEntryPoint;
+            info.image_base = optional_header.ImageBase;
+            info.subsystem = optional_header.Subsystem;
+            info.subsystem_major_version = optional_header.MajorSubsystemVersion;
+            info.subsystem_minor_version = optional_header.MinorSubsystemVersion;
+            info.dll_characteristics = optional_header.DllCharacteristics;
+            info.size_of_stack_reserve = optional_header.SizeOfStackReserve;
+            info.size_of_stack_commit = optional_header.SizeOfStackCommit;
+            info.size_of_code = optional_header.SizeOfCode;
+            info.loader_flags = optional_header.LoaderFlags;
+            info.checksum = optional_header.CheckSum;
+
+            info.has_code = (optional_header.SizeOfCode > 0) || (optional_header.AddressOfEntryPoint != 0);
+
+            const auto sections_offset =
+                dos_header->e_lfanew + sizeof(uint32_t) + sizeof(PEFileHeader_t) + file_header.SizeOfOptionalHeader;
+            if (file_data.size() >= sections_offset + sizeof(IMAGE_SECTION_HEADER) * file_header.NumberOfSections)
+            {
+                const auto* sections = reinterpret_cast<const IMAGE_SECTION_HEADER*>(file_data.data() + sections_offset);
+                for (uint16_t i = 0; i < file_header.NumberOfSections; ++i)
+                {
+                    if (sections[i].Characteristics & IMAGE_SCN_CNT_CODE)
+                    {
+                        info.has_code = true;
+                        break;
+                    }
+                }
+            }
+
+            return true;
+        }
+    }
+
+    // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
+} // namespace sogen

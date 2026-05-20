@@ -1,7 +1,7 @@
 #include "random_generator.hpp"
 #include <cstring>
 
-namespace fuzzer
+namespace sogen::fuzzer
 {
     random_generator::random_generator()
         : rng_(std::random_device()())
@@ -32,4 +32,4 @@ namespace fuzzer
             i += data_to_fill;
         }
     }
-}
+} // namespace sogen::fuzzer

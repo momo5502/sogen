@@ -21,47 +21,52 @@ X. x86_emulator<Traits>:   x86_emulator<Traits> are specialisations for
 #include "typed_emulator.hpp"
 #include "x86_register.hpp"
 
-// --[Core]--------------------------------------------------------------------------
-
-template <typename Traits>
-struct arch_emulator : typed_emulator<Traits>
+namespace sogen
 {
-};
 
-template <typename Traits>
-struct x86_emulator : arch_emulator<Traits>
-{
-    using register_type = typename Traits::register_type;
-    using pointer_type = typename Traits::pointer_type;
+    // --[Core]--------------------------------------------------------------------------
 
-    virtual void set_segment_base(register_type base, pointer_type value) = 0;
-    virtual pointer_type get_segment_base(register_type base) = 0;
-    virtual void load_gdt(pointer_type address, uint32_t limit) = 0;
-};
+    template <typename Traits>
+    struct arch_emulator : typed_emulator<Traits>
+    {
+    };
 
-template <typename Traits>
-struct arm_emulator : arch_emulator<Traits>
-{
-};
+    template <typename Traits>
+    struct x86_emulator : arch_emulator<Traits>
+    {
+        using register_type = typename Traits::register_type;
+        using pointer_type = typename Traits::pointer_type;
 
-enum class x86_hookable_instructions
-{
-    invalid, // TODO: Get rid of that
-    syscall,
-    cpuid,
-    rdtsc,
-    rdtscp,
-};
+        virtual void set_segment_base(register_type base, pointer_type value) = 0;
+        virtual pointer_type get_segment_base(register_type base) = 0;
+        virtual void load_gdt(pointer_type address, uint32_t limit) = 0;
+    };
 
-// --[x86_64]-------------------------------------------------------------------------
+    template <typename Traits>
+    struct arm_emulator : arch_emulator<Traits>
+    {
+    };
 
-struct x86_64_traits
-{
-    using pointer_type = uint64_t;
-    using register_type = x86_register;
-    static constexpr register_type instruction_pointer = x86_register::rip;
-    static constexpr register_type stack_pointer = x86_register::rsp;
-    using hookable_instructions = x86_hookable_instructions;
-};
+    enum class x86_hookable_instructions
+    {
+        invalid, // TODO: Get rid of that
+        syscall,
+        cpuid,
+        rdtsc,
+        rdtscp,
+    };
 
-using x86_64_emulator = x86_emulator<x86_64_traits>;
+    // --[x86_64]-------------------------------------------------------------------------
+
+    struct x86_64_traits
+    {
+        using pointer_type = uint64_t;
+        using register_type = x86_register;
+        static constexpr register_type instruction_pointer = x86_register::rip;
+        static constexpr register_type stack_pointer = x86_register::rsp;
+        using hookable_instructions = x86_hookable_instructions;
+    };
+
+    using x86_64_emulator = x86_emulator<x86_64_traits>;
+
+} // namespace sogen

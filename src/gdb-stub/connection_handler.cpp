@@ -6,7 +6,7 @@
 
 using namespace std::literals;
 
-namespace gdb_stub
+namespace sogen::gdb_stub
 {
     namespace
     {
@@ -190,4 +190,4 @@ namespace gdb_stub
             (void)this->client_.send(data);
         }
     }
-}
+} // namespace sogen::gdb_stub

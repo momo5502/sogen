@@ -20,7 +20,7 @@
 #include <utils/object.hpp>
 #include <utils/cpu_features.hpp>
 
-namespace whp
+namespace sogen::whp
 {
     namespace
     {
@@ -3220,4 +3220,4 @@ namespace whp
     {
         return std::make_unique<whp_x86_64_emulator>();
     }
-}
+} // namespace sogen::whp

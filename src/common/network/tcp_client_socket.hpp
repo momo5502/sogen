@@ -4,7 +4,7 @@
 
 #include <string_view>
 
-namespace network
+namespace sogen::network
 {
     class tcp_server_socket;
 

@@ -1,6 +1,6 @@
 #include "tcp_server_socket.hpp"
 
-namespace network
+namespace sogen::network
 {
     tcp_server_socket::tcp_server_socket(const int af)
         : socket(af, SOCK_STREAM, IPPROTO_TCP)

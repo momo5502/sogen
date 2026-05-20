@@ -1,6 +1,6 @@
 #include "emulation_test_utils.hpp"
 
-namespace test
+namespace sogen::test
 {
     TEST(TimeTest, SystemTimeIsAccurate)
     {
@@ -41,4 +41,4 @@ namespace test
 
         ASSERT_LE(diff, std::chrono::hours(1));
     }
-}
+} // namespace sogen::test

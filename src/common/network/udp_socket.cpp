@@ -1,7 +1,7 @@
 #include "udp_socket.hpp"
 #include <array>
 
-namespace network
+namespace sogen::network
 {
     udp_socket::udp_socket(const int af)
         : socket(af, SOCK_DGRAM, IPPROTO_UDP)

@@ -1,89 +1,94 @@
 #pragma once
 #include "emulator.hpp"
 
-class scoped_hook
+namespace sogen
 {
-  public:
-    scoped_hook() = default;
 
-    scoped_hook(emulator& emu)
-        : emu_(&emu)
+    class scoped_hook
     {
-    }
+      public:
+        scoped_hook() = default;
 
-    scoped_hook(emulator& emu, emulator_hook* hook)
-        : scoped_hook(emu, std::vector{hook})
-    {
-    }
+        scoped_hook(emulator& emu)
+            : emu_(&emu)
+        {
+        }
 
-    scoped_hook(emulator& emu, std::vector<emulator_hook*> hooks)
-        : emu_(&emu),
-          hooks_(std::move(hooks))
-    {
-    }
+        scoped_hook(emulator& emu, emulator_hook* hook)
+            : scoped_hook(emu, std::vector{hook})
+        {
+        }
 
-    ~scoped_hook()
-    {
-        this->remove();
-    }
+        scoped_hook(emulator& emu, std::vector<emulator_hook*> hooks)
+            : emu_(&emu),
+              hooks_(std::move(hooks))
+        {
+        }
 
-    scoped_hook(const scoped_hook&) = delete;
-    scoped_hook& operator=(const scoped_hook&) = delete;
-
-    scoped_hook(scoped_hook&& obj) noexcept
-    {
-        this->operator=(std::move(obj));
-    }
-
-    scoped_hook& operator=(scoped_hook&& obj) noexcept
-    {
-        if (this != &obj)
+        ~scoped_hook()
         {
             this->remove();
-            this->emu_ = obj.emu_;
-            this->hooks_ = std::move(obj.hooks_);
-
-            obj.hooks_ = {};
         }
 
-        return *this;
-    }
+        scoped_hook(const scoped_hook&) = delete;
+        scoped_hook& operator=(const scoped_hook&) = delete;
 
-    scoped_hook& operator=(emulator_hook* hook)
-    {
-        this->replace({hook});
-        return *this;
-    }
-
-    void replace(std::vector<emulator_hook*> hooks)
-    {
-        if (!this->emu_)
+        scoped_hook(scoped_hook&& obj) noexcept
         {
-            throw std::runtime_error("Invalid scoped hook");
+            this->operator=(std::move(obj));
         }
 
-        this->remove();
-        this->hooks_ = std::move(hooks);
-    }
-
-    void remove()
-    {
-        auto hooks = std::move(this->hooks_);
-        this->hooks_ = {};
-
-        for (auto* hook : hooks)
+        scoped_hook& operator=(scoped_hook&& obj) noexcept
         {
-            try
+            if (this != &obj)
             {
-                this->emu_->delete_hook(hook);
+                this->remove();
+                this->emu_ = obj.emu_;
+                this->hooks_ = std::move(obj.hooks_);
+
+                obj.hooks_ = {};
             }
-            catch (...)
+
+            return *this;
+        }
+
+        scoped_hook& operator=(emulator_hook* hook)
+        {
+            this->replace({hook});
+            return *this;
+        }
+
+        void replace(std::vector<emulator_hook*> hooks)
+        {
+            if (!this->emu_)
             {
+                throw std::runtime_error("Invalid scoped hook");
+            }
+
+            this->remove();
+            this->hooks_ = std::move(hooks);
+        }
+
+        void remove()
+        {
+            auto hooks = std::move(this->hooks_);
+            this->hooks_ = {};
+
+            for (auto* hook : hooks)
+            {
+                try
+                {
+                    this->emu_->delete_hook(hook);
+                }
+                catch (...)
+                {
+                }
             }
         }
-    }
 
-  private:
-    emulator* emu_{};
-    std::vector<emulator_hook*> hooks_{};
-};
+      private:
+        emulator* emu_{};
+        std::vector<emulator_hook*> hooks_{};
+    };
+
+} // namespace sogen

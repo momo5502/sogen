@@ -12,7 +12,7 @@
 
 using namespace std::literals;
 
-namespace gdb_stub
+namespace sogen::gdb_stub
 {
     namespace
     {
@@ -1090,4 +1090,4 @@ namespace gdb_stub
 
         return true;
     }
-}
+} // namespace sogen::gdb_stub

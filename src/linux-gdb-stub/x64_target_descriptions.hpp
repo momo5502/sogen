@@ -3,10 +3,13 @@
 #include <map>
 #include <string>
 
-inline std::map<std::string, std::string, std::less<>> x64_target_descriptions{
-    {
-        "target.xml",
-        R"__xml__(<?xml version="1.0"?>
+namespace sogen
+{
+
+    inline std::map<std::string, std::string, std::less<>> x64_target_descriptions{
+        {
+            "target.xml",
+            R"__xml__(<?xml version="1.0"?>
 <!-- Copyright (C) 2010-2018 Free Software Foundation, Inc.
 
      Copying and distribution of this file, with or without modification,
@@ -24,10 +27,10 @@ inline std::map<std::string, std::string, std::less<>> x64_target_descriptions{
   <xi:include href="64bit-avx.xml"/>
 </target>
 )__xml__",
-    },
-    {
-        "64bit-core.xml",
-        R"__xml__(<?xml version="1.0"?>
+        },
+        {
+            "64bit-core.xml",
+            R"__xml__(<?xml version="1.0"?>
 <!-- Copyright (C) 2010-2018 Free Software Foundation, Inc.
 
      Copying and distribution of this file, with or without modification,
@@ -101,10 +104,10 @@ inline std::map<std::string, std::string, std::less<>> x64_target_descriptions{
   <reg name="fop" bitsize="32" type="int" group="float"/>
 </feature>
 )__xml__",
-    },
-    {
-        "64bit-sse.xml",
-        R"__xml__(<?xml version="1.0"?>
+        },
+        {
+            "64bit-sse.xml",
+            R"__xml__(<?xml version="1.0"?>
 <!-- Copyright (C) 2010-2018 Free Software Foundation, Inc.
 
      Copying and distribution of this file, with or without modification,
@@ -165,10 +168,10 @@ inline std::map<std::string, std::string, std::less<>> x64_target_descriptions{
   <reg name="mxcsr" bitsize="32" type="i386_mxcsr" group="vector"/>
 </feature>
 )__xml__",
-    },
-    {
-        "64bit-segments.xml",
-        R"__xml__(<?xml version="1.0"?>
+        },
+        {
+            "64bit-segments.xml",
+            R"__xml__(<?xml version="1.0"?>
 <!-- Copyright (C) 2016-2018 Free Software Foundation, Inc.
 
      Copying and distribution of this file, with or without modification,
@@ -181,10 +184,10 @@ inline std::map<std::string, std::string, std::less<>> x64_target_descriptions{
   <reg name="gs_base" bitsize="64" type="int"/>
 </feature>
 )__xml__",
-    },
-    {
-        "64bit-avx.xml",
-        R"__xml__(<?xml version="1.0"?>
+        },
+        {
+            "64bit-avx.xml",
+            R"__xml__(<?xml version="1.0"?>
 <!-- Copyright (C) 2010-2018 Free Software Foundation, Inc.
 
      Copying and distribution of this file, with or without modification,
@@ -211,5 +214,7 @@ inline std::map<std::string, std::string, std::less<>> x64_target_descriptions{
   <reg name="ymm15h" bitsize="128" type="uint128"/>
 </feature>
 )__xml__",
-    },
-};
+        },
+    };
+
+} // namespace sogen

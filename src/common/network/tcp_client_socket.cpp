@@ -3,7 +3,7 @@
 #include <array>
 #include <cassert>
 
-namespace network
+namespace sogen::network
 {
     tcp_client_socket::tcp_client_socket(const int af)
         : socket(af, SOCK_STREAM, IPPROTO_TCP)
@@ -104,5 +104,4 @@ namespace network
             socket::close();
         }
     }
-
 }

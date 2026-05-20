@@ -9,80 +9,84 @@
 #include <csignal>
 #endif
 
-namespace utils
+namespace sogen
 {
-    namespace
+
+    namespace utils
     {
-        struct signal_data
+        namespace
         {
-            std::atomic_bool installed{false};
-            std::function<void()> handler{};
-        };
-
-        signal_data& get_signal_data()
-        {
-            static signal_data data{};
-            return data;
-        }
-
-#ifdef _WIN32
-        BOOL WINAPI handler(const DWORD signal)
-        {
-            const auto& data = get_signal_data();
-
-            if (signal == CTRL_C_EVENT && data.handler)
+            struct signal_data
             {
-                data.handler();
+                std::atomic_bool installed{false};
+                std::function<void()> handler{};
+            };
+
+            signal_data& get_signal_data()
+            {
+                static signal_data data{};
+                return data;
             }
 
-            return TRUE;
-        }
-
-#else
-        void handler(int signal)
-        {
-            const auto& data = get_signal_data();
-
-            if (signal == SIGINT && data.handler)
+#ifdef _WIN32
+            BOOL WINAPI handler(const DWORD signal)
             {
-                data.handler();
+                const auto& data = get_signal_data();
+
+                if (signal == CTRL_C_EVENT && data.handler)
+                {
+                    data.handler();
+                }
+
+                return TRUE;
             }
-        }
+
+#else
+            void handler(int signal)
+            {
+                const auto& data = get_signal_data();
+
+                if (signal == SIGINT && data.handler)
+                {
+                    data.handler();
+                }
+            }
 #endif
-    }
+        }
 
-    interupt_handler::interupt_handler(std::function<void()> callback)
-    {
-        auto& data = get_signal_data();
-
-        bool value{false};
-        if (!data.installed.compare_exchange_strong(value, true))
+        interupt_handler::interupt_handler(std::function<void()> callback)
         {
-            throw std::runtime_error("Global signal handler already installed");
+            auto& data = get_signal_data();
+
+            bool value{false};
+            if (!data.installed.compare_exchange_strong(value, true))
+            {
+                throw std::runtime_error("Global signal handler already installed");
+            }
+
+            data.handler = std::move(callback);
+
+#ifdef _WIN32
+            SetConsoleCtrlHandler(handler, TRUE);
+#else
+            signal(SIGINT, handler);
+#endif
         }
 
-        data.handler = std::move(callback);
-
+        interupt_handler::~interupt_handler()
+        {
 #ifdef _WIN32
-        SetConsoleCtrlHandler(handler, TRUE);
+            SetConsoleCtrlHandler(handler, FALSE);
 #else
-        signal(SIGINT, handler);
-#endif
-    }
-
-    interupt_handler::~interupt_handler()
-    {
-#ifdef _WIN32
-        SetConsoleCtrlHandler(handler, FALSE);
-#else
-        signal(SIGINT, SIG_DFL);
+            signal(SIGINT, SIG_DFL);
 #endif
 
-        std::this_thread::yield();
+            std::this_thread::yield();
 
-        auto& data = get_signal_data();
+            auto& data = get_signal_data();
 
-        data.handler = {};
-        data.installed = false;
+            data.handler = {};
+            data.installed = false;
+        }
     }
-}
+} // namespace sogen
