@@ -32,26 +32,31 @@
 
 #define IOCTL_MOUNTDEV_QUERY_DEVICE_NAME CTL_CODE(MOUNTDEVCONTROLTYPE, 2, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
-typedef struct _MOUNTMGR_MOUNT_POINT
+namespace sogen
 {
-    ULONG SymbolicLinkNameOffset;
-    USHORT SymbolicLinkNameLength;
-    ULONG UniqueIdOffset;
-    USHORT UniqueIdLength;
-    ULONG DeviceNameOffset;
-    USHORT DeviceNameLength;
-} MOUNTMGR_MOUNT_POINT, *PMOUNTMGR_MOUNT_POINT;
 
-//
-// Output structure for IOCTL_MOUNTMGR_DELETE_POINTS,
-// IOCTL_MOUNTMGR_QUERY_POINTS, and IOCTL_MOUNTMGR_DELETE_POINTS_DBONLY.
-//
+    typedef struct _MOUNTMGR_MOUNT_POINT
+    {
+        ULONG SymbolicLinkNameOffset;
+        USHORT SymbolicLinkNameLength;
+        ULONG UniqueIdOffset;
+        USHORT UniqueIdLength;
+        ULONG DeviceNameOffset;
+        USHORT DeviceNameLength;
+    } MOUNTMGR_MOUNT_POINT, *PMOUNTMGR_MOUNT_POINT;
 
-typedef struct _MOUNTMGR_MOUNT_POINTS
-{
-    ULONG Size;
-    ULONG NumberOfMountPoints;
-    MOUNTMGR_MOUNT_POINT MountPoints[1];
-} MOUNTMGR_MOUNT_POINTS, *PMOUNTMGR_MOUNT_POINTS;
+    //
+    // Output structure for IOCTL_MOUNTMGR_DELETE_POINTS,
+    // IOCTL_MOUNTMGR_QUERY_POINTS, and IOCTL_MOUNTMGR_DELETE_POINTS_DBONLY.
+    //
 
-// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
+    typedef struct _MOUNTMGR_MOUNT_POINTS
+    {
+        ULONG Size;
+        ULONG NumberOfMountPoints;
+        MOUNTMGR_MOUNT_POINT MountPoints[1];
+    } MOUNTMGR_MOUNT_POINTS, *PMOUNTMGR_MOUNT_POINTS;
+
+    // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
+
+} // namespace sogen

@@ -8,9 +8,9 @@ list(SORT SRC_FILES)
 
 add_executable(fuzzer ${SRC_FILES})
 
-momo_assign_source_group(${SRC_FILES})
+sogen_assign_source_group(${SRC_FILES})
 
-if(NOT MOMO_ENABLE_CLANG_TIDY)
+if(NOT SOGEN_ENABLE_CLANG_TIDY)
   target_precompile_headers(fuzzer PRIVATE std_include.hpp)
 endif()
 
@@ -19,10 +19,10 @@ target_link_libraries(fuzzer PRIVATE
   windows-emulator
 )
 
-if (MOMO_ENABLE_RUST)
+if (SOGEN_ENABLE_RUST)
   target_link_libraries(fuzzer PRIVATE
     icicle-emulator
   )
 endif()
 
-momo_strip_target(fuzzer)
+sogen_strip_target(fuzzer)

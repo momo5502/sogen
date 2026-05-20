@@ -24,7 +24,7 @@
 
 #include "event_handler.hpp"
 
-namespace debugger
+namespace sogen::debugger
 {
     enum class breakpoint_type : uint8_t
     {
@@ -136,4 +136,4 @@ namespace debugger
         windows_emulator* emu_{};
         std::unique_ptr<impl> impl_; // breakpoint set + persistent control hook
     };
-}
+} // namespace sogen::debugger

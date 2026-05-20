@@ -10,7 +10,7 @@
 
 #include "function_wrapper.hpp"
 
-namespace unicorn
+namespace sogen::unicorn
 {
     namespace
     {
@@ -749,4 +749,4 @@ namespace unicorn
     {
         return std::make_unique<unicorn_x86_64_emulator>();
     }
-}
+} // namespace sogen::unicorn

@@ -1,4 +1,9 @@
 #pragma once
 #include "../port.hpp"
 
-std::unique_ptr<port> create_dns_resolver();
+namespace sogen
+{
+
+    std::unique_ptr<port> create_dns_resolver();
+
+} // namespace sogen

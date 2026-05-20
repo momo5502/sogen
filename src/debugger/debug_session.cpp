@@ -14,7 +14,7 @@
 // methods are defined as documented no-ops so the class stays complete and
 // linkable, and the protocol layer can already advertise them.
 
-namespace debugger
+namespace sogen::debugger
 {
     struct debug_session::impl
     {
@@ -36,7 +36,7 @@ namespace debugger
         this->impl_->control_hook = scoped_hook(cpu, cpu.hook_memory_execution([this](const uint64_t address) {
             if (this->should_break(address))
             {
-                debugger::enter_breakpoint(*this->emu_, address);
+                enter_breakpoint(*this->emu_, address);
             }
         }));
     }
@@ -45,7 +45,7 @@ namespace debugger
 
     bool debug_session::should_break(const uint64_t address) const
     {
-        return this->impl_->breakpoint_addrs.contains(address) || debugger::step_should_break(address);
+        return this->impl_->breakpoint_addrs.contains(address) || step_should_break(address);
     }
 
     // --- breakpoints (just a set; the persistent control hook does the work) ---
@@ -86,20 +86,20 @@ namespace debugger
         switch (kind)
         {
         case step_kind::into:
-            debugger::request_resume(step_request::into);
+            request_resume(step_request::into);
             break;
         case step_kind::over:
-            debugger::request_resume(step_request::over);
+            request_resume(step_request::over);
             break;
         case step_kind::out:
-            debugger::request_resume(step_request::step_out);
+            request_resume(step_request::step_out);
             break;
         }
     }
 
     void debug_session::run_to(const uint64_t address)
     {
-        debugger::request_resume(step_request::cont, address);
+        request_resume(step_request::cont, address);
     }
 
     // --- read-only introspection ---
@@ -303,4 +303,4 @@ namespace debugger
 
         return frames;
     }
-}
+} // namespace sogen::debugger

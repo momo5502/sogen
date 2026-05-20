@@ -1,6 +1,6 @@
 #include "emulation_test_utils.hpp"
 
-namespace test
+namespace sogen::test
 {
     TEST(EmulationTest, BasicEmulationWorks)
     {
@@ -44,4 +44,4 @@ namespace test
         ASSERT_TERMINATED_SUCCESSFULLY(new_emu);
         ASSERT_EQ(new_emu.get_executed_instructions(), executedInstructions);
     }
-}
+} // namespace sogen::test

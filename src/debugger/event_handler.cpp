@@ -24,7 +24,7 @@
 #pragma warning(pop)
 #endif
 
-namespace debugger
+namespace sogen::debugger
 {
     namespace
     {
@@ -697,7 +697,7 @@ namespace debugger
                 }
                 else
                 {
-                    debugger::request_resume(step_request::into);
+                    request_resume(step_request::into);
                 }
                 json = "{}";
                 break;
@@ -709,7 +709,7 @@ namespace debugger
                 }
                 else
                 {
-                    debugger::request_resume(step_request::over);
+                    request_resume(step_request::over);
                 }
                 json = "{}";
                 break;
@@ -721,7 +721,7 @@ namespace debugger
                 }
                 else
                 {
-                    debugger::request_resume(step_request::step_out);
+                    request_resume(step_request::step_out);
                 }
                 json = "{}";
                 break;
@@ -739,7 +739,7 @@ namespace debugger
                 }
                 else
                 {
-                    debugger::request_resume(step_request::cont, address);
+                    request_resume(step_request::cont, address);
                 }
                 json = "{}";
                 break;
@@ -752,7 +752,7 @@ namespace debugger
                 }
                 else
                 {
-                    debugger::request_resume(step_request::cont);
+                    request_resume(step_request::cont);
                 }
                 json = "{}";
                 break;
@@ -777,7 +777,7 @@ namespace debugger
 
             case Debugger::Event_RunRequest:
                 c.state = emulation_state::running;
-                debugger::request_resume(step_request::cont);
+                request_resume(step_request::cont);
                 break;
 
             case Debugger::Event_GetStateRequest:
@@ -997,4 +997,4 @@ namespace debugger
         running.state = Debugger::State_Running;
         send_event(running);
     }
-}
+} // namespace sogen::debugger

@@ -8,7 +8,7 @@ list(SORT SRC_FILES)
 
 add_library(windows-gdb-stub ${SRC_FILES})
 
-momo_assign_source_group(${SRC_FILES})
+sogen_assign_source_group(${SRC_FILES})
 
 target_link_libraries(windows-gdb-stub PUBLIC
   gdb-stub
@@ -17,4 +17,4 @@ target_link_libraries(windows-gdb-stub PUBLIC
 
 target_include_directories(windows-gdb-stub INTERFACE "${CMAKE_CURRENT_LIST_DIR}")
 
-momo_strip_target(windows-gdb-stub)
+sogen_strip_target(windows-gdb-stub)

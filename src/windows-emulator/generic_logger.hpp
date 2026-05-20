@@ -7,22 +7,27 @@
 #define FORMAT_ATTRIBUTE(fmt_pos, var_pos)
 #endif
 
-enum class color
+namespace sogen
 {
-    black,
-    red,
-    green,
-    yellow,
-    blue,
-    cyan,
-    pink,
-    white,
-    gray,
-    dark_gray,
-};
 
-struct generic_logger : utils::object
-{
-    virtual void print(color c, std::string_view message) = 0;
-    virtual void print(color c, const char* message, ...) FORMAT_ATTRIBUTE(3, 4) = 0;
-};
+    enum class color
+    {
+        black,
+        red,
+        green,
+        yellow,
+        blue,
+        cyan,
+        pink,
+        white,
+        gray,
+        dark_gray,
+    };
+
+    struct generic_logger : utils::object
+    {
+        virtual void print(color c, std::string_view message) = 0;
+        virtual void print(color c, const char* message, ...) FORMAT_ATTRIBUTE(3, 4) = 0;
+    };
+
+} // namespace sogen

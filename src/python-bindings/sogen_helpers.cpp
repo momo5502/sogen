@@ -1,6 +1,6 @@
 #include "sogen_internal.hpp"
 
-namespace sogen_py
+namespace sogen::py
 {
     std::string stop_reason_to_string(const stop_reason reason)
     {

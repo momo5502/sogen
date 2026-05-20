@@ -36,14 +36,46 @@
                 "CMAKE_BUILD_TYPE": "Debug"
             }
         },
-		{
+        {
             "name": "tidy",
             "inherits": [
                 "release"
             ],
             "cacheVariables": {
-                "MOMO_ENABLE_CLANG_TIDY": "ON",
+                "SOGEN_ENABLE_CLANG_TIDY": "ON",
                 "SOGEN_ENABLE_PYTHON_BINDINGS": "ON"
+            }
+        },
+        {
+            "name": "emscripten-base",
+            "hidden": true,
+            "inherits": [
+                "ninja"
+            ],
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_TOOLCHAIN_FILE": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+                "SOGEN_ENABLE_RUST_CODE": "OFF"
+            },
+            "environment": {
+                "EMSDK_QUIET": "1"
+            }
+        },
+        {
+            "name": "emscripten32",
+            "inherits": [
+                "emscripten-base"
+            ],
+            "binaryDir": "${sourceDir}/build/emscripten32"
+        },
+        {
+            "name": "emscripten64",
+            "inherits": [
+                "emscripten-base"
+            ],
+            "binaryDir": "${sourceDir}/build/emscripten64",
+            "cacheVariables": {
+                "SOGEN_EMSCRIPTEN_MEMORY64": "ON"
             }
         },
         {
@@ -69,6 +101,22 @@
         {
             "name": "tidy",
             "configurePreset": "tidy"
+        },
+        {
+            "name": "emscripten32",
+            "configurePreset": "emscripten32",
+            "targets": [
+                "analyzer",
+                "linux-analyzer"
+            ]
+        },
+        {
+            "name": "emscripten64",
+            "configurePreset": "emscripten64",
+            "targets": [
+                "analyzer",
+                "linux-analyzer"
+            ]
         }
     ],
     "workflowPresets": [
@@ -98,7 +146,7 @@
                 }
             ]
         },
-		{
+        {
             "name": "tidy",
             "steps": [
                 {
@@ -108,6 +156,32 @@
                 {
                     "type": "build",
                     "name": "tidy"
+                }
+            ]
+        },
+        {
+            "name": "emscripten32",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "emscripten32"
+                },
+                {
+                    "type": "build",
+                    "name": "emscripten32"
+                }
+            ]
+        },
+        {
+            "name": "emscripten64",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "emscripten64"
+                },
+                {
+                    "type": "build",
+                    "name": "emscripten64"
                 }
             ]
         }

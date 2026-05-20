@@ -1,6 +1,6 @@
 #include "emulation_test_utils.hpp"
 
-namespace test
+namespace sogen::test
 {
     TEST(SerializationTest, ResettingEmulatorWorks)
     {
@@ -101,4 +101,4 @@ namespace test
 
         ASSERT_EQ(serializer1.get_buffer(), serializer2.get_buffer());
     }
-}
+} // namespace sogen::test

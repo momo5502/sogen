@@ -1,6 +1,6 @@
 #include "sogen_internal.hpp"
 
-namespace sogen_py
+namespace sogen::py
 {
     // ----- hook_registry -----
 
@@ -84,7 +84,7 @@ namespace sogen_py
 
     hook_handle hook_registry::basic_block(nb::object callback)
     {
-        auto* hook = this->emu->emu().hook_basic_block([cb = std::move(callback)](const ::basic_block& block) {
+        auto* hook = this->emu->emu().hook_basic_block([cb = std::move(callback)](const sogen::basic_block& block) {
             nb::gil_scoped_acquire gil{};
             cb(block);
         });

@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <functional>
 
-namespace fuzzer
+namespace sogen::fuzzer
 {
     using coverage_functor = void(uint64_t address);
 
@@ -35,4 +35,4 @@ namespace fuzzer
     };
 
     void run(fuzzing_handler& handler, size_t concurrency = std::thread::hardware_concurrency());
-}
+} // namespace sogen::fuzzer

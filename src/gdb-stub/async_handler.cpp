@@ -4,7 +4,7 @@
 
 using namespace std::chrono_literals;
 
-namespace gdb_stub
+namespace sogen::gdb_stub
 {
     async_handler::async_handler(handler_function h)
         : handler_(std::move(h))
@@ -79,4 +79,4 @@ namespace gdb_stub
             this->handler_(this->run_);
         }
     }
-}
+} // namespace sogen::gdb_stub

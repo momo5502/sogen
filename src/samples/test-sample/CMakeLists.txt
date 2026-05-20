@@ -12,4 +12,4 @@ if(WIN)
   target_link_libraries(test-sample PRIVATE dnsapi ws2_32 winmm)
 endif()
 
-momo_assign_source_group(${SRC_FILES})
+sogen_assign_source_group(${SRC_FILES})

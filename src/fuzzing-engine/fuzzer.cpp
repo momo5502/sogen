@@ -7,7 +7,7 @@
 #include <utils/string.hpp>
 #include <utils/finally.hpp>
 
-namespace fuzzer
+namespace sogen::fuzzer
 {
     namespace
     {
@@ -83,7 +83,7 @@ namespace fuzzer
                 }
 
                 const auto in = input[i];
-                bytes += utils::string::va("%02X ", static_cast<uint32_t>(in));
+                bytes += sogen::utils::string::va("%02X ", static_cast<uint32_t>(in));
                 text.push_back(isprint(in) ? static_cast<char>(in) : '.');
             }
 
@@ -94,7 +94,7 @@ namespace fuzzer
 
         void print_crash(const std::span<const uint8_t> input)
         {
-            std::string text = utils::string::va("\nFound crash for input (length %zu):\n", input.size());
+            std::string text = sogen::utils::string::va("\nFound crash for input (length %zu):\n", input.size());
             text += format_binary_data(input);
 
             printf("%.*s\n", static_cast<int>(text.size()), text.c_str());
@@ -165,7 +165,7 @@ namespace fuzzer
 
     void run(fuzzing_handler& handler, const size_t concurrency)
     {
-        const utils::timer<> t{};
+        const sogen::utils::timer<> t{};
         input_generator generator{};
         fuzzing_context context{generator, handler};
         worker_pool pool{context, concurrency};
@@ -184,4 +184,4 @@ namespace fuzzer
         const int64_t seconds = std::chrono::duration_cast<std::chrono::seconds>(duration).count();
         printf("Fuzzing stopped after %" PRIi64 "s\n", seconds);
     }
-}
+} // namespace sogen::fuzzer

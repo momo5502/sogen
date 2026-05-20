@@ -7,13 +7,18 @@
 
 #include <network/address.hpp>
 
-namespace network
+namespace sogen
 {
-    struct dns_lookup
-    {
-        dns_lookup();
-        virtual ~dns_lookup() = default;
 
-        virtual std::vector<address> resolve_host(std::string_view hostname, std::optional<int> family = std::nullopt);
-    };
-}
+    namespace network
+    {
+        struct dns_lookup
+        {
+            dns_lookup();
+            virtual ~dns_lookup() = default;
+
+            virtual std::vector<address> resolve_host(std::string_view hostname, std::optional<int> family = std::nullopt);
+        };
+    }
+
+} // namespace sogen

@@ -2,7 +2,7 @@
   <a href="https://github.com/momo5502/sogen"><img src="https://momo5502.com/sogen/banner.png" height="220" alt="Sogen" /></a>
 </p>
 
-Sogen exposes Python bindings for its Windows user-space emulator. The Python API is meant for scripting runs, building small analysis helpers, and quickly iterating on callbacks and hooks without rebuilding C++.
+Sogen exposes Python bindings for its Windows userspace emulator. The Python API is meant for scripting runs, building small analysis helpers, and quickly iterating on callbacks and hooks without rebuilding C++.
 
 Install from PyPI:
 
@@ -39,7 +39,7 @@ emulation_root="./root"
 ```python
 import sogen
 
-app = sogen.create_application(
+app = sogen.windows.create_application(
     "c:/test-sample.exe",
     emulation_root="./root",
 )
@@ -55,7 +55,7 @@ print("exit status:", app.process.exit_status)
 from pathlib import Path
 import sogen
 
-app = sogen.create_application(
+app = sogen.windows.create_application(
     "c:/test-sample.exe",
     emulation_root="./root",
     path_mappings={"c:/a.txt": Path("./a.txt")},
@@ -69,12 +69,12 @@ print("exit status:", app.process.exit_status)
 
 ## Choosing backend
 
-`create_empty()` and `create_application()` accept an explicit backend.
+`sogen.windows.create_empty()` and `sogen.windows.create_application()` accept an explicit backend.
 
 ```python
 import sogen
 
-emu = sogen.create_empty(
+emu = sogen.windows.create_empty(
     emulation_root="./root",
     backend=sogen.Backend.unicorn,
 )
@@ -92,12 +92,17 @@ Default is `sogen.Backend.unicorn`.
 
 Main entry points:
 
+- `sogen.windows.create_empty(...)`
+- `sogen.windows.create_application(...)`
+
+Compatibility aliases currently remain at top level:
+
 - `sogen.create_empty(...)`
 - `sogen.create_application(...)`
 
 Common objects exposed by the bindings:
 
-- `WindowsEmulator`
+- `sogen.windows.Emulator` / `sogen.windows.WindowsEmulator`
 - `ProcessContext`
 - `Thread`
 - `MemoryManager`
@@ -120,7 +125,7 @@ Example: print loaded modules.
 ```python
 import sogen
 
-app = sogen.create_application(
+app = sogen.windows.create_application(
     "c:/test-sample.exe",
     emulation_root="./root",
 )
@@ -146,7 +151,8 @@ Useful callback slots include:
 
 API hooks are registered through `app.hooks.apis`.
 
-Use `@sogen.api_call(...)` to describe calling convention and parameters.
+Use `@sogen.windows.api_call(...)` to describe calling convention and parameters.
+Top-level `sogen.api_call(...)` remains as compatibility alias.
 
 ### Observe API call, then run original
 
@@ -154,13 +160,13 @@ Use `@sogen.api_call(...)` to describe calling convention and parameters.
 import ctypes
 import sogen
 
-app = sogen.create_application(
+app = sogen.windows.create_application(
     "c:/test-sample.exe",
     emulation_root="./root",
 )
 
 
-@sogen.api_call(cc=sogen.CallingConvention.stdcall, params=[ctypes.c_uint32])
+@sogen.windows.api_call(cc=sogen.CallingConvention.stdcall, params=[ctypes.c_uint32])
 def on_sleep(call, params):
     print(f"Sleep({params[0]})")
 
@@ -174,13 +180,13 @@ app.start()
 ```python
 import sogen
 
-app = sogen.create_application(
+app = sogen.windows.create_application(
     "c:/hook-sample.exe",
     emulation_root="./root",
 )
 
 
-@sogen.api_call(cc=sogen.CallingConvention.stdcall, params=[])
+@sogen.windows.api_call(cc=sogen.CallingConvention.stdcall, params=[])
 def on_get_current_process_id(call, params):
     call.return_value = 0xC0FFEE01
     return sogen.ApiContinuation.intercept
@@ -203,7 +209,7 @@ The emulator exposes direct state access.
 ```python
 import sogen
 
-emu = sogen.create_empty(emulation_root="./root")
+emu = sogen.windows.create_empty(emulation_root="./root")
 base = emu.memory.allocate_memory(0x1000, sogen.MemoryPermission.read_write)
 emu.write_memory(base, b"ABCD")
 print(emu.read_memory(base, 4))

@@ -10,7 +10,7 @@
 
 using namespace std::literals;
 
-namespace debugger
+namespace sogen::debugger
 {
     void send_message(const std::string& message)
     {
@@ -73,4 +73,4 @@ namespace debugger
         }
 #endif
     }
-}
+} // namespace sogen::debugger

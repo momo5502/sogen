@@ -2,8 +2,9 @@
 
 #include "sogen_bindings.hpp"
 
-namespace sogen_py
+namespace sogen::py
 {
+
     // RAII wrapper for emulator hooks. Removes the hook on destruction.
     struct hook_handle
     {

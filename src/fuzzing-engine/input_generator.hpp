@@ -6,7 +6,7 @@
 
 #include "random_generator.hpp"
 
-namespace fuzzer
+namespace sogen::fuzzer
 {
     using input_score = uint64_t;
     using input_handler = input_score(std::span<const uint8_t>);
@@ -41,4 +41,4 @@ namespace fuzzer
 
         void store_input_entry(input_entry entry);
     };
-}
+} // namespace sogen::fuzzer

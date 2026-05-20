@@ -3,7 +3,7 @@
 #include <string>
 #include <cstdint>
 
-namespace gdb_stub
+namespace sogen::gdb_stub
 {
     class filesystem_interface
     {
@@ -16,4 +16,4 @@ namespace gdb_stub
         virtual std::string fstat(uint32_t fd) = 0;
         virtual int unlink(const std::string& file_path) = 0;
     };
-}
+} // namespace sogen::gdb_stub

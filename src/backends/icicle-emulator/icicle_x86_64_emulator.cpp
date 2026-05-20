@@ -49,7 +49,7 @@ extern "C"
     void icicle_run_on_next_instruction(icicle_emulator*, raw_func* callback, void* data);
 }
 
-namespace icicle
+namespace sogen::icicle
 {
     namespace
     {
@@ -637,4 +637,4 @@ namespace icicle
     {
         return std::make_unique<icicle_x86_64_emulator>();
     }
-}
+} // namespace sogen::icicle

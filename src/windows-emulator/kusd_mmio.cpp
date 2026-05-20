@@ -7,202 +7,207 @@
 
 #include <address_utils.hpp>
 
-constexpr auto KUSD_ADDRESS = 0x7ffe0000ULL;
-constexpr auto KUSD_SIZE = sizeof(KUSER_SHARED_DATA64);
-constexpr auto KUSD_BUFFER_SIZE = page_align_up(KUSD_SIZE);
-
-namespace
+namespace sogen
 {
-    void setup_kusd(KUSER_SHARED_DATA64& kusd, const windows_version_manager& version, const fake_environment_config& fake_env)
+
+    constexpr auto KUSD_ADDRESS = 0x7ffe0000ULL;
+    constexpr auto KUSD_SIZE = sizeof(KUSER_SHARED_DATA64);
+    constexpr auto KUSD_BUFFER_SIZE = page_align_up(KUSD_SIZE);
+
+    namespace
     {
-        memset(reinterpret_cast<void*>(&kusd), 0, sizeof(kusd));
+        void setup_kusd(KUSER_SHARED_DATA64& kusd, const windows_version_manager& version, const fake_environment_config& fake_env)
+        {
+            memset(reinterpret_cast<void*>(&kusd), 0, sizeof(kusd));
 
-        kusd.TickCountMultiplier = 0x0fa00000;
-        kusd.InterruptTime.LowPart = 0x17bd9547;
-        kusd.InterruptTime.High1Time = 0x0000004b;
-        kusd.InterruptTime.High2Time = 0x0000004b;
-        kusd.SystemTime.LowPart = 0x7af9da99;
-        kusd.SystemTime.High1Time = 0x01db27b9;
-        kusd.SystemTime.High2Time = 0x01db27b9;
-        kusd.TimeZoneBias.LowPart = 0x3c773000;
-        kusd.TimeZoneBias.High1Time = -17;
-        kusd.TimeZoneBias.High2Time = -17;
-        kusd.TimeZoneId = 0x00000002;
-        kusd.LargePageMinimum = 0x00200000;
-        kusd.RNGSeedVersion = 0;
-        kusd.TimeZoneBiasStamp = 0x00000004;
-        kusd.NtBuildNumber = version.get_windows_build_number();
-        kusd.NtProductType = static_cast<NT_PRODUCT_TYPE>(fake_env.nt_product_type);
-        kusd.ProductTypeIsValid = 0x01;
-        kusd.NativeProcessorArchitecture = 0x0009;
-        kusd.NtMajorVersion = version.get_major_version();
-        kusd.NtMinorVersion = version.get_minor_version();
-        kusd.BootId = 0;
-        kusd.SystemExpirationDate.QuadPart = 0;
-        kusd.SuiteMask = 0;
-        kusd.MitigationPolicies.MitigationPolicies = 0x0a;
-        kusd.MitigationPolicies.NXSupportPolicy = 0x02;
-        kusd.MitigationPolicies.SEHValidationPolicy = 0x02;
-        kusd.CyclesPerYield = 0x0064;
-        kusd.DismountCount = 0x00000006;
-        kusd.ComPlusPackage = 0x00000001;
-        kusd.LastSystemRITEventTickCount = 0x01ec1fd3;
-        kusd.NumberOfPhysicalPages = 0x00bf0958;
-        kusd.FullNumberOfPhysicalPages = 0x0000000000bf0958;
-        kusd.TickCount.TickCount.LowPart = 0x001f7f05;
-        kusd.TickCount.TickCountQuad = 0x00000000001f7f05;
-        kusd.Cookie = 0;
-        kusd.ConsoleSessionForegroundProcessId = 0x00000000000028f4;
-        kusd.TimeUpdateLock = 0x0000000002b28586;
-        // This is the QPC time when `SystemTime` is set
-        // We set it to UINT64_MAX, so `SystemTime` won't get adjusted in `RtlGetSystemTimePrecise`
-        kusd.BaselineSystemTimeQpc = 0xFFFFFFFFFFFFFFFF;
-        kusd.BaselineInterruptTimeQpc = 0xFFFFFFFFFFFFFFFF;
-        kusd.QpcSystemTimeIncrement = 0x8000000000000000;
-        kusd.QpcInterruptTimeIncrement = 0x8000000000000000;
-        kusd.QpcSystemTimeIncrementShift = 0x01;
-        kusd.QpcInterruptTimeIncrementShift = 0x01;
-        kusd.UnparkedProcessorCount = 0x000c;
-        kusd.TelemetryCoverageRound = 0x00000001;
-        kusd.LangGenerationCount = 0x00000003;
-        kusd.InterruptTimeBias = 0x00000015a5d56406;
-        kusd.ActiveProcessorCount = 0x00000004;
-        kusd.ActiveGroupCount = 0x01;
-        kusd.TimeZoneBiasEffectiveStart.QuadPart = 0x01db276e654cb2ff;
-        kusd.TimeZoneBiasEffectiveEnd.QuadPart = 0x01db280b8c3b2800;
-        kusd.XState.EnabledFeatures = 0x000000000000001f;
-        kusd.XState.EnabledVolatileFeatures = 0x000000000000000f;
-        kusd.XState.Size = 0x000003c0;
-        kusd.QpcData.QpcData = 0x0083;
-        kusd.QpcData.QpcBypassEnabled = 0x83;
-        kusd.QpcBias = 0x000000159530c4af;
-        kusd.QpcFrequency = utils::clock::steady_duration::period::den;
-        kusd.Reserved1 = 0x7ffeffff;
-        kusd.Reserved3 = 0x80000000;
-        kusd.ProcessorFeatures.arr[PF_RDTSC_INSTRUCTION_AVAILABLE] = 1;
-        kusd.ProcessorFeatures.arr[PF_RDTSCP_INSTRUCTION_AVAILABLE] = 1;
-        kusd.ProcessorFeatures.arr[PF_RDPID_INSTRUCTION_AVAILABLE] = 0;
+            kusd.TickCountMultiplier = 0x0fa00000;
+            kusd.InterruptTime.LowPart = 0x17bd9547;
+            kusd.InterruptTime.High1Time = 0x0000004b;
+            kusd.InterruptTime.High2Time = 0x0000004b;
+            kusd.SystemTime.LowPart = 0x7af9da99;
+            kusd.SystemTime.High1Time = 0x01db27b9;
+            kusd.SystemTime.High2Time = 0x01db27b9;
+            kusd.TimeZoneBias.LowPart = 0x3c773000;
+            kusd.TimeZoneBias.High1Time = -17;
+            kusd.TimeZoneBias.High2Time = -17;
+            kusd.TimeZoneId = 0x00000002;
+            kusd.LargePageMinimum = 0x00200000;
+            kusd.RNGSeedVersion = 0;
+            kusd.TimeZoneBiasStamp = 0x00000004;
+            kusd.NtBuildNumber = version.get_windows_build_number();
+            kusd.NtProductType = static_cast<NT_PRODUCT_TYPE>(fake_env.nt_product_type);
+            kusd.ProductTypeIsValid = 0x01;
+            kusd.NativeProcessorArchitecture = 0x0009;
+            kusd.NtMajorVersion = version.get_major_version();
+            kusd.NtMinorVersion = version.get_minor_version();
+            kusd.BootId = 0;
+            kusd.SystemExpirationDate.QuadPart = 0;
+            kusd.SuiteMask = 0;
+            kusd.MitigationPolicies.MitigationPolicies = 0x0a;
+            kusd.MitigationPolicies.NXSupportPolicy = 0x02;
+            kusd.MitigationPolicies.SEHValidationPolicy = 0x02;
+            kusd.CyclesPerYield = 0x0064;
+            kusd.DismountCount = 0x00000006;
+            kusd.ComPlusPackage = 0x00000001;
+            kusd.LastSystemRITEventTickCount = 0x01ec1fd3;
+            kusd.NumberOfPhysicalPages = 0x00bf0958;
+            kusd.FullNumberOfPhysicalPages = 0x0000000000bf0958;
+            kusd.TickCount.TickCount.LowPart = 0x001f7f05;
+            kusd.TickCount.TickCountQuad = 0x00000000001f7f05;
+            kusd.Cookie = 0;
+            kusd.ConsoleSessionForegroundProcessId = 0x00000000000028f4;
+            kusd.TimeUpdateLock = 0x0000000002b28586;
+            // This is the QPC time when `SystemTime` is set
+            // We set it to UINT64_MAX, so `SystemTime` won't get adjusted in `RtlGetSystemTimePrecise`
+            kusd.BaselineSystemTimeQpc = 0xFFFFFFFFFFFFFFFF;
+            kusd.BaselineInterruptTimeQpc = 0xFFFFFFFFFFFFFFFF;
+            kusd.QpcSystemTimeIncrement = 0x8000000000000000;
+            kusd.QpcInterruptTimeIncrement = 0x8000000000000000;
+            kusd.QpcSystemTimeIncrementShift = 0x01;
+            kusd.QpcInterruptTimeIncrementShift = 0x01;
+            kusd.UnparkedProcessorCount = 0x000c;
+            kusd.TelemetryCoverageRound = 0x00000001;
+            kusd.LangGenerationCount = 0x00000003;
+            kusd.InterruptTimeBias = 0x00000015a5d56406;
+            kusd.ActiveProcessorCount = 0x00000004;
+            kusd.ActiveGroupCount = 0x01;
+            kusd.TimeZoneBiasEffectiveStart.QuadPart = 0x01db276e654cb2ff;
+            kusd.TimeZoneBiasEffectiveEnd.QuadPart = 0x01db280b8c3b2800;
+            kusd.XState.EnabledFeatures = 0x000000000000001f;
+            kusd.XState.EnabledVolatileFeatures = 0x000000000000000f;
+            kusd.XState.Size = 0x000003c0;
+            kusd.QpcData.QpcData = 0x0083;
+            kusd.QpcData.QpcBypassEnabled = 0x83;
+            kusd.QpcBias = 0x000000159530c4af;
+            kusd.QpcFrequency = utils::clock::steady_duration::period::den;
+            kusd.Reserved1 = 0x7ffeffff;
+            kusd.Reserved3 = 0x80000000;
+            kusd.ProcessorFeatures.arr[PF_RDTSC_INSTRUCTION_AVAILABLE] = 1;
+            kusd.ProcessorFeatures.arr[PF_RDTSCP_INSTRUCTION_AVAILABLE] = 1;
+            kusd.ProcessorFeatures.arr[PF_RDPID_INSTRUCTION_AVAILABLE] = 0;
 
-        const auto& system_root = version.get_system_root();
-        utils::string::copy(kusd.NtSystemRoot.arr, std::u16string_view{system_root.u16string()});
+            const auto& system_root = version.get_system_root();
+            utils::string::copy(kusd.NtSystemRoot.arr, std::u16string_view{system_root.u16string()});
 
-        kusd.ImageNumberLow = IMAGE_FILE_MACHINE_AMD64;
-        kusd.ImageNumberHigh = IMAGE_FILE_MACHINE_AMD64;
-    }
-}
-
-namespace utils
-{
-    static void serialize(buffer_serializer& buffer, const KUSER_SHARED_DATA64& kusd)
-    {
-        static_assert(KUSD_SIZE == sizeof(kusd));
-        buffer.write(&kusd, KUSD_SIZE);
+            kusd.ImageNumberLow = IMAGE_FILE_MACHINE_AMD64;
+            kusd.ImageNumberHigh = IMAGE_FILE_MACHINE_AMD64;
+        }
     }
 
-    static void deserialize(buffer_deserializer& buffer, KUSER_SHARED_DATA64& kusd)
+    namespace utils
     {
-        buffer.read(&kusd, KUSD_SIZE);
-    }
-}
+        static void serialize(buffer_serializer& buffer, const KUSER_SHARED_DATA64& kusd)
+        {
+            static_assert(KUSD_SIZE == sizeof(kusd));
+            buffer.write(&kusd, KUSD_SIZE);
+        }
 
-kusd_mmio::kusd_mmio(memory_manager& memory, utils::clock& clock)
-    : memory_(&memory),
-      clock_(&clock)
-{
-}
-
-kusd_mmio::~kusd_mmio()
-{
-    this->deregister_mmio();
-}
-
-kusd_mmio::kusd_mmio(utils::buffer_deserializer& buffer)
-    : kusd_mmio(buffer.read<memory_manager_wrapper>(), buffer.read<clock_wrapper>())
-{
-}
-
-void kusd_mmio::setup(const windows_version_manager& version, const fake_environment_config& fake_env)
-{
-    setup_kusd(this->kusd_, version, fake_env);
-    this->register_mmio();
-}
-
-void kusd_mmio::serialize(utils::buffer_serializer& buffer) const
-{
-    buffer.write(this->kusd_);
-}
-
-void kusd_mmio::deserialize(utils::buffer_deserializer& buffer)
-{
-    buffer.read(this->kusd_);
-
-    this->deregister_mmio();
-    this->register_mmio();
-}
-
-void kusd_mmio::read(const uint64_t addr, void* data, const size_t size)
-{
-    this->update();
-
-    if (addr >= KUSD_SIZE)
-    {
-        return;
+        static void deserialize(buffer_deserializer& buffer, KUSER_SHARED_DATA64& kusd)
+        {
+            buffer.read(&kusd, KUSD_SIZE);
+        }
     }
 
-    const auto end = addr + size;
-    const auto valid_end = std::min(end, static_cast<uint64_t>(KUSD_SIZE));
-    const auto real_size = valid_end - addr;
-
-    const auto* kusd_buffer = reinterpret_cast<uint8_t*>(&this->kusd_);
-    memcpy(data, kusd_buffer + addr, static_cast<size_t>(real_size));
-}
-
-uint64_t kusd_mmio::address()
-{
-    return KUSD_ADDRESS;
-}
-
-void kusd_mmio::update()
-{
-    const auto time = this->clock_->system_now();
-    utils::convert_to_ksystem_time(&this->kusd_.SystemTime, time);
-
-    const auto ticks = this->clock_->steady_now();
-    const auto duration_100ns =
-        std::chrono::duration_cast<std::chrono::duration<uint64_t, std::ratio<1, 10000000>>>(ticks.time_since_epoch()).count();
-
-    this->kusd_.TickCount.TickCountQuad = (duration_100ns << 24) / this->kusd_.TickCountMultiplier;
-    this->kusd_.TickCount.TickCount.High2Time = this->kusd_.TickCount.TickCount.High1Time;
-
-    this->kusd_.InterruptTime.High2Time = static_cast<int32_t>(duration_100ns >> 32);
-    this->kusd_.InterruptTime.LowPart = static_cast<uint32_t>(duration_100ns & 0xFFFFFFFF);
-    this->kusd_.InterruptTime.High1Time = static_cast<int32_t>(duration_100ns >> 32);
-}
-
-void kusd_mmio::register_mmio()
-{
-    if (this->registered_)
+    kusd_mmio::kusd_mmio(memory_manager& memory, utils::clock& clock)
+        : memory_(&memory),
+          clock_(&clock)
     {
-        return;
     }
 
-    this->registered_ = true;
-
-    this->memory_->allocate_mmio(
-        KUSD_ADDRESS, KUSD_BUFFER_SIZE,
-        [this](const uint64_t addr, void* data, const size_t size) {
-            this->read(addr, data, size); //
-        },
-        [](const uint64_t, const void*, const size_t) {
-            // Writing not supported!
-        });
-}
-
-void kusd_mmio::deregister_mmio()
-{
-    if (this->registered_)
+    kusd_mmio::~kusd_mmio()
     {
-        this->registered_ = false;
-        this->memory_->release_memory(KUSD_ADDRESS, KUSD_BUFFER_SIZE);
+        this->deregister_mmio();
     }
-}
+
+    kusd_mmio::kusd_mmio(utils::buffer_deserializer& buffer)
+        : kusd_mmio(buffer.read<memory_manager_wrapper>(), buffer.read<clock_wrapper>())
+    {
+    }
+
+    void kusd_mmio::setup(const windows_version_manager& version, const fake_environment_config& fake_env)
+    {
+        setup_kusd(this->kusd_, version, fake_env);
+        this->register_mmio();
+    }
+
+    void kusd_mmio::serialize(utils::buffer_serializer& buffer) const
+    {
+        buffer.write(this->kusd_);
+    }
+
+    void kusd_mmio::deserialize(utils::buffer_deserializer& buffer)
+    {
+        buffer.read(this->kusd_);
+
+        this->deregister_mmio();
+        this->register_mmio();
+    }
+
+    void kusd_mmio::read(const uint64_t addr, void* data, const size_t size)
+    {
+        this->update();
+
+        if (addr >= KUSD_SIZE)
+        {
+            return;
+        }
+
+        const auto end = addr + size;
+        const auto valid_end = std::min(end, static_cast<uint64_t>(KUSD_SIZE));
+        const auto real_size = valid_end - addr;
+
+        const auto* kusd_buffer = reinterpret_cast<uint8_t*>(&this->kusd_);
+        memcpy(data, kusd_buffer + addr, static_cast<size_t>(real_size));
+    }
+
+    uint64_t kusd_mmio::address()
+    {
+        return KUSD_ADDRESS;
+    }
+
+    void kusd_mmio::update()
+    {
+        const auto time = this->clock_->system_now();
+        utils::convert_to_ksystem_time(&this->kusd_.SystemTime, time);
+
+        const auto ticks = this->clock_->steady_now();
+        const auto duration_100ns =
+            std::chrono::duration_cast<std::chrono::duration<uint64_t, std::ratio<1, 10000000>>>(ticks.time_since_epoch()).count();
+
+        this->kusd_.TickCount.TickCountQuad = (duration_100ns << 24) / this->kusd_.TickCountMultiplier;
+        this->kusd_.TickCount.TickCount.High2Time = this->kusd_.TickCount.TickCount.High1Time;
+
+        this->kusd_.InterruptTime.High2Time = static_cast<int32_t>(duration_100ns >> 32);
+        this->kusd_.InterruptTime.LowPart = static_cast<uint32_t>(duration_100ns & 0xFFFFFFFF);
+        this->kusd_.InterruptTime.High1Time = static_cast<int32_t>(duration_100ns >> 32);
+    }
+
+    void kusd_mmio::register_mmio()
+    {
+        if (this->registered_)
+        {
+            return;
+        }
+
+        this->registered_ = true;
+
+        this->memory_->allocate_mmio(
+            KUSD_ADDRESS, KUSD_BUFFER_SIZE,
+            [this](const uint64_t addr, void* data, const size_t size) {
+                this->read(addr, data, size); //
+            },
+            [](const uint64_t, const void*, const size_t) {
+                // Writing not supported!
+            });
+    }
+
+    void kusd_mmio::deregister_mmio()
+    {
+        if (this->registered_)
+        {
+            this->registered_ = false;
+            this->memory_->release_memory(KUSD_ADDRESS, KUSD_BUFFER_SIZE);
+        }
+    }
+
+} // namespace sogen

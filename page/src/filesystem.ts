@@ -6,6 +6,15 @@ function fetchFilesystemZip(progressCallback: DownloadPercentHandler) {
   return downloadBinaryFilePercent("./root.zip", progressCallback);
 }
 
+async function fetchOptionalFilesystemZip(path: string) {
+  const response = await fetch(path);
+  if (!response.ok) {
+    return null;
+  }
+
+  return await response.arrayBuffer();
+}
+
 async function fetchFilesystem(
   progressHandler: ProgressHandler,
   downloadProgressHandler: DownloadPercentHandler,
@@ -26,17 +35,24 @@ function synchronizeIDBFS(idbfs: MainModule, populate: boolean) {
   });
 }
 
-const filesystemPrefix = "/root/filesys/";
+export const runtimeRoots = {
+  windows: "/root-windows",
+  linux: "/root-linux",
+} as const;
+
+const windowsFilesystemPrefix = `${runtimeRoots.windows}/filesys/`;
+
+export type FilesystemMode = keyof typeof runtimeRoots;
 
 export function internalToWindowsPath(internalPath: string): string {
   if (
-    !internalPath.startsWith(filesystemPrefix) ||
-    internalPath.length <= filesystemPrefix.length
+    !internalPath.startsWith(windowsFilesystemPrefix) ||
+    internalPath.length <= windowsFilesystemPrefix.length
   ) {
     throw new Error("Invalid path");
   }
 
-  const winPath = internalPath.substring(filesystemPrefix.length);
+  const winPath = internalPath.substring(windowsFilesystemPrefix.length);
   return `${winPath[0]}:${winPath.substring(1)}`;
 }
 
@@ -45,18 +61,95 @@ export function windowsToInternalPath(windowsPath: string): string {
     throw new Error("Invalid path");
   }
 
-  return `${filesystemPrefix}${windowsPath[0]}${windowsPath.substring(2)}`;
+  return `${windowsFilesystemPrefix}${windowsPath[0]}${windowsPath.substring(2)}`;
 }
 
-async function initializeIDBFS() {
-  const idbfs = await idbfsModule();
+function ensureDirectory(idbfs: MainModule, path: string) {
+  if (!idbfs.FS.analyzePath(path, false).exists) {
+    idbfs.FS.mkdirTree(path, 0o777);
+  }
+}
 
-  idbfs.FS.mkdir("/root");
-  idbfs.FS.mount(idbfs.IDBFS, {}, "/root");
+function filterPseudoDir(e: string) {
+  return e != "." && e != "..";
+}
+
+function isFolder(idbfs: MainModule, path: string) {
+  return (idbfs.FS.stat(path, false).mode & 0x4000) != 0;
+}
+
+function unlinkRecursive(idbfs: MainModule, element: string) {
+  if (!isFolder(idbfs, element)) {
+    idbfs.FS.unlink(element);
+    return;
+  }
+
+  idbfs.FS.readdir(element)
+    .filter(filterPseudoDir)
+    .forEach((e: string) => {
+      unlinkRecursive(idbfs, `${element}/${e}`);
+    });
+
+  idbfs.FS.rmdir(element);
+}
+
+function clearDirectory(idbfs: MainModule, root: string) {
+  if (!idbfs.FS.analyzePath(root, false).exists) {
+    return;
+  }
+
+  idbfs.FS.readdir(root)
+    .filter(filterPseudoDir)
+    .forEach((e: string) => {
+      unlinkRecursive(idbfs, `${root}/${e}`);
+    });
+}
+
+function copyRecursive(idbfs: MainModule, source: string, target: string) {
+  if (isFolder(idbfs, source)) {
+    ensureDirectory(idbfs, target);
+
+    idbfs.FS.readdir(source)
+      .filter(filterPseudoDir)
+      .forEach((e: string) => {
+        copyRecursive(idbfs, `${source}/${e}`, `${target}/${e}`);
+      });
+
+    return;
+  }
+
+  const data = idbfs.FS.readFile(source);
+  const slash = target.lastIndexOf("/");
+  const parent = slash > 0 ? target.substring(0, slash) : "/";
+  ensureDirectory(idbfs, parent);
+  idbfs.FS.writeFile(target, data);
+}
+
+function copyDirectoryContents(
+  idbfs: MainModule,
+  sourceRoot: string,
+  targetRoot: string,
+) {
+  ensureDirectory(idbfs, sourceRoot);
+  ensureDirectory(idbfs, targetRoot);
+
+  idbfs.FS.readdir(sourceRoot)
+    .filter(filterPseudoDir)
+    .forEach((e: string) => {
+      copyRecursive(idbfs, `${sourceRoot}/${e}`, `${targetRoot}/${e}`);
+    });
+}
+
+async function initializeIDBFS(mode: FilesystemMode) {
+  const idbfs = await idbfsModule();
+  const runtimeRoot = runtimeRoots[mode];
+
+  ensureDirectory(idbfs, runtimeRoot);
+  idbfs.FS.mount(idbfs.IDBFS, {}, runtimeRoot);
 
   await synchronizeIDBFS(idbfs, true);
 
-  return idbfs;
+  return { idbfs, runtimeRoot };
 }
 
 export interface FileWithData {
@@ -64,33 +157,13 @@ export interface FileWithData {
   data: ArrayBuffer;
 }
 
-function deleteDatabase(dbName: string) {
-  return new Promise<void>((resolve, reject) => {
-    const request = indexedDB.deleteDatabase(dbName);
-
-    request.onsuccess = () => {
-      resolve();
-    };
-
-    request.onerror = () => {
-      reject(new Error(`Error deleting database ${dbName}.`));
-    };
-
-    request.onblocked = () => {
-      reject(new Error(`Deletion of database ${dbName} blocked.`));
-    };
-  });
-}
-
-function filterPseudoDir(e: string) {
-  return e != "." && e != "..";
-}
-
 export class Filesystem {
   private idbfs: MainModule;
+  private runtimeRoot: string;
 
-  constructor(idbfs: MainModule) {
+  constructor(idbfs: MainModule, runtimeRoot: string) {
     this.idbfs = idbfs;
+    this.runtimeRoot = runtimeRoot;
   }
 
   _storeFile(file: FileWithData) {
@@ -116,18 +189,7 @@ export class Filesystem {
   }
 
   _unlinkRecursive(element: string) {
-    if (!this.isFolder(element)) {
-      this.idbfs.FS.unlink(element);
-      return;
-    }
-
-    this.readDir(element) //
-      .filter(filterPseudoDir)
-      .forEach((e) => {
-        this._unlinkRecursive(`${element}/${e}`);
-      });
-
-    this.idbfs.FS.rmdir(element);
+    unlinkRecursive(this.idbfs, element);
   }
 
   async rename(oldFile: string, newFile: string) {
@@ -166,30 +228,99 @@ export class Filesystem {
   }
 
   async delete() {
-    this.readDir("/root") //
-      .filter(filterPseudoDir) //
-      .forEach((e) => {
-        try {
-          this._unlinkRecursive(e);
-        } catch (_) {}
-      });
-
-    await this.sync();
-
-    try {
-      await deleteDatabase("/root");
-    } catch (e) {}
+    clearDirectory(this.idbfs, this.runtimeRoot);
+    await synchronizeIDBFS(this.idbfs, false);
   }
+}
+
+export async function setupLinuxFilesystem() {
+  const { idbfs, runtimeRoot } = await initializeIDBFS("linux");
+  const fs = new Filesystem(idbfs, runtimeRoot);
+
+  // Ensure basic Linux root structure exists
+  const dirs = [
+    `${runtimeRoot}/bin`,
+    `${runtimeRoot}/lib`,
+    `${runtimeRoot}/tmp`,
+  ];
+
+  for (const dir of dirs) {
+    if (!idbfs.FS.analyzePath(dir, false).exists) {
+      idbfs.FS.mkdirTree(dir, 0o777);
+    }
+  }
+
+  // Optionally preload Linux sysroot files from page/public/linux-root.zip.
+  // This enables dynamic ELF binaries in web mode when a local sysroot archive
+  // is present, while still working when no archive exists.
+  const linuxRootMarker = `${runtimeRoot}/.linux-root-loaded`;
+  if (!idbfs.FS.analyzePath(linuxRootMarker, false).exists) {
+    try {
+      const linuxRootZip = await fetchOptionalFilesystemZip("./linux-root.zip");
+      if (linuxRootZip) {
+        const entries = await parseZipFile(linuxRootZip);
+
+        for (const entry of entries) {
+          let relativePath = entry.name.replace(/\\/g, "/");
+
+          while (relativePath.startsWith("./")) {
+            relativePath = relativePath.substring(2);
+          }
+
+          if (relativePath.startsWith("/")) {
+            relativePath = relativePath.substring(1);
+          }
+
+          if (relativePath.startsWith("root/")) {
+            relativePath = relativePath.substring("root/".length);
+          }
+
+          if (
+            relativePath.length === 0 ||
+            relativePath === "." ||
+            relativePath.startsWith("__MACOSX/")
+          ) {
+            continue;
+          }
+
+          const fullPath = `${runtimeRoot}/${relativePath}`;
+
+          if (entry.name.endsWith("/")) {
+            if (!idbfs.FS.analyzePath(fullPath, false).exists) {
+              idbfs.FS.mkdirTree(fullPath, 0o777);
+            }
+            continue;
+          }
+
+          const slash = fullPath.lastIndexOf("/");
+          const parent = slash > 0 ? fullPath.substring(0, slash) : runtimeRoot;
+
+          if (!idbfs.FS.analyzePath(parent, false).exists) {
+            idbfs.FS.mkdirTree(parent, 0o777);
+          }
+
+          idbfs.FS.writeFile(fullPath, new Uint8Array(entry.data));
+        }
+
+        idbfs.FS.writeFile(linuxRootMarker, new Uint8Array([1]));
+      }
+    } catch (_) {
+      // Ignore optional preload errors; users can still upload files manually.
+    }
+  }
+
+  await fs.sync();
+  return fs;
 }
 
 export async function setupFilesystem(
   progressHandler: ProgressHandler,
   downloadProgressHandler: DownloadPercentHandler,
 ) {
-  const idbfs = await initializeIDBFS();
-  const fs = new Filesystem(idbfs);
+  const { idbfs, runtimeRoot } = await initializeIDBFS("windows");
+  const fs = new Filesystem(idbfs, runtimeRoot);
 
-  if (idbfs.FS.analyzePath("/root/api-set.bin", false).exists) {
+  if (idbfs.FS.analyzePath(`${runtimeRoot}/api-set.bin`, false).exists) {
     return fs;
   }
 
@@ -199,15 +330,42 @@ export async function setupFilesystem(
   );
 
   filesystem.forEach((e) => {
-    if (idbfs.FS.analyzePath("/" + e.name, false).exists) {
+    let relativePath = e.name.replace(/\\/g, "/");
+
+    while (relativePath.startsWith("./")) {
+      relativePath = relativePath.substring(2);
+    }
+
+    if (relativePath.startsWith("/")) {
+      relativePath = relativePath.substring(1);
+    }
+
+    if (relativePath.startsWith("root/")) {
+      relativePath = relativePath.substring("root/".length);
+    }
+
+    if (
+      relativePath.length === 0 ||
+      relativePath === "." ||
+      relativePath.startsWith("__MACOSX/")
+    ) {
+      return;
+    }
+
+    const fullPath = `${runtimeRoot}/${relativePath}`;
+
+    if (idbfs.FS.analyzePath(fullPath, false).exists) {
       return;
     }
 
     if (e.name.endsWith("/")) {
-      idbfs.FS.mkdir("/" + e.name.slice(0, -1));
+      idbfs.FS.mkdirTree(fullPath, 0o777);
     } else {
+      const slash = fullPath.lastIndexOf("/");
+      const parent = slash > 0 ? fullPath.substring(0, slash) : runtimeRoot;
+      ensureDirectory(idbfs, parent);
       const buffer = new Uint8Array(e.data);
-      idbfs.FS.writeFile("/" + e.name, buffer);
+      idbfs.FS.writeFile(fullPath, buffer);
     }
   });
 

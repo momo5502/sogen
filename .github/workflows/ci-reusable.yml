@@ -229,7 +229,7 @@ jobs:
             cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/mingw-w64.cmake"
           - platform: Linux x86_64 GCC Sanitizer
             runner: ubuntu-24.04
-            cmake-options: "-DMOMO_ENABLE_SANITIZER=On"
+            cmake-options: "-DSOGEN_ENABLE_SANITIZER=On"
           - platform: Linux x86_64 GCC
             runner: ubuntu-24.04
           - platform: Linux x86_64 Clang
@@ -255,13 +255,13 @@ jobs:
             cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake"
           - platform: Emscripten Web
             runner: ubuntu-24.04
-            cmake-options: "-DMOMO_ENABLE_RUST_CODE=Off -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
+            cmake-options: "-DSOGEN_ENABLE_RUST_CODE=Off -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
           - platform: Emscripten Web Memory 64
             runner: ubuntu-24.04
-            cmake-options: "-DMOMO_ENABLE_RUST_CODE=Off -DMOMO_EMSCRIPTEN_MEMORY64=On -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
+            cmake-options: "-DSOGEN_ENABLE_RUST_CODE=Off -DSOGEN_EMSCRIPTEN_MEMORY64=On -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
           - platform: Emscripten Node.js
             runner: ubuntu-24.04
-            cmake-options: "-DMOMO_EMSCRIPTEN_SUPPORT_NODEJS=On -DMOMO_ENABLE_RUST_CODE=Off -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
+            cmake-options: "-DSOGEN_EMSCRIPTEN_SUPPORT_NODEJS=On -DSOGEN_ENABLE_RUST_CODE=Off -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
     steps:
       - name: Checkout Source
         uses: actions/checkout@v6
@@ -337,7 +337,7 @@ jobs:
           retention-days: 1
 
       - name: Upload Test Configuration
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
           path: "build/${{matrix.preset}}/**/CTestTestfile.cmake"
@@ -390,7 +390,7 @@ jobs:
           retention-days: 1
 
       - name: Upload Test Configuration
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: Temp Isolate ${{ matrix.platform }} ${{matrix.configuration}} Test Config
           path: "build/${{matrix.preset}}/**/CTestTestfile.cmake"
@@ -454,7 +454,7 @@ jobs:
           echo "EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }}" >> $GITHUB_ENV
 
       - name: Download Test Configuration
-        uses: actions/download-artifact@v8.0.1
+        uses: actions/download-artifact@v8
         with:
           name: Temp ${{ matrix.platform }} ${{matrix.configuration}} Test Config
           path: build/${{matrix.preset}}
@@ -488,6 +488,7 @@ jobs:
           EMULATOR_ROOT: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/root
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
           ANALYSIS_SAMPLE: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/test-sample.exe
+          LINUX_TEST_ROOT: ${{github.workspace}}/deps/sogen-linux-files/test/linux
 
   win-test:
     name: Windows Test
@@ -527,7 +528,7 @@ jobs:
           echo "EMULATOR_WHP=${{ matrix.emulator == 'WHP' }}" >> $GITHUB_ENV
 
       - name: Download Test Configuration
-        uses: actions/download-artifact@v8.0.1
+        uses: actions/download-artifact@v8
         with:
           name: Temp Isolate Windows x86_64 ${{ matrix.configuration}} Test Config
           path: build/${{ matrix.preset }}
@@ -794,14 +795,21 @@ jobs:
       - name: Create Emulation Root zip
         run: cd ./build/release/artifacts && zip -r "${{github.workspace}}/page/public/root.zip" ./root
 
+      - name: Create Linux Emulation Root zip
+        run: cd ./deps/sogen-linux-files && zip -r "${{github.workspace}}/page/public/linux-root.zip" ./root
+
       - name: Copy Files
         run: |
           mkdir -p ./page/public/32/
           mkdir -p ./page/public/64/
           cp ./build/release/artifacts/32/analyzer.js ./page/public/32/
           cp ./build/release/artifacts/32/analyzer.wasm ./page/public/32/
+          cp ./build/release/artifacts/32/linux-analyzer.js ./page/public/32/
+          cp ./build/release/artifacts/32/linux-analyzer.wasm ./page/public/32/
           cp ./build/release/artifacts/64/analyzer.js ./page/public/64/
           cp ./build/release/artifacts/64/analyzer.wasm ./page/public/64/
+          cp ./build/release/artifacts/64/linux-analyzer.js ./page/public/64/
+          cp ./build/release/artifacts/64/linux-analyzer.wasm ./page/public/64/
 
       - name: Build Page
         run: cd ./page && npm ci && npm run build
@@ -844,6 +852,8 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.9"
+        env:
+          PIP_NO_CACHE_DIR: 1
 
       - name: Install build tools
         run: python -m pip install --upgrade pip build setuptools-scm
@@ -854,7 +864,7 @@ jobs:
           CMAKE_ARGS: ${{ inputs.enable_deploy && '-DSOGEN_DISABLE_NANOBIND_LEAK_WARNINGS=ON' || '' }}
 
       - name: Upload wheel artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sogen-wheel-${{ matrix.artifact }}
           path: dist/*.whl
@@ -888,9 +898,11 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.9"
+        env:
+          PIP_NO_CACHE_DIR: 1
 
       - name: Download wheel artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: sogen-wheel-${{ matrix.artifact }}
           path: dist
@@ -935,6 +947,8 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.9"
+        env:
+          PIP_NO_CACHE_DIR: 1
 
       - name: Install build tools
         run: python -m pip install --upgrade pip build setuptools-scm
@@ -943,7 +957,7 @@ jobs:
         run: python -m build "${{ github.workspace }}" --sdist --outdir dist
 
       - name: Upload sdist artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sogen-sdist
           path: dist/*.tar.gz
@@ -958,9 +972,11 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.9"
+        env:
+          PIP_NO_CACHE_DIR: 1
 
       - name: Download sdist artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: sogen-sdist
           path: dist
@@ -976,34 +992,6 @@ jobs:
           assert hasattr(sogen, "Backend")
           print("ok")
           PY
-
-  deploy-page:
-    name: Deploy Page
-    runs-on: ubuntu-latest
-    needs: [build-page, summary]
-    if: ${{ inputs.enable_deploy }}
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    steps:
-      - name: Download Page Artifacts
-        uses: pyTooling/download-artifact@v8
-        with:
-          name: Page Artifacts
-          path: ./page/dist/
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v6
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: ./page/dist
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
 
   summary:
     name: Pipeline Summary

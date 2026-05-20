@@ -1,180 +1,185 @@
 #pragma once
 #include "memory_permission.hpp"
 
-enum class memory_permission_ext : uint8_t
+namespace sogen
 {
-    none = 0,
-    guard = 1 << 0,
-};
 
-/*****************************************************************************
- *
- ****************************************************************************/
-
-constexpr memory_permission_ext operator&(const memory_permission_ext x, const memory_permission_ext y)
-{
-    return static_cast<memory_permission_ext>(static_cast<uint8_t>(x) & static_cast<uint8_t>(y));
-}
-
-constexpr memory_permission_ext operator|(const memory_permission_ext x, const memory_permission_ext y)
-{
-    return static_cast<memory_permission_ext>(static_cast<uint8_t>(x) | static_cast<uint8_t>(y));
-}
-
-constexpr memory_permission_ext operator^(const memory_permission_ext x, const memory_permission_ext y)
-{
-    return static_cast<memory_permission_ext>(static_cast<uint8_t>(x) ^ static_cast<uint8_t>(y));
-}
-
-constexpr memory_permission_ext operator~(memory_permission_ext x)
-{
-    return static_cast<memory_permission_ext>(~static_cast<uint8_t>(x));
-}
-
-inline memory_permission_ext& operator&=(memory_permission_ext& x, const memory_permission_ext y)
-{
-    x = x & y;
-    return x;
-}
-
-inline memory_permission_ext& operator|=(memory_permission_ext& x, const memory_permission_ext y)
-{
-    x = x | y;
-    return x;
-}
-
-inline memory_permission_ext& operator^=(memory_permission_ext& x, const memory_permission_ext y)
-{
-    x = x ^ y;
-    return x;
-}
-
-/*****************************************************************************
- *
- ****************************************************************************/
-
-struct nt_memory_permission
-{
-    memory_permission common;
-    memory_permission_ext extended;
-
-    constexpr nt_memory_permission()
-        : common(memory_permission::none),
-          extended(memory_permission_ext::none)
+    enum class memory_permission_ext : uint8_t
     {
-    }
-    constexpr nt_memory_permission(memory_permission common)
-        : common(common),
-          extended(memory_permission_ext::none)
+        none = 0,
+        guard = 1 << 0,
+    };
+
+    /*****************************************************************************
+     *
+     ****************************************************************************/
+
+    constexpr memory_permission_ext operator&(const memory_permission_ext x, const memory_permission_ext y)
     {
-    }
-    constexpr nt_memory_permission(memory_permission common, memory_permission_ext ext)
-        : common(common),
-          extended(ext)
-    {
+        return static_cast<memory_permission_ext>(static_cast<uint8_t>(x) & static_cast<uint8_t>(y));
     }
 
-    // Implicit coercions
-    operator memory_permission() const
+    constexpr memory_permission_ext operator|(const memory_permission_ext x, const memory_permission_ext y)
     {
-        return common;
-    }
-    operator memory_permission_ext() const
-    {
-        return extended;
+        return static_cast<memory_permission_ext>(static_cast<uint8_t>(x) | static_cast<uint8_t>(y));
     }
 
-    // This just does memberwise equality on each of the members in declaration order
-    bool operator==(nt_memory_permission const&) const = default;
-
-    nt_memory_permission& operator=(memory_permission const& y)
+    constexpr memory_permission_ext operator^(const memory_permission_ext x, const memory_permission_ext y)
     {
-        this->common = y;
-        this->extended = memory_permission_ext::none;
-        return *this;
+        return static_cast<memory_permission_ext>(static_cast<uint8_t>(x) ^ static_cast<uint8_t>(y));
     }
 
-    constexpr bool is_guarded() const
+    constexpr memory_permission_ext operator~(memory_permission_ext x)
     {
-        return (this->extended & memory_permission_ext::guard) == memory_permission_ext::guard;
+        return static_cast<memory_permission_ext>(~static_cast<uint8_t>(x));
     }
-};
 
-/*****************************************************************************
- *
- ****************************************************************************/
+    inline memory_permission_ext& operator&=(memory_permission_ext& x, const memory_permission_ext y)
+    {
+        x = x & y;
+        return x;
+    }
 
-constexpr nt_memory_permission operator&(const nt_memory_permission x, const memory_permission y)
-{
-    return nt_memory_permission{x.common & y, x.extended};
-}
+    inline memory_permission_ext& operator|=(memory_permission_ext& x, const memory_permission_ext y)
+    {
+        x = x | y;
+        return x;
+    }
 
-constexpr nt_memory_permission operator&(const nt_memory_permission x, const memory_permission_ext y)
-{
-    return nt_memory_permission{x.common, x.extended & y};
-}
+    inline memory_permission_ext& operator^=(memory_permission_ext& x, const memory_permission_ext y)
+    {
+        x = x ^ y;
+        return x;
+    }
 
-constexpr nt_memory_permission operator|(const nt_memory_permission x, const memory_permission y)
-{
-    return nt_memory_permission{x.common | y, x.extended};
-}
+    /*****************************************************************************
+     *
+     ****************************************************************************/
 
-constexpr nt_memory_permission operator|(const nt_memory_permission x, const memory_permission_ext y)
-{
-    return nt_memory_permission{x.common, x.extended | y};
-}
+    struct nt_memory_permission
+    {
+        memory_permission common;
+        memory_permission_ext extended;
 
-constexpr nt_memory_permission operator^(const nt_memory_permission x, const memory_permission y)
-{
-    return nt_memory_permission{x.common ^ y, x.extended};
-}
+        constexpr nt_memory_permission()
+            : common(memory_permission::none),
+              extended(memory_permission_ext::none)
+        {
+        }
+        constexpr nt_memory_permission(memory_permission common)
+            : common(common),
+              extended(memory_permission_ext::none)
+        {
+        }
+        constexpr nt_memory_permission(memory_permission common, memory_permission_ext ext)
+            : common(common),
+              extended(ext)
+        {
+        }
 
-constexpr nt_memory_permission operator^(const nt_memory_permission x, const memory_permission_ext y)
-{
-    return nt_memory_permission{x.common, x.extended ^ y};
-}
+        // Implicit coercions
+        operator memory_permission() const
+        {
+            return common;
+        }
+        operator memory_permission_ext() const
+        {
+            return extended;
+        }
 
-inline nt_memory_permission& operator&=(nt_memory_permission& x, const memory_permission y)
-{
-    x = x & y;
-    return x;
-}
+        // This just does memberwise equality on each of the members in declaration order
+        bool operator==(nt_memory_permission const&) const = default;
 
-inline nt_memory_permission& operator&=(nt_memory_permission& x, const memory_permission_ext y)
-{
-    x = x & y;
-    return x;
-}
+        nt_memory_permission& operator=(memory_permission const& y)
+        {
+            this->common = y;
+            this->extended = memory_permission_ext::none;
+            return *this;
+        }
 
-inline nt_memory_permission& operator|=(nt_memory_permission& x, const memory_permission y)
-{
-    x.common | y;
-    return x;
-}
+        constexpr bool is_guarded() const
+        {
+            return (this->extended & memory_permission_ext::guard) == memory_permission_ext::guard;
+        }
+    };
 
-inline nt_memory_permission& operator|=(nt_memory_permission& x, const nt_memory_permission y)
-{
-    x.extended | y;
-    return x;
-}
+    /*****************************************************************************
+     *
+     ****************************************************************************/
 
-inline nt_memory_permission& operator^=(nt_memory_permission& x, const memory_permission y)
-{
-    x.common ^ y;
-    return x;
-}
+    constexpr nt_memory_permission operator&(const nt_memory_permission x, const memory_permission y)
+    {
+        return nt_memory_permission{x.common & y, x.extended};
+    }
 
-inline nt_memory_permission& operator^=(nt_memory_permission& x, const nt_memory_permission y)
-{
-    x.extended ^ y;
-    return x;
-}
+    constexpr nt_memory_permission operator&(const nt_memory_permission x, const memory_permission_ext y)
+    {
+        return nt_memory_permission{x.common, x.extended & y};
+    }
 
-/*****************************************************************************
- *
- ****************************************************************************/
+    constexpr nt_memory_permission operator|(const nt_memory_permission x, const memory_permission y)
+    {
+        return nt_memory_permission{x.common | y, x.extended};
+    }
 
-inline bool is_guarded(const memory_permission_ext permission)
-{
-    return (permission & memory_permission_ext::guard) != memory_permission_ext::none;
-}
+    constexpr nt_memory_permission operator|(const nt_memory_permission x, const memory_permission_ext y)
+    {
+        return nt_memory_permission{x.common, x.extended | y};
+    }
+
+    constexpr nt_memory_permission operator^(const nt_memory_permission x, const memory_permission y)
+    {
+        return nt_memory_permission{x.common ^ y, x.extended};
+    }
+
+    constexpr nt_memory_permission operator^(const nt_memory_permission x, const memory_permission_ext y)
+    {
+        return nt_memory_permission{x.common, x.extended ^ y};
+    }
+
+    inline nt_memory_permission& operator&=(nt_memory_permission& x, const memory_permission y)
+    {
+        x = x & y;
+        return x;
+    }
+
+    inline nt_memory_permission& operator&=(nt_memory_permission& x, const memory_permission_ext y)
+    {
+        x = x & y;
+        return x;
+    }
+
+    inline nt_memory_permission& operator|=(nt_memory_permission& x, const memory_permission y)
+    {
+        x.common | y;
+        return x;
+    }
+
+    inline nt_memory_permission& operator|=(nt_memory_permission& x, const nt_memory_permission y)
+    {
+        x.extended | y;
+        return x;
+    }
+
+    inline nt_memory_permission& operator^=(nt_memory_permission& x, const memory_permission y)
+    {
+        x.common ^ y;
+        return x;
+    }
+
+    inline nt_memory_permission& operator^=(nt_memory_permission& x, const nt_memory_permission y)
+    {
+        x.extended ^ y;
+        return x;
+    }
+
+    /*****************************************************************************
+     *
+     ****************************************************************************/
+
+    inline bool is_guarded(const memory_permission_ext permission)
+    {
+        return (permission & memory_permission_ext::guard) != memory_permission_ext::none;
+    }
+
+} // namespace sogen

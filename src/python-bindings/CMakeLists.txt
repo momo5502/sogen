@@ -47,4 +47,4 @@ else()
   install(FILES "${CMAKE_CURRENT_BINARY_DIR}/sogen.pyi" "${CMAKE_CURRENT_BINARY_DIR}/py.typed" DESTINATION .)
 endif()
 
-momo_targets_set_folder("bindings" sogen sogen_stub)
+sogen_targets_set_folder("bindings" sogen sogen_stub)

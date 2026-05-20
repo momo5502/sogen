@@ -5,7 +5,7 @@
 
 using namespace std::literals;
 
-namespace network
+namespace sogen::network
 {
     socket::socket(const SOCKET s)
         : socket_(s)

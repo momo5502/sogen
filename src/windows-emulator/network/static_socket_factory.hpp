@@ -2,7 +2,12 @@
 
 #include "socket_factory.hpp"
 
-namespace network
+namespace sogen
 {
-    std::unique_ptr<socket_factory> create_static_socket_factory();
-}
+
+    namespace network
+    {
+        std::unique_ptr<socket_factory> create_static_socket_factory();
+    }
+
+} // namespace sogen

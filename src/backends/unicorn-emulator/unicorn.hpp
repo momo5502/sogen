@@ -25,7 +25,7 @@
 
 #include <stdexcept>
 
-namespace unicorn
+namespace sogen::unicorn
 {
     struct unicorn_error : std::runtime_error
     {
@@ -50,4 +50,4 @@ namespace unicorn
     {
         throw_if_unicorn_error(error_code);
     }
-}
+} // namespace sogen::unicorn

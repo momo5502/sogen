@@ -8,5 +8,5 @@ list(SORT SRC_FILES)
 
 add_library(emulator ${SRC_FILES})
 
-target_link_libraries(emulator PUBLIC emulator-common)
+target_link_libraries(emulator PUBLIC emulator-common emulator-platform)
 target_include_directories(emulator INTERFACE "${CMAKE_CURRENT_LIST_DIR}")

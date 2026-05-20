@@ -1,9 +1,9 @@
 #include <gtest/gtest.h>
 
-#include "common/platform/platform.hpp"
+#include <platform/platform.hpp>
 #include <cstring>
 
-namespace test
+namespace sogen::test
 {
     const std::vector<std::pair<const char*, const char16_t*>> good_strings = {
         {"", u""},
@@ -257,4 +257,4 @@ namespace test
             EXPECT_TRUE(u8_byte_len == u8_conv.length() && memcmp(u8_str, u8_conv.data(), u8_byte_len) == 0);
         }
     }
-}
+} // namespace sogen::test

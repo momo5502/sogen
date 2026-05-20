@@ -18,7 +18,7 @@ endif()
 
 ##########################################
 
-if(MOMO_ENABLE_REFLECTION)
+if(SOGEN_ENABLE_REFLECTION)
   add_library(reflect INTERFACE)
   target_include_directories(reflect INTERFACE
     "${CMAKE_CURRENT_LIST_DIR}/reflect"

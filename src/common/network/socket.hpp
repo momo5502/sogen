@@ -24,7 +24,7 @@ using sent_size = ssize_t;
 #define SERR(x)            (x)
 #endif
 
-namespace network
+namespace sogen::network
 {
     class socket
     {
