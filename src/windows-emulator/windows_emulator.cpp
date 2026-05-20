@@ -553,8 +553,8 @@ namespace sogen
             return;
         }
 
-        hooks[section_index] = this->emu().hook_memory_range_execution(
-            section.region.start, section.region.length, [this](const uint64_t address) {
+        hooks[section_index] =
+            this->emu().hook_memory_range_execution(section.region.start, section.region.length, [this](const uint64_t address) {
                 this->track_section_first_execution(address); //
             });
     }
