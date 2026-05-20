@@ -1,6 +1,8 @@
 #include "io.hpp"
 #include <fstream>
 #include <sstream>
+#include <utility>
+#include <vector>
 
 namespace utils::io
 {
@@ -54,7 +56,45 @@ namespace utils::io
             return false;
         }
 
-        *data = {};
+        data->clear();
+
+        std::error_code ec{};
+        const bool regular = std::filesystem::is_regular_file(file, ec);
+
+        if (regular && !ec)
+        {
+            const auto size = std::filesystem::file_size(file, ec);
+            if (!ec)
+            {
+                if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::streamsize>::max()))
+                {
+                    return false;
+                }
+
+                data->resize(static_cast<std::size_t>(size));
+
+                std::ifstream file_stream(file, std::ios::binary);
+                if (!file_stream)
+                {
+                    data->clear();
+                    return false;
+                }
+
+                if (size == 0)
+                {
+                    return true;
+                }
+
+                file_stream.read(reinterpret_cast<char*>(data->data()), static_cast<std::streamsize>(data->size()));
+                if (static_cast<std::size_t>(file_stream.gcount()) != data->size())
+                {
+                    data->clear();
+                    return false;
+                }
+
+                return true;
+            }
+        }
 
         std::ifstream file_stream(file, std::ios::binary);
         if (!file_stream)
@@ -62,21 +102,22 @@ namespace utils::io
             return false;
         }
 
-        std::vector<char> temp_buffer(0x1000);
+        constexpr std::size_t chunk_size = 0x1000;
+        std::vector<char> buffer(chunk_size);
 
         while (file_stream)
         {
-            file_stream.read(temp_buffer.data(), static_cast<std::streamsize>(temp_buffer.size()));
+            file_stream.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
             const auto bytes_read = file_stream.gcount();
 
             if (bytes_read > 0)
             {
-                const auto* buffer = reinterpret_cast<const std::byte*>(temp_buffer.data());
-                data->insert(data->end(), buffer, buffer + bytes_read);
+                const auto* begin = reinterpret_cast<const std::byte*>(buffer.data());
+                data->insert(data->end(), begin, begin + bytes_read);
             }
         }
 
-        return true;
+        return !file_stream.bad();
     }
 
     std::size_t file_size(const std::filesystem::path& file)
