@@ -431,7 +431,7 @@ namespace
                 continue;
             }
 
-            if (!memory.allocate_memory(target_ptr, section_size, memory_permission::read_write))
+            if (!memory.commit_memory(target_ptr, section_size, memory_permission::read_write))
             {
                 return false;
             }
@@ -485,11 +485,6 @@ namespace
 
         for (const auto& section : binary.sections)
         {
-            if (section.region.permissions == memory_permission::read_write)
-            {
-                continue;
-            }
-
             if (!memory.protect_memory(section.region.start, section.region.length, section.region.permissions, nullptr))
             {
                 return false;
@@ -510,9 +505,16 @@ namespace
         binary.imported_modules.clear();
         binary.address_names.clear();
 
-        const auto headers_size = static_cast<size_t>(page_align_up(optional_header.SizeOfHeaders));
-        if (!memory.allocate_memory(binary.image_base, headers_size, memory_permission::read_write))
+        const auto image_size = static_cast<size_t>(binary.size_of_image);
+        if (!memory.allocate_memory(binary.image_base, image_size, memory_permission::read_write, true))
         {
+            return false;
+        }
+
+        const auto headers_size = static_cast<size_t>(page_align_up(optional_header.SizeOfHeaders));
+        if (!memory.commit_memory(binary.image_base, headers_size, memory_permission::read_write))
+        {
+            memory.release_memory(binary.image_base, 0);
             return false;
         }
 
@@ -524,11 +526,6 @@ namespace
             if (!map_sections(memory, binary, buffer, nt_headers, nt_headers_offset))
             {
                 memory.release_memory(binary.image_base, 0);
-                for (const auto& section : binary.sections)
-                {
-                    memory.release_memory(section.region.start, 0);
-                }
-
                 binary.sections.clear();
                 return false;
             }
@@ -551,10 +548,6 @@ namespace
         catch (...)
         {
             memory.release_memory(binary.image_base, 0);
-            for (const auto& section : binary.sections)
-            {
-                memory.release_memory(section.region.start, 0);
-            }
 
             binary.sections.clear();
             binary.exports.clear();
@@ -740,14 +733,14 @@ mapped_module map_module_from_memory(memory_manager& memory, uint64_t base_addre
 
 bool unmap_module(memory_manager& memory, const mapped_module& mod)
 {
+    if (memory.release_memory(mod.image_base, 0))
+    {
+        return true;
+    }
+
     std::unordered_set<uint64_t> released_bases{};
 
     bool success = true;
-
-    if (released_bases.emplace(mod.image_base).second)
-    {
-        success = memory.release_memory(mod.image_base, 0) && success;
-    }
 
     for (const auto& section : mod.sections)
     {
