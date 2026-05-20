@@ -215,7 +215,205 @@ namespace
     }
 
     template <typename T>
-    void map_sections(memory_manager& memory, mapped_module& binary, const utils::safe_buffer_accessor<const std::byte> buffer,
+        requires(std::is_integral_v<T>)
+    void apply_relocation(memory_manager& memory, const uint64_t address, const uint64_t delta)
+    {
+        T value{};
+        memory.read_memory(address, &value, sizeof(value));
+        value += static_cast<T>(delta);
+        memory.write_memory(address, &value, sizeof(value));
+    }
+
+    template <typename T>
+    T read_mapped_object(const memory_manager& memory, const uint64_t address)
+    {
+        T value{};
+        memory.read_memory(address, &value, sizeof(value));
+        return value;
+    }
+
+    std::string read_mapped_string(const memory_manager& memory, const uint64_t address)
+    {
+        std::string value{};
+
+        for (size_t i = 0;; ++i)
+        {
+            char c{};
+            memory.read_memory(address + i, &c, sizeof(c));
+            if (c == '\0')
+            {
+                break;
+            }
+
+            value.push_back(c);
+        }
+
+        return value;
+    }
+
+    template <typename T>
+    void collect_imports(mapped_module& binary, const memory_manager& memory, const PEOptionalHeader_t<T>& optional_header)
+    {
+        const auto& import_directory_entry = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+        if (import_directory_entry.VirtualAddress == 0 || import_directory_entry.Size == 0)
+        {
+            return;
+        }
+
+        const auto import_base = binary.image_base + import_directory_entry.VirtualAddress;
+
+        for (size_t i = 0;; ++i)
+        {
+            const auto descriptor = read_mapped_object<IMAGE_IMPORT_DESCRIPTOR>(memory, import_base + i * sizeof(IMAGE_IMPORT_DESCRIPTOR));
+            if (!descriptor.Name)
+            {
+                break;
+            }
+
+            using thunk_traits = thunk_data_traits<T>;
+            using thunk_type = typename thunk_traits::type;
+
+            const auto module_index = binary.imported_modules.size();
+            binary.imported_modules.push_back(read_mapped_string(memory, binary.image_base + descriptor.Name));
+
+            auto original_thunk_rva = descriptor.FirstThunk;
+            if (descriptor.OriginalFirstThunk)
+            {
+                original_thunk_rva = descriptor.OriginalFirstThunk;
+            }
+
+            for (size_t j = 0;; ++j)
+            {
+                const auto original_thunk =
+                    read_mapped_object<thunk_type>(memory, binary.image_base + original_thunk_rva + sizeof(thunk_type) * j);
+                if (!original_thunk.u1.AddressOfData)
+                {
+                    break;
+                }
+
+                static_assert(sizeof(thunk_type) == sizeof(T));
+                const auto thunk_rva = descriptor.FirstThunk + sizeof(thunk_type) * j;
+                const auto thunk_address = thunk_rva + binary.image_base;
+
+                auto& sym = binary.imports[thunk_address];
+                sym.module_index = module_index;
+
+                if (thunk_traits::snap_by_ordinal(original_thunk.u1.Ordinal))
+                {
+                    sym.name = "#" + std::to_string(thunk_traits::ordinal_mask(original_thunk.u1.Ordinal));
+                }
+                else
+                {
+                    const auto by_name_address = binary.image_base + original_thunk.u1.AddressOfData + offsetof(IMAGE_IMPORT_BY_NAME, Name);
+                    sym.name = read_mapped_string(memory, by_name_address);
+                }
+            }
+        }
+    }
+
+    template <typename T>
+    void collect_exports(mapped_module& binary, const memory_manager& memory, const PEOptionalHeader_t<T>& optional_header)
+    {
+        const auto& export_directory_entry = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+        if (export_directory_entry.VirtualAddress == 0 || export_directory_entry.Size == 0)
+        {
+            return;
+        }
+
+        const auto export_directory =
+            read_mapped_object<IMAGE_EXPORT_DIRECTORY>(memory, binary.image_base + export_directory_entry.VirtualAddress);
+
+        const auto names_count = export_directory.NumberOfNames;
+        binary.exports.reserve(names_count);
+
+        for (DWORD i = 0; i < names_count; i++)
+        {
+            const auto ordinal =
+                read_mapped_object<WORD>(memory, binary.image_base + export_directory.AddressOfNameOrdinals + i * sizeof(WORD));
+            const auto function_rva =
+                read_mapped_object<DWORD>(memory, binary.image_base + export_directory.AddressOfFunctions + ordinal * sizeof(DWORD));
+            const auto name_rva =
+                read_mapped_object<DWORD>(memory, binary.image_base + export_directory.AddressOfNames + i * sizeof(DWORD));
+
+            exported_symbol symbol{};
+            symbol.ordinal = export_directory.Base + ordinal;
+            symbol.rva = function_rva;
+            symbol.address = binary.image_base + symbol.rva;
+            symbol.name = read_mapped_string(memory, binary.image_base + name_rva);
+
+            binary.exports.push_back(std::move(symbol));
+        }
+
+        for (const auto& symbol : binary.exports)
+        {
+            binary.address_names.try_emplace(symbol.address, symbol.name);
+        }
+    }
+
+    template <typename T>
+    void apply_relocations(const mapped_module& binary, memory_manager& memory, const PEOptionalHeader_t<T>& optional_header)
+    {
+        const auto delta = binary.image_base - optional_header.ImageBase;
+        if (delta == 0)
+        {
+            return;
+        }
+
+        const auto* directory = &optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
+        if (directory->Size == 0)
+        {
+            return;
+        }
+
+        auto relocation_offset = directory->VirtualAddress;
+        const auto relocation_end = relocation_offset + directory->Size;
+
+        while (relocation_offset < relocation_end)
+        {
+            const auto relocation = read_mapped_object<IMAGE_BASE_RELOCATION>(memory, binary.image_base + relocation_offset);
+
+            if (relocation.VirtualAddress <= 0 || relocation.SizeOfBlock <= sizeof(IMAGE_BASE_RELOCATION))
+            {
+                break;
+            }
+
+            const auto data_size = relocation.SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION);
+            const auto entry_count = data_size / sizeof(uint16_t);
+            const auto entries_base = binary.image_base + relocation_offset + sizeof(IMAGE_BASE_RELOCATION);
+
+            relocation_offset += relocation.SizeOfBlock;
+
+            for (size_t i = 0; i < entry_count; ++i)
+            {
+                const auto entry = read_mapped_object<uint16_t>(memory, entries_base + i * sizeof(uint16_t));
+
+                const int type = entry >> 12;
+                const auto offset = static_cast<uint16_t>(entry & 0xfff);
+                const auto total_offset = relocation.VirtualAddress + offset;
+                const auto target_address = binary.image_base + total_offset;
+
+                switch (type)
+                {
+                case IMAGE_REL_BASED_ABSOLUTE:
+                    break;
+
+                case IMAGE_REL_BASED_HIGHLOW:
+                    apply_relocation<DWORD>(memory, target_address, delta);
+                    break;
+
+                case IMAGE_REL_BASED_DIR64:
+                    apply_relocation<ULONGLONG>(memory, target_address, delta);
+                    break;
+
+                default:
+                    throw std::runtime_error("Unknown relocation type: " + std::to_string(type));
+                }
+            }
+        }
+    }
+
+    template <typename T>
+    bool map_sections(memory_manager& memory, mapped_module& binary, const utils::safe_buffer_accessor<const std::byte> buffer,
                       const PENTHeaders_t<T>& nt_headers, const uint64_t nt_headers_offset)
     {
         const auto first_section_offset = winpe::get_first_section_offset(nt_headers, nt_headers_offset);
@@ -226,6 +424,17 @@ namespace
             const auto section = sections.get(i);
             const auto target_ptr = binary.image_base + section.VirtualAddress;
             const auto size_of_section = page_align_up(section.Misc.VirtualSize, nt_headers.OptionalHeader.SectionAlignment);
+            const auto section_size = static_cast<size_t>(size_of_section);
+
+            if (section_size == 0)
+            {
+                continue;
+            }
+
+            if (!memory.allocate_memory(target_ptr, section_size, memory_permission::read_write))
+            {
+                return false;
+            }
 
             if (section.SizeOfRawData > 0)
             {
@@ -251,11 +460,9 @@ namespace
                 permissions |= memory_permission::write;
             }
 
-            memory.protect_memory(target_ptr, static_cast<size_t>(size_of_section), permissions, nullptr);
-
             mapped_section section_info{};
             section_info.region.start = target_ptr;
-            section_info.region.length = static_cast<size_t>(size_of_section);
+            section_info.region.length = section_size;
             section_info.region.permissions = permissions;
 
             for (size_t j = 0; j < sizeof(section.Name) && section.Name[j]; ++j)
@@ -265,6 +472,99 @@ namespace
 
             binary.sections.push_back(std::move(section_info));
         }
+
+        return true;
+    }
+
+    bool protect_module_memory(memory_manager& memory, const mapped_module& binary, const size_t headers_size)
+    {
+        if (!memory.protect_memory(binary.image_base, headers_size, memory_permission::read))
+        {
+            return false;
+        }
+
+        for (const auto& section : binary.sections)
+        {
+            if (section.region.permissions == memory_permission::read_write)
+            {
+                continue;
+            }
+
+            if (!memory.protect_memory(section.region.start, section.region.length, section.region.permissions, nullptr))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    template <typename T>
+    bool try_map_module_at_current_base(memory_manager& memory, mapped_module& binary,
+                                        const utils::safe_buffer_accessor<const std::byte> buffer, const PENTHeaders_t<T>& nt_headers,
+                                        const uint64_t nt_headers_offset, const PEOptionalHeader_t<T>& optional_header)
+    {
+        binary.sections.clear();
+        binary.exports.clear();
+        binary.imports.clear();
+        binary.imported_modules.clear();
+        binary.address_names.clear();
+
+        const auto headers_size = static_cast<size_t>(page_align_up(optional_header.SizeOfHeaders));
+        if (!memory.allocate_memory(binary.image_base, headers_size, memory_permission::read_write))
+        {
+            return false;
+        }
+
+        try
+        {
+            const auto* header_buffer = buffer.get_pointer_for_range(0, optional_header.SizeOfHeaders);
+            memory.write_memory(binary.image_base, header_buffer, optional_header.SizeOfHeaders);
+
+            if (!map_sections(memory, binary, buffer, nt_headers, nt_headers_offset))
+            {
+                memory.release_memory(binary.image_base, 0);
+                for (const auto& section : binary.sections)
+                {
+                    memory.release_memory(section.region.start, 0);
+                }
+
+                binary.sections.clear();
+                return false;
+            }
+
+            const auto image_base = static_cast<T>(binary.image_base);
+            const auto image_base_address = binary.image_base + nt_headers_offset + offsetof(PENTHeaders_t<T>, OptionalHeader) +
+                                            offsetof(PEOptionalHeader_t<T>, ImageBase);
+            memory.write_memory(image_base_address, &image_base, sizeof(image_base));
+
+            apply_relocations(binary, memory, optional_header);
+            collect_exports(binary, memory, optional_header);
+            collect_imports(binary, memory, optional_header);
+
+            // TODO: Make sure to match kernel allocation patterns to attain correct initial permissions!
+            if (!protect_module_memory(memory, binary, headers_size))
+            {
+                throw std::runtime_error("Failed to protect mapped module memory");
+            }
+        }
+        catch (...)
+        {
+            memory.release_memory(binary.image_base, 0);
+            for (const auto& section : binary.sections)
+            {
+                memory.release_memory(section.region.start, 0);
+            }
+
+            binary.sections.clear();
+            binary.exports.clear();
+            binary.imports.clear();
+            binary.imported_modules.clear();
+            binary.address_names.clear();
+            throw;
+        }
+
+        return true;
     }
 }
 
@@ -308,10 +608,17 @@ mapped_module map_module_from_data(memory_manager& memory, const std::span<const
     binary.size_of_heap_reserve = optional_header.SizeOfHeapReserve;
     binary.size_of_heap_commit = optional_header.SizeOfHeapCommit;
 
-    if (!memory.allocate_memory(binary.image_base, static_cast<size_t>(binary.size_of_image), memory_permission::all))
+    const bool is_32bit = (nt_headers.FileHeader.Machine == PEMachineType::I386);
+    const auto is_dll = nt_headers.FileHeader.Characteristics & IMAGE_FILE_DLL;
+    const auto has_dynamic_base = optional_header.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
+    const auto is_relocatable = is_dll || has_dynamic_base;
+
+    if (!try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header))
     {
-        // Check if this is a 32-bit module (WOW64)
-        const bool is_32bit = (nt_headers.FileHeader.Machine == PEMachineType::I386);
+        if (!is_relocatable)
+        {
+            throw std::runtime_error("Memory range not allocatable");
+        }
 
         if (force_wow64cpu_32bit_va)
         {
@@ -331,40 +638,13 @@ mapped_module map_module_from_data(memory_manager& memory, const std::span<const
                 memory.find_free_allocation_base(static_cast<size_t>(binary.size_of_image), DEFAULT_ALLOCATION_ADDRESS_64BIT);
         }
 
-        const auto is_dll = nt_headers.FileHeader.Characteristics & IMAGE_FILE_DLL;
-        const auto has_dynamic_base = optional_header.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
-        const auto is_relocatable = is_dll || has_dynamic_base;
-
-        if (!is_relocatable ||
-            !memory.allocate_memory(binary.image_base, static_cast<size_t>(binary.size_of_image), memory_permission::all))
+        if (!binary.image_base || !try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header))
         {
             throw std::runtime_error("Memory range not allocatable");
         }
     }
 
-    // TODO: Make sure to match kernel allocation patterns to attain correct initial permissions!
-    memory.protect_memory(binary.image_base, static_cast<size_t>(binary.size_of_image), memory_permission::read);
-
     binary.entry_point = binary.image_base + optional_header.AddressOfEntryPoint;
-
-    const auto* header_buffer = buffer.get_pointer_for_range(0, optional_header.SizeOfHeaders);
-    memory.write_memory(binary.image_base, header_buffer, optional_header.SizeOfHeaders);
-
-    const auto image_base = static_cast<T>(binary.image_base);
-    const auto image_base_address =
-        binary.image_base + nt_headers_offset + offsetof(PENTHeaders_t<T>, OptionalHeader) + offsetof(PEOptionalHeader_t<T>, ImageBase);
-    memory.write_memory(image_base_address, &image_base, sizeof(image_base));
-
-    map_sections(memory, binary, buffer, nt_headers, nt_headers_offset);
-
-    auto mapped_memory = read_mapped_memory<T>(memory, binary);
-    utils::safe_buffer_accessor<std::byte> mapped_buffer{mapped_memory};
-
-    apply_relocations(binary, mapped_buffer, optional_header);
-    collect_exports(binary, mapped_buffer, optional_header);
-    collect_imports(binary, mapped_buffer, optional_header);
-
-    memory.write_memory(binary.image_base, mapped_memory.data(), mapped_memory.size());
 
     return binary;
 }
@@ -460,7 +740,24 @@ mapped_module map_module_from_memory(memory_manager& memory, uint64_t base_addre
 
 bool unmap_module(memory_manager& memory, const mapped_module& mod)
 {
-    return memory.release_memory(mod.image_base, static_cast<size_t>(mod.size_of_image));
+    std::unordered_set<uint64_t> released_bases{};
+
+    bool success = true;
+
+    if (released_bases.emplace(mod.image_base).second)
+    {
+        success = memory.release_memory(mod.image_base, 0) && success;
+    }
+
+    for (const auto& section : mod.sections)
+    {
+        if (released_bases.emplace(section.region.start).second)
+        {
+            success = memory.release_memory(section.region.start, 0) && success;
+        }
+    }
+
+    return success;
 }
 
 template mapped_module map_module_from_data<std::uint32_t>(memory_manager& memory, const std::span<const std::byte> data,
