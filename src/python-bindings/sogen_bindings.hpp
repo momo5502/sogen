@@ -20,7 +20,23 @@ namespace nb = nanobind;
 
 namespace sogen::py
 {
-    using namespace sogen;
+    using sogen::backend_type;
+    using sogen::emulator_hook;
+    using sogen::emulator_thread;
+    using sogen::function_calling_convention;
+    using sogen::instruction_hook_continuation;
+    using sogen::mapped_module;
+    using sogen::memory_interface;
+    using sogen::memory_manager;
+    using sogen::memory_permission;
+    using sogen::memory_region_kind;
+    using sogen::memory_violation_continuation;
+    using sogen::nt_memory_permission;
+    using sogen::process_context;
+    using sogen::stop_reason;
+    using sogen::u16_to_u8;
+    using sogen::windows_emulator;
+    using sogen::x86_register;
 
     // ----- continuation enums (custom to bindings) -----
     enum class api_call_continuation
