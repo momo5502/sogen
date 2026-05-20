@@ -4,6 +4,9 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 
+namespace sogen
+{
+
 namespace syscalls
 {
     NTSTATUS handle_NtReleaseMutant(const syscall_context& c, const handle mutant_handle, const emulator_object<LONG> previous_count)
@@ -107,3 +110,5 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 }
+
+} // namespace sogen

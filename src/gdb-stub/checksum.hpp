@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace gdb_stub
+namespace sogen::gdb_stub
 {
     constexpr size_t CHECKSUM_SIZE = 2;
 
@@ -16,4 +16,5 @@ namespace gdb_stub
 
         return checksum;
     }
-}
+} // namespace sogen::gdb_stub
+

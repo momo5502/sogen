@@ -5,6 +5,9 @@
 #include <cstdint>
 #include <cstring>
 
+namespace sogen
+{
+
 namespace utils::compression
 {
     namespace zstd
@@ -47,3 +50,4 @@ namespace utils::compression
         }
     }
 }
+} // namespace sogen

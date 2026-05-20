@@ -3,6 +3,9 @@
 #include <array>
 #include <cstdarg>
 
+namespace sogen
+{
+
 namespace utils::string
 {
     // NOLINTNEXTLINE(cert-dcl50-cpp)
@@ -50,3 +53,4 @@ namespace utils::string
         return buffer.data();
     }
 }
+} // namespace sogen

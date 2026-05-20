@@ -4,6 +4,9 @@
 #include <algorithm>
 #include <cstring>
 
+namespace sogen
+{
+
 using namespace elf; // NOLINT(google-build-using-namespace)
 
 namespace
@@ -565,3 +568,5 @@ void apply_elf_relocations(linux_memory_manager& memory, linux_mapped_module& /*
         }
     }
 }
+
+} // namespace sogen

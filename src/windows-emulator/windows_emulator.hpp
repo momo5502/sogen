@@ -15,6 +15,9 @@
 #include "network/socket_factory.hpp"
 #include "version/windows_version_manager.hpp"
 
+namespace sogen
+{
+
 struct io_device;
 
 struct emulator_callbacks : module_manager::callbacks, process_context::callbacks
@@ -298,3 +301,5 @@ class windows_emulator
 
     void register_factories(utils::buffer_deserializer& buffer);
 };
+
+} // namespace sogen

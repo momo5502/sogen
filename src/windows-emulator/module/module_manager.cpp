@@ -11,6 +11,9 @@
 #include <cinttypes>
 #include <vector>
 
+namespace sogen
+{
+
 namespace
 {
     uint64_t get_system_dll_init_block_size(const windows_version_manager& version)
@@ -630,3 +633,5 @@ bool module_manager::unmap(const uint64_t address)
 
     return true;
 }
+
+} // namespace sogen

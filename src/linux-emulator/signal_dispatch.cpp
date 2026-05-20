@@ -4,6 +4,9 @@
 
 #include <cstring>
 
+namespace sogen
+{
+
 using namespace linux_signals; // NOLINT(google-build-using-namespace)
 
 void signal_dispatcher::setup_trampoline(linux_emulator& emu)
@@ -267,3 +270,5 @@ void signal_dispatcher::sigreturn(linux_emulator& emu)
         emu.process.active_thread->signal_mask = frame.uc.uc_sigmask;
     }
 }
+
+} // namespace sogen

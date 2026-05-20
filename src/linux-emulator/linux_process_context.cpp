@@ -5,6 +5,9 @@
 #include <address_utils.hpp>
 #include <platform/elf.hpp>
 
+namespace sogen
+{
+
 using namespace elf; // NOLINT(google-build-using-namespace)
 
 namespace
@@ -351,3 +354,5 @@ void linux_process_context::setup(x86_64_emulator& emu, linux_memory_manager& me
     this->active_thread->stack_base = stack_alloc_base;
     this->active_thread->stack_size = STACK_SIZE;
 }
+
+} // namespace sogen

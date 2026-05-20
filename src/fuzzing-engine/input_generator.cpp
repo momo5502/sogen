@@ -2,7 +2,7 @@
 
 #include <cassert>
 
-namespace fuzzer
+namespace sogen::fuzzer
 {
     namespace
     {
@@ -122,4 +122,4 @@ namespace fuzzer
             }
         }
     }
-}
+} // namespace sogen::fuzzer

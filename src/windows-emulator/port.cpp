@@ -6,6 +6,9 @@
 #include "ports/dns_resolver.hpp"
 #include "ports/lsa_policy_lookup.hpp"
 
+namespace sogen
+{
+
 namespace
 {
     struct dummy_port : port
@@ -193,3 +196,5 @@ NTSTATUS rpc_port::handle_rpc_call(windows_emulator& win_emu, const lpc_request_
 
     return status;
 }
+
+} // namespace sogen

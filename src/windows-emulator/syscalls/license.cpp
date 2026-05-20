@@ -1,6 +1,9 @@
 #include "../std_include.hpp"
 #include "../syscall_utils.hpp"
 
+namespace sogen
+{
+
 namespace syscalls
 {
     namespace
@@ -181,3 +184,5 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 }
+
+} // namespace sogen

@@ -2,6 +2,8 @@
 
 #include <utils/finally.hpp>
 
+namespace sogen
+{
 namespace
 {
     void cse(const cs_err error)
@@ -121,3 +123,4 @@ void instructions::release()
 
     this->instructions_ = {};
 }
+} // namespace sogen

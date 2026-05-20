@@ -2,6 +2,9 @@
 
 #include <mutex>
 
+namespace sogen
+{
+
 namespace utils::concurrency
 {
     template <typename T, typename MutexType = std::mutex>
@@ -61,3 +64,4 @@ namespace utils::concurrency
         T object_{};
     };
 }
+} // namespace sogen

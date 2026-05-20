@@ -4,6 +4,9 @@
 
 // Based on this implementation: https://github.com/reahly/windows-hive-parser
 
+namespace sogen
+{
+
 namespace
 {
     constexpr uint64_t MAIN_ROOT_OFFSET = 0x1000;
@@ -254,3 +257,5 @@ hive_parser::hive_parser(const std::filesystem::path& file_path)
       root_key_(parse_root_block(file_, file_path))
 {
 }
+
+} // namespace sogen

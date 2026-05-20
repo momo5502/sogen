@@ -2,6 +2,9 @@
 #include "emulator_utils.hpp"
 #include "handles.hpp"
 
+namespace sogen
+{
+
 class user_handle_table
 {
   public:
@@ -436,3 +439,5 @@ class user_handle_store : public generic_handle_store
     bool block_mutation_{false};
     value_map store_{};
 };
+
+} // namespace sogen

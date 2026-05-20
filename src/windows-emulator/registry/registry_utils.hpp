@@ -2,6 +2,9 @@
 
 #include "registry_manager.hpp"
 
+namespace sogen
+{
+
 inline std::string get_user_sid_string(registry_manager& registry)
 {
     const std::filesystem::path profile_list_path = R"(\Registry\Machine\Software\Microsoft\Windows NT\CurrentVersion\ProfileList)";
@@ -35,3 +38,5 @@ inline std::string get_user_sid_string(registry_manager& registry)
 
     return "S-1-5-18";
 }
+
+} // namespace sogen

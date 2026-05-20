@@ -9,6 +9,9 @@
 #include "segment_utils.hpp"
 #include "x86_register.hpp"
 
+namespace sogen
+{
+
 class instructions
 {
   public:
@@ -254,3 +257,6 @@ inline bool resolve_jump_target(x86_64_emulator& cpu, uint64_t& target)
 
     return true;
 }
+
+} // namespace sogen
+

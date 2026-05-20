@@ -7,6 +7,9 @@
 #include <cstdint>
 #include <unordered_map>
 
+namespace sogen
+{
+
 class windows_filesystem final : public gdb_stub::filesystem_interface
 {
   public:
@@ -35,3 +38,6 @@ class windows_filesystem final : public gdb_stub::filesystem_interface
     std::unordered_map<unsigned, std::fstream> opened_files;
     uint32_t free_index{1};
 };
+
+} // namespace sogen
+

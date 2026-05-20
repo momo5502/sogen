@@ -8,6 +8,9 @@
 #define FNID_START      0x29A
 #define FNID_ARRAY_SIZE 24
 
+namespace sogen
+{
+
 constexpr size_t USER_NUM_SYSCOLORS = 31;
 constexpr size_t USER_SERVERINFO_BRUSH_SLOT_COUNT = 32;
 constexpr size_t USER_SERVERINFO_BRUSH_TRAILING_BYTES = 0x78;
@@ -205,3 +208,4 @@ struct USER_DESKTOPINFO
 };
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
+} // namespace sogen

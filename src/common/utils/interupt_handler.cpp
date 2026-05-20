@@ -9,6 +9,9 @@
 #include <csignal>
 #endif
 
+namespace sogen
+{
+
 namespace utils
 {
     namespace
@@ -86,3 +89,4 @@ namespace utils
         data.installed = false;
     }
 }
+} // namespace sogen

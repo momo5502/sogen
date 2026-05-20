@@ -1,6 +1,9 @@
 #include "std_include.hpp"
 #include "cpu_context.hpp"
 
+namespace sogen
+{
+
 namespace cpu_context
 {
     void restore(x86_64_emulator& emu, const CONTEXT64& context)
@@ -149,3 +152,5 @@ namespace cpu_context
         }
     }
 }
+
+} // namespace sogen

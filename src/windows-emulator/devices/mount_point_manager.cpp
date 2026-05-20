@@ -4,6 +4,9 @@
 #include "../windows_emulator.hpp"
 #include "mountmgr.hpp"
 
+namespace sogen
+{
+
 namespace
 {
     std::pair<ULONG, USHORT> write_data(std::vector<uint8_t>& buffer, const std::span<const uint8_t> data)
@@ -189,3 +192,5 @@ std::unique_ptr<io_device> create_mount_point_manager()
 {
     return std::make_unique<mount_point_manager>();
 }
+
+} // namespace sogen

@@ -4,6 +4,9 @@
 #include <utils/function.hpp>
 #include <string_view>
 
+namespace sogen
+{
+
 class logger : public generic_logger
 {
   public:
@@ -52,3 +55,5 @@ class logger : public generic_logger
     sink sink_{};
     void print_message(color c, std::string_view message, bool force = false) const;
 };
+
+} // namespace sogen

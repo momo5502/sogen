@@ -7,6 +7,9 @@
 #include "segment_utils.hpp"
 #include "wow64_heaven_gate.hpp"
 
+namespace sogen
+{
+
 namespace
 {
     using exception_record = EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>;
@@ -292,3 +295,5 @@ void dispatch_breakpoint(windows_emulator& win_emu)
 {
     dispatch_exception(win_emu, STATUS_BREAKPOINT, {});
 }
+
+} // namespace sogen

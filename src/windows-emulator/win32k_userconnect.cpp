@@ -4,6 +4,9 @@
 #include "process_context.hpp"
 #include "windows_emulator.hpp"
 
+namespace sogen
+{
+
 namespace
 {
     constexpr size_t k_dispatch_client_message_index = 21;
@@ -259,3 +262,5 @@ namespace win32k_userconnect
         return try_update_client_pfn_arrays_from_addresses(win_emu.memory, win_emu.process, pointers[0], pointers[1], pointers[2]);
     }
 }
+
+} // namespace sogen

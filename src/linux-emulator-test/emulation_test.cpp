@@ -1,5 +1,7 @@
 #include "linux_emulation_test_utils.hpp"
 
+namespace sogen
+{
 namespace linux_test
 {
     // --- Raw syscall tests (assembly ELFs) ---
@@ -160,4 +162,5 @@ namespace linux_test
         // Should not have terminated yet (hello_musl needs ~10K+ instructions)
         ASSERT_LINUX_NOT_TERMINATED(linux_emu);
     }
-}
+} // namespace linux_test
+} // namespace sogen

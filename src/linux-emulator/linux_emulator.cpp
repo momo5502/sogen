@@ -3,6 +3,9 @@
 
 #include <address_utils.hpp>
 
+namespace sogen
+{
+
 namespace
 {
     // GDT constants — same as Windows emulator
@@ -458,3 +461,5 @@ void linux_emulator::resolve_irelative_relocations()
 
     this->log.info("Resolved %zu/%zu IRELATIVE relocations\n", resolved_count, entries.size());
 }
+
+} // namespace sogen

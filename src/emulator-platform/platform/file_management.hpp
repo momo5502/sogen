@@ -81,6 +81,9 @@
     (FILE_WRITE_THROUGH | FILE_SEQUENTIAL_ONLY | FILE_NO_INTERMEDIATE_BUFFERING | FILE_SYNCHRONOUS_IO_ALERT | \
      FILE_SYNCHRONOUS_IO_NONALERT | FILE_DELETE_ON_CLOSE)
 
+namespace sogen
+{
+
 #define FILE_ATTRIBUTE_NORMAL                      0x00000080
 #define FILE_ATTRIBUTE_DIRECTORY                   0x00000010
 
@@ -639,3 +642,4 @@ typedef struct _OBJECT_HANDLE_FLAG_INFORMATION
 } OBJECT_HANDLE_FLAG_INFORMATION, *POBJECT_HANDLE_FLAG_INFORMATION;
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
+} // namespace sogen

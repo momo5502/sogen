@@ -7,6 +7,9 @@
 #include <memory>
 #include <cinttypes>
 
+namespace sogen
+{
+
 struct object_access_info
 {
     bool main_access{};
@@ -108,3 +111,5 @@ emulator_hook* watch_object(windows_emulator& emu, const std::set<std::string, s
     return watch_object<T>(emu, modules, emulator_object<T>{emu.emu(), address}, verbose, std::forward<Callback>(on_access),
                            std::move(state));
 }
+
+} // namespace sogen

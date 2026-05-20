@@ -1,6 +1,9 @@
 #pragma once
 #include <cstdint>
 
+namespace sogen
+{
+
 template <typename T>
 T* offset_pointer(void* data, const size_t offset)
 {
@@ -57,3 +60,6 @@ constexpr uint64_t rva_to_file_offset(uint64_t va_base, uint64_t raw_base, uint6
 {
     return rva - (va_base - raw_base);
 }
+
+} // namespace sogen
+

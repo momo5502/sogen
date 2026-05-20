@@ -4,6 +4,9 @@
 #include "platform/user.hpp"
 #include "emulator_utils.hpp"
 
+namespace sogen
+{
+
 struct process_context;
 class windows_emulator;
 
@@ -26,3 +29,5 @@ namespace win32k_userconnect
                                                      uint64_t apfn_client_w, uint64_t apfn_client_worker);
     bool try_bootstrap_client_pfn_arrays_from_ntdll(windows_emulator& win_emu);
 }
+
+} // namespace sogen

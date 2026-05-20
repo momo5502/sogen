@@ -1,5 +1,8 @@
 #pragma once
 
+namespace sogen
+{
+
 // x86_64 and x86_32 register definitions
 enum class x86_register
 {
@@ -245,3 +248,6 @@ enum class x86_register
     xcr0,
     end, // Must be last
 };
+
+} // namespace sogen
+

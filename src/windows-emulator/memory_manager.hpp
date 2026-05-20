@@ -10,6 +10,9 @@
 
 #include <memory_interface.hpp>
 
+namespace sogen
+{
+
 constexpr auto ALLOCATION_GRANULARITY = 0x0000000000010000ULL;
 constexpr auto MIN_ALLOCATION_ADDRESS = 0x0000000000010000ULL;
 constexpr auto MAX_ALLOCATION_ADDRESS = 0x00007ffffffeffffULL;
@@ -190,3 +193,5 @@ namespace memory_region_policy
         return STATUS_SUCCESS;
     }
 }
+
+} // namespace sogen

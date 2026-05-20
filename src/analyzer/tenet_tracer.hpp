@@ -4,6 +4,9 @@
 #include <emulator/x86_register.hpp>
 #include <emulator/scoped_hook.hpp>
 
+namespace sogen
+{
+
 constexpr std::array<std::pair<x86_register, std::string_view>, 16> GPRs_TO_TRACE = {
     {
         {x86_register::rax, "rax"},
@@ -56,3 +59,5 @@ class tenet_tracer
     scoped_hook write_hook_;
     scoped_hook execute_hook_;
 };
+
+} // namespace sogen

@@ -8,6 +8,9 @@
 // Reuse mapped_module from windows-emulator (it's OS-agnostic)
 // Re-declare the relevant types here to avoid depending on windows-emulator headers
 
+namespace sogen
+{
+
 struct linux_exported_symbol
 {
     std::string name{};
@@ -90,3 +93,5 @@ void apply_elf_relocations(linux_memory_manager& memory, linux_mapped_module& mo
 // These need to be resolved by running each resolver function in the emulator
 // and writing the result (RAX) into the GOT slot.
 std::vector<elf_irelative_entry> collect_irelative_relocations(std::span<const std::byte> data, int64_t base_delta);
+
+} // namespace sogen

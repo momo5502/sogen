@@ -121,6 +121,9 @@
 #define PF_ARM_SME_FA64_INSTRUCTIONS_AVAILABLE     88
 #endif
 
+namespace sogen
+{
+
 typedef struct _EMU_NT_TIB64
 {
     EMULATOR_CAST(std::uint64_t, struct _EXCEPTION_REGISTRATION_RECORD*) ExceptionList;
@@ -2035,3 +2038,4 @@ constexpr uint64_t PS_SYSTEM_DLL_INIT_BLOCK_SIZE_V3_2004 = offsetof(PS_SYSTEM_DL
 constexpr uint64_t PS_SYSTEM_DLL_INIT_BLOCK_SIZE_V3 = sizeof(PS_SYSTEM_DLL_INIT_BLOCK_V3);
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
+} // namespace sogen

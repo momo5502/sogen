@@ -1,5 +1,8 @@
 #pragma once
 
+namespace sogen
+{
+
 namespace utils
 {
     struct object
@@ -21,3 +24,4 @@ namespace utils
         obj = std::move(new_obj);
     }
 }
+} // namespace sogen

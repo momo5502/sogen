@@ -8,6 +8,9 @@
 #include <algorithm>
 #include <string_view>
 
+namespace sogen
+{
+
 namespace utils::string
 {
 #ifdef __clang__
@@ -298,3 +301,4 @@ namespace utils::string
         return compare_ignore_case(std::basic_string_view<Elem, Traits>(lhs), std::basic_string_view<Elem, Traits>(rhs));
     }
 }
+} // namespace sogen

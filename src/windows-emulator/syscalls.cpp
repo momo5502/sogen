@@ -10,6 +10,9 @@
 #include <utils/time.hpp>
 #include <utils/finally.hpp>
 
+namespace sogen
+{
+
 namespace syscalls
 {
     // syscalls/event.cpp:
@@ -1134,3 +1137,5 @@ void syscall_dispatcher::add_callbacks()
 #undef add_callback
 #undef add_stateless_callback
 }
+
+} // namespace sogen

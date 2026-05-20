@@ -2,6 +2,9 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 
+namespace sogen
+{
+
 namespace syscalls
 {
     namespace
@@ -84,3 +87,5 @@ namespace syscalls
         }
     }
 }
+
+} // namespace sogen

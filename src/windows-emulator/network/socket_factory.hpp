@@ -4,6 +4,9 @@
 
 #include <memory>
 
+namespace sogen
+{
+
 namespace network
 {
     struct poll_entry
@@ -22,3 +25,5 @@ namespace network
         virtual int poll_sockets(std::span<poll_entry> entries);
     };
 }
+
+} // namespace sogen

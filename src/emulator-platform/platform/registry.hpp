@@ -2,6 +2,9 @@
 
 // NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 
+namespace sogen
+{
+
 typedef enum _KEY_INFORMATION_CLASS
 {
     KeyBasicInformation,          // KEY_BASIC_INFORMATION
@@ -131,3 +134,4 @@ struct KEY_VALUE_ENTRY
 };
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
+} // namespace sogen

@@ -2,6 +2,9 @@
 
 #include "std_include.hpp"
 
+namespace sogen
+{
+
 class linux_logger
 {
   public:
@@ -75,3 +78,5 @@ class linux_logger
   private:
     bool disable_output_{false};
 };
+
+} // namespace sogen

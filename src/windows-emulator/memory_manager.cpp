@@ -10,6 +10,9 @@
 #include <stdexcept>
 #include <cassert>
 
+namespace sogen
+{
+
 namespace
 {
     void split_regions(memory_manager::committed_region_map& regions, const std::vector<uint64_t>& split_points)
@@ -865,3 +868,5 @@ void memory_manager::apply_memory_protection(const uint64_t address, const size_
 {
     this->memory_->apply_memory_protection(address, size, permissions);
 }
+
+} // namespace sogen

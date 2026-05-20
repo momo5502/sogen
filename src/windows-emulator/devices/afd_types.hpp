@@ -5,6 +5,9 @@
 
 // NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 
+namespace sogen
+{
+
 typedef LONG TDI_STATUS;
 
 struct win_sockaddr
@@ -216,3 +219,5 @@ struct AFD_EVENT_SELECT_INFO
 #define AFD_TRANSPORT_IOCTL             47
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
+
+} // namespace sogen

@@ -3,6 +3,9 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 
+namespace sogen
+{
+
 namespace syscalls
 {
     NTSTATUS handle_NtQueryTimerResolution(const syscall_context&, const emulator_object<ULONG> maximum_time,
@@ -135,3 +138,5 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 }
+
+} // namespace sogen

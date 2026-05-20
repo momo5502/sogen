@@ -4,7 +4,7 @@
 
 #include "unicorn.hpp"
 
-namespace unicorn
+namespace sogen::unicorn
 {
     class unicorn_memory_regions
     {
@@ -63,4 +63,5 @@ namespace unicorn
             this->regions_ = nullptr;
         }
     };
-}
+} // namespace sogen::unicorn
+

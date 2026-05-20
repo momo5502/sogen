@@ -10,6 +10,9 @@
 #include <unistd.h>
 #endif
 
+namespace sogen
+{
+
 using namespace linux_errno; // NOLINT(google-build-using-namespace)
 
 // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
@@ -620,3 +623,5 @@ void sys_pselect6(const linux_syscall_context& c)
     sys_select(c);
 }
 // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+
+} // namespace sogen

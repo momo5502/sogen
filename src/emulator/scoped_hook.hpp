@@ -1,6 +1,9 @@
 #pragma once
 #include "emulator.hpp"
 
+namespace sogen
+{
+
 class scoped_hook
 {
   public:
@@ -87,3 +90,6 @@ class scoped_hook
     emulator* emu_{};
     std::vector<emulator_hook*> hooks_{};
 };
+
+} // namespace sogen
+

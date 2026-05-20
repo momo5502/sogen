@@ -18,8 +18,10 @@
 
 namespace nb = nanobind;
 
-namespace sogen_py
+namespace sogen::py
 {
+    using namespace sogen;
+
     // ----- continuation enums (custom to bindings) -----
     enum class api_call_continuation
     {
@@ -52,8 +54,8 @@ namespace sogen_py
     std::unique_ptr<windows_emulator> create_empty_emulator(const nb::kwargs& kwargs);
     std::unique_ptr<windows_emulator> create_application_emulator(const nb::object& application, const nb::object& args,
                                                                   const nb::kwargs& kwargs);
-}
 
-void register_sogen_types_bindings(nb::module_& m);
-void register_sogen_windows_runtime_bindings(nb::module_& m);
-void register_sogen_runtime_bindings(nb::module_& m);
+    void register_types_bindings(nb::module_& m);
+    void register_windows_runtime_bindings(nb::module_& m);
+    void register_runtime_bindings(nb::module_& m);
+}

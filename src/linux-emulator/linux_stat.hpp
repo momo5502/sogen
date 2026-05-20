@@ -6,6 +6,9 @@
 // Matches the kernel's struct stat for x86-64
 // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 #pragma pack(push, 1)
+namespace sogen
+{
+
 struct linux_stat
 {
     uint64_t st_dev;
@@ -31,3 +34,5 @@ struct linux_stat
 // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
 static_assert(sizeof(linux_stat) == 144);
+
+} // namespace sogen

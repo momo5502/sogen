@@ -11,6 +11,9 @@
 #include <utils/finally.hpp>
 #include <utils/time.hpp>
 
+namespace sogen
+{
+
 namespace
 {
     // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
@@ -1294,3 +1297,5 @@ std::unique_ptr<io_device> create_afd_async_connect_hlp(const bool is_32_bit)
 
     return std::make_unique<afd_async_connect_hlp<EmulatorTraits<Emu64>>>();
 }
+
+} // namespace sogen

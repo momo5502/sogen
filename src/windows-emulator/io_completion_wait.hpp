@@ -2,6 +2,9 @@
 
 #include "process_context.hpp"
 
+namespace sogen
+{
+
 namespace io_completion_wait
 {
     bool is_wait_completion_target_type(handle target_object_handle);
@@ -18,3 +21,5 @@ namespace io_completion_wait
                                         emulator_object<FILE_IO_COMPLETION_INFORMATION<EmulatorTraits<Emu64>>> out_entries,
                                         ULONG max_count);
 }
+
+} // namespace sogen

@@ -7,6 +7,13 @@
 #include <limits>
 #include <utils/string.hpp>
 
+#ifdef msg
+#undef msg
+#endif
+
+namespace sogen
+{
+
 namespace
 {
     constexpr ULONG k_thread_state_win32_thread_info = 0xE;
@@ -1090,7 +1097,7 @@ namespace syscalls
         {
             if (thread.id == target_thread_id)
             {
-                ::msg qmsg{};
+                sogen::msg qmsg{};
                 qmsg.window = hwnd;
                 qmsg.message = msg;
                 qmsg.wParam = wParam;
@@ -1106,7 +1113,7 @@ namespace syscalls
 
     BOOL handle_NtUserPostQuitMessage(const syscall_context& c, int exit_code)
     {
-        msg qmsg{};
+        sogen::msg qmsg{};
         qmsg.message = WM_QUIT;
         qmsg.wParam = exit_code;
 
@@ -1545,3 +1552,5 @@ namespace syscalls
         return result;
     }
 }
+
+} // namespace sogen

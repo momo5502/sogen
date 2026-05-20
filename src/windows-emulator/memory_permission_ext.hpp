@@ -1,6 +1,9 @@
 #pragma once
 #include "memory_permission.hpp"
 
+namespace sogen
+{
+
 enum class memory_permission_ext : uint8_t
 {
     none = 0,
@@ -178,3 +181,5 @@ inline bool is_guarded(const memory_permission_ext permission)
 {
     return (permission & memory_permission_ext::guard) != memory_permission_ext::none;
 }
+
+} // namespace sogen

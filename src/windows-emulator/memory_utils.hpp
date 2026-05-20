@@ -4,6 +4,9 @@
 #include <emulator.hpp>
 #include "memory_permission_ext.hpp"
 
+namespace sogen
+{
+
 inline std::string get_permission_string(const memory_permission permission)
 {
     const bool has_exec = (permission & memory_permission::exec) != memory_permission::none;
@@ -105,3 +108,5 @@ inline uint32_t map_emulator_to_nt_protection(const memory_permission permission
 
     return PAGE_READONLY;
 }
+
+} // namespace sogen

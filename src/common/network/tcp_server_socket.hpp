@@ -3,7 +3,7 @@
 #include "socket.hpp"
 #include "tcp_client_socket.hpp"
 
-namespace network
+namespace sogen::network
 {
     class tcp_server_socket : public socket
     {

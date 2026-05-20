@@ -6,6 +6,9 @@
 #include <unordered_map>
 #include "string.hpp"
 
+namespace sogen
+{
+
 namespace utils
 {
     template <typename Elem, typename Traits>
@@ -90,3 +93,4 @@ namespace utils
     using unordered_string_set = std::unordered_set<std::string, string_hash, std::equal_to<>>;
     using unordered_u16string_set = std::unordered_set<std::u16string, u16string_hash, std::equal_to<>>;
 }
+} // namespace sogen

@@ -11,6 +11,9 @@
 #include <string>
 #include <string_view>
 
+namespace sogen
+{
+
 namespace
 {
     using analysis_reporter_detail::make_overloaded;
@@ -597,3 +600,5 @@ std::unique_ptr<analysis_reporter> create_jsonl_reporter(const std::filesystem::
 {
     return std::make_unique<jsonl_analysis_reporter>(path);
 }
+
+} // namespace sogen

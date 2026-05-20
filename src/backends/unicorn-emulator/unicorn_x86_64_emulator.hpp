@@ -10,10 +10,11 @@
 #define UNICORN_EMULATOR_DLL_STORAGE IMPORT_SYMBOL
 #endif
 
-namespace unicorn
+namespace sogen::unicorn
 {
 #if !SOGEN_BUILD_STATIC
     UNICORN_EMULATOR_DLL_STORAGE
 #endif
     std::unique_ptr<x86_64_emulator> create_x86_64_emulator();
-}
+} // namespace sogen::unicorn
+

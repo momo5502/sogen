@@ -8,6 +8,9 @@
 
 #include <arch_emulator.hpp>
 
+namespace sogen
+{
+
 struct linux_process_context
 {
     linux_fd_table fds{};
@@ -54,3 +57,5 @@ struct linux_process_context
                const std::vector<std::string>& argv_values, const std::vector<std::string>& envp_values, uint64_t interpreter_base = 0,
                uint64_t initial_rip = 0, uint64_t vdso_base = 0);
 };
+
+} // namespace sogen

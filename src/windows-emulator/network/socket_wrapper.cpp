@@ -1,6 +1,9 @@
 #include "socket_wrapper.hpp"
 #include <cassert>
 
+namespace sogen
+{
+
 namespace network
 {
     socket_wrapper::socket_wrapper(SOCKET s)
@@ -116,3 +119,5 @@ namespace network
         return res;
     }
 }
+
+} // namespace sogen

@@ -2,6 +2,9 @@
 #include "register_entry.hpp"
 #include <vector>
 
+namespace sogen
+{
+
 inline std::vector<register_entry> x86_gdb_registers{
     x86_register::eax,        x86_register::ecx,     x86_register::edx,     x86_register::ebx,     x86_register::esp,
     x86_register::ebp,        x86_register::esi,     x86_register::edi,     x86_register::eip,     x86_register::eflags,
@@ -25,3 +28,6 @@ inline std::vector<register_entry> x86_gdb_registers{
     x86_register::xmm5,       x86_register::xmm6,    x86_register::xmm7,    x86_register::mxcsr,   x86_register::fs_base,
     x86_register::gs_base,
 };
+
+} // namespace sogen
+

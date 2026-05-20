@@ -10,6 +10,9 @@
 // ELF format definitions — portable, no compiler intrinsics
 // ============================================================================
 
+namespace sogen
+{
+
 namespace elf
 {
     // ---- ELF identification ------------------------------------------------
@@ -431,3 +434,4 @@ namespace elf
     }
 
 } // namespace elf
+} // namespace sogen

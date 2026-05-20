@@ -2,6 +2,9 @@
 #include <utility>
 #include <type_traits>
 
+namespace sogen
+{
+
 namespace utils
 {
     /*
@@ -56,3 +59,4 @@ namespace utils
         return final_action<std::remove_cv_t<std::remove_reference_t<F>>>(std::forward<F>(f));
     }
 }
+} // namespace sogen

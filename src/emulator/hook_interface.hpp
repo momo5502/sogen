@@ -7,6 +7,9 @@
 #include <functional>
 #include <stdexcept>
 
+namespace sogen
+{
+
 struct emulator_hook;
 
 using memory_operation = memory_permission;
@@ -83,3 +86,6 @@ class hook_interface
 
     virtual void delete_hook(emulator_hook* hook) = 0;
 };
+
+} // namespace sogen
+

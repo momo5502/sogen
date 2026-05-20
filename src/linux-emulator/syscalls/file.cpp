@@ -17,6 +17,9 @@
 #include <unistd.h>
 #endif
 
+namespace sogen
+{
+
 using namespace linux_errno; // NOLINT(google-build-using-namespace)
 
 #ifdef _WIN32
@@ -2130,3 +2133,5 @@ void sys_ioctl(const linux_syscall_context& c)
         break;
     }
 }
+
+} // namespace sogen

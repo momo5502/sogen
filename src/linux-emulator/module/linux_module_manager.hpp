@@ -6,6 +6,9 @@
 
 #include <utils/io.hpp>
 
+namespace sogen
+{
+
 class linux_file_system;
 
 class linux_module_manager
@@ -71,3 +74,5 @@ class linux_module_manager
     // with the directory containing the requesting module.
     static std::vector<std::filesystem::path> split_search_paths(const std::string& paths, const std::filesystem::path& origin);
 };
+
+} // namespace sogen

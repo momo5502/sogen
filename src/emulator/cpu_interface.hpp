@@ -5,6 +5,9 @@
 #include <cstddef>
 #include <vector>
 
+namespace sogen
+{
+
 struct cpu_interface
 {
     virtual ~cpu_interface() = default;
@@ -31,3 +34,6 @@ struct cpu_interface
 
     virtual bool supports_instruction_counting() const = 0;
 };
+
+} // namespace sogen
+

@@ -5,6 +5,9 @@
 #include <algorithm>
 #include <cstddef>
 
+namespace sogen
+{
+
 namespace utils
 {
     template <typename Signature>
@@ -98,3 +101,4 @@ namespace utils
         callback_id_type next_id = 1;
     };
 }
+} // namespace sogen

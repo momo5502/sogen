@@ -5,6 +5,9 @@
 
 #include <cstring>
 
+namespace sogen
+{
+
 using namespace elf; // NOLINT(google-build-using-namespace)
 
 // ============================================================================
@@ -488,3 +491,5 @@ uint64_t linux_vdso::setup(linux_memory_manager& memory)
 
     return base;
 }
+
+} // namespace sogen

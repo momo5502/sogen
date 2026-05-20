@@ -4,6 +4,9 @@
 #include <cstddef>
 #include <cstdint>
 
+namespace sogen
+{
+
 namespace wow64::heaven_gate
 {
     inline constexpr uint64_t kCodeBase = 0xFF300000ULL;
@@ -19,3 +22,5 @@ namespace wow64::heaven_gate
     inline constexpr std::array<uint8_t, 19> kTrampolineBytes{0x6A, 0x33, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x83, 0x04, 0x24,
                                                               0x05, 0xCB, 0x52, 0x53, 0x9C, 0x51, 0x50, 0x48, 0xCF};
 }
+
+} // namespace sogen

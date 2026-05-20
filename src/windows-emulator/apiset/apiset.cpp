@@ -10,6 +10,9 @@
 #include <utils/io.hpp>
 #include <utils/compression.hpp>
 
+namespace sogen
+{
+
 namespace apiset
 {
     namespace
@@ -204,3 +207,5 @@ namespace apiset
         return apiset;
     }
 }
+
+} // namespace sogen

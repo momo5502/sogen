@@ -7,6 +7,9 @@
 
 #include <utils/time.hpp>
 
+namespace sogen
+{
+
 struct process_context;
 struct fake_environment_config;
 class windows_emulator;
@@ -57,3 +60,5 @@ class kusd_mmio
     void register_mmio();
     void deregister_mmio();
 };
+
+} // namespace sogen

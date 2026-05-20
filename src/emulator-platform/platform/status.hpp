@@ -2,6 +2,9 @@
 
 #include <cstdint>
 
+namespace sogen
+{
+
 using NTSTATUS = std::uint32_t;
 
 #ifndef OS_WINDOWS
@@ -106,3 +109,4 @@ using NTSTATUS = std::uint32_t;
 
 #define FILE_DEVICE_NETWORK                0x00000012
 #define FSCTL_AFD_BASE                     FILE_DEVICE_NETWORK
+} // namespace sogen

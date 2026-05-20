@@ -2,6 +2,9 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 
+namespace sogen
+{
+
 namespace syscalls
 {
     NTSTATUS handle_NtOpenSemaphore(const syscall_context& c, const emulator_object<handle> semaphore_handle,
@@ -105,3 +108,5 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 }
+
+} // namespace sogen

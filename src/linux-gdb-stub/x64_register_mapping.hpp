@@ -1,7 +1,11 @@
 #pragma once
 #include <cstddef>
 #include <optional>
+#include <vector>
 #include <x86_register.hpp>
+
+namespace sogen
+{
 
 struct register_entry
 {
@@ -99,3 +103,6 @@ inline std::vector<register_entry> gdb_registers{
     {x86_register::ymm14, 16, 16},
     {x86_register::ymm15, 16, 16},
 };
+
+} // namespace sogen
+

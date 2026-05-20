@@ -6,6 +6,9 @@
 #include <optional>
 #include "../emulator_utils.hpp"
 
+namespace sogen
+{
+
 using apiset_map = std::map<std::u16string, std::u16string>;
 namespace apiset
 {
@@ -37,3 +40,5 @@ namespace apiset
 
     apiset_map get_namespace_table(const API_SET_NAMESPACE* apiset_ns_data);
 }
+
+} // namespace sogen

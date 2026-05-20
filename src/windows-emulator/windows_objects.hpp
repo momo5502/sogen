@@ -8,6 +8,9 @@
 #include <platform/synchronisation.hpp>
 #include <platform/win_pefile.hpp>
 
+namespace sogen
+{
+
 struct timer : ref_counted_object
 {
     std::u16string name{};
@@ -660,3 +663,5 @@ struct private_namespace : ref_counted_object
         buffer.read(this->deleted);
     }
 };
+
+} // namespace sogen

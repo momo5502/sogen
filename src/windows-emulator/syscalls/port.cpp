@@ -3,6 +3,9 @@
 #include "../syscall_utils.hpp"
 #include "../port.hpp"
 
+namespace sogen
+{
+
 namespace syscalls
 {
     NTSTATUS handle_NtConnectPort(const syscall_context& c, const emulator_object<handle> client_port_handle,
@@ -152,3 +155,5 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 }
+
+} // namespace sogen

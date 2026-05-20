@@ -1,6 +1,9 @@
 #include "std_include.hpp"
 #include "io_completion_wait.hpp"
 
+namespace sogen
+{
+
 namespace io_completion_wait
 {
     namespace
@@ -261,3 +264,5 @@ namespace io_completion_wait
         return removed;
     }
 }
+
+} // namespace sogen

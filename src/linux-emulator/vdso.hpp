@@ -32,6 +32,9 @@
 //   time                 (alias)
 //   getcpu               (alias)
 
+namespace sogen
+{
+
 class linux_vdso
 {
   public:
@@ -57,3 +60,5 @@ class linux_vdso
     uint64_t base_address_{};
     size_t image_size_{};
 };
+
+} // namespace sogen

@@ -15,6 +15,9 @@
 #include "vdso.hpp"
 #include "module/linux_module_manager.hpp"
 
+namespace sogen
+{
+
 class linux_emulator
 {
     uint64_t executed_instructions_{0};
@@ -75,3 +78,5 @@ class linux_emulator
     void on_instruction_execution(uint64_t address);
     void resolve_irelative_relocations();
 };
+
+} // namespace sogen

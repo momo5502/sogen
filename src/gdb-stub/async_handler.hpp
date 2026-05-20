@@ -4,7 +4,7 @@
 #include <functional>
 #include <condition_variable>
 
-namespace gdb_stub
+namespace sogen::gdb_stub
 {
     class async_handler
     {
@@ -35,4 +35,5 @@ namespace gdb_stub
 
         void work();
     };
-}
+} // namespace sogen::gdb_stub
+

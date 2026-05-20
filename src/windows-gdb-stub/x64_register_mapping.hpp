@@ -2,6 +2,9 @@
 #include "register_entry.hpp"
 #include <vector>
 
+namespace sogen
+{
+
 inline std::vector<register_entry> x64_gdb_registers{
     x86_register::rax,
     x86_register::rbx,
@@ -83,3 +86,6 @@ inline std::vector<register_entry> x64_gdb_registers{
     {x86_register::ymm14, 16, 16},
     {x86_register::ymm15, 16, 16},
 };
+
+} // namespace sogen
+

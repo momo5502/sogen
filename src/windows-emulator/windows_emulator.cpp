@@ -14,6 +14,9 @@
 #include "network/static_socket_factory.hpp"
 #include "memory_permission_ext.hpp"
 
+namespace sogen
+{
+
 constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 0x20000;
 
 namespace
@@ -785,3 +788,5 @@ void windows_emulator::restore_snapshot()
     this->dispatcher.deserialize(buffer);
     this->process.deserialize(buffer);
 }
+
+} // namespace sogen

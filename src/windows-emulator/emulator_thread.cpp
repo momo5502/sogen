@@ -6,6 +6,9 @@
 #include "io_completion_wait.hpp"
 #include "syscall_utils.hpp"
 
+namespace sogen
+{
+
 namespace
 {
     void setup_wow64_fs_segment(memory_manager& memory, uint64_t teb32_addr)
@@ -750,3 +753,5 @@ void callback_frame::deserialize(utils::buffer_deserializer& buffer)
         buffer.read(*this->state);
     }
 }
+
+} // namespace sogen

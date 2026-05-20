@@ -11,6 +11,9 @@
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
 #endif
 
+namespace sogen
+{
+
 namespace
 {
     bool must_map_module_below_4gb(const std::string& module_name, const PEMachineType machine, const uint64_t image_base)
@@ -764,3 +767,5 @@ template mapped_module map_module_from_memory<std::uint32_t>(memory_manager& mem
                                                              windows_path module_path);
 template mapped_module map_module_from_memory<std::uint64_t>(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                                              windows_path module_path);
+
+} // namespace sogen

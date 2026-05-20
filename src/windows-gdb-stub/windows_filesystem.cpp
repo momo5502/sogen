@@ -13,6 +13,9 @@
 #undef st_mtime
 #undef st_ctime
 
+namespace sogen
+{
+
 constexpr auto FILEIO_O_WRONLY = 0x1u;
 constexpr auto FILEIO_O_RDWR = 0x2u;
 constexpr auto FILEIO_O_APPEND = 0x8u;
@@ -231,3 +234,5 @@ int windows_filesystem::unlink(const std::string& file_path)
 
     return ::unlink(real_path.c_str());
 }
+
+} // namespace sogen

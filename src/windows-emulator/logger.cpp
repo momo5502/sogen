@@ -3,6 +3,9 @@
 
 #include <utils/finally.hpp>
 
+namespace sogen
+{
+
 namespace
 {
 #ifdef _WIN32
@@ -205,3 +208,5 @@ void logger::log(const char* message, ...) const
     format_to_string(message, data);
     this->print_message(color::gray, data);
 }
+
+} // namespace sogen

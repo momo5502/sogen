@@ -6,6 +6,9 @@
 #include <utils/function.hpp>
 #include "platform/win_pefile.hpp"
 
+namespace sogen
+{
+
 class logger;
 class registry_manager;
 class windows_version_manager;
@@ -219,3 +222,5 @@ class module_manager
         return this->modules_.end();
     }
 };
+
+} // namespace sogen

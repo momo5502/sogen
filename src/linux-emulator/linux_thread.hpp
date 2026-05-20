@@ -3,6 +3,9 @@
 #include "std_include.hpp"
 #include <arch_emulator.hpp>
 
+namespace sogen
+{
+
 struct linux_saved_registers
 {
     uint64_t rax{};
@@ -177,3 +180,5 @@ struct linux_thread
         emu.set_segment_base(x86_register::gs, this->saved_regs.gs_base);
     }
 };
+
+} // namespace sogen

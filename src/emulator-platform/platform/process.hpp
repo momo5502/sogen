@@ -29,6 +29,8 @@
     (CONTEXT_CONTROL_32 | CONTEXT_INTEGER_32 | CONTEXT_SEGMENTS_32 | CONTEXT_FLOATING_POINT_32 | CONTEXT_DEBUG_REGISTERS_32 | \
      CONTEXT_EXTENDED_REGISTERS_32)
 
+namespace sogen
+{
 using SYSTEM_INFORMATION_CLASS = enum _SYSTEM_INFORMATION_CLASS
 {
     SystemBasicInformation,                // q: SYSTEM_BASIC_INFORMATION
@@ -1171,3 +1173,4 @@ struct PROCESS_INSTRUMENTATION_CALLBACK_INFORMATION
     uint64_t Callback;
 };
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
+} // namespace sogen

@@ -41,6 +41,9 @@
 #define MEM_64K_PAGES               (MEM_LARGE_PAGES | MEM_PHYSICAL)
 #endif
 
+namespace sogen
+{
+
 typedef enum _MEMORY_INFORMATION_CLASS
 {
     MemoryBasicInformation,              // q: MEMORY_BASIC_INFORMATION
@@ -138,3 +141,4 @@ typedef struct _MEMORY_REGION_INFORMATION
 } MEMORY_REGION_INFORMATION64, *PMEMORY_REGION_INFORMATION64;
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-use-enum-class)
+} // namespace sogen

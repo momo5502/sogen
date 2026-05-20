@@ -5,6 +5,9 @@
 #include <filesystem>
 #include <memory>
 
+namespace sogen
+{
+
 class logger;
 
 struct console_reporter_settings
@@ -24,3 +27,5 @@ class analysis_reporter
 };
 
 std::unique_ptr<analysis_reporter> create_console_reporter(logger& log, console_reporter_settings settings);
+
+} // namespace sogen

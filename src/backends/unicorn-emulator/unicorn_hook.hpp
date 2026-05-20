@@ -2,7 +2,7 @@
 
 #include "unicorn.hpp"
 
-namespace unicorn
+namespace sogen::unicorn
 {
     class unicorn_hook
     {
@@ -73,4 +73,5 @@ namespace unicorn
         uc_engine* uc_{};
         uc_hook hook_{};
     };
-}
+} // namespace sogen::unicorn
+

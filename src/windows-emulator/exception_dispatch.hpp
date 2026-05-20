@@ -15,6 +15,9 @@
 #define BREAKPOINT_UNLOAD_SYMBOLS 4
 #define BREAKPOINT_COMMAND_STRING 5
 
+namespace sogen
+{
+
 class windows_emulator;
 
 void dispatch_exception(windows_emulator& win_emu, DWORD status, const std::vector<EmulatorTraits<Emu64>::ULONG_PTR>& parameters);
@@ -32,3 +35,5 @@ void dispatch_illegal_instruction_violation(windows_emulator& win_emu);
 void dispatch_integer_division_by_zero(windows_emulator& win_emu);
 void dispatch_single_step(windows_emulator& win_emu);
 void dispatch_breakpoint(windows_emulator& win_emu);
+
+} // namespace sogen

@@ -4,6 +4,9 @@
 
 #include <iomanip>
 
+namespace sogen
+{
+
 namespace
 {
     std::string format_hex(uint64_t value)
@@ -267,3 +270,5 @@ void tenet_tracer::process_instruction(const uint64_t address)
     mem_write_log_.str("");
     mem_write_log_.clear();
 }
+
+} // namespace sogen

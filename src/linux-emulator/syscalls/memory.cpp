@@ -4,6 +4,9 @@
 
 #include <address_utils.hpp>
 
+namespace sogen
+{
+
 using namespace linux_errno; // NOLINT(google-build-using-namespace)
 
 namespace
@@ -335,3 +338,5 @@ void sys_madvise(const linux_syscall_context& c)
     // All other advice values are no-ops
     write_linux_syscall_result(c, 0);
 }
+
+} // namespace sogen

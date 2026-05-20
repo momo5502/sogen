@@ -5,6 +5,9 @@
 
 #include <limits>
 
+namespace sogen
+{
+
 namespace syscalls
 {
     namespace
@@ -404,3 +407,5 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 }
+
+} // namespace sogen

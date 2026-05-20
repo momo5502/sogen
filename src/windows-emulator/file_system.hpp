@@ -2,6 +2,9 @@
 #include "std_include.hpp"
 #include "windows_path.hpp"
 
+namespace sogen
+{
+
 class file_system
 {
   public:
@@ -111,3 +114,5 @@ class file_system
     std::filesystem::path root_{};
     std::unordered_map<windows_path, std::filesystem::path> mappings_{};
 };
+
+} // namespace sogen

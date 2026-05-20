@@ -9,6 +9,9 @@
 #include <cpuid.h>
 #endif
 
+namespace sogen
+{
+
 namespace utils::cpu_features
 {
     namespace detail
@@ -86,3 +89,4 @@ namespace utils::cpu_features
 #endif
     }
 }
+} // namespace sogen

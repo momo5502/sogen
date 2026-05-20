@@ -7,6 +7,9 @@
 #include <utils/function.hpp>
 #include <utils/string.hpp>
 
+namespace sogen
+{
+
 class win_x86_64_gdb_stub_handler : public x86_64_gdb_stub_handler
 {
   public:
@@ -217,3 +220,6 @@ class win_x86_64_gdb_stub_handler : public x86_64_gdb_stub_handler
     utils::callback_id_type mod_unload_id{};
     utils::callback_id_type dbg_msg_id{};
 };
+
+} // namespace sogen
+

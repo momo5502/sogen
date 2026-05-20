@@ -7,6 +7,9 @@
 #include <optional>
 
 // Forward declarations
+namespace sogen
+{
+
 class linux_emulator;
 
 // Synthesizes /proc filesystem content from emulator state.
@@ -53,3 +56,5 @@ class procfs
     static std::string generate_proc_stat(const linux_emulator& emu);
     static std::string generate_osrelease();
 };
+
+} // namespace sogen

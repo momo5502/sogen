@@ -2,7 +2,7 @@
 #include <queue>
 #include <string>
 
-namespace gdb_stub
+namespace sogen::gdb_stub
 {
     class stream_processor
     {
@@ -18,4 +18,5 @@ namespace gdb_stub
         void process_data_stream();
         void enqueue_packet(std::string packet);
     };
-}
+} // namespace sogen::gdb_stub
+

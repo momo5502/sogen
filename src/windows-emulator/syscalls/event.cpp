@@ -2,6 +2,9 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 
+namespace sogen
+{
+
 namespace syscalls
 {
     NTSTATUS handle_NtSetEvent(const syscall_context& c, const uint64_t handle, const emulator_object<LONG> previous_state)
@@ -180,3 +183,5 @@ namespace syscalls
         return STATUS_NOT_FOUND;
     }
 }
+
+} // namespace sogen

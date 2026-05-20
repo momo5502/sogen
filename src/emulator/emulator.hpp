@@ -6,6 +6,9 @@
 
 #include "serialization.hpp"
 
+namespace sogen
+{
+
 class emulator : public cpu_interface, public memory_interface, public hook_interface
 {
   public:
@@ -23,3 +26,6 @@ class emulator : public cpu_interface, public memory_interface, public hook_inte
     virtual void serialize_state(utils::buffer_serializer& buffer, bool is_snapshot) const = 0;
     virtual void deserialize_state(utils::buffer_deserializer& buffer, bool is_snapshot) = 0;
 };
+
+} // namespace sogen
+

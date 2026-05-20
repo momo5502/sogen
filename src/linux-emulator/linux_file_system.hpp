@@ -2,6 +2,9 @@
 
 #include "std_include.hpp"
 
+namespace sogen
+{
+
 class linux_file_system
 {
   public:
@@ -209,3 +212,5 @@ class linux_file_system
         return path == "/dev/urandom" || path == "/dev/random";
     }
 };
+
+} // namespace sogen

@@ -4,6 +4,9 @@
 
 #include <utils/string.hpp>
 
+namespace sogen
+{
+
 static void serialize(utils::buffer_serializer& buffer, const syscall_handler_entry& obj)
 {
     buffer.write(obj.name);
@@ -196,3 +199,5 @@ syscall_dispatcher::syscall_dispatcher(const exported_symbols& ntdll_exports, co
 }
 
 std::map<callback_id, std::function<std::unique_ptr<completion_state>()>> syscall_dispatcher::completion_state_factories_{};
+
+} // namespace sogen

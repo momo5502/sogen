@@ -3,6 +3,9 @@
 #include "linux_emulator.hpp"
 
 // NOLINTBEGIN(google-build-using-namespace)
+namespace sogen
+{
+
 using namespace linux_syscalls;
 using namespace linux_errno;
 // NOLINTEND(google-build-using-namespace)
@@ -346,3 +349,5 @@ void linux_syscall_dispatcher::add_handlers()
     this->handlers_[LINUX_SYS_fork].name = "fork";
     this->handlers_[LINUX_SYS_vfork].name = "vfork";
 }
+
+} // namespace sogen

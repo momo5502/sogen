@@ -3,6 +3,9 @@
 #include "string.hpp"
 #include <filesystem>
 
+namespace sogen
+{
+
 namespace utils
 {
     class path_key
@@ -55,13 +58,14 @@ namespace utils
         std::filesystem::path path_{};
     };
 }
+} // namespace sogen
 
 namespace std
 {
     template <>
-    struct hash<utils::path_key>
+    struct hash<sogen::utils::path_key>
     {
-        size_t operator()(const utils::path_key& p) const noexcept
+        size_t operator()(const sogen::utils::path_key& p) const noexcept
         {
             return hash<std::filesystem::path::string_type>()(p.get().native());
         }

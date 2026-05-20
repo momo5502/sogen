@@ -11,6 +11,9 @@
 #include "x64_register_mapping.hpp"
 #include "x64_target_descriptions.hpp"
 
+namespace sogen
+{
+
 struct breakpoint_key
 {
     uint64_t addr{};
@@ -23,15 +26,23 @@ struct breakpoint_key
     }
 };
 
-template <>
-struct std::hash<breakpoint_key>
+} // namespace sogen
+
+namespace std
 {
-    std::size_t operator()(const breakpoint_key& k) const noexcept
+    template <>
+    struct hash<sogen::breakpoint_key>
     {
-        return ((std::hash<uint64_t>()(k.addr) ^ (std::hash<size_t>()(k.size) << 1)) >> 1) ^
-               (std::hash<size_t>()(static_cast<size_t>(k.type)) << 1);
-    }
-};
+        std::size_t operator()(const sogen::breakpoint_key& k) const noexcept
+        {
+            return ((std::hash<uint64_t>()(k.addr) ^ (std::hash<size_t>()(k.size) << 1)) >> 1) ^
+                   (std::hash<size_t>()(static_cast<size_t>(k.type)) << 1);
+        }
+    };
+}
+
+namespace sogen
+{
 
 class x86_64_gdb_stub_handler : public gdb_stub::debugging_handler
 {
@@ -341,3 +352,6 @@ class x86_64_gdb_stub_handler : public gdb_stub::debugging_handler
         }
     }
 };
+
+} // namespace sogen
+

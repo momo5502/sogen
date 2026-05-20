@@ -1,6 +1,9 @@
 #include "socket_factory.hpp"
 #include "socket_wrapper.hpp"
 
+namespace sogen
+{
+
 namespace network
 {
     socket_factory::socket_factory()
@@ -53,3 +56,5 @@ namespace network
         return res;
     }
 }
+
+} // namespace sogen

@@ -5,6 +5,9 @@
 
 #include <utils/object.hpp>
 
+namespace sogen
+{
+
 template <typename ReturnType, typename... Args>
 class function_wrapper : public utils::object
 {
@@ -40,3 +43,6 @@ class function_wrapper : public utils::object
   private:
     std::unique_ptr<functor_type> functor_{};
 };
+
+} // namespace sogen
+

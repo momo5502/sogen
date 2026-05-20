@@ -6,6 +6,9 @@
 
 #include "hive_parser.hpp"
 
+namespace sogen
+{
+
 namespace
 {
     bool is_subpath(const utils::path_key& root, const utils::path_key& p)
@@ -65,7 +68,7 @@ registry_manager::registry_manager(registry_manager&&) noexcept = default;
 registry_manager& registry_manager::operator=(registry_manager&&) noexcept = default;
 
 registry_manager::registry_manager(const std::filesystem::path& hive_path)
-    : hive_path_(absolute(hive_path))
+    : hive_path_(std::filesystem::absolute(hive_path))
 {
     this->setup();
 }
@@ -457,3 +460,5 @@ std::optional<std::u16string> registry_manager::read_u16string(const registry_ke
     auto s = std::u16string(data_ptr, char_count - 1);
     return s;
 }
+
+} // namespace sogen

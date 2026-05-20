@@ -5,6 +5,9 @@
 #include <platform/primitives.hpp>
 #include "devices/named_pipe.hpp"
 
+namespace sogen
+{
+
 struct completion_state;
 
 struct syscall_context
@@ -289,3 +292,5 @@ NTSTATUS handle_query(x86_64_emulator& emu, const uint64_t buffer, const uint32_
 
     return status_block.Status;
 }
+
+} // namespace sogen

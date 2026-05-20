@@ -4,6 +4,9 @@
 
 #include <utils/io.hpp>
 
+namespace sogen
+{
+
 namespace syscalls
 {
     NTSTATUS handle_NtInitializeNlsFiles(const syscall_context& c, const emulator_object<uint64_t> base_address,
@@ -86,3 +89,5 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 }
+
+} // namespace sogen

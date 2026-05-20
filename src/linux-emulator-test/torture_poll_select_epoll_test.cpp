@@ -1,6 +1,6 @@
 #include "linux_emulation_test_utils.hpp"
 
-namespace linux_test
+namespace sogen::linux_test
 {
     TEST(LinuxSyscallTortureTest, PollSelectEpollConsistency)
     {

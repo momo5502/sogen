@@ -18,6 +18,9 @@
 #define ANYSIZE_ARRAY 1
 
 #define DWORD         std::uint32_t
+namespace sogen
+{
+
 using LONG = std::int32_t;
 using ULONG = DWORD;
 using DWORD64 = std::uint64_t;
@@ -83,3 +86,6 @@ static_assert(sizeof(int) == 4);
 static_assert(sizeof(BOOLEAN) == 1);
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-use-enum-class)
+#ifndef OS_WINDOWS
+} // namespace sogen
+#endif

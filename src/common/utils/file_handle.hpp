@@ -9,6 +9,9 @@
 #include <unistd.h>
 #endif
 
+namespace sogen
+{
+
 namespace utils
 {
     class file_handle
@@ -210,3 +213,4 @@ namespace utils
         }
     };
 }
+} // namespace sogen

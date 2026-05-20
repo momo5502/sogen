@@ -4,6 +4,9 @@
 
 // NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 
+namespace sogen
+{
+
 using pointer = uint64_t;
 
 #ifndef OS_WINDOWS
@@ -221,3 +224,4 @@ struct EMU_DEVMODEW
 };
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
+} // namespace sogen

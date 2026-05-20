@@ -1,6 +1,9 @@
 #pragma once
 #include <string>
 
+namespace sogen
+{
+
 namespace utils::wildcard
 {
     inline bool is_wildcard(char16_t c)
@@ -97,3 +100,4 @@ namespace utils::wildcard
         return mask_pos == mask.size();
     }
 }
+} // namespace sogen

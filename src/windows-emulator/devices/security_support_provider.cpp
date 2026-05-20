@@ -3,6 +3,9 @@
 
 #include "../windows_emulator.hpp"
 
+namespace sogen
+{
+
 namespace
 {
     struct security_support_provider : stateless_device
@@ -86,3 +89,5 @@ std::unique_ptr<io_device> create_security_support_provider()
 {
     return std::make_unique<security_support_provider>();
 }
+
+} // namespace sogen

@@ -2,6 +2,9 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 
+namespace sogen
+{
+
 namespace syscalls
 {
     TOKEN_TYPE get_token_type(const handle token_handle)
@@ -446,3 +449,5 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 }
+
+} // namespace sogen

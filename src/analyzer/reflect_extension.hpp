@@ -1,5 +1,8 @@
 #pragma once
 
+namespace sogen
+{
+
 namespace
 {
     template <bool Cond>
@@ -2168,3 +2171,5 @@ namespace reflect::inline v1_2_5
 
 #undef REFLECT_FWD_LIKE
 #undef REFLECT_FWD
+
+} // namespace sogen

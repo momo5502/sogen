@@ -6,6 +6,9 @@
 #include <filesystem>
 #include <utils/path_key.hpp>
 
+namespace sogen
+{
+
 namespace utils
 {
     inline void serialize(buffer_serializer& buffer, const std::chrono::steady_clock::time_point& tp)
@@ -56,3 +59,4 @@ namespace utils
         path = buffer.read<std::filesystem::path>();
     }
 }
+} // namespace sogen

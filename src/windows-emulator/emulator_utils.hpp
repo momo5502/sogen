@@ -11,6 +11,9 @@
 #include <utils/time.hpp>
 #include <vector>
 
+namespace sogen
+{
+
 namespace network
 {
     struct socket_factory;
@@ -614,3 +617,5 @@ constexpr size_t aligned_stack_space(const size_t arg_count)
     const size_t bytes = slots * sizeof(uint64_t);
     return (bytes + 15) & ~15;
 }
+
+} // namespace sogen

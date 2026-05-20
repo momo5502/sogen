@@ -2,6 +2,9 @@
 #include <memory_region.hpp>
 #include "../windows_path.hpp"
 
+namespace sogen
+{
+
 struct exported_symbol
 {
     std::string name{};
@@ -78,3 +81,5 @@ struct mapped_module
         return this->image_base_file;
     }
 };
+
+} // namespace sogen

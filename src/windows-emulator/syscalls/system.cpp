@@ -2,6 +2,9 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 
+namespace sogen
+{
+
 namespace syscalls
 {
     namespace
@@ -317,3 +320,5 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 }
+
+} // namespace sogen

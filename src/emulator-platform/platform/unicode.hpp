@@ -8,6 +8,9 @@
 #include <filesystem>
 #include <type_traits>
 
+namespace sogen
+{
+
 template <typename Traits>
 struct UNICODE_STRING
 {
@@ -456,3 +459,4 @@ inline int open_unicode(FILE** handle, const std::filesystem::path& fileName, co
     return errno ? errno : EACCES;
 }
 #endif
+} // namespace sogen

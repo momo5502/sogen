@@ -2,6 +2,9 @@
 
 #include <chrono>
 
+namespace sogen
+{
+
 namespace utils
 {
     template <typename Clock = std::chrono::high_resolution_clock>
@@ -28,3 +31,4 @@ namespace utils
         typename Clock::time_point point_{Clock::now()};
     };
 }
+} // namespace sogen

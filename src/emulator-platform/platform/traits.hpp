@@ -5,6 +5,9 @@
 // used to retain original type "x"
 #define EMULATOR_CAST(T, x) T
 
+namespace sogen
+{
+
 struct Emu32
 {
 };
@@ -35,3 +38,4 @@ struct EmulatorTraits<Emu64>
     using UNICODE = char16_t;
     using HANDLE = std::uint64_t;
 };
+} // namespace sogen

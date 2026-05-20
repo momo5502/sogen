@@ -10,10 +10,11 @@
 #define WHP_EMULATOR_DLL_STORAGE IMPORT_SYMBOL
 #endif
 
-namespace whp
+namespace sogen::whp
 {
 #if !SOGEN_BUILD_STATIC
     WHP_EMULATOR_DLL_STORAGE
 #endif
     std::unique_ptr<x86_64_emulator> create_x86_64_emulator();
-}
+} // namespace sogen::whp
+

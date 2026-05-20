@@ -18,6 +18,9 @@
 
 #include "apiset/apiset.hpp"
 
+namespace sogen
+{
+
 struct fake_environment_config;
 
 #define PEB_SEGMENT_SIZE        (20 << 20) // 20 MB
@@ -239,3 +242,5 @@ struct process_context
     uint32_t last_extended_params_attributes{0};
     uint16_t last_extended_params_image_machine{IMAGE_FILE_MACHINE_UNKNOWN};
 };
+
+} // namespace sogen

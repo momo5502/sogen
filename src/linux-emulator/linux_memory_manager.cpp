@@ -1,6 +1,9 @@
 #include "std_include.hpp"
 #include "linux_memory_manager.hpp"
 
+namespace sogen
+{
+
 namespace utils
 {
     static void serialize(buffer_serializer& buffer, const linux_memory_manager::mapped_region& region)
@@ -316,3 +319,5 @@ void linux_memory_manager::map_mmio(const uint64_t address, const size_t size, s
 {
     this->memory_->map_mmio(address, size, std::move(read_cb), std::move(write_cb));
 }
+
+} // namespace sogen

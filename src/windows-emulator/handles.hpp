@@ -4,6 +4,9 @@
 
 // NOLINTBEGIN(cppcoreguidelines-use-enum-class)
 
+namespace sogen
+{
+
 struct handle_types
 {
     enum type : uint16_t
@@ -452,3 +455,5 @@ constexpr auto CURRENT_THREAD = make_handle(~1ULL);
 constexpr auto CURRENT_PROCESS_TOKEN = make_handle(~3ULL);
 constexpr auto CURRENT_THREAD_TOKEN = make_handle(~4ULL);
 constexpr auto CURRENT_THREAD_EFFECTIVE_TOKEN = make_handle(~5ULL);
+
+} // namespace sogen

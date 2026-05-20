@@ -8,7 +8,7 @@
 #include <functional>
 #include <condition_variable>
 
-namespace gdb_stub
+namespace sogen::gdb_stub
 {
     class connection_handler
     {
@@ -46,4 +46,5 @@ namespace gdb_stub
         void await_transmission(const std::function<void()>& handler);
         std::string get_next_data_to_transmit();
     };
-}
+} // namespace sogen::gdb_stub
+

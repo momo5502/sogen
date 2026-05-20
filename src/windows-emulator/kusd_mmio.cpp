@@ -7,6 +7,9 @@
 
 #include <address_utils.hpp>
 
+namespace sogen
+{
+
 constexpr auto KUSD_ADDRESS = 0x7ffe0000ULL;
 constexpr auto KUSD_SIZE = sizeof(KUSER_SHARED_DATA64);
 constexpr auto KUSD_BUFFER_SIZE = page_align_up(KUSD_SIZE);
@@ -206,3 +209,5 @@ void kusd_mmio::deregister_mmio()
         this->memory_->release_memory(KUSD_ADDRESS, KUSD_BUFFER_SIZE);
     }
 }
+
+} // namespace sogen

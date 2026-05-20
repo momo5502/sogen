@@ -1,6 +1,9 @@
 #pragma once
 #include "../io_device.hpp"
 
+namespace sogen
+{
+
 class named_pipe : public io_device_container
 {
   public:
@@ -33,3 +36,5 @@ class named_pipe : public io_device_container
     {
     }
 };
+
+} // namespace sogen

@@ -8,9 +8,8 @@
 #ifndef OS_WINDOWS
 #define REG_NONE (0ul) // No value type
 #define REG_SZ   (1ul) // Unicode nul terminated string
-#define REG_EXPAND_SZ \
-    (2ul)                                    // Unicode nul terminated string
-                                             // (with environment variable references)
+#define REG_EXPAND_SZ (2ul) // Unicode nul terminated string
+                            // (with environment variable references)
 #define REG_BINARY                     (3ul) // Free form binary
 #define REG_DWORD                      (4ul) // 32-bit number
 #define REG_DWORD_LITTLE_ENDIAN        (4ul) // 32-bit number (same as REG_DWORD)
@@ -23,6 +22,9 @@
 #define REG_QWORD                      (11ul) // 64-bit number
 #define REG_QWORD_LITTLE_ENDIAN        (11ul) // 64-bit number (same as REG_QWORD)
 #endif
+
+namespace sogen
+{
 
 struct registry_key : ref_counted_object
 {
@@ -174,3 +176,5 @@ class registry_manager
 
     void setup();
 };
+
+} // namespace sogen

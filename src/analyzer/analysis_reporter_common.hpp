@@ -3,6 +3,9 @@
 #include <type_traits>
 #include <utility>
 
+namespace sogen
+{
+
 namespace analysis_reporter_detail
 {
     template <typename... Ts>
@@ -17,3 +20,5 @@ namespace analysis_reporter_detail
         return overloaded<std::decay_t<Ts>...>{std::forward<Ts>(ts)...};
     }
 }
+
+} // namespace sogen

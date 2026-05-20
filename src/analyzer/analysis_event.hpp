@@ -7,6 +7,9 @@
 #include <variant>
 #include <vector>
 
+namespace sogen
+{
+
 enum class syscall_classification
 {
     regular,
@@ -290,3 +293,5 @@ using analysis_event =
                  import_read_event, import_write_event, object_access_event, environment_access_event, function_execution_event,
                  entry_point_execution_event, foreign_code_transition_event, section_first_execute_event, rdtsc_event, rdtscp_event,
                  cpuid_event, syscall_event, foreign_module_read_event, executable_read_event, executable_write_event, fast_fail_event>;
+
+} // namespace sogen

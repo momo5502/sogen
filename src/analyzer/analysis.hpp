@@ -9,6 +9,9 @@
 #include "analysis_event.hpp"
 #include "disassembler.hpp"
 
+namespace sogen
+{
+
 struct mapped_module;
 class module_manager;
 class windows_emulator;
@@ -114,3 +117,5 @@ struct analysis_context
 
 void register_analysis_callbacks(analysis_context& c);
 std::optional<mapped_module*> get_module_if_interesting(module_manager& manager, const string_set& modules, uint64_t address);
+
+} // namespace sogen

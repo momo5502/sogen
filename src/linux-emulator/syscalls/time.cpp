@@ -2,6 +2,9 @@
 #include "../linux_emulator.hpp"
 #include "../linux_syscall_dispatcher.hpp"
 
+namespace sogen
+{
+
 using namespace linux_errno; // NOLINT(google-build-using-namespace)
 
 namespace
@@ -122,3 +125,5 @@ void sys_clock_nanosleep(const linux_syscall_context& c)
 
     write_linux_syscall_result(c, 0);
 }
+
+} // namespace sogen

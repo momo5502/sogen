@@ -4,6 +4,9 @@
 #include <utility>
 #include <vector>
 
+namespace sogen
+{
+
 namespace utils::io
 {
     bool remove_file(const std::filesystem::path& file)
@@ -181,3 +184,4 @@ namespace utils::io
         return files;
     }
 }
+} // namespace sogen

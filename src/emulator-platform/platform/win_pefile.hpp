@@ -102,6 +102,9 @@
 #define PROCESSOR_ARCHITECTURE_INTEL 0
 #define PROCESSOR_ARCHITECTURE_AMD64 9
 
+namespace sogen
+{
+
 enum class PEMachineType : std::uint16_t
 {
     UNKNOWN = 0,
@@ -529,7 +532,7 @@ namespace winpe
     }
 
     template <typename T>
-    IMAGE_SECTION_HEADER get_section_header_by_rva(const utils::safe_buffer_accessor<const std::byte>& buffer,
+    IMAGE_SECTION_HEADER get_section_header_by_rva(const sogen::utils::safe_buffer_accessor<const std::byte>& buffer,
                                                    const PENTHeaders_t<T>& nt_headers, uint64_t nt_headers_offset, uint64_t rva)
     {
         IMAGE_SECTION_HEADER section_header = {};
@@ -741,3 +744,4 @@ namespace winpe
 }
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
+} // namespace sogen

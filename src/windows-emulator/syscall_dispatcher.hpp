@@ -2,6 +2,9 @@
 
 #include "process_context.hpp"
 
+namespace sogen
+{
+
 struct syscall_context;
 using syscall_handler = void (*)(const syscall_context& c);
 
@@ -159,3 +162,5 @@ class syscall_dispatcher
     void add_handlers();
     void add_callbacks();
 };
+
+} // namespace sogen

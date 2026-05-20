@@ -5,6 +5,9 @@
 // x86-64 Linux syscall numbers
 // Reference: arch/x86/entry/syscalls/syscall_64.tbl
 
+namespace sogen
+{
+
 namespace linux_syscalls
 {
     constexpr uint64_t LINUX_SYS_read = 0;
@@ -329,3 +332,5 @@ namespace linux_syscalls
     constexpr uint64_t LINUX_SYS_rseq = 334;
 
 } // namespace linux_syscalls
+
+} // namespace sogen

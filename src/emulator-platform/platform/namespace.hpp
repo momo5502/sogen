@@ -9,6 +9,9 @@
 
 // NOLINTBEGIN(modernize-use-using,cppcoreguidelines-use-enum-class)
 
+namespace sogen
+{
+
 enum BOUNDARY_ENTRY_TYPE : ULONG
 {
     OBNS_Invalid,
@@ -51,3 +54,4 @@ struct OBJECT_BOUNDARY_DESCRIPTOR
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
+} // namespace sogen

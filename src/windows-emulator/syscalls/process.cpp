@@ -4,6 +4,9 @@
 
 #include <utils/finally.hpp>
 
+namespace sogen
+{
+
 namespace syscalls
 {
     NTSTATUS handle_NtQueryInformationProcess(const syscall_context& c, const handle process_handle, const uint32_t info_class,
@@ -488,3 +491,5 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 }
+
+} // namespace sogen

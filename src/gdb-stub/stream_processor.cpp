@@ -4,7 +4,7 @@
 #include <cassert>
 #include <stdexcept>
 
-namespace gdb_stub
+namespace sogen::gdb_stub
 {
     namespace
     {
@@ -91,4 +91,4 @@ namespace gdb_stub
             this->packets_.push(std::move(packet));
         }
     }
-}
+} // namespace sogen::gdb_stub

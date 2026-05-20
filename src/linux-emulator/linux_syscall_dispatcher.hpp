@@ -5,6 +5,9 @@
 #include "linux_syscall_numbers.hpp"
 
 // Linux errno constants (with LINUX_ prefix to avoid clash with system <errno.h> macros)
+namespace sogen
+{
+
 namespace linux_errno
 {
     constexpr int64_t LINUX_EPERM = 1;
@@ -106,3 +109,5 @@ class linux_syscall_dispatcher
   private:
     std::array<linux_syscall_handler_entry, 512> handlers_{};
 };
+
+} // namespace sogen

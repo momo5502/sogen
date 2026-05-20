@@ -12,6 +12,9 @@
 
 #define STR_VIEW_VA(str) static_cast<int>((str).size()), (str).data()
 
+namespace sogen
+{
+
 namespace
 {
     constexpr size_t MAX_INSTRUCTION_BYTES = 15;
@@ -846,3 +849,5 @@ std::optional<mapped_module*> get_module_if_interesting(module_manager& manager,
 
     return std::nullopt;
 }
+
+} // namespace sogen

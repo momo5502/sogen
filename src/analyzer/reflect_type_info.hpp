@@ -41,6 +41,9 @@
 
 #include <utils/string.hpp>
 
+namespace sogen
+{
+
 template <typename T>
 class reflect_type_info
 {
@@ -137,3 +140,5 @@ class reflect_type_info
     std::string type_name_{};
     std::map<size_t, std::pair<std::string, size_t>> members_{};
 };
+
+} // namespace sogen

@@ -21,6 +21,9 @@ X. x86_emulator<Traits>:   x86_emulator<Traits> are specialisations for
 #include "typed_emulator.hpp"
 #include "x86_register.hpp"
 
+namespace sogen
+{
+
 // --[Core]--------------------------------------------------------------------------
 
 template <typename Traits>
@@ -65,3 +68,6 @@ struct x86_64_traits
 };
 
 using x86_64_emulator = x86_emulator<x86_64_traits>;
+
+} // namespace sogen
+

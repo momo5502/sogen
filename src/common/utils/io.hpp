@@ -4,6 +4,9 @@
 #include <vector>
 #include <filesystem>
 
+namespace sogen
+{
+
 namespace utils::io
 {
     bool remove_file(const std::filesystem::path& file);
@@ -20,3 +23,4 @@ namespace utils::io
 
     std::vector<std::filesystem::path> list_files(const std::filesystem::path& directory, bool recursive = false);
 }
+} // namespace sogen

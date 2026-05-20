@@ -7,6 +7,9 @@
 #include "emulator_utils.hpp"
 #include "handles.hpp"
 
+namespace sogen
+{
+
 class windows_emulator;
 struct process_context;
 
@@ -193,3 +196,5 @@ class io_device_container : public io_device
         }
     }
 };
+
+} // namespace sogen

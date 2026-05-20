@@ -3,6 +3,9 @@
 #include <cstdint>
 #include <stdexcept>
 
+namespace sogen
+{
+
 namespace utils
 {
     template <typename Type, typename SpanElement = const std::byte>
@@ -118,3 +121,4 @@ namespace utils
         const std::span<SpanElement> buffer_{};
     };
 }
+} // namespace sogen

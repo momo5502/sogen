@@ -5,6 +5,9 @@
 #include <platform/elf.hpp>
 #include <utils/io.hpp>
 
+namespace sogen
+{
+
 using namespace elf; // NOLINT(google-build-using-namespace)
 
 linux_mapped_module* linux_module_manager::insert_module(linux_mapped_module mod)
@@ -314,3 +317,5 @@ void linux_module_manager::load_dependencies(const linux_file_system& file_sys)
         }
     }
 }
+
+} // namespace sogen

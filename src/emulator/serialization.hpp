@@ -12,6 +12,9 @@
 #include <typeindex>
 #include <atomic>
 
+namespace sogen
+{
+
 namespace utils
 {
     class buffer_serializer;
@@ -615,3 +618,4 @@ namespace utils
         this->write_string(object);
     }
 }
+} // namespace sogen

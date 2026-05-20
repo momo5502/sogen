@@ -10,6 +10,9 @@
 #include <x86intrin.h>
 #endif
 
+namespace sogen
+{
+
 constexpr auto HUNDRED_NANOSECONDS_IN_ONE_SECOND = 10000000LL;
 constexpr auto EPOCH_DIFFERENCE_1601_TO_1970_SECONDS = 11644473600LL;
 constexpr auto WINDOWS_EPOCH_DIFFERENCE = EPOCH_DIFFERENCE_1601_TO_1970_SECONDS * HUNDRED_NANOSECONDS_IN_ONE_SECOND;
@@ -115,3 +118,4 @@ namespace utils
 #endif
     LARGE_INTEGER convert_unix_to_windows_time(__time64_t unix_time);
 }
+} // namespace sogen

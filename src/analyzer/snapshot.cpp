@@ -3,6 +3,9 @@
 #include <utils/io.hpp>
 #include <utils/compression.hpp>
 
+namespace sogen
+{
+
 namespace snapshot
 {
     namespace
@@ -120,3 +123,5 @@ namespace snapshot
         load_emulator_snapshot(win_emu, data);
     }
 }
+
+} // namespace sogen

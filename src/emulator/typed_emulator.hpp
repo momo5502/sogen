@@ -3,6 +3,9 @@
 #include "emulator.hpp"
 #include <utility>
 
+namespace sogen
+{
+
 struct emulator_stack_allocation
 {
     uint64_t address{};
@@ -171,3 +174,6 @@ class typed_emulator : public emulator
     size_t read_raw_register(int reg, void* value, size_t size) override = 0;
     size_t write_raw_register(int reg, const void* value, size_t size) override = 0;
 };
+
+} // namespace sogen
+

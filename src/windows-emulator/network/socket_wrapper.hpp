@@ -2,6 +2,9 @@
 
 #include "i_socket.hpp"
 
+namespace sogen
+{
+
 namespace network
 {
     class socket_wrapper : public i_socket
@@ -40,3 +43,5 @@ namespace network
         socket socket_{};
     };
 }
+
+} // namespace sogen

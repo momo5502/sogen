@@ -4,6 +4,9 @@
 #include "linux_emulator_utils.hpp"
 #include "linux_process_context.hpp"
 
+namespace sogen
+{
+
 class linux_emulator;
 
 struct linux_syscall_context
@@ -32,3 +35,5 @@ T resolve_linux_indexed_argument(x86_64_emulator& emu, size_t& index)
 {
     return resolve_linux_argument<T>(emu, index++);
 }
+
+} // namespace sogen

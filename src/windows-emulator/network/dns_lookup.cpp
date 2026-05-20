@@ -4,6 +4,9 @@
 
 #include <utils/finally.hpp>
 
+namespace sogen
+{
+
 namespace network
 {
     dns_lookup::dns_lookup()
@@ -52,3 +55,5 @@ namespace network
         return results;
     }
 }
+
+} // namespace sogen

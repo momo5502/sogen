@@ -6,6 +6,9 @@
 #include <algorithm>
 #include <utils/finally.hpp>
 
+namespace sogen
+{
+
 namespace
 {
     struct wow64_callback_context
@@ -963,3 +966,5 @@ namespace syscalls
         return {};
     }
 }
+
+} // namespace sogen

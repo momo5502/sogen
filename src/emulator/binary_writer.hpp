@@ -1,5 +1,7 @@
 #pragma once
 
+namespace sogen
+{
 namespace utils
 {
     template <typename Traits>
@@ -29,7 +31,7 @@ namespace utils
         }
 
         template <typename T>
-            requires(!is_optional<T>::value)
+            requires(!sogen::utils::is_optional<T>::value)
         void write(const T& value)
         {
             constexpr auto is_trivially_copyable = std::is_trivially_copyable_v<T>;
@@ -104,3 +106,5 @@ namespace utils
         typename Traits::PVOID next_referent_id_{0x20000};
     };
 }
+
+} // namespace sogen

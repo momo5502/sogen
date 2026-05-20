@@ -7,6 +7,9 @@
 #include "devices/named_pipe.hpp"
 #include <iostream>
 
+namespace sogen
+{
+
 namespace
 {
     struct dummy_device : stateless_device
@@ -120,3 +123,5 @@ void io_device_container::deserialize_object(utils::buffer_deserializer& buffer)
     this->setup();
     this->device_->deserialize(buffer);
 }
+
+} // namespace sogen

@@ -3,6 +3,9 @@
 #include <optional>
 #include <type_traits>
 
+namespace sogen
+{
+
 namespace utils
 {
     template <typename F, typename T>
@@ -67,3 +70,4 @@ namespace utils
         return lazy_object<std::invoke_result_t<F>, F>(std::move(accessor));
     }
 }
+} // namespace sogen

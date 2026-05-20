@@ -4,6 +4,9 @@
 #include <optional>
 #include <x86_register.hpp>
 
+namespace sogen
+{
+
 struct register_entry
 {
     x86_register reg;
@@ -18,3 +21,6 @@ struct register_entry
     {
     }
 };
+
+} // namespace sogen
+

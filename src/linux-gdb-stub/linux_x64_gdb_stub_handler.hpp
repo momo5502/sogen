@@ -4,6 +4,9 @@
 #include <linux_emulator.hpp>
 #include <utils/function.hpp>
 
+namespace sogen
+{
+
 class linux_x64_gdb_stub_handler : public x64_gdb_stub_handler
 {
   public:
@@ -144,3 +147,6 @@ class linux_x64_gdb_stub_handler : public x64_gdb_stub_handler
     linux_emulator* linux_emu_{};
     utils::optional_function<bool()> should_stop_{};
 };
+
+} // namespace sogen
+

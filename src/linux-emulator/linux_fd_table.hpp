@@ -11,6 +11,9 @@
 #include <unistd.h>
 #endif
 
+namespace sogen
+{
+
 enum class fd_type
 {
     file,
@@ -286,3 +289,5 @@ class linux_fd_table
         return fd;
     }
 };
+
+} // namespace sogen

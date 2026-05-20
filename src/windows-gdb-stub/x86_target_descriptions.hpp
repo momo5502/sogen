@@ -5,6 +5,9 @@
 
 #include "osabi_template.hpp"
 
+namespace sogen
+{
+
 inline std::map<std::string, std::string, std::less<>> x86_target_descriptions{
     {
         "target.xml",
@@ -169,3 +172,6 @@ inline std::map<std::string, std::string, std::less<>> x86_target_descriptions{
 )__xml__",
     },
 };
+
+} // namespace sogen
+

@@ -3,6 +3,9 @@
 #include <span>
 #include <network/socket.hpp>
 
+namespace sogen
+{
+
 namespace network
 {
     struct i_socket
@@ -30,3 +33,5 @@ namespace network
         virtual sent_size recvfrom(address& source, std::span<std::byte> data) = 0;
     };
 }
+
+} // namespace sogen

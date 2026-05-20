@@ -7,6 +7,9 @@
 
 #include <serialization.hpp>
 
+namespace sogen
+{
+
 namespace windows_path_detail
 {
     constexpr std::u16string_view unc_prefix = u"\\??\\";
@@ -282,23 +285,28 @@ class windows_path
     }
 };
 
-template <>
-struct std::hash<windows_path>
+} // namespace sogen
+
+namespace std
 {
-    std::size_t operator()(const windows_path& k) const noexcept
+    template <>
+    struct hash<sogen::windows_path>
     {
-        auto hash = std::hash<bool>()(k.drive_.has_value());
-
-        if (k.drive_.has_value())
+        std::size_t operator()(const sogen::windows_path& k) const noexcept
         {
-            hash ^= std::hash<char>()(*k.drive_);
-        }
+            auto hash = std::hash<bool>()(k.drive_.has_value());
 
-        for (const auto& folder : k.folders_)
-        {
-            hash ^= std::hash<std::u16string>()(folder);
-        }
+            if (k.drive_.has_value())
+            {
+                hash ^= std::hash<char>()(*k.drive_);
+            }
 
-        return hash;
-    }
-};
+            for (const auto& folder : k.folders_)
+            {
+                hash ^= std::hash<std::u16string>()(folder);
+            }
+
+            return hash;
+        }
+    };
+}

@@ -16,6 +16,9 @@
 #undef st_mtime
 #undef st_ctime
 
+namespace sogen
+{
+
 LARGE_INTEGER convert_timespec_to_filetime(const timespec timespec)
 {
     return {.QuadPart = (timespec.tv_sec * HUNDRED_NANOSECONDS_IN_ONE_SECOND) + timespec.tv_nsec + WINDOWS_EPOCH_DIFFERENCE};
@@ -169,3 +172,4 @@ bool compat_stat(const char* file_name, struct compat_stat* stat)
 }
 
 #endif
+} // namespace sogen

@@ -1,6 +1,9 @@
 #pragma once
 #include <type_traits>
 
+namespace sogen
+{
+
 namespace utils
 {
     class moved_marker
@@ -44,3 +47,4 @@ namespace utils
         bool was_moved_{false};
     };
 }
+} // namespace sogen

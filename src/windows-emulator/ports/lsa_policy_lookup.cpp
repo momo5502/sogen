@@ -3,6 +3,9 @@
 
 #include "../windows_emulator.hpp"
 
+namespace sogen
+{
+
 namespace
 {
     constexpr NTSTATUS k_status_none_mapped = static_cast<NTSTATUS>(0xC0000073);
@@ -118,3 +121,5 @@ std::unique_ptr<port> create_lsa_policy_lookup_port()
 {
     return std::make_unique<lsa_policy_lookup_port>();
 }
+
+} // namespace sogen

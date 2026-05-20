@@ -3,6 +3,9 @@
 #include "../io_completion_wait.hpp"
 #include "../syscall_utils.hpp"
 
+namespace sogen
+{
+
 namespace syscalls
 {
     NTSTATUS handle_NtClose(const syscall_context& c, const handle h)
@@ -705,3 +708,5 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 }
+
+} // namespace sogen

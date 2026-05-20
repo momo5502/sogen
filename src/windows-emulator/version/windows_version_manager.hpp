@@ -5,6 +5,9 @@
 #include <optional>
 #include <cstdint>
 
+namespace sogen
+{
+
 class logger;
 class registry_manager;
 
@@ -80,3 +83,5 @@ class windows_version_manager
   private:
     windows_version_info info_{};
 };
+
+} // namespace sogen

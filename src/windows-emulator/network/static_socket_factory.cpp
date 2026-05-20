@@ -21,6 +21,9 @@
 #define POLLWRNORM 0x0100
 #endif
 
+namespace sogen
+{
+
 namespace network
 {
     namespace
@@ -357,3 +360,5 @@ namespace network
         return std::make_unique<static_socket_factory_impl>();
     }
 }
+
+} // namespace sogen

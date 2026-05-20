@@ -18,6 +18,9 @@
 // memory_permission rather than nt_memory_permission.
 // --------------------------------------------------------------------------
 
+namespace sogen
+{
+
 constexpr uint64_t LINUX_PAGE_SIZE = 0x1000ULL;
 constexpr uint64_t LINUX_ALLOCATION_GRANULARITY = 0x1000ULL;
 constexpr uint64_t LINUX_MIN_MMAP_ADDRESS = 0x0000000000010000ULL;
@@ -97,3 +100,5 @@ class linux_memory_manager : public memory_interface
     void map_mmio(uint64_t address, size_t size, std::function<void(uint64_t, void*, size_t)> read_cb,
                   std::function<void(uint64_t, const void*, size_t)> write_cb) override;
 };
+
+} // namespace sogen

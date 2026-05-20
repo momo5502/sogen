@@ -7,6 +7,9 @@
 #include <utils/container.hpp>
 #include <platform/unicode.hpp>
 
+namespace sogen
+{
+
 struct hive_value
 {
     uint32_t type{};
@@ -166,3 +169,5 @@ class hive_parser
     std::ifstream file_{};
     hive_key root_key_;
 };
+
+} // namespace sogen

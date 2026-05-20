@@ -13,6 +13,9 @@
 // emulator_pointer
 // --------------------------------------------------------------------------
 
+namespace sogen
+{
+
 using emulator_pointer = uint64_t;
 
 // --------------------------------------------------------------------------
@@ -290,3 +293,5 @@ std::basic_string<Element> read_string(memory_interface& mem, const uint64_t add
 
     return result;
 }
+
+} // namespace sogen

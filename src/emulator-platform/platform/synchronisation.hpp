@@ -2,6 +2,9 @@
 
 // NOLINTBEGIN(modernize-use-using,cppcoreguidelines-use-enum-class)
 
+namespace sogen
+{
+
 typedef enum _EVENT_TYPE
 {
     NotificationEvent,
@@ -24,3 +27,4 @@ struct EVENT_BASIC_INFORMATION
 };
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-use-enum-class)
+} // namespace sogen

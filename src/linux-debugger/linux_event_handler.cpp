@@ -15,7 +15,7 @@
 #pragma warning(pop)
 #endif
 
-namespace linux_debugger
+namespace sogen::linux_debugger
 {
     namespace
     {
@@ -265,4 +265,4 @@ namespace linux_debugger
         }
         send_event(response);
     }
-}
+} // namespace sogen::linux_debugger

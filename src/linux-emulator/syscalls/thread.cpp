@@ -4,6 +4,9 @@
 
 #include <cstring>
 
+namespace sogen
+{
+
 using namespace linux_errno; // NOLINT(google-build-using-namespace)
 
 // --- Phase 4b: Threading syscalls ---
@@ -196,3 +199,5 @@ void sys_futex(const linux_syscall_context& c)
         break;
     }
 }
+
+} // namespace sogen

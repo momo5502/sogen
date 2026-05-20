@@ -7,6 +7,9 @@
 
 #include <network/address.hpp>
 
+namespace sogen
+{
+
 namespace network
 {
     struct dns_lookup
@@ -17,3 +20,5 @@ namespace network
         virtual std::vector<address> resolve_host(std::string_view hostname, std::optional<int> family = std::nullopt);
     };
 }
+
+} // namespace sogen

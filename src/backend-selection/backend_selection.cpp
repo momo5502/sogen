@@ -13,6 +13,8 @@
 
 using namespace std::literals;
 
+namespace sogen
+{
 namespace
 {
     std::unique_ptr<x86_64_emulator> create_backend(backend_type backend)
@@ -73,3 +75,4 @@ std::unique_ptr<x86_64_emulator> create_x86_64_emulator_from_environment()
 
     return create_x86_64_emulator(backend);
 }
+} // namespace sogen

@@ -15,6 +15,9 @@
 #define DNS_ERROR_RCODE_NAME_ERROR 0x232B
 #endif
 
+namespace sogen
+{
+
 namespace
 {
     constexpr DWORD k_dns_record_flags = 0x2009;
@@ -596,3 +599,5 @@ std::unique_ptr<port> create_dns_resolver()
 {
     return std::make_unique<dns_resolver>();
 }
+
+} // namespace sogen

@@ -5,6 +5,9 @@
 
 #include <utils/io.hpp>
 
+namespace sogen
+{
+
 namespace syscalls
 {
     using namespace std::string_view_literals;
@@ -794,3 +797,5 @@ namespace syscalls
         }
     }
 }
+
+} // namespace sogen

@@ -4,6 +4,9 @@
 #include "../logger.hpp"
 #include <platform/kernel_mapped.hpp>
 
+namespace sogen
+{
+
 void windows_version_manager::load_from_registry(registry_manager& registry, const logger& logger)
 {
     constexpr auto version_key_path = R"(\Registry\Machine\Software\Microsoft\Windows NT\CurrentVersion)";
@@ -114,3 +117,5 @@ void windows_version_manager::deserialize(utils::buffer_deserializer& buffer)
     buffer.read(info_.windows_build_number);
     buffer.read(info_.windows_update_build_revision);
 }
+
+} // namespace sogen

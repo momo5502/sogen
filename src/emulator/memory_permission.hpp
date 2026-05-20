@@ -1,6 +1,9 @@
 #pragma once
 #include <cstdint>
 
+namespace sogen
+{
+
 enum class memory_permission : uint8_t
 {
     none = 0,
@@ -71,3 +74,6 @@ inline bool is_writable(const memory_permission permission)
 {
     return (permission & memory_permission::write) != memory_permission::none;
 }
+
+} // namespace sogen
+

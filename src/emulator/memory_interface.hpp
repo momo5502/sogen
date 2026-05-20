@@ -4,6 +4,9 @@
 
 #include "memory_permission.hpp"
 
+namespace sogen
+{
+
 using mmio_read_callback = std::function<void(uint64_t addr, void* data, size_t size)>;
 using mmio_write_callback = std::function<void(uint64_t addr, const void* data, size_t size)>;
 
@@ -99,3 +102,6 @@ class memory_interface
         }
     }
 };
+
+} // namespace sogen
+

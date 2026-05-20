@@ -13,6 +13,9 @@
 
 #include "../devices/named_pipe.hpp"
 
+namespace sogen
+{
+
 namespace syscalls
 {
     namespace
@@ -2071,3 +2074,5 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 }
+
+} // namespace sogen

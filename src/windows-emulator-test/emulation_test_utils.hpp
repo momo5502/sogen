@@ -26,8 +26,10 @@
 
 #define ASSERT_TERMINATED_SUCCESSFULLY(win_emu) ASSERT_TERMINATED_WITH_STATUS(win_emu, STATUS_SUCCESS)
 
-namespace test
+namespace sogen::test
 {
+    using namespace std::literals;
+
     inline bool enable_verbose_logging()
     {
         const auto* env = getenv("EMULATOR_VERBOSE");
@@ -257,4 +259,4 @@ namespace test
 
         printf("Diff detected after 0x%" PRIx64 " instructions at 0x%" PRIx64 " (%s)\n", lower_bound, rip, emu.mod_manager.find_name(rip));
     }
-}
+} // namespace sogen::test

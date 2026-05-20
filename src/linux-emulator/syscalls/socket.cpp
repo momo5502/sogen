@@ -4,6 +4,9 @@
 
 #include <cstring>
 
+namespace sogen
+{
+
 using namespace linux_errno; // NOLINT(google-build-using-namespace)
 
 // Linux socket constants
@@ -578,3 +581,5 @@ void sys_getpeername(const linux_syscall_context& c)
 
     write_linux_syscall_result(c, 0);
 }
+
+} // namespace sogen

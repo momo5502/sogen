@@ -2,7 +2,7 @@
 
 #include <array>
 
-namespace sogen_py
+namespace sogen::py
 {
     namespace
     {

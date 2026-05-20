@@ -6,6 +6,7 @@
 
 #include <cstdlib>
 #include <string>
+#include <string_view>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <linux_emulator.hpp>
@@ -26,7 +27,9 @@
 
 #define ASSERT_LINUX_TERMINATED_SUCCESSFULLY(linux_emu) ASSERT_LINUX_TERMINATED_WITH_STATUS(linux_emu, 0)
 
-namespace linux_test
+using namespace std::literals;
+
+namespace sogen::linux_test
 {
     inline bool enable_verbose_logging()
     {
@@ -188,4 +191,4 @@ namespace linux_test
 
         return result;
     }
-}
+} // namespace sogen::linux_test

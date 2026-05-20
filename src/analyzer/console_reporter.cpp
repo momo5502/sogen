@@ -6,6 +6,9 @@
 #include <cinttypes>
 #include <logger.hpp>
 
+namespace sogen
+{
+
 using analysis_reporter_detail::make_overloaded;
 
 namespace
@@ -248,3 +251,5 @@ std::unique_ptr<analysis_reporter> create_console_reporter(logger& log, const co
 {
     return std::make_unique<console_analysis_reporter>(log, settings);
 }
+
+} // namespace sogen

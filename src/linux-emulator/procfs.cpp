@@ -9,6 +9,9 @@
 // procfs assembles text via snprintf into fixed-size local buffers.
 // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
+namespace sogen
+{
+
 bool procfs::is_procfs_path(const std::string_view path)
 {
     return path.starts_with("/proc/self/") || path == "/proc/self" || path.starts_with("/proc/sys/") ||
@@ -401,3 +404,5 @@ std::string procfs::generate_osrelease()
     return "5.15.0-sogen\n";
 }
 // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+
+} // namespace sogen

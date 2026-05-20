@@ -4,6 +4,9 @@
 #include "../win32k_userconnect.hpp"
 #include "../windows_emulator.hpp"
 
+namespace sogen
+{
+
 namespace
 {
     bool is_user_server_dll_index(const uint64_t server_dll_index)
@@ -173,3 +176,5 @@ std::unique_ptr<port> create_api_port()
 {
     return std::make_unique<api_port>();
 }
+
+} // namespace sogen

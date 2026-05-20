@@ -4,6 +4,9 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 
+namespace sogen
+{
+
 namespace syscalls
 {
     NTSTATUS handle_NtOpenKey(const syscall_context& c, const emulator_object<handle> key_handle, const ACCESS_MASK /*desired_access*/,
@@ -617,3 +620,5 @@ namespace syscalls
         return STATUS_NOT_SUPPORTED;
     }
 }
+
+} // namespace sogen

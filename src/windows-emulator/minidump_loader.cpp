@@ -10,6 +10,9 @@
 
 #include <minidump/minidump.hpp>
 
+namespace sogen
+{
+
 namespace minidump_loader
 {
     namespace
@@ -712,3 +715,5 @@ namespace minidump_loader
         }
     }
 } // namespace minidump_loader
+
+} // namespace sogen

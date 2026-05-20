@@ -6,82 +6,84 @@
 
 #include <type_traits>
 
-namespace utils::nt
+namespace sogen
 {
-    using HandleFunction = HANDLE();
-
-    inline HANDLE null_handle()
+    namespace utils::nt
     {
-        return nullptr;
-    }
+        using HandleFunction = HANDLE();
 
-    inline HANDLE invalid_handle()
-    {
-        return INVALID_HANDLE_VALUE;
-    }
-
-    template <HandleFunction InvalidHandleFunction = null_handle>
-    class handle
-    {
-      public:
-        handle() = default;
-
-        handle(const HANDLE h)
-            : handle_(h)
+        inline HANDLE null_handle()
         {
+            return nullptr;
         }
 
-        ~handle()
+        inline HANDLE invalid_handle()
         {
-            if (*this)
+            return INVALID_HANDLE_VALUE;
+        }
+
+        template <HandleFunction InvalidHandleFunction = null_handle>
+        class handle
+        {
+          public:
+            handle() = default;
+
+            handle(const HANDLE h)
+                : handle_(h)
             {
-                CloseHandle(this->handle_);
-                this->handle_ = InvalidHandleFunction();
             }
-        }
 
-        handle(const handle&) = delete;
-        handle& operator=(const handle&) = delete;
+            ~handle()
+            {
+                if (*this)
+                {
+                    CloseHandle(this->handle_);
+                    this->handle_ = InvalidHandleFunction();
+                }
+            }
 
-        handle(handle&& obj) noexcept
-            : handle()
-        {
-            this->operator=(std::move(obj));
-        }
+            handle(const handle&) = delete;
+            handle& operator=(const handle&) = delete;
 
-        handle& operator=(handle&& obj) noexcept
-        {
-            if (this != &obj)
+            handle(handle&& obj) noexcept
+                : handle()
+            {
+                this->operator=(std::move(obj));
+            }
+
+            handle& operator=(handle&& obj) noexcept
+            {
+                if (this != &obj)
+                {
+                    this->~handle();
+                    this->handle_ = obj.handle_;
+                    obj.handle_ = InvalidHandleFunction();
+                }
+
+                return *this;
+            }
+
+            handle& operator=(HANDLE h) noexcept
             {
                 this->~handle();
-                this->handle_ = obj.handle_;
-                obj.handle_ = InvalidHandleFunction();
+                this->handle_ = h;
+
+                return *this;
             }
 
-            return *this;
-        }
+            [[nodiscard]] explicit operator bool() const
+            {
+                return this->handle_ != InvalidHandleFunction();
+            }
 
-        handle& operator=(HANDLE h) noexcept
-        {
-            this->~handle();
-            this->handle_ = h;
+            [[nodiscard]] operator HANDLE() const
+            {
+                return this->handle_;
+            }
 
-            return *this;
-        }
-
-        [[nodiscard]] explicit operator bool() const
-        {
-            return this->handle_ != InvalidHandleFunction();
-        }
-
-        [[nodiscard]] operator HANDLE() const
-        {
-            return this->handle_;
-        }
-
-      private:
-        HANDLE handle_{InvalidHandleFunction()};
-    };
-}
-
+          private:
+            HANDLE handle_{InvalidHandleFunction()};
+        };
+    }
+} // namespace sogen
 #endif

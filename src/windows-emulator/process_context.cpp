@@ -12,6 +12,9 @@
 #include <regex>
 #include <sstream>
 
+namespace sogen
+{
+
 namespace
 {
 
@@ -1027,3 +1030,5 @@ void process_context::add_knowndll_section(const std::u16string& name, const sec
         knowndlls64_sections[lname] = section;
     }
 }
+
+} // namespace sogen

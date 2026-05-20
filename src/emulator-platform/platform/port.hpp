@@ -17,6 +17,9 @@
 
 #define LpcpGetMessageType(x)  ((x)->u2.s2.Type & ~LPC_KERNELMODE_MESSAGE)
 
+namespace sogen
+{
+
 struct PORT_MESSAGE64
 {
     union
@@ -78,3 +81,4 @@ struct ALPC_SECURITY_ATTR
 };
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
+} // namespace sogen

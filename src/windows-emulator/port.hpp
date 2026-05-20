@@ -7,6 +7,9 @@
 #include "emulator_utils.hpp"
 #include "handles.hpp"
 
+namespace sogen
+{
+
 class windows_emulator;
 struct process_context;
 
@@ -188,3 +191,5 @@ class port_container : public port
         }
     }
 };
+
+} // namespace sogen

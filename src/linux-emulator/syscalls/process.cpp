@@ -4,6 +4,9 @@
 
 #include <cstring>
 
+namespace sogen
+{
+
 using namespace linux_errno; // NOLINT(google-build-using-namespace)
 
 namespace
@@ -672,3 +675,5 @@ void sys_setsid(const linux_syscall_context& c)
     (void)c;
     write_linux_syscall_result(c, c.proc.pid);
 }
+
+} // namespace sogen

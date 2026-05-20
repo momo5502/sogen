@@ -6,6 +6,9 @@
 
 #include <utils/moved_marker.hpp>
 
+namespace sogen
+{
+
 struct completion_state;
 struct process_context;
 
@@ -478,3 +481,5 @@ class emulator_thread : public ref_counted_object
         }
     }
 };
+
+} // namespace sogen

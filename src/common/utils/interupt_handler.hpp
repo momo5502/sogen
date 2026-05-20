@@ -1,6 +1,9 @@
 #pragma once
 #include <functional>
 
+namespace sogen
+{
+
 namespace utils
 {
     struct interupt_handler
@@ -15,3 +18,4 @@ namespace utils
         interupt_handler& operator=(const interupt_handler&) = delete;
     };
 }
+} // namespace sogen

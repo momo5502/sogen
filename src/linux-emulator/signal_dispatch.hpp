@@ -6,6 +6,9 @@
 #include <cstring>
 
 // Forward declarations
+namespace sogen
+{
+
 class linux_emulator;
 
 // Linux signal numbers and constants
@@ -195,3 +198,5 @@ class signal_dispatcher
     // Restore context from a signal frame on the stack (called by sys_rt_sigreturn).
     static void sigreturn(linux_emulator& emu);
 };
+
+} // namespace sogen

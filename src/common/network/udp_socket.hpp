@@ -4,7 +4,7 @@
 
 #include <string_view>
 
-namespace network
+namespace sogen::network
 {
     struct udp_socket : socket
     {

@@ -5,6 +5,9 @@
 #include "../syscall_utils.hpp"
 #include "../memory_manager.hpp"
 
+namespace sogen
+{
+
 namespace syscalls
 {
     namespace
@@ -683,3 +686,5 @@ namespace syscalls
         return STATUS_SUCCESS;
     }
 }
+
+} // namespace sogen
