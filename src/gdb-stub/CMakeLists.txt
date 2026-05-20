@@ -12,6 +12,7 @@ sogen_assign_source_group(${SRC_FILES})
 
 target_link_libraries(gdb-stub PUBLIC
   emulator-common
+  emulator-platform
 )
 
 target_include_directories(gdb-stub INTERFACE "${CMAKE_CURRENT_LIST_DIR}")

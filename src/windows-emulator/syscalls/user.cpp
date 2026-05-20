@@ -2,7 +2,7 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 #include "../win32k_userconnect.hpp"
-#include "common/segment_utils.hpp"
+#include "segment_utils.hpp"
 #include "windows-emulator/user_callback_dispatch.hpp"
 #include <limits>
 #include <utils/string.hpp>

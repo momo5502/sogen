@@ -4,7 +4,7 @@
 #include "cpu_context.hpp"
 #include "windows_emulator.hpp"
 
-#include "common/segment_utils.hpp"
+#include "segment_utils.hpp"
 #include "wow64_heaven_gate.hpp"
 
 namespace
