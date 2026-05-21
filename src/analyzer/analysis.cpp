@@ -441,32 +441,26 @@ namespace sogen
             ++c.instructions[instructions[0].id];
         }
 
-        void log_first_section_execution(analysis_context& c, mapped_module* binary, const uint64_t address)
+        void handle_section_first_execution(analysis_context& c, const mapped_module& binary, const mapped_section& section,
+                                            const uint64_t address)
         {
-            if (!binary)
+            const auto is_main_exe = &binary == c.win_emu->mod_manager.executable;
+            if (!c.has_reached_main && c.settings->concise_logging && !c.settings->silent && is_main_exe)
+            {
+                c.has_reached_main = true;
+                c.win_emu->log.disable_output(false);
+            }
+
+            if (!c.settings->log_first_section_execution)
             {
                 return;
             }
 
-            for (auto& section : binary->sections)
-            {
-                if (!is_within_start_and_length(address, section.region.start, section.region.length))
-                {
-                    continue;
-                }
-
-                if (!section.first_execute.has_value())
-                {
-                    section.first_execute = address;
-                    c.emit_observation<section_first_execute_event>([&](auto& event) {
-                        event.module_name = binary->name;
-                        event.section_name = section.name;
-                        event.file_address = *section.first_execute - binary->image_base + binary->image_base_file;
-                    });
-                }
-
-                break;
-            }
+            c.emit_observation<section_first_execute_event>([&](auto& event) {
+                event.module_name = binary.name;
+                event.section_name = section.name;
+                event.file_address = address - binary.image_base + binary.image_base_file;
+            });
         }
 
         void handle_instruction(analysis_context& c, const uint64_t address)
@@ -496,11 +490,6 @@ namespace sogen
 
                 return win_emu.mod_manager.find_by_address(address); //
             });
-
-            if (c.settings->log_first_section_execution)
-            {
-                log_first_section_execution(c, binary, address);
-            }
 
             const auto previous_binary = utils::make_lazy([&] {
                 if (is_previous_main_exe)
@@ -532,12 +521,6 @@ namespace sogen
             const auto is_interesting_call = is_previous_main_exe                                              //
                                              || (!previous_binary && current_thread.executed_instructions > 1) //
                                              || is_in_interesting_module();
-
-            if (!c.has_reached_main && c.settings->concise_logging && !c.settings->silent && is_main_exe)
-            {
-                c.has_reached_main = true;
-                win_emu.log.disable_output(false);
-            }
 
             if ((!c.settings->verbose_logging && !is_interesting_call) || !binary)
             {
@@ -813,6 +796,7 @@ namespace sogen
 
         (void)cb.on_module_load.add(make_callback(c, handle_module_load));
         (void)cb.on_module_unload.add(make_callback(c, handle_module_unload));
+        (void)cb.on_section_first_execution.add(make_callback(c, handle_section_first_execution));
 
         cb.on_thread_create = make_callback(c, handle_thread_create);
         cb.on_thread_terminated = make_callback(c, handle_thread_terminated);

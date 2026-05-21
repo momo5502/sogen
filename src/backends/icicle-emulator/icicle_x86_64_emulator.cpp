@@ -36,6 +36,7 @@ extern "C"
     uint32_t icicle_add_interrupt_hook(icicle_emulator*, interrupt_func* callback, void* data);
     uint32_t icicle_add_block_hook(icicle_emulator*, block_func* callback, void* data);
     uint32_t icicle_add_execution_hook(icicle_emulator*, uint64_t address, ptr_func* callback, void* data);
+    uint32_t icicle_add_ranged_execution_hook(icicle_emulator*, uint64_t address, uint64_t size, ptr_func* callback, void* data);
     uint32_t icicle_add_generic_execution_hook(icicle_emulator*, ptr_func* callback, void* data);
     uint32_t icicle_add_violation_hook(icicle_emulator*, violation_func* callback, void* data);
     uint32_t icicle_add_read_hook(icicle_emulator*, uint64_t start, uint64_t end, memory_access_func* cb, void* data);
@@ -139,6 +140,7 @@ namespace sogen::icicle
         void start(const size_t count) override
         {
             icicle_start(this->emu_, count);
+            this->perform_pending_actions();
         }
 
         void stop() override
@@ -389,6 +391,27 @@ namespace sogen::icicle
             return wrap_hook(id);
         }
 
+        emulator_hook* hook_memory_range_execution(const uint64_t address, const uint64_t size,
+                                                   memory_execution_hook_callback callback) override
+        {
+            if (size == 1)
+            {
+                return this->hook_memory_execution(address, std::move(callback));
+            }
+
+            auto object = make_function_object(std::move(callback), this->is_in_hook_);
+            auto* ptr = object.get();
+            auto* wrapper = +[](void* user, const uint64_t addr) {
+                const auto& func = *static_cast<decltype(ptr)>(user);
+                (func)(addr);
+            };
+
+            const auto id = icicle_add_ranged_execution_hook(this->emu_, address, size, wrapper, ptr);
+            this->hooks_[id] = std::move(object);
+
+            return wrap_hook(id);
+        }
+
         emulator_hook* hook_memory_execution(memory_execution_hook_callback callback) override
         {
             auto object = make_function_object(std::move(callback), this->is_in_hook_);
@@ -429,7 +452,6 @@ namespace sogen::icicle
             if (this->is_in_hook_)
             {
                 this->hooks_to_delete_.insert(hook);
-                this->schedule_action_execution();
             }
             else
             {
@@ -572,20 +594,25 @@ namespace sogen::icicle
 
         void perform_pending_actions()
         {
-            auto hooks_to_install = std::move(this->hooks_to_install_);
             const auto hooks_to_delete = std::move(this->hooks_to_delete_);
 
             this->hooks_to_delete_ = {};
+            this->perform_pending_hook_installs();
+
+            for (auto* hook : hooks_to_delete)
+            {
+                this->delete_hook_internal(hook);
+            }
+        }
+
+        void perform_pending_hook_installs()
+        {
+            auto hooks_to_install = std::move(this->hooks_to_install_);
             this->hooks_to_install_ = {};
 
             for (auto& hook : hooks_to_install)
             {
                 this->hook_memory_access(std::move(hook.second), hook.first);
-            }
-
-            for (auto* hook : hooks_to_delete)
-            {
-                this->delete_hook_internal(hook);
             }
         }
 
@@ -607,7 +634,7 @@ namespace sogen::icicle
         void schedule_action_execution()
         {
             this->run_on_next_instruction([this] {
-                this->perform_pending_actions(); //
+                this->perform_pending_hook_installs(); //
             });
         }
 

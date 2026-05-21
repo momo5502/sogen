@@ -16,7 +16,6 @@
 
 namespace sogen
 {
-
     constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 0x20000;
 
     namespace
@@ -370,6 +369,7 @@ namespace sogen
         this->version.load_from_registry(this->registry, this->log);
 
         this->mod_manager.map_main_modules(this->application_settings_.application, this->version, context, this->log);
+        this->install_section_first_execution_hooks();
 
         const auto* executable = this->mod_manager.executable;
         const auto* ntdll = this->mod_manager.ntdll;
@@ -454,11 +454,147 @@ namespace sogen
         thread.previous_ip = thread.current_ip;
         thread.current_ip = this->emu().read_instruction_pointer();
 
+        if (!this->uses_section_first_execution_hooks())
+        {
+            this->track_section_first_execution(address);
+        }
+
         this->callbacks.on_instruction(address);
+    }
+
+    bool windows_emulator::uses_section_first_execution_hooks() const
+    {
+        return !this->emu().supports_global_memory_execution_hooks();
+    }
+
+    void windows_emulator::track_section_first_execution(const uint64_t address)
+    {
+        auto* mod = this->mod_manager.find_by_address(address);
+        if (!mod)
+        {
+            return;
+        }
+
+        auto* hook_states = [&]() -> std::vector<emulator_hook*>* {
+            const auto entry = this->section_first_execution_hooks_.find(mod->image_base);
+            return entry == this->section_first_execution_hooks_.end() ? nullptr : &entry->second;
+        }();
+
+        for (size_t i = 0; i < mod->sections.size(); ++i)
+        {
+            auto& section = mod->sections[i];
+            if (!is_within_start_and_length(address, section.region.start, section.region.length))
+            {
+                continue;
+            }
+
+            if (section.first_execute.has_value())
+            {
+                return;
+            }
+
+            section.first_execute = address;
+
+            if (hook_states && i < hook_states->size() && (*hook_states)[i])
+            {
+                auto* hook = (*hook_states)[i];
+                (*hook_states)[i] = nullptr;
+                this->emu().delete_hook(hook);
+            }
+
+            this->callbacks.on_section_first_execution(*mod, section, address);
+
+            return;
+        }
+    }
+
+    void windows_emulator::clear_section_first_execution_hooks()
+    {
+        for (const auto& hooks : this->section_first_execution_hooks_ | std::views::values)
+        {
+            for (auto* hook : hooks)
+            {
+                if (hook)
+                {
+                    this->emu().delete_hook(hook);
+                }
+            }
+        }
+
+        this->section_first_execution_hooks_.clear();
+    }
+
+    void windows_emulator::install_section_first_execution_hook(const mapped_module& mod, const size_t section_index)
+    {
+        if (!this->uses_section_first_execution_hooks() || section_index >= mod.sections.size())
+        {
+            return;
+        }
+
+        const auto& section = mod.sections[section_index];
+        if (section.first_execute.has_value() || section.region.length == 0)
+        {
+            return;
+        }
+
+        auto& hooks = this->section_first_execution_hooks_[mod.image_base];
+        if (hooks.size() < mod.sections.size())
+        {
+            hooks.resize(mod.sections.size());
+        }
+
+        if (hooks[section_index])
+        {
+            return;
+        }
+
+        hooks[section_index] =
+            this->emu().hook_memory_range_execution(section.region.start, section.region.length, [this](const uint64_t address) {
+                this->track_section_first_execution(address); //
+            });
+    }
+
+    void windows_emulator::install_section_first_execution_hooks()
+    {
+        if (!this->uses_section_first_execution_hooks())
+        {
+            return;
+        }
+
+        for (const auto& mod : this->mod_manager.modules() | std::views::values)
+        {
+            for (size_t i = 0; i < mod.sections.size(); ++i)
+            {
+                this->install_section_first_execution_hook(mod, i);
+            }
+        }
     }
 
     void windows_emulator::setup_hooks()
     {
+        this->callbacks.on_module_load.add([this](mapped_module& mod) {
+            for (size_t i = 0; i < mod.sections.size(); ++i)
+            {
+                this->install_section_first_execution_hook(mod, i);
+            }
+        });
+
+        this->callbacks.on_module_unload.add([this](mapped_module& mod) {
+            const auto hooks = this->section_first_execution_hooks_.extract(mod.image_base);
+            if (!hooks)
+            {
+                return;
+            }
+
+            for (auto* hook : hooks.mapped())
+            {
+                if (hook)
+                {
+                    this->emu().delete_hook(hook);
+                }
+            }
+        });
+
         this->emu().hook_instruction(x86_hookable_instructions::syscall, [&] {
             this->dispatcher.dispatch(*this);
             return instruction_hook_continuation::skip_instruction;
@@ -731,11 +867,13 @@ namespace sogen
         this->registry.deserialize_runtime_state(buffer);
 
         this->memory.unmap_all_memory();
+        this->clear_section_first_execution_hooks();
 
         // Match raw serialize() above; do not use backend snapshot mode here.
         this->emu().deserialize_state(buffer, false);
         this->memory.deserialize_memory_state(buffer, false);
         this->mod_manager.deserialize(buffer);
+        this->install_section_first_execution_hooks();
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer);
     }
@@ -781,10 +919,12 @@ namespace sogen
         this->registry.deserialize_runtime_state(buffer);
 
         this->memory.unmap_all_memory();
+        this->clear_section_first_execution_hooks();
 
         this->emu().deserialize_state(buffer, false);
         this->memory.deserialize_memory_state(buffer, false);
         this->mod_manager.deserialize(buffer);
+        this->install_section_first_execution_hooks();
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer);
     }

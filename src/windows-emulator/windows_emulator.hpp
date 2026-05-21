@@ -41,6 +41,7 @@ namespace sogen
         opt_func<void(std::string_view description)> on_generic_activity{};
         opt_func<void(std::string_view description)> on_suspicious_activity{};
         utils::callback_list<void(std::string_view message)> on_debug_string{};
+        utils::callback_list<void(const mapped_module& mod, const mapped_section& section, uint64_t address)> on_section_first_execution{};
         opt_func<void(uint64_t address)> on_instruction{};
         opt_func<void(io_device& device, std::u16string_view device_name, ULONG code)> on_ioctrl{};
         opt_func<void(uint32_t fail_code)> on_fast_fail{};
@@ -295,9 +296,17 @@ namespace sogen
         stop_reason last_stop_reason_{stop_reason::none};
         std::string last_stop_detail_{};
 
+        std::map<uint64_t, std::vector<emulator_hook*>> section_first_execution_hooks_{};
+
         void setup_hooks();
         void setup_process();
         void on_instruction_execution(uint64_t address);
+
+        bool uses_section_first_execution_hooks() const;
+        void clear_section_first_execution_hooks();
+        void install_section_first_execution_hook(const mapped_module& mod, size_t section_index);
+        void install_section_first_execution_hooks();
+        void track_section_first_execution(uint64_t address);
 
         void register_factories(utils::buffer_deserializer& buffer);
     };
