@@ -59,8 +59,8 @@ function generateButtons(additionalClasses: string = "") {
 const pythonBindingsSample = `import ctypes
 import sogen
 
-app = sogen.windows.create_application("c:/test-sample.exe",
-                                       emulation_root="./root")
+app = sogen.windows.create_application(
+    "c:/test-sample.exe", emulation_root="./root")
 
 @sogen.windows.api_call(cc=sogen.CallingConvention.stdcall,
                         params=[ctypes.c_uint32])
