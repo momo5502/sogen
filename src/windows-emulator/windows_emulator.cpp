@@ -469,11 +469,6 @@ namespace sogen
 
     void windows_emulator::track_section_first_execution(const uint64_t address)
     {
-        if (!this->callbacks.on_section_first_execution)
-        {
-            return;
-        }
-
         auto* mod = this->mod_manager.find_by_address(address);
         if (!mod)
         {
@@ -499,7 +494,6 @@ namespace sogen
             }
 
             section.first_execute = address;
-            this->callbacks.on_section_first_execution(*mod, section, address);
 
             if (hook_states && i < hook_states->size() && (*hook_states)[i])
             {
@@ -507,6 +501,8 @@ namespace sogen
                 (*hook_states)[i] = nullptr;
                 this->emu().delete_hook(hook);
             }
+
+            this->callbacks.on_section_first_execution(*mod, section, address);
 
             return;
         }
@@ -530,8 +526,7 @@ namespace sogen
 
     void windows_emulator::install_section_first_execution_hook(const mapped_module& mod, const size_t section_index)
     {
-        if (!this->uses_section_first_execution_hooks() || !this->callbacks.on_section_first_execution ||
-            section_index >= mod.sections.size())
+        if (!this->uses_section_first_execution_hooks() || section_index >= mod.sections.size())
         {
             return;
         }
@@ -561,7 +556,7 @@ namespace sogen
 
     void windows_emulator::install_section_first_execution_hooks()
     {
-        if (!this->uses_section_first_execution_hooks() || !this->callbacks.on_section_first_execution)
+        if (!this->uses_section_first_execution_hooks())
         {
             return;
         }
