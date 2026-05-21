@@ -65,6 +65,10 @@
     "vite-plugin-pwa": "^1.2.0"
   },
   "overrides": {
-    "serialize-javascript": ">=7.0.5"
+    "serialize-javascript": ">=7.0.5",
+    "dompurify": "^3.4.5",
+    "monaco-editor": {
+      "dompurify": "^3.4.5"
+    }
   }
 }
