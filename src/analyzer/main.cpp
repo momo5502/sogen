@@ -19,7 +19,7 @@ namespace
     }
 }
 
-int main(int argc, char** argv)
+int dispatch_main(int argc, char** argv)
 {
     if (should_use_linux_analyzer())
     {
@@ -29,9 +29,14 @@ int main(int argc, char** argv)
     return sogen::windows_main(argc, argv);
 }
 
+int main(int argc, char** argv)
+{
+    return dispatch_main(argc, argv);
+}
+
 #ifdef _WIN32
 int WINAPI WinMain(HINSTANCE, HINSTANCE, PSTR, int)
 {
-    return main(__argc, __argv);
+    return dispatch_main(__argc, __argv);
 }
 #endif
