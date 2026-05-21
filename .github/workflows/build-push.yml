@@ -104,7 +104,7 @@ jobs:
       id-token: write
     steps:
       - name: Configure fast APT mirror
-        uses: vegardit/fast-apt-mirror.sh@1.4.4
+        uses: vegardit/fast-apt-mirror.sh@1.4.5
         with:
           exclude-current: true
 
