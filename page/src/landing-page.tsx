@@ -162,7 +162,6 @@ export function LandingPage() {
 
   const stats = [
     { value: "100%", label: "Open Source" },
-    { value: "14", label: "Platforms" },
     { value: "2", label: "OS Targets" },
     { value: "3", label: "Backends" },
     { value: "100%", label: "Deterministic" },
