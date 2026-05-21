@@ -98,6 +98,11 @@ function runEmulation(
   globalThis.Module = {
     arguments: mainArguments,
     noInitialRun: true,
+    preRun: [
+      () => {
+        ENV.EMULATOR_LINUX = "1";
+      },
+    ],
     locateFile: (path, scriptDirectory) => {
       const bitness = wasm64 ? "64" : "32";
       const busterParams = cacheBuster ? `?${cacheBuster}` : "";
@@ -122,8 +127,8 @@ function runEmulation(
   const busterParams = cacheBuster ? `?${cacheBuster}` : "";
 
   if (wasm64) {
-    importScripts("./64/linux-analyzer.js" + busterParams);
+    importScripts("./64/analyzer.js" + busterParams);
   } else {
-    importScripts("./32/linux-analyzer.js" + busterParams);
+    importScripts("./32/analyzer.js" + busterParams);
   }
 }
