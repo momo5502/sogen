@@ -169,16 +169,8 @@ namespace sogen
         }
     }
 
+    int linux_main(const int argc, char** argv)
+    {
+        return run_main(argc, argv);
+    }
 }
-
-int main(const int argc, char** argv)
-{
-    return sogen::run_main(argc, argv);
-}
-
-#ifdef _WIN32
-int WINAPI WinMain(HINSTANCE, HINSTANCE, PSTR, int)
-{
-    return sogen::run_main(__argc, __argv);
-}
-#endif
