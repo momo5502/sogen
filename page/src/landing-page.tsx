@@ -59,8 +59,8 @@ function generateButtons(additionalClasses: string = "") {
 const pythonBindingsSample = `import ctypes
 import sogen
 
-app = sogen.windows.create_application("c:/test-sample.exe",
-                                       emulation_root="./root")
+app = sogen.windows.create_application(
+    "c:/test-sample.exe", emulation_root="./root")
 
 @sogen.windows.api_call(cc=sogen.CallingConvention.stdcall,
                         params=[ctypes.c_uint32])
@@ -162,7 +162,6 @@ export function LandingPage() {
 
   const stats = [
     { value: "100%", label: "Open Source" },
-    { value: "14", label: "Platforms" },
     { value: "2", label: "OS Targets" },
     { value: "3", label: "Backends" },
     { value: "100%", label: "Deterministic" },
