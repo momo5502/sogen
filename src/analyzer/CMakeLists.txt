@@ -1,30 +1,13 @@
-file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
-  *.cpp
-  *.hpp
-  *.rc
-)
+add_executable(analyzer main.cpp)
 
-list(SORT SRC_FILES)
+sogen_assign_source_group(main.cpp)
 
-add_library(windows-analyzer STATIC ${SRC_FILES})
+target_link_libraries(analyzer PRIVATE windows-analyzer linux-analyzer)
 
-sogen_assign_source_group(${SRC_FILES})
+set_property(GLOBAL PROPERTY VS_STARTUP_PROJECT analyzer)
 
-if(NOT SOGEN_ENABLE_CLANG_TIDY)
-  target_precompile_headers(windows-analyzer PRIVATE std_include.hpp)
-endif()
+sogen_strip_target(analyzer)
 
-target_link_libraries(windows-analyzer PRIVATE
-  debugger
-  disassembler
-  capstone
-  windows-emulator
-  windows-gdb-stub
-  backend-selection
-)
-
-if(SOGEN_ENABLE_REFLECTION)
-  target_link_libraries(windows-analyzer PRIVATE
-    reflect
-  )
-endif()
+add_test(NAME analyzer-test
+         COMMAND "${PYTHON3_EXE}" "${CMAKE_CURRENT_LIST_DIR}/../windows-analyzer/test.py"
+         WORKING_DIRECTORY "$<TARGET_FILE_DIR:analyzer>")
