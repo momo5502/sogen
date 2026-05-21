@@ -645,7 +645,7 @@ namespace sogen
                     //       See: https://github.com/momo5502/sogen/issues/560
                     emu.reg<uint32_t>(x86_register::eax, 0x000906EA);
                     emu.reg<uint32_t>(x86_register::ebx, 0x00100800);
-                    emu.reg<uint32_t>(x86_register::ecx, 0xEFE2F38F);
+                    emu.reg<uint32_t>(x86_register::ecx, 0x6FE2F38F);
                     emu.reg<uint32_t>(x86_register::edx, 0xBFEBFBFF);
 
                     return instruction_hook_continuation::skip_instruction;
