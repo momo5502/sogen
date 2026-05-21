@@ -651,6 +651,27 @@ namespace sogen
                     return instruction_hook_continuation::skip_instruction;
                 }
 
+                if (leaf == 0x40000000 && !is_whp)
+                {
+                    // Microsoft Hv vendor string
+                    emu.reg<uint32_t>(x86_register::eax, 0x40000003);
+                    emu.reg<uint32_t>(x86_register::ebx, 0x7263694d);
+                    emu.reg<uint32_t>(x86_register::ecx, 0x666f736f);
+                    emu.reg<uint32_t>(x86_register::edx, 0x76482074);
+
+                    return instruction_hook_continuation::skip_instruction;
+                }
+
+                if (leaf == 0x40000003 && !is_whp)
+                {
+                    emu.reg<uint32_t>(x86_register::eax, 0x00000000);
+                    emu.reg<uint32_t>(x86_register::ebx, 0x00000001);
+                    emu.reg<uint32_t>(x86_register::ecx, 0x00000000);
+                    emu.reg<uint32_t>(x86_register::edx, 0x00000000);
+
+                    return instruction_hook_continuation::skip_instruction;
+                }
+
                 return instruction_hook_continuation::run_instruction;
             });
 
