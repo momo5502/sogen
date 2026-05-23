@@ -59,6 +59,9 @@ namespace sogen
         std::set<uint64_t> rdtsc_cache{};
         std::set<uint64_t> rdtscp_cache{};
         std::set<std::pair<uint64_t, uint32_t>> cpuid_cache{};
+        uint64_t traced_call_count{};
+        std::optional<uint64_t> auto_break_before_call{};
+        std::optional<uint64_t> syscall_to_resume_after_break{};
 
         mutable std::pair<uint64_t, uint64_t> mapping_violation{0, 0};
         mutable uint64_t next_event_sequence{1};

@@ -211,6 +211,7 @@ namespace sogen
 
     struct function_execution_event : observation_event
     {
+        uint64_t call_count{};
         std::string function_name{};
         bool interesting{};
         std::vector<function_execution_detail> details{};
@@ -250,6 +251,7 @@ namespace sogen
 
     struct syscall_event : observation_event
     {
+        uint64_t call_count{};
         syscall_classification classification{syscall_classification::regular};
         uint32_t syscall_id{};
         std::string syscall_name{};

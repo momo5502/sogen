@@ -18,6 +18,7 @@ namespace sogen
     namespace
     {
         constexpr size_t MAX_INSTRUCTION_BYTES = 15;
+        constexpr uint64_t SYSCALL_INSTRUCTION_SIZE = 2;
 
         template <typename Return, typename... Args>
         std::function<Return(Args...)> make_callback(analysis_context& c, Return (*callback)(analysis_context&, Args...))
@@ -441,6 +442,35 @@ namespace sogen
             ++c.instructions[instructions[0].id];
         }
 
+        uint64_t next_traced_call_count(analysis_context& c)
+        {
+            return ++c.traced_call_count;
+        }
+
+        bool break_before_traced_call(analysis_context& c, const uint64_t call_count)
+        {
+            if (!c.auto_break_before_call || *c.auto_break_before_call != call_count)
+            {
+                return false;
+            }
+
+            c.auto_break_before_call.reset();
+            c.win_emu->stop();
+            return true;
+        }
+
+        bool break_before_traced_syscall(analysis_context& c, const uint64_t call_count, const uint64_t address)
+        {
+            if (!break_before_traced_call(c, call_count))
+            {
+                return false;
+            }
+
+            c.syscall_to_resume_after_break = address;
+            c.win_emu->emu().reg<uint64_t>(x86_register::rip, address - SYSCALL_INSTRUCTION_SIZE);
+            return true;
+        }
+
         void handle_section_first_execution(analysis_context& c, const mapped_module& binary, const mapped_section& section,
                                             const uint64_t address)
         {
@@ -533,11 +563,14 @@ namespace sogen
                 if (!c.settings->ignored_functions.contains(export_entry->second))
                 {
                     auto details = collect_function_details(c, export_entry->second);
+                    const auto call_count = next_traced_call_count(c);
                     c.emit_observation<function_execution_event>([&](auto& event) {
+                        event.call_count = call_count;
                         event.function_name = export_entry->second;
                         event.interesting = is_interesting_call;
                         event.details = std::move(details);
                     });
+                    (void)break_before_traced_call(c, call_count);
                 }
             }
             else if (address == binary->entry_point)
@@ -593,13 +626,21 @@ namespace sogen
             c.emit_observation<rdtscp_event>();
         }
 
-        emulator_callbacks::continuation handle_syscall(const analysis_context& c, const uint32_t syscall_id,
-                                                        const std::string_view syscall_name)
+        emulator_callbacks::continuation handle_syscall(analysis_context& c, const uint32_t syscall_id, const std::string_view syscall_name)
         {
             auto& win_emu = *c.win_emu;
             auto& emu = win_emu.emu();
 
             const auto address = emu.read_instruction_pointer();
+            if (c.syscall_to_resume_after_break)
+            {
+                const auto syscall_to_resume = std::exchange(c.syscall_to_resume_after_break, std::nullopt);
+                if (*syscall_to_resume == address)
+                {
+                    return instruction_hook_continuation::run_instruction;
+                }
+            }
+
             const auto* mod = win_emu.mod_manager.find_by_address(address);
             const auto is_sus_module = mod != win_emu.mod_manager.ntdll && mod != win_emu.mod_manager.win32u;
             const auto previous_ip = win_emu.current_thread().previous_ip;
@@ -611,11 +652,18 @@ namespace sogen
 
             if (is_sus_module && !is_valid_32_bit_module)
             {
+                const auto call_count = next_traced_call_count(c);
                 c.emit_observation<syscall_event>([&](auto& event) {
+                    event.call_count = call_count;
                     event.classification = syscall_classification::inline_syscall;
                     event.syscall_id = syscall_id;
                     event.syscall_name = std::string(syscall_name);
                 });
+
+                if (break_before_traced_syscall(c, call_count, address))
+                {
+                    return instruction_hook_continuation::skip_instruction;
+                }
             }
             else if (!previous_ip || mod->contains(previous_ip))
             {
@@ -627,27 +675,41 @@ namespace sogen
                     emu.try_read_memory(rsp, &return_address, sizeof(return_address));
 
                     const auto* caller_mod_name = win_emu.mod_manager.find_name(return_address);
+                    const auto call_count = next_traced_call_count(c);
 
                     c.emit_observation<syscall_event>([&](auto& event) {
+                        event.call_count = call_count;
                         event.classification = syscall_classification::regular;
                         event.syscall_id = syscall_id;
                         event.syscall_name = std::string(syscall_name);
                         event.caller_rip = return_address;
                         event.caller_module = caller_mod_name ? std::optional<std::string>{caller_mod_name} : std::nullopt;
                     });
+
+                    if (break_before_traced_syscall(c, call_count, address))
+                    {
+                        return instruction_hook_continuation::skip_instruction;
+                    }
                 }
             }
             else
             {
                 const auto* previous_mod = win_emu.mod_manager.find_by_address(previous_ip);
+                const auto call_count = next_traced_call_count(c);
 
                 c.emit_observation<syscall_event>([&](auto& event) {
+                    event.call_count = call_count;
                     event.classification = syscall_classification::crafted_out_of_line;
                     event.syscall_id = syscall_id;
                     event.syscall_name = std::string(syscall_name);
                     event.caller_rip = previous_ip;
                     event.caller_module = previous_mod ? std::optional<std::string>{previous_mod->name} : std::nullopt;
                 });
+
+                if (break_before_traced_syscall(c, call_count, address))
+                {
+                    return instruction_hook_continuation::skip_instruction;
+                }
             }
 
             return instruction_hook_continuation::run_instruction;

@@ -511,6 +511,7 @@ namespace sogen
 
             static void write_fields(json_object_builder& object, const function_execution_event& event)
             {
+                object.field("callCount", event.call_count);
                 object.field("fn", event.function_name);
                 object.field("interesting", event.interesting);
                 object.array_field("details", [&](const auto& emit) {
@@ -559,6 +560,7 @@ namespace sogen
 
             static void write_fields(json_object_builder& object, const syscall_event& event)
             {
+                object.field("callCount", event.call_count);
                 object.field("class", syscall_classification_name(event.classification));
                 object.field("id", event.syscall_id);
                 object.field("name", event.syscall_name);
