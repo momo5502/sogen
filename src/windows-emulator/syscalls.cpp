@@ -611,10 +611,7 @@ namespace sogen
                                      emulator_pointer text, UINT count, emulator_pointer dx, DWORD code_page);
         BOOL handle_NtGdiGetRealizationInfo(const syscall_context& c, hdc dc, emulator_pointer realization_info, uint64_t font);
         NTSTATUS handle_NtGdiGetEntry(const syscall_context& c, uint32_t handle_value, emulator_pointer entry_ptr);
-        BOOL handle_NtGdiMoveToEx(const syscall_context& c, hdc dc, LONG x, LONG y, emulator_pointer old_point_ptr);
-        uint64_t handle_NtGdiSelectBrushLocal(const syscall_context& c, hdc dc, uint32_t brush, emulator_pointer old_brush_ptr);
-        uint64_t handle_NtGdiSelectPenLocal(const syscall_context& c, hdc dc, uint32_t pen, emulator_pointer old_pen_ptr);
-        NTSTATUS handle_NtGdiOpenDCW();
+        hdc handle_NtGdiOpenDCW(const syscall_context& c);
         NTSTATUS handle_NtGdiDdDDIEnumAdapters2(const syscall_context& c, emulator_object<EMU_D3DKMT_ENUMADAPTERS2> enum_adapters);
         NTSTATUS handle_NtDxgkEnumAdapters3(const syscall_context& c, emulator_object<EMU_D3DKMT_ENUMADAPTERS3> enum_adapters);
         NTSTATUS handle_NtDxgkGetProperties(const syscall_context& c, emulator_object<EMU_D3DKMT_GET_PROPERTIES> get_properties);
@@ -624,8 +621,22 @@ namespace sogen
         NTSTATUS handle_NtGdiDdDDIEscape(const syscall_context& c, emulator_object<EMU_D3DKMT_ESCAPE> escape_desc);
         NTSTATUS handle_NtGdiDdDDICreateContext(const syscall_context& c, emulator_object<EMU_D3DKMT_CREATECONTEXT> context_desc);
         NTSTATUS handle_NtGdiDdDDICreateAllocation(const syscall_context& c, emulator_object<EMU_D3DKMT_CREATEALLOCATION> allocation_desc);
+        NTSTATUS handle_NtGdiDdDDIQueryResourceInfo(const syscall_context& c, emulator_object<EMU_D3DKMT_QUERYRESOURCEINFO> resource_info);
+        NTSTATUS handle_NtGdiDdDDIOpenResource(const syscall_context& c, emulator_object<EMU_D3DKMT_OPENRESOURCE> open_resource);
         NTSTATUS handle_NtGdiDdDDILock(const syscall_context& c, emulator_object<EMU_D3DKMT_LOCK> lock_desc);
         NTSTATUS handle_NtGdiDdDDIUnlock();
+        NTSTATUS handle_NtGdiDdDDIGetDisplayModeList(const syscall_context& c,
+                                                     emulator_object<EMU_D3DKMT_GETDISPLAYMODELIST> display_mode_list);
+        NTSTATUS handle_NtGdiDdDDIGetSharedPrimaryHandle(const syscall_context& c,
+                                                         emulator_object<EMU_D3DKMT_GETSHAREDPRIMARYHANDLE> shared_primary);
+        NTSTATUS handle_NtGdiDdDDIGetDeviceState(const syscall_context& c, emulator_object<EMU_D3DKMT_GETDEVICESTATE> device_state);
+        NTSTATUS handle_NtGdiDdDDIMarkDeviceAsError(const syscall_context& c, emulator_object<EMU_D3DKMT_MARKDEVICEASERROR> mark_error);
+        NTSTATUS handle_NtGdiDdDDIGetCachedHybridQueryValue(const syscall_context& c, emulator_object<uint32_t> value);
+        NTSTATUS handle_NtGdiDdDDICacheHybridQueryValue();
+        NTSTATUS handle_NtGdiDdDDIDestroyAllocation2(const syscall_context& c,
+                                                     emulator_object<EMU_D3DKMT_DESTROYALLOCATION2> destroy_allocation);
+        NTSTATUS handle_NtGdiDdDDIDestroyAllocation(const syscall_context& c,
+                                                    emulator_object<EMU_D3DKMT_DESTROYALLOCATION> destroy_allocation);
         NTSTATUS handle_NtGdiDdDDIDestroyContext();
         NTSTATUS handle_NtGdiDdDDIDestroyDevice();
         NTSTATUS handle_NtGdiDdDDIOpenAdapterFromHdc(const syscall_context& c, emulator_object<EMU_D3DKMT_OPENADAPTERFROMHDC> open_adapter);
@@ -939,9 +950,14 @@ namespace sogen
             return STATUS_NOT_SUPPORTED;
         }
 
-        NTSTATUS handle_NtAllocateLocallyUniqueId(const syscall_context&, emulator_object<LUID> luid)
+        NTSTATUS handle_NtAllocateLocallyUniqueId(const syscall_context& c, const emulator_object<LUID> luid)
         {
-            luid.access([&](LUID& l) { AllocateLocallyUniqueId(&l); });
+            luid.access([&](LUID& l) {
+                const std::uint64_t value = c.proc.next_luid++;
+                l.LowPart = static_cast<std::uint32_t>(value);
+                l.HighPart = static_cast<std::int32_t>(value >> 32);
+            });
+
             return STATUS_SUCCESS;
         }
     }
@@ -1292,14 +1308,25 @@ namespace sogen
         add_handler(NtGdiDdDDIEscape);
         add_handler(NtGdiDdDDICreateContext);
         add_handler(NtGdiDdDDICreateAllocation);
+        add_handler(NtGdiDdDDIQueryResourceInfo);
+        add_handler(NtGdiDdDDIOpenResource);
         add_handler(NtGdiDdDDILock);
+        add_handler(NtGdiDdDDIGetDisplayModeList);
+        add_handler(NtGdiDdDDIGetSharedPrimaryHandle);
+        add_handler(NtGdiDdDDIGetDeviceState);
+        add_handler(NtGdiDdDDIMarkDeviceAsError);
+        add_handler(NtGdiDdDDIGetCachedHybridQueryValue);
+        add_handler(NtGdiDdDDICacheHybridQueryValue);
         add_handler(NtGdiDdDDIUnlock);
+        add_handler(NtGdiDdDDIDestroyAllocation2);
+        add_handler(NtGdiDdDDIDestroyAllocation);
         add_handler(NtGdiDdDDIDestroyContext);
         add_handler(NtGdiDdDDIDestroyDevice);
         add_handler(NtAllocateLocallyUniqueId);
         add_handler(NtUserAllowSetForegroundWindow);
         add_handler(NtGdiOpenDCW);
         add_handler(NtGdiDdDDIOpenAdapterFromHdc);
+        add_handler(NtGdiSelectFont);
 
 #undef add_handler
     }

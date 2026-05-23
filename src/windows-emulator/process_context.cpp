@@ -626,6 +626,8 @@ namespace sogen
         buffer.write(this->last_extended_params_attributes);
         buffer.write(this->last_extended_params_image_machine);
 
+        buffer.write(this->next_luid);
+
         buffer.write_vector(this->default_register_set);
         buffer.write(this->spawned_thread_count);
         buffer.write(this->threads);
@@ -698,6 +700,8 @@ namespace sogen
         buffer.read(this->last_extended_params_numa_node);
         buffer.read(this->last_extended_params_attributes);
         buffer.read(this->last_extended_params_image_machine);
+
+        buffer.read(this->next_luid);
 
         buffer.read_vector(this->default_register_set);
         buffer.read(this->spawned_thread_count);

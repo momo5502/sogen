@@ -262,6 +262,9 @@ namespace sogen
                 teb_obj.SameTebFlags.SkipThreadAttach = (create_flags & THREAD_CREATE_FLAGS_SKIP_THREAD_ATTACH) ? 1 : 0;
                 teb_obj.SameTebFlags.LoaderWorker = (create_flags & THREAD_CREATE_FLAGS_LOADER_WORKER) ? 1 : 0;
                 teb_obj.SameTebFlags.SkipLoaderInit = (create_flags & THREAD_CREATE_FLAGS_SKIP_LOADER_INIT) ? 1 : 0;
+                teb_obj.StaticUnicodeString.Length = 0;
+                teb_obj.StaticUnicodeString.MaximumLength = sizeof(teb_obj.StaticUnicodeBuffer);
+                teb_obj.StaticUnicodeString.Buffer = this->teb64->value() + offsetof(TEB64, StaticUnicodeBuffer);
 
                 const auto desktop_info_obj = this->gs_segment->reserve<USER_DESKTOPINFO>();
                 desktop_info_obj.access([&](USER_DESKTOPINFO& info) {
@@ -333,6 +336,7 @@ namespace sogen
             teb_obj.SameTebFlags.SkipThreadAttach = (create_flags & THREAD_CREATE_FLAGS_SKIP_THREAD_ATTACH) ? 1 : 0;
             teb_obj.SameTebFlags.LoaderWorker = (create_flags & THREAD_CREATE_FLAGS_LOADER_WORKER) ? 1 : 0;
             teb_obj.SameTebFlags.SkipLoaderInit = (create_flags & THREAD_CREATE_FLAGS_SKIP_LOADER_INIT) ? 1 : 0;
+            teb_obj.StaticUnicodeString.Length = 0;
             teb_obj.StaticUnicodeString.MaximumLength = sizeof(teb_obj.StaticUnicodeBuffer);
             teb_obj.StaticUnicodeString.Buffer = this->teb64->value() + offsetof(TEB64, StaticUnicodeBuffer);
 
@@ -392,6 +396,9 @@ namespace sogen
             teb32_obj.SkipThreadAttach = (create_flags & THREAD_CREATE_FLAGS_SKIP_THREAD_ATTACH) ? 1 : 0;
             teb32_obj.LoaderWorker = (create_flags & THREAD_CREATE_FLAGS_LOADER_WORKER) ? 1 : 0;
             teb32_obj.SkipLoaderInit = (create_flags & THREAD_CREATE_FLAGS_SKIP_LOADER_INIT) ? 1 : 0;
+            teb32_obj.StaticUnicodeString.Length = 0;
+            teb32_obj.StaticUnicodeString.MaximumLength = sizeof(teb32_obj.StaticUnicodeBuffer);
+            teb32_obj.StaticUnicodeString.Buffer = static_cast<uint32_t>(teb32_addr + offsetof(TEB32, StaticUnicodeBuffer));
 
             // Note: CurrentLocale and other fields will be initialized by WOW64 runtime
         });

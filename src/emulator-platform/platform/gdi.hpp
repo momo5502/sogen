@@ -39,7 +39,7 @@ namespace sogen
     };
     static_assert(sizeof(GDI_HANDLE_ENTRY32) == 0x10);
 
-    #define GDI_MAX_HANDLE_COUNT 0xFFFF // 0x4000
+#define GDI_MAX_HANDLE_COUNT 0xFFFF // 0x4000
 
     struct GDI_SHARED_MEMORY64
     {
@@ -244,6 +244,44 @@ namespace sogen
         UINT64 hPrivateRuntimeResourceHandle;
     };
 
+    struct EMU_D3DKMT_QUERYRESOURCEINFO
+    {
+        UINT32 hDevice;
+        UINT32 hGlobalShare;
+        UINT64 pPrivateRuntimeData;
+        UINT32 PrivateRuntimeDataSize;
+        UINT32 TotalPrivateDriverDataSize;
+        UINT32 ResourcePrivateDriverDataSize;
+        UINT32 NumAllocations;
+    };
+
+    struct EMU_D3DDDI_OPENALLOCATIONINFO2
+    {
+        UINT32 hAllocation;
+        UINT32 Padding0;
+        UINT64 pPrivateDriverData;
+        UINT32 PrivateDriverDataSize;
+        UINT32 Padding1;
+        UINT64 GpuVirtualAddress;
+        UINT64 Reserved[6];
+    };
+    static_assert(sizeof(EMU_D3DDDI_OPENALLOCATIONINFO2) == 80);
+
+    struct EMU_D3DKMT_OPENRESOURCE
+    {
+        UINT32 hDevice;
+        UINT32 hGlobalShare;
+        UINT32 NumAllocations;
+        UINT64 pOpenAllocationInfo;
+        UINT64 pPrivateRuntimeData;
+        UINT32 PrivateRuntimeDataSize;
+        UINT64 pResourcePrivateDriverData;
+        UINT32 ResourcePrivateDriverDataSize;
+        UINT64 pTotalPrivateDriverDataBuffer;
+        UINT32 TotalPrivateDriverDataBufferSize;
+        UINT32 hResource;
+    };
+
     struct EMU_D3DKMT_LOCK
     {
         UINT32 hDevice;
@@ -254,6 +292,91 @@ namespace sogen
         UINT64 pData;
         UINT32 Flags;
         UINT64 GpuVirtualAddress;
+    };
+
+    struct EMU_D3DKMT_GETDEVICESTATE
+    {
+        UINT32 hDevice;
+        UINT32 StateType;
+        union
+        {
+            UINT32 State;
+            UINT32 DeviceExecutionState;
+            UINT32 PresentState;
+            UINT32 ResetState;
+        };
+    };
+
+    struct EMU_D3DKMT_MARKDEVICEASERROR
+    {
+        UINT32 hDevice;
+        UINT32 Reason;
+    };
+
+    struct EMU_D3DKMT_DESTROYALLOCATION
+    {
+        UINT32 hDevice;
+        UINT32 hResource;
+        UINT64 phAllocationList;
+        UINT32 AllocationCount;
+    };
+
+    struct EMU_D3DDDICB_DESTROYALLOCATION2FLAGS
+    {
+        union
+        {
+            struct
+            {
+                UINT32 AssumeNotInUse : 1;
+                UINT32 SynchronousDestroy : 1;
+                UINT32 Reserved : 29;
+                UINT32 SystemUseOnly : 1;
+            };
+            UINT32 Value;
+        };
+    };
+
+    struct EMU_D3DKMT_DESTROYALLOCATION2
+    {
+        UINT32 hDevice;
+        UINT32 hResource;
+        UINT64 phAllocationList;
+        UINT32 AllocationCount;
+        EMU_D3DDDICB_DESTROYALLOCATION2FLAGS Flags;
+    };
+
+    struct EMU_D3DDDI_RATIONAL
+    {
+        UINT32 Numerator;
+        UINT32 Denominator;
+    };
+
+    struct EMU_D3DKMT_DISPLAYMODE
+    {
+        UINT32 Width;
+        UINT32 Height;
+        UINT32 Format;
+        UINT32 IntegerRefreshRate;
+        EMU_D3DDDI_RATIONAL RefreshRate;
+        UINT32 ScanLineOrdering;
+        UINT32 DisplayOrientation;
+        UINT32 DisplayFixedOutput;
+        UINT32 Flags;
+    };
+
+    struct EMU_D3DKMT_GETDISPLAYMODELIST
+    {
+        UINT32 hAdapter;
+        UINT32 VidPnSourceId;
+        UINT64 pModeList;
+        UINT32 ModeCount;
+    };
+
+    struct EMU_D3DKMT_GETSHAREDPRIMARYHANDLE
+    {
+        UINT32 hAdapter;
+        UINT32 VidPnSourceId;
+        UINT32 hSharedPrimary;
     };
 
     struct EMU_D3DKMT_OPENADAPTERFROMHDC

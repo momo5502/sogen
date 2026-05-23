@@ -3314,6 +3314,81 @@ namespace sogen
             }
 
             case EMU_DISPLAYCONFIG_DEVICE_INFO_TYPE::GET_DISPLAY_INFO: {
+                struct EMU_DISPLAY_INFO_DEVICE_BLOCK
+                {
+                    UINT32 Valid;
+                    UINT32 VendorID;
+                    UINT32 DeviceID;
+                    UINT32 SubSystemVendorID;
+                    UINT32 SubSystemID;
+                    UINT32 RevisionID;
+                    UINT32 WddmVersion;
+                    char16_t AdapterDesc[128];
+                    char16_t AdapterDevicePath[260];
+                };
+
+                struct EMU_GET_DISPLAY_INFO
+                {
+                    UINT32 type;
+                    UINT32 size;
+                    LUID adapterId;
+                    UINT32 id;
+                    EMU_DISPLAY_INFO_DEVICE_BLOCK DisplayAdapter;
+                    UINT8 padding_0338[0x340 - 0x338];
+                    EMU_DISPLAY_INFO_DEVICE_BLOCK RenderAdapter;
+                    UINT8 padding_0664[2056 - 0x664];
+                };
+
+                static_assert(sizeof(EMU_DISPLAY_INFO_DEVICE_BLOCK) == 0x324);
+                static_assert(sizeof(EMU_GET_DISPLAY_INFO) == 2056);
+                static_assert(offsetof(EMU_GET_DISPLAY_INFO, adapterId) == 8);
+                static_assert(offsetof(EMU_GET_DISPLAY_INFO, id) == 16);
+                static_assert(offsetof(EMU_GET_DISPLAY_INFO, DisplayAdapter) == 0x14);
+                static_assert(offsetof(EMU_GET_DISPLAY_INFO, DisplayAdapter.AdapterDesc) == 0x30);
+                static_assert(offsetof(EMU_GET_DISPLAY_INFO, DisplayAdapter.AdapterDevicePath) == 0x130);
+                static_assert(offsetof(EMU_GET_DISPLAY_INFO, RenderAdapter) == 0x340);
+                static_assert(offsetof(EMU_GET_DISPLAY_INFO, RenderAdapter.AdapterDesc) == 0x35C);
+                static_assert(offsetof(EMU_GET_DISPLAY_INFO, RenderAdapter.AdapterDevicePath) == 0x45C);
+
+                if (header.size < sizeof(EMU_GET_DISPLAY_INFO))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                const emulator_object<EMU_GET_DISPLAY_INFO> display_info{c.emu, packet};
+
+                display_info.access([](EMU_GET_DISPLAY_INFO& info) {
+                    const bool known_adapter =
+                        info.adapterId.LowPart == 0x1000 && info.adapterId.HighPart == 0; // Must match k_dxgk_adapter_luid!
+
+                    if (!known_adapter)
+                    {
+                        return;
+                    }
+
+                    const auto fill_block = [](EMU_DISPLAY_INFO_DEVICE_BLOCK& block) {
+                        block.Valid = 1;
+                        block.VendorID = 0x10DE;
+                        block.DeviceID = 0x1C03;
+                        block.SubSystemVendorID = 0x10DE;
+                        block.SubSystemID = 0;
+                        block.RevisionID = 0xA1;
+                        block.WddmVersion = 3200;
+
+                        utils::string::copy(block.AdapterDesc, u"NVIDIA GeForce GTX 1060 6GB");
+                        utils::string::copy(
+                            block.AdapterDevicePath,
+                            u"\\\\?\\PCI#VEN_10DE&DEV_1C03&SUBSYS_00000000&REV_A1#4&1234567&0&0008#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}");
+                    };
+
+                    fill_block(info.DisplayAdapter);
+                    fill_block(info.RenderAdapter);
+                });
+
+                return STATUS_SUCCESS;
+            }
+
+            case EMU_DISPLAYCONFIG_DEVICE_INFO_TYPE::GET_DISPLAY_INFO_EX: {
                 struct EMU_GET_DISPLAY_INFO
                 {
                     UINT32 type;
@@ -3404,7 +3479,6 @@ namespace sogen
             }
 
             default:
-                // c.win_emu.log.warn("Unknown DisplayConfig Info Type: %d", header.type);
                 return STATUS_SUCCESS;
             }
         }

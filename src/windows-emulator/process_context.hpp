@@ -177,17 +177,20 @@ namespace sogen
         {
             struct dxgk_allocation
             {
+                uint32_t resource_handle{};
                 uint64_t backing_memory{};
                 uint64_t backing_size{};
 
                 void serialize(utils::buffer_serializer& buffer) const
                 {
+                    buffer.write(this->resource_handle);
                     buffer.write(this->backing_memory);
                     buffer.write(this->backing_size);
                 }
 
                 void deserialize(utils::buffer_deserializer& buffer)
                 {
+                    buffer.read(this->resource_handle);
                     buffer.read(this->backing_memory);
                     buffer.read(this->backing_size);
                 }
@@ -202,7 +205,7 @@ namespace sogen
                 return ++this->next_resource_handle;
             }
 
-            uint32_t create_allocation(memory_manager& memory, uint64_t backing_size)
+            uint32_t create_allocation(memory_manager& memory, const uint32_t resource_handle, uint64_t backing_size)
             {
                 if (backing_size == 0)
                 {
@@ -215,6 +218,7 @@ namespace sogen
                 const uint32_t handle = ++this->next_allocation_handle;
 
                 this->allocations[handle] = {
+                    .resource_handle = resource_handle,
                     .backing_memory = backing_memory,
                     .backing_size = aligned_size,
                 };
@@ -231,6 +235,47 @@ namespace sogen
                 }
 
                 return &it->second;
+            }
+
+            bool destroy_allocation(memory_manager& memory, const uint32_t handle)
+            {
+                const auto it = this->allocations.find(handle);
+                if (it == this->allocations.end())
+                {
+                    return false;
+                }
+
+                if (it->second.backing_memory != 0)
+                {
+                    memory.release_memory(it->second.backing_memory, 0);
+                }
+
+                this->allocations.erase(it);
+                return true;
+            }
+
+            size_t destroy_resource_allocations(memory_manager& memory, const uint32_t resource_handle)
+            {
+                size_t destroy_count = 0;
+
+                for (auto it = this->allocations.begin(); it != this->allocations.end();)
+                {
+                    if (it->second.resource_handle != resource_handle)
+                    {
+                        ++it;
+                        continue;
+                    }
+
+                    if (it->second.backing_memory != 0)
+                    {
+                        memory.release_memory(it->second.backing_memory, 0);
+                    }
+
+                    it = this->allocations.erase(it);
+                    ++destroy_count;
+                }
+
+                return destroy_count;
             }
 
             void serialize(utils::buffer_serializer& buffer) const
@@ -375,6 +420,8 @@ namespace sogen
         uint64_t last_extended_params_numa_node{0};
         uint32_t last_extended_params_attributes{0};
         uint16_t last_extended_params_image_machine{IMAGE_FILE_MACHINE_UNKNOWN};
+
+        uint64_t next_luid{0x1001};
     };
 
 } // namespace sogen

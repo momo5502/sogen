@@ -444,8 +444,9 @@ namespace sogen
         SET_HDR_STATE = 16,
         SET_WCG_STATE = 17,
 
+        GET_DISPLAY_INFO = static_cast<uint32_t>(-2),
         GET_SOURCE_FROM_HASH = static_cast<uint32_t>(-14),
-        GET_DISPLAY_INFO = static_cast<uint32_t>(-21),
+        GET_DISPLAY_INFO_EX = static_cast<uint32_t>(-21),
     };
 
     struct EMU_DISPLAYCONFIG_DEVICE_INFO_HEADER

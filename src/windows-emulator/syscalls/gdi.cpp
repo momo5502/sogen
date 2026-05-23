@@ -171,6 +171,7 @@ namespace sogen
             constexpr uint32_t k_dxgk_adapter_handle = 0x4000;
             constexpr uint32_t k_dxgk_device_handle = 0x5000;
             constexpr uint32_t k_dxgk_context_handle = 0x6000;
+            constexpr uint32_t k_dxgk_shared_primary_handle = 0x7000;
             constexpr LUID k_dxgk_adapter_luid = {0x1000, 0};
             constexpr uint32_t k_dxgk_adapter_source_count = 1;
             constexpr size_t k_dxgk_command_buffer_size = 0x1000;
@@ -179,6 +180,11 @@ namespace sogen
             constexpr uint32_t k_dxgk_fake_vendor_id = 0x10DE;
             constexpr uint32_t k_dxgk_fake_device_id = 0x1C03;
             constexpr uint32_t k_dxgk_fake_revision_id = 0xA1;
+            constexpr uint32_t k_dxgk_open_resource_resource_private_size = 0x18;
+            constexpr uint32_t k_dxgk_open_resource_allocation_private_size = 0x18;
+            constexpr uint32_t k_dxgk_open_resource_descriptor_size = 0x80;
+            constexpr uint32_t k_dxgk_open_resource_total_private_size =
+                k_dxgk_open_resource_allocation_private_size + k_dxgk_open_resource_descriptor_size;
             constexpr GUID k_dxgk_adapter_guid = {0x5b45201d, 0xf2f2, 0x4f3b, {0x85, 0xbb, 0x30, 0xff, 0x1f, 0x95, 0x35, 0x99}};
 
             uint64_t ensure_gdi_shared_table(const syscall_context& c)
@@ -1098,6 +1104,7 @@ namespace sogen
                 case 0xA:  // VERTRES
                 case 0x75: // DESKTOPVERTRES
                     return k_default_height;
+                case 14:
                 case 0x28: // PLANES
                 case 0x2A: // NUMBRUSHES
                 case 0x2C: // NUMPENS
@@ -1105,6 +1112,8 @@ namespace sogen
                 case 0x58: // LOGPIXELSX
                 case 0x5A: // LOGPIXELSY
                     return k_default_dpi;
+                case 12:
+                    return 32;
                 default:
                     return 0;
                 }
@@ -1272,6 +1281,64 @@ namespace sogen
 
                 c.emu.write_memory(query.pPrivateDriverData, &value, sizeof(T));
                 return STATUS_SUCCESS;
+            }
+
+            template <typename TDestroyAllocation>
+            NTSTATUS destroy_dxgk_allocations(const syscall_context& c, const emulator_object<TDestroyAllocation> destroy_allocation)
+            {
+                if (!destroy_allocation)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                NTSTATUS status = STATUS_SUCCESS;
+
+                destroy_allocation.access([&](const TDestroyAllocation& params) {
+                    if (params.hDevice != 0 && params.hDevice != k_dxgk_device_handle)
+                    {
+                        dxgk_warn(c, "DestroyAllocation: Unexpected device 0x%X", params.hDevice);
+                    }
+
+                    if (params.AllocationCount == 0)
+                    {
+                        if (params.hResource == 0)
+                        {
+                            return;
+                        }
+
+                        const auto destroy_count = c.proc.dxgk.destroy_resource_allocations(c.win_emu.memory, params.hResource);
+                        if (destroy_count == 0)
+                        {
+                            dxgk_warn(c, "DestroyAllocation: Unknown resource handle 0x%X", params.hResource);
+                            return;
+                        }
+
+                        dxgk_info(c, "DestroyAllocation: destroyed %zu allocation(s) for resource 0x%X", destroy_count, params.hResource);
+                        return;
+                    }
+
+                    if (params.phAllocationList == 0)
+                    {
+                        dxgk_warn(c, "DestroyAllocation: AllocationCount=%u but phAllocationList is null", params.AllocationCount);
+                        status = STATUS_INVALID_PARAMETER;
+                        return;
+                    }
+
+                    const emulator_object<UINT32> allocation_list{c.emu, params.phAllocationList};
+                    for (UINT32 i = 0; i < params.AllocationCount; ++i)
+                    {
+                        const auto allocation_handle = allocation_list.read(i);
+                        if (!c.proc.dxgk.destroy_allocation(c.win_emu.memory, allocation_handle))
+                        {
+                            dxgk_warn(c, "DestroyAllocation: Unknown allocation handle 0x%X", allocation_handle);
+                            continue;
+                        }
+
+                        dxgk_info(c, "DestroyAllocation: destroyed allocation 0x%X", allocation_handle);
+                    }
+                });
+
+                return status;
             }
         }
 
@@ -1515,9 +1582,9 @@ namespace sogen
             return allocate_gdi_dc(c, dc_attr);
         }
 
-        NTSTATUS handle_NtGdiOpenDCW()
+        hdc handle_NtGdiOpenDCW(const syscall_context& c)
         {
-            return STATUS_SUCCESS;
+            return ensure_default_hdc(c);
         }
 
         int32_t handle_NtGdiSaveDC(const syscall_context& c, const hdc dc)
@@ -2558,14 +2625,61 @@ namespace sogen
                 return write_query_adapter_info(c, query, adapter_guid);
             }
 
-            case KMTQAITYPE::KMTQAITYPE_DRIVERVERSION:
-                return write_query_adapter_info(c, query, 2700);
+            case KMTQAITYPE::KMTQAITYPE_FLIPQUEUEINFO: {
+                struct EMU_D3DKMT_FLIPQUEUEINFO
+                {
+                    UINT32 MaxHardwareFlipQueueLength;
+                    UINT32 MaxSoftwareFlipQueueLength;
+                    UINT32 FlipFlags;
+                } flip_queue_info{};
 
-            case KMTQAITYPE::KMTQAITYPE_ADAPTERTYPE:
+                if (query.PrivateDriverDataSize < sizeof(flip_queue_info))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                flip_queue_info.MaxHardwareFlipQueueLength = 0;
+                flip_queue_info.MaxSoftwareFlipQueueLength = 0x1F;
+                flip_queue_info.FlipFlags = 0;
+
+                return write_query_adapter_info(c, query, flip_queue_info);
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_DRIVERVERSION: {
+                return write_query_adapter_info(c, query, 3200);
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_WDDM_1_2_CAPS: {
+                struct EMU_D3DKMT_WDDM_1_2_CAPS
+                {
+                    UINT32 Value0;
+                    UINT32 Value1;
+                    UINT32 Value2;
+                } caps{};
+
+                if (query.PrivateDriverDataSize < sizeof(caps))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                caps.Value0 = 0x190;
+                caps.Value1 = 0x0C8;
+                caps.Value2 = 0x1DF;
+
+                return write_query_adapter_info(c, query, caps);
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_WDDM_1_3_CAPS: {
+                return write_query_adapter_info(c, query, 0x34u);
+            }
+
+            case KMTQAITYPE::KMTQAITYPE_ADAPTERTYPE: {
                 return write_query_adapter_info(c, query, 3);
+            }
 
-            case KMTQAITYPE::KMTQAITYPE_PHYSICALADAPTERCOUNT:
+            case KMTQAITYPE::KMTQAITYPE_PHYSICALADAPTERCOUNT: {
                 return write_query_adapter_info(c, query, 1);
+            }
 
             case KMTQAITYPE::KMTQAITYPE_PHYSICALADAPTERDEVICEIDS: {
                 struct EMU_D3DKMT_PHYSICAL_ADAPTER_DEVICE_IDS
@@ -2590,8 +2704,9 @@ namespace sogen
                 return write_query_adapter_info(c, query, ids);
             }
 
-            case KMTQAITYPE::KMTQAITYPE_ADAPTERTYPE_RENDER:
+            case KMTQAITYPE::KMTQAITYPE_ADAPTERTYPE_RENDER: {
                 return write_query_adapter_info(c, query, 1);
+            }
 
             case KMTQAITYPE::KMTQAITYPE_QUERY_ADAPTER_UNIQUE_GUID: {
                 GUID unique_guid = k_dxgk_adapter_guid;
@@ -2791,7 +2906,7 @@ namespace sogen
                             const uint64_t backing_size = infer_warp_allocation_size_from_private_data(c, alloc_info.pPrivateDriverData,
                                                                                                        alloc_info.PrivateDriverDataSize);
 
-                            alloc_info.hAllocation = c.proc.dxgk.create_allocation(c.win_emu.memory, backing_size);
+                            alloc_info.hAllocation = c.proc.dxgk.create_allocation(c.win_emu.memory, create_alloc.hResource, backing_size);
 
                             const auto* allocation = c.proc.dxgk.get_allocation(alloc_info.hAllocation);
                             const auto actual_size = allocation ? allocation->backing_size : 0ull;
@@ -2806,6 +2921,178 @@ namespace sogen
             });
 
             return STATUS_SUCCESS;
+        }
+
+        bool write_warp_open_resource_resource_private_data(const syscall_context& c, const uint64_t buffer, const uint32_t buffer_size,
+                                                            const uint64_t allocation_private)
+        {
+            if (buffer == 0 || buffer_size < k_dxgk_open_resource_resource_private_size)
+            {
+                return false;
+            }
+
+            std::vector<uint8_t> resource_private_data(k_dxgk_open_resource_resource_private_size, 0);
+            std::memcpy(resource_private_data.data() + 0x08, &allocation_private, sizeof(allocation_private));
+
+            c.emu.write_memory(buffer, resource_private_data.data(), resource_private_data.size());
+
+            dxgk_info(c, "NtGdiDdDDIOpenResource: resource private data=0x%llX alloc_private=0x%llX size=0x%X", buffer, allocation_private,
+                      buffer_size);
+            return true;
+        }
+
+        bool write_warp_open_resource_allocation_private_data(const syscall_context& c, const uint64_t buffer, const uint32_t buffer_size)
+        {
+            if (buffer == 0 || buffer_size < k_dxgk_open_resource_total_private_size)
+            {
+                return false;
+            }
+
+            std::vector<uint8_t> private_data(k_dxgk_open_resource_total_private_size, 0);
+
+            const uint64_t allocation_private = buffer;
+            const uint64_t descriptor = buffer + k_dxgk_open_resource_allocation_private_size;
+
+            const auto write_private = [&](const size_t offset, const auto value) {
+                std::memcpy(private_data.data() + offset, &value, sizeof(value));
+            };
+
+            write_private(0x08, descriptor);
+
+            const size_t descriptor_offset = k_dxgk_open_resource_allocation_private_size;
+            write_private(descriptor_offset + 0x00, 2u);
+            write_private(descriptor_offset + 0x04, k_default_width);
+            write_private(descriptor_offset + 0x08, k_default_height);
+            write_private(descriptor_offset + 0x0C, 1u);
+            write_private(descriptor_offset + 0x10, 0x57u);
+            write_private(descriptor_offset + 0x1C, 1u);
+            write_private(descriptor_offset + 0x20, 1u);
+
+            c.emu.write_memory(buffer, private_data.data(), private_data.size());
+
+            dxgk_info(c, "NtGdiDdDDIOpenResource: allocation private data=0x%llX descriptor=0x%llX size=0x%X", allocation_private,
+                      descriptor, buffer_size);
+            return true;
+        }
+
+        NTSTATUS handle_NtGdiDdDDIQueryResourceInfo(const syscall_context& c,
+                                                    const emulator_object<EMU_D3DKMT_QUERYRESOURCEINFO> resource_info)
+        {
+            if (!resource_info)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            resource_info.access([&](EMU_D3DKMT_QUERYRESOURCEINFO& params) {
+                if (params.hDevice != 0 && params.hDevice != k_dxgk_device_handle)
+                {
+                    dxgk_warn(c, "NtGdiDdDDIQueryResourceInfo: Unexpected device 0x%X", params.hDevice);
+                }
+
+                if (params.hGlobalShare != k_dxgk_shared_primary_handle && params.hGlobalShare <= 0x8000)
+                {
+                    dxgk_warn(c, "NtGdiDdDDIQueryResourceInfo: Unexpected global share 0x%X", params.hGlobalShare);
+                }
+
+                if (params.pPrivateRuntimeData != 0 && params.PrivateRuntimeDataSize != 0)
+                {
+                    std::vector<uint8_t> zeros(params.PrivateRuntimeDataSize, 0);
+                    c.emu.write_memory(params.pPrivateRuntimeData, zeros.data(), zeros.size());
+                }
+
+                params.PrivateRuntimeDataSize = 0;
+                params.TotalPrivateDriverDataSize = k_dxgk_open_resource_total_private_size;
+                params.ResourcePrivateDriverDataSize = k_dxgk_open_resource_resource_private_size;
+                params.NumAllocations = 1;
+            });
+
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtGdiDdDDIOpenResource(const syscall_context& c, const emulator_object<EMU_D3DKMT_OPENRESOURCE> open_resource)
+        {
+            if (!open_resource)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            NTSTATUS status = STATUS_SUCCESS;
+
+            open_resource.access([&](EMU_D3DKMT_OPENRESOURCE& params) {
+                if (params.hDevice != 0 && params.hDevice != k_dxgk_device_handle)
+                {
+                    dxgk_warn(c, "NtGdiDdDDIOpenResource: Unexpected device 0x%X", params.hDevice);
+                }
+
+                if (params.hGlobalShare != k_dxgk_shared_primary_handle && params.hGlobalShare <= 0x8000)
+                {
+                    dxgk_warn(c, "NtGdiDdDDIOpenResource: Unexpected global share 0x%X", params.hGlobalShare);
+                }
+
+                if (params.pTotalPrivateDriverDataBuffer == 0 ||
+                    params.TotalPrivateDriverDataBufferSize < k_dxgk_open_resource_total_private_size)
+                {
+                    status = STATUS_BUFFER_TOO_SMALL;
+                    return;
+                }
+
+                if (params.pResourcePrivateDriverData == 0 ||
+                    params.ResourcePrivateDriverDataSize < k_dxgk_open_resource_resource_private_size)
+                {
+                    status = STATUS_BUFFER_TOO_SMALL;
+                    return;
+                }
+
+                params.hResource = c.proc.dxgk.create_resource();
+
+                const auto backing_size = static_cast<uint64_t>(k_default_width) * static_cast<uint64_t>(k_default_height) * 4ull;
+                const auto allocation_private_data = params.pTotalPrivateDriverDataBuffer;
+
+                if (allocation_private_data != 0 &&
+                    write_warp_open_resource_allocation_private_data(c, allocation_private_data, params.TotalPrivateDriverDataBufferSize))
+                {
+                    params.TotalPrivateDriverDataBufferSize = k_dxgk_open_resource_total_private_size;
+                }
+
+                if (params.pResourcePrivateDriverData != 0)
+                {
+                    write_warp_open_resource_resource_private_data(c, params.pResourcePrivateDriverData,
+                                                                   params.ResourcePrivateDriverDataSize, allocation_private_data);
+                }
+
+                if (params.NumAllocations > 0 && params.pOpenAllocationInfo != 0)
+                {
+                    constexpr size_t info_size = sizeof(EMU_D3DDDI_OPENALLOCATIONINFO2);
+
+                    for (UINT32 allocation_index = 0; allocation_index < params.NumAllocations; ++allocation_index)
+                    {
+                        const emulator_pointer info_ptr = params.pOpenAllocationInfo + (allocation_index * info_size);
+                        const emulator_object<EMU_D3DDDI_OPENALLOCATIONINFO2> allocation_info{c.emu, info_ptr};
+
+                        allocation_info.access([&](EMU_D3DDDI_OPENALLOCATIONINFO2& alloc_info) {
+                            alloc_info.hAllocation = c.proc.dxgk.create_allocation(c.win_emu.memory, params.hResource, backing_size);
+                            alloc_info.pPrivateDriverData = allocation_private_data;
+                            alloc_info.PrivateDriverDataSize =
+                                allocation_private_data != 0 ? k_dxgk_open_resource_allocation_private_size : 0;
+
+                            const auto* allocation = c.proc.dxgk.get_allocation(alloc_info.hAllocation);
+                            const auto actual_size = allocation ? allocation->backing_size : 0ull;
+                            const auto backing_memory = allocation ? allocation->backing_memory : 0ull;
+
+                            alloc_info.GpuVirtualAddress = backing_memory;
+                            std::fill(std::begin(alloc_info.Reserved), std::end(alloc_info.Reserved), 0ull);
+
+                            dxgk_info(c, "NtGdiDdDDIOpenResource: Alloc %u/%u -> Handle 0x%X Size=0x%llX Address=0x%llX",
+                                      allocation_index + 1, params.NumAllocations, alloc_info.hAllocation, actual_size, backing_memory);
+                        });
+                    }
+                }
+
+                dxgk_info(c, "NtGdiDdDDIOpenResource: share=0x%X -> resource=0x%X allocs=%u", params.hGlobalShare, params.hResource,
+                          params.NumAllocations);
+            });
+
+            return status;
         }
 
         NTSTATUS handle_NtGdiDdDDILock(const syscall_context& c, const emulator_object<EMU_D3DKMT_LOCK> lock_desc)
@@ -2841,9 +3128,141 @@ namespace sogen
             return status;
         }
 
+        NTSTATUS handle_NtGdiDdDDIGetDisplayModeList(const syscall_context& c,
+                                                     const emulator_object<EMU_D3DKMT_GETDISPLAYMODELIST> display_mode_list)
+        {
+            if (!display_mode_list)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            NTSTATUS status = STATUS_SUCCESS;
+
+            display_mode_list.access([&](EMU_D3DKMT_GETDISPLAYMODELIST& params) {
+                if (params.hAdapter != k_dxgk_adapter_handle)
+                {
+                    dxgk_warn(c, "NtGdiDdDDIGetDisplayModeList: Unknown adapter 0x%X", params.hAdapter);
+                }
+
+                const auto capacity = params.ModeCount;
+                params.ModeCount = 1;
+
+                if (params.pModeList == 0)
+                {
+                    return;
+                }
+
+                if (capacity < 1)
+                {
+                    status = STATUS_BUFFER_TOO_SMALL;
+                    return;
+                }
+
+                const emulator_object<EMU_D3DKMT_DISPLAYMODE> mode{c.emu, params.pModeList};
+                mode.access([](EMU_D3DKMT_DISPLAYMODE& current_mode) {
+                    current_mode.Width = k_default_width;
+                    current_mode.Height = k_default_height;
+                    current_mode.Format = 22;
+                    current_mode.IntegerRefreshRate = 60;
+                    current_mode.RefreshRate = {.Numerator = 60, .Denominator = 1};
+                    current_mode.ScanLineOrdering = 1;
+                    current_mode.DisplayOrientation = 1;
+                    current_mode.DisplayFixedOutput = 0;
+                    current_mode.Flags = 0;
+                });
+            });
+
+            return status;
+        }
+
+        NTSTATUS handle_NtGdiDdDDIGetSharedPrimaryHandle(const syscall_context& c,
+                                                         const emulator_object<EMU_D3DKMT_GETSHAREDPRIMARYHANDLE> shared_primary)
+        {
+            if (!shared_primary)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            shared_primary.access([&](EMU_D3DKMT_GETSHAREDPRIMARYHANDLE& params) {
+                if (params.hAdapter != k_dxgk_adapter_handle)
+                {
+                    dxgk_warn(c, "NtGdiDdDDIGetSharedPrimaryHandle: Unknown adapter 0x%X", params.hAdapter);
+                }
+
+                params.hSharedPrimary = k_dxgk_shared_primary_handle;
+            });
+
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtGdiDdDDIGetDeviceState(const syscall_context& c, const emulator_object<EMU_D3DKMT_GETDEVICESTATE> device_state)
+        {
+            if (!device_state)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            device_state.access([&](EMU_D3DKMT_GETDEVICESTATE& state) {
+                if (state.hDevice != k_dxgk_device_handle)
+                {
+                    dxgk_warn(c, "NtGdiDdDDIGetDeviceState: Unknown device 0x%X", state.hDevice);
+                }
+
+                state.State = 0;
+            });
+
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtGdiDdDDIMarkDeviceAsError(const syscall_context& c,
+                                                    const emulator_object<EMU_D3DKMT_MARKDEVICEASERROR> mark_error)
+        {
+            if (!mark_error)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            mark_error.access([&](const EMU_D3DKMT_MARKDEVICEASERROR& params) {
+                if (params.hDevice != 0 && params.hDevice != k_dxgk_device_handle)
+                {
+                    dxgk_warn(c, "NtGdiDdDDIMarkDeviceAsError: Unexpected device 0x%X", params.hDevice);
+                }
+
+                dxgk_info(c, "NtGdiDdDDIMarkDeviceAsError: device=0x%X reason=0x%X", params.hDevice, params.Reason);
+            });
+
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtGdiDdDDIGetCachedHybridQueryValue(const syscall_context&, const emulator_object<uint32_t> value)
+        {
+            if (value)
+            {
+                value.write(3);
+            }
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtGdiDdDDICacheHybridQueryValue()
+        {
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtGdiDdDDIUnlock()
         {
             return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtGdiDdDDIDestroyAllocation2(const syscall_context& c,
+                                                     const emulator_object<EMU_D3DKMT_DESTROYALLOCATION2> destroy_allocation)
+        {
+            return destroy_dxgk_allocations(c, destroy_allocation);
+        }
+
+        NTSTATUS handle_NtGdiDdDDIDestroyAllocation(const syscall_context& c,
+                                                    const emulator_object<EMU_D3DKMT_DESTROYALLOCATION> destroy_allocation)
+        {
+            return destroy_dxgk_allocations(c, destroy_allocation);
         }
 
         NTSTATUS handle_NtGdiDdDDIDestroyContext()
@@ -2870,6 +3289,11 @@ namespace sogen
                 open_params.VidPnSourceId = 0;
             });
 
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtGdiSelectFont()
+        {
             return STATUS_SUCCESS;
         }
     }
