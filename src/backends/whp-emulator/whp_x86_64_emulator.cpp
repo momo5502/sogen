@@ -1809,8 +1809,9 @@ namespace sogen::whp
                 if (enabled_exits.ExceptionExit)
                 {
                     WHV_PARTITION_PROPERTY exception_exit_bitmap{};
-                    exception_exit_bitmap.ExceptionExitBitmap =
-                        (1ull << WHvX64ExceptionTypeDebugTrapOrFault) | (1ull << WHvX64ExceptionTypeBreakpointTrap);
+                    exception_exit_bitmap.ExceptionExitBitmap = (1ull << WHvX64ExceptionTypeDebugTrapOrFault) |
+                                                                (1ull << WHvX64ExceptionTypeBreakpointTrap) |
+                                                                (1ull << WHvX64ExceptionTypeInvalidOpcodeFault);
 
                     WHP_CHECK_HR(WHvSetPartitionProperty(this->partition_, WHvPartitionPropertyCodeExceptionExitBitmap,
                                                          &exception_exit_bitmap, sizeof(exception_exit_bitmap)));
@@ -2970,8 +2971,22 @@ namespace sogen::whp
             {
                 const auto rip = this->read_instruction_pointer();
                 std::array<std::byte, 2> opcode{};
-                if (this->access_memory(rip, opcode.data(), opcode.size(), false) && opcode[0] == std::byte{0x0F} &&
-                    opcode[1] == std::byte{0x0B})
+                if (this->access_memory(rip, opcode.data(), opcode.size(), false) && opcode[0] == std::byte{0xCD})
+                {
+                    for (auto& [_, hook] : this->interrupt_hooks_)
+                    {
+                        hook(std::to_integer<uint8_t>(opcode[1]));
+
+                        if (this->read_instruction_pointer() == rip)
+                        {
+                            this->advance_rip(2);
+                        }
+
+                        return true;
+                    }
+                }
+                else if (this->access_memory(rip, opcode.data(), opcode.size(), false) && opcode[0] == std::byte{0x0F} &&
+                         opcode[1] == std::byte{0x0B})
                 {
                     bool skip = false;
                     bool consumed = false;
@@ -3249,6 +3264,7 @@ namespace sogen::whp
 
                 if (exception.ExceptionType == WHvX64ExceptionTypeInvalidOpcodeFault)
                 {
+                    const auto rip = this->read_instruction_pointer();
                     bool consumed = false;
 
                     for (auto& [_, hook] : this->instruction_hooks_)
@@ -3260,7 +3276,10 @@ namespace sogen::whp
 
                         if (hook.callback(0) == instruction_hook_continuation::skip_instruction)
                         {
-                            this->advance_rip(exception.InstructionByteCount);
+                            if (this->read_instruction_pointer() == rip)
+                            {
+                                this->advance_rip(exception.InstructionByteCount);
+                            }
                             consumed = true;
                         }
                     }
