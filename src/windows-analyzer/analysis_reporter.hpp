@@ -14,6 +14,7 @@ namespace sogen
     {
         bool silent{};
         bool buffer_stdout{};
+        bool prepend_call_count{};
     };
 
     class analysis_reporter

@@ -49,6 +49,16 @@ namespace sogen
                            event);
             }
 
+            std::string make_call_prefix(const uint64_t call_count) const
+            {
+                if (!this->settings_.prepend_call_count)
+                {
+                    return {};
+                }
+
+                return "[" + std::to_string(call_count) + "] ";
+            }
+
             void report_regular(const analysis_event& event)
             {
                 std::visit(
@@ -162,8 +172,9 @@ namespace sogen
                                              static_cast<size_t>(e.size), e.execution.rip, e.execution.rip_module.c_str());
                         },
                         [&](const function_execution_event& e) {
+                            const auto prefix = this->make_call_prefix(e.call_count);
                             this->log_.print(e.interesting ? color::yellow : color::dark_gray,
-                                             "Executing function: %s (%s) (0x%" PRIx64 ") via 0x%" PRIx64 " (%s)\n",
+                                             "%sExecuting function: %s (%s) (0x%" PRIx64 ") via 0x%" PRIx64 " (%s)\n", prefix.c_str(),
                                              e.function_name.c_str(), e.execution.rip_module.c_str(), e.execution.rip,
                                              e.execution.previous_ip.value_or(0), e.execution.previous_ip_module.value_or("<N/A>").c_str());
                             for (const auto& detail : e.details)
@@ -206,21 +217,24 @@ namespace sogen
                                              e.execution.rip, e.execution.rip_module.c_str());
                         },
                         [&](const syscall_event& e) {
+                            const auto prefix = this->make_call_prefix(e.call_count);
                             switch (e.classification)
                             {
                             case syscall_classification::inline_syscall:
-                                this->log_.print(color::blue, "Executing inline syscall: %s (0x%X) at 0x%" PRIx64 " (%s)\n",
-                                                 e.syscall_name.c_str(), e.syscall_id, e.execution.rip, e.execution.rip_module.c_str());
+                                this->log_.print(color::blue, "%sExecuting inline syscall: %s (0x%X) at 0x%" PRIx64 " (%s)\n",
+                                                 prefix.c_str(), e.syscall_name.c_str(), e.syscall_id, e.execution.rip,
+                                                 e.execution.rip_module.c_str());
                                 break;
                             case syscall_classification::crafted_out_of_line:
                                 this->log_.print(
-                                    color::blue, "Crafted out-of-line syscall: %s (0x%X) at 0x%" PRIx64 " (%s) via 0x%" PRIx64 " (%s)\n",
-                                    e.syscall_name.c_str(), e.syscall_id, e.execution.rip, e.execution.rip_module.c_str(),
+                                    color::blue, "%sCrafted out-of-line syscall: %s (0x%X) at 0x%" PRIx64 " (%s) via 0x%" PRIx64 " (%s)\n",
+                                    prefix.c_str(), e.syscall_name.c_str(), e.syscall_id, e.execution.rip, e.execution.rip_module.c_str(),
                                     e.execution.previous_ip.value_or(0), e.execution.previous_ip_module.value_or("<N/A>").c_str());
                                 break;
                             case syscall_classification::regular:
                             default:
-                                this->log_.print(color::dark_gray, "Executing syscall: %s (0x%X) at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n",
+                                this->log_.print(color::dark_gray,
+                                                 "%sExecuting syscall: %s (0x%X) at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n", prefix.c_str(),
                                                  e.syscall_name.c_str(), e.syscall_id, e.execution.rip, e.caller_rip.value_or(0),
                                                  e.caller_module.value_or("<N/A>").c_str());
                                 break;

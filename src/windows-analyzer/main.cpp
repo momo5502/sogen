@@ -53,6 +53,8 @@ namespace sogen
             bool log_executable_access{false};
             bool log_foreign_module_access{false};
             bool tenet_trace{false};
+            bool prepend_call_count{false};
+            std::optional<uint64_t> break_call{};
             std::filesystem::path dump{};
             std::filesystem::path minidump_path{};
             std::filesystem::path report_path{};
@@ -474,6 +476,26 @@ namespace sogen
             throw std::runtime_error("WHP memory execution hook mode must be auto or int3");
         }
 
+        uint64_t parse_u64_argument(const std::string_view value, const std::string_view option_name)
+        {
+            if (value.empty())
+            {
+                throw std::runtime_error("Bad value for " + std::string(option_name));
+            }
+
+            uint64_t parsed{};
+            const auto* const begin = value.data();
+            const auto* const end = begin + value.size();
+            const auto result = std::from_chars(begin, end, parsed, 10);
+
+            if (result.ec != std::errc{} || result.ptr != end)
+            {
+                throw std::runtime_error("Bad value for " + std::string(option_name));
+            }
+
+            return parsed;
+        }
+
         std::unique_ptr<x86_64_emulator> create_configured_backend(const analysis_options& options)
         {
             auto emu = create_x86_64_emulator_from_environment();
@@ -557,6 +579,7 @@ namespace sogen
         {
             analysis_context context{
                 .settings = &options,
+                .auto_break_before_call = options.break_call,
             };
 
             const auto concise_logging = options.concise_logging;
@@ -567,6 +590,7 @@ namespace sogen
             reporters.emplace_back(create_console_reporter(win_emu->log, console_reporter_settings{
                                                                              .silent = options.silent,
                                                                              .buffer_stdout = options.buffer_stdout,
+                                                                             .prepend_call_count = options.prepend_call_count,
                                                                          }));
 
             if (!options.report_path.empty())
@@ -795,33 +819,35 @@ namespace sogen
         {
             printf("Usage: analyzer [options] [application] [args...]\n\n");
             printf("Options:\n");
-            printf("  -h, --help                Show this help message\n");
-            printf("  -d, --debug               Enable GDB debugging mode\n");
-            printf("  --bind <ip>               IP or hostname to bind to in GDB mode (default: 127.0.0.1)\n");
-            printf("  --port <port>             Port to listen to in GDB mode (default: 28960)\n");
-            printf("  -s, --silent              Silent mode\n");
-            printf("  -v, --verbose             Verbose logging\n");
-            printf("  -b, --buffer              Buffer stdout\n");
-            printf("  -f, --foreign             Log read access to foreign modules\n");
-            printf("  -c, --concise             Concise logging\n");
-            printf("  -vc, --very-concise       Very concise logging\n");
-            printf("  -x, --exec                Log r/w access to executable memory\n");
-            printf("  -m, --module <module>     Specify module to track\n");
-            printf("  -e, --emulation <path>    Set emulation root path\n");
-            printf("  -a, --snapshot <path>     Load snapshot dump from path\n");
-            printf("  --minidump <path>         Load minidump from path\n");
-            printf("  --report <path>           Write machine-readable analysis events to a file\n");
-            printf("  --report-format <format>  Report format (supported: jsonl)\n");
-            printf("  --whp-exec-hook <mode>    WHP memory execution hook mode: auto or int3 (default: auto)\n");
-            printf("  -t, --tenet-trace         Enable Tenet tracer\n");
-            printf("  -i, --ignore <funcs>      Comma-separated list of functions to ignore\n");
-            printf("  -p, --path <src> <dst>    Map Windows path to host path\n");
-            printf("  -r, --registry <path>     Set registry path (default: ./registry)\n\n");
-            printf("  -fx, --first-exec         Print first executions of sections\n");
-            printf("  -is, --inst-summary       Print a summary of executed instructions of the analyzed modules\n");
-            printf("  -ss, --skip-syscalls      Skip the logging of regular syscalls\n");
-            printf("  -rep, --reproducible      Stub clocks and other mechanisms to make executions reproducible\n");
-            printf("  --env <var> <value>       Set environment variable\n");
+            printf("  -h, --help                 Show this help message\n");
+            printf("  -d, --debug                Enable GDB debugging mode\n");
+            printf("  --bind <ip>                IP or hostname to bind to in GDB mode (default: 127.0.0.1)\n");
+            printf("  --port <port>              Port to listen to in GDB mode (default: 28960)\n");
+            printf("  -s, --silent               Silent mode\n");
+            printf("  -v, --verbose              Verbose logging\n");
+            printf("  -b, --buffer               Buffer stdout\n");
+            printf("  -f, --foreign              Log read access to foreign modules\n");
+            printf("  -c, --concise              Concise logging\n");
+            printf("  -vc, --very-concise        Very concise logging\n");
+            printf("  -x, --exec                 Log r/w access to executable memory\n");
+            printf("  -m, --module <module>      Specify module to track\n");
+            printf("  -e, --emulation <path>     Set emulation root path\n");
+            printf("  -a, --snapshot <path>      Load snapshot dump from path\n");
+            printf("  --minidump <path>          Load minidump from path\n");
+            printf("  --report <path>            Write machine-readable analysis events to a file\n");
+            printf("  --report-format <format>   Report format (supported: jsonl)\n");
+            printf("  --whp-exec-hook <mode>     WHP memory execution hook mode: auto or int3 (default: auto)\n");
+            printf("  --call-count               Prefix function and syscall lines with a traced-call count\n");
+            printf("  -t, --tenet-trace          Enable Tenet tracer\n");
+            printf("  -i, --ignore <funcs>       Comma-separated list of functions to ignore\n");
+            printf("  -p, --path <src> <dst>     Map Windows path to host path\n");
+            printf("  -r, --registry <path>      Set registry path (default: ./registry)\n\n");
+            printf("  -fx, --first-exec          Print first executions of sections\n");
+            printf("  -is, --inst-summary        Print a summary of executed instructions of the analyzed modules\n");
+            printf("  -ss, --skip-syscalls       Skip the logging of regular syscalls\n");
+            printf("  -rep, --reproducible       Stub clocks and other mechanisms to make executions reproducible\n");
+            printf("  --env <var> <value>        Set environment variable\n");
+            printf("  -bc, --break-call <count>  In GDB mode, stop before the specified traced function/syscall call\n");
             printf("Examples:\n");
             printf("  analyzer -v -e path/to/root myapp.exe\n");
             printf("  analyzer --report run.jsonl test-sample.exe\n");
@@ -831,7 +857,7 @@ namespace sogen
         analysis_options parse_options(std::vector<std::string_view>& args)
         {
             analysis_options options{};
-            bool require_debug_option = false;
+            std::optional<std::string_view> require_debug_option{};
 
             while (!args.empty())
             {
@@ -857,7 +883,7 @@ namespace sogen
 
                     arg_it = args.erase(arg_it);
                     options.gdb_host = args[0];
-                    require_debug_option = true;
+                    require_debug_option = arg;
                 }
                 else if (arg == "--port")
                 {
@@ -868,13 +894,7 @@ namespace sogen
 
                     arg_it = args.erase(arg_it);
 
-                    char* end_ptr = nullptr;
-                    const auto port = strtoull(std::string(args[0]).c_str(), &end_ptr, 10);
-
-                    if (*end_ptr)
-                    {
-                        throw std::runtime_error("Bad port number");
-                    }
+                    const auto port = parse_u64_argument(args[0], arg);
 
                     if (port > 65535)
                     {
@@ -882,7 +902,7 @@ namespace sogen
                     }
 
                     options.gdb_port = static_cast<uint16_t>(port);
-                    require_debug_option = true;
+                    require_debug_option = arg;
                 }
                 else if (arg == "-s" || arg == "--silent")
                 {
@@ -1047,6 +1067,21 @@ namespace sogen
 
                     options.environment[std::move(env_var)] = std::move(env_value);
                 }
+                else if (arg == "--call-count")
+                {
+                    options.prepend_call_count = true;
+                }
+                else if (arg == "-bc" || arg == "--break-call")
+                {
+                    if (args.size() < 2)
+                    {
+                        throw std::runtime_error("No call count provided after -bc/--break-call");
+                    }
+
+                    arg_it = args.erase(arg_it);
+                    options.break_call = parse_u64_argument(args[0], arg);
+                    require_debug_option = arg;
+                }
                 else
                 {
                     break;
@@ -1057,7 +1092,7 @@ namespace sogen
 
             if (require_debug_option && !options.use_gdb)
             {
-                throw std::runtime_error("--bind or --port options used without -d");
+                throw std::runtime_error(std::string(*require_debug_option) + " option used without -d");
             }
 
             return options;
