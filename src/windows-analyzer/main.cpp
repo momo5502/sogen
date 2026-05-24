@@ -476,19 +476,21 @@ namespace sogen
             throw std::runtime_error("WHP memory execution hook mode must be auto or int3");
         }
 
-        uint64_t parse_positive_u64_argument(const std::string_view value, const std::string_view option_name)
+        uint64_t parse_u64_argument(const std::string_view value, const std::string_view option_name)
         {
-            char* end_ptr = nullptr;
-            const auto parsed = strtoull(std::string(value).c_str(), &end_ptr, 10);
-
-            if (*end_ptr)
+            if (value.empty())
             {
                 throw std::runtime_error("Bad value for " + std::string(option_name));
             }
 
-            if (parsed == 0)
+            uint64_t parsed{};
+            const auto* const begin = value.data();
+            const auto* const end = begin + value.size();
+            const auto result = std::from_chars(begin, end, parsed, 10);
+
+            if (result.ec != std::errc{} || result.ptr != end)
             {
-                throw std::runtime_error(std::string(option_name) + " expects a value greater than 0");
+                throw std::runtime_error("Bad value for " + std::string(option_name));
             }
 
             return parsed;
@@ -892,13 +894,7 @@ namespace sogen
 
                     arg_it = args.erase(arg_it);
 
-                    char* end_ptr = nullptr;
-                    const auto port = strtoull(std::string(args[0]).c_str(), &end_ptr, 10);
-
-                    if (*end_ptr)
-                    {
-                        throw std::runtime_error("Bad port number");
-                    }
+                    const auto port = parse_u64_argument(args[0], arg);
 
                     if (port > 65535)
                     {
@@ -1083,7 +1079,7 @@ namespace sogen
                     }
 
                     arg_it = args.erase(arg_it);
-                    options.break_call = parse_positive_u64_argument(args[0], "--break-call");
+                    options.break_call = parse_u64_argument(args[0], arg);
                     require_debug_option = arg;
                 }
                 else
