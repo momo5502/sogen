@@ -662,8 +662,10 @@ namespace sogen
         }
 
         this->rip = emu.reg(x86_register::rip);
+        this->rsi = emu.reg(x86_register::rsi);
         this->rsp = emu.reg(x86_register::rsp);
         this->r10 = emu.reg(x86_register::r10);
+        this->rbx = emu.reg(x86_register::rbx);
         this->rcx = emu.reg(x86_register::rcx);
         this->rdx = emu.reg(x86_register::rdx);
         this->r8 = emu.reg(x86_register::r8);
@@ -690,8 +692,10 @@ namespace sogen
         emu.reg<uint16_t>(x86_register::fs, this->fs);
         emu.reg<uint16_t>(x86_register::gs, this->gs);
         emu.reg(x86_register::rip, this->rip);
+        emu.reg(x86_register::rsi, this->rsi);
         emu.reg(x86_register::rsp, this->rsp);
         emu.reg(x86_register::r10, this->r10);
+        emu.reg(x86_register::rbx, this->rbx);
         emu.reg(x86_register::rcx, this->rcx);
         emu.reg(x86_register::rdx, this->rdx);
         emu.reg(x86_register::r8, this->r8);
@@ -702,8 +706,10 @@ namespace sogen
     {
         buffer.write(this->handler_id);
         buffer.write(this->rip);
+        buffer.write(this->rsi);
         buffer.write(this->rsp);
         buffer.write(this->r10);
+        buffer.write(this->rbx);
         buffer.write(this->rcx);
         buffer.write(this->rdx);
         buffer.write(this->r8);
@@ -726,8 +732,10 @@ namespace sogen
     {
         buffer.read(this->handler_id);
         buffer.read(this->rip);
+        buffer.read(this->rsi);
         buffer.read(this->rsp);
         buffer.read(this->r10);
+        buffer.read(this->rbx);
         buffer.read(this->rcx);
         buffer.read(this->rdx);
         buffer.read(this->r8);
