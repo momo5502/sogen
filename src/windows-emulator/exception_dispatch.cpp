@@ -229,9 +229,9 @@ namespace sogen
         {
             // skip 2 bytes int 2dh
             ctx.Rip += 2;
-            record.ExceptionAddress = ctx.Rip + 1;
 
             record.NumberParameters = 3;
+
             record.ExceptionInformation[0] = ctx.Rax;
             record.ExceptionInformation[1] = ctx.Rcx;
             record.ExceptionInformation[2] = ctx.Rdx;
