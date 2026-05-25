@@ -238,11 +238,12 @@ export function CfgView({
         panning.current = { x: e.clientX - view.x, y: e.clientY - view.y };
       }}
       onMouseMove={(e) => {
-        if (panning.current) {
+        const pan = panning.current;
+        if (pan) {
           setView((v) => ({
             ...v,
-            x: e.clientX - panning.current!.x,
-            y: e.clientY - panning.current!.y,
+            x: e.clientX - pan.x,
+            y: e.clientY - pan.y,
           }));
         }
       }}
