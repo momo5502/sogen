@@ -664,7 +664,25 @@ namespace sogen
                 return;
             case 45:
                 this->callbacks.on_suspicious_activity("DbgPrint");
-                dispatch_breakpoint(*this);
+                {
+                    const auto cs_selector = this->emu().reg<uint16_t>(x86_register::cs);
+                    const auto bitness = segment_utils::get_segment_bitness(this->emu(), cs_selector);
+                    const auto service = this->emu().reg<uint32_t>(x86_register::eax);
+
+                    if (bitness && *bitness == segment_utils::segment_bitness::bit64 &&
+                        (service == BREAKPOINT_PRINT || service == BREAKPOINT_LOAD_SYMBOLS || service == BREAKPOINT_UNLOAD_SYMBOLS ||
+                         service == BREAKPOINT_COMMAND_STRING))
+                    {
+                        const auto ip = this->emu().supports_instruction_counting() //
+                                            ? this->current_thread().current_ip
+                                            : this->emu().read_instruction_pointer();
+                        this->emu().reg(x86_register::rip, ip + 3);
+                    }
+                    else
+                    {
+                        dispatch_breakpoint(*this);
+                    }
+                }
                 return;
             default:
                 if (this->callbacks.on_generic_activity)

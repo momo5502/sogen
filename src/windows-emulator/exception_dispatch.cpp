@@ -157,6 +157,67 @@ namespace sogen
             emu.reg(x86_register::rsp, wow64::heaven_gate::kStackTop);
             emu.reg(x86_register::rip, wow64::heaven_gate::kCodeBase);
         }
+
+        WOW64_CONTEXT make_wow64_context(const CONTEXT64& ctx)
+        {
+            WOW64_CONTEXT result{};
+            result.ContextFlags = CONTEXT32_ALL;
+            result.Dr0 = static_cast<DWORD>(ctx.Dr0);
+            result.Dr1 = static_cast<DWORD>(ctx.Dr1);
+            result.Dr2 = static_cast<DWORD>(ctx.Dr2);
+            result.Dr3 = static_cast<DWORD>(ctx.Dr3);
+            result.Dr6 = static_cast<DWORD>(ctx.Dr6);
+            result.Dr7 = static_cast<DWORD>(ctx.Dr7);
+            result.SegGs = ctx.SegGs;
+            result.SegFs = ctx.SegFs;
+            result.SegEs = ctx.SegEs;
+            result.SegDs = ctx.SegDs;
+            result.Edi = static_cast<DWORD>(ctx.Rdi);
+            result.Esi = static_cast<DWORD>(ctx.Rsi);
+            result.Ebx = static_cast<DWORD>(ctx.Rbx);
+            result.Edx = static_cast<DWORD>(ctx.Rdx);
+            result.Ecx = static_cast<DWORD>(ctx.Rcx);
+            result.Eax = static_cast<DWORD>(ctx.Rax);
+            result.Ebp = static_cast<DWORD>(ctx.Rbp);
+            result.Eip = static_cast<DWORD>(ctx.Rip);
+            result.SegCs = ctx.SegCs;
+            result.EFlags = ctx.EFlags;
+            result.Esp = static_cast<DWORD>(ctx.Rsp);
+            result.SegSs = ctx.SegSs;
+            result.FloatSave.ControlWord = 0x037F;
+            result.FloatSave.TagWord = 0xFFFF;
+
+            XMM_SAVE_AREA32 xmm_state{};
+            xmm_state.ControlWord = 0x037F;
+            xmm_state.TagWord = 0xFF;
+            xmm_state.MxCsr = 0x1F80;
+            xmm_state.MxCsr_Mask = 0xFFFFFFFF;
+            static_assert(sizeof(xmm_state) <= sizeof(result.ExtendedRegisters));
+            memcpy(result.ExtendedRegisters, &xmm_state, sizeof(xmm_state));
+            return result;
+        }
+
+        void sync_wow64_cpu_reserved_context(windows_emulator& win_emu, const CONTEXT64& ctx)
+        {
+            if (!win_emu.process.is_wow64_process)
+            {
+                return;
+            }
+
+            const auto bitness = segment_utils::get_segment_bitness(win_emu.emu(), ctx.SegCs);
+            if (!bitness || *bitness != segment_utils::segment_bitness::bit32)
+            {
+                return;
+            }
+
+            // Wow64PassExceptionToGuest rebuilds the 32-bit context from WOW64_CPURESERVED
+            // (TEB64 TLS slot 1), not from the native exception ContextRecord below.
+            win_emu.current_thread().wow64_cpu_reserved->access([&](WOW64_CPURESERVED& cpu) {
+                cpu.Flags |= WOW64_CPURESERVED_FLAG_RESET_STATE;
+                cpu.Context = make_wow64_context(ctx);
+            });
+        }
+
     }
 
     bool dispatch_debug_exception(windows_emulator& win_emu, CONTEXT64& ctx, EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>& record)
@@ -174,39 +235,6 @@ namespace sogen
             record.ExceptionInformation[0] = ctx.Rax;
             record.ExceptionInformation[1] = ctx.Rcx;
             record.ExceptionInformation[2] = ctx.Rdx;
-
-            // https://github.com/ayoubfaouzi/al-khaser/issues/223
-
-            // inc qword ptr [rbp + KTRAP_FRAME_Rip]
-            ctx.Rip++;
-
-            switch (ctx.Rax)
-            {
-            case BREAKPOINT_BREAK:
-                // just drops straight into the debugger trap handler. Doesn't increment the instruction pointer.
-                break;
-            case BREAKPOINT_PRINT:
-                // calls BREAKPOINT_PRINT service, which is implemented by KdpPrint, increments the instruction pointer.
-                ctx.Rip += 3;
-                break;
-            case BREAKPOINT_PROMPT:
-                // calls BREAKPOINT_PROMPT service, which is implemented by KdpPrompt, doesn't increment the instruction pointer.
-                break;
-            case BREAKPOINT_LOAD_SYMBOLS:
-                // calls BREAKPOINT_LOAD_SYMBOLS, which is implemented by KdpSymbol, increments the instruction pointer.
-                ctx.Rip += 3;
-                break;
-            case BREAKPOINT_UNLOAD_SYMBOLS:
-                // calls BREAKPOINT_UNLOAD_SYMBOLS, which is also implemented by KdpSymbol, increments the instruction pointer.
-                ctx.Rip += 3;
-                break;
-            case BREAKPOINT_COMMAND_STRING:
-                // calls BREAKPOINT_COMMAND_STRING, which is implemented in KdpCommandString, increments the instruction pointer.
-                ctx.Rip += 3;
-                break;
-            default:
-                break;
-            }
 
             return true;
         }
@@ -253,10 +281,11 @@ namespace sogen
 
         record.ExceptionAddress = ctx.Rip;
 
+        sync_wow64_cpu_reserved_context(win_emu, ctx);
+
         EMU_EXCEPTION_POINTERS<EmulatorTraits<Emu64>> pointers{};
         pointers.ContextRecord = reinterpret_cast<EmulatorTraits<Emu64>::PVOID>(&ctx);
         pointers.ExceptionRecord = reinterpret_cast<EmulatorTraits<Emu64>::PVOID>(&record);
-
         dispatch_exception_pointers(win_emu.emu(), win_emu.process.ki_user_exception_dispatcher, pointers);
     }
 
