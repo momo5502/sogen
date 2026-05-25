@@ -131,7 +131,7 @@ export function ScriptConsole({ emulator }: ScriptConsoleProps) {
       prev.concat({
         id,
         name: `script ${prev.length + 1}`,
-        source: "# new script\n",
+        source: "// new script\n",
       }),
     );
     setActiveId(id);
