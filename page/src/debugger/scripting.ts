@@ -243,10 +243,77 @@ export async function runPythonScript(
   py.setStdout({ batched: emit });
   py.setStderr({ batched: emit });
 
-  // Keep `emu` a live JsProxy (methods + awaitable promises). A deep toPy
-  // conversion would flatten it into a plain dict and drop the methods.
-  py.globals.set("emu", emu);
   try {
+    // Keep `emu` as JsProxy, then wrap selected methods into Python-native
+    // objects so scripts can use normal indexing / iteration.
+    py.globals.set("emu", emu);
+    await py.runPythonAsync(`
+from pyodide.ffi import to_py
+
+class _Debug:
+    def __init__(self, js):
+        self._js = js
+
+    async def breakpoint(self, address):
+        return to_py(await self._js.breakpoint(address))
+
+    async def clear_breakpoint(self, address):
+        return to_py(await self._js.clear_breakpoint(address))
+
+    async def breakpoints(self):
+        return to_py(await self._js.breakpoints())
+
+    async def step_into(self):
+        return to_py(await self._js.step_into())
+
+    async def step_over(self):
+        return to_py(await self._js.step_over())
+
+    async def step_out(self):
+        return to_py(await self._js.step_out())
+
+    async def run_to(self, address):
+        return to_py(await self._js.run_to(address))
+
+    async def continue_execution(self):
+        return to_py(await self._js.continue_execution())
+
+    async def registers(self):
+        return to_py(await self._js.registers())
+
+    async def disassemble(self, address, count=16):
+        return to_py(await self._js.disassemble(address, count))
+
+    async def modules(self):
+        return to_py(await self._js.modules())
+
+    async def threads(self):
+        return to_py(await self._js.threads())
+
+    async def call_stack(self):
+        return to_py(await self._js.call_stack())
+
+
+class _Memory:
+    def __init__(self, js):
+        self._js = js
+
+    async def read(self, address, size):
+        return to_py(await self._js.read(address, size))
+
+    async def read_memory(self, address, size):
+        return to_py(await self._js.read_memory(address, size))
+
+
+class _Emu:
+    def __init__(self, js):
+        self.debug = _Debug(js.debug)
+        self.memory = _Memory(js.memory)
+        self.state = js.state
+
+
+emu = _Emu(emu)
+`);
     await py.runPythonAsync(source);
     return { ok: true };
   } catch (e) {
