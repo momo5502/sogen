@@ -393,7 +393,7 @@ namespace sogen
 #if defined(OS_EMSCRIPTEN) && !defined(SOGEN_EMSCRIPTEN_SUPPORT_NODEJS)
                     if (options.pause_before_start)
                     {
-                        debugger::enter_breakpoint(*win_emu, win_emu->mod_manager.executable->entry_point);
+                        debugger::enter_breakpoint(win_emu, win_emu.mod_manager.executable->entry_point);
                     }
 #endif
                     win_emu.start();
