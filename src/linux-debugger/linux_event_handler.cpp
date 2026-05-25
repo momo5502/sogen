@@ -2,6 +2,8 @@
 #include <message_transmitter.hpp>
 #include <linux_emulator.hpp>
 
+#include <chrono>
+
 #include <base64.hpp>
 
 #ifdef _MSC_VER
@@ -252,6 +254,30 @@ namespace sogen::linux_debugger
         status.executed_instructions = linux_emu.get_executed_instructions();
         status.active_threads = static_cast<uint32_t>(linux_emu.process.threads.size());
         send_event(status);
+    }
+
+    void pause_before_start(event_context& c)
+    {
+        Debugger::GetStateResponseT stopped{};
+        stopped.state = Debugger::State_Paused;
+        send_event(stopped);
+
+        c.state = emulation_state::paused;
+        update_emulation_status(c.linux_emu);
+
+        while (true)
+        {
+            handle_events_once(c);
+            if (c.state != emulation_state::paused)
+            {
+                break;
+            }
+            debugger::suspend_execution(std::chrono::milliseconds(2));
+        }
+
+        Debugger::GetStateResponseT running{};
+        running.state = Debugger::State_Running;
+        send_event(running);
     }
 
     void handle_exit(const linux_emulator& linux_emu, std::optional<int> exit_status)

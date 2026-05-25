@@ -54,6 +54,7 @@ namespace sogen
             bool log_foreign_module_access{false};
             bool tenet_trace{false};
             bool prepend_call_count{false};
+            bool pause_before_start{false};
             std::optional<uint64_t> break_call{};
             std::filesystem::path dump{};
             std::filesystem::path minidump_path{};
@@ -389,6 +390,12 @@ namespace sogen
                 }
                 else
                 {
+#if defined(OS_EMSCRIPTEN) && !defined(SOGEN_EMSCRIPTEN_SUPPORT_NODEJS)
+                    if (options.pause_before_start)
+                    {
+                        debugger::enter_breakpoint(*win_emu, win_emu->mod_manager.executable->entry_point);
+                    }
+#endif
                     win_emu.start();
                 }
 
@@ -847,6 +854,7 @@ namespace sogen
             printf("  -ss, --skip-syscalls       Skip the logging of regular syscalls\n");
             printf("  -rep, --reproducible       Stub clocks and other mechanisms to make executions reproducible\n");
             printf("  --env <var> <value>        Set environment variable\n");
+            printf("  --break-start             Pause before executing the first instruction\n");
             printf("  -bc, --break-call <count>  In GDB mode, stop before the specified traced function/syscall call\n");
             printf("Examples:\n");
             printf("  analyzer -v -e path/to/root myapp.exe\n");
@@ -1070,6 +1078,10 @@ namespace sogen
                 else if (arg == "--call-count")
                 {
                     options.prepend_call_count = true;
+                }
+                else if (arg == "--break-start")
+                {
+                    options.pause_before_start = true;
                 }
                 else if (arg == "-bc" || arg == "--break-call")
                 {

@@ -28,6 +28,7 @@ namespace sogen
             std::vector<std::string> envp{};
             bool verbose{false};
             bool use_gdb{false};
+            bool pause_before_start{false};
         };
 
         void print_usage(const char* program)
@@ -37,6 +38,7 @@ namespace sogen
             fprintf(stderr, "  --root <path>    Set emulation root directory\n");
             fprintf(stderr, "  --verbose        Enable verbose logging\n");
             fprintf(stderr, "  --gdb, -d        Wait for GDB connection on 127.0.0.1:28960\n");
+            fprintf(stderr, "  --break-start     Pause before executing the first instruction\n");
             fprintf(stderr, "  --help           Show this help message\n");
         }
 
@@ -71,6 +73,10 @@ namespace sogen
                 {
                     print_usage(argv[0]);
                     exit(0);
+                }
+                else if (arg == "--break-start")
+                {
+                    opts.pause_before_start = true;
                 }
                 else if (arg[0] == '-')
                 {
@@ -146,6 +152,13 @@ namespace sogen
             }
             else
             {
+#if defined(OS_EMSCRIPTEN) && !defined(SOGEN_EMSCRIPTEN_SUPPORT_NODEJS)
+                if (opts.pause_before_start)
+                {
+                    linux_debugger::event_context pause_ec{.linux_emu = linux_emu};
+                    linux_debugger::pause_before_start(pause_ec);
+                }
+#endif
                 linux_emu.start();
             }
 
