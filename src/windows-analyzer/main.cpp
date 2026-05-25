@@ -54,6 +54,9 @@ namespace sogen
             bool log_foreign_module_access{false};
             bool tenet_trace{false};
             bool prepend_call_count{false};
+#if defined(OS_EMSCRIPTEN) && !defined(SOGEN_EMSCRIPTEN_SUPPORT_NODEJS)
+            bool pause_before_start{false};
+#endif
             std::optional<uint64_t> break_call{};
             std::filesystem::path dump{};
             std::filesystem::path minidump_path{};
@@ -389,6 +392,12 @@ namespace sogen
                 }
                 else
                 {
+#if defined(OS_EMSCRIPTEN) && !defined(SOGEN_EMSCRIPTEN_SUPPORT_NODEJS)
+                    if (options.pause_before_start)
+                    {
+                        debugger::enter_breakpoint(win_emu, win_emu.mod_manager.executable->entry_point);
+                    }
+#endif
                     win_emu.start();
                 }
 
@@ -847,6 +856,9 @@ namespace sogen
             printf("  -ss, --skip-syscalls       Skip the logging of regular syscalls\n");
             printf("  -rep, --reproducible       Stub clocks and other mechanisms to make executions reproducible\n");
             printf("  --env <var> <value>        Set environment variable\n");
+#if defined(OS_EMSCRIPTEN) && !defined(SOGEN_EMSCRIPTEN_SUPPORT_NODEJS)
+            printf("  --break-start             Pause before executing the first instruction\n");
+#endif
             printf("  -bc, --break-call <count>  In GDB mode, stop before the specified traced function/syscall call\n");
             printf("Examples:\n");
             printf("  analyzer -v -e path/to/root myapp.exe\n");
@@ -1071,6 +1083,12 @@ namespace sogen
                 {
                     options.prepend_call_count = true;
                 }
+#if defined(OS_EMSCRIPTEN) && !defined(SOGEN_EMSCRIPTEN_SUPPORT_NODEJS)
+                else if (arg == "--break-start")
+                {
+                    options.pause_before_start = true;
+                }
+#endif
                 else if (arg == "-bc" || arg == "--break-call")
                 {
                     if (args.size() < 2)

@@ -191,7 +191,7 @@ export class Emulator {
     this.worker.onmessage = (e) => queueMicrotask(() => this._onMessage(e));
   }
 
-  async start(settings: Settings, file: string) {
+  async start(settings: Settings, file: string, breakOnStart = false) {
     this.start_time = new Date();
     this.pause_time = null;
     this.paused_time = 0;
@@ -199,6 +199,9 @@ export class Emulator {
     this.stautsUpdateHandler(createDefaultEmulationStatus());
 
     const options = translateSettings(settings);
+    if (breakOnStart) {
+      options.emulatorOptions.push("--break-start");
+    }
 
     this.worker.postMessage({
       message: "run",

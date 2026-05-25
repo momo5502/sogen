@@ -331,7 +331,7 @@ export class Playground extends React.Component<
     this.output.current?.clear();
 
     this.setDrawerOpen(false);
-    this.setState({ memoryViewOpen: false, debuggerOpen: false });
+    this.setState({ memoryViewOpen: false });
 
     if (this.state.filesystemPromise) {
       await this.state.filesystemPromise;
@@ -350,7 +350,7 @@ export class Playground extends React.Component<
 
     this.setState({ emulator: new_emulator, application: userFile });
 
-    new_emulator.start(this.state.settings, userFile);
+    new_emulator.start(this.state.settings, userFile, this.state.debuggerOpen);
   }
 
   render() {
@@ -486,10 +486,13 @@ export class Playground extends React.Component<
             </Button>
 
             <Button
-              disabled={!this.state.emulator || !this.isEmulatorPaused()}
+              disabled={
+                !!this.state.emulator &&
+                this.state.emulator.getState() === EmulationState.Running
+              }
               size="sm"
               title={
-                this.isEmulatorPaused()
+                !this.state.emulator || this.isEmulatorPaused()
                   ? "Debugger"
                   : "Pause emulation to debug"
               }
