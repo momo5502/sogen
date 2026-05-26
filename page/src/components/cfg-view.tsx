@@ -11,6 +11,10 @@ const MAX_INSNS = 400; // bound CFG generation for performance
 const NODE_WIDTH = 260;
 const LINE_HEIGHT = 14;
 const NODE_PAD = 8;
+const CFG_CHAR_WIDTH = 6;
+const INSN_ADDRESS_COL = NODE_PAD;
+const INSN_MNEMONIC_COL = INSN_ADDRESS_COL + (8 + 3) * CFG_CHAR_WIDTH;
+const INSN_OPERAND_COL = INSN_MNEMONIC_COL + (8 + 1) * CFG_CHAR_WIDTH;
 const H_GAP = 60;
 const V_GAP = 40;
 
@@ -196,13 +200,28 @@ export function CfgView({
         return;
       }
       const map = buildBlocks(insns);
-      layout(map, insns.length > 0 ? insns[0].address : "");
-      setBlocks([...map.values()]);
+      const entryAddr = insns.length > 0 ? insns[0].address : "";
+      const ripAddr = rip.toString(16);
+      setBlocks((prev) => {
+        const keepExisting = prev.some((b) =>
+          b.insns.some((i) => toBig(i.address)?.toString(16) === ripAddr),
+        );
+        if (keepExisting) {
+          return prev;
+        }
+
+        const next = new Map<string, BasicBlock>();
+        for (const block of map.values()) {
+          next.set(block.start, block);
+        }
+        layout(next, entryAddr);
+        return [...next.values()];
+      });
     });
     return () => {
       cancelled = true;
     };
-  }, [emulator, paused, entry, generation]);
+  }, [emulator, paused, entry, generation, rip]);
 
   const ripKey = rip.toString(16);
   const byStart = React.useMemo(() => {
@@ -213,8 +232,9 @@ export function CfgView({
     return m;
   }, [blocks]);
 
+  const currentInsnKey = ripKey;
   const containsRip = (b: BasicBlock) =>
-    b.insns.some((i) => toBig(i.address)?.toString(16) === ripKey);
+    b.insns.some((i) => toBig(i.address)?.toString(16) === currentInsnKey);
 
   if (blocks.length === 0) {
     return (
@@ -298,28 +318,65 @@ export function CfgView({
                   rx={4}
                   className={
                     active
-                      ? "fill-primary/20 stroke-primary"
+                      ? "fill-primary/30 stroke-primary shadow-[0_0_0_2px_rgba(59,130,246,0.45)]"
                       : "fill-card stroke-border"
                   }
-                  strokeWidth={1}
+                  strokeWidth={active ? 2 : 1}
                 />
-                {b.insns.map((i, idx) => (
-                  <text
-                    key={i.address}
-                    x={NODE_PAD}
-                    y={NODE_PAD + (idx + 1) * LINE_HEIGHT - 3}
-                    className={
-                      "fill-foreground font-mono " +
-                      (toBig(i.address)?.toString(16) === ripKey
-                        ? "font-bold"
-                        : "")
-                    }
-                    fontSize={10}
-                  >
-                    {i.address.slice(2).padStart(8, "0")} {i.mnemonic}{" "}
-                    {i.operands.slice(0, 22)}
-                  </text>
-                ))}
+                {b.insns.map((i, idx) => {
+                  const isCurrent = toBig(i.address)?.toString(16) === ripKey;
+                  const lineY = NODE_PAD + (idx + 1) * LINE_HEIGHT - 3;
+                  return (
+                    <React.Fragment key={i.address}>
+                      {isCurrent && (
+                        <rect
+                          x={NODE_PAD - 4}
+                          y={lineY - LINE_HEIGHT + 3}
+                          width={b.w - NODE_PAD * 2 + 8}
+                          height={LINE_HEIGHT + 1}
+                          rx={2}
+                          className="fill-primary/40"
+                        />
+                      )}
+                      <text
+                        x={INSN_ADDRESS_COL}
+                        y={lineY}
+                        className={
+                          "font-mono " +
+                          (isCurrent ? "font-bold" : "font-normal")
+                        }
+                        fontSize={10}
+                      >
+                        <tspan
+                          x={INSN_ADDRESS_COL}
+                          className={
+                            isCurrent ? "fill-sky-300" : "fill-slate-400"
+                          }
+                        >
+                          {i.address.slice(2).padStart(8, "0")}
+                        </tspan>
+                        <tspan
+                          x={INSN_MNEMONIC_COL}
+                          className={
+                            isCurrent ? "fill-foreground" : "fill-slate-100"
+                          }
+                        >
+                          {i.mnemonic}
+                        </tspan>
+                        <tspan
+                          x={INSN_OPERAND_COL}
+                          className={
+                            isCurrent
+                              ? "fill-muted-foreground"
+                              : "fill-slate-400"
+                          }
+                        >
+                          {i.operands.slice(0, 22)}
+                        </tspan>
+                      </text>
+                    </React.Fragment>
+                  );
+                })}
               </g>
             );
           })}
