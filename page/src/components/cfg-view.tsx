@@ -11,6 +11,10 @@ const MAX_INSNS = 400; // bound CFG generation for performance
 const NODE_WIDTH = 260;
 const LINE_HEIGHT = 14;
 const NODE_PAD = 8;
+const CFG_CHAR_WIDTH = 6;
+const INSN_ADDRESS_COL = NODE_PAD;
+const INSN_MNEMONIC_COL = INSN_ADDRESS_COL + (8 + 3) * CFG_CHAR_WIDTH;
+const INSN_OPERAND_COL = INSN_MNEMONIC_COL + (8 + 1) * CFG_CHAR_WIDTH;
 const H_GAP = 60;
 const V_GAP = 40;
 
@@ -335,17 +339,40 @@ export function CfgView({
                         />
                       )}
                       <text
-                        x={NODE_PAD}
+                        x={INSN_ADDRESS_COL}
                         y={lineY}
                         className={
-                          "fill-foreground font-mono " +
-                          (isCurrent ? "font-bold" : "")
+                          "font-mono " +
+                          (isCurrent ? "font-bold" : "font-normal")
                         }
                         fontSize={10}
                       >
-                        {isCurrent ? "▶ " : "  "}
-                        {i.address.slice(2).padStart(8, "0")} {i.mnemonic}{" "}
-                        {i.operands.slice(0, 22)}
+                        <tspan
+                          x={INSN_ADDRESS_COL}
+                          className={
+                            isCurrent ? "fill-sky-300" : "fill-slate-400"
+                          }
+                        >
+                          {i.address.slice(2).padStart(8, "0")}
+                        </tspan>
+                        <tspan
+                          x={INSN_MNEMONIC_COL}
+                          className={
+                            isCurrent ? "fill-foreground" : "fill-slate-100"
+                          }
+                        >
+                          {i.mnemonic}
+                        </tspan>
+                        <tspan
+                          x={INSN_OPERAND_COL}
+                          className={
+                            isCurrent
+                              ? "fill-muted-foreground"
+                              : "fill-slate-400"
+                          }
+                        >
+                          {i.operands.slice(0, 22)}
+                        </tspan>
                       </text>
                     </React.Fragment>
                   );
