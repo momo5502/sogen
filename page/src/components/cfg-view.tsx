@@ -327,9 +327,9 @@ export function CfgView({
                       {isCurrent && (
                         <rect
                           x={NODE_PAD - 4}
-                          y={lineY - LINE_HEIGHT + 2}
+                          y={lineY - LINE_HEIGHT + 3}
                           width={b.w - NODE_PAD * 2 + 8}
-                          height={LINE_HEIGHT}
+                          height={LINE_HEIGHT + 1}
                           rx={2}
                           className="fill-primary/40"
                         />
