@@ -426,6 +426,7 @@ namespace sogen
         NTSTATUS handle_NtUserDisplayConfigGetDeviceInfo();
         NTSTATUS handle_NtUserRegisterWindowMessage();
         NTSTATUS handle_NtUserGetThreadState(const syscall_context& c, ULONG routine);
+        NTSTATUS completion_NtUserGetThreadState(const syscall_context& c, ULONG routine);
         NTSTATUS handle_NtUserProcessConnect(const syscall_context& c, handle process_handle, ULONG length, emulator_pointer user_connect);
         NTSTATUS handle_NtUserInitializeClientPfnArrays(const syscall_context& c, emulator_pointer apfn_client_a,
                                                         emulator_pointer apfn_client_w, emulator_pointer apfn_client_worker,
@@ -1146,6 +1147,7 @@ namespace sogen
         this->completion_handlers_[callback_id::syscall] = make_syscall_handler<syscalls::completion_##syscall>(); \
     } while (0)
 
+        add_stateless_callback(NtUserGetThreadState);
         add_callback(NtUserCreateWindowEx, window_create_state);
         add_callback(NtUserDestroyWindow, window_destroy_state);
         add_callback(NtUserShowWindow, window_show_state);

@@ -2,10 +2,8 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 #include "../win32k_userconnect.hpp"
-#include "segment_utils.hpp"
 #include "windows-emulator/user_callback_dispatch.hpp"
 #include <limits>
-#include <utils/string.hpp>
 
 #ifdef msg
 #undef msg
@@ -19,26 +17,103 @@ namespace sogen
         constexpr ULONG k_thread_state_win32_thread_info = 0xE;
         constexpr size_t k_win32_thread_info_slab_size = 0x2000;
         constexpr uint64_t k_win32_thread_info_bias = 0x800;
-        // callback id used by wow64.dll!Wow64KiUserCallbackDispatcher
-        constexpr uint32_t k_wow64_client_setup_callback_id = 0x54;
-        // user32 callback id for ___ClientMonitorEnumProc@4
-        constexpr uint32_t k_wow64_enum_display_monitors_callback_id = 0x57;
-        constexpr size_t k_wow64_callback_context_buffer_size = 0x140;
+        constexpr uint32_t k_client_setup_callback_id = 0x54;
+        constexpr uint32_t k_enum_display_monitors_callback_id = 0x57;
+        constexpr uint32_t k_fn_dword_callback_id = 0x02;
+        constexpr uint32_t k_fn_nc_destroy_callback_id = 0x03;
+        constexpr uint32_t k_fn_in_lp_create_struct_callback_id = 0x0A;
+        constexpr uint32_t k_fn_in_lp_window_pos_callback_id = 0x11;
+        constexpr uint32_t k_fn_inout_lp_point5_callback_id = 0x12;
+        constexpr uint32_t k_fn_inout_nc_calc_size_callback_id = 0x15;
 
-        struct wow64_enum_display_monitors_callback_args
+        struct user_callback_capture_buffer
         {
-            uint32_t monitor{};
-            uint32_t dc{};
-            RECT rect{};
-            uint32_t param{};
-            uint32_t callback{};
+            DWORD cbCallback{};
+            DWORD cbCapture{};
+            DWORD cCapturedPointers{};
+            pointer pbFree{};
+            DWORD offPointers{};
+            pointer pvVirtualAddress{};
         };
-        static_assert(offsetof(wow64_enum_display_monitors_callback_args, monitor) == 0x0);
-        static_assert(offsetof(wow64_enum_display_monitors_callback_args, dc) == 0x4);
-        static_assert(offsetof(wow64_enum_display_monitors_callback_args, rect) == 0x8);
-        static_assert(offsetof(wow64_enum_display_monitors_callback_args, param) == 0x18);
-        static_assert(offsetof(wow64_enum_display_monitors_callback_args, callback) == 0x1C);
-        static_assert(sizeof(wow64_enum_display_monitors_callback_args) == 0x20);
+
+        struct fn_dword_message
+        {
+            pointer pwnd{};
+            UINT msg{};
+            wparam wParam{};
+            lparam lParam{};
+            pointer xParam{};
+            pointer xpfnProc{};
+        };
+
+        struct fn_in_lp_create_struct_message
+        {
+            user_callback_capture_buffer captureBuffer{};
+            pointer pwnd{};
+            UINT msg{};
+            wparam wParam{};
+            lparam lParam{};
+            EMU_CREATESTRUCT cs{};
+            pointer xParam{};
+            pointer xpfnProc{};
+        };
+
+        struct fn_in_lp_window_pos_message
+        {
+            pointer pwnd{};
+            UINT msg{};
+            wparam wParam{};
+            EMU_WINDOWPOS wp{};
+            pointer xParam{};
+            pointer xpfnProc{};
+        };
+
+        struct fn_inout_lp_point5_message
+        {
+            pointer pwnd{};
+            UINT msg{};
+            wparam wParam{};
+            union
+            {
+                EMU_MINMAXINFO point5;
+                EMU_WINDOWPOS window_pos;
+            } data{};
+            pointer xParam{};
+            pointer xpfnProc{};
+        };
+
+        struct EMU_NCCALCSIZE_PARAMS
+        {
+            std::array<RECT, 3> rgrc{};
+            pointer lppos{};
+        };
+
+        struct fn_inout_nc_calc_size_message
+        {
+            pointer pwnd{};
+            UINT msg{};
+            wparam wParam{};
+            pointer xParam{};
+            pointer xpfnProc{};
+            union
+            {
+                RECT rect;
+                struct
+                {
+                    EMU_NCCALCSIZE_PARAMS params;
+                    EMU_WINDOWPOS pos;
+                } data;
+            } u{};
+        };
+
+        struct enum_display_monitors_callback_args
+        {
+            hdc monitor{};
+            hdc dc{};
+            RECT rect{};
+            pointer data{};
+            pointer callback{};
+        };
 
         void set_guest_last_error(const syscall_context& c, uint32_t last_error)
         {
@@ -117,8 +192,113 @@ namespace sogen
         {
             set_thread_window_context(c, win.handle, win.guest.value());
 
-            dispatch_user_callback(c, id, std::forward<T>(state), c.proc.dispatch_client_message, win.guest.value(),
-                                   static_cast<uint64_t>(message), w_param, l_param, win.wnd_proc);
+            switch (message)
+            {
+            case WM_CREATE:
+            case WM_NCCREATE: {
+                fn_in_lp_create_struct_message args{};
+                args.pwnd = win.guest.value();
+                args.msg = message;
+                args.wParam = w_param;
+                args.lParam = l_param;
+                args.xpfnProc = win.wnd_proc;
+                if (l_param != 0)
+                {
+                    c.emu.read_memory(l_param, &args.cs, sizeof(args.cs));
+                }
+
+                dispatch_user_callback(c, id, k_fn_in_lp_create_struct_callback_id, std::forward<T>(state), args);
+                return;
+            }
+
+            case WM_WINDOWPOSCHANGED: {
+                fn_in_lp_window_pos_message args{};
+                args.pwnd = win.guest.value();
+                args.msg = message;
+                args.wParam = w_param;
+                args.xpfnProc = win.wnd_proc;
+                if (l_param != 0)
+                {
+                    c.emu.read_memory(l_param, &args.wp, sizeof(args.wp));
+                }
+
+                dispatch_user_callback(c, id, k_fn_in_lp_window_pos_callback_id, std::forward<T>(state), args);
+                return;
+            }
+
+            case WM_WINDOWPOSCHANGING:
+            case WM_GETMINMAXINFO: {
+                fn_inout_lp_point5_message args{};
+                args.pwnd = win.guest.value();
+                args.msg = message;
+                args.wParam = w_param;
+                args.xpfnProc = win.wnd_proc;
+                if (l_param != 0)
+                {
+                    if (message == WM_WINDOWPOSCHANGING)
+                    {
+                        c.emu.read_memory(l_param, &args.data.window_pos, sizeof(args.data.window_pos));
+                    }
+                    else
+                    {
+                        c.emu.read_memory(l_param, &args.data.point5, sizeof(args.data.point5));
+                    }
+                }
+
+                dispatch_user_callback(c, id, k_fn_inout_lp_point5_callback_id, std::forward<T>(state), args);
+                return;
+            }
+
+            case WM_NCCALCSIZE: {
+                fn_inout_nc_calc_size_message args{};
+                args.pwnd = win.guest.value();
+                args.msg = message;
+                args.wParam = w_param;
+                args.xpfnProc = win.wnd_proc;
+                if (l_param != 0)
+                {
+                    if (w_param == FALSE)
+                    {
+                        c.emu.read_memory(l_param, &args.u.rect, sizeof(args.u.rect));
+                    }
+                    else
+                    {
+                        c.emu.read_memory(l_param, &args.u.data.params, sizeof(args.u.data.params));
+                        if (args.u.data.params.lppos != 0)
+                        {
+                            c.emu.read_memory(args.u.data.params.lppos, &args.u.data.pos, sizeof(args.u.data.pos));
+                        }
+                    }
+                }
+
+                dispatch_user_callback(c, id, k_fn_inout_nc_calc_size_callback_id, std::forward<T>(state), args);
+                return;
+            }
+
+            case WM_NCDESTROY: {
+                fn_dword_message args{};
+                args.pwnd = win.guest.value();
+                args.msg = message;
+                args.wParam = w_param;
+                args.lParam = l_param;
+                args.xpfnProc = win.wnd_proc;
+
+                dispatch_user_callback(c, id, k_fn_nc_destroy_callback_id, std::forward<T>(state), args);
+                return;
+            }
+
+            default: {
+                fn_dword_message args{};
+                args.pwnd = win.guest.value();
+                args.msg = message;
+                args.wParam = w_param;
+                args.lParam = l_param;
+                args.xpfnProc = win.wnd_proc;
+
+                dispatch_user_callback(c, id, k_fn_dword_callback_id, std::forward<T>(state), args);
+                return;
+            }
+            }
         }
 
         template <typename T>
@@ -217,86 +397,6 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        uint64_t resolve_wow64_callback_dispatcher(const syscall_context& c)
-        {
-            if (c.proc.wow64_ki_user_callback_dispatcher != 0)
-            {
-                return c.proc.wow64_ki_user_callback_dispatcher;
-            }
-
-            for (const auto& [_, mod] : c.win_emu.mod_manager.modules())
-            {
-                if (!utils::string::equals_ignore_case(std::string_view{mod.name}, std::string_view{"wow64.dll"}))
-                {
-                    continue;
-                }
-
-                const auto dispatcher = mod.find_export("Wow64KiUserCallbackDispatcher");
-                if (dispatcher != 0)
-                {
-                    c.proc.wow64_ki_user_callback_dispatcher = dispatcher;
-                    return dispatcher;
-                }
-            }
-
-            return 0;
-        }
-
-        uint64_t ensure_wow64_callback_buffer(const syscall_context& c, emulator_thread& thread)
-        {
-            if (thread.win32k_callback_buffer != 0)
-            {
-                return thread.win32k_callback_buffer;
-            }
-
-            thread.win32k_callback_buffer = c.proc.base_allocator.reserve(k_wow64_callback_context_buffer_size, 0x10);
-            std::array<std::byte, k_wow64_callback_context_buffer_size> zeros{};
-            c.emu.write_memory(thread.win32k_callback_buffer, zeros.data(), zeros.size());
-            return thread.win32k_callback_buffer;
-        }
-
-        bool schedule_wow64_callback(const syscall_context& c, emulator_thread& thread, const uint32_t callback_id,
-                                     const uint64_t arg_buffer, const uint32_t arg_length,
-                                     const std::optional<pending_wow64_callback>& pending_callback = std::nullopt)
-        {
-            if (!c.proc.is_wow64_process)
-            {
-                return false;
-            }
-
-            thread.win32k_pending_wow64_callback.reset();
-
-            const auto dispatcher = resolve_wow64_callback_dispatcher(c);
-            if (dispatcher == 0)
-            {
-                return false;
-            }
-
-            const auto cs_selector = c.emu.reg<uint16_t>(x86_register::cs);
-            const auto bitness = segment_utils::get_segment_bitness(c.emu, cs_selector);
-            if (!bitness || *bitness != segment_utils::segment_bitness::bit64)
-            {
-                return false;
-            }
-
-            const auto callback_buffer = ensure_wow64_callback_buffer(c, thread);
-            std::array<std::byte, k_wow64_callback_context_buffer_size> zeros{};
-            c.emu.write_memory(callback_buffer, zeros.data(), zeros.size());
-
-            c.emu.reg(x86_register::rcx, callback_buffer);
-            c.emu.reg(x86_register::rdx, static_cast<uint64_t>(callback_id));
-            c.emu.reg(x86_register::r8, arg_buffer);
-            c.emu.reg(x86_register::r9, static_cast<uint64_t>(arg_length));
-            c.emu.reg(x86_register::rip, dispatcher);
-            thread.win32k_pending_wow64_callback = pending_callback;
-            return true;
-        }
-
-        bool schedule_wow64_client_callback(const syscall_context& c, emulator_thread& thread)
-        {
-            return schedule_wow64_callback(c, thread, k_wow64_client_setup_callback_id, 0, 0);
-        }
-
         std::u16string read_unicode_string_or_atom(const syscall_context& c,
                                                    const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> uc_string,
                                                    const size_t index = 0)
@@ -368,14 +468,16 @@ namespace sogen
             if (c.proc.is_wow64_process && c.proc.active_thread && !c.proc.active_thread->win32k_thread_setup_done &&
                 !c.proc.active_thread->win32k_thread_setup_pending)
             {
-                if (!schedule_wow64_client_callback(c, *c.proc.active_thread))
-                {
-                    return STATUS_UNSUCCESSFUL;
-                }
-
                 c.proc.active_thread->win32k_thread_setup_pending = true;
+                dispatch_user_callback(c, callback_id::NtUserGetThreadState, k_client_setup_callback_id);
+                return {};
             }
 
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS completion_NtUserGetThreadState(const syscall_context&, const ULONG /*routine*/)
+        {
             return STATUS_SUCCESS;
         }
 
@@ -1233,44 +1335,15 @@ namespace sogen
                 }
             }
 
-            if (c.proc.is_wow64_process)
-            {
-                if (!c.proc.active_thread)
-                {
-                    return FALSE;
-                }
+            const enum_display_monitors_callback_args args{
+                .monitor = hmon,
+                .dc = hdc_in,
+                .rect = effective_rc,
+                .data = param,
+                .callback = callback,
+            };
 
-                if (hmon > std::numeric_limits<uint32_t>::max() || hdc_in > std::numeric_limits<uint32_t>::max() ||
-                    callback > std::numeric_limits<uint32_t>::max() || param > std::numeric_limits<uint32_t>::max())
-                {
-                    return FALSE;
-                }
-
-                wow64_enum_display_monitors_callback_args args{};
-                args.monitor = static_cast<uint32_t>(hmon);
-                args.dc = static_cast<uint32_t>(hdc_in);
-                args.param = static_cast<uint32_t>(param);
-                args.callback = static_cast<uint32_t>(callback);
-                args.rect = effective_rc;
-
-                const auto arg_buffer = c.proc.base_allocator.reserve(sizeof(args), alignof(uint32_t));
-                emulator_object<wow64_enum_display_monitors_callback_args>{c.emu, arg_buffer}.write(args);
-
-                pending_wow64_callback pending_callback{};
-                pending_callback.callback_id = k_wow64_enum_display_monitors_callback_id;
-                pending_callback.postprocess = wow64_callback_postprocess::bool_result_to_status;
-
-                if (!schedule_wow64_callback(c, *c.proc.active_thread, k_wow64_enum_display_monitors_callback_id, arg_buffer,
-                                             static_cast<uint32_t>(sizeof(args)), pending_callback))
-                {
-                    return FALSE;
-                }
-
-                return TRUE;
-            }
-
-            const uint64_t rect_ptr = display_info.pPrimaryMonitor + offsetof(USER_MONITOR, rcMonitor);
-            dispatch_user_callback(c, callback_id::NtUserEnumDisplayMonitors, callback, hmon, hdc_in, rect_ptr, param);
+            dispatch_user_callback(c, callback_id::NtUserEnumDisplayMonitors, k_enum_display_monitors_callback_id, args);
             return {};
         }
 

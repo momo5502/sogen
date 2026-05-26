@@ -2,39 +2,29 @@
 
 #include "syscall_utils.hpp"
 
-// TODO: Here we are calling guest functions directly, but this is not how it works in the real Windows kernel.
-//       In the real implementation, the kernel invokes ntdll!KiUserCallbackDispatcher and passes a callback
-//       index that refers to an entry in PEB->KernelCallbackTable. The dispatcher then looks up the function
-//       pointer in that table and invokes the corresponding user-mode callback.
-//       See Also: https://web.archive.org/web/20080717175308/http://www.nynaeve.net/?p=204
-
 namespace sogen
 {
 
     template <typename... Args>
-    void prepare_call_stack(x86_64_emulator& emu, uint64_t return_address, Args... args)
+    constexpr uint32_t user_callback_args_size()
     {
-        constexpr size_t arg_count = sizeof...(Args);
-        const size_t stack_args_size = aligned_stack_space(arg_count);
-
-        const uint64_t current_rsp = emu.read_stack_pointer();
-        const uint64_t aligned_rsp = align_down(current_rsp, 16);
-
-        // We subtract the args size (including the shadow space) AND the size of the return address
-        const uint64_t new_rsp = aligned_rsp - stack_args_size - sizeof(emulator_pointer);
-        emu.reg(x86_register::rsp, new_rsp);
-
-        emu.write_memory(new_rsp, &return_address, sizeof(return_address));
-
-        size_t index = 0;
-        (set_function_argument(emu, index++, static_cast<uint64_t>(args)), ...);
+        size_t offset = 0;
+        ((offset = static_cast<size_t>(align_up(offset, alignof(Args))), offset += sizeof(Args)), ...);
+        return static_cast<uint32_t>(offset);
     }
 
-    template <typename StateT, typename... Args>
+    template <typename T>
+    void write_user_callback_arg(x86_64_emulator& emu, const uint64_t arg_buffer, size_t& offset, const T& arg)
+    {
+        offset = static_cast<size_t>(align_up(offset, alignof(T)));
+        emu.write_memory(arg_buffer + offset, &arg, sizeof(arg));
+        offset += sizeof(arg);
+    }
+
+    template <typename StateT>
         requires(std::derived_from<std::remove_reference_t<StateT>, completion_state> ||
                  std::same_as<std::remove_reference_t<StateT>, std::nullptr_t>)
-    void dispatch_user_callback(const syscall_context& c, callback_id completion_id, StateT&& state_obj, uint64_t func_address,
-                                Args... args)
+    void push_callback_frame(const syscall_context& c, callback_id completion_id, StateT&& state_obj)
     {
         if (c.run_callback)
         {
@@ -56,17 +46,53 @@ namespace sogen
         frame.save_registers(c.emu);
         c.proc.active_thread->callback_return_rax.reset();
         c.proc.active_thread->callback_stack.emplace_back(std::move(frame));
+    }
 
-        prepare_call_stack(c.emu, c.proc.zw_callback_return, args...);
+    template <typename... Args>
+    void prepare_call_stack(x86_64_emulator& emu, const uint32_t callback_index, const Args&... args)
+    {
+        const uint32_t arg_length = user_callback_args_size<Args...>();
+        const uint64_t stack_args_size = align_up(arg_length, 0x10);
+        const uint64_t current_rsp = emu.read_stack_pointer();
+        const uint64_t aligned_rsp = align_down(current_rsp, 16);
 
-        c.emu.reg(x86_register::rip, func_address);
+        // KiUserCallbackDispatcher expects 0x20 bytes of shadow space plus the arg buffer pointer,
+        // arg length, and callback index stored in the 0x10 bytes above it.
+        const uint64_t new_rsp = aligned_rsp - 0x30 - stack_args_size;
+        const uint64_t arg_buffer = new_rsp + 0x30;
+
+        emu.reg(x86_register::rsp, new_rsp);
+
+        if constexpr (sizeof...(Args) > 0)
+        {
+            size_t offset = 0;
+            (write_user_callback_arg(emu, arg_buffer, offset, args), ...);
+        }
+
+        emu.write_memory(new_rsp + 0x20, &arg_buffer, sizeof(arg_buffer));
+        emu.write_memory(new_rsp + 0x28, &arg_length, sizeof(arg_length));
+        emu.write_memory(new_rsp + 0x2C, &callback_index, sizeof(callback_index));
+    }
+
+    template <typename StateT, typename... Args>
+        requires(std::derived_from<std::remove_reference_t<StateT>, completion_state> ||
+                 std::same_as<std::remove_reference_t<StateT>, std::nullptr_t>)
+    void dispatch_user_callback(const syscall_context& c, const callback_id completion_id, const uint32_t callback_index,
+                                StateT&& state_obj, const Args&... args)
+    {
+        push_callback_frame(c, completion_id, std::forward<StateT>(state_obj));
+
+        prepare_call_stack(c.emu, callback_index, args...);
+
+        c.emu.reg(x86_register::rip, c.proc.ki_user_callback_dispatcher);
         c.run_callback = true;
     }
 
     template <typename... Args>
-    void dispatch_user_callback(const syscall_context& c, callback_id completion_id, uint64_t func_address, Args... args)
+    void dispatch_user_callback(const syscall_context& c, const callback_id completion_id, const uint32_t callback_index,
+                                const Args&... args)
     {
-        dispatch_user_callback(c, completion_id, nullptr, func_address, args...);
+        dispatch_user_callback(c, completion_id, callback_index, nullptr, args...);
     }
 
 } // namespace sogen

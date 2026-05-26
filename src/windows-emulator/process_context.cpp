@@ -484,8 +484,8 @@ namespace sogen
         this->rtl_user_thread_start = ntdll.find_export("RtlUserThreadStart");
         this->ki_user_apc_dispatcher = ntdll.find_export("KiUserApcDispatcher");
         this->ki_user_exception_dispatcher = ntdll.find_export("KiUserExceptionDispatcher");
+        this->ki_user_callback_dispatcher = ntdll.find_export("KiUserCallbackDispatcher");
         this->instrumentation_callback = 0;
-        this->wow64_ki_user_callback_dispatcher = 0;
         this->zw_callback_return = ntdll.find_export("ZwCallbackReturn");
         this->gdi_default_dc_handle = 0;
         this->etw_notification_event.reset();
@@ -577,8 +577,8 @@ namespace sogen
         buffer.write_optional(this->rtl_user_thread_start32);
         buffer.write(this->ki_user_apc_dispatcher);
         buffer.write(this->ki_user_exception_dispatcher);
+        buffer.write(this->ki_user_callback_dispatcher);
         buffer.write(this->instrumentation_callback);
-        buffer.write(this->wow64_ki_user_callback_dispatcher);
         buffer.write(this->zw_callback_return);
         buffer.write(this->dispatch_client_message);
         buffer.write(this->gdi_default_dc_handle);
@@ -644,8 +644,8 @@ namespace sogen
         buffer.read_optional(this->rtl_user_thread_start32);
         buffer.read(this->ki_user_apc_dispatcher);
         buffer.read(this->ki_user_exception_dispatcher);
+        buffer.read(this->ki_user_callback_dispatcher);
         buffer.read(this->instrumentation_callback);
-        buffer.read(this->wow64_ki_user_callback_dispatcher);
         buffer.read(this->zw_callback_return);
         buffer.read(this->dispatch_client_message);
         buffer.read(this->gdi_default_dc_handle);

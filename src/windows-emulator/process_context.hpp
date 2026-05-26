@@ -192,8 +192,8 @@ namespace sogen
         uint64_t rtl_user_thread_start{};
         uint64_t ki_user_apc_dispatcher{};
         uint64_t ki_user_exception_dispatcher{};
+        uint64_t ki_user_callback_dispatcher{};
         uint64_t instrumentation_callback{};
-        uint64_t wow64_ki_user_callback_dispatcher{};
         uint64_t zw_callback_return{};
         uint64_t dispatch_client_message{};
         uint32_t gdi_default_dc_handle{};
