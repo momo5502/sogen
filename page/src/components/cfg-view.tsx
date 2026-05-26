@@ -202,9 +202,11 @@ export function CfgView({
         const keepExisting = prev.some((b) =>
           b.insns.some((i) => toBig(i.address)?.toString(16) === ripAddr),
         );
-        const next = keepExisting
-          ? new Map(prev.map((b) => [b.start, b]))
-          : new Map<string, BasicBlock>();
+        if (keepExisting) {
+          return prev;
+        }
+
+        const next = new Map<string, BasicBlock>();
         for (const block of map.values()) {
           next.set(block.start, block);
         }
