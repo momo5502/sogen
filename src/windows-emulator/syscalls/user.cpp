@@ -73,9 +73,19 @@ namespace sogen
             pointer pwnd{};
             UINT msg{};
             wparam wParam{};
-            EMU_MINMAXINFO point5{};
+            union
+            {
+                EMU_MINMAXINFO point5;
+                EMU_WINDOWPOS window_pos;
+            } data{};
             pointer xParam{};
             pointer xpfnProc{};
+        };
+
+        struct EMU_NCCALCSIZE_PARAMS
+        {
+            std::array<RECT, 3> rgrc{};
+            pointer lppos{};
         };
 
         struct fn_inout_nc_calc_size_message
@@ -85,7 +95,15 @@ namespace sogen
             wparam wParam{};
             pointer xParam{};
             pointer xpfnProc{};
-            RECT rect{};
+            union
+            {
+                RECT rect;
+                struct
+                {
+                    EMU_NCCALCSIZE_PARAMS params;
+                    EMU_WINDOWPOS pos;
+                } data;
+            } u{};
         };
 
         struct enum_display_monitors_callback_args
@@ -193,7 +211,6 @@ namespace sogen
                 return;
             }
 
-            case WM_WINDOWPOSCHANGING:
             case WM_WINDOWPOSCHANGED: {
                 fn_in_lp_window_pos_message args{};
                 args.pwnd = win.guest.value();
@@ -209,21 +226,7 @@ namespace sogen
                 return;
             }
 
-            case WM_NCCALCSIZE: {
-                fn_inout_nc_calc_size_message args{};
-                args.pwnd = win.guest.value();
-                args.msg = message;
-                args.wParam = w_param;
-                args.xpfnProc = win.wnd_proc;
-                if (l_param != 0)
-                {
-                    c.emu.read_memory(l_param, &args.rect, sizeof(args.rect));
-                }
-
-                dispatch_user_callback(c, id, k_fn_inout_nc_calc_size_callback_id, std::forward<T>(state), args);
-                return;
-            }
-
+            case WM_WINDOWPOSCHANGING:
             case WM_GETMINMAXINFO: {
                 fn_inout_lp_point5_message args{};
                 args.pwnd = win.guest.value();
@@ -232,10 +235,43 @@ namespace sogen
                 args.xpfnProc = win.wnd_proc;
                 if (l_param != 0)
                 {
-                    c.emu.read_memory(l_param, &args.point5, sizeof(args.point5));
+                    if (message == WM_WINDOWPOSCHANGING)
+                    {
+                        c.emu.read_memory(l_param, &args.data.window_pos, sizeof(args.data.window_pos));
+                    }
+                    else
+                    {
+                        c.emu.read_memory(l_param, &args.data.point5, sizeof(args.data.point5));
+                    }
                 }
 
                 dispatch_user_callback(c, id, k_fn_inout_lp_point5_callback_id, std::forward<T>(state), args);
+                return;
+            }
+
+            case WM_NCCALCSIZE: {
+                fn_inout_nc_calc_size_message args{};
+                args.pwnd = win.guest.value();
+                args.msg = message;
+                args.wParam = w_param;
+                args.xpfnProc = win.wnd_proc;
+                if (l_param != 0)
+                {
+                    if (w_param == FALSE)
+                    {
+                        c.emu.read_memory(l_param, &args.u.rect, sizeof(args.u.rect));
+                    }
+                    else
+                    {
+                        c.emu.read_memory(l_param, &args.u.data.params, sizeof(args.u.data.params));
+                        if (args.u.data.params.lppos != 0)
+                        {
+                            c.emu.read_memory(args.u.data.params.lppos, &args.u.data.pos, sizeof(args.u.data.pos));
+                        }
+                    }
+                }
+
+                dispatch_user_callback(c, id, k_fn_inout_nc_calc_size_callback_id, std::forward<T>(state), args);
                 return;
             }
 
