@@ -52,7 +52,7 @@ namespace sogen
     void prepare_call_stack(x86_64_emulator& emu, const uint32_t callback_index, const Args&... args)
     {
         const uint32_t arg_length = user_callback_args_size<Args...>();
-        const size_t stack_args_size = align_up(static_cast<size_t>(arg_length), 0x10);
+        const uint64_t stack_args_size = align_up(arg_length, 0x10);
         const uint64_t current_rsp = emu.read_stack_pointer();
         const uint64_t aligned_rsp = align_down(current_rsp, 16);
 
