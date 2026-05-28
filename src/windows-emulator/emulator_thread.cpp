@@ -11,6 +11,13 @@ namespace sogen
 
     namespace
     {
+        enum class wait_state
+        {
+            not_signaled,
+            signaled,
+            abandoned,
+        };
+
         void setup_wow64_fs_segment(memory_manager& memory, uint64_t teb32_addr)
         {
             const uint64_t base = teb32_addr;
@@ -62,7 +69,7 @@ namespace sogen
             }
         }
 
-        bool is_object_signaled(process_context& c, const handle h, const uint32_t current_thread_id)
+        wait_state observe_object_signal(process_context& c, const handle h, const uint32_t current_thread_id)
         {
             const auto type = h.value.type;
 
@@ -74,32 +81,37 @@ namespace sogen
             case handle_types::event: {
                 if (h.value.is_pseudo)
                 {
-                    return true;
+                    return wait_state::signaled;
                 }
 
-                auto* e = c.events.get(h);
-                if (e)
+                const auto* e = c.events.get(h);
+                if (e && e->signaled)
                 {
-                    return e->is_signaled();
+                    return wait_state::signaled;
                 }
 
                 break;
             }
 
             case handle_types::mutant: {
-                auto* e = c.mutants.get(h);
-                return !e || e->try_lock(current_thread_id);
+                const auto* e = c.mutants.get(h);
+                if (e && e->is_signaled(current_thread_id))
+                {
+                    return e->abandoned ? wait_state::abandoned : wait_state::signaled;
+                }
+
+                break;
             }
 
             case handle_types::timer: {
-                return true; // TODO
+                return wait_state::signaled; // TODO
             }
 
             case handle_types::semaphore: {
-                auto* s = c.semaphores.get(h);
-                if (s)
+                const auto* s = c.semaphores.get(h);
+                if (s && s->current_count > 0)
                 {
-                    return s->try_lock();
+                    return wait_state::signaled;
                 }
 
                 break;
@@ -107,16 +119,84 @@ namespace sogen
 
             case handle_types::thread: {
                 const auto* t = c.threads.get(h);
-                if (t)
+                if (t && t->is_terminated())
                 {
-                    return t->is_terminated();
+                    return wait_state::signaled;
                 }
 
                 break;
             }
             }
 
-            throw std::runtime_error("Bad object: " + std::to_string(h.value.type));
+            return wait_state::not_signaled;
+        }
+
+        std::optional<wait_state> consume_object_signal(process_context& c, const handle h, const uint32_t current_thread_id)
+        {
+            switch (h.value.type)
+            {
+            case handle_types::event: {
+                if (h.value.is_pseudo)
+                {
+                    return wait_state::signaled;
+                }
+
+                auto* event = c.events.get(h);
+                if (!event || !event->signaled)
+                {
+                    return std::nullopt;
+                }
+
+                if (event->type == SynchronizationEvent)
+                {
+                    event->signaled = false;
+                }
+
+                return wait_state::signaled;
+            }
+
+            case handle_types::mutant: {
+                auto* mutant = c.mutants.get(h);
+                if (!mutant)
+                {
+                    return std::nullopt;
+                }
+
+                const auto acquired = mutant->try_lock(current_thread_id);
+                if (!acquired.has_value())
+                {
+                    return std::nullopt;
+                }
+
+                return *acquired ? wait_state::abandoned : wait_state::signaled;
+            }
+
+            case handle_types::timer:
+                return wait_state::signaled; // TODO
+
+            case handle_types::semaphore: {
+                auto* semaphore = c.semaphores.get(h);
+                if (!semaphore || !semaphore->try_lock())
+                {
+                    return std::nullopt;
+                }
+
+                return wait_state::signaled;
+            }
+
+            case handle_types::thread: {
+                const auto* thread = c.threads.get(h);
+                if (!thread || !thread->is_terminated())
+                {
+                    return std::nullopt;
+                }
+
+                return wait_state::signaled;
+            }
+
+            default:
+                throw std::runtime_error("Bad object: " + std::to_string(h.value.type));
+            }
         }
     }
 
@@ -457,23 +537,46 @@ namespace sogen
         if (!this->await_objects.empty())
         {
             bool all_signaled = true;
+            std::optional<uint32_t> abandoned_index{};
             for (uint32_t i = 0; i < this->await_objects.size(); ++i)
             {
                 const auto& obj = this->await_objects[i];
 
-                const auto signaled = is_object_signaled(process, obj, this->id);
+                const auto state = observe_object_signal(process, obj, this->id);
+                const auto signaled = state != wait_state::not_signaled;
                 all_signaled &= signaled;
+
+                if (state == wait_state::abandoned && !abandoned_index.has_value())
+                {
+                    abandoned_index = i;
+                }
 
                 if (signaled && this->await_any)
                 {
-                    this->mark_as_ready(STATUS_WAIT_0 + i);
+                    const auto consumed_state = consume_object_signal(process, obj, this->id);
+                    if (!consumed_state.has_value())
+                    {
+                        all_signaled = false;
+                        continue;
+                    }
+
+                    this->mark_as_ready(*consumed_state == wait_state::abandoned ? (STATUS_ABANDONED_WAIT_0 + i) : (STATUS_WAIT_0 + i));
                     return true;
                 }
             }
 
             if (!this->await_any && all_signaled)
             {
-                this->mark_as_ready(STATUS_SUCCESS);
+                for (const auto& obj : this->await_objects)
+                {
+                    const auto consumed_state = consume_object_signal(process, obj, this->id);
+                    if (!consumed_state.has_value())
+                    {
+                        return false;
+                    }
+                }
+
+                this->mark_as_ready(abandoned_index.has_value() ? (STATUS_ABANDONED_WAIT_0 + *abandoned_index) : STATUS_SUCCESS);
                 return true;
             }
 

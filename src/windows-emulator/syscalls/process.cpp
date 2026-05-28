@@ -461,7 +461,7 @@ namespace sogen
                 {
                     if (&thread != c.proc.active_thread)
                     {
-                        thread.exit_status = exit_status;
+                        c.proc.terminate_thread(thread, exit_status);
                     }
                 }
 

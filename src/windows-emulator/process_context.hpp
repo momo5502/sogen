@@ -145,6 +145,7 @@ namespace sogen
 
         handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size, uint32_t create_flags,
                              bool initial_thread = false);
+        void terminate_thread(emulator_thread& thread, NTSTATUS thread_exit_status);
 
         std::optional<uint16_t> find_atom(std::u16string_view name);
         uint16_t add_or_find_atom(std::u16string name);

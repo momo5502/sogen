@@ -32,18 +32,6 @@ namespace sogen
         EVENT_TYPE type{};
         std::u16string name{};
 
-        bool is_signaled()
-        {
-            const auto res = this->signaled;
-
-            if (this->type == SynchronizationEvent)
-            {
-                this->signaled = false;
-            }
-
-            return res;
-        }
-
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
             buffer.write(this->signaled);
@@ -164,24 +152,32 @@ namespace sogen
     {
         uint32_t locked_count{0};
         uint32_t owning_thread_id{};
+        bool abandoned{false};
         std::u16string name{};
 
-        bool try_lock(const uint32_t thread_id)
+        bool is_signaled(const uint32_t thread_id) const
+        {
+            return this->abandoned || this->locked_count == 0 || this->owning_thread_id == thread_id;
+        }
+
+        std::optional<bool> try_lock(const uint32_t thread_id)
         {
             if (this->locked_count == 0)
             {
                 ++this->locked_count;
                 this->owning_thread_id = thread_id;
-                return true;
+                const auto was_abandoned = this->abandoned;
+                this->abandoned = false;
+                return was_abandoned;
             }
 
             if (this->owning_thread_id != thread_id)
             {
-                return false;
+                return std::nullopt;
             }
 
             ++this->locked_count;
-            return true;
+            return false;
         }
 
         std::pair<uint32_t, bool> release(const uint32_t thread_id)
@@ -194,13 +190,30 @@ namespace sogen
             }
 
             --this->locked_count;
+            if (this->locked_count == 0)
+            {
+                this->owning_thread_id = 0;
+            }
             return {old_count, true};
+        }
+
+        void abandon()
+        {
+            if (this->locked_count == 0)
+            {
+                return;
+            }
+
+            this->locked_count = 0;
+            this->owning_thread_id = 0;
+            this->abandoned = true;
         }
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
             buffer.write(this->locked_count);
             buffer.write(this->owning_thread_id);
+            buffer.write(this->abandoned);
             buffer.write(this->name);
         }
 
@@ -208,6 +221,7 @@ namespace sogen
         {
             buffer.read(this->locked_count);
             buffer.read(this->owning_thread_id);
+            buffer.read(this->abandoned);
             buffer.read(this->name);
         }
     };

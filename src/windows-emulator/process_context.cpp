@@ -748,6 +748,31 @@ namespace sogen
         return h;
     }
 
+    void process_context::terminate_thread(emulator_thread& thread, const NTSTATUS thread_exit_status)
+    {
+        thread.exit_status = thread_exit_status;
+
+        for (auto& mutant : this->mutants | std::views::values)
+        {
+            if (mutant.owning_thread_id == thread.id && mutant.locked_count > 0)
+            {
+                mutant.abandon();
+            }
+        }
+
+        for (auto i = this->windows.begin(); i != this->windows.end();)
+        {
+            if (i->second.thread_id != thread.id)
+            {
+                ++i;
+                continue;
+            }
+
+            i->second.ref_count = 1;
+            i = this->windows.erase(i).first;
+        }
+    }
+
     std::optional<uint16_t> process_context::find_atom(const std::u16string_view name)
     {
         for (auto& entry : this->atoms)
