@@ -103,7 +103,7 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            if (worker_process_handle != CURRENT_PROCESS)
+            if (!c.proc.is_current_process_handle(worker_process_handle))
             {
                 return STATUS_INVALID_HANDLE;
             }

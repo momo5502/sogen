@@ -13,7 +13,7 @@ namespace sogen
                                                   const uint64_t process_information, const uint32_t process_information_length,
                                                   const emulator_object<uint32_t> return_length)
         {
-            if (process_handle != CURRENT_PROCESS)
+            if (!c.proc.is_current_process_handle(process_handle))
             {
                 return STATUS_NOT_SUPPORTED;
             }
@@ -246,7 +246,7 @@ namespace sogen
         NTSTATUS handle_NtSetInformationProcess(const syscall_context& c, const handle process_handle, const uint32_t info_class,
                                                 const uint64_t process_information, const uint32_t process_information_length)
         {
-            if (process_handle != CURRENT_PROCESS)
+            if (!c.proc.is_current_process_handle(process_handle))
             {
                 return STATUS_NOT_SUPPORTED;
             }
@@ -434,10 +434,10 @@ namespace sogen
             return STATUS_NOT_SUPPORTED;
         }
 
-        NTSTATUS handle_NtOpenProcessToken(const syscall_context&, const handle process_handle, const ACCESS_MASK /*desired_access*/,
+        NTSTATUS handle_NtOpenProcessToken(const syscall_context& c, const handle process_handle, const ACCESS_MASK /*desired_access*/,
                                            const emulator_object<handle> token_handle)
         {
-            if (process_handle != CURRENT_PROCESS)
+            if (!c.proc.is_current_process_handle(process_handle))
             {
                 return STATUS_NOT_SUPPORTED;
             }
@@ -468,7 +468,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            if (process_handle == CURRENT_PROCESS)
+            if (c.proc.is_current_process_handle(process_handle))
             {
                 c.proc.exit_status = exit_status;
                 c.emu.stop();

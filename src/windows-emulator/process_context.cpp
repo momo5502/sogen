@@ -699,6 +699,10 @@ namespace sogen
     {
         switch (handle.value.type)
         {
+        case handle_types::process: {
+            static dummy_handle_store<handle_types::process, emulator_process> handle_store{GUEST_PROCESS_HANDLE};
+            return &handle_store;
+        }
         case handle_types::thread:
             return &threads;
         case handle_types::event:
@@ -732,6 +736,37 @@ namespace sogen
         default:
             return nullptr;
         }
+    }
+
+    bool process_context::is_current_process_handle(const handle handle) const
+    {
+        return handle == CURRENT_PROCESS || (handle.value.type == handle_types::process && handle == GUEST_PROCESS_HANDLE);
+    }
+
+    bool process_context::is_current_thread_handle(const handle handle) const
+    {
+        return handle == CURRENT_THREAD || (handle.value.type == handle_types::thread && this->active_thread &&
+                                            this->threads.find_handle(this->active_thread) == handle);
+    }
+
+    bool process_context::is_current_pseudo_handle(const handle handle) const
+    {
+        return handle == CURRENT_PROCESS || handle == CURRENT_THREAD;
+    }
+
+    handle process_context::resolve_current_pseudo_handle(const handle handle) const
+    {
+        if (handle == CURRENT_PROCESS)
+        {
+            return GUEST_PROCESS_HANDLE;
+        }
+
+        if (handle == CURRENT_THREAD)
+        {
+            return this->threads.find_handle(this->active_thread);
+        }
+
+        return handle;
     }
 
     size_t process_context::get_live_thread_count() const

@@ -171,6 +171,17 @@ namespace sogen
         void deserialize(utils::buffer_deserializer& buffer);
     };
 
+    class emulator_process : public ref_counted_object
+    {
+        void serialize_object(utils::buffer_serializer&) const override
+        {
+        }
+
+        void deserialize_object(utils::buffer_deserializer&) override
+        {
+        }
+    };
+
     class emulator_thread : public ref_counted_object
     {
       public:

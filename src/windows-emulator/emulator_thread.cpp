@@ -78,6 +78,14 @@ namespace sogen
             default:
                 break;
 
+            case handle_types::process:
+                if (h == GUEST_PROCESS_HANDLE)
+                {
+                    return c.exit_status.has_value();
+                }
+
+                break;
+
             case handle_types::event: {
                 if (h.value.is_pseudo)
                 {
