@@ -738,6 +738,7 @@ namespace sogen
         }
     }
 
+    // NOLINTNEXTLINE(cert-dcl50-cpp,readability-convert-member-functions-to-static)
     bool process_context::is_current_process_handle(const handle handle) const
     {
         return handle == CURRENT_PROCESS || handle == GUEST_PROCESS_HANDLE;
@@ -749,6 +750,7 @@ namespace sogen
                                             this->threads.find_handle(this->active_thread) == handle);
     }
 
+    // NOLINTNEXTLINE(cert-dcl50-cpp,readability-convert-member-functions-to-static)
     bool process_context::is_object_pseudo_handle(const handle handle) const
     {
         return handle == CURRENT_PROCESS || handle == CURRENT_THREAD;
