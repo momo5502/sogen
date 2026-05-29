@@ -556,8 +556,7 @@ namespace sogen
                     const auto consumed_state = consume_object_signal(process, obj, this->id);
                     if (!consumed_state.has_value())
                     {
-                        all_signaled = false;
-                        continue;
+                        throw std::runtime_error("Failed to consume object signal!");
                     }
 
                     this->mark_as_ready(*consumed_state == wait_state::abandoned ? (STATUS_ABANDONED_WAIT_0 + i) : (STATUS_WAIT_0 + i));
@@ -572,7 +571,7 @@ namespace sogen
                     const auto consumed_state = consume_object_signal(process, obj, this->id);
                     if (!consumed_state.has_value())
                     {
-                        return false;
+                        throw std::runtime_error("Failed to consume object signal!");
                     }
                 }
 
