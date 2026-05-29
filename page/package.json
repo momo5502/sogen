@@ -60,7 +60,7 @@
     "globals": "^17.6.0",
     "prettier": "3.8.3",
     "typescript": "~5.9.3",
-    "typescript-eslint": "^8.59.2",
+    "typescript-eslint": "^8.59.4",
     "vite": "^7.3.2",
     "vite-plugin-pwa": "^1.3.0"
   },
