@@ -94,9 +94,9 @@ namespace sogen
                 return true;
             }
 
-            if (process.is_current_pseudo_handle(source_handle))
+            if (process.is_object_pseudo_handle(source_handle))
             {
-                const auto resolved_handle = process.resolve_current_pseudo_handle(source_handle);
+                const auto resolved_handle = process.resolve_object_pseudo_handle(source_handle);
                 auto* store = process.get_handle_store(resolved_handle);
                 if (!store)
                 {

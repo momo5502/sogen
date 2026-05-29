@@ -304,7 +304,7 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            const auto resolved_target_handle = c.proc.resolve_current_pseudo_handle(target_object_handle);
+            const auto resolved_target_handle = c.proc.resolve_object_pseudo_handle(target_object_handle);
             if (!io_completion_wait::is_wait_completion_target_type(resolved_target_handle))
             {
                 return STATUS_OBJECT_TYPE_MISMATCH;

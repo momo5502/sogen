@@ -614,7 +614,7 @@ namespace sogen
             }
 
             const auto resolved_thread_handle =
-                thread_handle == NULL_HANDLE ? std::optional<handle>{thread_handle} : c.proc.resolve_current_pseudo_handle(thread_handle);
+                thread_handle == NULL_HANDLE ? std::optional<handle>{thread_handle} : c.proc.resolve_object_pseudo_handle(thread_handle);
             if (!resolved_thread_handle)
             {
                 return STATUS_INVALID_HANDLE;

@@ -81,7 +81,7 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
 
-            const auto resolved_source_handle = c.proc.resolve_current_pseudo_handle(source_handle);
+            const auto resolved_source_handle = c.proc.resolve_object_pseudo_handle(source_handle);
 
             if (resolved_source_handle != source_handle)
             {
@@ -176,7 +176,7 @@ namespace sogen
                                       const OBJECT_INFORMATION_CLASS object_information_class, const emulator_pointer object_information,
                                       const ULONG object_information_length, const emulator_object<ULONG> return_length)
         {
-            const auto effective_handle = c.proc.resolve_current_pseudo_handle(handle);
+            const auto effective_handle = c.proc.resolve_object_pseudo_handle(handle);
 
             if (object_information_class == ObjectNameInformation)
             {
@@ -460,12 +460,12 @@ namespace sogen
 
         NTSTATUS validate_wait_handle(const syscall_context& c, const handle h, const bool allow_current_pseudo, handle& resolved_handle)
         {
-            if (!allow_current_pseudo && c.proc.is_current_pseudo_handle(h))
+            if (!allow_current_pseudo && c.proc.is_object_pseudo_handle(h))
             {
                 return STATUS_INVALID_HANDLE;
             }
 
-            resolved_handle = c.proc.resolve_current_pseudo_handle(h);
+            resolved_handle = c.proc.resolve_object_pseudo_handle(h);
 
             const auto validate_handle_in_store = [&](auto& store) -> NTSTATUS {
                 return store.get(resolved_handle) ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
@@ -508,8 +508,8 @@ namespace sogen
 
         NTSTATUS handle_NtCompareObjects(const syscall_context& c, const handle first, const handle second)
         {
-            const auto first_resolved = c.proc.resolve_current_pseudo_handle(first);
-            const auto second_resolved = c.proc.resolve_current_pseudo_handle(second);
+            const auto first_resolved = c.proc.resolve_object_pseudo_handle(first);
+            const auto second_resolved = c.proc.resolve_object_pseudo_handle(second);
             return (first_resolved == second_resolved) ? STATUS_SUCCESS : STATUS_NOT_SAME_OBJECT;
         }
 

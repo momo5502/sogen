@@ -740,7 +740,7 @@ namespace sogen
 
     bool process_context::is_current_process_handle(const handle handle) const
     {
-        return handle == CURRENT_PROCESS || (handle.value.type == handle_types::process && handle == GUEST_PROCESS_HANDLE);
+        return handle == CURRENT_PROCESS || handle == GUEST_PROCESS_HANDLE;
     }
 
     bool process_context::is_current_thread_handle(const handle handle) const
@@ -749,12 +749,12 @@ namespace sogen
                                             this->threads.find_handle(this->active_thread) == handle);
     }
 
-    bool process_context::is_current_pseudo_handle(const handle handle) const
+    bool process_context::is_object_pseudo_handle(const handle handle) const
     {
         return handle == CURRENT_PROCESS || handle == CURRENT_THREAD;
     }
 
-    handle process_context::resolve_current_pseudo_handle(const handle handle) const
+    handle process_context::resolve_object_pseudo_handle(const handle handle) const
     {
         if (handle == CURRENT_PROCESS)
         {

@@ -609,7 +609,7 @@ namespace sogen
 
     constexpr auto DUMMY_IMPERSONATION_TOKEN = make_pseudo_handle(0x1, handle_types::token);
 
-    constexpr auto GUEST_PROCESS_HANDLE = make_pseudo_handle(0x1, handle_types::process);
+    constexpr auto GUEST_PROCESS_HANDLE = make_handle(0x1, handle_types::process, false);
 
     constexpr auto CURRENT_PROCESS = make_handle(~0ULL);
     constexpr auto CURRENT_THREAD = make_handle(~1ULL);
