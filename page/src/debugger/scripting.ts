@@ -1,7 +1,7 @@
 // Scripting bridge.
 //
-// Real emulator access, no fake mock. JS scripts call same debugger channel
-// used by rest of UI.
+// Scripts hit the actual emulator through the same debugger channel the
+// rest of the UI uses — nothing mocked.
 
 import { Emulator } from "@/emulator";
 import * as dbg from "@/debugger/api";

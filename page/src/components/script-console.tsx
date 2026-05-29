@@ -18,8 +18,8 @@ interface Script {
   source: string;
 }
 
-const DEFAULT_SOURCE = `// JS scripting — drives the REAL emulator via debugger backend.
-// emu exposes debugger + memory helpers. Use await.
+const DEFAULT_SOURCE = `// Write JS to poke at the emulator through the debugger backend.
+// emu gives you debugger + memory helpers. Remember to await.
 
 const regs = await emu.debug.registers();
 console.log("rip =", regs.rip);
@@ -255,7 +255,8 @@ export function ScriptConsole({ emulator }: ScriptConsoleProps) {
       <div className="h-40 shrink-0 overflow-auto border-t bg-black/30 p-2 font-mono text-[11px] whitespace-pre-wrap">
         {output.length === 0 ? (
           <span className="text-muted-foreground">
-            Output. `emu.debug.*` drives the live emulator. Use `await`.
+            Output shows up here. Call `emu.debug.*` to talk to the emulator,
+            and don't forget to `await`.
           </span>
         ) : (
           output.map((l, i) => <div key={i}>{l}</div>)

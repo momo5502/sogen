@@ -249,10 +249,18 @@ export function CfgView({
       className="h-full w-full overflow-hidden bg-black/20"
       onWheel={(e) => {
         const factor = e.deltaY < 0 ? 1.1 : 0.9;
-        setView((v) => ({
-          ...v,
-          scale: Math.min(2.5, Math.max(0.2, v.scale * factor)),
-        }));
+        const rect = e.currentTarget.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        setView((v) => {
+          const scale = Math.min(2.5, Math.max(0.2, v.scale * factor));
+          const ratio = scale / v.scale;
+          return {
+            scale,
+            x: mx - (mx - v.x) * ratio,
+            y: my - (my - v.y) * ratio,
+          };
+        });
       }}
       onMouseDown={(e) => {
         panning.current = { x: e.clientX - view.x, y: e.clientY - view.y };
