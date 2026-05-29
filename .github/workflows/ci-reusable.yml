@@ -864,7 +864,7 @@ jobs:
         with:
           name: sogen-wheel-${{ matrix.artifact }}
           path: dist/*.whl
-          retention-days: 7
+          retention-days: 1
 
   test-python-wheel:
     name: Test Python Wheel (${{ matrix.display }})
@@ -957,7 +957,7 @@ jobs:
         with:
           name: sogen-sdist
           path: dist/*.tar.gz
-          retention-days: 7
+          retention-days: 1
 
   test-python-sdist:
     name: Test Python Sdist
