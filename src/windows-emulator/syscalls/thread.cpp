@@ -613,14 +613,9 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            const auto resolved_thread_handle =
-                thread_handle == NULL_HANDLE ? std::optional<handle>{thread_handle} : c.proc.resolve_object_pseudo_handle(thread_handle);
-            if (!resolved_thread_handle)
-            {
-                return STATUS_INVALID_HANDLE;
-            }
+            const auto resolved_thread_handle = c.proc.resolve_object_pseudo_handle(thread_handle);
 
-            if (*resolved_thread_handle != NULL_HANDLE && resolved_thread_handle->value.type != handle_types::thread)
+            if (resolved_thread_handle != NULL_HANDLE && resolved_thread_handle.value.type != handle_types::thread)
             {
                 return STATUS_INVALID_HANDLE;
             }
@@ -632,7 +627,7 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
 
-            bool return_next_thread = *resolved_thread_handle == NULL_HANDLE;
+            bool return_next_thread = resolved_thread_handle == NULL_HANDLE;
             for (auto& t : c.proc.threads)
             {
                 if (return_next_thread && !t.second.is_terminated())
@@ -642,7 +637,7 @@ namespace sogen
                     return STATUS_SUCCESS;
                 }
 
-                if (t.first == resolved_thread_handle->value.id)
+                if (t.first == resolved_thread_handle.value.id)
                 {
                     return_next_thread = true;
                 }
