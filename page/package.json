@@ -35,7 +35,7 @@
     "prism-react-renderer": "^2.4.1",
     "react": "^19.2.6",
     "react-bootstrap-icons": "^1.11.6",
-    "react-dom": "^19.2.5",
+    "react-dom": "^19.2.6",
     "react-dropzone": "^15.0.0",
     "react-router-dom": "^7.15.1",
     "react-window": "^2.2.7",
