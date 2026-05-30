@@ -758,6 +758,19 @@ namespace sogen
             return 0;
         }
 
+        uint64_t handle_NtUserCallHwndParam(const syscall_context& c, const hwnd hwnd, const uint64_t param, const uint32_t code)
+        {
+            (void)hwnd;
+            (void)param;
+
+            if (c.win_emu.callbacks.on_generic_activity)
+            {
+                c.win_emu.callbacks.on_generic_activity("NtUserCallHwndParam code=" + std::to_string(code));
+            }
+
+            return 0;
+        }
+
         uint16_t handle_NtUserRegisterClassExWOW(const syscall_context& c, const emulator_object<EMU_WNDCLASSEX> wnd_class_ex,
                                                  const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                                  const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*class_version*/,
@@ -897,6 +910,9 @@ namespace sogen
                 guest_win.ptrBase = win.guest.value();
                 guest_win.dwExStyle = ex_style;
                 guest_win.dwStyle = style;
+                guest_win.rcWindow = {.left = x, .top = y, .right = x + width, .bottom = y + height};
+                guest_win.rcClient = {.left = 0, .top = 0, .right = width, .bottom = height};
+                guest_win.rcWindowRelative = guest_win.rcWindow;
                 if (parent_win && has_child_parent)
                 {
                     guest_win.spwndParent = parent_win->guest.value();
@@ -1536,9 +1552,38 @@ namespace sogen
             return handle_entry.pHead;
         }
 
-        NTSTATUS handle_NtUserTransformRect()
+        BOOL handle_NtUserTransformRect(const syscall_context& c, const uint64_t a1, const uint64_t a2, const uint64_t a3,
+                                        const uint64_t a4)
         {
-            return STATUS_SUCCESS;
+            const std::array<uint64_t, 4> args{a1, a2, a3, a4};
+
+            const window* win = nullptr;
+            for (const auto value : args)
+            {
+                if ((win = c.proc.windows.get(value)))
+                {
+                    break;
+                }
+            }
+
+            if (!win)
+            {
+                return FALSE;
+            }
+
+            for (const auto value : args)
+            {
+                const emulator_object<RECT> rect{c.emu, value};
+                if (!rect)
+                {
+                    continue;
+                }
+
+                rect.write(win->guest.read().rcWindow);
+                return TRUE;
+            }
+
+            return FALSE;
         }
 
         BOOL handle_NtUserSetWindowPos()

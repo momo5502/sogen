@@ -68,4 +68,16 @@ namespace sogen::test
         const auto it = emu.process.classes.find(u"PaintWindowSampleClass");
         ASSERT_NE(it, emu.process.classes.end());
     }
+
+    TEST(EmulationTest, RectWindowSampleRunsToCompletion)
+    {
+        auto emu = create_application_emulator(make_application_settings(u"C:\\rect-window-sample.exe"));
+        emu.start();
+
+        ASSERT_TERMINATED_SUCCESSFULLY(emu);
+        ASSERT_EQ(emu.process.windows.size(), 1u);
+
+        const auto it = emu.process.classes.find(u"RectWindowSampleClass");
+        ASSERT_NE(it, emu.process.classes.end());
+    }
 } // namespace sogen::test

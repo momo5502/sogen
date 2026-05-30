@@ -7,6 +7,7 @@ add_subdirectory(hello-window-sample)
 add_subdirectory(hook-sample)
 add_subdirectory(messagebox-sample)
 add_subdirectory(paint-window-sample)
+add_subdirectory(rect-window-sample)
 add_subdirectory(test-sample)
 
 ##########################################

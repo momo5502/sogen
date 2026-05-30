@@ -176,7 +176,9 @@ namespace sogen
         uint64_t spwndParent;
         uint8_t pad_038[8];
         uint64_t spwndOwner;
-        uint8_t pad_048[48];
+        RECT rcWindow;
+        RECT rcClient;
+        RECT rcWindowRelative;
         uint64_t lpfnWndProc;
         uint64_t pcls;
         uint8_t pad_088[16];

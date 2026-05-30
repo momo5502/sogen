@@ -540,10 +540,15 @@ namespace sogen
         this->default_desktop_window_handle = wh;
         desktop_win.handle = wh.bits;
         desktop_win.style = WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
+        desktop_win.width = 1920;
+        desktop_win.height = 1080;
         desktop_win.guest.access([&](USER_WINDOW& window) {
             window.hWnd = wh.bits;
             window.ptrBase = desktop_win.guest.value();
             window.dwStyle = desktop_win.style;
+            window.rcWindow = {.left = 0, .top = 0, .right = desktop_win.width, .bottom = desktop_win.height};
+            window.rcClient = window.rcWindow;
+            window.rcWindowRelative = window.rcWindow;
             window.fnid = 0x29D;   // FNID_DESKTOP
             window.windowBand = 1; // ZBID_DESKTOP
         });

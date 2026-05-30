@@ -448,6 +448,7 @@ namespace sogen
                                            emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> window_name);
         BOOL handle_NtUserMoveWindow();
         uint64_t handle_NtUserGetProcessWindowStation();
+        uint64_t handle_NtUserCallHwndParam(const syscall_context& c, hwnd hwnd, uint64_t param, uint32_t code);
         uint16_t handle_NtUserRegisterClassExWOW(const syscall_context& c, emulator_object<EMU_WNDCLASSEX> wnd_class_ex,
                                                  emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                                  emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_version,
@@ -501,7 +502,7 @@ namespace sogen
                                                   uint64_t param);
         BOOL handle_NtUserGetHDevName(const syscall_context& c, handle hdev, emulator_pointer device_name);
         emulator_pointer handle_NtUserMapDesktopObject(const syscall_context& c, handle handle);
-        NTSTATUS handle_NtUserTransformRect();
+        BOOL handle_NtUserTransformRect(const syscall_context& c, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4);
         BOOL handle_NtUserSetWindowPos();
         NTSTATUS handle_NtUserSetForegroundWindow();
         hwnd handle_NtUserGetForegroundWindow();
@@ -1068,6 +1069,7 @@ namespace sogen
         add_handler(NtFlushBuffersFile);
         add_handler(NtAreMappedFilesTheSame);
         add_handler(NtUserGetProcessWindowStation);
+        add_handler(NtUserCallHwndParam);
         add_handler(NtUserRegisterClassExWOW);
         add_handler(NtUserUnregisterClass);
         add_handler(NtUserSetWindowsHookEx);
