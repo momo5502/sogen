@@ -414,10 +414,10 @@ namespace sogen
             return STATUS_INVALID_CID;
         }
 
-        NTSTATUS handle_NtOpenThreadToken(const syscall_context&, const handle thread_handle, const ACCESS_MASK /*desired_access*/,
+        NTSTATUS handle_NtOpenThreadToken(const syscall_context& c, const handle thread_handle, const ACCESS_MASK /*desired_access*/,
                                           const BOOLEAN /*open_as_self*/, const emulator_object<handle> token_handle)
         {
-            if (thread_handle != CURRENT_THREAD)
+            if (!c.proc.is_current_thread_handle(thread_handle))
             {
                 return STATUS_NOT_SUPPORTED;
             }
@@ -608,12 +608,14 @@ namespace sogen
                                         const ACCESS_MASK /*desired_access*/, const ULONG /*handle_attributes*/, const ULONG flags,
                                         const emulator_object<handle> new_thread_handle)
         {
-            if (process_handle != CURRENT_PROCESS)
+            if (!c.proc.is_current_process_handle(process_handle))
             {
                 return STATUS_INVALID_HANDLE;
             }
 
-            if (thread_handle != NULL_HANDLE && thread_handle.value.type != handle_types::thread)
+            const auto resolved_thread_handle = c.proc.resolve_object_pseudo_handle(thread_handle);
+
+            if (resolved_thread_handle != NULL_HANDLE && resolved_thread_handle.value.type != handle_types::thread)
             {
                 return STATUS_INVALID_HANDLE;
             }
@@ -625,7 +627,7 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
 
-            bool return_next_thread = thread_handle == NULL_HANDLE;
+            bool return_next_thread = resolved_thread_handle == NULL_HANDLE;
             for (auto& t : c.proc.threads)
             {
                 if (return_next_thread && !t.second.is_terminated())
@@ -635,7 +637,7 @@ namespace sogen
                     return STATUS_SUCCESS;
                 }
 
-                if (t.first == thread_handle.value.id)
+                if (t.first == resolved_thread_handle.value.id)
                 {
                     return_next_thread = true;
                 }
@@ -719,7 +721,7 @@ namespace sogen
                                          const EmulatorTraits<Emu64>::SIZE_T maximum_stack_size,
                                          const emulator_object<PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>> attribute_list)
         {
-            if (process_handle != CURRENT_PROCESS)
+            if (!c.proc.is_current_process_handle(process_handle))
             {
                 return STATUS_NOT_SUPPORTED;
             }

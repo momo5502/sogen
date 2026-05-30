@@ -76,24 +76,26 @@ namespace sogen
                                           const handle target_process_handle, const emulator_object<handle> target_handle,
                                           const ACCESS_MASK /*desired_access*/, const ULONG /*handle_attributes*/, const ULONG /*options*/)
         {
-            if (source_process_handle != CURRENT_PROCESS || target_process_handle != CURRENT_PROCESS)
+            if (!c.proc.is_current_process_handle(source_process_handle) || !c.proc.is_current_process_handle(target_process_handle))
             {
                 return STATUS_NOT_SUPPORTED;
             }
 
-            if (source_handle.value.is_pseudo)
+            const auto resolved_source_handle = c.proc.resolve_object_pseudo_handle(source_handle);
+
+            if (resolved_source_handle.value.is_pseudo)
             {
-                target_handle.write(source_handle);
+                target_handle.write(resolved_source_handle);
                 return STATUS_SUCCESS;
             }
 
-            auto* store = c.proc.get_handle_store(source_handle);
+            auto* store = c.proc.get_handle_store(resolved_source_handle);
             if (!store)
             {
                 return STATUS_NOT_SUPPORTED;
             }
 
-            const auto new_handle = store->duplicate(source_handle);
+            const auto new_handle = store->duplicate(resolved_source_handle);
             if (!new_handle)
             {
                 return STATUS_INVALID_HANDLE;
@@ -145,6 +147,8 @@ namespace sogen
                 return u"TpWorkerFactory";
             case handle_types::private_namespace:
                 return u"Directory";
+            case handle_types::process:
+                return u"Process";
             default:
                 return u"";
             }
@@ -154,17 +158,19 @@ namespace sogen
                                       const OBJECT_INFORMATION_CLASS object_information_class, const emulator_pointer object_information,
                                       const ULONG object_information_length, const emulator_object<ULONG> return_length)
         {
+            const auto effective_handle = c.proc.resolve_object_pseudo_handle(handle);
+
             if (object_information_class == ObjectNameInformation)
             {
                 std::u16string device_path;
-                switch (handle.value.type)
+                switch (effective_handle.value.type)
                 {
                 case handle_types::reserved: {
                     return STATUS_NOT_SUPPORTED;
                 }
 
                 case handle_types::file: {
-                    const auto* file = c.proc.files.get(handle);
+                    const auto* file = c.proc.files.get(effective_handle);
                     if (!file)
                     {
                         return STATUS_INVALID_HANDLE;
@@ -174,7 +180,7 @@ namespace sogen
                     break;
                 }
                 case handle_types::device: {
-                    const auto* device = c.proc.devices.get(handle);
+                    const auto* device = c.proc.devices.get(effective_handle);
                     if (!device)
                     {
                         return STATUS_INVALID_HANDLE;
@@ -185,19 +191,19 @@ namespace sogen
                 }
                 case handle_types::directory: {
                     // Directory handles are pseudo handles representing specific object directories
-                    if (handle == KNOWN_DLLS_DIRECTORY)
+                    if (effective_handle == KNOWN_DLLS_DIRECTORY)
                     {
                         device_path = u"\\KnownDlls";
                     }
-                    else if (handle == KNOWN_DLLS32_DIRECTORY)
+                    else if (effective_handle == KNOWN_DLLS32_DIRECTORY)
                     {
                         device_path = u"\\KnownDlls32";
                     }
-                    else if (handle == BASE_NAMED_OBJECTS_DIRECTORY)
+                    else if (effective_handle == BASE_NAMED_OBJECTS_DIRECTORY)
                     {
                         device_path = u"\\Sessions\\1\\BaseNamedObjects";
                     }
-                    else if (handle == RPC_CONTROL_DIRECTORY)
+                    else if (effective_handle == RPC_CONTROL_DIRECTORY)
                     {
                         device_path = u"\\RPC Control";
                     }
@@ -209,7 +215,7 @@ namespace sogen
                     break;
                 }
                 case handle_types::registry: {
-                    const auto* registry = c.proc.registry_keys.get(handle);
+                    const auto* registry = c.proc.registry_keys.get(effective_handle);
                     if (!registry)
                     {
                         return STATUS_INVALID_HANDLE;
@@ -228,7 +234,7 @@ namespace sogen
                     break;
                 }
                 case handle_types::desktop: {
-                    const auto* desk = c.proc.desktops.get(handle);
+                    const auto* desk = c.proc.desktops.get(effective_handle);
                     if (!desk)
                     {
                         return STATUS_INVALID_HANDLE;
@@ -239,7 +245,7 @@ namespace sogen
                     break;
                 }
                 case handle_types::io_completion: {
-                    const auto* io = c.proc.io_completions.get(handle);
+                    const auto* io = c.proc.io_completions.get(effective_handle);
                     if (!io)
                     {
                         return STATUS_INVALID_HANDLE;
@@ -249,7 +255,7 @@ namespace sogen
                     break;
                 }
                 case handle_types::wait_completion_packet: {
-                    const auto* packet = c.proc.wait_completion_packets.get(handle);
+                    const auto* packet = c.proc.wait_completion_packets.get(effective_handle);
                     if (!packet)
                     {
                         return STATUS_INVALID_HANDLE;
@@ -259,7 +265,7 @@ namespace sogen
                     break;
                 }
                 case handle_types::worker_factory: {
-                    const auto* factory = c.proc.worker_factories.get(handle);
+                    const auto* factory = c.proc.worker_factories.get(effective_handle);
                     if (!factory)
                     {
                         return STATUS_INVALID_HANDLE;
@@ -269,7 +275,7 @@ namespace sogen
                     break;
                 }
                 case handle_types::private_namespace: {
-                    const auto* ns = c.proc.private_namespaces.get(handle);
+                    const auto* ns = c.proc.private_namespaces.get(effective_handle);
                     if (!ns)
                     {
                         return STATUS_INVALID_HANDLE;
@@ -277,8 +283,25 @@ namespace sogen
 
                     break;
                 }
+                case handle_types::process: {
+                    if (effective_handle != GUEST_PROCESS_HANDLE)
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+
+                    break;
+                }
+                case handle_types::thread: {
+                    const auto* thread = c.proc.threads.get(effective_handle);
+                    if (!thread)
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+
+                    break;
+                }
                 default:
-                    c.win_emu.log.error("Unsupported handle type for name information query: %X\n", handle.value.type);
+                    c.win_emu.log.error("Unsupported handle type for name information query: %X\n", effective_handle.value.type);
                     c.emu.stop();
                     return STATUS_NOT_SUPPORTED;
                 }
@@ -308,7 +331,7 @@ namespace sogen
 
             if (object_information_class == ObjectTypeInformation)
             {
-                const auto name = get_type_name(static_cast<handle_types::type>(handle.value.type));
+                const auto name = get_type_name(static_cast<handle_types::type>(effective_handle.value.type));
 
                 const auto required_size = sizeof(OBJECT_TYPE_INFORMATION) + (name.size() + 1) * 2;
                 return_length.write_if_valid(static_cast<ULONG>(required_size));
@@ -329,7 +352,7 @@ namespace sogen
 
             if (object_information_class == ObjectTypesInformation)
             {
-                const auto name = get_type_name(static_cast<handle_types::type>(handle.value.type));
+                const auto name = get_type_name(static_cast<handle_types::type>(effective_handle.value.type));
                 constexpr auto type_start_offset = align_up(sizeof(OBJECT_TYPES_INFORMATION), sizeof(uint64_t));
 
                 const auto required_size = type_start_offset + sizeof(OBJECT_TYPE_INFORMATION) + (name.size() + 1) * 2;
@@ -425,6 +448,9 @@ namespace sogen
 
             switch (h.value.type)
             {
+            case handle_types::process:
+                return h == GUEST_PROCESS_HANDLE ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
+
             case handle_types::event:
                 if (h.value.is_pseudo)
                 {
@@ -455,9 +481,11 @@ namespace sogen
             }
         }
 
-        NTSTATUS handle_NtCompareObjects(const syscall_context&, const handle first, const handle second)
+        NTSTATUS handle_NtCompareObjects(const syscall_context& c, const handle first, const handle second)
         {
-            return (first == second) ? STATUS_SUCCESS : STATUS_NOT_SAME_OBJECT;
+            const auto first_resolved = c.proc.resolve_object_pseudo_handle(first);
+            const auto second_resolved = c.proc.resolve_object_pseudo_handle(second);
+            return (first_resolved == second_resolved) ? STATUS_SUCCESS : STATUS_NOT_SAME_OBJECT;
         }
 
         NTSTATUS handle_NtWaitForMultipleObjects(const syscall_context& c, const ULONG count, const emulator_object<handle> handles,
@@ -486,6 +514,12 @@ namespace sogen
             for (ULONG i = 0; i < count; ++i)
             {
                 const auto h = handles.read(i);
+
+                if (c.proc.is_object_pseudo_handle(h))
+                {
+                    t.await_time = {};
+                    return STATUS_INVALID_HANDLE;
+                }
 
                 const auto validation_status = validate_wait_handle(c, h);
                 if (!NT_SUCCESS(validation_status))
@@ -542,6 +576,12 @@ namespace sogen
                     return STATUS_INVALID_HANDLE;
                 }
 
+                if (c.proc.is_object_pseudo_handle(*h))
+                {
+                    t.await_time = {};
+                    return STATUS_INVALID_HANDLE;
+                }
+
                 const auto validation_status = validate_wait_handle(c, *h);
                 if (!NT_SUCCESS(validation_status))
                 {
@@ -567,14 +607,15 @@ namespace sogen
         NTSTATUS handle_NtWaitForSingleObject(const syscall_context& c, const handle h, const BOOLEAN alertable,
                                               const emulator_object<LARGE_INTEGER> timeout)
         {
-            const auto validation_status = validate_wait_handle(c, h);
+            const auto resolved_handle = c.proc.resolve_object_pseudo_handle(h);
+            const auto validation_status = validate_wait_handle(c, resolved_handle);
             if (!NT_SUCCESS(validation_status))
             {
                 return validation_status;
             }
 
             auto& t = c.win_emu.current_thread();
-            t.await_objects = {h};
+            t.await_objects = {resolved_handle};
             t.await_any = false;
 
             if (timeout.value() && !t.await_time.has_value())

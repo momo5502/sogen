@@ -32,6 +32,7 @@ namespace sogen
             wait_completion_packet,
             worker_factory,
             private_namespace,
+            process,
         };
     };
 
@@ -424,6 +425,165 @@ namespace sogen
         value_map store_{};
     };
 
+    template <handle_types::type Type, typename T>
+        requires(utils::Serializable<T> && std::is_base_of_v<ref_counted_object, T>)
+    class dummy_handle_store : public generic_handle_store
+    {
+      public:
+        using key_type = uint32_t;
+        using value_map = std::map<key_type, T>;
+
+        explicit dummy_handle_store(std::initializer_list<handle> handles)
+        {
+            for (const auto h : handles)
+            {
+                if (h.value.type != Type)
+                {
+                    throw std::invalid_argument("Handle has an unexpected type!");
+                }
+
+                const auto key = this->make_key(h);
+                const auto [_, inserted] = this->store_.try_emplace(key);
+
+                if (!inserted)
+                {
+                    throw std::invalid_argument("Duplicate handle!");
+                }
+
+                this->handles_.emplace(key, h);
+            }
+        }
+
+        T* get(const handle_value h)
+        {
+            handle hh{};
+            hh.value = h;
+            return this->get(hh);
+        }
+
+        const T* get(const handle_value h) const
+        {
+            handle hh{};
+            hh.value = h;
+            return this->get(hh);
+        }
+
+        T* get(const handle h)
+        {
+            const auto entry = this->store_.find(this->make_key(h));
+            return entry == this->store_.end() ? nullptr : &entry->second;
+        }
+
+        const T* get(const handle h) const
+        {
+            const auto entry = this->store_.find(this->make_key(h));
+            return entry == this->store_.end() ? nullptr : &entry->second;
+        }
+
+        T* get(const uint64_t h)
+        {
+            return this->get(sogen::make_handle(h));
+        }
+
+        const T* get(const uint64_t h) const
+        {
+            return this->get(sogen::make_handle(h));
+        }
+
+        size_t size() const
+        {
+            return this->store_.size();
+        }
+
+        std::optional<handle> duplicate(const handle h) override
+        {
+            auto* entry = this->get(h);
+            if (!entry)
+            {
+                return std::nullopt;
+            }
+
+            ++static_cast<ref_counted_object*>(entry)->ref_count;
+            return h;
+        }
+
+        bool erase(const handle h) override
+        {
+            auto* entry = this->get(h);
+            if (!entry)
+            {
+                return false;
+            }
+
+            auto& ref_count = static_cast<ref_counted_object*>(entry)->ref_count;
+            if (ref_count > 1)
+            {
+                --ref_count;
+            }
+
+            return true;
+        }
+
+        bool erase(const handle_value h)
+        {
+            handle hh{};
+            hh.value = h;
+            return this->erase(hh);
+        }
+
+        bool erase(const uint64_t h)
+        {
+            return this->erase(sogen::make_handle(h));
+        }
+
+        handle find_handle(const T& value) const
+        {
+            for (const auto& [key, entry] : this->store_)
+            {
+                if (&entry == &value)
+                {
+                    return this->handles_.at(key);
+                }
+            }
+
+            return {};
+        }
+
+        handle find_handle(const T* value) const
+        {
+            return value ? this->find_handle(*value) : handle{};
+        }
+
+        typename value_map::iterator begin()
+        {
+            return this->store_.begin();
+        }
+
+        typename value_map::const_iterator begin() const
+        {
+            return this->store_.begin();
+        }
+
+        typename value_map::iterator end()
+        {
+            return this->store_.end();
+        }
+
+        typename value_map::const_iterator end() const
+        {
+            return this->store_.end();
+        }
+
+      private:
+        key_type make_key(const handle h) const
+        {
+            return static_cast<key_type>(h.bits & 0x00000000FFFFFFFFULL);
+        }
+
+        value_map store_{};
+        std::map<key_type, handle> handles_{};
+    };
+
     constexpr auto NULL_HANDLE = make_handle(0ULL);
 
     constexpr auto KNOWN_DLLS_DIRECTORY = make_pseudo_handle(0x1, handle_types::directory);
@@ -448,6 +608,8 @@ namespace sogen
     constexpr auto NUL_HANDLE = make_pseudo_handle(0x4, handle_types::file);
 
     constexpr auto DUMMY_IMPERSONATION_TOKEN = make_pseudo_handle(0x1, handle_types::token);
+
+    constexpr auto GUEST_PROCESS_HANDLE = make_handle(0x1, handle_types::process, false);
 
     constexpr auto CURRENT_PROCESS = make_handle(~0ULL);
     constexpr auto CURRENT_THREAD = make_handle(~1ULL);

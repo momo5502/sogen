@@ -489,7 +489,7 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
 
-            if (process_handle != CURRENT_PROCESS)
+            if (!c.proc.is_current_process_handle(process_handle))
             {
                 return STATUS_INVALID_HANDLE;
             }

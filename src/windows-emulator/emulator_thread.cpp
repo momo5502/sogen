@@ -78,6 +78,14 @@ namespace sogen
             default:
                 break;
 
+            case handle_types::process:
+                if (h == GUEST_PROCESS_HANDLE && c.exit_status.has_value())
+                {
+                    return wait_state::signaled;
+                }
+
+                break;
+
             case handle_types::event: {
                 if (h.value.is_pseudo)
                 {
@@ -135,6 +143,15 @@ namespace sogen
         {
             switch (h.value.type)
             {
+            case handle_types::process: {
+                if (h != GUEST_PROCESS_HANDLE || !c.exit_status.has_value())
+                {
+                    return std::nullopt;
+                }
+
+                return wait_state::signaled;
+            }
+
             case handle_types::event: {
                 if (h.value.is_pseudo)
                 {

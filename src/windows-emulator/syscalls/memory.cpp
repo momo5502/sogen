@@ -123,7 +123,7 @@ namespace sogen
                                              const uint32_t info_class, const uint64_t memory_information,
                                              const uint64_t memory_information_length, const emulator_object<uint64_t> return_length)
         {
-            if (process_handle != CURRENT_PROCESS)
+            if (!c.proc.is_current_process_handle(process_handle))
             {
                 return STATUS_NOT_SUPPORTED;
             }
@@ -261,7 +261,7 @@ namespace sogen
                                                const emulator_object<uint32_t> bytes_to_protect, const uint32_t protection,
                                                const emulator_object<uint32_t> old_protection)
         {
-            if (process_handle != CURRENT_PROCESS)
+            if (!c.proc.is_current_process_handle(process_handle))
             {
                 return STATUS_NOT_SUPPORTED;
             }
@@ -308,7 +308,7 @@ namespace sogen
                                                   const emulator_object<MEM_EXTENDED_PARAMETER64> extended_parameters,
                                                   const ULONG extended_parameter_count)
         {
-            if (process_handle != CURRENT_PROCESS)
+            if (!c.proc.is_current_process_handle(process_handle))
             {
                 return STATUS_NOT_SUPPORTED;
             }
@@ -457,7 +457,7 @@ namespace sogen
                                             const emulator_object<uint64_t> base_address, const emulator_object<uint64_t> bytes_to_allocate,
                                             const uint32_t free_type)
         {
-            if (process_handle != CURRENT_PROCESS)
+            if (!c.proc.is_current_process_handle(process_handle))
             {
                 return STATUS_NOT_SUPPORTED;
             }
@@ -549,7 +549,7 @@ namespace sogen
         {
             number_of_bytes_read.try_write(0);
 
-            if (process_handle != CURRENT_PROCESS)
+            if (!c.proc.is_current_process_handle(process_handle))
             {
                 return STATUS_NOT_SUPPORTED;
             }
@@ -603,7 +603,7 @@ namespace sogen
         {
             number_of_bytes_write.try_write(0);
 
-            if (process_handle != CURRENT_PROCESS)
+            if (!c.proc.is_current_process_handle(process_handle))
             {
                 return STATUS_NOT_SUPPORTED;
             }
@@ -643,7 +643,7 @@ namespace sogen
                                              const emulator_object<uint64_t> base_address, const emulator_object<uint64_t> region_size,
                                              const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block)
         {
-            if (process_handle != CURRENT_PROCESS)
+            if (!c.proc.is_current_process_handle(process_handle))
             {
                 return STATUS_NOT_SUPPORTED;
             }

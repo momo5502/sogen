@@ -12,6 +12,9 @@ namespace sogen
             {
                 switch (target_object_handle.value.type)
                 {
+                case handle_types::process:
+                    return target_object_handle == GUEST_PROCESS_HANDLE && process.exit_status.has_value();
+
                 case handle_types::event: {
                     const auto* e = process.events.get(target_object_handle);
                     return e && e->signaled;
@@ -71,6 +74,7 @@ namespace sogen
         {
             switch (target_object_handle.value.type)
             {
+            case handle_types::process:
             case handle_types::event:
             case handle_types::thread:
             case handle_types::semaphore:
@@ -90,19 +94,21 @@ namespace sogen
                 return true;
             }
 
-            if (source_handle.value.is_pseudo)
+            const auto resolved_source_handle = process.resolve_object_pseudo_handle(source_handle);
+
+            if (resolved_source_handle.value.is_pseudo)
             {
-                retained_handle = source_handle;
+                retained_handle = resolved_source_handle;
                 return true;
             }
 
-            auto* store = process.get_handle_store(source_handle);
+            auto* store = process.get_handle_store(resolved_source_handle);
             if (!store)
             {
                 return false;
             }
 
-            const auto duplicated = store->duplicate(source_handle);
+            const auto duplicated = store->duplicate(resolved_source_handle);
             if (!duplicated)
             {
                 return false;

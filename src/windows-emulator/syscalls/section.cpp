@@ -285,7 +285,7 @@ namespace sogen
                                            const SECTION_INHERIT /*inherit_disposition*/, const ULONG /*allocation_type*/,
                                            const ULONG /*win32_protect*/)
         {
-            if (process_handle != CURRENT_PROCESS)
+            if (!c.proc.is_current_process_handle(process_handle))
             {
                 return STATUS_INVALID_HANDLE;
             }
@@ -525,7 +525,7 @@ namespace sogen
 
         NTSTATUS handle_NtUnmapViewOfSection(const syscall_context& c, const handle process_handle, const uint64_t base_address)
         {
-            if (process_handle != CURRENT_PROCESS)
+            if (!c.proc.is_current_process_handle(process_handle))
             {
                 return STATUS_NOT_SUPPORTED;
             }

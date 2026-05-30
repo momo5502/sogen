@@ -304,24 +304,28 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            if (!io_completion_wait::is_wait_completion_target_type(target_object_handle))
+            const auto resolved_target_handle = c.proc.resolve_object_pseudo_handle(target_object_handle);
+
+            if (!io_completion_wait::is_wait_completion_target_type(resolved_target_handle))
             {
                 return STATUS_OBJECT_TYPE_MISMATCH;
             }
 
             const auto target_exists = [&]() -> bool {
-                switch (target_object_handle.value.type)
+                switch (resolved_target_handle.value.type)
                 {
+                case handle_types::process:
+                    return resolved_target_handle == GUEST_PROCESS_HANDLE;
                 case handle_types::event:
-                    return c.proc.events.get(target_object_handle) != nullptr;
+                    return c.proc.events.get(resolved_target_handle) != nullptr;
                 case handle_types::thread:
-                    return c.proc.threads.get(target_object_handle) != nullptr;
+                    return c.proc.threads.get(resolved_target_handle) != nullptr;
                 case handle_types::semaphore:
-                    return c.proc.semaphores.get(target_object_handle) != nullptr;
+                    return c.proc.semaphores.get(resolved_target_handle) != nullptr;
                 case handle_types::mutant:
-                    return c.proc.mutants.get(target_object_handle) != nullptr;
+                    return c.proc.mutants.get(resolved_target_handle) != nullptr;
                 case handle_types::timer:
-                    return c.proc.timers.get(target_object_handle) != nullptr;
+                    return c.proc.timers.get(resolved_target_handle) != nullptr;
                 default:
                     return false;
                 }
@@ -344,7 +348,7 @@ namespace sogen
             }
 
             handle retained_target_handle{};
-            if (!io_completion_wait::retain_handle_reference(c.proc, target_object_handle, retained_target_handle))
+            if (!io_completion_wait::retain_handle_reference(c.proc, resolved_target_handle, retained_target_handle))
             {
                 io_completion_wait::release_handle_reference(c.proc, retained_io_completion_handle);
                 return STATUS_INVALID_HANDLE;
