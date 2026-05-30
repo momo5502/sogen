@@ -111,6 +111,14 @@ namespace sogen::test
         return settings;
     }
 
+    inline application_settings make_application_settings(std::u16string application, std::vector<std::u16string> arguments = {})
+    {
+        application_settings settings{};
+        settings.application = windows_path(std::move(application));
+        settings.arguments = std::move(arguments);
+        return settings;
+    }
+
     inline windows_emulator create_emulator(emulator_settings settings, emulator_callbacks callbacks = {},
                                             emulator_interfaces interfaces = {})
     {
@@ -199,6 +207,38 @@ namespace sogen::test
         }
 
         return create_emulator(std::move(settings), {}, std::move(interfaces));
+    }
+
+    inline windows_emulator create_application_emulator(application_settings app_settings, emulator_settings settings = {},
+                                                        emulator_callbacks callbacks = {}, emulator_interfaces interfaces = {})
+    {
+        const auto is_verbose = enable_verbose_logging();
+
+        if (is_verbose)
+        {
+            callbacks.on_stdout = [](const std::string_view data) {
+                std::cout << data; //
+            };
+        }
+
+        settings.emulation_root = get_emulator_root();
+
+        settings.path_mappings[app_settings.application] =
+            std::filesystem::current_path() / std::filesystem::path(app_settings.application.string()).filename();
+        settings.path_mappings["C:\\a.txt"] =
+            std::filesystem::temp_directory_path() / ("emulator-test-file-" + std::to_string(getpid()) + ".txt");
+
+        if (!interfaces.socket_factory)
+        {
+            interfaces.socket_factory = network::create_static_socket_factory();
+        }
+
+        if (!interfaces.dns_lookup)
+        {
+            interfaces.dns_lookup = create_sample_dns_lookup();
+        }
+
+        return windows_emulator{create_x86_64_emulator(), std::move(app_settings), settings, std::move(callbacks), std::move(interfaces)};
     }
 
     inline void bisect_emulation(windows_emulator& emu)

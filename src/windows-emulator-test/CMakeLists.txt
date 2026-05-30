@@ -18,7 +18,7 @@ target_link_libraries(windows-emulator-test PRIVATE
 )
 
 if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
-  add_dependencies(windows-emulator-test test-sample)
+  add_dependencies(windows-emulator-test hello-window-sample paint-window-sample test-sample)
 endif()
 
 add_test(NAME windows-emulator-test

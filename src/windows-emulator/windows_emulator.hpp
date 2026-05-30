@@ -60,6 +60,7 @@ namespace sogen
         unknown_syscall,
         unimplemented_syscall,
         syscall_exception,
+        deadlock,
     };
 
     struct application_settings

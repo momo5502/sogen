@@ -93,6 +93,55 @@ namespace sogen
             }
         }
 
+        bool has_finite_timeout(const std::optional<std::chrono::steady_clock::time_point>& timeout)
+        {
+            return timeout.has_value() && timeout.value() != std::chrono::steady_clock::time_point::min();
+        }
+
+        bool can_thread_make_progress_without_external_input(const emulator_thread& thread)
+        {
+            if (thread.is_terminated() || thread.suspended > 0)
+            {
+                return false;
+            }
+
+            if (thread.pending_status.has_value() || !thread.message_queue.empty() || !thread.pending_apcs.empty())
+            {
+                return true;
+            }
+
+            if (has_finite_timeout(thread.await_time))
+            {
+                return true;
+            }
+
+            if (thread.waiting_for_alert && has_finite_timeout(thread.await_time))
+            {
+                return true;
+            }
+
+            if (thread.await_io_completion.has_value() && has_finite_timeout(thread.await_io_completion->timeout))
+            {
+                return true;
+            }
+
+            return thread.await_objects.empty() && !thread.await_msg.has_value() && !thread.await_io_completion.has_value() &&
+                   !thread.await_time.has_value() && !thread.waiting_for_alert;
+        }
+
+        bool has_internal_progress_path(const windows_emulator& win_emu)
+        {
+            for (const auto& thread : win_emu.process.threads | std::views::values)
+            {
+                if (can_thread_make_progress_without_external_input(thread))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         emulator_thread* get_thread_by_id(process_context& process, const uint32_t id)
         {
             for (auto& t : process.threads | std::views::values)
@@ -403,8 +452,16 @@ namespace sogen
         const auto needed_switch = this->switch_thread_.exchange(false);
 
         this->switch_thread_ = false;
+        size_t idle_iterations = 0;
         while (!switch_to_next_thread(*this))
         {
+            if (!has_internal_progress_path(*this))
+            {
+                this->record_stop(stop_reason::deadlock, "No runnable thread and no internal wakeup path");
+                this->switch_thread_ = needed_switch;
+                return false;
+            }
+
             if (this->use_relative_time_)
             {
                 this->executed_instructions_ += MAX_INSTRUCTIONS_PER_TIME_SLICE;
@@ -416,6 +473,13 @@ namespace sogen
 
             if (this->should_stop)
             {
+                this->switch_thread_ = needed_switch;
+                return false;
+            }
+
+            if (++idle_iterations >= 5000)
+            {
+                this->record_stop(stop_reason::deadlock, "No thread became runnable after waiting");
                 this->switch_thread_ = needed_switch;
                 return false;
             }

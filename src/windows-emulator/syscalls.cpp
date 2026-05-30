@@ -437,6 +437,8 @@ namespace sogen
         hdc handle_NtUserGetDC(const syscall_context& c, hwnd window);
         hdc handle_NtUserGetWindowDC(const syscall_context& c, hwnd window);
         BOOL handle_NtUserReleaseDC();
+        hdc handle_NtUserBeginPaint(const syscall_context& c, hwnd window, emulator_object<EMU_PAINTSTRUCT> paint_struct);
+        BOOL handle_NtUserEndPaint(const syscall_context& c, hwnd window, emulator_object<EMU_PAINTSTRUCT> paint_struct);
         NTSTATUS handle_NtUserGetCursorPos();
         NTSTATUS handle_NtUserSetCursor();
         uint64_t handle_NtUserGetCursor();
@@ -1026,6 +1028,8 @@ namespace sogen
         add_handler(NtUserGetDCEx);
         add_handler(NtUserGetDC);
         add_handler(NtUserGetWindowDC);
+        add_handler(NtUserBeginPaint);
+        add_handler(NtUserEndPaint);
         add_handler(NtUserGetDpiForCurrentProcess);
         add_handler(NtReleaseSemaphore);
         add_handler(NtEnumerateKey);

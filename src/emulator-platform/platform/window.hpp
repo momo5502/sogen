@@ -110,6 +110,16 @@ namespace sogen
         DWORD dwExStyle;
     };
 
+    struct EMU_PAINTSTRUCT
+    {
+        hdc hdc;
+        BOOL fErase;
+        RECT rcPaint;
+        BOOL fRestore;
+        BOOL fIncUpdate;
+        uint8_t rgbReserved[32];
+    };
+
 #ifndef OS_WINDOWS
 #define MAXINTATOM           0xC000
 
@@ -133,6 +143,8 @@ namespace sogen
 #define WM_KILLFOCUS         0x0008
 #define WM_QUIT              0x0012
 #define WM_SHOWWINDOW        0x0018
+#define WM_PAINT             0x000F
+#define WM_ERASEBKGND        0x0014
 #define WM_GETMINMAXINFO     0x0024
 #define WM_WINDOWPOSCHANGING 0x0046
 #define WM_WINDOWPOSCHANGED  0x0047

@@ -620,6 +620,43 @@ namespace sogen
             return TRUE;
         }
 
+        hdc handle_NtUserBeginPaint(const syscall_context& c, const hwnd window, const emulator_object<EMU_PAINTSTRUCT> paint_struct)
+        {
+            const auto* win = c.proc.windows.get(window);
+            if (!win)
+            {
+                return 0;
+            }
+
+            const auto dc = handle_NtUserGetDCEx(c, window, 0, 0);
+            if (!dc)
+            {
+                return 0;
+            }
+
+            if (paint_struct)
+            {
+                EMU_PAINTSTRUCT ps{};
+                ps.hdc = dc;
+                ps.fErase = FALSE;
+                ps.rcPaint.left = 0;
+                ps.rcPaint.top = 0;
+                ps.rcPaint.right = win->width;
+                ps.rcPaint.bottom = win->height;
+                ps.fRestore = FALSE;
+                ps.fIncUpdate = FALSE;
+                paint_struct.write(ps);
+            }
+
+            return dc;
+        }
+
+        BOOL handle_NtUserEndPaint(const syscall_context& c, const hwnd window, const emulator_object<EMU_PAINTSTRUCT> /*paint_struct*/)
+        {
+            const auto* win = c.proc.windows.get(window);
+            return win ? TRUE : FALSE;
+        }
+
         NTSTATUS handle_NtUserGetCursorPos()
         {
             return STATUS_NOT_SUPPORTED;
@@ -880,6 +917,7 @@ namespace sogen
                 const auto size_lparam = static_cast<uint64_t>(((height & 0xFFFF) << 16) | (width & 0xFFFF));
 
                 const std::initializer_list<qmsg> sw_messages = {
+                    {.message = WM_PAINT, .wParam = 0, .lParam = 0},
                     {.message = WM_MOVE, .wParam = 0, .lParam = move_lparam},
                     {.message = WM_SIZE, .wParam = 0, .lParam = size_lparam},
                     {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = state.window_pos_alloc.address},
@@ -1077,6 +1115,7 @@ namespace sogen
                 const auto size_lparam = static_cast<uint64_t>(((win->height & 0xFFFF) << 16) | (win->width & 0xFFFF));
 
                 state.message_queue = {
+                    {.message = WM_PAINT, .wParam = 0, .lParam = 0},
                     {.message = WM_MOVE, .wParam = 0, .lParam = move_lparam},
                     {.message = WM_SIZE, .wParam = 0, .lParam = size_lparam},
                     {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = state.window_pos_alloc.address},
