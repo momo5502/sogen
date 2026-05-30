@@ -9,6 +9,7 @@ namespace sogen
 
 #ifndef OS_WINDOWS
 #define STATUS_WAIT_0                 ((NTSTATUS)0x00000000L)
+#define STATUS_ABANDONED_WAIT_0       ((NTSTATUS)0x00000080L)
 #define STATUS_USER_APC               ((NTSTATUS)0x000000C0L)
 #define STATUS_TIMEOUT                ((NTSTATUS)0x00000102L)
 #define STATUS_PENDING                ((NTSTATUS)0x00000103L)
