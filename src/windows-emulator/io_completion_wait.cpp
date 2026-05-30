@@ -94,38 +94,21 @@ namespace sogen
                 return true;
             }
 
-            if (process.is_object_pseudo_handle(source_handle))
+            const auto resolved_source_handle = process.resolve_object_pseudo_handle(source_handle);
+
+            if (resolved_source_handle.value.is_pseudo)
             {
-                const auto resolved_handle = process.resolve_object_pseudo_handle(source_handle);
-                auto* store = process.get_handle_store(resolved_handle);
-                if (!store)
-                {
-                    return false;
-                }
-
-                const auto duplicated = store->duplicate(resolved_handle);
-                if (!duplicated)
-                {
-                    return false;
-                }
-
-                retained_handle = *duplicated;
+                retained_handle = resolved_source_handle;
                 return true;
             }
 
-            if (source_handle.value.is_pseudo)
-            {
-                retained_handle = source_handle;
-                return true;
-            }
-
-            auto* store = process.get_handle_store(source_handle);
+            auto* store = process.get_handle_store(resolved_source_handle);
             if (!store)
             {
                 return false;
             }
 
-            const auto duplicated = store->duplicate(source_handle);
+            const auto duplicated = store->duplicate(resolved_source_handle);
             if (!duplicated)
             {
                 return false;

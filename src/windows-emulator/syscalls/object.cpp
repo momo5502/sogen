@@ -83,37 +83,19 @@ namespace sogen
 
             const auto resolved_source_handle = c.proc.resolve_object_pseudo_handle(source_handle);
 
-            if (resolved_source_handle != source_handle)
+            if (resolved_source_handle.value.is_pseudo)
             {
-                auto* store = c.proc.get_handle_store(resolved_source_handle);
-                if (!store)
-                {
-                    return STATUS_INVALID_HANDLE;
-                }
-
-                const auto new_handle = store->duplicate(resolved_source_handle);
-                if (!new_handle)
-                {
-                    return STATUS_INVALID_HANDLE;
-                }
-
-                target_handle.write(*new_handle);
+                target_handle.write(resolved_source_handle);
                 return STATUS_SUCCESS;
             }
 
-            if (source_handle.value.is_pseudo)
-            {
-                target_handle.write(source_handle);
-                return STATUS_SUCCESS;
-            }
-
-            auto* store = c.proc.get_handle_store(source_handle);
+            auto* store = c.proc.get_handle_store(resolved_source_handle);
             if (!store)
             {
                 return STATUS_NOT_SUPPORTED;
             }
 
-            const auto new_handle = store->duplicate(source_handle);
+            const auto new_handle = store->duplicate(resolved_source_handle);
             if (!new_handle)
             {
                 return STATUS_INVALID_HANDLE;
@@ -458,26 +440,19 @@ namespace sogen
             return std::nullopt;
         }
 
-        NTSTATUS validate_wait_handle(const syscall_context& c, const handle h, const bool allow_current_pseudo, handle& resolved_handle)
+        NTSTATUS validate_wait_handle(const syscall_context& c, const handle h)
         {
-            if (!allow_current_pseudo && c.proc.is_object_pseudo_handle(h))
-            {
-                return STATUS_INVALID_HANDLE;
-            }
-
-            resolved_handle = c.proc.resolve_object_pseudo_handle(h);
-
             const auto validate_handle_in_store = [&](auto& store) -> NTSTATUS {
-                return store.get(resolved_handle) ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
+                return store.get(h) ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
             };
 
-            switch (resolved_handle.value.type)
+            switch (h.value.type)
             {
             case handle_types::process:
-                return resolved_handle == GUEST_PROCESS_HANDLE ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
+                return h == GUEST_PROCESS_HANDLE ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
 
             case handle_types::event:
-                if (resolved_handle.value.is_pseudo)
+                if (h.value.is_pseudo)
                 {
                     return STATUS_SUCCESS;
                 }
@@ -494,7 +469,7 @@ namespace sogen
                 return validate_handle_in_store(c.proc.semaphores);
 
             case handle_types::timer:
-                if (resolved_handle.value.is_pseudo)
+                if (h.value.is_pseudo)
                 {
                     return STATUS_SUCCESS;
                 }
@@ -540,15 +515,20 @@ namespace sogen
             {
                 const auto h = handles.read(i);
 
-                handle resolved_handle{};
-                const auto validation_status = validate_wait_handle(c, h, false, resolved_handle);
+                if (c.proc.is_object_pseudo_handle(h))
+                {
+                    t.await_time = {};
+                    return STATUS_INVALID_HANDLE;
+                }
+
+                const auto validation_status = validate_wait_handle(c, h);
                 if (!NT_SUCCESS(validation_status))
                 {
                     t.await_time = {};
                     return validation_status;
                 }
 
-                wait_handles.push_back(resolved_handle);
+                wait_handles.push_back(h);
             }
 
             t.await_objects = std::move(wait_handles);
@@ -596,15 +576,20 @@ namespace sogen
                     return STATUS_INVALID_HANDLE;
                 }
 
-                handle resolved_handle{};
-                const auto validation_status = validate_wait_handle(c, *h, false, resolved_handle);
+                if (c.proc.is_object_pseudo_handle(*h))
+                {
+                    t.await_time = {};
+                    return STATUS_INVALID_HANDLE;
+                }
+
+                const auto validation_status = validate_wait_handle(c, *h);
                 if (!NT_SUCCESS(validation_status))
                 {
                     t.await_time = {};
                     return validation_status;
                 }
 
-                wait_handles.push_back(resolved_handle);
+                wait_handles.push_back(*h);
             }
 
             t.await_objects = std::move(wait_handles);
@@ -622,8 +607,8 @@ namespace sogen
         NTSTATUS handle_NtWaitForSingleObject(const syscall_context& c, const handle h, const BOOLEAN alertable,
                                               const emulator_object<LARGE_INTEGER> timeout)
         {
-            handle resolved_handle{};
-            const auto validation_status = validate_wait_handle(c, h, true, resolved_handle);
+            const auto resolved_handle = c.proc.resolve_object_pseudo_handle(h);
+            const auto validation_status = validate_wait_handle(c, resolved_handle);
             if (!NT_SUCCESS(validation_status))
             {
                 return validation_status;
