@@ -480,10 +480,13 @@ namespace sogen
                                           uint64_t result_info, DWORD type, BOOL ansi);
         uint64_t completion_NtUserMessageCall(const syscall_context& c, hwnd hwnd, UINT msg, uint64_t w_param, uint64_t l_param,
                                               uint64_t result_info, DWORD type, BOOL ansi);
+        uint64_t handle_NtUserDispatchMessage(const syscall_context& c, emulator_object<msg> message);
         BOOL handle_NtUserGetMessage(const syscall_context& c, emulator_object<msg> message, hwnd hwnd, UINT msg_filter_min,
                                      UINT msg_filter_max);
         BOOL handle_NtUserPeekMessage(const syscall_context& c, emulator_object<msg> message, hwnd hwnd, UINT msg_filter_min,
                                       UINT msg_filter_max, UINT remove_message);
+        BOOL handle_NtUserInvalidateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect, BOOL erase);
+        BOOL handle_NtUserValidateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect);
         BOOL handle_NtUserPostMessage(const syscall_context& c, hwnd hwnd, UINT msg, uint64_t wParam, uint64_t lParam);
         BOOL handle_NtUserPostQuitMessage(const syscall_context& c, int exit_code);
         NTSTATUS handle_NtUserEnumDisplayDevices(const syscall_context& c,
@@ -506,7 +509,8 @@ namespace sogen
                                                        BOOL Ansi);
         uint32_t handle_NtUserSetWindowLong(const syscall_context& c, handle hWnd, int nIndex, uint32_t dwNewLong, BOOL Ansi);
         uint64_t handle_NtUserGetAncestor(const syscall_context& c, hwnd child_hwnd, UINT flags);
-        BOOL handle_NtUserRedrawWindow();
+        BOOL handle_NtUserRedrawWindow(const syscall_context& c, hwnd hwnd, emulator_object<RECT> update_rect, uint64_t update_rgn,
+                                       UINT flags);
         NTSTATUS handle_NtUserGetCPD();
         NTSTATUS handle_NtUserSetWindowFNID();
         BOOL handle_NtUserEnableWindow();
@@ -1071,8 +1075,11 @@ namespace sogen
         add_handler(NtUserCreateWindowEx);
         add_handler(NtUserShowWindow);
         add_handler(NtUserMessageCall);
+        add_handler(NtUserDispatchMessage);
         add_handler(NtUserGetMessage);
         add_handler(NtUserPeekMessage);
+        add_handler(NtUserInvalidateRect);
+        add_handler(NtUserValidateRect);
         add_handler(NtUserMapVirtualKeyEx);
         add_handler(NtUserToUnicodeEx);
         add_handler(NtUserSetProcessDpiAwarenessContext);

@@ -186,6 +186,48 @@ namespace sogen
             c.proc.user_handles.get_handle_table().access([&](USER_HANDLEENTRY& entry) { entry.pOwner = owner; }, index);
         }
 
+        RECT get_client_rect(const window& win)
+        {
+            return RECT{.left = 0, .top = 0, .right = win.width, .bottom = win.height};
+        }
+
+        void queue_window_paint(const syscall_context& c, window& win)
+        {
+            if (win.paint_message_posted)
+            {
+                return;
+            }
+
+            for (auto& thread : c.proc.threads | std::views::values)
+            {
+                if (thread.id != win.thread_id)
+                {
+                    continue;
+                }
+
+                thread.post_message(msg{.window = win.handle, .message = WM_PAINT, .wParam = 0, .lParam = 0});
+                win.paint_message_posted = true;
+                return;
+            }
+        }
+
+        void invalidate_window(const syscall_context& c, window& win, const std::optional<RECT>& update_rect = std::nullopt,
+                               const bool erase = false)
+        {
+            win.update_pending = true;
+            win.erase_pending = win.erase_pending || erase;
+            win.update_rect = update_rect.value_or(get_client_rect(win));
+            queue_window_paint(c, win);
+        }
+
+        void validate_window(window& win)
+        {
+            win.update_pending = false;
+            win.paint_message_posted = false;
+            win.erase_pending = false;
+            win.update_rect = {};
+        }
+
         template <typename T>
         void dispatch_window_message(const syscall_context& c, callback_id id, T&& state, const window& win, uint32_t message,
                                      uint64_t w_param = 0, uint64_t l_param = 0)
@@ -638,11 +680,8 @@ namespace sogen
             {
                 EMU_PAINTSTRUCT ps{};
                 ps.hdc = dc;
-                ps.fErase = FALSE;
-                ps.rcPaint.left = 0;
-                ps.rcPaint.top = 0;
-                ps.rcPaint.right = win->width;
-                ps.rcPaint.bottom = win->height;
+                ps.fErase = win->erase_pending ? TRUE : FALSE;
+                ps.rcPaint = win->update_pending ? win->update_rect : get_client_rect(*win);
                 ps.fRestore = FALSE;
                 ps.fIncUpdate = FALSE;
                 paint_struct.write(ps);
@@ -653,8 +692,14 @@ namespace sogen
 
         BOOL handle_NtUserEndPaint(const syscall_context& c, const hwnd window, const emulator_object<EMU_PAINTSTRUCT> /*paint_struct*/)
         {
-            const auto* win = c.proc.windows.get(window);
-            return win ? TRUE : FALSE;
+            auto* win = c.proc.windows.get(window);
+            if (!win)
+            {
+                return FALSE;
+            }
+
+            validate_window(*win);
+            return TRUE;
         }
 
         NTSTATUS handle_NtUserGetCursorPos()
@@ -903,6 +948,8 @@ namespace sogen
 
             if ((style & WS_VISIBLE) != 0)
             {
+                invalidate_window(c, win);
+
                 EMU_WINDOWPOS wp{};
                 wp.hwnd = handle.bits;
                 wp.hwndInsertAfter = 0;
@@ -917,7 +964,6 @@ namespace sogen
                 const auto size_lparam = static_cast<uint64_t>(((height & 0xFFFF) << 16) | (width & 0xFFFF));
 
                 const std::initializer_list<qmsg> sw_messages = {
-                    {.message = WM_PAINT, .wParam = 0, .lParam = 0},
                     {.message = WM_MOVE, .wParam = 0, .lParam = move_lparam},
                     {.message = WM_SIZE, .wParam = 0, .lParam = size_lparam},
                     {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = state.window_pos_alloc.address},
@@ -1111,11 +1157,12 @@ namespace sogen
 
             if (want_visible)
             {
+                invalidate_window(c, *win);
+
                 const auto move_lparam = static_cast<uint64_t>(((win->y & 0xFFFF) << 16) | (win->x & 0xFFFF));
                 const auto size_lparam = static_cast<uint64_t>(((win->height & 0xFFFF) << 16) | (win->width & 0xFFFF));
 
                 state.message_queue = {
-                    {.message = WM_PAINT, .wParam = 0, .lParam = 0},
                     {.message = WM_MOVE, .wParam = 0, .lParam = move_lparam},
                     {.message = WM_SIZE, .wParam = 0, .lParam = size_lparam},
                     {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = state.window_pos_alloc.address},
@@ -1192,6 +1239,29 @@ namespace sogen
             return c.get_callback_result<uint64_t>();
         }
 
+        uint64_t handle_NtUserDispatchMessage(const syscall_context& c, const emulator_object<msg> message)
+        {
+            if (!message)
+            {
+                return 0;
+            }
+
+            const auto m = message.read();
+            const auto* win = c.proc.windows.get(m.window);
+            if (!win)
+            {
+                return 0;
+            }
+
+            if (win->thread_id != c.proc.active_thread->id)
+            {
+                return 0;
+            }
+
+            dispatch_window_message(c, callback_id::NtUserMessageCall, nullptr, *win, m.message, m.wParam, m.lParam);
+            return {};
+        }
+
         BOOL handle_NtUserGetMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
                                      const UINT msg_filter_min, const UINT msg_filter_max)
         {
@@ -1226,6 +1296,36 @@ namespace sogen
             }
 
             return FALSE;
+        }
+
+        BOOL handle_NtUserInvalidateRect(const syscall_context& c, const hwnd hwnd, const emulator_object<RECT> rect, const BOOL erase)
+        {
+            auto* win = c.proc.windows.get(hwnd);
+            if (!win)
+            {
+                return FALSE;
+            }
+
+            std::optional<RECT> update_rect{};
+            if (rect)
+            {
+                update_rect = rect.read();
+            }
+
+            invalidate_window(c, *win, update_rect, erase != FALSE);
+            return TRUE;
+        }
+
+        BOOL handle_NtUserValidateRect(const syscall_context& c, const hwnd hwnd, const emulator_object<RECT> /*rect*/)
+        {
+            auto* win = c.proc.windows.get(hwnd);
+            if (!win)
+            {
+                return FALSE;
+            }
+
+            validate_window(*win);
+            return TRUE;
         }
 
         BOOL handle_NtUserPostMessage(const syscall_context& c, const hwnd hwnd, const UINT msg, const uint64_t wParam,
@@ -1594,8 +1694,36 @@ namespace sogen
             }
         }
 
-        BOOL handle_NtUserRedrawWindow()
+        BOOL handle_NtUserRedrawWindow(const syscall_context& c, const hwnd hwnd, const emulator_object<RECT> update_rect,
+                                       const uint64_t /*update_rgn*/, const UINT flags)
         {
+            auto* win = c.proc.windows.get(hwnd);
+            if (!win)
+            {
+                return FALSE;
+            }
+
+            if ((flags & RDW_VALIDATE) != 0)
+            {
+                validate_window(*win);
+            }
+
+            if ((flags & (RDW_INVALIDATE | RDW_INTERNALPAINT)) != 0)
+            {
+                std::optional<RECT> rect{};
+                if (update_rect)
+                {
+                    rect = update_rect.read();
+                }
+
+                invalidate_window(c, *win, rect, (flags & RDW_ERASE) != 0 && (flags & RDW_NOERASE) == 0);
+            }
+
+            if ((flags & RDW_NOINTERNALPAINT) != 0)
+            {
+                win->paint_message_posted = false;
+            }
+
             return TRUE;
         }
 

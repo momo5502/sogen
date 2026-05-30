@@ -83,6 +83,10 @@ namespace sogen
         int32_t y{};
         uint32_t ex_style{};
         uint32_t style{};
+        RECT update_rect{};
+        bool update_pending{};
+        bool paint_message_posted{};
+        bool erase_pending{};
         std::map<std::u16string, uint64_t> props{};
         emulator_pointer wnd_proc{};
 
@@ -106,6 +110,10 @@ namespace sogen
             buffer.write(this->y);
             buffer.write(this->ex_style);
             buffer.write(this->style);
+            buffer.write(this->update_rect);
+            buffer.write(this->update_pending);
+            buffer.write(this->paint_message_posted);
+            buffer.write(this->erase_pending);
             buffer.write_map(this->props);
             buffer.write(this->wnd_proc);
         }
@@ -125,6 +133,10 @@ namespace sogen
             buffer.read(this->y);
             buffer.read(this->ex_style);
             buffer.read(this->style);
+            buffer.read(this->update_rect);
+            buffer.read(this->update_pending);
+            buffer.read(this->paint_message_posted);
+            buffer.read(this->erase_pending);
             buffer.read_map(this->props);
             buffer.read(this->wnd_proc);
         }

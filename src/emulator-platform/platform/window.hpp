@@ -157,6 +157,15 @@ namespace sogen
 #define PM_REMOVE            0x0001
 #define PM_NOYIELD           0x0002
 
+#define RDW_INVALIDATE       0x0001
+#define RDW_INTERNALPAINT    0x0002
+#define RDW_ERASE            0x0004
+#define RDW_VALIDATE         0x0008
+#define RDW_NOINTERNALPAINT  0x0010
+#define RDW_NOERASE          0x0020
+#define RDW_UPDATENOW        0x0100
+#define RDW_ERASENOW         0x0200
+
 #define GWLP_WNDPROC         (-4)
 #define GWLP_HINSTANCE       (-6)
 #define GWLP_HWNDPARENT      (-8)

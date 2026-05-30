@@ -50,6 +50,7 @@ int main()
     }
 
     ShowWindow(hwnd, SW_SHOW);
+    InvalidateRect(hwnd, nullptr, TRUE);
     UpdateWindow(hwnd);
     PostMessageA(hwnd, WM_CLOSE, 0, 0);
 
