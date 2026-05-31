@@ -2,7 +2,7 @@
 
 namespace
 {
-    constexpr char kWindowClassName[] = "MoveWindowSampleClass";
+    constexpr auto* kWindowClassName = "MoveWindowSampleClass";
 
     bool check_rect(const RECT& rect, const LONG left, const LONG top, const LONG right, const LONG bottom)
     {
@@ -38,8 +38,8 @@ int main()
         return 1;
     }
 
-    const auto hwnd = CreateWindowExA(0, kWindowClassName, "Move window sample", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 10, 20, 320, 240,
-                                      nullptr, nullptr, wc.hInstance, nullptr);
+    auto* const hwnd = CreateWindowExA(0, kWindowClassName, "Move window sample", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 10, 20, 320, 240,
+                                       nullptr, nullptr, wc.hInstance, nullptr);
     if (!hwnd)
     {
         return 2;

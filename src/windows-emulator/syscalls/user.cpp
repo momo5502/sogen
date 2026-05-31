@@ -194,7 +194,7 @@ namespace sogen
             }
 
             uint64_t wnd_proc = 0;
-            uint32_t wnd_extra = 0;
+            int wnd_extra = 0;
 
             if (!c.win_emu.mod_manager.ntdll)
             {
@@ -294,7 +294,7 @@ namespace sogen
             c.proc.user_handles.get_handle_table().access([&](USER_HANDLEENTRY& entry) { entry.pOwner = owner; }, index);
         }
 
-        void invalidate_window(const syscall_context& c, window& win, const std::optional<RECT>& update_rect, const bool erase);
+        void invalidate_window(const syscall_context& c, window& win, const std::optional<RECT>& update_rect, bool erase);
 
         RECT get_client_rect(const window& win)
         {
@@ -353,7 +353,7 @@ namespace sogen
         }
 
         void invalidate_window(const syscall_context& c, window& win, const std::optional<RECT>& update_rect = std::nullopt,
-                               const bool erase = false)
+                               bool erase = false)
         {
             win.update_pending = true;
             win.erase_pending = win.erase_pending || erase;
@@ -820,7 +820,7 @@ namespace sogen
             if (paint_struct)
             {
                 EMU_PAINTSTRUCT ps{};
-                ps.hdc = dc;
+                ps.paint_hdc = dc;
                 ps.fErase = win->erase_pending ? TRUE : FALSE;
                 ps.rcPaint = win->update_pending ? win->update_rect : get_client_rect(*win);
                 ps.fRestore = FALSE;

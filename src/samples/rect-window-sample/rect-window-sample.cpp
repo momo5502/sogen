@@ -2,7 +2,7 @@
 
 namespace
 {
-    constexpr char kWindowClassName[] = "RectWindowSampleClass";
+    constexpr auto* kWindowClassName = "RectWindowSampleClass";
 
     LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
@@ -33,8 +33,8 @@ int main()
         return 1;
     }
 
-    const auto hwnd = CreateWindowExA(0, kWindowClassName, "Rect sample", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 10, 20, 320, 240, nullptr,
-                                      nullptr, wc.hInstance, nullptr);
+    auto* const hwnd = CreateWindowExA(0, kWindowClassName, "Rect sample", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 10, 20, 320, 240, nullptr,
+                                       nullptr, wc.hInstance, nullptr);
     if (!hwnd)
     {
         return 2;

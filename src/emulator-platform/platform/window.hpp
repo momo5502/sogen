@@ -112,7 +112,7 @@ namespace sogen
 
     struct EMU_PAINTSTRUCT
     {
-        hdc hdc;
+        hdc paint_hdc;
         BOOL fErase;
         RECT rcPaint;
         BOOL fRestore;

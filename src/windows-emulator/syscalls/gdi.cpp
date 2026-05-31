@@ -851,8 +851,8 @@ namespace sogen
             return TRUE;
         }
 
-        uint64_t handle_NtGdiCreateRectRgn(const syscall_context& c, const LONG /*x_left*/, const LONG /*y_top*/,
-                                           const LONG /*x_right*/, const LONG /*y_bottom*/)
+        uint64_t handle_NtGdiCreateRectRgn(const syscall_context& c, const LONG /*x_left*/, const LONG /*y_top*/, const LONG /*x_right*/,
+                                           const LONG /*y_bottom*/)
         {
             return allocate_gdi_object(c, k_gdi_region_type, k_gdi_region_attr_size);
         }

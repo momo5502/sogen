@@ -111,10 +111,10 @@ namespace sogen::test
         return settings;
     }
 
-    inline application_settings make_application_settings(std::u16string application, std::vector<std::u16string> arguments = {})
+    inline application_settings make_application_settings(const std::u16string& application, std::vector<std::u16string> arguments = {})
     {
         application_settings settings{};
-        settings.application = windows_path(std::move(application));
+        settings.application = windows_path(application);
         settings.arguments = std::move(arguments);
         return settings;
     }

@@ -4,8 +4,8 @@
 
 namespace
 {
-    constexpr char kWindowClassName[] = "HelloWindowSampleClass";
-    constexpr char kWindowTitle[] = "Hello world";
+    constexpr auto* kWindowClassName = "HelloWindowSampleClass";
+    constexpr auto* kWindowTitle = "Hello world";
 
     LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
@@ -40,8 +40,8 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    const auto hwnd = CreateWindowExA(0, kWindowClassName, kWindowTitle, WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT,
-                                      640, 480, nullptr, nullptr, wc.hInstance, nullptr);
+    auto* const hwnd = CreateWindowExA(0, kWindowClassName, kWindowTitle, WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT,
+                                       640, 480, nullptr, nullptr, wc.hInstance, nullptr);
     if (!hwnd)
     {
         return 2;
