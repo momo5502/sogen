@@ -570,20 +570,20 @@ namespace sogen::icicle
                 return;
             }
 
-            char message[160]{};
+            std::array<char, 160> message{};
             if (kind == icicle_stop_kind::unhandled_exception)
             {
-                std::snprintf(message, sizeof(message), "Icicle stopped on unhandled exception: code=0x%X value=0x%llX rip=0x%llX",
+                std::snprintf(message.data(), message.size(), "Icicle stopped on unhandled exception: code=0x%X value=0x%llX rip=0x%llX",
                               info.code, static_cast<unsigned long long>(info.value),
                               static_cast<unsigned long long>(this->read_instruction_pointer()));
             }
             else
             {
-                std::snprintf(message, sizeof(message), "Icicle stopped on unhandled VM exit at rip=0x%llX",
+                std::snprintf(message.data(), message.size(), "Icicle stopped on unhandled VM exit at rip=0x%llX",
                               static_cast<unsigned long long>(this->read_instruction_pointer()));
             }
 
-            throw std::runtime_error(message);
+            throw std::runtime_error(message.data());
         }
 
         emulator_hook* hook_memory_access(memory_access_hook hook, emulator_hook* hook_id)

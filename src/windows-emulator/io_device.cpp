@@ -5,6 +5,7 @@
 #include "devices/mount_point_manager.hpp"
 #include "devices/security_support_provider.hpp"
 #include "devices/named_pipe.hpp"
+#include "devices/network_store_interface.hpp"
 #include <iostream>
 
 namespace sogen
@@ -50,7 +51,6 @@ namespace sogen
     std::unique_ptr<io_device> create_device(const std::u16string_view device, const bool is_32_bit)
     {
         if (device == u"CNG"                    //
-            || device == u"Nsi"                 //
             || device == u"RasAcd"              //
             || device == u"PcwDrv"              //
             || device == u"DeviceApi\\CMApi"    //
@@ -58,6 +58,11 @@ namespace sogen
             || device == u"ConDrv\\Server")
         {
             return std::make_unique<dummy_device>();
+        }
+
+        if (device == u"Nsi")
+        {
+            return create_network_store_interface();
         }
 
         if (device == u"Afd\\Endpoint")

@@ -780,7 +780,7 @@ namespace
         const auto query_status = DnsQuery_A(hostname, DNS_TYPE_A, DNS_QUERY_STANDARD, nullptr, &records, nullptr);
         if (query_status != ERROR_SUCCESS)
         {
-            puts("DnsQuery_A failed");
+            printf("DnsQuery_A failed: %ld\n", query_status);
             return false;
         }
 
@@ -1483,8 +1483,9 @@ int main(const int argc, const char* argv[])
 
     bool valid = true;
 
-    (void)&test_dns;
-    // RUN_TEST(test_dns, "DNS")
+#ifdef _WIN64
+    RUN_TEST(test_dns, "DNS")
+#endif
     RUN_TEST(test_io, "I/O")
     RUN_TEST(test_file_locking, "File Locking")
     RUN_TEST(test_dir_io, "Dir I/O")
