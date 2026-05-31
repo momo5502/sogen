@@ -122,6 +122,48 @@ namespace sogen
             });
         }
 
+        bool is_builtin_window_class_name(const std::u16string_view class_name)
+        {
+            return class_name == u"#32770" || class_name == u"Button" || class_name == u"Static";
+        }
+
+        process_context::class_entry* ensure_builtin_window_class(const syscall_context& c, const std::u16string_view class_name)
+        {
+            const auto it = c.proc.classes.find(class_name);
+            if (it != c.proc.classes.end())
+            {
+                return &it->second;
+            }
+
+            if (!is_builtin_window_class_name(class_name))
+            {
+                return nullptr;
+            }
+
+            if (!c.win_emu.mod_manager.ntdll)
+            {
+                return nullptr;
+            }
+
+            const auto wnd_proc = c.win_emu.mod_manager.ntdll->find_export("NtdllDefWindowProc_A");
+            if (wnd_proc == 0)
+            {
+                return nullptr;
+            }
+
+            constexpr auto cls_size = static_cast<size_t>(page_align_up(sizeof(USER_CLASS)));
+            const auto cls_ptr = c.win_emu.memory.allocate_memory(cls_size, memory_permission::read);
+
+            EMU_WNDCLASSEX wnd_class{};
+            wnd_class.cbSize = sizeof(wnd_class);
+            wnd_class.lpfnWndProc = wnd_proc;
+
+            const auto [inserted_it, inserted] = c.proc.classes.emplace(std::u16string{class_name},
+                                                                        process_context::class_entry{cls_ptr, wnd_class, {}});
+            (void)inserted;
+            return &inserted_it->second;
+        }
+
         void set_thread_window_context(const syscall_context& c, const uint64_t active_handle, const uint64_t active_window_ptr)
         {
             if (c.proc.active_thread && c.proc.active_thread->teb64)
@@ -901,10 +943,24 @@ namespace sogen
                                          const pointer /*acbi_buffer*/)
         {
             const auto cls_name = read_large_string_or_atom(c, class_name);
-            const auto cls_it = c.proc.classes.find(cls_name);
+            auto cls_it = c.proc.classes.find(cls_name);
 
             if (cls_it == c.proc.classes.end())
             {
+                if (const auto* builtin = ensure_builtin_window_class(c, cls_name))
+                {
+                    cls_it = c.proc.classes.find(cls_name);
+                    (void)builtin;
+                }
+            }
+
+            if (cls_it == c.proc.classes.end())
+            {
+                if (c.win_emu.callbacks.on_generic_activity)
+                {
+                    c.win_emu.callbacks.on_generic_activity("CreateWindowEx missing class '" + u16_to_u8(cls_name) + "'");
+                }
+
                 set_guest_last_error(c, 1407); // ERROR_CANNOT_FIND_WND_CLASS
                 return 0;
             }
@@ -932,6 +988,7 @@ namespace sogen
 
             const auto class_obj_addr = cls_it->second.guest_obj_addr;
             const auto* wnd_class = &cls_it->second.wnd_class;
+            const auto is_builtin_class = is_builtin_window_class_name(cls_name);
 
             auto [handle, win] = c.proc.windows.create(c.win_emu.memory);
             win.ex_style = ex_style;
@@ -987,6 +1044,16 @@ namespace sogen
             const auto thread_info = ensure_win32_thread_info(c);
             publish_win32_thread_info(c, thread_info);
             set_user_handle_owner(c, handle, thread_info);
+
+            if (is_builtin_class)
+            {
+                if ((style & WS_VISIBLE) != 0)
+                {
+                    invalidate_window(c, win);
+                }
+
+                return handle.bits;
+            }
 
             window_create_state state{};
             state.handle = handle.bits;
