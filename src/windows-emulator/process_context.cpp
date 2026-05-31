@@ -66,7 +66,7 @@ namespace sogen
 
         std::vector<uint8_t> get_sid(registry_manager& registry)
         {
-            const auto sid_string = get_user_sid_string(registry);
+            const auto sid_string = registry_utils::get_user_sid_string(registry);
             return sid_string_to_bytes(sid_string);
         }
 
@@ -185,25 +185,13 @@ namespace sogen
                 for (size_t i = 0; const auto value_opt = registry.get_value(*env_key, i); i++)
                 {
                     const auto& value = *value_opt;
-
-                    if (value.type != REG_SZ && value.type != REG_EXPAND_SZ)
+                    const auto decoded = registry_utils::decode_registry_string(value);
+                    if (!decoded)
                     {
                         continue;
                     }
 
-                    if (value.data.empty() || value.data.size() % 2 != 0)
-                    {
-                        continue;
-                    }
-
-                    const auto char_count = value.data.size() / sizeof(char16_t);
-                    const auto* data_ptr = reinterpret_cast<const char16_t*>(value.data.data());
-                    if (data_ptr[char_count - 1] != u'\0')
-                    {
-                        continue;
-                    }
-
-                    const auto [it, inserted] = env_map.emplace(u8_to_u16(value.name), std::u16string(data_ptr, char_count - 1));
+                    const auto [it, inserted] = env_map.emplace(u8_to_u16(value.name), *decoded);
                     if (inserted && value.type == REG_EXPAND_SZ)
                     {
                         keys_to_expand.insert(it->first);
@@ -234,14 +222,15 @@ namespace sogen
             }
             system_temp += u"SystemTemp";
 
-            env_map[u"COMPUTERNAME"] = u"momo";
-            env_map[u"USERNAME"] = u"momo";
+            const auto user_profile = registry_utils::get_user_profile_path(registry);
+            env_map[u"COMPUTERNAME"] = registry_utils::get_account_domain(registry);
+            env_map[u"USERNAME"] = registry_utils::get_user_name(registry);
             env_map[u"SystemDrive"] = system_drive;
             env_map[u"SystemRoot"] = system_root;
             env_map[u"SystemTemp"] = system_temp;
-            env_map[u"TMP"] = u"C:\\Users\\momo\\AppData\\Temp";
-            env_map[u"TEMP"] = u"C:\\Users\\momo\\AppData\\Temp";
-            env_map[u"USERPROFILE"] = u"C:\\Users\\momo";
+            env_map[u"TMP"] = user_profile + u"\\AppData\\Temp";
+            env_map[u"TEMP"] = user_profile + u"\\AppData\\Temp";
+            env_map[u"USERPROFILE"] = user_profile;
 
             for (const auto& [key, value] : app_settings.environment)
             {
