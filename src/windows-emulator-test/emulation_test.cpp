@@ -69,6 +69,18 @@ namespace sogen::test
         ASSERT_NE(it, emu.process.classes.end());
     }
 
+    TEST(EmulationTest, MoveWindowSampleRunsToCompletion)
+    {
+        auto emu = create_application_emulator(make_application_settings(u"C:\\move-window-sample.exe"));
+        emu.start();
+
+        ASSERT_TERMINATED_SUCCESSFULLY(emu);
+        ASSERT_EQ(emu.process.windows.size(), 1u);
+
+        const auto it = emu.process.classes.find(u"MoveWindowSampleClass");
+        ASSERT_NE(it, emu.process.classes.end());
+    }
+
     TEST(EmulationTest, RectWindowSampleRunsToCompletion)
     {
         auto emu = create_application_emulator(make_application_settings(u"C:\\rect-window-sample.exe"));

@@ -131,6 +131,9 @@ namespace sogen
 #define WS_CLIPSIBLINGS      0x04000000L
 #define WS_CLIPCHILDREN      0x02000000L
 
+#define SWP_NOSIZE           0x0001
+#define SWP_NOMOVE           0x0002
+#define SWP_NOREDRAW         0x0008
 #define SWP_SHOWWINDOW       0x0040
 #define SWP_HIDEWINDOW       0x0080
 

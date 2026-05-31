@@ -186,9 +186,42 @@ namespace sogen
             c.proc.user_handles.get_handle_table().access([&](USER_HANDLEENTRY& entry) { entry.pOwner = owner; }, index);
         }
 
+        void invalidate_window(const syscall_context& c, window& win, const std::optional<RECT>& update_rect, const bool erase);
+
         RECT get_client_rect(const window& win)
         {
             return RECT{.left = 0, .top = 0, .right = win.width, .bottom = win.height};
+        }
+
+        RECT get_window_rect(const window& win)
+        {
+            return RECT{.left = win.x, .top = win.y, .right = win.x + win.width, .bottom = win.y + win.height};
+        }
+
+        void sync_guest_window_rects(window& win)
+        {
+            const auto window_rect = get_window_rect(win);
+
+            win.guest.access([&](USER_WINDOW& guest_win) {
+                guest_win.rcUnknown_048 = window_rect;
+                guest_win.rcWindow = window_rect;
+                guest_win.rcClient = window_rect;
+            });
+        }
+
+        void update_window_geometry(const syscall_context& c, window& win, const int x, const int y, const int width, const int height,
+                                    const bool repaint)
+        {
+            win.x = x;
+            win.y = y;
+            win.width = width;
+            win.height = height;
+            sync_guest_window_rects(win);
+
+            if (repaint)
+            {
+                invalidate_window(c, win, std::nullopt, false);
+            }
         }
 
         void queue_window_paint(const syscall_context& c, window& win)
@@ -748,8 +781,16 @@ namespace sogen
             return 0;
         }
 
-        BOOL handle_NtUserMoveWindow()
+        BOOL handle_NtUserMoveWindow(const syscall_context& c, const hwnd hwnd, const int x, const int y, const int width, const int height,
+                                     const BOOL repaint)
         {
+            auto* win = c.proc.windows.get(hwnd);
+            if (!win)
+            {
+                return FALSE;
+            }
+
+            update_window_geometry(c, *win, x, y, width, height, repaint != FALSE);
             return TRUE;
         }
 
@@ -1552,42 +1593,40 @@ namespace sogen
             return handle_entry.pHead;
         }
 
-        BOOL handle_NtUserTransformRect(const syscall_context& c, const uint64_t a1, const uint64_t a2, const uint64_t a3,
-                                        const uint64_t a4)
+        BOOL handle_NtUserTransformRect(const syscall_context& c, const emulator_object<RECT> rect, const hwnd hwnd,
+                                        const uint32_t /*type*/, const uint64_t /*unknown*/)
         {
-            const std::array<uint64_t, 4> args{a1, a2, a3, a4};
-
-            const window* win = nullptr;
-            for (const auto value : args)
+            if (!rect)
             {
-                if ((win = c.proc.windows.get(value)))
-                {
-                    break;
-                }
+                return FALSE;
             }
 
+            const auto* win = c.proc.windows.get(hwnd);
             if (!win)
             {
                 return FALSE;
             }
 
-            for (const auto value : args)
-            {
-                const emulator_object<RECT> rect{c.emu, value};
-                if (!rect)
-                {
-                    continue;
-                }
-
-                rect.write(win->guest.read().rcWindow);
-                return TRUE;
-            }
-
-            return FALSE;
+            rect.write(get_window_rect(*win));
+            return TRUE;
         }
 
-        BOOL handle_NtUserSetWindowPos()
+        BOOL handle_NtUserSetWindowPos(const syscall_context& c, const hwnd hWnd, const hwnd /*hwnd_insert_after*/, const int x,
+                                       const int y, const int cx, const int cy, const UINT flags)
         {
+            auto* win = c.proc.windows.get(hWnd);
+            if (!win)
+            {
+                return FALSE;
+            }
+
+            const auto new_x = (flags & SWP_NOMOVE) ? win->x : x;
+            const auto new_y = (flags & SWP_NOMOVE) ? win->y : y;
+            const auto new_width = (flags & SWP_NOSIZE) ? win->width : cx;
+            const auto new_height = (flags & SWP_NOSIZE) ? win->height : cy;
+            const auto repaint = (flags & SWP_NOREDRAW) == 0;
+
+            update_window_geometry(c, *win, new_x, new_y, new_width, new_height, repaint);
             return TRUE;
         }
 
