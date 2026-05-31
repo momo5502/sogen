@@ -549,6 +549,8 @@ namespace sogen
                                        ULONG flags);
         uint64_t handle_NtGdiCreateRectRgn(const syscall_context& c, LONG x_left, LONG y_top, LONG x_right, LONG y_bottom);
         int32_t handle_NtGdiGetRandomRgn(const syscall_context& c, hdc dc, uint64_t region, LONG index);
+        int32_t handle_NtGdiIntersectClipRect(const syscall_context& c, hdc dc, LONG x_left, LONG y_top, LONG x_right, LONG y_bottom);
+        uint32_t handle_NtGdiGetCharSet(const syscall_context& c, hdc dc);
         NTSTATUS handle_NtGdiGetEntry(const syscall_context& c, uint32_t handle_value, emulator_pointer entry_ptr);
 
         // syscalls/trace.cpp:
@@ -979,6 +981,8 @@ namespace sogen
         add_handler(NtGdiGetTextExtent);
         add_handler(NtGdiCreateRectRgn);
         add_handler(NtGdiGetRandomRgn);
+        add_handler(NtGdiIntersectClipRect);
+        add_handler(NtGdiGetCharSet);
         add_handler(NtGdiGetEntry);
         add_handler(NtGdiInit2);
         add_handler(NtUserGetThreadState);

@@ -857,6 +857,17 @@ namespace sogen
             return (dc != 0 && region != 0) ? 1 : 0;
         }
 
+        int32_t handle_NtGdiIntersectClipRect(const syscall_context&, const hdc dc, const LONG /*x_left*/, const LONG /*y_top*/,
+                                              const LONG /*x_right*/, const LONG /*y_bottom*/)
+        {
+            return dc != 0 ? 2 : 0;
+        }
+
+        uint32_t handle_NtGdiGetCharSet(const syscall_context&, const hdc dc)
+        {
+            return dc != 0 ? 1 : 0;
+        }
+
         NTSTATUS handle_NtGdiGetEntry(const syscall_context& c, const uint32_t handle_value, const emulator_pointer entry_ptr)
         {
             if (entry_ptr == 0)
