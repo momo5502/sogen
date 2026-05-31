@@ -1,7 +1,7 @@
 mod icicle;
 mod registers;
 
-use icicle::IcicleEmulator;
+use icicle::{IcicleEmulator, IcicleStopInfo};
 use registers::X86Register;
 use std::os::raw::c_void;
 
@@ -25,6 +25,20 @@ pub fn icicle_start(ptr: *mut c_void, count: usize) {
         let emulator = &mut *(ptr as *mut IcicleEmulator);
         emulator.start(count as u64);
     }
+}
+
+#[unsafe(no_mangle)]
+pub fn icicle_get_stop_info(ptr: *mut c_void, out: *mut IcicleStopInfo) -> i32 {
+    if out.is_null() {
+        return 0;
+    }
+
+    unsafe {
+        let emulator = &*(ptr as *mut IcicleEmulator);
+        *out = emulator.last_stop_info();
+    }
+
+    return 1;
 }
 
 #[unsafe(no_mangle)]
