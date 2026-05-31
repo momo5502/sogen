@@ -1149,8 +1149,8 @@ namespace sogen
 
                 if (c.win_emu.callbacks.on_generic_activity)
                 {
-                    c.win_emu.callbacks.on_generic_activity("CreateWindowEx builtin success class='" + u16_to_u8(cls_name) +
-                                                            "' hwnd=0x" + std::format("{:x}", handle.bits));
+                    c.win_emu.callbacks.on_generic_activity("CreateWindowEx builtin success class='" + u16_to_u8(cls_name) + "' hwnd=0x" +
+                                                            std::format("{:x}", handle.bits));
                 }
 
                 return handle.bits;
@@ -1584,7 +1584,8 @@ namespace sogen
             }
 
             const auto command_wparam = static_cast<uint64_t>((static_cast<uint64_t>(BN_CLICKED) << 16) | (command_id & 0xFFFF));
-            thread.post_message(msg{.window = dialog->handle, .message = WM_COMMAND, .wParam = command_wparam, .lParam = ok_button->handle});
+            thread.post_message(
+                msg{.window = dialog->handle, .message = WM_COMMAND, .wParam = command_wparam, .lParam = ok_button->handle});
             return TRUE;
         }
 
@@ -1934,7 +1935,6 @@ namespace sogen
 
                     c.win_emu.memory.read_memory(targetAddress, &oldValue, sizeof(oldValue));
                     c.win_emu.memory.write_memory(targetAddress, &dwNewLong, sizeof(dwNewLong));
-
                 }
                 else
                 {
@@ -2097,8 +2097,8 @@ namespace sogen
 
             if (c.win_emu.callbacks.on_generic_activity)
             {
-                c.win_emu.callbacks.on_generic_activity("SetWindowFNID hwnd=0x" + std::format("{:x}", hwnd) +
-                                                        " fnid=0x" + std::format("{:x}", fnid));
+                c.win_emu.callbacks.on_generic_activity("SetWindowFNID hwnd=0x" + std::format("{:x}", hwnd) + " fnid=0x" +
+                                                        std::format("{:x}", fnid));
             }
 
             return TRUE;
