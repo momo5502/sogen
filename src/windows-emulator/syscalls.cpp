@@ -517,7 +517,7 @@ namespace sogen
                                        UINT flags);
         NTSTATUS handle_NtUserGetCPD();
         BOOL handle_NtUserSetWindowFNID(const syscall_context& c, hwnd hwnd, WORD fnid);
-        BOOL handle_NtUserSetDialogPointer(const syscall_context& c, hwnd hwnd, ULONG_PTR ptr);
+        BOOL handle_NtUserSetDialogPointer(const syscall_context& c, hwnd hwnd, emulator_pointer ptr);
         BOOL handle_NtUserSetDialogSystemMenu(const syscall_context& c, hwnd hwnd);
         BOOL handle_NtUserEnableWindow();
         uint64_t handle_NtUserGetSystemMenu(const syscall_context& c, hwnd hwnd, BOOL revert);

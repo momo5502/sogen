@@ -15,6 +15,12 @@ namespace sogen
         LONG x;
         LONG y;
     } POINT;
+
+    typedef struct tagSIZE
+    {
+        LONG cx;
+        LONG cy;
+    } SIZE;
 #endif
 
     using wparam = pointer;

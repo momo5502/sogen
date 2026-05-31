@@ -2104,7 +2104,7 @@ namespace sogen
             return TRUE;
         }
 
-        BOOL handle_NtUserSetDialogPointer(const syscall_context& c, const hwnd hwnd, const ULONG_PTR ptr)
+        BOOL handle_NtUserSetDialogPointer(const syscall_context& c, const hwnd hwnd, const emulator_pointer ptr)
         {
             auto* win = c.proc.windows.get(hwnd);
             if (!win)
