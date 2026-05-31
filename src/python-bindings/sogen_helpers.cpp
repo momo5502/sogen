@@ -14,6 +14,8 @@ namespace sogen::py
             return "unimplemented_syscall";
         case stop_reason::syscall_exception:
             return "syscall_exception";
+        case stop_reason::deadlock:
+            return "deadlock";
         }
 
         return "unknown";
