@@ -64,5 +64,10 @@ int main()
         return 4;
     }
 
+    if (window.left != 10 || window.top != 20 || window.right != 330 || window.bottom != 260)
+    {
+        return 5;
+    }
+
     return 0;
 }

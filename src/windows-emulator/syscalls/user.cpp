@@ -910,9 +910,9 @@ namespace sogen
                 guest_win.ptrBase = win.guest.value();
                 guest_win.dwExStyle = ex_style;
                 guest_win.dwStyle = style;
-                guest_win.rcWindow = {.left = x, .top = y, .right = x + width, .bottom = y + height};
-                guest_win.rcClient = {.left = 0, .top = 0, .right = width, .bottom = height};
-                guest_win.rcWindowRelative = guest_win.rcWindow;
+                guest_win.rcUnknown_048 = {.left = x, .top = y, .right = x + width, .bottom = y + height};
+                guest_win.rcWindow = guest_win.rcUnknown_048;
+                guest_win.rcClient = guest_win.rcWindow;
                 if (parent_win && has_child_parent)
                 {
                     guest_win.spwndParent = parent_win->guest.value();
