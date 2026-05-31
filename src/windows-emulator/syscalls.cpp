@@ -443,6 +443,7 @@ namespace sogen
         NTSTATUS handle_NtUserSetCursor();
         uint64_t handle_NtUserGetCursor();
         NTSTATUS handle_NtUserFindExistingCursorIcon();
+        BOOL handle_NtUserMessageBeep();
         uint64_t handle_NtUserFindWindowEx(const syscall_context& c, hwnd parent, hwnd child_after,
                                            emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                            emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> window_name);
@@ -537,6 +538,7 @@ namespace sogen
                                                     uint32_t offset, uint32_t cj, uint32_t i_usage);
         uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, uint32_t handle_value);
         uint64_t handle_NtGdiSelectBitmap(const syscall_context& c, hdc dc, handle bitmap);
+        uint64_t handle_NtGdiSelectFont(const syscall_context& c, hdc dc, uint64_t font);
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, handle bitmap);
         uint64_t handle_NtGdiHfontCreate(const syscall_context& c, emulator_pointer logfont, uint32_t angle);
         uint32_t handle_NtGdiExtGetObjectW(const syscall_context& c, uint32_t handle_value, uint32_t size, emulator_pointer buffer);
@@ -551,6 +553,7 @@ namespace sogen
         int32_t handle_NtGdiGetRandomRgn(const syscall_context& c, hdc dc, uint64_t region, LONG index);
         int32_t handle_NtGdiIntersectClipRect(const syscall_context& c, hdc dc, LONG x_left, LONG y_top, LONG x_right, LONG y_bottom);
         uint32_t handle_NtGdiGetCharSet(const syscall_context& c, hdc dc);
+        int32_t handle_NtGdiExtSelectClipRgn(const syscall_context& c, hdc dc, uint64_t region, LONG mode);
         NTSTATUS handle_NtGdiGetEntry(const syscall_context& c, uint32_t handle_value, emulator_pointer entry_ptr);
 
         // syscalls/trace.cpp:
@@ -970,6 +973,7 @@ namespace sogen
         add_handler(NtGdiCreateDIBitmapInternal);
         add_handler(NtGdiDeleteObjectApp);
         add_handler(NtGdiSelectBitmap);
+        add_handler(NtGdiSelectFont);
         add_handler(NtGdiGetDCforBitmap);
         add_handler(NtGdiHfontCreate);
         add_handler(NtGdiExtGetObjectW);
@@ -983,6 +987,7 @@ namespace sogen
         add_handler(NtGdiGetRandomRgn);
         add_handler(NtGdiIntersectClipRect);
         add_handler(NtGdiGetCharSet);
+        add_handler(NtGdiExtSelectClipRgn);
         add_handler(NtGdiGetEntry);
         add_handler(NtGdiInit2);
         add_handler(NtUserGetThreadState);
@@ -1061,6 +1066,7 @@ namespace sogen
         add_handler(NtUserGetCursorPos);
         add_handler(NtUserReleaseDC);
         add_handler(NtUserFindExistingCursorIcon);
+        add_handler(NtUserMessageBeep);
         add_handler(NtSetContextThread);
         add_handler(NtUserFindWindowEx);
         add_handler(NtUserMoveWindow);

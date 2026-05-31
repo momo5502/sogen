@@ -689,6 +689,11 @@ namespace sogen
             return bitmap.bits;
         }
 
+        uint64_t handle_NtGdiSelectFont(const syscall_context&, const hdc dc, const uint64_t font)
+        {
+            return dc != 0 ? font : 0;
+        }
+
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, const handle /*bitmap*/)
         {
             return ensure_default_hdc(c);
@@ -866,6 +871,11 @@ namespace sogen
         uint32_t handle_NtGdiGetCharSet(const syscall_context&, const hdc dc)
         {
             return dc != 0 ? 1 : 0;
+        }
+
+        int32_t handle_NtGdiExtSelectClipRgn(const syscall_context&, const hdc dc, const uint64_t /*region*/, const LONG /*mode*/)
+        {
+            return dc != 0 ? 1 : -1;
         }
 
         NTSTATUS handle_NtGdiGetEntry(const syscall_context& c, const uint32_t handle_value, const emulator_pointer entry_ptr)

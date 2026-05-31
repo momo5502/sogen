@@ -755,6 +755,11 @@ namespace sogen
             return STATUS_NOT_SUPPORTED;
         }
 
+        BOOL handle_NtUserMessageBeep()
+        {
+            return TRUE;
+        }
+
         uint64_t handle_NtUserFindWindowEx(const syscall_context& c, const hwnd, const hwnd,
                                            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> window_name)
