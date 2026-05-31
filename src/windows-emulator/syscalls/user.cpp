@@ -3,7 +3,9 @@
 #include "../syscall_utils.hpp"
 #include "../win32k_userconnect.hpp"
 #include "windows-emulator/user_callback_dispatch.hpp"
+#include <iomanip>
 #include <limits>
+#include <sstream>
 
 #ifdef msg
 #undef msg
@@ -25,6 +27,19 @@ namespace sogen
         constexpr uint32_t k_fn_in_lp_window_pos_callback_id = 0x11;
         constexpr uint32_t k_fn_inout_lp_point5_callback_id = 0x12;
         constexpr uint32_t k_fn_inout_nc_calc_size_callback_id = 0x15;
+
+        template <typename T>
+        std::string hex_string(const T value, const int width = 0)
+        {
+            std::ostringstream oss;
+            oss << std::hex << std::nouppercase << std::setfill('0');
+            if (width > 0)
+            {
+                oss << std::setw(width);
+            }
+            oss << static_cast<uint64_t>(value);
+            return oss.str();
+        }
 
         struct user_callback_capture_buffer
         {
@@ -346,7 +361,7 @@ namespace sogen
                     continue;
                 }
 
-                thread.post_message(msg{.window = win.handle, .message = WM_PAINT, .wParam = 0, .lParam = 0});
+                thread.post_message(msg{.window = win.handle, .message = WM_PAINT, .wParam = 0, .lParam = 0, .time = 0, .pt = {}});
                 win.paint_message_posted = true;
                 return;
             }
@@ -1034,7 +1049,7 @@ namespace sogen
             if (c.win_emu.callbacks.on_generic_activity)
             {
                 c.win_emu.callbacks.on_generic_activity("CreateWindowEx class='" + u16_to_u8(cls_name) + "' style=0x" +
-                                                        std::format("{:08x}", style));
+                                                        hex_string(style, 8));
             }
 
             auto cls_it = c.proc.classes.find(cls_name);
@@ -1150,7 +1165,7 @@ namespace sogen
                 if (c.win_emu.callbacks.on_generic_activity)
                 {
                     c.win_emu.callbacks.on_generic_activity("CreateWindowEx builtin success class='" + u16_to_u8(cls_name) + "' hwnd=0x" +
-                                                            std::format("{:x}", handle.bits));
+                                                            hex_string(handle.bits));
                 }
 
                 return handle.bits;
@@ -1210,7 +1225,7 @@ namespace sogen
             if (c.win_emu.callbacks.on_generic_activity)
             {
                 c.win_emu.callbacks.on_generic_activity("CreateWindowEx async class='" + u16_to_u8(cls_name) + "' hwnd=0x" +
-                                                        std::format("{:x}", handle.bits));
+                                                        hex_string(handle.bits));
             }
 
             dispatch_next_message(c, callback_id::NtUserCreateWindowEx, std::move(state), win, state.message_queue);
@@ -1584,8 +1599,12 @@ namespace sogen
             }
 
             const auto command_wparam = static_cast<uint64_t>((static_cast<uint64_t>(BN_CLICKED) << 16) | (command_id & 0xFFFF));
-            thread.post_message(
-                msg{.window = dialog->handle, .message = WM_COMMAND, .wParam = command_wparam, .lParam = ok_button->handle});
+            thread.post_message(msg{.window = dialog->handle,
+                                    .message = WM_COMMAND,
+                                    .wParam = command_wparam,
+                                    .lParam = ok_button->handle,
+                                    .time = 0,
+                                    .pt = {}});
             return TRUE;
         }
 
@@ -2097,8 +2116,7 @@ namespace sogen
 
             if (c.win_emu.callbacks.on_generic_activity)
             {
-                c.win_emu.callbacks.on_generic_activity("SetWindowFNID hwnd=0x" + std::format("{:x}", hwnd) + " fnid=0x" +
-                                                        std::format("{:x}", fnid));
+                c.win_emu.callbacks.on_generic_activity("SetWindowFNID hwnd=0x" + hex_string(hwnd) + " fnid=0x" + hex_string(fnid));
             }
 
             return TRUE;
