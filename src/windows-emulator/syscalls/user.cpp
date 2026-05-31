@@ -525,17 +525,17 @@ namespace sogen
             return STATUS_NOT_SUPPORTED;
         }
 
-        NTSTATUS handle_NtUserGetThreadState(const syscall_context& c, const ULONG routine)
+        uint64_t handle_NtUserGetThreadState(const syscall_context& c, const ULONG routine)
         {
             if (routine != k_thread_state_win32_thread_info)
             {
-                return STATUS_SUCCESS;
+                return 0;
             }
 
             const auto thread_info = ensure_win32_thread_info(c);
             if (thread_info == 0)
             {
-                return STATUS_UNSUCCESSFUL;
+                return 0;
             }
 
             publish_win32_thread_info(c, thread_info);
@@ -545,15 +545,15 @@ namespace sogen
             {
                 c.proc.active_thread->win32k_thread_setup_pending = true;
                 dispatch_user_callback(c, callback_id::NtUserGetThreadState, k_client_setup_callback_id);
-                return {};
+                return 0;
             }
 
-            return STATUS_SUCCESS;
+            return thread_info;
         }
 
-        NTSTATUS completion_NtUserGetThreadState(const syscall_context&, const ULONG /*routine*/)
+        uint64_t completion_NtUserGetThreadState(const syscall_context& c, const ULONG routine)
         {
-            return STATUS_SUCCESS;
+            return handle_NtUserGetThreadState(c, routine);
         }
 
         NTSTATUS handle_NtUserProcessConnect(const syscall_context& c, const handle process_handle, const ULONG length,

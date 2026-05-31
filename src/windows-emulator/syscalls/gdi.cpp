@@ -25,6 +25,7 @@ namespace sogen
             static_assert(sizeof(GDI_HANDLE_ENTRY32) == 0x10);
 
             constexpr uint8_t k_gdi_dc_type = 0x01;
+            constexpr uint8_t k_gdi_region_type = 0x04;
             constexpr uint8_t k_gdi_bitmap_type = 0x05;
             constexpr uint8_t k_gdi_font_type = 0x0A;
             constexpr uint8_t k_gdi_brush_type = 0x10;
@@ -35,6 +36,7 @@ namespace sogen
             constexpr uint32_t k_gdi_pen_attr_size = 0x20;
             constexpr uint32_t k_gdi_bitmap_attr_size = 0x20;
             constexpr uint32_t k_gdi_font_attr_size = 0x40;
+            constexpr uint32_t k_gdi_region_attr_size = 0x20;
 
             constexpr uint32_t k_gdi_dc_attr_font_offset = 0x128;
 
@@ -556,6 +558,8 @@ namespace sogen
                     return k_logfontw_size;
                 case k_gdi_bitmap_type:
                     return k_bitmap_size;
+                case k_gdi_region_type:
+                    return k_gdi_region_attr_size;
                 default:
                     return 0;
                 }
@@ -792,6 +796,65 @@ namespace sogen
             write_u8(0x38, 0x01);
 
             return 1;
+        }
+
+        int32_t handle_NtGdiGetTextFaceW(const syscall_context& c, const hdc dc, const int32_t count, const emulator_pointer face_name,
+                                         const BOOL /*alias_name*/)
+        {
+            if (dc == 0)
+            {
+                return 0;
+            }
+
+            static constexpr std::wstring_view k_default_font_name = L"Segoe UI";
+            const auto required = static_cast<int32_t>(k_default_font_name.size() + 1);
+
+            if (face_name == 0)
+            {
+                return required;
+            }
+
+            if (count <= 0)
+            {
+                return 0;
+            }
+
+            const auto writable_chars = std::min<int32_t>(count - 1, static_cast<int32_t>(k_default_font_name.size()));
+            if (writable_chars > 0)
+            {
+                c.emu.write_memory(face_name, k_default_font_name.data(), static_cast<size_t>(writable_chars) * sizeof(wchar_t));
+            }
+
+            const wchar_t terminator = L'\0';
+            c.emu.write_memory(face_name + static_cast<uint64_t>(writable_chars) * sizeof(wchar_t), &terminator, sizeof(terminator));
+            return required;
+        }
+
+        BOOL handle_NtGdiGetTextExtent(const syscall_context& c, const hdc dc, const emulator_pointer /*text*/, const int32_t char_count,
+                                       const emulator_pointer size, const ULONG /*flags*/)
+        {
+            if (dc == 0 || size == 0 || char_count < 0)
+            {
+                return FALSE;
+            }
+
+            const SIZE text_size{
+                .cx = static_cast<LONG>(k_default_font_width * char_count),
+                .cy = static_cast<LONG>(k_default_font_height),
+            };
+            c.emu.write_memory(size, &text_size, sizeof(text_size));
+            return TRUE;
+        }
+
+        uint64_t handle_NtGdiCreateRectRgn(const syscall_context& c, const LONG /*x_left*/, const LONG /*y_top*/,
+                                           const LONG /*x_right*/, const LONG /*y_bottom*/)
+        {
+            return allocate_gdi_object(c, k_gdi_region_type, k_gdi_region_attr_size);
+        }
+
+        int32_t handle_NtGdiGetRandomRgn(const syscall_context&, const hdc dc, const uint64_t region, const LONG /*index*/)
+        {
+            return (dc != 0 && region != 0) ? 1 : 0;
         }
 
         NTSTATUS handle_NtGdiGetEntry(const syscall_context& c, const uint32_t handle_value, const emulator_pointer entry_ptr)

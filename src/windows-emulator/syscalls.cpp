@@ -425,8 +425,8 @@ namespace sogen
         NTSTATUS handle_NtUserTraceLoggingSendMixedModeTelemetry();
         NTSTATUS handle_NtUserDisplayConfigGetDeviceInfo();
         NTSTATUS handle_NtUserRegisterWindowMessage();
-        NTSTATUS handle_NtUserGetThreadState(const syscall_context& c, ULONG routine);
-        NTSTATUS completion_NtUserGetThreadState(const syscall_context& c, ULONG routine);
+        uint64_t handle_NtUserGetThreadState(const syscall_context& c, ULONG routine);
+        uint64_t completion_NtUserGetThreadState(const syscall_context& c, ULONG routine);
         NTSTATUS handle_NtUserProcessConnect(const syscall_context& c, handle process_handle, ULONG length, emulator_pointer user_connect);
         NTSTATUS handle_NtUserInitializeClientPfnArrays(const syscall_context& c, emulator_pointer apfn_client_a,
                                                         emulator_pointer apfn_client_w, emulator_pointer apfn_client_worker,
@@ -544,6 +544,11 @@ namespace sogen
         uint32_t handle_NtGdiGetTextCharsetInfo(const syscall_context& c, hdc dc, emulator_pointer sig, uint32_t flags);
         uint32_t handle_NtGdiQueryFontAssocInfo(const syscall_context& c, hdc dc);
         uint32_t handle_NtGdiGetTextMetricsW(const syscall_context& c, hdc dc, emulator_pointer ptm, uint32_t cj);
+        int32_t handle_NtGdiGetTextFaceW(const syscall_context& c, hdc dc, int32_t count, emulator_pointer face_name, BOOL alias_name);
+        BOOL handle_NtGdiGetTextExtent(const syscall_context& c, hdc dc, emulator_pointer text, int32_t char_count, emulator_pointer size,
+                                       ULONG flags);
+        uint64_t handle_NtGdiCreateRectRgn(const syscall_context& c, LONG x_left, LONG y_top, LONG x_right, LONG y_bottom);
+        int32_t handle_NtGdiGetRandomRgn(const syscall_context& c, hdc dc, uint64_t region, LONG index);
         NTSTATUS handle_NtGdiGetEntry(const syscall_context& c, uint32_t handle_value, emulator_pointer entry_ptr);
 
         // syscalls/trace.cpp:
@@ -970,6 +975,10 @@ namespace sogen
         add_handler(NtGdiGetTextCharsetInfo);
         add_handler(NtGdiQueryFontAssocInfo);
         add_handler(NtGdiGetTextMetricsW);
+        add_handler(NtGdiGetTextFaceW);
+        add_handler(NtGdiGetTextExtent);
+        add_handler(NtGdiCreateRectRgn);
+        add_handler(NtGdiGetRandomRgn);
         add_handler(NtGdiGetEntry);
         add_handler(NtGdiInit2);
         add_handler(NtUserGetThreadState);

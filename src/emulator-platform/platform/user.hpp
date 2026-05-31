@@ -25,12 +25,18 @@ namespace sogen
         uint64_t apfnClientWorker[FNID_ARRAY_SIZE];
         uint8_t unknown2[0xE90];
         uint64_t ahbrSystem[USER_SERVERINFO_BRUSH_SLOT_COUNT];
-        uint8_t unknown3[USER_SERVERINFO_BRUSH_TRAILING_BYTES];
+        uint8_t unknown3a[0x34];
+        int32_t defaultFontHeightScale;
+        int32_t defaultFontWidthScale;
+        uint8_t unknown3b[0x7C2];
+        uint16_t systemDpi;
     };
     static_assert(offsetof(USER_SERVERINFO, apfnClientA) == 0x188);
     static_assert(offsetof(USER_SERVERINFO, ahbrSystem) == 0x1258);
-    static_assert(offsetof(USER_SERVERINFO, unknown3) == 0x1358);
-    static_assert(sizeof(USER_SERVERINFO) == 0x13D0);
+    static_assert(offsetof(USER_SERVERINFO, defaultFontHeightScale) == 0x138C);
+    static_assert(offsetof(USER_SERVERINFO, defaultFontWidthScale) == 0x1390);
+    static_assert(offsetof(USER_SERVERINFO, systemDpi) == 0x1B56);
+    static_assert(sizeof(USER_SERVERINFO) == 0x1B58);
 
     struct USER_DISPINFO
     {
