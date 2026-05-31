@@ -63,15 +63,23 @@ namespace sogen
                 next_referent_id_ += sizeof(typename Traits::PVOID);
             }
 
-            void write_ndr_u16string(const std::u16string& str)
+            void write_ndr_u16string(const std::u16string_view str, const bool include_nul = true)
             {
-                size_t char_count = str.size() + 1;
-                size_t byte_length = char_count * sizeof(char16_t);
+                const auto max_char_count = str.size() + 1;
+                const auto actual_char_count = str.size() + (include_nul ? 1 : 0);
 
-                write<typename Traits::SIZE_T>(char_count);
+                write<typename Traits::SIZE_T>(max_char_count);
                 write<typename Traits::SIZE_T>(0);
-                write<typename Traits::SIZE_T>(char_count);
-                write(str.c_str(), byte_length);
+                write<typename Traits::SIZE_T>(actual_char_count);
+                if (!str.empty())
+                {
+                    write(str.data(), str.size() * sizeof(char16_t));
+                }
+                if (include_nul)
+                {
+                    constexpr char16_t nul{};
+                    write(&nul, sizeof(nul));
+                }
             }
 
             void pad(size_t count)

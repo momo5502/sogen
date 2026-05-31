@@ -151,13 +151,16 @@ namespace sogen
             win_emu.emu().write_memory<uint32_t>(c.recv_buffer + rpc_handshake_state_offset, 2);
         }
 
+        c.recv_buffer_length = c.send_buffer_length;
+
         return STATUS_SUCCESS;
     }
 
     NTSTATUS rpc_port::handle_rpc_call(windows_emulator& win_emu, const lpc_request_context& c)
     {
         constexpr ULONG rpc_call_header_size = 0x40;
-        constexpr ULONG rpc_call_proc_id_offset = 12;
+        constexpr ULONG rpc_call_id_offset = 12;
+        constexpr ULONG rpc_call_opnum_offset = 20;
 
         if (c.send_buffer_length < rpc_call_header_size)
         {
@@ -170,10 +173,12 @@ namespace sogen
             return STATUS_BUFFER_TOO_SMALL;
         }
 
-        const auto procedure_id = win_emu.emu().read_memory<uint8_t>(c.send_buffer + rpc_call_proc_id_offset);
+        const auto call_id = win_emu.emu().read_memory<uint32_t>(c.send_buffer + rpc_call_id_offset);
+        const auto procedure_id = win_emu.emu().read_memory<uint32_t>(c.send_buffer + rpc_call_opnum_offset);
 
-        std::array<uint8_t, 24> header = {0x03,         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                                          procedure_id, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+        std::array<uint8_t, 24> header = {0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+        std::memcpy(header.data() + 12, &call_id, sizeof(call_id));
         win_emu.emu().write_memory(c.recv_buffer, header);
 
         const auto max_payload_length = c.recv_buffer_length - rpc_header_size;

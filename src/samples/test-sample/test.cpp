@@ -193,6 +193,59 @@ namespace
         return !computername.empty() && blub == "LUL";
     }
 
+    bool test_lookup_account_sid()
+    {
+        HANDLE token{};
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+        {
+            return false;
+        }
+
+        const auto close_token = sogen::utils::finally([&] { CloseHandle(token); });
+
+        DWORD size = 0;
+        GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || size < sizeof(TOKEN_USER))
+        {
+            return false;
+        }
+
+        std::vector<std::byte> buffer(size);
+        if (!GetTokenInformation(token, TokenUser, buffer.data(), size, &size))
+        {
+            return false;
+        }
+
+        const auto& token_user = *reinterpret_cast<const TOKEN_USER*>(buffer.data());
+        if (token_user.User.Sid == nullptr || IsValidSid(token_user.User.Sid) == FALSE)
+        {
+            return false;
+        }
+
+        DWORD name_size = 0;
+        DWORD domain_size = 0;
+        SID_NAME_USE use = SidTypeUnknown;
+
+        LookupAccountSidW(nullptr, token_user.User.Sid, nullptr, &name_size, nullptr, &domain_size, &use);
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || name_size == 0 || domain_size == 0)
+        {
+            return false;
+        }
+
+        std::wstring name(name_size, L'\0');
+        std::wstring domain(domain_size, L'\0');
+
+        if (!LookupAccountSidW(nullptr, token_user.User.Sid, name.data(), &name_size, domain.data(), &domain_size, &use))
+        {
+            return false;
+        }
+
+        name.resize(name_size);
+        domain.resize(domain_size);
+
+        return !name.empty() && !domain.empty() && use == SidTypeUser;
+    }
+
     bool test_file_path_io(const std::filesystem::path& filename)
     {
         std::error_code ec{};
@@ -1446,6 +1499,9 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_threads, "Threads")
     RUN_TEST(test_threads_winapi, "Threads WinAPI")
     RUN_TEST(test_env, "Environment")
+#ifdef _WIN64
+    RUN_TEST(test_lookup_account_sid, "LSA")
+#endif
     RUN_TEST(test_exceptions, "Exceptions")
 #ifndef __MINGW64__
     RUN_TEST(test_native_exceptions, "Native Exceptions")
