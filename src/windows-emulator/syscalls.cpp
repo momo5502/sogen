@@ -487,6 +487,7 @@ namespace sogen
                                      UINT msg_filter_max);
         BOOL handle_NtUserPeekMessage(const syscall_context& c, emulator_object<msg> message, hwnd hwnd, UINT msg_filter_min,
                                       UINT msg_filter_max, UINT remove_message);
+        BOOL handle_NtUserWaitMessage(const syscall_context& c);
         BOOL handle_NtUserInvalidateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect, BOOL erase);
         BOOL handle_NtUserValidateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect);
         BOOL handle_NtUserPostMessage(const syscall_context& c, hwnd hwnd, UINT msg, uint64_t wParam, uint64_t lParam);
@@ -515,9 +516,11 @@ namespace sogen
         BOOL handle_NtUserRedrawWindow(const syscall_context& c, hwnd hwnd, emulator_object<RECT> update_rect, uint64_t update_rgn,
                                        UINT flags);
         NTSTATUS handle_NtUserGetCPD();
-        NTSTATUS handle_NtUserSetWindowFNID();
+        BOOL handle_NtUserSetWindowFNID(const syscall_context& c, hwnd hwnd, WORD fnid);
+        BOOL handle_NtUserSetDialogPointer(const syscall_context& c, hwnd hwnd, ULONG_PTR ptr);
+        BOOL handle_NtUserSetDialogSystemMenu(const syscall_context& c, hwnd hwnd);
         BOOL handle_NtUserEnableWindow();
-        uint64_t handle_NtUserGetSystemMenu();
+        uint64_t handle_NtUserGetSystemMenu(const syscall_context& c, hwnd hwnd, BOOL revert);
         BOOL handle_NtUserAllowSetForegroundWindow();
         ULONG handle_NtUserGetAtomName(const syscall_context& c, RTL_ATOM atom,
                                        emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> atom_name);
@@ -1100,6 +1103,7 @@ namespace sogen
         add_handler(NtUserDispatchMessage);
         add_handler(NtUserGetMessage);
         add_handler(NtUserPeekMessage);
+        add_handler(NtUserWaitMessage);
         add_handler(NtUserInvalidateRect);
         add_handler(NtUserValidateRect);
         add_handler(NtUserMapVirtualKeyEx);
@@ -1155,6 +1159,8 @@ namespace sogen
         add_handler(NtUserRedrawWindow);
         add_handler(NtUserGetCPD);
         add_handler(NtUserSetWindowFNID);
+        add_handler(NtUserSetDialogPointer);
+        add_handler(NtUserSetDialogSystemMenu);
         add_handler(NtUserEnableWindow);
         add_handler(NtUserGetSystemMenu);
         add_handler(NtCallbackReturn);

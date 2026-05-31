@@ -92,4 +92,12 @@ namespace sogen::test
         const auto it = emu.process.classes.find(u"RectWindowSampleClass");
         ASSERT_NE(it, emu.process.classes.end());
     }
+
+    TEST(EmulationTest, MessageBoxSampleRunsToCompletion)
+    {
+        auto emu = create_application_emulator(make_application_settings(u"C:\\messagebox-sample.exe"));
+        emu.start();
+
+        ASSERT_TERMINATED_SUCCESSFULLY(emu);
+    }
 } // namespace sogen::test

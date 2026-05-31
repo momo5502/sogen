@@ -155,6 +155,11 @@ namespace sogen
 #define WM_NCDESTROY         0x0082
 #define WM_NCCALCSIZE        0x0083
 #define WM_NCACTIVATE        0x0086
+#define WM_COMMAND           0x0111
+
+#define BN_CLICKED           0
+
+#define IDOK                 1
 
 #define PM_NOREMOVE          0x0000
 #define PM_REMOVE            0x0001

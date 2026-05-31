@@ -89,6 +89,8 @@ namespace sogen
         bool erase_pending{};
         std::map<std::u16string, uint64_t> props{};
         emulator_pointer wnd_proc{};
+        emulator_pointer dialog_pointer{};
+        emulator_pointer system_menu_ptr{};
 
         window(memory_interface& memory)
             : user_object(memory)
@@ -116,6 +118,8 @@ namespace sogen
             buffer.write(this->erase_pending);
             buffer.write_map(this->props);
             buffer.write(this->wnd_proc);
+            buffer.write(this->dialog_pointer);
+            buffer.write(this->system_menu_ptr);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -139,6 +143,8 @@ namespace sogen
             buffer.read(this->erase_pending);
             buffer.read_map(this->props);
             buffer.read(this->wnd_proc);
+            buffer.read(this->dialog_pointer);
+            buffer.read(this->system_menu_ptr);
         }
     };
 
