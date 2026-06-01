@@ -12,6 +12,19 @@ function ensureDirectory(path) {
 
 onmessage = async (event) => {
   const data = event.data;
+
+  if (data?.type === "sogen_ui_event") {
+    if (globalThis.Module?._sogen_web_ui_push_event) {
+      globalThis.Module._sogen_web_ui_push_event(
+        data.window >>> 0,
+        data.message >>> 0,
+        data.wParam >>> 0,
+        data.lParam >>> 0,
+      );
+    }
+    return;
+  }
+
   const payload = data.data;
 
   switch (data.message) {
