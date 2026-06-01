@@ -127,15 +127,6 @@ namespace sogen
             {
                 if (auto* const host = this->resolve_hwnd(window))
                 {
-                    if (const auto it = this->guest_windows_.find(host); it != this->guest_windows_.end())
-                    {
-                        const auto guest = it->second;
-                        if (auto* const top = GetParent(host); top != nullptr)
-                        {
-                            printf("HOST title guest=0x%llx title=%s\n", static_cast<unsigned long long>(guest), u16_to_u8(title).c_str());
-                            fflush(stdout);
-                        }
-                    }
                     const auto wide = to_wide(title);
                     SetWindowTextW(host, wide.c_str());
                 }
@@ -258,10 +249,6 @@ namespace sogen
                         const auto parent_it = this->guest_windows_.find(parent_hwnd);
                         if (child_it != this->guest_windows_.end() && parent_it != this->guest_windows_.end())
                         {
-                            printf("HOST command parent=0x%llx child=0x%llx wparam=0x%llx\n",
-                                   static_cast<unsigned long long>(parent_it->second), static_cast<unsigned long long>(child_it->second),
-                                   static_cast<unsigned long long>(wparam));
-                            fflush(stdout);
                             this->sink_(ui_event{.window = parent_it->second,
                                                  .message = WM_COMMAND,
                                                  .wParam = static_cast<uint64_t>(wparam),

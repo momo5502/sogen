@@ -93,68 +93,6 @@ namespace sogen
             }
         }
 
-        bool has_finite_timeout(const std::optional<std::chrono::steady_clock::time_point>& timeout)
-        {
-            return timeout.has_value() && timeout.value() != std::chrono::steady_clock::time_point::min();
-        }
-
-        bool can_thread_make_progress_without_external_input(const emulator_thread& thread)
-        {
-            if (thread.is_terminated() || thread.suspended > 0)
-            {
-                return false;
-            }
-
-            if (thread.pending_status.has_value() || !thread.message_queue.empty() || !thread.pending_apcs.empty())
-            {
-                return true;
-            }
-
-            if (has_finite_timeout(thread.await_time))
-            {
-                return true;
-            }
-
-            if (thread.waiting_for_alert && has_finite_timeout(thread.await_time))
-            {
-                return true;
-            }
-
-            if (thread.await_io_completion.has_value() && has_finite_timeout(thread.await_io_completion->timeout))
-            {
-                return true;
-            }
-
-            return thread.await_objects.empty() && !thread.await_msg.has_value() && !thread.await_io_completion.has_value() &&
-                   !thread.await_time.has_value() && !thread.waiting_for_alert;
-        }
-
-        bool has_internal_progress_path(const windows_emulator& win_emu)
-        {
-            for (const auto& thread : win_emu.process.threads | std::views::values)
-            {
-                if (can_thread_make_progress_without_external_input(thread))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        bool has_external_message_wakeup_path(const windows_emulator& win_emu)
-        {
-            for (const auto& thread : win_emu.process.threads | std::views::values)
-            {
-                if (!thread.is_terminated() && thread.await_msg.has_value())
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
         emulator_thread* get_thread_by_id(process_context& process, const uint32_t id)
         {
             for (auto& t : process.threads | std::views::values)
@@ -444,7 +382,7 @@ namespace sogen
 
         this->mod_manager.map_main_modules(this->application_settings_.application, this->version, context, this->log);
         this->install_section_first_execution_hooks();
-        this->install_ui_debug_hooks();
+        this->install_ui_dialog_proc_hooks();
 
         const auto* executable = this->mod_manager.executable;
         const auto* ntdll = this->mod_manager.ntdll;
@@ -478,16 +416,8 @@ namespace sogen
         const auto needed_switch = this->switch_thread_.exchange(false);
 
         this->switch_thread_ = false;
-        size_t idle_iterations = 0;
         while (!switch_to_next_thread(*this))
         {
-            if (!has_internal_progress_path(*this) && !has_external_message_wakeup_path(*this))
-            {
-                this->record_stop(stop_reason::deadlock, "No runnable thread and no internal wakeup path");
-                this->switch_thread_ = needed_switch;
-                return false;
-            }
-
             this->ui_backend_->pump_events();
 
             if (this->use_relative_time_)
@@ -501,13 +431,6 @@ namespace sogen
 
             if (this->should_stop)
             {
-                this->switch_thread_ = needed_switch;
-                return false;
-            }
-
-            if (++idle_iterations >= 5000)
-            {
-                this->record_stop(stop_reason::deadlock, "No thread became runnable after waiting");
                 this->switch_thread_ = needed_switch;
                 return false;
             }
@@ -616,9 +539,9 @@ namespace sogen
         this->section_first_execution_hooks_.clear();
     }
 
-    void windows_emulator::clear_ui_debug_hooks()
+    void windows_emulator::clear_ui_dialog_proc_hooks()
     {
-        for (auto* hook : this->ui_debug_hooks_)
+        for (auto* hook : this->ui_dialog_proc_hooks_)
         {
             if (hook)
             {
@@ -626,21 +549,7 @@ namespace sogen
             }
         }
 
-        for (auto* hook : this->ui_dialog_write_hooks_ | std::views::values)
-        {
-            if (hook)
-            {
-                this->emu().delete_hook(hook);
-            }
-        }
-
-        this->ui_debug_hooks_.clear();
-        this->ui_dialog_write_hooks_.clear();
-    }
-
-    void windows_emulator::watch_ui_dialog_pointer(const uint64_t ptr)
-    {
-        (void)ptr;
+        this->ui_dialog_proc_hooks_.clear();
     }
 
     uint64_t windows_emulator::current_ui_dialog_proc_candidate()
@@ -649,12 +558,12 @@ namespace sogen
         return it == this->ui_pending_dialog_proc_by_thread_.end() ? 0 : it->second;
     }
 
-    void windows_emulator::install_ui_debug_hooks()
+    void windows_emulator::install_ui_dialog_proc_hooks()
     {
         if (const auto* user32 = this->mod_manager.find_by_name("user32.dll"))
         {
             constexpr uint64_t dialog_create_rva = 0x2A070;
-            this->ui_debug_hooks_.push_back(
+            this->ui_dialog_proc_hooks_.push_back(
                 this->emu().hook_memory_execution(user32->image_base + dialog_create_rva, [this](const uint64_t /*address*/) {
                     uint64_t dialog_proc = 0;
                     this->memory.try_read_memory(this->emu().reg<uint64_t>(x86_register::rsp) + 0x28, &dialog_proc, sizeof(dialog_proc));
@@ -722,8 +631,8 @@ namespace sogen
 
             if (mod.name == "user32.dll")
             {
-                this->clear_ui_debug_hooks();
-                this->install_ui_debug_hooks();
+                this->clear_ui_dialog_proc_hooks();
+                this->install_ui_dialog_proc_hooks();
             }
         });
 
@@ -1069,14 +978,14 @@ namespace sogen
 
         this->memory.unmap_all_memory();
         this->clear_section_first_execution_hooks();
-        this->clear_ui_debug_hooks();
+        this->clear_ui_dialog_proc_hooks();
 
         // Match raw serialize() above; do not use backend snapshot mode here.
         this->emu().deserialize_state(buffer, false);
         this->memory.deserialize_memory_state(buffer, false);
         this->mod_manager.deserialize(buffer);
         this->install_section_first_execution_hooks();
-        this->install_ui_debug_hooks();
+        this->install_ui_dialog_proc_hooks();
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer);
     }
@@ -1123,13 +1032,13 @@ namespace sogen
 
         this->memory.unmap_all_memory();
         this->clear_section_first_execution_hooks();
-        this->clear_ui_debug_hooks();
+        this->clear_ui_dialog_proc_hooks();
 
         this->emu().deserialize_state(buffer, false);
         this->memory.deserialize_memory_state(buffer, false);
         this->mod_manager.deserialize(buffer);
         this->install_section_first_execution_hooks();
-        this->install_ui_debug_hooks();
+        this->install_ui_dialog_proc_hooks();
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer);
     }

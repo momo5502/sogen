@@ -3,7 +3,6 @@
 #include "../syscall_utils.hpp"
 #include "../win32k_userconnect.hpp"
 #include "windows-emulator/user_callback_dispatch.hpp"
-#include <cinttypes>
 #include <limits>
 
 #ifdef msg
@@ -26,13 +25,6 @@ namespace sogen
         constexpr uint32_t k_fn_in_lp_window_pos_callback_id = 0x11;
         constexpr uint32_t k_fn_inout_lp_point5_callback_id = 0x12;
         constexpr uint32_t k_fn_inout_nc_calc_size_callback_id = 0x15;
-
-        template <typename T>
-        std::string hex_string(const T value, const int width = 0)
-        {
-            const auto number = static_cast<std::uint64_t>(value);
-            return width > 0 ? utils::string::va("%0*" PRIx64, width, number) : utils::string::va("%" PRIx64, number);
-        }
 
         struct user_callback_capture_buffer
         {
@@ -1302,8 +1294,9 @@ namespace sogen
             const auto cls_name = read_large_string_or_atom(c, class_name);
             if (c.win_emu.callbacks.on_generic_activity)
             {
-                c.win_emu.callbacks.on_generic_activity("CreateWindowEx class='" + u16_to_u8(cls_name) + "' style=0x" +
-                                                        hex_string(style, 8));
+                auto style_string = utils::string::to_hex_number(style);
+                style_string.insert(style_string.begin(), std::max(0, 8 - static_cast<int>(style_string.size())), '0');
+                c.win_emu.callbacks.on_generic_activity("CreateWindowEx class='" + u16_to_u8(cls_name) + "' style=0x" + style_string);
             }
 
             auto cls_it = c.proc.classes.find(cls_name);
@@ -1505,7 +1498,7 @@ namespace sogen
                 if (c.win_emu.callbacks.on_generic_activity)
                 {
                     c.win_emu.callbacks.on_generic_activity("CreateWindowEx builtin success class='" + u16_to_u8(cls_name) + "' hwnd=0x" +
-                                                            hex_string(handle.bits));
+                                                            utils::string::to_hex_number(handle.bits));
                 }
 
                 return handle.bits;
@@ -1578,7 +1571,7 @@ namespace sogen
             if (c.win_emu.callbacks.on_generic_activity)
             {
                 c.win_emu.callbacks.on_generic_activity("CreateWindowEx async class='" + u16_to_u8(cls_name) + "' hwnd=0x" +
-                                                        hex_string(handle.bits));
+                                                        utils::string::to_hex_number(handle.bits));
             }
 
             dispatch_next_message(c, callback_id::NtUserCreateWindowEx, std::move(state), win, state.message_queue);
@@ -1848,37 +1841,16 @@ namespace sogen
             {
                 if (l_param == 0)
                 {
-                    if (normalize_builtin_window_class_name(win->class_name) == u"Button" ||
-                        normalize_builtin_window_class_name(win->class_name) == u"Static")
-                    {
-                        printf("UI child settext hwnd=0x%llx class=%s text=\n", static_cast<unsigned long long>(hwnd),
-                               u16_to_u8(normalize_builtin_window_class_name(win->class_name)).c_str());
-                        fflush(stdout);
-                    }
                     update_window_title(c, *win, {});
                 }
                 else if (ansi)
                 {
                     const auto text = u8_to_u16(read_string<char>(c.win_emu.memory, l_param));
-                    if (normalize_builtin_window_class_name(win->class_name) == u"Button" ||
-                        normalize_builtin_window_class_name(win->class_name) == u"Static")
-                    {
-                        printf("UI child settext hwnd=0x%llx class=%s text=%s\n", static_cast<unsigned long long>(hwnd),
-                               u16_to_u8(normalize_builtin_window_class_name(win->class_name)).c_str(), u16_to_u8(text).c_str());
-                        fflush(stdout);
-                    }
                     update_window_title(c, *win, text);
                 }
                 else
                 {
                     const auto text = read_string<char16_t>(c.win_emu.memory, l_param);
-                    if (normalize_builtin_window_class_name(win->class_name) == u"Button" ||
-                        normalize_builtin_window_class_name(win->class_name) == u"Static")
-                    {
-                        printf("UI child settext hwnd=0x%llx class=%s text=%s\n", static_cast<unsigned long long>(hwnd),
-                               u16_to_u8(normalize_builtin_window_class_name(win->class_name)).c_str(), u16_to_u8(text).c_str());
-                        fflush(stdout);
-                    }
                     update_window_title(c, *win, text);
                 }
             }
@@ -2580,7 +2552,8 @@ namespace sogen
 
             if (c.win_emu.callbacks.on_generic_activity)
             {
-                c.win_emu.callbacks.on_generic_activity("SetWindowFNID hwnd=0x" + hex_string(hwnd) + " fnid=0x" + hex_string(fnid));
+                c.win_emu.callbacks.on_generic_activity("SetWindowFNID hwnd=0x" + utils::string::to_hex_number(hwnd) + " fnid=0x" +
+                                                        utils::string::to_hex_number(fnid));
             }
 
             return TRUE;

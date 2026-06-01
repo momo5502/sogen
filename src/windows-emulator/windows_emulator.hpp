@@ -48,20 +48,12 @@ namespace sogen
         opt_func<void(uint32_t fail_code)> on_fast_fail{};
     };
 
-    // Typed reason the most recent start() returned. Today callers can only
-    // infer "why we stopped" by parsing log strings written by the syscall
-    // dispatcher, which is fragile and loses context. Internal error paths
-    // record a reason via windows_emulator::record_stop(); callers read it
-    // with last_stop_reason() post-start(). `none` covers clean exits,
-    // external stop() calls, and instruction-cap exhaustion — the caller
-    // already knows about those from exit_status and its own flags.
     enum class stop_reason : uint8_t
     {
         none,
         unknown_syscall,
         unimplemented_syscall,
         syscall_exception,
-        deadlock,
     };
 
     struct application_settings
@@ -210,7 +202,6 @@ namespace sogen
         }
 
         void handle_ui_event(const ui_event& event);
-        static void watch_ui_dialog_pointer(uint64_t ptr);
         uint64_t current_ui_dialog_proc_candidate();
 
         emulator_thread& current_thread() const
@@ -315,13 +306,12 @@ namespace sogen
         std::string last_stop_detail_{};
 
         std::map<uint64_t, std::vector<emulator_hook*>> section_first_execution_hooks_{};
-        std::vector<emulator_hook*> ui_debug_hooks_{};
-        std::unordered_map<uint64_t, emulator_hook*> ui_dialog_write_hooks_{};
+        std::vector<emulator_hook*> ui_dialog_proc_hooks_{};
         std::unordered_map<uint32_t, uint64_t> ui_pending_dialog_proc_by_thread_{};
 
         void setup_hooks();
-        void clear_ui_debug_hooks();
-        void install_ui_debug_hooks();
+        void clear_ui_dialog_proc_hooks();
+        void install_ui_dialog_proc_hooks();
         void setup_process();
         void on_instruction_execution(uint64_t address);
 
