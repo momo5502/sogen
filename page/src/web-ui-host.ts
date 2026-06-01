@@ -60,6 +60,7 @@ const WM_LBUTTONUP = 0x0202;
 const WM_RBUTTONDOWN = 0x0204;
 const WM_RBUTTONUP = 0x0205;
 const TITLE_BAR_HEIGHT = 24;
+const TOP_LEVEL_CLIENT_OFFSET_Y = TITLE_BAR_HEIGHT + 8;
 
 function cloneRect(rect?: { left: number; top: number; right: number; bottom: number }) {
   return rect ?? { left: 0, top: 0, right: 0, bottom: 0 };
@@ -162,6 +163,8 @@ export function attachSogenUiHost(
   }
 
   function drawChildren(parent: HostWindowState) {
+    const clientOffsetY = parent.topLevel ? TOP_LEVEL_CLIENT_OFFSET_Y : 0;
+
     for (const child of windows.values()) {
       if (!child.visible || child.parent !== parent.hwnd) {
         continue;
@@ -172,7 +175,7 @@ export function attachSogenUiHost(
       const className = child.className.toLowerCase();
 
       context2d.save();
-      context2d.translate(child.rect.left, child.rect.top);
+      context2d.translate(child.rect.left, child.rect.top + clientOffsetY);
 
       if (className === "button") {
         context2d.fillStyle = child.enabled ? "#e5e7eb" : "#d4d4d8";

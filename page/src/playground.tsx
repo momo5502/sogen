@@ -628,11 +628,6 @@ export class Playground extends React.Component<
                     className="h-full w-full rounded bg-background outline-none"
                   />
                 </div>
-                {this.state.uiWindowCount === 0 && (
-                  <div className="mt-2 text-xs text-muted-foreground">
-                    Start emulation. Guest windows will appear here when web UI backend emits create_window / present_surface messages.
-                  </div>
-                )}
               </div>
             </div>
             {this.state.memoryViewOpen && this.state.emulator && (
