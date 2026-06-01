@@ -27,6 +27,21 @@ namespace sogen
         bool top_level{};
     };
 
+    enum class ui_surface_format
+    {
+        bgra8,
+        rgba8,
+    };
+
+    struct ui_surface_desc
+    {
+        int width{};
+        int height{};
+        int stride{};
+        ui_surface_format format{ui_surface_format::bgra8};
+        const void* pixels{};
+    };
+
     struct ui_event
     {
         hwnd window{};
@@ -66,6 +81,9 @@ namespace sogen
         virtual void invalidate(const hwnd /*window*/, const std::optional<RECT>& /*rect*/)
         {
         }
+        virtual void present_surface(const hwnd /*window*/, const ui_surface_desc& /*surface*/)
+        {
+        }
     };
 
     class null_ui_backend final : public ui_backend
@@ -80,5 +98,7 @@ namespace sogen
     };
 
     std::unique_ptr<ui_backend> create_default_ui_backend();
+    std::unique_ptr<ui_backend> create_win32_ui_backend();
+    std::unique_ptr<ui_backend> create_sdl_ui_backend();
 
 } // namespace sogen
