@@ -3,9 +3,7 @@
 #include "../syscall_utils.hpp"
 #include "../win32k_userconnect.hpp"
 #include "windows-emulator/user_callback_dispatch.hpp"
-#include <iomanip>
 #include <limits>
-#include <sstream>
 
 #ifdef msg
 #undef msg
@@ -31,14 +29,8 @@ namespace sogen
         template <typename T>
         std::string hex_string(const T value, const int width = 0)
         {
-            std::ostringstream oss;
-            oss << std::hex << std::nouppercase << std::setfill('0');
-            if (width > 0)
-            {
-                oss << std::setw(width);
-            }
-            oss << static_cast<uint64_t>(value);
-            return oss.str();
+            const auto number = static_cast<unsigned long long>(value);
+            return width > 0 ? utils::string::va("%0*llx", width, number) : utils::string::va("%llx", number);
         }
 
         struct user_callback_capture_buffer

@@ -3,13 +3,9 @@ sogen_get_all_targets(EXISTING_TARGETS)
 ##########################################
 
 add_subdirectory(bad-sample)
-add_subdirectory(hello-window-sample)
 add_subdirectory(hook-sample)
 add_subdirectory(messagebox-sample)
 add_subdirectory(manual-messagebox-sample)
-add_subdirectory(move-window-sample)
-add_subdirectory(paint-window-sample)
-add_subdirectory(rect-window-sample)
 add_subdirectory(test-sample)
 
 ##########################################
