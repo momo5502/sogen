@@ -1,4 +1,5 @@
 import React from "react";
+import { attachSogenUiHost } from "./web-ui-host";
 
 import { Output } from "@/components/output";
 
@@ -71,6 +72,7 @@ export interface PlaygroundState {
   memoryViewOpen: boolean;
   debuggerOpen: boolean;
   allowWasm64: boolean;
+  uiWindowCount: number;
   file?: PlaygroundFile;
 }
 
@@ -141,12 +143,15 @@ export class Playground extends React.Component<
   PlaygroundState
 > {
   private output: React.RefObject<Output | null>;
+  private uiCanvas: React.RefObject<HTMLCanvasElement | null>;
+  private uiHostDispose?: () => void;
   private iconCache: Map<string, string | null> = new Map();
 
   constructor(props: PlaygroundProps) {
     super(props);
 
     this.output = React.createRef();
+    this.uiCanvas = React.createRef();
 
     this.start = this.start.bind(this);
     this.resetFilesys = this.resetFilesys.bind(this);
@@ -160,6 +165,7 @@ export class Playground extends React.Component<
       memoryViewOpen: false,
       debuggerOpen: false,
       allowWasm64: false,
+      uiWindowCount: 0,
       file: decodeFileData(getEmulateData()),
     };
   }
@@ -175,6 +181,7 @@ export class Playground extends React.Component<
   }
 
   componentWillUnmount(): void {
+    this.uiHostDispose?.();
     this.state.emulator?.stop();
   }
 
@@ -348,7 +355,17 @@ export class Playground extends React.Component<
     );
     //new_emulator.onTerminate().then(() => this.setState({ emulator: null }));
 
-    this.setState({ emulator: new_emulator, application: userFile });
+    this.uiHostDispose?.();
+    this.uiHostDispose = undefined;
+    if (this.uiCanvas.current) {
+      const host = attachSogenUiHost(new_emulator.worker, this.uiCanvas.current, {
+        onWindowCountChanged: (uiWindowCount) =>
+          this.setState({ uiWindowCount }),
+      });
+      this.uiHostDispose = host.dispose;
+    }
+
+    this.setState({ emulator: new_emulator, application: userFile, uiWindowCount: 0 });
 
     new_emulator.start(this.state.settings, userFile, this.state.debuggerOpen);
   }
@@ -555,6 +572,25 @@ export class Playground extends React.Component<
                 status={this.state.emulationStatus}
                 executionTimeFetcher={this.fetchExecutionTime}
               />
+              <div className="border-b p-2 bg-slate-950/70">
+                <div className="mb-2 flex items-center justify-between text-sm text-slate-300">
+                  <span>Web UI Prototype</span>
+                  <span>{this.state.uiWindowCount} window(s)</span>
+                </div>
+                <div className="rounded-md border border-slate-800 bg-slate-950 p-2">
+                  <canvas
+                    ref={this.uiCanvas}
+                    width={640}
+                    height={240}
+                    className="h-[240px] w-full rounded bg-slate-950 outline-none"
+                  />
+                  {this.state.uiWindowCount === 0 && (
+                    <div className="mt-2 text-xs text-slate-400">
+                      Start emulation. Guest windows will appear here when web UI backend emits create_window / present_surface messages.
+                    </div>
+                  )}
+                </div>
+              </div>
               <div className="flex flex-1 flex-col pl-1 overflow-auto min-w-0">
                 <Output ref={this.output} />
               </div>
