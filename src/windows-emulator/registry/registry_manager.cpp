@@ -92,7 +92,7 @@ namespace sogen
 
         register_hive(this->hives_, root / "user", this->hive_path_ / "NTUSER.DAT");
 
-        this->add_path_mapping(user / get_user_sid_string(*this), user);
+        this->add_path_mapping(user / registry_utils::get_user_sid_string(*this), user);
         this->add_path_mapping(user / ".Default", user);
 
         this->add_path_mapping(machine / "system" / "CurrentControlSet", machine / "system" / "ControlSet001");
@@ -443,27 +443,7 @@ namespace sogen
             return {};
         }
 
-        const auto& value = value_opt.value();
-
-        if (value.type != REG_SZ && value.type != REG_EXPAND_SZ)
-        {
-            return {};
-        }
-
-        if (value.data.empty() || value.data.size() % 2 != 0)
-        {
-            return {};
-        }
-
-        const auto char_count = value.data.size() / sizeof(char16_t);
-        const auto* data_ptr = reinterpret_cast<const char16_t*>(value.data.data());
-        if (data_ptr[char_count - 1] != u'\0')
-        {
-            return {};
-        }
-
-        auto s = std::u16string(data_ptr, char_count - 1);
-        return s;
+        return registry_utils::decode_registry_string(*value_opt);
     }
 
 } // namespace sogen

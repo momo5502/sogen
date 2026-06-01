@@ -1,6 +1,7 @@
 #define ICICLE_EMULATOR_IMPL
 #include "icicle_x86_64_emulator.hpp"
 
+#include <cstdio>
 #include <unordered_set>
 #include <utils/object.hpp>
 #include <utils/finally.hpp>
@@ -19,6 +20,13 @@ extern "C"
     using violation_func = int32_t(void*, uint64_t address, uint8_t operation, int32_t unmapped);
     using data_accessor_func = void(void* user, const void* data, size_t length);
     using memory_access_func = icicle_mmio_write_func;
+
+    struct icicle_stop_info
+    {
+        uint32_t kind;
+        uint32_t code;
+        uint64_t value;
+    };
 
     icicle_emulator* icicle_create_emulator();
     int32_t icicle_protect_memory(icicle_emulator*, uint64_t address, uint64_t length, uint8_t permissions);
@@ -45,6 +53,7 @@ extern "C"
     size_t icicle_read_register(icicle_emulator*, int reg, void* data, size_t length);
     size_t icicle_write_register(icicle_emulator*, int reg, const void* data, size_t length);
     void icicle_start(icicle_emulator*, size_t count);
+    int32_t icicle_get_stop_info(icicle_emulator*, icicle_stop_info* info);
     void icicle_stop(icicle_emulator*);
     void icicle_destroy_emulator(icicle_emulator*);
     void icicle_run_on_next_instruction(icicle_emulator*, raw_func* callback, void* data);
@@ -110,6 +119,14 @@ namespace sogen::icicle
             memory_access_hook_callback callback{};
             bool is_read{};
         };
+
+        enum class icicle_stop_kind : uint32_t
+        {
+            none = 0,
+            instruction_limit = 1,
+            unhandled_exception = 2,
+            other = 3,
+        };
     }
 
     class icicle_x86_64_emulator : public x86_64_emulator
@@ -140,6 +157,7 @@ namespace sogen::icicle
         void start(const size_t count) override
         {
             icicle_start(this->emu_, count);
+            this->throw_if_unhandled_stop();
             this->perform_pending_actions();
         }
 
@@ -539,6 +557,33 @@ namespace sogen::icicle
             this->id_mapping_[hook] = icicle_id;
 
             return hook;
+        }
+
+        void throw_if_unhandled_stop()
+        {
+            icicle_stop_info info{};
+            ice(icicle_get_stop_info(this->emu_, &info) != 0, "Failed to read icicle stop info");
+
+            const auto kind = static_cast<icicle_stop_kind>(info.kind);
+            if (kind == icicle_stop_kind::none || kind == icicle_stop_kind::instruction_limit)
+            {
+                return;
+            }
+
+            std::array<char, 160> message{};
+            if (kind == icicle_stop_kind::unhandled_exception)
+            {
+                std::snprintf(message.data(), message.size(), "Icicle stopped on unhandled exception: code=0x%X value=0x%llX rip=0x%llX",
+                              info.code, static_cast<unsigned long long>(info.value),
+                              static_cast<unsigned long long>(this->read_instruction_pointer()));
+            }
+            else
+            {
+                std::snprintf(message.data(), message.size(), "Icicle stopped on unhandled VM exit at rip=0x%llX",
+                              static_cast<unsigned long long>(this->read_instruction_pointer()));
+            }
+
+            throw std::runtime_error(message.data());
         }
 
         emulator_hook* hook_memory_access(memory_access_hook hook, emulator_hook* hook_id)

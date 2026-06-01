@@ -22,6 +22,53 @@ const FOREIGN_READ: u8 = 1 << 0;
 const FOREIGN_WRITE: u8 = 1 << 1;
 const FOREIGN_EXEC: u8 = 1 << 2;
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct IcicleStopInfo {
+    pub kind: u32,
+    pub code: u32,
+    pub value: u64,
+}
+
+impl IcicleStopInfo {
+    const NONE: u32 = 0;
+    const INSTRUCTION_LIMIT: u32 = 1;
+    const UNHANDLED_EXCEPTION: u32 = 2;
+    const OTHER: u32 = 3;
+
+    fn none() -> Self {
+        Self {
+            kind: Self::NONE,
+            code: 0,
+            value: 0,
+        }
+    }
+
+    fn instruction_limit() -> Self {
+        Self {
+            kind: Self::INSTRUCTION_LIMIT,
+            code: 0,
+            value: 0,
+        }
+    }
+
+    fn unhandled_exception(code: ExceptionCode, value: u64) -> Self {
+        Self {
+            kind: Self::UNHANDLED_EXCEPTION,
+            code: code as u32,
+            value,
+        }
+    }
+
+    fn other() -> Self {
+        Self {
+            kind: Self::OTHER,
+            code: 0,
+            value: 0,
+        }
+    }
+}
+
 fn map_permissions(foreign_permissions: u8) -> u8 {
     let mut permissions: u8 = 0;
 
@@ -342,6 +389,7 @@ impl ExecutionHooks {
 pub struct IcicleEmulator {
     executing_thread: std::thread::ThreadId,
     vm: icicle_vm::Vm,
+    last_stop: IcicleStopInfo,
     reg: registers::X86RegisterNodes,
     syscall_hooks: HookContainer<dyn Fn()>,
     interrupt_hooks: HookContainer<dyn Fn(i32)>,
@@ -434,6 +482,7 @@ impl IcicleEmulator {
         Self {
             stop: stop_value,
             executing_thread: std::thread::current().id(),
+            last_stop: IcicleStopInfo::none(),
             reg: registers::X86RegisterNodes::new(&virtual_machine.cpu.arch),
             vm: virtual_machine,
             syscall_hooks: HookContainer::new(),
@@ -450,6 +499,7 @@ impl IcicleEmulator {
 
     pub fn start(&mut self, count: u64) {
         self.executing_thread = std::thread::current().id();
+        self.last_stop = IcicleStopInfo::none();
 
         self.vm.icount_limit = match count {
             0 => u64::MAX,
@@ -466,16 +516,27 @@ impl IcicleEmulator {
             let reason = self.vm.run();
 
             match reason {
-                icicle_vm::VmExit::InstructionLimit => break,
+                icicle_vm::VmExit::InstructionLimit => {
+                    self.last_stop = IcicleStopInfo::instruction_limit();
+                    break;
+                }
                 icicle_vm::VmExit::UnhandledException((code, value)) => {
                     let continue_execution = self.handle_exception(code, value);
                     if !continue_execution {
+                        self.last_stop = IcicleStopInfo::unhandled_exception(code, value);
                         break;
                     }
                 }
-                _ => break,
+                _ => {
+                    self.last_stop = IcicleStopInfo::other();
+                    break;
+                }
             };
         }
+    }
+
+    pub fn last_stop_info(&self) -> IcicleStopInfo {
+        return self.last_stop;
     }
 
     fn handle_interrupt(&mut self, code: i32) -> bool {
@@ -493,6 +554,8 @@ impl IcicleEmulator {
             ExceptionCode::WritePerm => self.handle_violation(value, FOREIGN_WRITE, false),
             ExceptionCode::ReadUnmapped => self.handle_violation(value, FOREIGN_READ, true),
             ExceptionCode::WriteUnmapped => self.handle_violation(value, FOREIGN_WRITE, true),
+            ExceptionCode::ExecViolation => self.handle_violation(value, FOREIGN_EXEC, false),
+            ExceptionCode::SelfModifyingCode => self.handle_self_modifying_code(),
             ExceptionCode::SoftwareBreakpoint => self.handle_interrupt(3),
             ExceptionCode::InvalidInstruction => self.handle_interrupt(6),
             ExceptionCode::DivisionException => self.handle_interrupt(0),
@@ -500,6 +563,12 @@ impl IcicleEmulator {
         };
 
         return continue_execution;
+    }
+
+    fn handle_self_modifying_code(&mut self) -> bool {
+        self.vm.code.flush_code();
+        self.vm.cpu.block_id = u64::MAX;
+        return true;
     }
 
     fn handle_violation(&mut self, address: u64, permission: u8, unmapped: bool) -> bool {
