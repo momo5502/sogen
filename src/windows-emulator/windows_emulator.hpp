@@ -14,6 +14,7 @@
 #include "network/dns_lookup.hpp"
 #include "network/socket_factory.hpp"
 #include "version/windows_version_manager.hpp"
+#include <platform/ui_backend.hpp>
 
 namespace sogen
 {
@@ -119,6 +120,7 @@ namespace sogen
         std::unique_ptr<utils::clock> clock{};
         std::unique_ptr<network::dns_lookup> dns_lookup{};
         std::unique_ptr<network::socket_factory> socket_factory{};
+        std::unique_ptr<ui_backend> ui_backend{};
     };
 
     class windows_emulator
@@ -130,6 +132,7 @@ namespace sogen
         std::unique_ptr<utils::clock> clock_{};
         std::unique_ptr<network::dns_lookup> dns_lookup_{};
         std::unique_ptr<network::socket_factory> socket_factory_{};
+        std::unique_ptr<ui_backend> ui_backend_{};
         bool setup_completed_{false};
 
       public:
@@ -195,6 +198,20 @@ namespace sogen
         {
             return *this->socket_factory_;
         }
+
+        ui_backend& ui()
+        {
+            return *this->ui_backend_;
+        }
+
+        const ui_backend& ui() const
+        {
+            return *this->ui_backend_;
+        }
+
+        void handle_ui_event(const ui_event& event);
+        void watch_ui_dialog_pointer(uint64_t ptr);
+        uint64_t current_ui_dialog_proc_candidate();
 
         emulator_thread& current_thread() const
         {
@@ -298,8 +315,13 @@ namespace sogen
         std::string last_stop_detail_{};
 
         std::map<uint64_t, std::vector<emulator_hook*>> section_first_execution_hooks_{};
+        std::vector<emulator_hook*> ui_debug_hooks_{};
+        std::unordered_map<uint64_t, emulator_hook*> ui_dialog_write_hooks_{};
+        std::unordered_map<uint32_t, uint64_t> ui_pending_dialog_proc_by_thread_{};
 
         void setup_hooks();
+        void clear_ui_debug_hooks();
+        void install_ui_debug_hooks();
         void setup_process();
         void on_instruction_execution(uint64_t address);
 

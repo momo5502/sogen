@@ -155,16 +155,21 @@ namespace sogen
 #define WM_PAINT             0x000F
 #define WM_ERASEBKGND        0x0014
 #define WM_GETMINMAXINFO     0x0024
+#define WM_KEYDOWN           0x0100
+#define WM_COMMAND           0x0111
 #define WM_WINDOWPOSCHANGING 0x0046
 #define WM_WINDOWPOSCHANGED  0x0047
 #define WM_NCCREATE          0x0081
 #define WM_NCDESTROY         0x0082
 #define WM_NCCALCSIZE        0x0083
 #define WM_NCACTIVATE        0x0086
-#define WM_COMMAND           0x0111
 
 #define BN_CLICKED           0
 
+#define VK_ESCAPE            0x1B
+#define VK_RETURN            0x0D
+
+#define IDCANCEL             2
 #define IDOK                 1
 
 #define PM_NOREMOVE          0x0000

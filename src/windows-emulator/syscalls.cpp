@@ -483,6 +483,7 @@ namespace sogen
         uint64_t completion_NtUserMessageCall(const syscall_context& c, hwnd hwnd, UINT msg, uint64_t w_param, uint64_t l_param,
                                               uint64_t result_info, DWORD type, BOOL ansi);
         uint64_t handle_NtUserDispatchMessage(const syscall_context& c, emulator_object<msg> message);
+        BOOL handle_NtUserTranslateMessage(const syscall_context& c, emulator_object<msg> message, UINT flags);
         BOOL handle_NtUserGetMessage(const syscall_context& c, emulator_object<msg> message, hwnd hwnd, UINT msg_filter_min,
                                      UINT msg_filter_max);
         BOOL handle_NtUserPeekMessage(const syscall_context& c, emulator_object<msg> message, hwnd hwnd, UINT msg_filter_min,
@@ -509,6 +510,7 @@ namespace sogen
                                        UINT flags);
         NTSTATUS handle_NtUserSetForegroundWindow();
         hwnd handle_NtUserGetForegroundWindow();
+        hwnd handle_NtUserSetFocus(const syscall_context& c, hwnd hwnd);
         emulator_pointer handle_NtUserSetWindowLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
                                                        BOOL Ansi);
         uint32_t handle_NtUserSetWindowLong(const syscall_context& c, handle hWnd, int nIndex, uint32_t dwNewLong, BOOL Ansi);
@@ -519,7 +521,8 @@ namespace sogen
         BOOL handle_NtUserSetWindowFNID(const syscall_context& c, hwnd hwnd, WORD fnid);
         BOOL handle_NtUserSetDialogPointer(const syscall_context& c, hwnd hwnd, emulator_pointer ptr);
         BOOL handle_NtUserSetDialogSystemMenu(const syscall_context& c, hwnd hwnd);
-        BOOL handle_NtUserEnableWindow();
+        BOOL handle_NtUserSetMsgBox(const syscall_context& c, hwnd hwnd);
+        BOOL handle_NtUserEnableWindow(const syscall_context& c, hwnd hwnd, BOOL enable);
         uint64_t handle_NtUserGetSystemMenu(const syscall_context& c, hwnd hwnd, BOOL revert);
         BOOL handle_NtUserAllowSetForegroundWindow();
         ULONG handle_NtUserGetAtomName(const syscall_context& c, RTL_ATOM atom,
@@ -1101,6 +1104,7 @@ namespace sogen
         add_handler(NtUserShowWindow);
         add_handler(NtUserMessageCall);
         add_handler(NtUserDispatchMessage);
+        add_handler(NtUserTranslateMessage);
         add_handler(NtUserGetMessage);
         add_handler(NtUserPeekMessage);
         add_handler(NtUserWaitMessage);
@@ -1152,6 +1156,7 @@ namespace sogen
         add_handler(NtUserSetWindowPos);
         add_handler(NtUserSetForegroundWindow);
         add_handler(NtUserGetForegroundWindow);
+        add_handler(NtUserSetFocus);
         add_handler(NtUserSetWindowLongPtr);
         add_handler(NtUserSetWindowLong);
         add_handler(NtUserGetAncestor);
@@ -1161,6 +1166,7 @@ namespace sogen
         add_handler(NtUserSetWindowFNID);
         add_handler(NtUserSetDialogPointer);
         add_handler(NtUserSetDialogSystemMenu);
+        add_handler(NtUserSetMsgBox);
         add_handler(NtUserEnableWindow);
         add_handler(NtUserGetSystemMenu);
         add_handler(NtCallbackReturn);

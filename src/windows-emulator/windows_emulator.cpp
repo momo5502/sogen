@@ -350,6 +350,16 @@ namespace sogen
             return std::make_unique<network::socket_factory>();
 #endif
         }
+
+        std::unique_ptr<ui_backend> get_ui_backend(emulator_interfaces& interfaces)
+        {
+            if (interfaces.ui_backend)
+            {
+                return std::move(interfaces.ui_backend);
+            }
+
+            return create_default_ui_backend();
+        }
     }
 
     windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, application_settings app_settings,
@@ -366,6 +376,7 @@ namespace sogen
           clock_(get_clock(interfaces, this->executed_instructions_, settings.use_relative_time)),
           dns_lookup_(get_dns_lookup(interfaces)),
           socket_factory_(get_socket_factory(interfaces)),
+          ui_backend_(get_ui_backend(interfaces)),
           emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
           fake_env(settings.fake_env),
           callbacks(std::move(callbacks)),
@@ -376,6 +387,7 @@ namespace sogen
           process(*this->emu_, memory, *this->clock_, this->callbacks),
           use_relative_time_(settings.use_relative_time)
     {
+        this->ui_backend_->set_event_sink([this](const ui_event& event) { this->handle_ui_event(event); });
 #ifndef OS_WINDOWS
         if (this->emulation_root.empty())
         {
@@ -419,6 +431,7 @@ namespace sogen
 
         this->mod_manager.map_main_modules(this->application_settings_.application, this->version, context, this->log);
         this->install_section_first_execution_hooks();
+        this->install_ui_debug_hooks();
 
         const auto* executable = this->mod_manager.executable;
         const auto* ntdll = this->mod_manager.ntdll;
@@ -588,6 +601,56 @@ namespace sogen
         this->section_first_execution_hooks_.clear();
     }
 
+    void windows_emulator::clear_ui_debug_hooks()
+    {
+        for (auto* hook : this->ui_debug_hooks_)
+        {
+            if (hook)
+            {
+                this->emu().delete_hook(hook);
+            }
+        }
+
+        for (auto* hook : this->ui_dialog_write_hooks_ | std::views::values)
+        {
+            if (hook)
+            {
+                this->emu().delete_hook(hook);
+            }
+        }
+
+        this->ui_debug_hooks_.clear();
+        this->ui_dialog_write_hooks_.clear();
+    }
+
+    void windows_emulator::watch_ui_dialog_pointer(const uint64_t ptr)
+    {
+        (void)ptr;
+    }
+
+    uint64_t windows_emulator::current_ui_dialog_proc_candidate()
+    {
+        const auto it = this->ui_pending_dialog_proc_by_thread_.find(this->current_thread().id);
+        return it == this->ui_pending_dialog_proc_by_thread_.end() ? 0 : it->second;
+    }
+
+    void windows_emulator::install_ui_debug_hooks()
+    {
+        if (const auto* user32 = this->mod_manager.find_by_name("user32.dll"))
+        {
+            constexpr uint64_t dialog_create_rva = 0x2A070;
+            this->ui_debug_hooks_.push_back(
+                this->emu().hook_memory_execution(user32->image_base + dialog_create_rva, [this](const uint64_t /*address*/) {
+                    uint64_t dialog_proc = 0;
+                    this->memory.try_read_memory(this->emu().reg<uint64_t>(x86_register::rsp) + 0x28, &dialog_proc, sizeof(dialog_proc));
+                    if (dialog_proc != 0)
+                    {
+                        this->ui_pending_dialog_proc_by_thread_[this->current_thread().id] = dialog_proc;
+                    }
+                }));
+        }
+    }
+
     void windows_emulator::install_section_first_execution_hook(const mapped_module& mod, const size_t section_index)
     {
         if (!this->uses_section_first_execution_hooks() || section_index >= mod.sections.size())
@@ -641,20 +704,24 @@ namespace sogen
             {
                 this->install_section_first_execution_hook(mod, i);
             }
+
+            if (mod.name == "user32.dll")
+            {
+                this->clear_ui_debug_hooks();
+                this->install_ui_debug_hooks();
+            }
         });
 
         this->callbacks.on_module_unload.add([this](mapped_module& mod) {
             const auto hooks = this->section_first_execution_hooks_.extract(mod.image_base);
-            if (!hooks)
+            if (hooks)
             {
-                return;
-            }
-
-            for (auto* hook : hooks.mapped())
-            {
-                if (hook)
+                for (auto* hook : hooks.mapped())
                 {
-                    this->emu().delete_hook(hook);
+                    if (hook)
+                    {
+                        this->emu().delete_hook(hook);
+                    }
                 }
             }
         });
@@ -843,6 +910,7 @@ namespace sogen
 
         while (!this->should_stop)
         {
+            this->ui_backend_->pump_events();
             if (this->switch_thread_ || !this->current_thread().is_thread_ready(this->process, this->clock()))
             {
                 if (!this->perform_thread_switch())
@@ -869,6 +937,34 @@ namespace sogen
 
                 count = static_cast<size_t>(target_instructions - current_instructions);
             }
+        }
+    }
+
+    void windows_emulator::handle_ui_event(const ui_event& event)
+    {
+        const auto* win = this->process.windows.get(event.window);
+        if (!win)
+        {
+            return;
+        }
+
+        auto* thread = get_thread_by_id(this->process, win->thread_id);
+        if (!thread)
+        {
+            return;
+        }
+
+        msg m{};
+        m.window = event.window;
+        m.message = event.message;
+        m.wParam = event.wParam;
+        m.lParam = event.lParam;
+        thread->post_message(m);
+
+        if (event.message == WM_CLOSE || event.message == WM_COMMAND || event.message == WM_KEYDOWN)
+        {
+            this->switch_thread_ = true;
+            this->emu().stop();
         }
     }
 
@@ -950,12 +1046,14 @@ namespace sogen
 
         this->memory.unmap_all_memory();
         this->clear_section_first_execution_hooks();
+        this->clear_ui_debug_hooks();
 
         // Match raw serialize() above; do not use backend snapshot mode here.
         this->emu().deserialize_state(buffer, false);
         this->memory.deserialize_memory_state(buffer, false);
         this->mod_manager.deserialize(buffer);
         this->install_section_first_execution_hooks();
+        this->install_ui_debug_hooks();
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer);
     }
@@ -1002,11 +1100,13 @@ namespace sogen
 
         this->memory.unmap_all_memory();
         this->clear_section_first_execution_hooks();
+        this->clear_ui_debug_hooks();
 
         this->emu().deserialize_state(buffer, false);
         this->memory.deserialize_memory_state(buffer, false);
         this->mod_manager.deserialize(buffer);
         this->install_section_first_execution_hooks();
+        this->install_ui_debug_hooks();
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer);
     }
