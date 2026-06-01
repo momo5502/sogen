@@ -100,17 +100,11 @@ int main()
     UpdateWindow(hwnd);
 
     MSG msg{};
-    for (;;)
+    while (GetMessageA(&msg, nullptr, 0, 0) > 0)
     {
-        while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE))
-        {
-            if (msg.message == WM_QUIT)
-            {
-                return static_cast<int>(msg.wParam);
-            }
-            TranslateMessage(&msg);
-            DispatchMessageA(&msg);
-        }
-        Sleep(10);
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
     }
+
+    return static_cast<int>(msg.wParam);
 }

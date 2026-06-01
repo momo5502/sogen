@@ -59,11 +59,6 @@ namespace sogen
                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(desc.control_id)), GetModuleHandleW(nullptr), this);
                 if (!hwnd)
                 {
-                    printf(
-                        "HOST create failed class=%s resolved=%ls title=%s parent=0x%llx style=0x%08x ex=0x%08x rect=%d,%d %dx%d err=%lu\n",
-                        u16_to_u8(desc.class_name).c_str(), class_name.c_str(), u16_to_u8(desc.title).c_str(),
-                        static_cast<unsigned long long>(desc.parent), style, ex_style, host_rect.left, host_rect.top,
-                        host_rect.right - host_rect.left, host_rect.bottom - host_rect.top, GetLastError());
                     return;
                 }
 

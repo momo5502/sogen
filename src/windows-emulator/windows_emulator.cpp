@@ -142,6 +142,19 @@ namespace sogen
             return false;
         }
 
+        bool has_external_message_wakeup_path(const windows_emulator& win_emu)
+        {
+            for (const auto& thread : win_emu.process.threads | std::views::values)
+            {
+                if (!thread.is_terminated() && thread.await_msg.has_value())
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         emulator_thread* get_thread_by_id(process_context& process, const uint32_t id)
         {
             for (auto& t : process.threads | std::views::values)
@@ -468,12 +481,14 @@ namespace sogen
         size_t idle_iterations = 0;
         while (!switch_to_next_thread(*this))
         {
-            if (!has_internal_progress_path(*this))
+            if (!has_internal_progress_path(*this) && !has_external_message_wakeup_path(*this))
             {
                 this->record_stop(stop_reason::deadlock, "No runnable thread and no internal wakeup path");
                 this->switch_thread_ = needed_switch;
                 return false;
             }
+
+            this->ui_backend_->pump_events();
 
             if (this->use_relative_time_)
             {
