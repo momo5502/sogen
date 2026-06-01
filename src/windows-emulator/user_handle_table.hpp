@@ -30,6 +30,9 @@ namespace sogen
             const emulator_object<USER_SERVERINFO> srv_obj(*memory_, server_info_addr_);
             srv_obj.access([&](USER_SERVERINFO& srv) {
                 srv.cHandleEntries = MAX_HANDLES - 1; //
+                srv.defaultFontHeightScale = -11;
+                srv.defaultFontWidthScale = 0;
+                srv.systemDpi = 96;
             });
 
             const auto handle_table_size = static_cast<size_t>(page_align_up(sizeof(USER_HANDLEENTRY) * MAX_HANDLES));

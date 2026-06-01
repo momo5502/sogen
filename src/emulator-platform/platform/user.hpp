@@ -8,6 +8,24 @@
 #define FNID_START      0x29A
 #define FNID_ARRAY_SIZE 24
 
+#define FNID_SCROLLBAR  0x29A
+#define FNID_ICONTITLE  0x29B
+#define FNID_MENU       0x29C
+#define FNID_DESKTOP    0x29D
+#define FNID_DEFWINDOW  0x29E
+#define FNID_MESSAGE    0x29F
+#define FNID_SWITCH     0x2A0
+#define FNID_BUTTON     0x2A1
+#define FNID_COMBOBOX   0x2A2
+#define FNID_COMBOLBOX  0x2A3
+#define FNID_DIALOG     0x2A4
+#define FNID_EDIT       0x2A5
+#define FNID_LISTBOX    0x2A6
+#define FNID_MDICLIENT  0x2A7
+#define FNID_STATIC     0x2A8
+#define FNID_IME        0x2A9
+#define FNID_GHOST      0x2AA
+
 namespace sogen
 {
 
@@ -25,12 +43,18 @@ namespace sogen
         uint64_t apfnClientWorker[FNID_ARRAY_SIZE];
         uint8_t unknown2[0xE90];
         uint64_t ahbrSystem[USER_SERVERINFO_BRUSH_SLOT_COUNT];
-        uint8_t unknown3[USER_SERVERINFO_BRUSH_TRAILING_BYTES];
+        uint8_t unknown3a[0x34];
+        int32_t defaultFontHeightScale;
+        int32_t defaultFontWidthScale;
+        uint8_t unknown3b[0x7C2];
+        uint16_t systemDpi;
     };
     static_assert(offsetof(USER_SERVERINFO, apfnClientA) == 0x188);
     static_assert(offsetof(USER_SERVERINFO, ahbrSystem) == 0x1258);
-    static_assert(offsetof(USER_SERVERINFO, unknown3) == 0x1358);
-    static_assert(sizeof(USER_SERVERINFO) == 0x13D0);
+    static_assert(offsetof(USER_SERVERINFO, defaultFontHeightScale) == 0x138C);
+    static_assert(offsetof(USER_SERVERINFO, defaultFontWidthScale) == 0x1390);
+    static_assert(offsetof(USER_SERVERINFO, systemDpi) == 0x1B56);
+    static_assert(sizeof(USER_SERVERINFO) == 0x1B58);
 
     struct USER_DISPINFO
     {
@@ -176,7 +200,9 @@ namespace sogen
         uint64_t spwndParent;
         uint8_t pad_038[8];
         uint64_t spwndOwner;
-        uint8_t pad_048[48];
+        RECT rcUnknown_048;
+        RECT rcWindow;
+        RECT rcClient;
         uint64_t lpfnWndProc;
         uint64_t pcls;
         uint8_t pad_088[16];

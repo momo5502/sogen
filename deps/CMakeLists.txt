@@ -31,6 +31,18 @@ add_subdirectory(minidump_cpp)
 
 ##########################################
 
+if(SOGEN_ENABLE_SDL3 AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/SDL/CMakeLists.txt")
+  set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+  set(SDL_STATIC ON CACHE BOOL "" FORCE)
+  set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+  set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+  set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+  add_subdirectory(SDL)
+endif()
+
+##########################################
+
 if(SOGEN_ENABLE_PYTHON_BINDINGS)
   if (NOT TARGET Python::Module)
     if(CMAKE_VERSION VERSION_LESS 3.18)

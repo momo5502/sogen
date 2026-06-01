@@ -14,6 +14,7 @@
 #include "network/dns_lookup.hpp"
 #include "network/socket_factory.hpp"
 #include "version/windows_version_manager.hpp"
+#include <platform/ui_backend.hpp>
 
 namespace sogen
 {
@@ -47,13 +48,6 @@ namespace sogen
         opt_func<void(uint32_t fail_code)> on_fast_fail{};
     };
 
-    // Typed reason the most recent start() returned. Today callers can only
-    // infer "why we stopped" by parsing log strings written by the syscall
-    // dispatcher, which is fragile and loses context. Internal error paths
-    // record a reason via windows_emulator::record_stop(); callers read it
-    // with last_stop_reason() post-start(). `none` covers clean exits,
-    // external stop() calls, and instruction-cap exhaustion — the caller
-    // already knows about those from exit_status and its own flags.
     enum class stop_reason : uint8_t
     {
         none,
@@ -118,6 +112,7 @@ namespace sogen
         std::unique_ptr<utils::clock> clock{};
         std::unique_ptr<network::dns_lookup> dns_lookup{};
         std::unique_ptr<network::socket_factory> socket_factory{};
+        std::unique_ptr<ui_backend> ui{};
     };
 
     class windows_emulator
@@ -129,6 +124,7 @@ namespace sogen
         std::unique_ptr<utils::clock> clock_{};
         std::unique_ptr<network::dns_lookup> dns_lookup_{};
         std::unique_ptr<network::socket_factory> socket_factory_{};
+        std::unique_ptr<ui_backend> ui_backend_{};
         bool setup_completed_{false};
 
       public:
@@ -194,6 +190,18 @@ namespace sogen
         {
             return *this->socket_factory_;
         }
+
+        ui_backend& ui()
+        {
+            return *this->ui_backend_;
+        }
+
+        const ui_backend& ui() const
+        {
+            return *this->ui_backend_;
+        }
+
+        void handle_ui_event(const ui_event& event);
 
         emulator_thread& current_thread() const
         {

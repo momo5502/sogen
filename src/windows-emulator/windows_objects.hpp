@@ -83,8 +83,17 @@ namespace sogen
         int32_t y{};
         uint32_t ex_style{};
         uint32_t style{};
+        RECT update_rect{};
+        bool update_pending{};
+        bool paint_message_posted{};
+        bool erase_pending{};
         std::map<std::u16string, uint64_t> props{};
         emulator_pointer wnd_proc{};
+        emulator_pointer dialog_pointer{};
+        uint32_t dialog_flags{};
+        uint64_t dialog_result{};
+        emulator_pointer system_menu_ptr{};
+        bool host_surface_window{};
 
         window(memory_interface& memory)
             : user_object(memory)
@@ -106,8 +115,17 @@ namespace sogen
             buffer.write(this->y);
             buffer.write(this->ex_style);
             buffer.write(this->style);
+            buffer.write(this->update_rect);
+            buffer.write(this->update_pending);
+            buffer.write(this->paint_message_posted);
+            buffer.write(this->erase_pending);
             buffer.write_map(this->props);
             buffer.write(this->wnd_proc);
+            buffer.write(this->dialog_pointer);
+            buffer.write(this->dialog_flags);
+            buffer.write(this->dialog_result);
+            buffer.write(this->system_menu_ptr);
+            buffer.write(this->host_surface_window);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -125,8 +143,17 @@ namespace sogen
             buffer.read(this->y);
             buffer.read(this->ex_style);
             buffer.read(this->style);
+            buffer.read(this->update_rect);
+            buffer.read(this->update_pending);
+            buffer.read(this->paint_message_posted);
+            buffer.read(this->erase_pending);
             buffer.read_map(this->props);
             buffer.read(this->wnd_proc);
+            buffer.read(this->dialog_pointer);
+            buffer.read(this->dialog_flags);
+            buffer.read(this->dialog_result);
+            buffer.read(this->system_menu_ptr);
+            buffer.read(this->host_surface_window);
         }
     };
 

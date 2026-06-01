@@ -43,3 +43,6 @@
 	path = deps/sogen-linux-files
 	url = https://github.com/momo5502/sogen-linux-files.git
 	shallow = true
+[submodule "deps/SDL"]
+	path = deps/SDL
+	url = https://github.com/libsdl-org/SDL.git
