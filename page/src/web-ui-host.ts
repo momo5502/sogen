@@ -28,6 +28,7 @@ interface HostWindowState {
   rect: { left: number; top: number; right: number; bottom: number };
   className: string;
   title: string;
+  controlId: number;
   visible: boolean;
   enabled: boolean;
   topLevel: boolean;
@@ -119,6 +120,7 @@ export function attachSogenUiHost(
         rect: cloneRect(),
         className: "",
         title: "",
+        controlId: 0,
         visible: false,
         enabled: true,
         topLevel: true,
@@ -327,6 +329,28 @@ export function attachSogenUiHost(
     return hit;
   }
 
+  function hitTestChild(parent: HostWindowState, localX: number, localY: number) {
+    const parentClientY = localY - (parent.topLevel ? TOP_LEVEL_CLIENT_OFFSET_Y : 0);
+    let hit: HostWindowState | null = null;
+
+    for (const child of windows.values()) {
+      if (!child.visible || child.parent !== parent.hwnd) {
+        continue;
+      }
+
+      if (
+        localX >= child.rect.left &&
+        localX < child.rect.right &&
+        parentClientY >= child.rect.top &&
+        parentClientY < child.rect.bottom
+      ) {
+        hit = child;
+      }
+    }
+
+    return hit;
+  }
+
   function sendUiEvent(hwnd: number, message: number, wParam: number, lParam: number) {
     worker.postMessage({
       type: "sogen_ui_event",
@@ -368,6 +392,7 @@ export function attachSogenUiHost(
         window.rect = cloneRect(message.rect);
         window.className = message.class_name ?? "";
         window.title = message.title ?? "";
+        window.controlId = message.control_id ?? 0;
         window.visible = !!message.visible;
         window.enabled = message.enabled ?? true;
         window.topLevel = message.top_level ?? true;
@@ -449,6 +474,12 @@ export function attachSogenUiHost(
     if ((message === WM_LBUTTONUP || message === WM_RBUTTONUP) && dragState) {
       dragState = null;
       composite();
+      return;
+    }
+
+    const child = hitTestChild(target, localX, localY);
+    if (message === WM_LBUTTONUP && child && child.className.toLowerCase() === "button") {
+      sendUiEvent(target.hwnd, 0x0111, child.controlId, child.hwnd);
       return;
     }
 
