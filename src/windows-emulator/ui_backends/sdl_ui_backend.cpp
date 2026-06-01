@@ -486,7 +486,7 @@ namespace sogen
                     if (normalized == u"Static")
                     {
                         draw_debug_text(state.renderer, child.desc.rect.left, child.desc.rect.top + 6, child.desc.title,
-                                              SDL_Color{0, 0, 0, 255});
+                                        SDL_Color{0, 0, 0, 255});
                         continue;
                     }
 
@@ -498,7 +498,7 @@ namespace sogen
                         SDL_SetRenderDrawColor(state.renderer, 32, 32, 32, 255);
                         SDL_RenderRect(state.renderer, &rect);
                         draw_debug_text(state.renderer, child.desc.rect.left + 8, child.desc.rect.top + 8, child.desc.title,
-                                              SDL_Color{0, 0, 0, 255});
+                                        SDL_Color{0, 0, 0, 255});
                         continue;
                     }
                 }
@@ -538,10 +538,10 @@ namespace sogen
                 }
 
                 present_surface(state, ui_surface_desc{.width = width,
-                                                             .height = height,
-                                                             .stride = width * static_cast<int>(sizeof(uint32_t)),
-                                                             .format = ui_surface_format::bgra8,
-                                                             .pixels = pixels.data()});
+                                                       .height = height,
+                                                       .stride = width * static_cast<int>(sizeof(uint32_t)),
+                                                       .format = ui_surface_format::bgra8,
+                                                       .pixels = pixels.data()});
             }
 
             hwnd resolve_guest(const SDL_WindowID window_id) const

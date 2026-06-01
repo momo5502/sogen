@@ -53,10 +53,10 @@ namespace sogen
                     host_rect.bottom = host_rect.top + (adjusted.bottom - adjusted.top);
                 }
 
-                auto* const hwnd = CreateWindowExW(ex_style, class_name.c_str(), title.c_str(), style, host_rect.left, host_rect.top,
-                                                   host_rect.right - host_rect.left, host_rect.bottom - host_rect.top, parent,
-                                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(desc.control_id)),
-                                                   GetModuleHandleW(nullptr), this);
+                auto* const hwnd =
+                    CreateWindowExW(ex_style, class_name.c_str(), title.c_str(), style, host_rect.left, host_rect.top,
+                                    host_rect.right - host_rect.left, host_rect.bottom - host_rect.top, parent,
+                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(desc.control_id)), GetModuleHandleW(nullptr), this);
                 if (!hwnd)
                 {
                     return;
