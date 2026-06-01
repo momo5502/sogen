@@ -3,6 +3,7 @@
 #include "../syscall_utils.hpp"
 #include "../win32k_userconnect.hpp"
 #include "windows-emulator/user_callback_dispatch.hpp"
+#include <cinttypes>
 #include <limits>
 
 #ifdef msg
@@ -30,7 +31,7 @@ namespace sogen
         std::string hex_string(const T value, const int width = 0)
         {
             const auto number = static_cast<std::uint64_t>(value);
-            return width > 0 ? utils::string::va("%0*llx", width, number) : utils::string::va("%llx", number);
+            return width > 0 ? utils::string::va("%0*" PRIx64, width, number) : utils::string::va("%" PRIx64, number);
         }
 
         struct user_callback_capture_buffer

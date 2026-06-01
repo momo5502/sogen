@@ -120,7 +120,7 @@ namespace sogen
         std::unique_ptr<utils::clock> clock{};
         std::unique_ptr<network::dns_lookup> dns_lookup{};
         std::unique_ptr<network::socket_factory> socket_factory{};
-        std::unique_ptr<ui_backend> ui_backend{};
+        std::unique_ptr<ui_backend> ui{};
     };
 
     class windows_emulator

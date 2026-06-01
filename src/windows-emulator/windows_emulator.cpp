@@ -366,9 +366,9 @@ namespace sogen
 
         std::unique_ptr<ui_backend> get_ui_backend(emulator_interfaces& interfaces)
         {
-            if (interfaces.ui_backend)
+            if (interfaces.ui)
             {
-                return std::move(interfaces.ui_backend);
+                return std::move(interfaces.ui);
             }
 
             return create_default_ui_backend();
