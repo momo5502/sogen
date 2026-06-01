@@ -73,6 +73,7 @@ export interface PlaygroundState {
   debuggerOpen: boolean;
   allowWasm64: boolean;
   uiWindowCount: number;
+  uiPanelWidth: number;
   file?: PlaygroundFile;
 }
 
@@ -145,6 +146,7 @@ export class Playground extends React.Component<
   private output: React.RefObject<Output | null>;
   private uiCanvas: React.RefObject<HTMLCanvasElement | null>;
   private uiHostDispose?: () => void;
+  private uiPanelDragging = false;
   private iconCache: Map<string, string | null> = new Map();
 
   constructor(props: PlaygroundProps) {
@@ -166,6 +168,7 @@ export class Playground extends React.Component<
       debuggerOpen: false,
       allowWasm64: false,
       uiWindowCount: 0,
+      uiPanelWidth: Math.min(720, Math.round(window.innerWidth * 0.45)),
       file: decodeFileData(getEmulateData()),
     };
   }
@@ -175,15 +178,42 @@ export class Playground extends React.Component<
       this.setState({ allowWasm64 });
     });
 
+    window.addEventListener("mousemove", this.onUiPanelResizeMove);
+    window.addEventListener("mouseup", this.onUiPanelResizeEnd);
+
     if (this.state.file) {
       this.emulateRemoteFile(this.state.file);
     }
   }
 
   componentWillUnmount(): void {
+    window.removeEventListener("mousemove", this.onUiPanelResizeMove);
+    window.removeEventListener("mouseup", this.onUiPanelResizeEnd);
+    document.body.style.userSelect = "";
+    this.uiPanelDragging = false;
     this.uiHostDispose?.();
     this.state.emulator?.stop();
   }
+
+  onUiPanelResizeMove = (event: MouseEvent) => {
+    if (!this.uiPanelDragging) {
+      return;
+    }
+
+    const next = window.innerWidth - event.clientX;
+    this.setState({
+      uiPanelWidth: Math.min(Math.max(next, 320), window.innerWidth - 160),
+    });
+  };
+
+  onUiPanelResizeEnd = () => {
+    if (!this.uiPanelDragging) {
+      return;
+    }
+
+    this.uiPanelDragging = false;
+    document.body.style.userSelect = "";
+  };
 
   resetFilesystemState() {
     this.setState({
@@ -572,27 +602,43 @@ export class Playground extends React.Component<
                 status={this.state.emulationStatus}
                 executionTimeFetcher={this.fetchExecutionTime}
               />
-              <div className="border-b p-2 bg-slate-950/70">
-                <div className="mb-2 flex items-center justify-between text-sm text-slate-300">
-                  <span>Web UI Prototype</span>
-                  <span>{this.state.uiWindowCount} window(s)</span>
-                </div>
-                <div className="rounded-md border border-slate-800 bg-slate-950 p-2">
-                  <canvas
-                    ref={this.uiCanvas}
-                    width={640}
-                    height={240}
-                    className="h-[240px] w-full rounded bg-slate-950 outline-none"
-                  />
-                  {this.state.uiWindowCount === 0 && (
-                    <div className="mt-2 text-xs text-slate-400">
-                      Start emulation. Guest windows will appear here when web UI backend emits create_window / present_surface messages.
-                    </div>
-                  )}
-                </div>
-              </div>
               <div className="flex flex-1 flex-col pl-1 overflow-auto min-w-0">
                 <Output ref={this.output} />
+              </div>
+            </div>
+            <div
+              className="relative flex h-full shrink-0 flex-col border-l bg-background"
+              style={{ width: `${this.state.uiPanelWidth}px`, maxWidth: "100vw" }}
+            >
+              <div
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  this.uiPanelDragging = true;
+                  document.body.style.userSelect = "none";
+                }}
+                title="Drag to resize"
+                className="absolute inset-y-0 left-0 z-20 w-1.5 cursor-col-resize hover:bg-primary/40"
+              />
+              <div className="flex items-center justify-between gap-2 border-b p-2">
+                <span className="text-sm font-medium">Web UI Prototype</span>
+                <span className="text-xs text-muted-foreground">
+                  {this.state.uiWindowCount} window(s)
+                </span>
+              </div>
+              <div className="flex flex-1 flex-col p-2 min-h-0">
+                <div className="flex-1 rounded-md border bg-muted/20 p-2 min-h-0">
+                  <canvas
+                    ref={this.uiCanvas}
+                    width={960}
+                    height={640}
+                    className="h-full w-full rounded bg-background outline-none"
+                  />
+                </div>
+                {this.state.uiWindowCount === 0 && (
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    Start emulation. Guest windows will appear here when web UI backend emits create_window / present_surface messages.
+                  </div>
+                )}
               </div>
             </div>
             {this.state.memoryViewOpen && this.state.emulator && (

@@ -34,6 +34,12 @@ interface HostWindowState {
   imageData: ImageData | null;
 }
 
+interface DragState {
+  hwnd: number;
+  offsetX: number;
+  offsetY: number;
+}
+
 interface AttachSogenUiHostOptions {
   onWindowCountChanged?: (count: number) => void;
 }
@@ -46,6 +52,7 @@ const WM_LBUTTONDOWN = 0x0201;
 const WM_LBUTTONUP = 0x0202;
 const WM_RBUTTONDOWN = 0x0204;
 const WM_RBUTTONUP = 0x0205;
+const TITLE_BAR_HEIGHT = 24;
 
 function cloneRect(rect?: { left: number; top: number; right: number; bottom: number }) {
   return rect ?? { left: 0, top: 0, right: 0, bottom: 0 };
@@ -87,6 +94,7 @@ export function attachSogenUiHost(
 
   const windows = new Map<number, HostWindowState>();
   let focusedWindow = 0;
+  let dragState: DragState | null = null;
 
   function notifyWindowCount() {
     options.onWindowCountChanged?.(windows.size);
@@ -136,6 +144,16 @@ export function attachSogenUiHost(
     return new ImageData(rgba, message.width, message.height);
   }
 
+  function bringToFront(hwnd: number) {
+    const window = windows.get(hwnd);
+    if (!window) {
+      return;
+    }
+
+    windows.delete(hwnd);
+    windows.set(hwnd, window);
+  }
+
   function drawWindow(window: HostWindowState) {
     if (!window.visible) {
       return;
@@ -155,7 +173,7 @@ export function attachSogenUiHost(
     context2d.strokeRect(0.5, 0.5, width - 1, height - 1);
 
     context2d.fillStyle = "#0f172a";
-    context2d.fillRect(1, 1, Math.max(0, width - 2), Math.min(24, Math.max(0, height - 2)));
+    context2d.fillRect(1, 1, Math.max(0, width - 2), Math.min(TITLE_BAR_HEIGHT, Math.max(0, height - 2)));
 
     context2d.fillStyle = "#e2e8f0";
     context2d.font = "12px Inter, sans-serif";
@@ -284,6 +302,26 @@ export function attachSogenUiHost(
 
   function onMouse(message: number, event: MouseEvent) {
     const point = toCanvasPoint(event);
+
+    if (message === WM_MOUSEMOVE && dragState) {
+      const target = windows.get(dragState.hwnd);
+      if (!target) {
+        dragState = null;
+        return;
+      }
+
+      const width = target.rect.right - target.rect.left;
+      const height = target.rect.bottom - target.rect.top;
+      target.rect = {
+        left: point.x - dragState.offsetX,
+        top: point.y - dragState.offsetY,
+        right: point.x - dragState.offsetX + width,
+        bottom: point.y - dragState.offsetY + height,
+      };
+      composite();
+      return;
+    }
+
     const window = hitTest(point.x, point.y);
     const target = window ?? (focusedWindow ? windows.get(focusedWindow) ?? null : null);
     if (!target) {
@@ -291,8 +329,27 @@ export function attachSogenUiHost(
     }
 
     focusedWindow = target.hwnd;
+    bringToFront(target.hwnd);
+
     const localX = point.x - target.rect.left;
     const localY = point.y - target.rect.top;
+
+    if (message === WM_LBUTTONDOWN && target.topLevel && localY >= 0 && localY < TITLE_BAR_HEIGHT) {
+      dragState = {
+        hwnd: target.hwnd,
+        offsetX: localX,
+        offsetY: localY,
+      };
+      composite();
+      return;
+    }
+
+    if ((message === WM_LBUTTONUP || message === WM_RBUTTONUP) && dragState) {
+      dragState = null;
+      composite();
+      return;
+    }
+
     sendUiEvent(target.hwnd, message, 0, packPoint(localX, localY));
   }
 
