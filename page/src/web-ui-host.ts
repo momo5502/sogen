@@ -32,6 +32,7 @@ interface HostWindowState {
   enabled: boolean;
   topLevel: boolean;
   imageData: ImageData | null;
+  surfaceCanvas: HTMLCanvasElement | null;
 }
 
 const PLAYGROUND_BACKGROUND = "#18181b";
@@ -122,6 +123,7 @@ export function attachSogenUiHost(
         enabled: true,
         topLevel: true,
         imageData: null,
+        surfaceCanvas: null,
       };
       windows.set(hwnd, window);
       notifyWindowCount();
@@ -150,6 +152,40 @@ export function attachSogenUiHost(
       pixels,
     );
     return new ImageData(rgba, message.width, message.height);
+  }
+
+  function updateSurfaceCanvas(window: HostWindowState, imageData: ImageData | null) {
+    window.imageData = imageData;
+    if (!imageData) {
+      window.surfaceCanvas = null;
+      return;
+    }
+
+    const surfaceCanvas = window.surfaceCanvas ?? document.createElement("canvas");
+    surfaceCanvas.width = imageData.width;
+    surfaceCanvas.height = imageData.height;
+    const surfaceContext = surfaceCanvas.getContext("2d");
+    if (!surfaceContext) {
+      window.surfaceCanvas = null;
+      return;
+    }
+
+    surfaceContext.putImageData(imageData, 0, 0);
+    window.surfaceCanvas = surfaceCanvas;
+  }
+
+  function resizeCanvas() {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const width = Math.max(1, Math.round(rect.width * dpr));
+    const height = Math.max(1, Math.round(rect.height * dpr));
+
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+
+    context2d.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
   function bringToFront(hwnd: number) {
@@ -241,8 +277,8 @@ export function attachSogenUiHost(
     context2d.textBaseline = "middle";
     context2d.fillText(window.title || window.className || `0x${window.hwnd.toString(16)}`, 8, 12);
 
-    if (window.imageData) {
-      context2d.putImageData(window.imageData, 0, 0);
+    if (window.surfaceCanvas) {
+      context2d.drawImage(window.surfaceCanvas, 0, 0);
     }
 
     drawChildren(window);
@@ -257,9 +293,12 @@ export function attachSogenUiHost(
   }
 
   function composite() {
-    context2d.clearRect(0, 0, canvas.width, canvas.height);
+    resizeCanvas();
+
+    const rect = canvas.getBoundingClientRect();
+    context2d.clearRect(0, 0, rect.width, rect.height);
     context2d.fillStyle = PLAYGROUND_BACKGROUND;
-    context2d.fillRect(0, 0, canvas.width, canvas.height);
+    context2d.fillRect(0, 0, rect.width, rect.height);
 
     for (const window of windows.values()) {
       if (window.parent === 0) {
@@ -300,11 +339,9 @@ export function attachSogenUiHost(
 
   function toCanvasPoint(event: MouseEvent) {
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
     return {
-      x: Math.floor((event.clientX - rect.left) * scaleX),
-      y: Math.floor((event.clientY - rect.top) * scaleY),
+      x: Math.floor(event.clientX - rect.left),
+      y: Math.floor(event.clientY - rect.top),
     };
   }
 
@@ -356,7 +393,7 @@ export function attachSogenUiHost(
         getWindow(hwnd).title = message.title ?? "";
         break;
       case "present_surface":
-        getWindow(hwnd).imageData = unpackPixels(message);
+        updateSurfaceCanvas(getWindow(hwnd), unpackPixels(message));
         break;
       default:
         break;
@@ -453,11 +490,17 @@ export function attachSogenUiHost(
   });
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 
+  const resizeObserver = new ResizeObserver(() => {
+    composite();
+  });
+  resizeObserver.observe(canvas);
+
   worker.addEventListener("message", onWorkerMessage);
   composite();
 
   return {
     dispose() {
+      resizeObserver.disconnect();
       worker.removeEventListener("message", onWorkerMessage);
       windows.clear();
       notifyWindowCount();
