@@ -29,7 +29,7 @@ namespace sogen
         template <typename T>
         std::string hex_string(const T value, const int width = 0)
         {
-            const auto number = static_cast<unsigned long long>(value);
+            const auto number = static_cast<std::uint64_t>(value);
             return width > 0 ? utils::string::va("%0*llx", width, number) : utils::string::va("%llx", number);
         }
 
@@ -406,7 +406,7 @@ namespace sogen
 
         std::u16string normalize_dialog_button_caption(std::u16string text)
         {
-            text.erase(std::remove(text.begin(), text.end(), u'&'), text.end());
+            text.erase(std::ranges::remove(text, u'&').begin(), text.end());
             return text;
         }
 
@@ -2002,6 +2002,9 @@ namespace sogen
             case WM_CLOSE:
                 complete_dialog(c, dialog, IDCANCEL);
                 return true;
+
+            default:
+                break;
             }
 
             return false;

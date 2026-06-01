@@ -210,7 +210,7 @@ namespace sogen
         }
 
         void handle_ui_event(const ui_event& event);
-        void watch_ui_dialog_pointer(uint64_t ptr);
+        static void watch_ui_dialog_pointer(uint64_t ptr);
         uint64_t current_ui_dialog_proc_candidate();
 
         emulator_thread& current_thread() const

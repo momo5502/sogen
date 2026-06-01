@@ -17,7 +17,7 @@ namespace sogen
         {
             if (key >= 'a' && key <= 'z')
             {
-                return static_cast<uint64_t>(key - 'a' + 'A');
+                return static_cast<uint64_t>(key) - static_cast<uint64_t>('a') + static_cast<uint64_t>('A');
             }
 
             if ((key >= '0' && key <= '9') || key == SDLK_RETURN || key == SDLK_ESCAPE || key == SDLK_BACKSPACE || key == SDLK_TAB ||
@@ -46,14 +46,13 @@ namespace sogen
                 bool has_surface{};
             };
 #endif
-          public:
             ~sdl_ui_backend() override
             {
 #ifdef SOGEN_HAS_SDL3
                 for (auto& [guest, state] : this->windows_)
                 {
                     (void)guest;
-                    this->destroy_window_resources(state);
+                    destroy_window_resources(state);
                 }
 
                 this->windows_.clear();
@@ -215,7 +214,7 @@ namespace sogen
                 {
                     SDL_StopTextInput(it->second.window);
                     this->guest_by_window_id_.erase(SDL_GetWindowID(it->second.window));
-                    this->destroy_window_resources(it->second);
+                    destroy_window_resources(it->second);
                     this->windows_.erase(it);
                 }
 #else
@@ -305,7 +304,7 @@ namespace sogen
 #ifdef SOGEN_HAS_SDL3
                 if (auto* state = this->resolve_window(window))
                 {
-                    this->present_surface(*state, surface);
+                    present_surface(*state, surface);
                 }
 #else
                 (void)window;
@@ -377,7 +376,7 @@ namespace sogen
                 }
             }
 
-            void destroy_window_resources(window_state& state)
+            static void destroy_window_resources(window_state& state)
             {
                 if (state.texture)
                 {
@@ -398,7 +397,7 @@ namespace sogen
                 state.texture_height = 0;
             }
 
-            void ensure_texture(window_state& state, const ui_surface_desc& surface)
+            static void ensure_texture(window_state& state, const ui_surface_desc& surface)
             {
                 if (state.texture && state.texture_width == surface.width && state.texture_height == surface.height &&
                     state.texture_format == surface.format)
@@ -422,7 +421,7 @@ namespace sogen
                 }
             }
 
-            void present_surface(window_state& state, const ui_surface_desc& surface)
+            static void present_surface(window_state& state, const ui_surface_desc& surface)
             {
                 state.has_surface = true;
                 if (!surface.pixels || surface.width <= 0 || surface.height <= 0 || surface.stride <= 0)
@@ -430,7 +429,7 @@ namespace sogen
                     return;
                 }
 
-                this->ensure_texture(state, surface);
+                ensure_texture(state, surface);
                 if (!state.texture)
                 {
                     return;
@@ -443,7 +442,7 @@ namespace sogen
                 SDL_RenderPresent(state.renderer);
             }
 
-            void draw_debug_text(SDL_Renderer* renderer, const int x, const int y, std::u16string_view text, const SDL_Color color)
+            static void draw_debug_text(SDL_Renderer* renderer, const int x, const int y, std::u16string_view text, const SDL_Color color)
             {
                 const auto utf8 = u16_to_u8(text);
                 SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
@@ -486,7 +485,7 @@ namespace sogen
 
                     if (normalized == u"Static")
                     {
-                        this->draw_debug_text(state.renderer, child.desc.rect.left, child.desc.rect.top + 6, child.desc.title,
+                        draw_debug_text(state.renderer, child.desc.rect.left, child.desc.rect.top + 6, child.desc.title,
                                               SDL_Color{0, 0, 0, 255});
                         continue;
                     }
@@ -498,7 +497,7 @@ namespace sogen
                         SDL_RenderFillRect(state.renderer, &rect);
                         SDL_SetRenderDrawColor(state.renderer, 32, 32, 32, 255);
                         SDL_RenderRect(state.renderer, &rect);
-                        this->draw_debug_text(state.renderer, child.desc.rect.left + 8, child.desc.rect.top + 8, child.desc.title,
+                        draw_debug_text(state.renderer, child.desc.rect.left + 8, child.desc.rect.top + 8, child.desc.title,
                                               SDL_Color{0, 0, 0, 255});
                         continue;
                     }
@@ -525,7 +524,7 @@ namespace sogen
                 }
             }
 
-            void present_test_pattern(window_state& state, const int width, const int height)
+            static void present_test_pattern(window_state& state, const int width, const int height)
             {
                 std::vector<uint32_t> pixels(static_cast<size_t>(width) * static_cast<size_t>(height));
                 for (int y = 0; y < height; ++y)
@@ -538,7 +537,7 @@ namespace sogen
                     }
                 }
 
-                this->present_surface(state, ui_surface_desc{.width = width,
+                present_surface(state, ui_surface_desc{.width = width,
                                                              .height = height,
                                                              .stride = width * static_cast<int>(sizeof(uint32_t)),
                                                              .format = ui_surface_format::bgra8,

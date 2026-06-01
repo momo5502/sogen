@@ -10,11 +10,11 @@ namespace sogen
 {
     namespace
     {
-        constexpr wchar_t k_window_class_name[] = L"sogen_ui_host_window";
+        constexpr auto k_window_class_name = L"sogen_ui_host_window";
 
         std::wstring to_wide(std::u16string_view text)
         {
-            return std::wstring(text.begin(), text.end());
+            return {text.begin(), text.end()};
         }
 
         class win32_ui_backend final : public ui_backend
@@ -37,13 +37,13 @@ namespace sogen
 
             void create_window(const ui_window_desc& desc) override
             {
-                this->ensure_class();
+                ensure_class();
 
-                const auto parent = this->resolve_hwnd(desc.parent);
-                const auto style = this->map_style(desc);
-                const auto ex_style = this->map_ex_style(desc);
+                auto* const parent = this->resolve_hwnd(desc.parent);
+                const auto style = map_style(desc);
+                const auto ex_style = map_ex_style(desc);
                 const auto title = to_wide(desc.title);
-                const auto class_name = this->resolve_class_name(desc.class_name);
+                const auto class_name = resolve_class_name(desc.class_name);
                 RECT host_rect{desc.rect.left, desc.rect.top, desc.rect.right, desc.rect.bottom};
                 if (desc.top_level)
                 {
@@ -53,10 +53,10 @@ namespace sogen
                     host_rect.bottom = host_rect.top + (adjusted.bottom - adjusted.top);
                 }
 
-                HWND hwnd =
-                    CreateWindowExW(ex_style, class_name.c_str(), title.c_str(), style, host_rect.left, host_rect.top,
-                                    host_rect.right - host_rect.left, host_rect.bottom - host_rect.top, parent,
-                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(desc.control_id)), GetModuleHandleW(nullptr), this);
+                auto* const hwnd = CreateWindowExW(ex_style, class_name.c_str(), title.c_str(), style, host_rect.left, host_rect.top,
+                                                   host_rect.right - host_rect.left, host_rect.bottom - host_rect.top, parent,
+                                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(desc.control_id)),
+                                                   GetModuleHandleW(nullptr), this);
                 if (!hwnd)
                 {
                     return;
@@ -68,7 +68,7 @@ namespace sogen
 
                 if (desc.owner != 0)
                 {
-                    if (const auto owner = this->resolve_hwnd(desc.owner))
+                    if (auto* const owner = this->resolve_hwnd(desc.owner))
                     {
                         SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(owner));
                     }
@@ -80,7 +80,7 @@ namespace sogen
 
             void destroy_window(const hwnd window) override
             {
-                if (const auto host = this->resolve_hwnd(window))
+                if (auto* const host = this->resolve_hwnd(window))
                 {
                     this->guest_windows_.erase(host);
                     this->host_windows_.erase(window);
@@ -90,7 +90,7 @@ namespace sogen
 
             void set_window_rect(const hwnd window, const RECT& rect) override
             {
-                if (const auto host = this->resolve_hwnd(window))
+                if (auto* const host = this->resolve_hwnd(window))
                 {
                     const auto style = static_cast<DWORD>(GetWindowLongW(host, GWL_STYLE));
                     const auto ex_style = static_cast<DWORD>(GetWindowLongW(host, GWL_EXSTYLE));
@@ -109,7 +109,7 @@ namespace sogen
 
             void set_window_visible(const hwnd window, const bool visible) override
             {
-                if (const auto host = this->resolve_hwnd(window))
+                if (auto* const host = this->resolve_hwnd(window))
                 {
                     ShowWindow(host, visible ? SW_SHOW : SW_HIDE);
                 }
@@ -117,7 +117,7 @@ namespace sogen
 
             void set_window_enabled(const hwnd window, const bool enabled) override
             {
-                if (const auto host = this->resolve_hwnd(window))
+                if (auto* const host = this->resolve_hwnd(window))
                 {
                     EnableWindow(host, enabled ? TRUE : FALSE);
                 }
@@ -125,12 +125,12 @@ namespace sogen
 
             void set_window_title(const hwnd window, std::u16string_view title) override
             {
-                if (const auto host = this->resolve_hwnd(window))
+                if (auto* const host = this->resolve_hwnd(window))
                 {
                     if (const auto it = this->guest_windows_.find(host); it != this->guest_windows_.end())
                     {
                         const auto guest = it->second;
-                        if (const auto top = GetParent(host); top != nullptr)
+                        if (auto* const top = GetParent(host); top != nullptr)
                         {
                             printf("HOST title guest=0x%llx title=%s\n", static_cast<unsigned long long>(guest), u16_to_u8(title).c_str());
                             fflush(stdout);
@@ -143,7 +143,7 @@ namespace sogen
 
             void invalidate(const hwnd window, const std::optional<RECT>& rect) override
             {
-                if (const auto host = this->resolve_hwnd(window))
+                if (auto* const host = this->resolve_hwnd(window))
                 {
                     if (rect)
                     {
@@ -177,7 +177,7 @@ namespace sogen
                 return self->handle_message(hwnd, msg, wparam, lparam);
             }
 
-            void ensure_class()
+            static void ensure_class()
             {
                 static bool registered = false;
                 if (registered)
@@ -195,7 +195,7 @@ namespace sogen
                 registered = true;
             }
 
-            std::wstring resolve_class_name(const std::u16string& class_name) const
+            static std::wstring resolve_class_name(const std::u16string& class_name)
             {
                 if (class_name == u"Button")
                 {
@@ -219,7 +219,7 @@ namespace sogen
                 SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
             }
 
-            DWORD map_style(const ui_window_desc& desc) const
+            static DWORD map_style(const ui_window_desc& desc)
             {
                 auto style = static_cast<DWORD>(desc.style);
                 if (desc.top_level)
@@ -236,7 +236,7 @@ namespace sogen
                 return style;
             }
 
-            DWORD map_ex_style(const ui_window_desc& desc) const
+            static DWORD map_ex_style(const ui_window_desc& desc)
             {
                 constexpr DWORD ws_ex_setansicreator = 0x80000000u;
                 return desc.ex_style & ~ws_ex_setansicreator;
@@ -252,8 +252,8 @@ namespace sogen
                 case WM_COMMAND:
                     if (this->sink_ && lparam != 0)
                     {
-                        const auto child_hwnd = reinterpret_cast<HWND>(lparam);
-                        const auto parent_hwnd = GetParent(child_hwnd);
+                        auto* const child_hwnd = reinterpret_cast<HWND>(lparam);
+                        auto* const parent_hwnd = GetParent(child_hwnd);
                         const auto child_it = this->guest_windows_.find(child_hwnd);
                         const auto parent_it = this->guest_windows_.find(parent_hwnd);
                         if (child_it != this->guest_windows_.end() && parent_it != this->guest_windows_.end())
@@ -266,9 +266,6 @@ namespace sogen
                                                  .message = WM_COMMAND,
                                                  .wParam = static_cast<uint64_t>(wparam),
                                                  .lParam = child_it->second});
-                        }
-                        else
-                        {
                         }
                     }
                     return 0;
@@ -310,6 +307,9 @@ namespace sogen
                         this->host_windows_.erase(guest);
                         this->guest_windows_.erase(hwnd);
                     }
+                    break;
+
+                default:
                     break;
                 }
 
