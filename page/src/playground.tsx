@@ -619,12 +619,6 @@ export class Playground extends React.Component<
                 title="Drag to resize"
                 className="absolute inset-y-0 left-0 z-20 w-1.5 cursor-col-resize hover:bg-primary/40"
               />
-              <div className="flex items-center justify-between gap-2 border-b p-2">
-                <span className="text-sm font-medium">Web UI Prototype</span>
-                <span className="text-xs text-muted-foreground">
-                  {this.state.uiWindowCount} window(s)
-                </span>
-              </div>
               <div className="flex flex-1 flex-col p-2 min-h-0">
                 <div className="flex-1 rounded-md border bg-muted/20 p-2 min-h-0">
                   <canvas

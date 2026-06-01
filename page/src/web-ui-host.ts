@@ -34,6 +34,13 @@ interface HostWindowState {
   imageData: ImageData | null;
 }
 
+const PLAYGROUND_BACKGROUND = "#18181b";
+const WINDOW_BACKGROUND = "#f5f5f5";
+const WINDOW_DISABLED_BACKGROUND = "#e5e7eb";
+const TITLE_BACKGROUND = "#27272a";
+const WINDOW_BORDER = "#71717a";
+const CHILD_BORDER = "#a1a1aa";
+
 interface DragState {
   hwnd: number;
   offsetX: number;
@@ -154,6 +161,57 @@ export function attachSogenUiHost(
     windows.set(hwnd, window);
   }
 
+  function drawChildren(parent: HostWindowState) {
+    for (const child of windows.values()) {
+      if (!child.visible || child.parent !== parent.hwnd) {
+        continue;
+      }
+
+      const width = Math.max(1, child.rect.right - child.rect.left);
+      const height = Math.max(1, child.rect.bottom - child.rect.top);
+      const className = child.className.toLowerCase();
+
+      context2d.save();
+      context2d.translate(child.rect.left, child.rect.top);
+
+      if (className === "button") {
+        context2d.fillStyle = child.enabled ? "#e5e7eb" : "#d4d4d8";
+        context2d.fillRect(0, 0, width, height);
+        context2d.strokeStyle = CHILD_BORDER;
+        context2d.lineWidth = 1;
+        context2d.strokeRect(0.5, 0.5, width - 1, height - 1);
+        context2d.fillStyle = "#18181b";
+        context2d.font = "12px Inter, sans-serif";
+        context2d.textAlign = "center";
+        context2d.textBaseline = "middle";
+        context2d.fillText(child.title || child.className || "Button", width / 2, height / 2);
+      } else if (className === "static") {
+        context2d.fillStyle = "#18181b";
+        context2d.font = "12px Inter, sans-serif";
+        context2d.textAlign = "left";
+        context2d.textBaseline = "top";
+        context2d.fillText(child.title || "", 0, 0);
+      } else {
+        context2d.fillStyle = child.enabled ? "#fafafa" : "#e4e4e7";
+        context2d.fillRect(0, 0, width, height);
+        context2d.strokeStyle = CHILD_BORDER;
+        context2d.lineWidth = 1;
+        context2d.strokeRect(0.5, 0.5, width - 1, height - 1);
+        context2d.fillStyle = "#52525b";
+        context2d.font = "11px Inter, sans-serif";
+        context2d.textAlign = "left";
+        context2d.textBaseline = "top";
+        context2d.fillText(child.title || child.className || `0x${child.hwnd.toString(16)}`, 6, 6);
+      }
+
+      if (child.imageData) {
+        context2d.putImageData(child.imageData, 0, 0);
+      }
+
+      context2d.restore();
+    }
+  }
+
   function drawWindow(window: HostWindowState) {
     if (!window.visible) {
       return;
@@ -165,14 +223,14 @@ export function attachSogenUiHost(
     context2d.save();
     context2d.translate(window.rect.left, window.rect.top);
 
-    context2d.fillStyle = window.enabled ? "#1b1f24" : "#2a2f36";
+    context2d.fillStyle = window.enabled ? WINDOW_BACKGROUND : WINDOW_DISABLED_BACKGROUND;
     context2d.fillRect(0, 0, width, height);
 
-    context2d.strokeStyle = window.topLevel ? "#7dd3fc" : "#64748b";
+    context2d.strokeStyle = window.topLevel ? WINDOW_BORDER : CHILD_BORDER;
     context2d.lineWidth = 1;
     context2d.strokeRect(0.5, 0.5, width - 1, height - 1);
 
-    context2d.fillStyle = "#0f172a";
+    context2d.fillStyle = TITLE_BACKGROUND;
     context2d.fillRect(1, 1, Math.max(0, width - 2), Math.min(TITLE_BAR_HEIGHT, Math.max(0, height - 2)));
 
     context2d.fillStyle = "#e2e8f0";
@@ -182,8 +240,12 @@ export function attachSogenUiHost(
 
     if (window.imageData) {
       context2d.putImageData(window.imageData, 0, 0);
-    } else {
-      context2d.fillStyle = "#94a3b8";
+    }
+
+    drawChildren(window);
+
+    if (!window.imageData && !Array.from(windows.values()).some((child) => child.parent === window.hwnd && child.visible)) {
+      context2d.fillStyle = "#71717a";
       context2d.font = "11px Inter, sans-serif";
       context2d.fillText(window.className || "window", 8, Math.min(height - 12, 40));
     }
@@ -193,7 +255,7 @@ export function attachSogenUiHost(
 
   function composite() {
     context2d.clearRect(0, 0, canvas.width, canvas.height);
-    context2d.fillStyle = "#020617";
+    context2d.fillStyle = PLAYGROUND_BACKGROUND;
     context2d.fillRect(0, 0, canvas.width, canvas.height);
 
     for (const window of windows.values()) {
