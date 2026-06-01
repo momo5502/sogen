@@ -382,7 +382,6 @@ namespace sogen
 
         this->mod_manager.map_main_modules(this->application_settings_.application, this->version, context, this->log);
         this->install_section_first_execution_hooks();
-        this->install_ui_dialog_proc_hooks();
 
         const auto* executable = this->mod_manager.executable;
         const auto* ntdll = this->mod_manager.ntdll;
@@ -539,42 +538,6 @@ namespace sogen
         this->section_first_execution_hooks_.clear();
     }
 
-    void windows_emulator::clear_ui_dialog_proc_hooks()
-    {
-        for (auto* hook : this->ui_dialog_proc_hooks_)
-        {
-            if (hook)
-            {
-                this->emu().delete_hook(hook);
-            }
-        }
-
-        this->ui_dialog_proc_hooks_.clear();
-    }
-
-    uint64_t windows_emulator::current_ui_dialog_proc_candidate()
-    {
-        const auto it = this->ui_pending_dialog_proc_by_thread_.find(this->current_thread().id);
-        return it == this->ui_pending_dialog_proc_by_thread_.end() ? 0 : it->second;
-    }
-
-    void windows_emulator::install_ui_dialog_proc_hooks()
-    {
-        if (const auto* user32 = this->mod_manager.find_by_name("user32.dll"))
-        {
-            constexpr uint64_t dialog_create_rva = 0x2A070;
-            this->ui_dialog_proc_hooks_.push_back(
-                this->emu().hook_memory_execution(user32->image_base + dialog_create_rva, [this](const uint64_t /*address*/) {
-                    uint64_t dialog_proc = 0;
-                    this->memory.try_read_memory(this->emu().reg<uint64_t>(x86_register::rsp) + 0x28, &dialog_proc, sizeof(dialog_proc));
-                    if (dialog_proc != 0)
-                    {
-                        this->ui_pending_dialog_proc_by_thread_[this->current_thread().id] = dialog_proc;
-                    }
-                }));
-        }
-    }
-
     void windows_emulator::install_section_first_execution_hook(const mapped_module& mod, const size_t section_index)
     {
         if (!this->uses_section_first_execution_hooks() || section_index >= mod.sections.size())
@@ -627,12 +590,6 @@ namespace sogen
             for (size_t i = 0; i < mod.sections.size(); ++i)
             {
                 this->install_section_first_execution_hook(mod, i);
-            }
-
-            if (mod.name == "user32.dll")
-            {
-                this->clear_ui_dialog_proc_hooks();
-                this->install_ui_dialog_proc_hooks();
             }
         });
 
@@ -978,14 +935,12 @@ namespace sogen
 
         this->memory.unmap_all_memory();
         this->clear_section_first_execution_hooks();
-        this->clear_ui_dialog_proc_hooks();
 
         // Match raw serialize() above; do not use backend snapshot mode here.
         this->emu().deserialize_state(buffer, false);
         this->memory.deserialize_memory_state(buffer, false);
         this->mod_manager.deserialize(buffer);
         this->install_section_first_execution_hooks();
-        this->install_ui_dialog_proc_hooks();
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer);
     }
@@ -1032,13 +987,11 @@ namespace sogen
 
         this->memory.unmap_all_memory();
         this->clear_section_first_execution_hooks();
-        this->clear_ui_dialog_proc_hooks();
 
         this->emu().deserialize_state(buffer, false);
         this->memory.deserialize_memory_state(buffer, false);
         this->mod_manager.deserialize(buffer);
         this->install_section_first_execution_hooks();
-        this->install_ui_dialog_proc_hooks();
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer);
     }

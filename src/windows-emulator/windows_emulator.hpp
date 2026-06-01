@@ -202,7 +202,6 @@ namespace sogen
         }
 
         void handle_ui_event(const ui_event& event);
-        uint64_t current_ui_dialog_proc_candidate();
 
         emulator_thread& current_thread() const
         {
@@ -306,12 +305,8 @@ namespace sogen
         std::string last_stop_detail_{};
 
         std::map<uint64_t, std::vector<emulator_hook*>> section_first_execution_hooks_{};
-        std::vector<emulator_hook*> ui_dialog_proc_hooks_{};
-        std::unordered_map<uint32_t, uint64_t> ui_pending_dialog_proc_by_thread_{};
 
         void setup_hooks();
-        void clear_ui_dialog_proc_hooks();
-        void install_ui_dialog_proc_hooks();
         void setup_process();
         void on_instruction_execution(uint64_t address);
 

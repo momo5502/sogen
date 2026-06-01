@@ -90,7 +90,6 @@ namespace sogen
         std::map<std::u16string, uint64_t> props{};
         emulator_pointer wnd_proc{};
         emulator_pointer dialog_pointer{};
-        emulator_pointer dialog_proc_candidate{};
         uint32_t dialog_flags{};
         uint64_t dialog_result{};
         emulator_pointer system_menu_ptr{};
@@ -123,7 +122,6 @@ namespace sogen
             buffer.write_map(this->props);
             buffer.write(this->wnd_proc);
             buffer.write(this->dialog_pointer);
-            buffer.write(this->dialog_proc_candidate);
             buffer.write(this->dialog_flags);
             buffer.write(this->dialog_result);
             buffer.write(this->system_menu_ptr);
@@ -152,7 +150,6 @@ namespace sogen
             buffer.read_map(this->props);
             buffer.read(this->wnd_proc);
             buffer.read(this->dialog_pointer);
-            buffer.read(this->dialog_proc_candidate);
             buffer.read(this->dialog_flags);
             buffer.read(this->dialog_result);
             buffer.read(this->system_menu_ptr);

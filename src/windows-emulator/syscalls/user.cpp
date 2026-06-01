@@ -1392,10 +1392,6 @@ namespace sogen
                 win.name = read_large_string(window_name);
             }
             win.wnd_proc = wnd_class->lpfnWndProc;
-            if (cls_name == u"#32770")
-            {
-                win.dialog_proc_candidate = c.win_emu.current_ui_dialog_proc_candidate();
-            }
 
             win.guest.access([&](USER_WINDOW& guest_win) {
                 guest_win.hWnd = handle.bits;
@@ -2565,16 +2561,6 @@ namespace sogen
             if (!win)
             {
                 return FALSE;
-            }
-
-            if (ptr != 0 && win->dialog_proc_candidate != 0)
-            {
-                uint64_t q0 = 0;
-                c.win_emu.memory.try_read_memory(ptr, &q0, sizeof(q0));
-                if (q0 == 0)
-                {
-                    c.win_emu.memory.write_memory(ptr, &win->dialog_proc_candidate, sizeof(win->dialog_proc_candidate));
-                }
             }
 
             win->dialog_pointer = ptr;
