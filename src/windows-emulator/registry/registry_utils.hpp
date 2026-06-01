@@ -102,7 +102,7 @@ namespace sogen::registry_utils
         {
         }
 
-        return u"C:\\Users\\momo";
+        return u"C:\\Users\\sogen";
     }
 
     inline std::u16string get_user_name(registry_manager& registry)
