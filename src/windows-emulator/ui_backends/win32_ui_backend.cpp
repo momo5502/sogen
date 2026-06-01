@@ -44,15 +44,26 @@ namespace sogen
                 const auto ex_style = this->map_ex_style(desc);
                 const auto title = to_wide(desc.title);
                 const auto class_name = this->resolve_class_name(desc.class_name);
+                RECT host_rect{desc.rect.left, desc.rect.top, desc.rect.right, desc.rect.bottom};
+                if (desc.top_level)
+                {
+                    RECT adjusted{0, 0, desc.rect.right - desc.rect.left, desc.rect.bottom - desc.rect.top};
+                    AdjustWindowRectEx(&adjusted, style, FALSE, ex_style);
+                    host_rect.right = host_rect.left + (adjusted.right - adjusted.left);
+                    host_rect.bottom = host_rect.top + (adjusted.bottom - adjusted.top);
+                }
 
                 HWND hwnd =
-                    CreateWindowExW(ex_style, class_name.c_str(), title.c_str(), style, desc.rect.left, desc.rect.top,
-                                    desc.rect.right - desc.rect.left, desc.rect.bottom - desc.rect.top, parent,
+                    CreateWindowExW(ex_style, class_name.c_str(), title.c_str(), style, host_rect.left, host_rect.top,
+                                    host_rect.right - host_rect.left, host_rect.bottom - host_rect.top, parent,
                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(desc.control_id)), GetModuleHandleW(nullptr), this);
                 if (!hwnd)
                 {
-                    printf("HOST create failed class=%s title=%s err=%lu\n", u16_to_u8(desc.class_name).c_str(),
-                           u16_to_u8(desc.title).c_str(), GetLastError());
+                    printf(
+                        "HOST create failed class=%s resolved=%ls title=%s parent=0x%llx style=0x%08x ex=0x%08x rect=%d,%d %dx%d err=%lu\n",
+                        u16_to_u8(desc.class_name).c_str(), class_name.c_str(), u16_to_u8(desc.title).c_str(),
+                        static_cast<unsigned long long>(desc.parent), style, ex_style, host_rect.left, host_rect.top,
+                        host_rect.right - host_rect.left, host_rect.bottom - host_rect.top, GetLastError());
                     return;
                 }
 
@@ -86,7 +97,18 @@ namespace sogen
             {
                 if (const auto host = this->resolve_hwnd(window))
                 {
-                    MoveWindow(host, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, TRUE);
+                    const auto style = static_cast<DWORD>(GetWindowLongW(host, GWL_STYLE));
+                    const auto ex_style = static_cast<DWORD>(GetWindowLongW(host, GWL_EXSTYLE));
+                    RECT host_rect{rect.left, rect.top, rect.right, rect.bottom};
+                    if ((style & WS_CHILD) == 0)
+                    {
+                        RECT adjusted{0, 0, rect.right - rect.left, rect.bottom - rect.top};
+                        AdjustWindowRectEx(&adjusted, style, FALSE, ex_style);
+                        host_rect.right = host_rect.left + (adjusted.right - adjusted.left);
+                        host_rect.bottom = host_rect.top + (adjusted.bottom - adjusted.top);
+                    }
+                    MoveWindow(host, host_rect.left, host_rect.top, host_rect.right - host_rect.left, host_rect.bottom - host_rect.top,
+                               TRUE);
                 }
             }
 
@@ -110,6 +132,15 @@ namespace sogen
             {
                 if (const auto host = this->resolve_hwnd(window))
                 {
+                    if (const auto it = this->guest_windows_.find(host); it != this->guest_windows_.end())
+                    {
+                        const auto guest = it->second;
+                        if (const auto top = GetParent(host); top != nullptr)
+                        {
+                            printf("HOST title guest=0x%llx title=%s\n", static_cast<unsigned long long>(guest), u16_to_u8(title).c_str());
+                            fflush(stdout);
+                        }
+                    }
                     const auto wide = to_wide(title);
                     SetWindowTextW(host, wide.c_str());
                 }
@@ -212,7 +243,8 @@ namespace sogen
 
             DWORD map_ex_style(const ui_window_desc& desc) const
             {
-                return desc.ex_style;
+                constexpr DWORD ws_ex_setansicreator = 0x80000000u;
+                return desc.ex_style & ~ws_ex_setansicreator;
             }
 
             LRESULT handle_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
@@ -231,6 +263,10 @@ namespace sogen
                         const auto parent_it = this->guest_windows_.find(parent_hwnd);
                         if (child_it != this->guest_windows_.end() && parent_it != this->guest_windows_.end())
                         {
+                            printf("HOST command parent=0x%llx child=0x%llx wparam=0x%llx\n",
+                                   static_cast<unsigned long long>(parent_it->second), static_cast<unsigned long long>(child_it->second),
+                                   static_cast<unsigned long long>(wparam));
+                            fflush(stdout);
                             this->sink_(ui_event{.window = parent_it->second,
                                                  .message = WM_COMMAND,
                                                  .wParam = static_cast<uint64_t>(wparam),

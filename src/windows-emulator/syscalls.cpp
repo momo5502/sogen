@@ -491,6 +491,7 @@ namespace sogen
         BOOL handle_NtUserWaitMessage(const syscall_context& c);
         BOOL handle_NtUserInvalidateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect, BOOL erase);
         BOOL handle_NtUserValidateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect);
+        BOOL handle_NtUserUpdateWindow(const syscall_context& c, hwnd hwnd);
         BOOL handle_NtUserPostMessage(const syscall_context& c, hwnd hwnd, UINT msg, uint64_t wParam, uint64_t lParam);
         BOOL handle_NtUserPostQuitMessage(const syscall_context& c, int exit_code);
         NTSTATUS handle_NtUserEnumDisplayDevices(const syscall_context& c,
@@ -523,6 +524,7 @@ namespace sogen
         BOOL handle_NtUserSetDialogSystemMenu(const syscall_context& c, hwnd hwnd);
         BOOL handle_NtUserSetMsgBox(const syscall_context& c, hwnd hwnd);
         BOOL handle_NtUserEnableWindow(const syscall_context& c, hwnd hwnd, BOOL enable);
+        BOOL handle_NtUserDeleteMenu(const syscall_context& c, uint64_t menu, UINT position, UINT flags);
         uint64_t handle_NtUserGetSystemMenu(const syscall_context& c, hwnd hwnd, BOOL revert);
         BOOL handle_NtUserAllowSetForegroundWindow();
         ULONG handle_NtUserGetAtomName(const syscall_context& c, RTL_ATOM atom,
@@ -1110,6 +1112,7 @@ namespace sogen
         add_handler(NtUserWaitMessage);
         add_handler(NtUserInvalidateRect);
         add_handler(NtUserValidateRect);
+        add_handler(NtUserUpdateWindow);
         add_handler(NtUserMapVirtualKeyEx);
         add_handler(NtUserToUnicodeEx);
         add_handler(NtUserSetProcessDpiAwarenessContext);
@@ -1168,6 +1171,7 @@ namespace sogen
         add_handler(NtUserSetDialogSystemMenu);
         add_handler(NtUserSetMsgBox);
         add_handler(NtUserEnableWindow);
+        add_handler(NtUserDeleteMenu);
         add_handler(NtUserGetSystemMenu);
         add_handler(NtCallbackReturn);
         add_handler(NtUserPostQuitMessage);
