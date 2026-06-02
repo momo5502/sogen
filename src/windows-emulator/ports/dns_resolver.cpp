@@ -43,13 +43,12 @@ namespace sogen
             std::array<uint8_t, 8> cookie{};
         };
 
-        template <typename Traits>
         struct dns_query_response
         {
             std::optional<resolved_dns_record> record;
             uint64_t error_code{};
 
-            void write(utils::aligned_binary_writer<Traits>& writer) const
+            void write(utils::aligned_binary_writer& writer) const
             {
                 writer.write_ndr_pointer(record.has_value());
                 if (record)
@@ -63,12 +62,12 @@ namespace sogen
                     writer.write(record->reserved);
 
                     writer.write(record->type);
-                    writer.write(record->data.data(), record->data_length, sizeof(typename Traits::PVOID));
+                    writer.write(record->data.data(), record->data_length, writer.pointer_size());
 
                     writer.write_ndr_u16string(record->name);
                 }
 
-                writer.align_to(sizeof(typename Traits::PVOID));
+                writer.align_to(writer.pointer_size());
                 writer.pad(24);
                 writer.write(error_code);
                 writer.pad(64);
@@ -204,10 +203,9 @@ namespace sogen
 
         struct dns_resolver : rpc_port
         {
-            NTSTATUS handle_rpc(windows_emulator& win_emu, const uint32_t procedure_id, const lpc_request_context& c) override
+            NTSTATUS handle_rpc(windows_emulator& win_emu, const uint32_t procedure_id, const lpc_request_context& c,
+                                utils::aligned_binary_writer& writer) override
             {
-                utils::aligned_binary_writer<EmulatorTraits<Emu64>> writer(win_emu.emu(), c.recv_buffer);
-
                 if (procedure_id == 4)
                 {
                     return handle_dns_query(win_emu, c, writer);
@@ -217,9 +215,7 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
 
-            template <typename Traits>
-            static NTSTATUS handle_dns_query(windows_emulator& win_emu, const lpc_request_context& c,
-                                             utils::aligned_binary_writer<Traits>& writer)
+            static NTSTATUS handle_dns_query(windows_emulator& win_emu, const lpc_request_context& c, utils::aligned_binary_writer& writer)
             {
                 dns_query_request request{};
                 if (!parse_dns_query_request(win_emu, c, request))
@@ -235,12 +231,11 @@ namespace sogen
                 win_emu.callbacks.on_generic_activity("DNS query: " + u16_to_u8(request.hostname));
                 writer.write(request.cookie);
 
-                dns_query_response<Traits> response{};
+                dns_query_response response{};
                 response.record = resolve_single_host_record(win_emu, request.hostname, request.type);
                 response.error_code = response.record ? ERROR_SUCCESS : DNS_ERROR_RCODE_NAME_ERROR;
                 writer.write(response);
 
-                c.recv_buffer_length = static_cast<ULONG>(writer.offset());
                 return STATUS_SUCCESS;
             }
         };
