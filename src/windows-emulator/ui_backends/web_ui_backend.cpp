@@ -15,21 +15,25 @@ namespace sogen
 
         std::mutex g_web_ui_event_mutex{};
         std::deque<queued_web_ui_event> g_web_ui_events{};
+        bool g_web_ui_bridge_available = false;
 
         class web_ui_backend;
         web_ui_backend* g_active_web_ui_backend = nullptr;
 
         // clang-format off
-        EM_JS(void, initialize_web_ui_bridge, (), {
+        EM_JS(int, initialize_web_ui_bridge, (), {
             if (globalThis.__sogenUiBridgeInitialized) {
-                return;
+                return globalThis.__sogenUiBridgeAvailable ? 1 : 0;
             }
 
             globalThis.__sogenUiBridgeInitialized = true;
+            globalThis.__sogenUiBridgeAvailable = false;
 
             if (typeof globalThis.addEventListener !== 'function' || typeof globalThis.postMessage !== 'function') {
-                return;
+                return 0;
             }
+
+            globalThis.__sogenUiBridgeAvailable = true;
 
             globalThis.addEventListener('message', function(event) {
                 const message = event.data;
@@ -46,11 +50,21 @@ namespace sogen
             });
 
             postMessage({ type: 'sogen_ui', command: 'host_ready' });
+            return 1;
         });
         // clang-format on
 
+        bool has_web_ui_bridge()
+        {
+            return g_web_ui_bridge_available;
+        }
+
         void post_ui_message(const char* command, const hwnd window)
         {
+            if (!has_web_ui_bridge())
+            {
+                return;
+            }
             // clang-format off
             EM_ASM({
                 postMessage({
@@ -64,6 +78,10 @@ namespace sogen
 
         void post_ui_rect_message(const char* command, const hwnd window, const RECT& rect)
         {
+            if (!has_web_ui_bridge())
+            {
+                return;
+            }
             // clang-format off
             EM_ASM({
                 postMessage({
@@ -83,6 +101,10 @@ namespace sogen
 
         void post_ui_visibility_message(const char* command, const hwnd window, const bool value)
         {
+            if (!has_web_ui_bridge())
+            {
+                return;
+            }
             // clang-format off
             EM_ASM({
                 postMessage({
@@ -97,6 +119,11 @@ namespace sogen
 
         void post_ui_title_message(const char* command, const hwnd window, const std::u16string_view title)
         {
+            if (!has_web_ui_bridge())
+            {
+                return;
+            }
+
             const auto utf8 = u16_to_u8(title);
             // clang-format off
             EM_ASM({
@@ -112,6 +139,11 @@ namespace sogen
 
         void post_ui_create_window(const ui_window_desc& desc)
         {
+            if (!has_web_ui_bridge())
+            {
+                return;
+            }
+
             const auto class_name = u16_to_u8(desc.class_name);
             const auto title = u16_to_u8(desc.title);
             // clang-format off
@@ -145,6 +177,11 @@ namespace sogen
 
         void post_ui_present_surface(const hwnd window, const ui_surface_desc& surface)
         {
+            if (!has_web_ui_bridge())
+            {
+                return;
+            }
+
             if (!surface.pixels || surface.width <= 0 || surface.height <= 0 || surface.stride <= 0)
             {
                 return;
@@ -184,7 +221,7 @@ namespace sogen
           public:
             web_ui_backend()
             {
-                initialize_web_ui_bridge();
+                g_web_ui_bridge_available = initialize_web_ui_bridge() != 0;
                 g_active_web_ui_backend = this;
             }
 
