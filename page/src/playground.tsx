@@ -615,9 +615,16 @@ export class Playground extends React.Component<
               </div>
             </div>
             <div
-              className="relative flex h-full shrink-0 flex-col border-l bg-background"
+              className={
+                this.state.uiWindowCount > 0
+                  ? "relative flex h-full shrink-0 flex-col border-l bg-background"
+                  : "relative flex h-full shrink-0 flex-col overflow-hidden border-l-0 bg-background"
+              }
               style={{
-                width: `${this.state.uiPanelWidth}px`,
+                width:
+                  this.state.uiWindowCount > 0
+                    ? `${this.state.uiPanelWidth}px`
+                    : "0px",
                 maxWidth: "100vw",
               }}
             >
@@ -628,7 +635,11 @@ export class Playground extends React.Component<
                   document.body.style.userSelect = "none";
                 }}
                 title="Drag to resize"
-                className="absolute inset-y-0 left-0 z-20 w-1.5 cursor-col-resize hover:bg-primary/40"
+                className={
+                  this.state.uiWindowCount > 0
+                    ? "absolute inset-y-0 left-0 z-20 w-1.5 cursor-col-resize hover:bg-primary/40"
+                    : "hidden"
+                }
               />
               <div className="flex flex-1 flex-col p-2 min-h-0">
                 <div className="flex-1 rounded-md border bg-muted/20 p-2 min-h-0">
