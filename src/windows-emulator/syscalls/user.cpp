@@ -25,6 +25,8 @@ namespace sogen
         constexpr uint32_t k_fn_in_lp_window_pos_callback_id = 0x11;
         constexpr uint32_t k_fn_inout_lp_point5_callback_id = 0x12;
         constexpr uint32_t k_fn_inout_nc_calc_size_callback_id = 0x15;
+        constexpr int k_host_ui_client_padding = 8;
+        constexpr int k_host_ui_title_bar_height = 24;
 
         struct user_callback_capture_buffer
         {
@@ -306,6 +308,19 @@ namespace sogen
             return RECT{.left = win.x, .top = win.y, .right = win.x + win.width, .bottom = win.y + win.height};
         }
 
+        ui_insets get_host_ui_client_insets(const window& win)
+        {
+            if ((win.style & WS_CHILD) != 0)
+            {
+                return {};
+            }
+
+            return ui_insets{.left = k_host_ui_client_padding,
+                             .top = k_host_ui_title_bar_height + k_host_ui_client_padding,
+                             .right = k_host_ui_client_padding,
+                             .bottom = k_host_ui_client_padding};
+        }
+
         void sync_guest_window_rects(window& win)
         {
             const auto window_rect = get_window_rect(win);
@@ -357,6 +372,115 @@ namespace sogen
             }
         }
 
+        void fill_rect_bgra(const std::span<uint32_t> pixels, const int width, const int height, const int left, const int top,
+                            const int right, const int bottom, const uint32_t color)
+        {
+            const int clamped_left = std::clamp(left, 0, width);
+            const int clamped_top = std::clamp(top, 0, height);
+            const int clamped_right = std::clamp(right, 0, width);
+            const int clamped_bottom = std::clamp(bottom, 0, height);
+            for (int y = clamped_top; y < clamped_bottom; ++y)
+            {
+                for (int x = clamped_left; x < clamped_right; ++x)
+                {
+                    pixels[static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)] = color;
+                }
+            }
+        }
+
+        void stroke_rect_bgra(const std::span<uint32_t> pixels, const int width, const int height, const RECT& rect, const uint32_t color)
+        {
+            fill_rect_bgra(pixels, width, height, rect.left, rect.top, rect.right, rect.top + 1, color);
+            fill_rect_bgra(pixels, width, height, rect.left, rect.bottom - 1, rect.right, rect.bottom, color);
+            fill_rect_bgra(pixels, width, height, rect.left, rect.top, rect.left + 1, rect.bottom, color);
+            fill_rect_bgra(pixels, width, height, rect.right - 1, rect.top, rect.right, rect.bottom, color);
+        }
+
+        void draw_text_placeholder_bgra(const std::span<uint32_t> pixels, const int width, const int height, const RECT& rect,
+                                        std::u16string_view text, const uint32_t color)
+        {
+            if (text.empty())
+            {
+                return;
+            }
+
+            const auto line_width = std::min<int>(rect.right - rect.left - 4, static_cast<int>(text.size()) * 6);
+            if (line_width <= 0)
+            {
+                return;
+            }
+
+            const auto line_top = rect.top + 4;
+            fill_rect_bgra(pixels, width, height, rect.left + 2, line_top, rect.left + 2 + line_width, line_top + 2, color);
+        }
+
+        window* find_top_level_host_surface_window(const syscall_context& c, window& win)
+        {
+            auto* current = &win;
+            while (current)
+            {
+                if ((current->style & WS_CHILD) == 0)
+                {
+                    return current->host_surface_window ? current : nullptr;
+                }
+
+                current = current->parent_handle != 0 ? c.proc.windows.get(current->parent_handle) : nullptr;
+            }
+
+            return nullptr;
+        }
+
+        void present_window_surface(const syscall_context& c, window& win)
+        {
+            auto* top = find_top_level_host_surface_window(c, win);
+            if (!top)
+            {
+                return;
+            }
+
+            const auto insets = get_host_ui_client_insets(*top);
+            const int client_width = std::max(1, top->width - insets.left - insets.right);
+            const int client_height = std::max(1, top->height - insets.top - insets.bottom);
+            std::vector<uint32_t> pixels(static_cast<size_t>(client_width) * static_cast<size_t>(client_height), 0xFFF5F5F5u);
+            const auto span = std::span<uint32_t>{pixels};
+
+            for (const auto& [child_index, child] : c.proc.windows)
+            {
+                (void)child_index;
+                if (child.parent_handle != top->handle || (child.style & WS_VISIBLE) == 0)
+                {
+                    continue;
+                }
+
+                RECT rect{child.x, child.y, child.x + child.width, child.y + child.height};
+                const auto normalized = normalize_builtin_window_class_name(child.class_name);
+                if (normalized == u"Button")
+                {
+                    const auto fill = (child.style & WS_DISABLED) == 0 ? 0xFFE5E7EBu : 0xFFD4D4D8u;
+                    fill_rect_bgra(span, client_width, client_height, rect.left, rect.top, rect.right, rect.bottom, fill);
+                    stroke_rect_bgra(span, client_width, client_height, rect, 0xFFA1A1AAu);
+                    draw_text_placeholder_bgra(span, client_width, client_height, rect, child.name, 0xFF18181Bu);
+                }
+                else if (normalized == u"Static")
+                {
+                    draw_text_placeholder_bgra(span, client_width, client_height, rect, child.name, 0xFF18181Bu);
+                }
+                else
+                {
+                    fill_rect_bgra(span, client_width, client_height, rect.left, rect.top, rect.right, rect.bottom, 0xFFFAFAFAu);
+                    stroke_rect_bgra(span, client_width, client_height, rect, 0xFFA1A1AAu);
+                    draw_text_placeholder_bgra(span, client_width, client_height, rect, child.name.empty() ? child.class_name : child.name,
+                                               0xFF52525Bu);
+                }
+            }
+
+            c.win_emu.ui().present_surface(top->handle, ui_surface_desc{.width = client_width,
+                                                                        .height = client_height,
+                                                                        .stride = client_width * static_cast<int>(sizeof(uint32_t)),
+                                                                        .format = ui_surface_format::bgra8,
+                                                                        .pixels = pixels.data()});
+        }
+
         void invalidate_window(const syscall_context& c, window& win, const std::optional<RECT>& update_rect = std::nullopt,
                                bool erase = false)
         {
@@ -369,6 +493,7 @@ namespace sogen
                 c.win_emu.ui().invalidate(win.handle, update_rect);
             }
 
+            present_window_surface(c, win);
             queue_window_paint(c, win);
         }
 
@@ -379,6 +504,8 @@ namespace sogen
             {
                 c.win_emu.ui().set_window_title(win.handle, win.name);
             }
+
+            present_window_surface(c, win);
         }
 
         std::u16string read_guest_window_text(const syscall_context& c, const window& win)
@@ -1469,7 +1596,7 @@ namespace sogen
                     .parent = has_child_parent && parent_win ? parent_win->handle : 0,
                     .owner = has_owner && parent_win ? parent_win->handle : 0,
                     .rect = get_window_rect(win),
-                    .client_insets = ui_insets{.left = 0, .top = 0, .right = 0, .bottom = 0},
+                    .client_insets = get_host_ui_client_insets(win),
                     .class_name = std::u16string{normalize_builtin_window_class_name(cls_name)},
                     .title = win.name,
                     .style = style,
