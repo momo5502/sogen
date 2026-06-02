@@ -449,6 +449,14 @@ namespace sogen
         return switch_to_thread(*this, *thread, true);
     }
 
+    void windows_emulator::watch_ui_proc_address(const uint64_t address)
+    {
+        if (address != 0)
+        {
+            this->watched_ui_proc_addresses_.insert(address);
+        }
+    }
+
     void windows_emulator::on_instruction_execution(const uint64_t address)
     {
         auto& thread = this->current_thread();
@@ -471,6 +479,11 @@ namespace sogen
         if (!this->uses_section_first_execution_hooks())
         {
             this->track_section_first_execution(address);
+        }
+
+        if (this->watched_ui_proc_addresses_.contains(address))
+        {
+            std::printf("UI proc executed rip=0x%llx\n", static_cast<unsigned long long>(address));
         }
 
         this->callbacks.on_instruction(address);

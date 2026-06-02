@@ -304,7 +304,8 @@ namespace sogen
 #ifdef SOGEN_HAS_SDL3
                 if (auto* state = this->resolve_window(window))
                 {
-                    present_surface(*state, surface);
+                    update_surface_texture(*state, surface);
+                    this->render_window(*state);
                 }
 #else
                 (void)window;
@@ -421,7 +422,7 @@ namespace sogen
                 }
             }
 
-            static void present_surface(window_state& state, const ui_surface_desc& surface)
+            static void update_surface_texture(window_state& state, const ui_surface_desc& surface)
             {
                 state.has_surface = true;
                 if (!surface.pixels || surface.width <= 0 || surface.height <= 0 || surface.stride <= 0)
@@ -436,10 +437,6 @@ namespace sogen
                 }
 
                 SDL_UpdateTexture(state.texture, nullptr, surface.pixels, surface.stride);
-                SDL_SetRenderDrawColor(state.renderer, 0, 0, 0, 255);
-                SDL_RenderClear(state.renderer);
-                SDL_RenderTexture(state.renderer, state.texture, nullptr, nullptr);
-                SDL_RenderPresent(state.renderer);
             }
 
             static void draw_debug_text(SDL_Renderer* renderer, const int x, const int y, std::u16string_view text, const SDL_Color color)
@@ -457,15 +454,12 @@ namespace sogen
 
             void render_window(window_state& state)
             {
-                if (state.has_surface)
+                if (state.has_surface && state.texture)
                 {
-                    if (state.texture)
-                    {
-                        SDL_SetRenderDrawColor(state.renderer, 0, 0, 0, 255);
-                        SDL_RenderClear(state.renderer);
-                        SDL_RenderTexture(state.renderer, state.texture, nullptr, nullptr);
-                        SDL_RenderPresent(state.renderer);
-                    }
+                    SDL_SetRenderDrawColor(state.renderer, 0, 0, 0, 255);
+                    SDL_RenderClear(state.renderer);
+                    SDL_RenderTexture(state.renderer, state.texture, nullptr, nullptr);
+                    SDL_RenderPresent(state.renderer);
                     return;
                 }
 
@@ -537,11 +531,18 @@ namespace sogen
                     }
                 }
 
-                present_surface(state, ui_surface_desc{.width = width,
-                                                       .height = height,
-                                                       .stride = width * static_cast<int>(sizeof(uint32_t)),
-                                                       .format = ui_surface_format::bgra8,
-                                                       .pixels = pixels.data()});
+                update_surface_texture(state, ui_surface_desc{.width = width,
+                                                              .height = height,
+                                                              .stride = width * static_cast<int>(sizeof(uint32_t)),
+                                                              .format = ui_surface_format::bgra8,
+                                                              .pixels = pixels.data()});
+                SDL_SetRenderDrawColor(state.renderer, 0, 0, 0, 255);
+                SDL_RenderClear(state.renderer);
+                if (state.texture)
+                {
+                    SDL_RenderTexture(state.renderer, state.texture, nullptr, nullptr);
+                }
+                SDL_RenderPresent(state.renderer);
             }
 
             hwnd resolve_guest(const SDL_WindowID window_id) const

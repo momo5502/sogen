@@ -290,6 +290,7 @@ namespace sogen
         void yield_thread(bool alertable = false);
         bool perform_thread_switch();
         bool activate_thread(uint32_t id);
+        void watch_ui_proc_address(uint64_t address);
 
       private:
         std::atomic_bool switch_thread_{false};
@@ -305,6 +306,7 @@ namespace sogen
         std::string last_stop_detail_{};
 
         std::map<uint64_t, std::vector<emulator_hook*>> section_first_execution_hooks_{};
+        std::unordered_set<uint64_t> watched_ui_proc_addresses_{};
 
         void setup_hooks();
         void setup_process();

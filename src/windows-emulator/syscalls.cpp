@@ -1200,7 +1200,7 @@ namespace sogen
         add_callback(NtUserCreateWindowEx, window_create_state);
         add_callback(NtUserDestroyWindow, window_destroy_state);
         add_callback(NtUserShowWindow, window_show_state);
-        add_stateless_callback(NtUserMessageCall);
+        add_callback(NtUserMessageCall, message_call_state);
         add_stateless_callback(NtUserEnumDisplayMonitors);
 
 #undef add_callback

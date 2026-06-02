@@ -316,9 +316,9 @@ export function attachSogenUiHost(
         window.clientInsets.left,
         window.clientInsets.top,
       );
-    } else {
-      drawChildren(window);
     }
+
+    drawChildren(window);
 
     if (
       !window.imageData &&
