@@ -3,6 +3,10 @@
 
 #include "cpu_context.hpp"
 
+#ifdef OS_EMSCRIPTEN
+#include <emscripten.h>
+#endif
+
 #include <utils/io.hpp>
 #include <utils/timer.hpp>
 #include <utils/finally.hpp>
@@ -801,6 +805,10 @@ namespace sogen
             }
 
             this->emu().start(count);
+
+#ifdef OS_EMSCRIPTEN
+            emscripten_sleep(0);
+#endif
 
             if (!this->switch_thread_ && !this->emu().has_violation())
             {
