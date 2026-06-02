@@ -4,6 +4,7 @@ import * as flatbuffers from "flatbuffers";
 import * as fbDebugger from "@/fb/debugger";
 
 type LogHandler = (lines: string[]) => void;
+export type UiMessageHandler = (message: unknown) => void;
 
 export enum EmulationState {
   Stopped,
@@ -128,7 +129,7 @@ function decodeEvent(data: string) {
 type StateChangeHandler = (state: EmulationState) => void;
 type StatusUpdateHandler = (status: EmulationStatus) => void;
 
-const cacheBuster = undefined; //import.meta.env.VITE_BUILD_TIME || Date.now();
+const cacheBuster = Date.now();
 
 export class Emulator {
   logHandler: LogHandler;
@@ -154,6 +155,7 @@ export class Emulator {
   // The paused backend answers in FIFO order per address.
   private pendingMemoryReads: Map<string, PendingRead[]> = new Map();
   private pendingRegionRequests: RegionsResolver[] = [];
+  private uiMessageHandlers: Set<UiMessageHandler> = new Set();
 
   // Generic debugger command channel: each request gets a unique id; the
   // backend echoes it on the response so correlation is exact (no FIFO
@@ -232,12 +234,18 @@ export class Emulator {
   stop() {
     this.worker.terminate();
     this._flushPendingMemoryRequests();
+    this.uiMessageHandlers.clear();
     this._setState(EmulationState.Stopped);
     this.terminateResolve(null);
   }
 
   onTerminate() {
     return this.terminatePromise;
+  }
+
+  addUiMessageListener(handler: UiMessageHandler) {
+    this.uiMessageHandlers.add(handler);
+    return () => this.uiMessageHandlers.delete(handler);
   }
 
   sendEvent(event: fbDebugger.DebugEventT) {
@@ -640,6 +648,13 @@ export class Emulator {
   }
 
   _onMessage(event: MessageEvent) {
+    if (event.data?.type === "sogen_ui") {
+      for (const handler of this.uiMessageHandlers) {
+        handler(event.data);
+      }
+      return;
+    }
+
     if (event.data.message == "log") {
       this.logHandler(event.data.data);
     } else if (event.data.message == "event") {

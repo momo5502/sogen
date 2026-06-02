@@ -159,6 +159,13 @@ namespace sogen
 #define WM_ERASEBKGND        0x0014
 #define WM_GETMINMAXINFO     0x0024
 #define WM_KEYDOWN           0x0100
+#define WM_KEYUP             0x0101
+#define WM_CHAR              0x0102
+#define WM_MOUSEMOVE         0x0200
+#define WM_LBUTTONDOWN       0x0201
+#define WM_LBUTTONUP         0x0202
+#define WM_RBUTTONDOWN       0x0204
+#define WM_RBUTTONUP         0x0205
 #define WM_COMMAND           0x0111
 #define WM_WINDOWPOSCHANGING 0x0046
 #define WM_WINDOWPOSCHANGED  0x0047

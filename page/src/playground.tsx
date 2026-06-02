@@ -1,4 +1,5 @@
 import React from "react";
+import { attachSogenUiHost } from "./web-ui-host";
 
 import { Output } from "@/components/output";
 
@@ -71,6 +72,8 @@ export interface PlaygroundState {
   memoryViewOpen: boolean;
   debuggerOpen: boolean;
   allowWasm64: boolean;
+  uiWindowCount: number;
+  uiPanelWidth: number;
   file?: PlaygroundFile;
 }
 
@@ -141,12 +144,16 @@ export class Playground extends React.Component<
   PlaygroundState
 > {
   private output: React.RefObject<Output | null>;
+  private uiCanvas: React.RefObject<HTMLCanvasElement | null>;
+  private uiHostDispose?: () => void;
+  private uiPanelDragging = false;
   private iconCache: Map<string, string | null> = new Map();
 
   constructor(props: PlaygroundProps) {
     super(props);
 
     this.output = React.createRef();
+    this.uiCanvas = React.createRef();
 
     this.start = this.start.bind(this);
     this.resetFilesys = this.resetFilesys.bind(this);
@@ -160,6 +167,8 @@ export class Playground extends React.Component<
       memoryViewOpen: false,
       debuggerOpen: false,
       allowWasm64: false,
+      uiWindowCount: 0,
+      uiPanelWidth: Math.min(720, Math.round(window.innerWidth * 0.45)),
       file: decodeFileData(getEmulateData()),
     };
   }
@@ -169,14 +178,42 @@ export class Playground extends React.Component<
       this.setState({ allowWasm64 });
     });
 
+    window.addEventListener("mousemove", this.onUiPanelResizeMove);
+    window.addEventListener("mouseup", this.onUiPanelResizeEnd);
+
     if (this.state.file) {
       this.emulateRemoteFile(this.state.file);
     }
   }
 
   componentWillUnmount(): void {
+    window.removeEventListener("mousemove", this.onUiPanelResizeMove);
+    window.removeEventListener("mouseup", this.onUiPanelResizeEnd);
+    document.body.style.userSelect = "";
+    this.uiPanelDragging = false;
+    this.uiHostDispose?.();
     this.state.emulator?.stop();
   }
+
+  onUiPanelResizeMove = (event: MouseEvent) => {
+    if (!this.uiPanelDragging) {
+      return;
+    }
+
+    const next = window.innerWidth - event.clientX;
+    this.setState({
+      uiPanelWidth: Math.min(Math.max(next, 320), window.innerWidth - 160),
+    });
+  };
+
+  onUiPanelResizeEnd = () => {
+    if (!this.uiPanelDragging) {
+      return;
+    }
+
+    this.uiPanelDragging = false;
+    document.body.style.userSelect = "";
+  };
 
   resetFilesystemState() {
     this.setState({
@@ -348,7 +385,25 @@ export class Playground extends React.Component<
     );
     //new_emulator.onTerminate().then(() => this.setState({ emulator: null }));
 
-    this.setState({ emulator: new_emulator, application: userFile });
+    this.uiHostDispose?.();
+    this.uiHostDispose = undefined;
+    if (this.uiCanvas.current) {
+      const host = attachSogenUiHost(
+        new_emulator.worker,
+        this.uiCanvas.current,
+        {
+          onWindowCountChanged: (uiWindowCount) =>
+            this.setState({ uiWindowCount }),
+        },
+      );
+      this.uiHostDispose = host.dispose;
+    }
+
+    this.setState({
+      emulator: new_emulator,
+      application: userFile,
+      uiWindowCount: 0,
+    });
 
     new_emulator.start(this.state.settings, userFile, this.state.debuggerOpen);
   }
@@ -557,6 +612,44 @@ export class Playground extends React.Component<
               />
               <div className="flex flex-1 flex-col pl-1 overflow-auto min-w-0">
                 <Output ref={this.output} />
+              </div>
+            </div>
+            <div
+              className={
+                this.state.uiWindowCount > 0
+                  ? "relative flex h-full shrink-0 flex-col border-l bg-background"
+                  : "relative flex h-full shrink-0 flex-col overflow-hidden border-l-0 bg-background"
+              }
+              style={{
+                width:
+                  this.state.uiWindowCount > 0
+                    ? `${this.state.uiPanelWidth}px`
+                    : "0px",
+                maxWidth: "100vw",
+              }}
+            >
+              <div
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  this.uiPanelDragging = true;
+                  document.body.style.userSelect = "none";
+                }}
+                title="Drag to resize"
+                className={
+                  this.state.uiWindowCount > 0
+                    ? "absolute inset-y-0 left-0 z-20 w-1.5 cursor-col-resize hover:bg-primary/40"
+                    : "hidden"
+                }
+              />
+              <div className="flex flex-1 flex-col p-2 min-h-0">
+                <div className="flex-1 rounded-md border bg-muted/20 p-2 min-h-0">
+                  <canvas
+                    ref={this.uiCanvas}
+                    width={960}
+                    height={640}
+                    className="h-full w-full rounded bg-background outline-none"
+                  />
+                </div>
               </div>
             </div>
             {this.state.memoryViewOpen && this.state.emulator && (
