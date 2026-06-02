@@ -26,6 +26,11 @@ namespace sogen
             }
 
             globalThis.__sogenUiBridgeInitialized = true;
+
+            if (typeof globalThis.addEventListener !== 'function' || typeof globalThis.postMessage !== 'function') {
+                return;
+            }
+
             globalThis.addEventListener('message', function(event) {
                 const message = event.data;
                 if (!message || message.type !== 'sogen_ui_event') {
