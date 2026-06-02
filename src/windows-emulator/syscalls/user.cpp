@@ -1469,6 +1469,7 @@ namespace sogen
                     .parent = has_child_parent && parent_win ? parent_win->handle : 0,
                     .owner = has_owner && parent_win ? parent_win->handle : 0,
                     .rect = get_window_rect(win),
+                    .client_insets = ui_insets{.left = 0, .top = 0, .right = 0, .bottom = 0},
                     .class_name = std::u16string{normalize_builtin_window_class_name(cls_name)},
                     .title = win.name,
                     .style = style,

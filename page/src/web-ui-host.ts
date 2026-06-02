@@ -11,8 +11,7 @@ export interface SogenUiHostMessage {
   ex_style?: number;
   control_id?: number;
   visible?: boolean;
-  client_offset_x?: number;
-  client_offset_y?: number;
+  client_insets?: { left: number; top: number; right: number; bottom: number };
   enabled?: boolean;
   top_level?: boolean;
   value?: boolean;
@@ -31,8 +30,7 @@ interface HostWindowState {
   className: string;
   title: string;
   controlId: number;
-  clientOffsetX: number;
-  clientOffsetY: number;
+  clientInsets: { left: number; top: number; right: number; bottom: number };
   visible: boolean;
   enabled: boolean;
   topLevel: boolean;
@@ -129,8 +127,7 @@ export function attachSogenUiHost(
         className: "",
         title: "",
         controlId: 0,
-        clientOffsetX: 0,
-        clientOffsetY: 0,
+        clientInsets: { left: 0, top: 0, right: 0, bottom: 0 },
         visible: false,
         enabled: true,
         topLevel: true,
@@ -226,8 +223,8 @@ export function attachSogenUiHost(
 
       context2d.save();
       context2d.translate(
-        child.rect.left + parent.clientOffsetX,
-        child.rect.top + parent.clientOffsetY,
+        child.rect.left + parent.clientInsets.left,
+        child.rect.top + parent.clientInsets.top,
       );
 
       if (className === "button") {
@@ -316,8 +313,8 @@ export function attachSogenUiHost(
     if (window.surfaceCanvas) {
       context2d.drawImage(
         window.surfaceCanvas,
-        window.clientOffsetX,
-        window.clientOffsetY,
+        window.clientInsets.left,
+        window.clientInsets.top,
       );
     } else {
       drawChildren(window);
@@ -381,8 +378,8 @@ export function attachSogenUiHost(
     localX: number,
     localY: number,
   ) {
-    const parentClientX = localX - parent.clientOffsetX;
-    const parentClientY = localY - parent.clientOffsetY;
+    const parentClientX = localX - parent.clientInsets.left;
+    const parentClientY = localY - parent.clientInsets.top;
     let hit: HostWindowState | null = null;
 
     for (const child of windows.values()) {
@@ -450,8 +447,12 @@ export function attachSogenUiHost(
         window.className = message.class_name ?? "";
         window.title = message.title ?? "";
         window.controlId = message.control_id ?? 0;
-        window.clientOffsetX = message.client_offset_x ?? 0;
-        window.clientOffsetY = message.client_offset_y ?? 0;
+        window.clientInsets = message.client_insets ?? {
+          left: 0,
+          top: 0,
+          right: 0,
+          bottom: 0,
+        };
         window.visible = !!message.visible;
         window.enabled = message.enabled ?? true;
         window.topLevel = message.top_level ?? true;
@@ -544,8 +545,8 @@ export function attachSogenUiHost(
 
     const child = hitTestChild(target, localX, localY);
     if (child && child.className.toLowerCase() === "button") {
-      const childLocalY = localY - target.clientOffsetY - child.rect.top;
-      const childLocalX = localX - target.clientOffsetX - child.rect.left;
+      const childLocalY = localY - target.clientInsets.top - child.rect.top;
+      const childLocalX = localX - target.clientInsets.left - child.rect.left;
 
       if (message === WM_LBUTTONDOWN || message === WM_LBUTTONUP) {
         sendUiEvent(

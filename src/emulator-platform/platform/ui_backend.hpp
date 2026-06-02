@@ -11,12 +11,21 @@
 namespace sogen
 {
 
+    struct ui_insets
+    {
+        int left{};
+        int top{};
+        int right{};
+        int bottom{};
+    };
+
     struct ui_window_desc
     {
         hwnd handle{};
         hwnd parent{};
         hwnd owner{};
         RECT rect{};
+        ui_insets client_insets{};
         std::u16string class_name{};
         std::u16string title{};
         uint32_t style{};
