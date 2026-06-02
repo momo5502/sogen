@@ -1793,13 +1793,20 @@ namespace sogen
                 return {};
             }
 
+            auto* parent_window = win->parent_handle != 0 ? c.proc.windows.get(win->parent_handle) : nullptr;
+
             if (s.window_pos_alloc.address != 0)
             {
                 c.emu.pop_stack(std::move(s.window_pos_alloc));
             }
 
             c.win_emu.ui().destroy_window(window);
-            return c.proc.windows.erase(window);
+            const auto result = c.proc.windows.erase(window);
+            if (parent_window)
+            {
+                present_window_surface(c, *parent_window);
+            }
+            return result;
         }
 
         BOOL handle_NtUserSetProp(const syscall_context& c, const hwnd window, const uint16_t atom, const uint64_t data)
@@ -2771,6 +2778,7 @@ namespace sogen
                 c.win_emu.ui().set_window_enabled(hwnd, want_enabled);
             }
 
+            present_window_surface(c, *win);
             return was_enabled ? FALSE : TRUE;
         }
 
