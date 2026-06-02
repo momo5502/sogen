@@ -1490,9 +1490,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_file_locking, "File Locking")
     RUN_TEST(test_dir_io, "Dir I/O")
     RUN_TEST(test_apis, "APIs")
-#ifdef _WIN64
     RUN_TEST(test_working_directory, "Working Directory")
-#endif
     RUN_TEST(test_registry, "Registry")
     RUN_TEST(test_system_info, "System Info")
     RUN_TEST(test_monitor_info, "Monitor Info")
@@ -1507,19 +1505,15 @@ int main(const int argc, const char* argv[])
 #ifndef __MINGW64__
     RUN_TEST(test_native_exceptions, "Native Exceptions")
 #endif
-#ifdef _WIN64
     if (!getenv("EMULATOR_ICICLE"))
     {
         RUN_TEST(test_interrupts, "Interrupts")
     }
-#endif
     RUN_TEST(test_tls, "TLS")
     RUN_TEST(test_socket, "Socket")
     RUN_TEST(test_apc, "APC")
     RUN_TEST(test_user_callback, "User Callback")
-#ifdef _WIN64
     RUN_TEST(test_message_queue, "Message Queue")
-#endif
     RUN_TEST(test_private_namespace, "Private Namespace")
     RUN_TEST(test_actctx, "Activation Context")
     RUN_TEST(test_mmio, "MMIO")

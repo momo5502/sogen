@@ -323,7 +323,14 @@ namespace sogen
             for (const auto& arg : app_settings.arguments)
             {
                 command_line.push_back(u' ');
-                command_line.append(arg);
+                if (arg.find(' ') != std::string::npos)
+                {
+                    command_line.append(u"\"" + arg + u"\"");
+                }
+                else
+                {
+                    command_line.append(arg);
+                }
             }
 
             allocator.make_unicode_string(proc_params.CommandLine, command_line);
