@@ -16,6 +16,9 @@ namespace sogen
         std::mutex g_web_ui_event_mutex{};
         std::deque<queued_web_ui_event> g_web_ui_events{};
 
+        class web_ui_backend;
+        web_ui_backend* g_active_web_ui_backend = nullptr;
+
         // clang-format off
         EM_JS(void, initialize_web_ui_bridge, (), {
             if (globalThis.__sogenUiBridgeInitialized) {
@@ -177,6 +180,15 @@ namespace sogen
             web_ui_backend()
             {
                 initialize_web_ui_bridge();
+                g_active_web_ui_backend = this;
+            }
+
+            ~web_ui_backend() override
+            {
+                if (g_active_web_ui_backend == this)
+                {
+                    g_active_web_ui_backend = nullptr;
+                }
             }
 
             void set_event_sink(event_sink sink) override
@@ -201,6 +213,17 @@ namespace sogen
                 {
                     this->sink_(event.event);
                 }
+            }
+
+            void deliver_external_event(const ui_event& event)
+            {
+                if (this->sink_)
+                {
+                    this->sink_(event);
+                    return;
+                }
+
+                enqueue_web_ui_event(event);
             }
 
             void create_window(const ui_window_desc& desc) override
@@ -265,7 +288,15 @@ namespace sogen
     {
         printf("WEB UI push event hwnd=0x%x msg=0x%x w=0x%x l=0x%x\n", window, message, wparam, lparam);
         fflush(stdout);
-        enqueue_web_ui_event(ui_event{.window = window, .message = message, .wParam = wparam, .lParam = lparam});
+
+        const ui_event event{.window = window, .message = message, .wParam = wparam, .lParam = lparam};
+        if (g_active_web_ui_backend)
+        {
+            g_active_web_ui_backend->deliver_external_event(event);
+            return;
+        }
+
+        enqueue_web_ui_event(event);
     }
 }
 

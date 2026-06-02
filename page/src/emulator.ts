@@ -129,7 +129,7 @@ function decodeEvent(data: string) {
 type StateChangeHandler = (state: EmulationState) => void;
 type StatusUpdateHandler = (status: EmulationStatus) => void;
 
-const cacheBuster = undefined; //import.meta.env.VITE_BUILD_TIME || Date.now();
+const cacheBuster = Date.now();
 
 export class Emulator {
   logHandler: LogHandler;
