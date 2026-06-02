@@ -204,15 +204,15 @@ namespace sogen
                     events.swap(g_web_ui_events);
                 }
 
-                if (!this->sink_)
+                if (this->sink_)
                 {
-                    return;
+                    for (const auto& event : events)
+                    {
+                        this->sink_(event.event);
+                    }
                 }
 
-                for (const auto& event : events)
-                {
-                    this->sink_(event.event);
-                }
+                emscripten_sleep(0);
             }
 
             void deliver_external_event(const ui_event& event)

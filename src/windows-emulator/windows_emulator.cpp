@@ -423,10 +423,6 @@ namespace sogen
         {
             this->ui_backend_->pump_events();
 
-#ifdef OS_EMSCRIPTEN
-            emscripten_sleep(0);
-#endif
-
             if (this->use_relative_time_)
             {
                 this->executed_instructions_ += MAX_INSTRUCTIONS_PER_TIME_SLICE;
