@@ -13,6 +13,9 @@ namespace sogen
             ui_event event{};
         };
 
+        constexpr LONG k_web_ui_title_bar_height = 24;
+        constexpr LONG k_web_ui_client_padding = 8;
+
         std::mutex g_web_ui_event_mutex{};
         std::deque<queued_web_ui_event> g_web_ui_events{};
         bool g_web_ui_bridge_available = false;
@@ -168,10 +171,14 @@ namespace sogen
                     visible: Boolean($12),
                     enabled: Boolean($13),
                     top_level: Boolean($14),
+                    client_offset_x: $15,
+                    client_offset_y: $16,
                 });
             }, static_cast<uint32_t>(desc.handle), static_cast<uint32_t>(desc.parent), static_cast<uint32_t>(desc.owner), desc.rect.left,
                desc.rect.top, desc.rect.right, desc.rect.bottom, class_name.c_str(), title.c_str(), desc.style, desc.ex_style,
-               desc.control_id, desc.visible ? 1 : 0, desc.enabled ? 1 : 0, desc.top_level ? 1 : 0);
+               desc.control_id, desc.visible ? 1 : 0, desc.enabled ? 1 : 0, desc.top_level ? 1 : 0,
+               desc.top_level ? k_web_ui_client_padding : 0,
+               desc.top_level ? (k_web_ui_title_bar_height + k_web_ui_client_padding) : 0);
             // clang-format on
         }
 
