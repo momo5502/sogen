@@ -478,8 +478,23 @@ export function attachSogenUiHost(
     }
 
     const child = hitTestChild(target, localX, localY);
-    if (message === WM_LBUTTONUP && child && child.className.toLowerCase() === "button") {
-      sendUiEvent(target.hwnd, 0x0111, child.controlId, child.hwnd);
+    if (child && child.className.toLowerCase() === "button") {
+      const childLocalY =
+        localY - (target.topLevel ? TOP_LEVEL_CLIENT_OFFSET_Y : 0) - child.rect.top;
+      const childLocalX = localX - child.rect.left;
+
+      if (message === WM_LBUTTONDOWN || message === WM_LBUTTONUP) {
+        sendUiEvent(
+          child.hwnd,
+          message,
+          0,
+          packPoint(childLocalX, childLocalY),
+        );
+      }
+
+      if (message === WM_LBUTTONUP) {
+        sendUiEvent(target.hwnd, 0x0111, child.controlId, child.hwnd);
+      }
       return;
     }
 
