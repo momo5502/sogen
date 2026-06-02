@@ -3,10 +3,6 @@
 
 #include "cpu_context.hpp"
 
-#ifdef OS_EMSCRIPTEN
-#include <emscripten.h>
-#endif
-
 #include <utils/io.hpp>
 #include <utils/timer.hpp>
 #include <utils/finally.hpp>
@@ -429,9 +425,7 @@ namespace sogen
             }
             else
             {
-#ifndef OS_EMSCRIPTEN
                 std::this_thread::sleep_for(1ms);
-#endif
             }
 
             if (this->should_stop)

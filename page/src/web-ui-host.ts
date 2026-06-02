@@ -64,7 +64,12 @@ const WM_RBUTTONUP = 0x0205;
 const TITLE_BAR_HEIGHT = 24;
 const TOP_LEVEL_CLIENT_OFFSET_Y = TITLE_BAR_HEIGHT + 8;
 
-function cloneRect(rect?: { left: number; top: number; right: number; bottom: number }) {
+function cloneRect(rect?: {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}) {
   return rect ?? { left: 0, top: 0, right: 0, bottom: 0 };
 }
 
@@ -156,14 +161,18 @@ export function attachSogenUiHost(
     return new ImageData(rgba, message.width, message.height);
   }
 
-  function updateSurfaceCanvas(window: HostWindowState, imageData: ImageData | null) {
+  function updateSurfaceCanvas(
+    window: HostWindowState,
+    imageData: ImageData | null,
+  ) {
     window.imageData = imageData;
     if (!imageData) {
       window.surfaceCanvas = null;
       return;
     }
 
-    const surfaceCanvas = window.surfaceCanvas ?? document.createElement("canvas");
+    const surfaceCanvas =
+      window.surfaceCanvas ?? document.createElement("canvas");
     surfaceCanvas.width = imageData.width;
     surfaceCanvas.height = imageData.height;
     const surfaceContext = surfaceCanvas.getContext("2d");
@@ -225,7 +234,11 @@ export function attachSogenUiHost(
         context2d.font = "12px Inter, sans-serif";
         context2d.textAlign = "center";
         context2d.textBaseline = "middle";
-        context2d.fillText(child.title || child.className || "Button", width / 2, height / 2);
+        context2d.fillText(
+          child.title || child.className || "Button",
+          width / 2,
+          height / 2,
+        );
       } else if (className === "static") {
         context2d.fillStyle = "#18181b";
         context2d.font = "12px Inter, sans-serif";
@@ -242,7 +255,11 @@ export function attachSogenUiHost(
         context2d.font = "11px Inter, sans-serif";
         context2d.textAlign = "left";
         context2d.textBaseline = "top";
-        context2d.fillText(child.title || child.className || `0x${child.hwnd.toString(16)}`, 6, 6);
+        context2d.fillText(
+          child.title || child.className || `0x${child.hwnd.toString(16)}`,
+          6,
+          6,
+        );
       }
 
       if (child.imageData) {
@@ -264,7 +281,9 @@ export function attachSogenUiHost(
     context2d.save();
     context2d.translate(window.rect.left, window.rect.top);
 
-    context2d.fillStyle = window.enabled ? WINDOW_BACKGROUND : WINDOW_DISABLED_BACKGROUND;
+    context2d.fillStyle = window.enabled
+      ? WINDOW_BACKGROUND
+      : WINDOW_DISABLED_BACKGROUND;
     context2d.fillRect(0, 0, width, height);
 
     context2d.strokeStyle = window.topLevel ? WINDOW_BORDER : CHILD_BORDER;
@@ -272,12 +291,21 @@ export function attachSogenUiHost(
     context2d.strokeRect(0.5, 0.5, width - 1, height - 1);
 
     context2d.fillStyle = TITLE_BACKGROUND;
-    context2d.fillRect(1, 1, Math.max(0, width - 2), Math.min(TITLE_BAR_HEIGHT, Math.max(0, height - 2)));
+    context2d.fillRect(
+      1,
+      1,
+      Math.max(0, width - 2),
+      Math.min(TITLE_BAR_HEIGHT, Math.max(0, height - 2)),
+    );
 
     context2d.fillStyle = "#e2e8f0";
     context2d.font = "12px Inter, sans-serif";
     context2d.textBaseline = "middle";
-    context2d.fillText(window.title || window.className || `0x${window.hwnd.toString(16)}`, 8, 12);
+    context2d.fillText(
+      window.title || window.className || `0x${window.hwnd.toString(16)}`,
+      8,
+      12,
+    );
 
     if (window.surfaceCanvas) {
       context2d.drawImage(window.surfaceCanvas, 0, 0);
@@ -285,10 +313,19 @@ export function attachSogenUiHost(
 
     drawChildren(window);
 
-    if (!window.imageData && !Array.from(windows.values()).some((child) => child.parent === window.hwnd && child.visible)) {
+    if (
+      !window.imageData &&
+      !Array.from(windows.values()).some(
+        (child) => child.parent === window.hwnd && child.visible,
+      )
+    ) {
       context2d.fillStyle = "#71717a";
       context2d.font = "11px Inter, sans-serif";
-      context2d.fillText(window.className || "window", 8, Math.min(height - 12, 40));
+      context2d.fillText(
+        window.className || "window",
+        8,
+        Math.min(height - 12, 40),
+      );
     }
 
     context2d.restore();
@@ -329,8 +366,13 @@ export function attachSogenUiHost(
     return hit;
   }
 
-  function hitTestChild(parent: HostWindowState, localX: number, localY: number) {
-    const parentClientY = localY - (parent.topLevel ? TOP_LEVEL_CLIENT_OFFSET_Y : 0);
+  function hitTestChild(
+    parent: HostWindowState,
+    localX: number,
+    localY: number,
+  ) {
+    const parentClientY =
+      localY - (parent.topLevel ? TOP_LEVEL_CLIENT_OFFSET_Y : 0);
     let hit: HostWindowState | null = null;
 
     for (const child of windows.values()) {
@@ -351,7 +393,12 @@ export function attachSogenUiHost(
     return hit;
   }
 
-  function sendUiEvent(hwnd: number, message: number, wParam: number, lParam: number) {
+  function sendUiEvent(
+    hwnd: number,
+    message: number,
+    wParam: number,
+    lParam: number,
+  ) {
     worker.postMessage({
       type: "sogen_ui_event",
       window: hwnd >>> 0,
@@ -450,7 +497,8 @@ export function attachSogenUiHost(
     }
 
     const window = hitTest(point.x, point.y);
-    const target = window ?? (focusedWindow ? windows.get(focusedWindow) ?? null : null);
+    const target =
+      window ?? (focusedWindow ? (windows.get(focusedWindow) ?? null) : null);
     if (!target) {
       return;
     }
@@ -461,7 +509,12 @@ export function attachSogenUiHost(
     const localX = point.x - target.rect.left;
     const localY = point.y - target.rect.top;
 
-    if (message === WM_LBUTTONDOWN && target.topLevel && localY >= 0 && localY < TITLE_BAR_HEIGHT) {
+    if (
+      message === WM_LBUTTONDOWN &&
+      target.topLevel &&
+      localY >= 0 &&
+      localY < TITLE_BAR_HEIGHT
+    ) {
       dragState = {
         hwnd: target.hwnd,
         offsetX: localX,
@@ -480,7 +533,9 @@ export function attachSogenUiHost(
     const child = hitTestChild(target, localX, localY);
     if (child && child.className.toLowerCase() === "button") {
       const childLocalY =
-        localY - (target.topLevel ? TOP_LEVEL_CLIENT_OFFSET_Y : 0) - child.rect.top;
+        localY -
+        (target.topLevel ? TOP_LEVEL_CLIENT_OFFSET_Y : 0) -
+        child.rect.top;
       const childLocalX = localX - child.rect.left;
 
       if (message === WM_LBUTTONDOWN || message === WM_LBUTTONUP) {
@@ -506,7 +561,8 @@ export function attachSogenUiHost(
       return;
     }
 
-    const key = event.key.length === 1 ? event.key.toUpperCase().charCodeAt(0) : 0;
+    const key =
+      event.key.length === 1 ? event.key.toUpperCase().charCodeAt(0) : 0;
     sendUiEvent(focusedWindow, message, key || event.keyCode || 0, 0);
   }
 

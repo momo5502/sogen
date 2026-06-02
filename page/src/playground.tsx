@@ -388,14 +388,22 @@ export class Playground extends React.Component<
     this.uiHostDispose?.();
     this.uiHostDispose = undefined;
     if (this.uiCanvas.current) {
-      const host = attachSogenUiHost(new_emulator.worker, this.uiCanvas.current, {
-        onWindowCountChanged: (uiWindowCount) =>
-          this.setState({ uiWindowCount }),
-      });
+      const host = attachSogenUiHost(
+        new_emulator.worker,
+        this.uiCanvas.current,
+        {
+          onWindowCountChanged: (uiWindowCount) =>
+            this.setState({ uiWindowCount }),
+        },
+      );
       this.uiHostDispose = host.dispose;
     }
 
-    this.setState({ emulator: new_emulator, application: userFile, uiWindowCount: 0 });
+    this.setState({
+      emulator: new_emulator,
+      application: userFile,
+      uiWindowCount: 0,
+    });
 
     new_emulator.start(this.state.settings, userFile, this.state.debuggerOpen);
   }
@@ -608,7 +616,10 @@ export class Playground extends React.Component<
             </div>
             <div
               className="relative flex h-full shrink-0 flex-col border-l bg-background"
-              style={{ width: `${this.state.uiPanelWidth}px`, maxWidth: "100vw" }}
+              style={{
+                width: `${this.state.uiPanelWidth}px`,
+                maxWidth: "100vw",
+              }}
             >
               <div
                 onMouseDown={(e) => {
