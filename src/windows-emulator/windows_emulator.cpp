@@ -423,13 +423,19 @@ namespace sogen
         {
             this->ui_backend_->pump_events();
 
+#ifdef OS_EMSCRIPTEN
+            emscripten_sleep(0);
+#endif
+
             if (this->use_relative_time_)
             {
                 this->executed_instructions_ += MAX_INSTRUCTIONS_PER_TIME_SLICE;
             }
             else
             {
+#ifndef OS_EMSCRIPTEN
                 std::this_thread::sleep_for(1ms);
+#endif
             }
 
             if (this->should_stop)
@@ -805,10 +811,6 @@ namespace sogen
             }
 
             this->emu().start(count);
-
-#ifdef OS_EMSCRIPTEN
-            emscripten_sleep(0);
-#endif
 
             if (!this->switch_thread_ && !this->emu().has_violation())
             {
