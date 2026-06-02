@@ -66,6 +66,7 @@ namespace sogen
             constexpr uint32_t k_default_dpi = 96;
             constexpr uint32_t k_default_width = 1920;
             constexpr uint32_t k_default_height = 1080;
+            constexpr uint32_t k_default_bitmap_fill = 0xFFF5F5F5u;
 
             constexpr uint32_t k_gdi_first_dynamic_handle = 0x2000;
             constexpr uint32_t k_gdi_default_cookie = STATUS_WAIT_1;
@@ -473,7 +474,12 @@ namespace sogen
                 }
 
                 initialize_dc_attr(c, dc_attr);
-                return allocate_gdi_handle(c, k_gdi_dc_type, dc_attr, dc_attr);
+                const auto handle_value = allocate_gdi_handle(c, k_gdi_dc_type, dc_attr, dc_attr);
+                if (handle_value != 0)
+                {
+                    c.proc.gdi_dc_states[handle_value] = {};
+                }
+                return handle_value;
             }
 
             hdc ensure_default_hdc(const syscall_context& c)
@@ -645,19 +651,38 @@ namespace sogen
             return allocate_gdi_dc(c, dc_attr);
         }
 
-        uint64_t handle_NtGdiCreateCompatibleBitmap(const syscall_context& c, const hdc /*dc*/, const uint32_t /*width*/,
-                                                    const uint32_t /*height*/)
+        uint64_t handle_NtGdiCreateCompatibleBitmap(const syscall_context& c, const hdc /*dc*/, const uint32_t width, const uint32_t height)
         {
-            return allocate_gdi_object(c, k_gdi_bitmap_type, k_gdi_bitmap_attr_size);
+            const auto handle_value = allocate_gdi_object(c, k_gdi_bitmap_type, k_gdi_bitmap_attr_size);
+            if (handle_value != 0)
+            {
+                auto& surface = c.proc.gdi_bitmap_surfaces[handle_value];
+                surface.width = width;
+                surface.height = height;
+                surface.pixels.assign(static_cast<size_t>(width) * static_cast<size_t>(height), k_default_bitmap_fill);
+            }
+            return handle_value;
         }
 
-        uint64_t handle_NtGdiCreateDIBitmapInternal(const syscall_context& c, const hdc /*dc*/, const uint32_t /*width*/,
-                                                    const uint32_t /*height*/, const uint32_t /*usage*/, const emulator_pointer /*bits*/,
-                                                    const emulator_pointer /*info*/, const uint32_t /*info_header_size*/,
-                                                    const uint32_t /*init*/, const uint32_t /*offset*/, const uint32_t /*cj*/,
-                                                    const uint32_t /*i_usage*/)
+        uint64_t handle_NtGdiCreateDIBitmapInternal(const syscall_context& c, const hdc /*dc*/, const uint32_t width, const uint32_t height,
+                                                    const uint32_t /*usage*/, const emulator_pointer bits, const emulator_pointer /*info*/,
+                                                    const uint32_t /*info_header_size*/, const uint32_t /*init*/, const uint32_t /*offset*/,
+                                                    const uint32_t /*cj*/, const uint32_t /*i_usage*/)
         {
-            return allocate_gdi_object(c, k_gdi_bitmap_type, k_gdi_bitmap_attr_size);
+            const auto handle_value = allocate_gdi_object(c, k_gdi_bitmap_type, k_gdi_bitmap_attr_size);
+            if (handle_value != 0)
+            {
+                auto& surface = c.proc.gdi_bitmap_surfaces[handle_value];
+                surface.width = width;
+                surface.height = height;
+                surface.pixels.assign(static_cast<size_t>(width) * static_cast<size_t>(height), k_default_bitmap_fill);
+                if (bits != 0)
+                {
+                    const auto byte_count = static_cast<size_t>(width) * static_cast<size_t>(height) * sizeof(uint32_t);
+                    c.emu.read_memory(bits, surface.pixels.data(), byte_count);
+                }
+            }
+            return handle_value;
         }
 
         uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, const uint32_t handle_value)
@@ -681,12 +706,22 @@ namespace sogen
                 c.proc.gdi_default_dc_handle = 0;
             }
 
+            c.proc.gdi_dc_states.erase(handle_value);
+            c.proc.gdi_bitmap_surfaces.erase(handle_value);
             return 1;
         }
 
-        uint64_t handle_NtGdiSelectBitmap(const syscall_context&, const hdc /*dc*/, const handle bitmap)
+        uint64_t handle_NtGdiSelectBitmap(const syscall_context& c, const hdc dc, const handle bitmap)
         {
-            return bitmap.bits;
+            const auto it = c.proc.gdi_dc_states.find(static_cast<uint32_t>(dc));
+            if (it == c.proc.gdi_dc_states.end())
+            {
+                return bitmap.bits;
+            }
+
+            const auto old = it->second.selected_bitmap;
+            it->second.selected_bitmap = static_cast<uint32_t>(bitmap.bits);
+            return old;
         }
 
         uint64_t handle_NtGdiSelectFont(const syscall_context&, const hdc dc, const uint64_t font)

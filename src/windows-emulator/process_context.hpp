@@ -83,6 +83,45 @@ namespace sogen
         }
     };
 
+    struct gdi_bitmap_surface
+    {
+        uint32_t width{};
+        uint32_t height{};
+        std::vector<uint32_t> pixels{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->width);
+            buffer.write(this->height);
+            buffer.write_vector(this->pixels);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->width);
+            buffer.read(this->height);
+            buffer.read_vector(this->pixels);
+        }
+    };
+
+    struct gdi_dc_state
+    {
+        uint32_t selected_bitmap{};
+        hwnd target_window{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->selected_bitmap);
+            buffer.write(this->target_window);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->selected_bitmap);
+            buffer.read(this->target_window);
+        }
+    };
+
     struct process_context
     {
         struct callbacks
@@ -202,6 +241,8 @@ namespace sogen
         uint64_t zw_callback_return{};
         uint64_t dispatch_client_message{};
         uint32_t gdi_default_dc_handle{};
+        std::map<uint32_t, gdi_dc_state> gdi_dc_states{};
+        std::map<uint32_t, gdi_bitmap_surface> gdi_bitmap_surfaces{};
         std::optional<handle> etw_notification_event{};
 
         // For WOW64 processes

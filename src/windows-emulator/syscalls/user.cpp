@@ -984,6 +984,7 @@ namespace sogen
     namespace syscalls
     {
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, handle bitmap);
+        uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, hdc dc);
 
         NTSTATUS handle_NtUserTraceLoggingSendMixedModeTelemetry()
         {
@@ -1150,9 +1151,14 @@ namespace sogen
             return target->win32k_desktop.bits;
         }
 
-        hdc handle_NtUserGetDCEx(const syscall_context& c, const hwnd /*window*/, const uint64_t /*clip_region*/, const ULONG /*flags*/)
+        hdc handle_NtUserGetDCEx(const syscall_context& c, const hwnd window, const uint64_t /*clip_region*/, const ULONG /*flags*/)
         {
-            return handle_NtGdiGetDCforBitmap(c, {});
+            const auto dc = handle_NtGdiCreateCompatibleDC(c, {});
+            if (dc != 0)
+            {
+                c.proc.gdi_dc_states[static_cast<uint32_t>(dc)].target_window = window;
+            }
+            return dc;
         }
 
         hdc handle_NtUserGetDC(const syscall_context& c, const hwnd window)
@@ -1160,9 +1166,9 @@ namespace sogen
             return handle_NtUserGetDCEx(c, window, 0, 0);
         }
 
-        hdc handle_NtUserGetWindowDC(const syscall_context& c, const hwnd /*window*/)
+        hdc handle_NtUserGetWindowDC(const syscall_context& c, const hwnd window)
         {
-            return handle_NtGdiGetDCforBitmap(c, {});
+            return handle_NtUserGetDCEx(c, window, 0, 0);
         }
 
         BOOL handle_NtUserReleaseDC()
@@ -1198,12 +1204,34 @@ namespace sogen
             return dc;
         }
 
-        BOOL handle_NtUserEndPaint(const syscall_context& c, const hwnd window, const emulator_object<EMU_PAINTSTRUCT> /*paint_struct*/)
+        BOOL handle_NtUserEndPaint(const syscall_context& c, const hwnd window, const emulator_object<EMU_PAINTSTRUCT> paint_struct)
         {
             auto* win = c.proc.windows.get(window);
             if (!win)
             {
                 return FALSE;
+            }
+
+            if (paint_struct)
+            {
+                const auto ps = paint_struct.read();
+                const auto dc_it = c.proc.gdi_dc_states.find(static_cast<uint32_t>(ps.paint_hdc));
+                if (dc_it != c.proc.gdi_dc_states.end() && dc_it->second.selected_bitmap != 0)
+                {
+                    const auto bitmap_it = c.proc.gdi_bitmap_surfaces.find(dc_it->second.selected_bitmap);
+                    if (bitmap_it != c.proc.gdi_bitmap_surfaces.end() && bitmap_it->second.width > 0 && bitmap_it->second.height > 0 &&
+                        !bitmap_it->second.pixels.empty())
+                    {
+                        c.win_emu.ui().present_surface(
+                            window, ui_surface_desc{.width = static_cast<int>(bitmap_it->second.width),
+                                                    .height = static_cast<int>(bitmap_it->second.height),
+                                                    .stride = static_cast<int>(bitmap_it->second.width * sizeof(uint32_t)),
+                                                    .format = ui_surface_format::bgra8,
+                                                    .pixels = bitmap_it->second.pixels.data()});
+                    }
+                }
+
+                c.proc.gdi_dc_states.erase(static_cast<uint32_t>(ps.paint_hdc));
             }
 
             validate_window(*win);
