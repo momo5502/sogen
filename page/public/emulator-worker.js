@@ -30,10 +30,16 @@ function getUiEventBridge() {
 function dispatchUiEvent(data) {
   const bridge = getUiEventBridge();
   if (!bridge) {
+    logLine(
+      `[ui-worker] queue event hwnd=0x${(data.window >>> 0).toString(16)} msg=0x${(data.message >>> 0).toString(16)} w=0x${(data.wParam >>> 0).toString(16)} l=0x${(data.lParam >>> 0).toString(16)}`,
+    );
     pendingUiEvents.push(data);
     return false;
   }
 
+  logLine(
+    `[ui-worker] dispatch event hwnd=0x${(data.window >>> 0).toString(16)} msg=0x${(data.message >>> 0).toString(16)} w=0x${(data.wParam >>> 0).toString(16)} l=0x${(data.lParam >>> 0).toString(16)}`,
+  );
   bridge(
     data.window >>> 0,
     data.message >>> 0,
@@ -48,6 +54,7 @@ function flushUiEvents() {
     return;
   }
 
+  logLine(`[ui-worker] flushing ${pendingUiEvents.length} queued ui event(s)`);
   const events = pendingUiEvents;
   pendingUiEvents = [];
   for (const event of events) {

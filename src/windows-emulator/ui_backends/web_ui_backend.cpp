@@ -263,6 +263,8 @@ namespace sogen
     extern "C" EMSCRIPTEN_KEEPALIVE void sogen_web_ui_push_event(const uint32_t window, const uint32_t message, const uint32_t wparam,
                                                                  const uint32_t lparam)
     {
+        printf("WEB UI push event hwnd=0x%x msg=0x%x w=0x%x l=0x%x\n", window, message, wparam, lparam);
+        fflush(stdout);
         enqueue_web_ui_event(ui_event{.window = window, .message = message, .wParam = wparam, .lParam = lparam});
     }
 }

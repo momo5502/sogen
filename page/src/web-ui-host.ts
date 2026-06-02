@@ -396,6 +396,14 @@ export function attachSogenUiHost(
         window.visible = !!message.visible;
         window.enabled = message.enabled ?? true;
         window.topLevel = message.top_level ?? true;
+        console.debug("[sogen-ui] create_window", {
+          hwnd,
+          parent: window.parent,
+          className: window.className,
+          title: window.title,
+          controlId: window.controlId,
+          rect: window.rect,
+        });
         break;
       }
       case "destroy_window":
@@ -484,6 +492,14 @@ export function attachSogenUiHost(
       const childLocalX = localX - child.rect.left;
 
       if (message === WM_LBUTTONDOWN || message === WM_LBUTTONUP) {
+        console.debug("[sogen-ui] button mouse", {
+          parent: target.hwnd,
+          child: child.hwnd,
+          controlId: child.controlId,
+          message,
+          childLocalX,
+          childLocalY,
+        });
         sendUiEvent(
           child.hwnd,
           message,
@@ -493,6 +509,11 @@ export function attachSogenUiHost(
       }
 
       if (message === WM_LBUTTONUP) {
+        console.debug("[sogen-ui] button command", {
+          parent: target.hwnd,
+          child: child.hwnd,
+          controlId: child.controlId,
+        });
         sendUiEvent(target.hwnd, 0x0111, child.controlId, child.hwnd);
       }
       return;
