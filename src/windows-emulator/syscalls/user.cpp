@@ -297,6 +297,7 @@ namespace sogen
         }
 
         void invalidate_window(const syscall_context& c, window& win, const std::optional<RECT>& update_rect, bool erase);
+        void present_window_surface(const syscall_context& c, window& win);
 
         RECT get_client_rect(const window& win)
         {
@@ -346,6 +347,7 @@ namespace sogen
                 c.win_emu.ui().set_window_rect(win.handle, get_window_rect(win));
             }
 
+            present_window_surface(c, win);
             if (repaint)
             {
                 invalidate_window(c, win, std::nullopt, false);
@@ -430,6 +432,68 @@ namespace sogen
             return nullptr;
         }
 
+        std::optional<RECT> get_descendant_rect_in_top_level_client(const syscall_context& c, const window& top, const window& win)
+        {
+            int left = win.x;
+            int top_y = win.y;
+            const window* current = &win;
+            while (current && current->handle != top.handle)
+            {
+                if (current->handle != win.handle && (current->style & WS_VISIBLE) == 0)
+                {
+                    return std::nullopt;
+                }
+
+                if (current->parent_handle == 0)
+                {
+                    return std::nullopt;
+                }
+
+                current = c.proc.windows.get(current->parent_handle);
+                if (!current)
+                {
+                    return std::nullopt;
+                }
+
+                if (current->handle != top.handle)
+                {
+                    left += current->x;
+                    top_y += current->y;
+                }
+            }
+
+            if (!current || (win.style & WS_VISIBLE) == 0)
+            {
+                return std::nullopt;
+            }
+
+            return RECT{left, top_y, left + win.width, top_y + win.height};
+        }
+
+        void draw_fallback_child_surface(const std::span<uint32_t> pixels, const int client_width, const int client_height,
+                                         const window& child, const RECT& rect)
+        {
+            const auto normalized = normalize_builtin_window_class_name(child.class_name);
+            if (normalized == u"Button")
+            {
+                const auto fill = (child.style & WS_DISABLED) == 0 ? 0xFFE5E7EBu : 0xFFD4D4D8u;
+                fill_rect_bgra(pixels, client_width, client_height, rect.left, rect.top, rect.right, rect.bottom, fill);
+                stroke_rect_bgra(pixels, client_width, client_height, rect, 0xFFA1A1AAu);
+                draw_text_placeholder_bgra(pixels, client_width, client_height, rect, child.name, 0xFF18181Bu);
+            }
+            else if (normalized == u"Static")
+            {
+                draw_text_placeholder_bgra(pixels, client_width, client_height, rect, child.name, 0xFF18181Bu);
+            }
+            else
+            {
+                fill_rect_bgra(pixels, client_width, client_height, rect.left, rect.top, rect.right, rect.bottom, 0xFFFAFAFAu);
+                stroke_rect_bgra(pixels, client_width, client_height, rect, 0xFFA1A1AAu);
+                draw_text_placeholder_bgra(pixels, client_width, client_height, rect, child.name.empty() ? child.class_name : child.name,
+                                           0xFF52525Bu);
+            }
+        }
+
         void present_window_surface(const syscall_context& c, window& win)
         {
             auto* top = find_top_level_host_surface_window(c, win);
@@ -447,31 +511,18 @@ namespace sogen
             for (const auto& [child_index, child] : c.proc.windows)
             {
                 (void)child_index;
-                if (child.parent_handle != top->handle || (child.style & WS_VISIBLE) == 0)
+                if (child.handle == top->handle)
                 {
                     continue;
                 }
 
-                RECT rect{child.x, child.y, child.x + child.width, child.y + child.height};
-                const auto normalized = normalize_builtin_window_class_name(child.class_name);
-                if (normalized == u"Button")
+                const auto rect = get_descendant_rect_in_top_level_client(c, *top, child);
+                if (!rect)
                 {
-                    const auto fill = (child.style & WS_DISABLED) == 0 ? 0xFFE5E7EBu : 0xFFD4D4D8u;
-                    fill_rect_bgra(span, client_width, client_height, rect.left, rect.top, rect.right, rect.bottom, fill);
-                    stroke_rect_bgra(span, client_width, client_height, rect, 0xFFA1A1AAu);
-                    draw_text_placeholder_bgra(span, client_width, client_height, rect, child.name, 0xFF18181Bu);
+                    continue;
                 }
-                else if (normalized == u"Static")
-                {
-                    draw_text_placeholder_bgra(span, client_width, client_height, rect, child.name, 0xFF18181Bu);
-                }
-                else
-                {
-                    fill_rect_bgra(span, client_width, client_height, rect.left, rect.top, rect.right, rect.bottom, 0xFFFAFAFAu);
-                    stroke_rect_bgra(span, client_width, client_height, rect, 0xFFA1A1AAu);
-                    draw_text_placeholder_bgra(span, client_width, client_height, rect, child.name.empty() ? child.class_name : child.name,
-                                               0xFF52525Bu);
-                }
+
+                draw_fallback_child_surface(span, client_width, client_height, child, *rect);
             }
 
             c.win_emu.ui().present_surface(top->handle, ui_surface_desc{.width = client_width,
