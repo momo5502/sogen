@@ -126,10 +126,10 @@ namespace sogen
         uint8_t rgbReserved[32];
     };
 
+#define EMU_HWND_MESSAGE ((hwnd) - 3)
+
 #ifndef OS_WINDOWS
 #define MAXINTATOM           0xC000
-
-#define HWND_MESSAGE         ((hwnd) - 3)
 
 #define WS_POPUP             0x80000000L
 #define WS_CHILD             0x40000000L

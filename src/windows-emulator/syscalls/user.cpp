@@ -1327,7 +1327,7 @@ namespace sogen
                 return 0;
             }
 
-            const bool is_message_only = parent == reinterpret_cast<pointer>(HWND_MESSAGE);
+            const bool is_message_only = parent == EMU_HWND_MESSAGE;
             const bool has_child_parent = (style & WS_CHILD) != 0 && (style & WS_POPUP) == 0;
             const bool has_owner = parent != 0 && !is_message_only && !has_child_parent;
 
