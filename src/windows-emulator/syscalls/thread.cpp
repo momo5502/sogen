@@ -47,7 +47,59 @@ namespace sogen
                 // Update the persistent context for future queries
                 thread->wow64_cpu_reserved->access([&](WOW64_CPURESERVED& ctx) {
                     ctx.Flags |= WOW64_CPURESERVED_FLAG_RESET_STATE;
-                    ctx.Context = new_wow64_context;
+                    auto merged_context = ctx.Context;
+                    merged_context.ContextFlags = new_wow64_context.ContextFlags;
+
+                    if ((new_wow64_context.ContextFlags & CONTEXT_DEBUG_REGISTERS_32) == CONTEXT_DEBUG_REGISTERS_32)
+                    {
+                        merged_context.Dr0 = new_wow64_context.Dr0;
+                        merged_context.Dr1 = new_wow64_context.Dr1;
+                        merged_context.Dr2 = new_wow64_context.Dr2;
+                        merged_context.Dr3 = new_wow64_context.Dr3;
+                        merged_context.Dr6 = new_wow64_context.Dr6;
+                        merged_context.Dr7 = new_wow64_context.Dr7;
+                    }
+
+                    if ((new_wow64_context.ContextFlags & CONTEXT_FLOATING_POINT_32) == CONTEXT_FLOATING_POINT_32)
+                    {
+                        merged_context.FloatSave = new_wow64_context.FloatSave;
+                    }
+
+                    if ((new_wow64_context.ContextFlags & CONTEXT_SEGMENTS_32) == CONTEXT_SEGMENTS_32)
+                    {
+                        merged_context.SegGs = new_wow64_context.SegGs;
+                        merged_context.SegFs = new_wow64_context.SegFs;
+                        merged_context.SegEs = new_wow64_context.SegEs;
+                        merged_context.SegDs = new_wow64_context.SegDs;
+                    }
+
+                    if ((new_wow64_context.ContextFlags & CONTEXT_INTEGER_32) == CONTEXT_INTEGER_32)
+                    {
+                        merged_context.Edi = new_wow64_context.Edi;
+                        merged_context.Esi = new_wow64_context.Esi;
+                        merged_context.Ebx = new_wow64_context.Ebx;
+                        merged_context.Edx = new_wow64_context.Edx;
+                        merged_context.Ecx = new_wow64_context.Ecx;
+                        merged_context.Eax = new_wow64_context.Eax;
+                    }
+
+                    if ((new_wow64_context.ContextFlags & CONTEXT_CONTROL_32) == CONTEXT_CONTROL_32)
+                    {
+                        merged_context.Ebp = new_wow64_context.Ebp;
+                        merged_context.Eip = new_wow64_context.Eip;
+                        merged_context.SegCs = new_wow64_context.SegCs;
+                        merged_context.EFlags = new_wow64_context.EFlags;
+                        merged_context.Esp = new_wow64_context.Esp;
+                        merged_context.SegSs = new_wow64_context.SegSs;
+                    }
+
+                    if ((new_wow64_context.ContextFlags & CONTEXT_EXTENDED_REGISTERS_32) == CONTEXT_EXTENDED_REGISTERS_32)
+                    {
+                        memcpy(merged_context.ExtendedRegisters, new_wow64_context.ExtendedRegisters,
+                               sizeof(merged_context.ExtendedRegisters));
+                    }
+
+                    ctx.Context = merged_context;
                     // c.win_emu.callbacks.on_suspicious_activity("WOW64 CONTEXT");
                 });
 
