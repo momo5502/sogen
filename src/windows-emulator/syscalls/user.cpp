@@ -788,7 +788,8 @@ namespace sogen
                 args.msg = message;
                 args.wParam = w_param;
                 args.lParam = l_param;
-                args.xpfnProc = win.wnd_proc;
+                args.xParam = win.wnd_proc;
+                args.xpfnProc = c.proc.dispatch_client_message;
                 if (l_param != 0)
                 {
                     c.emu.read_memory(l_param, &args.cs, sizeof(args.cs));
@@ -803,7 +804,8 @@ namespace sogen
                 args.pwnd = win.guest.value();
                 args.msg = message;
                 args.wParam = w_param;
-                args.xpfnProc = win.wnd_proc;
+                args.xParam = win.wnd_proc;
+                args.xpfnProc = c.proc.dispatch_client_message;
                 if (l_param != 0)
                 {
                     c.emu.read_memory(l_param, &args.wp, sizeof(args.wp));
@@ -819,7 +821,8 @@ namespace sogen
                 args.pwnd = win.guest.value();
                 args.msg = message;
                 args.wParam = w_param;
-                args.xpfnProc = win.wnd_proc;
+                args.xParam = win.wnd_proc;
+                args.xpfnProc = c.proc.dispatch_client_message;
                 if (l_param != 0)
                 {
                     if (message == WM_WINDOWPOSCHANGING)
@@ -841,7 +844,8 @@ namespace sogen
                 args.pwnd = win.guest.value();
                 args.msg = message;
                 args.wParam = w_param;
-                args.xpfnProc = win.wnd_proc;
+                args.xParam = win.wnd_proc;
+                args.xpfnProc = c.proc.dispatch_client_message;
                 if (l_param != 0)
                 {
                     if (w_param == FALSE)
@@ -868,7 +872,8 @@ namespace sogen
                 args.msg = message;
                 args.wParam = w_param;
                 args.lParam = l_param;
-                args.xpfnProc = win.wnd_proc;
+                args.xParam = win.wnd_proc;
+                args.xpfnProc = c.proc.dispatch_client_message;
 
                 dispatch_user_callback(c, id, k_fn_nc_destroy_callback_id, std::forward<T>(state), args);
                 return;
@@ -880,7 +885,8 @@ namespace sogen
                 args.msg = message;
                 args.wParam = w_param;
                 args.lParam = l_param;
-                args.xpfnProc = win.wnd_proc;
+                args.xParam = win.wnd_proc;
+                args.xpfnProc = c.proc.dispatch_client_message;
 
                 dispatch_user_callback(c, id, k_fn_dword_callback_id, std::forward<T>(state), args);
                 return;
@@ -1580,7 +1586,7 @@ namespace sogen
                 return 0;
             }
 
-            const bool is_message_only = parent == reinterpret_cast<pointer>(HWND_MESSAGE);
+            const bool is_message_only = parent == EMU_HWND_MESSAGE;
             const bool has_child_parent = (style & WS_CHILD) != 0 && (style & WS_POPUP) == 0;
             const bool has_owner = parent != 0 && !is_message_only && !has_child_parent;
 

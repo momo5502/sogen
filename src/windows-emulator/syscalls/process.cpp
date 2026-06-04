@@ -124,6 +124,11 @@ namespace sogen
                                                                 c.PriorityClass = 32; // Normal
                                                             });
 
+            case ProcessWow64Information:
+                return handle_query<EmulatorTraits<Emu64>::ULONG_PTR>(
+                    c.emu, process_information, process_information_length, return_length,
+                    [&](EmulatorTraits<Emu64>::ULONG_PTR& peb32) { peb32 = c.proc.peb32 ? c.proc.peb32->value() : 0; });
+
             case ProcessBasicInformation: {
                 const auto init_basic_info = [&](PROCESS_BASIC_INFORMATION64& basic_info) {
                     basic_info.PebBaseAddress = c.proc.peb64.value();

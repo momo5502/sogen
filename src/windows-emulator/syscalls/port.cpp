@@ -121,14 +121,31 @@ namespace sogen
             context.receive_message = receive_message;
             context.receive_buffer_length = buffer_length ? buffer_length.read() : 0;
 
-            const auto status = port->handle_message(c.win_emu, context);
+            const auto result = port->handle_message(c.win_emu, context);
+
+            if (receive_message && NT_SUCCESS(result.status))
+            {
+                if (context.receive_buffer_length < result.total_length())
+                {
+                    // The port handler should always queue messages that are too large to be written,
+                    // so if we still got a message that doesn't fit in the receive buffer, something
+                    // has gone wrong.
+                    throw std::runtime_error("Unexpected success result returned by port handler");
+                }
+
+                receive_message.write(result.message);
+                if (!result.payload.empty())
+                {
+                    c.emu.write_memory(receive_message.value() + sizeof(PORT_MESSAGE64), result.payload.data(), result.payload.size());
+                }
+            }
 
             if (receive_message && buffer_length)
             {
-                buffer_length.write(static_cast<typename EmulatorTraits<Emu64>::SIZE_T>(receive_message.read().u1.s1.TotalLength));
+                buffer_length.write(static_cast<typename EmulatorTraits<Emu64>::SIZE_T>(result.total_length()));
             }
 
-            return status;
+            return result.status;
         }
 
         NTSTATUS handle_NtAlpcQueryInformation()
