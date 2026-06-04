@@ -1,4 +1,3 @@
-#include "std_include.hpp"
 #include "window_destroy_orchestrator.hpp"
 
 #include "syscall_utils.hpp"
@@ -6,25 +5,28 @@
 namespace sogen
 {
 
-    window_destroy_orchestrator::window_destroy_orchestrator(window_destroy_state& state)
-        : state_(state)
+    window_destroy_orchestrator::window_destroy_orchestrator(window_destroy_state& state, const syscall_context& c)
+        : state_(state),
+          emu_(c.emu),
+          proc_(c.proc),
+          ui_(c.win_emu.ui())
     {
     }
 
-    void window_destroy_orchestrator::start(const syscall_context& c, window& root)
+    void window_destroy_orchestrator::start(window& root) const
     {
-        this->push_frame(c, root);
+        this->push_frame(root);
     }
 
-    std::optional<window_destroy_step> window_destroy_orchestrator::advance(const syscall_context& c)
+    std::optional<window_destroy_step> window_destroy_orchestrator::advance() const
     {
         while (!this->state_.frames.empty())
         {
             auto& frame = this->state_.frames.back();
-            auto* win = c.proc.windows.get(frame.handle);
-            if (!win || win->thread_id != c.proc.active_thread->id)
+            auto* win = this->proc_.windows.get(frame.handle);
+            if (!win || win->thread_id != this->proc_.active_thread->id)
             {
-                this->pop_frame_allocation(c, frame);
+                this->pop_frame_allocation(frame);
                 this->state_.frames.pop_back();
                 continue;
             }
@@ -43,14 +45,14 @@ namespace sogen
                 continue;
 
             case window_destroy_phase::children: {
-                const auto dependents = this->collect_dependents(c, *win);
+                const auto dependents = this->collect_dependents(*win);
                 frame.phase = window_destroy_phase::nc_destroy;
 
                 for (const auto dependent : std::ranges::reverse_view(dependents))
                 {
-                    if (auto* dependent_win = c.proc.windows.get(dependent))
+                    if (auto* dependent_win = this->proc_.windows.get(dependent))
                     {
-                        this->push_frame(c, *dependent_win);
+                        this->push_frame(*dependent_win);
                     }
                 }
                 continue;
@@ -62,7 +64,7 @@ namespace sogen
                 continue;
 
             case window_destroy_phase::finalize:
-                this->finalize_frame(c, frame, *win);
+                this->finalize_frame(frame, *win);
                 this->state_.frames.pop_back();
                 continue;
             }
@@ -71,14 +73,14 @@ namespace sogen
         return std::nullopt;
     }
 
-    hwnd window_destroy_orchestrator::find_window_by_guest_pointer(const process_context& proc, const uint64_t window_ptr) const
+    hwnd window_destroy_orchestrator::find_window_by_guest_pointer(const uint64_t window_ptr) const
     {
         if (window_ptr == 0)
         {
             return 0;
         }
 
-        for (const auto& [_, win] : proc.windows)
+        for (const auto& [_, win] : this->proc_.windows)
         {
             if (win.guest.value() == window_ptr)
             {
@@ -89,7 +91,7 @@ namespace sogen
         return 0;
     }
 
-    void window_destroy_orchestrator::unlink_window_from_parent_and_siblings(const syscall_context& c, window& win) const
+    void window_destroy_orchestrator::unlink_window_from_parent_and_siblings(window& win) const
     {
         uint64_t parent = 0;
         uint64_t prev = 0;
@@ -104,7 +106,7 @@ namespace sogen
 
         if (parent != 0)
         {
-            emulator_object<USER_WINDOW> parent_obj{c.emu, parent};
+            emulator_object<USER_WINDOW> parent_obj{this->emu_, parent};
             parent_obj.access([&](USER_WINDOW& parent_guest) {
                 if (parent_guest.spwndChild == win_ptr)
                 {
@@ -115,7 +117,7 @@ namespace sogen
 
         if (prev != 0)
         {
-            emulator_object<USER_WINDOW> prev_obj{c.emu, prev};
+            emulator_object<USER_WINDOW> prev_obj{this->emu_, prev};
             prev_obj.access([&](USER_WINDOW& prev_guest) {
                 if (prev_guest.spwndNext == win_ptr)
                 {
@@ -126,7 +128,7 @@ namespace sogen
 
         if (next != 0)
         {
-            emulator_object<USER_WINDOW> next_obj{c.emu, next};
+            emulator_object<USER_WINDOW> next_obj{this->emu_, next};
             next_obj.access([&](USER_WINDOW& next_guest) {
                 if (next_guest.spwndPrev == win_ptr)
                 {
@@ -136,7 +138,7 @@ namespace sogen
         }
     }
 
-    window_destroy_frame window_destroy_orchestrator::make_frame(const syscall_context& c, const window& win) const
+    window_destroy_frame window_destroy_orchestrator::make_frame(const window& win) const
     {
         window_destroy_frame frame{};
         frame.handle = win.handle;
@@ -151,7 +153,7 @@ namespace sogen
             wp.cx = win.width;
             wp.cy = win.height;
             wp.flags = SWP_HIDEWINDOW;
-            frame.window_pos_alloc = c.emu.push_stack(wp);
+            frame.window_pos_alloc = this->emu_.push_stack(wp);
 
             frame.message_queue = {
                 {.message = WM_DESTROY, .wParam = 0, .lParam = 0},
@@ -174,21 +176,21 @@ namespace sogen
         return frame;
     }
 
-    void window_destroy_orchestrator::push_frame(const syscall_context& c, window& win)
+    void window_destroy_orchestrator::push_frame(window& win) const
     {
-        this->unlink_window_from_parent_and_siblings(c, win);
-        this->state_.frames.push_back(this->make_frame(c, win));
+        this->unlink_window_from_parent_and_siblings(win);
+        this->state_.frames.push_back(this->make_frame(win));
     }
 
-    void window_destroy_orchestrator::pop_frame_allocation(const syscall_context& c, window_destroy_frame& frame) const
+    void window_destroy_orchestrator::pop_frame_allocation(window_destroy_frame& frame) const
     {
         if (frame.window_pos_alloc.address != 0)
         {
-            c.emu.pop_stack(std::move(frame.window_pos_alloc));
+            this->emu_.pop_stack(std::move(frame.window_pos_alloc));
         }
     }
 
-    std::vector<hwnd> window_destroy_orchestrator::collect_dependents(const syscall_context& c, const window& win) const
+    std::vector<hwnd> window_destroy_orchestrator::collect_dependents(const window& win) const
     {
         std::vector<hwnd> dependents{};
 
@@ -198,7 +200,7 @@ namespace sogen
                 return;
             }
 
-            const auto* dependent_win = c.proc.windows.get(dependent);
+            const auto* dependent_win = this->proc_.windows.get(dependent);
             if (!dependent_win || dependent_win->thread_id != win.thread_id)
             {
                 return;
@@ -210,15 +212,15 @@ namespace sogen
         uint64_t child = 0;
         win.guest.access([&](const USER_WINDOW& guest_win) { child = guest_win.spwndChild; });
 
-        for (size_t guard = 0; child != 0 && guard < c.proc.windows.size(); ++guard)
+        for (size_t guard = 0; child != 0 && guard < this->proc_.windows.size(); ++guard)
         {
-            add_dependent(this->find_window_by_guest_pointer(c.proc, child));
+            add_dependent(this->find_window_by_guest_pointer(child));
 
-            emulator_object<USER_WINDOW> child_obj{c.emu, child};
+            emulator_object<USER_WINDOW> child_obj{this->emu_, child};
             child_obj.access([&](const USER_WINDOW& child_guest) { child = child_guest.spwndNext; });
         }
 
-        for (const auto& [_, candidate] : c.proc.windows)
+        for (const auto& [_, candidate] : this->proc_.windows)
         {
             if (candidate.owner_handle == win.handle)
             {
@@ -229,9 +231,9 @@ namespace sogen
         return dependents;
     }
 
-    void window_destroy_orchestrator::finalize_frame(const syscall_context& c, window_destroy_frame& frame, window& win) const
+    void window_destroy_orchestrator::finalize_frame(window_destroy_frame& frame, window& win) const
     {
-        this->pop_frame_allocation(c, frame);
+        this->pop_frame_allocation(frame);
 
         win.guest.access([&](USER_WINDOW& guest_win) {
             guest_win.spwndParent = 0;
@@ -241,8 +243,8 @@ namespace sogen
             guest_win.spwndPrev = 0;
         });
 
-        c.win_emu.ui().destroy_window(frame.handle);
-        (void)c.proc.windows.erase(frame.handle);
+        this->ui_.destroy_window(frame.handle);
+        (void)this->proc_.windows.erase(frame.handle);
     }
 
 } // namespace sogen

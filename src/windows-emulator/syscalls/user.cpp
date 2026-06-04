@@ -680,8 +680,8 @@ namespace sogen
 
         BOOL advance_window_destroy(const syscall_context& c, window_destroy_state& state)
         {
-            window_destroy_orchestrator orchestrator{state};
-            const auto step = orchestrator.advance(c);
+            window_destroy_orchestrator orchestrator{state, c};
+            const auto step = orchestrator.advance();
             if (!step)
             {
                 return TRUE;
@@ -1659,7 +1659,7 @@ namespace sogen
             }
 
             window_destroy_state state{};
-            window_destroy_orchestrator{state}.start(c, *win);
+            window_destroy_orchestrator{state, c}.start(*win);
             return advance_window_destroy(c, state);
         }
 
