@@ -1,4 +1,5 @@
 #include "../std_include.hpp"
+#include "../debug_font.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 
@@ -73,6 +74,40 @@ namespace sogen
 
             constexpr uint32_t k_gdi_first_dynamic_handle = 0x2000;
             constexpr uint32_t k_gdi_default_cookie = STATUS_WAIT_1;
+
+            constexpr int16_t k_gdi_batch_cmd_text_out = 2;
+            constexpr uint32_t k_gdibs_no_rect = 0x80000000u;
+
+            struct gdi_batch_header
+            {
+                int16_t size{};
+                int16_t cmd{};
+            };
+
+            struct gdi_batch_text_out
+            {
+                gdi_batch_header header{};
+                COLORREF foreground{};
+                COLORREF background{};
+                LONG bk_mode{};
+                ULONG foreground_ul{};
+                ULONG background_ul{};
+                int32_t x{};
+                int32_t y{};
+                UINT options{};
+                RECT rect{};
+                DWORD code_page{};
+                UINT count{};
+                UINT dx_size{};
+                uint64_t font{};
+                FLONG text_align{};
+                POINTL viewport_org{};
+                union
+                {
+                    WCHAR string[2];
+                    ULONG buffer[1];
+                };
+            };
 
             uint64_t ensure_gdi_shared_table(const syscall_context& c)
             {
@@ -376,8 +411,7 @@ namespace sogen
                 const auto height = static_cast<uint32_t>(win->height);
 
                 auto& surface = c.proc.gdi_window_surfaces[top_handle];
-                if (surface.width != width || surface.height != height ||
-                    surface.pixels.size() != static_cast<size_t>(width) * height)
+                if (surface.width != width || surface.height != height || surface.pixels.size() != static_cast<size_t>(width) * height)
                 {
                     surface.width = width;
                     surface.height = height;
@@ -390,8 +424,8 @@ namespace sogen
                 return &surface;
             }
 
-            bool get_dc_state_and_surface(const syscall_context& c, const hdc dc, gdi_dc_state*& dc_state,
-                                          gdi_bitmap_surface*& surface, int32_t& origin_x, int32_t& origin_y)
+            bool get_dc_state_and_surface(const syscall_context& c, const hdc dc, gdi_dc_state*& dc_state, gdi_bitmap_surface*& surface,
+                                          int32_t& origin_x, int32_t& origin_y)
             {
                 dc_state = nullptr;
                 surface = nullptr;
@@ -420,6 +454,11 @@ namespace sogen
                 surface.pixels[static_cast<size_t>(y) * surface.width + static_cast<size_t>(x)] = color;
             }
 
+            uint32_t colorref_to_bgra(const uint32_t colorref)
+            {
+                return 0xFF000000u | ((colorref & 0x000000FFu) << 16) | (colorref & 0x0000FF00u) | ((colorref & 0x00FF0000u) >> 16);
+            }
+
             uint32_t get_dc_pen_color(const syscall_context& c, const hdc dc)
             {
                 uint64_t dc_attr = 0;
@@ -443,7 +482,7 @@ namespace sogen
 
                 uint32_t colorref = 0;
                 c.win_emu.memory.try_read_memory(pen_attr + sizeof(uint32_t), &colorref, sizeof(colorref));
-                return 0xFF000000u | ((colorref & 0x000000FFu) << 16) | (colorref & 0x0000FF00u) | ((colorref & 0x00FF0000u) >> 16);
+                return colorref_to_bgra(colorref);
             }
 
             void set_dc_current_point(const syscall_context& c, const hdc dc, const int32_t x, const int32_t y)
@@ -485,7 +524,7 @@ namespace sogen
 
                 uint32_t colorref = 0;
                 c.win_emu.memory.try_read_memory(brush_attr + sizeof(uint32_t), &colorref, sizeof(colorref));
-                return 0xFF000000u | ((colorref & 0x000000FFu) << 16) | (colorref & 0x0000FF00u) | ((colorref & 0x00FF0000u) >> 16);
+                return colorref_to_bgra(colorref);
             }
 
             void draw_line(gdi_bitmap_surface& surface, int x0, int y0, const int x1, const int y1, const uint32_t color)
@@ -516,6 +555,101 @@ namespace sogen
                         y0 += sy;
                     }
                 }
+            }
+
+            void draw_debug_glyph(gdi_bitmap_surface& surface, const int x, const int y, char32_t codepoint, const uint32_t color)
+            {
+                if (codepoint < debug_font::first_codepoint || codepoint > debug_font::last_codepoint)
+                {
+                    codepoint = U'?';
+                }
+
+                const auto& glyph = debug_font::glyphs[static_cast<size_t>(codepoint - debug_font::first_codepoint)];
+                for (int row = 0; row < debug_font::glyph_height; ++row)
+                {
+                    const uint8_t bits = glyph[static_cast<size_t>(row)];
+                    for (int col = 0; col < debug_font::glyph_width; ++col)
+                    {
+                        if ((bits & (0x01u << col)) != 0)
+                        {
+                            set_surface_pixel(surface, x + col, y + row, color);
+                        }
+                    }
+                }
+            }
+
+            void draw_debug_text(gdi_bitmap_surface& surface, const int x, const int y, const std::u16string_view text,
+                                 const uint32_t color)
+            {
+                int pen_x = x;
+                for (const auto ch : text)
+                {
+                    draw_debug_glyph(surface, pen_x, y, static_cast<char32_t>(ch), color);
+                    pen_x += debug_font::glyph_width;
+                }
+            }
+
+            void fill_rect(gdi_bitmap_surface& surface, const int left, const int top, const int right, const int bottom,
+                           const uint32_t color)
+            {
+                for (int y = top; y < bottom; ++y)
+                {
+                    for (int x = left; x < right; ++x)
+                    {
+                        set_surface_pixel(surface, x, y, color);
+                    }
+                }
+            }
+
+            template <typename Batch>
+            bool flush_gdi_text_batch(const syscall_context& c, const Batch& batch)
+            {
+                if (batch.Offset == 0 || batch.HDC == 0 || batch.Offset > sizeof(batch.Buffer))
+                {
+                    return true;
+                }
+
+                const auto dc = static_cast<hdc>(batch.HDC);
+                gdi_dc_state* dc_state = nullptr;
+                gdi_bitmap_surface* surface = nullptr;
+                int32_t origin_x = 0;
+                int32_t origin_y = 0;
+                if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !surface)
+                {
+                    return false;
+                }
+
+                const auto* bytes = reinterpret_cast<const uint8_t*>(batch.Buffer);
+                size_t offset = 0;
+                while (offset + sizeof(gdi_batch_header) <= batch.Offset)
+                {
+                    const auto* header = reinterpret_cast<const gdi_batch_header*>(bytes + offset);
+                    if (header->size <= 0 || offset + static_cast<size_t>(header->size) > batch.Offset)
+                    {
+                        break;
+                    }
+
+                    if (header->cmd == k_gdi_batch_cmd_text_out &&
+                        static_cast<size_t>(header->size) >= offsetof(gdi_batch_text_out, string))
+                    {
+                        const auto* text_out = reinterpret_cast<const gdi_batch_text_out*>(header);
+                        if ((text_out->options & ETO_OPAQUE) != 0 && (text_out->options & k_gdibs_no_rect) == 0)
+                        {
+                            fill_rect(*surface, text_out->rect.left + origin_x, text_out->rect.top + origin_y,
+                                      text_out->rect.right + origin_x, text_out->rect.bottom + origin_y,
+                                      colorref_to_bgra(text_out->background));
+                        }
+
+                        const auto* text = reinterpret_cast<const char16_t*>(&text_out->string[text_out->dx_size / sizeof(char16_t)]);
+                        draw_debug_text(*surface, text_out->x + text_out->viewport_org.x + origin_x,
+                                        text_out->y + text_out->viewport_org.y + origin_y, std::u16string_view(text, text_out->count),
+                                        colorref_to_bgra(text_out->foreground));
+                    }
+
+                    offset += static_cast<size_t>(header->size);
+                }
+
+                return true;
             }
 
             void seed_user_system_color_brushes(const syscall_context& c)
@@ -859,6 +993,34 @@ namespace sogen
             return dc ? 1 : 0;
         }
 
+        BOOL handle_NtGdiFlush(const syscall_context& c)
+        {
+            auto& thread = c.win_emu.current_thread();
+            if (thread.teb64)
+            {
+                GDI_TEB_BATCH64 batch{};
+                thread.teb64->access([&](TEB64& teb) {
+                    batch = teb.GdiTebBatch;
+                    teb.GdiTebBatch = {};
+                    teb.GdiBatchCount = 0;
+                });
+                return flush_gdi_text_batch(c, batch) ? TRUE : FALSE;
+            }
+
+            if (thread.teb32)
+            {
+                GDI_TEB_BATCH32 batch{};
+                thread.teb32->access([&](TEB32& teb) {
+                    batch = teb.GdiTebBatch;
+                    teb.GdiTebBatch = {};
+                    teb.GdiBatchCount = 0;
+                });
+                return flush_gdi_text_batch(c, batch) ? TRUE : FALSE;
+            }
+
+            return TRUE;
+        }
+
         uint64_t handle_NtGdiCreateSolidBrush(const syscall_context& c, const uint32_t color, const uint64_t /*unused*/)
         {
             const auto handle = allocate_gdi_object(c, k_gdi_brush_type, k_gdi_brush_attr_size);
@@ -1114,6 +1276,8 @@ namespace sogen
         BOOL handle_NtGdiGetTextExtent(const syscall_context& c, const hdc dc, const emulator_pointer /*text*/, const int32_t char_count,
                                        const emulator_pointer size, const ULONG /*flags*/)
         {
+            std::printf("GDI GetTextExtent hdc=0x%llx chars=%d size=0x%llx\n", static_cast<unsigned long long>(dc), char_count,
+                        static_cast<unsigned long long>(size));
             if (dc == 0 || size == 0 || char_count < 0)
             {
                 return FALSE;
@@ -1181,8 +1345,7 @@ namespace sogen
             }
 
             const auto color = get_dc_pen_color(c, dc);
-            draw_line(*surface, dc_state->current_x + origin_x, dc_state->current_y + origin_y, x_end + origin_x, y_end + origin_y,
-                      color);
+            draw_line(*surface, dc_state->current_x + origin_x, dc_state->current_y + origin_y, x_end + origin_x, y_end + origin_y, color);
 
             dc_state->current_x = x_end;
             dc_state->current_y = y_end;
@@ -1232,8 +1395,8 @@ namespace sogen
             return TRUE;
         }
 
-        BOOL handle_NtGdiExtTextOutW(const syscall_context& c, const hdc dc, const LONG x, const LONG y, const UINT /*options*/,
-                                     const emulator_pointer /*rect*/, const emulator_pointer /*text*/, const UINT count,
+        BOOL handle_NtGdiExtTextOutW(const syscall_context& c, const hdc dc, const LONG x, const LONG y, const UINT options,
+                                     const emulator_pointer /*rect*/, const emulator_pointer text, const UINT count,
                                      const emulator_pointer /*dx*/, const DWORD /*code_page*/)
         {
             gdi_dc_state* dc_state = nullptr;
@@ -1245,13 +1408,33 @@ namespace sogen
                 return FALSE;
             }
 
+            if (count == 0 || text == 0)
+            {
+                std::printf("GDI ExtTextOutW hdc=0x%llx x=%d y=%d count=%u options=0x%x empty\n", static_cast<unsigned long long>(dc),
+                            static_cast<int>(x), static_cast<int>(y), count, options);
+                dc_state->current_x = x;
+                dc_state->current_y = y;
+                return TRUE;
+            }
+
+            std::u16string glyphs;
+            glyphs.resize(count);
+            c.emu.read_memory(text, glyphs.data(), count * sizeof(char16_t));
+
+            std::string ascii;
+            ascii.reserve(count);
+            for (const auto ch : glyphs)
+            {
+                ascii.push_back(ch >= 32 && ch <= 126 ? static_cast<char>(ch) : '?');
+            }
+
             const auto color = get_dc_pen_color(c, dc);
-            const int width = static_cast<int>(count) * 8;
-            const int baseline = y + 12;
+            std::printf("GDI ExtTextOutW hdc=0x%llx x=%d y=%d count=%u options=0x%x text='%s' color=0x%08x origin=%d,%d\n",
+                        static_cast<unsigned long long>(dc), static_cast<int>(x), static_cast<int>(y), count, options, ascii.c_str(), color,
+                        static_cast<int>(origin_x), static_cast<int>(origin_y));
+            draw_debug_text(*surface, x + origin_x, y + origin_y, glyphs, color);
 
-            draw_line(*surface, x + origin_x, baseline + origin_y, x + width + origin_x, baseline + origin_y, color);
-
-            dc_state->current_x = x + width;
+            dc_state->current_x = x + static_cast<int32_t>(count * debug_font::glyph_width);
             dc_state->current_y = y;
             return TRUE;
         }
@@ -1273,8 +1456,7 @@ namespace sogen
             return TRUE;
         }
 
-        BOOL handle_NtGdiMoveToEx(const syscall_context& c, const hdc dc, const LONG x, const LONG y,
-                                  const emulator_pointer old_point_ptr)
+        BOOL handle_NtGdiMoveToEx(const syscall_context& c, const hdc dc, const LONG x, const LONG y, const emulator_pointer old_point_ptr)
         {
             if (old_point_ptr != 0)
             {
@@ -1307,7 +1489,7 @@ namespace sogen
         }
 
         uint64_t handle_NtGdiSelectPenLocal(const syscall_context& c, const hdc dc, const uint32_t pen,
-                                             const emulator_pointer /*old_pen_ptr*/)
+                                            const emulator_pointer /*old_pen_ptr*/)
         {
             uint32_t old_pen = 0;
             uint64_t dc_attr = 0;

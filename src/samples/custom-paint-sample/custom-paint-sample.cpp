@@ -1,5 +1,7 @@
 #include <windows.h>
 
+#include <string>
+
 namespace
 {
     constexpr auto* kWindowClassName = "CustomPaintSampleClass";
@@ -36,6 +38,17 @@ namespace
                 LineTo(dc, 200, 96);
                 MoveToEx(dc, 200, 32, nullptr);
                 LineTo(dc, 32, 96);
+
+                std::wstring text = L"Hello guest paint ";
+                while (text.size() < 700)
+                {
+                    text += L"x";
+                }
+
+                SetBkMode(dc, TRANSPARENT);
+                ExtTextOutW(dc, 40, 112, 0, nullptr, text.c_str(), static_cast<UINT>(text.size()), nullptr);
+                GdiFlush();
+
                 SelectObject(dc, old_pen);
                 DeleteObject(pen);
             }

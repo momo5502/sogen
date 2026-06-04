@@ -537,6 +537,7 @@ namespace sogen
         uint32_t handle_NtGdiGetDeviceCaps(const syscall_context& c, hdc dc, uint32_t index);
         uint32_t handle_NtGdiGetDeviceCapsAll(const syscall_context& c, hdc dc, emulator_pointer caps);
         uint32_t handle_NtGdiComputeXformCoefficients(const syscall_context& c, hdc dc);
+        BOOL handle_NtGdiFlush(const syscall_context& c);
         uint64_t handle_NtGdiCreateSolidBrush(const syscall_context& c, uint32_t color, uint64_t unused);
         uint64_t handle_NtGdiCreatePatternBrushInternal(const syscall_context& c, handle bitmap, uint32_t unused);
         uint64_t handle_NtGdiCreatePen(const syscall_context& c, uint32_t style, uint32_t width, uint32_t color);
@@ -983,6 +984,7 @@ namespace sogen
         add_handler(NtGdiGetDeviceCaps);
         add_handler(NtGdiGetDeviceCapsAll);
         add_handler(NtGdiComputeXformCoefficients);
+        add_handler(NtGdiFlush);
         add_handler(NtGdiCreateSolidBrush);
         add_handler(NtGdiCreatePatternBrushInternal);
         add_handler(NtGdiCreatePen);
