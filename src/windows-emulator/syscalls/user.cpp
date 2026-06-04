@@ -2,6 +2,7 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 #include "../win32k_userconnect.hpp"
+#include "../window_destroy_orchestrator.hpp"
 #include "windows-emulator/user_callback_dispatch.hpp"
 #include <limits>
 
@@ -311,7 +312,6 @@ namespace sogen
             const auto window_rect = get_window_rect(win);
 
             win.guest.access([&](USER_WINDOW& guest_win) {
-                guest_win.rcUnknown_048 = window_rect;
                 guest_win.rcWindow = window_rect;
                 guest_win.rcClient = window_rect;
             });
@@ -676,6 +676,26 @@ namespace sogen
             message_queue.pop_back();
 
             dispatch_window_message(c, id, std::forward<T>(state), win, m.message, m.wParam, m.lParam);
+        }
+
+        BOOL advance_window_destroy(const syscall_context& c, window_destroy_state& state)
+        {
+            window_destroy_orchestrator orchestrator{state};
+            const auto step = orchestrator.advance(c);
+            if (!step)
+            {
+                return TRUE;
+            }
+
+            auto* win = c.proc.windows.get(step->handle);
+            if (!win)
+            {
+                return advance_window_destroy(c, state);
+            }
+
+            dispatch_window_message(c, callback_id::NtUserDestroyWindow, std::move(state), *win, step->message.message,
+                                    step->message.wParam, step->message.lParam);
+            return {};
         }
 
         uint64_t ensure_win32_thread_info(const syscall_context& c)
@@ -1404,8 +1424,7 @@ namespace sogen
                 guest_win.ptrBase = win.guest.value();
                 guest_win.dwExStyle = ex_style;
                 guest_win.dwStyle = style;
-                guest_win.rcUnknown_048 = {.left = x, .top = y, .right = x + width, .bottom = y + height};
-                guest_win.rcWindow = guest_win.rcUnknown_048;
+                guest_win.rcWindow = {.left = x, .top = y, .right = x + width, .bottom = y + height};
                 guest_win.rcClient = guest_win.rcWindow;
                 if (parent_win && has_child_parent)
                 {
@@ -1437,32 +1456,49 @@ namespace sogen
 
             if (has_child_parent && parent_win && parent_win->guest.value() != 0)
             {
-                constexpr uint64_t k_spwnd_child_offset = 0x38;
-                constexpr uint64_t k_spwnd_next_offset = 0x48;
-                constexpr uint64_t k_null_ptr = 0;
-
-                c.win_emu.memory.write_memory(win.guest.value() + k_spwnd_next_offset, &k_null_ptr, sizeof(k_null_ptr));
-
+                const auto child_ptr = win.guest.value();
                 uint64_t first_child = 0;
-                c.win_emu.memory.try_read_memory(parent_win->guest.value() + k_spwnd_child_offset, &first_child, sizeof(first_child));
-                if (first_child == 0)
-                {
-                    const auto child_ptr = win.guest.value();
-                    c.win_emu.memory.write_memory(parent_win->guest.value() + k_spwnd_child_offset, &child_ptr, sizeof(child_ptr));
-                }
-                else
+
+                parent_win->guest.access([&](USER_WINDOW& parent_guest) {
+                    first_child = parent_guest.spwndChild;
+
+                    if (first_child == 0)
+                    {
+                        parent_guest.spwndChild = child_ptr;
+                    }
+                });
+
+                if (first_child != 0)
                 {
                     uint64_t current = first_child;
-                    uint64_t next = 0;
-                    while (current != 0)
+
+                    // Guard against corrupted/cyclic child chains.
+                    for (size_t guard = 0; current != 0 && guard < c.proc.windows.size(); ++guard)
                     {
-                        c.win_emu.memory.try_read_memory(current + k_spwnd_next_offset, &next, sizeof(next));
-                        if (next == 0)
+                        uint64_t next = 0;
+                        bool appended = false;
+
+                        emulator_object<USER_WINDOW> current_win_obj{c.emu, current};
+                        current_win_obj.access([&](USER_WINDOW& current_guest) {
+                            next = current_guest.spwndNext;
+
+                            if (next == 0)
+                            {
+                                current_guest.spwndNext = child_ptr;
+                                appended = true;
+                            }
+                        });
+
+                        if (appended)
                         {
-                            const auto child_ptr = win.guest.value();
-                            c.win_emu.memory.write_memory(current + k_spwnd_next_offset, &child_ptr, sizeof(child_ptr));
+                            win.guest.access([&](USER_WINDOW& guest_win) {
+                                guest_win.spwndPrev = current;
+                                guest_win.spwndNext = 0;
+                            });
+
                             break;
                         }
+
                         current = next;
                     }
                 }
@@ -1623,61 +1659,14 @@ namespace sogen
             }
 
             window_destroy_state state{};
-
-            if ((win->style & WS_VISIBLE) != 0)
-            {
-                EMU_WINDOWPOS wp{};
-                wp.hwnd = window;
-                wp.hwndInsertAfter = 0;
-                wp.x = win->x;
-                wp.y = win->y;
-                wp.cx = win->width;
-                wp.cy = win->height;
-                wp.flags = SWP_HIDEWINDOW;
-                state.window_pos_alloc = c.emu.push_stack(wp);
-
-                state.message_queue = {
-                    {.message = WM_NCDESTROY, .wParam = 0, .lParam = 0},
-                    {.message = WM_DESTROY, .wParam = 0, .lParam = 0},
-                    {.message = WM_KILLFOCUS, .wParam = 0, .lParam = 0},
-                    {.message = WM_ACTIVATE, .wParam = 0, .lParam = 0},
-                    {.message = WM_NCACTIVATE, .wParam = FALSE, .lParam = 0},
-                    {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = state.window_pos_alloc.address},
-                    {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = state.window_pos_alloc.address},
-                    {.message = WM_UAHDESTROYWINDOW, .wParam = 0, .lParam = 0},
-                };
-            }
-            else
-            {
-                state.message_queue = {
-                    {.message = WM_NCDESTROY, .wParam = 0, .lParam = 0},
-                    {.message = WM_DESTROY, .wParam = 0, .lParam = 0},
-                    {.message = WM_UAHDESTROYWINDOW, .wParam = 0, .lParam = 0},
-                };
-            }
-
-            dispatch_next_message(c, callback_id::NtUserDestroyWindow, std::move(state), *win, state.message_queue);
-            return {};
+            window_destroy_orchestrator{state}.start(c, *win);
+            return advance_window_destroy(c, state);
         }
 
-        BOOL completion_NtUserDestroyWindow(const syscall_context& c, const hwnd window)
+        BOOL completion_NtUserDestroyWindow(const syscall_context& c, const hwnd /*window*/)
         {
             auto& s = c.get_completion_state<window_destroy_state>();
-            auto* win = c.proc.windows.get(window);
-
-            if (!s.message_queue.empty())
-            {
-                dispatch_next_message(c, callback_id::NtUserDestroyWindow, std::move(s), *win, s.message_queue);
-                return {};
-            }
-
-            if (s.window_pos_alloc.address != 0)
-            {
-                c.emu.pop_stack(std::move(s.window_pos_alloc));
-            }
-
-            c.win_emu.ui().destroy_window(window);
-            return c.proc.windows.erase(window);
+            return advance_window_destroy(c, s);
         }
 
         BOOL handle_NtUserSetProp(const syscall_context& c, const hwnd window, const uint16_t atom, const uint64_t data)
