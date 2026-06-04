@@ -120,7 +120,7 @@ namespace sogen
                 return true;
             }
 
-            NTSTATUS handle_request(windows_emulator& win_emu, const lpc_request_context& c) override
+            lpc_request_result handle_request(windows_emulator& win_emu, const lpc_request_context& c) override
             {
                 wow64_userconnect_payload payload{};
                 if (try_read_wow64_payload(win_emu, c, payload))
@@ -131,7 +131,7 @@ namespace sogen
                         win_emu.log.warn("ApiPort WOW64 userconnect write failed: status=0x%X, ptr=0x%llX, len=0x%llX\n", status,
                                          static_cast<unsigned long long>(payload.user_connect_ptr),
                                          static_cast<unsigned long long>(payload.user_connect_length));
-                        return status;
+                        return {status, lpc_request_result::reply_in_place};
                     }
 
                     if (!win32k_userconnect::try_bootstrap_client_pfn_arrays_from_ntdll(win_emu))
@@ -139,27 +139,27 @@ namespace sogen
                         win_emu.log.warn("ApiPort userconnect callback-table bootstrap failed\n");
                     }
 
-                    return STATUS_SUCCESS;
+                    return {STATUS_SUCCESS, lpc_request_result::reply_in_place};
                 }
 
                 uint32_t server_dll_index{};
                 if (!try_read_reply_server_dll_index(win_emu, c, server_dll_index) ||
                     server_dll_index != win32k_userconnect::k_user_server_dll_index)
                 {
-                    return STATUS_SUCCESS;
+                    return {STATUS_SUCCESS, lpc_request_result::reply_in_place};
                 }
 
                 uint64_t base{};
                 if (!resolve_reply_base(win_emu, c, base))
                 {
                     win_emu.log.warn("ApiPort userconnect reply base resolution failed\n");
-                    return STATUS_INVALID_PARAMETER;
+                    return {STATUS_INVALID_PARAMETER, lpc_request_result::reply_in_place};
                 }
 
                 if (!win32k_userconnect::try_write_api_port_userconnect_reply(win_emu.memory, base, win_emu.process))
                 {
                     win_emu.log.warn("ApiPort userconnect shared info write failed\n");
-                    return STATUS_INVALID_PARAMETER;
+                    return {STATUS_INVALID_PARAMETER, lpc_request_result::reply_in_place};
                 }
 
                 if (!win32k_userconnect::try_bootstrap_client_pfn_arrays_from_ntdll(win_emu))
@@ -167,7 +167,7 @@ namespace sogen
                     win_emu.log.warn("ApiPort userconnect callback-table bootstrap failed\n");
                 }
 
-                return STATUS_SUCCESS;
+                return {STATUS_SUCCESS, lpc_request_result::reply_in_place};
             }
         };
     }
