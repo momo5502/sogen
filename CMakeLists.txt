@@ -14,7 +14,6 @@ else()
   set(SOGEN_ENABLE_SDL3_DEFAULT OFF)
 endif()
 option(SOGEN_ENABLE_SDL3 "Enable SDL3 dependency and backend scaffolding when submodule exists" ${SOGEN_ENABLE_SDL3_DEFAULT})
-option(SOGEN_USE_SDL3_UI_BACKEND "Use SDL3 as default host UI backend" OFF)
 option(SOGEN_EMSCRIPTEN_MEMORY64 "Enable memory 64 support for emscripten builds" OFF)
 option(SOGEN_EMSCRIPTEN_SUPPORT_NODEJS "Enable Node.js filesystem for emscripten compilation" OFF)
 

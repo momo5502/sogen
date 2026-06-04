@@ -10,7 +10,7 @@ namespace sogen
 #elif defined(SOGEN_HAS_SDL3)
         return create_sdl_ui_backend();
 #else
-        return create_win32_ui_backend();
+#error "No host UI backend available: build with the SDL3 submodule (deps/SDL)"
 #endif
     }
 }
