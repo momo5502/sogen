@@ -353,7 +353,6 @@ namespace sogen
         }
 
         void invalidate_window(const syscall_context& c, window& win, const std::optional<RECT>& update_rect, bool erase);
-        void present_window_surface(const syscall_context& c, window& win);
 
         RECT get_client_rect(const window& win)
         {
@@ -395,7 +394,6 @@ namespace sogen
                 c.win_emu.ui().set_window_rect(win.handle, get_window_rect(win));
             }
 
-            present_window_surface(c, win);
             if (repaint)
             {
                 invalidate_window(c, win, std::nullopt, false);
@@ -422,164 +420,6 @@ namespace sogen
             }
         }
 
-        void fill_rect_bgra(const std::span<uint32_t> pixels, const int width, const int height, const int left, const int top,
-                            const int right, const int bottom, const uint32_t color)
-        {
-            const int clamped_left = std::clamp(left, 0, width);
-            const int clamped_top = std::clamp(top, 0, height);
-            const int clamped_right = std::clamp(right, 0, width);
-            const int clamped_bottom = std::clamp(bottom, 0, height);
-            for (int y = clamped_top; y < clamped_bottom; ++y)
-            {
-                for (int x = clamped_left; x < clamped_right; ++x)
-                {
-                    pixels[static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)] = color;
-                }
-            }
-        }
-
-        void stroke_rect_bgra(const std::span<uint32_t> pixels, const int width, const int height, const RECT& rect, const uint32_t color)
-        {
-            fill_rect_bgra(pixels, width, height, rect.left, rect.top, rect.right, rect.top + 1, color);
-            fill_rect_bgra(pixels, width, height, rect.left, rect.bottom - 1, rect.right, rect.bottom, color);
-            fill_rect_bgra(pixels, width, height, rect.left, rect.top, rect.left + 1, rect.bottom, color);
-            fill_rect_bgra(pixels, width, height, rect.right - 1, rect.top, rect.right, rect.bottom, color);
-        }
-
-        void draw_text_placeholder_bgra(const std::span<uint32_t> pixels, const int width, const int height, const RECT& rect,
-                                        std::u16string_view text, const uint32_t color)
-        {
-            if (text.empty())
-            {
-                return;
-            }
-
-            const auto line_width = std::min<int>(rect.right - rect.left - 4, static_cast<int>(text.size()) * 6);
-            if (line_width <= 0)
-            {
-                return;
-            }
-
-            const auto line_top = rect.top + 4;
-            fill_rect_bgra(pixels, width, height, rect.left + 2, line_top, rect.left + 2 + line_width, line_top + 2, color);
-        }
-
-        window* find_top_level_host_surface_window(const syscall_context& c, window& win)
-        {
-            auto* current = &win;
-            while (current)
-            {
-                if ((current->style & WS_CHILD) == 0)
-                {
-                    return current->host_surface_window ? current : nullptr;
-                }
-
-                current = current->parent_handle != 0 ? c.proc.windows.get(current->parent_handle) : nullptr;
-            }
-
-            return nullptr;
-        }
-
-        std::optional<RECT> get_descendant_rect_in_top_level_client(const syscall_context& c, const window& top, const window& win)
-        {
-            int left = win.x;
-            int top_y = win.y;
-            const window* current = &win;
-            while (current && current->handle != top.handle)
-            {
-                if (current->handle != win.handle && (current->style & WS_VISIBLE) == 0)
-                {
-                    return std::nullopt;
-                }
-
-                if (current->parent_handle == 0)
-                {
-                    return std::nullopt;
-                }
-
-                current = c.proc.windows.get(current->parent_handle);
-                if (!current)
-                {
-                    return std::nullopt;
-                }
-
-                if (current->handle != top.handle)
-                {
-                    left += current->x;
-                    top_y += current->y;
-                }
-            }
-
-            if (!current || (win.style & WS_VISIBLE) == 0)
-            {
-                return std::nullopt;
-            }
-
-            return RECT{left, top_y, left + win.width, top_y + win.height};
-        }
-
-        void draw_fallback_child_surface(const std::span<uint32_t> pixels, const int client_width, const int client_height,
-                                         const window& child, const RECT& rect)
-        {
-            const auto normalized = normalize_builtin_window_class_name(child.class_name);
-            if (normalized == u"Button")
-            {
-                const auto fill = (child.style & WS_DISABLED) == 0 ? 0xFFE5E7EBu : 0xFFD4D4D8u;
-                fill_rect_bgra(pixels, client_width, client_height, rect.left, rect.top, rect.right, rect.bottom, fill);
-                stroke_rect_bgra(pixels, client_width, client_height, rect, 0xFFA1A1AAu);
-                draw_text_placeholder_bgra(pixels, client_width, client_height, rect, child.name, 0xFF18181Bu);
-            }
-            else if (normalized == u"Static")
-            {
-                draw_text_placeholder_bgra(pixels, client_width, client_height, rect, child.name, 0xFF18181Bu);
-            }
-            else
-            {
-                fill_rect_bgra(pixels, client_width, client_height, rect.left, rect.top, rect.right, rect.bottom, 0xFFFAFAFAu);
-                stroke_rect_bgra(pixels, client_width, client_height, rect, 0xFFA1A1AAu);
-                draw_text_placeholder_bgra(pixels, client_width, client_height, rect, child.name.empty() ? child.class_name : child.name,
-                                           0xFF52525Bu);
-            }
-        }
-
-        void present_window_surface(const syscall_context& c, window& win)
-        {
-            auto* top = find_top_level_host_surface_window(c, win);
-            if (!top)
-            {
-                return;
-            }
-
-            const auto insets = get_host_ui_client_insets(*top);
-            const int client_width = std::max(1, top->width - insets.left - insets.right);
-            const int client_height = std::max(1, top->height - insets.top - insets.bottom);
-            std::vector<uint32_t> pixels(static_cast<size_t>(client_width) * static_cast<size_t>(client_height), 0xFFF5F5F5u);
-            const auto span = std::span<uint32_t>{pixels};
-
-            for (const auto& [child_index, child] : c.proc.windows)
-            {
-                (void)child_index;
-                if (child.handle == top->handle)
-                {
-                    continue;
-                }
-
-                const auto rect = get_descendant_rect_in_top_level_client(c, *top, child);
-                if (!rect)
-                {
-                    continue;
-                }
-
-                draw_fallback_child_surface(span, client_width, client_height, child, *rect);
-            }
-
-            c.win_emu.ui().present_surface(top->handle, ui_surface_desc{.width = client_width,
-                                                                        .height = client_height,
-                                                                        .stride = client_width * static_cast<int>(sizeof(uint32_t)),
-                                                                        .format = ui_surface_format::bgra8,
-                                                                        .pixels = pixels.data()});
-        }
-
         void invalidate_window(const syscall_context& c, window& win, const std::optional<RECT>& update_rect = std::nullopt,
                                bool erase = false)
         {
@@ -592,7 +432,6 @@ namespace sogen
                 c.win_emu.ui().invalidate(win.handle, update_rect);
             }
 
-            present_window_surface(c, win);
             queue_window_paint(c, win);
         }
 
@@ -604,7 +443,7 @@ namespace sogen
                 c.win_emu.ui().set_window_title(win.handle, win.name);
             }
 
-            present_window_surface(c, win);
+            invalidate_window(c, win);
         }
 
         std::u16string read_guest_window_text(const syscall_context& c, const window& win)
@@ -1090,6 +929,7 @@ namespace sogen
     {
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, handle bitmap);
         uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, hdc dc);
+        gdi_bitmap_surface* get_dc_present_surface(const syscall_context& c, hdc dc, uint32_t& present_handle);
 
         NTSTATUS handle_NtUserTraceLoggingSendMixedModeTelemetry()
         {
@@ -1336,32 +1176,19 @@ namespace sogen
             if (paint_struct)
             {
                 const auto ps = paint_struct.read();
-                const auto dc_it = c.proc.gdi_dc_states.find(static_cast<uint32_t>(ps.paint_hdc));
-                if (dc_it != c.proc.gdi_dc_states.end())
+
+                // Present the surface the guest just painted into. For child controls this resolves to the owning
+                // top-level window's shared surface, keyed by that top-level host window handle.
+                uint32_t present_handle = 0;
+                if (auto* surface = get_dc_present_surface(c, ps.paint_hdc, present_handle);
+                    surface && present_handle != 0 && surface->width > 0 && surface->height > 0 && !surface->pixels.empty())
                 {
-                    if (dc_it->second.selected_bitmap != 0)
-                    {
-                        const auto bitmap_it = c.proc.gdi_bitmap_surfaces.find(dc_it->second.selected_bitmap);
-                        if (bitmap_it != c.proc.gdi_bitmap_surfaces.end() && bitmap_it->second.width > 0 && bitmap_it->second.height > 0 &&
-                            !bitmap_it->second.pixels.empty())
-                        {
-                            c.win_emu.ui().present_surface(
-                                window, ui_surface_desc{.width = static_cast<int>(bitmap_it->second.width),
-                                                        .height = static_cast<int>(bitmap_it->second.height),
-                                                        .stride = static_cast<int>(bitmap_it->second.width * sizeof(uint32_t)),
-                                                        .format = ui_surface_format::bgra8,
-                                                        .pixels = bitmap_it->second.pixels.data()});
-                        }
-                    }
-                    else if (dc_it->second.surface_width > 0 && dc_it->second.surface_height > 0 && !dc_it->second.surface_pixels.empty())
-                    {
-                        c.win_emu.ui().present_surface(
-                            window, ui_surface_desc{.width = static_cast<int>(dc_it->second.surface_width),
-                                                    .height = static_cast<int>(dc_it->second.surface_height),
-                                                    .stride = static_cast<int>(dc_it->second.surface_width * sizeof(uint32_t)),
-                                                    .format = ui_surface_format::bgra8,
-                                                    .pixels = dc_it->second.surface_pixels.data()});
-                    }
+                    c.win_emu.ui().present_surface(present_handle,
+                                                   ui_surface_desc{.width = static_cast<int>(surface->width),
+                                                                   .height = static_cast<int>(surface->height),
+                                                                   .stride = static_cast<int>(surface->width * sizeof(uint32_t)),
+                                                                   .format = ui_surface_format::bgra8,
+                                                                   .pixels = surface->pixels.data()});
                 }
 
                 c.proc.gdi_dc_states.erase(static_cast<uint32_t>(ps.paint_hdc));
@@ -1771,7 +1598,7 @@ namespace sogen
 
                 if (has_child_parent && parent_win && (style & WS_VISIBLE) != 0)
                 {
-                    present_window_surface(c, *parent_win);
+                    invalidate_window(c, win);
                 }
             }
 
@@ -1968,10 +1795,11 @@ namespace sogen
             }
 
             c.win_emu.ui().destroy_window(window);
+            c.proc.gdi_window_surfaces.erase(static_cast<uint32_t>(window));
             const auto result = c.proc.windows.erase(window);
             if (parent_window)
             {
-                present_window_surface(c, *parent_window);
+                invalidate_window(c, *parent_window);
             }
             return result;
         }
@@ -2960,7 +2788,7 @@ namespace sogen
                 c.win_emu.ui().set_window_enabled(hwnd, want_enabled);
             }
 
-            present_window_surface(c, *win);
+            invalidate_window(c, *win);
             return was_enabled ? FALSE : TRUE;
         }
 

@@ -316,11 +316,87 @@ namespace sogen
                 return addr != 0;
             }
 
+            // Resolves the bitmap surface a DC draws into, plus the offset from DC-local coordinates to surface
+            // coordinates, and the host window handle the surface should be presented to. For a window DC this is
+            // the top-level host window's persistent surface; child controls draw into it at their client offset.
+            gdi_bitmap_surface* resolve_dc_surface(const syscall_context& c, const hdc dc, int32_t& origin_x, int32_t& origin_y,
+                                                   uint32_t& present_handle)
+            {
+                origin_x = 0;
+                origin_y = 0;
+                present_handle = 0;
+
+                const auto dc_it = c.proc.gdi_dc_states.find(static_cast<uint32_t>(dc));
+                if (dc_it == c.proc.gdi_dc_states.end())
+                {
+                    return nullptr;
+                }
+
+                const auto& dc_state = dc_it->second;
+                if (dc_state.selected_bitmap != 0)
+                {
+                    const auto bmp_it = c.proc.gdi_bitmap_surfaces.find(dc_state.selected_bitmap);
+                    if (bmp_it == c.proc.gdi_bitmap_surfaces.end())
+                    {
+                        return nullptr;
+                    }
+
+                    present_handle = static_cast<uint32_t>(dc_state.target_window);
+                    return &bmp_it->second;
+                }
+
+                if (dc_state.target_window == 0)
+                {
+                    return nullptr;
+                }
+
+                const auto* win = c.proc.windows.get(dc_state.target_window);
+                if (!win)
+                {
+                    return nullptr;
+                }
+
+                // Walk up to the owning top-level window, accumulating each child's client-area offset.
+                int32_t off_x = 0;
+                int32_t off_y = 0;
+                while (win && (win->style & WS_CHILD) != 0)
+                {
+                    off_x += win->x;
+                    off_y += win->y;
+                    win = win->parent_handle != 0 ? c.proc.windows.get(win->parent_handle) : nullptr;
+                }
+
+                if (!win || !win->host_surface_window || win->width <= 0 || win->height <= 0)
+                {
+                    return nullptr;
+                }
+
+                const auto top_handle = static_cast<uint32_t>(win->handle);
+                const auto width = static_cast<uint32_t>(win->width);
+                const auto height = static_cast<uint32_t>(win->height);
+
+                auto& surface = c.proc.gdi_window_surfaces[top_handle];
+                if (surface.width != width || surface.height != height ||
+                    surface.pixels.size() != static_cast<size_t>(width) * height)
+                {
+                    surface.width = width;
+                    surface.height = height;
+                    surface.pixels.assign(static_cast<size_t>(width) * height, 0xFFFFFFFFu);
+                }
+
+                origin_x = off_x;
+                origin_y = off_y;
+                present_handle = top_handle;
+                return &surface;
+            }
+
             bool get_dc_state_and_surface(const syscall_context& c, const hdc dc, gdi_dc_state*& dc_state,
-                                          gdi_bitmap_surface*& bitmap_surface)
+                                          gdi_bitmap_surface*& surface, int32_t& origin_x, int32_t& origin_y)
             {
                 dc_state = nullptr;
-                bitmap_surface = nullptr;
+                surface = nullptr;
+                origin_x = 0;
+                origin_y = 0;
 
                 const auto dc_it = c.proc.gdi_dc_states.find(static_cast<uint32_t>(dc));
                 if (dc_it == c.proc.gdi_dc_states.end())
@@ -329,40 +405,9 @@ namespace sogen
                 }
 
                 dc_state = &dc_it->second;
-                if (dc_state->selected_bitmap != 0)
-                {
-                    const auto bmp_it = c.proc.gdi_bitmap_surfaces.find(dc_state->selected_bitmap);
-                    if (bmp_it == c.proc.gdi_bitmap_surfaces.end())
-                    {
-                        return false;
-                    }
-
-                    bitmap_surface = &bmp_it->second;
-                    return true;
-                }
-
-                if (dc_state->target_window == 0)
-                {
-                    return false;
-                }
-
-                const auto* win = c.proc.windows.get(dc_state->target_window);
-                if (!win || win->width <= 0 || win->height <= 0)
-                {
-                    return false;
-                }
-
-                const auto width = static_cast<uint32_t>(win->width);
-                const auto height = static_cast<uint32_t>(win->height);
-                if (dc_state->surface_width != width || dc_state->surface_height != height ||
-                    dc_state->surface_pixels.size() != static_cast<size_t>(width) * height)
-                {
-                    dc_state->surface_width = width;
-                    dc_state->surface_height = height;
-                    dc_state->surface_pixels.assign(static_cast<size_t>(width) * height, 0xFFFFFFFFu);
-                }
-
-                return true;
+                uint32_t present_handle = 0;
+                surface = resolve_dc_surface(c, dc, origin_x, origin_y, present_handle);
+                return surface != nullptr;
             }
 
             void set_surface_pixel(gdi_bitmap_surface& surface, const int x, const int y, const uint32_t color)
@@ -373,16 +418,6 @@ namespace sogen
                 }
 
                 surface.pixels[static_cast<size_t>(y) * surface.width + static_cast<size_t>(x)] = color;
-            }
-
-            void set_surface_pixel(gdi_dc_state& dc_state, const int x, const int y, const uint32_t color)
-            {
-                if (x < 0 || y < 0 || x >= static_cast<int>(dc_state.surface_width) || y >= static_cast<int>(dc_state.surface_height))
-                {
-                    return;
-                }
-
-                dc_state.surface_pixels[static_cast<size_t>(y) * dc_state.surface_width + static_cast<size_t>(x)] = color;
             }
 
             uint32_t get_dc_pen_color(const syscall_context& c, const hdc dc)
@@ -464,36 +499,6 @@ namespace sogen
                 for (;;)
                 {
                     set_surface_pixel(surface, x0, y0, color);
-                    if (x0 == x1 && y0 == y1)
-                    {
-                        break;
-                    }
-
-                    const int e2 = err * 2;
-                    if (e2 >= dy)
-                    {
-                        err += dy;
-                        x0 += sx;
-                    }
-                    if (e2 <= dx)
-                    {
-                        err += dx;
-                        y0 += sy;
-                    }
-                }
-            }
-
-            void draw_line(gdi_dc_state& dc_state, int x0, int y0, const int x1, const int y1, const uint32_t color)
-            {
-                int dx = std::abs(x1 - x0);
-                const int sx = x0 < x1 ? 1 : -1;
-                int dy = -std::abs(y1 - y0);
-                const int sy = y0 < y1 ? 1 : -1;
-                int err = dx + dy;
-
-                for (;;)
-                {
-                    set_surface_pixel(dc_state, x0, y0, color);
                     if (x0 == x1 && y0 == y1)
                     {
                         break;
@@ -809,6 +814,15 @@ namespace sogen
                 const auto unique = static_cast<uint16_t>(handle_value >> 16);
                 return entry.Type != 0 && entry.Unique == unique;
             }
+        }
+
+        // Returns the surface a paint DC should be presented to, and (via present_handle) the host window handle it
+        // belongs to (the top-level window for child controls). Used by NtUserEndPaint to flush guest paint output.
+        gdi_bitmap_surface* get_dc_present_surface(const syscall_context& c, const hdc dc, uint32_t& present_handle)
+        {
+            int32_t origin_x = 0;
+            int32_t origin_y = 0;
+            return resolve_dc_surface(c, dc, origin_x, origin_y, present_handle);
         }
 
         NTSTATUS handle_NtGdiInit(const syscall_context& c)
@@ -1143,8 +1157,10 @@ namespace sogen
         BOOL handle_NtGdiLineTo(const syscall_context& c, const hdc dc, const LONG x_end, const LONG y_end)
         {
             gdi_dc_state* dc_state = nullptr;
-            gdi_bitmap_surface* bitmap_surface = nullptr;
-            if (!get_dc_state_and_surface(c, dc, dc_state, bitmap_surface) || !dc_state)
+            gdi_bitmap_surface* surface = nullptr;
+            int32_t origin_x = 0;
+            int32_t origin_y = 0;
+            if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !dc_state || !surface)
             {
                 return FALSE;
             }
@@ -1165,14 +1181,8 @@ namespace sogen
             }
 
             const auto color = get_dc_pen_color(c, dc);
-            if (bitmap_surface)
-            {
-                draw_line(*bitmap_surface, dc_state->current_x, dc_state->current_y, x_end, y_end, color);
-            }
-            else
-            {
-                draw_line(*dc_state, dc_state->current_x, dc_state->current_y, x_end, y_end, color);
-            }
+            draw_line(*surface, dc_state->current_x + origin_x, dc_state->current_y + origin_y, x_end + origin_x, y_end + origin_y,
+                      color);
 
             dc_state->current_x = x_end;
             dc_state->current_y = y_end;
@@ -1203,27 +1213,22 @@ namespace sogen
                                 const DWORD /*rop*/)
         {
             gdi_dc_state* dc_state = nullptr;
-            gdi_bitmap_surface* bitmap_surface = nullptr;
-            if (!get_dc_state_and_surface(c, dc, dc_state, bitmap_surface) || !dc_state)
+            gdi_bitmap_surface* surface = nullptr;
+            int32_t origin_x = 0;
+            int32_t origin_y = 0;
+            if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !dc_state || !surface)
             {
                 return FALSE;
             }
 
             const auto color = get_dc_brush_color(c, dc);
-            const auto fill = [&](auto& surface) {
-                for (int yy = 0; yy < height; ++yy)
+            for (int yy = 0; yy < height; ++yy)
+            {
+                for (int xx = 0; xx < width; ++xx)
                 {
-                    for (int xx = 0; xx < width; ++xx)
-                    {
-                        set_surface_pixel(surface, x + xx, y + yy, color);
-                    }
+                    set_surface_pixel(*surface, x + xx + origin_x, y + yy + origin_y, color);
                 }
-            };
-
-            if (bitmap_surface)
-                fill(*bitmap_surface);
-            else
-                fill(*dc_state);
+            }
             return TRUE;
         }
 
@@ -1232,8 +1237,10 @@ namespace sogen
                                      const emulator_pointer /*dx*/, const DWORD /*code_page*/)
         {
             gdi_dc_state* dc_state = nullptr;
-            gdi_bitmap_surface* bitmap_surface = nullptr;
-            if (!get_dc_state_and_surface(c, dc, dc_state, bitmap_surface) || !dc_state)
+            gdi_bitmap_surface* surface = nullptr;
+            int32_t origin_x = 0;
+            int32_t origin_y = 0;
+            if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !dc_state || !surface)
             {
                 return FALSE;
             }
@@ -1242,14 +1249,7 @@ namespace sogen
             const int width = static_cast<int>(count) * 8;
             const int baseline = y + 12;
 
-            if (bitmap_surface)
-            {
-                draw_line(*bitmap_surface, x, baseline, x + width, baseline, color);
-            }
-            else
-            {
-                draw_line(*dc_state, x, baseline, x + width, baseline, color);
-            }
+            draw_line(*surface, x + origin_x, baseline + origin_y, x + width + origin_x, baseline + origin_y, color);
 
             dc_state->current_x = x + width;
             dc_state->current_y = y;

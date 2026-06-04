@@ -486,6 +486,7 @@ namespace sogen
         this->gdi_default_dc_handle = 0;
         this->gdi_dc_states.clear();
         this->gdi_bitmap_surfaces.clear();
+        this->gdi_window_surfaces.clear();
         this->etw_notification_event.reset();
 
         const auto gdi_shared_table = this->base_allocator.reserve<GDI_SHARED_MEMORY64>();
@@ -587,6 +588,7 @@ namespace sogen
         buffer.write(this->gdi_default_dc_handle);
         buffer.write_map(this->gdi_dc_states);
         buffer.write_map(this->gdi_bitmap_surfaces);
+        buffer.write_map(this->gdi_window_surfaces);
         buffer.write_optional(this->etw_notification_event);
 
         buffer.write(this->user_handles);
@@ -656,6 +658,7 @@ namespace sogen
         buffer.read(this->gdi_default_dc_handle);
         buffer.read_map(this->gdi_dc_states);
         buffer.read_map(this->gdi_bitmap_surfaces);
+        buffer.read_map(this->gdi_window_surfaces);
         buffer.read_optional(this->etw_notification_event);
 
         buffer.read(this->user_handles);

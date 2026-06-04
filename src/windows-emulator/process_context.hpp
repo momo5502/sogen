@@ -110,9 +110,6 @@ namespace sogen
         hwnd target_window{};
         int32_t current_x{};
         int32_t current_y{};
-        uint32_t surface_width{};
-        uint32_t surface_height{};
-        std::vector<uint32_t> surface_pixels{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
@@ -120,9 +117,6 @@ namespace sogen
             buffer.write(this->target_window);
             buffer.write(this->current_x);
             buffer.write(this->current_y);
-            buffer.write(this->surface_width);
-            buffer.write(this->surface_height);
-            buffer.write_vector(this->surface_pixels);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -131,9 +125,6 @@ namespace sogen
             buffer.read(this->target_window);
             buffer.read(this->current_x);
             buffer.read(this->current_y);
-            buffer.read(this->surface_width);
-            buffer.read(this->surface_height);
-            buffer.read_vector(this->surface_pixels);
         }
     };
 
@@ -258,6 +249,8 @@ namespace sogen
         uint32_t gdi_default_dc_handle{};
         std::map<uint32_t, gdi_dc_state> gdi_dc_states{};
         std::map<uint32_t, gdi_bitmap_surface> gdi_bitmap_surfaces{};
+        // Persistent per-top-level-window paint surface; child controls composite into it at their offset.
+        std::map<uint32_t, gdi_bitmap_surface> gdi_window_surfaces{};
         std::optional<handle> etw_notification_event{};
 
         // For WOW64 processes
