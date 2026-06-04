@@ -91,7 +91,7 @@ namespace sogen
         return 0;
     }
 
-    void window_destroy_orchestrator::unlink_window_from_parent_and_siblings(window& win) const
+    void window_destroy_orchestrator::unlink_window_from_parent_and_siblings(const window& win) const
     {
         uint64_t parent = 0;
         uint64_t prev = 0;
@@ -176,7 +176,7 @@ namespace sogen
         return frame;
     }
 
-    void window_destroy_orchestrator::push_frame(window& win) const
+    void window_destroy_orchestrator::push_frame(const window& win) const
     {
         this->unlink_window_from_parent_and_siblings(win);
         this->state_.frames.push_back(this->make_frame(win));
@@ -231,7 +231,7 @@ namespace sogen
         return dependents;
     }
 
-    void window_destroy_orchestrator::finalize_frame(window_destroy_frame& frame, window& win) const
+    void window_destroy_orchestrator::finalize_frame(window_destroy_frame& frame, const window& win) const
     {
         this->pop_frame_allocation(frame);
 
