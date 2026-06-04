@@ -439,19 +439,6 @@ namespace sogen
                 SDL_UpdateTexture(state.texture, nullptr, surface.pixels, surface.stride);
             }
 
-            static void draw_debug_text(SDL_Renderer* renderer, const int x, const int y, std::u16string_view text, const SDL_Color color)
-            {
-                const auto utf8 = u16_to_u8(text);
-                SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
-                SDL_RenderDebugText(renderer, static_cast<float>(x), static_cast<float>(y), utf8.c_str());
-            }
-
-            static SDL_FRect make_rect(const RECT& rect)
-            {
-                return SDL_FRect{static_cast<float>(rect.left), static_cast<float>(rect.top), static_cast<float>(rect.right - rect.left),
-                                 static_cast<float>(rect.bottom - rect.top)};
-            }
-
             void render_window(window_state& state)
             {
                 if (state.has_surface && state.texture)
@@ -465,38 +452,6 @@ namespace sogen
 
                 SDL_SetRenderDrawColor(state.renderer, 224, 224, 224, 255);
                 SDL_RenderClear(state.renderer);
-
-                for (const auto& [guest, child] : this->windows_)
-                {
-                    (void)guest;
-                    if (child.desc.parent != state.desc.handle || !child.desc.visible)
-                    {
-                        continue;
-                    }
-
-                    const auto normalized = child.desc.class_name;
-                    const auto rect = make_rect(child.desc.rect);
-
-                    if (normalized == u"Static")
-                    {
-                        draw_debug_text(state.renderer, child.desc.rect.left, child.desc.rect.top + 6, child.desc.title,
-                                        SDL_Color{0, 0, 0, 255});
-                        continue;
-                    }
-
-                    if (normalized == u"Button")
-                    {
-                        const auto fill = child.desc.enabled ? SDL_Color{240, 240, 240, 255} : SDL_Color{192, 192, 192, 255};
-                        SDL_SetRenderDrawColor(state.renderer, fill.r, fill.g, fill.b, fill.a);
-                        SDL_RenderFillRect(state.renderer, &rect);
-                        SDL_SetRenderDrawColor(state.renderer, 32, 32, 32, 255);
-                        SDL_RenderRect(state.renderer, &rect);
-                        draw_debug_text(state.renderer, child.desc.rect.left + 8, child.desc.rect.top + 8, child.desc.title,
-                                        SDL_Color{0, 0, 0, 255});
-                        continue;
-                    }
-                }
-
                 SDL_RenderPresent(state.renderer);
             }
 

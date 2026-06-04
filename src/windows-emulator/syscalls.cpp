@@ -436,6 +436,7 @@ namespace sogen
         hdc handle_NtUserGetDCEx(const syscall_context& c, hwnd window, uint64_t clip_region, ULONG flags);
         hdc handle_NtUserGetDC(const syscall_context& c, hwnd window);
         hdc handle_NtUserGetWindowDC(const syscall_context& c, hwnd window);
+        uint64_t handle_NtUserGetControlBrush(const syscall_context& c, hwnd window, hdc dc, uint32_t control_type);
         BOOL handle_NtUserReleaseDC();
         BOOL handle_NtUserGetClientRect(const syscall_context& c, hwnd window, emulator_pointer rect_ptr);
         hdc handle_NtUserBeginPaint(const syscall_context& c, hwnd window, emulator_object<EMU_PAINTSTRUCT> paint_struct);
@@ -882,6 +883,7 @@ namespace sogen
 
         uint64_t handle_NtUserCallNoParam()
         {
+            std::printf("USER CallNoParam\n");
             return 0;
         }
     }
@@ -1080,6 +1082,7 @@ namespace sogen
         add_handler(NtUserGetDCEx);
         add_handler(NtUserGetDC);
         add_handler(NtUserGetWindowDC);
+        add_handler(NtUserGetControlBrush);
         add_handler(NtUserGetClientRect);
         add_handler(NtUserBeginPaint);
         add_handler(NtUserEndPaint);

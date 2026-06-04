@@ -148,6 +148,7 @@ namespace sogen
             connect.he_entry_size = sizeof(USER_HANDLEENTRY);
             connect.disp_info_low = disp_info;
             connect.monitor_info_low = monitor_info;
+            std::ranges::fill(connect.wndmsg_table, uint8_t{0xFF});
             connect.wndmsg_count = k_wow64_wndmsg_count;
             connect.ime_msg_count = k_wow64_ime_msg_count;
 
@@ -174,6 +175,10 @@ namespace sogen
             shared.aheList = process.user_handles.get_handle_table().value();
             shared.HeEntrySize = sizeof(USER_HANDLEENTRY);
             shared.pDispInfo = process.user_handles.get_display_info().value();
+            shared.controlMessageMax = k_wow64_wndmsg_count;
+            shared.controlMessageBits = process.user_handles.get_client_message_bits();
+            shared.staticMessageMax = k_wow64_wndmsg_count;
+            shared.staticMessageBits = process.user_handles.get_client_message_bits();
         }
 
         bool try_write_user_shared_info(memory_interface& memory, const uint64_t destination, const process_context& process)

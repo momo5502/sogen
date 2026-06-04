@@ -28,6 +28,12 @@ namespace sogen
         constexpr size_t k_client_pfn_button_wndproc_index = 7;
         constexpr size_t k_client_pfn_dialog_wndproc_index = 10;
         constexpr size_t k_client_pfn_static_wndproc_index = 14;
+        constexpr uint32_t k_ctlcolor_edit = 1;
+        constexpr uint32_t k_ctlcolor_listbox = 2;
+        constexpr uint32_t k_ctlcolor_scrollbar = 5;
+        constexpr uint32_t k_color_scrollbar = 0;
+        constexpr uint32_t k_color_window = 5;
+        constexpr uint32_t k_color_btnface = 15;
 
         struct user_callback_capture_buffer
         {
@@ -613,6 +619,38 @@ namespace sogen
             win.update_rect = {};
         }
 
+        void present_existing_guest_window_surface(const syscall_context& c, const window& painted_window)
+        {
+            const window* top_level = &painted_window;
+            while (top_level && (top_level->style & WS_CHILD) != 0)
+            {
+                top_level = top_level->parent_handle != 0 ? c.proc.windows.get(top_level->parent_handle) : nullptr;
+            }
+
+            if (!top_level || !top_level->host_surface_window)
+            {
+                return;
+            }
+
+            const auto surface_it = c.proc.gdi_window_surfaces.find(static_cast<uint32_t>(top_level->handle));
+            if (surface_it == c.proc.gdi_window_surfaces.end())
+            {
+                return;
+            }
+
+            const auto& surface = surface_it->second;
+            if (surface.width == 0 || surface.height == 0 || surface.pixels.empty())
+            {
+                return;
+            }
+
+            c.win_emu.ui().present_surface(top_level->handle, ui_surface_desc{.width = static_cast<int>(surface.width),
+                                                                              .height = static_cast<int>(surface.height),
+                                                                              .stride = static_cast<int>(surface.width * sizeof(uint32_t)),
+                                                                              .format = ui_surface_format::bgra8,
+                                                                              .pixels = surface.pixels.data()});
+        }
+
         template <typename T>
         void dispatch_window_message(const syscall_context& c, callback_id id, T&& state, const window& win, uint32_t message,
                                      uint64_t w_param = 0, uint64_t l_param = 0)
@@ -929,6 +967,7 @@ namespace sogen
     {
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, handle bitmap);
         uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, hdc dc);
+        BOOL handle_NtGdiFlush(const syscall_context& c);
         gdi_bitmap_surface* get_dc_present_surface(const syscall_context& c, hdc dc, uint32_t& present_handle);
 
         NTSTATUS handle_NtUserTraceLoggingSendMixedModeTelemetry()
@@ -1009,6 +1048,21 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
+            if (const auto* user32 = c.win_emu.mod_manager.find_by_name("user32.dll"))
+            {
+                uint32_t button_max = 0;
+                uint64_t button_bits = 0;
+                uint32_t static_max = 0;
+                uint64_t static_bits = 0;
+                c.win_emu.memory.try_read_memory(user32->image_base + 0xD2368, &button_max, sizeof(button_max));
+                c.win_emu.memory.try_read_memory(user32->image_base + 0xD2370, &button_bits, sizeof(button_bits));
+                c.win_emu.memory.try_read_memory(user32->image_base + 0xD23D8, &static_max, sizeof(static_max));
+                c.win_emu.memory.try_read_memory(user32->image_base + 0xD23E0, &static_bits, sizeof(static_bits));
+                std::printf("USER user32 msgbits button max=0x%x bits=0x%llx static max=0x%x bits=0x%llx connect=0x%x\n", button_max,
+                            static_cast<unsigned long long>(button_bits), static_max, static_cast<unsigned long long>(static_bits),
+                            connect_destination);
+            }
+
             uint64_t user_shared_info_ptr{};
             const auto shared_info_status = ensure_user_shared_info_ptr(c, user_shared_info_ptr);
             if (shared_info_status != STATUS_SUCCESS)
@@ -1037,6 +1091,26 @@ namespace sogen
                                                         const emulator_pointer apfn_client_w, const emulator_pointer apfn_client_worker,
                                                         const emulator_pointer /*hmod_user*/)
         {
+            uint64_t first_a = 0;
+            uint64_t first_w = 0;
+            uint64_t first_worker = 0;
+            if (apfn_client_a != 0)
+            {
+                c.win_emu.memory.try_read_memory(apfn_client_a, &first_a, sizeof(first_a));
+            }
+            if (apfn_client_w != 0)
+            {
+                c.win_emu.memory.try_read_memory(apfn_client_w, &first_w, sizeof(first_w));
+            }
+            if (apfn_client_worker != 0)
+            {
+                c.win_emu.memory.try_read_memory(apfn_client_worker, &first_worker, sizeof(first_worker));
+            }
+            std::printf("USER InitClientPfn A=0x%llx first=0x%llx W=0x%llx first=0x%llx Worker=0x%llx first=0x%llx\n",
+                        static_cast<unsigned long long>(apfn_client_a), static_cast<unsigned long long>(first_a),
+                        static_cast<unsigned long long>(apfn_client_w), static_cast<unsigned long long>(first_w),
+                        static_cast<unsigned long long>(apfn_client_worker), static_cast<unsigned long long>(first_worker));
+
             if (c.proc.active_thread)
             {
                 c.proc.active_thread->win32k_thread_setup_pending = false;
@@ -1103,6 +1177,11 @@ namespace sogen
             {
                 c.proc.gdi_dc_states[static_cast<uint32_t>(dc)].target_window = window;
             }
+            if (const auto* win = c.proc.windows.get(window))
+            {
+                std::printf("USER GetDCEx hwnd=0x%llx class=%s dc=0x%llx\n", static_cast<unsigned long long>(window),
+                            u16_to_u8(win->class_name).c_str(), static_cast<unsigned long long>(dc));
+            }
             return dc;
         }
 
@@ -1114,6 +1193,29 @@ namespace sogen
         hdc handle_NtUserGetWindowDC(const syscall_context& c, const hwnd window)
         {
             return handle_NtUserGetDCEx(c, window, 0, 0);
+        }
+
+        uint64_t handle_NtUserGetControlBrush(const syscall_context& c, hwnd /*window*/, hdc /*dc*/, uint32_t control_type)
+        {
+            uint32_t brush_index = k_color_btnface;
+            if (control_type == k_ctlcolor_edit || control_type == k_ctlcolor_listbox)
+            {
+                brush_index = k_color_window;
+            }
+            else if (control_type == k_ctlcolor_scrollbar)
+            {
+                brush_index = k_color_scrollbar;
+            }
+
+            uint64_t brush = 0;
+            c.proc.user_handles.get_server_info().access([&](const USER_SERVERINFO& server_info) {
+                if (brush_index < USER_SERVERINFO_BRUSH_SLOT_COUNT)
+                {
+                    brush = server_info.ahbrSystem[brush_index];
+                }
+            });
+
+            return brush;
         }
 
         BOOL handle_NtUserReleaseDC()
@@ -1145,6 +1247,9 @@ namespace sogen
                 return 0;
             }
 
+            std::printf("USER BeginPaint hwnd=0x%llx class=%s pending=%d\n", static_cast<unsigned long long>(window),
+                        u16_to_u8(win->class_name).c_str(), win->update_pending ? 1 : 0);
+
             const auto dc = handle_NtUserGetDCEx(c, window, 0, 0);
             if (!dc)
             {
@@ -1173,9 +1278,13 @@ namespace sogen
                 return FALSE;
             }
 
+            std::printf("USER EndPaint hwnd=0x%llx class=%s\n", static_cast<unsigned long long>(window),
+                        u16_to_u8(win->class_name).c_str());
+
             if (paint_struct)
             {
                 const auto ps = paint_struct.read();
+                (void)handle_NtGdiFlush(c);
 
                 // Present the surface the guest just painted into. For child controls this resolves to the owning
                 // top-level window's shared surface, keyed by that top-level host window handle.
@@ -1294,6 +1403,8 @@ namespace sogen
         {
             (void)hwnd;
             (void)param;
+            std::printf("USER CallHwndParam hwnd=0x%llx param=0x%llx code=%u\n", static_cast<unsigned long long>(hwnd),
+                        static_cast<unsigned long long>(param), code);
             if (c.win_emu.callbacks.on_generic_activity)
             {
                 c.win_emu.callbacks.on_generic_activity("NtUserCallHwndParam code=" + std::to_string(code));
@@ -1999,6 +2110,8 @@ namespace sogen
             {
                 if (auto* win = c.proc.windows.get(state.window))
                 {
+                    (void)handle_NtGdiFlush(c);
+                    present_existing_guest_window_surface(c, *win);
                     validate_window(*win);
                 }
             }

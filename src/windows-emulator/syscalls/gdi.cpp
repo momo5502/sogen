@@ -76,6 +76,7 @@ namespace sogen
             constexpr uint32_t k_gdi_default_cookie = STATUS_WAIT_1;
 
             constexpr int16_t k_gdi_batch_cmd_text_out = 2;
+            constexpr int16_t k_gdi_batch_cmd_poly_pat_blt = 1;
             constexpr uint32_t k_gdibs_no_rect = 0x80000000u;
 
             struct gdi_batch_header
@@ -107,6 +108,28 @@ namespace sogen
                     WCHAR string[2];
                     ULONG buffer[1];
                 };
+            };
+
+            struct gdi_batch_pat_rect
+            {
+                RECT rect{};
+                uint64_t brush{};
+            };
+
+            struct gdi_batch_poly_pat_blt
+            {
+                gdi_batch_header header{};
+                DWORD rop{};
+                DWORD mode{};
+                DWORD count{};
+                COLORREF foreground{};
+                COLORREF background{};
+                COLORREF brush_color{};
+                ULONG foreground_ul{};
+                ULONG background_ul{};
+                ULONG brush_ul{};
+                POINTL viewport_org{};
+                gdi_batch_pat_rect rects[1]{};
             };
 
             uint64_t ensure_gdi_shared_table(const syscall_context& c)
@@ -604,7 +627,13 @@ namespace sogen
             template <typename Batch>
             bool flush_gdi_text_batch(const syscall_context& c, const Batch& batch)
             {
-                if (batch.Offset == 0 || batch.HDC == 0 || batch.Offset > sizeof(batch.Buffer))
+                if (batch.Offset != 0 || batch.HDC != 0)
+                {
+                    std::printf("GDI batch flush hdc=0x%llx offset=%u\n", static_cast<unsigned long long>(batch.HDC), batch.Offset);
+                }
+
+                const auto batch_offset = batch.Offset & ~k_gdibs_no_rect;
+                if (batch_offset == 0 || batch.HDC == 0 || batch_offset > sizeof(batch.Buffer))
                 {
                     return true;
                 }
@@ -616,6 +645,7 @@ namespace sogen
                 int32_t origin_y = 0;
                 if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !surface)
                 {
+                    std::printf("GDI batch surface missing hdc=0x%llx\n", static_cast<unsigned long long>(dc));
                     return false;
                 }
 
@@ -624,10 +654,14 @@ namespace sogen
                 while (offset + sizeof(gdi_batch_header) <= batch.Offset)
                 {
                     const auto* header = reinterpret_cast<const gdi_batch_header*>(bytes + offset);
-                    if (header->size <= 0 || offset + static_cast<size_t>(header->size) > batch.Offset)
+                    if (header->size <= 0 || offset + static_cast<size_t>(header->size) > batch_offset)
                     {
+                        std::printf("GDI batch invalid header offset=%zu size=%d cmd=%d batch_offset=%u\n", offset, header->size,
+                                    header->cmd, batch_offset);
                         break;
                     }
+
+                    std::printf("GDI batch cmd=%d size=%d offset=%zu\n", header->cmd, header->size, offset);
 
                     if (header->cmd == k_gdi_batch_cmd_text_out &&
                         static_cast<size_t>(header->size) >= offsetof(gdi_batch_text_out, string))
