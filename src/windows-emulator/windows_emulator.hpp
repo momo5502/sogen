@@ -305,8 +305,17 @@ namespace sogen
         stop_reason last_stop_reason_{stop_reason::none};
         std::string last_stop_detail_{};
 
+        struct ui_paint_trace_state
+        {
+            bool active{};
+            size_t callback_depth{};
+            uint64_t entry{};
+            size_t remaining{};
+        };
+
         std::map<uint64_t, std::vector<emulator_hook*>> section_first_execution_hooks_{};
         std::unordered_set<uint64_t> watched_ui_proc_addresses_{};
+        ui_paint_trace_state ui_paint_trace_{};
 
         void setup_hooks();
         void setup_process();

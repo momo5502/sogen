@@ -10,6 +10,7 @@
 
 #include "exception_dispatch.hpp"
 #include "apiset/apiset.hpp"
+#include "syscall_dispatcher.hpp"
 
 #include "network/static_socket_factory.hpp"
 #include "memory_permission_ext.hpp"
@@ -481,9 +482,43 @@ namespace sogen
             this->track_section_first_execution(address);
         }
 
-        if (this->watched_ui_proc_addresses_.contains(address))
+        const auto callback_depth = thread.callback_stack.size();
+        if (this->ui_paint_trace_.active)
         {
-            std::printf("UI proc executed rip=0x%llx\n", static_cast<unsigned long long>(address));
+            if (callback_depth < this->ui_paint_trace_.callback_depth || this->ui_paint_trace_.remaining == 0)
+            {
+                std::printf("UI trace end entry=0x%llx\n", static_cast<unsigned long long>(this->ui_paint_trace_.entry));
+                this->ui_paint_trace_ = {};
+            }
+            else
+            {
+                const auto* mod = this->mod_manager.find_by_address(address);
+                const auto module_name = mod ? mod->name : std::string{"?"};
+                const auto rva = mod ? address - mod->image_base : 0;
+                std::printf("UI trace rip=0x%llx module=%s rva=0x%llx\n", static_cast<unsigned long long>(address), module_name.c_str(),
+                            static_cast<unsigned long long>(rva));
+                --this->ui_paint_trace_.remaining;
+            }
+        }
+        else if (this->watched_ui_proc_addresses_.contains(address) && !thread.callback_stack.empty())
+        {
+            const auto& frame = thread.callback_stack.back();
+            if (frame.handler_id == callback_id::NtUserMessageCall)
+            {
+                if (const auto* state = dynamic_cast<const message_call_state*>(frame.state.get()); state && state->message == WM_PAINT)
+                {
+                    this->ui_paint_trace_ = {.active = true, .callback_depth = callback_depth, .entry = address, .remaining = 200};
+                    const auto* mod = this->mod_manager.find_by_address(address);
+                    const auto module_name = mod ? mod->name : std::string{"?"};
+                    const auto rva = mod ? address - mod->image_base : 0;
+                    std::printf("UI trace start rip=0x%llx module=%s rva=0x%llx rcx=0x%llx rdx=0x%llx r8=0x%llx r9=0x%llx\n",
+                                static_cast<unsigned long long>(address), module_name.c_str(), static_cast<unsigned long long>(rva),
+                                static_cast<unsigned long long>(this->emu().reg<uint64_t>(x86_register::rcx)),
+                                static_cast<unsigned long long>(this->emu().reg<uint64_t>(x86_register::rdx)),
+                                static_cast<unsigned long long>(this->emu().reg<uint64_t>(x86_register::r8)),
+                                static_cast<unsigned long long>(this->emu().reg<uint64_t>(x86_register::r9)));
+                }
+            }
         }
 
         this->callbacks.on_instruction(address);

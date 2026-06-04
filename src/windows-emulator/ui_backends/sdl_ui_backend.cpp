@@ -304,6 +304,8 @@ namespace sogen
 #ifdef SOGEN_HAS_SDL3
                 if (auto* state = this->resolve_window(window))
                 {
+                    std::printf("SDL present surface hwnd=0x%llx %dx%d stride=%d\n", static_cast<unsigned long long>(window), surface.width,
+                                surface.height, surface.stride);
                     update_surface_texture(*state, surface);
                     this->render_window(*state);
                 }

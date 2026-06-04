@@ -108,17 +108,32 @@ namespace sogen
     {
         uint32_t selected_bitmap{};
         hwnd target_window{};
+        int32_t current_x{};
+        int32_t current_y{};
+        uint32_t surface_width{};
+        uint32_t surface_height{};
+        std::vector<uint32_t> surface_pixels{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
             buffer.write(this->selected_bitmap);
             buffer.write(this->target_window);
+            buffer.write(this->current_x);
+            buffer.write(this->current_y);
+            buffer.write(this->surface_width);
+            buffer.write(this->surface_height);
+            buffer.write_vector(this->surface_pixels);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
         {
             buffer.read(this->selected_bitmap);
             buffer.read(this->target_window);
+            buffer.read(this->current_x);
+            buffer.read(this->current_y);
+            buffer.read(this->surface_width);
+            buffer.read(this->surface_height);
+            buffer.read_vector(this->surface_pixels);
         }
     };
 

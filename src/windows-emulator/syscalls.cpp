@@ -562,6 +562,12 @@ namespace sogen
         int32_t handle_NtGdiIntersectClipRect(const syscall_context& c, hdc dc, LONG x_left, LONG y_top, LONG x_right, LONG y_bottom);
         uint32_t handle_NtGdiGetCharSet(const syscall_context& c, hdc dc);
         int32_t handle_NtGdiExtSelectClipRgn(const syscall_context& c, hdc dc, uint64_t region, LONG mode);
+        BOOL handle_NtGdiLineTo(const syscall_context& c, hdc dc, LONG x_end, LONG y_end);
+        BOOL handle_NtGdiRectangle(const syscall_context& c, hdc dc, LONG left, LONG top, LONG right, LONG bottom);
+        BOOL handle_NtGdiPatBlt(const syscall_context& c, hdc dc, LONG x, LONG y, LONG width, LONG height, DWORD rop);
+        BOOL handle_NtGdiExtTextOutW(const syscall_context& c, hdc dc, LONG x, LONG y, UINT options, emulator_pointer rect,
+                                     emulator_pointer text, UINT count, emulator_pointer dx, DWORD code_page);
+        BOOL handle_NtGdiGetRealizationInfo(const syscall_context& c, hdc dc, emulator_pointer realization_info, uint64_t font);
         NTSTATUS handle_NtGdiGetEntry(const syscall_context& c, uint32_t handle_value, emulator_pointer entry_ptr);
 
         // syscalls/trace.cpp:
@@ -996,6 +1002,11 @@ namespace sogen
         add_handler(NtGdiIntersectClipRect);
         add_handler(NtGdiGetCharSet);
         add_handler(NtGdiExtSelectClipRgn);
+        add_handler(NtGdiLineTo);
+        add_handler(NtGdiRectangle);
+        add_handler(NtGdiPatBlt);
+        add_handler(NtGdiExtTextOutW);
+        add_handler(NtGdiGetRealizationInfo);
         add_handler(NtGdiGetEntry);
         add_handler(NtGdiInit2);
         add_handler(NtUserGetThreadState);

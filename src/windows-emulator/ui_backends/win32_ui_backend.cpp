@@ -5,6 +5,7 @@
 #include <windows.h>
 
 #include <unordered_map>
+#include <vector>
 
 namespace sogen
 {
@@ -20,6 +21,14 @@ namespace sogen
         class win32_ui_backend final : public ui_backend
         {
           public:
+            struct surface_state
+            {
+                int width{};
+                int height{};
+                int stride{};
+                ui_surface_format format{ui_surface_format::bgra8};
+                std::vector<std::byte> pixels{};
+            };
             void set_event_sink(event_sink sink) override
             {
                 this->sink_ = std::move(sink);
@@ -144,6 +153,31 @@ namespace sogen
                     {
                         InvalidateRect(host, nullptr, TRUE);
                     }
+                }
+            }
+
+            void present_surface(const hwnd window, const ui_surface_desc& surface) override
+            {
+                if (!surface.pixels || surface.width <= 0 || surface.height <= 0 || surface.stride <= 0)
+                {
+                    return;
+                }
+
+                auto& state = this->surfaces_[window];
+                state.width = surface.width;
+                state.height = surface.height;
+                state.stride = surface.stride;
+                state.format = surface.format;
+                const auto byte_count = static_cast<size_t>(surface.stride) * static_cast<size_t>(surface.height);
+                state.pixels.resize(byte_count);
+                std::memcpy(state.pixels.data(), surface.pixels, byte_count);
+
+                std::printf("HOST present surface hwnd=0x%llx %dx%d stride=%d bytes=%zu\n", static_cast<unsigned long long>(window),
+                            surface.width, surface.height, surface.stride, byte_count);
+                if (auto* const host = this->resolve_hwnd(window))
+                {
+                    InvalidateRect(host, nullptr, FALSE);
+                    UpdateWindow(host);
                 }
             }
 
@@ -272,7 +306,34 @@ namespace sogen
                 case WM_KILLFOCUS:
                 case WM_ACTIVATE:
                 case WM_NCACTIVATE:
+                    break;
+
                 case WM_PAINT:
+                    if (guest != 0)
+                    {
+                        PAINTSTRUCT ps{};
+                        HDC dc = BeginPaint(hwnd, &ps);
+                        const auto surface_it = this->surfaces_.find(guest);
+                        if (dc && surface_it != this->surfaces_.end() && !surface_it->second.pixels.empty())
+                        {
+                            std::printf(
+                                "HOST blit surface hwnd=0x%llx %dx%d stride=%d first=0x%08x\n", static_cast<unsigned long long>(guest),
+                                surface_it->second.width, surface_it->second.height, surface_it->second.stride,
+                                surface_it->second.pixels.empty() ? 0u
+                                                                  : *reinterpret_cast<const uint32_t*>(surface_it->second.pixels.data()));
+                            BITMAPINFO bmi{};
+                            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+                            bmi.bmiHeader.biWidth = surface_it->second.width;
+                            bmi.bmiHeader.biHeight = -surface_it->second.height;
+                            bmi.bmiHeader.biPlanes = 1;
+                            bmi.bmiHeader.biBitCount = 32;
+                            bmi.bmiHeader.biCompression = BI_RGB;
+                            StretchDIBits(dc, 0, 0, surface_it->second.width, surface_it->second.height, 0, 0, surface_it->second.width,
+                                          surface_it->second.height, surface_it->second.pixels.data(), &bmi, DIB_RGB_COLORS, SRCCOPY);
+                        }
+                        EndPaint(hwnd, &ps);
+                        return 0;
+                    }
                     break;
 
                 case WM_KEYDOWN:
@@ -293,6 +354,7 @@ namespace sogen
                     {
                         this->host_windows_.erase(guest);
                         this->guest_windows_.erase(hwnd);
+                        this->surfaces_.erase(guest);
                     }
                     break;
 
@@ -306,6 +368,7 @@ namespace sogen
             event_sink sink_{};
             std::unordered_map<hwnd, HWND> host_windows_{};
             std::unordered_map<HWND, hwnd> guest_windows_{};
+            std::unordered_map<hwnd, surface_state> surfaces_{};
         };
     }
 

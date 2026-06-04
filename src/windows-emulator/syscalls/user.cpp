@@ -250,7 +250,11 @@ namespace sogen
                 }
             });
 
-            if (normalized_name == u"#32770")
+            if (normalized_name == u"Button" || normalized_name == u"Static")
+            {
+                wnd_extra = 8;
+            }
+            else if (normalized_name == u"#32770")
             {
                 wnd_extra = 30; // DLGWINDOWEXTRA
             }
@@ -1326,18 +1330,43 @@ namespace sogen
                             u16_to_u8(normalize_builtin_window_class_name(win->class_name)).c_str(),
                             static_cast<unsigned long long>(win->wnd_proc), static_cast<unsigned long long>(ps.paint_hdc));
                 const auto dc_it = c.proc.gdi_dc_states.find(static_cast<uint32_t>(ps.paint_hdc));
-                if (dc_it != c.proc.gdi_dc_states.end() && dc_it->second.selected_bitmap != 0)
+                if (dc_it != c.proc.gdi_dc_states.end())
                 {
-                    const auto bitmap_it = c.proc.gdi_bitmap_surfaces.find(dc_it->second.selected_bitmap);
-                    if (bitmap_it != c.proc.gdi_bitmap_surfaces.end() && bitmap_it->second.width > 0 && bitmap_it->second.height > 0 &&
-                        !bitmap_it->second.pixels.empty())
+                    if (dc_it->second.selected_bitmap != 0)
                     {
+                        const auto bitmap_it = c.proc.gdi_bitmap_surfaces.find(dc_it->second.selected_bitmap);
+                        if (bitmap_it != c.proc.gdi_bitmap_surfaces.end() && bitmap_it->second.width > 0 && bitmap_it->second.height > 0 &&
+                            !bitmap_it->second.pixels.empty())
+                        {
+                            c.win_emu.ui().present_surface(
+                                window, ui_surface_desc{.width = static_cast<int>(bitmap_it->second.width),
+                                                        .height = static_cast<int>(bitmap_it->second.height),
+                                                        .stride = static_cast<int>(bitmap_it->second.width * sizeof(uint32_t)),
+                                                        .format = ui_surface_format::bgra8,
+                                                        .pixels = bitmap_it->second.pixels.data()});
+                        }
+                    }
+                    else if (dc_it->second.surface_width > 0 && dc_it->second.surface_height > 0 && !dc_it->second.surface_pixels.empty())
+                    {
+                        const auto sample_at = [&](const size_t x, const size_t y) {
+                            if (x >= dc_it->second.surface_width || y >= dc_it->second.surface_height ||
+                                dc_it->second.surface_pixels.empty())
+                            {
+                                return 0u;
+                            }
+                            return dc_it->second.surface_pixels[y * dc_it->second.surface_width + x];
+                        };
+                        std::printf("UI present surface hwnd=0x%llx %ux%u stride=%u p00=0x%08x p16_16=0x%08x p20_20=0x%08x p24_48=0x%08x "
+                                    "p100_16=0x%08x p16_32=0x%08x\n",
+                                    static_cast<unsigned long long>(window), dc_it->second.surface_width, dc_it->second.surface_height,
+                                    dc_it->second.surface_width * static_cast<uint32_t>(sizeof(uint32_t)), sample_at(0, 0),
+                                    sample_at(16, 16), sample_at(20, 20), sample_at(24, 48), sample_at(100, 16), sample_at(16, 32));
                         c.win_emu.ui().present_surface(
-                            window, ui_surface_desc{.width = static_cast<int>(bitmap_it->second.width),
-                                                    .height = static_cast<int>(bitmap_it->second.height),
-                                                    .stride = static_cast<int>(bitmap_it->second.width * sizeof(uint32_t)),
+                            window, ui_surface_desc{.width = static_cast<int>(dc_it->second.surface_width),
+                                                    .height = static_cast<int>(dc_it->second.surface_height),
+                                                    .stride = static_cast<int>(dc_it->second.surface_width * sizeof(uint32_t)),
                                                     .format = ui_surface_format::bgra8,
-                                                    .pixels = bitmap_it->second.pixels.data()});
+                                                    .pixels = dc_it->second.surface_pixels.data()});
                     }
                 }
 
@@ -1682,6 +1711,10 @@ namespace sogen
                 guest_win.lpfnWndProc = win.wnd_proc;
                 guest_win.pcls = class_obj_addr;
                 guest_win.cbWndExtra = wnd_class->cbWndExtra;
+                if (normalized_class == u"Button" || normalized_class == u"Static")
+                {
+                    std::printf("UI builtin create class=%s cbWndExtra=%d\n", u16_to_u8(normalized_class).c_str(), wnd_class->cbWndExtra);
+                }
                 guest_win.wID = has_child_parent ? menu : 0;
                 guest_win.windowBand = 1; // ZBID_DESKTOP
                 guest_win.fnid = get_builtin_window_fnid(normalized_class);
