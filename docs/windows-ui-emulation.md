@@ -46,9 +46,12 @@ Real emulation goal is stronger: builtin controls, dialogs, and custom `WM_PAINT
   - `NtGdiRectangle`
   - `NtGdiPatBlt`
   - `NtGdiExtTextOutW`
+  - `NtGdiFlush`
   - `NtGdiGetRealizationInfo`
   - `NtGdiSelectBrushLocal`
   - `NtGdiSelectPenLocal`
+- temporary debug bitmap font added:
+  - `src/windows-emulator/debug_font.hpp`
 - `NtUserGetClientRect` added so `GetClientRect` returns correct dimensions
 - DC-backed paint surface storage in `gdi_dc_state`
 - child-control paint is now composited into top-level window surface instead of relying on separate host child HWNDs
@@ -57,6 +60,9 @@ Real emulation goal is stronger: builtin controls, dialogs, and custom `WM_PAINT
 
 ### Current truth
 
+- `custom-paint-sample` now visibly renders geometry again:
+  - border lines show
+  - cross lines show
 - `custom-paint-sample` paint path executes fully:
   - `BeginPaint`
   - GDI brush/pen creation + selection via `NtGdiSelectBrushLocal` / `NtGdiSelectPenLocal`
@@ -66,24 +72,25 @@ Real emulation goal is stronger: builtin controls, dialogs, and custom `WM_PAINT
   - `EndPaint` → `present_surface` → SDL texture updated and rendered
 - child paint can feed top-level composed surface
 - host fallback no longer overwrites guest paint after `WM_PAINT`
-- text still not real; `NtGdiExtTextOutW` remains placeholder
-- visible correctness still incomplete; latest user report for custom sample was empty window before newest fix series was validated visually
+- direct text rendering path now exists via temporary 8x8 debug font in `NtGdiExtTextOutW`
+- user validated forced direct text path visually: text appears and glyph mirroring bug was fixed
+- current text gap is smaller-text GDI batching behavior, not raw top-level surface presentation
 
 ## Remaining blockers
 
-- validate latest SDL/native path visually after fallback-overwrite fix
-- confirm `custom-paint-sample` lines/rectangles now appear on screen
-- finish text rendering; `NtGdiExtTextOutW` still placeholder
+- finish small-text / batched GDI text path so ordinary `TextOutA/W` works without forcing oversized `ExtTextOutW`
+- decide where batch flush should happen generically, not only in sample-driven probing
+- replace temporary debug-font text path with more correct font/text handling over time
 - improve builtin control self-draw (`Button`, `Static`) via real user32 paint path
 - add more correct clip/region handling
 - add more correct ROP / brush / pen / DC semantics where builtin paint needs them
 
 ## Next steps
 
-1. Re-run `custom-paint-sample` and verify visible output after commits `8aa839cf`, `894144c6`, `35c8d57e`.
-2. If geometry now shows, move to text path next.
-3. Re-test `manual-messagebox-sample` and inspect whether builtin control text/frame paint improved under top-level compositing.
-4. Remove temporary paint/present probes once path is stable.
+1. Make batched text path work for normal `TextOutA/W` without sample hacks.
+2. Re-test `manual-messagebox-sample` and inspect whether builtin control text now appears through guest paint path.
+3. Re-test builtin `STATIC` / `BUTTON` paint after text-path progress.
+4. Remove temporary paint/present probes and temporary sample hacks once path is stable.
 
 ## Non-goals for this checkpoint
 
