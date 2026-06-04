@@ -416,9 +416,6 @@ namespace sogen
                     continue;
                 }
 
-                std::printf("UI paint queued hwnd=0x%llx class=%s proc=0x%llx\n", static_cast<unsigned long long>(win.handle),
-                            u16_to_u8(normalize_builtin_window_class_name(win.class_name)).c_str(),
-                            static_cast<unsigned long long>(win.wnd_proc));
                 thread.post_message(msg{.window = win.handle, .message = WM_PAINT, .wParam = 0, .lParam = 0, .time = 0, .pt = {}});
                 win.paint_message_posted = true;
                 return;
@@ -1284,6 +1281,22 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtUserGetClientRect(const syscall_context& c, const hwnd window, const emulator_pointer rect_ptr)
+        {
+            if (rect_ptr == 0)
+            {
+                return FALSE;
+            }
+            const auto* win = c.proc.windows.get(window);
+            if (!win)
+            {
+                return FALSE;
+            }
+            const auto cr = get_client_rect(*win);
+            c.emu.write_memory(rect_ptr, &cr, sizeof(cr));
+            return TRUE;
+        }
+
         hdc handle_NtUserBeginPaint(const syscall_context& c, const hwnd window, const emulator_object<EMU_PAINTSTRUCT> paint_struct)
         {
             const auto* win = c.proc.windows.get(window);
@@ -1300,9 +1313,6 @@ namespace sogen
 
             if (paint_struct)
             {
-                std::printf("UI BeginPaint hwnd=0x%llx class=%s proc=0x%llx hdc=0x%llx\n", static_cast<unsigned long long>(win->handle),
-                            u16_to_u8(normalize_builtin_window_class_name(win->class_name)).c_str(),
-                            static_cast<unsigned long long>(win->wnd_proc), static_cast<unsigned long long>(dc));
                 EMU_PAINTSTRUCT ps{};
                 ps.paint_hdc = dc;
                 ps.fErase = win->erase_pending ? TRUE : FALSE;
@@ -1326,9 +1336,6 @@ namespace sogen
             if (paint_struct)
             {
                 const auto ps = paint_struct.read();
-                std::printf("UI EndPaint hwnd=0x%llx class=%s proc=0x%llx hdc=0x%llx\n", static_cast<unsigned long long>(win->handle),
-                            u16_to_u8(normalize_builtin_window_class_name(win->class_name)).c_str(),
-                            static_cast<unsigned long long>(win->wnd_proc), static_cast<unsigned long long>(ps.paint_hdc));
                 const auto dc_it = c.proc.gdi_dc_states.find(static_cast<uint32_t>(ps.paint_hdc));
                 if (dc_it != c.proc.gdi_dc_states.end())
                 {
@@ -1348,19 +1355,6 @@ namespace sogen
                     }
                     else if (dc_it->second.surface_width > 0 && dc_it->second.surface_height > 0 && !dc_it->second.surface_pixels.empty())
                     {
-                        const auto sample_at = [&](const size_t x, const size_t y) {
-                            if (x >= dc_it->second.surface_width || y >= dc_it->second.surface_height ||
-                                dc_it->second.surface_pixels.empty())
-                            {
-                                return 0u;
-                            }
-                            return dc_it->second.surface_pixels[y * dc_it->second.surface_width + x];
-                        };
-                        std::printf("UI present surface hwnd=0x%llx %ux%u stride=%u p00=0x%08x p16_16=0x%08x p20_20=0x%08x p24_48=0x%08x "
-                                    "p100_16=0x%08x p16_32=0x%08x\n",
-                                    static_cast<unsigned long long>(window), dc_it->second.surface_width, dc_it->second.surface_height,
-                                    dc_it->second.surface_width * static_cast<uint32_t>(sizeof(uint32_t)), sample_at(0, 0),
-                                    sample_at(16, 16), sample_at(20, 20), sample_at(24, 48), sample_at(100, 16), sample_at(16, 32));
                         c.win_emu.ui().present_surface(
                             window, ui_surface_desc{.width = static_cast<int>(dc_it->second.surface_width),
                                                     .height = static_cast<int>(dc_it->second.surface_height),
@@ -1711,10 +1705,6 @@ namespace sogen
                 guest_win.lpfnWndProc = win.wnd_proc;
                 guest_win.pcls = class_obj_addr;
                 guest_win.cbWndExtra = wnd_class->cbWndExtra;
-                if (normalized_class == u"Button" || normalized_class == u"Static")
-                {
-                    std::printf("UI builtin create class=%s cbWndExtra=%d\n", u16_to_u8(normalized_class).c_str(), wnd_class->cbWndExtra);
-                }
                 guest_win.wID = has_child_parent ? menu : 0;
                 guest_win.windowBand = 1; // ZBID_DESKTOP
                 guest_win.fnid = get_builtin_window_fnid(normalized_class);
@@ -2181,7 +2171,6 @@ namespace sogen
             {
                 if (auto* win = c.proc.windows.get(state.window))
                 {
-                    present_window_surface(c, *win);
                     validate_window(*win);
                 }
             }
@@ -2209,13 +2198,6 @@ namespace sogen
             }
 
             (void)handle_dialog_message(c, *win, m.message, m.wParam, m.lParam);
-
-            if (m.message == WM_PAINT)
-            {
-                std::printf("UI dispatch WM_PAINT hwnd=0x%llx class=%s proc=0x%llx\n", static_cast<unsigned long long>(win->handle),
-                            u16_to_u8(normalize_builtin_window_class_name(win->class_name)).c_str(),
-                            static_cast<unsigned long long>(win->wnd_proc));
-            }
 
             message_call_state state{};
             state.window = m.window;

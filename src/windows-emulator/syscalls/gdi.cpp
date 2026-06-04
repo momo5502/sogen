@@ -40,7 +40,7 @@ namespace sogen
 
             constexpr uint32_t k_gdi_dc_attr_hbrush_offset = 0x10;
             constexpr uint32_t k_gdi_dc_attr_hpen_offset = 0x18;
-            constexpr uint32_t k_gdi_dc_attr_pt_current_offset = 0x4C;
+            constexpr uint32_t k_gdi_dc_attr_pt_current_offset = 0xD8;
             constexpr uint32_t k_gdi_dc_attr_font_offset = 0x128;
 
             constexpr uint32_t k_stock_white_brush_index = 0x00;
@@ -1164,8 +1164,6 @@ namespace sogen
                 }
             }
 
-            std::printf("GDI LineTo hdc=0x%llx from=%d,%d to=%d,%d\n", static_cast<unsigned long long>(dc), dc_state->current_x,
-                        dc_state->current_y, static_cast<int>(x_end), static_cast<int>(y_end));
             const auto color = get_dc_pen_color(c, dc);
             if (bitmap_surface)
             {
@@ -1273,6 +1271,52 @@ namespace sogen
             }
 
             return TRUE;
+        }
+
+        BOOL handle_NtGdiMoveToEx(const syscall_context& c, const hdc dc, const LONG x, const LONG y,
+                                  const emulator_pointer old_point_ptr)
+        {
+            if (old_point_ptr != 0)
+            {
+                uint64_t dc_attr = 0;
+                if (get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
+                {
+                    int32_t old_x = 0;
+                    int32_t old_y = 0;
+                    c.win_emu.memory.try_read_memory(dc_attr + k_gdi_dc_attr_pt_current_offset, &old_x, sizeof(old_x));
+                    c.win_emu.memory.try_read_memory(dc_attr + k_gdi_dc_attr_pt_current_offset + sizeof(int32_t), &old_y, sizeof(old_y));
+                    c.emu.write_memory(old_point_ptr, &old_x, sizeof(old_x));
+                    c.emu.write_memory(old_point_ptr + sizeof(int32_t), &old_y, sizeof(old_y));
+                }
+            }
+            set_dc_current_point(c, dc, x, y);
+            return dc != 0 ? TRUE : FALSE;
+        }
+
+        uint64_t handle_NtGdiSelectBrushLocal(const syscall_context& c, const hdc dc, const uint32_t brush,
+                                              const emulator_pointer /*old_brush_ptr*/)
+        {
+            uint32_t old_brush = 0;
+            uint64_t dc_attr = 0;
+            if (get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
+            {
+                c.win_emu.memory.try_read_memory(dc_attr + k_gdi_dc_attr_hbrush_offset, &old_brush, sizeof(old_brush));
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_hbrush_offset, &brush, sizeof(brush));
+            }
+            return old_brush;
+        }
+
+        uint64_t handle_NtGdiSelectPenLocal(const syscall_context& c, const hdc dc, const uint32_t pen,
+                                             const emulator_pointer /*old_pen_ptr*/)
+        {
+            uint32_t old_pen = 0;
+            uint64_t dc_attr = 0;
+            if (get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
+            {
+                c.win_emu.memory.try_read_memory(dc_attr + k_gdi_dc_attr_hpen_offset, &old_pen, sizeof(old_pen));
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_hpen_offset, &pen, sizeof(pen));
+            }
+            return old_pen;
         }
 
         NTSTATUS handle_NtGdiGetEntry(const syscall_context& c, const uint32_t handle_value, const emulator_pointer entry_ptr)

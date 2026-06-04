@@ -7,7 +7,7 @@ namespace sogen
     {
 #ifdef OS_EMSCRIPTEN
         return create_web_ui_backend();
-#elif defined(SOGEN_USE_SDL3_UI_BACKEND)
+#elif defined(SOGEN_HAS_SDL3)
         return create_sdl_ui_backend();
 #else
         return create_win32_ui_backend();

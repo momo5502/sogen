@@ -437,6 +437,7 @@ namespace sogen
         hdc handle_NtUserGetDC(const syscall_context& c, hwnd window);
         hdc handle_NtUserGetWindowDC(const syscall_context& c, hwnd window);
         BOOL handle_NtUserReleaseDC();
+        BOOL handle_NtUserGetClientRect(const syscall_context& c, hwnd window, emulator_pointer rect_ptr);
         hdc handle_NtUserBeginPaint(const syscall_context& c, hwnd window, emulator_object<EMU_PAINTSTRUCT> paint_struct);
         BOOL handle_NtUserEndPaint(const syscall_context& c, hwnd window, emulator_object<EMU_PAINTSTRUCT> paint_struct);
         NTSTATUS handle_NtUserGetCursorPos();
@@ -569,6 +570,9 @@ namespace sogen
                                      emulator_pointer text, UINT count, emulator_pointer dx, DWORD code_page);
         BOOL handle_NtGdiGetRealizationInfo(const syscall_context& c, hdc dc, emulator_pointer realization_info, uint64_t font);
         NTSTATUS handle_NtGdiGetEntry(const syscall_context& c, uint32_t handle_value, emulator_pointer entry_ptr);
+        BOOL handle_NtGdiMoveToEx(const syscall_context& c, hdc dc, LONG x, LONG y, emulator_pointer old_point_ptr);
+        uint64_t handle_NtGdiSelectBrushLocal(const syscall_context& c, hdc dc, uint32_t brush, emulator_pointer old_brush_ptr);
+        uint64_t handle_NtGdiSelectPenLocal(const syscall_context& c, hdc dc, uint32_t pen, emulator_pointer old_pen_ptr);
 
         // syscalls/trace.cpp:
         NTSTATUS handle_NtTraceControl(const syscall_context& c, ULONG function_code, uint64_t input_buffer, ULONG input_buffer_length,
@@ -1009,6 +1013,9 @@ namespace sogen
         add_handler(NtGdiGetRealizationInfo);
         add_handler(NtGdiGetEntry);
         add_handler(NtGdiInit2);
+        add_handler(NtGdiMoveToEx);
+        add_handler(NtGdiSelectBrushLocal);
+        add_handler(NtGdiSelectPenLocal);
         add_handler(NtUserGetThreadState);
         add_handler(NtUserProcessConnect);
         add_handler(NtUserInitializeClientPfnArrays);
@@ -1071,6 +1078,7 @@ namespace sogen
         add_handler(NtUserGetDCEx);
         add_handler(NtUserGetDC);
         add_handler(NtUserGetWindowDC);
+        add_handler(NtUserGetClientRect);
         add_handler(NtUserBeginPaint);
         add_handler(NtUserEndPaint);
         add_handler(NtUserGetDpiForCurrentProcess);
