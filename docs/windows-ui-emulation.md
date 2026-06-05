@@ -120,6 +120,29 @@ The `cy = 64` value is intentional for the user32 static-icon path inspected in 
 - add more correct clip/region handling
 - add more correct ROP / brush / pen / DC semantics where builtin paint needs them
 
+## Backend parity notes
+
+SDL and web still need separate host backends because their platform integration is genuinely different:
+
+- SDL owns native windows, textures, and SDL event polling.
+- web UI owns canvas compositing, worker `postMessage`, and browser keyboard/mouse events.
+
+The backend contract should stay smaller than USER/GDI semantics:
+
+- C++ USER/GDI code creates guest windows, paints pixels, composites child surfaces, and decides Win32 messages.
+- backends present `ui_surface_desc` pixels for top-level windows.
+- backends forward primitive input in a common shape.
+
+Current parity work:
+
+- web host now consumes the full `ui_window_desc` metadata instead of only rect/title/visible/enabled.
+- web host converts `ui_surface_format::bgra8` into canvas RGBA before creating `ImageData`.
+- web host forwards top-level-local mouse coordinates, matching SDL's coordinate shape.
+- SDL no longer owns direct `Button` click-to-`WM_COMMAND` synthesis.
+- direct child `Button` hit-testing for `WM_LBUTTONDOWN` now lives in `windows_emulator::handle_ui_event`, so SDL and web share that behavior.
+
+The remaining design direction is to continue moving Win32 behavior out of host backends. Future paint or control fixes should generally land in the emulator-side USER/GDI path and then work in both SDL and web as long as the backend presents surfaces and forwards input.
+
 ## Next steps
 
 1. Make batched text path work for normal `TextOutA/W` without sample hacks.

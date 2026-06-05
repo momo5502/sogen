@@ -53,6 +53,41 @@ namespace sogen
             adjust_application(app_settings);
         }
 
+        int16_t point_x(const uint64_t lparam)
+        {
+            return static_cast<int16_t>(lparam & 0xFFFF);
+        }
+
+        int16_t point_y(const uint64_t lparam)
+        {
+            return static_cast<int16_t>((lparam >> 16) & 0xFFFF);
+        }
+
+        bool is_button_window(const window& win)
+        {
+            return win.class_name == u"Button" || win.class_name == u"BUTTON";
+        }
+
+        const window* find_button_child_at(const process_context& process, const hwnd parent, const int x, const int y)
+        {
+            for (const auto& [index, child] : process.windows)
+            {
+                (void)index;
+                if (child.parent_handle != parent || !is_button_window(child) || (child.style & WS_VISIBLE) == 0 ||
+                    (child.style & WS_DISABLED) != 0)
+                {
+                    continue;
+                }
+
+                if (x >= child.x && x < child.x + child.width && y >= child.y && y < child.y + child.height)
+                {
+                    return &child;
+                }
+            }
+
+            return nullptr;
+        }
+
         void perform_context_switch_work(windows_emulator& win_emu)
         {
             auto& threads = win_emu.process.threads;
@@ -885,6 +920,22 @@ namespace sogen
         if (!thread)
         {
             return;
+        }
+
+        if (event.message == WM_LBUTTONDOWN)
+        {
+            if (const auto* button = find_button_child_at(this->process, event.window, point_x(event.lParam), point_y(event.lParam)))
+            {
+                msg command{};
+                command.window = event.window;
+                command.message = WM_COMMAND;
+                command.wParam = button->guest.read().wID & 0xFFFFull;
+                command.lParam = button->handle;
+                thread->post_message(command);
+                this->switch_thread_ = true;
+                this->emu().stop();
+                return;
+            }
         }
 
         msg m{};

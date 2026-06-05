@@ -3,13 +3,30 @@ export function createSogenUiHost(worker, canvas) {
   const windows = new Map();
   let focusedWindow = 0;
 
+  const WM_KEYDOWN = 0x0100;
+  const WM_KEYUP = 0x0101;
+  const WM_CHAR = 0x0102;
+  const WM_LBUTTONDOWN = 0x0201;
+  const WM_LBUTTONUP = 0x0202;
+  const WM_RBUTTONDOWN = 0x0204;
+  const WM_RBUTTONUP = 0x0205;
+  const WM_MOUSEMOVE = 0x0200;
+
   function getWindow(hwnd) {
     let win = windows.get(hwnd);
     if (!win) {
       win = {
         hwnd,
+        parent: 0,
+        owner: 0,
         rect: { left: 0, top: 0, right: 0, bottom: 0 },
+        clientInsets: { left: 0, top: 0, right: 0, bottom: 0 },
+        className: '',
         title: '',
+        style: 0,
+        exStyle: 0,
+        controlId: 0,
+        topLevel: false,
         visible: false,
         enabled: true,
         imageData: null,
@@ -23,7 +40,7 @@ export function createSogenUiHost(worker, canvas) {
     context.clearRect(0, 0, canvas.width, canvas.height);
 
     for (const win of windows.values()) {
-      if (!win.visible || !win.imageData) {
+      if (!win.visible || !win.topLevel || !win.imageData) {
         continue;
       }
 
@@ -31,14 +48,18 @@ export function createSogenUiHost(worker, canvas) {
     }
   }
 
-  function hitTest(x, y) {
+  function containsPoint(win, x, y) {
+    return x >= win.rect.left && x < win.rect.right && y >= win.rect.top && y < win.rect.bottom;
+  }
+
+  function findTopLevelAt(x, y) {
     let hit = 0;
     for (const win of windows.values()) {
-      if (!win.visible) {
+      if (!win.visible || !win.enabled || !win.topLevel) {
         continue;
       }
 
-      if (x >= win.rect.left && x < win.rect.right && y >= win.rect.top && y < win.rect.bottom) {
+      if (containsPoint(win, x, y)) {
         hit = win.hwnd;
       }
     }
@@ -60,6 +81,54 @@ export function createSogenUiHost(worker, canvas) {
     });
   }
 
+  function updateWindowFromMessage(win, message) {
+    win.parent = message.parent >>> 0;
+    win.owner = message.owner >>> 0;
+    win.rect = message.rect;
+    win.clientInsets = message.client_insets || { left: 0, top: 0, right: 0, bottom: 0 };
+    win.className = message.class_name || '';
+    win.title = message.title || '';
+    win.style = message.style >>> 0;
+    win.exStyle = message.ex_style >>> 0;
+    win.controlId = message.control_id >>> 0;
+    win.visible = !!message.visible;
+    win.enabled = !!message.enabled;
+    win.topLevel = !!message.top_level;
+  }
+
+  function convertSurface(message) {
+    const width = message.width | 0;
+    const height = message.height | 0;
+    const stride = message.stride | 0;
+    const format = message.format | 0;
+    const source = new Uint8Array(message.pixels);
+    const pixels = new Uint8ClampedArray(width * height * 4);
+
+    for (let y = 0; y < height; ++y) {
+      const sourceBase = y * stride;
+      const destBase = y * width * 4;
+
+      for (let x = 0; x < width; ++x) {
+        const sourceIndex = sourceBase + x * 4;
+        const destIndex = destBase + x * 4;
+
+        if (format === 0) {
+          pixels[destIndex] = source[sourceIndex + 2];
+          pixels[destIndex + 1] = source[sourceIndex + 1];
+          pixels[destIndex + 2] = source[sourceIndex];
+          pixels[destIndex + 3] = source[sourceIndex + 3];
+        } else {
+          pixels[destIndex] = source[sourceIndex];
+          pixels[destIndex + 1] = source[sourceIndex + 1];
+          pixels[destIndex + 2] = source[sourceIndex + 2];
+          pixels[destIndex + 3] = source[sourceIndex + 3];
+        }
+      }
+    }
+
+    return new ImageData(pixels, width, height);
+  }
+
   worker.addEventListener('message', (event) => {
     const message = event.data;
     if (!message || message.type !== 'sogen_ui') {
@@ -69,14 +138,14 @@ export function createSogenUiHost(worker, canvas) {
     switch (message.command) {
       case 'create_window': {
         const win = getWindow(message.hwnd >>> 0);
-        win.rect = message.rect;
-        win.title = message.title;
-        win.visible = !!message.visible;
-        win.enabled = !!message.enabled;
+        updateWindowFromMessage(win, message);
         break;
       }
       case 'destroy_window':
         windows.delete(message.hwnd >>> 0);
+        if (focusedWindow === (message.hwnd >>> 0)) {
+          focusedWindow = 0;
+        }
         break;
       case 'set_rect':
         getWindow(message.hwnd >>> 0).rect = message.rect;
@@ -92,8 +161,7 @@ export function createSogenUiHost(worker, canvas) {
         break;
       case 'present_surface': {
         const win = getWindow(message.hwnd >>> 0);
-        const pixels = new Uint8ClampedArray(message.pixels);
-        win.imageData = new ImageData(pixels, message.width, message.height);
+        win.imageData = convertSurface(message);
         break;
       }
       default:
@@ -108,38 +176,47 @@ export function createSogenUiHost(worker, canvas) {
     const rect = canvas.getBoundingClientRect();
     const x = Math.floor(event.clientX - rect.left);
     const y = Math.floor(event.clientY - rect.top);
-    const hwnd = hitTest(x, y);
+    const hwnd = findTopLevelAt(x, y);
     if (!hwnd) {
       return;
     }
 
+    const win = windows.get(hwnd);
+    const localX = x - win.rect.left;
+    const localY = y - win.rect.top;
     focusedWindow = hwnd;
     canvas.focus();
-    sendEvent(hwnd, event.button === 2 ? 0x0204 : 0x0201, 0, packPoint(x, y));
+    sendEvent(hwnd, event.button === 2 ? WM_RBUTTONDOWN : WM_LBUTTONDOWN, 0, packPoint(localX, localY));
   });
 
   canvas.addEventListener('mouseup', (event) => {
     const rect = canvas.getBoundingClientRect();
     const x = Math.floor(event.clientX - rect.left);
     const y = Math.floor(event.clientY - rect.top);
-    const hwnd = hitTest(x, y) || focusedWindow;
+    const hwnd = findTopLevelAt(x, y) || focusedWindow;
     if (!hwnd) {
       return;
     }
 
-    sendEvent(hwnd, event.button === 2 ? 0x0205 : 0x0202, 0, packPoint(x, y));
+    const win = windows.get(hwnd);
+    const localX = win ? x - win.rect.left : x;
+    const localY = win ? y - win.rect.top : y;
+    sendEvent(hwnd, event.button === 2 ? WM_RBUTTONUP : WM_LBUTTONUP, 0, packPoint(localX, localY));
   });
 
   canvas.addEventListener('mousemove', (event) => {
     const rect = canvas.getBoundingClientRect();
     const x = Math.floor(event.clientX - rect.left);
     const y = Math.floor(event.clientY - rect.top);
-    const hwnd = hitTest(x, y) || focusedWindow;
+    const hwnd = findTopLevelAt(x, y) || focusedWindow;
     if (!hwnd) {
       return;
     }
 
-    sendEvent(hwnd, 0x0200, 0, packPoint(x, y));
+    const win = windows.get(hwnd);
+    const localX = win ? x - win.rect.left : x;
+    const localY = win ? y - win.rect.top : y;
+    sendEvent(hwnd, WM_MOUSEMOVE, 0, packPoint(localX, localY));
   });
 
   canvas.addEventListener('keydown', (event) => {
@@ -149,7 +226,7 @@ export function createSogenUiHost(worker, canvas) {
 
     const key = event.key && event.key.length === 1 ? event.key.toUpperCase().charCodeAt(0) : 0;
     const wParam = key || event.keyCode || 0;
-    sendEvent(focusedWindow, 0x0100, wParam, 0);
+    sendEvent(focusedWindow, WM_KEYDOWN, wParam, 0);
   });
 
   canvas.addEventListener('keyup', (event) => {
@@ -159,7 +236,7 @@ export function createSogenUiHost(worker, canvas) {
 
     const key = event.key && event.key.length === 1 ? event.key.toUpperCase().charCodeAt(0) : 0;
     const wParam = key || event.keyCode || 0;
-    sendEvent(focusedWindow, 0x0101, wParam, 0);
+    sendEvent(focusedWindow, WM_KEYUP, wParam, 0);
   });
 
   canvas.addEventListener('keypress', (event) => {
@@ -167,7 +244,7 @@ export function createSogenUiHost(worker, canvas) {
       return;
     }
 
-    sendEvent(focusedWindow, 0x0102, event.key.charCodeAt(0), 0);
+    sendEvent(focusedWindow, WM_CHAR, event.key.charCodeAt(0), 0);
   });
 
   canvas.addEventListener('contextmenu', (event) => {

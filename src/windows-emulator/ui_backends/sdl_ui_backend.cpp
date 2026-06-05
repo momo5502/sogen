@@ -13,6 +13,12 @@ namespace sogen
         constexpr uint32_t wm_keyup = 0x0101;
         constexpr uint32_t wm_char = 0x0102;
 
+        uint64_t pack_point(const int x, const int y)
+        {
+            return (static_cast<uint64_t>(static_cast<uint32_t>(y) & 0xFFFFu) << 16) |
+                   static_cast<uint64_t>(static_cast<uint32_t>(x) & 0xFFFFu);
+        }
+
         uint64_t map_sdl_keycode(const SDL_Keycode key)
         {
             if (key >= 'a' && key <= 'z')
@@ -137,7 +143,8 @@ namespace sogen
                         {
                             if (const auto guest = this->resolve_guest(event.button.windowID); guest != 0)
                             {
-                                this->handle_left_click(guest, static_cast<int>(event.button.x), static_cast<int>(event.button.y));
+                                this->post_event(guest, WM_LBUTTONDOWN, 0,
+                                                 pack_point(static_cast<int>(event.button.x), static_cast<int>(event.button.y)));
                             }
                         }
                         break;
@@ -453,24 +460,6 @@ namespace sogen
                 SDL_SetRenderDrawColor(state.renderer, 224, 224, 224, 255);
                 SDL_RenderClear(state.renderer);
                 SDL_RenderPresent(state.renderer);
-            }
-
-            void handle_left_click(const hwnd top_level, const int x, const int y)
-            {
-                for (const auto& [guest, child] : this->windows_)
-                {
-                    (void)guest;
-                    if (child.desc.parent != top_level || !child.desc.visible || !child.desc.enabled || child.desc.class_name != u"Button")
-                    {
-                        continue;
-                    }
-
-                    if (x >= child.desc.rect.left && x < child.desc.rect.right && y >= child.desc.rect.top && y < child.desc.rect.bottom)
-                    {
-                        this->post_event(top_level, WM_COMMAND, child.desc.control_id, child.desc.handle);
-                        return;
-                    }
-                }
             }
 
             static void present_test_pattern(window_state& state, const int width, const int height)
