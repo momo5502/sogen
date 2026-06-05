@@ -1028,22 +1028,9 @@ jobs:
           name: sogen-sdist
           path: dist
 
-      - name: Install Linux UI Dependencies
-        uses: nick-fields/retry@v4.0.0
-        with:
-          max_attempts: 5
-          timeout_minutes: 15
-          retry_wait_seconds: 60
-          command: |
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends \
-              libasound2-dev libpulse-dev libjack-jackd2-dev libsndio-dev \
-              libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
-              libxi-dev libxss-dev libxtst-dev libxkbcommon-dev \
-              libdrm-dev libgbm-dev libgl1-mesa-dev libegl-dev libgles-dev \
-              libdbus-1-dev libudev-dev \
-              libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
-
+      # Intentionally NOT installing the SDL build dependencies here: this job
+      # proves that the sdist builds headless (SDL's Linux deps are optional and
+      # it falls back to its dummy drivers when their -dev packages are absent).
       - name: Install sdist
         run: python -m pip install --upgrade pip && python -m pip install --force-reinstall dist/*.tar.gz
 
