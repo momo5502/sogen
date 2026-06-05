@@ -596,7 +596,7 @@ namespace sogen
                 return true;
             }
 
-            if (this->is_await_time_over(clock))
+            if (this->is_await_time_over(clock) && !this->has_pending_alertable_apc())
             {
                 this->mark_as_ready(STATUS_TIMEOUT);
                 return true;
@@ -607,7 +607,7 @@ namespace sogen
 
         if (this->await_time.has_value())
         {
-            if (this->is_await_time_over(clock))
+            if (this->is_await_time_over(clock) && !this->has_pending_alertable_apc())
             {
                 this->mark_as_ready(STATUS_SUCCESS);
                 return true;
