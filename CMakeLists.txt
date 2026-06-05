@@ -8,12 +8,11 @@ option(SOGEN_ENABLE_CLANG_TIDY "Enable clang-tidy checks" OFF)
 option(SOGEN_ENABLE_LTO "Enable interprocedural optimization (LTO/IPO)" ON)
 option(SOGEN_ENABLE_RUST_CODE "Enable code parts written in rust" ON)
 option(SOGEN_ENABLE_REFLECTION "Enable reflection using the reflect library" ON)
-if(WIN32)
-  set(SOGEN_ENABLE_SDL3_DEFAULT ON)
-else()
-  set(SOGEN_ENABLE_SDL3_DEFAULT OFF)
-endif()
-option(SOGEN_ENABLE_SDL3 "Enable SDL3 dependency and backend scaffolding when submodule exists" ${SOGEN_ENABLE_SDL3_DEFAULT})
+# SDL3 provides the host UI backend on every non-Emscripten platform, so it is
+# required and enabled by default everywhere. Emscripten uses the web UI backend
+# instead and skips SDL in deps/CMakeLists.txt. project() runs after this block,
+# so EMSCRIPTEN is not known yet and cannot be branched on here.
+option(SOGEN_ENABLE_SDL3 "Enable SDL3 dependency and backend scaffolding when submodule exists" ON)
 option(SOGEN_EMSCRIPTEN_MEMORY64 "Enable memory 64 support for emscripten builds" OFF)
 option(SOGEN_EMSCRIPTEN_SUPPORT_NODEJS "Enable Node.js filesystem for emscripten compilation" OFF)
 

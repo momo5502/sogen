@@ -83,6 +83,23 @@ jobs:
           jobs="$(python -c 'import os; print(max(1, (os.cpu_count() or 1) * 2))')"
           echo "CMAKE_BUILD_PARALLEL_LEVEL=$jobs" >> "$GITHUB_ENV"
 
+      - name: Install Linux UI Dependencies
+        if: "${{ matrix.platform == 'Linux' }}"
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 5
+          timeout_minutes: 15
+          retry_wait_seconds: 60
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends \
+              libasound2-dev libpulse-dev libjack-jackd2-dev libsndio-dev \
+              libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
+              libxi-dev libxss-dev libxtst-dev libxkbcommon-dev \
+              libdrm-dev libgbm-dev libgl1-mesa-dev libegl-dev libgles-dev \
+              libdbus-1-dev libudev-dev \
+              libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
+
       - name: CMake Build
         run: cmake --workflow --preset=tidy
 
@@ -324,6 +341,23 @@ jobs:
         run: |
           echo "ANDROID_NDK_ROOT=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
           echo "ANDROID_ABI=${{ matrix.abi }}" >> $GITHUB_ENV
+
+      - name: Install Linux UI Dependencies
+        if: "${{ contains(matrix.platform, 'Linux x86_64') }}"
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 5
+          timeout_minutes: 15
+          retry_wait_seconds: 60
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends \
+              libasound2-dev libpulse-dev libjack-jackd2-dev libsndio-dev \
+              libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
+              libxi-dev libxss-dev libxtst-dev libxkbcommon-dev \
+              libdrm-dev libgbm-dev libgl1-mesa-dev libegl-dev libgles-dev \
+              libdbus-1-dev libudev-dev \
+              libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
 
       - name: CMake Build
         run: cmake --preset=${{matrix.preset}} ${{matrix.cmake-options}} && cmake --build --preset=${{matrix.preset}}
@@ -854,6 +888,23 @@ jobs:
       - name: Install build tools
         run: python -m pip install --upgrade pip build setuptools-scm
 
+      - name: Install Linux UI Dependencies
+        if: "${{ startsWith(matrix.runner, 'ubuntu') }}"
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 5
+          timeout_minutes: 15
+          retry_wait_seconds: 60
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends \
+              libasound2-dev libpulse-dev libjack-jackd2-dev libsndio-dev \
+              libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
+              libxi-dev libxss-dev libxtst-dev libxkbcommon-dev \
+              libdrm-dev libgbm-dev libgl1-mesa-dev libegl-dev libgles-dev \
+              libdbus-1-dev libudev-dev \
+              libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
+
       - name: Build wheel
         run: python -m build "${{ github.workspace }}" --wheel --outdir dist
         env:
@@ -976,6 +1027,22 @@ jobs:
         with:
           name: sogen-sdist
           path: dist
+
+      - name: Install Linux UI Dependencies
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 5
+          timeout_minutes: 15
+          retry_wait_seconds: 60
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends \
+              libasound2-dev libpulse-dev libjack-jackd2-dev libsndio-dev \
+              libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
+              libxi-dev libxss-dev libxtst-dev libxkbcommon-dev \
+              libdrm-dev libgbm-dev libgl1-mesa-dev libegl-dev libgles-dev \
+              libdbus-1-dev libudev-dev \
+              libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
 
       - name: Install sdist
         run: python -m pip install --upgrade pip && python -m pip install --force-reinstall dist/*.tar.gz
