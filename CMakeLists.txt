@@ -60,7 +60,7 @@ endif()
 
 ##########################################
 
-if(SKBUILD)
+if(SKBUILD OR CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
   set(SOGEN_BUILD_STATIC_DEFAULT ON)
 else()
   set(SOGEN_BUILD_STATIC_DEFAULT ${SOGEN_IS_SUBPROJECT})
