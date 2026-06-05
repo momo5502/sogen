@@ -542,8 +542,7 @@ namespace sogen
             window.hWnd = wh.bits;
             window.ptrBase = desktop_win.guest.value();
             window.dwStyle = desktop_win.style;
-            window.rcUnknown_048 = {.left = 0, .top = 0, .right = desktop_win.width, .bottom = desktop_win.height};
-            window.rcWindow = window.rcUnknown_048;
+            window.rcWindow = {.left = 0, .top = 0, .right = desktop_win.width, .bottom = desktop_win.height};
             window.rcClient = window.rcWindow;
             window.fnid = 0x29D;   // FNID_DESKTOP
             window.windowBand = 1; // ZBID_DESKTOP

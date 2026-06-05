@@ -78,22 +78,51 @@ namespace sogen
         }
     };
 
-    struct window_destroy_state : completion_state
+    enum class window_destroy_phase : uint8_t
     {
+        messages,
+        children,
+        nc_destroy,
+        finalize
+    };
+
+    struct window_destroy_frame
+    {
+        hwnd handle{};
         emulator_stack_allocation window_pos_alloc{};
         std::vector<qmsg> message_queue{};
+        window_destroy_phase phase{window_destroy_phase::messages};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->handle);
+            buffer.write(this->window_pos_alloc);
+            buffer.write_vector(this->message_queue);
+            buffer.write(this->phase);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->handle);
+            buffer.read(this->window_pos_alloc);
+            buffer.read_vector(this->message_queue);
+            buffer.read(this->phase);
+        }
+    };
+
+    struct window_destroy_state : completion_state
+    {
+        std::vector<window_destroy_frame> frames{};
 
       private:
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
-            buffer.write(this->window_pos_alloc);
-            buffer.write_vector(this->message_queue);
+            buffer.write_vector(this->frames);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
         {
-            buffer.read(this->window_pos_alloc);
-            buffer.read_vector(this->message_queue);
+            buffer.read_vector(this->frames);
         }
     };
 

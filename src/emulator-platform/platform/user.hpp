@@ -198,9 +198,10 @@ namespace sogen
         uint16_t fnid;
         uint8_t pad_02C[4];
         uint64_t spwndParent;
-        uint8_t pad_038[8];
+        uint64_t spwndChild;
         uint64_t spwndOwner;
-        RECT rcUnknown_048;
+        uint64_t spwndNext;
+        uint64_t spwndPrev;
         RECT rcWindow;
         RECT rcClient;
         uint64_t lpfnWndProc;
