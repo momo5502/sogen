@@ -165,6 +165,12 @@ namespace sogen
             const auto client_insets = get_web_ui_client_insets(desc);
             // clang-format off
             EM_ASM({
+                const rect = Number($3);
+                const className = Number($4);
+                const title = Number($5);
+                const insets = Number($12);
+                const rectIndex = rect / 4;
+                const insetsIndex = insets / 4;
                 postMessage({
                     type: 'sogen_ui',
                     command: 'create_window',
@@ -172,30 +178,29 @@ namespace sogen
                     parent: Number($1 >>> 0),
                     owner: Number($2 >>> 0),
                     rect: {
-                        left: $3,
-                        top: $4,
-                        right: $5,
-                        bottom: $6,
+                        left: HEAP32[rectIndex + 0],
+                        top: HEAP32[rectIndex + 1],
+                        right: HEAP32[rectIndex + 2],
+                        bottom: HEAP32[rectIndex + 3],
                     },
-                    class_name: UTF8ToString($7),
-                    title: UTF8ToString($8),
-                    style: Number($9 >>> 0),
-                    ex_style: Number($10 >>> 0),
-                    control_id: Number($11 >>> 0),
-                    visible: Boolean($12),
-                    enabled: Boolean($13),
-                    top_level: Boolean($14),
+                    class_name: UTF8ToString(className),
+                    title: UTF8ToString(title),
+                    style: Number($6 >>> 0),
+                    ex_style: Number($7 >>> 0),
+                    control_id: Number($8 >>> 0),
+                    visible: Boolean($9),
+                    enabled: Boolean($10),
+                    top_level: Boolean($11),
                     client_insets: {
-                        left: $15,
-                        top: $16,
-                        right: $17,
-                        bottom: $18,
+                        left: HEAP32[insetsIndex + 0],
+                        top: HEAP32[insetsIndex + 1],
+                        right: HEAP32[insetsIndex + 2],
+                        bottom: HEAP32[insetsIndex + 3],
                     },
                 });
-            }, static_cast<uint32_t>(desc.handle), static_cast<uint32_t>(desc.parent), static_cast<uint32_t>(desc.owner), desc.rect.left,
-               desc.rect.top, desc.rect.right, desc.rect.bottom, class_name.c_str(), title.c_str(), desc.style, desc.ex_style,
-               desc.control_id, desc.visible ? 1 : 0, desc.enabled ? 1 : 0, desc.top_level ? 1 : 0, client_insets.left,
-               client_insets.top, client_insets.right, client_insets.bottom);
+            }, static_cast<uint32_t>(desc.handle), static_cast<uint32_t>(desc.parent), static_cast<uint32_t>(desc.owner), &desc.rect,
+               class_name.c_str(), title.c_str(), desc.style, desc.ex_style, desc.control_id, desc.visible ? 1 : 0,
+               desc.enabled ? 1 : 0, desc.top_level ? 1 : 0, &client_insets);
             // clang-format on
         }
 
