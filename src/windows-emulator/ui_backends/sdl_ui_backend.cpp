@@ -186,8 +186,8 @@ namespace sogen
                     flags |= SDL_WINDOW_RESIZABLE;
                 }
 
-                const auto width = std::max(1L, desc.rect.right - desc.rect.left);
-                const auto height = std::max(1L, desc.rect.bottom - desc.rect.top);
+                const auto width = std::max<int>(1, static_cast<int>(desc.rect.right - desc.rect.left));
+                const auto height = std::max<int>(1, static_cast<int>(desc.rect.bottom - desc.rect.top));
                 const auto title = u16_to_u8(desc.title);
                 auto* window = SDL_CreateWindow(title.c_str(), static_cast<int>(width), static_cast<int>(height), flags);
                 if (!window)
