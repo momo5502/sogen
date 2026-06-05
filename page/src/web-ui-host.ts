@@ -39,17 +39,6 @@ interface HostWindowState {
 }
 
 const PLAYGROUND_BACKGROUND = "#18181b";
-const WINDOW_BACKGROUND = "#f5f5f5";
-const WINDOW_DISABLED_BACKGROUND = "#e5e7eb";
-const TITLE_BACKGROUND = "#27272a";
-const WINDOW_BORDER = "#71717a";
-const CHILD_BORDER = "#a1a1aa";
-
-interface DragState {
-  hwnd: number;
-  offsetX: number;
-  offsetY: number;
-}
 
 interface AttachSogenUiHostOptions {
   onWindowCountChanged?: (count: number) => void;
@@ -63,7 +52,6 @@ const WM_LBUTTONDOWN = 0x0201;
 const WM_LBUTTONUP = 0x0202;
 const WM_RBUTTONDOWN = 0x0204;
 const WM_RBUTTONUP = 0x0205;
-const TITLE_BAR_HEIGHT = 24;
 
 function cloneRect(rect?: {
   left: number;
@@ -77,20 +65,32 @@ function cloneRect(rect?: {
 function convertSurfacePixels(
   width: number,
   height: number,
+  stride: number,
   format: number,
   pixels: Uint8Array,
 ) {
-  if (format !== 0) {
-    return Uint8ClampedArray.from(pixels.subarray(0, width * height * 4));
-  }
-
   const rgba = new Uint8ClampedArray(width * height * 4);
-  for (let i = 0; i < width * height; ++i) {
-    const src = i * 4;
-    rgba[src + 0] = pixels[src + 2] ?? 0;
-    rgba[src + 1] = pixels[src + 1] ?? 0;
-    rgba[src + 2] = pixels[src + 0] ?? 0;
-    rgba[src + 3] = pixels[src + 3] ?? 255;
+
+  for (let y = 0; y < height; ++y) {
+    const sourceBase = y * stride;
+    const destBase = y * width * 4;
+
+    for (let x = 0; x < width; ++x) {
+      const sourceIndex = sourceBase + x * 4;
+      const destIndex = destBase + x * 4;
+
+      if (format === 0) {
+        rgba[destIndex] = pixels[sourceIndex + 2] ?? 0;
+        rgba[destIndex + 1] = pixels[sourceIndex + 1] ?? 0;
+        rgba[destIndex + 2] = pixels[sourceIndex] ?? 0;
+        rgba[destIndex + 3] = pixels[sourceIndex + 3] ?? 255;
+      } else {
+        rgba[destIndex] = pixels[sourceIndex] ?? 0;
+        rgba[destIndex + 1] = pixels[sourceIndex + 1] ?? 0;
+        rgba[destIndex + 2] = pixels[sourceIndex + 2] ?? 0;
+        rgba[destIndex + 3] = pixels[sourceIndex + 3] ?? 255;
+      }
+    }
   }
 
   return rgba;
@@ -110,7 +110,6 @@ export function attachSogenUiHost(
 
   const windows = new Map<number, HostWindowState>();
   let focusedWindow = 0;
-  let dragState: DragState | null = null;
 
   function notifyWindowCount() {
     options.onWindowCountChanged?.(windows.size);
@@ -146,7 +145,12 @@ export function attachSogenUiHost(
   }
 
   function unpackPixels(message: SogenUiHostMessage) {
-    if (!message.pixels || !message.width || !message.height) {
+    if (
+      !message.pixels ||
+      !message.width ||
+      !message.height ||
+      !message.stride
+    ) {
       return null;
     }
 
@@ -157,6 +161,7 @@ export function attachSogenUiHost(
     const rgba = convertSurfacePixels(
       message.width,
       message.height,
+      message.stride,
       message.format ?? 0,
       pixels,
     );
@@ -201,141 +206,16 @@ export function attachSogenUiHost(
     context2d.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  function bringToFront(hwnd: number) {
-    const window = windows.get(hwnd);
-    if (!window) {
-      return;
-    }
-
-    windows.delete(hwnd);
-    windows.set(hwnd, window);
-  }
-
-  function drawChildren(parent: HostWindowState) {
-    for (const child of windows.values()) {
-      if (!child.visible || child.parent !== parent.hwnd) {
-        continue;
-      }
-
-      const width = Math.max(1, child.rect.right - child.rect.left);
-      const height = Math.max(1, child.rect.bottom - child.rect.top);
-      const className = child.className.toLowerCase();
-
-      context2d.save();
-      context2d.translate(
-        child.rect.left + parent.clientInsets.left,
-        child.rect.top + parent.clientInsets.top,
-      );
-
-      if (className === "button") {
-        context2d.fillStyle = child.enabled ? "#e5e7eb" : "#d4d4d8";
-        context2d.fillRect(0, 0, width, height);
-        context2d.strokeStyle = CHILD_BORDER;
-        context2d.lineWidth = 1;
-        context2d.strokeRect(0.5, 0.5, width - 1, height - 1);
-        context2d.fillStyle = "#18181b";
-        context2d.font = "12px Inter, sans-serif";
-        context2d.textAlign = "center";
-        context2d.textBaseline = "middle";
-        context2d.fillText(
-          child.title || child.className || "Button",
-          width / 2,
-          height / 2,
-        );
-      } else if (className === "static") {
-        context2d.fillStyle = "#18181b";
-        context2d.font = "12px Inter, sans-serif";
-        context2d.textAlign = "left";
-        context2d.textBaseline = "top";
-        context2d.fillText(child.title || "", 0, 0);
-      } else {
-        context2d.fillStyle = child.enabled ? "#fafafa" : "#e4e4e7";
-        context2d.fillRect(0, 0, width, height);
-        context2d.strokeStyle = CHILD_BORDER;
-        context2d.lineWidth = 1;
-        context2d.strokeRect(0.5, 0.5, width - 1, height - 1);
-        context2d.fillStyle = "#52525b";
-        context2d.font = "11px Inter, sans-serif";
-        context2d.textAlign = "left";
-        context2d.textBaseline = "top";
-        context2d.fillText(
-          child.title || child.className || `0x${child.hwnd.toString(16)}`,
-          6,
-          6,
-        );
-      }
-
-      if (child.imageData) {
-        context2d.putImageData(child.imageData, 0, 0);
-      }
-
-      context2d.restore();
-    }
-  }
-
   function drawWindow(window: HostWindowState) {
-    if (!window.visible) {
+    if (!window.visible || !window.topLevel || !window.surfaceCanvas) {
       return;
     }
 
-    const width = Math.max(1, window.rect.right - window.rect.left);
-    const height = Math.max(1, window.rect.bottom - window.rect.top);
-
-    context2d.save();
-    context2d.translate(window.rect.left, window.rect.top);
-
-    context2d.fillStyle = window.enabled
-      ? WINDOW_BACKGROUND
-      : WINDOW_DISABLED_BACKGROUND;
-    context2d.fillRect(0, 0, width, height);
-
-    context2d.strokeStyle = window.topLevel ? WINDOW_BORDER : CHILD_BORDER;
-    context2d.lineWidth = 1;
-    context2d.strokeRect(0.5, 0.5, width - 1, height - 1);
-
-    context2d.fillStyle = TITLE_BACKGROUND;
-    context2d.fillRect(
-      1,
-      1,
-      Math.max(0, width - 2),
-      Math.min(TITLE_BAR_HEIGHT, Math.max(0, height - 2)),
+    context2d.drawImage(
+      window.surfaceCanvas,
+      window.rect.left,
+      window.rect.top,
     );
-
-    context2d.fillStyle = "#e2e8f0";
-    context2d.font = "12px Inter, sans-serif";
-    context2d.textBaseline = "middle";
-    context2d.fillText(
-      window.title || window.className || `0x${window.hwnd.toString(16)}`,
-      8,
-      12,
-    );
-
-    if (window.surfaceCanvas) {
-      context2d.drawImage(
-        window.surfaceCanvas,
-        window.clientInsets.left,
-        window.clientInsets.top,
-      );
-    }
-
-    drawChildren(window);
-
-    if (
-      !window.imageData &&
-      !Array.from(windows.values()).some(
-        (child) => child.parent === window.hwnd && child.visible,
-      )
-    ) {
-      context2d.fillStyle = "#71717a";
-      context2d.font = "11px Inter, sans-serif";
-      context2d.fillText(
-        window.className || "window",
-        8,
-        Math.min(height - 12, 40),
-      );
-    }
-
-    context2d.restore();
   }
 
   function composite() {
@@ -347,16 +227,14 @@ export function attachSogenUiHost(
     context2d.fillRect(0, 0, rect.width, rect.height);
 
     for (const window of windows.values()) {
-      if (window.parent === 0) {
-        drawWindow(window);
-      }
+      drawWindow(window);
     }
   }
 
   function hitTest(clientX: number, clientY: number) {
     let hit: HostWindowState | null = null;
     for (const window of windows.values()) {
-      if (!window.visible || window.parent !== 0) {
+      if (!window.visible || !window.enabled || !window.topLevel) {
         continue;
       }
 
@@ -367,33 +245,6 @@ export function attachSogenUiHost(
         clientY < window.rect.bottom
       ) {
         hit = window;
-      }
-    }
-
-    return hit;
-  }
-
-  function hitTestChild(
-    parent: HostWindowState,
-    localX: number,
-    localY: number,
-  ) {
-    const parentClientX = localX - parent.clientInsets.left;
-    const parentClientY = localY - parent.clientInsets.top;
-    let hit: HostWindowState | null = null;
-
-    for (const child of windows.values()) {
-      if (!child.visible || child.parent !== parent.hwnd) {
-        continue;
-      }
-
-      if (
-        parentClientX >= child.rect.left &&
-        parentClientX < child.rect.right &&
-        parentClientY >= child.rect.top &&
-        parentClientY < child.rect.bottom
-      ) {
-        hit = child;
       }
     }
 
@@ -489,26 +340,6 @@ export function attachSogenUiHost(
 
   function onMouse(message: number, event: MouseEvent) {
     const point = toCanvasPoint(event);
-
-    if (message === WM_MOUSEMOVE && dragState) {
-      const target = windows.get(dragState.hwnd);
-      if (!target) {
-        dragState = null;
-        return;
-      }
-
-      const width = target.rect.right - target.rect.left;
-      const height = target.rect.bottom - target.rect.top;
-      target.rect = {
-        left: point.x - dragState.offsetX,
-        top: point.y - dragState.offsetY,
-        right: point.x - dragState.offsetX + width,
-        bottom: point.y - dragState.offsetY + height,
-      };
-      composite();
-      return;
-    }
-
     const window = hitTest(point.x, point.y);
     const target =
       window ?? (focusedWindow ? (windows.get(focusedWindow) ?? null) : null);
@@ -517,51 +348,9 @@ export function attachSogenUiHost(
     }
 
     focusedWindow = target.hwnd;
-    bringToFront(target.hwnd);
 
     const localX = point.x - target.rect.left;
     const localY = point.y - target.rect.top;
-
-    if (
-      message === WM_LBUTTONDOWN &&
-      target.topLevel &&
-      localY >= 0 &&
-      localY < TITLE_BAR_HEIGHT
-    ) {
-      dragState = {
-        hwnd: target.hwnd,
-        offsetX: localX,
-        offsetY: localY,
-      };
-      composite();
-      return;
-    }
-
-    if ((message === WM_LBUTTONUP || message === WM_RBUTTONUP) && dragState) {
-      dragState = null;
-      composite();
-      return;
-    }
-
-    const child = hitTestChild(target, localX, localY);
-    if (child && child.className.toLowerCase() === "button") {
-      const childLocalY = localY - target.clientInsets.top - child.rect.top;
-      const childLocalX = localX - target.clientInsets.left - child.rect.left;
-
-      if (message === WM_LBUTTONDOWN || message === WM_LBUTTONUP) {
-        sendUiEvent(
-          child.hwnd,
-          message,
-          0,
-          packPoint(childLocalX, childLocalY),
-        );
-      }
-
-      if (message === WM_LBUTTONUP) {
-        sendUiEvent(target.hwnd, 0x0111, child.controlId, child.hwnd);
-      }
-      return;
-    }
 
     sendUiEvent(target.hwnd, message, 0, packPoint(localX, localY));
   }
