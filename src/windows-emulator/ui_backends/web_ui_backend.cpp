@@ -13,20 +13,14 @@ namespace sogen
             ui_event event{};
         };
 
-        constexpr LONG k_web_ui_title_bar_height = 24;
-        constexpr LONG k_web_ui_client_padding = 8;
-
+        // The guest models windows without a non-client area (client rect == window rect),
+        // so the presented surface fills the whole window rect. The host draws the caption
+        // bar and frame *around* that rect (see web_ui_host.js), exactly like the SDL backend
+        // relies on the OS window manager to decorate the client area. We therefore forward
+        // the guest's own (zero) insets unchanged rather than reserving title-bar space inside.
         ui_insets get_web_ui_client_insets(const ui_window_desc& desc)
         {
-            if (!desc.top_level)
-            {
-                return desc.client_insets;
-            }
-
-            return ui_insets{.left = k_web_ui_client_padding,
-                             .top = k_web_ui_title_bar_height + k_web_ui_client_padding,
-                             .right = k_web_ui_client_padding,
-                             .bottom = k_web_ui_client_padding};
+            return desc.client_insets;
         }
 
         std::mutex g_web_ui_event_mutex{};
