@@ -13,6 +13,10 @@ option(SOGEN_ENABLE_REFLECTION "Enable reflection using the reflect library" ON)
 # instead and skips SDL in deps/CMakeLists.txt. project() runs after this block,
 # so EMSCRIPTEN is not known yet and cannot be branched on here.
 option(SOGEN_ENABLE_SDL3 "Enable SDL3 dependency and backend scaffolding when submodule exists" ON)
+# When ON, a system-installed SDL3 (find_package, e.g. libsdl3-dev on Ubuntu 25.04+,
+# Homebrew, vcpkg) is used if present, falling back to the vendored deps/SDL submodule.
+# Set OFF to always build the pinned submodule.
+option(SOGEN_USE_SYSTEM_SDL3 "Prefer a system-installed SDL3 over the vendored deps/SDL submodule" ON)
 option(SOGEN_EMSCRIPTEN_MEMORY64 "Enable memory 64 support for emscripten builds" OFF)
 option(SOGEN_EMSCRIPTEN_SUPPORT_NODEJS "Enable Node.js filesystem for emscripten compilation" OFF)
 
