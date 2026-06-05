@@ -441,9 +441,28 @@ namespace sogen
             queue_window_paint(c, win);
         }
 
+        void write_guest_window_text(const syscall_context& c, window& win, const std::u16string& title)
+        {
+            win.guest.access([&](USER_WINDOW& guest_win) {
+                guest_win.dwTextLengthBytes = static_cast<uint32_t>(title.size() * sizeof(char16_t));
+                if (title.empty())
+                {
+                    guest_win.strText = 0;
+                    return;
+                }
+
+                const auto text_size = (title.size() + 1) * sizeof(char16_t);
+                const auto text_buffer =
+                    c.win_emu.memory.allocate_memory(static_cast<size_t>(page_align_up(text_size)), memory_permission::read_write);
+                c.win_emu.memory.write_memory(text_buffer, title.c_str(), text_size);
+                guest_win.strText = text_buffer;
+            });
+        }
+
         void update_window_title(const syscall_context& c, window& win, const std::u16string& title)
         {
             win.name = title;
+            write_guest_window_text(c, win, title);
             if (win.host_surface_window)
             {
                 c.win_emu.ui().set_window_title(win.handle, win.name);
@@ -1292,6 +1311,16 @@ namespace sogen
                 if (auto* surface = get_dc_present_surface(c, ps.paint_hdc, present_handle);
                     surface && present_handle != 0 && surface->width > 0 && surface->height > 0 && !surface->pixels.empty())
                 {
+                    uint32_t non_white = 0;
+                    for (const auto pixel : surface->pixels)
+                    {
+                        if (pixel != 0xFFFFFFFFu)
+                        {
+                            ++non_white;
+                        }
+                    }
+                    std::printf("USER present EndPaint hwnd=0x%llx present=0x%x surface=%ux%u nonwhite=%u\n",
+                                static_cast<unsigned long long>(window), present_handle, surface->width, surface->height, non_white);
                     c.win_emu.ui().present_surface(present_handle,
                                                    ui_surface_desc{.width = static_cast<int>(surface->width),
                                                                    .height = static_cast<int>(surface->height),
@@ -1655,6 +1684,7 @@ namespace sogen
                     guest_win.pExtraBytes = c.win_emu.memory.allocate_memory(extra_size, memory_permission::read_write);
                 }
             });
+            write_guest_window_text(c, win, win.name);
 
             if (has_child_parent && parent_win && parent_win->guest.value() != 0)
             {

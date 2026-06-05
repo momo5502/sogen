@@ -544,6 +544,8 @@ namespace sogen
         uint64_t handle_NtGdiCreatePen(const syscall_context& c, uint32_t style, uint32_t width, uint32_t color);
         uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, hdc dc);
         uint64_t handle_NtGdiCreateCompatibleBitmap(const syscall_context& c, hdc dc, uint32_t width, uint32_t height);
+        uint64_t handle_NtGdiCreateBitmap(const syscall_context& c, uint32_t width, uint32_t height, uint32_t planes, uint32_t bits_pixel,
+                                          emulator_pointer bits);
         uint64_t handle_NtGdiCreateDIBitmapInternal(const syscall_context& c, hdc dc, uint32_t width, uint32_t height, uint32_t usage,
                                                     emulator_pointer bits, emulator_pointer info, uint32_t info_header_size, uint32_t init,
                                                     uint32_t offset, uint32_t cj, uint32_t i_usage);
@@ -992,6 +994,7 @@ namespace sogen
         add_handler(NtGdiCreatePen);
         add_handler(NtGdiCreateCompatibleDC);
         add_handler(NtGdiCreateCompatibleBitmap);
+        add_handler(NtGdiCreateBitmap);
         add_handler(NtGdiCreateDIBitmapInternal);
         add_handler(NtGdiDeleteObjectApp);
         add_handler(NtGdiSelectBitmap);
