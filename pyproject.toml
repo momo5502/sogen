@@ -30,6 +30,12 @@ sdist.include = ["deps/**"]
 [tool.scikit-build.cmake.define]
 SOGEN_ENABLE_LTO = "OFF"
 
+# Allow the bundled SDL3 to build without X11/Wayland development libraries.
+# Source installs (sdist/wheel-from-source) should succeed on headless systems;
+# when the libraries are present SDL still builds the X11/Wayland backends, so
+# this only suppresses SDL's "no desktop video backend" hard error. Linux-only.
+SDL_UNIX_CONSOLE_BUILD = "ON"
+
 [tool.setuptools_scm]
 fallback_version = "0.0.0"
 local_scheme = "no-local-version"

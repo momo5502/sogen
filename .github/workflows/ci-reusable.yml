@@ -1029,8 +1029,8 @@ jobs:
           path: dist
 
       # Intentionally NOT installing the SDL build dependencies here: this job
-      # proves that the sdist builds headless (SDL's Linux deps are optional and
-      # it falls back to its dummy drivers when their -dev packages are absent).
+      # proves that a source install builds headless. pyproject.toml sets
+      # SDL_UNIX_CONSOLE_BUILD=ON so the bundled SDL3 builds without X11/Wayland.
       - name: Install sdist
         run: python -m pip install --upgrade pip && python -m pip install --force-reinstall dist/*.tar.gz
 
