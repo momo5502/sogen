@@ -273,12 +273,9 @@ namespace sogen
 
             if (wnd_proc == 0)
             {
-                std::printf("UI builtin class missing wndproc class=%s\n", u16_to_u8(normalized_name).c_str());
                 return nullptr;
             }
 
-            std::printf("UI builtin class wndproc class=%s proc=0x%llx\n", u16_to_u8(normalized_name).c_str(),
-                        static_cast<unsigned long long>(wnd_proc));
             c.win_emu.watch_ui_proc_address(wnd_proc);
 
             constexpr auto cls_size = static_cast<size_t>(page_align_up(sizeof(USER_CLASS)));
@@ -1087,21 +1084,6 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            if (const auto* user32 = c.win_emu.mod_manager.find_by_name("user32.dll"))
-            {
-                uint32_t button_max = 0;
-                uint64_t button_bits = 0;
-                uint32_t static_max = 0;
-                uint64_t static_bits = 0;
-                c.win_emu.memory.try_read_memory(user32->image_base + 0xD2368, &button_max, sizeof(button_max));
-                c.win_emu.memory.try_read_memory(user32->image_base + 0xD2370, &button_bits, sizeof(button_bits));
-                c.win_emu.memory.try_read_memory(user32->image_base + 0xD23D8, &static_max, sizeof(static_max));
-                c.win_emu.memory.try_read_memory(user32->image_base + 0xD23E0, &static_bits, sizeof(static_bits));
-                std::printf("USER user32 msgbits button max=0x%x bits=0x%llx static max=0x%x bits=0x%llx connect=0x%x\n", button_max,
-                            static_cast<unsigned long long>(button_bits), static_max, static_cast<unsigned long long>(static_bits),
-                            connect_destination);
-            }
-
             uint64_t user_shared_info_ptr{};
             const auto shared_info_status = ensure_user_shared_info_ptr(c, user_shared_info_ptr);
             if (shared_info_status != STATUS_SUCCESS)
@@ -1130,26 +1112,6 @@ namespace sogen
                                                         const emulator_pointer apfn_client_w, const emulator_pointer apfn_client_worker,
                                                         const emulator_pointer /*hmod_user*/)
         {
-            uint64_t first_a = 0;
-            uint64_t first_w = 0;
-            uint64_t first_worker = 0;
-            if (apfn_client_a != 0)
-            {
-                c.win_emu.memory.try_read_memory(apfn_client_a, &first_a, sizeof(first_a));
-            }
-            if (apfn_client_w != 0)
-            {
-                c.win_emu.memory.try_read_memory(apfn_client_w, &first_w, sizeof(first_w));
-            }
-            if (apfn_client_worker != 0)
-            {
-                c.win_emu.memory.try_read_memory(apfn_client_worker, &first_worker, sizeof(first_worker));
-            }
-            std::printf("USER InitClientPfn A=0x%llx first=0x%llx W=0x%llx first=0x%llx Worker=0x%llx first=0x%llx\n",
-                        static_cast<unsigned long long>(apfn_client_a), static_cast<unsigned long long>(first_a),
-                        static_cast<unsigned long long>(apfn_client_w), static_cast<unsigned long long>(first_w),
-                        static_cast<unsigned long long>(apfn_client_worker), static_cast<unsigned long long>(first_worker));
-
             if (c.proc.active_thread)
             {
                 c.proc.active_thread->win32k_thread_setup_pending = false;
@@ -1216,11 +1178,6 @@ namespace sogen
             {
                 c.proc.gdi_dc_states[static_cast<uint32_t>(dc)].target_window = window;
             }
-            if (const auto* win = c.proc.windows.get(window))
-            {
-                std::printf("USER GetDCEx hwnd=0x%llx class=%s dc=0x%llx\n", static_cast<unsigned long long>(window),
-                            u16_to_u8(win->class_name).c_str(), static_cast<unsigned long long>(dc));
-            }
             return dc;
         }
 
@@ -1286,9 +1243,6 @@ namespace sogen
                 return 0;
             }
 
-            std::printf("USER BeginPaint hwnd=0x%llx class=%s pending=%d\n", static_cast<unsigned long long>(window),
-                        u16_to_u8(win->class_name).c_str(), win->update_pending ? 1 : 0);
-
             const auto dc = handle_NtUserGetDCEx(c, window, 0, 0);
             if (!dc)
             {
@@ -1317,9 +1271,6 @@ namespace sogen
                 return FALSE;
             }
 
-            std::printf("USER EndPaint hwnd=0x%llx class=%s\n", static_cast<unsigned long long>(window),
-                        u16_to_u8(win->class_name).c_str());
-
             if (paint_struct)
             {
                 const auto ps = paint_struct.read();
@@ -1331,16 +1282,6 @@ namespace sogen
                 if (auto* surface = get_dc_present_surface(c, ps.paint_hdc, present_handle);
                     surface && present_handle != 0 && surface->width > 0 && surface->height > 0 && !surface->pixels.empty())
                 {
-                    uint32_t non_white = 0;
-                    for (const auto pixel : surface->pixels)
-                    {
-                        if (pixel != 0xFFFFFFFFu)
-                        {
-                            ++non_white;
-                        }
-                    }
-                    std::printf("USER present EndPaint hwnd=0x%llx present=0x%x surface=%ux%u nonwhite=%u\n",
-                                static_cast<unsigned long long>(window), present_handle, surface->width, surface->height, non_white);
                     c.win_emu.ui().present_surface(present_handle,
                                                    ui_surface_desc{.width = static_cast<int>(surface->width),
                                                                    .height = static_cast<int>(surface->height),
@@ -1452,8 +1393,6 @@ namespace sogen
         {
             (void)hwnd;
             (void)param;
-            std::printf("USER CallHwndParam hwnd=0x%llx param=0x%llx code=%u\n", static_cast<unsigned long long>(hwnd),
-                        static_cast<unsigned long long>(param), code);
             if (c.win_emu.callbacks.on_generic_activity)
             {
                 c.win_emu.callbacks.on_generic_activity("NtUserCallHwndParam code=" + std::to_string(code));

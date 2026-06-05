@@ -66,6 +66,9 @@ namespace sogen
             constexpr uint32_t k_default_font_descent = 4;
             constexpr uint32_t k_default_font_width = 8;
             constexpr uint32_t k_default_font_weight = 400;
+            constexpr int k_text_cell_width = static_cast<int>(k_default_font_width);
+            constexpr int k_text_cell_height = static_cast<int>(k_default_font_height);
+            constexpr int k_text_glyph_y_offset = (k_text_cell_height - debug_font::glyph_height) / 2;
 
             constexpr uint32_t k_default_dpi = 96;
             constexpr uint32_t k_default_width = 1920;
@@ -637,7 +640,21 @@ namespace sogen
                 }
             }
 
-            void draw_debug_glyph(gdi_bitmap_surface& surface, const int x, const int y, char32_t codepoint, const uint32_t color)
+            bool point_in_rect(const int x, const int y, const RECT* clip)
+            {
+                return clip == nullptr || (x >= clip->left && x < clip->right && y >= clip->top && y < clip->bottom);
+            }
+
+            void set_text_pixel(gdi_bitmap_surface& surface, const int x, const int y, const uint32_t color, const RECT* clip)
+            {
+                if (point_in_rect(x, y, clip))
+                {
+                    set_surface_pixel(surface, x, y, color);
+                }
+            }
+
+            void draw_text_glyph(gdi_bitmap_surface& surface, const int x, const int y, char32_t codepoint, const uint32_t color,
+                                 const RECT* clip)
             {
                 if (codepoint < debug_font::first_codepoint || codepoint > debug_font::last_codepoint)
                 {
@@ -652,20 +669,20 @@ namespace sogen
                     {
                         if ((bits & (0x01u << col)) != 0)
                         {
-                            set_surface_pixel(surface, x + col, y + row, color);
+                            set_text_pixel(surface, x + col, y + k_text_glyph_y_offset + row, color, clip);
                         }
                     }
                 }
             }
 
-            void draw_debug_text(gdi_bitmap_surface& surface, const int x, const int y, const std::u16string_view text,
-                                 const uint32_t color)
+            void draw_text(gdi_bitmap_surface& surface, const int x, const int y, const std::u16string_view text, const uint32_t color,
+                           const RECT* clip = nullptr, const uint32_t* dx = nullptr)
             {
                 int pen_x = x;
-                for (const auto ch : text)
+                for (size_t i = 0; i < text.size(); ++i)
                 {
-                    draw_debug_glyph(surface, pen_x, y, static_cast<char32_t>(ch), color);
-                    pen_x += debug_font::glyph_width;
+                    draw_text_glyph(surface, pen_x, y, static_cast<char32_t>(text[i]), color, clip);
+                    pen_x += dx != nullptr ? static_cast<int32_t>(dx[i]) : k_text_cell_width;
                 }
             }
 
@@ -684,11 +701,6 @@ namespace sogen
             template <typename Batch>
             bool flush_gdi_text_batch(const syscall_context& c, const Batch& batch)
             {
-                if (batch.Offset != 0 || batch.HDC != 0)
-                {
-                    std::printf("GDI batch flush hdc=0x%llx offset=%u\n", static_cast<unsigned long long>(batch.HDC), batch.Offset);
-                }
-
                 const auto batch_offset = batch.Offset & ~k_gdibs_no_rect;
                 if (batch_offset == 0 || batch.HDC == 0 || batch_offset > sizeof(batch.Buffer))
                 {
@@ -718,39 +730,32 @@ namespace sogen
                         break;
                     }
 
-                    std::printf("GDI batch cmd=%d size=%d offset=%zu\n", header->cmd, header->size, offset);
-
                     if (header->cmd == k_gdi_batch_cmd_text_out &&
                         static_cast<size_t>(header->size) >= offsetof(gdi_batch_text_out, string))
                     {
                         const auto* text_out = reinterpret_cast<const gdi_batch_text_out*>(header);
+                        RECT clip_rect{.left = text_out->rect.left + origin_x,
+                                       .top = text_out->rect.top + origin_y,
+                                       .right = text_out->rect.right + origin_x,
+                                       .bottom = text_out->rect.bottom + origin_y};
+                        const auto has_rect = (text_out->options & k_gdibs_no_rect) == 0;
                         if ((text_out->options & ETO_OPAQUE) != 0 && (text_out->options & k_gdibs_no_rect) == 0)
                         {
-                            fill_rect(*surface, text_out->rect.left + origin_x, text_out->rect.top + origin_y,
-                                      text_out->rect.right + origin_x, text_out->rect.bottom + origin_y,
+                            fill_rect(*surface, clip_rect.left, clip_rect.top, clip_rect.right, clip_rect.bottom,
                                       colorref_to_bgra(text_out->background));
                         }
 
+                        const auto* dx = reinterpret_cast<const uint32_t*>(text_out->string);
                         const auto* text = reinterpret_cast<const char16_t*>(&text_out->string[text_out->dx_size / sizeof(char16_t)]);
-                        draw_debug_text(*surface, text_out->x + text_out->viewport_org.x + origin_x,
-                                        text_out->y + text_out->viewport_org.y + origin_y, std::u16string_view(text, text_out->count),
-                                        colorref_to_bgra(text_out->foreground));
+                        draw_text(*surface, text_out->x + text_out->viewport_org.x + origin_x,
+                                  text_out->y + text_out->viewport_org.y + origin_y, std::u16string_view(text, text_out->count),
+                                  colorref_to_bgra(text_out->foreground),
+                                  has_rect && (text_out->options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr,
+                                  text_out->dx_size >= text_out->count * sizeof(uint32_t) ? dx : nullptr);
                     }
                     else if (header->cmd == k_gdi_batch_cmd_poly_pat_blt &&
                              static_cast<size_t>(header->size) >= k_gdi_poly_pat_blt_rect_offset)
                     {
-                        static int poly_dump_count = 0;
-                        if (poly_dump_count++ < 2)
-                        {
-                            std::printf("GDI poly raw size=%d:", header->size);
-                            const auto dump_size = std::min<size_t>(static_cast<size_t>(header->size), 128);
-                            for (size_t dump_i = 0; dump_i < dump_size; ++dump_i)
-                            {
-                                std::printf(" %02x", bytes[offset + dump_i]);
-                            }
-                            std::printf("\n");
-                        }
-
                         uint32_t declared_count = 0;
                         std::memcpy(&declared_count, bytes + offset + 0x0C, sizeof(declared_count));
 
@@ -766,15 +771,6 @@ namespace sogen
                             brush = rect.brush;
 
                             const auto color = brush != 0 ? get_brush_color(c, static_cast<uint32_t>(brush)) : get_dc_brush_color(c, dc);
-                            if (i < 4)
-                            {
-                                std::printf(
-                                    "GDI poly rect hdc=0x%llx surface=%ux%u origin=%d,%d vp=%d,%d count=%zu/%u rect=%ld,%ld,%ld,%ld "
-                                    "brush=0x%llx color=0x%08x\n",
-                                    static_cast<unsigned long long>(dc), surface->width, surface->height, origin_x, origin_y, 0, 0,
-                                    rect_count, declared_count, rect.x, rect.y, rect.width, rect.height,
-                                    static_cast<unsigned long long>(brush), color);
-                            }
                             fill_rect(*surface, rect.x + origin_x, rect.y + origin_y, rect.x + rect.width + origin_x,
                                       rect.y + rect.height + origin_y, color);
                         }
@@ -1451,8 +1447,6 @@ namespace sogen
         BOOL handle_NtGdiGetTextExtent(const syscall_context& c, const hdc dc, const emulator_pointer /*text*/, const int32_t char_count,
                                        const emulator_pointer size, const ULONG /*flags*/)
         {
-            std::printf("GDI GetTextExtent hdc=0x%llx chars=%d size=0x%llx\n", static_cast<unsigned long long>(dc), char_count,
-                        static_cast<unsigned long long>(size));
             if (dc == 0 || size == 0 || char_count < 0)
             {
                 return FALSE;
@@ -1573,8 +1567,8 @@ namespace sogen
         }
 
         BOOL handle_NtGdiExtTextOutW(const syscall_context& c, const hdc dc, const LONG x, const LONG y, const UINT options,
-                                     const emulator_pointer /*rect*/, const emulator_pointer text, const UINT count,
-                                     const emulator_pointer /*dx*/, const DWORD /*code_page*/)
+                                     const emulator_pointer rect, const emulator_pointer text, const UINT count, const emulator_pointer dx,
+                                     const DWORD /*code_page*/)
         {
             (void)handle_NtGdiFlush(c);
 
@@ -1589,8 +1583,6 @@ namespace sogen
 
             if (count == 0 || text == 0)
             {
-                std::printf("GDI ExtTextOutW hdc=0x%llx x=%d y=%d count=%u options=0x%x empty\n", static_cast<unsigned long long>(dc),
-                            static_cast<int>(x), static_cast<int>(y), count, options);
                 dc_state->current_x = x;
                 dc_state->current_y = y;
                 return TRUE;
@@ -1600,20 +1592,33 @@ namespace sogen
             glyphs.resize(count);
             c.emu.read_memory(text, glyphs.data(), count * sizeof(char16_t));
 
-            std::string ascii;
-            ascii.reserve(count);
-            for (const auto ch : glyphs)
+            RECT clip_rect{};
+            const auto has_rect = rect != 0 && (options & k_gdibs_no_rect) == 0;
+            if (has_rect)
             {
-                ascii.push_back(ch >= 32 && ch <= 126 ? static_cast<char>(ch) : '?');
+                c.emu.read_memory(rect, &clip_rect, sizeof(clip_rect));
+                clip_rect.left += origin_x;
+                clip_rect.top += origin_y;
+                clip_rect.right += origin_x;
+                clip_rect.bottom += origin_y;
+                if ((options & ETO_OPAQUE) != 0)
+                {
+                    fill_rect(*surface, clip_rect.left, clip_rect.top, clip_rect.right, clip_rect.bottom, get_dc_brush_color(c, dc));
+                }
+            }
+
+            std::vector<uint32_t> advances{};
+            if (dx != 0)
+            {
+                advances.resize(count);
+                c.emu.read_memory(dx, advances.data(), advances.size() * sizeof(uint32_t));
             }
 
             const auto color = get_dc_pen_color(c, dc);
-            std::printf("GDI ExtTextOutW hdc=0x%llx x=%d y=%d count=%u options=0x%x text='%s' color=0x%08x origin=%d,%d\n",
-                        static_cast<unsigned long long>(dc), static_cast<int>(x), static_cast<int>(y), count, options, ascii.c_str(), color,
-                        static_cast<int>(origin_x), static_cast<int>(origin_y));
-            draw_debug_text(*surface, x + origin_x, y + origin_y, glyphs, color);
+            draw_text(*surface, x + origin_x, y + origin_y, glyphs, color, has_rect && (options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr,
+                      advances.empty() ? nullptr : advances.data());
 
-            dc_state->current_x = x + static_cast<int32_t>(count * debug_font::glyph_width);
+            dc_state->current_x = x + static_cast<int32_t>(count * k_text_cell_width);
             dc_state->current_y = y;
             return TRUE;
         }

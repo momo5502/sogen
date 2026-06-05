@@ -885,7 +885,6 @@ namespace sogen
 
         uint64_t handle_NtUserCallNoParam()
         {
-            std::printf("USER CallNoParam\n");
             return 0;
         }
     }

@@ -68,29 +68,6 @@ namespace sogen
             return win_emu.memory.try_read_memory(c.recv_buffer + 0x18, &server_dll_index, sizeof(server_dll_index));
         }
 
-        void dump_user32_message_bits(windows_emulator& win_emu, const char* source, const uint64_t destination)
-        {
-            const auto* user32 = win_emu.mod_manager.find_by_name("user32.dll");
-            if (!user32)
-            {
-                std::printf("USER user32 msgbits source=%s no-user32 destination=0x%llx\n", source,
-                            static_cast<unsigned long long>(destination));
-                return;
-            }
-
-            uint32_t button_max = 0;
-            uint64_t button_bits = 0;
-            uint32_t static_max = 0;
-            uint64_t static_bits = 0;
-            win_emu.memory.try_read_memory(user32->image_base + 0xD2368, &button_max, sizeof(button_max));
-            win_emu.memory.try_read_memory(user32->image_base + 0xD2370, &button_bits, sizeof(button_bits));
-            win_emu.memory.try_read_memory(user32->image_base + 0xD23D8, &static_max, sizeof(static_max));
-            win_emu.memory.try_read_memory(user32->image_base + 0xD23E0, &static_bits, sizeof(static_bits));
-            std::printf("USER user32 msgbits source=%s button max=0x%x bits=0x%llx static max=0x%x bits=0x%llx destination=0x%llx\n",
-                        source, button_max, static_cast<unsigned long long>(button_bits), static_max,
-                        static_cast<unsigned long long>(static_bits), static_cast<unsigned long long>(destination));
-        }
-
         NTSTATUS try_write_wow64_userconnect_response(windows_emulator& win_emu, const wow64_userconnect_payload& payload)
         {
             uint32_t destination{};
@@ -113,7 +90,6 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            dump_user32_message_bits(win_emu, "wow64-payload", destination);
             return STATUS_SUCCESS;
         }
 
@@ -186,7 +162,6 @@ namespace sogen
                     return {STATUS_INVALID_PARAMETER, lpc_request_result::reply_in_place};
                 }
 
-                dump_user32_message_bits(win_emu, "reply-base", base);
                 if (!win32k_userconnect::try_bootstrap_client_pfn_arrays_from_ntdll(win_emu))
                 {
                     win_emu.log.warn("ApiPort userconnect callback-table bootstrap failed\n");
