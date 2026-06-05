@@ -1495,6 +1495,8 @@ namespace sogen
 
         BOOL handle_NtGdiLineTo(const syscall_context& c, const hdc dc, const LONG x_end, const LONG y_end)
         {
+            (void)handle_NtGdiFlush(c);
+
             gdi_dc_state* dc_state = nullptr;
             gdi_bitmap_surface* surface = nullptr;
             int32_t origin_x = 0;
@@ -1574,6 +1576,8 @@ namespace sogen
                                      const emulator_pointer /*rect*/, const emulator_pointer text, const UINT count,
                                      const emulator_pointer /*dx*/, const DWORD /*code_page*/)
         {
+            (void)handle_NtGdiFlush(c);
+
             gdi_dc_state* dc_state = nullptr;
             gdi_bitmap_surface* surface = nullptr;
             int32_t origin_x = 0;
