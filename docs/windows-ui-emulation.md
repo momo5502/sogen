@@ -75,9 +75,44 @@ Real emulation goal is stronger: builtin controls, dialogs, and custom `WM_PAINT
 - direct text rendering path now exists via temporary 8x8 debug font in `NtGdiExtTextOutW`
 - user validated forced direct text path visually: text appears and glyph mirroring bug was fixed
 - current text gap is smaller-text GDI batching behavior, not raw top-level surface presentation
+- `manual-messagebox-sample` runs through the native button/static paint path well enough for visible controls and text.
+- builtin `MessageBox` is past the earlier missing `NtUserSetThreadState` syscall, but it is not working yet.
+  - `NtUserSetThreadState(value, mask)` is now modeled as a per-thread USER state bitfield.
+  - `NtUserGetThreadState(10)` returns that bitfield for the dialog cleanup path.
+  - user32 creates the dialog and buttons, then uses predefined class atom `#2032` for the message-box icon/static control.
+  - `#2032` now normalizes to the builtin `Static` class, matching the `SS_ICON` control path.
+  - The next concrete blocker is `NtUserGetIconSize(icon, frame, &cx, &cy)`, reached while static/icon painting or setup runs.
+
+## Builtin MessageBox Investigation Notes
+
+IDA/user32 findings from the current checkpoint:
+
+- `StartTaskModalDialog` / `EndTaskModalDialog` do not use `NtUserSetThreadState`; they only disable and re-enable top-level windows.
+- The only `NtUserSetThreadState` callers found are in `DefDlgProcWorker`.
+- `DefDlgProcWorker` uses the call as `NtUserSetThreadState(value, 0x4000)`, setting or clearing a dialog-related thread state bit. The return value is ignored at the inspected call sites.
+- `DialogBox2` later calls `NtUserGetThreadState(10)` before an owner/foreground-window cleanup path.
+- A blind no-op `NtUserSetThreadState` is not sufficient: it lets the sample proceed, but `MessageBox` returns `0` immediately.
+- After adding the thread-state bitfield, verbose report output showed `MessageBox` got as far as dialog/control creation. It then failed on class atom `#2032`, destroyed the dialog, and printed `clicked: other (0)`.
+- Mapping `#2032` to `Static` moves the failure forward to the next missing syscall: `NtUserGetIconSize`.
+
+Expected next narrow implementation:
+
+```cpp
+BOOL NtUserGetIconSize(HICON icon, UINT frame, int* cx, int* cy);
+```
+
+For the current message-box icon path, returning a default icon size is probably enough to advance:
+
+- write `cx = 32`
+- write `cy = 64`
+- return `TRUE`
+
+The `cy = 64` value is intentional for the user32 static-icon path inspected in IDA: it halves the returned height before layout/drawing, so this models a 32x32 icon backed by a 32x64 icon/mask bitmap.
 
 ## Remaining blockers
 
+- implement `NtUserGetIconSize` minimally and re-test builtin `messagebox-sample`
+- expect possible follow-up icon/static paint gaps such as `DrawIconEx` behavior or icon-handle metadata
 - finish small-text / batched GDI text path so ordinary `TextOutA/W` works without forcing oversized `ExtTextOutW`
 - decide where batch flush should happen generically, not only in sample-driven probing
 - replace temporary debug-font text path with more correct font/text handling over time

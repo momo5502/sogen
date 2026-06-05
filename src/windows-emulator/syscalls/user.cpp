@@ -16,6 +16,7 @@ namespace sogen
     namespace
     {
         constexpr ULONG k_thread_state_win32_thread_info = 0xE;
+        constexpr ULONG k_thread_state_dialog_state = 0xA;
         constexpr size_t k_win32_thread_info_slab_size = 0x2000;
         constexpr uint64_t k_win32_thread_info_bias = 0x800;
         constexpr uint32_t k_client_setup_callback_id = 0x54;
@@ -153,7 +154,8 @@ namespace sogen
             {
                 return u"Edit";
             }
-            if (class_name == u"#3" || class_name == u"#2160" || class_name == u"STATIC" || class_name == u"Static")
+            if (class_name == u"#3" || class_name == u"#2032" || class_name == u"#2160" || class_name == u"STATIC" ||
+                class_name == u"Static")
             {
                 return u"Static";
             }
@@ -1023,6 +1025,11 @@ namespace sogen
 
         uint64_t handle_NtUserGetThreadState(const syscall_context& c, const ULONG routine)
         {
+            if (routine == k_thread_state_dialog_state)
+            {
+                return c.proc.active_thread ? c.proc.active_thread->win32k_thread_state : 0;
+            }
+
             if (routine != k_thread_state_win32_thread_info)
             {
                 return 0;
@@ -1045,6 +1052,19 @@ namespace sogen
             }
 
             return thread_info;
+        }
+
+        uint64_t handle_NtUserSetThreadState(const syscall_context& c, const uint64_t value, const uint64_t mask)
+        {
+            auto* thread = c.proc.active_thread;
+            if (!thread)
+            {
+                return 0;
+            }
+
+            const auto previous = thread->win32k_thread_state;
+            thread->win32k_thread_state = (previous & ~mask) | (value & mask);
+            return previous;
         }
 
         uint64_t completion_NtUserGetThreadState(const syscall_context& c, const ULONG routine)

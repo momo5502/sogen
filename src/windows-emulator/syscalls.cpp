@@ -426,6 +426,7 @@ namespace sogen
         NTSTATUS handle_NtUserDisplayConfigGetDeviceInfo();
         NTSTATUS handle_NtUserRegisterWindowMessage();
         uint64_t handle_NtUserGetThreadState(const syscall_context& c, ULONG routine);
+        uint64_t handle_NtUserSetThreadState(const syscall_context& c, uint64_t value, uint64_t mask);
         uint64_t completion_NtUserGetThreadState(const syscall_context& c, ULONG routine);
         NTSTATUS handle_NtUserProcessConnect(const syscall_context& c, handle process_handle, ULONG length, emulator_pointer user_connect);
         NTSTATUS handle_NtUserInitializeClientPfnArrays(const syscall_context& c, emulator_pointer apfn_client_a,
@@ -1023,6 +1024,7 @@ namespace sogen
         add_handler(NtGdiSelectBrushLocal);
         add_handler(NtGdiSelectPenLocal);
         add_handler(NtUserGetThreadState);
+        add_handler(NtUserSetThreadState);
         add_handler(NtUserProcessConnect);
         add_handler(NtUserInitializeClientPfnArrays);
         add_handler(NtUserRemoteConnectState);
