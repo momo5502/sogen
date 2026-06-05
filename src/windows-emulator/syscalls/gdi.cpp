@@ -144,8 +144,8 @@ namespace sogen
                 POINTL viewport_org{};
                 union
                 {
-                    WCHAR string[2];
-                    ULONG buffer[1];
+                    std::array<WCHAR, 2> string;
+                    std::array<ULONG, 1> buffer;
                 };
             };
 
@@ -171,7 +171,7 @@ namespace sogen
                 ULONG background_ul{};
                 ULONG brush_ul{};
                 POINTL viewport_org{};
-                gdi_batch_pat_rect rects[1]{};
+                std::array<gdi_batch_pat_rect, 1> rects{};
             };
 
             uint64_t ensure_gdi_shared_table(const syscall_context& c)
@@ -745,8 +745,9 @@ namespace sogen
                                       colorref_to_bgra(text_out->background));
                         }
 
-                        const auto* dx = reinterpret_cast<const uint32_t*>(text_out->string);
-                        const auto* text = reinterpret_cast<const char16_t*>(&text_out->string[text_out->dx_size / sizeof(char16_t)]);
+                        const auto* dx = reinterpret_cast<const uint32_t*>(text_out->string.data());
+                        const auto* text =
+                            reinterpret_cast<const char16_t*>(text_out->string.data() + text_out->dx_size / sizeof(char16_t));
                         draw_text(*surface, text_out->x + text_out->viewport_org.x + origin_x,
                                   text_out->y + text_out->viewport_org.y + origin_y, std::u16string_view(text, text_out->count),
                                   colorref_to_bgra(text_out->foreground),
@@ -827,7 +828,8 @@ namespace sogen
                     }
                 }
 
-                for (size_t i = 0; i < system_brushes.size() && i < k_default_system_colors.size(); ++i)
+                const auto system_brush_count = std::min(system_brushes.size(), k_default_system_colors.size());
+                for (size_t i = 0; i < system_brush_count; ++i)
                 {
                     if (system_brushes[i] != 0)
                     {
@@ -1535,11 +1537,17 @@ namespace sogen
             set_dc_current_point(c, dc, left, top);
 
             if (!handle_NtGdiLineTo(c, dc, right - 1, top))
+            {
                 return FALSE;
+            }
             if (!handle_NtGdiLineTo(c, dc, right - 1, bottom - 1))
+            {
                 return FALSE;
+            }
             if (!handle_NtGdiLineTo(c, dc, left, bottom - 1))
+            {
                 return FALSE;
+            }
             return handle_NtGdiLineTo(c, dc, left, top);
         }
 

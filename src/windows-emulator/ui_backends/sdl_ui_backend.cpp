@@ -210,7 +210,7 @@ namespace sogen
                 state.window = window;
                 state.renderer = renderer;
                 this->guest_by_window_id_[SDL_GetWindowID(window)] = desc.handle;
-                this->render_window(state);
+                render_window(state);
 #endif
             }
 
@@ -312,7 +312,7 @@ namespace sogen
                 if (auto* state = this->resolve_window(window))
                 {
                     update_surface_texture(*state, surface);
-                    this->render_window(*state);
+                    render_window(*state);
                 }
 #else
                 (void)window;
@@ -367,7 +367,7 @@ namespace sogen
                 {
                     if (auto* top_state = this->resolve_window(top))
                     {
-                        this->render_window(*top_state);
+                        render_window(*top_state);
                     }
                 }
             }
@@ -446,7 +446,7 @@ namespace sogen
                 SDL_UpdateTexture(state.texture, nullptr, surface.pixels, surface.stride);
             }
 
-            void render_window(window_state& state)
+            static void render_window(window_state& state)
             {
                 if (state.has_surface && state.texture)
                 {

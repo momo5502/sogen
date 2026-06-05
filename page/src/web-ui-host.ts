@@ -342,9 +342,7 @@ export function attachSogenUiHost(
   }
 
   function pointInRect(rect: Rect, x: number, y: number) {
-    return (
-      x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom
-    );
+    return x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
   }
 
   function drawButtonGlyph(button: CaptionButton, color: string) {
@@ -362,7 +360,12 @@ export function attachSogenUiHost(
       context2d.moveTo(cx + 5, cy - 5);
       context2d.lineTo(cx - 5, cy + 5);
     } else if (button.command === "maximize") {
-      context2d.strokeRect(Math.round(cx - 5) + 0.5, Math.round(cy - 5) + 0.5, 10, 10);
+      context2d.strokeRect(
+        Math.round(cx - 5) + 0.5,
+        Math.round(cy - 5) + 0.5,
+        10,
+        10,
+      );
     } else {
       context2d.moveTo(cx - 5, Math.round(cy) + 0.5);
       context2d.lineTo(cx + 5, Math.round(cy) + 0.5);
