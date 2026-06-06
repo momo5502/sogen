@@ -10,6 +10,16 @@ function(sogen_check_reflection_support)
     return()
   endif()
 
+  # The 32-bit MSVC compiler crashes on reflect (https://github.com/qlibs/reflect/issues/81)
+  # rather than failing cleanly. Ninja reports the crash as a fatal "build tool
+  # execution failed" error that aborts configuration before the graceful fallback
+  # below can disable reflection, so skip the probe entirely.
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+    message(STATUS "Reflection is not supported on 32-bit MSVC; disabling it.")
+    set(SOGEN_ENABLE_REFLECTION OFF CACHE BOOL "Enable reflection using the reflect library" FORCE)
+    return()
+  endif()
+
   set(CMAKE_REQUIRED_INCLUDES
     "${CMAKE_SOURCE_DIR}/deps/reflect"
     "${CMAKE_SOURCE_DIR}/src/windows-analyzer"
