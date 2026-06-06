@@ -1005,6 +1005,7 @@ namespace sogen
     {
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, handle bitmap);
         uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, hdc dc);
+        uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, uint32_t handle_value);
         BOOL handle_NtGdiFlush(const syscall_context& c);
         gdi_bitmap_surface* get_dc_present_surface(const syscall_context& c, hdc dc, uint32_t& present_handle);
 
@@ -1310,7 +1311,9 @@ namespace sogen
                                                                    .pixels = surface->pixels.data()});
                 }
 
-                c.proc.gdi_dc_states.erase(static_cast<uint32_t>(ps.paint_hdc));
+                // BeginPaint allocated a fresh GDI DC (handle table entry + DC_ATTR block) via
+                // GetDCEx; fully delete it here so repeated repaints don't leak GDI handles.
+                (void)handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(ps.paint_hdc));
             }
 
             validate_window(*win);

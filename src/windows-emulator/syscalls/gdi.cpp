@@ -745,14 +745,30 @@ namespace sogen
                                       colorref_to_bgra(text_out->background));
                         }
 
-                        const auto* dx = reinterpret_cast<const uint32_t*>(text_out->string.data());
-                        const auto* text =
-                            reinterpret_cast<const char16_t*>(text_out->string.data() + text_out->dx_size / sizeof(char16_t));
-                        draw_text(*surface, text_out->x + text_out->viewport_org.x + origin_x,
-                                  text_out->y + text_out->viewport_org.y + origin_y, std::u16string_view(text, text_out->count),
-                                  colorref_to_bgra(text_out->foreground),
-                                  has_rect && (text_out->options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr,
-                                  text_out->dx_size >= text_out->count * sizeof(uint32_t) ? dx : nullptr);
+                        // The guest controls the batch contents: the variable payload after
+                        // `string` holds the dx array (dx_size bytes) followed by the text
+                        // (count * sizeof(char16_t) bytes). Validate both fit inside this
+                        // command before dereferencing, otherwise a malformed count/dx_size
+                        // would read past header->size and beyond batch.Buffer.
+                        const auto payload_capacity = static_cast<size_t>(header->size) - offsetof(gdi_batch_text_out, string);
+                        const auto dx_bytes = static_cast<size_t>(text_out->dx_size);
+                        const auto text_bytes = static_cast<size_t>(text_out->count) * sizeof(char16_t);
+                        if (dx_bytes > payload_capacity || text_bytes > payload_capacity - dx_bytes)
+                        {
+                            std::printf("GDI batch text payload out of bounds count=%u dx_size=%u capacity=%zu\n", text_out->count,
+                                        text_out->dx_size, payload_capacity);
+                        }
+                        else
+                        {
+                            const auto* dx = reinterpret_cast<const uint32_t*>(text_out->string.data());
+                            const auto* text =
+                                reinterpret_cast<const char16_t*>(text_out->string.data() + text_out->dx_size / sizeof(char16_t));
+                            draw_text(*surface, text_out->x + text_out->viewport_org.x + origin_x,
+                                      text_out->y + text_out->viewport_org.y + origin_y, std::u16string_view(text, text_out->count),
+                                      colorref_to_bgra(text_out->foreground),
+                                      has_rect && (text_out->options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr,
+                                      text_out->dx_size >= text_out->count * sizeof(uint32_t) ? dx : nullptr);
+                        }
                     }
                     else if (header->cmd == k_gdi_batch_cmd_poly_pat_blt &&
                              static_cast<size_t>(header->size) >= k_gdi_poly_pat_blt_rect_offset)
