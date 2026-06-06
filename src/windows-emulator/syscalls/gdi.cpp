@@ -416,6 +416,8 @@ namespace sogen
                 return addr != 0;
             }
 
+            uint32_t window_surface_fill_color(const syscall_context& c, const window& win);
+
             // Resolves the bitmap surface a DC draws into, plus the offset from DC-local coordinates to surface
             // coordinates, and the host window handle the surface should be presented to. For a window DC this is
             // the top-level host window's persistent surface; child controls draw into it at their client offset.
@@ -480,7 +482,7 @@ namespace sogen
                 {
                     surface.width = width;
                     surface.height = height;
-                    surface.pixels.assign(static_cast<size_t>(width) * height, 0xFFFFFFFFu);
+                    surface.pixels.assign(static_cast<size_t>(width) * height, window_surface_fill_color(c, *win));
                 }
 
                 origin_x = off_x;
@@ -608,6 +610,40 @@ namespace sogen
                 }
 
                 return get_brush_color(c, brush_handle);
+            }
+
+            // The base fill for a freshly (re)created top-level window surface, matching what WM_ERASEBKGND
+            // would paint: the window class's background brush. hbrBackground is either a (COLOR_* + 1)
+            // system-color encoding (small integer) or a real GDI brush handle. A class brush of 0 means
+            // "no background", which we keep white, except for dialogs (#32770) whose face is the gray 3D
+            // face (COLOR_BTNFACE) painted by DefDlgProc.
+            uint32_t window_surface_fill_color(const syscall_context& c, const window& win)
+            {
+                constexpr uint32_t white_fill = 0xFFFFFFFFu;
+                constexpr uint32_t color_btnface_index = 15; // COLOR_BTNFACE in k_default_system_colors
+
+                uint64_t background = 0;
+                if (const auto it = c.proc.classes.find(win.class_name); it != c.proc.classes.end())
+                {
+                    background = it->second.wnd_class.hbrBackground;
+                }
+
+                if (background == 0)
+                {
+                    if (win.class_name == u"#32770")
+                    {
+                        return colorref_to_bgra(k_default_system_colors[color_btnface_index]);
+                    }
+
+                    return white_fill;
+                }
+
+                if (background <= USER_NUM_SYSCOLORS)
+                {
+                    return colorref_to_bgra(k_default_system_colors[background - 1]);
+                }
+
+                return get_brush_color(c, static_cast<uint32_t>(background));
             }
 
             void draw_line(gdi_bitmap_surface& surface, int x0, int y0, const int x1, const int y1, const uint32_t color)
