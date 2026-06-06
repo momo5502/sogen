@@ -21,6 +21,11 @@ namespace sogen
 
                 const auto request = c.emu.read_memory<LOGICAL_PROCESSOR_RELATIONSHIP>(input_buffer);
 
+                if (request == RelationAll)
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+
                 if (request == RelationGroup)
                 {
                     constexpr auto root_size = offsetof(EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64, Group);
