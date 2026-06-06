@@ -1272,6 +1272,66 @@ namespace sogen
             return TRUE;
         }
 
+        // user32 builds the classic checkbox/radio glyph bitmaps (FUN_18000b440 in user32) by asking
+        // win32k for each OEM control bitmap's dimensions via NtUserGetOemBitmapSize(id, SIZE*), filling
+        // { LONG cx; LONG cy; }. We don't host the real system bitmaps, but the size is still needed so
+        // button layout/paint can proceed instead of aborting on an unimplemented syscall. The classic
+        // check/radio glyph is 13x13 at 96 DPI; report that for every id.
+        BOOL handle_NtUserGetOemBitmapSize(const syscall_context& c, const uint32_t /*bitmap_id*/, const emulator_pointer size_ptr)
+        {
+            if (size_ptr == 0)
+            {
+                return FALSE;
+            }
+
+            constexpr std::array<int32_t, 2> size = {13, 13}; // { cx, cy }
+            c.emu.write_memory(size_ptr, size.data(), sizeof(size));
+            return TRUE;
+        }
+
+        // user32 stores per-window state bits (button checked/pushed/focus, etc.) in the window object's
+        // state bytes starting at WND offset 0x10. SetWindowState/ClearWindowState set/clear them: the
+        // high byte of `flags` selects the state byte (0x10 + (flags >> 8)) and the low byte is the mask.
+        // The client (e.g. the button wndproc) reads these bytes back from the same shared window object
+        // when painting, so faithfully OR/AND-ing the mask keeps client-side state consistent.
+        BOOL apply_window_state(const syscall_context& c, const hwnd window, const uint32_t flags, const bool set)
+        {
+            auto* win = c.proc.windows.get(window);
+            if (!win)
+            {
+                return FALSE;
+            }
+
+            const auto byte_address = win->guest.value() + 0x10 + ((flags >> 8) & 0xFF);
+            const auto mask = static_cast<uint8_t>(flags & 0xFF);
+
+            uint8_t state = 0;
+            c.win_emu.memory.try_read_memory(byte_address, &state, sizeof(state));
+            state = set ? static_cast<uint8_t>(state | mask) : static_cast<uint8_t>(state & ~mask);
+            c.win_emu.memory.write_memory(byte_address, &state, sizeof(state));
+            return TRUE;
+        }
+
+        BOOL handle_NtUserSetWindowState(const syscall_context& c, const hwnd window, const uint32_t flags)
+        {
+            return apply_window_state(c, window, flags, true);
+        }
+
+        BOOL handle_NtUserClearWindowState(const syscall_context& c, const hwnd window, const uint32_t flags)
+        {
+            return apply_window_state(c, window, flags, false);
+        }
+
+        // user32 blits the classic checkbox/radio/scrollbar glyphs from a kernel-owned system bitmap onto
+        // a DC via NtUserBitBltSysBmp(hdc, x, y, index). We don't host those system bitmaps, so this is a
+        // success stub (no glyph pixels) — like NtUserDrawIconEx — so control paint completes without the
+        // emulator aborting on an unimplemented syscall. The glyph itself is simply not drawn yet.
+        BOOL handle_NtUserBitBltSysBmp(const syscall_context& /*c*/, const hdc /*dc*/, const int /*x*/, const int /*y*/,
+                                       const uint32_t /*bitmap_index*/)
+        {
+            return TRUE;
+        }
+
         BOOL handle_NtUserGetClientRect(const syscall_context& c, const hwnd window, const emulator_pointer rect_ptr)
         {
             if (rect_ptr == 0)
