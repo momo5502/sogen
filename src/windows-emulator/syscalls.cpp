@@ -578,6 +578,7 @@ namespace sogen
         BOOL handle_NtGdiLineTo(const syscall_context& c, hdc dc, LONG x_end, LONG y_end);
         BOOL handle_NtGdiRectangle(const syscall_context& c, hdc dc, LONG left, LONG top, LONG right, LONG bottom);
         BOOL handle_NtGdiPatBlt(const syscall_context& c, hdc dc, LONG x, LONG y, LONG width, LONG height, DWORD rop);
+        BOOL handle_NtGdiPolyPatBlt(const syscall_context& c, hdc dc, DWORD rop, emulator_pointer poly, DWORD count, DWORD mode);
         BOOL handle_NtGdiExtTextOutW(const syscall_context& c, hdc dc, LONG x, LONG y, UINT options, emulator_pointer rect,
                                      emulator_pointer text, UINT count, emulator_pointer dx, DWORD code_page);
         BOOL handle_NtGdiGetRealizationInfo(const syscall_context& c, hdc dc, emulator_pointer realization_info, uint64_t font);
@@ -1024,6 +1025,7 @@ namespace sogen
         add_handler(NtGdiLineTo);
         add_handler(NtGdiRectangle);
         add_handler(NtGdiPatBlt);
+        add_handler(NtGdiPolyPatBlt);
         add_handler(NtGdiExtTextOutW);
         add_handler(NtGdiGetRealizationInfo);
         add_handler(NtGdiGetEntry);

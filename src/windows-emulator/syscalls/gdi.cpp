@@ -1599,6 +1599,44 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtGdiPolyPatBlt(const syscall_context& c, const hdc dc, const DWORD /*rop*/, const emulator_pointer poly,
+                                    const DWORD count, const DWORD /*mode*/)
+        {
+            gdi_dc_state* dc_state = nullptr;
+            gdi_bitmap_surface* surface = nullptr;
+            int32_t origin_x = 0;
+            int32_t origin_y = 0;
+            if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !surface)
+            {
+                return FALSE;
+            }
+
+            if (poly == 0 || count == 0 || count > 0x1000)
+            {
+                return FALSE;
+            }
+
+            // POLYPATBLT entry: { int x; int y; int cx; int cy; HBRUSH hbr; } (HBRUSH at +0x10 on x64).
+            constexpr uint64_t k_entry_size = 0x18;
+            constexpr uint64_t k_brush_offset = 0x10;
+            for (DWORD i = 0; i < count; ++i)
+            {
+                const auto entry = poly + static_cast<uint64_t>(i) * k_entry_size;
+                int32_t rect[4]{}; // x, y, cx, cy
+                uint64_t brush = 0;
+                if (!c.win_emu.memory.try_read_memory(entry, rect, sizeof(rect)) ||
+                    !c.win_emu.memory.try_read_memory(entry + k_brush_offset, &brush, sizeof(brush)))
+                {
+                    return FALSE;
+                }
+
+                const auto color = brush != 0 ? get_brush_color(c, static_cast<uint32_t>(brush)) : get_dc_brush_color(c, dc);
+                fill_rect(*surface, rect[0] + origin_x, rect[1] + origin_y, rect[0] + rect[2] + origin_x,
+                          rect[1] + rect[3] + origin_y, color);
+            }
+            return TRUE;
+        }
+
         BOOL handle_NtGdiExtTextOutW(const syscall_context& c, const hdc dc, const LONG x, const LONG y, const UINT options,
                                      const emulator_pointer rect, const emulator_pointer text, const UINT count, const emulator_pointer dx,
                                      const DWORD /*code_page*/)

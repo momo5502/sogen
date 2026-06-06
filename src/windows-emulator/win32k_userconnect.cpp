@@ -78,6 +78,56 @@ namespace sogen
             return try_read_exact(memory, source, destination, std::min(sizeof(destination), source_size));
         }
 
+        // user32 builds MessageBox dialogs from SERVERINFO.MBStrings: an array of
+        // { WCHAR achName[16]; UINT id; UINT uStr; } (0x28 bytes) at gpsi + 0x3A4, indexed by the
+        // standard order OK, Cancel, Abort, Retry, Ignore, Yes, No, Close, Help, Try Again, Continue.
+        // SoftModalMessageBox reads each button's control id (+0x20) and caption (+0x00) from here, so
+        // without it message-box buttons get id 0 (wrong return value) and empty captions.
+        void seed_messagebox_button_strings(memory_interface& memory, const uint64_t serverinfo_base)
+        {
+            if (serverinfo_base == 0)
+            {
+                return;
+            }
+
+            struct mb_string
+            {
+                std::u16string_view text;
+                uint32_t id;
+            };
+            static constexpr std::array<mb_string, 11> entries = {{
+                {u"OK", 1},        // IDOK
+                {u"Cancel", 2},    // IDCANCEL
+                {u"&Abort", 3},    // IDABORT
+                {u"&Retry", 4},    // IDRETRY
+                {u"&Ignore", 5},   // IDIGNORE
+                {u"&Yes", 6},      // IDYES
+                {u"&No", 7},       // IDNO
+                {u"&Close", 8},    // IDCLOSE
+                {u"Help", 9},      // IDHELP
+                {u"&Try Again", 10}, // IDTRYAGAIN
+                {u"&Continue", 11},  // IDCONTINUE
+            }};
+
+            constexpr uint64_t k_mbstrings_offset = 0x3A4;
+            constexpr uint64_t k_mbstrings_entry_size = 0x28;
+            constexpr uint64_t k_mbstrings_id_offset = 0x20;
+            constexpr size_t k_mbstrings_name_capacity = 16; // WCHAR achName[16]
+
+            for (size_t i = 0; i < entries.size(); ++i)
+            {
+                const auto entry_base = serverinfo_base + k_mbstrings_offset + i * k_mbstrings_entry_size;
+
+                std::array<char16_t, k_mbstrings_name_capacity> name{};
+                const auto copy_count = std::min<size_t>(entries[i].text.size(), k_mbstrings_name_capacity - 1);
+                std::ranges::copy_n(entries[i].text.begin(), static_cast<std::ptrdiff_t>(copy_count), name.begin());
+                memory.write_memory(entry_base, name.data(), name.size() * sizeof(char16_t));
+
+                const auto id = entries[i].id;
+                memory.write_memory(entry_base + k_mbstrings_id_offset, &id, sizeof(id));
+            }
+        }
+
         bool try_copy_client_pfn_arrays(memory_interface& memory, process_context& process, const client_pfn_arrays arrays)
         {
             if (arrays.ansi == 0 || arrays.wide == 0 || arrays.worker == 0)
@@ -96,6 +146,9 @@ namespace sogen
             {
                 return false;
             }
+
+            // Seed after the pfn copy: the worker-array fill above zeroes part of the MBStrings region.
+            seed_messagebox_button_strings(memory, process.user_handles.get_server_info().value());
 
             refresh_dispatch_client_message(process);
             return true;
