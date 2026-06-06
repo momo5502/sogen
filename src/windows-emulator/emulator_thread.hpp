@@ -282,10 +282,6 @@ namespace sogen
             return this->await_time.has_value() && this->await_time.value() != infinite && this->await_time.value() < clock.steady_now();
         }
 
-        // A user APC queued for an alertable wait must be delivered (WAIT_IO_COMPLETION)
-        // before the wait completes by timeout. While such an APC is pending, the wait
-        // must not latch a timeout status, otherwise it suppresses APC dispatch in
-        // switch_to_thread (which skips dispatch when a status is already pending).
         bool has_pending_alertable_apc() const
         {
             return this->apc_alertable && !this->pending_apcs.empty();
