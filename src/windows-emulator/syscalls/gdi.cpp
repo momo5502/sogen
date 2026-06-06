@@ -714,8 +714,7 @@ namespace sogen
                 int32_t origin_y = 0;
                 if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !surface)
                 {
-                    std::printf("GDI batch surface missing hdc=0x%llx\n", static_cast<unsigned long long>(dc));
-                    return false;
+                    return true;
                 }
 
                 const auto* bytes = reinterpret_cast<const uint8_t*>(batch.Buffer);
@@ -1321,6 +1320,21 @@ namespace sogen
             return ensure_default_hdc(c);
         }
 
+        BOOL handle_NtGdiGetDCDword(const syscall_context& c, const hdc dc, const uint32_t /*index*/, const emulator_pointer result)
+        {
+            if (dc == 0 || result == 0)
+            {
+                return FALSE;
+            }
+
+            // gdi32 only falls back to this syscall for DC dwords it does not cache client-side
+            // (e.g. GdiGetIsMemDc). 0 is the correct default for the control paint path: the paint
+            // DC is a real (non-memory) DC, so "is memory DC" is false.
+            uint32_t value = 0;
+            c.emu.write_memory(result, &value, sizeof(value));
+            return TRUE;
+        }
+
         uint64_t handle_NtGdiHfontCreate(const syscall_context& c, const emulator_pointer /*logfont*/, const uint32_t /*angle*/)
         {
             return allocate_gdi_object(c, k_gdi_font_type, k_gdi_font_attr_size);
@@ -1581,6 +1595,46 @@ namespace sogen
                 {
                     set_surface_pixel(*surface, x + xx + origin_x, y + yy + origin_y, color);
                 }
+            }
+            return TRUE;
+        }
+
+        BOOL handle_NtGdiPolyPatBlt(const syscall_context& c, const hdc dc, const DWORD /*rop*/, const emulator_pointer poly,
+                                    const DWORD count, const DWORD /*mode*/)
+        {
+            gdi_dc_state* dc_state = nullptr;
+            gdi_bitmap_surface* surface = nullptr;
+            int32_t origin_x = 0;
+            int32_t origin_y = 0;
+            if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !surface)
+            {
+                return FALSE;
+            }
+
+            if (poly == 0 || count == 0 || count > 0x1000)
+            {
+                return FALSE;
+            }
+
+            // POLYPATBLT entry (verified at runtime against this build's gdi32): { int x; int y; int cx; int cy; HBRUSH hbr; }
+            // i.e. position + size, NOT a RECT with right/bottom. Button frame draws pass thin edges such as
+            // {x=96, y=4, cx=1, cy=20}, which only make sense as width/height. HBRUSH is at +0x10 on x64.
+            constexpr uint64_t k_entry_size = 0x18;
+            constexpr uint64_t k_brush_offset = 0x10;
+            for (DWORD i = 0; i < count; ++i)
+            {
+                const auto entry = poly + static_cast<uint64_t>(i) * k_entry_size;
+                std::array<int32_t, 4> rect{}; // x, y, cx, cy
+                uint64_t brush = 0;
+                if (!c.win_emu.memory.try_read_memory(entry, rect.data(), rect.size() * sizeof(int32_t)) ||
+                    !c.win_emu.memory.try_read_memory(entry + k_brush_offset, &brush, sizeof(brush)))
+                {
+                    return FALSE;
+                }
+
+                const auto color = brush != 0 ? get_brush_color(c, static_cast<uint32_t>(brush)) : get_dc_brush_color(c, dc);
+                fill_rect(*surface, rect[0] + origin_x, rect[1] + origin_y, rect[0] + rect[2] + origin_x, rect[1] + rect[3] + origin_y,
+                          color);
             }
             return TRUE;
         }

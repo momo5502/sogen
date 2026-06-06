@@ -47,6 +47,11 @@ interface Rect {
   bottom: number;
 }
 
+interface Point {
+  x: number;
+  y: number;
+}
+
 type CaptionCommand = "minimize" | "maximize" | "close";
 
 interface CaptionButton extends Rect {
@@ -94,6 +99,7 @@ const WS_MAXIMIZEBOX = 0x00010000;
 const CAPTION_HEIGHT = 30;
 const FRAME_BORDER = 1;
 const CAPTION_BUTTON_WIDTH = 46;
+const VIEWPORT_MARGIN = 16;
 
 const CHROME_COLORS = {
   frame: "#202020",
@@ -167,6 +173,7 @@ export function attachSogenUiHost(
   let dragState: { hwnd: number; offsetX: number; offsetY: number } | null =
     null;
   let hoverState: { hwnd: number; command: CaptionCommand } | null = null;
+  let viewportOffset: Point = { x: 0, y: 0 };
 
   function notifyWindowCount() {
     options.onWindowCountChanged?.(windows.size);
@@ -345,6 +352,84 @@ export function attachSogenUiHost(
     return x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
   }
 
+  function orderedTopLevelWindows() {
+    const ordered: HostWindowState[] = [];
+    for (const window of windows.values()) {
+      if (window.visible && window.topLevel) {
+        ordered.push(window);
+      }
+    }
+
+    return ordered;
+  }
+
+  function visibleWindowBounds(windowsToDraw: HostWindowState[]) {
+    if (windowsToDraw.length === 0) {
+      return null;
+    }
+
+    const bounds = {
+      left: Number.POSITIVE_INFINITY,
+      top: Number.POSITIVE_INFINITY,
+      right: Number.NEGATIVE_INFINITY,
+      bottom: Number.NEGATIVE_INFINITY,
+    };
+
+    for (const window of windowsToDraw) {
+      const frame = frameRect(window);
+      bounds.left = Math.min(bounds.left, frame.left);
+      bounds.top = Math.min(bounds.top, frame.top);
+      bounds.right = Math.max(bounds.right, frame.right);
+      bounds.bottom = Math.max(bounds.bottom, frame.bottom);
+    }
+
+    return bounds;
+  }
+
+  function computeViewportAxisOffset(
+    min: number,
+    max: number,
+    viewportSize: number,
+  ) {
+    const size = max - min;
+    const usableSize = Math.max(1, viewportSize - VIEWPORT_MARGIN * 2);
+
+    if (size <= usableSize) {
+      if (min < VIEWPORT_MARGIN || max > viewportSize - VIEWPORT_MARGIN) {
+        return Math.round((viewportSize - size) / 2 - min);
+      }
+
+      return 0;
+    }
+
+    if (min > VIEWPORT_MARGIN) {
+      return Math.round(VIEWPORT_MARGIN - min);
+    }
+
+    if (max < viewportSize - VIEWPORT_MARGIN) {
+      return Math.round(viewportSize - VIEWPORT_MARGIN - max);
+    }
+
+    return 0;
+  }
+
+  function updateViewportOffset(
+    windowsToDraw: HostWindowState[],
+    viewportWidth: number,
+    viewportHeight: number,
+  ) {
+    const bounds = visibleWindowBounds(windowsToDraw);
+    if (!bounds) {
+      viewportOffset = { x: 0, y: 0 };
+      return;
+    }
+
+    viewportOffset = {
+      x: computeViewportAxisOffset(bounds.left, bounds.right, viewportWidth),
+      y: computeViewportAxisOffset(bounds.top, bounds.bottom, viewportHeight),
+    };
+  }
+
   function drawButtonGlyph(button: CaptionButton, color: string) {
     const cx = (button.left + button.right) / 2;
     const cy = (button.top + button.bottom) / 2;
@@ -483,9 +568,15 @@ export function attachSogenUiHost(
     context2d.fillStyle = PLAYGROUND_BACKGROUND;
     context2d.fillRect(0, 0, rect.width, rect.height);
 
-    for (const window of windows.values()) {
+    const windowsToDraw = orderedTopLevelWindows();
+    updateViewportOffset(windowsToDraw, rect.width, rect.height);
+
+    context2d.save();
+    context2d.translate(viewportOffset.x, viewportOffset.y);
+    for (const window of windowsToDraw) {
       drawWindow(window);
     }
+    context2d.restore();
   }
 
   function raiseWindow(hwnd: number) {
@@ -499,12 +590,7 @@ export function attachSogenUiHost(
   }
 
   function hitTest(x: number, y: number): HitResult | null {
-    const ordered: HostWindowState[] = [];
-    for (const window of windows.values()) {
-      if (window.visible && window.topLevel) {
-        ordered.push(window);
-      }
-    }
+    const ordered = orderedTopLevelWindows();
 
     for (let i = ordered.length - 1; i >= 0; --i) {
       const window = ordered[i];
@@ -555,8 +641,8 @@ export function attachSogenUiHost(
   function toCanvasPoint(event: MouseEvent) {
     const rect = canvas.getBoundingClientRect();
     return {
-      x: Math.floor(event.clientX - rect.left),
-      y: Math.floor(event.clientY - rect.top),
+      x: Math.floor(event.clientX - rect.left - viewportOffset.x),
+      y: Math.floor(event.clientY - rect.top - viewportOffset.y),
     };
   }
 

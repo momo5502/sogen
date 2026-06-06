@@ -446,6 +446,12 @@ namespace sogen
         NTSTATUS handle_NtUserSetCursor();
         uint64_t handle_NtUserGetCursor();
         NTSTATUS handle_NtUserFindExistingCursorIcon();
+        BOOL handle_NtUserDestroyCursor(const syscall_context& c, hicon icon, DWORD flags);
+        hicon handle_NtUserGetCursorFrameInfo(const syscall_context& c, hicon icon, UINT frame, emulator_object<uint32_t> rate_jiffies,
+                                              emulator_object<uint32_t> frame_count);
+        BOOL handle_NtUserGetIconSize(const syscall_context& c, hicon icon, UINT frame, emulator_object<int> cx, emulator_object<int> cy);
+        BOOL handle_NtUserDrawIconEx(const syscall_context& c, hdc dc, int x, int y, hicon icon, int cx, int cy, UINT istep,
+                                     uint64_t flicker_brush, UINT di_flags);
         BOOL handle_NtUserMessageBeep();
         uint64_t handle_NtUserFindWindowEx(const syscall_context& c, hwnd parent, hwnd child_after,
                                            emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
@@ -554,6 +560,7 @@ namespace sogen
         uint64_t handle_NtGdiSelectBitmap(const syscall_context& c, hdc dc, handle bitmap);
         uint64_t handle_NtGdiSelectFont(const syscall_context& c, hdc dc, uint64_t font);
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, handle bitmap);
+        BOOL handle_NtGdiGetDCDword(const syscall_context& c, hdc dc, uint32_t index, emulator_pointer result);
         uint64_t handle_NtGdiHfontCreate(const syscall_context& c, emulator_pointer logfont, uint32_t angle);
         uint32_t handle_NtGdiExtGetObjectW(const syscall_context& c, uint32_t handle_value, uint32_t size, emulator_pointer buffer);
         uint32_t handle_NtGdiEnumFonts();
@@ -571,6 +578,7 @@ namespace sogen
         BOOL handle_NtGdiLineTo(const syscall_context& c, hdc dc, LONG x_end, LONG y_end);
         BOOL handle_NtGdiRectangle(const syscall_context& c, hdc dc, LONG left, LONG top, LONG right, LONG bottom);
         BOOL handle_NtGdiPatBlt(const syscall_context& c, hdc dc, LONG x, LONG y, LONG width, LONG height, DWORD rop);
+        BOOL handle_NtGdiPolyPatBlt(const syscall_context& c, hdc dc, DWORD rop, emulator_pointer poly, DWORD count, DWORD mode);
         BOOL handle_NtGdiExtTextOutW(const syscall_context& c, hdc dc, LONG x, LONG y, UINT options, emulator_pointer rect,
                                      emulator_pointer text, UINT count, emulator_pointer dx, DWORD code_page);
         BOOL handle_NtGdiGetRealizationInfo(const syscall_context& c, hdc dc, emulator_pointer realization_info, uint64_t font);
@@ -1000,6 +1008,7 @@ namespace sogen
         add_handler(NtGdiSelectBitmap);
         add_handler(NtGdiSelectFont);
         add_handler(NtGdiGetDCforBitmap);
+        add_handler(NtGdiGetDCDword);
         add_handler(NtGdiHfontCreate);
         add_handler(NtGdiExtGetObjectW);
         add_handler(NtGdiEnumFonts);
@@ -1016,6 +1025,7 @@ namespace sogen
         add_handler(NtGdiLineTo);
         add_handler(NtGdiRectangle);
         add_handler(NtGdiPatBlt);
+        add_handler(NtGdiPolyPatBlt);
         add_handler(NtGdiExtTextOutW);
         add_handler(NtGdiGetRealizationInfo);
         add_handler(NtGdiGetEntry);
@@ -1102,6 +1112,10 @@ namespace sogen
         add_handler(NtUserGetCursorPos);
         add_handler(NtUserReleaseDC);
         add_handler(NtUserFindExistingCursorIcon);
+        add_handler(NtUserDestroyCursor);
+        add_handler(NtUserGetCursorFrameInfo);
+        add_handler(NtUserGetIconSize);
+        add_handler(NtUserDrawIconEx);
         add_handler(NtUserMessageBeep);
         add_handler(NtSetContextThread);
         add_handler(NtUserFindWindowEx);

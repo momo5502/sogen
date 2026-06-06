@@ -12,6 +12,15 @@ namespace sogen
         constexpr size_t k_dispatch_client_message_index = 21;
         constexpr size_t k_ntdll_probe_size = 128;
         constexpr size_t k_expected_pfn_pointer_count = 3;
+        constexpr size_t k_client_pfn_array_size = FNID_ARRAY_SIZE * sizeof(uint64_t);
+        constexpr size_t k_client_worker_pfn_array_size = 0x90;
+
+        struct client_pfn_arrays
+        {
+            uint64_t ansi{};
+            uint64_t wide{};
+            uint64_t worker{};
+        };
 
         std::vector<uint64_t> scan_rip_relative_lea_references(const std::vector<uint8_t>& bytes, const uint64_t code_base,
                                                                const size_t max_results)
@@ -56,6 +65,96 @@ namespace sogen
                 process.dispatch_client_message = dispatch_client_message;
             }
         }
+
+        bool try_read_exact(memory_interface& memory, const uint64_t address, void* data, const size_t size)
+        {
+            return address != 0 && memory.try_read_memory(address, data, size);
+        }
+
+        // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+        bool try_copy_client_pfn_array(memory_interface& memory, const uint64_t source, uint64_t (&destination)[FNID_ARRAY_SIZE],
+                                       const size_t source_size)
+        {
+            std::ranges::fill(destination, 0);
+            return try_read_exact(memory, source, destination, std::min(sizeof(destination), source_size));
+        }
+
+        // user32 builds MessageBox dialogs from SERVERINFO.MBStrings: an array of
+        // { WCHAR achName[16]; UINT id; UINT uStr; } (0x28 bytes) at gpsi + 0x3A4, indexed by the
+        // standard order OK, Cancel, Abort, Retry, Ignore, Yes, No, Close, Help, Try Again, Continue.
+        // SoftModalMessageBox reads each button's control id (+0x20) and caption (+0x00) from here, so
+        // without it message-box buttons get id 0 (wrong return value) and empty captions.
+        void seed_messagebox_button_strings(memory_interface& memory, const uint64_t serverinfo_base)
+        {
+            if (serverinfo_base == 0)
+            {
+                return;
+            }
+
+            struct mb_string
+            {
+                std::u16string_view text;
+                uint32_t id;
+            };
+            static constexpr std::array<mb_string, 11> entries = {{
+                {.text = u"OK", .id = 1},          // IDOK
+                {.text = u"Cancel", .id = 2},      // IDCANCEL
+                {.text = u"&Abort", .id = 3},      // IDABORT
+                {.text = u"&Retry", .id = 4},      // IDRETRY
+                {.text = u"&Ignore", .id = 5},     // IDIGNORE
+                {.text = u"&Yes", .id = 6},        // IDYES
+                {.text = u"&No", .id = 7},         // IDNO
+                {.text = u"&Close", .id = 8},      // IDCLOSE
+                {.text = u"Help", .id = 9},        // IDHELP
+                {.text = u"&Try Again", .id = 10}, // IDTRYAGAIN
+                {.text = u"&Continue", .id = 11},  // IDCONTINUE
+            }};
+
+            constexpr uint64_t k_mbstrings_offset = 0x3A4;
+            constexpr uint64_t k_mbstrings_entry_size = 0x28;
+            constexpr uint64_t k_mbstrings_id_offset = 0x20;
+            constexpr size_t k_mbstrings_name_capacity = 16; // WCHAR achName[16]
+
+            for (size_t i = 0; i < entries.size(); ++i)
+            {
+                const auto entry_base = serverinfo_base + k_mbstrings_offset + i * k_mbstrings_entry_size;
+
+                std::array<char16_t, k_mbstrings_name_capacity> name{};
+                const auto copy_count = std::min<size_t>(entries[i].text.size(), k_mbstrings_name_capacity - 1);
+                std::ranges::copy_n(entries[i].text.begin(), static_cast<std::ptrdiff_t>(copy_count), name.begin());
+                memory.write_memory(entry_base, name.data(), name.size() * sizeof(char16_t));
+
+                const auto id = entries[i].id;
+                memory.write_memory(entry_base + k_mbstrings_id_offset, &id, sizeof(id));
+            }
+        }
+
+        bool try_copy_client_pfn_arrays(memory_interface& memory, process_context& process, const client_pfn_arrays arrays)
+        {
+            if (arrays.ansi == 0 || arrays.wide == 0 || arrays.worker == 0)
+            {
+                return false;
+            }
+
+            bool copied = false;
+            process.user_handles.get_server_info().access([&](USER_SERVERINFO& server_info) {
+                copied = try_copy_client_pfn_array(memory, arrays.ansi, server_info.apfnClientA, k_client_pfn_array_size) &&
+                         try_copy_client_pfn_array(memory, arrays.wide, server_info.apfnClientW, k_client_pfn_array_size) &&
+                         try_copy_client_pfn_array(memory, arrays.worker, server_info.apfnClientWorker, k_client_worker_pfn_array_size);
+            });
+
+            if (!copied)
+            {
+                return false;
+            }
+
+            // Seed after the pfn copy: the worker-array fill above zeroes part of the MBStrings region.
+            seed_messagebox_button_strings(memory, process.user_handles.get_server_info().value());
+
+            refresh_dispatch_client_message(process);
+            return true;
+        }
+
     }
 
     namespace win32k_userconnect
@@ -211,32 +310,8 @@ namespace sogen
         bool try_update_client_pfn_arrays_from_addresses(memory_interface& memory, process_context& process, const uint64_t apfn_client_a,
                                                          const uint64_t apfn_client_w, const uint64_t apfn_client_worker)
         {
-            try
-            {
-                process.user_handles.get_server_info().access([&](USER_SERVERINFO& server_info) {
-                    if (apfn_client_a != 0)
-                    {
-                        memory.read_memory(apfn_client_a, &server_info.apfnClientA, sizeof(server_info.apfnClientA));
-                    }
-
-                    if (apfn_client_w != 0)
-                    {
-                        memory.read_memory(apfn_client_w, &server_info.apfnClientW, sizeof(server_info.apfnClientW));
-                    }
-
-                    if (apfn_client_worker != 0)
-                    {
-                        memory.read_memory(apfn_client_worker, &server_info.apfnClientWorker, sizeof(server_info.apfnClientWorker));
-                    }
-                });
-            }
-            catch (...)
-            {
-                return false;
-            }
-
-            refresh_dispatch_client_message(process);
-            return true;
+            return try_copy_client_pfn_arrays(
+                memory, process, client_pfn_arrays{.ansi = apfn_client_a, .wide = apfn_client_w, .worker = apfn_client_worker});
         }
 
         bool try_bootstrap_client_pfn_arrays_from_ntdll(windows_emulator& win_emu)

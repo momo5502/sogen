@@ -65,7 +65,10 @@ namespace sogen
 
         bool is_button_window(const window& win)
         {
-            return win.class_name == u"Button" || win.class_name == u"BUTTON";
+            // window::class_name stores the raw class passed to CreateWindowEx, which for builtin
+            // controls is often an ordinal atom (e.g. "#1") rather than the literal name. Match the
+            // same aliases that syscalls::normalize_builtin_window_class_name maps to "Button".
+            return win.class_name == u"Button" || win.class_name == u"BUTTON" || win.class_name == u"#1";
         }
 
         const window* find_button_child_at(const process_context& process, const hwnd parent, const int x, const int y)
