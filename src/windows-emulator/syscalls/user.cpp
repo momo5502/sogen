@@ -971,6 +971,60 @@ namespace sogen
             return read_large_string(str_obj, index);
         }
 
+        std::u16string read_def_set_text_string(const syscall_context& c, const emulator_object<LARGE_STRING> text)
+        {
+            if (!text)
+            {
+                return {};
+            }
+
+            if (const auto str = text.try_read())
+            {
+                constexpr ULONG k_max_reasonable_text_bytes = 0x10000;
+                const auto length = str->Length;
+                const auto max_length = str->MaximumLength;
+                const auto has_valid_empty_string = length == 0;
+                std::byte last_byte{};
+                const auto has_valid_buffer = str->Buffer != 0 && length <= k_max_reasonable_text_bytes && length <= max_length &&
+                                              length > 0 &&
+                                              c.win_emu.memory.try_read_memory(str->Buffer + length - 1, &last_byte, sizeof(last_byte));
+                if (has_valid_empty_string)
+                {
+                    return {};
+                }
+
+                if (has_valid_buffer)
+                {
+                    std::array<uint8_t, 2> buffer_bytes{};
+                    c.win_emu.memory.try_read_memory(str->Buffer, buffer_bytes.data(), buffer_bytes.size());
+                    if (str->bAnsi || (buffer_bytes[0] >= 0x20 && buffer_bytes[0] < 0x7F && buffer_bytes[1] != 0))
+                    {
+                        return u8_to_u16(read_string<char>(c.win_emu.memory, str->Buffer, length));
+                    }
+
+                    return read_string<char16_t>(c.win_emu.memory, str->Buffer, length / sizeof(char16_t));
+                }
+            }
+
+            std::array<uint8_t, 2> first_bytes{};
+            if (!c.win_emu.memory.try_read_memory(text.value(), first_bytes.data(), first_bytes.size()))
+            {
+                return {};
+            }
+
+            if (first_bytes[0] >= 0x20 && first_bytes[0] < 0x7F && first_bytes[1] == 0)
+            {
+                return read_string<char16_t>(c.win_emu.memory, text.value());
+            }
+
+            if (first_bytes[0] >= 0x20 && first_bytes[0] < 0x7F)
+            {
+                return u8_to_u16(read_string<char>(c.win_emu.memory, text.value()));
+            }
+
+            return read_string<char16_t>(c.win_emu.memory, text.value());
+        }
+
         std::u16string standard_dialog_button_caption(const uint64_t id)
         {
             switch (id)
@@ -1040,6 +1094,7 @@ namespace sogen
         uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, uint32_t handle_value);
         BOOL handle_NtGdiFlush(const syscall_context& c);
         gdi_bitmap_surface* get_dc_present_surface(const syscall_context& c, hdc dc, uint32_t& present_handle);
+        void draw_system_button_glyph(const syscall_context& c, hdc dc, int x, int y, uint32_t index);
 
         NTSTATUS handle_NtUserTraceLoggingSendMixedModeTelemetry()
         {
@@ -1272,6 +1327,34 @@ namespace sogen
             return TRUE;
         }
 
+        hwnd handle_NtUserSetCapture(const syscall_context& c, const hwnd window)
+        {
+            const auto previous = c.proc.mouse_capture_window;
+            if (window == 0 || c.proc.windows.get(window))
+            {
+                c.proc.mouse_capture_window = window;
+            }
+            return previous;
+        }
+
+        BOOL handle_NtUserReleaseCapture(const syscall_context& c)
+        {
+            c.proc.mouse_capture_window = 0;
+            return TRUE;
+        }
+
+        BOOL handle_NtUserDefSetText(const syscall_context& c, const hwnd window, const emulator_object<LARGE_STRING> text)
+        {
+            auto* win = c.proc.windows.get(window);
+            if (!win)
+            {
+                return FALSE;
+            }
+
+            update_window_title(c, *win, read_def_set_text_string(c, text));
+            return TRUE;
+        }
+
         // user32 builds the classic checkbox/radio glyph bitmaps (FUN_18000b440 in user32) by asking
         // win32k for each OEM control bitmap's dimensions via NtUserGetOemBitmapSize(id, SIZE*), filling
         // { LONG cx; LONG cy; }. We don't host the real system bitmaps, but the size is still needed so
@@ -1322,13 +1405,10 @@ namespace sogen
             return apply_window_state(c, window, flags, false);
         }
 
-        // user32 blits the classic checkbox/radio/scrollbar glyphs from a kernel-owned system bitmap onto
-        // a DC via NtUserBitBltSysBmp(hdc, x, y, index). We don't host those system bitmaps, so this is a
-        // success stub (no glyph pixels) — like NtUserDrawIconEx — so control paint completes without the
-        // emulator aborting on an unimplemented syscall. The glyph itself is simply not drawn yet.
-        BOOL handle_NtUserBitBltSysBmp(const syscall_context& /*c*/, const hdc /*dc*/, const int /*x*/, const int /*y*/,
-                                       const uint32_t /*bitmap_index*/)
+        BOOL handle_NtUserBitBltSysBmp(const syscall_context& c, const hdc dc, const int x, const int y, const uint32_t bitmap_index)
         {
+            (void)handle_NtGdiFlush(c);
+            draw_system_button_glyph(c, dc, x, y, bitmap_index);
             return TRUE;
         }
 

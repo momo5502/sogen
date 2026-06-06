@@ -63,32 +63,66 @@ namespace sogen
             return static_cast<int16_t>((lparam >> 16) & 0xFFFF);
         }
 
-        bool is_button_window(const window& win)
+        struct child_hit_test_result
         {
-            // window::class_name stores the raw class passed to CreateWindowEx, which for builtin
-            // controls is often an ordinal atom (e.g. "#1") rather than the literal name. Match the
-            // same aliases that syscalls::normalize_builtin_window_class_name maps to "Button".
-            return win.class_name == u"Button" || win.class_name == u"BUTTON" || win.class_name == u"#1";
-        }
+            const window* win{};
+            int x{};
+            int y{};
+        };
 
-        const window* find_button_child_at(const process_context& process, const hwnd parent, const int x, const int y)
+        std::optional<child_hit_test_result> find_child_window_at(const process_context& process, const hwnd parent, const int x,
+                                                                  const int y)
         {
+            std::optional<child_hit_test_result> result{};
             for (const auto& [index, child] : process.windows)
             {
                 (void)index;
-                if (child.parent_handle != parent || !is_button_window(child) || (child.style & WS_VISIBLE) == 0 ||
-                    (child.style & WS_DISABLED) != 0)
+                if (child.parent_handle != parent || (child.style & WS_VISIBLE) == 0 || (child.style & WS_DISABLED) != 0)
                 {
                     continue;
                 }
 
                 if (x >= child.x && x < child.x + child.width && y >= child.y && y < child.y + child.height)
                 {
-                    return &child;
+                    const auto child_x = x - child.x;
+                    const auto child_y = y - child.y;
+                    if (auto descendant = find_child_window_at(process, child.handle, child_x, child_y))
+                    {
+                        result = descendant;
+                    }
+                    else
+                    {
+                        result = child_hit_test_result{.win = &child, .x = child_x, .y = child_y};
+                    }
                 }
             }
 
-            return nullptr;
+            return result;
+        }
+
+        std::optional<POINT> get_window_origin_relative_to_ancestor(const process_context& process, const hwnd window, const hwnd ancestor)
+        {
+            POINT origin{};
+            auto current_handle = window;
+            while (current_handle != 0 && current_handle != ancestor)
+            {
+                const auto* current = process.windows.get(current_handle);
+                if (!current)
+                {
+                    return std::nullopt;
+                }
+
+                origin.x += current->x;
+                origin.y += current->y;
+                current_handle = current->parent_handle;
+            }
+
+            if (current_handle != ancestor)
+            {
+                return std::nullopt;
+            }
+
+            return origin;
         }
 
         void perform_context_switch_work(windows_emulator& win_emu)
@@ -874,27 +908,41 @@ namespace sogen
             return;
         }
 
-        if (event.message == WM_LBUTTONDOWN)
-        {
-            if (const auto* button = find_button_child_at(this->process, event.window, point_x(event.lParam), point_y(event.lParam)))
-            {
-                msg command{};
-                command.window = event.window;
-                command.message = WM_COMMAND;
-                command.wParam = button->guest.read().wID & 0xFFFFull;
-                command.lParam = button->handle;
-                thread->post_message(command);
-                this->switch_thread_ = true;
-                this->emu().stop();
-                return;
-            }
-        }
-
         msg m{};
         m.window = event.window;
         m.message = event.message;
         m.wParam = event.wParam;
         m.lParam = event.lParam;
+
+        if (event.message == WM_LBUTTONDOWN || event.message == WM_LBUTTONUP)
+        {
+            const auto x = point_x(event.lParam);
+            const auto y = point_y(event.lParam);
+
+            if (this->process.mouse_capture_window != 0)
+            {
+                if (const auto* captured = this->process.windows.get(this->process.mouse_capture_window);
+                    captured && (captured->style & WS_VISIBLE) != 0)
+                {
+                    if (auto origin = get_window_origin_relative_to_ancestor(this->process, captured->handle, event.window))
+                    {
+                        m.window = captured->handle;
+                        m.lParam =
+                            static_cast<uint16_t>(x - origin->x) | (static_cast<uint64_t>(static_cast<uint16_t>(y - origin->y)) << 16);
+                    }
+                }
+                else
+                {
+                    this->process.mouse_capture_window = 0;
+                }
+            }
+            else if (const auto child = find_child_window_at(this->process, event.window, x, y))
+            {
+                m.window = child->win->handle;
+                m.lParam = static_cast<uint16_t>(child->x) | (static_cast<uint64_t>(static_cast<uint16_t>(child->y)) << 16);
+            }
+        }
+
         if (event.message == WM_COMMAND && event.lParam != 0 && (event.wParam & 0xFFFF) == 0)
         {
             if (const auto* child = this->process.windows.get(event.lParam))
@@ -905,7 +953,8 @@ namespace sogen
         }
         thread->post_message(m);
 
-        if (event.message == WM_CLOSE || event.message == WM_COMMAND || event.message == WM_KEYDOWN)
+        if (event.message == WM_CLOSE || event.message == WM_COMMAND || event.message == WM_KEYDOWN || event.message == WM_LBUTTONDOWN ||
+            event.message == WM_LBUTTONUP)
         {
             this->switch_thread_ = true;
             this->emu().stop();

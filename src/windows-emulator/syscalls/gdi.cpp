@@ -1190,6 +1190,136 @@ namespace sogen
             return dc ? 1 : 0;
         }
 
+        void draw_system_button_glyph(const syscall_context& c, const hdc dc, const int x, const int y, const uint32_t index)
+        {
+            constexpr uint32_t k_obi_radio_mask = 0x47;
+            constexpr uint32_t k_obi_check_base = 0x48;
+            constexpr uint32_t k_obi_radio_base = 0x4D;
+            constexpr uint32_t k_obi_3state_base = 0x52;
+            constexpr uint32_t k_state_count = 5;
+
+            if (index == k_obi_radio_mask)
+            {
+                return;
+            }
+
+            bool radio = false;
+            bool indeterminate = false;
+            uint32_t offset = 0;
+            if (index >= k_obi_radio_base && index < k_obi_radio_base + k_state_count)
+            {
+                radio = true;
+                offset = index - k_obi_radio_base;
+            }
+            else if (index >= k_obi_3state_base && index < k_obi_3state_base + k_state_count)
+            {
+                indeterminate = true;
+                offset = index - k_obi_3state_base;
+            }
+            else if (index >= k_obi_check_base && index < k_obi_check_base + k_state_count)
+            {
+                offset = index - k_obi_check_base;
+            }
+            else
+            {
+                return; // not a checkbox/radio glyph we model
+            }
+
+            const bool checked = indeterminate || offset == 1 || offset == 3 || offset == 4;
+            const bool pressed = offset == 2 || offset == 3;
+            const bool disabled_mark = indeterminate || offset == 4;
+
+            gdi_dc_state* dc_state = nullptr;
+            gdi_bitmap_surface* surface = nullptr;
+            int32_t origin_x = 0;
+            int32_t origin_y = 0;
+            if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !surface)
+            {
+                return;
+            }
+
+            const int ox = x + origin_x;
+            const int oy = y + origin_y;
+
+            constexpr int k_glyph = 13;
+            constexpr uint32_t k_white = 0xFFFFFFFFu;
+            constexpr uint32_t k_face = 0xFFF0F0F0u;
+            constexpr uint32_t k_shadow = 0xFF808080u;
+            constexpr uint32_t k_frame = 0xFF404040u;
+            constexpr uint32_t k_ink = 0xFF000000u;
+            constexpr uint32_t k_ink_disabled = 0xFF808080u;
+
+            const uint32_t interior = pressed ? k_face : k_white;
+            const uint32_t mark = disabled_mark ? k_ink_disabled : k_ink;
+
+            if (radio)
+            {
+                // 13x13 disc: thin ring around the edge, filled interior, centre dot when checked.
+                constexpr int center = 6;
+                for (int dy = -center; dy <= center; ++dy)
+                {
+                    for (int dx = -center; dx <= center; ++dx)
+                    {
+                        const int d2 = dx * dx + dy * dy;
+                        if (d2 > 37)
+                        {
+                            continue;
+                        }
+                        uint32_t color = (d2 >= 25) ? k_frame : interior;
+                        if (checked && d2 <= 5)
+                        {
+                            color = mark;
+                        }
+                        set_surface_pixel(*surface, ox + center + dx, oy + center + dy, color);
+                    }
+                }
+                return;
+            }
+
+            fill_rect(*surface, ox, oy, ox + k_glyph, oy + k_glyph, interior);
+            for (int i = 0; i < k_glyph; ++i)
+            {
+                set_surface_pixel(*surface, ox + i, oy, k_shadow);              // top edge
+                set_surface_pixel(*surface, ox, oy + i, k_shadow);              // left edge
+                set_surface_pixel(*surface, ox + i, oy + k_glyph - 1, k_white); // bottom edge
+                set_surface_pixel(*surface, ox + k_glyph - 1, oy + i, k_white); // right edge
+            }
+            for (int i = 1; i < k_glyph - 1; ++i)
+            {
+                set_surface_pixel(*surface, ox + i, oy + 1, k_frame); // inner top
+                set_surface_pixel(*surface, ox + 1, oy + i, k_frame); // inner left
+            }
+
+            if (checked)
+            {
+                static constexpr std::array<const char*, k_glyph> k_check = {
+                    "             ", //
+                    "             ", //
+                    "             ", //
+                    "          XX ", //
+                    "         XX  ", //
+                    "        XX   ", //
+                    "  X    XX    ", //
+                    "  XX  XX     ", //
+                    "   XXXX      ", //
+                    "    XX       ", //
+                    "             ", //
+                    "             ", //
+                    "             ", //
+                };
+                for (int row = 0; row < k_glyph; ++row)
+                {
+                    for (int col = 0; col < k_glyph; ++col)
+                    {
+                        if (k_check[row][col] != ' ')
+                        {
+                            set_surface_pixel(*surface, ox + col, oy + row, mark);
+                        }
+                    }
+                }
+            }
+        }
+
         BOOL handle_NtGdiFlush(const syscall_context& c)
         {
             auto& thread = c.win_emu.current_thread();
@@ -1366,6 +1496,22 @@ namespace sogen
             // DC is a real (non-memory) DC, so "is memory DC" is false.
             uint32_t value = 0;
             c.emu.write_memory(result, &value, sizeof(value));
+            return TRUE;
+        }
+
+        BOOL handle_NtGdiSetBrushOrg(const syscall_context& c, const hdc dc, const int /*x*/, const int /*y*/, const emulator_pointer prev)
+        {
+            if (dc == 0)
+            {
+                return FALSE;
+            }
+
+            if (prev != 0)
+            {
+                constexpr POINT previous{};
+                c.emu.write_memory(prev, &previous, sizeof(previous));
+            }
+
             return TRUE;
         }
 

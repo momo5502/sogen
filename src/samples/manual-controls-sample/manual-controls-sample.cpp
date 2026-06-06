@@ -1,5 +1,6 @@
 #include <windows.h>
 
+#include <array>
 #include <cstdio>
 
 // A slightly richer manual UI sample (no dialog template) used to exercise the emulated
@@ -13,18 +14,23 @@ namespace
     constexpr auto* kWindowClassName = "ManualControlsSampleClass";
     constexpr auto* kWindowTitle = "Controls";
 
-    enum control_id : int
+    enum class control_id : int
     {
-        kTitleId = 100,
-        kGroupId = 101,
-        kCheckId = 102,
-        kModeLabelId = 103,
-        kRadioFastId = 104,
-        kRadioAccurateId = 105,
-        kStatusId = 106,
-        kOkId = 107,
-        kCancelId = 108,
+        title = 100,
+        group = 101,
+        check = 102,
+        mode_label = 103,
+        radio_fast = 104,
+        radio_accurate = 105,
+        status = 106,
+        ok = 107,
+        cancel = 108,
     };
+
+    constexpr int id(control_id value)
+    {
+        return static_cast<int>(value);
+    }
 
     int g_exit_code = 2;
     HWND g_check = nullptr;
@@ -49,27 +55,27 @@ namespace
         const bool checked = SendMessageA(g_check, BM_GETCHECK, 0, 0) == BST_CHECKED;
         const bool fast = SendMessageA(g_radio_fast, BM_GETCHECK, 0, 0) == BST_CHECKED;
 
-        char buffer[128];
-        std::snprintf(buffer, sizeof(buffer), "Status: feature %s, mode %s", checked ? "on" : "off", fast ? "fast" : "accurate");
-        SetWindowTextA(g_status, buffer);
+        std::array<char, 128> buffer{};
+        std::snprintf(buffer.data(), buffer.size(), "Status: feature %s, mode %s", checked ? "on" : "off", fast ? "fast" : "accurate");
+        SetWindowTextA(g_status, buffer.data());
         (void)hwnd;
     }
 
     void on_create(HWND hwnd)
     {
-        create_control(hwnd, "STATIC", "Configure the sample:", 0, 16, 12, 320, 20, kTitleId);
+        create_control(hwnd, "STATIC", "Configure the sample:", 0, 16, 12, 320, 20, id(control_id::title));
 
-        create_control(hwnd, "BUTTON", "Options", BS_GROUPBOX, 16, 40, 320, 116, kGroupId);
-        g_check = create_control(hwnd, "BUTTON", "Enable feature", BS_AUTOCHECKBOX, 32, 64, 200, 22, kCheckId);
+        create_control(hwnd, "BUTTON", "Options", BS_GROUPBOX, 16, 40, 320, 116, id(control_id::group));
+        g_check = create_control(hwnd, "BUTTON", "Enable feature", BS_AUTOCHECKBOX, 32, 64, 200, 22, id(control_id::check));
 
-        create_control(hwnd, "STATIC", "Mode:", 0, 32, 96, 48, 20, kModeLabelId);
-        g_radio_fast = create_control(hwnd, "BUTTON", "Fast", BS_AUTORADIOBUTTON | WS_GROUP, 88, 94, 90, 22, kRadioFastId);
-        g_radio_accurate = create_control(hwnd, "BUTTON", "Accurate", BS_AUTORADIOBUTTON, 184, 94, 120, 22, kRadioAccurateId);
+        create_control(hwnd, "STATIC", "Mode:", 0, 32, 96, 48, 20, id(control_id::mode_label));
+        g_radio_fast = create_control(hwnd, "BUTTON", "Fast", BS_AUTORADIOBUTTON | WS_GROUP, 88, 94, 90, 22, id(control_id::radio_fast));
+        g_radio_accurate = create_control(hwnd, "BUTTON", "Accurate", BS_AUTORADIOBUTTON, 184, 94, 120, 22, id(control_id::radio_accurate));
 
-        g_status = create_control(hwnd, "STATIC", "Status: feature off, mode fast", WS_GROUP, 16, 168, 320, 20, kStatusId);
+        g_status = create_control(hwnd, "STATIC", "Status: feature off, mode fast", WS_GROUP, 16, 168, 320, 20, id(control_id::status));
 
-        create_control(hwnd, "BUTTON", "OK", BS_DEFPUSHBUTTON, 160, 208, 80, 28, kOkId);
-        create_control(hwnd, "BUTTON", "Cancel", BS_PUSHBUTTON, 252, 208, 80, 28, kCancelId);
+        create_control(hwnd, "BUTTON", "OK", BS_DEFPUSHBUTTON, 160, 208, 80, 28, id(control_id::ok));
+        create_control(hwnd, "BUTTON", "Cancel", BS_PUSHBUTTON, 252, 208, 80, 28, id(control_id::cancel));
 
         // Default the radio group to "Fast".
         SendMessageA(g_radio_fast, BM_SETCHECK, BST_CHECKED, 0);
@@ -86,13 +92,13 @@ namespace
         case WM_COMMAND:
             switch (LOWORD(wp))
             {
-            case kCheckId:
-            case kRadioFastId:
-            case kRadioAccurateId:
+            case id(control_id::check):
+            case id(control_id::radio_fast):
+            case id(control_id::radio_accurate):
                 update_status(hwnd);
                 return 0;
 
-            case kOkId: {
+            case id(control_id::ok): {
                 const bool checked = SendMessageA(g_check, BM_GETCHECK, 0, 0) == BST_CHECKED;
                 const bool fast = SendMessageA(g_radio_fast, BM_GETCHECK, 0, 0) == BST_CHECKED;
                 std::printf("clicked: ok (feature=%s, mode=%s)\n", checked ? "on" : "off", fast ? "fast" : "accurate");
@@ -101,7 +107,7 @@ namespace
                 return 0;
             }
 
-            case kCancelId:
+            case id(control_id::cancel):
                 std::puts("clicked: cancel");
                 g_exit_code = 1;
                 DestroyWindow(hwnd);

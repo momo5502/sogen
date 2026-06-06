@@ -589,6 +589,7 @@ namespace sogen
         buffer.write_map(this->gdi_bitmap_surfaces);
         buffer.write_map(this->gdi_window_surfaces);
         buffer.write_optional(this->etw_notification_event);
+        buffer.write(this->mouse_capture_window);
 
         buffer.write(this->user_handles);
         buffer.write(this->default_monitor_handle);
@@ -659,6 +660,7 @@ namespace sogen
         buffer.read_map(this->gdi_bitmap_surfaces);
         buffer.read_map(this->gdi_window_surfaces);
         buffer.read_optional(this->etw_notification_event);
+        buffer.read(this->mouse_capture_window);
 
         buffer.read(this->user_handles);
         buffer.read(this->default_monitor_handle);
