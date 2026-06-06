@@ -141,37 +141,36 @@ so always analyze the DLL the emulator actually maps):
 
 - The message-box **icon** is not drawn (`NtUserDrawIconEx` stub).
 - The dialog **background** may stay white instead of the gray dialog face.
-- **System builtin-class atom resolution is not portable** (see next section).
 
-## System builtin-class atom resolution (open, build-specific)
+## System builtin-class atom resolution (resolved, portable)
 
-`normalize_builtin_window_class_name` hardcodes specific class-atom values (`#1`→Button,
-`#2032`/`#2160`/`#12192`→Static, `#32770`→dialog). This breaks across Windows builds: the same
-sample works with one system's user32 (static = `#2032`) but fails with another's (static =
-`#12192`, "missing class"). Investigation findings:
+**Fixed** in `resolve_builtin_class_atom` (`syscalls/user.cpp`). The earlier stopgap had
+`normalize_builtin_window_class_name` hardcoding build-specific class-atom values
+(`#2032`/`#2160`/`#12192`→Static); this broke across Windows builds because the same sample
+resolved static = `#2032` on one system's user32 but `#12192` on another's ("missing class").
 
-- The builtin window classes are **never registered via a syscall** — `NtUserRegisterClassExWOW`
-  appears zero times in the full startup+run trace. So the emulator never observes the class
-  atom → name mapping.
-- The class atoms (Button `0x1`, Static `0x7f0`=#2032 / `0x2fa0`=#12192, Dialog `0x8002`=#32770) are
-  **user32-internal, build-specific integer atoms** (< `MAXINTATOM` 0xC000). user32 already holds
-  them; it calls `NtUserGetAtomName(atom)` (emulator returns the `#NNNN` integer form) and then
-  passes the atom to `NtUserCreateWindowEx`. Dialog templates store controls by **system class
-  ordinal** (`0x80`=Button, `0x82`=Static via `FUN_18006c2f4` writing `0xFFFF,<ord>`); user32 maps
-  the ordinal to its internal atom.
-- The atoms are **not** present in our `gpsi`/`USER_SERVERINFO` (scanned the full `0x1B58` struct as
-  both 16- and 32-bit; the only `0x7f0` hits were the low word of worker-pfn pointers like
-  `0x1801207f0`). So user32 is not reading them from a table the emulator populates.
-- `add_or_find_atom` assigns string atoms from `0xC000` up, so emulator-registered atoms never
-  collide with these low integer atoms anyway.
+How user32 sources the atom (host `user32.dll`, dialog-creation worker `FUN_18002a070`): dialog
+templates store controls by **system class ordinal** (`0x80`=Button, `0x81`=Edit, `0x82`=Static,
+`0x83`=ListBox, `0x84`=ScrollBar, `0x85`=ComboBox, written as `0xFFFF,<ord>`). user32 turns the
+ordinal into a class atom by indexing the WORD table `SERVERINFO.atomSysClass[ICLS]` at **`gpsi +
+0x364`** with `(ordinal & 0x7F)`, then passes that atom to `NtUserCreateWindowEx`:
 
-Because there is no registration hook and the atoms live in user32-internal build-specific state,
-the emulator cannot currently resolve them dynamically — the hardcoded list is the stopgap (each new
-build's atom must be added). **Decisive next step for a real fix:** decompile the `NtUserGetAtomName`
-caller / dialog class-ordinal resolution in user32 to find where the static atom (`0x7f0`) is
-sourced — either `gpsi->atomSysClass` (possibly *beyond* our `0x1B58` SERVERINFO size, in which case
-enlarge the struct and pre-register system classes with emulator-chosen atoms = fully portable) or a
-user32-internal global baked at `DllMain` (then read it at startup or keep the hardcode).
+```c
+class_atom = *(WORD *)(gpsi + (ordinal & 0x7F) * 2 + 0x364);
+```
+
+The atom values are assigned per build (Static = `0x7F0` here, `0x2FA0` elsewhere), which is why a
+hardcoded list cannot be portable.
+
+The fix reverse-maps an incoming integer class atom back to its canonical builtin class name by
+reading that **same** `gpsi + 0x364` table and matching the atom against the ICLS-indexed entries
+(0=Button, 1=Edit, 2=Static, 3=ListBox, 4=ScrollBar, 5=ComboBox). Because the lookup round-trips
+through the exact memory user32 used for the forward mapping, it agrees with user32 regardless of the
+build's atom values — no hardcoded atoms. Verified: the message-box dialog now creates `Button` and
+`Static` controls with no "missing class" errors and no `#NNNN` aliases.
+
+Confirmed empirically with a runtime probe at `NtUserCreateWindowEx`: incoming Button atom `0x1`
+matched `atomSysClass[0]`, incoming Static atom `0x7F0` matched `atomSysClass[2]`.
 
 ## Builtin MessageBox Investigation Notes
 
@@ -253,10 +252,10 @@ Likely proper direction:
 ## Remaining blockers
 
 Resolved by the 2026-06-06 update above: builtin `MessageBox` control rendering on the real
-user32 paint path, button self-draw, click→`WM_COMMAND`→`EndDialog`, correct return code, and
-button captions. Still open:
+user32 paint path, button self-draw, click→`WM_COMMAND`→`EndDialog`, correct return code,
+button captions, and portable system builtin-class atom resolution (see "System builtin-class
+atom resolution"). Still open:
 
-- portable system builtin-class atom resolution (see "System builtin-class atom resolution")
 - message-box **icon** pixels (`NtUserDrawIconEx` is a success stub)
 - dialog **background** fill (may render white instead of the gray dialog face)
 - finish small-text / batched GDI text path so ordinary `TextOutA/W` works without forcing oversized `ExtTextOutW`
@@ -291,12 +290,10 @@ The remaining design direction is to continue moving Win32 behavior out of host 
 
 ## Next steps
 
-1. Make system builtin-class atom resolution portable (see that section) so the hardcoded `#NNNN`
-   list can be dropped.
-2. Draw the message-box icon (`NtUserDrawIconEx`) and the dialog background.
-3. Keep builtin control paint on the real callback/user32 path; do not reintroduce manual
+1. Draw the message-box icon (`NtUserDrawIconEx`) and the dialog background.
+2. Keep builtin control paint on the real callback/user32 path; do not reintroduce manual
    `Button` / `Static` drawing fallbacks.
-4. Continue improving batched text and font handling.
+3. Continue improving batched text and font handling.
 
 ## Non-goals for this checkpoint
 
