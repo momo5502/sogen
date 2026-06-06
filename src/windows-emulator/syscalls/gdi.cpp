@@ -1320,6 +1320,21 @@ namespace sogen
             return ensure_default_hdc(c);
         }
 
+        BOOL handle_NtGdiGetDCDword(const syscall_context& c, const hdc dc, const uint32_t /*index*/, const emulator_pointer result)
+        {
+            if (dc == 0 || result == 0)
+            {
+                return FALSE;
+            }
+
+            // gdi32 only falls back to this syscall for DC dwords it does not cache client-side
+            // (e.g. GdiGetIsMemDc). 0 is the correct default for the control paint path: the paint
+            // DC is a real (non-memory) DC, so "is memory DC" is false.
+            uint32_t value = 0;
+            c.emu.write_memory(result, &value, sizeof(value));
+            return TRUE;
+        }
+
         uint64_t handle_NtGdiHfontCreate(const syscall_context& c, const emulator_pointer /*logfont*/, const uint32_t /*angle*/)
         {
             return allocate_gdi_object(c, k_gdi_font_type, k_gdi_font_attr_size);

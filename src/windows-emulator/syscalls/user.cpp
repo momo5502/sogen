@@ -440,6 +440,24 @@ namespace sogen
             queue_window_paint(c, win);
         }
 
+        // Invalidate a window together with its visible descendant controls. Used when a window
+        // transitions to visible: child controls created while an ancestor was still hidden skip
+        // their paint body (user32 gates control painting on the whole parent chain being visible),
+        // so they must be repainted once the ancestor becomes visible.
+        void invalidate_window_tree(const syscall_context& c, window& win)
+        {
+            invalidate_window(c, win);
+
+            for (auto& [index, child] : c.proc.windows)
+            {
+                (void)index;
+                if (child.parent_handle == win.handle && (child.style & WS_VISIBLE) != 0)
+                {
+                    invalidate_window_tree(c, child);
+                }
+            }
+        }
+
         void write_guest_window_text(const syscall_context& c, window& win, const std::u16string& title)
         {
             win.guest.access([&](USER_WINDOW& guest_win) {
@@ -490,39 +508,6 @@ namespace sogen
         {
             text.erase(std::ranges::remove(text, u'&').begin(), text.end());
             return text;
-        }
-
-        uint64_t map_dialog_button_caption_to_id(const std::u16string_view caption)
-        {
-            if (caption == u"OK")
-            {
-                return IDOK;
-            }
-            if (caption == u"Cancel")
-            {
-                return IDCANCEL;
-            }
-            if (caption == u"Abort")
-            {
-                return IDABORT;
-            }
-            if (caption == u"Retry")
-            {
-                return IDRETRY;
-            }
-            if (caption == u"Ignore")
-            {
-                return IDIGNORE;
-            }
-            if (caption == u"Yes")
-            {
-                return IDYES;
-            }
-            if (caption == u"No")
-            {
-                return IDNO;
-            }
-            return 0;
         }
 
         std::vector<std::u16string> read_msgbox_button_titles(const syscall_context& c, const window& parent)
@@ -619,10 +604,6 @@ namespace sogen
                         if (!titles[i].empty())
                         {
                             update_window_title(c, *empty_buttons[i], titles[i]);
-                            if (const auto id = map_dialog_button_caption_to_id(titles[i]); id != 0)
-                            {
-                                empty_buttons[i]->guest.access([&](USER_WINDOW& guest_win) { guest_win.wID = id; });
-                            }
                         }
                     }
                 }
@@ -1376,6 +1357,15 @@ namespace sogen
             return TRUE;
         }
 
+        // Minimal stub: report success so icon/static (SS_ICON) paint completes. Rendering the actual
+        // system icon pixels is a separate task; for now the icon area is left unpainted.
+        BOOL handle_NtUserDrawIconEx(const syscall_context&, const hdc /*dc*/, const int /*x*/, const int /*y*/, const hicon icon,
+                                     const int /*cx*/, const int /*cy*/, const UINT /*istep*/, const uint64_t /*flicker_brush*/,
+                                     const UINT /*di_flags*/)
+        {
+            return icon != 0 ? TRUE : FALSE;
+        }
+
         uint64_t handle_NtUserFindWindowEx(const syscall_context& c, const hwnd parent, const hwnd child_after,
                                            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> window_name)
@@ -2005,8 +1995,6 @@ namespace sogen
 
             if (want_visible)
             {
-                invalidate_window(c, *win);
-
                 const auto move_lparam = static_cast<uint64_t>(((win->y & 0xFFFF) << 16) | (win->x & 0xFFFF));
                 const auto size_lparam = static_cast<uint64_t>(((win->height & 0xFFFF) << 16) | (win->width & 0xFFFF));
 
@@ -2041,6 +2029,13 @@ namespace sogen
             win->guest.access([&](USER_WINDOW& guest_win) { //
                 guest_win.dwStyle = win->style;
             });
+
+            if (want_visible)
+            {
+                // Now that this window is visible, repaint it and any visible child controls that
+                // were created (and skipped painting) while their ancestor chain was still hidden.
+                invalidate_window_tree(c, *win);
+            }
 
             dispatch_next_message(c, callback_id::NtUserShowWindow, std::move(state), *win, state.message_queue);
             return {};
@@ -2583,6 +2578,8 @@ namespace sogen
                 {
                     c.win_emu.ui().set_window_visible(hWnd, true);
                 }
+                // Repaint the now-visible window and its child controls (see invalidate_window_tree).
+                invalidate_window_tree(c, *win);
             }
 
             return TRUE;
