@@ -140,7 +140,8 @@ so always analyze the DLL the emulator actually maps):
 ### Still open after this update
 
 - The message-box **icon** is not drawn (`NtUserDrawIconEx` stub).
-- The dialog **background** may stay white instead of the gray dialog face.
+- The classic checkbox/radio **check glyph** is not drawn (`NtUserBitBltSysBmp` stub); the control
+  box, label, and click/state handling work.
 
 ## System builtin-class atom resolution (resolved, portable)
 
@@ -253,11 +254,13 @@ Likely proper direction:
 
 Resolved by the 2026-06-06 update above: builtin `MessageBox` control rendering on the real
 user32 paint path, button self-draw, click→`WM_COMMAND`→`EndDialog`, correct return code,
-button captions, and portable system builtin-class atom resolution (see "System builtin-class
-atom resolution"). Still open:
+button captions, portable system builtin-class atom resolution (see "System builtin-class
+atom resolution"), and the window/dialog **background** fill (top-level surfaces are now filled
+with the class background brush — gray dialog face instead of white). Still open:
 
 - message-box **icon** pixels (`NtUserDrawIconEx` is a success stub)
-- dialog **background** fill (may render white instead of the gray dialog face)
+- classic checkbox/radio **check glyph** pixels (`NtUserBitBltSysBmp` is a success stub; box, label,
+  and click/state handling work)
 - finish small-text / batched GDI text path so ordinary `TextOutA/W` works without forcing oversized `ExtTextOutW`
 - replace temporary debug-font text path with more correct font/text handling over time
 - add more correct clip/region handling
