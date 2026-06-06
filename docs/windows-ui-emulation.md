@@ -83,6 +83,96 @@ Real emulation goal is stronger: builtin controls, dialogs, and custom `WM_PAINT
   - `#2032` now normalizes to the builtin `Static` class, matching the `SS_ICON` control path.
   - The current blocker is no longer a single missing syscall; it is correct user32 client callback initialization and builtin control paint.
 
+## UPDATE 2026-06-06 — builtin `MessageBox` renders and works end-to-end
+
+`messagebox-sample` (`MessageBoxA(NULL, "Proceed?", "Question", MB_YESNO | MB_ICONQUESTION)`)
+now renders the dialog with **Yes/No buttons, their labels, and the message text**, and
+**clicking Yes returns `IDYES`** (the sample prints `clicked: yes`). The real user32
+control wndprocs run and paint through the guest GDI path — no manual fallback drawing.
+
+The sections below ("Current truth", "Builtin MessageBox Investigation Notes",
+"Ntdll/User32 Callback Findings") predate this and are kept for history; several of their
+"blockers" are resolved. The root causes that were actually blocking visible, interactive
+controls turned out to be four independent issues (all verified with Ghidra on the **host**
+`C:\Windows\System32\user32.dll` — note the emulator loads the *host* live system DLLs when
+run with no `-e root`, not a captured `root` copy; the routing globals differ between builds
+so always analyze the DLL the emulator actually maps):
+
+1. **Controls never repaint after the dialog becomes visible.** user32's control wndprocs gate
+   their paint body on the whole parent chain being visible
+   (`ButtonWndProcW` → worker `FUN_18000a540` → drawability check `FUN_180008030`, which walks
+   the window + every ancestor requiring `WS_VISIBLE`, style byte at WND `+0x1f` bit `0x10` =
+   `0x10000000`; this maps to `USER_WINDOW dwStyle@0x1c`, `fnid@0x2a`, `spwndParent@0x30`).
+   MessageBox creates its children during `WM_INITDIALOG` and they paint while the dialog is
+   still hidden, so they correctly skip drawing. `NtUserShowWindow` then only invalidated the
+   dialog itself. Fix: `invalidate_window_tree()` (in `user.cpp`) recursively re-invalidates the
+   visible child subtree, called from `NtUserShowWindow` and `NtUserSetWindowPos(SWP_SHOWWINDOW)`
+   after `WS_VISIBLE` is set.
+
+2. **Button click hit-testing failed.** `is_button_window` (in `windows_emulator.cpp`) compared
+   the literal `"Button"`, but `window::class_name` stores the raw ordinal-atom class (`#1`).
+   Fix: also match `#1` so `find_button_child_at` works and clicking dismisses the dialog.
+
+3. **Wrong return code + blank button labels — both from `SERVERINFO.MBStrings`.**
+   user32 `SoftModalMessageBox` builds the dialog template by reading each button's
+   `{caption, control id}` from `gpsi->MBStrings`: an array at `gpsi + 0x3A4` of
+   `{ WCHAR achName[16]; UINT id @ +0x20; UINT uStr @ +0x24 }` (0x28-byte entries), fixed order
+   OK, Cancel, Abort, Retry, Ignore, Yes, No, Close, Help, Try Again, Continue (ids 1..11; per-MB-type
+   index tables `DAT_…b3c00/b3c5c/b3c64`). Our SERVERINFO left it zeroed → buttons got control id 0
+   (so the dialog always returned `IDOK`) and empty captions (blank labels). The dialog proc
+   (`MB_DlgProc` @ `0x1800530a0`) stores MSGBOXDATA in the dialog's `GWLP_USERDATA` on
+   `WM_INITDIALOG` and calls `EndDialog(control_id)` on `WM_COMMAND`. Fix:
+   `seed_messagebox_button_strings()` in `win32k_userconnect.cpp` populates `MBStrings`, called from
+   `try_copy_client_pfn_arrays` **after** the client-pfn copy (the `apfnClientWorker` fill zeroes the
+   overlapping tail). Confirmed at runtime that user32's `gpsi` == our `user_handles.get_server_info()`.
+   The fragile caption→ID heuristic (`map_dialog_button_caption_to_id`) was removed.
+
+4. **Missing GDI/USER syscalls surfaced once controls actually painted:**
+   - `NtGdiGetDCDword` — gdi32 calls it for `GdiGetIsMemDc`; was unimplemented and halted. Returns 0
+     (a real paint DC is not a memory DC).
+   - `NtGdiPolyPatBlt` — button frame/press repaint. **Entry layout verified at runtime against this
+     build's gdi32: `{ int x; int y; int cx; int cy; HBRUSH hbr@+0x10 }` (position + size), NOT a RECT
+     with right/bottom** — button frame draws pass thin edges like `{x=96,y=4,cx=1,cy=20}` that only
+     make sense as width/height.
+   - `NtUserDrawIconEx` — stubbed to return success so the `SS_ICON` static finishes painting (icon
+     pixels are not drawn yet).
+
+### Still open after this update
+
+- The message-box **icon** is not drawn (`NtUserDrawIconEx` stub).
+- The dialog **background** may stay white instead of the gray dialog face.
+- **System builtin-class atom resolution is not portable** (see next section).
+
+## System builtin-class atom resolution (open, build-specific)
+
+`normalize_builtin_window_class_name` hardcodes specific class-atom values (`#1`→Button,
+`#2032`/`#2160`/`#12192`→Static, `#32770`→dialog). This breaks across Windows builds: the same
+sample works with one system's user32 (static = `#2032`) but fails with another's (static =
+`#12192`, "missing class"). Investigation findings:
+
+- The builtin window classes are **never registered via a syscall** — `NtUserRegisterClassExWOW`
+  appears zero times in the full startup+run trace. So the emulator never observes the class
+  atom → name mapping.
+- The class atoms (Button `0x1`, Static `0x7f0`=#2032 / `0x2fa0`=#12192, Dialog `0x8002`=#32770) are
+  **user32-internal, build-specific integer atoms** (< `MAXINTATOM` 0xC000). user32 already holds
+  them; it calls `NtUserGetAtomName(atom)` (emulator returns the `#NNNN` integer form) and then
+  passes the atom to `NtUserCreateWindowEx`. Dialog templates store controls by **system class
+  ordinal** (`0x80`=Button, `0x82`=Static via `FUN_18006c2f4` writing `0xFFFF,<ord>`); user32 maps
+  the ordinal to its internal atom.
+- The atoms are **not** present in our `gpsi`/`USER_SERVERINFO` (scanned the full `0x1B58` struct as
+  both 16- and 32-bit; the only `0x7f0` hits were the low word of worker-pfn pointers like
+  `0x1801207f0`). So user32 is not reading them from a table the emulator populates.
+- `add_or_find_atom` assigns string atoms from `0xC000` up, so emulator-registered atoms never
+  collide with these low integer atoms anyway.
+
+Because there is no registration hook and the atoms live in user32-internal build-specific state,
+the emulator cannot currently resolve them dynamically — the hardcoded list is the stopgap (each new
+build's atom must be added). **Decisive next step for a real fix:** decompile the `NtUserGetAtomName`
+caller / dialog class-ordinal resolution in user32 to find where the static atom (`0x7f0`) is
+sourced — either `gpsi->atomSysClass` (possibly *beyond* our `0x1B58` SERVERINFO size, in which case
+enlarge the struct and pre-register system classes with emulator-chosen atoms = fully portable) or a
+user32-internal global baked at `DllMain` (then read it at startup or keep the hardcode).
+
 ## Builtin MessageBox Investigation Notes
 
 IDA/user32 findings from the current checkpoint:
@@ -162,14 +252,19 @@ Likely proper direction:
 
 ## Remaining blockers
 
-- builtin `MessageBox` control rendering still needs the real client callback/user32 initialization path
-- expect possible follow-up icon/static paint gaps such as `DrawIconEx` behavior or icon-handle metadata
+Resolved by the 2026-06-06 update above: builtin `MessageBox` control rendering on the real
+user32 paint path, button self-draw, click→`WM_COMMAND`→`EndDialog`, correct return code, and
+button captions. Still open:
+
+- portable system builtin-class atom resolution (see "System builtin-class atom resolution")
+- message-box **icon** pixels (`NtUserDrawIconEx` is a success stub)
+- dialog **background** fill (may render white instead of the gray dialog face)
 - finish small-text / batched GDI text path so ordinary `TextOutA/W` works without forcing oversized `ExtTextOutW`
-- decide where batch flush should happen generically, not only in sample-driven probing
 - replace temporary debug-font text path with more correct font/text handling over time
-- improve builtin control self-draw (`Button`, `Static`) via real user32 paint path
 - add more correct clip/region handling
 - add more correct ROP / brush / pen / DC semantics where builtin paint needs them
+- `NtGdiGetDCDword` only returns the default (0); other indices (MapMode, GraphicsMode, …) would need
+  real values if a control relies on them
 
 ## Backend parity notes
 
@@ -196,10 +291,12 @@ The remaining design direction is to continue moving Win32 behavior out of host 
 
 ## Next steps
 
-1. Model the user32 client initialization path cleanly enough that ntdll client thunks do not point at `UninitUser32Proc`.
-2. Keep builtin control paint on the real callback/user32 path; do not reintroduce manual `Button` / `Static` drawing fallbacks.
-3. Re-test builtin `STATIC` / `BUTTON` paint after client callback initialization is fixed.
-4. Continue improving batched text and font handling once control paint reaches real GDI calls.
+1. Make system builtin-class atom resolution portable (see that section) so the hardcoded `#NNNN`
+   list can be dropped.
+2. Draw the message-box icon (`NtUserDrawIconEx`) and the dialog background.
+3. Keep builtin control paint on the real callback/user32 path; do not reintroduce manual
+   `Button` / `Static` drawing fallbacks.
+4. Continue improving batched text and font handling.
 
 ## Non-goals for this checkpoint
 
@@ -217,6 +314,12 @@ Manual message box sample:
 
 ```cmd
 build\release\artifacts\analyzer.exe -s build\release\artifacts\manual-messagebox-sample.exe
+```
+
+Builtin message box sample (renders Yes/No + text; clicking Yes prints `clicked: yes`):
+
+```cmd
+build\release\artifacts\analyzer.exe -s build\release\artifacts\messagebox-sample.exe
 ```
 
 MessageBox sample with root mapping:
