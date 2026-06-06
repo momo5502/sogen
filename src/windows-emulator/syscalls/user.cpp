@@ -154,8 +154,11 @@ namespace sogen
             {
                 return u"Edit";
             }
-            if (class_name == u"#3" || class_name == u"#2032" || class_name == u"#2160" || class_name == u"STATIC" ||
-                class_name == u"Static")
+            // NOTE: the #NNNN aliases are build-specific class atoms for the static control (the value
+            // differs between Windows versions). This hardcoded list is a stopgap; the atom should be
+            // resolved to its registered class name instead.
+            if (class_name == u"#3" || class_name == u"#2032" || class_name == u"#2160" || class_name == u"#12192" ||
+                class_name == u"STATIC" || class_name == u"Static")
             {
                 return u"Static";
             }
