@@ -36,6 +36,13 @@ namespace sogen
         constexpr uint32_t k_color_scrollbar = 0;
         constexpr uint32_t k_color_window = 5;
         constexpr uint32_t k_color_btnface = 15;
+        constexpr auto k_user_timer_minimum = std::chrono::milliseconds{10};
+
+        struct send_message_callback_info
+        {
+            uint64_t callback{};
+            uint64_t data{};
+        };
 
         struct user_callback_capture_buffer
         {
@@ -414,16 +421,10 @@ namespace sogen
                 return;
             }
 
-            for (auto& thread : c.proc.threads | std::views::values)
+            if (auto* thread = c.proc.find_thread_by_id(win.thread_id))
             {
-                if (thread.id != win.thread_id)
-                {
-                    continue;
-                }
-
-                thread.post_message(msg{.window = win.handle, .message = WM_PAINT, .wParam = 0, .lParam = 0, .time = 0, .pt = {}});
+                thread->post_message(msg{.window = win.handle, .message = WM_PAINT, .wParam = 0, .lParam = 0, .time = 0, .pt = {}});
                 win.paint_message_posted = true;
-                return;
             }
         }
 
@@ -2274,7 +2275,7 @@ namespace sogen
         }
 
         uint64_t handle_NtUserMessageCall(const syscall_context& c, const hwnd hwnd, const UINT msg, const uint64_t w_param,
-                                          const uint64_t l_param, const uint64_t /*result_info*/, const DWORD /*type*/, const BOOL ansi)
+                                          const uint64_t l_param, const uint64_t /*result_info*/, const DWORD type, const BOOL ansi)
         {
             auto* win = c.proc.windows.get(hwnd);
             if (!win)
@@ -2284,6 +2285,22 @@ namespace sogen
 
             if (win->thread_id != c.proc.active_thread->id)
             {
+                // TODO: This is a bit incorrect. We're supposed to wait until the message is received, but this is fine for a first
+                //       minimal version.
+                if (type == FNID_SENDMESSAGECALLBACK)
+                {
+                    if (auto* t = c.proc.find_thread_by_id(win->thread_id))
+                    {
+                        sogen::msg queued_message{};
+                        queued_message.window = hwnd;
+                        queued_message.message = msg;
+                        queued_message.wParam = w_param;
+                        queued_message.lParam = l_param;
+                        t->post_message(queued_message);
+                        return TRUE;
+                    }
+                }
+
                 return 0;
             }
 
@@ -2339,9 +2356,8 @@ namespace sogen
             return {};
         }
 
-        uint64_t completion_NtUserMessageCall(const syscall_context& c, const hwnd /*hwnd*/, const UINT /*msg*/, const uint64_t /*w_param*/,
-                                              const uint64_t /*l_param*/, const uint64_t /*result_info*/, const DWORD /*type*/,
-                                              const BOOL /*ansi*/)
+        uint64_t completion_NtUserMessageCall(const syscall_context& c, const hwnd hwnd, const UINT msg, const uint64_t /*w_param*/,
+                                              const uint64_t /*l_param*/, const uint64_t result_info, const DWORD type, const BOOL /*ansi*/)
         {
             auto& state = c.get_completion_state<message_call_state>();
             if (state.scratch_text != 0)
@@ -2358,6 +2374,41 @@ namespace sogen
                 }
             }
 
+            if (type == FNID_SENDMESSAGECALLBACK)
+            {
+                if (state.dispatching_result_callback)
+                {
+                    return TRUE;
+                }
+
+                if (result_info != 0)
+                {
+                    const auto* win = c.proc.windows.get(hwnd);
+                    if (!win)
+                    {
+                        return TRUE;
+                    }
+
+                    send_message_callback_info callback_info{};
+                    if (c.win_emu.memory.try_read_memory(result_info, &callback_info, sizeof(callback_info)) && callback_info.callback != 0)
+                    {
+                        fn_dword_message args{};
+                        args.pwnd = win->guest.value();
+                        args.msg = msg;
+                        args.wParam = callback_info.data;
+                        args.lParam = c.get_callback_result<uint64_t>();
+                        args.xParam = callback_info.callback;
+                        args.xpfnProc = c.proc.dispatch_client_message;
+
+                        state.dispatching_result_callback = true;
+                        dispatch_user_callback(c, callback_id::NtUserMessageCall, k_fn_dword_callback_id, std::move(state), args);
+                        return {};
+                    }
+                }
+
+                return TRUE;
+            }
+
             return c.get_callback_result<uint64_t>();
         }
 
@@ -2369,13 +2420,37 @@ namespace sogen
             }
 
             const auto m = message.read();
-            auto* win = c.proc.windows.get(m.window);
-            if (!win)
+            auto* win = m.window != 0 ? c.proc.windows.get(m.window) : nullptr;
+            if (m.window != 0 && !win)
             {
                 return 0;
             }
 
-            if (win->thread_id != c.proc.active_thread->id)
+            if (win && win->thread_id != c.proc.active_thread->id)
+            {
+                return 0;
+            }
+
+            if (m.message == WM_TIMER && m.lParam != 0)
+            {
+                set_thread_window_context(c, m.window, win ? win->guest.value() : 0);
+
+                fn_dword_message args{};
+                args.pwnd = win ? win->guest.value() : 0;
+                args.msg = m.message;
+                args.wParam = m.wParam;
+                args.lParam = m.time;
+                args.xParam = m.lParam;
+                args.xpfnProc = c.proc.dispatch_client_message;
+
+                message_call_state state{};
+                state.window = m.window;
+                state.message = m.message;
+                dispatch_user_callback(c, callback_id::NtUserMessageCall, k_fn_dword_callback_id, args);
+                return {};
+            }
+
+            if (!win)
             {
                 return 0;
             }
@@ -2397,7 +2472,7 @@ namespace sogen
         {
             auto& t = c.win_emu.current_thread();
 
-            if (auto pending_msg = t.peek_pending_message(c.proc, hwnd, msg_filter_min, msg_filter_max, true))
+            if (auto pending_msg = t.peek_pending_message(c.proc, c.win_emu.clock(), hwnd, msg_filter_min, msg_filter_max, true))
             {
                 message.write(*pending_msg);
                 set_thread_window_context(c, pending_msg->window);
@@ -2416,7 +2491,8 @@ namespace sogen
             auto& t = c.win_emu.current_thread();
 
             const bool should_remove = (remove_message & PM_REMOVE) != 0;
-            std::optional<msg> pending_msg = t.peek_pending_message(c.proc, hwnd, msg_filter_min, msg_filter_max, should_remove);
+            std::optional<msg> pending_msg =
+                t.peek_pending_message(c.proc, c.win_emu.clock(), hwnd, msg_filter_min, msg_filter_max, should_remove);
 
             if (pending_msg)
             {
@@ -2431,7 +2507,7 @@ namespace sogen
         BOOL handle_NtUserWaitMessage(const syscall_context& c)
         {
             auto& t = c.win_emu.current_thread();
-            if (t.peek_pending_message(c.proc, 0, 0, 0, false))
+            if (t.peek_pending_message(c.proc, c.win_emu.clock()))
             {
                 return TRUE;
             }
@@ -2496,19 +2572,33 @@ namespace sogen
 
             uint32_t target_thread_id = hwnd != 0 ? win->thread_id : c.win_emu.current_thread().id;
 
-            for (auto& thread : c.proc.threads | std::views::values)
+            if (auto* thread = c.proc.find_thread_by_id(target_thread_id))
             {
-                if (thread.id == target_thread_id)
-                {
-                    sogen::msg qmsg{};
-                    qmsg.window = hwnd;
-                    qmsg.message = msg;
-                    qmsg.wParam = wParam;
-                    qmsg.lParam = lParam;
+                sogen::msg qmsg{};
+                qmsg.window = hwnd;
+                qmsg.message = msg;
+                qmsg.wParam = wParam;
+                qmsg.lParam = lParam;
 
-                    thread.post_message(qmsg);
-                    return TRUE;
-                }
+                thread->post_message(qmsg);
+                return TRUE;
+            }
+
+            return FALSE;
+        }
+
+        BOOL handle_NtUserPostThreadMessage(const syscall_context& c, const DWORD id_thread, const UINT msg, const uint64_t wParam,
+                                            const uint64_t lParam)
+        {
+            if (auto* thread = c.proc.find_thread_by_id(id_thread))
+            {
+                sogen::msg qmsg{};
+                qmsg.message = msg;
+                qmsg.wParam = wParam;
+                qmsg.lParam = lParam;
+
+                thread->post_message(qmsg);
+                return TRUE;
             }
 
             return FALSE;
@@ -3388,6 +3478,134 @@ namespace sogen
             default:
                 return STATUS_SUCCESS;
             }
+        }
+
+        uint64_t handle_NtUserInitThreadCoreMessagingIocp2(const syscall_context& c, const handle /*window_handle*/,
+                                                           const emulator_object<uint32_t> completion_queue_index)
+        {
+            io_completion completion{};
+            completion.number_of_concurrent_threads = 1;
+
+            completion_queue_index.write_if_valid(0);
+            return c.proc.io_completions.store(std::move(completion)).bits;
+        }
+
+        BOOL handle_NtUserDrainThreadCoreMessagingCompletions2()
+        {
+            return TRUE;
+        }
+
+        uint64_t handle_NtUserScheduleDispatchNotification(const syscall_context& /*c*/, const hwnd /*hwnd*/)
+        {
+            return 2;
+        }
+
+        uint64_t handle_NtUserSetTimer(const syscall_context& c, const hwnd hwnd, const uint64_t timer_id, const uint32_t elapsed_ms,
+                                       const uint64_t timer_proc)
+        {
+            auto interval = std::chrono::milliseconds{elapsed_ms};
+            if (interval < k_user_timer_minimum)
+            {
+                interval = k_user_timer_minimum;
+            }
+
+            auto* target_thread = c.proc.active_thread;
+
+            if (hwnd != 0)
+            {
+                const auto* win = c.proc.windows.get(hwnd);
+                if (!win)
+                {
+                    set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
+                    return 0;
+                }
+
+                target_thread = c.proc.find_thread_by_id(win->thread_id);
+
+                if (!target_thread)
+                {
+                    set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
+                    return 0;
+                }
+            }
+
+            const auto now = c.win_emu.clock().steady_now();
+
+            if (auto* timer = target_thread->find_user_timer(hwnd, timer_id))
+            {
+                timer->interval = interval;
+                timer->due_time = now + interval;
+                timer->timer_proc = timer_proc;
+                return timer_id;
+            }
+
+            return target_thread->create_user_timer(c.proc, hwnd, timer_id, timer_proc, interval, now).timer_id;
+        }
+
+        BOOL handle_NtUserKillTimer(const syscall_context& c, const hwnd hwnd, const uint64_t timer_id)
+        {
+            auto* target_thread = c.proc.active_thread;
+
+            if (hwnd != 0)
+            {
+                const auto* win = c.proc.windows.get(hwnd);
+                if (!win)
+                {
+                    set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
+                    return FALSE;
+                }
+
+                target_thread = c.proc.find_thread_by_id(win->thread_id);
+
+                if (!target_thread)
+                {
+                    set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
+                    return FALSE;
+                }
+            }
+
+            if (!target_thread->delete_user_timer(hwnd, timer_id))
+            {
+                return FALSE;
+            }
+
+            return TRUE;
+        }
+
+        BOOL handle_NtUserValidateTimerCallback(const syscall_context& c, const uint64_t timer_proc)
+        {
+            if (timer_proc == 0)
+            {
+                return FALSE;
+            }
+
+            for (const auto& thread : c.proc.threads | std::views::values)
+            {
+                for (const auto& timer : thread.user_timers | std::views::values)
+                {
+                    if (timer.timer_proc == timer_proc)
+                    {
+                        return TRUE;
+                    }
+                }
+            }
+
+            return FALSE;
+        }
+
+        uint32_t handle_NtUserGetQueueStatusReadonly(const syscall_context& c, const UINT flags)
+        {
+            const auto thread = c.proc.active_thread;
+            const auto current_bits = thread->get_message_queue_status(c.win_emu.clock()) & flags;
+            const auto changed_bits = thread->queue_status_changed_bits & flags;
+            return current_bits | (changed_bits << 16);
+        }
+
+        uint32_t handle_NtUserGetQueueStatus(const syscall_context& c, const UINT flags)
+        {
+            const auto result = handle_NtUserGetQueueStatusReadonly(c, flags);
+            c.proc.active_thread->queue_status_changed_bits &= ~flags;
+            return result;
         }
     }
 

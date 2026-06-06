@@ -165,10 +165,12 @@ namespace sogen
                     throw std::runtime_error("Unexpected success result returned by port handler");
                 }
 
-                receive_message.write(result.message);
+                result.message.write(receive_message);
+
                 if (!result.payload.empty())
                 {
-                    c.emu.write_memory(receive_message.value() + sizeof(PORT_MESSAGE64), result.payload.data(), result.payload.size());
+                    c.emu.write_memory(receive_message.value() + result.message.header_size(), result.payload.data(),
+                                       result.payload.size());
                 }
             }
 

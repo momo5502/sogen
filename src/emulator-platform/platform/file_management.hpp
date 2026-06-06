@@ -635,6 +635,15 @@ namespace sogen
         EmulatorTraits<Emu64>::PVOID ViewBase;
     } REMOTE_PORT_VIEW64, *PREMOTE_PORT_VIEW64;
 
+    typedef struct _OBJECT_BASIC_INFORMATION
+    {
+        ULONG Attributes{};
+        ACCESS_MASK GrantedAccess{};
+        ULONG HandleCount{};
+        ULONG PointerCount{};
+        ULONG Reserved[10]{};
+    } OBJECT_BASIC_INFORMATION, *POBJECT_BASIC_INFORMATION;
+
     typedef struct _OBJECT_HANDLE_FLAG_INFORMATION
     {
         BOOLEAN Inherit;

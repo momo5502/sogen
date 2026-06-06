@@ -188,6 +188,8 @@ namespace sogen
                                       emulator_pointer object_information, ULONG object_information_length,
                                       emulator_object<ULONG> return_length);
         NTSTATUS handle_NtCompareObjects(const syscall_context& c, handle first, handle second);
+        DWORD handle_NtUserMsgWaitForMultipleObjectsEx(const syscall_context& c, ULONG count, emulator_object<handle> handles,
+                                                       DWORD timeout, DWORD wake_mask, DWORD flags);
         NTSTATUS handle_NtWaitForMultipleObjects(const syscall_context& c, ULONG count, emulator_object<handle> handles,
                                                  WAIT_TYPE wait_type, BOOLEAN alertable, emulator_object<LARGE_INTEGER> timeout);
         NTSTATUS handle_NtWaitForMultipleObjects32(const syscall_context& c, ULONG count, emulator_object<uint32_t> handles,
@@ -216,7 +218,7 @@ namespace sogen
                                             emulator_object<ULONG> connection_info_length);
         NTSTATUS handle_NtAlpcCreatePort(const syscall_context& c, emulator_object<handle> port_handle,
                                          emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
-                                         emulator_pointer /*port_attributes*/);
+                                         emulator_pointer port_attributes);
         NTSTATUS handle_NtAlpcConnectPort(const syscall_context& c, emulator_object<handle> port_handle,
                                           emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> server_port_name,
                                           emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
@@ -514,6 +516,7 @@ namespace sogen
         BOOL handle_NtUserValidateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect);
         BOOL handle_NtUserUpdateWindow(const syscall_context& c, hwnd hwnd);
         BOOL handle_NtUserPostMessage(const syscall_context& c, hwnd hwnd, UINT msg, uint64_t wParam, uint64_t lParam);
+        BOOL handle_NtUserPostThreadMessage(const syscall_context& c, DWORD id_thread, UINT msg, uint64_t wParam, uint64_t lParam);
         BOOL handle_NtUserPostQuitMessage(const syscall_context& c, int exit_code);
         NTSTATUS handle_NtUserEnumDisplayDevices(const syscall_context& c,
                                                  emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> str_device, DWORD dev_num,
@@ -557,6 +560,15 @@ namespace sogen
                                                  emulator_pointer path_array, emulator_object<UINT32> current_topology_id,
                                                  emulator_pointer reserved);
         NTSTATUS handle_NtUserDisplayConfigGetDeviceInfo(const syscall_context& c, emulator_pointer packet);
+        uint64_t handle_NtUserInitThreadCoreMessagingIocp2(const syscall_context& c, handle window_handle,
+                                                           emulator_object<uint32_t> completion_queue_index);
+        BOOL handle_NtUserDrainThreadCoreMessagingCompletions2();
+        uint64_t handle_NtUserScheduleDispatchNotification(const syscall_context& c, hwnd hwnd);
+        uint64_t handle_NtUserSetTimer(const syscall_context& c, hwnd hwnd, uint64_t timer_id, uint32_t elapsed_ms, uint64_t timer_proc);
+        BOOL handle_NtUserKillTimer(const syscall_context& c, hwnd hwnd, uint64_t timer_id);
+        BOOL handle_NtUserValidateTimerCallback(const syscall_context& c, uint64_t timer_proc);
+        uint32_t handle_NtUserGetQueueStatusReadonly(const syscall_context& c, UINT flags);
+        uint32_t handle_NtUserGetQueueStatus(const syscall_context& c, UINT flags);
 
         // syscalls/gdi.cpp:
         NTSTATUS handle_NtDxgkIsFeatureEnabled();
@@ -961,6 +973,37 @@ namespace sogen
 
             return STATUS_SUCCESS;
         }
+
+        NTSTATUS handle_NtAllocateReserveObject(const syscall_context& c, const emulator_object<handle> memory_reserve_handle,
+                                                const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                                const DWORD type)
+        {
+            std::u16string name{};
+            if (object_attributes)
+            {
+                const auto attributes = object_attributes.read();
+                if (attributes.ObjectName != 0)
+                {
+                    name = read_unicode_string(c.emu, attributes.ObjectName);
+                }
+            }
+
+            switch (type)
+            {
+            case 1: { // MemoryReserveIoCompletion
+                // TODO: This probably isn't 100% correct.
+                wait_completion_packet packet{};
+                packet.name = std::move(name);
+                memory_reserve_handle.write(c.proc.wait_completion_packets.store(std::move(packet)));
+                return STATUS_SUCCESS;
+            }
+            case 0: // MemoryReserveUserApc
+            default:
+                c.win_emu.log.error("Not supported NtAllocateReserveObject type %d", type);
+                c.emu.stop();
+                return STATUS_NOT_SUPPORTED;
+            }
+        }
     }
 
     // NOLINTNEXTLINE(readability-function-size,hicpp-function-size)
@@ -1285,6 +1328,7 @@ namespace sogen
         add_handler(NtUserSetWindowLong);
         add_handler(NtUserGetAncestor);
         add_handler(NtUserPostMessage);
+        add_handler(NtUserPostThreadMessage);
         add_handler(NtUserRedrawWindow);
         add_handler(NtUserGetCPD);
         add_handler(NtUserSetWindowFNID);
@@ -1328,6 +1372,16 @@ namespace sogen
         add_handler(NtGdiOpenDCW);
         add_handler(NtGdiDdDDIOpenAdapterFromHdc);
         add_handler(NtGdiSelectFont);
+        add_handler(NtUserInitThreadCoreMessagingIocp2);
+        add_handler(NtUserDrainThreadCoreMessagingCompletions2);
+        add_handler(NtUserSetTimer);
+        add_handler(NtUserKillTimer);
+        add_handler(NtUserValidateTimerCallback);
+        add_handler(NtAllocateReserveObject);
+        add_handler(NtUserMsgWaitForMultipleObjectsEx);
+        add_handler(NtUserGetQueueStatusReadonly);
+        add_handler(NtUserGetQueueStatus);
+        add_handler(NtUserScheduleDispatchNotification);
 
 #undef add_handler
     }

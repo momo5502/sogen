@@ -26,6 +26,7 @@ namespace sogen
             token,
             window,
             timer,
+            user_timer,
             monitor,
             desktop,
             io_completion,

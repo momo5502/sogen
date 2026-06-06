@@ -365,6 +365,10 @@ namespace sogen
                                                                     basic_info.NumberOfProcessors = 4;
                                                                 });
 
+            case SystemRecommendedSharedDataAlignment:
+                return handle_query<ULONG>(c.emu, system_information, system_information_length, return_length,
+                                           [&](ULONG& alignment) { alignment = 64; });
+
             case SystemSupportedProcessorArchitectures: {
                 constexpr auto num_arch = 2;
 
@@ -392,7 +396,7 @@ namespace sogen
             }
 
             default:
-                c.win_emu.log.error("Unsupported system info class: %X\n", info_class);
+                c.win_emu.log.error("Unsupported system info class: 0x%X\n", info_class);
                 c.emu.stop();
                 return STATUS_NOT_SUPPORTED;
             }

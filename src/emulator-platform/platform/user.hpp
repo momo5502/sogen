@@ -5,26 +5,27 @@
 
 // NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 
-#define FNID_START      0x29A
-#define FNID_ARRAY_SIZE 24
+#define FNID_START               0x29A
+#define FNID_ARRAY_SIZE          24
 
-#define FNID_SCROLLBAR  0x29A
-#define FNID_ICONTITLE  0x29B
-#define FNID_MENU       0x29C
-#define FNID_DESKTOP    0x29D
-#define FNID_DEFWINDOW  0x29E
-#define FNID_MESSAGE    0x29F
-#define FNID_SWITCH     0x2A0
-#define FNID_BUTTON     0x2A1
-#define FNID_COMBOBOX   0x2A2
-#define FNID_COMBOLBOX  0x2A3
-#define FNID_DIALOG     0x2A4
-#define FNID_EDIT       0x2A5
-#define FNID_LISTBOX    0x2A6
-#define FNID_MDICLIENT  0x2A7
-#define FNID_STATIC     0x2A8
-#define FNID_IME        0x2A9
-#define FNID_GHOST      0x2AA
+#define FNID_SCROLLBAR           0x29A
+#define FNID_ICONTITLE           0x29B
+#define FNID_MENU                0x29C
+#define FNID_DESKTOP             0x29D
+#define FNID_DEFWINDOW           0x29E
+#define FNID_MESSAGE             0x29F
+#define FNID_SWITCH              0x2A0
+#define FNID_BUTTON              0x2A1
+#define FNID_COMBOBOX            0x2A2
+#define FNID_COMBOLBOX           0x2A3
+#define FNID_DIALOG              0x2A4
+#define FNID_EDIT                0x2A5
+#define FNID_LISTBOX             0x2A6
+#define FNID_MDICLIENT           0x2A7
+#define FNID_STATIC              0x2A8
+#define FNID_IME                 0x2A9
+#define FNID_GHOST               0x2AA
+#define FNID_SENDMESSAGECALLBACK 0x2B8
 
 namespace sogen
 {

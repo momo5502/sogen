@@ -3,6 +3,7 @@
 #include "logger.hpp"
 #include "windows_emulator.hpp"
 #include "ports/api_port.hpp"
+#include "ports/core_messaging_registrar.hpp"
 #include "ports/dns_resolver.hpp"
 #include "ports/lsa_policy_lookup.hpp"
 #include "binary_writer.hpp"
@@ -37,6 +38,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
         };
+
     }
 
     std::unique_ptr<port> create_port(const std::u16string_view port)
@@ -59,6 +61,11 @@ namespace sogen
         if (port == u"\\WindowsErrorReportingServicePort")
         {
             return std::make_unique<noop_port>();
+        }
+
+        if (port == u"\\BaseNamedObjects\\CoreMessagingRegistrar")
+        {
+            return create_core_messaging_registrar_port();
         }
 
         if (port == u"\\RPC Control\\ntsvcs")
@@ -120,40 +127,55 @@ namespace sogen
             return {.status = STATUS_INVALID_PARAMETER};
         }
 
-        const auto send_header = c.send_message.read();
+        const auto send_header = lpc_port_message::read(c.send_message);
+
+        const auto data_length = send_header.data_length();
+        const auto total_length = send_header.total_length();
+
+        if (total_length < data_length)
+        {
+            return {.status = STATUS_INVALID_PARAMETER};
+        }
+
+        const auto header_size = send_header.header_size();
+
+        if (header_size != send_header.wire_size())
+        {
+            return {.status = STATUS_INVALID_PARAMETER};
+        }
 
         auto recv_header = send_header;
-        recv_header.u2.s2.Type = LPC_REPLY;
+        recv_header.native.u2.s2.Type = LPC_REPLY;
 
-        if (send_header.u2.s2.Type == LPC_NO_IMPERSONATE)
+        if (send_header.native.u2.s2.Type == LPC_NO_IMPERSONATE)
         {
-            recv_header.u2.s2.Type |= LPC_NO_IMPERSONATE;
+            recv_header.native.u2.s2.Type |= LPC_NO_IMPERSONATE;
         }
 
         lpc_request_context context{};
-        context.send_buffer = c.send_message.value() + sizeof(PORT_MESSAGE64);
-        context.send_buffer_length = send_header.u1.s1.DataLength;
-        context.recv_buffer = c.receive_message ? c.receive_message.value() + sizeof(PORT_MESSAGE64) : 0;
-        context.recv_buffer_length = c.receive_buffer_length >= sizeof(PORT_MESSAGE64)
-                                         ? static_cast<ULONG>(c.receive_buffer_length - sizeof(PORT_MESSAGE64))
-                                         : recv_header.u1.s1.DataLength;
+        context.send_buffer = c.send_message.value() + header_size;
+        context.send_buffer_length = data_length;
+        context.recv_buffer = c.receive_message ? c.receive_message.value() + header_size : 0;
+        context.recv_buffer_length =
+            c.receive_buffer_length >= header_size ? static_cast<ULONG>(c.receive_buffer_length - header_size) : data_length;
 
         auto request_result = this->handle_request(win_emu, context);
         const auto payload_size = request_result.payload ? static_cast<ULONG>(request_result.payload->size()) : context.recv_buffer_length;
 
-        if (sizeof(PORT_MESSAGE64) + payload_size > static_cast<uint16_t>(std::numeric_limits<CSHORT>::max()))
+        if (header_size + payload_size > static_cast<ULONG>(std::numeric_limits<CSHORT>::max()))
         {
             throw std::runtime_error("Response payload too big");
         }
 
-        recv_header.u1.s1.DataLength = static_cast<CSHORT>(payload_size);
-        recv_header.u1.s1.TotalLength = static_cast<CSHORT>(sizeof(PORT_MESSAGE64) + payload_size);
+        recv_header.native.u1.s1.DataLength = static_cast<CSHORT>(payload_size);
+        recv_header.native.u1.s1.TotalLength = static_cast<CSHORT>(header_size + payload_size);
 
         lpc_message_result result{.status = request_result.status, .message = recv_header};
         if (request_result.payload)
         {
             result.payload = std::move(*request_result.payload);
         }
+
         return result;
     }
 

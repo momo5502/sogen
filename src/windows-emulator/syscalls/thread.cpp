@@ -533,7 +533,7 @@ namespace sogen
                 }
             }
 
-            return STATUS_INVALID_HANDLE;
+            return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtAlertThreadByThreadIdEx(const syscall_context& c, const uint64_t thread_id,

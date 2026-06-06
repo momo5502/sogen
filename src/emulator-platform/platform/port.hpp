@@ -20,7 +20,8 @@
 namespace sogen
 {
 
-    struct PORT_MESSAGE64
+    template <typename Traits>
+    struct PORT_MESSAGE
     {
         union
         {
@@ -46,7 +47,7 @@ namespace sogen
 
         union
         {
-            CLIENT_ID64 ClientId;
+            CLIENT_ID<Traits> ClientId;
             double DoNotUseThisField;
         };
 
@@ -54,10 +55,13 @@ namespace sogen
 
         union
         {
-            EmulatorTraits<Emu64>::SIZE_T ClientViewSize; // only valid for LPC_CONNECTION_REQUEST messages
-            ULONG CallbackId;                             // only valid for LPC_REQUEST messages
+            typename Traits::SIZE_T ClientViewSize; // only valid for LPC_CONNECTION_REQUEST messages
+            ULONG CallbackId;                       // only valid for LPC_REQUEST messages
         };
     };
+
+    using PORT_MESSAGE32 = PORT_MESSAGE<EmulatorTraits<Emu32>>;
+    using PORT_MESSAGE64 = PORT_MESSAGE<EmulatorTraits<Emu64>>;
 
     struct ALPC_MESSAGE_ATTRIBUTES
     {

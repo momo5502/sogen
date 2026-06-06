@@ -379,6 +379,16 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            if (object_information_class == ObjectBasicInformation)
+            {
+                return handle_query<OBJECT_BASIC_INFORMATION>(c.emu, object_information, object_information_length, return_length,
+                                                              [&](OBJECT_BASIC_INFORMATION& info) {
+                                                                  info.GrantedAccess = GENERIC_ALL;
+                                                                  info.HandleCount = 1;
+                                                                  info.PointerCount = 2;
+                                                              });
+            }
+
             if (object_information_class == ObjectHandleFlagInformation)
             {
                 return handle_query<OBJECT_HANDLE_FLAG_INFORMATION>(c.emu, object_information, object_information_length, return_length,
@@ -430,6 +440,7 @@ namespace sogen
             collect_wait32_candidate(c.proc.threads, id, resolved, candidate_count);
             collect_wait32_candidate(c.proc.mutants, id, resolved, candidate_count);
             collect_wait32_candidate(c.proc.semaphores, id, resolved, candidate_count);
+            collect_wait32_candidate(c.proc.ports, id, resolved, candidate_count);
             collect_wait32_candidate(c.proc.timers, id, resolved, candidate_count);
 
             if (candidate_count == 1)
@@ -468,6 +479,9 @@ namespace sogen
             case handle_types::semaphore:
                 return validate_handle_in_store(c.proc.semaphores);
 
+            case handle_types::port:
+                return validate_handle_in_store(c.proc.ports);
+
             case handle_types::timer:
                 if (h.value.is_pseudo)
                 {
@@ -477,6 +491,7 @@ namespace sogen
                 return validate_handle_in_store(c.proc.timers);
 
             default:
+                c.win_emu.log.error("Wait handle type not supported!\n");
                 return STATUS_OBJECT_TYPE_MISMATCH;
             }
         }
@@ -486,6 +501,60 @@ namespace sogen
             const auto first_resolved = c.proc.resolve_object_pseudo_handle(first);
             const auto second_resolved = c.proc.resolve_object_pseudo_handle(second);
             return (first_resolved == second_resolved) ? STATUS_SUCCESS : STATUS_NOT_SAME_OBJECT;
+        }
+
+        DWORD handle_NtUserMsgWaitForMultipleObjectsEx(const syscall_context& c, const ULONG count, const emulator_object<handle> handles,
+                                                       const DWORD timeout, const DWORD wake_mask, const DWORD flags)
+        {
+            constexpr DWORD mwmo_waitall = 0x0001;
+            constexpr DWORD wait_failed = 0xFFFFFFFF;
+            constexpr DWORD infinite_timeout = 0xFFFFFFFF;
+
+            if (count > 64)
+            {
+                return wait_failed;
+            }
+
+            const bool wait_all = (flags & mwmo_waitall) != 0;
+            auto& t = c.win_emu.current_thread();
+            t.await_objects = {};
+            t.await_any = false;
+            t.await_msg_mask = {};
+            t.await_time = {};
+
+            std::vector<handle> wait_handles{};
+            wait_handles.reserve(count);
+            for (ULONG i = 0; i < count; ++i)
+            {
+                const auto h = handles.read(i);
+
+                if (c.proc.is_object_pseudo_handle(h))
+                {
+                    return wait_failed;
+                }
+
+                if (!NT_SUCCESS(validate_wait_handle(c, h)))
+                {
+                    return wait_failed;
+                }
+
+                wait_handles.push_back(h);
+            }
+
+            t.await_objects = std::move(wait_handles);
+            t.await_any = !wait_all;
+            if (wake_mask != 0)
+            {
+                t.await_msg_mask = wake_mask;
+            }
+
+            if (timeout != infinite_timeout)
+            {
+                t.await_time = c.win_emu.clock().steady_now() + std::chrono::milliseconds{timeout};
+            }
+
+            c.win_emu.yield_thread(false);
+            return {};
         }
 
         NTSTATUS handle_NtWaitForMultipleObjects(const syscall_context& c, const ULONG count, const emulator_object<handle> handles,
