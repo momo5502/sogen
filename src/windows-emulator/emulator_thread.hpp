@@ -282,6 +282,11 @@ namespace sogen
             return this->await_time.has_value() && this->await_time.value() != infinite && this->await_time.value() < clock.steady_now();
         }
 
+        bool has_pending_alertable_apc() const
+        {
+            return this->apc_alertable && !this->pending_apcs.empty();
+        }
+
         std::optional<msg> peek_pending_message(hwnd hwnd_filter, UINT filter_min, UINT filter_max, bool remove = false);
         void post_message(const msg& msg);
 

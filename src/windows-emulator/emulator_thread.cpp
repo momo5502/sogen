@@ -596,7 +596,7 @@ namespace sogen
                 return true;
             }
 
-            if (this->is_await_time_over(clock))
+            if (this->is_await_time_over(clock) && !this->has_pending_alertable_apc())
             {
                 this->mark_as_ready(STATUS_TIMEOUT);
                 return true;
@@ -607,7 +607,7 @@ namespace sogen
 
         if (this->await_time.has_value())
         {
-            if (this->is_await_time_over(clock))
+            if (this->is_await_time_over(clock) && !this->has_pending_alertable_apc())
             {
                 this->mark_as_ready(STATUS_SUCCESS);
                 return true;
@@ -644,7 +644,7 @@ namespace sogen
                     return true;
                 }
 
-                if (timeout_expired(wait))
+                if (timeout_expired(wait) && !this->has_pending_alertable_apc())
                 {
                     this->mark_as_ready(STATUS_TIMEOUT);
                     return true;
@@ -667,7 +667,7 @@ namespace sogen
                     return true;
                 }
 
-                if (timeout_expired(wait))
+                if (timeout_expired(wait) && !this->has_pending_alertable_apc())
                 {
                     emulator_object<ULONG>{*this->memory_ptr, wait.entries_removed_ptr}.write_if_valid(0);
                     this->mark_as_ready(STATUS_TIMEOUT);
