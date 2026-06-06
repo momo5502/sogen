@@ -134,6 +134,42 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
     app = None
     gc.collect()
 
+# temporary hook lifetime smoke test: returned Hook object must not be kept in Python
+# for hook to stay active.
+if hook_sample.exists():
+    temp_hook_hits = {"count": 0}
+    temp_app_box = {"app": None}
+
+    def on_temp_module_load(module):
+        if module.name.lower() == "hook-sample.exe":
+            temp_app_box["app"].hooks.memory_execution_at(
+                module.entry_point,
+                lambda address: temp_hook_hits.__setitem__("count", temp_hook_hits["count"] + 1),
+            )
+
+    hook_sample_copy = filesys_root / "hook-sample.exe"
+    hook_sample_copy.write_bytes(hook_sample.read_bytes())
+
+    @win.api_call(cc=mod.CallingConvention.stdcall, params=[])
+    def on_temp_get_current_process_id(call, params):
+        call.return_value = 0xC0FFEE01
+        return mod.ApiContinuation.intercept
+
+    temp_app = win.create_application(
+        r"C:\hook-sample.exe",
+        emulation_root=emulator_root,
+    )
+    temp_app_box["app"] = temp_app
+    temp_app.callbacks.on_stdout = lambda text: print(text, end="", flush=True)
+    temp_app.callbacks.on_module_load = on_temp_module_load
+    temp_app.hooks.apis["GetCurrentProcessId"] = on_temp_get_current_process_id
+    temp_app.start()
+    assert temp_hook_hits["count"] > 0, "temporary memory_execution_at hook died immediately"
+    assert temp_app.process.exit_status == 0, f"non-zero exit: {temp_app.process.exit_status}"
+
+    temp_app = None
+    gc.collect()
+
 # ----- intercept smoke test against a controlled minimal sample -----
 #
 # hook-sample.exe returns 0 only when GetCurrentProcessId() returns the magic

@@ -12,7 +12,12 @@ namespace sogen::py
 
     hook_handle hook_registry::make_hook(emulator_hook* hook)
     {
-        return {*this->emu, hook, nb::cast(this, nb::rv_policy::reference_internal)};
+        hook_handle stored{*this->emu, hook, nb::none()};
+        this->active_hooks.emplace_back(stored);
+
+        auto exposed = stored;
+        exposed.owner = nb::cast(this, nb::rv_policy::reference_internal);
+        return exposed;
     }
 
     hook_handle hook_registry::memory_execution(nb::object callback)

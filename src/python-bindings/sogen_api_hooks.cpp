@@ -57,43 +57,18 @@ namespace sogen::py
 
     // ----- hook_handle -----
 
-    hook_handle::hook_handle(windows_emulator& emulator, emulator_hook* hook, nb::object owner)
+    hook_handle::hook_state::hook_state(windows_emulator& emulator, emulator_hook* hook)
         : emu(&emulator),
-          hook(hook),
-          owner(std::move(owner))
+          hook(hook)
     {
     }
 
-    hook_handle::~hook_handle()
+    hook_handle::hook_state::~hook_state()
     {
         remove();
     }
 
-    hook_handle::hook_handle(hook_handle&& other) noexcept
-        : emu(other.emu),
-          hook(other.hook),
-          owner(std::move(other.owner))
-    {
-        other.emu = nullptr;
-        other.hook = nullptr;
-    }
-
-    hook_handle& hook_handle::operator=(hook_handle&& other) noexcept
-    {
-        if (this != &other)
-        {
-            remove();
-            emu = other.emu;
-            hook = other.hook;
-            owner = std::move(other.owner);
-            other.emu = nullptr;
-            other.hook = nullptr;
-        }
-
-        return *this;
-    }
-
-    void hook_handle::remove()
+    void hook_handle::hook_state::remove()
     {
         if (!this->emu || !this->hook)
         {
@@ -109,6 +84,20 @@ namespace sogen::py
         }
 
         this->hook = nullptr;
+    }
+
+    hook_handle::hook_handle(windows_emulator& emulator, emulator_hook* hook, nb::object owner)
+        : shared_state(std::make_shared<hook_state>(emulator, hook)),
+          owner(std::move(owner))
+    {
+    }
+
+    void hook_handle::remove() const
+    {
+        if (this->shared_state)
+        {
+            this->shared_state->remove();
+        }
     }
 
     // ----- api_hook_registry -----

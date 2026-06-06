@@ -8,25 +8,36 @@ namespace sogen::py
     // RAII wrapper for emulator hooks. Removes the hook on destruction.
     struct hook_handle
     {
-        windows_emulator* emu{};
-        emulator_hook* hook{};
+        struct hook_state
+        {
+            windows_emulator* emu{};
+            emulator_hook* hook{};
+
+            hook_state() = default;
+            hook_state(windows_emulator& emulator, emulator_hook* hook);
+            ~hook_state();
+
+            hook_state(const hook_state&) = delete;
+            hook_state& operator=(const hook_state&) = delete;
+
+            void remove();
+            bool active() const
+            {
+                return this->hook != nullptr;
+            }
+        };
+
+        std::shared_ptr<hook_state> shared_state{};
         nb::object owner = nb::none();
 
         hook_handle() = default;
         hook_handle(windows_emulator& emulator, emulator_hook* hook, nb::object owner);
-        ~hook_handle();
-
-        hook_handle(const hook_handle&) = delete;
-        hook_handle& operator=(const hook_handle&) = delete;
-
-        hook_handle(hook_handle&& other) noexcept;
-        hook_handle& operator=(hook_handle&& other) noexcept;
 
         bool active() const
         {
-            return this->hook != nullptr;
+            return this->shared_state && this->shared_state->active();
         }
-        void remove();
+        void remove() const;
     };
 
     // Information about a single API call passed to the user's Python callback.
@@ -119,6 +130,7 @@ namespace sogen::py
     {
         windows_emulator* emu{};
         std::shared_ptr<api_hook_registry> apis{};
+        std::vector<hook_handle> active_hooks{};
 
         explicit hook_registry(windows_emulator& emulator);
 
