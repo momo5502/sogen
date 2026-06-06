@@ -92,7 +92,7 @@ namespace sogen::py
     {
     }
 
-    void hook_handle::remove()
+    void hook_handle::remove() const
     {
         if (this->shared_state)
         {

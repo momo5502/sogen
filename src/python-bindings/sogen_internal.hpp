@@ -37,7 +37,7 @@ namespace sogen::py
         {
             return this->shared_state && this->shared_state->active();
         }
-        void remove();
+        void remove() const;
     };
 
     // Information about a single API call passed to the user's Python callback.
