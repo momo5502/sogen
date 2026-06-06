@@ -154,11 +154,10 @@ namespace sogen
             {
                 return u"Edit";
             }
-            // NOTE: the #NNNN aliases are build-specific class atoms for the static control (the value
-            // differs between Windows versions). This hardcoded list is a stopgap; the atom should be
-            // resolved to its registered class name instead.
-            if (class_name == u"#3" || class_name == u"#2032" || class_name == u"#2160" || class_name == u"#12192" ||
-                class_name == u"STATIC" || class_name == u"Static")
+            // Build-specific integer atoms for the control classes are resolved to their canonical names
+            // earlier, via SERVERINFO.atomSysClass (see resolve_builtin_class_atom), so only the literal
+            // class names and the stable ordinal aliases need to be handled here.
+            if (class_name == u"#3" || class_name == u"STATIC" || class_name == u"Static")
             {
                 return u"Static";
             }
@@ -890,6 +889,55 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        // user32's dialog manager turns a control-class ordinal (0x80=Button, 0x81=Edit, 0x82=Static,
+        // 0x83=ListBox, 0x84=ScrollBar, 0x85=ComboBox) into a class atom by indexing the WORD table
+        // SERVERINFO.atomSysClass[ICLS] at gpsi+0x364 with (ordinal & 0x7F), then hands that atom to
+        // NtUserCreateWindowEx. Those atom values are assigned per build, so the same control shows up
+        // as e.g. atom 0x7F0 on one Windows version and a different value on another. Map an incoming
+        // integer atom back to its canonical builtin class name by reverse-looking it up in that table,
+        // which is portable across builds (no hardcoded atom values).
+        std::u16string_view resolve_builtin_class_atom(const syscall_context& c, const uint16_t atom)
+        {
+            if (atom == 0)
+            {
+                return {};
+            }
+
+            static constexpr std::array<std::u16string_view, 6> class_names = {
+                u"Button", u"Edit", u"Static", u"ListBox", u"ScrollBar", u"ComboBox",
+            };
+
+            constexpr uint64_t k_atom_sys_class_offset = 0x364;
+
+            const auto serverinfo_base = c.proc.user_handles.get_server_info().value();
+            if (serverinfo_base == 0)
+            {
+                return {};
+            }
+
+            for (size_t i = 0; i < class_names.size(); ++i)
+            {
+                uint16_t entry = 0;
+                const auto address = serverinfo_base + k_atom_sys_class_offset + i * sizeof(uint16_t);
+                if (c.win_emu.memory.try_read_memory(address, &entry, sizeof(entry)) && entry == atom)
+                {
+                    return class_names[i];
+                }
+            }
+
+            return {};
+        }
+
+        std::u16string resolve_atom_name(const syscall_context& c, const uint16_t atom)
+        {
+            if (const auto builtin = resolve_builtin_class_atom(c, atom); !builtin.empty())
+            {
+                return std::u16string{builtin};
+            }
+
+            return c.proc.get_atom_name(atom).value_or(u"");
+        }
+
         std::u16string read_unicode_string_or_atom(const syscall_context& c,
                                                    const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> uc_string,
                                                    const size_t index = 0)
@@ -901,7 +949,7 @@ namespace sogen
 
             if (uc_string.value() <= std::numeric_limits<uint16_t>::max())
             {
-                return c.proc.get_atom_name(static_cast<uint16_t>(uc_string.value())).value_or(u"");
+                return resolve_atom_name(c, static_cast<uint16_t>(uc_string.value()));
             }
 
             return read_unicode_string(c.emu, uc_string, index);
@@ -917,7 +965,7 @@ namespace sogen
 
             if (str_obj.value() <= std::numeric_limits<uint16_t>::max())
             {
-                return c.proc.get_atom_name(static_cast<uint16_t>(str_obj.value())).value_or(u"");
+                return resolve_atom_name(c, static_cast<uint16_t>(str_obj.value()));
             }
 
             return read_large_string(str_obj, index);
