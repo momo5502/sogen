@@ -278,8 +278,6 @@ namespace sogen
                 return nullptr;
             }
 
-            c.win_emu.watch_ui_proc_address(wnd_proc);
-
             constexpr auto cls_size = static_cast<size_t>(page_align_up(sizeof(USER_CLASS)));
             const auto cls_ptr = c.win_emu.memory.allocate_memory(cls_size, memory_permission::read);
 

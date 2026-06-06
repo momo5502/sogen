@@ -753,12 +753,7 @@ namespace sogen
                         const auto payload_capacity = static_cast<size_t>(header->size) - offsetof(gdi_batch_text_out, string);
                         const auto dx_bytes = static_cast<size_t>(text_out->dx_size);
                         const auto text_bytes = static_cast<size_t>(text_out->count) * sizeof(char16_t);
-                        if (dx_bytes > payload_capacity || text_bytes > payload_capacity - dx_bytes)
-                        {
-                            std::printf("GDI batch text payload out of bounds count=%u dx_size=%u capacity=%zu\n", text_out->count,
-                                        text_out->dx_size, payload_capacity);
-                        }
-                        else
+                        if (dx_bytes <= payload_capacity && text_bytes <= payload_capacity - dx_bytes)
                         {
                             const auto* dx = reinterpret_cast<const uint32_t*>(text_out->string.data());
                             const auto* text =
