@@ -16,6 +16,8 @@ export function createSogenUiHost(worker, canvas) {
   const WM_RBUTTONUP = 0x0205;
   const WM_MOUSEMOVE = 0x0200;
 
+  const MK_LBUTTON = 0x0001;
+
   const SC_MINIMIZE = 0xf020;
   const SC_MAXIMIZE = 0xf030;
 
@@ -443,7 +445,7 @@ export function createSogenUiHost(worker, canvas) {
 
     const localX = x - win.rect.left;
     const localY = y - win.rect.top;
-    sendEvent(win.hwnd, event.button === 2 ? WM_RBUTTONDOWN : WM_LBUTTONDOWN, 0, packPoint(localX, localY));
+    sendEvent(win.hwnd, event.button === 2 ? WM_RBUTTONDOWN : WM_LBUTTONDOWN, event.button === 0 ? MK_LBUTTON : 0, packPoint(localX, localY));
     composite();
   });
 
