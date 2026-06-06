@@ -232,29 +232,31 @@ namespace sogen
                 return nullptr;
             }
 
+            (void)win32k_userconnect::try_bootstrap_client_pfn_arrays_from_ntdll(c.win_emu);
+
             c.proc.user_handles.get_server_info().access([&](const USER_SERVERINFO& server_info) {
                 if (normalized_name == u"Button")
                 {
-                    wnd_proc = server_info.apfnClientA[k_client_pfn_button_wndproc_index];
+                    wnd_proc = server_info.apfnClientW[k_client_pfn_button_wndproc_index];
                     if (wnd_proc == 0)
                     {
-                        wnd_proc = server_info.apfnClientW[k_client_pfn_button_wndproc_index];
+                        wnd_proc = server_info.apfnClientA[k_client_pfn_button_wndproc_index];
                     }
                 }
                 else if (normalized_name == u"Static")
                 {
-                    wnd_proc = server_info.apfnClientA[k_client_pfn_static_wndproc_index];
+                    wnd_proc = server_info.apfnClientW[k_client_pfn_static_wndproc_index];
                     if (wnd_proc == 0)
                     {
-                        wnd_proc = server_info.apfnClientW[k_client_pfn_static_wndproc_index];
+                        wnd_proc = server_info.apfnClientA[k_client_pfn_static_wndproc_index];
                     }
                 }
                 else if (normalized_name == u"#32770")
                 {
-                    wnd_proc = server_info.apfnClientA[k_client_pfn_dialog_wndproc_index];
+                    wnd_proc = server_info.apfnClientW[k_client_pfn_dialog_wndproc_index];
                     if (wnd_proc == 0)
                     {
-                        wnd_proc = server_info.apfnClientW[k_client_pfn_dialog_wndproc_index];
+                        wnd_proc = server_info.apfnClientA[k_client_pfn_dialog_wndproc_index];
                     }
                 }
             });
@@ -1336,6 +1338,37 @@ namespace sogen
         NTSTATUS handle_NtUserFindExistingCursorIcon()
         {
             return STATUS_NOT_SUPPORTED;
+        }
+
+        BOOL handle_NtUserDestroyCursor(const syscall_context&, const hicon icon, const DWORD /*flags*/)
+        {
+            return icon != 0 ? TRUE : FALSE;
+        }
+
+        hicon handle_NtUserGetCursorFrameInfo(const syscall_context&, const hicon icon, const UINT /*frame*/,
+                                              const emulator_object<uint32_t> rate_jiffies, const emulator_object<uint32_t> frame_count)
+        {
+            if (icon == 0)
+            {
+                return 0;
+            }
+
+            rate_jiffies.write_if_valid(0);
+            frame_count.write_if_valid(1);
+            return icon;
+        }
+
+        BOOL handle_NtUserGetIconSize(const syscall_context&, const hicon icon, const UINT /*frame*/, const emulator_object<int> cx,
+                                      const emulator_object<int> cy)
+        {
+            if (icon == 0 || !cx || !cy)
+            {
+                return FALSE;
+            }
+
+            cx.write(32);
+            cy.write(64);
+            return TRUE;
         }
 
         BOOL handle_NtUserMessageBeep()

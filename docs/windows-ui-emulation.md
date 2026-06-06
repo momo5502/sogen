@@ -33,7 +33,7 @@ Real emulation goal is stronger: builtin controls, dialogs, and custom `WM_PAINT
 - SDL is now native default backend when SDL3 is available
 - guest dialog flow works much better than before
 - `MessageBox` no longer depends on export hook hack
-- builtin control callback dispatch reaches real user32 code
+- builtin control callback dispatch reaches ntdll client thunks, but those thunks still need correct user32 client initialization before real builtin control paint can work
 - builtin `Button` / `Static` no longer crash during paint because correct extra bytes now allocated:
   - `Button` -> `cbWndExtra = 8`
   - `Static` -> `cbWndExtra = 8`
@@ -75,13 +75,13 @@ Real emulation goal is stronger: builtin controls, dialogs, and custom `WM_PAINT
 - direct text rendering path now exists via temporary 8x8 debug font in `NtGdiExtTextOutW`
 - user validated forced direct text path visually: text appears and glyph mirroring bug was fixed
 - current text gap is smaller-text GDI batching behavior, not raw top-level surface presentation
-- `manual-messagebox-sample` runs through the native button/static paint path well enough for visible controls and text.
-- builtin `MessageBox` is past the earlier missing `NtUserSetThreadState` syscall, but it is not working yet.
+- `manual-messagebox-sample` exercises more of the USER/GDI path than before, but builtin control rendering still must not rely on manual fallback drawing.
+- builtin `MessageBox` is past the earlier missing `NtUserSetThreadState`, `NtUserGetIconSize`, and `NtUserGetCursorFrameInfo` blockers, but it is not working correctly yet.
   - `NtUserSetThreadState(value, mask)` is now modeled as a per-thread USER state bitfield.
   - `NtUserGetThreadState(10)` returns that bitfield for the dialog cleanup path.
   - user32 creates the dialog and buttons, then uses predefined class atom `#2032` for the message-box icon/static control.
   - `#2032` now normalizes to the builtin `Static` class, matching the `SS_ICON` control path.
-  - The next concrete blocker is `NtUserGetIconSize(icon, frame, &cx, &cy)`, reached while static/icon painting or setup runs.
+  - The current blocker is no longer a single missing syscall; it is correct user32 client callback initialization and builtin control paint.
 
 ## Builtin MessageBox Investigation Notes
 
@@ -93,25 +93,76 @@ IDA/user32 findings from the current checkpoint:
 - `DialogBox2` later calls `NtUserGetThreadState(10)` before an owner/foreground-window cleanup path.
 - A blind no-op `NtUserSetThreadState` is not sufficient: it lets the sample proceed, but `MessageBox` returns `0` immediately.
 - After adding the thread-state bitfield, verbose report output showed `MessageBox` got as far as dialog/control creation. It then failed on class atom `#2032`, destroyed the dialog, and printed `clicked: other (0)`.
-- Mapping `#2032` to `Static` moves the failure forward to the next missing syscall: `NtUserGetIconSize`.
+- Mapping `#2032` to `Static` moved the failure forward to icon/static setup.
 
-Expected next narrow implementation:
+Implemented narrow syscall progress:
 
-```cpp
-BOOL NtUserGetIconSize(HICON icon, UINT frame, int* cx, int* cy);
-```
+- `NtUserGetIconSize(icon, frame, &cx, &cy)`
+  - returns `TRUE` for non-null icons
+  - writes `cx = 32`
+  - writes `cy = 64`
+- `NtUserGetCursorFrameInfo(icon, frame, &rate, &frame_count)`
+  - returns the icon handle for non-null icons
+  - writes `rate = 0`
+  - writes `frame_count = 1`
+- `NtUserDestroyCursor(icon, flags)`
+  - returns `TRUE` for non-null handles
 
-For the current message-box icon path, returning a default icon size is probably enough to advance:
+The `cy = 64` value is intentional for the user32 static-icon path inspected in IDA: `xxxSetStaticImage` halves the returned height before layout/drawing, so this models a 32x32 icon backed by a 32x64 icon/mask bitmap.
 
-- write `cx = 32`
-- write `cy = 64`
-- return `TRUE`
+Current runtime state:
 
-The `cy = 64` value is intentional for the user32 static-icon path inspected in IDA: it halves the returned height before layout/drawing, so this models a 32x32 icon backed by a 32x64 icon/mask bitmap.
+- builtin `messagebox-sample` now creates the dialog window and child windows.
+- The real guest paint path still does not make builtin button/static controls visible.
+- A manual host-side/emulator-side paint experiment was added briefly:
+  - intercepted builtin `Button` / `Static` `WM_PAINT`
+  - called emulator GDI primitives directly
+  - drew button rectangles and text from stored `window.name`
+- That experiment made text/buttons visible, but it was a hack and has been removed.
+- With that hack removed, visible builtin control rendering is still not solved.
+
+## Ntdll/User32 Callback Findings
+
+The important finding is that builtin class WndProc setup is not just a pointer lookup problem.
+
+Observed current behavior:
+
+- `SERVERINFO.apfnClientA/W` currently contains ntdll client thunks such as:
+  - `NtdllButtonWndProc_A/W`
+  - `NtdllStaticWndProc_A/W`
+  - `NtdllDialogWndProc_A/W`
+- In IDA, those ntdll thunks call entries in ntdll's `NtUserPfn` tables.
+- Those table entries initially point at `UninitUser32Proc`, which prints `"User32 init not called"` and breaks.
+- `user32!InitializeNtdllUserPfn` calls `ntdll!RtlInitializeNtUserPfn` with user32's A/W/worker callback arrays.
+
+Experiments and conclusions:
+
+- Directly replacing `SERVERINFO.apfnClient*` with user32's public WndProc arrays is not correct.
+- That made class WndProcs point into user32, but `messagebox-sample` returned `clicked: other (0)` quickly.
+- IDA explains why: `user32!ButtonWndProcW` immediately calls `ValidateHwnd`.
+- `ValidateHwnd` depends on user32 client/global/shared state:
+  - `TEB.Win32ClientInfo[8/9]`
+  - `gSharedInfo`
+  - `gpsi`
+  - user32 handle-table metadata
+- Our synthetic window objects are not enough for that public WndProc path.
+- Patching ntdll's `NtUserPfn` tables from the emulator was also explored only as a debugging experiment and is not an acceptable solution.
+
+Likely proper direction:
+
+- Do not add manual control drawing fallbacks.
+- Do not ad-hoc patch ntdll memory from emulator code.
+- Make the user32 client initialization path happen in a Windows-like way, or emulate the relevant effects at the USER boundary with a principled model:
+  - `UserClientDllInitialize`
+  - `InitializeNtdllUserPfn`
+  - `RtlInitializeNtUserPfn`
+  - `RtlRetrieveNtUserPfn`
+  - user32 shared info / handle validation state
+- Keep callback dispatch through the ntdll/user32 callback convention instead of directly invoking public user32 WndProcs from host-side code.
 
 ## Remaining blockers
 
-- implement `NtUserGetIconSize` minimally and re-test builtin `messagebox-sample`
+- builtin `MessageBox` control rendering still needs the real client callback/user32 initialization path
 - expect possible follow-up icon/static paint gaps such as `DrawIconEx` behavior or icon-handle metadata
 - finish small-text / batched GDI text path so ordinary `TextOutA/W` works without forcing oversized `ExtTextOutW`
 - decide where batch flush should happen generically, not only in sample-driven probing
@@ -145,10 +196,10 @@ The remaining design direction is to continue moving Win32 behavior out of host 
 
 ## Next steps
 
-1. Make batched text path work for normal `TextOutA/W` without sample hacks.
-2. Re-test `manual-messagebox-sample` and inspect whether builtin control text now appears through guest paint path.
-3. Re-test builtin `STATIC` / `BUTTON` paint after text-path progress.
-4. Remove temporary paint/present probes and temporary sample hacks once path is stable.
+1. Model the user32 client initialization path cleanly enough that ntdll client thunks do not point at `UninitUser32Proc`.
+2. Keep builtin control paint on the real callback/user32 path; do not reintroduce manual `Button` / `Static` drawing fallbacks.
+3. Re-test builtin `STATIC` / `BUTTON` paint after client callback initialization is fixed.
+4. Continue improving batched text and font handling once control paint reaches real GDI calls.
 
 ## Non-goals for this checkpoint
 

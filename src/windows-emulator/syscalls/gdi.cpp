@@ -714,8 +714,7 @@ namespace sogen
                 int32_t origin_y = 0;
                 if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !surface)
                 {
-                    std::printf("GDI batch surface missing hdc=0x%llx\n", static_cast<unsigned long long>(dc));
-                    return false;
+                    return true;
                 }
 
                 const auto* bytes = reinterpret_cast<const uint8_t*>(batch.Buffer);

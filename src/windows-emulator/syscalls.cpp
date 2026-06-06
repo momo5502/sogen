@@ -446,6 +446,10 @@ namespace sogen
         NTSTATUS handle_NtUserSetCursor();
         uint64_t handle_NtUserGetCursor();
         NTSTATUS handle_NtUserFindExistingCursorIcon();
+        BOOL handle_NtUserDestroyCursor(const syscall_context& c, hicon icon, DWORD flags);
+        hicon handle_NtUserGetCursorFrameInfo(const syscall_context& c, hicon icon, UINT frame, emulator_object<uint32_t> rate_jiffies,
+                                              emulator_object<uint32_t> frame_count);
+        BOOL handle_NtUserGetIconSize(const syscall_context& c, hicon icon, UINT frame, emulator_object<int> cx, emulator_object<int> cy);
         BOOL handle_NtUserMessageBeep();
         uint64_t handle_NtUserFindWindowEx(const syscall_context& c, hwnd parent, hwnd child_after,
                                            emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
@@ -1102,6 +1106,9 @@ namespace sogen
         add_handler(NtUserGetCursorPos);
         add_handler(NtUserReleaseDC);
         add_handler(NtUserFindExistingCursorIcon);
+        add_handler(NtUserDestroyCursor);
+        add_handler(NtUserGetCursorFrameInfo);
+        add_handler(NtUserGetIconSize);
         add_handler(NtUserMessageBeep);
         add_handler(NtSetContextThread);
         add_handler(NtUserFindWindowEx);
