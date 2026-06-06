@@ -174,6 +174,7 @@ export function attachSogenUiHost(
     null;
   let hoverState: { hwnd: number; command: CaptionCommand } | null = null;
   let viewportOffset: Point = { x: 0, y: 0 };
+  let viewportPinnedByUser = false;
 
   function notifyWindowCount() {
     options.onWindowCountChanged?.(windows.size);
@@ -569,7 +570,9 @@ export function attachSogenUiHost(
     context2d.fillRect(0, 0, rect.width, rect.height);
 
     const windowsToDraw = orderedTopLevelWindows();
-    updateViewportOffset(windowsToDraw, rect.width, rect.height);
+    if (!viewportPinnedByUser) {
+      updateViewportOffset(windowsToDraw, rect.width, rect.height);
+    }
 
     context2d.save();
     context2d.translate(viewportOffset.x, viewportOffset.y);
@@ -663,6 +666,7 @@ export function attachSogenUiHost(
 
     switch (message.command) {
       case "create_window": {
+        viewportPinnedByUser = false;
         const window = getWindow(hwnd);
         window.parent = message.parent ?? 0;
         window.owner = message.owner ?? 0;
@@ -687,6 +691,7 @@ export function attachSogenUiHost(
         break;
       }
       case "destroy_window":
+        viewportPinnedByUser = false;
         windows.delete(hwnd);
         notifyWindowCount();
         if (focusedWindow === hwnd) {
@@ -694,9 +699,11 @@ export function attachSogenUiHost(
         }
         break;
       case "set_rect":
+        viewportPinnedByUser = false;
         getWindow(hwnd).rect = cloneRect(message.rect);
         break;
       case "set_visible":
+        viewportPinnedByUser = false;
         getWindow(hwnd).visible = !!message.value;
         break;
       case "set_enabled":
@@ -744,6 +751,7 @@ export function attachSogenUiHost(
 
     if (hit.region === "caption" || hit.region === "frame") {
       if (event.button === 0) {
+        viewportPinnedByUser = true;
         dragState = {
           hwnd: window.hwnd,
           offsetX: point.x - window.rect.left,
