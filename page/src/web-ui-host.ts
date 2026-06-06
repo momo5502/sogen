@@ -175,6 +175,7 @@ export function attachSogenUiHost(
   let dragState: { hwnd: number; offsetX: number; offsetY: number } | null =
     null;
   let hoverState: { hwnd: number; command: CaptionCommand } | null = null;
+  let mouseDownWindow = 0;
   let viewportOffset: Point = { x: 0, y: 0 };
   let viewportPinnedByUser = false;
 
@@ -766,6 +767,7 @@ export function attachSogenUiHost(
 
     const localX = point.x - window.rect.left;
     const localY = point.y - window.rect.top;
+    mouseDownWindow = window.hwnd;
     sendUiEvent(
       window.hwnd,
       event.button === 2 ? WM_RBUTTONDOWN : WM_LBUTTONDOWN,
@@ -790,11 +792,13 @@ export function attachSogenUiHost(
     }
 
     const target =
-      hit && hit.region === "client"
+      (mouseDownWindow ? windows.get(mouseDownWindow) : null) ??
+      (hit && hit.region === "client"
         ? hit.window
         : focusedWindow
           ? (windows.get(focusedWindow) ?? null)
-          : null;
+          : null);
+    mouseDownWindow = 0;
     if (!target) {
       return;
     }

@@ -4,6 +4,7 @@ export function createSogenUiHost(worker, canvas) {
   let focusedWindow = 0;
   let dragState = null;
   let hoverState = null;
+  let mouseDownWindow = 0;
 
   const WM_KEYDOWN = 0x0100;
   const WM_KEYUP = 0x0101;
@@ -445,6 +446,7 @@ export function createSogenUiHost(worker, canvas) {
 
     const localX = x - win.rect.left;
     const localY = y - win.rect.top;
+    mouseDownWindow = win.hwnd;
     sendEvent(win.hwnd, event.button === 2 ? WM_RBUTTONDOWN : WM_LBUTTONDOWN, event.button === 0 ? MK_LBUTTON : 0, packPoint(localX, localY));
     composite();
   });
@@ -463,7 +465,8 @@ export function createSogenUiHost(worker, canvas) {
       return;
     }
 
-    const target = hit && (hit.region === 'client') ? hit.win : windows.get(focusedWindow);
+    const target = (mouseDownWindow ? windows.get(mouseDownWindow) : null) || (hit && (hit.region === 'client') ? hit.win : windows.get(focusedWindow));
+    mouseDownWindow = 0;
     if (!target) {
       return;
     }
