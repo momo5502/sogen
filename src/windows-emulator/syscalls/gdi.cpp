@@ -1616,7 +1616,9 @@ namespace sogen
                 return FALSE;
             }
 
-            // POLYPATBLT entry: { int x; int y; int cx; int cy; HBRUSH hbr; } (HBRUSH at +0x10 on x64).
+            // POLYPATBLT entry (verified at runtime against this build's gdi32): { int x; int y; int cx; int cy; HBRUSH hbr; }
+            // i.e. position + size, NOT a RECT with right/bottom. Button frame draws pass thin edges such as
+            // {x=96, y=4, cx=1, cy=20}, which only make sense as width/height. HBRUSH is at +0x10 on x64.
             constexpr uint64_t k_entry_size = 0x18;
             constexpr uint64_t k_brush_offset = 0x10;
             for (DWORD i = 0; i < count; ++i)
