@@ -640,7 +640,7 @@ namespace sogen
 
                 if (background <= USER_NUM_SYSCOLORS)
                 {
-                    return colorref_to_bgra(k_default_system_colors[background - 1]);
+                    return colorref_to_bgra(k_default_system_colors[static_cast<size_t>(background - 1)]);
                 }
 
                 return get_brush_color(c, static_cast<uint32_t>(background));
