@@ -10,11 +10,20 @@ namespace sogen
     using pointer = uint64_t;
 
 #ifndef OS_WINDOWS
+    typedef DWORD COLORREF;
+    typedef ULONG FLONG;
+
     typedef struct tagPOINT
     {
         LONG x;
         LONG y;
     } POINT;
+
+    typedef struct _POINTL
+    {
+        LONG x;
+        LONG y;
+    } POINTL;
 
     typedef struct tagSIZE
     {
@@ -199,6 +208,9 @@ namespace sogen
 #define RDW_NOERASE          0x0020
 #define RDW_UPDATENOW        0x0100
 #define RDW_ERASENOW         0x0200
+
+#define ETO_OPAQUE           0x0002
+#define ETO_CLIPPED          0x0004
 
 #define GWLP_WNDPROC         (-4)
 #define GWLP_HINSTANCE       (-6)

@@ -13,7 +13,7 @@ namespace sogen
     namespace win32k_userconnect
     {
         constexpr uint32_t k_user_server_dll_index = 3;
-        constexpr ULONG k_wow64_wndmsg_count = 0x2000;
+        constexpr ULONG k_wow64_wndmsg_count = 0x63F;
         constexpr ULONG k_wow64_ime_msg_count = 0x2000;
         constexpr ULONG k_wow64_userconnect_header_size = 0x8;
         constexpr ULONG k_wow64_userconnect_reply_shared_info_offset = sizeof(uint64_t);

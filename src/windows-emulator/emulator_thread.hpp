@@ -254,6 +254,7 @@ namespace sogen
         std::optional<NTSTATUS> pending_status{};
 
         uint64_t win32k_thread_info{0};
+        uint64_t win32k_thread_state{0};
         handle win32k_desktop{};
         bool win32k_thread_setup_pending{false};
         bool win32k_thread_setup_done{false};
@@ -359,6 +360,7 @@ namespace sogen
 
             buffer.write_optional(this->pending_status);
             buffer.write(this->win32k_thread_info);
+            buffer.write(this->win32k_thread_state);
             buffer.write(this->win32k_desktop);
             buffer.write(this->win32k_thread_setup_pending);
             buffer.write(this->win32k_thread_setup_done);
@@ -419,6 +421,7 @@ namespace sogen
 
             buffer.read_optional(this->pending_status);
             buffer.read(this->win32k_thread_info);
+            buffer.read(this->win32k_thread_state);
             buffer.read(this->win32k_desktop);
             buffer.read(this->win32k_thread_setup_pending);
             buffer.read(this->win32k_thread_setup_done);

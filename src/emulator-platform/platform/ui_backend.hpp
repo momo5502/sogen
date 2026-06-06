@@ -11,12 +11,21 @@
 namespace sogen
 {
 
+    struct ui_insets
+    {
+        int32_t left{};
+        int32_t top{};
+        int32_t right{};
+        int32_t bottom{};
+    };
+
     struct ui_window_desc
     {
         hwnd handle{};
         hwnd parent{};
         hwnd owner{};
         RECT rect{};
+        ui_insets client_insets{};
         std::u16string class_name{};
         std::u16string title{};
         uint32_t style{};
@@ -98,7 +107,6 @@ namespace sogen
     };
 
     std::unique_ptr<ui_backend> create_default_ui_backend();
-    std::unique_ptr<ui_backend> create_win32_ui_backend();
     std::unique_ptr<ui_backend> create_sdl_ui_backend();
     std::unique_ptr<ui_backend> create_web_ui_backend();
 

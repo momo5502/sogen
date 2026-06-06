@@ -148,6 +148,25 @@ namespace sogen
         }
     };
 
+    struct message_call_state : completion_state
+    {
+        hwnd window{};
+        UINT message{};
+
+      private:
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            buffer.write(this->window);
+            buffer.write(this->message);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            buffer.read(this->window);
+            buffer.read(this->message);
+        }
+    };
+
     class windows_emulator;
 
     class syscall_dispatcher

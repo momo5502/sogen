@@ -11,6 +11,7 @@ export interface SogenUiHostMessage {
   ex_style?: number;
   control_id?: number;
   visible?: boolean;
+  client_insets?: { left: number; top: number; right: number; bottom: number };
   enabled?: boolean;
   top_level?: boolean;
   value?: boolean;
@@ -29,6 +30,9 @@ interface HostWindowState {
   className: string;
   title: string;
   controlId: number;
+  clientInsets: { left: number; top: number; right: number; bottom: number };
+  style: number;
+  exStyle: number;
   visible: boolean;
   enabled: boolean;
   topLevel: boolean;
@@ -36,18 +40,28 @@ interface HostWindowState {
   surfaceCanvas: HTMLCanvasElement | null;
 }
 
-const PLAYGROUND_BACKGROUND = "#18181b";
-const WINDOW_BACKGROUND = "#f5f5f5";
-const WINDOW_DISABLED_BACKGROUND = "#e5e7eb";
-const TITLE_BACKGROUND = "#27272a";
-const WINDOW_BORDER = "#71717a";
-const CHILD_BORDER = "#a1a1aa";
-
-interface DragState {
-  hwnd: number;
-  offsetX: number;
-  offsetY: number;
+interface Rect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
 }
+
+type CaptionCommand = "minimize" | "maximize" | "close";
+
+interface CaptionButton extends Rect {
+  command: CaptionCommand;
+}
+
+type HitRegion = "client" | "caption" | "frame" | "button" | "disabled";
+
+interface HitResult {
+  window: HostWindowState;
+  region: HitRegion;
+  button?: CaptionButton;
+}
+
+const PLAYGROUND_BACKGROUND = "#18181b";
 
 interface AttachSogenUiHostOptions {
   onWindowCountChanged?: (count: number) => void;
@@ -56,13 +70,42 @@ interface AttachSogenUiHostOptions {
 const WM_KEYDOWN = 0x0100;
 const WM_KEYUP = 0x0101;
 const WM_CHAR = 0x0102;
+const WM_CLOSE = 0x0010;
+const WM_SYSCOMMAND = 0x0112;
 const WM_MOUSEMOVE = 0x0200;
 const WM_LBUTTONDOWN = 0x0201;
 const WM_LBUTTONUP = 0x0202;
 const WM_RBUTTONDOWN = 0x0204;
 const WM_RBUTTONUP = 0x0205;
-const TITLE_BAR_HEIGHT = 24;
-const TOP_LEVEL_CLIENT_OFFSET_Y = TITLE_BAR_HEIGHT + 8;
+
+const SC_MINIMIZE = 0xf020;
+const SC_MAXIMIZE = 0xf030;
+
+// Window style bits relevant to non-client chrome.
+const WS_CAPTION = 0x00c00000;
+const WS_SYSMENU = 0x00080000;
+const WS_MINIMIZEBOX = 0x00020000;
+const WS_MAXIMIZEBOX = 0x00010000;
+
+// The guest models windows without a non-client area (client rect == window
+// rect), so the presented surface fills win.rect exactly. We draw the caption
+// bar and frame *around* win.rect, mirroring how a native window manager (and
+// the SDL backend's OS windows) decorate the client area.
+const CAPTION_HEIGHT = 30;
+const FRAME_BORDER = 1;
+const CAPTION_BUTTON_WIDTH = 46;
+
+const CHROME_COLORS = {
+  frame: "#202020",
+  captionFocused: "#0078d4",
+  captionUnfocused: "#5a5a5a",
+  titleFocused: "#ffffff",
+  titleUnfocused: "#d8d8d8",
+  glyphFocused: "#ffffff",
+  glyphUnfocused: "#e0e0e0",
+  buttonHover: "rgba(255, 255, 255, 0.18)",
+  closeHover: "#e81123",
+};
 
 function cloneRect(rect?: {
   left: number;
@@ -76,20 +119,32 @@ function cloneRect(rect?: {
 function convertSurfacePixels(
   width: number,
   height: number,
+  stride: number,
   format: number,
   pixels: Uint8Array,
 ) {
-  if (format !== 0) {
-    return Uint8ClampedArray.from(pixels.subarray(0, width * height * 4));
-  }
-
   const rgba = new Uint8ClampedArray(width * height * 4);
-  for (let i = 0; i < width * height; ++i) {
-    const src = i * 4;
-    rgba[src + 0] = pixels[src + 2] ?? 0;
-    rgba[src + 1] = pixels[src + 1] ?? 0;
-    rgba[src + 2] = pixels[src + 0] ?? 0;
-    rgba[src + 3] = pixels[src + 3] ?? 255;
+
+  for (let y = 0; y < height; ++y) {
+    const sourceBase = y * stride;
+    const destBase = y * width * 4;
+
+    for (let x = 0; x < width; ++x) {
+      const sourceIndex = sourceBase + x * 4;
+      const destIndex = destBase + x * 4;
+
+      if (format === 0) {
+        rgba[destIndex] = pixels[sourceIndex + 2] ?? 0;
+        rgba[destIndex + 1] = pixels[sourceIndex + 1] ?? 0;
+        rgba[destIndex + 2] = pixels[sourceIndex] ?? 0;
+        rgba[destIndex + 3] = pixels[sourceIndex + 3] ?? 255;
+      } else {
+        rgba[destIndex] = pixels[sourceIndex] ?? 0;
+        rgba[destIndex + 1] = pixels[sourceIndex + 1] ?? 0;
+        rgba[destIndex + 2] = pixels[sourceIndex + 2] ?? 0;
+        rgba[destIndex + 3] = pixels[sourceIndex + 3] ?? 255;
+      }
+    }
   }
 
   return rgba;
@@ -109,7 +164,9 @@ export function attachSogenUiHost(
 
   const windows = new Map<number, HostWindowState>();
   let focusedWindow = 0;
-  let dragState: DragState | null = null;
+  let dragState: { hwnd: number; offsetX: number; offsetY: number } | null =
+    null;
+  let hoverState: { hwnd: number; command: CaptionCommand } | null = null;
 
   function notifyWindowCount() {
     options.onWindowCountChanged?.(windows.size);
@@ -126,6 +183,9 @@ export function attachSogenUiHost(
         className: "",
         title: "",
         controlId: 0,
+        clientInsets: { left: 0, top: 0, right: 0, bottom: 0 },
+        style: 0,
+        exStyle: 0,
         visible: false,
         enabled: true,
         topLevel: true,
@@ -144,7 +204,12 @@ export function attachSogenUiHost(
   }
 
   function unpackPixels(message: SogenUiHostMessage) {
-    if (!message.pixels || !message.width || !message.height) {
+    if (
+      !message.pixels ||
+      !message.width ||
+      !message.height ||
+      !message.stride
+    ) {
       return null;
     }
 
@@ -155,6 +220,7 @@ export function attachSogenUiHost(
     const rgba = convertSurfacePixels(
       message.width,
       message.height,
+      message.stride,
       message.format ?? 0,
       pixels,
     );
@@ -199,136 +265,214 @@ export function attachSogenUiHost(
     context2d.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  function bringToFront(hwnd: number) {
-    const window = windows.get(hwnd);
-    if (!window) {
+  function hasCaption(window: HostWindowState) {
+    return (window.style & WS_CAPTION) === WS_CAPTION;
+  }
+
+  function hasSysMenu(window: HostWindowState) {
+    return (window.style & WS_SYSMENU) !== 0;
+  }
+
+  function captionHeight(window: HostWindowState) {
+    return hasCaption(window) ? CAPTION_HEIGHT : 0;
+  }
+
+  function frameRect(window: HostWindowState): Rect {
+    const caption = captionHeight(window);
+    return {
+      left: window.rect.left - FRAME_BORDER,
+      top: window.rect.top - caption - FRAME_BORDER,
+      right: window.rect.right + FRAME_BORDER,
+      bottom: window.rect.bottom + FRAME_BORDER,
+    };
+  }
+
+  function captionRect(window: HostWindowState): Rect {
+    const frame = frameRect(window);
+    return {
+      left: frame.left,
+      top: frame.top,
+      right: frame.right,
+      bottom: window.rect.top,
+    };
+  }
+
+  // Caption buttons, right-aligned: [minimize, maximize, close].
+  function captionButtons(window: HostWindowState): CaptionButton[] {
+    if (!hasCaption(window) || !hasSysMenu(window)) {
+      return [];
+    }
+
+    const caption = captionRect(window);
+    const top = caption.top + FRAME_BORDER;
+    const bottom = caption.bottom;
+    const buttons: CaptionButton[] = [];
+
+    const close: CaptionButton = {
+      command: "close",
+      left: caption.right - FRAME_BORDER - CAPTION_BUTTON_WIDTH,
+      right: caption.right - FRAME_BORDER,
+      top,
+      bottom,
+    };
+    buttons.push(close);
+
+    if (window.style & WS_MAXIMIZEBOX) {
+      buttons.push({
+        command: "maximize",
+        left: close.left - CAPTION_BUTTON_WIDTH,
+        right: close.left,
+        top,
+        bottom,
+      });
+    }
+
+    if (window.style & WS_MINIMIZEBOX) {
+      const reference = buttons[buttons.length - 1];
+      buttons.push({
+        command: "minimize",
+        left: reference.left - CAPTION_BUTTON_WIDTH,
+        right: reference.left,
+        top,
+        bottom,
+      });
+    }
+
+    return buttons;
+  }
+
+  function pointInRect(rect: Rect, x: number, y: number) {
+    return x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
+  }
+
+  function drawButtonGlyph(button: CaptionButton, color: string) {
+    const cx = (button.left + button.right) / 2;
+    const cy = (button.top + button.bottom) / 2;
+
+    context2d.save();
+    context2d.strokeStyle = color;
+    context2d.lineWidth = 1;
+    context2d.beginPath();
+
+    if (button.command === "close") {
+      context2d.moveTo(cx - 5, cy - 5);
+      context2d.lineTo(cx + 5, cy + 5);
+      context2d.moveTo(cx + 5, cy - 5);
+      context2d.lineTo(cx - 5, cy + 5);
+    } else if (button.command === "maximize") {
+      context2d.strokeRect(
+        Math.round(cx - 5) + 0.5,
+        Math.round(cy - 5) + 0.5,
+        10,
+        10,
+      );
+    } else {
+      context2d.moveTo(cx - 5, Math.round(cy) + 0.5);
+      context2d.lineTo(cx + 5, Math.round(cy) + 0.5);
+    }
+
+    context2d.stroke();
+    context2d.restore();
+  }
+
+  function drawChrome(window: HostWindowState) {
+    if (!hasCaption(window)) {
       return;
     }
 
-    windows.delete(hwnd);
-    windows.set(hwnd, window);
-  }
+    const frame = frameRect(window);
+    const caption = captionRect(window);
+    const focused = window.hwnd === focusedWindow;
 
-  function drawChildren(parent: HostWindowState) {
-    const clientOffsetY = parent.topLevel ? TOP_LEVEL_CLIENT_OFFSET_Y : 0;
+    context2d.fillStyle = CHROME_COLORS.frame;
+    context2d.fillRect(
+      frame.left,
+      frame.top,
+      frame.right - frame.left,
+      frame.bottom - frame.top,
+    );
 
-    for (const child of windows.values()) {
-      if (!child.visible || child.parent !== parent.hwnd) {
-        continue;
+    context2d.fillStyle = focused
+      ? CHROME_COLORS.captionFocused
+      : CHROME_COLORS.captionUnfocused;
+    context2d.fillRect(
+      caption.left,
+      caption.top,
+      caption.right - caption.left,
+      caption.bottom - caption.top,
+    );
+
+    const buttons = captionButtons(window);
+
+    for (const button of buttons) {
+      const hovered =
+        hoverState !== null &&
+        hoverState.hwnd === window.hwnd &&
+        hoverState.command === button.command;
+      if (hovered) {
+        context2d.fillStyle =
+          button.command === "close"
+            ? CHROME_COLORS.closeHover
+            : CHROME_COLORS.buttonHover;
+        context2d.fillRect(
+          button.left,
+          button.top,
+          button.right - button.left,
+          button.bottom - button.top,
+        );
       }
 
-      const width = Math.max(1, child.rect.right - child.rect.left);
-      const height = Math.max(1, child.rect.bottom - child.rect.top);
-      const className = child.className.toLowerCase();
+      const glyphColor =
+        hovered && button.command === "close"
+          ? "#ffffff"
+          : focused
+            ? CHROME_COLORS.glyphFocused
+            : CHROME_COLORS.glyphUnfocused;
+      drawButtonGlyph(button, glyphColor);
+    }
 
+    const titleRight = buttons.length
+      ? buttons[buttons.length - 1].left
+      : caption.right - FRAME_BORDER;
+    const available = titleRight - (caption.left + 10);
+    if (window.title && available > 8) {
       context2d.save();
-      context2d.translate(child.rect.left, child.rect.top + clientOffsetY);
-
-      if (className === "button") {
-        context2d.fillStyle = child.enabled ? "#e5e7eb" : "#d4d4d8";
-        context2d.fillRect(0, 0, width, height);
-        context2d.strokeStyle = CHILD_BORDER;
-        context2d.lineWidth = 1;
-        context2d.strokeRect(0.5, 0.5, width - 1, height - 1);
-        context2d.fillStyle = "#18181b";
-        context2d.font = "12px Inter, sans-serif";
-        context2d.textAlign = "center";
-        context2d.textBaseline = "middle";
-        context2d.fillText(
-          child.title || child.className || "Button",
-          width / 2,
-          height / 2,
-        );
-      } else if (className === "static") {
-        context2d.fillStyle = "#18181b";
-        context2d.font = "12px Inter, sans-serif";
-        context2d.textAlign = "left";
-        context2d.textBaseline = "top";
-        context2d.fillText(child.title || "", 0, 0);
-      } else {
-        context2d.fillStyle = child.enabled ? "#fafafa" : "#e4e4e7";
-        context2d.fillRect(0, 0, width, height);
-        context2d.strokeStyle = CHILD_BORDER;
-        context2d.lineWidth = 1;
-        context2d.strokeRect(0.5, 0.5, width - 1, height - 1);
-        context2d.fillStyle = "#52525b";
-        context2d.font = "11px Inter, sans-serif";
-        context2d.textAlign = "left";
-        context2d.textBaseline = "top";
-        context2d.fillText(
-          child.title || child.className || `0x${child.hwnd.toString(16)}`,
-          6,
-          6,
-        );
-      }
-
-      if (child.imageData) {
-        context2d.putImageData(child.imageData, 0, 0);
-      }
-
+      context2d.beginPath();
+      context2d.rect(
+        caption.left + 8,
+        caption.top,
+        available,
+        caption.bottom - caption.top,
+      );
+      context2d.clip();
+      context2d.fillStyle = focused
+        ? CHROME_COLORS.titleFocused
+        : CHROME_COLORS.titleUnfocused;
+      context2d.font = '13px "Segoe UI", system-ui, sans-serif';
+      context2d.textBaseline = "middle";
+      context2d.fillText(
+        window.title,
+        caption.left + 10,
+        (caption.top + caption.bottom) / 2 + 1,
+      );
       context2d.restore();
     }
   }
 
   function drawWindow(window: HostWindowState) {
-    if (!window.visible) {
+    if (!window.visible || !window.topLevel) {
       return;
     }
 
-    const width = Math.max(1, window.rect.right - window.rect.left);
-    const height = Math.max(1, window.rect.bottom - window.rect.top);
-
-    context2d.save();
-    context2d.translate(window.rect.left, window.rect.top);
-
-    context2d.fillStyle = window.enabled
-      ? WINDOW_BACKGROUND
-      : WINDOW_DISABLED_BACKGROUND;
-    context2d.fillRect(0, 0, width, height);
-
-    context2d.strokeStyle = window.topLevel ? WINDOW_BORDER : CHILD_BORDER;
-    context2d.lineWidth = 1;
-    context2d.strokeRect(0.5, 0.5, width - 1, height - 1);
-
-    context2d.fillStyle = TITLE_BACKGROUND;
-    context2d.fillRect(
-      1,
-      1,
-      Math.max(0, width - 2),
-      Math.min(TITLE_BAR_HEIGHT, Math.max(0, height - 2)),
-    );
-
-    context2d.fillStyle = "#e2e8f0";
-    context2d.font = "12px Inter, sans-serif";
-    context2d.textBaseline = "middle";
-    context2d.fillText(
-      window.title || window.className || `0x${window.hwnd.toString(16)}`,
-      8,
-      12,
-    );
+    drawChrome(window);
 
     if (window.surfaceCanvas) {
-      context2d.drawImage(window.surfaceCanvas, 0, 0);
-    }
-
-    drawChildren(window);
-
-    if (
-      !window.imageData &&
-      !Array.from(windows.values()).some(
-        (child) => child.parent === window.hwnd && child.visible,
-      )
-    ) {
-      context2d.fillStyle = "#71717a";
-      context2d.font = "11px Inter, sans-serif";
-      context2d.fillText(
-        window.className || "window",
-        8,
-        Math.min(height - 12, 40),
+      context2d.drawImage(
+        window.surfaceCanvas,
+        window.rect.left,
+        window.rect.top,
       );
     }
-
-    context2d.restore();
   }
 
   function composite() {
@@ -340,57 +484,57 @@ export function attachSogenUiHost(
     context2d.fillRect(0, 0, rect.width, rect.height);
 
     for (const window of windows.values()) {
-      if (window.parent === 0) {
-        drawWindow(window);
-      }
+      drawWindow(window);
     }
   }
 
-  function hitTest(clientX: number, clientY: number) {
-    let hit: HostWindowState | null = null;
+  function raiseWindow(hwnd: number) {
+    const window = windows.get(hwnd);
+    if (!window) {
+      return;
+    }
+    // Re-insert to move to the end of the Map so it composites on top.
+    windows.delete(hwnd);
+    windows.set(hwnd, window);
+  }
+
+  function hitTest(x: number, y: number): HitResult | null {
+    const ordered: HostWindowState[] = [];
     for (const window of windows.values()) {
-      if (!window.visible || window.parent !== 0) {
-        continue;
-      }
-
-      if (
-        clientX >= window.rect.left &&
-        clientX < window.rect.right &&
-        clientY >= window.rect.top &&
-        clientY < window.rect.bottom
-      ) {
-        hit = window;
+      if (window.visible && window.topLevel) {
+        ordered.push(window);
       }
     }
 
-    return hit;
-  }
-
-  function hitTestChild(
-    parent: HostWindowState,
-    localX: number,
-    localY: number,
-  ) {
-    const parentClientY =
-      localY - (parent.topLevel ? TOP_LEVEL_CLIENT_OFFSET_Y : 0);
-    let hit: HostWindowState | null = null;
-
-    for (const child of windows.values()) {
-      if (!child.visible || child.parent !== parent.hwnd) {
+    for (let i = ordered.length - 1; i >= 0; --i) {
+      const window = ordered[i];
+      if (!window.enabled) {
+        if (pointInRect(frameRect(window), x, y)) {
+          return { window, region: "disabled" };
+        }
         continue;
       }
 
-      if (
-        localX >= child.rect.left &&
-        localX < child.rect.right &&
-        parentClientY >= child.rect.top &&
-        parentClientY < child.rect.bottom
-      ) {
-        hit = child;
+      if (pointInRect(window.rect, x, y)) {
+        return { window, region: "client" };
+      }
+
+      for (const button of captionButtons(window)) {
+        if (pointInRect(button, x, y)) {
+          return { window, region: "button", button };
+        }
+      }
+
+      if (pointInRect(captionRect(window), x, y)) {
+        return { window, region: "caption" };
+      }
+
+      if (pointInRect(frameRect(window), x, y)) {
+        return { window, region: "frame" };
       }
     }
 
-    return hit;
+    return null;
   }
 
   function sendUiEvent(
@@ -440,9 +584,20 @@ export function attachSogenUiHost(
         window.className = message.class_name ?? "";
         window.title = message.title ?? "";
         window.controlId = message.control_id ?? 0;
+        window.clientInsets = message.client_insets ?? {
+          left: 0,
+          top: 0,
+          right: 0,
+          bottom: 0,
+        };
+        window.style = message.style ?? 0;
+        window.exStyle = message.ex_style ?? 0;
         window.visible = !!message.visible;
         window.enabled = message.enabled ?? true;
         window.topLevel = message.top_level ?? true;
+        if (window.topLevel && window.visible) {
+          focusedWindow = hwnd;
+        }
         break;
       }
       case "destroy_window":
@@ -474,86 +629,128 @@ export function attachSogenUiHost(
     composite();
   }
 
-  function onMouse(message: number, event: MouseEvent) {
+  function triggerButton(window: HostWindowState, button: CaptionButton) {
+    if (button.command === "close") {
+      sendUiEvent(window.hwnd, WM_CLOSE, 0, 0);
+    } else if (button.command === "minimize") {
+      sendUiEvent(window.hwnd, WM_SYSCOMMAND, SC_MINIMIZE, 0);
+    } else {
+      sendUiEvent(window.hwnd, WM_SYSCOMMAND, SC_MAXIMIZE, 0);
+    }
+  }
+
+  function onMouseDown(event: MouseEvent) {
+    canvas.focus();
     const point = toCanvasPoint(event);
+    const hit = hitTest(point.x, point.y);
+    if (!hit || hit.region === "disabled") {
+      return;
+    }
 
-    if (message === WM_MOUSEMOVE && dragState) {
-      const target = windows.get(dragState.hwnd);
-      if (!target) {
-        dragState = null;
-        return;
-      }
+    const window = hit.window;
+    focusedWindow = window.hwnd;
+    raiseWindow(window.hwnd);
 
-      const width = target.rect.right - target.rect.left;
-      const height = target.rect.bottom - target.rect.top;
-      target.rect = {
-        left: point.x - dragState.offsetX,
-        top: point.y - dragState.offsetY,
-        right: point.x - dragState.offsetX + width,
-        bottom: point.y - dragState.offsetY + height,
-      };
+    if (hit.region === "button") {
       composite();
       return;
     }
 
-    const window = hitTest(point.x, point.y);
+    if (hit.region === "caption" || hit.region === "frame") {
+      if (event.button === 0) {
+        dragState = {
+          hwnd: window.hwnd,
+          offsetX: point.x - window.rect.left,
+          offsetY: point.y - window.rect.top,
+        };
+      }
+      composite();
+      return;
+    }
+
+    const localX = point.x - window.rect.left;
+    const localY = point.y - window.rect.top;
+    sendUiEvent(
+      window.hwnd,
+      event.button === 2 ? WM_RBUTTONDOWN : WM_LBUTTONDOWN,
+      0,
+      packPoint(localX, localY),
+    );
+    composite();
+  }
+
+  function onMouseUp(event: MouseEvent) {
+    const point = toCanvasPoint(event);
+
+    if (dragState) {
+      dragState = null;
+      return;
+    }
+
+    const hit = hitTest(point.x, point.y);
+    if (hit && hit.region === "button" && hit.button && event.button === 0) {
+      triggerButton(hit.window, hit.button);
+      return;
+    }
+
     const target =
-      window ?? (focusedWindow ? (windows.get(focusedWindow) ?? null) : null);
+      hit && hit.region === "client"
+        ? hit.window
+        : focusedWindow
+          ? (windows.get(focusedWindow) ?? null)
+          : null;
     if (!target) {
       return;
     }
 
-    focusedWindow = target.hwnd;
-    bringToFront(target.hwnd);
-
     const localX = point.x - target.rect.left;
     const localY = point.y - target.rect.top;
+    sendUiEvent(
+      target.hwnd,
+      event.button === 2 ? WM_RBUTTONUP : WM_LBUTTONUP,
+      0,
+      packPoint(localX, localY),
+    );
+  }
 
-    if (
-      message === WM_LBUTTONDOWN &&
-      target.topLevel &&
-      localY >= 0 &&
-      localY < TITLE_BAR_HEIGHT
-    ) {
-      dragState = {
-        hwnd: target.hwnd,
-        offsetX: localX,
-        offsetY: localY,
-      };
-      composite();
-      return;
-    }
+  function onMouseMove(event: MouseEvent) {
+    const point = toCanvasPoint(event);
 
-    if ((message === WM_LBUTTONUP || message === WM_RBUTTONUP) && dragState) {
-      dragState = null;
-      composite();
-      return;
-    }
-
-    const child = hitTestChild(target, localX, localY);
-    if (child && child.className.toLowerCase() === "button") {
-      const childLocalY =
-        localY -
-        (target.topLevel ? TOP_LEVEL_CLIENT_OFFSET_Y : 0) -
-        child.rect.top;
-      const childLocalX = localX - child.rect.left;
-
-      if (message === WM_LBUTTONDOWN || message === WM_LBUTTONUP) {
-        sendUiEvent(
-          child.hwnd,
-          message,
-          0,
-          packPoint(childLocalX, childLocalY),
-        );
-      }
-
-      if (message === WM_LBUTTONUP) {
-        sendUiEvent(target.hwnd, 0x0111, child.controlId, child.hwnd);
+    if (dragState) {
+      const window = windows.get(dragState.hwnd);
+      if (window) {
+        const width = window.rect.right - window.rect.left;
+        const height = window.rect.bottom - window.rect.top;
+        window.rect = {
+          left: point.x - dragState.offsetX,
+          top: point.y - dragState.offsetY,
+          right: point.x - dragState.offsetX + width,
+          bottom: point.y - dragState.offsetY + height,
+        };
+        composite();
       }
       return;
     }
 
-    sendUiEvent(target.hwnd, message, 0, packPoint(localX, localY));
+    const hit = hitTest(point.x, point.y);
+    let nextHover: { hwnd: number; command: CaptionCommand } | null = null;
+    if (hit && hit.region === "button" && hit.button) {
+      nextHover = { hwnd: hit.window.hwnd, command: hit.button.command };
+    }
+
+    const hoverChanged =
+      (nextHover?.hwnd ?? 0) !== (hoverState?.hwnd ?? 0) ||
+      (nextHover?.command ?? "") !== (hoverState?.command ?? "");
+    if (hoverChanged) {
+      hoverState = nextHover;
+      composite();
+    }
+
+    if (hit && hit.region === "client") {
+      const localX = point.x - hit.window.rect.left;
+      const localY = point.y - hit.window.rect.top;
+      sendUiEvent(hit.window.hwnd, WM_MOUSEMOVE, 0, packPoint(localX, localY));
+    }
   }
 
   function onKey(message: number, event: KeyboardEvent) {
@@ -567,16 +764,9 @@ export function attachSogenUiHost(
   }
 
   canvas.tabIndex = 0;
-  canvas.addEventListener("mousedown", (event) => {
-    canvas.focus();
-    onMouse(event.button === 2 ? WM_RBUTTONDOWN : WM_LBUTTONDOWN, event);
-  });
-  canvas.addEventListener("mouseup", (event) => {
-    onMouse(event.button === 2 ? WM_RBUTTONUP : WM_LBUTTONUP, event);
-  });
-  canvas.addEventListener("mousemove", (event) => {
-    onMouse(WM_MOUSEMOVE, event);
-  });
+  canvas.addEventListener("mousedown", onMouseDown);
+  canvas.addEventListener("mouseup", onMouseUp);
+  canvas.addEventListener("mousemove", onMouseMove);
   canvas.addEventListener("keydown", (event) => {
     onKey(WM_KEYDOWN, event);
   });

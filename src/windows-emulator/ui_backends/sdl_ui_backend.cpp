@@ -13,6 +13,12 @@ namespace sogen
         constexpr uint32_t wm_keyup = 0x0101;
         constexpr uint32_t wm_char = 0x0102;
 
+        uint64_t pack_point(const int x, const int y)
+        {
+            return (static_cast<uint64_t>(static_cast<uint32_t>(y) & 0xFFFFu) << 16) |
+                   static_cast<uint64_t>(static_cast<uint32_t>(x) & 0xFFFFu);
+        }
+
         uint64_t map_sdl_keycode(const SDL_Keycode key)
         {
             if (key >= 'a' && key <= 'z')
@@ -137,7 +143,8 @@ namespace sogen
                         {
                             if (const auto guest = this->resolve_guest(event.button.windowID); guest != 0)
                             {
-                                this->handle_left_click(guest, static_cast<int>(event.button.x), static_cast<int>(event.button.y));
+                                this->post_event(guest, WM_LBUTTONDOWN, 0,
+                                                 pack_point(static_cast<int>(event.button.x), static_cast<int>(event.button.y)));
                             }
                         }
                         break;
@@ -179,8 +186,8 @@ namespace sogen
                     flags |= SDL_WINDOW_RESIZABLE;
                 }
 
-                const auto width = std::max(1L, desc.rect.right - desc.rect.left);
-                const auto height = std::max(1L, desc.rect.bottom - desc.rect.top);
+                const auto width = std::max<int>(1, static_cast<int>(desc.rect.right - desc.rect.left));
+                const auto height = std::max<int>(1, static_cast<int>(desc.rect.bottom - desc.rect.top));
                 const auto title = u16_to_u8(desc.title);
                 auto* window = SDL_CreateWindow(title.c_str(), static_cast<int>(width), static_cast<int>(height), flags);
                 if (!window)
@@ -203,7 +210,7 @@ namespace sogen
                 state.window = window;
                 state.renderer = renderer;
                 this->guest_by_window_id_[SDL_GetWindowID(window)] = desc.handle;
-                this->render_window(state);
+                render_window(state);
 #endif
             }
 
@@ -304,7 +311,8 @@ namespace sogen
 #ifdef SOGEN_HAS_SDL3
                 if (auto* state = this->resolve_window(window))
                 {
-                    present_surface(*state, surface);
+                    update_surface_texture(*state, surface);
+                    render_window(*state);
                 }
 #else
                 (void)window;
@@ -359,7 +367,7 @@ namespace sogen
                 {
                     if (auto* top_state = this->resolve_window(top))
                     {
-                        this->render_window(*top_state);
+                        render_window(*top_state);
                     }
                 }
             }
@@ -421,7 +429,7 @@ namespace sogen
                 }
             }
 
-            static void present_surface(window_state& state, const ui_surface_desc& surface)
+            static void update_surface_texture(window_state& state, const ui_surface_desc& surface)
             {
                 state.has_surface = true;
                 if (!surface.pixels || surface.width <= 0 || surface.height <= 0 || surface.stride <= 0)
@@ -436,92 +444,22 @@ namespace sogen
                 }
 
                 SDL_UpdateTexture(state.texture, nullptr, surface.pixels, surface.stride);
-                SDL_SetRenderDrawColor(state.renderer, 0, 0, 0, 255);
-                SDL_RenderClear(state.renderer);
-                SDL_RenderTexture(state.renderer, state.texture, nullptr, nullptr);
-                SDL_RenderPresent(state.renderer);
             }
 
-            static void draw_debug_text(SDL_Renderer* renderer, const int x, const int y, std::u16string_view text, const SDL_Color color)
+            static void render_window(window_state& state)
             {
-                const auto utf8 = u16_to_u8(text);
-                SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
-                SDL_RenderDebugText(renderer, static_cast<float>(x), static_cast<float>(y), utf8.c_str());
-            }
-
-            static SDL_FRect make_rect(const RECT& rect)
-            {
-                return SDL_FRect{static_cast<float>(rect.left), static_cast<float>(rect.top), static_cast<float>(rect.right - rect.left),
-                                 static_cast<float>(rect.bottom - rect.top)};
-            }
-
-            void render_window(window_state& state)
-            {
-                if (state.has_surface)
+                if (state.has_surface && state.texture)
                 {
-                    if (state.texture)
-                    {
-                        SDL_SetRenderDrawColor(state.renderer, 0, 0, 0, 255);
-                        SDL_RenderClear(state.renderer);
-                        SDL_RenderTexture(state.renderer, state.texture, nullptr, nullptr);
-                        SDL_RenderPresent(state.renderer);
-                    }
+                    SDL_SetRenderDrawColor(state.renderer, 0, 0, 0, 255);
+                    SDL_RenderClear(state.renderer);
+                    SDL_RenderTexture(state.renderer, state.texture, nullptr, nullptr);
+                    SDL_RenderPresent(state.renderer);
                     return;
                 }
 
                 SDL_SetRenderDrawColor(state.renderer, 224, 224, 224, 255);
                 SDL_RenderClear(state.renderer);
-
-                for (const auto& [guest, child] : this->windows_)
-                {
-                    (void)guest;
-                    if (child.desc.parent != state.desc.handle || !child.desc.visible)
-                    {
-                        continue;
-                    }
-
-                    const auto normalized = child.desc.class_name;
-                    const auto rect = make_rect(child.desc.rect);
-
-                    if (normalized == u"Static")
-                    {
-                        draw_debug_text(state.renderer, child.desc.rect.left, child.desc.rect.top + 6, child.desc.title,
-                                        SDL_Color{0, 0, 0, 255});
-                        continue;
-                    }
-
-                    if (normalized == u"Button")
-                    {
-                        const auto fill = child.desc.enabled ? SDL_Color{240, 240, 240, 255} : SDL_Color{192, 192, 192, 255};
-                        SDL_SetRenderDrawColor(state.renderer, fill.r, fill.g, fill.b, fill.a);
-                        SDL_RenderFillRect(state.renderer, &rect);
-                        SDL_SetRenderDrawColor(state.renderer, 32, 32, 32, 255);
-                        SDL_RenderRect(state.renderer, &rect);
-                        draw_debug_text(state.renderer, child.desc.rect.left + 8, child.desc.rect.top + 8, child.desc.title,
-                                        SDL_Color{0, 0, 0, 255});
-                        continue;
-                    }
-                }
-
                 SDL_RenderPresent(state.renderer);
-            }
-
-            void handle_left_click(const hwnd top_level, const int x, const int y)
-            {
-                for (const auto& [guest, child] : this->windows_)
-                {
-                    (void)guest;
-                    if (child.desc.parent != top_level || !child.desc.visible || !child.desc.enabled || child.desc.class_name != u"Button")
-                    {
-                        continue;
-                    }
-
-                    if (x >= child.desc.rect.left && x < child.desc.rect.right && y >= child.desc.rect.top && y < child.desc.rect.bottom)
-                    {
-                        this->post_event(top_level, WM_COMMAND, child.desc.control_id, child.desc.handle);
-                        return;
-                    }
-                }
             }
 
             static void present_test_pattern(window_state& state, const int width, const int height)
@@ -537,11 +475,18 @@ namespace sogen
                     }
                 }
 
-                present_surface(state, ui_surface_desc{.width = width,
-                                                       .height = height,
-                                                       .stride = width * static_cast<int>(sizeof(uint32_t)),
-                                                       .format = ui_surface_format::bgra8,
-                                                       .pixels = pixels.data()});
+                update_surface_texture(state, ui_surface_desc{.width = width,
+                                                              .height = height,
+                                                              .stride = width * static_cast<int>(sizeof(uint32_t)),
+                                                              .format = ui_surface_format::bgra8,
+                                                              .pixels = pixels.data()});
+                SDL_SetRenderDrawColor(state.renderer, 0, 0, 0, 255);
+                SDL_RenderClear(state.renderer);
+                if (state.texture)
+                {
+                    SDL_RenderTexture(state.renderer, state.texture, nullptr, nullptr);
+                }
+                SDL_RenderPresent(state.renderer);
             }
 
             hwnd resolve_guest(const SDL_WindowID window_id) const

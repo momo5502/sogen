@@ -31,14 +31,26 @@ add_subdirectory(minidump_cpp)
 
 ##########################################
 
-if(SOGEN_ENABLE_SDL3 AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/SDL/CMakeLists.txt")
-  set(SDL_SHARED OFF CACHE BOOL "" FORCE)
-  set(SDL_STATIC ON CACHE BOOL "" FORCE)
-  set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
-  set(SDL_TESTS OFF CACHE BOOL "" FORCE)
-  set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
-  set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
-  add_subdirectory(SDL)
+if(SOGEN_ENABLE_SDL3 AND NOT EMSCRIPTEN)
+  # Prefer a system-installed SDL3 (find_package) when allowed and present;
+  # otherwise build the vendored submodule. Emscripten uses the web UI backend
+  # and is excluded above.
+  if(SOGEN_USE_SYSTEM_SDL3)
+    find_package(SDL3 CONFIG QUIET)
+  endif()
+
+  if(TARGET SDL3::SDL3)
+    message(STATUS "Using system SDL3 ${SDL3_VERSION}")
+  elseif(EXISTS "${CMAKE_CURRENT_LIST_DIR}/SDL/CMakeLists.txt")
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+    set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+    add_subdirectory(SDL)
+    message(STATUS "Using vendored SDL3 submodule (deps/SDL)")
+  endif()
 endif()
 
 ##########################################

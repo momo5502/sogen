@@ -16,6 +16,7 @@ namespace sogen
     namespace
     {
         constexpr ULONG k_thread_state_win32_thread_info = 0xE;
+        constexpr ULONG k_thread_state_dialog_state = 0xA;
         constexpr size_t k_win32_thread_info_slab_size = 0x2000;
         constexpr uint64_t k_win32_thread_info_bias = 0x800;
         constexpr uint32_t k_client_setup_callback_id = 0x54;
@@ -26,6 +27,15 @@ namespace sogen
         constexpr uint32_t k_fn_in_lp_window_pos_callback_id = 0x11;
         constexpr uint32_t k_fn_inout_lp_point5_callback_id = 0x12;
         constexpr uint32_t k_fn_inout_nc_calc_size_callback_id = 0x15;
+        constexpr size_t k_client_pfn_button_wndproc_index = 7;
+        constexpr size_t k_client_pfn_dialog_wndproc_index = 10;
+        constexpr size_t k_client_pfn_static_wndproc_index = 14;
+        constexpr uint32_t k_ctlcolor_edit = 1;
+        constexpr uint32_t k_ctlcolor_listbox = 2;
+        constexpr uint32_t k_ctlcolor_scrollbar = 5;
+        constexpr uint32_t k_color_scrollbar = 0;
+        constexpr uint32_t k_color_window = 5;
+        constexpr uint32_t k_color_btnface = 15;
 
         struct user_callback_capture_buffer
         {
@@ -144,7 +154,8 @@ namespace sogen
             {
                 return u"Edit";
             }
-            if (class_name == u"#3" || class_name == u"#2160" || class_name == u"STATIC" || class_name == u"Static")
+            if (class_name == u"#3" || class_name == u"#2032" || class_name == u"#2160" || class_name == u"STATIC" ||
+                class_name == u"Static")
             {
                 return u"Static";
             }
@@ -168,6 +179,25 @@ namespace sogen
         {
             const auto normalized = normalize_builtin_window_class_name(class_name);
             return normalized == u"#32770" || normalized == u"Button" || normalized == u"Static";
+        }
+
+        uint16_t get_builtin_window_fnid(const std::u16string_view class_name)
+        {
+            const auto normalized = normalize_builtin_window_class_name(class_name);
+            if (normalized == u"Button")
+            {
+                return 0x02A1;
+            }
+            if (normalized == u"#32770")
+            {
+                return 0x02A4;
+            }
+            if (normalized == u"Static")
+            {
+                return 0x02A8;
+            }
+
+            return 0;
         }
 
         process_context::class_entry* ensure_builtin_window_class(const syscall_context& c, const std::u16string_view class_name)
@@ -202,14 +232,45 @@ namespace sogen
                 return nullptr;
             }
 
-            if (normalized_name == u"#32770")
+            c.proc.user_handles.get_server_info().access([&](const USER_SERVERINFO& server_info) {
+                if (normalized_name == u"Button")
+                {
+                    wnd_proc = server_info.apfnClientA[k_client_pfn_button_wndproc_index];
+                    if (wnd_proc == 0)
+                    {
+                        wnd_proc = server_info.apfnClientW[k_client_pfn_button_wndproc_index];
+                    }
+                }
+                else if (normalized_name == u"Static")
+                {
+                    wnd_proc = server_info.apfnClientA[k_client_pfn_static_wndproc_index];
+                    if (wnd_proc == 0)
+                    {
+                        wnd_proc = server_info.apfnClientW[k_client_pfn_static_wndproc_index];
+                    }
+                }
+                else if (normalized_name == u"#32770")
+                {
+                    wnd_proc = server_info.apfnClientA[k_client_pfn_dialog_wndproc_index];
+                    if (wnd_proc == 0)
+                    {
+                        wnd_proc = server_info.apfnClientW[k_client_pfn_dialog_wndproc_index];
+                    }
+                }
+            });
+
+            if (normalized_name == u"Button" || normalized_name == u"Static")
             {
-                wnd_proc = c.win_emu.mod_manager.ntdll->find_export("NtdllDialogWndProc_W");
+                wnd_extra = 8;
+            }
+            else if (normalized_name == u"#32770")
+            {
                 wnd_extra = 30; // DLGWINDOWEXTRA
             }
-            else
+
+            if (wnd_proc == 0 && normalized_name == u"#32770")
             {
-                wnd_proc = c.win_emu.mod_manager.ntdll->find_export("NtdllDefWindowProc_A");
+                wnd_proc = c.win_emu.mod_manager.ntdll->find_export("NtdllDialogWndProc_W");
             }
 
             if (wnd_proc == 0)
@@ -307,6 +368,11 @@ namespace sogen
             return RECT{.left = win.x, .top = win.y, .right = win.x + win.width, .bottom = win.y + win.height};
         }
 
+        ui_insets get_host_ui_client_insets(const window& /*win*/)
+        {
+            return {};
+        }
+
         void sync_guest_window_rects(window& win)
         {
             const auto window_rect = get_window_rect(win);
@@ -372,13 +438,34 @@ namespace sogen
             queue_window_paint(c, win);
         }
 
+        void write_guest_window_text(const syscall_context& c, window& win, const std::u16string& title)
+        {
+            win.guest.access([&](USER_WINDOW& guest_win) {
+                guest_win.dwTextLengthBytes = static_cast<uint32_t>(title.size() * sizeof(char16_t));
+                if (title.empty())
+                {
+                    guest_win.strText = 0;
+                    return;
+                }
+
+                const auto text_size = (title.size() + 1) * sizeof(char16_t);
+                const auto text_buffer =
+                    c.win_emu.memory.allocate_memory(static_cast<size_t>(page_align_up(text_size)), memory_permission::read_write);
+                c.win_emu.memory.write_memory(text_buffer, title.c_str(), text_size);
+                guest_win.strText = text_buffer;
+            });
+        }
+
         void update_window_title(const syscall_context& c, window& win, const std::u16string& title)
         {
             win.name = title;
+            write_guest_window_text(c, win, title);
             if (win.host_surface_window)
             {
                 c.win_emu.ui().set_window_title(win.handle, win.name);
             }
+
+            invalidate_window(c, win);
         }
 
         std::u16string read_guest_window_text(const syscall_context& c, const window& win)
@@ -546,6 +633,38 @@ namespace sogen
             win.paint_message_posted = false;
             win.erase_pending = false;
             win.update_rect = {};
+        }
+
+        void present_existing_guest_window_surface(const syscall_context& c, const window& painted_window)
+        {
+            const window* top_level = &painted_window;
+            while (top_level && (top_level->style & WS_CHILD) != 0)
+            {
+                top_level = top_level->parent_handle != 0 ? c.proc.windows.get(top_level->parent_handle) : nullptr;
+            }
+
+            if (!top_level || !top_level->host_surface_window)
+            {
+                return;
+            }
+
+            const auto surface_it = c.proc.gdi_window_surfaces.find(static_cast<uint32_t>(top_level->handle));
+            if (surface_it == c.proc.gdi_window_surfaces.end())
+            {
+                return;
+            }
+
+            const auto& surface = surface_it->second;
+            if (surface.width == 0 || surface.height == 0 || surface.pixels.empty())
+            {
+                return;
+            }
+
+            c.win_emu.ui().present_surface(top_level->handle, ui_surface_desc{.width = static_cast<int>(surface.width),
+                                                                              .height = static_cast<int>(surface.height),
+                                                                              .stride = static_cast<int>(surface.width * sizeof(uint32_t)),
+                                                                              .format = ui_surface_format::bgra8,
+                                                                              .pixels = surface.pixels.data()});
         }
 
         template <typename T>
@@ -883,6 +1002,10 @@ namespace sogen
     namespace syscalls
     {
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, handle bitmap);
+        uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, hdc dc);
+        uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, uint32_t handle_value);
+        BOOL handle_NtGdiFlush(const syscall_context& c);
+        gdi_bitmap_surface* get_dc_present_surface(const syscall_context& c, hdc dc, uint32_t& present_handle);
 
         NTSTATUS handle_NtUserTraceLoggingSendMixedModeTelemetry()
         {
@@ -901,6 +1024,11 @@ namespace sogen
 
         uint64_t handle_NtUserGetThreadState(const syscall_context& c, const ULONG routine)
         {
+            if (routine == k_thread_state_dialog_state)
+            {
+                return c.proc.active_thread ? c.proc.active_thread->win32k_thread_state : 0;
+            }
+
             if (routine != k_thread_state_win32_thread_info)
             {
                 return 0;
@@ -923,6 +1051,19 @@ namespace sogen
             }
 
             return thread_info;
+        }
+
+        uint64_t handle_NtUserSetThreadState(const syscall_context& c, const uint64_t value, const uint64_t mask)
+        {
+            auto* thread = c.proc.active_thread;
+            if (!thread)
+            {
+                return 0;
+            }
+
+            const auto previous = thread->win32k_thread_state;
+            thread->win32k_thread_state = (previous & ~mask) | (value & mask);
+            return previous;
         }
 
         uint64_t completion_NtUserGetThreadState(const syscall_context& c, const ULONG routine)
@@ -1049,9 +1190,14 @@ namespace sogen
             return target->win32k_desktop.bits;
         }
 
-        hdc handle_NtUserGetDCEx(const syscall_context& c, const hwnd /*window*/, const uint64_t /*clip_region*/, const ULONG /*flags*/)
+        hdc handle_NtUserGetDCEx(const syscall_context& c, const hwnd window, const uint64_t /*clip_region*/, const ULONG /*flags*/)
         {
-            return handle_NtGdiGetDCforBitmap(c, {});
+            const auto dc = handle_NtGdiCreateCompatibleDC(c, {});
+            if (dc != 0)
+            {
+                c.proc.gdi_dc_states[static_cast<uint32_t>(dc)].target_window = window;
+            }
+            return dc;
         }
 
         hdc handle_NtUserGetDC(const syscall_context& c, const hwnd window)
@@ -1059,13 +1205,52 @@ namespace sogen
             return handle_NtUserGetDCEx(c, window, 0, 0);
         }
 
-        hdc handle_NtUserGetWindowDC(const syscall_context& c, const hwnd /*window*/)
+        hdc handle_NtUserGetWindowDC(const syscall_context& c, const hwnd window)
         {
-            return handle_NtGdiGetDCforBitmap(c, {});
+            return handle_NtUserGetDCEx(c, window, 0, 0);
+        }
+
+        uint64_t handle_NtUserGetControlBrush(const syscall_context& c, hwnd /*window*/, hdc /*dc*/, uint32_t control_type)
+        {
+            uint32_t brush_index = k_color_btnface;
+            if (control_type == k_ctlcolor_edit || control_type == k_ctlcolor_listbox)
+            {
+                brush_index = k_color_window;
+            }
+            else if (control_type == k_ctlcolor_scrollbar)
+            {
+                brush_index = k_color_scrollbar;
+            }
+
+            uint64_t brush = 0;
+            c.proc.user_handles.get_server_info().access([&](const USER_SERVERINFO& server_info) {
+                if (brush_index < USER_SERVERINFO_BRUSH_SLOT_COUNT)
+                {
+                    brush = server_info.ahbrSystem[brush_index];
+                }
+            });
+
+            return brush;
         }
 
         BOOL handle_NtUserReleaseDC()
         {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserGetClientRect(const syscall_context& c, const hwnd window, const emulator_pointer rect_ptr)
+        {
+            if (rect_ptr == 0)
+            {
+                return FALSE;
+            }
+            const auto* win = c.proc.windows.get(window);
+            if (!win)
+            {
+                return FALSE;
+            }
+            const auto cr = get_client_rect(*win);
+            c.emu.write_memory(rect_ptr, &cr, sizeof(cr));
             return TRUE;
         }
 
@@ -1097,12 +1282,36 @@ namespace sogen
             return dc;
         }
 
-        BOOL handle_NtUserEndPaint(const syscall_context& c, const hwnd window, const emulator_object<EMU_PAINTSTRUCT> /*paint_struct*/)
+        BOOL handle_NtUserEndPaint(const syscall_context& c, const hwnd window, const emulator_object<EMU_PAINTSTRUCT> paint_struct)
         {
             auto* win = c.proc.windows.get(window);
             if (!win)
             {
                 return FALSE;
+            }
+
+            if (paint_struct)
+            {
+                const auto ps = paint_struct.read();
+                (void)handle_NtGdiFlush(c);
+
+                // Present the surface the guest just painted into. For child controls this resolves to the owning
+                // top-level window's shared surface, keyed by that top-level host window handle.
+                uint32_t present_handle = 0;
+                if (auto* surface = get_dc_present_surface(c, ps.paint_hdc, present_handle);
+                    surface && present_handle != 0 && surface->width > 0 && surface->height > 0 && !surface->pixels.empty())
+                {
+                    c.win_emu.ui().present_surface(present_handle,
+                                                   ui_surface_desc{.width = static_cast<int>(surface->width),
+                                                                   .height = static_cast<int>(surface->height),
+                                                                   .stride = static_cast<int>(surface->width * sizeof(uint32_t)),
+                                                                   .format = ui_surface_format::bgra8,
+                                                                   .pixels = surface->pixels.data()});
+                }
+
+                // BeginPaint allocated a fresh GDI DC (handle table entry + DC_ATTR block) via
+                // GetDCEx; fully delete it here so repeated repaints don't leak GDI handles.
+                (void)handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(ps.paint_hdc));
             }
 
             validate_window(*win);
@@ -1382,7 +1591,6 @@ namespace sogen
 
             const auto class_obj_addr = cls_it->second.guest_obj_addr;
             const auto* wnd_class = &cls_it->second.wnd_class;
-            const auto skip_create_messages = cls_name == u"Button" || cls_name == u"Static";
 
             auto [handle, win] = c.proc.windows.create(c.win_emu.memory);
             win.ex_style = ex_style;
@@ -1400,6 +1608,7 @@ namespace sogen
             }
             win.class_name = cls_name;
             const auto normalized_class = normalize_builtin_window_class_name(cls_name);
+            const auto skip_create_messages = false;
             if (normalized_class == u"Button" || normalized_class == u"Static")
             {
                 win.name = decode_dialog_control_title(c, normalized_class, window_name);
@@ -1444,6 +1653,7 @@ namespace sogen
                 guest_win.cbWndExtra = wnd_class->cbWndExtra;
                 guest_win.wID = has_child_parent ? menu : 0;
                 guest_win.windowBand = 1; // ZBID_DESKTOP
+                guest_win.fnid = get_builtin_window_fnid(normalized_class);
 
                 win.host_surface_window = !is_message_only;
 
@@ -1453,6 +1663,7 @@ namespace sogen
                     guest_win.pExtraBytes = c.win_emu.memory.allocate_memory(extra_size, memory_permission::read_write);
                 }
             });
+            write_guest_window_text(c, win, win.name);
 
             if (has_child_parent && parent_win && parent_win->guest.value() != 0)
             {
@@ -1511,6 +1722,7 @@ namespace sogen
                     .parent = has_child_parent && parent_win ? parent_win->handle : 0,
                     .owner = has_owner && parent_win ? parent_win->handle : 0,
                     .rect = get_window_rect(win),
+                    .client_insets = get_host_ui_client_insets(win),
                     .class_name = std::u16string{normalize_builtin_window_class_name(cls_name)},
                     .title = win.name,
                     .style = style,
@@ -1520,6 +1732,11 @@ namespace sogen
                     .enabled = (style & WS_DISABLED) == 0,
                     .top_level = !has_child_parent,
                 });
+
+                if (has_child_parent && parent_win && (style & WS_VISIBLE) != 0)
+                {
+                    invalidate_window(c, win);
+                }
             }
 
             const auto thread_info = ensure_win32_thread_info(c);
@@ -1848,7 +2065,10 @@ namespace sogen
 
             (void)handle_dialog_message(c, *win, msg, w_param, l_param);
 
-            dispatch_window_message(c, callback_id::NtUserMessageCall, nullptr, *win, msg, w_param, l_param);
+            message_call_state state{};
+            state.window = hwnd;
+            state.message = msg;
+            dispatch_window_message(c, callback_id::NtUserMessageCall, std::move(state), *win, msg, w_param, l_param);
             return {};
         }
 
@@ -1856,6 +2076,17 @@ namespace sogen
                                               const uint64_t /*l_param*/, const uint64_t /*result_info*/, const DWORD /*type*/,
                                               const BOOL /*ansi*/)
         {
+            auto& state = c.get_completion_state<message_call_state>();
+            if (state.message == WM_PAINT)
+            {
+                if (auto* win = c.proc.windows.get(state.window))
+                {
+                    (void)handle_NtGdiFlush(c);
+                    present_existing_guest_window_surface(c, *win);
+                    validate_window(*win);
+                }
+            }
+
             return c.get_callback_result<uint64_t>();
         }
 
@@ -1880,7 +2111,10 @@ namespace sogen
 
             (void)handle_dialog_message(c, *win, m.message, m.wParam, m.lParam);
 
-            dispatch_window_message(c, callback_id::NtUserMessageCall, nullptr, *win, m.message, m.wParam, m.lParam);
+            message_call_state state{};
+            state.window = m.window;
+            state.message = m.message;
+            dispatch_window_message(c, callback_id::NtUserMessageCall, std::move(state), *win, m.message, m.wParam, m.lParam);
             return {};
         }
 
@@ -2638,6 +2872,7 @@ namespace sogen
                 c.win_emu.ui().set_window_enabled(hwnd, want_enabled);
             }
 
+            invalidate_window(c, *win);
             return was_enabled ? FALSE : TRUE;
         }
 

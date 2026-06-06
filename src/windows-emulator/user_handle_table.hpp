@@ -2,6 +2,8 @@
 #include "emulator_utils.hpp"
 #include "handles.hpp"
 
+#include <array>
+
 namespace sogen
 {
 
@@ -9,6 +11,7 @@ namespace sogen
     {
       public:
         static constexpr uint32_t MAX_HANDLES = 0xFFFF;
+        static constexpr size_t CLIENT_MESSAGE_BITS_SIZE = 0xC8;
 
         user_handle_table(memory_manager& memory)
             : memory_(&memory)
@@ -37,6 +40,29 @@ namespace sogen
 
             const auto handle_table_size = static_cast<size_t>(page_align_up(sizeof(USER_HANDLEENTRY) * MAX_HANDLES));
             handle_table_addr_ = this->allocate_memory(handle_table_size, memory_permission::read);
+
+            client_message_bits_addr_ =
+                this->allocate_memory(static_cast<size_t>(page_align_up(CLIENT_MESSAGE_BITS_SIZE)), memory_permission::read);
+            std::array<uint8_t, CLIENT_MESSAGE_BITS_SIZE> client_message_bits{};
+            const auto set_message_bit = [&](const uint32_t message) {
+                const auto byte_index = message >> 3;
+                if (byte_index < client_message_bits.size())
+                {
+                    client_message_bits[byte_index] |= static_cast<uint8_t>(1u << (message & 7u));
+                }
+            };
+            // Window messages user32 forwards to the client-side window procedure; their bits
+            // are set in the shared client-message bitmap that user32 consults before calling back.
+            static constexpr auto client_callback_messages = std::to_array<uint32_t>(
+                {0x0001u, 0x0002u, 0x0007u, 0x0008u, 0x000Au, 0x000Cu, 0x000Fu, 0x0014u, 0x0030u, 0x0031u, 0x0050u,
+                 0x0070u, 0x0081u, 0x0082u, 0x0084u, 0x0087u, 0x00A1u, 0x00A3u, 0x00F0u, 0x00F1u, 0x00F2u, 0x00F3u,
+                 0x00F4u, 0x00F5u, 0x00F6u, 0x00F7u, 0x00F8u, 0x0100u, 0x0101u, 0x0102u, 0x0105u, 0x0110u, 0x0113u,
+                 0x0128u, 0x0129u, 0x0170u, 0x0171u, 0x0172u, 0x0200u, 0x0201u, 0x0202u, 0x0203u, 0x0215u, 0x0318u});
+            for (const uint32_t message : client_callback_messages)
+            {
+                set_message_bit(message);
+            }
+            memory_->write_memory(client_message_bits_addr_, client_message_bits.data(), client_message_bits.size());
         }
 
         emulator_object<USER_SERVERINFO> get_server_info() const
@@ -52,6 +78,11 @@ namespace sogen
         emulator_object<USER_DISPINFO> get_display_info() const
         {
             return {*memory_, display_info_addr_};
+        }
+
+        uint64_t get_client_message_bits() const
+        {
+            return client_message_bits_addr_;
         }
 
         template <typename T>
@@ -100,6 +131,7 @@ namespace sogen
             buffer.write(server_info_addr_);
             buffer.write(handle_table_addr_);
             buffer.write(display_info_addr_);
+            buffer.write(client_message_bits_addr_);
             buffer.write_vector(used_indices_);
             buffer.write(is_wow64_process_);
         }
@@ -109,6 +141,7 @@ namespace sogen
             buffer.read(server_info_addr_);
             buffer.read(handle_table_addr_);
             buffer.read(display_info_addr_);
+            buffer.read(client_message_bits_addr_);
             buffer.read_vector(used_indices_);
             buffer.read(is_wow64_process_);
         }
@@ -149,6 +182,7 @@ namespace sogen
         uint64_t server_info_addr_{};
         uint64_t handle_table_addr_{};
         uint64_t display_info_addr_{};
+        uint64_t client_message_bits_addr_{};
         std::vector<bool> used_indices_{};
         memory_manager* memory_{};
         bool is_wow64_process_{};
