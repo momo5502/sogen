@@ -66,6 +66,11 @@ interface HitResult {
   button?: CaptionButton;
 }
 
+interface ClientTarget {
+  window: HostWindowState;
+  point: Point;
+}
+
 const PLAYGROUND_BACKGROUND = "#18181b";
 
 interface AttachSogenUiHostOptions {
@@ -629,6 +634,63 @@ export function attachSogenUiHost(
     return null;
   }
 
+  function findChildTarget(
+    parent: HostWindowState,
+    x: number,
+    y: number,
+  ): ClientTarget | null {
+    let result: ClientTarget | null = null;
+
+    for (const child of windows.values()) {
+      if (
+        child.parent !== parent.hwnd ||
+        !child.visible ||
+        !child.enabled ||
+        !pointInRect(child.rect, x, y)
+      ) {
+        continue;
+      }
+
+      const childPoint = {
+        x: x - child.rect.left,
+        y: y - child.rect.top,
+      };
+      result =
+        findChildTarget(child, childPoint.x, childPoint.y) ?? {
+          window: child,
+          point: childPoint,
+        };
+    }
+
+    return result;
+  }
+
+  function resolveClientTarget(
+    window: HostWindowState,
+    x: number,
+    y: number,
+  ): ClientTarget {
+    return (
+      findChildTarget(window, x, y) ?? {
+        window,
+        point: { x, y },
+      }
+    );
+  }
+
+  function windowOrigin(window: HostWindowState): Point {
+    const parent = window.parent ? windows.get(window.parent) : null;
+    if (!parent) {
+      return { x: window.rect.left, y: window.rect.top };
+    }
+
+    const parentOrigin = windowOrigin(parent);
+    return {
+      x: parentOrigin.x + window.rect.left,
+      y: parentOrigin.y + window.rect.top,
+    };
+  }
+
   function sendUiEvent(
     hwnd: number,
     message: number,
@@ -765,14 +827,17 @@ export function attachSogenUiHost(
       return;
     }
 
-    const localX = point.x - window.rect.left;
-    const localY = point.y - window.rect.top;
-    mouseDownWindow = window.hwnd;
+    const target = resolveClientTarget(
+      window,
+      point.x - window.rect.left,
+      point.y - window.rect.top,
+    );
+    mouseDownWindow = target.window.hwnd;
     sendUiEvent(
-      window.hwnd,
+      target.window.hwnd,
       event.button === 2 ? WM_RBUTTONDOWN : WM_LBUTTONDOWN,
       event.button === 0 ? MK_LBUTTON : 0,
-      packPoint(localX, localY),
+      packPoint(target.point.x, target.point.y),
     );
     composite();
   }
@@ -803,8 +868,9 @@ export function attachSogenUiHost(
       return;
     }
 
-    const localX = point.x - target.rect.left;
-    const localY = point.y - target.rect.top;
+    const origin = windowOrigin(target);
+    const localX = point.x - origin.x;
+    const localY = point.y - origin.y;
     sendUiEvent(
       target.hwnd,
       event.button === 2 ? WM_RBUTTONUP : WM_LBUTTONUP,
@@ -847,9 +913,17 @@ export function attachSogenUiHost(
     }
 
     if (hit && hit.region === "client") {
-      const localX = point.x - hit.window.rect.left;
-      const localY = point.y - hit.window.rect.top;
-      sendUiEvent(hit.window.hwnd, WM_MOUSEMOVE, 0, packPoint(localX, localY));
+      const target = resolveClientTarget(
+        hit.window,
+        point.x - hit.window.rect.left,
+        point.y - hit.window.rect.top,
+      );
+      sendUiEvent(
+        target.window.hwnd,
+        WM_MOUSEMOVE,
+        0,
+        packPoint(target.point.x, target.point.y),
+      );
     }
   }
 
