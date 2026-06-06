@@ -1622,17 +1622,17 @@ namespace sogen
             for (DWORD i = 0; i < count; ++i)
             {
                 const auto entry = poly + static_cast<uint64_t>(i) * k_entry_size;
-                int32_t rect[4]{}; // x, y, cx, cy
+                std::array<int32_t, 4> rect{}; // x, y, cx, cy
                 uint64_t brush = 0;
-                if (!c.win_emu.memory.try_read_memory(entry, rect, sizeof(rect)) ||
+                if (!c.win_emu.memory.try_read_memory(entry, rect.data(), rect.size() * sizeof(int32_t)) ||
                     !c.win_emu.memory.try_read_memory(entry + k_brush_offset, &brush, sizeof(brush)))
                 {
                     return FALSE;
                 }
 
                 const auto color = brush != 0 ? get_brush_color(c, static_cast<uint32_t>(brush)) : get_dc_brush_color(c, dc);
-                fill_rect(*surface, rect[0] + origin_x, rect[1] + origin_y, rect[0] + rect[2] + origin_x,
-                          rect[1] + rect[3] + origin_y, color);
+                fill_rect(*surface, rect[0] + origin_x, rect[1] + origin_y, rect[0] + rect[2] + origin_x, rect[1] + rect[3] + origin_y,
+                          color);
             }
             return TRUE;
         }

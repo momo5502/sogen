@@ -71,6 +71,7 @@ namespace sogen
             return address != 0 && memory.try_read_memory(address, data, size);
         }
 
+        // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
         bool try_copy_client_pfn_array(memory_interface& memory, const uint64_t source, uint64_t (&destination)[FNID_ARRAY_SIZE],
                                        const size_t source_size)
         {
@@ -96,17 +97,17 @@ namespace sogen
                 uint32_t id;
             };
             static constexpr std::array<mb_string, 11> entries = {{
-                {u"OK", 1},        // IDOK
-                {u"Cancel", 2},    // IDCANCEL
-                {u"&Abort", 3},    // IDABORT
-                {u"&Retry", 4},    // IDRETRY
-                {u"&Ignore", 5},   // IDIGNORE
-                {u"&Yes", 6},      // IDYES
-                {u"&No", 7},       // IDNO
-                {u"&Close", 8},    // IDCLOSE
-                {u"Help", 9},      // IDHELP
-                {u"&Try Again", 10}, // IDTRYAGAIN
-                {u"&Continue", 11},  // IDCONTINUE
+                {.text = u"OK", .id = 1},          // IDOK
+                {.text = u"Cancel", .id = 2},      // IDCANCEL
+                {.text = u"&Abort", .id = 3},      // IDABORT
+                {.text = u"&Retry", .id = 4},      // IDRETRY
+                {.text = u"&Ignore", .id = 5},     // IDIGNORE
+                {.text = u"&Yes", .id = 6},        // IDYES
+                {.text = u"&No", .id = 7},         // IDNO
+                {.text = u"&Close", .id = 8},      // IDCLOSE
+                {.text = u"Help", .id = 9},        // IDHELP
+                {.text = u"&Try Again", .id = 10}, // IDTRYAGAIN
+                {.text = u"&Continue", .id = 11},  // IDCONTINUE
             }};
 
             constexpr uint64_t k_mbstrings_offset = 0x3A4;
