@@ -724,8 +724,6 @@ namespace sogen
                     const auto* header = reinterpret_cast<const gdi_batch_header*>(bytes + offset);
                     if (header->size <= 0 || offset + static_cast<size_t>(header->size) > batch_offset)
                     {
-                        std::printf("GDI batch invalid header offset=%zu size=%d cmd=%d batch_offset=%zu\n", offset, header->size,
-                                    header->cmd, static_cast<size_t>(batch_offset));
                         break;
                     }
 
