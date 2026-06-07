@@ -51,6 +51,7 @@ namespace sogen
                     return;
                 }
 
+                console.log('[sogen-ui][worker-recv]', 'msg=0x' + (message.message >>> 0).toString(16), 'hwnd=' + (message.window >>> 0)); // TEMP diagnostic
                 Module._sogen_web_ui_push_event(
                     message.window >>> 0,
                     message.message >>> 0,
@@ -335,6 +336,12 @@ namespace sogen
                 {
                     std::scoped_lock lock{g_web_ui_event_mutex};
                     events.swap(g_web_ui_events);
+                }
+
+                if (!events.empty())
+                {
+                    EM_ASM({ console.log('[sogen-ui][drain]', $0, 'event(s), sink=' + $1); }, // TEMP diagnostic
+                           static_cast<int>(events.size()), this->sink_ ? 1 : 0);
                 }
 
                 if (this->sink_)
