@@ -41,6 +41,8 @@ namespace sogen
 
             constexpr uint32_t k_gdi_dc_attr_hbrush_offset = 0x10;
             constexpr uint32_t k_gdi_dc_attr_hpen_offset = 0x18;
+            constexpr uint32_t k_gdi_dc_attr_background_color_offset = 0x20; // DC_ATTR.crBackgroundClr (SetBkColor)
+            constexpr uint32_t k_gdi_dc_attr_text_color_offset = 0x28;       // DC_ATTR.crForegroundClr (SetTextColor)
             constexpr uint32_t k_gdi_dc_attr_pt_current_offset = 0xD8;
             constexpr uint32_t k_gdi_dc_attr_font_offset = 0x128;
 
@@ -610,6 +612,31 @@ namespace sogen
                 }
 
                 return get_brush_color(c, brush_handle);
+            }
+
+            // Reads a COLORREF directly out of the DC_ATTR (the user-mode block gdi32 updates on
+            // SetTextColor / SetBkColor without a syscall), returning `fallback` if the DC is unknown.
+            uint32_t get_dc_attr_color(const syscall_context& c, const hdc dc, const uint32_t offset, const uint32_t fallback)
+            {
+                uint64_t dc_attr = 0;
+                if (!get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
+                {
+                    return fallback;
+                }
+
+                uint32_t colorref = 0;
+                c.win_emu.memory.try_read_memory(dc_attr + offset, &colorref, sizeof(colorref));
+                return colorref_to_bgra(colorref);
+            }
+
+            uint32_t get_dc_text_color(const syscall_context& c, const hdc dc)
+            {
+                return get_dc_attr_color(c, dc, k_gdi_dc_attr_text_color_offset, 0xFF000000u);
+            }
+
+            uint32_t get_dc_background_color(const syscall_context& c, const hdc dc)
+            {
+                return get_dc_attr_color(c, dc, k_gdi_dc_attr_background_color_offset, 0xFFFFFFFFu);
             }
 
             // The base fill for a freshly (re)created top-level window surface, matching what WM_ERASEBKGND
@@ -1856,7 +1883,7 @@ namespace sogen
                 clip_rect.bottom += origin_y;
                 if ((options & ETO_OPAQUE) != 0)
                 {
-                    fill_rect(*surface, clip_rect.left, clip_rect.top, clip_rect.right, clip_rect.bottom, get_dc_brush_color(c, dc));
+                    fill_rect(*surface, clip_rect.left, clip_rect.top, clip_rect.right, clip_rect.bottom, get_dc_background_color(c, dc));
                 }
             }
 
@@ -1867,7 +1894,7 @@ namespace sogen
                 c.emu.read_memory(dx, advances.data(), advances.size() * sizeof(uint32_t));
             }
 
-            const auto color = get_dc_pen_color(c, dc);
+            const auto color = get_dc_text_color(c, dc);
             draw_text(*surface, x + origin_x, y + origin_y, glyphs, color, has_rect && (options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr,
                       advances.empty() ? nullptr : advances.data());
 
