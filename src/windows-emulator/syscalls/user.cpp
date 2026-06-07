@@ -2302,14 +2302,16 @@ namespace sogen
                     {
                         const auto wide = u8_to_u16(read_string<char>(c.win_emu.memory, l_param));
                         const auto bytes = (wide.size() + 1) * sizeof(char16_t);
-                        scratch_text = c.win_emu.memory.allocate_memory(page_align_up(bytes), memory_permission::read_write);
+                        scratch_text =
+                            c.win_emu.memory.allocate_memory(static_cast<size_t>(page_align_up(bytes)), memory_permission::read_write);
                         c.win_emu.memory.write_memory(scratch_text, wide.c_str(), bytes);
                     }
                     else
                     {
                         const auto narrow = u16_to_u8(read_string<char16_t>(c.win_emu.memory, l_param));
                         const auto bytes = narrow.size() + 1;
-                        scratch_text = c.win_emu.memory.allocate_memory(page_align_up(bytes), memory_permission::read_write);
+                        scratch_text =
+                            c.win_emu.memory.allocate_memory(static_cast<size_t>(page_align_up(bytes)), memory_permission::read_write);
                         c.win_emu.memory.write_memory(scratch_text, narrow.c_str(), bytes);
                     }
                     dispatch_l_param = scratch_text;
