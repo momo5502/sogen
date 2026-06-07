@@ -663,6 +663,7 @@ export function attachSogenUiHost(
     }
 
     const hwnd = message.hwnd ?? 0;
+    console.debug("[sogen-ui][recv]", message.command, "hwnd=" + hwnd); // TEMP diagnostic
     if (!hwnd) {
       return;
     }
