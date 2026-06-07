@@ -995,9 +995,12 @@ namespace sogen
 
                 if (has_valid_buffer)
                 {
-                    std::array<uint8_t, 2> buffer_bytes{};
-                    c.win_emu.memory.try_read_memory(str->Buffer, buffer_bytes.data(), buffer_bytes.size());
-                    if (str->bAnsi || (buffer_bytes[0] >= 0x20 && buffer_bytes[0] < 0x7F && buffer_bytes[1] != 0))
+                    // The LARGE_STRING header's bAnsi bit authoritatively identifies the encoding
+                    // (SetWindowTextA sets it, ...W clears it). Trust it instead of sniffing bytes:
+                    // byte-sniffing corrupts non-ASCII Unicode, e.g. a title starting with U+4E2D
+                    // ("中" = 2D 4E) looks like a printable ASCII byte followed by a non-zero byte and
+                    // would be misdecoded as the two ANSI characters "-N".
+                    if (str->bAnsi)
                     {
                         return u8_to_u16(read_string<char>(c.win_emu.memory, str->Buffer, length));
                     }

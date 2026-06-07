@@ -157,9 +157,19 @@ namespace sogen
                 if (const auto* captured = process.windows.get(process.mouse_capture_window);
                     captured && (captured->style & WS_VISIBLE) != 0)
                 {
-                    if (auto origin = get_window_origin_relative_to_ancestor(process, captured->handle, top_level))
+                    // Capture routes every pointer event to the capturing window, even when the event
+                    // was reported for a different top-level. Translate the top-level-local point into
+                    // the captured window's client space via screen coordinates (origin relative to the
+                    // root) so the contract holds across top-levels; otherwise a captured control could
+                    // miss its button-up and stay stuck. For a captured window under `top_level` this
+                    // reduces to the same offset as before.
+                    const auto captured_origin = get_window_origin_relative_to_ancestor(process, captured->handle, 0);
+                    const auto top_level_origin = get_window_origin_relative_to_ancestor(process, top_level, 0);
+                    if (captured_origin && top_level_origin)
                     {
-                        return {.window = captured->handle, .x = x - origin->x, .y = y - origin->y};
+                        const auto screen_x = top_level_origin->x + x;
+                        const auto screen_y = top_level_origin->y + y;
+                        return {.window = captured->handle, .x = screen_x - captured_origin->x, .y = screen_y - captured_origin->y};
                     }
                 }
                 else
