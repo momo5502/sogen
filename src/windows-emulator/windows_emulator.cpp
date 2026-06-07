@@ -981,14 +981,6 @@ namespace sogen
             m.lParam = pack_point(target.x, target.y);
         }
 
-        if (event.message == WM_COMMAND && event.lParam != 0 && (event.wParam & 0xFFFF) == 0)
-        {
-            if (const auto* child = this->process.windows.get(event.lParam))
-            {
-                const auto child_id = child->guest.read().wID;
-                m.wParam = (m.wParam & ~0xFFFFull) | (child_id & 0xFFFFull);
-            }
-        }
         thread->post_message(m);
 
         if (event.message == WM_CLOSE || event.message == WM_COMMAND || event.message == WM_KEYDOWN || event.message == WM_LBUTTONDOWN ||

@@ -300,16 +300,22 @@ principled USER/win32k model over time:
 - **All mouse messages are now child-routed** through `route_pointer` (`is_pointer_message`
   covers `WM_MOUSEMOVE` / `WM_LBUTTON*` / `WM_RBUTTON*`, honoring `SetCapture`). It is still a
   simplified hit-test (see above bullet).
-- **Dialog manager shortcut (now partly redundant).** `handle_dialog_message` + `complete_dialog`
-  (`syscalls/user.cpp`) intercept `WM_COMMAND(BN_CLICKED)` / `WM_KEYDOWN(VK_RETURN/ESCAPE)` /
-  `WM_CLOSE` in host code and write the dialog's `DLGINFO` end-flag + result directly. As of the
-  2026-06-07 (2) cross-build fix, **button-click completion no longer relies on this**: the real
-  `DefDlgProc` → `EndDialog` → modal loop now drives it (a button's `WM_COMMAND` is a synchronous
-  `SendMessage` that never reaches `handle_dialog_message` anyway). The shortcut still backs
-  keyboard (`VK_RETURN`/`VK_ESCAPE`) and `WM_CLOSE` dismissal, which go through the message queue.
-  Follow-up: route those through the real `DefDlgProc` path too, then remove the shortcut.
-- **`WM_COMMAND` control-id fixup** in `handle_ui_event` (`windows_emulator.cpp`) rewrites
-  `wParam` with the child's control id from host code.
+- **Dialog manager shortcut (keyboard / `WM_CLOSE` only).** `handle_dialog_message` + `complete_dialog`
+  (`syscalls/user.cpp`) intercept `WM_KEYDOWN(VK_RETURN/ESCAPE)` / `WM_CLOSE` in host code and write
+  the dialog's `DLGINFO` end-flag + result directly. Button-click completion does **not** use this: the
+  real `DefDlgProc` → `EndDialog` → modal loop drives it (the `WM_COMMAND(BN_CLICKED)` branch was
+  removed as dead code on 2026-06-07 (4) — a button's `WM_COMMAND` is a synchronous same-thread
+  `SendMessage` dispatched in-process, so it never reaches `handle_dialog_message`). Follow-up: route
+  the remaining keyboard/`WM_CLOSE` dismissal through the real `DefDlgProc` path too, then remove the
+  shortcut entirely.
+- **`#32770` (`WC_DIALOG`) is matched by literal string.** `is_dialog_window` and ~7 other sites
+  (`syscalls/user.cpp`, `syscalls/gdi.cpp`) compare `class_name`/`normalize_builtin_window_class_name`
+  against the magic string `u"#32770"`. The value is **portable** — `WC_DIALOG = MAKEINTATOM(0x8002)`
+  is a fixed Win32 ABI atom, formatted as `"#32770"` by `get_atom_name` — so this is not the
+  build-specific atom problem the control classes had (those are resolved via
+  `resolve_builtin_class_atom`). The cleanup is representational: centralize the literal into one
+  predicate (ideally keyed on the structured `fnid` `FNID_DIALOG = 0x02A4` already stored on each
+  window, falling back to the atom) instead of scattering the string.
 - **`invalidate_window_tree`** drives child-subtree repaint on `ShowWindow` / `SetWindowPos`,
   compensating for the lack of real win32k visibility/repaint propagation.
 
@@ -397,6 +403,32 @@ App windows whose class was registered with `RegisterClassExA` keep an ANSI proc
 `WM_SETTEXT` matches and is not converted — no behavior change for the common case. (Distinguishing a
 `RegisterClassExW` app class would need the register-time A/W flag, which is not yet threaded
 through; builtin controls, the affected case, are handled.)
+
+## UPDATE 2026-06-07 (4) — host-side cheat cleanup: dead `WM_COMMAND` paths removed
+
+Started clearing the host-side USER cheats listed under "Host-side USER logic still to move into the
+emulated USER/win32k path". Two of them turned out to be dead code now that the real user32 paths
+drive control notifications, and were removed:
+
+- **`WM_COMMAND` control-id fixup in `handle_ui_event`** (`windows_emulator.cpp`) rewrote a
+  `WM_COMMAND`'s `wParam` low word with the child's `wID`. No UI backend ever emits a `WM_COMMAND`
+  event — SDL posts only `WM_CLOSE` / `WM_KEYDOWN` / `WM_LBUTTONDOWN` / `WM_LBUTTONUP`, the web host
+  only `WM_LBUTTON*` + keys — so the branch was unreachable. The real `ButtonWndProc` already builds
+  `WM_COMMAND` from the child id (mirrored into both `spmenu` and `wID`, see update (2)). Removed.
+- **`WM_COMMAND(BN_CLICKED)` branch in `handle_dialog_message`** (`syscalls/user.cpp`) called
+  `complete_dialog` on a button click. A button's `WM_COMMAND` is a synchronous same-thread
+  `SendMessage`, which user32 dispatches in-process straight to `DefDlgProc` without a
+  `NtUserMessageCall` syscall, so it never reached `handle_dialog_message`. Completion already goes
+  through the real `DefDlgProc` → `EndDialog` → modal loop (update (2)). Removed; `l_param` (its only
+  consumer) was dropped from `handle_dialog_message`'s signature.
+
+`handle_dialog_message` / `complete_dialog` now only back keyboard (`VK_RETURN`/`VK_ESCAPE`) and
+`WM_CLOSE` dismissal — the next removal target (route those through the real `DefDlgProc` path).
+Verified the standard smoke suite (`analyzer.exe -s test-sample.exe`, incl. Message Queue / User
+Callback) still passes; `messagebox-sample` click→`IDYES` needs the interactive run to confirm.
+
+Also logged the **`#32770` literal-string** cleanup in the TODO list above (centralize the
+`WC_DIALOG` magic string; it is portable, unlike the build-specific control atoms).
 
 ## Backend parity notes
 

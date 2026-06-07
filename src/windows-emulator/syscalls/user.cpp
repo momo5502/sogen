@@ -2258,7 +2258,7 @@ namespace sogen
             return s.was_visible ? TRUE : FALSE;
         }
 
-        bool handle_dialog_message(const syscall_context& c, window& dialog, uint32_t message, uint64_t w_param, uint64_t l_param);
+        bool handle_dialog_message(const syscall_context& c, window& dialog, uint32_t message, uint64_t w_param);
 
         uint64_t handle_NtUserMessageCall(const syscall_context& c, const hwnd hwnd, const UINT msg, const uint64_t w_param,
                                           const uint64_t l_param, const uint64_t /*result_info*/, const DWORD /*type*/, const BOOL ansi)
@@ -2318,7 +2318,7 @@ namespace sogen
                 }
             }
 
-            (void)handle_dialog_message(c, *win, msg, w_param, l_param);
+            (void)handle_dialog_message(c, *win, msg, w_param);
 
             message_call_state state{};
             state.window = hwnd;
@@ -2369,7 +2369,7 @@ namespace sogen
                 return 0;
             }
 
-            (void)handle_dialog_message(c, *win, m.message, m.wParam, m.lParam);
+            (void)handle_dialog_message(c, *win, m.message, m.wParam);
 
             message_call_state state{};
             state.window = m.window;
@@ -2423,8 +2423,7 @@ namespace sogen
             return normalize_builtin_window_class_name(win.class_name) == u"#32770";
         }
 
-        bool handle_dialog_message(const syscall_context& c, window& dialog, const uint32_t message, const uint64_t w_param,
-                                   const uint64_t l_param)
+        bool handle_dialog_message(const syscall_context& c, window& dialog, const uint32_t message, const uint64_t w_param)
         {
             if (!is_dialog_window(dialog))
             {
@@ -2433,17 +2432,6 @@ namespace sogen
 
             switch (message)
             {
-            case WM_COMMAND: {
-                const auto control_id = static_cast<uint32_t>(w_param & 0xFFFF);
-                const auto notification = static_cast<uint32_t>((w_param >> 16) & 0xFFFF);
-                if (notification == BN_CLICKED && l_param != 0)
-                {
-                    complete_dialog(c, dialog, control_id != 0 ? control_id : IDOK);
-                    return true;
-                }
-                break;
-            }
-
             case WM_KEYDOWN:
                 if (w_param == VK_RETURN)
                 {
@@ -2482,7 +2470,7 @@ namespace sogen
                 {
                     if (auto* win = c.proc.windows.get(pending_msg->window))
                     {
-                        (void)handle_dialog_message(c, *win, pending_msg->message, pending_msg->wParam, pending_msg->lParam);
+                        (void)handle_dialog_message(c, *win, pending_msg->message, pending_msg->wParam);
                     }
                 }
                 message.write(*pending_msg);
