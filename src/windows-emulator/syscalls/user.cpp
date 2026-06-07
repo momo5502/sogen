@@ -995,11 +995,9 @@ namespace sogen
 
                 if (has_valid_buffer)
                 {
-                    // The LARGE_STRING header's bAnsi bit authoritatively identifies the encoding
-                    // (SetWindowTextA sets it, ...W clears it). Trust it instead of sniffing bytes:
-                    // byte-sniffing corrupts non-ASCII Unicode, e.g. a title starting with U+4E2D
-                    // ("中" = 2D 4E) looks like a printable ASCII byte followed by a non-zero byte and
-                    // would be misdecoded as the two ANSI characters "-N".
+                    // bAnsi is reliable: handle_NtUserMessageCall re-encodes WM_SETTEXT to the target
+                    // proc's encoding, so the buffer agrees with bAnsi here (byte-sniffing would
+                    // mis-handle non-ASCII Unicode such as a CJK title).
                     if (str->bAnsi)
                     {
                         return u8_to_u16(read_string<char>(c.win_emu.memory, str->Buffer, length));
@@ -1825,6 +1823,9 @@ namespace sogen
             }
             win.class_name = cls_name;
             const auto normalized_class = normalize_builtin_window_class_name(cls_name);
+            // Builtin controls use the wide (apfnClientW) wndproc (expect UTF-16); app classes keep
+            // their registered proc. Drives the WM_SETTEXT re-encoding so a wide proc never gets ANSI.
+            win.unicode_proc = is_builtin_window_class_name(normalized_class);
             const auto skip_create_messages = false;
             if (normalized_class == u"Button" || normalized_class == u"Static")
             {
@@ -1868,11 +1869,8 @@ namespace sogen
                 guest_win.lpfnWndProc = win.wnd_proc;
                 guest_win.pcls = class_obj_addr;
                 guest_win.cbWndExtra = wnd_class->cbWndExtra;
-                // A child window's control id lives in different WND fields depending on the
-                // user32 build: Windows 11 (26xxx) reads it from wID (WND+0x140), while
-                // Windows Server 2022 (20348) reads it from spmenu (WND+0x98) — which is where
-                // real Windows stores a child's id anyway. Populate both so the builtin control
-                // wndprocs build correct WM_COMMAND notifications regardless of the loaded build.
+                // Control id offset is build-specific: Win11 reads wID (WND+0x140), Server 2022 reads
+                // spmenu (WND+0x98). Populate both so builtin wndprocs emit the right WM_COMMAND id.
                 guest_win.wID = has_child_parent ? menu : 0;
                 if (has_child_parent)
                 {
@@ -2276,6 +2274,9 @@ namespace sogen
                 return 0;
             }
 
+            uint64_t dispatch_l_param = l_param;
+            uint64_t scratch_text = 0;
+
             if (msg == WM_SETTEXT)
             {
                 if (l_param == 0)
@@ -2284,13 +2285,34 @@ namespace sogen
                 }
                 else if (ansi)
                 {
-                    const auto text = u8_to_u16(read_string<char>(c.win_emu.memory, l_param));
-                    update_window_title(c, *win, text);
+                    update_window_title(c, *win, u8_to_u16(read_string<char>(c.win_emu.memory, l_param)));
                 }
                 else
                 {
-                    const auto text = read_string<char16_t>(c.win_emu.memory, l_param);
-                    update_window_title(c, *win, text);
+                    update_window_title(c, *win, read_string<char16_t>(c.win_emu.memory, l_param));
+                }
+
+                // Deliver the text in the target proc's encoding (caller's is `ansi`, proc's is
+                // unicode_proc): when they differ, re-encode into a scratch guest buffer so a wide proc
+                // never reads ANSI as UTF-16. Freed in completion_NtUserMessageCall.
+                const bool caller_unicode = ansi == FALSE;
+                if (l_param != 0 && caller_unicode != win->unicode_proc)
+                {
+                    if (win->unicode_proc)
+                    {
+                        const auto wide = u8_to_u16(read_string<char>(c.win_emu.memory, l_param));
+                        const auto bytes = (wide.size() + 1) * sizeof(char16_t);
+                        scratch_text = c.win_emu.memory.allocate_memory(page_align_up(bytes), memory_permission::read_write);
+                        c.win_emu.memory.write_memory(scratch_text, wide.c_str(), bytes);
+                    }
+                    else
+                    {
+                        const auto narrow = u16_to_u8(read_string<char16_t>(c.win_emu.memory, l_param));
+                        const auto bytes = narrow.size() + 1;
+                        scratch_text = c.win_emu.memory.allocate_memory(page_align_up(bytes), memory_permission::read_write);
+                        c.win_emu.memory.write_memory(scratch_text, narrow.c_str(), bytes);
+                    }
+                    dispatch_l_param = scratch_text;
                 }
             }
 
@@ -2299,7 +2321,8 @@ namespace sogen
             message_call_state state{};
             state.window = hwnd;
             state.message = msg;
-            dispatch_window_message(c, callback_id::NtUserMessageCall, std::move(state), *win, msg, w_param, l_param);
+            state.scratch_text = scratch_text;
+            dispatch_window_message(c, callback_id::NtUserMessageCall, std::move(state), *win, msg, w_param, dispatch_l_param);
             return {};
         }
 
@@ -2308,6 +2331,10 @@ namespace sogen
                                               const BOOL /*ansi*/)
         {
             auto& state = c.get_completion_state<message_call_state>();
+            if (state.scratch_text != 0)
+            {
+                c.win_emu.memory.release_memory(state.scratch_text, 0);
+            }
             if (state.message == WM_PAINT)
             {
                 if (auto* win = c.proc.windows.get(state.window))
@@ -2846,9 +2873,8 @@ namespace sogen
                     case GWLP_ID:
                         oldValue = guest_win.wID;
                         guest_win.wID = dwNewLong;
-                        // Keep spmenu in sync: builds differ on which field the control id is read
-                        // from (wID@0x140 vs spmenu@0x98). Only child windows store the id in spmenu;
-                        // top-level windows keep a real menu handle there.
+                        // Mirror to spmenu too (builds disagree on the id offset; see CreateWindowEx);
+                        // only child windows store the id there, top-level keeps a real menu handle.
                         if ((guest_win.dwStyle & WS_CHILD) != 0)
                         {
                             guest_win.spmenu = dwNewLong;
@@ -3042,11 +3068,9 @@ namespace sogen
             uint64_t pExtraBytes = 0;
             win->guest.access([&](USER_WINDOW& guest_win) {
                 pExtraBytes = guest_win.pExtraBytes;
-                // Mark the window as owning a DLGINFO (WND+0x12 bit 0). user32's "ensure dialog info"
-                // helper gates on this bit: without it, every dialog message re-allocates a fresh
-                // DLGINFO via NtUserSetDialogPointer, so the modal loop and EndDialog end up writing/
-                // reading different DLGINFO blocks and the dialog never ends. The real kernel sets this
-                // bit when a dialog pointer is associated; mirror that here.
+                // WND+0x12 bit 0 marks "has DLGINFO". Without it user32 re-creates the DLGINFO on
+                // every dialog message, so the modal loop and EndDialog touch different blocks and the
+                // dialog never ends. The real kernel sets it when associating the pointer.
                 if (ptr != 0)
                 {
                     guest_win.bFlags |= 0x1;

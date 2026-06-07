@@ -151,18 +151,14 @@ namespace sogen
         // are decided here, never in the host backends.
         pointer_target route_pointer(process_context& process, const hwnd top_level, const int x, const int y)
         {
-            // Mouse capture (SetCapture) redirects all pointer input to the capturing window.
             if (process.mouse_capture_window != 0)
             {
                 if (const auto* captured = process.windows.get(process.mouse_capture_window);
                     captured && (captured->style & WS_VISIBLE) != 0)
                 {
-                    // Capture routes every pointer event to the capturing window, even when the event
-                    // was reported for a different top-level. Translate the top-level-local point into
-                    // the captured window's client space via screen coordinates (origin relative to the
-                    // root) so the contract holds across top-levels; otherwise a captured control could
-                    // miss its button-up and stay stuck. For a captured window under `top_level` this
-                    // reduces to the same offset as before.
+                    // Capture sends every pointer event to the capturing window, even one reported for
+                    // another top-level. Translate via screen coordinates (origin relative to the root)
+                    // so it works across top-levels; for a child of top_level this is the same offset.
                     const auto captured_origin = get_window_origin_relative_to_ancestor(process, captured->handle, 0);
                     const auto top_level_origin = get_window_origin_relative_to_ancestor(process, top_level, 0);
                     if (captured_origin && top_level_origin)
