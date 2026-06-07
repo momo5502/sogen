@@ -258,15 +258,19 @@ button captions, portable system builtin-class atom resolution (see "System buil
 atom resolution"), and the window/dialog **background** fill (top-level surfaces are now filled
 with the class background brush — gray dialog face instead of white). Still open:
 
-- message-box **icon** pixels (`NtUserDrawIconEx` is a success stub)
-- classic checkbox/radio **check glyph** pixels (`NtUserBitBltSysBmp` is a success stub; box, label,
-  and click/state handling work)
-- finish small-text / batched GDI text path so ordinary `TextOutA/W` works without forcing oversized `ExtTextOutW`
-- replace temporary debug-font text path with more correct font/text handling over time
+- message-box **icon** pixels (`NtUserDrawIconEx` is a success stub) — still open; see update (8) for
+  the feasibility constraint (no stored icon pixel data / icon identity)
+- replace temporary debug-font text path with more correct font/text handling over time — still open
+  (text renders via the 8x8 `debug_font` at a fixed cell, ignoring the selected `HFONT`)
 - add more correct clip/region handling
 - add more correct ROP / brush / pen / DC semantics where builtin paint needs them
 - `NtGdiGetDCDword` only returns the default (0); other indices (MapMode, GraphicsMode, …) would need
   real values if a control relies on them
+
+Since resolved (see update (8)): the classic checkbox/radio **check glyph** (`NtUserBitBltSysBmp` now
+draws it via `draw_system_button_glyph`), and the small-text / **batched GDI text** path
+(`flush_gdi_text_batch` processes the TEB GDI batch, so ordinary `TextOutA/W` works without forcing an
+oversized `ExtTextOutW`).
 
 ## UPDATE 2026-06-07 — input routing consolidated into the emulated win32k layer
 
@@ -527,6 +531,33 @@ fixups) and #3 (dialog shortcut) removed as dead code, `#32770` centralized, and
 items (`invalidate_window_tree`, `route_pointer`) verified load-bearing and reframed as bounded win32k
 simplifications with their principled fixes recorded.
 
+## UPDATE 2026-06-07 (8) — GDI text/bitmap state synced + ExtTextOutW color fix
+
+Surveyed the GDI text/bitmap path and found the doc's "remaining blockers" list had drifted — two items
+listed as open are actually implemented:
+
+- **Batched GDI text** — `flush_gdi_text_batch` (`syscalls/gdi.cpp`) walks the TEB `GdiTebBatch` and
+  replays `TextOut` (`k_gdi_batch_cmd_text_out`) and `PolyPatBlt` records on `NtGdiFlush`, using the
+  foreground/background colors carried in each batch record. Ordinary `TextOutA/W` flows through this, so
+  no oversized `ExtTextOutW` is needed.
+- **Checkbox/radio check glyph** — `NtUserBitBltSysBmp` calls `draw_system_button_glyph`, which draws the
+  glyph; box, label, and click/state already worked.
+
+Fixed a real bug in the **direct** `NtGdiExtTextOutW` path (the non-batched path) where it read the
+wrong DC colors: text was drawn with the DC **pen** color and `ETO_OPAQUE` filled with the DC **brush**
+color. Windows uses the DC **text color** (`SetTextColor` / `crForegroundClr`) for glyphs and the DC
+**background color** (`SetBkColor` / `crBackgroundClr`) for the opaque fill — which the batched path
+already did correctly. Added `get_dc_text_color` / `get_dc_background_color` (reading `DC_ATTR` at
+`0x28` / `0x20`, consistent with the existing ReactOS-derived `DC_ATTR` offsets the file already uses)
+and pointed the direct path at them. Release + smoke pass.
+
+Genuinely still open in this area: **`NtUserDrawIconEx`** (message-box icon) is a success stub, and the
+icon model has no stored pixel data or tracked icon identity — drawing the real system icon would need
+either synthesizing the standard message-box icons as glyphs (like `draw_system_button_glyph`, plus a
+way to know which icon was requested) or loading+rasterizing the real `imageres.dll`/`user32` resource.
+And text still uses the temporary 8x8 `debug_font` at a fixed cell, ignoring the selected `HFONT`
+(size/face/weight) — real font handling remains the large follow-up.
+
 ## Backend parity notes
 
 SDL and web still need separate host backends because their platform integration is genuinely different:
@@ -552,10 +583,12 @@ The remaining design direction is to continue moving Win32 behavior out of host 
 
 ## Next steps
 
-1. Draw the message-box icon (`NtUserDrawIconEx`) and the dialog background.
+1. Draw the message-box icon (`NtUserDrawIconEx`) — needs an icon-identity/pixel-data approach first
+   (see update (8)); the dialog background fill is already done.
 2. Keep builtin control paint on the real callback/user32 path; do not reintroduce manual
    `Button` / `Static` drawing fallbacks.
-3. Continue improving batched text and font handling.
+3. Replace the temporary 8x8 `debug_font` with real `HFONT`-aware font/text handling (batched text
+   plumbing is already in place; the gap is glyph rasterization at the selected size/face).
 
 ## Non-goals for this checkpoint
 
