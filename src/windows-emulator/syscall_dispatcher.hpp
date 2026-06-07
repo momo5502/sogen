@@ -152,18 +152,21 @@ namespace sogen
     {
         hwnd window{};
         UINT message{};
+        uint64_t scratch_text{}; // guest buffer holding a re-encoded text payload; freed on completion
 
       private:
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
             buffer.write(this->window);
             buffer.write(this->message);
+            buffer.write(this->scratch_text);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
         {
             buffer.read(this->window);
             buffer.read(this->message);
+            buffer.read(this->scratch_text);
         }
     };
 

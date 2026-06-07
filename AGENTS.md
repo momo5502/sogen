@@ -29,3 +29,4 @@ Other applications can also be executed in the emulator:
 
 - Run clang-format on changed files to ensure consistent formatting
 - Do not generate code comments unless they add important information not otherwise deducible from code itself
+- Do not use shortcuts or workarounds. Always prefer clean and idiomatic solutions.

@@ -94,6 +94,7 @@ namespace sogen
         uint64_t dialog_result{};
         emulator_pointer system_menu_ptr{};
         bool host_surface_window{};
+        bool unicode_proc{};
 
         window(memory_interface& memory)
             : user_object(memory)
@@ -126,6 +127,7 @@ namespace sogen
             buffer.write(this->dialog_result);
             buffer.write(this->system_menu_ptr);
             buffer.write(this->host_surface_window);
+            buffer.write(this->unicode_proc);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -154,6 +156,7 @@ namespace sogen
             buffer.read(this->dialog_result);
             buffer.read(this->system_menu_ptr);
             buffer.read(this->host_surface_window);
+            buffer.read(this->unicode_proc);
         }
     };
 

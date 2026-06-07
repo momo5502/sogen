@@ -352,6 +352,52 @@ both the host (Win11) and Server 2022 roots with `manual-controls-sample` and `m
 The temporary `[ui-event]` / `[capture]` / `[sogen-ui]` input-routing diagnostics used to chase
 this down were removed in the same change; the branch carries no leftover debug logging.
 
+## UPDATE 2026-06-07 (3) — capture routing across top-levels + correct WM_SETTEXT A/W marshalling
+
+Two follow-ups from reviewing the cross-build work.
+
+### Mouse capture is honored across top-levels
+
+`route_pointer` translated a captured window's coordinates only via
+`get_window_origin_relative_to_ancestor(captured, top_level)`, which returns `nullopt` when the
+event was reported for a *different* top-level than the one owning the capture — and then fell back
+to delivering the event to that other top-level. That breaks the `SetCapture` contract for
+press/drag/release across emulator top-levels (a captured control could miss its button-up and stay
+stuck). Fixed by translating through **screen coordinates** (origin relative to the root) so the
+captured window always receives the event; for a captured window under the reporting top-level this
+reduces to the previous offset.
+
+### WM_SETTEXT is re-encoded to the target wndproc's encoding
+
+`SetWindowTextA` on a builtin control (e.g. a `Static`) produced corrupted text. The investigation
+ran through a couple of misleading layers before the real cause:
+
+- **`LARGE_STRING.bAnsi` is not a fixed value.** user32's internal `_DefSetText(hwnd, text, bAnsi)`
+  builds the `LARGE_STRING` for `NtUserDefSetText` from *the wndproc's own encoding*: it sets the
+  `bAnsi` bit for an ANSI proc and clears it for a wide proc (the Unicode-only title path,
+  `xxxSetWindowText`, additionally masks it with `& 0x7fffffff`). So `bAnsi` is authoritative **iff**
+  the buffer reaching the proc already matches the proc's encoding.
+- **The actual bug was on our side.** Tracing `SetWindowTextA` → `NtUserMessageCall(WM_SETTEXT)`
+  showed `ansi=1` with an ANSI buffer (consistent), but the emulator dispatched it through the pinned
+  `apfnClientA[21]` callback and forwarded the **raw ANSI `l_param`** straight to the wide
+  `StaticWndProcW`. The wide proc then called `_DefSetText` with `bAnsi=0` over ANSI bytes →
+  `read_def_set_text_string` saw `bAnsi=0` + ANSI text → corruption. The earlier byte-sniffing
+  heuristic in `read_def_set_text_string` was only masking this.
+
+Real win32k delivers a message's text to a wndproc in the proc's own encoding. The fix records each
+window's wndproc encoding (`window.unicode_proc` — wide for builtin controls, the registered proc
+otherwise) and, in `handle_NtUserMessageCall`, re-encodes the `WM_SETTEXT` string into a scratch
+guest buffer when the caller's encoding (`ansi`) differs from the target proc's. The scratch buffer
+is released in `completion_NtUserMessageCall`. With the payload now matching the proc, `bAnsi` is
+consistent at `NtUserDefSetText`, so `read_def_set_text_string` trusts it and the byte-sniffing
+special case is gone. Verified: `[defsettext]` for the status label flips to `bAnsi=0` + UTF‑16, and
+control text renders correctly.
+
+App windows whose class was registered with `RegisterClassExA` keep an ANSI proc, so an ANSI
+`WM_SETTEXT` matches and is not converted — no behavior change for the common case. (Distinguishing a
+`RegisterClassExW` app class would need the register-time A/W flag, which is not yet threaded
+through; builtin controls, the affected case, are handled.)
+
 ## Backend parity notes
 
 SDL and web still need separate host backends because their platform integration is genuinely different:
