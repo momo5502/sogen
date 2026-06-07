@@ -563,6 +563,10 @@ namespace sogen
         uint64_t handle_NtGdiCreateDIBitmapInternal(const syscall_context& c, hdc dc, uint32_t width, uint32_t height, uint32_t usage,
                                                     emulator_pointer bits, emulator_pointer info, uint32_t info_header_size, uint32_t init,
                                                     uint32_t offset, uint32_t cj, uint32_t i_usage);
+        int handle_NtGdiSetDIBitsToDeviceInternal(const syscall_context& c, hdc dc, int x_dest, int y_dest, uint32_t width, uint32_t height,
+                                                  int x_src, int y_src, uint32_t start_scan, uint32_t scan_lines, emulator_pointer bits,
+                                                  emulator_pointer info, uint32_t color_use, uint32_t max_bits, uint32_t max_info,
+                                                  uint32_t transform_coordinates, uint64_t color_transform);
         uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, uint32_t handle_value);
         uint64_t handle_NtGdiSelectBitmap(const syscall_context& c, hdc dc, handle bitmap);
         uint64_t handle_NtGdiSelectFont(const syscall_context& c, hdc dc, uint64_t font);
@@ -1012,6 +1016,7 @@ namespace sogen
         add_handler(NtGdiCreateCompatibleBitmap);
         add_handler(NtGdiCreateBitmap);
         add_handler(NtGdiCreateDIBitmapInternal);
+        add_handler(NtGdiSetDIBitsToDeviceInternal);
         add_handler(NtGdiDeleteObjectApp);
         add_handler(NtGdiSelectBitmap);
         add_handler(NtGdiSelectFont);

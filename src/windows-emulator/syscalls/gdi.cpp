@@ -1462,6 +1462,95 @@ namespace sogen
             return handle_value;
         }
 
+        int handle_NtGdiSetDIBitsToDeviceInternal(const syscall_context& c, const hdc dc, const int x_dest, const int y_dest,
+                                                  const uint32_t width, const uint32_t height, const int x_src, const int y_src,
+                                                  const uint32_t /*start_scan*/, const uint32_t scan_lines, const emulator_pointer bits,
+                                                  const emulator_pointer info, const uint32_t /*color_use*/, const uint32_t max_bits,
+                                                  const uint32_t /*max_info*/, const uint32_t /*transform_coordinates*/,
+                                                  const uint64_t /*color_transform*/)
+        {
+            if (bits == 0 || info == 0)
+            {
+                return 0;
+            }
+
+            gdi_dc_state* dc_state = nullptr;
+            gdi_bitmap_surface* surface = nullptr;
+            int32_t origin_x = 0;
+            int32_t origin_y = 0;
+            if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !surface)
+            {
+                return 0;
+            }
+
+            int32_t bi_width = 0;
+            int32_t bi_height = 0;
+            uint16_t bit_count = 0;
+            uint32_t compression = 0;
+            c.emu.read_memory(info + 4, &bi_width, sizeof(bi_width));
+            c.emu.read_memory(info + 8, &bi_height, sizeof(bi_height));
+            c.emu.read_memory(info + 14, &bit_count, sizeof(bit_count));
+            c.emu.read_memory(info + 16, &compression, sizeof(compression));
+
+            constexpr uint32_t bi_rgb = 0;
+            if (bit_count != 32 || compression != bi_rgb || bi_width <= 0)
+            {
+                c.win_emu.log.warn("NtGdiSetDIBitsToDeviceInternal: unsupported DIB (bpp=%u compression=%u width=%d)\n", bit_count,
+                                   compression, bi_width);
+                return 0;
+            }
+
+            const bool top_down = bi_height < 0;
+            const auto src_width = static_cast<uint32_t>(bi_width);
+            const auto src_height = static_cast<uint32_t>(top_down ? -bi_height : bi_height);
+            const auto stored_rows = std::min(scan_lines, src_height);
+            const size_t stride = static_cast<size_t>(src_width) * sizeof(uint32_t);
+
+            std::vector<uint8_t> data(stride * stored_rows);
+            if (data.empty())
+            {
+                return 0;
+            }
+            if (max_bits != 0 && data.size() > max_bits)
+            {
+                data.resize(max_bits);
+            }
+            c.emu.read_memory(bits, data.data(), data.size());
+            const auto available_rows = static_cast<uint32_t>(data.size() / stride);
+
+            uint32_t copied = 0;
+            for (uint32_t j = 0; j < height; ++j)
+            {
+                const auto src_img_y = static_cast<uint32_t>(y_src) + j;
+                if (src_img_y >= src_height)
+                {
+                    break;
+                }
+                const uint32_t bits_row = top_down ? src_img_y : (src_height - 1 - src_img_y);
+                if (bits_row >= available_rows)
+                {
+                    continue;
+                }
+
+                const uint8_t* row = data.data() + static_cast<size_t>(bits_row) * stride;
+                for (uint32_t i = 0; i < width; ++i)
+                {
+                    const auto src_x = static_cast<uint32_t>(x_src) + i;
+                    if (src_x >= src_width)
+                    {
+                        break;
+                    }
+                    uint32_t pixel = 0;
+                    std::memcpy(&pixel, row + static_cast<size_t>(src_x) * sizeof(uint32_t), sizeof(pixel));
+                    set_surface_pixel(*surface, x_dest + origin_x + static_cast<int>(i), y_dest + origin_y + static_cast<int>(j),
+                                      pixel | 0xFF000000u);
+                }
+                ++copied;
+            }
+
+            return static_cast<int>(copied);
+        }
+
         uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, const uint32_t handle_value)
         {
             GDI_HANDLE_ENTRY64 entry{};
