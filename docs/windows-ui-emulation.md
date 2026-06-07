@@ -291,27 +291,53 @@ Now consolidated:
 
 ### Host-side USER logic still to move into the emulated USER/win32k path (TODO)
 
-These are simplifications/cheats that currently live in host C++ and should grow into a more
-principled USER/win32k model over time:
+These are bounded simplifications in the emulated USER/win32k layer (they already live in the
+emulator core, not in a host backend) that should grow into a more principled win32k model over time.
+They are load-bearing and correct for the cases exercised today; the entries below scope exactly where
+they diverge from real win32k:
 
-- **`route_pointer` is a simplified hit-test.** It does not send `WM_NCHITTEST` to the wndproc
-  (so `HTTRANSPARENT`, draggable client areas, and custom hit-testing don't work), emits no
-  `WM_SETCURSOR` / `WM_MOUSEACTIVATE`, and approximates z-order by "last matching child wins".
-- **All mouse messages are now child-routed** through `route_pointer` (`is_pointer_message`
-  covers `WM_MOUSEMOVE` / `WM_LBUTTON*` / `WM_RBUTTON*`, honoring `SetCapture`). It is still a
-  simplified hit-test (see above bullet).
-- **Dialog manager shortcut (now partly redundant).** `handle_dialog_message` + `complete_dialog`
-  (`syscalls/user.cpp`) intercept `WM_COMMAND(BN_CLICKED)` / `WM_KEYDOWN(VK_RETURN/ESCAPE)` /
-  `WM_CLOSE` in host code and write the dialog's `DLGINFO` end-flag + result directly. As of the
-  2026-06-07 (2) cross-build fix, **button-click completion no longer relies on this**: the real
-  `DefDlgProc` → `EndDialog` → modal loop now drives it (a button's `WM_COMMAND` is a synchronous
-  `SendMessage` that never reaches `handle_dialog_message` anyway). The shortcut still backs
-  keyboard (`VK_RETURN`/`VK_ESCAPE`) and `WM_CLOSE` dismissal, which go through the message queue.
-  Follow-up: route those through the real `DefDlgProc` path too, then remove the shortcut.
-- **`WM_COMMAND` control-id fixup** in `handle_ui_event` (`windows_emulator.cpp`) rewrites
-  `wParam` with the child's control id from host code.
-- **`invalidate_window_tree`** drives child-subtree repaint on `ShowWindow` / `SetWindowPos`,
-  compensating for the lack of real win32k visibility/repaint propagation.
+- **`route_pointer` is a simplified hit-test** (`windows_emulator.cpp`). It already consolidates mouse
+  routing into the win32k layer (the backends only forward `(top-level, top-level-local x/y, buttons)`)
+  and correctly honors `SetCapture` across top-levels. Its divergences from real win32k:
+  - **No `WM_NCHITTEST`** — so `HTTRANSPARENT`, draggable client areas (`HTCAPTION`), and custom
+    hit-testing don't work.
+  - **No `WM_SETCURSOR` / `WM_MOUSEACTIVATE`** — no cursor changes or click-to-activate.
+  - **Approximate z-order** — `find_child_window_at` walks `process.windows` (handle-keyed map) and
+    "last match wins", i.e. handle-allocation order, not the real z-order sibling chain. Harmless while
+    sibling controls don't overlap (dialogs); wrong for overlapping siblings.
+  - **No `WS_EX_TRANSPARENT`** handling.
+  The principled direction is to move hit-testing from eager host-event time (`handle_ui_event`, where
+  guest code can't run) to **message-pop time in the guest thread context** (`GetMessage`/`PeekMessage`),
+  where a synchronous `SendMessage(WM_NCHITTEST)` / `WM_SETCURSOR` / `WM_MOUSEACTIVATE` to the wndproc is
+  possible — mirroring how the kernel raw-input path sends those before delivering a mouse message. That
+  is a real refactor, tracked separately. Two smaller improvements are tractable first: real z-order via
+  the sibling chain (only once `SetWindowPos`/`BringWindowToTop` are confirmed to keep the chain in sync)
+  and `WS_EX_TRANSPARENT` skipping.
+- **All mouse messages are child-routed** through `route_pointer` (`is_pointer_message` covers
+  `WM_MOUSEMOVE` / `WM_LBUTTON*` / `WM_RBUTTON*`, honoring `SetCapture`); still the simplified hit-test
+  above.
+  (The dialog manager shortcut `handle_dialog_message` / `complete_dialog` was **removed** on
+  2026-06-07 (4) — it turned out to be dead and buggy; the guest's real `DefDlgProc`/`IsDialogMessage`
+  path drives keyboard and `WM_CLOSE` correctly. See the update below.)
+  (The `#32770` / `WC_DIALOG` literal-string matching was **centralized** on 2026-06-07 (5) into the
+  `builtin_dialog_class_name` constant + `window::is_dialog()` in `windows_objects.hpp`; no scattered
+  `u"#32770"` literals remain. The value is portable — `WC_DIALOG = MAKEINTATOM(0x8002)` is a fixed
+  Win32 ABI atom formatted as `"#32770"` by `get_atom_name` — so unlike the build-specific control-class
+  atoms (resolved via `resolve_builtin_class_atom`) the canonical name is reliable. See the update below.)
+- **`invalidate_window_tree` is a bounded simplification, not a removable cheat** (verified
+  load-bearing on 2026-06-07 (6) — disabling the child recursion leaves the message box with a painted
+  dialog frame but blank buttons/text). On a hidden→visible transition (`NtUserShowWindow`,
+  `NtUserSetWindowPos|SWP_SHOWWINDOW`) it recursively invalidates the window and every `WS_VISIBLE`
+  descendant. It is needed because user32 control wndprocs gate their paint body on the *whole ancestor
+  chain* being visible (`FUN_180008030`), so children created during `WM_INITDIALOG` (while the dialog
+  is hidden) skip painting and never repaint on their own once the ancestor is shown. The behavior is
+  effectively `RedrawWindow(hwnd, RDW_INVALIDATE | RDW_ALLCHILDREN)` and already lives in the emulated
+  win32k layer (`syscalls/user.cpp`), so it is *not* host logic to relocate. It is **correct for the
+  cases exercised today** (a dialog whose children are all newly exposed when shown); it diverges from
+  real win32k only where there is no update-region/clipping model yet — partial exposure, overlapping
+  or occluded siblings, `WS_CLIPCHILDREN`, z-order. The principled version is a real per-window
+  update-region + clipping subsystem (large, coupled to broader GDI region work), tracked separately
+  rather than as a quick removal.
 
 ## UPDATE 2026-06-07 (2) — cross-build support: control id + dialog completion
 
@@ -397,6 +423,109 @@ App windows whose class was registered with `RegisterClassExA` keep an ANSI proc
 `WM_SETTEXT` matches and is not converted — no behavior change for the common case. (Distinguishing a
 `RegisterClassExW` app class would need the register-time A/W flag, which is not yet threaded
 through; builtin controls, the affected case, are handled.)
+
+## UPDATE 2026-06-07 (4) — host-side cheat cleanup: dead `WM_COMMAND` paths + dialog shortcut removed
+
+Started clearing the host-side USER cheats listed under "Host-side USER logic still to move into the
+emulated USER/win32k path". Two of them turned out to be dead code now that the real user32 paths
+drive control notifications, and were removed:
+
+- **`WM_COMMAND` control-id fixup in `handle_ui_event`** (`windows_emulator.cpp`) rewrote a
+  `WM_COMMAND`'s `wParam` low word with the child's `wID`. No UI backend ever emits a `WM_COMMAND`
+  event — SDL posts only `WM_CLOSE` / `WM_KEYDOWN` / `WM_LBUTTONDOWN` / `WM_LBUTTONUP`, the web host
+  only `WM_LBUTTON*` + keys — so the branch was unreachable. The real `ButtonWndProc` already builds
+  `WM_COMMAND` from the child id (mirrored into both `spmenu` and `wID`, see update (2)). Removed.
+- **`WM_COMMAND(BN_CLICKED)` branch in `handle_dialog_message`** (`syscalls/user.cpp`) called
+  `complete_dialog` on a button click. A button's `WM_COMMAND` is a synchronous same-thread
+  `SendMessage`, which user32 dispatches in-process straight to `DefDlgProc` without a
+  `NtUserMessageCall` syscall, so it never reached `handle_dialog_message`. Completion already goes
+  through the real `DefDlgProc` → `EndDialog` → modal loop (update (2)). Removed; `l_param` (its only
+  consumer) was dropped from `handle_dialog_message`'s signature.
+
+Then the **whole dialog manager shortcut was removed** (`handle_dialog_message`, `complete_dialog`,
+`is_dialog_window`). An experiment that disabled the shortcut and let only the guest's real
+`DefDlgProc`/`IsDialogMessage` path run showed it handles dialog dismissal correctly — and that the
+shortcut was not just redundant but **wrong** for `MB_YESNO`:
+
+- **Enter** → guest activates the default button (Yes) → `IDYES` / `clicked: yes`. The old shortcut
+  hardcoded `VK_RETURN` → `IDOK`, which a YesNo box does not even have.
+- **Esc** → ignored, matching native Windows (a YesNo box has no Cancel button). The old shortcut
+  forced `VK_ESCAPE` → `IDCANCEL`. (For `MB_OKCANCEL`/`MB_YESNOCANCEL` the guest path sends
+  `WM_COMMAND(IDCANCEL)` to the real Cancel button, so it works there too.)
+- **Window X** → correctly disabled (greyed out) for a YesNo box, matching native — the X has no
+  effect because there is no Cancel command. The old shortcut faked `WM_CLOSE` → `IDCANCEL`.
+- **Mouse Yes/No** → unchanged, still driven by the real `ButtonWndProc` → `DefDlgProc` → `EndDialog`.
+
+So the shortcut was deleted outright (verified interactively on the host Win11 DLLs:
+Enter→`clicked: yes`, Esc→no-op, X disabled, mouse Yes/No work). The now-dead dialog bookkeeping went
+with it: the `window` fields `dialog_pointer` / `dialog_flags` / `dialog_result` (and their
+serialization), and the `dialog_flags` re-apply branch in `NtUserSetDialogPointer` — which now only
+sets the `WND+0x12` "has DLGINFO" bit and writes the pointer into the window extra bytes (its real
+kernel job, see update (2)). Standard smoke suite (`analyzer.exe -s test-sample.exe`) still passes.
+
+Also logged the **`#32770` literal-string** cleanup in the TODO list above (centralize the
+`WC_DIALOG` magic string; it is portable, unlike the build-specific control atoms).
+
+## UPDATE 2026-06-07 (5) — centralize the `#32770` (`WC_DIALOG`) literal
+
+The dialog class `#32770` was matched by the bare string `u"#32770"` at seven sites across two
+translation units (`syscalls/user.cpp`, `syscalls/gdi.cpp`); `gdi.cpp` even duplicated the literal as a
+*raw* `class_name` compare because `normalize_builtin_window_class_name` is private to `user.cpp`. This
+is `WC_DIALOG = MAKEINTATOM(0x8002)`, a fixed Win32 ABI atom that `get_atom_name` formats as `"#32770"`,
+so — unlike the per-build control-class atoms resolved through `SERVERINFO.atomSysClass` — the canonical
+name is portable and safe to match directly.
+
+Centralized into one source of truth in `windows_objects.hpp`:
+
+- `inline constexpr std::u16string_view builtin_dialog_class_name = u"#32770";` (documented).
+- `window::is_dialog()` for the window-instance checks (`NtUserShowWindow` visibility sync, gdi.cpp
+  background fill). This also fixes the raw-vs-normalized inconsistency — `is_dialog()` is a raw
+  `class_name` compare, which is exactly equivalent because `normalize_builtin_window_class_name` never
+  maps anything *to* `#32770` (it only canonicalizes control aliases), so `normalize(x) == "#32770"`
+  iff `x == "#32770"`. A dialog's stored `class_name` is always literally `"#32770"` (it comes from the
+  `WC_DIALOG` atom).
+- The name-classification helpers (`is_builtin_window_class_name`, `get_builtin_window_fnid`,
+  `ensure_builtin_window_class`) use the constant.
+
+Pure refactor, behavior-preserving. No `u"#32770"` literals remain except the constant definition.
+Verified: release + tidy (clang-tidy) builds clean, smoke suite passes.
+
+## UPDATE 2026-06-07 (6) — `invalidate_window_tree` confirmed load-bearing (kept)
+
+Investigated the next entry on the host-side cheats list and concluded it is **not** a removable cheat,
+unlike the dialog shortcut. An experiment that disabled the child-subtree recursion (invalidating only
+the shown window) was verified interactively against `messagebox-sample`: the dialog frame still painted
+but the **Yes/No buttons and message text were blank**, because user32 control wndprocs gate their paint
+body on the entire ancestor chain being visible — children created during `WM_INITDIALOG` (dialog still
+hidden) skip painting and do not repaint on their own when the ancestor is later shown.
+
+So the recursion stays. The cheats-list entry was reframed: `invalidate_window_tree` is a bounded
+simplification (≈ `RedrawWindow(RDW_INVALIDATE | RDW_ALLCHILDREN)`) that already lives in the emulated
+win32k layer and is correct for the cases exercised today; the only divergence from real win32k is the
+absence of an update-region/clipping model (partial exposure, sibling occlusion, `WS_CLIPCHILDREN`,
+z-order), which is a separate, larger subsystem rather than a quick removal. No code change.
+
+## UPDATE 2026-06-07 (7) — `route_pointer` scoped as a bounded win32k simplification (kept)
+
+Investigated the last entry on the host-side cheats list. Like `invalidate_window_tree`, `route_pointer`
+is load-bearing and already lives in the emulated win32k layer (`windows_emulator.cpp`) — it was created
+to consolidate hit-testing that the SDL/web backends used to duplicate, so it is not host logic to
+relocate. It handles `SetCapture` (including across top-levels) and child hit-testing correctly for the
+cases exercised today.
+
+Confirmed by `grep` that `WM_NCHITTEST` / `WM_SETCURSOR` / `WM_MOUSEACTIVATE` / `HTTRANSPARENT` exist
+nowhere in the tree. The divergences from real win32k (no `WM_NCHITTEST`, no `WM_SETCURSOR` /
+`WM_MOUSEACTIVATE`, handle-order z-order instead of the sibling chain, no `WS_EX_TRANSPARENT`) are now
+scoped precisely in the TODO entry above. The architectural reason the deep parts aren't a quick fix:
+those messages are *synchronously sent*, but hit-testing currently runs at host-event time
+(`handle_ui_event`) where guest code can't run; the principled fix moves hit-testing to message-pop time
+(`GetMessage`/`PeekMessage`) in the guest thread context so the wndproc can be called synchronously. No
+code change.
+
+With this, every entry on the host-side cheats list has been resolved or scoped: #1/#2 (`WM_COMMAND`
+fixups) and #3 (dialog shortcut) removed as dead code, `#32770` centralized, and the two remaining
+items (`invalidate_window_tree`, `route_pointer`) verified load-bearing and reframed as bounded win32k
+simplifications with their principled fixes recorded.
 
 ## Backend parity notes
 

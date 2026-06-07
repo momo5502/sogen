@@ -3,6 +3,7 @@
 #include "handles.hpp"
 
 #include <algorithm>
+#include <string_view>
 #include <serialization_helper.hpp>
 #include <utils/file_handle.hpp>
 #include <platform/synchronisation.hpp>
@@ -69,6 +70,12 @@ namespace sogen
         }
     };
 
+    // WC_DIALOG = MAKEINTATOM(0x8002); user32 creates dialogs and message boxes with this fixed
+    // system atom, which the kernel reports as the class name "#32770". The atom value is constant
+    // across Windows builds (unlike the builtin control-class atoms, which vary per build and are
+    // resolved through SERVERINFO.atomSysClass), so matching this canonical name is portable.
+    inline constexpr std::u16string_view builtin_dialog_class_name = u"#32770";
+
     struct window : user_object<USER_WINDOW>
     {
         uint32_t thread_id{};
@@ -89,9 +96,6 @@ namespace sogen
         bool erase_pending{};
         std::map<std::u16string, uint64_t> props{};
         emulator_pointer wnd_proc{};
-        emulator_pointer dialog_pointer{};
-        uint32_t dialog_flags{};
-        uint64_t dialog_result{};
         emulator_pointer system_menu_ptr{};
         bool host_surface_window{};
         bool unicode_proc{};
@@ -99,6 +103,11 @@ namespace sogen
         window(memory_interface& memory)
             : user_object(memory)
         {
+        }
+
+        bool is_dialog() const
+        {
+            return this->class_name == builtin_dialog_class_name;
         }
 
         void serialize_object(utils::buffer_serializer& buffer) const override
@@ -122,9 +131,6 @@ namespace sogen
             buffer.write(this->erase_pending);
             buffer.write_map(this->props);
             buffer.write(this->wnd_proc);
-            buffer.write(this->dialog_pointer);
-            buffer.write(this->dialog_flags);
-            buffer.write(this->dialog_result);
             buffer.write(this->system_menu_ptr);
             buffer.write(this->host_surface_window);
             buffer.write(this->unicode_proc);
@@ -151,9 +157,6 @@ namespace sogen
             buffer.read(this->erase_pending);
             buffer.read_map(this->props);
             buffer.read(this->wnd_proc);
-            buffer.read(this->dialog_pointer);
-            buffer.read(this->dialog_flags);
-            buffer.read(this->dialog_result);
             buffer.read(this->system_menu_ptr);
             buffer.read(this->host_surface_window);
             buffer.read(this->unicode_proc);
