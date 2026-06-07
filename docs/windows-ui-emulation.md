@@ -297,15 +297,17 @@ principled USER/win32k model over time:
 - **`route_pointer` is a simplified hit-test.** It does not send `WM_NCHITTEST` to the wndproc
   (so `HTTRANSPARENT`, draggable client areas, and custom hit-testing don't work), emits no
   `WM_SETCURSOR` / `WM_MOUSEACTIVATE`, and approximates z-order by "last matching child wins".
-- **Only `WM_LBUTTONDOWN/UP` are child-routed** (`is_pointer_message`). `WM_MOUSEMOVE` and
-  `WM_RBUTTON*` still go to the top-level window only; they should be routed through the same
-  hit-test for hover/right-click on child controls to work.
-- **Dialog manager shortcut.** `handle_dialog_message` + `complete_dialog` (`syscalls/user.cpp`)
-  intercept `WM_COMMAND(BN_CLICKED)` / `WM_KEYDOWN(VK_RETURN/ESCAPE)` / `WM_CLOSE` in host code
-  and write the dialog's `DLGINFO` end-flag + result directly — i.e. the emulator performs
-  `EndDialog` itself instead of letting the guest's `DefDlgProcWorker` / `MB_DlgProc` drive
-  completion. Invoked from `NtUserMessageCall`, `NtUserDispatchMessage`, and `PeekMessage`.
-  Evaluate whether it can be removed now that real control wndprocs run.
+- **All mouse messages are now child-routed** through `route_pointer` (`is_pointer_message`
+  covers `WM_MOUSEMOVE` / `WM_LBUTTON*` / `WM_RBUTTON*`, honoring `SetCapture`). It is still a
+  simplified hit-test (see above bullet).
+- **Dialog manager shortcut (now partly redundant).** `handle_dialog_message` + `complete_dialog`
+  (`syscalls/user.cpp`) intercept `WM_COMMAND(BN_CLICKED)` / `WM_KEYDOWN(VK_RETURN/ESCAPE)` /
+  `WM_CLOSE` in host code and write the dialog's `DLGINFO` end-flag + result directly. As of the
+  2026-06-07 (2) cross-build fix, **button-click completion no longer relies on this**: the real
+  `DefDlgProc` → `EndDialog` → modal loop now drives it (a button's `WM_COMMAND` is a synchronous
+  `SendMessage` that never reaches `handle_dialog_message` anyway). The shortcut still backs
+  keyboard (`VK_RETURN`/`VK_ESCAPE`) and `WM_CLOSE` dismissal, which go through the message queue.
+  Follow-up: route those through the real `DefDlgProc` path too, then remove the shortcut.
 - **`WM_COMMAND` control-id fixup** in `handle_ui_event` (`windows_emulator.cpp`) rewrites
   `wParam` with the child's control id from host code.
 - **`invalidate_window_tree`** drives child-subtree repaint on `ShowWindow` / `SetWindowPos`,
@@ -340,6 +342,15 @@ each build's `user32.dll`:
    reached the loop. Fix: `NtUserSetDialogPointer` now sets/clears `WND+0x12` bit 0 with the pointer,
    matching the kernel. The dialog now completes through the real `DefDlgProc` → `EndDialog` → modal
    loop path (no synthesis); `messagebox-sample` returns `IDYES` on click again.
+
+Both fixes mirror real Windows semantics rather than working around it: a child's id genuinely
+lives in `spmenu`, and the kernel genuinely sets the `WND+0x12` DLGINFO bit. Writing the id to both
+`spmenu` and `wID` is a deliberate build-agnostic choice (the emulator can't know at create time
+which `user32` build is mapped, and each build reads only its own offset). Verified end-to-end on
+both the host (Win11) and Server 2022 roots with `manual-controls-sample` and `messagebox-sample`.
+
+The temporary `[ui-event]` / `[capture]` / `[sogen-ui]` input-routing diagnostics used to chase
+this down were removed in the same change; the branch carries no leftover debug logging.
 
 ## Backend parity notes
 
