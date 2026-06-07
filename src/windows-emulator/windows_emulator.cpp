@@ -127,7 +127,11 @@ namespace sogen
 
         bool is_pointer_message(const uint32_t message)
         {
-            return message == WM_LBUTTONDOWN || message == WM_LBUTTONUP;
+            // All mouse messages go through capture/child hit-testing: while a window holds the mouse
+            // capture every mouse message must reach it (so a pressed button still completes its click),
+            // and otherwise each is delivered to the child under the cursor (hover, right-click, etc.).
+            return message == WM_MOUSEMOVE || message == WM_LBUTTONDOWN || message == WM_LBUTTONUP ||
+                   message == WM_RBUTTONDOWN || message == WM_RBUTTONUP;
         }
 
         uint64_t pack_point(const int x, const int y)
@@ -984,8 +988,11 @@ namespace sogen
             const auto target = route_pointer(this->process, event.window, point_x(event.lParam), point_y(event.lParam));
             m.window = target.window;
             m.lParam = pack_point(target.x, target.y);
-            this->log.info("[ui-event] routed to window=0x%X local=(%d,%d)\n", static_cast<uint32_t>(target.window), target.x,
-                           target.y); // TEMP diagnostic
+            if (trace_event) // TEMP diagnostic (skip the move flood)
+            {
+                this->log.info("[ui-event] routed to window=0x%X local=(%d,%d)\n", static_cast<uint32_t>(target.window), target.x,
+                               target.y);
+            }
         }
 
         if (event.message == WM_COMMAND && event.lParam != 0 && (event.wParam & 0xFFFF) == 0)
