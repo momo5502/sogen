@@ -94,7 +94,7 @@ namespace sogen
         uint64_t dialog_result{};
         emulator_pointer system_menu_ptr{};
         bool host_surface_window{};
-        bool unicode_proc{}; // wndproc expects UTF-16 text (builtin controls); false => ANSI proc
+        bool unicode_proc{};
 
         window(memory_interface& memory)
             : user_object(memory)
