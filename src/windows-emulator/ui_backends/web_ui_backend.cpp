@@ -78,7 +78,7 @@ namespace sogen
             // clang-format off
             EM_ASM({
                 const command = UTF8ToString($0);
-                console.debug('[sogen-ui][emit]', command, 'hwnd=' + Number($1 >>> 0)); // TEMP diagnostic
+                console.log('[sogen-ui][emit]', command, 'hwnd=' + Number($1 >>> 0)); // TEMP diagnostic
                 postMessage({
                     type: 'sogen_ui',
                     command: command,
@@ -220,7 +220,7 @@ namespace sogen
             // clang-format off
             EM_ASM({
                 const pixels = HEAPU8.slice($5, $5 + $6);
-                console.debug('[sogen-ui][emit] present_surface', 'hwnd=' + Number($0 >>> 0), $1 + 'x' + $2); // TEMP diagnostic
+                console.log('[sogen-ui][emit] present_surface', 'hwnd=' + Number($0 >>> 0), $1 + 'x' + $2); // TEMP diagnostic
                 postMessage({
                     type: 'sogen_ui',
                     command: 'present_surface',
