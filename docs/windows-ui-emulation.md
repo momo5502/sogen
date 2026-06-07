@@ -268,6 +268,49 @@ with the class background brush — gray dialog face instead of white). Still op
 - `NtGdiGetDCDword` only returns the default (0); other indices (MapMode, GraphicsMode, …) would need
   real values if a control relies on them
 
+## UPDATE 2026-06-07 — input routing consolidated into the emulated win32k layer
+
+Pointer hit-testing is win32k's (kernel) job, not the host backend's and not the guest's
+user32: in real Windows the raw-input thread hit-tests the window tree, sends `WM_NCHITTEST`,
+and posts the mouse message **already targeted at the specific child HWND**. `DefWindowProc`
+never forwards a click to children, so the emulator (which plays the kernel role) must do the
+hit-test. The earlier web/SDL backends each re-derived this themselves, which was the actual
+hack.
+
+Now consolidated:
+
+- `windows_emulator::route_pointer` is the single authority for mouse capture, child
+  hit-testing, and window-local coordinate translation. Both backends only forward
+  `(top-level window, top-level-local x/y, button-state)`.
+- The duplicated `findChildTarget` / `resolveClientTarget` / `windowOrigin` tree-walks were
+  deleted from both web hosts (`page/src/web-ui-host.ts` and `ui_backends/web_ui_host.js`).
+- **`GetMessage`/`PeekMessage` `IsChild` filter fixed**: `peek_pending_message` now matches a
+  message whose target is the filter HWND *or any descendant of it*, so `GetMessage(&msg, hWnd,
+  …)` with a non-NULL top-level no longer silently drops child-control messages. Previously the
+  filter was exact-equality only and the hwnd-filtered form lost all child input.
+
+### Host-side USER logic still to move into the emulated USER/win32k path (TODO)
+
+These are simplifications/cheats that currently live in host C++ and should grow into a more
+principled USER/win32k model over time:
+
+- **`route_pointer` is a simplified hit-test.** It does not send `WM_NCHITTEST` to the wndproc
+  (so `HTTRANSPARENT`, draggable client areas, and custom hit-testing don't work), emits no
+  `WM_SETCURSOR` / `WM_MOUSEACTIVATE`, and approximates z-order by "last matching child wins".
+- **Only `WM_LBUTTONDOWN/UP` are child-routed** (`is_pointer_message`). `WM_MOUSEMOVE` and
+  `WM_RBUTTON*` still go to the top-level window only; they should be routed through the same
+  hit-test for hover/right-click on child controls to work.
+- **Dialog manager shortcut.** `handle_dialog_message` + `complete_dialog` (`syscalls/user.cpp`)
+  intercept `WM_COMMAND(BN_CLICKED)` / `WM_KEYDOWN(VK_RETURN/ESCAPE)` / `WM_CLOSE` in host code
+  and write the dialog's `DLGINFO` end-flag + result directly — i.e. the emulator performs
+  `EndDialog` itself instead of letting the guest's `DefDlgProcWorker` / `MB_DlgProc` drive
+  completion. Invoked from `NtUserMessageCall`, `NtUserDispatchMessage`, and `PeekMessage`.
+  Evaluate whether it can be removed now that real control wndprocs run.
+- **`WM_COMMAND` control-id fixup** in `handle_ui_event` (`windows_emulator.cpp`) rewrites
+  `wParam` with the child's control id from host code.
+- **`invalidate_window_tree`** drives child-subtree repaint on `ShowWindow` / `SetWindowPos`,
+  compensating for the lack of real win32k visibility/repaint propagation.
+
 ## Backend parity notes
 
 SDL and web still need separate host backends because their platform integration is genuinely different:

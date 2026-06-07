@@ -2347,7 +2347,7 @@ namespace sogen
         {
             auto& t = c.win_emu.current_thread();
 
-            if (auto pending_msg = t.peek_pending_message(hwnd, msg_filter_min, msg_filter_max, true))
+            if (auto pending_msg = t.peek_pending_message(c.proc, hwnd, msg_filter_min, msg_filter_max, true))
             {
                 message.write(*pending_msg);
                 set_thread_window_context(c, pending_msg->window);
@@ -2433,7 +2433,7 @@ namespace sogen
             auto& t = c.win_emu.current_thread();
 
             const bool should_remove = (remove_message & PM_REMOVE) != 0;
-            std::optional<msg> pending_msg = t.peek_pending_message(hwnd, msg_filter_min, msg_filter_max, should_remove);
+            std::optional<msg> pending_msg = t.peek_pending_message(c.proc, hwnd, msg_filter_min, msg_filter_max, should_remove);
 
             if (pending_msg)
             {
@@ -2455,7 +2455,7 @@ namespace sogen
         BOOL handle_NtUserWaitMessage(const syscall_context& c)
         {
             auto& t = c.win_emu.current_thread();
-            if (t.peek_pending_message(0, 0, 0, false))
+            if (t.peek_pending_message(c.proc, 0, 0, 0, false))
             {
                 return TRUE;
             }
