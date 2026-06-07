@@ -946,15 +946,30 @@ namespace sogen
 
     void windows_emulator::handle_ui_event(const ui_event& event)
     {
+        const bool trace_event = event.message != WM_MOUSEMOVE; // TEMP diagnostic (skip the move flood)
+        if (trace_event)
+        {
+            this->log.info("[ui-event] in window=0x%X message=0x%X lParam=0x%llX\n", static_cast<uint32_t>(event.window),
+                           event.message, static_cast<unsigned long long>(event.lParam));
+        }
+
         const auto* win = this->process.windows.get(event.window);
         if (!win)
         {
+            if (trace_event)
+            {
+                this->log.info("[ui-event] window 0x%X not found, dropping\n", static_cast<uint32_t>(event.window));
+            }
             return;
         }
 
         auto* thread = get_thread_by_id(this->process, win->thread_id);
         if (!thread)
         {
+            if (trace_event)
+            {
+                this->log.info("[ui-event] no thread for window 0x%X\n", static_cast<uint32_t>(event.window));
+            }
             return;
         }
 
@@ -969,6 +984,8 @@ namespace sogen
             const auto target = route_pointer(this->process, event.window, point_x(event.lParam), point_y(event.lParam));
             m.window = target.window;
             m.lParam = pack_point(target.x, target.y);
+            this->log.info("[ui-event] routed to window=0x%X local=(%d,%d)\n", static_cast<uint32_t>(target.window), target.x,
+                           target.y); // TEMP diagnostic
         }
 
         if (event.message == WM_COMMAND && event.lParam != 0 && (event.wParam & 0xFFFF) == 0)
