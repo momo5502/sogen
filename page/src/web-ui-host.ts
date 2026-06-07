@@ -628,14 +628,12 @@ export function attachSogenUiHost(
     return null;
   }
 
-
   function sendUiEvent(
     hwnd: number,
     message: number,
     wParam: number,
     lParam: number,
   ) {
-    console.log("[sogen-ui][send]", "msg=0x" + (message >>> 0).toString(16), "hwnd=" + (hwnd >>> 0), "lParam=" + (lParam >>> 0)); // TEMP diagnostic
     worker.postMessage({
       type: "sogen_ui_event",
       window: hwnd >>> 0,
@@ -664,7 +662,6 @@ export function attachSogenUiHost(
     }
 
     const hwnd = message.hwnd ?? 0;
-    console.log("[sogen-ui][recv]", message.command, "hwnd=" + hwnd); // TEMP diagnostic
     if (!hwnd) {
       return;
     }

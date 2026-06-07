@@ -311,6 +311,36 @@ principled USER/win32k model over time:
 - **`invalidate_window_tree`** drives child-subtree repaint on `ShowWindow` / `SetWindowPos`,
   compensating for the lack of real win32k visibility/repaint propagation.
 
+## UPDATE 2026-06-07 (2) — cross-build support: control id + dialog completion
+
+Clicks worked with the host's live system DLLs (Windows 11, build 26x00) but failed with a
+captured **Windows Server 2022 (20348)** emulation root. The earlier "web backend" click bug was
+really this build difference (web used the Server 2022 root, SDL used the host DLLs); SDL with the
+Server 2022 root reproduces it. Two build-specific gaps were fixed, both verified by decompiling
+each build's `user32.dll`:
+
+1. **Child control id field differs between builds.** A button's `ButtonWndProc` builds its
+   `WM_COMMAND` from the child's control id, which it reads from a build-specific WND offset:
+   Windows 11 reads `wID` at **`WND+0x140`**, Windows Server 2022 reads `spmenu` at **`WND+0x98`**
+   (`(short)pwnd[0x13]` in the notify helper; `spmenu` is where real Windows stores a child's id).
+   The emulator only wrote `wID@0x140`, so on Server 2022 every `WM_COMMAND` carried id `0` and the
+   app's handler fell through to `DefWindowProc`. Fix (`NtUserCreateWindowEx` /
+   `NtUserSetWindowLongPtr(GWLP_ID)`): child windows now mirror the id into **both** `spmenu` and
+   `wID`, so the builtin wndprocs notify correctly regardless of the loaded build. This removed the
+   need for the old `handle_ui_event` `find_button_child_at` `WM_COMMAND` synthesis — the **real**
+   `ButtonWndProc` now drives `WM_COMMAND` on both builds.
+
+2. **Builtin `MessageBox`/dialog never ended (real `EndDialog` path).** Once real button
+   `WM_COMMAND` replaced the synthesis, the builtin message box stopped closing on click. Root
+   cause: `NtUserSetDialogPointer` stored the DLGINFO pointer but never set the WND "has-DLGINFO"
+   flag at **`WND+0x12` bit 0**. user32's ensure-dialog-info helper gates on that bit, so it
+   re-allocated a fresh DLGINFO on *every* dialog message (observed: hundreds of
+   `NtUserSetDialogPointer` calls). The modal loop and `EndDialog` then read/wrote different DLGINFO
+   blocks, so `EndDialog` (which sets `DLGINFO+0x18 |= 1`, hides the dialog, posts `WM_NULL`) never
+   reached the loop. Fix: `NtUserSetDialogPointer` now sets/clears `WND+0x12` bit 0 with the pointer,
+   matching the kernel. The dialog now completes through the real `DefDlgProc` → `EndDialog` → modal
+   loop path (no synthesis); `messagebox-sample` returns `IDYES` on click again.
+
 ## Backend parity notes
 
 SDL and web still need separate host backends because their platform integration is genuinely different:

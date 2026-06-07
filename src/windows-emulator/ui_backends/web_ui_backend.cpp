@@ -51,7 +51,6 @@ namespace sogen
                     return;
                 }
 
-                console.log('[sogen-ui][worker-recv]', 'msg=0x' + (message.message >>> 0).toString(16), 'hwnd=' + (message.window >>> 0)); // TEMP diagnostic
                 Module._sogen_web_ui_push_event(
                     message.window >>> 0,
                     message.message >>> 0,
@@ -79,7 +78,6 @@ namespace sogen
             // clang-format off
             EM_ASM({
                 const command = UTF8ToString($0);
-                console.log('[sogen-ui][emit]', command, 'hwnd=' + Number($1 >>> 0)); // TEMP diagnostic
                 postMessage({
                     type: 'sogen_ui',
                     command: command,
@@ -221,7 +219,6 @@ namespace sogen
             // clang-format off
             EM_ASM({
                 const pixels = HEAPU8.slice($5, $5 + $6);
-                console.log('[sogen-ui][emit] present_surface', 'hwnd=' + Number($0 >>> 0), $1 + 'x' + $2); // TEMP diagnostic
                 postMessage({
                     type: 'sogen_ui',
                     command: 'present_surface',
@@ -336,12 +333,6 @@ namespace sogen
                 {
                     std::scoped_lock lock{g_web_ui_event_mutex};
                     events.swap(g_web_ui_events);
-                }
-
-                if (!events.empty())
-                {
-                    EM_ASM({ console.log('[sogen-ui][drain]', $0, 'event(s), sink=' + $1); }, // TEMP diagnostic
-                           static_cast<int>(events.size()), this->sink_ ? 1 : 0);
                 }
 
                 if (this->sink_)

@@ -1334,15 +1334,11 @@ namespace sogen
             {
                 c.proc.mouse_capture_window = window;
             }
-            c.win_emu.log.info("[capture] SetCapture(0x%X) prev=0x%X\n", static_cast<uint32_t>(window),
-                               static_cast<uint32_t>(previous)); // TEMP diagnostic
             return previous;
         }
 
         BOOL handle_NtUserReleaseCapture(const syscall_context& c)
         {
-            c.win_emu.log.info("[capture] ReleaseCapture prev=0x%X\n",
-                               static_cast<uint32_t>(c.proc.mouse_capture_window)); // TEMP diagnostic
             c.proc.mouse_capture_window = 0;
             return TRUE;
         }
@@ -1869,7 +1865,16 @@ namespace sogen
                 guest_win.lpfnWndProc = win.wnd_proc;
                 guest_win.pcls = class_obj_addr;
                 guest_win.cbWndExtra = wnd_class->cbWndExtra;
+                // A child window's control id lives in different WND fields depending on the
+                // user32 build: Windows 11 (26xxx) reads it from wID (WND+0x140), while
+                // Windows Server 2022 (20348) reads it from spmenu (WND+0x98) — which is where
+                // real Windows stores a child's id anyway. Populate both so the builtin control
+                // wndprocs build correct WM_COMMAND notifications regardless of the loaded build.
                 guest_win.wID = has_child_parent ? menu : 0;
+                if (has_child_parent)
+                {
+                    guest_win.spmenu = menu;
+                }
                 guest_win.windowBand = 1; // ZBID_DESKTOP
                 guest_win.fnid = get_builtin_window_fnid(normalized_class);
 
@@ -2838,6 +2843,13 @@ namespace sogen
                     case GWLP_ID:
                         oldValue = guest_win.wID;
                         guest_win.wID = dwNewLong;
+                        // Keep spmenu in sync: builds differ on which field the control id is read
+                        // from (wID@0x140 vs spmenu@0x98). Only child windows store the id in spmenu;
+                        // top-level windows keep a real menu handle there.
+                        if ((guest_win.dwStyle & WS_CHILD) != 0)
+                        {
+                            guest_win.spmenu = dwNewLong;
+                        }
                         if (normalize_builtin_window_class_name(win->class_name) == u"Button")
                         {
                             if (win->name.empty())
@@ -3024,10 +3036,27 @@ namespace sogen
                 c.win_emu.memory.write_memory(ptr + 0x20, &win->dialog_result, sizeof(win->dialog_result));
             }
 
-            const auto guest_win = win->guest.read();
-            if (guest_win.pExtraBytes != 0)
+            uint64_t pExtraBytes = 0;
+            win->guest.access([&](USER_WINDOW& guest_win) {
+                pExtraBytes = guest_win.pExtraBytes;
+                // Mark the window as owning a DLGINFO (WND+0x12 bit 0). user32's "ensure dialog info"
+                // helper gates on this bit: without it, every dialog message re-allocates a fresh
+                // DLGINFO via NtUserSetDialogPointer, so the modal loop and EndDialog end up writing/
+                // reading different DLGINFO blocks and the dialog never ends. The real kernel sets this
+                // bit when a dialog pointer is associated; mirror that here.
+                if (ptr != 0)
+                {
+                    guest_win.bFlags |= 0x1;
+                }
+                else
+                {
+                    guest_win.bFlags &= static_cast<uint8_t>(~0x1);
+                }
+            });
+
+            if (pExtraBytes != 0)
             {
-                c.win_emu.memory.write_memory(guest_win.pExtraBytes + sizeof(uint64_t), &ptr, sizeof(ptr));
+                c.win_emu.memory.write_memory(pExtraBytes + sizeof(uint64_t), &ptr, sizeof(ptr));
             }
 
             return TRUE;
