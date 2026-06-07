@@ -125,6 +125,56 @@ namespace sogen
             return origin;
         }
 
+        bool is_pointer_message(const uint32_t message)
+        {
+            return message == WM_LBUTTONDOWN || message == WM_LBUTTONUP;
+        }
+
+        uint64_t pack_point(const int x, const int y)
+        {
+            return static_cast<uint16_t>(x) | (static_cast<uint64_t>(static_cast<uint16_t>(y)) << 16);
+        }
+
+        struct pointer_target
+        {
+            hwnd window{};
+            int x{};
+            int y{};
+        };
+
+        // Single authority for routing a top-level-local pointer event to its destination window.
+        // Backends only forward (top-level window, top-level-local x/y); capture and child hit-testing
+        // are decided here, never in the host backends.
+        pointer_target route_pointer(process_context& process, const hwnd top_level, const int x, const int y)
+        {
+            // Mouse capture (SetCapture) redirects all pointer input to the capturing window.
+            if (process.mouse_capture_window != 0)
+            {
+                if (const auto* captured = process.windows.get(process.mouse_capture_window);
+                    captured && (captured->style & WS_VISIBLE) != 0)
+                {
+                    if (auto origin = get_window_origin_relative_to_ancestor(process, captured->handle, top_level))
+                    {
+                        return {.window = captured->handle, .x = x - origin->x, .y = y - origin->y};
+                    }
+                }
+                else
+                {
+                    process.mouse_capture_window = 0;
+                }
+
+                return {.window = top_level, .x = x, .y = y};
+            }
+
+            // Otherwise deliver to the deepest visible/enabled child under the cursor.
+            if (const auto child = find_child_window_at(process, top_level, x, y))
+            {
+                return {.window = child->win->handle, .x = child->x, .y = child->y};
+            }
+
+            return {.window = top_level, .x = x, .y = y};
+        }
+
         void perform_context_switch_work(windows_emulator& win_emu)
         {
             auto& threads = win_emu.process.threads;
@@ -914,33 +964,11 @@ namespace sogen
         m.wParam = event.wParam;
         m.lParam = event.lParam;
 
-        if (event.message == WM_LBUTTONDOWN || event.message == WM_LBUTTONUP)
+        if (is_pointer_message(event.message))
         {
-            const auto x = point_x(event.lParam);
-            const auto y = point_y(event.lParam);
-
-            if (this->process.mouse_capture_window != 0)
-            {
-                if (const auto* captured = this->process.windows.get(this->process.mouse_capture_window);
-                    captured && (captured->style & WS_VISIBLE) != 0)
-                {
-                    if (auto origin = get_window_origin_relative_to_ancestor(this->process, captured->handle, event.window))
-                    {
-                        m.window = captured->handle;
-                        m.lParam =
-                            static_cast<uint16_t>(x - origin->x) | (static_cast<uint64_t>(static_cast<uint16_t>(y - origin->y)) << 16);
-                    }
-                }
-                else
-                {
-                    this->process.mouse_capture_window = 0;
-                }
-            }
-            else if (const auto child = find_child_window_at(this->process, event.window, x, y))
-            {
-                m.window = child->win->handle;
-                m.lParam = static_cast<uint16_t>(child->x) | (static_cast<uint64_t>(static_cast<uint16_t>(child->y)) << 16);
-            }
+            const auto target = route_pointer(this->process, event.window, point_x(event.lParam), point_y(event.lParam));
+            m.window = target.window;
+            m.lParam = pack_point(target.x, target.y);
         }
 
         if (event.message == WM_COMMAND && event.lParam != 0 && (event.wParam & 0xFFFF) == 0)

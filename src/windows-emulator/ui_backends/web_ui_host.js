@@ -4,7 +4,6 @@ export function createSogenUiHost(worker, canvas) {
   let focusedWindow = 0;
   let dragState = null;
   let hoverState = null;
-  let mouseDownWindow = 0;
 
   const WM_KEYDOWN = 0x0100;
   const WM_KEYUP = 0x0101;
@@ -293,40 +292,6 @@ export function createSogenUiHost(worker, canvas) {
     return null;
   }
 
-  function findChildTarget(parent, x, y) {
-    let result = null;
-    for (const child of windows.values()) {
-      if (child.parent !== parent.hwnd || !child.visible || !child.enabled || !pointInRect(child.rect, x, y)) {
-        continue;
-      }
-
-      const childPoint = {
-        x: x - child.rect.left,
-        y: y - child.rect.top,
-      };
-      result = findChildTarget(child, childPoint.x, childPoint.y) || { win: child, point: childPoint };
-    }
-
-    return result;
-  }
-
-  function resolveClientTarget(win, x, y) {
-    return findChildTarget(win, x, y) || { win, point: { x, y } };
-  }
-
-  function windowOrigin(win) {
-    const parent = win.parent ? windows.get(win.parent) : null;
-    if (!parent) {
-      return { x: win.rect.left, y: win.rect.top };
-    }
-
-    const parentOrigin = windowOrigin(parent);
-    return {
-      x: parentOrigin.x + win.rect.left,
-      y: parentOrigin.y + win.rect.top,
-    };
-  }
-
   function packPoint(x, y) {
     return ((y & 0xffff) << 16) | (x & 0xffff);
   }
@@ -478,9 +443,9 @@ export function createSogenUiHost(worker, canvas) {
       return;
     }
 
-    const target = resolveClientTarget(win, x - win.rect.left, y - win.rect.top);
-    mouseDownWindow = target.win.hwnd;
-    sendEvent(target.win.hwnd, event.button === 2 ? WM_RBUTTONDOWN : WM_LBUTTONDOWN, event.button === 0 ? MK_LBUTTON : 0, packPoint(target.point.x, target.point.y));
+    const localX = x - win.rect.left;
+    const localY = y - win.rect.top;
+    sendEvent(win.hwnd, event.button === 2 ? WM_RBUTTONDOWN : WM_LBUTTONDOWN, event.button === 0 ? MK_LBUTTON : 0, packPoint(localX, localY));
     composite();
   });
 
@@ -498,15 +463,13 @@ export function createSogenUiHost(worker, canvas) {
       return;
     }
 
-    const target = (mouseDownWindow ? windows.get(mouseDownWindow) : null) || (hit && (hit.region === 'client') ? hit.win : windows.get(focusedWindow));
-    mouseDownWindow = 0;
+    const target = hit && (hit.region === 'client') ? hit.win : windows.get(focusedWindow);
     if (!target) {
       return;
     }
 
-    const origin = windowOrigin(target);
-    const localX = x - origin.x;
-    const localY = y - origin.y;
+    const localX = x - target.rect.left;
+    const localY = y - target.rect.top;
     sendEvent(target.hwnd, event.button === 2 ? WM_RBUTTONUP : WM_LBUTTONUP, 0, packPoint(localX, localY));
   });
 
@@ -540,8 +503,9 @@ export function createSogenUiHost(worker, canvas) {
     }
 
     if (hit && hit.region === 'client') {
-      const target = resolveClientTarget(hit.win, x - hit.win.rect.left, y - hit.win.rect.top);
-      sendEvent(target.win.hwnd, WM_MOUSEMOVE, 0, packPoint(target.point.x, target.point.y));
+      const localX = x - hit.win.rect.left;
+      const localY = y - hit.win.rect.top;
+      sendEvent(hit.win.hwnd, WM_MOUSEMOVE, 0, packPoint(localX, localY));
     }
   });
 
