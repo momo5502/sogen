@@ -291,15 +291,31 @@ Now consolidated:
 
 ### Host-side USER logic still to move into the emulated USER/win32k path (TODO)
 
-These are simplifications/cheats that currently live in host C++ and should grow into a more
-principled USER/win32k model over time:
+These are bounded simplifications in the emulated USER/win32k layer (they already live in the
+emulator core, not in a host backend) that should grow into a more principled win32k model over time.
+They are load-bearing and correct for the cases exercised today; the entries below scope exactly where
+they diverge from real win32k:
 
-- **`route_pointer` is a simplified hit-test.** It does not send `WM_NCHITTEST` to the wndproc
-  (so `HTTRANSPARENT`, draggable client areas, and custom hit-testing don't work), emits no
-  `WM_SETCURSOR` / `WM_MOUSEACTIVATE`, and approximates z-order by "last matching child wins".
-- **All mouse messages are now child-routed** through `route_pointer` (`is_pointer_message`
-  covers `WM_MOUSEMOVE` / `WM_LBUTTON*` / `WM_RBUTTON*`, honoring `SetCapture`). It is still a
-  simplified hit-test (see above bullet).
+- **`route_pointer` is a simplified hit-test** (`windows_emulator.cpp`). It already consolidates mouse
+  routing into the win32k layer (the backends only forward `(top-level, top-level-local x/y, buttons)`)
+  and correctly honors `SetCapture` across top-levels. Its divergences from real win32k:
+  - **No `WM_NCHITTEST`** — so `HTTRANSPARENT`, draggable client areas (`HTCAPTION`), and custom
+    hit-testing don't work.
+  - **No `WM_SETCURSOR` / `WM_MOUSEACTIVATE`** — no cursor changes or click-to-activate.
+  - **Approximate z-order** — `find_child_window_at` walks `process.windows` (handle-keyed map) and
+    "last match wins", i.e. handle-allocation order, not the real z-order sibling chain. Harmless while
+    sibling controls don't overlap (dialogs); wrong for overlapping siblings.
+  - **No `WS_EX_TRANSPARENT`** handling.
+  The principled direction is to move hit-testing from eager host-event time (`handle_ui_event`, where
+  guest code can't run) to **message-pop time in the guest thread context** (`GetMessage`/`PeekMessage`),
+  where a synchronous `SendMessage(WM_NCHITTEST)` / `WM_SETCURSOR` / `WM_MOUSEACTIVATE` to the wndproc is
+  possible — mirroring how the kernel raw-input path sends those before delivering a mouse message. That
+  is a real refactor, tracked separately. Two smaller improvements are tractable first: real z-order via
+  the sibling chain (only once `SetWindowPos`/`BringWindowToTop` are confirmed to keep the chain in sync)
+  and `WS_EX_TRANSPARENT` skipping.
+- **All mouse messages are child-routed** through `route_pointer` (`is_pointer_message` covers
+  `WM_MOUSEMOVE` / `WM_LBUTTON*` / `WM_RBUTTON*`, honoring `SetCapture`); still the simplified hit-test
+  above.
   (The dialog manager shortcut `handle_dialog_message` / `complete_dialog` was **removed** on
   2026-06-07 (4) — it turned out to be dead and buggy; the guest's real `DefDlgProc`/`IsDialogMessage`
   path drives keyboard and `WM_CLOSE` correctly. See the update below.)
@@ -488,6 +504,28 @@ simplification (≈ `RedrawWindow(RDW_INVALIDATE | RDW_ALLCHILDREN)`) that alrea
 win32k layer and is correct for the cases exercised today; the only divergence from real win32k is the
 absence of an update-region/clipping model (partial exposure, sibling occlusion, `WS_CLIPCHILDREN`,
 z-order), which is a separate, larger subsystem rather than a quick removal. No code change.
+
+## UPDATE 2026-06-07 (7) — `route_pointer` scoped as a bounded win32k simplification (kept)
+
+Investigated the last entry on the host-side cheats list. Like `invalidate_window_tree`, `route_pointer`
+is load-bearing and already lives in the emulated win32k layer (`windows_emulator.cpp`) — it was created
+to consolidate hit-testing that the SDL/web backends used to duplicate, so it is not host logic to
+relocate. It handles `SetCapture` (including across top-levels) and child hit-testing correctly for the
+cases exercised today.
+
+Confirmed by `grep` that `WM_NCHITTEST` / `WM_SETCURSOR` / `WM_MOUSEACTIVATE` / `HTTRANSPARENT` exist
+nowhere in the tree. The divergences from real win32k (no `WM_NCHITTEST`, no `WM_SETCURSOR` /
+`WM_MOUSEACTIVATE`, handle-order z-order instead of the sibling chain, no `WS_EX_TRANSPARENT`) are now
+scoped precisely in the TODO entry above. The architectural reason the deep parts aren't a quick fix:
+those messages are *synchronously sent*, but hit-testing currently runs at host-event time
+(`handle_ui_event`) where guest code can't run; the principled fix moves hit-testing to message-pop time
+(`GetMessage`/`PeekMessage`) in the guest thread context so the wndproc can be called synchronously. No
+code change.
+
+With this, every entry on the host-side cheats list has been resolved or scoped: #1/#2 (`WM_COMMAND`
+fixups) and #3 (dialog shortcut) removed as dead code, `#32770` centralized, and the two remaining
+items (`invalidate_window_tree`, `route_pointer`) verified load-bearing and reframed as bounded win32k
+simplifications with their principled fixes recorded.
 
 ## Backend parity notes
 
