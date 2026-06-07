@@ -160,6 +160,15 @@ namespace sogen
                         }
                         break;
 
+                    case SDL_EVENT_MOUSE_MOTION:
+                        if (const auto guest = this->resolve_guest(event.motion.windowID); guest != 0)
+                        {
+                            const uint64_t keys = (event.motion.state & SDL_BUTTON_LMASK) ? MK_LBUTTON : 0;
+                            this->post_event(guest, WM_MOUSEMOVE, keys,
+                                             pack_point(static_cast<int>(event.motion.x), static_cast<int>(event.motion.y)));
+                        }
+                        break;
+
                     default:
                         break;
                     }
