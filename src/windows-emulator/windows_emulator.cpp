@@ -985,13 +985,17 @@ namespace sogen
 
         if (is_pointer_message(event.message))
         {
+            const auto capture_before = this->process.mouse_capture_window; // TEMP diagnostic
             const auto target = route_pointer(this->process, event.window, point_x(event.lParam), point_y(event.lParam));
             m.window = target.window;
             m.lParam = pack_point(target.x, target.y);
-            if (trace_event) // TEMP diagnostic (skip the move flood)
+            // TEMP diagnostic: show non-move events always, and moves while a capture is held (the
+            // window between a button DOWN and UP where a stray move could clear the pressed state).
+            if (trace_event || capture_before != 0)
             {
-                this->log.info("[ui-event] routed to window=0x%X local=(%d,%d)\n", static_cast<uint32_t>(target.window), target.x,
-                               target.y);
+                this->log.info("[ui-event] routed msg=0x%X wParam=0x%X to window=0x%X local=(%d,%d) capture=0x%X\n", event.message,
+                               static_cast<uint32_t>(event.wParam), static_cast<uint32_t>(target.window), target.x, target.y,
+                               static_cast<uint32_t>(capture_before));
             }
         }
 

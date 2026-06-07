@@ -1334,11 +1334,15 @@ namespace sogen
             {
                 c.proc.mouse_capture_window = window;
             }
+            c.win_emu.log.info("[capture] SetCapture(0x%X) prev=0x%X\n", static_cast<uint32_t>(window),
+                               static_cast<uint32_t>(previous)); // TEMP diagnostic
             return previous;
         }
 
         BOOL handle_NtUserReleaseCapture(const syscall_context& c)
         {
+            c.win_emu.log.info("[capture] ReleaseCapture prev=0x%X\n",
+                               static_cast<uint32_t>(c.proc.mouse_capture_window)); // TEMP diagnostic
             c.proc.mouse_capture_window = 0;
             return TRUE;
         }
