@@ -130,8 +130,8 @@ namespace sogen
             // All mouse messages go through capture/child hit-testing: while a window holds the mouse
             // capture every mouse message must reach it (so a pressed button still completes its click),
             // and otherwise each is delivered to the child under the cursor (hover, right-click, etc.).
-            return message == WM_MOUSEMOVE || message == WM_LBUTTONDOWN || message == WM_LBUTTONUP ||
-                   message == WM_RBUTTONDOWN || message == WM_RBUTTONUP;
+            return message == WM_MOUSEMOVE || message == WM_LBUTTONDOWN || message == WM_LBUTTONUP || message == WM_RBUTTONDOWN ||
+                   message == WM_RBUTTONUP;
         }
 
         uint64_t pack_point(const int x, const int y)
