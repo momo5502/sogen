@@ -303,15 +303,11 @@ principled USER/win32k model over time:
   (The dialog manager shortcut `handle_dialog_message` / `complete_dialog` was **removed** on
   2026-06-07 (4) — it turned out to be dead and buggy; the guest's real `DefDlgProc`/`IsDialogMessage`
   path drives keyboard and `WM_CLOSE` correctly. See the update below.)
-- **`#32770` (`WC_DIALOG`) is matched by literal string.** ~7 sites (`syscalls/user.cpp`,
-  `syscalls/gdi.cpp`) compare `class_name`/`normalize_builtin_window_class_name` against the magic
-  string `u"#32770"` (e.g. `get_builtin_window_fnid`, `ensure_builtin_window_class`, the
-  `NtUserShowWindow` visible check, the gdi.cpp background fill). The value is **portable** —
-  `WC_DIALOG = MAKEINTATOM(0x8002)` is a fixed Win32 ABI atom, formatted as `"#32770"` by
-  `get_atom_name` — so this is not the build-specific atom problem the control classes had (those are
-  resolved via `resolve_builtin_class_atom`). The cleanup is representational: centralize the literal
-  into one predicate (ideally keyed on the structured `fnid` `FNID_DIALOG = 0x02A4` already stored on
-  each window, falling back to the atom) instead of scattering the string.
+  (The `#32770` / `WC_DIALOG` literal-string matching was **centralized** on 2026-06-07 (5) into the
+  `builtin_dialog_class_name` constant + `window::is_dialog()` in `windows_objects.hpp`; no scattered
+  `u"#32770"` literals remain. The value is portable — `WC_DIALOG = MAKEINTATOM(0x8002)` is a fixed
+  Win32 ABI atom formatted as `"#32770"` by `get_atom_name` — so unlike the build-specific control-class
+  atoms (resolved via `resolve_builtin_class_atom`) the canonical name is reliable. See the update below.)
 - **`invalidate_window_tree`** drives child-subtree repaint on `ShowWindow` / `SetWindowPos`,
   compensating for the lack of real win32k visibility/repaint propagation.
 
@@ -441,6 +437,30 @@ kernel job, see update (2)). Standard smoke suite (`analyzer.exe -s test-sample.
 
 Also logged the **`#32770` literal-string** cleanup in the TODO list above (centralize the
 `WC_DIALOG` magic string; it is portable, unlike the build-specific control atoms).
+
+## UPDATE 2026-06-07 (5) — centralize the `#32770` (`WC_DIALOG`) literal
+
+The dialog class `#32770` was matched by the bare string `u"#32770"` at seven sites across two
+translation units (`syscalls/user.cpp`, `syscalls/gdi.cpp`); `gdi.cpp` even duplicated the literal as a
+*raw* `class_name` compare because `normalize_builtin_window_class_name` is private to `user.cpp`. This
+is `WC_DIALOG = MAKEINTATOM(0x8002)`, a fixed Win32 ABI atom that `get_atom_name` formats as `"#32770"`,
+so — unlike the per-build control-class atoms resolved through `SERVERINFO.atomSysClass` — the canonical
+name is portable and safe to match directly.
+
+Centralized into one source of truth in `windows_objects.hpp`:
+
+- `inline constexpr std::u16string_view builtin_dialog_class_name = u"#32770";` (documented).
+- `window::is_dialog()` for the window-instance checks (`NtUserShowWindow` visibility sync, gdi.cpp
+  background fill). This also fixes the raw-vs-normalized inconsistency — `is_dialog()` is a raw
+  `class_name` compare, which is exactly equivalent because `normalize_builtin_window_class_name` never
+  maps anything *to* `#32770` (it only canonicalizes control aliases), so `normalize(x) == "#32770"`
+  iff `x == "#32770"`. A dialog's stored `class_name` is always literally `"#32770"` (it comes from the
+  `WC_DIALOG` atom).
+- The name-classification helpers (`is_builtin_window_class_name`, `get_builtin_window_fnid`,
+  `ensure_builtin_window_class`) use the constant.
+
+Pure refactor, behavior-preserving. No `u"#32770"` literals remain except the constant definition.
+Verified: release + tidy (clang-tidy) builds clean, smoke suite passes.
 
 ## Backend parity notes
 

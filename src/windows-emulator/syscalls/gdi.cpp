@@ -630,7 +630,7 @@ namespace sogen
 
                 if (background == 0)
                 {
-                    if (win.class_name == u"#32770")
+                    if (win.is_dialog())
                     {
                         return colorref_to_bgra(k_default_system_colors[color_btnface_index]);
                     }

@@ -180,7 +180,7 @@ namespace sogen
         bool is_builtin_window_class_name(const std::u16string_view class_name)
         {
             const auto normalized = normalize_builtin_window_class_name(class_name);
-            return normalized == u"#32770" || normalized == u"Button" || normalized == u"Static";
+            return normalized == builtin_dialog_class_name || normalized == u"Button" || normalized == u"Static";
         }
 
         uint16_t get_builtin_window_fnid(const std::u16string_view class_name)
@@ -190,7 +190,7 @@ namespace sogen
             {
                 return 0x02A1;
             }
-            if (normalized == u"#32770")
+            if (normalized == builtin_dialog_class_name)
             {
                 return 0x02A4;
             }
@@ -253,7 +253,7 @@ namespace sogen
                         wnd_proc = server_info.apfnClientA[k_client_pfn_static_wndproc_index];
                     }
                 }
-                else if (normalized_name == u"#32770")
+                else if (normalized_name == builtin_dialog_class_name)
                 {
                     wnd_proc = server_info.apfnClientW[k_client_pfn_dialog_wndproc_index];
                     if (wnd_proc == 0)
@@ -267,12 +267,12 @@ namespace sogen
             {
                 wnd_extra = 8;
             }
-            else if (normalized_name == u"#32770")
+            else if (normalized_name == builtin_dialog_class_name)
             {
                 wnd_extra = 30; // DLGWINDOWEXTRA
             }
 
-            if (wnd_proc == 0 && normalized_name == u"#32770")
+            if (wnd_proc == 0 && normalized_name == builtin_dialog_class_name)
             {
                 wnd_proc = c.win_emu.mod_manager.ntdll->find_export("NtdllDialogWndProc_W");
             }
@@ -2187,7 +2187,7 @@ namespace sogen
 
             if (win->host_surface_window)
             {
-                if (want_visible && normalize_builtin_window_class_name(win->class_name) == u"#32770")
+                if (want_visible && win->is_dialog())
                 {
                     sync_child_control_titles_from_guest(c, *win);
                 }

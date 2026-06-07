@@ -3,6 +3,7 @@
 #include "handles.hpp"
 
 #include <algorithm>
+#include <string_view>
 #include <serialization_helper.hpp>
 #include <utils/file_handle.hpp>
 #include <platform/synchronisation.hpp>
@@ -69,6 +70,12 @@ namespace sogen
         }
     };
 
+    // WC_DIALOG = MAKEINTATOM(0x8002); user32 creates dialogs and message boxes with this fixed
+    // system atom, which the kernel reports as the class name "#32770". The atom value is constant
+    // across Windows builds (unlike the builtin control-class atoms, which vary per build and are
+    // resolved through SERVERINFO.atomSysClass), so matching this canonical name is portable.
+    inline constexpr std::u16string_view builtin_dialog_class_name = u"#32770";
+
     struct window : user_object<USER_WINDOW>
     {
         uint32_t thread_id{};
@@ -96,6 +103,11 @@ namespace sogen
         window(memory_interface& memory)
             : user_object(memory)
         {
+        }
+
+        bool is_dialog() const
+        {
+            return this->class_name == builtin_dialog_class_name;
         }
 
         void serialize_object(utils::buffer_serializer& buffer) const override
