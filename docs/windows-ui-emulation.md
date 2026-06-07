@@ -308,8 +308,20 @@ principled USER/win32k model over time:
   `u"#32770"` literals remain. The value is portable — `WC_DIALOG = MAKEINTATOM(0x8002)` is a fixed
   Win32 ABI atom formatted as `"#32770"` by `get_atom_name` — so unlike the build-specific control-class
   atoms (resolved via `resolve_builtin_class_atom`) the canonical name is reliable. See the update below.)
-- **`invalidate_window_tree`** drives child-subtree repaint on `ShowWindow` / `SetWindowPos`,
-  compensating for the lack of real win32k visibility/repaint propagation.
+- **`invalidate_window_tree` is a bounded simplification, not a removable cheat** (verified
+  load-bearing on 2026-06-07 (6) — disabling the child recursion leaves the message box with a painted
+  dialog frame but blank buttons/text). On a hidden→visible transition (`NtUserShowWindow`,
+  `NtUserSetWindowPos|SWP_SHOWWINDOW`) it recursively invalidates the window and every `WS_VISIBLE`
+  descendant. It is needed because user32 control wndprocs gate their paint body on the *whole ancestor
+  chain* being visible (`FUN_180008030`), so children created during `WM_INITDIALOG` (while the dialog
+  is hidden) skip painting and never repaint on their own once the ancestor is shown. The behavior is
+  effectively `RedrawWindow(hwnd, RDW_INVALIDATE | RDW_ALLCHILDREN)` and already lives in the emulated
+  win32k layer (`syscalls/user.cpp`), so it is *not* host logic to relocate. It is **correct for the
+  cases exercised today** (a dialog whose children are all newly exposed when shown); it diverges from
+  real win32k only where there is no update-region/clipping model yet — partial exposure, overlapping
+  or occluded siblings, `WS_CLIPCHILDREN`, z-order. The principled version is a real per-window
+  update-region + clipping subsystem (large, coupled to broader GDI region work), tracked separately
+  rather than as a quick removal.
 
 ## UPDATE 2026-06-07 (2) — cross-build support: control id + dialog completion
 
@@ -461,6 +473,21 @@ Centralized into one source of truth in `windows_objects.hpp`:
 
 Pure refactor, behavior-preserving. No `u"#32770"` literals remain except the constant definition.
 Verified: release + tidy (clang-tidy) builds clean, smoke suite passes.
+
+## UPDATE 2026-06-07 (6) — `invalidate_window_tree` confirmed load-bearing (kept)
+
+Investigated the next entry on the host-side cheats list and concluded it is **not** a removable cheat,
+unlike the dialog shortcut. An experiment that disabled the child-subtree recursion (invalidating only
+the shown window) was verified interactively against `messagebox-sample`: the dialog frame still painted
+but the **Yes/No buttons and message text were blank**, because user32 control wndprocs gate their paint
+body on the entire ancestor chain being visible — children created during `WM_INITDIALOG` (dialog still
+hidden) skip painting and do not repaint on their own when the ancestor is later shown.
+
+So the recursion stays. The cheats-list entry was reframed: `invalidate_window_tree` is a bounded
+simplification (≈ `RedrawWindow(RDW_INVALIDATE | RDW_ALLCHILDREN)`) that already lives in the emulated
+win32k layer and is correct for the cases exercised today; the only divergence from real win32k is the
+absence of an update-region/clipping model (partial exposure, sibling occlusion, `WS_CLIPCHILDREN`,
+z-order), which is a separate, larger subsystem rather than a quick removal. No code change.
 
 ## Backend parity notes
 
