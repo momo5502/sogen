@@ -300,22 +300,18 @@ principled USER/win32k model over time:
 - **All mouse messages are now child-routed** through `route_pointer` (`is_pointer_message`
   covers `WM_MOUSEMOVE` / `WM_LBUTTON*` / `WM_RBUTTON*`, honoring `SetCapture`). It is still a
   simplified hit-test (see above bullet).
-- **Dialog manager shortcut (keyboard / `WM_CLOSE` only).** `handle_dialog_message` + `complete_dialog`
-  (`syscalls/user.cpp`) intercept `WM_KEYDOWN(VK_RETURN/ESCAPE)` / `WM_CLOSE` in host code and write
-  the dialog's `DLGINFO` end-flag + result directly. Button-click completion does **not** use this: the
-  real `DefDlgProc` → `EndDialog` → modal loop drives it (the `WM_COMMAND(BN_CLICKED)` branch was
-  removed as dead code on 2026-06-07 (4) — a button's `WM_COMMAND` is a synchronous same-thread
-  `SendMessage` dispatched in-process, so it never reaches `handle_dialog_message`). Follow-up: route
-  the remaining keyboard/`WM_CLOSE` dismissal through the real `DefDlgProc` path too, then remove the
-  shortcut entirely.
-- **`#32770` (`WC_DIALOG`) is matched by literal string.** `is_dialog_window` and ~7 other sites
-  (`syscalls/user.cpp`, `syscalls/gdi.cpp`) compare `class_name`/`normalize_builtin_window_class_name`
-  against the magic string `u"#32770"`. The value is **portable** — `WC_DIALOG = MAKEINTATOM(0x8002)`
-  is a fixed Win32 ABI atom, formatted as `"#32770"` by `get_atom_name` — so this is not the
-  build-specific atom problem the control classes had (those are resolved via
-  `resolve_builtin_class_atom`). The cleanup is representational: centralize the literal into one
-  predicate (ideally keyed on the structured `fnid` `FNID_DIALOG = 0x02A4` already stored on each
-  window, falling back to the atom) instead of scattering the string.
+  (The dialog manager shortcut `handle_dialog_message` / `complete_dialog` was **removed** on
+  2026-06-07 (4) — it turned out to be dead and buggy; the guest's real `DefDlgProc`/`IsDialogMessage`
+  path drives keyboard and `WM_CLOSE` correctly. See the update below.)
+- **`#32770` (`WC_DIALOG`) is matched by literal string.** ~7 sites (`syscalls/user.cpp`,
+  `syscalls/gdi.cpp`) compare `class_name`/`normalize_builtin_window_class_name` against the magic
+  string `u"#32770"` (e.g. `get_builtin_window_fnid`, `ensure_builtin_window_class`, the
+  `NtUserShowWindow` visible check, the gdi.cpp background fill). The value is **portable** —
+  `WC_DIALOG = MAKEINTATOM(0x8002)` is a fixed Win32 ABI atom, formatted as `"#32770"` by
+  `get_atom_name` — so this is not the build-specific atom problem the control classes had (those are
+  resolved via `resolve_builtin_class_atom`). The cleanup is representational: centralize the literal
+  into one predicate (ideally keyed on the structured `fnid` `FNID_DIALOG = 0x02A4` already stored on
+  each window, falling back to the atom) instead of scattering the string.
 - **`invalidate_window_tree`** drives child-subtree repaint on `ShowWindow` / `SetWindowPos`,
   compensating for the lack of real win32k visibility/repaint propagation.
 
@@ -404,7 +400,7 @@ App windows whose class was registered with `RegisterClassExA` keep an ANSI proc
 `RegisterClassExW` app class would need the register-time A/W flag, which is not yet threaded
 through; builtin controls, the affected case, are handled.)
 
-## UPDATE 2026-06-07 (4) — host-side cheat cleanup: dead `WM_COMMAND` paths removed
+## UPDATE 2026-06-07 (4) — host-side cheat cleanup: dead `WM_COMMAND` paths + dialog shortcut removed
 
 Started clearing the host-side USER cheats listed under "Host-side USER logic still to move into the
 emulated USER/win32k path". Two of them turned out to be dead code now that the real user32 paths
@@ -422,10 +418,26 @@ drive control notifications, and were removed:
   through the real `DefDlgProc` → `EndDialog` → modal loop (update (2)). Removed; `l_param` (its only
   consumer) was dropped from `handle_dialog_message`'s signature.
 
-`handle_dialog_message` / `complete_dialog` now only back keyboard (`VK_RETURN`/`VK_ESCAPE`) and
-`WM_CLOSE` dismissal — the next removal target (route those through the real `DefDlgProc` path).
-Verified the standard smoke suite (`analyzer.exe -s test-sample.exe`, incl. Message Queue / User
-Callback) still passes; `messagebox-sample` click→`IDYES` needs the interactive run to confirm.
+Then the **whole dialog manager shortcut was removed** (`handle_dialog_message`, `complete_dialog`,
+`is_dialog_window`). An experiment that disabled the shortcut and let only the guest's real
+`DefDlgProc`/`IsDialogMessage` path run showed it handles dialog dismissal correctly — and that the
+shortcut was not just redundant but **wrong** for `MB_YESNO`:
+
+- **Enter** → guest activates the default button (Yes) → `IDYES` / `clicked: yes`. The old shortcut
+  hardcoded `VK_RETURN` → `IDOK`, which a YesNo box does not even have.
+- **Esc** → ignored, matching native Windows (a YesNo box has no Cancel button). The old shortcut
+  forced `VK_ESCAPE` → `IDCANCEL`. (For `MB_OKCANCEL`/`MB_YESNOCANCEL` the guest path sends
+  `WM_COMMAND(IDCANCEL)` to the real Cancel button, so it works there too.)
+- **Window X** → correctly disabled (greyed out) for a YesNo box, matching native — the X has no
+  effect because there is no Cancel command. The old shortcut faked `WM_CLOSE` → `IDCANCEL`.
+- **Mouse Yes/No** → unchanged, still driven by the real `ButtonWndProc` → `DefDlgProc` → `EndDialog`.
+
+So the shortcut was deleted outright (verified interactively on the host Win11 DLLs:
+Enter→`clicked: yes`, Esc→no-op, X disabled, mouse Yes/No work). The now-dead dialog bookkeeping went
+with it: the `window` fields `dialog_pointer` / `dialog_flags` / `dialog_result` (and their
+serialization), and the `dialog_flags` re-apply branch in `NtUserSetDialogPointer` — which now only
+sets the `WND+0x12` "has DLGINFO" bit and writes the pointer into the window extra bytes (its real
+kernel job, see update (2)). Standard smoke suite (`analyzer.exe -s test-sample.exe`) still passes.
 
 Also logged the **`#32770` literal-string** cleanup in the TODO list above (centralize the
 `WC_DIALOG` magic string; it is portable, unlike the build-specific control atoms).

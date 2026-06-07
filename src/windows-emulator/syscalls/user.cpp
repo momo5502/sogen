@@ -2258,8 +2258,6 @@ namespace sogen
             return s.was_visible ? TRUE : FALSE;
         }
 
-        bool handle_dialog_message(const syscall_context& c, window& dialog, uint32_t message, uint64_t w_param);
-
         uint64_t handle_NtUserMessageCall(const syscall_context& c, const hwnd hwnd, const UINT msg, const uint64_t w_param,
                                           const uint64_t l_param, const uint64_t /*result_info*/, const DWORD /*type*/, const BOOL ansi)
         {
@@ -2318,8 +2316,6 @@ namespace sogen
                 }
             }
 
-            (void)handle_dialog_message(c, *win, msg, w_param);
-
             message_call_state state{};
             state.window = hwnd;
             state.message = msg;
@@ -2369,8 +2365,6 @@ namespace sogen
                 return 0;
             }
 
-            (void)handle_dialog_message(c, *win, m.message, m.wParam);
-
             message_call_state state{};
             state.window = m.window;
             state.message = m.message;
@@ -2401,61 +2395,6 @@ namespace sogen
             return {};
         }
 
-        void complete_dialog(const syscall_context& c, window& dialog, const uint64_t result)
-        {
-            if (dialog.dialog_pointer == 0)
-            {
-                return;
-            }
-
-            constexpr uint32_t dialog_flag_end = 0x1;
-            uint32_t flags{};
-            c.win_emu.memory.read_memory(dialog.dialog_pointer + 0x18, &flags, sizeof(flags));
-            flags |= dialog_flag_end;
-            c.win_emu.memory.write_memory(dialog.dialog_pointer + 0x18, &flags, sizeof(flags));
-            c.win_emu.memory.write_memory(dialog.dialog_pointer + 0x20, &result, sizeof(result));
-            dialog.dialog_flags = flags;
-            dialog.dialog_result = result;
-        }
-
-        bool is_dialog_window(const window& win)
-        {
-            return normalize_builtin_window_class_name(win.class_name) == u"#32770";
-        }
-
-        bool handle_dialog_message(const syscall_context& c, window& dialog, const uint32_t message, const uint64_t w_param)
-        {
-            if (!is_dialog_window(dialog))
-            {
-                return false;
-            }
-
-            switch (message)
-            {
-            case WM_KEYDOWN:
-                if (w_param == VK_RETURN)
-                {
-                    complete_dialog(c, dialog, IDOK);
-                    return true;
-                }
-                if (w_param == VK_ESCAPE)
-                {
-                    complete_dialog(c, dialog, IDCANCEL);
-                    return true;
-                }
-                break;
-
-            case WM_CLOSE:
-                complete_dialog(c, dialog, IDCANCEL);
-                return true;
-
-            default:
-                break;
-            }
-
-            return false;
-        }
-
         BOOL handle_NtUserPeekMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
                                       const UINT msg_filter_min, const UINT msg_filter_max, const UINT remove_message)
         {
@@ -2466,13 +2405,6 @@ namespace sogen
 
             if (pending_msg)
             {
-                if (should_remove)
-                {
-                    if (auto* win = c.proc.windows.get(pending_msg->window))
-                    {
-                        (void)handle_dialog_message(c, *win, pending_msg->message, pending_msg->wParam);
-                    }
-                }
                 message.write(*pending_msg);
                 set_thread_window_context(c, pending_msg->window);
                 return TRUE;
@@ -3046,13 +2978,6 @@ namespace sogen
             if (!win)
             {
                 return FALSE;
-            }
-
-            win->dialog_pointer = ptr;
-            if (ptr != 0 && (win->dialog_flags & 0x1) != 0)
-            {
-                c.win_emu.memory.write_memory(ptr + 0x18, &win->dialog_flags, sizeof(win->dialog_flags));
-                c.win_emu.memory.write_memory(ptr + 0x20, &win->dialog_result, sizeof(win->dialog_result));
             }
 
             uint64_t pExtraBytes = 0;
