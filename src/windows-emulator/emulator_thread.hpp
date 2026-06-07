@@ -288,7 +288,8 @@ namespace sogen
             return this->apc_alertable && !this->pending_apcs.empty();
         }
 
-        std::optional<msg> peek_pending_message(hwnd hwnd_filter, UINT filter_min, UINT filter_max, bool remove = false);
+        std::optional<msg> peek_pending_message(const process_context& process, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
+                                                bool remove = false);
         void post_message(const msg& msg);
 
         bool is_terminated() const;

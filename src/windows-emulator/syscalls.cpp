@@ -439,6 +439,13 @@ namespace sogen
         hdc handle_NtUserGetWindowDC(const syscall_context& c, hwnd window);
         uint64_t handle_NtUserGetControlBrush(const syscall_context& c, hwnd window, hdc dc, uint32_t control_type);
         BOOL handle_NtUserReleaseDC();
+        hwnd handle_NtUserSetCapture(const syscall_context& c, hwnd window);
+        BOOL handle_NtUserReleaseCapture(const syscall_context& c);
+        BOOL handle_NtUserDefSetText(const syscall_context& c, hwnd window, emulator_object<LARGE_STRING> text);
+        BOOL handle_NtUserGetOemBitmapSize(const syscall_context& c, uint32_t bitmap_id, emulator_pointer size_ptr);
+        BOOL handle_NtUserSetWindowState(const syscall_context& c, hwnd window, uint32_t flags);
+        BOOL handle_NtUserClearWindowState(const syscall_context& c, hwnd window, uint32_t flags);
+        BOOL handle_NtUserBitBltSysBmp(const syscall_context& c, hdc dc, int x, int y, uint32_t bitmap_index);
         BOOL handle_NtUserGetClientRect(const syscall_context& c, hwnd window, emulator_pointer rect_ptr);
         hdc handle_NtUserBeginPaint(const syscall_context& c, hwnd window, emulator_object<EMU_PAINTSTRUCT> paint_struct);
         BOOL handle_NtUserEndPaint(const syscall_context& c, hwnd window, emulator_object<EMU_PAINTSTRUCT> paint_struct);
@@ -561,6 +568,7 @@ namespace sogen
         uint64_t handle_NtGdiSelectFont(const syscall_context& c, hdc dc, uint64_t font);
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, handle bitmap);
         BOOL handle_NtGdiGetDCDword(const syscall_context& c, hdc dc, uint32_t index, emulator_pointer result);
+        BOOL handle_NtGdiSetBrushOrg(const syscall_context& c, hdc dc, int x, int y, emulator_pointer prev);
         uint64_t handle_NtGdiHfontCreate(const syscall_context& c, emulator_pointer logfont, uint32_t angle);
         uint32_t handle_NtGdiExtGetObjectW(const syscall_context& c, uint32_t handle_value, uint32_t size, emulator_pointer buffer);
         uint32_t handle_NtGdiEnumFonts();
@@ -1009,6 +1017,7 @@ namespace sogen
         add_handler(NtGdiSelectFont);
         add_handler(NtGdiGetDCforBitmap);
         add_handler(NtGdiGetDCDword);
+        add_handler(NtGdiSetBrushOrg);
         add_handler(NtGdiHfontCreate);
         add_handler(NtGdiExtGetObjectW);
         add_handler(NtGdiEnumFonts);
@@ -1097,6 +1106,13 @@ namespace sogen
         add_handler(NtUserGetDC);
         add_handler(NtUserGetWindowDC);
         add_handler(NtUserGetControlBrush);
+        add_handler(NtUserGetOemBitmapSize);
+        add_handler(NtUserSetCapture);
+        add_handler(NtUserReleaseCapture);
+        add_handler(NtUserDefSetText);
+        add_handler(NtUserSetWindowState);
+        add_handler(NtUserClearWindowState);
+        add_handler(NtUserBitBltSysBmp);
         add_handler(NtUserGetClientRect);
         add_handler(NtUserBeginPaint);
         add_handler(NtUserEndPaint);

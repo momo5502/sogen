@@ -6,6 +6,7 @@ add_subdirectory(bad-sample)
 add_subdirectory(hook-sample)
 add_subdirectory(messagebox-sample)
 add_subdirectory(manual-messagebox-sample)
+add_subdirectory(manual-controls-sample)
 add_subdirectory(custom-paint-sample)
 add_subdirectory(test-sample)
 

@@ -77,9 +77,10 @@ namespace sogen
             }
             // clang-format off
             EM_ASM({
+                const command = UTF8ToString($0);
                 postMessage({
                     type: 'sogen_ui',
-                    command: UTF8ToString($0),
+                    command: command,
                     hwnd: Number($1 >>> 0),
                 });
             }, command, static_cast<uint32_t>(window));
@@ -263,31 +264,18 @@ namespace sogen
 
             void pump_events() override
             {
-                std::deque<queued_web_ui_event> events{};
-                {
-                    std::scoped_lock lock{g_web_ui_event_mutex};
-                    events.swap(g_web_ui_events);
-                }
-
-                if (this->sink_)
-                {
-                    for (const auto& event : events)
-                    {
-                        this->sink_(event.event);
-                    }
-                }
-
+                // Drain, yield to the browser (which may enqueue more via the message bridge), then
+                // drain again so freshly-arrived events are handled within this same pump call.
+                this->drain_events();
                 emscripten_sleep(0);
+                this->drain_events();
             }
 
             void deliver_external_event(const ui_event& event)
             {
-                if (this->sink_)
-                {
-                    this->sink_(event);
-                    return;
-                }
-
+                // Always enqueue. Browser 'message' callbacks fire during emscripten_sleep(0), i.e. on the
+                // asyncify-unwound stack mid-emulation; calling the sink (and emu().stop()) re-entrantly from
+                // there is unsafe. pump_events drains the queue at a clean point, matching the SDL backend.
                 enqueue_web_ui_event(event);
             }
 
@@ -339,6 +327,23 @@ namespace sogen
             }
 
           private:
+            void drain_events()
+            {
+                std::deque<queued_web_ui_event> events{};
+                {
+                    std::scoped_lock lock{g_web_ui_event_mutex};
+                    events.swap(g_web_ui_events);
+                }
+
+                if (this->sink_)
+                {
+                    for (const auto& event : events)
+                    {
+                        this->sink_(event.event);
+                    }
+                }
+            }
+
             event_sink sink_{};
         };
     }

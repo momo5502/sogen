@@ -185,6 +185,8 @@ namespace sogen
 
 #define BN_CLICKED           0
 
+#define MK_LBUTTON           0x0001
+
 #define VK_ESCAPE            0x1B
 #define VK_RETURN            0x0D
 

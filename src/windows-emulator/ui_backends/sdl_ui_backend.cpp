@@ -143,9 +143,29 @@ namespace sogen
                         {
                             if (const auto guest = this->resolve_guest(event.button.windowID); guest != 0)
                             {
-                                this->post_event(guest, WM_LBUTTONDOWN, 0,
+                                this->post_event(guest, WM_LBUTTONDOWN, MK_LBUTTON,
                                                  pack_point(static_cast<int>(event.button.x), static_cast<int>(event.button.y)));
                             }
+                        }
+                        break;
+
+                    case SDL_EVENT_MOUSE_BUTTON_UP:
+                        if (event.button.button == SDL_BUTTON_LEFT)
+                        {
+                            if (const auto guest = this->resolve_guest(event.button.windowID); guest != 0)
+                            {
+                                this->post_event(guest, WM_LBUTTONUP, 0,
+                                                 pack_point(static_cast<int>(event.button.x), static_cast<int>(event.button.y)));
+                            }
+                        }
+                        break;
+
+                    case SDL_EVENT_MOUSE_MOTION:
+                        if (const auto guest = this->resolve_guest(event.motion.windowID); guest != 0)
+                        {
+                            const uint64_t keys = (event.motion.state & SDL_BUTTON_LMASK) ? MK_LBUTTON : 0;
+                            this->post_event(guest, WM_MOUSEMOVE, keys,
+                                             pack_point(static_cast<int>(event.motion.x), static_cast<int>(event.motion.y)));
                         }
                         break;
 

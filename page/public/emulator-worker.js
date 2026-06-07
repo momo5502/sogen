@@ -27,7 +27,15 @@ function getUiEventBridge() {
   return null;
 }
 
-function dispatchUiEvent(data) {
+function dispatchUiEvent(data, fromMessage = false) {
+  if (
+    fromMessage &&
+    globalThis.__sogenUiBridgeInitialized &&
+    globalThis.__sogenUiBridgeAvailable
+  ) {
+    return true;
+  }
+
   const bridge = getUiEventBridge();
   if (!bridge) {
     pendingUiEvents.push(data);
@@ -61,7 +69,7 @@ onmessage = async (event) => {
   const data = event.data;
 
   if (data?.type === "sogen_ui_event") {
-    dispatchUiEvent(data);
+    dispatchUiEvent(data, true);
     return;
   }
 

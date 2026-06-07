@@ -971,6 +971,63 @@ namespace sogen
             return read_large_string(str_obj, index);
         }
 
+        std::u16string read_def_set_text_string(const syscall_context& c, const emulator_object<LARGE_STRING> text)
+        {
+            if (!text)
+            {
+                return {};
+            }
+
+            if (const auto str = text.try_read())
+            {
+                constexpr ULONG k_max_reasonable_text_bytes = 0x10000;
+                const auto length = str->Length;
+                const auto max_length = str->MaximumLength;
+                const auto has_valid_empty_string = length == 0;
+                std::byte last_byte{};
+                const auto has_valid_buffer = str->Buffer != 0 && length <= k_max_reasonable_text_bytes && length <= max_length &&
+                                              length > 0 &&
+                                              c.win_emu.memory.try_read_memory(str->Buffer + length - 1, &last_byte, sizeof(last_byte));
+                if (has_valid_empty_string)
+                {
+                    return {};
+                }
+
+                if (has_valid_buffer)
+                {
+                    // The LARGE_STRING header's bAnsi bit authoritatively identifies the encoding
+                    // (SetWindowTextA sets it, ...W clears it). Trust it instead of sniffing bytes:
+                    // byte-sniffing corrupts non-ASCII Unicode, e.g. a title starting with U+4E2D
+                    // ("中" = 2D 4E) looks like a printable ASCII byte followed by a non-zero byte and
+                    // would be misdecoded as the two ANSI characters "-N".
+                    if (str->bAnsi)
+                    {
+                        return u8_to_u16(read_string<char>(c.win_emu.memory, str->Buffer, length));
+                    }
+
+                    return read_string<char16_t>(c.win_emu.memory, str->Buffer, length / sizeof(char16_t));
+                }
+            }
+
+            std::array<uint8_t, 2> first_bytes{};
+            if (!c.win_emu.memory.try_read_memory(text.value(), first_bytes.data(), first_bytes.size()))
+            {
+                return {};
+            }
+
+            if (first_bytes[0] >= 0x20 && first_bytes[0] < 0x7F && first_bytes[1] == 0)
+            {
+                return read_string<char16_t>(c.win_emu.memory, text.value());
+            }
+
+            if (first_bytes[0] >= 0x20 && first_bytes[0] < 0x7F)
+            {
+                return u8_to_u16(read_string<char>(c.win_emu.memory, text.value()));
+            }
+
+            return read_string<char16_t>(c.win_emu.memory, text.value());
+        }
+
         std::u16string standard_dialog_button_caption(const uint64_t id)
         {
             switch (id)
@@ -1040,6 +1097,7 @@ namespace sogen
         uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, uint32_t handle_value);
         BOOL handle_NtGdiFlush(const syscall_context& c);
         gdi_bitmap_surface* get_dc_present_surface(const syscall_context& c, hdc dc, uint32_t& present_handle);
+        void draw_system_button_glyph(const syscall_context& c, hdc dc, int x, int y, uint32_t index);
 
         NTSTATUS handle_NtUserTraceLoggingSendMixedModeTelemetry()
         {
@@ -1269,6 +1327,91 @@ namespace sogen
 
         BOOL handle_NtUserReleaseDC()
         {
+            return TRUE;
+        }
+
+        hwnd handle_NtUserSetCapture(const syscall_context& c, const hwnd window)
+        {
+            const auto previous = c.proc.mouse_capture_window;
+            if (window == 0 || c.proc.windows.get(window))
+            {
+                c.proc.mouse_capture_window = window;
+            }
+            return previous;
+        }
+
+        BOOL handle_NtUserReleaseCapture(const syscall_context& c)
+        {
+            c.proc.mouse_capture_window = 0;
+            return TRUE;
+        }
+
+        BOOL handle_NtUserDefSetText(const syscall_context& c, const hwnd window, const emulator_object<LARGE_STRING> text)
+        {
+            auto* win = c.proc.windows.get(window);
+            if (!win)
+            {
+                return FALSE;
+            }
+
+            update_window_title(c, *win, read_def_set_text_string(c, text));
+            return TRUE;
+        }
+
+        // user32 builds the classic checkbox/radio glyph bitmaps (FUN_18000b440 in user32) by asking
+        // win32k for each OEM control bitmap's dimensions via NtUserGetOemBitmapSize(id, SIZE*), filling
+        // { LONG cx; LONG cy; }. We don't host the real system bitmaps, but the size is still needed so
+        // button layout/paint can proceed instead of aborting on an unimplemented syscall. The classic
+        // check/radio glyph is 13x13 at 96 DPI; report that for every id.
+        BOOL handle_NtUserGetOemBitmapSize(const syscall_context& c, const uint32_t /*bitmap_id*/, const emulator_pointer size_ptr)
+        {
+            if (size_ptr == 0)
+            {
+                return FALSE;
+            }
+
+            constexpr std::array<int32_t, 2> size = {13, 13}; // { cx, cy }
+            c.emu.write_memory(size_ptr, size.data(), sizeof(size));
+            return TRUE;
+        }
+
+        // user32 stores per-window state bits (button checked/pushed/focus, etc.) in the window object's
+        // state bytes starting at WND offset 0x10. SetWindowState/ClearWindowState set/clear them: the
+        // high byte of `flags` selects the state byte (0x10 + (flags >> 8)) and the low byte is the mask.
+        // The client (e.g. the button wndproc) reads these bytes back from the same shared window object
+        // when painting, so faithfully OR/AND-ing the mask keeps client-side state consistent.
+        BOOL apply_window_state(const syscall_context& c, const hwnd window, const uint32_t flags, const bool set)
+        {
+            auto* win = c.proc.windows.get(window);
+            if (!win)
+            {
+                return FALSE;
+            }
+
+            const auto byte_address = win->guest.value() + 0x10 + ((flags >> 8) & 0xFF);
+            const auto mask = static_cast<uint8_t>(flags & 0xFF);
+
+            uint8_t state = 0;
+            c.win_emu.memory.try_read_memory(byte_address, &state, sizeof(state));
+            state = set ? static_cast<uint8_t>(state | mask) : static_cast<uint8_t>(state & ~mask);
+            c.win_emu.memory.write_memory(byte_address, &state, sizeof(state));
+            return TRUE;
+        }
+
+        BOOL handle_NtUserSetWindowState(const syscall_context& c, const hwnd window, const uint32_t flags)
+        {
+            return apply_window_state(c, window, flags, true);
+        }
+
+        BOOL handle_NtUserClearWindowState(const syscall_context& c, const hwnd window, const uint32_t flags)
+        {
+            return apply_window_state(c, window, flags, false);
+        }
+
+        BOOL handle_NtUserBitBltSysBmp(const syscall_context& c, const hdc dc, const int x, const int y, const uint32_t bitmap_index)
+        {
+            (void)handle_NtGdiFlush(c);
+            draw_system_button_glyph(c, dc, x, y, bitmap_index);
             return TRUE;
         }
 
@@ -1725,7 +1868,16 @@ namespace sogen
                 guest_win.lpfnWndProc = win.wnd_proc;
                 guest_win.pcls = class_obj_addr;
                 guest_win.cbWndExtra = wnd_class->cbWndExtra;
+                // A child window's control id lives in different WND fields depending on the
+                // user32 build: Windows 11 (26xxx) reads it from wID (WND+0x140), while
+                // Windows Server 2022 (20348) reads it from spmenu (WND+0x98) — which is where
+                // real Windows stores a child's id anyway. Populate both so the builtin control
+                // wndprocs build correct WM_COMMAND notifications regardless of the loaded build.
                 guest_win.wID = has_child_parent ? menu : 0;
+                if (has_child_parent)
+                {
+                    guest_win.spmenu = menu;
+                }
                 guest_win.windowBand = 1; // ZBID_DESKTOP
                 guest_win.fnid = get_builtin_window_fnid(normalized_class);
 
@@ -2207,7 +2359,7 @@ namespace sogen
         {
             auto& t = c.win_emu.current_thread();
 
-            if (auto pending_msg = t.peek_pending_message(hwnd, msg_filter_min, msg_filter_max, true))
+            if (auto pending_msg = t.peek_pending_message(c.proc, hwnd, msg_filter_min, msg_filter_max, true))
             {
                 message.write(*pending_msg);
                 set_thread_window_context(c, pending_msg->window);
@@ -2293,7 +2445,7 @@ namespace sogen
             auto& t = c.win_emu.current_thread();
 
             const bool should_remove = (remove_message & PM_REMOVE) != 0;
-            std::optional<msg> pending_msg = t.peek_pending_message(hwnd, msg_filter_min, msg_filter_max, should_remove);
+            std::optional<msg> pending_msg = t.peek_pending_message(c.proc, hwnd, msg_filter_min, msg_filter_max, should_remove);
 
             if (pending_msg)
             {
@@ -2315,7 +2467,7 @@ namespace sogen
         BOOL handle_NtUserWaitMessage(const syscall_context& c)
         {
             auto& t = c.win_emu.current_thread();
-            if (t.peek_pending_message(0, 0, 0, false))
+            if (t.peek_pending_message(c.proc, 0, 0, 0, false))
             {
                 return TRUE;
             }
@@ -2694,6 +2846,13 @@ namespace sogen
                     case GWLP_ID:
                         oldValue = guest_win.wID;
                         guest_win.wID = dwNewLong;
+                        // Keep spmenu in sync: builds differ on which field the control id is read
+                        // from (wID@0x140 vs spmenu@0x98). Only child windows store the id in spmenu;
+                        // top-level windows keep a real menu handle there.
+                        if ((guest_win.dwStyle & WS_CHILD) != 0)
+                        {
+                            guest_win.spmenu = dwNewLong;
+                        }
                         if (normalize_builtin_window_class_name(win->class_name) == u"Button")
                         {
                             if (win->name.empty())
@@ -2880,10 +3039,27 @@ namespace sogen
                 c.win_emu.memory.write_memory(ptr + 0x20, &win->dialog_result, sizeof(win->dialog_result));
             }
 
-            const auto guest_win = win->guest.read();
-            if (guest_win.pExtraBytes != 0)
+            uint64_t pExtraBytes = 0;
+            win->guest.access([&](USER_WINDOW& guest_win) {
+                pExtraBytes = guest_win.pExtraBytes;
+                // Mark the window as owning a DLGINFO (WND+0x12 bit 0). user32's "ensure dialog info"
+                // helper gates on this bit: without it, every dialog message re-allocates a fresh
+                // DLGINFO via NtUserSetDialogPointer, so the modal loop and EndDialog end up writing/
+                // reading different DLGINFO blocks and the dialog never ends. The real kernel sets this
+                // bit when a dialog pointer is associated; mirror that here.
+                if (ptr != 0)
+                {
+                    guest_win.bFlags |= 0x1;
+                }
+                else
+                {
+                    guest_win.bFlags &= static_cast<uint8_t>(~0x1);
+                }
+            });
+
+            if (pExtraBytes != 0)
             {
-                c.win_emu.memory.write_memory(guest_win.pExtraBytes + sizeof(uint64_t), &ptr, sizeof(ptr));
+                c.win_emu.memory.write_memory(pExtraBytes + sizeof(uint64_t), &ptr, sizeof(ptr));
             }
 
             return TRUE;

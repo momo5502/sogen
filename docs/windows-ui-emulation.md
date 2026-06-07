@@ -140,7 +140,8 @@ so always analyze the DLL the emulator actually maps):
 ### Still open after this update
 
 - The message-box **icon** is not drawn (`NtUserDrawIconEx` stub).
-- The dialog **background** may stay white instead of the gray dialog face.
+- The classic checkbox/radio **check glyph** is not drawn (`NtUserBitBltSysBmp` stub); the control
+  box, label, and click/state handling work.
 
 ## System builtin-class atom resolution (resolved, portable)
 
@@ -253,17 +254,103 @@ Likely proper direction:
 
 Resolved by the 2026-06-06 update above: builtin `MessageBox` control rendering on the real
 user32 paint path, button self-draw, click→`WM_COMMAND`→`EndDialog`, correct return code,
-button captions, and portable system builtin-class atom resolution (see "System builtin-class
-atom resolution"). Still open:
+button captions, portable system builtin-class atom resolution (see "System builtin-class
+atom resolution"), and the window/dialog **background** fill (top-level surfaces are now filled
+with the class background brush — gray dialog face instead of white). Still open:
 
 - message-box **icon** pixels (`NtUserDrawIconEx` is a success stub)
-- dialog **background** fill (may render white instead of the gray dialog face)
+- classic checkbox/radio **check glyph** pixels (`NtUserBitBltSysBmp` is a success stub; box, label,
+  and click/state handling work)
 - finish small-text / batched GDI text path so ordinary `TextOutA/W` works without forcing oversized `ExtTextOutW`
 - replace temporary debug-font text path with more correct font/text handling over time
 - add more correct clip/region handling
 - add more correct ROP / brush / pen / DC semantics where builtin paint needs them
 - `NtGdiGetDCDword` only returns the default (0); other indices (MapMode, GraphicsMode, …) would need
   real values if a control relies on them
+
+## UPDATE 2026-06-07 — input routing consolidated into the emulated win32k layer
+
+Pointer hit-testing is win32k's (kernel) job, not the host backend's and not the guest's
+user32: in real Windows the raw-input thread hit-tests the window tree, sends `WM_NCHITTEST`,
+and posts the mouse message **already targeted at the specific child HWND**. `DefWindowProc`
+never forwards a click to children, so the emulator (which plays the kernel role) must do the
+hit-test. The earlier web/SDL backends each re-derived this themselves, which was the actual
+hack.
+
+Now consolidated:
+
+- `windows_emulator::route_pointer` is the single authority for mouse capture, child
+  hit-testing, and window-local coordinate translation. Both backends only forward
+  `(top-level window, top-level-local x/y, button-state)`.
+- The duplicated `findChildTarget` / `resolveClientTarget` / `windowOrigin` tree-walks were
+  deleted from both web hosts (`page/src/web-ui-host.ts` and `ui_backends/web_ui_host.js`).
+- **`GetMessage`/`PeekMessage` `IsChild` filter fixed**: `peek_pending_message` now matches a
+  message whose target is the filter HWND *or any descendant of it*, so `GetMessage(&msg, hWnd,
+  …)` with a non-NULL top-level no longer silently drops child-control messages. Previously the
+  filter was exact-equality only and the hwnd-filtered form lost all child input.
+
+### Host-side USER logic still to move into the emulated USER/win32k path (TODO)
+
+These are simplifications/cheats that currently live in host C++ and should grow into a more
+principled USER/win32k model over time:
+
+- **`route_pointer` is a simplified hit-test.** It does not send `WM_NCHITTEST` to the wndproc
+  (so `HTTRANSPARENT`, draggable client areas, and custom hit-testing don't work), emits no
+  `WM_SETCURSOR` / `WM_MOUSEACTIVATE`, and approximates z-order by "last matching child wins".
+- **All mouse messages are now child-routed** through `route_pointer` (`is_pointer_message`
+  covers `WM_MOUSEMOVE` / `WM_LBUTTON*` / `WM_RBUTTON*`, honoring `SetCapture`). It is still a
+  simplified hit-test (see above bullet).
+- **Dialog manager shortcut (now partly redundant).** `handle_dialog_message` + `complete_dialog`
+  (`syscalls/user.cpp`) intercept `WM_COMMAND(BN_CLICKED)` / `WM_KEYDOWN(VK_RETURN/ESCAPE)` /
+  `WM_CLOSE` in host code and write the dialog's `DLGINFO` end-flag + result directly. As of the
+  2026-06-07 (2) cross-build fix, **button-click completion no longer relies on this**: the real
+  `DefDlgProc` → `EndDialog` → modal loop now drives it (a button's `WM_COMMAND` is a synchronous
+  `SendMessage` that never reaches `handle_dialog_message` anyway). The shortcut still backs
+  keyboard (`VK_RETURN`/`VK_ESCAPE`) and `WM_CLOSE` dismissal, which go through the message queue.
+  Follow-up: route those through the real `DefDlgProc` path too, then remove the shortcut.
+- **`WM_COMMAND` control-id fixup** in `handle_ui_event` (`windows_emulator.cpp`) rewrites
+  `wParam` with the child's control id from host code.
+- **`invalidate_window_tree`** drives child-subtree repaint on `ShowWindow` / `SetWindowPos`,
+  compensating for the lack of real win32k visibility/repaint propagation.
+
+## UPDATE 2026-06-07 (2) — cross-build support: control id + dialog completion
+
+Clicks worked with the host's live system DLLs (Windows 11, build 26x00) but failed with a
+captured **Windows Server 2022 (20348)** emulation root. The earlier "web backend" click bug was
+really this build difference (web used the Server 2022 root, SDL used the host DLLs); SDL with the
+Server 2022 root reproduces it. Two build-specific gaps were fixed, both verified by decompiling
+each build's `user32.dll`:
+
+1. **Child control id field differs between builds.** A button's `ButtonWndProc` builds its
+   `WM_COMMAND` from the child's control id, which it reads from a build-specific WND offset:
+   Windows 11 reads `wID` at **`WND+0x140`**, Windows Server 2022 reads `spmenu` at **`WND+0x98`**
+   (`(short)pwnd[0x13]` in the notify helper; `spmenu` is where real Windows stores a child's id).
+   The emulator only wrote `wID@0x140`, so on Server 2022 every `WM_COMMAND` carried id `0` and the
+   app's handler fell through to `DefWindowProc`. Fix (`NtUserCreateWindowEx` /
+   `NtUserSetWindowLongPtr(GWLP_ID)`): child windows now mirror the id into **both** `spmenu` and
+   `wID`, so the builtin wndprocs notify correctly regardless of the loaded build. This removed the
+   need for the old `handle_ui_event` `find_button_child_at` `WM_COMMAND` synthesis — the **real**
+   `ButtonWndProc` now drives `WM_COMMAND` on both builds.
+
+2. **Builtin `MessageBox`/dialog never ended (real `EndDialog` path).** Once real button
+   `WM_COMMAND` replaced the synthesis, the builtin message box stopped closing on click. Root
+   cause: `NtUserSetDialogPointer` stored the DLGINFO pointer but never set the WND "has-DLGINFO"
+   flag at **`WND+0x12` bit 0**. user32's ensure-dialog-info helper gates on that bit, so it
+   re-allocated a fresh DLGINFO on *every* dialog message (observed: hundreds of
+   `NtUserSetDialogPointer` calls). The modal loop and `EndDialog` then read/wrote different DLGINFO
+   blocks, so `EndDialog` (which sets `DLGINFO+0x18 |= 1`, hides the dialog, posts `WM_NULL`) never
+   reached the loop. Fix: `NtUserSetDialogPointer` now sets/clears `WND+0x12` bit 0 with the pointer,
+   matching the kernel. The dialog now completes through the real `DefDlgProc` → `EndDialog` → modal
+   loop path (no synthesis); `messagebox-sample` returns `IDYES` on click again.
+
+Both fixes mirror real Windows semantics rather than working around it: a child's id genuinely
+lives in `spmenu`, and the kernel genuinely sets the `WND+0x12` DLGINFO bit. Writing the id to both
+`spmenu` and `wID` is a deliberate build-agnostic choice (the emulator can't know at create time
+which `user32` build is mapped, and each build reads only its own offset). Verified end-to-end on
+both the host (Win11) and Server 2022 roots with `manual-controls-sample` and `messagebox-sample`.
+
+The temporary `[ui-event]` / `[capture]` / `[sogen-ui]` input-routing diagnostics used to chase
+this down were removed in the same change; the branch carries no leftover debug logging.
 
 ## Backend parity notes
 

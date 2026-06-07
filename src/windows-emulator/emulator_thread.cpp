@@ -489,16 +489,46 @@ namespace sogen
         this->waiting_for_alert = false;
     }
 
-    std::optional<msg> emulator_thread::peek_pending_message(hwnd hwnd_filter, UINT filter_min, UINT filter_max, bool remove)
+    namespace
+    {
+        // GetMessage(hWnd) retrieves messages for hWnd and all of its children (IsChild semantics),
+        // so a message targeted at a child control must match a filter naming any of its ancestors.
+        bool window_matches_filter(const process_context& process, const hwnd target, const hwnd filter)
+        {
+            auto current = target;
+            while (current != 0)
+            {
+                if (current == filter)
+                {
+                    return true;
+                }
+
+                const auto* win = process.windows.get(current);
+                if (!win)
+                {
+                    break;
+                }
+
+                current = win->parent_handle;
+            }
+
+            return false;
+        }
+    }
+
+    std::optional<msg> emulator_thread::peek_pending_message(const process_context& process, hwnd hwnd_filter, UINT filter_min,
+                                                             UINT filter_max, bool remove)
     {
         for (auto it = message_queue.begin(); it != message_queue.end(); ++it)
         {
-            if (hwnd_filter != 0 && hwnd_filter != static_cast<hwnd>(-1) && it->window != hwnd_filter)
+            if (hwnd_filter == static_cast<hwnd>(-1))
             {
-                continue;
+                if (it->window != 0)
+                {
+                    continue;
+                }
             }
-
-            if (hwnd_filter == static_cast<hwnd>(-1) && it->window != 0)
+            else if (hwnd_filter != 0 && !window_matches_filter(process, it->window, hwnd_filter))
             {
                 continue;
             }
@@ -683,7 +713,7 @@ namespace sogen
 
         if (this->await_msg.has_value())
         {
-            if (const auto m = this->peek_pending_message(this->await_msg->hwnd_filter, this->await_msg->filter_min,
+            if (const auto m = this->peek_pending_message(process, this->await_msg->hwnd_filter, this->await_msg->filter_min,
                                                           this->await_msg->filter_max, true))
             {
                 this->await_msg->message.write(*m);

@@ -83,6 +83,8 @@ const WM_LBUTTONUP = 0x0202;
 const WM_RBUTTONDOWN = 0x0204;
 const WM_RBUTTONUP = 0x0205;
 
+const MK_LBUTTON = 0x0001;
+
 const SC_MINIMIZE = 0xf020;
 const SC_MAXIMIZE = 0xf030;
 
@@ -767,7 +769,7 @@ export function attachSogenUiHost(
     sendUiEvent(
       window.hwnd,
       event.button === 2 ? WM_RBUTTONDOWN : WM_LBUTTONDOWN,
-      0,
+      event.button === 0 ? MK_LBUTTON : 0,
       packPoint(localX, localY),
     );
     composite();

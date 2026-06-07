@@ -252,6 +252,7 @@ namespace sogen
         // Persistent per-top-level-window paint surface; child controls composite into it at their offset.
         std::map<uint32_t, gdi_bitmap_surface> gdi_window_surfaces{};
         std::optional<handle> etw_notification_event{};
+        hwnd mouse_capture_window{};
 
         // For WOW64 processes
         std::optional<emulator_object<PEB32>> peb32;
