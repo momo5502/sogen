@@ -126,6 +126,22 @@ namespace sogen
             PFN_vkCmdPipelineBarrier cmd_pipeline_barrier{};
             PFN_vkCmdClearColorImage cmd_clear_color_image{};
             PFN_vkCmdCopyImageToBuffer cmd_copy_image_to_buffer{};
+            PFN_vkCreateShaderModule create_shader_module{};
+            PFN_vkDestroyShaderModule destroy_shader_module{};
+            PFN_vkCreateImageView create_image_view{};
+            PFN_vkDestroyImageView destroy_image_view{};
+            PFN_vkCreateRenderPass create_render_pass{};
+            PFN_vkDestroyRenderPass destroy_render_pass{};
+            PFN_vkCreateFramebuffer create_framebuffer{};
+            PFN_vkDestroyFramebuffer destroy_framebuffer{};
+            PFN_vkCreatePipelineLayout create_pipeline_layout{};
+            PFN_vkDestroyPipelineLayout destroy_pipeline_layout{};
+            PFN_vkCreateGraphicsPipelines create_graphics_pipelines{};
+            PFN_vkDestroyPipeline destroy_pipeline{};
+            PFN_vkCmdBeginRenderPass cmd_begin_render_pass{};
+            PFN_vkCmdBindPipeline cmd_bind_pipeline{};
+            PFN_vkCmdDraw cmd_draw{};
+            PFN_vkCmdEndRenderPass cmd_end_render_pass{};
         };
 
         // A guest-side window-system surface. There is no real host VkSurfaceKHR (the host driver may
@@ -211,6 +227,45 @@ namespace sogen
         std::unordered_map<uint64_t, image_data> images;
         std::unordered_map<uint64_t, surface_data> surfaces;
         std::unordered_map<uint64_t, swapchain_data> swapchains;
+
+        // Graphics-pipeline objects. All non-dispatchable, device-owned, so one shape suffices.
+        struct shader_module_data
+        {
+            VkShaderModule handle{};
+            uint64_t device_id{};
+        };
+        struct image_view_data
+        {
+            VkImageView handle{};
+            uint64_t device_id{};
+        };
+        struct render_pass_data
+        {
+            VkRenderPass handle{};
+            uint64_t device_id{};
+        };
+        struct framebuffer_data
+        {
+            VkFramebuffer handle{};
+            uint64_t device_id{};
+        };
+        struct pipeline_layout_data
+        {
+            VkPipelineLayout handle{};
+            uint64_t device_id{};
+        };
+        struct pipeline_data
+        {
+            VkPipeline handle{};
+            uint64_t device_id{};
+        };
+
+        std::unordered_map<uint64_t, shader_module_data> shader_modules;
+        std::unordered_map<uint64_t, image_view_data> image_views;
+        std::unordered_map<uint64_t, render_pass_data> render_passes;
+        std::unordered_map<uint64_t, framebuffer_data> framebuffers;
+        std::unordered_map<uint64_t, pipeline_layout_data> pipeline_layouts;
+        std::unordered_map<uint64_t, pipeline_data> pipelines;
         uint64_t next_id{1};
 
         // Picks the first memory type set in `type_bits` that has all `required` property flags, using
@@ -315,6 +370,57 @@ namespace sogen
                     ++sc;
                 }
             }
+
+            // Graphics-pipeline objects, in dependency order (framebuffers/pipelines reference render
+            // passes, layouts, shader modules and image views; image views reference images).
+            for (auto& [id, fb] : this->framebuffers)
+            {
+                if (fb.device_id == device_id && fb.handle && it->second.destroy_framebuffer)
+                {
+                    it->second.destroy_framebuffer(it->second.handle, fb.handle, nullptr);
+                }
+            }
+            for (auto& [id, pipe] : this->pipelines)
+            {
+                if (pipe.device_id == device_id && pipe.handle && it->second.destroy_pipeline)
+                {
+                    it->second.destroy_pipeline(it->second.handle, pipe.handle, nullptr);
+                }
+            }
+            for (auto& [id, layout] : this->pipeline_layouts)
+            {
+                if (layout.device_id == device_id && layout.handle && it->second.destroy_pipeline_layout)
+                {
+                    it->second.destroy_pipeline_layout(it->second.handle, layout.handle, nullptr);
+                }
+            }
+            for (auto& [id, rp] : this->render_passes)
+            {
+                if (rp.device_id == device_id && rp.handle && it->second.destroy_render_pass)
+                {
+                    it->second.destroy_render_pass(it->second.handle, rp.handle, nullptr);
+                }
+            }
+            for (auto& [id, view] : this->image_views)
+            {
+                if (view.device_id == device_id && view.handle && it->second.destroy_image_view)
+                {
+                    it->second.destroy_image_view(it->second.handle, view.handle, nullptr);
+                }
+            }
+            for (auto& [id, sm] : this->shader_modules)
+            {
+                if (sm.device_id == device_id && sm.handle && it->second.destroy_shader_module)
+                {
+                    it->second.destroy_shader_module(it->second.handle, sm.handle, nullptr);
+                }
+            }
+            this->erase_owned(this->framebuffers, [&](const framebuffer_data& d) { return d.device_id == device_id; });
+            this->erase_owned(this->pipelines, [&](const pipeline_data& d) { return d.device_id == device_id; });
+            this->erase_owned(this->pipeline_layouts, [&](const pipeline_layout_data& d) { return d.device_id == device_id; });
+            this->erase_owned(this->render_passes, [&](const render_pass_data& d) { return d.device_id == device_id; });
+            this->erase_owned(this->image_views, [&](const image_view_data& d) { return d.device_id == device_id; });
+            this->erase_owned(this->shader_modules, [&](const shader_module_data& d) { return d.device_id == device_id; });
 
             // Destroy GPU-owned children (pools free their command buffers; fences are freed) before
             // the device itself.
@@ -714,6 +820,23 @@ namespace sogen
             data.cmd_clear_color_image = reinterpret_cast<PFN_vkCmdClearColorImage>(resolve("vkCmdClearColorImage"));
             data.cmd_copy_image_to_buffer =
                 reinterpret_cast<PFN_vkCmdCopyImageToBuffer>(resolve("vkCmdCopyImageToBuffer"));
+            data.create_shader_module = reinterpret_cast<PFN_vkCreateShaderModule>(resolve("vkCreateShaderModule"));
+            data.destroy_shader_module = reinterpret_cast<PFN_vkDestroyShaderModule>(resolve("vkDestroyShaderModule"));
+            data.create_image_view = reinterpret_cast<PFN_vkCreateImageView>(resolve("vkCreateImageView"));
+            data.destroy_image_view = reinterpret_cast<PFN_vkDestroyImageView>(resolve("vkDestroyImageView"));
+            data.create_render_pass = reinterpret_cast<PFN_vkCreateRenderPass>(resolve("vkCreateRenderPass"));
+            data.destroy_render_pass = reinterpret_cast<PFN_vkDestroyRenderPass>(resolve("vkDestroyRenderPass"));
+            data.create_framebuffer = reinterpret_cast<PFN_vkCreateFramebuffer>(resolve("vkCreateFramebuffer"));
+            data.destroy_framebuffer = reinterpret_cast<PFN_vkDestroyFramebuffer>(resolve("vkDestroyFramebuffer"));
+            data.create_pipeline_layout = reinterpret_cast<PFN_vkCreatePipelineLayout>(resolve("vkCreatePipelineLayout"));
+            data.destroy_pipeline_layout = reinterpret_cast<PFN_vkDestroyPipelineLayout>(resolve("vkDestroyPipelineLayout"));
+            data.create_graphics_pipelines =
+                reinterpret_cast<PFN_vkCreateGraphicsPipelines>(resolve("vkCreateGraphicsPipelines"));
+            data.destroy_pipeline = reinterpret_cast<PFN_vkDestroyPipeline>(resolve("vkDestroyPipeline"));
+            data.cmd_begin_render_pass = reinterpret_cast<PFN_vkCmdBeginRenderPass>(resolve("vkCmdBeginRenderPass"));
+            data.cmd_bind_pipeline = reinterpret_cast<PFN_vkCmdBindPipeline>(resolve("vkCmdBindPipeline"));
+            data.cmd_draw = reinterpret_cast<PFN_vkCmdDraw>(resolve("vkCmdDraw"));
+            data.cmd_end_render_pass = reinterpret_cast<PFN_vkCmdEndRenderPass>(resolve("vkCmdEndRenderPass"));
         }
 
         const uint64_t id = this->impl_->next_id++;
@@ -1732,6 +1855,455 @@ namespace sogen
         out_width = sc.width;
         out_height = sc.height;
         out_hwnd = sc.hwnd;
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::create_shader_module(uint64_t device, const void* code, size_t code_size, uint64_t& out_module)
+    {
+        out_module = 0;
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end() || !dev->second.create_shader_module)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkShaderModuleCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        info.codeSize = code_size;
+        info.pCode = static_cast<const uint32_t*>(code);
+
+        VkShaderModule module{};
+        const VkResult result = dev->second.create_shader_module(dev->second.handle, &info, nullptr, &module);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->shader_modules.emplace(id, impl::shader_module_data{.handle = module, .device_id = device});
+        out_module = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::destroy_shader_module(uint64_t device, uint64_t shader_module)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->shader_modules.find(shader_module);
+        if (it == this->impl_->shader_modules.end())
+        {
+            return;
+        }
+        if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_shader_module)
+        {
+            dev->second.destroy_shader_module(dev->second.handle, it->second.handle, nullptr);
+        }
+        this->impl_->shader_modules.erase(it);
+    }
+
+    int32_t vulkan_host::create_image_view(uint64_t device, uint64_t image, uint32_t format, uint64_t& out_view)
+    {
+        out_view = 0;
+        const auto dev = this->impl_->devices.find(device);
+        const auto img = this->impl_->images.find(image);
+        if (dev == this->impl_->devices.end() || img == this->impl_->images.end() || !dev->second.create_image_view)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkImageViewCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        info.image = img->second.handle;
+        info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        info.format = static_cast<VkFormat>(format);
+        info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        info.subresourceRange.levelCount = 1;
+        info.subresourceRange.layerCount = 1;
+
+        VkImageView view{};
+        const VkResult result = dev->second.create_image_view(dev->second.handle, &info, nullptr, &view);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->image_views.emplace(id, impl::image_view_data{.handle = view, .device_id = device});
+        out_view = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::destroy_image_view(uint64_t device, uint64_t image_view)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->image_views.find(image_view);
+        if (it == this->impl_->image_views.end())
+        {
+            return;
+        }
+        if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_image_view)
+        {
+            dev->second.destroy_image_view(dev->second.handle, it->second.handle, nullptr);
+        }
+        this->impl_->image_views.erase(it);
+    }
+
+    int32_t vulkan_host::create_render_pass(uint64_t device, uint32_t format, uint32_t load_op, uint32_t store_op,
+                                            uint32_t initial_layout, uint32_t final_layout, uint64_t& out_render_pass)
+    {
+        out_render_pass = 0;
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end() || !dev->second.create_render_pass)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkAttachmentDescription color{};
+        color.format = static_cast<VkFormat>(format);
+        color.samples = VK_SAMPLE_COUNT_1_BIT;
+        color.loadOp = static_cast<VkAttachmentLoadOp>(load_op);
+        color.storeOp = static_cast<VkAttachmentStoreOp>(store_op);
+        color.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        color.initialLayout = translate_layout(initial_layout);
+        color.finalLayout = translate_layout(final_layout);
+
+        VkAttachmentReference ref{};
+        ref.attachment = 0;
+        ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &ref;
+
+        VkSubpassDependency dep{};
+        dep.srcSubpass = VK_SUBPASS_EXTERNAL;
+        dep.dstSubpass = 0;
+        dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dep.srcAccessMask = 0;
+        dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+        VkRenderPassCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        info.attachmentCount = 1;
+        info.pAttachments = &color;
+        info.subpassCount = 1;
+        info.pSubpasses = &subpass;
+        info.dependencyCount = 1;
+        info.pDependencies = &dep;
+
+        VkRenderPass render_pass{};
+        const VkResult result = dev->second.create_render_pass(dev->second.handle, &info, nullptr, &render_pass);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->render_passes.emplace(id, impl::render_pass_data{.handle = render_pass, .device_id = device});
+        out_render_pass = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::destroy_render_pass(uint64_t device, uint64_t render_pass)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->render_passes.find(render_pass);
+        if (it == this->impl_->render_passes.end())
+        {
+            return;
+        }
+        if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_render_pass)
+        {
+            dev->second.destroy_render_pass(dev->second.handle, it->second.handle, nullptr);
+        }
+        this->impl_->render_passes.erase(it);
+    }
+
+    int32_t vulkan_host::create_framebuffer(uint64_t device, uint64_t render_pass, uint64_t image_view, uint32_t width,
+                                            uint32_t height, uint64_t& out_framebuffer)
+    {
+        out_framebuffer = 0;
+        const auto dev = this->impl_->devices.find(device);
+        const auto rp = this->impl_->render_passes.find(render_pass);
+        const auto view = this->impl_->image_views.find(image_view);
+        if (dev == this->impl_->devices.end() || rp == this->impl_->render_passes.end() ||
+            view == this->impl_->image_views.end() || !dev->second.create_framebuffer)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkFramebufferCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        info.renderPass = rp->second.handle;
+        info.attachmentCount = 1;
+        info.pAttachments = &view->second.handle;
+        info.width = width;
+        info.height = height;
+        info.layers = 1;
+
+        VkFramebuffer framebuffer{};
+        const VkResult result = dev->second.create_framebuffer(dev->second.handle, &info, nullptr, &framebuffer);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->framebuffers.emplace(id, impl::framebuffer_data{.handle = framebuffer, .device_id = device});
+        out_framebuffer = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::destroy_framebuffer(uint64_t device, uint64_t framebuffer)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->framebuffers.find(framebuffer);
+        if (it == this->impl_->framebuffers.end())
+        {
+            return;
+        }
+        if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_framebuffer)
+        {
+            dev->second.destroy_framebuffer(dev->second.handle, it->second.handle, nullptr);
+        }
+        this->impl_->framebuffers.erase(it);
+    }
+
+    int32_t vulkan_host::create_pipeline_layout(uint64_t device, uint64_t& out_layout)
+    {
+        out_layout = 0;
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end() || !dev->second.create_pipeline_layout)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkPipelineLayoutCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+
+        VkPipelineLayout layout{};
+        const VkResult result = dev->second.create_pipeline_layout(dev->second.handle, &info, nullptr, &layout);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->pipeline_layouts.emplace(id, impl::pipeline_layout_data{.handle = layout, .device_id = device});
+        out_layout = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::destroy_pipeline_layout(uint64_t device, uint64_t pipeline_layout)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->pipeline_layouts.find(pipeline_layout);
+        if (it == this->impl_->pipeline_layouts.end())
+        {
+            return;
+        }
+        if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_pipeline_layout)
+        {
+            dev->second.destroy_pipeline_layout(dev->second.handle, it->second.handle, nullptr);
+        }
+        this->impl_->pipeline_layouts.erase(it);
+    }
+
+    int32_t vulkan_host::create_graphics_pipeline(uint64_t device, uint64_t render_pass, uint64_t pipeline_layout,
+                                                  uint64_t vertex_shader, uint64_t fragment_shader, uint32_t width,
+                                                  uint32_t height, uint64_t& out_pipeline)
+    {
+        out_pipeline = 0;
+        const auto dev = this->impl_->devices.find(device);
+        const auto rp = this->impl_->render_passes.find(render_pass);
+        const auto layout = this->impl_->pipeline_layouts.find(pipeline_layout);
+        const auto vert = this->impl_->shader_modules.find(vertex_shader);
+        const auto frag = this->impl_->shader_modules.find(fragment_shader);
+        if (dev == this->impl_->devices.end() || rp == this->impl_->render_passes.end() ||
+            layout == this->impl_->pipeline_layouts.end() || vert == this->impl_->shader_modules.end() ||
+            frag == this->impl_->shader_modules.end() || !dev->second.create_graphics_pipelines)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
+        stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+        stages[0].module = vert->second.handle;
+        stages[0].pName = "main";
+        stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        stages[1].module = frag->second.handle;
+        stages[1].pName = "main";
+
+        VkPipelineVertexInputStateCreateInfo vertex_input{};
+        vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+        VkPipelineInputAssemblyStateCreateInfo input_assembly{};
+        input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+        VkViewport viewport{};
+        viewport.width = static_cast<float>(width);
+        viewport.height = static_cast<float>(height);
+        viewport.maxDepth = 1.0f;
+        VkRect2D scissor{};
+        scissor.extent = {.width = width, .height = height};
+
+        VkPipelineViewportStateCreateInfo viewport_state{};
+        viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewport_state.viewportCount = 1;
+        viewport_state.pViewports = &viewport;
+        viewport_state.scissorCount = 1;
+        viewport_state.pScissors = &scissor;
+
+        VkPipelineRasterizationStateCreateInfo rasterization{};
+        rasterization.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rasterization.polygonMode = VK_POLYGON_MODE_FILL;
+        rasterization.cullMode = VK_CULL_MODE_NONE;
+        rasterization.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        rasterization.lineWidth = 1.0f;
+
+        VkPipelineMultisampleStateCreateInfo multisample{};
+        multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+        VkPipelineColorBlendAttachmentState blend_attachment{};
+        blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
+                                          VK_COLOR_COMPONENT_A_BIT;
+
+        VkPipelineColorBlendStateCreateInfo color_blend{};
+        color_blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        color_blend.attachmentCount = 1;
+        color_blend.pAttachments = &blend_attachment;
+
+        VkGraphicsPipelineCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        info.stageCount = static_cast<uint32_t>(stages.size());
+        info.pStages = stages.data();
+        info.pVertexInputState = &vertex_input;
+        info.pInputAssemblyState = &input_assembly;
+        info.pViewportState = &viewport_state;
+        info.pRasterizationState = &rasterization;
+        info.pMultisampleState = &multisample;
+        info.pColorBlendState = &color_blend;
+        info.layout = layout->second.handle;
+        info.renderPass = rp->second.handle;
+        info.subpass = 0;
+
+        VkPipeline pipeline{};
+        const VkResult result =
+            dev->second.create_graphics_pipelines(dev->second.handle, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->pipelines.emplace(id, impl::pipeline_data{.handle = pipeline, .device_id = device});
+        out_pipeline = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::destroy_pipeline(uint64_t device, uint64_t pipeline)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->pipelines.find(pipeline);
+        if (it == this->impl_->pipelines.end())
+        {
+            return;
+        }
+        if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_pipeline)
+        {
+            dev->second.destroy_pipeline(dev->second.handle, it->second.handle, nullptr);
+        }
+        this->impl_->pipelines.erase(it);
+    }
+
+    int32_t vulkan_host::cmd_begin_render_pass(uint64_t command_buffer, uint64_t render_pass, uint64_t framebuffer,
+                                               uint32_t width, uint32_t height, float r, float g, float b, float a)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto rp = this->impl_->render_passes.find(render_pass);
+        const auto fb = this->impl_->framebuffers.find(framebuffer);
+        if (cb == this->impl_->command_buffers.end() || rp == this->impl_->render_passes.end() ||
+            fb == this->impl_->framebuffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_begin_render_pass)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkClearValue clear{};
+        clear.color.float32[0] = r;
+        clear.color.float32[1] = g;
+        clear.color.float32[2] = b;
+        clear.color.float32[3] = a;
+
+        VkRenderPassBeginInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        info.renderPass = rp->second.handle;
+        info.framebuffer = fb->second.handle;
+        info.renderArea.extent = {.width = width, .height = height};
+        info.clearValueCount = 1;
+        info.pClearValues = &clear;
+
+        dev->second.cmd_begin_render_pass(cb->second.handle, &info, VK_SUBPASS_CONTENTS_INLINE);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_bind_pipeline(uint64_t command_buffer, uint64_t pipeline)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto pipe = this->impl_->pipelines.find(pipeline);
+        if (cb == this->impl_->command_buffers.end() || pipe == this->impl_->pipelines.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_bind_pipeline)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_bind_pipeline(cb->second.handle, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe->second.handle);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_draw(uint64_t command_buffer, uint32_t vertex_count, uint32_t instance_count,
+                                  uint32_t first_vertex, uint32_t first_instance)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_draw)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_draw(cb->second.handle, vertex_count, instance_count, first_vertex, first_instance);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_end_render_pass(uint64_t command_buffer)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_end_render_pass)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_end_render_pass(cb->second.handle);
         return VK_SUCCESS;
     }
 }

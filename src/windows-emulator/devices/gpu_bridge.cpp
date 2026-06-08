@@ -110,6 +110,38 @@ namespace sogen
                     return handle_acquire_next_image(win_emu, context);
                 case gpu_bridge::ioctl_queue_present:
                     return handle_queue_present(win_emu, context);
+                case gpu_bridge::ioctl_create_shader_module:
+                    return handle_create_shader_module(win_emu, context);
+                case gpu_bridge::ioctl_destroy_shader_module:
+                    return handle_destroy_shader_module(win_emu, context);
+                case gpu_bridge::ioctl_create_image_view:
+                    return handle_create_image_view(win_emu, context);
+                case gpu_bridge::ioctl_destroy_image_view:
+                    return handle_destroy_image_view(win_emu, context);
+                case gpu_bridge::ioctl_create_render_pass:
+                    return handle_create_render_pass(win_emu, context);
+                case gpu_bridge::ioctl_destroy_render_pass:
+                    return handle_destroy_render_pass(win_emu, context);
+                case gpu_bridge::ioctl_create_framebuffer:
+                    return handle_create_framebuffer(win_emu, context);
+                case gpu_bridge::ioctl_destroy_framebuffer:
+                    return handle_destroy_framebuffer(win_emu, context);
+                case gpu_bridge::ioctl_create_pipeline_layout:
+                    return handle_create_pipeline_layout(win_emu, context);
+                case gpu_bridge::ioctl_destroy_pipeline_layout:
+                    return handle_destroy_pipeline_layout(win_emu, context);
+                case gpu_bridge::ioctl_create_graphics_pipeline:
+                    return handle_create_graphics_pipeline(win_emu, context);
+                case gpu_bridge::ioctl_destroy_pipeline:
+                    return handle_destroy_pipeline(win_emu, context);
+                case gpu_bridge::ioctl_cmd_begin_render_pass:
+                    return handle_cmd_begin_render_pass(win_emu, context);
+                case gpu_bridge::ioctl_cmd_bind_pipeline:
+                    return handle_cmd_bind_pipeline(win_emu, context);
+                case gpu_bridge::ioctl_cmd_draw:
+                    return handle_cmd_draw(win_emu, context);
+                case gpu_bridge::ioctl_cmd_end_render_pass:
+                    return handle_cmd_end_render_pass(win_emu, context);
 
                 default:
                     win_emu.log.warn("[gpu-bridge] Unsupported IOCTL: 0x%X\n", context.io_control_code);
@@ -972,6 +1004,215 @@ namespace sogen
                                                  });
                 }
 
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_create_shader_module(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::create_shader_module_request;
+
+                request_t request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const auto code_bytes = std::min<uint64_t>(request.code_size, context.input_buffer_length - sizeof(request_t));
+                std::vector<std::byte> code(code_bytes);
+                if (code_bytes > 0)
+                {
+                    win_emu.emu().read_memory(context.input_buffer + sizeof(request_t), code.data(), code.size());
+                }
+
+                uint64_t module = gpu_bridge::null_object;
+                const int32_t result = this->vulkan_.create_shader_module(request.device, code.data(), code.size(), module);
+                return write_output(win_emu, context,
+                                    gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = module});
+            }
+
+            NTSTATUS handle_destroy_shader_module(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::device_child_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                this->vulkan_.destroy_shader_module(request.device, request.object);
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_create_image_view(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::create_image_view_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                uint64_t view = gpu_bridge::null_object;
+                const int32_t result = this->vulkan_.create_image_view(request.device, request.image, request.format, view);
+                return write_output(win_emu, context,
+                                    gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = view});
+            }
+
+            NTSTATUS handle_destroy_image_view(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::device_child_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                this->vulkan_.destroy_image_view(request.device, request.object);
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_create_render_pass(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::create_render_pass_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                uint64_t render_pass = gpu_bridge::null_object;
+                const int32_t result = this->vulkan_.create_render_pass(request.device, request.format, request.load_op,
+                                                                        request.store_op, request.initial_layout,
+                                                                        request.final_layout, render_pass);
+                return write_output(win_emu, context,
+                                    gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = render_pass});
+            }
+
+            NTSTATUS handle_destroy_render_pass(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::device_child_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                this->vulkan_.destroy_render_pass(request.device, request.object);
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_create_framebuffer(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::create_framebuffer_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                uint64_t framebuffer = gpu_bridge::null_object;
+                const int32_t result = this->vulkan_.create_framebuffer(request.device, request.render_pass,
+                                                                        request.image_view, request.width, request.height,
+                                                                        framebuffer);
+                return write_output(win_emu, context,
+                                    gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = framebuffer});
+            }
+
+            NTSTATUS handle_destroy_framebuffer(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::device_child_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                this->vulkan_.destroy_framebuffer(request.device, request.object);
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_create_pipeline_layout(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::create_pipeline_layout_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                uint64_t layout = gpu_bridge::null_object;
+                const int32_t result = this->vulkan_.create_pipeline_layout(request.device, layout);
+                return write_output(win_emu, context,
+                                    gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = layout});
+            }
+
+            NTSTATUS handle_destroy_pipeline_layout(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::device_child_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                this->vulkan_.destroy_pipeline_layout(request.device, request.object);
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_create_graphics_pipeline(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::create_graphics_pipeline_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                uint64_t pipeline = gpu_bridge::null_object;
+                const int32_t result = this->vulkan_.create_graphics_pipeline(
+                    request.device, request.render_pass, request.pipeline_layout, request.vertex_shader,
+                    request.fragment_shader, request.width, request.height, pipeline);
+                return write_output(win_emu, context,
+                                    gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = pipeline});
+            }
+
+            NTSTATUS handle_destroy_pipeline(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::device_child_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                this->vulkan_.destroy_pipeline(request.device, request.object);
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_cmd_begin_render_pass(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::cmd_begin_render_pass_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                const int32_t result = this->vulkan_.cmd_begin_render_pass(request.command_buffer, request.render_pass,
+                                                                           request.framebuffer, request.width,
+                                                                           request.height, request.clear_r, request.clear_g,
+                                                                           request.clear_b, request.clear_a);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_cmd_bind_pipeline(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::cmd_bind_pipeline_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                const int32_t result = this->vulkan_.cmd_bind_pipeline(request.command_buffer, request.pipeline);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_cmd_draw(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::cmd_draw_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                const int32_t result = this->vulkan_.cmd_draw(request.command_buffer, request.vertex_count,
+                                                              request.instance_count, request.first_vertex,
+                                                              request.first_instance);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_cmd_end_render_pass(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::cmd_end_render_pass_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                const int32_t result = this->vulkan_.cmd_end_render_pass(request.command_buffer);
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
         };

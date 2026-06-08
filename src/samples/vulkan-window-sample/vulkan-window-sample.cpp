@@ -19,6 +19,8 @@
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <vulkan/vulkan_win32.h>
 
+#include "triangle_spirv.hpp"
+
 namespace
 {
     constexpr uint32_t window_width = 320;
@@ -132,9 +134,17 @@ int main(int argc, char** argv)
     const auto allocate_command_buffers = load<PFN_vkAllocateCommandBuffers>(gipa, instance, "vkAllocateCommandBuffers");
     const auto begin_command_buffer = load<PFN_vkBeginCommandBuffer>(gipa, instance, "vkBeginCommandBuffer");
     const auto end_command_buffer = load<PFN_vkEndCommandBuffer>(gipa, instance, "vkEndCommandBuffer");
-    const auto cmd_pipeline_barrier = load<PFN_vkCmdPipelineBarrier>(gipa, instance, "vkCmdPipelineBarrier");
-    const auto cmd_clear_color_image = load<PFN_vkCmdClearColorImage>(gipa, instance, "vkCmdClearColorImage");
     const auto queue_submit = load<PFN_vkQueueSubmit>(gipa, instance, "vkQueueSubmit");
+    const auto create_shader_module = load<PFN_vkCreateShaderModule>(gipa, instance, "vkCreateShaderModule");
+    const auto create_image_view = load<PFN_vkCreateImageView>(gipa, instance, "vkCreateImageView");
+    const auto create_render_pass = load<PFN_vkCreateRenderPass>(gipa, instance, "vkCreateRenderPass");
+    const auto create_framebuffer = load<PFN_vkCreateFramebuffer>(gipa, instance, "vkCreateFramebuffer");
+    const auto create_pipeline_layout = load<PFN_vkCreatePipelineLayout>(gipa, instance, "vkCreatePipelineLayout");
+    const auto create_graphics_pipelines = load<PFN_vkCreateGraphicsPipelines>(gipa, instance, "vkCreateGraphicsPipelines");
+    const auto cmd_begin_render_pass = load<PFN_vkCmdBeginRenderPass>(gipa, instance, "vkCmdBeginRenderPass");
+    const auto cmd_bind_pipeline = load<PFN_vkCmdBindPipeline>(gipa, instance, "vkCmdBindPipeline");
+    const auto cmd_draw = load<PFN_vkCmdDraw>(gipa, instance, "vkCmdDraw");
+    const auto cmd_end_render_pass = load<PFN_vkCmdEndRenderPass>(gipa, instance, "vkCmdEndRenderPass");
 
     uint32_t device_count = 0;
     enumerate(instance, &device_count, nullptr);
@@ -210,7 +220,7 @@ int main(int argc, char** argv)
     swci.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
     swci.imageExtent = {.width = window_width, .height = window_height};
     swci.imageArrayLayers = 1;
-    swci.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT; // we render by clearing (a transfer write)
+    swci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; // we render into them via a render pass
     swci.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
     swci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     swci.presentMode = VK_PRESENT_MODE_FIFO_KHR;
@@ -229,6 +239,146 @@ int main(int argc, char** argv)
     get_swapchain_images(device, swapchain, &image_count, images.data());
     std::printf("[vk-window] swapchain ready: %u images, %ux%u\n", image_count, window_width, window_height);
 
+    // --- render pass (clear -> draw -> present) ---
+    VkAttachmentDescription color_attachment{};
+    color_attachment.format = swapchain_format;
+    color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    VkAttachmentReference color_ref{};
+    color_ref.attachment = 0;
+    color_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &color_ref;
+    VkRenderPassCreateInfo rpci{};
+    rpci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    rpci.attachmentCount = 1;
+    rpci.pAttachments = &color_attachment;
+    rpci.subpassCount = 1;
+    rpci.pSubpasses = &subpass;
+    VkRenderPass render_pass = VK_NULL_HANDLE;
+    if (create_render_pass(device, &rpci, nullptr, &render_pass) != VK_SUCCESS)
+    {
+        std::printf("[vk-window] vkCreateRenderPass failed\n");
+        return 11;
+    }
+
+    // --- shader modules (embedded SPIR-V) ---
+    VkShaderModuleCreateInfo vert_ci{};
+    vert_ci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    vert_ci.codeSize = triangle_vert_spv.size() * sizeof(uint32_t);
+    vert_ci.pCode = triangle_vert_spv.data();
+    VkShaderModule vert_module = VK_NULL_HANDLE;
+    create_shader_module(device, &vert_ci, nullptr, &vert_module);
+
+    VkShaderModuleCreateInfo frag_ci{};
+    frag_ci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    frag_ci.codeSize = triangle_frag_spv.size() * sizeof(uint32_t);
+    frag_ci.pCode = triangle_frag_spv.data();
+    VkShaderModule frag_module = VK_NULL_HANDLE;
+    create_shader_module(device, &frag_ci, nullptr, &frag_module);
+
+    // --- pipeline layout + graphics pipeline ---
+    VkPipelineLayoutCreateInfo plci{};
+    plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
+    create_pipeline_layout(device, &plci, nullptr, &pipeline_layout);
+
+    std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vert_module;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = frag_module;
+    stages[1].pName = "main";
+
+    VkPipelineVertexInputStateCreateInfo vertex_input{};
+    vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    VkPipelineInputAssemblyStateCreateInfo input_assembly{};
+    input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkViewport viewport{};
+    viewport.width = static_cast<float>(window_width);
+    viewport.height = static_cast<float>(window_height);
+    viewport.maxDepth = 1.0f;
+    VkRect2D scissor{};
+    scissor.extent = {.width = window_width, .height = window_height};
+    VkPipelineViewportStateCreateInfo viewport_state{};
+    viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewport_state.viewportCount = 1;
+    viewport_state.pViewports = &viewport;
+    viewport_state.scissorCount = 1;
+    viewport_state.pScissors = &scissor;
+    VkPipelineRasterizationStateCreateInfo rasterization{};
+    rasterization.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterization.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterization.cullMode = VK_CULL_MODE_NONE;
+    rasterization.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterization.lineWidth = 1.0f;
+    VkPipelineMultisampleStateCreateInfo multisample{};
+    multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineColorBlendAttachmentState blend_attachment{};
+    blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
+                                      VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo color_blend{};
+    color_blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    color_blend.attachmentCount = 1;
+    color_blend.pAttachments = &blend_attachment;
+
+    VkGraphicsPipelineCreateInfo gpci{};
+    gpci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    gpci.stageCount = static_cast<uint32_t>(stages.size());
+    gpci.pStages = stages.data();
+    gpci.pVertexInputState = &vertex_input;
+    gpci.pInputAssemblyState = &input_assembly;
+    gpci.pViewportState = &viewport_state;
+    gpci.pRasterizationState = &rasterization;
+    gpci.pMultisampleState = &multisample;
+    gpci.pColorBlendState = &color_blend;
+    gpci.layout = pipeline_layout;
+    gpci.renderPass = render_pass;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    if (create_graphics_pipelines(device, VK_NULL_HANDLE, 1, &gpci, nullptr, &pipeline) != VK_SUCCESS || !pipeline)
+    {
+        std::printf("[vk-window] vkCreateGraphicsPipelines failed\n");
+        return 12;
+    }
+
+    // --- per-image views + framebuffers ---
+    std::vector<VkImageView> image_views(image_count);
+    std::vector<VkFramebuffer> framebuffers(image_count);
+    for (uint32_t i = 0; i < image_count; ++i)
+    {
+        VkImageViewCreateInfo ivci{};
+        ivci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        ivci.image = images[i];
+        ivci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        ivci.format = swapchain_format;
+        ivci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        ivci.subresourceRange.levelCount = 1;
+        ivci.subresourceRange.layerCount = 1;
+        create_image_view(device, &ivci, nullptr, &image_views[i]);
+
+        VkFramebufferCreateInfo fbci{};
+        fbci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fbci.renderPass = render_pass;
+        fbci.attachmentCount = 1;
+        fbci.pAttachments = &image_views[i];
+        fbci.width = window_width;
+        fbci.height = window_height;
+        fbci.layers = 1;
+        create_framebuffer(device, &fbci, nullptr, &framebuffers[i]);
+    }
+
     VkCommandPoolCreateInfo pci{};
     pci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -244,12 +394,7 @@ int main(int argc, char** argv)
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     allocate_command_buffers(device, &cbai, &cmd);
 
-    VkImageSubresourceRange range{};
-    range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    range.levelCount = 1;
-    range.layerCount = 1;
-
-    // --- render loop: clear to an animated color and present each frame ---
+    // --- render loop: clear to a background color, draw the triangle, present each frame ---
     uint32_t frame = 0;
     while (!g_quit && frame < max_frames)
     {
@@ -276,38 +421,30 @@ int main(int argc, char** argv)
             break;
         }
 
-        const float t = static_cast<float>(frame % 120) / 120.0f;
-        VkClearColorValue clear{};
-        clear.float32[0] = t;
-        clear.float32[1] = 0.2f;
-        clear.float32[2] = 1.0f - t;
-        clear.float32[3] = 1.0f;
+        const float t = static_cast<float>(frame % 180) / 180.0f;
 
         VkCommandBufferBeginInfo begin{};
         begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         begin_command_buffer(cmd, &begin);
 
-        const auto barrier = [&](VkImageLayout old_layout, VkImageLayout new_layout, VkAccessFlags src_access,
-                                 VkAccessFlags dst_access, VkPipelineStageFlags src_stage, VkPipelineStageFlags dst_stage) {
-            VkImageMemoryBarrier b{};
-            b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            b.srcAccessMask = src_access;
-            b.dstAccessMask = dst_access;
-            b.oldLayout = old_layout;
-            b.newLayout = new_layout;
-            b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            b.image = images[image_index];
-            b.subresourceRange = range;
-            cmd_pipeline_barrier(cmd, src_stage, dst_stage, 0, 0, nullptr, 0, nullptr, 1, &b);
-        };
+        VkClearValue clear{};
+        clear.color.float32[0] = 0.10f;
+        clear.color.float32[1] = 0.10f;
+        clear.color.float32[2] = 0.15f + 0.25f * t; // subtle animated background so motion is visible
+        clear.color.float32[3] = 1.0f;
 
-        barrier(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
-                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
-        cmd_clear_color_image(cmd, images[image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear, 1, &range);
-        barrier(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_ACCESS_TRANSFER_WRITE_BIT,
-                VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+        VkRenderPassBeginInfo rpbi{};
+        rpbi.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        rpbi.renderPass = render_pass;
+        rpbi.framebuffer = framebuffers[image_index];
+        rpbi.renderArea.extent = {.width = window_width, .height = window_height};
+        rpbi.clearValueCount = 1;
+        rpbi.pClearValues = &clear;
+        cmd_begin_render_pass(cmd, &rpbi, VK_SUBPASS_CONTENTS_INLINE);
+        cmd_bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        cmd_draw(cmd, 3, 1, 0, 0);
+        cmd_end_render_pass(cmd);
 
         end_command_buffer(cmd);
 
@@ -325,8 +462,7 @@ int main(int argc, char** argv)
         const VkResult presented = queue_present(queue, &present);
         if (frame < 3 || (frame % 60) == 0)
         {
-            std::printf("[vk-window] frame %u: image %u, clear=(%.2f,0.20,%.2f) present -> %d\n", frame, image_index, t,
-                        1.0f - t, presented);
+            std::printf("[vk-window] frame %u: image %u, draw triangle, present -> %d\n", frame, image_index, presented);
         }
         if (presented != VK_SUCCESS)
         {
@@ -339,12 +475,28 @@ int main(int argc, char** argv)
 
     std::printf("[vk-window] done after %u frames\n", frame);
 
+    const auto destroy_framebuffer = load<PFN_vkDestroyFramebuffer>(gipa, instance, "vkDestroyFramebuffer");
+    const auto destroy_image_view = load<PFN_vkDestroyImageView>(gipa, instance, "vkDestroyImageView");
+    const auto destroy_pipeline = load<PFN_vkDestroyPipeline>(gipa, instance, "vkDestroyPipeline");
+    const auto destroy_pipeline_layout = load<PFN_vkDestroyPipelineLayout>(gipa, instance, "vkDestroyPipelineLayout");
+    const auto destroy_shader_module = load<PFN_vkDestroyShaderModule>(gipa, instance, "vkDestroyShaderModule");
+    const auto destroy_render_pass = load<PFN_vkDestroyRenderPass>(gipa, instance, "vkDestroyRenderPass");
     const auto destroy_swapchain = load<PFN_vkDestroySwapchainKHR>(gipa, instance, "vkDestroySwapchainKHR");
     const auto destroy_surface = load<PFN_vkDestroySurfaceKHR>(gipa, instance, "vkDestroySurfaceKHR");
     const auto destroy_command_pool = load<PFN_vkDestroyCommandPool>(gipa, instance, "vkDestroyCommandPool");
     const auto destroy_device = load<PFN_vkDestroyDevice>(gipa, instance, "vkDestroyDevice");
     const auto destroy_instance = load<PFN_vkDestroyInstance>(gipa, instance, "vkDestroyInstance");
 
+    for (uint32_t i = 0; i < image_count; ++i)
+    {
+        destroy_framebuffer(device, framebuffers[i], nullptr);
+        destroy_image_view(device, image_views[i], nullptr);
+    }
+    destroy_pipeline(device, pipeline, nullptr);
+    destroy_pipeline_layout(device, pipeline_layout, nullptr);
+    destroy_shader_module(device, frag_module, nullptr);
+    destroy_shader_module(device, vert_module, nullptr);
+    destroy_render_pass(device, render_pass, nullptr);
     destroy_command_pool(device, pool, nullptr);
     destroy_swapchain(device, swapchain, nullptr);
     destroy_surface(instance, surface, nullptr);

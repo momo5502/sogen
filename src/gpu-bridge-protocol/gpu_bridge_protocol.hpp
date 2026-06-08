@@ -77,6 +77,22 @@ namespace sogen::gpu_bridge
         get_swapchain_images = 0x829,
         acquire_next_image = 0x82A,
         queue_present = 0x82B,
+        create_shader_module = 0x82C,
+        destroy_shader_module = 0x82D,
+        create_image_view = 0x82E,
+        destroy_image_view = 0x82F,
+        create_render_pass = 0x830,
+        destroy_render_pass = 0x831,
+        create_framebuffer = 0x832,
+        destroy_framebuffer = 0x833,
+        create_pipeline_layout = 0x834,
+        destroy_pipeline_layout = 0x835,
+        create_graphics_pipeline = 0x836,
+        destroy_pipeline = 0x837,
+        cmd_begin_render_pass = 0x838,
+        cmd_bind_pipeline = 0x839,
+        cmd_draw = 0x83A,
+        cmd_end_render_pass = 0x83B,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -131,6 +147,25 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_get_swapchain_images = make_ioctl(static_cast<uint32_t>(command::get_swapchain_images));
     inline constexpr uint32_t ioctl_acquire_next_image = make_ioctl(static_cast<uint32_t>(command::acquire_next_image));
     inline constexpr uint32_t ioctl_queue_present = make_ioctl(static_cast<uint32_t>(command::queue_present));
+    inline constexpr uint32_t ioctl_create_shader_module = make_ioctl(static_cast<uint32_t>(command::create_shader_module));
+    inline constexpr uint32_t ioctl_destroy_shader_module = make_ioctl(static_cast<uint32_t>(command::destroy_shader_module));
+    inline constexpr uint32_t ioctl_create_image_view = make_ioctl(static_cast<uint32_t>(command::create_image_view));
+    inline constexpr uint32_t ioctl_destroy_image_view = make_ioctl(static_cast<uint32_t>(command::destroy_image_view));
+    inline constexpr uint32_t ioctl_create_render_pass = make_ioctl(static_cast<uint32_t>(command::create_render_pass));
+    inline constexpr uint32_t ioctl_destroy_render_pass = make_ioctl(static_cast<uint32_t>(command::destroy_render_pass));
+    inline constexpr uint32_t ioctl_create_framebuffer = make_ioctl(static_cast<uint32_t>(command::create_framebuffer));
+    inline constexpr uint32_t ioctl_destroy_framebuffer = make_ioctl(static_cast<uint32_t>(command::destroy_framebuffer));
+    inline constexpr uint32_t ioctl_create_pipeline_layout =
+        make_ioctl(static_cast<uint32_t>(command::create_pipeline_layout));
+    inline constexpr uint32_t ioctl_destroy_pipeline_layout =
+        make_ioctl(static_cast<uint32_t>(command::destroy_pipeline_layout));
+    inline constexpr uint32_t ioctl_create_graphics_pipeline =
+        make_ioctl(static_cast<uint32_t>(command::create_graphics_pipeline));
+    inline constexpr uint32_t ioctl_destroy_pipeline = make_ioctl(static_cast<uint32_t>(command::destroy_pipeline));
+    inline constexpr uint32_t ioctl_cmd_begin_render_pass = make_ioctl(static_cast<uint32_t>(command::cmd_begin_render_pass));
+    inline constexpr uint32_t ioctl_cmd_bind_pipeline = make_ioctl(static_cast<uint32_t>(command::cmd_bind_pipeline));
+    inline constexpr uint32_t ioctl_cmd_draw = make_ioctl(static_cast<uint32_t>(command::cmd_draw));
+    inline constexpr uint32_t ioctl_cmd_end_render_pass = make_ioctl(static_cast<uint32_t>(command::cmd_end_render_pass));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -638,5 +673,116 @@ namespace sogen::gpu_bridge
         object_id swapchain;
         uint32_t image_index;
         uint32_t reserved;
+    };
+
+    // Shared output for the "create a device child" commands below (one new object id).
+    struct object_response
+    {
+        int32_t vk_result;
+        uint32_t reserved;
+        object_id object; // null_object on failure
+    };
+
+    // Shared input for the matching "destroy a device child" commands (vkDestroyX(device, child)).
+    struct device_child_request
+    {
+        object_id device;
+        object_id object;
+    };
+
+    // ioctl_create_shader_module: in header immediately followed by `code_size` bytes of SPIR-V;
+    // out = object_response
+    struct create_shader_module_request
+    {
+        object_id device;
+        uint32_t code_size; // bytes (multiple of 4)
+        uint32_t reserved;
+        // uint8_t code[code_size];
+    };
+
+    // ioctl_create_image_view: in (2D, single mip/layer, COLOR aspect); out = object_response
+    struct create_image_view_request
+    {
+        object_id device;
+        object_id image;
+        uint32_t format; // VkFormat
+        uint32_t reserved;
+    };
+
+    // ioctl_create_render_pass: in (single color attachment, single subpass); out = object_response
+    struct create_render_pass_request
+    {
+        object_id device;
+        uint32_t format;         // VkFormat of the color attachment
+        uint32_t load_op;        // VkAttachmentLoadOp
+        uint32_t store_op;       // VkAttachmentStoreOp
+        uint32_t initial_layout; // VkImageLayout
+        uint32_t final_layout;   // VkImageLayout (PRESENT_SRC_KHR is mapped to TRANSFER_SRC_OPTIMAL)
+    };
+
+    // ioctl_create_framebuffer: in (single attachment); out = object_response
+    struct create_framebuffer_request
+    {
+        object_id device;
+        object_id render_pass;
+        object_id image_view;
+        uint32_t width;
+        uint32_t height;
+    };
+
+    // ioctl_create_pipeline_layout: in (empty: no descriptor sets / push constants); out = object_response
+    struct create_pipeline_layout_request
+    {
+        object_id device;
+    };
+
+    // ioctl_create_graphics_pipeline: in (no vertex input, triangle list, static full viewport/scissor,
+    // one non-blended color attachment); out = object_response
+    struct create_graphics_pipeline_request
+    {
+        object_id device;
+        object_id render_pass;
+        object_id pipeline_layout;
+        object_id vertex_shader;
+        object_id fragment_shader;
+        uint32_t width;
+        uint32_t height;
+    };
+
+    // ioctl_cmd_begin_render_pass: in (clear color load); out = result_response
+    struct cmd_begin_render_pass_request
+    {
+        object_id command_buffer;
+        object_id render_pass;
+        object_id framebuffer;
+        uint32_t width;
+        uint32_t height;
+        float clear_r;
+        float clear_g;
+        float clear_b;
+        float clear_a;
+    };
+
+    // ioctl_cmd_bind_pipeline: in (graphics bind point); out = result_response
+    struct cmd_bind_pipeline_request
+    {
+        object_id command_buffer;
+        object_id pipeline;
+    };
+
+    // ioctl_cmd_draw: in; out = result_response
+    struct cmd_draw_request
+    {
+        object_id command_buffer;
+        uint32_t vertex_count;
+        uint32_t instance_count;
+        uint32_t first_vertex;
+        uint32_t first_instance;
+    };
+
+    // ioctl_cmd_end_render_pass: in; out = result_response
+    struct cmd_end_render_pass_request
+    {
+        object_id command_buffer;
     };
 }

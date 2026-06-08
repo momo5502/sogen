@@ -162,6 +162,17 @@ plus the surrounding calls needed to actually use them:
   an animated color each frame, and presents; the window shows the live GPU output (verified on screen
   against SwiftShader).
 
+- **Graphics pipeline: a triangle in the window.** The first *real rendering* (not just transfer
+  clears). Adds `vkCreateShaderModule`, `vkCreateImageView`, `vkCreateRenderPass`, `vkCreateFramebuffer`,
+  `vkCreatePipelineLayout`, `vkCreateGraphicsPipelines` (+ destroys), and the draw recording
+  `vkCmdBeginRenderPass` / `vkCmdBindPipeline` / `vkCmdDraw` / `vkCmdEndRenderPass`. The host hardcodes
+  most fixed-function state (no vertex input, triangle list, static full-extent viewport/scissor, one
+  non-blended color attachment); the guest supplies the SPIR-V, render pass attachment, and viewport
+  extent. `vulkan-window-sample` now renders the classic RGB-gradient triangle through a render pass
+  into the swapchain image and presents it — verified on screen against SwiftShader. Shader SPIR-V is
+  compiled offline (glslang) and checked in as `triangle_spirv.hpp`, so the build needs no shader
+  compiler.
+
 ## Remoted Vulkan entry points so far
 
 Instance/device: `vkCreateInstance`, `vkDestroyInstance`, `vkEnumeratePhysicalDevices`,
@@ -182,6 +193,10 @@ Images/transfer: `vkCreateImage`, `vkDestroyImage`, `vkGetImageMemoryRequirement
 
 WSI: `vkCreateWin32SurfaceKHR`, `vkDestroySurfaceKHR`, `vkCreateSwapchainKHR`, `vkDestroySwapchainKHR`,
 `vkGetSwapchainImagesKHR`, `vkAcquireNextImageKHR`, `vkQueuePresentKHR`.
+
+Graphics pipeline: `vkCreateShaderModule`, `vkCreateImageView`, `vkCreateRenderPass`,
+`vkCreateFramebuffer`, `vkCreatePipelineLayout`, `vkCreateGraphicsPipelines` (+ destroys),
+`vkCmdBeginRenderPass`, `vkCmdBindPipeline`, `vkCmdDraw`, `vkCmdEndRenderPass`.
 
 The hand-written entry points currently pass minimal/empty create-infos (e.g. `vkCreateInstance`
 ignores layers/extensions, `vkQueueSubmit` ignores semaphores). The generator is the path to
@@ -219,8 +234,9 @@ honoring the full structs.
 
 ## What's left (plan)
 
-The near-term goal is a **windowed** Vulkan sample: a guest app that opens a real window and shows
-its GPU-rendered content. The approach is **readback-and-present** — render on the host GPU into an
+The near-term goal — a **windowed** Vulkan sample that opens a real window and shows its GPU-rendered
+content — is **reached**: `vulkan-window-sample` renders a triangle through a graphics pipeline into a
+guest window (steps 1–4 below all done). The approach is **readback-and-present** — render on the host GPU into an
 offscreen image, read the pixels back, and hand them to the guest window's surface through Sogen's
 existing `present_surface` seam (the SDL backend already displays a per-HWND BGRA surface; see
 `windows-ui-emulation.md`). The guest stays a real Vulkan WSI app (`vkCreateWin32SurfaceKHR` /
@@ -235,7 +251,8 @@ Staged steps toward that:
    `vkCmdCopyImageToBuffer` readback verified against a known clear color).
 3. **WSI → first visible window** — *done* (`vkCreateWin32SurfaceKHR` + swapchain + `vkQueuePresentKHR`;
    present = readback + `present_surface(hwnd, …)`; `vulkan-window-sample` shows an animated color on screen).
-4. **Triangle** — render pass, framebuffer, SPIR-V shader modules, graphics pipeline, `vkCmdDraw`.
+4. **Triangle** — *done* (render pass, framebuffer, SPIR-V shader modules, graphics pipeline, `vkCmdDraw`;
+   `vulkan-window-sample` renders the RGB-gradient triangle into the window).
 
 Cross-cutting (needed as the create-infos get richer, can land alongside the steps above):
 
@@ -261,7 +278,7 @@ Later: OpenGL via Zink, DirectX via DXVK — no new bridge work, just guest DLL 
 | `tools/vulkan-bridge-generator/generate.py` | The generator (parses `vk.xml`); `STRUCT_ALLOWLIST` controls coverage |
 | `src/samples/vulkan-shim/` | Guest `vulkan-1.dll` shim (the deliverable) |
 | `src/samples/vulkan-shim-test/` | Headless guest exe driving the shim (instance→device→fill/clear readback) |
-| `src/samples/vulkan-window-sample/` | Windowed guest exe: real Win32 window + Vulkan swapchain, presents each frame |
+| `src/samples/vulkan-window-sample/` | Windowed guest exe: Win32 window + swapchain + render-pass triangle. `triangle.{vert,frag}` are the GLSL sources; `triangle_spirv.hpp` is the checked-in compiled SPIR-V |
 | `src/samples/gpu-bridge-probe-sample/` | Low-level probe (direct `DeviceIoControl`, no Vulkan headers) |
 | `src/windows-emulator-test/vulkan_marshal_test.cpp` | Round-trip gtests for the generated marshalling |
 | `deps/Vulkan-Headers` | Shallow submodule; `vulkan-headers` INTERFACE target |

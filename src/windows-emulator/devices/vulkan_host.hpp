@@ -153,6 +153,41 @@ namespace sogen
         int32_t queue_present(uint64_t queue, uint64_t swapchain, uint32_t image_index, std::vector<std::byte>& out_pixels,
                               uint32_t& out_width, uint32_t& out_height, uint64_t& out_hwnd);
 
+        // --- graphics pipeline (enough for a render-pass triangle) ---
+
+        int32_t create_shader_module(uint64_t device, const void* code, size_t code_size, uint64_t& out_module);
+        void destroy_shader_module(uint64_t device, uint64_t shader_module);
+
+        int32_t create_image_view(uint64_t device, uint64_t image, uint32_t format, uint64_t& out_view);
+        void destroy_image_view(uint64_t device, uint64_t image_view);
+
+        // Single color attachment, single subpass (initial/final layouts as given; PRESENT_SRC_KHR is
+        // mapped to TRANSFER_SRC_OPTIMAL).
+        int32_t create_render_pass(uint64_t device, uint32_t format, uint32_t load_op, uint32_t store_op,
+                                   uint32_t initial_layout, uint32_t final_layout, uint64_t& out_render_pass);
+        void destroy_render_pass(uint64_t device, uint64_t render_pass);
+
+        int32_t create_framebuffer(uint64_t device, uint64_t render_pass, uint64_t image_view, uint32_t width,
+                                   uint32_t height, uint64_t& out_framebuffer);
+        void destroy_framebuffer(uint64_t device, uint64_t framebuffer);
+
+        int32_t create_pipeline_layout(uint64_t device, uint64_t& out_layout);
+        void destroy_pipeline_layout(uint64_t device, uint64_t pipeline_layout);
+
+        // No vertex input, triangle list, static full-extent viewport/scissor, one non-blended color
+        // attachment.
+        int32_t create_graphics_pipeline(uint64_t device, uint64_t render_pass, uint64_t pipeline_layout,
+                                         uint64_t vertex_shader, uint64_t fragment_shader, uint32_t width, uint32_t height,
+                                         uint64_t& out_pipeline);
+        void destroy_pipeline(uint64_t device, uint64_t pipeline);
+
+        int32_t cmd_begin_render_pass(uint64_t command_buffer, uint64_t render_pass, uint64_t framebuffer, uint32_t width,
+                                      uint32_t height, float r, float g, float b, float a);
+        int32_t cmd_bind_pipeline(uint64_t command_buffer, uint64_t pipeline);
+        int32_t cmd_draw(uint64_t command_buffer, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex,
+                         uint32_t first_instance);
+        int32_t cmd_end_render_pass(uint64_t command_buffer);
+
       private:
         struct impl;
         std::unique_ptr<impl> impl_;

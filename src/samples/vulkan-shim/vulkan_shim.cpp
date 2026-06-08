@@ -71,6 +71,20 @@ namespace
         uint64_t size{};
     };
     std::unordered_map<gb::object_id, mapped_range> g_mapped_ranges;
+
+    // vkDestroyX(device, child) for the non-dispatchable device children that share device_child_request.
+    template <typename Handle>
+    void destroy_device_child(uint32_t code, VkDevice device, Handle child)
+    {
+        if (!child)
+        {
+            return;
+        }
+        gb::device_child_request request{};
+        request.device = to_object_id(device);
+        request.object = to_object_id(child);
+        bridge_call(code, &request, sizeof(request), nullptr, 0);
+    }
 }
 
 extern "C"
@@ -1012,6 +1026,277 @@ extern "C"
         return overall;
     }
 
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateShaderModule(VkDevice device,
+                                                                              const VkShaderModuleCreateInfo* pCreateInfo,
+                                                                              const VkAllocationCallbacks*,
+                                                                              VkShaderModule* pShaderModule)
+    {
+        const auto code_size = static_cast<uint32_t>(pCreateInfo->codeSize);
+        std::vector<uint8_t> message(sizeof(gb::create_shader_module_request) + code_size);
+        gb::create_shader_module_request header{};
+        header.device = to_object_id(device);
+        header.code_size = code_size;
+        std::memcpy(message.data(), &header, sizeof(header));
+        std::memcpy(message.data() + sizeof(header), pCreateInfo->pCode, code_size);
+
+        gb::object_response response{};
+        if (!bridge_call(gb::ioctl_create_shader_module, message.data(), static_cast<DWORD>(message.size()), &response,
+                         sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+        *pShaderModule = to_handle<VkShaderModule>(response.object);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyShaderModule(VkDevice device, VkShaderModule shaderModule,
+                                                                           const VkAllocationCallbacks*)
+    {
+        destroy_device_child(gb::ioctl_destroy_shader_module, device, shaderModule);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateImageView(VkDevice device,
+                                                                           const VkImageViewCreateInfo* pCreateInfo,
+                                                                           const VkAllocationCallbacks*, VkImageView* pView)
+    {
+        gb::create_image_view_request request{};
+        request.device = to_object_id(device);
+        request.image = to_object_id(pCreateInfo->image);
+        request.format = static_cast<uint32_t>(pCreateInfo->format);
+
+        gb::object_response response{};
+        if (!bridge_call(gb::ioctl_create_image_view, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+        *pView = to_handle<VkImageView>(response.object);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyImageView(VkDevice device, VkImageView imageView,
+                                                                        const VkAllocationCallbacks*)
+    {
+        destroy_device_child(gb::ioctl_destroy_image_view, device, imageView);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateRenderPass(VkDevice device,
+                                                                            const VkRenderPassCreateInfo* pCreateInfo,
+                                                                            const VkAllocationCallbacks*,
+                                                                            VkRenderPass* pRenderPass)
+    {
+        // Single color attachment is modeled; the first attachment drives the render pass.
+        const VkAttachmentDescription& a = pCreateInfo->pAttachments[0];
+        gb::create_render_pass_request request{};
+        request.device = to_object_id(device);
+        request.format = static_cast<uint32_t>(a.format);
+        request.load_op = static_cast<uint32_t>(a.loadOp);
+        request.store_op = static_cast<uint32_t>(a.storeOp);
+        request.initial_layout = static_cast<uint32_t>(a.initialLayout);
+        request.final_layout = static_cast<uint32_t>(a.finalLayout);
+
+        gb::object_response response{};
+        if (!bridge_call(gb::ioctl_create_render_pass, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+        *pRenderPass = to_handle<VkRenderPass>(response.object);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyRenderPass(VkDevice device, VkRenderPass renderPass,
+                                                                         const VkAllocationCallbacks*)
+    {
+        destroy_device_child(gb::ioctl_destroy_render_pass, device, renderPass);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateFramebuffer(VkDevice device,
+                                                                             const VkFramebufferCreateInfo* pCreateInfo,
+                                                                             const VkAllocationCallbacks*,
+                                                                             VkFramebuffer* pFramebuffer)
+    {
+        gb::create_framebuffer_request request{};
+        request.device = to_object_id(device);
+        request.render_pass = to_object_id(pCreateInfo->renderPass);
+        request.image_view = to_object_id(pCreateInfo->pAttachments[0]); // single attachment
+        request.width = pCreateInfo->width;
+        request.height = pCreateInfo->height;
+
+        gb::object_response response{};
+        if (!bridge_call(gb::ioctl_create_framebuffer, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+        *pFramebuffer = to_handle<VkFramebuffer>(response.object);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyFramebuffer(VkDevice device, VkFramebuffer framebuffer,
+                                                                          const VkAllocationCallbacks*)
+    {
+        destroy_device_child(gb::ioctl_destroy_framebuffer, device, framebuffer);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreatePipelineLayout(
+        VkDevice device, const VkPipelineLayoutCreateInfo*, const VkAllocationCallbacks*, VkPipelineLayout* pPipelineLayout)
+    {
+        gb::create_pipeline_layout_request request{};
+        request.device = to_object_id(device);
+
+        gb::object_response response{};
+        if (!bridge_call(gb::ioctl_create_pipeline_layout, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+        *pPipelineLayout = to_handle<VkPipelineLayout>(response.object);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyPipelineLayout(VkDevice device,
+                                                                             VkPipelineLayout pipelineLayout,
+                                                                             const VkAllocationCallbacks*)
+    {
+        destroy_device_child(gb::ioctl_destroy_pipeline_layout, device, pipelineLayout);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
+        VkDevice device, VkPipelineCache, uint32_t createInfoCount, const VkGraphicsPipelineCreateInfo* pCreateInfos,
+        const VkAllocationCallbacks*, VkPipeline* pPipelines)
+    {
+        VkResult overall = VK_SUCCESS;
+        for (uint32_t i = 0; i < createInfoCount; ++i)
+        {
+            const VkGraphicsPipelineCreateInfo& ci = pCreateInfos[i];
+
+            gb::object_id vertex_shader = gb::null_object;
+            gb::object_id fragment_shader = gb::null_object;
+            for (uint32_t s = 0; s < ci.stageCount; ++s)
+            {
+                if (ci.pStages[s].stage == VK_SHADER_STAGE_VERTEX_BIT)
+                {
+                    vertex_shader = to_object_id(ci.pStages[s].module);
+                }
+                else if (ci.pStages[s].stage == VK_SHADER_STAGE_FRAGMENT_BIT)
+                {
+                    fragment_shader = to_object_id(ci.pStages[s].module);
+                }
+            }
+
+            uint32_t width = 0;
+            uint32_t height = 0;
+            if (ci.pViewportState && ci.pViewportState->pViewports && ci.pViewportState->viewportCount > 0)
+            {
+                width = static_cast<uint32_t>(ci.pViewportState->pViewports[0].width);
+                height = static_cast<uint32_t>(ci.pViewportState->pViewports[0].height);
+            }
+
+            gb::create_graphics_pipeline_request request{};
+            request.device = to_object_id(device);
+            request.render_pass = to_object_id(ci.renderPass);
+            request.pipeline_layout = to_object_id(ci.layout);
+            request.vertex_shader = vertex_shader;
+            request.fragment_shader = fragment_shader;
+            request.width = width;
+            request.height = height;
+
+            gb::object_response response{};
+            const bool ok =
+                bridge_call(gb::ioctl_create_graphics_pipeline, &request, sizeof(request), &response, sizeof(response));
+            if (!ok || response.vk_result != VK_SUCCESS)
+            {
+                pPipelines[i] = VK_NULL_HANDLE;
+                overall = ok ? static_cast<VkResult>(response.vk_result) : VK_ERROR_INITIALIZATION_FAILED;
+            }
+            else
+            {
+                pPipelines[i] = to_handle<VkPipeline>(response.object);
+            }
+        }
+        return overall;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyPipeline(VkDevice device, VkPipeline pipeline,
+                                                                       const VkAllocationCallbacks*)
+    {
+        destroy_device_child(gb::ioctl_destroy_pipeline, device, pipeline);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBeginRenderPass(VkCommandBuffer commandBuffer,
+                                                                          const VkRenderPassBeginInfo* pRenderPassBegin,
+                                                                          VkSubpassContents)
+    {
+        gb::cmd_begin_render_pass_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.render_pass = to_object_id(pRenderPassBegin->renderPass);
+        request.framebuffer = to_object_id(pRenderPassBegin->framebuffer);
+        request.width = pRenderPassBegin->renderArea.extent.width;
+        request.height = pRenderPassBegin->renderArea.extent.height;
+        if (pRenderPassBegin->clearValueCount > 0 && pRenderPassBegin->pClearValues)
+        {
+            request.clear_r = pRenderPassBegin->pClearValues[0].color.float32[0];
+            request.clear_g = pRenderPassBegin->pClearValues[0].color.float32[1];
+            request.clear_b = pRenderPassBegin->pClearValues[0].color.float32[2];
+            request.clear_a = pRenderPassBegin->pClearValues[0].color.float32[3];
+        }
+
+        gb::result_response response{};
+        bridge_call(gb::ioctl_cmd_begin_render_pass, &request, sizeof(request), &response, sizeof(response));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(VkCommandBuffer commandBuffer, VkPipelineBindPoint,
+                                                                       VkPipeline pipeline)
+    {
+        gb::cmd_bind_pipeline_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.pipeline = to_object_id(pipeline);
+
+        gb::result_response response{};
+        bridge_call(gb::ioctl_cmd_bind_pipeline, &request, sizeof(request), &response, sizeof(response));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdDraw(VkCommandBuffer commandBuffer, uint32_t vertexCount,
+                                                               uint32_t instanceCount, uint32_t firstVertex,
+                                                               uint32_t firstInstance)
+    {
+        gb::cmd_draw_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.vertex_count = vertexCount;
+        request.instance_count = instanceCount;
+        request.first_vertex = firstVertex;
+        request.first_instance = firstInstance;
+
+        gb::result_response response{};
+        bridge_call(gb::ioctl_cmd_draw, &request, sizeof(request), &response, sizeof(response));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdEndRenderPass(VkCommandBuffer commandBuffer)
+    {
+        gb::cmd_end_render_pass_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+
+        gb::result_response response{};
+        bridge_call(gb::ioctl_cmd_end_render_pass, &request, sizeof(request), &response, sizeof(response));
+    }
+
     __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice, const char* pName);
 
     __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance, const char* pName)
@@ -1079,6 +1364,22 @@ extern "C"
             {.name = "vkGetSwapchainImagesKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetSwapchainImagesKHR)},
             {.name = "vkAcquireNextImageKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkAcquireNextImageKHR)},
             {.name = "vkQueuePresentKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkQueuePresentKHR)},
+            {.name = "vkCreateShaderModule", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateShaderModule)},
+            {.name = "vkDestroyShaderModule", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyShaderModule)},
+            {.name = "vkCreateImageView", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateImageView)},
+            {.name = "vkDestroyImageView", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyImageView)},
+            {.name = "vkCreateRenderPass", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateRenderPass)},
+            {.name = "vkDestroyRenderPass", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyRenderPass)},
+            {.name = "vkCreateFramebuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateFramebuffer)},
+            {.name = "vkDestroyFramebuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyFramebuffer)},
+            {.name = "vkCreatePipelineLayout", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreatePipelineLayout)},
+            {.name = "vkDestroyPipelineLayout", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyPipelineLayout)},
+            {.name = "vkCreateGraphicsPipelines", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateGraphicsPipelines)},
+            {.name = "vkDestroyPipeline", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyPipeline)},
+            {.name = "vkCmdBeginRenderPass", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBeginRenderPass)},
+            {.name = "vkCmdBindPipeline", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindPipeline)},
+            {.name = "vkCmdDraw", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDraw)},
+            {.name = "vkCmdEndRenderPass", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdEndRenderPass)},
         };
 
         for (const auto& e : table)
