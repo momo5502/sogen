@@ -837,7 +837,7 @@ namespace sogen
             {
                 attributes.access(
                     [&](const PS_ATTRIBUTE<EmulatorTraits<Emu64>>& attribute) {
-                        const auto type = attribute.Attribute & ~PS_ATTRIBUTE_THREAD;
+                        const auto type = attribute.Attribute & PS_ATTRIBUTE_NUMBER_MASK;
 
                         if (type == PsAttributeClientId)
                         {
@@ -847,6 +847,10 @@ namespace sogen
                         else if (type == PsAttributeTebAddress)
                         {
                             write_attribute(c.emu, attribute, thread->teb64->value());
+                        }
+                        else if (type == PsAttributeGroupAffinity || type == PsAttributeIdealProcessor)
+                        {
+                            // Scheduling hints; not modeled by the emulator.
                         }
                         else
                         {
