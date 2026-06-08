@@ -32,6 +32,14 @@ namespace sogen
                     return handle_enumerate_physical_devices(win_emu, context);
                 case gpu_bridge::ioctl_get_physical_device_properties:
                     return handle_get_physical_device_properties(win_emu, context);
+                case gpu_bridge::ioctl_get_queue_family_properties:
+                    return handle_get_queue_family_properties(win_emu, context);
+                case gpu_bridge::ioctl_create_device:
+                    return handle_create_device(win_emu, context);
+                case gpu_bridge::ioctl_get_device_queue:
+                    return handle_get_device_queue(win_emu, context);
+                case gpu_bridge::ioctl_destroy_device:
+                    return handle_destroy_device(win_emu, context);
 
                 default:
                     win_emu.log.warn("[gpu-bridge] Unsupported IOCTL: 0x%X\n", context.io_control_code);
@@ -183,6 +191,116 @@ namespace sogen
 
                 win_emu.emu().write_memory(context.output_buffer, properties.data(), properties.size());
                 set_information(context, context.output_buffer_length);
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_get_queue_family_properties(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::get_queue_family_properties_request;
+                using response_t = gpu_bridge::get_queue_family_properties_response;
+
+                if (!context.input_buffer || context.input_buffer_length < sizeof(request_t))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (!context.output_buffer || context.output_buffer_length < sizeof(response_t))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                const auto request = emulator_object<request_t>{win_emu.emu(), context.input_buffer}.read();
+                const auto array_bytes = context.output_buffer_length - static_cast<uint32_t>(sizeof(response_t));
+
+                std::vector<std::byte> properties(array_bytes);
+                uint32_t count = 0;
+                const int32_t result =
+                    this->vulkan_.get_queue_family_properties(request.physical_device, properties.data(), properties.size(), count);
+                if (result != 0)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const response_t response{.count = count, .reserved = 0};
+                emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(response);
+
+                if (array_bytes > 0)
+                {
+                    win_emu.emu().write_memory(context.output_buffer + sizeof(response_t), properties.data(), array_bytes);
+                }
+
+                set_information(context, static_cast<ULONG>(sizeof(response_t) + array_bytes));
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_create_device(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::create_device_request;
+                using response_t = gpu_bridge::create_device_response;
+
+                if (!context.input_buffer || context.input_buffer_length < sizeof(request_t))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (!context.output_buffer || context.output_buffer_length < sizeof(response_t))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                const auto request = emulator_object<request_t>{win_emu.emu(), context.input_buffer}.read();
+
+                uint64_t device = gpu_bridge::null_object;
+                const int32_t result =
+                    this->vulkan_.create_device(request.physical_device, request.queue_family_index, request.queue_count, device);
+
+                const response_t response{
+                    .vk_result = result,
+                    .reserved = 0,
+                    .device = device,
+                };
+                emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(response);
+                set_information(context, static_cast<ULONG>(sizeof(response_t)));
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_get_device_queue(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::get_device_queue_request;
+                using response_t = gpu_bridge::get_device_queue_response;
+
+                if (!context.input_buffer || context.input_buffer_length < sizeof(request_t))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (!context.output_buffer || context.output_buffer_length < sizeof(response_t))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                const auto request = emulator_object<request_t>{win_emu.emu(), context.input_buffer}.read();
+
+                uint64_t queue = gpu_bridge::null_object;
+                this->vulkan_.get_device_queue(request.device, request.queue_family_index, request.queue_index, queue);
+
+                const response_t response{.queue = queue};
+                emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(response);
+                set_information(context, static_cast<ULONG>(sizeof(response_t)));
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_destroy_device(windows_emulator& win_emu, const io_device_context& context)
+            {
+                if (!context.input_buffer || context.input_buffer_length < sizeof(gpu_bridge::destroy_device_request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const auto request =
+                    emulator_object<gpu_bridge::destroy_device_request>{win_emu.emu(), context.input_buffer}.read();
+
+                this->vulkan_.destroy_device(request.device);
                 return STATUS_SUCCESS;
             }
         };

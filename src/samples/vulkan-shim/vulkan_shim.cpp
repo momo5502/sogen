@@ -133,6 +133,99 @@ extern "C"
         bridge_call(gb::ioctl_get_physical_device_properties, &request, sizeof(request), pProperties, sizeof(*pProperties));
     }
 
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceQueueFamilyProperties(
+        VkPhysicalDevice physicalDevice, uint32_t* pCount, VkQueueFamilyProperties* pProperties)
+    {
+        gb::get_queue_family_properties_request request{};
+        request.physical_device = to_object_id(physicalDevice);
+        request.max_count = pProperties ? *pCount : 0;
+
+        std::vector<std::byte> buffer(sizeof(gb::get_queue_family_properties_response) +
+                                      static_cast<size_t>(request.max_count) * sizeof(VkQueueFamilyProperties));
+        if (!bridge_call(gb::ioctl_get_queue_family_properties, &request, sizeof(request), buffer.data(),
+                         static_cast<DWORD>(buffer.size())))
+        {
+            *pCount = 0;
+            return;
+        }
+
+        const auto* response = reinterpret_cast<const gb::get_queue_family_properties_response*>(buffer.data());
+
+        if (!pProperties)
+        {
+            *pCount = response->count;
+            return;
+        }
+
+        const uint32_t written = (response->count < *pCount) ? response->count : *pCount;
+        const auto* families =
+            reinterpret_cast<const VkQueueFamilyProperties*>(buffer.data() + sizeof(gb::get_queue_family_properties_response));
+        for (uint32_t i = 0; i < written; ++i)
+        {
+            pProperties[i] = families[i];
+        }
+        *pCount = written;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice physicalDevice,
+                                                                        const VkDeviceCreateInfo* pCreateInfo,
+                                                                        const VkAllocationCallbacks*, VkDevice* pDevice)
+    {
+        gb::create_device_request request{};
+        request.physical_device = to_object_id(physicalDevice);
+
+        if (pCreateInfo && pCreateInfo->queueCreateInfoCount > 0 && pCreateInfo->pQueueCreateInfos)
+        {
+            request.queue_family_index = pCreateInfo->pQueueCreateInfos[0].queueFamilyIndex;
+            request.queue_count = pCreateInfo->pQueueCreateInfos[0].queueCount;
+        }
+        else
+        {
+            request.queue_count = 1;
+        }
+
+        gb::create_device_response response{};
+        if (!bridge_call(gb::ioctl_create_device, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+
+        *pDevice = to_handle<VkDevice>(response.device);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice device, const VkAllocationCallbacks*)
+    {
+        gb::destroy_device_request request{};
+        request.device = to_object_id(device);
+        bridge_call(gb::ioctl_destroy_device, &request, sizeof(request), nullptr, 0);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue(VkDevice device, uint32_t queueFamilyIndex,
+                                                                      uint32_t queueIndex, VkQueue* pQueue)
+    {
+        gb::get_device_queue_request request{};
+        request.device = to_object_id(device);
+        request.queue_family_index = queueFamilyIndex;
+        request.queue_index = queueIndex;
+
+        gb::get_device_queue_response response{};
+        if (!bridge_call(gb::ioctl_get_device_queue, &request, sizeof(request), &response, sizeof(response)))
+        {
+            *pQueue = VK_NULL_HANDLE;
+            return;
+        }
+
+        *pQueue = to_handle<VkQueue>(response.queue);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice, const char* pName);
+
     __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance, const char* pName)
     {
         if (!pName)
@@ -148,10 +241,16 @@ extern "C"
 
         static const entry table[] = {
             {"vkGetInstanceProcAddr", reinterpret_cast<PFN_vkVoidFunction>(vkGetInstanceProcAddr)},
+            {"vkGetDeviceProcAddr", reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceProcAddr)},
             {"vkCreateInstance", reinterpret_cast<PFN_vkVoidFunction>(vkCreateInstance)},
             {"vkDestroyInstance", reinterpret_cast<PFN_vkVoidFunction>(vkDestroyInstance)},
             {"vkEnumeratePhysicalDevices", reinterpret_cast<PFN_vkVoidFunction>(vkEnumeratePhysicalDevices)},
             {"vkGetPhysicalDeviceProperties", reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceProperties)},
+            {"vkGetPhysicalDeviceQueueFamilyProperties",
+             reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceQueueFamilyProperties)},
+            {"vkCreateDevice", reinterpret_cast<PFN_vkVoidFunction>(vkCreateDevice)},
+            {"vkDestroyDevice", reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDevice)},
+            {"vkGetDeviceQueue", reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceQueue)},
         };
 
         for (const auto& e : table)
@@ -163,6 +262,12 @@ extern "C"
         }
 
         return nullptr;
+    }
+
+    // Device-level entry points resolve through the same table for this minimal shim.
+    __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice, const char* pName)
+    {
+        return vkGetInstanceProcAddr(VK_NULL_HANDLE, pName);
     }
 
     // Some loaders / probes bootstrap through the ICD-style export instead.

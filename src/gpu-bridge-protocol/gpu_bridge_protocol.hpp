@@ -38,6 +38,10 @@ namespace sogen::gpu_bridge
         destroy_instance = 0x802,
         enumerate_physical_devices = 0x803,
         get_physical_device_properties = 0x804,
+        get_queue_family_properties = 0x805,
+        create_device = 0x806,
+        get_device_queue = 0x807,
+        destroy_device = 0x808,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -47,6 +51,11 @@ namespace sogen::gpu_bridge
         make_ioctl(static_cast<uint32_t>(command::enumerate_physical_devices));
     inline constexpr uint32_t ioctl_get_physical_device_properties =
         make_ioctl(static_cast<uint32_t>(command::get_physical_device_properties));
+    inline constexpr uint32_t ioctl_get_queue_family_properties =
+        make_ioctl(static_cast<uint32_t>(command::get_queue_family_properties));
+    inline constexpr uint32_t ioctl_create_device = make_ioctl(static_cast<uint32_t>(command::create_device));
+    inline constexpr uint32_t ioctl_get_device_queue = make_ioctl(static_cast<uint32_t>(command::get_device_queue));
+    inline constexpr uint32_t ioctl_destroy_device = make_ioctl(static_cast<uint32_t>(command::destroy_device));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -100,5 +109,56 @@ namespace sogen::gpu_bridge
     struct get_physical_device_properties_request
     {
         object_id physical_device;
+    };
+
+    // ioctl_get_queue_family_properties: in
+    struct get_queue_family_properties_request
+    {
+        object_id physical_device;
+        uint32_t max_count; // capacity (in entries) of the array following the response header
+        uint32_t reserved;
+    };
+
+    // ioctl_get_queue_family_properties: out header, followed by `count` raw VkQueueFamilyProperties
+    struct get_queue_family_properties_response
+    {
+        uint32_t count; // true number of queue families on the device
+        uint32_t reserved;
+    };
+
+    // ioctl_create_device: in (single queue from one family; no extensions/features for now)
+    struct create_device_request
+    {
+        object_id physical_device;
+        uint32_t queue_family_index;
+        uint32_t queue_count;
+    };
+
+    // ioctl_create_device: out
+    struct create_device_response
+    {
+        int32_t vk_result;
+        uint32_t reserved;
+        object_id device; // null_object on failure
+    };
+
+    // ioctl_get_device_queue: in
+    struct get_device_queue_request
+    {
+        object_id device;
+        uint32_t queue_family_index;
+        uint32_t queue_index;
+    };
+
+    // ioctl_get_device_queue: out
+    struct get_device_queue_response
+    {
+        object_id queue; // null_object on failure
+    };
+
+    // ioctl_destroy_device: in
+    struct destroy_device_request
+    {
+        object_id device;
     };
 }

@@ -41,6 +41,18 @@ namespace sogen
         // Writes up to out_size bytes of the device's VkPhysicalDeviceProperties into out.
         int32_t get_physical_device_properties(uint64_t physical_device, void* out, size_t out_size);
 
+        // Writes the device's queue families as raw VkQueueFamilyProperties into out (sized in
+        // bytes). out_count always receives the true family count.
+        int32_t get_queue_family_properties(uint64_t physical_device, void* out, size_t out_size, uint32_t& out_count);
+
+        // Creates a logical device with a single queue family (queue_count queues, default priority)
+        // and no extensions/features. out_device receives a fresh object id, or 0 on failure.
+        int32_t create_device(uint64_t physical_device, uint32_t queue_family_index, uint32_t queue_count, uint64_t& out_device);
+        void destroy_device(uint64_t device);
+
+        // Resolves a queue created with the device; out_queue receives a stable object id.
+        int32_t get_device_queue(uint64_t device, uint32_t queue_family_index, uint32_t queue_index, uint64_t& out_queue);
+
       private:
         struct impl;
         std::unique_ptr<impl> impl_;

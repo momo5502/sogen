@@ -77,6 +77,56 @@ int main(int argc, char** argv)
                         VK_API_VERSION_MAJOR(props.apiVersion), VK_API_VERSION_MINOR(props.apiVersion),
                         VK_API_VERSION_PATCH(props.apiVersion));
         }
+
+        // Create a logical device on the first physical device, using a graphics-capable queue family.
+        const auto get_queue_families = reinterpret_cast<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(
+            get_instance_proc(instance, "vkGetPhysicalDeviceQueueFamilyProperties"));
+        const auto create_device = reinterpret_cast<PFN_vkCreateDevice>(get_instance_proc(instance, "vkCreateDevice"));
+        const auto get_device_queue = reinterpret_cast<PFN_vkGetDeviceQueue>(get_instance_proc(instance, "vkGetDeviceQueue"));
+        const auto destroy_device = reinterpret_cast<PFN_vkDestroyDevice>(get_instance_proc(instance, "vkDestroyDevice"));
+
+        uint32_t family_count = 0;
+        get_queue_families(devices[0], &family_count, nullptr);
+        std::vector<VkQueueFamilyProperties> families(family_count);
+        get_queue_families(devices[0], &family_count, families.data());
+
+        uint32_t graphics_family = UINT32_MAX;
+        for (uint32_t i = 0; i < family_count; ++i)
+        {
+            if (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
+            {
+                graphics_family = i;
+                break;
+            }
+        }
+        std::printf("[shim-test] queue families=%u, graphics family=%u\n", family_count, graphics_family);
+
+        if (graphics_family != UINT32_MAX)
+        {
+            const float priority = 1.0f;
+            VkDeviceQueueCreateInfo queue_info{};
+            queue_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            queue_info.queueFamilyIndex = graphics_family;
+            queue_info.queueCount = 1;
+            queue_info.pQueuePriorities = &priority;
+
+            VkDeviceCreateInfo device_info{};
+            device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+            device_info.queueCreateInfoCount = 1;
+            device_info.pQueueCreateInfos = &queue_info;
+
+            VkDevice device = VK_NULL_HANDLE;
+            const VkResult device_result = create_device(devices[0], &device_info, nullptr, &device);
+            std::printf("[shim-test] vkCreateDevice -> %d, device=%p\n", device_result, static_cast<void*>(device));
+
+            if (device_result == VK_SUCCESS && device != VK_NULL_HANDLE)
+            {
+                VkQueue queue = VK_NULL_HANDLE;
+                get_device_queue(device, graphics_family, 0, &queue);
+                std::printf("[shim-test] vkGetDeviceQueue -> queue=%p\n", static_cast<void*>(queue));
+                destroy_device(device, nullptr);
+            }
+        }
     }
 
     if (destroy_instance)
