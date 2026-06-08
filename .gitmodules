@@ -46,3 +46,7 @@
 [submodule "deps/SDL"]
 	path = deps/SDL
 	url = https://github.com/libsdl-org/SDL.git
+[submodule "deps/Vulkan-Headers"]
+	path = deps/Vulkan-Headers
+	url = https://github.com/KhronosGroup/Vulkan-Headers.git
+	shallow = true

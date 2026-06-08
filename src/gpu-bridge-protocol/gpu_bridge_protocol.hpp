@@ -34,14 +34,71 @@ namespace sogen::gpu_bridge
     enum class command : uint32_t
     {
         get_version = 0x800,
+        create_instance = 0x801,
+        destroy_instance = 0x802,
+        enumerate_physical_devices = 0x803,
+        get_physical_device_properties = 0x804,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
+    inline constexpr uint32_t ioctl_create_instance = make_ioctl(static_cast<uint32_t>(command::create_instance));
+    inline constexpr uint32_t ioctl_destroy_instance = make_ioctl(static_cast<uint32_t>(command::destroy_instance));
+    inline constexpr uint32_t ioctl_enumerate_physical_devices =
+        make_ioctl(static_cast<uint32_t>(command::enumerate_physical_devices));
+    inline constexpr uint32_t ioctl_get_physical_device_properties =
+        make_ioctl(static_cast<uint32_t>(command::get_physical_device_properties));
 
-    // Output payload of ioctl_get_version.
+    // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
+    // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
+    // raw host pointers never cross the boundary.
+    using object_id = uint64_t;
+
+    inline constexpr object_id null_object = 0;
+
+    // Real Vulkan structs (VkPhysicalDeviceProperties, ...) ride the wire as raw bytes; both sides
+    // agree on their layout through their own <vulkan/vulkan_core.h>. This keeps the protocol header
+    // dependency-free while still passing native structures unchanged.
+
+    // ioctl_get_version: out
     struct version_response
     {
         uint32_t magic;   // protocol_magic
         uint32_t version; // protocol_version
+    };
+
+    // ioctl_create_instance: out (no input for now; a bare instance with no layers/extensions)
+    struct create_instance_response
+    {
+        int32_t vk_result;  // VkResult from the host
+        uint32_t reserved;  // padding / future flags
+        object_id instance; // null_object on failure
+    };
+
+    // ioctl_destroy_instance: in
+    struct destroy_instance_request
+    {
+        object_id instance;
+    };
+
+    // ioctl_enumerate_physical_devices: in
+    struct enumerate_physical_devices_request
+    {
+        object_id instance;
+        uint32_t max_count; // capacity of the device-id array in the output buffer (after the header)
+        uint32_t reserved;
+    };
+
+    // ioctl_enumerate_physical_devices: out header, immediately followed by `count` object_id entries
+    struct enumerate_physical_devices_response
+    {
+        int32_t vk_result;
+        uint32_t count; // number of physical devices reported by the host
+        // object_id devices[count];
+    };
+
+    // ioctl_get_physical_device_properties: in (out = raw VkPhysicalDeviceProperties bytes)
+    struct get_physical_device_properties_request
+    {
+        object_id physical_device;
     };
 }
