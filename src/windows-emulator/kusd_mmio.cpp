@@ -173,8 +173,9 @@ namespace sogen
         const auto ticks = this->clock_->steady_now();
         const auto duration_100ns =
             std::chrono::duration_cast<std::chrono::duration<uint64_t, std::ratio<1, 10000000>>>(ticks.time_since_epoch()).count();
+        const auto duration_ms = duration_100ns / 10000;
 
-        this->kusd_.TickCount.TickCountQuad = (duration_100ns << 24) / this->kusd_.TickCountMultiplier;
+        this->kusd_.TickCount.TickCountQuad = (duration_ms << 24) / this->kusd_.TickCountMultiplier;
         this->kusd_.TickCount.TickCount.High2Time = this->kusd_.TickCount.TickCount.High1Time;
 
         this->kusd_.InterruptTime.High2Time = static_cast<int32_t>(duration_100ns >> 32);
