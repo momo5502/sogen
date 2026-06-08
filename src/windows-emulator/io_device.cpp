@@ -6,6 +6,7 @@
 #include "devices/security_support_provider.hpp"
 #include "devices/named_pipe.hpp"
 #include "devices/network_store_interface.hpp"
+#include "devices/gpu_bridge.hpp"
 #include <iostream>
 
 namespace sogen
@@ -88,6 +89,11 @@ namespace sogen
         if (device == u"NamedPipe")
         {
             return std::make_unique<named_pipe>();
+        }
+
+        if (device == u"SogenGpu")
+        {
+            return create_gpu_bridge();
         }
 
         if (device == u"Tcp" || device == u"Tcp6" || device == u"Udp" || device == u"RawIp")

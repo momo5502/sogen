@@ -1499,6 +1499,7 @@ namespace sogen
             const std::set<std::u16string, std::less<>> devices{
                 u"Nsi",
                 u"MountPointManager",
+                u"SogenGpu",
             };
 
             if (devices.contains(path))
