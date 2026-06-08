@@ -11,6 +11,74 @@
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan_core.h>
 
+namespace
+{
+    // Records an empty primary command buffer, submits it with a fence, and waits on the fence
+    // through the shim's poll-and-yield vkWaitForFences -- exercising the full submission + sync path
+    // against the host GPU.
+    void submit_and_wait(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance, VkDevice device, VkQueue queue,
+                         uint32_t queue_family)
+    {
+        const auto create_command_pool =
+            reinterpret_cast<PFN_vkCreateCommandPool>(get_instance_proc(instance, "vkCreateCommandPool"));
+        const auto destroy_command_pool =
+            reinterpret_cast<PFN_vkDestroyCommandPool>(get_instance_proc(instance, "vkDestroyCommandPool"));
+        const auto allocate_command_buffers =
+            reinterpret_cast<PFN_vkAllocateCommandBuffers>(get_instance_proc(instance, "vkAllocateCommandBuffers"));
+        const auto begin_command_buffer =
+            reinterpret_cast<PFN_vkBeginCommandBuffer>(get_instance_proc(instance, "vkBeginCommandBuffer"));
+        const auto end_command_buffer =
+            reinterpret_cast<PFN_vkEndCommandBuffer>(get_instance_proc(instance, "vkEndCommandBuffer"));
+        const auto create_fence = reinterpret_cast<PFN_vkCreateFence>(get_instance_proc(instance, "vkCreateFence"));
+        const auto destroy_fence = reinterpret_cast<PFN_vkDestroyFence>(get_instance_proc(instance, "vkDestroyFence"));
+        const auto queue_submit = reinterpret_cast<PFN_vkQueueSubmit>(get_instance_proc(instance, "vkQueueSubmit"));
+        const auto wait_for_fences = reinterpret_cast<PFN_vkWaitForFences>(get_instance_proc(instance, "vkWaitForFences"));
+
+        VkCommandPoolCreateInfo pool_info{};
+        pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        pool_info.queueFamilyIndex = queue_family;
+
+        VkCommandPool pool = VK_NULL_HANDLE;
+        if (create_command_pool(device, &pool_info, nullptr, &pool) != VK_SUCCESS)
+        {
+            std::printf("[shim-test] vkCreateCommandPool failed\n");
+            return;
+        }
+
+        VkCommandBufferAllocateInfo alloc_info{};
+        alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        alloc_info.commandPool = pool;
+        alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        alloc_info.commandBufferCount = 1;
+
+        VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+        allocate_command_buffers(device, &alloc_info, &command_buffer);
+
+        VkCommandBufferBeginInfo begin_info{};
+        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        begin_command_buffer(command_buffer, &begin_info);
+        end_command_buffer(command_buffer);
+
+        VkFenceCreateInfo fence_info{};
+        fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        VkFence fence = VK_NULL_HANDLE;
+        create_fence(device, &fence_info, nullptr, &fence);
+
+        VkSubmitInfo submit{};
+        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &command_buffer;
+
+        const VkResult submit_result = queue_submit(queue, 1, &submit, fence);
+        const VkResult wait_result = wait_for_fences(device, 1, &fence, VK_TRUE, 1000000000ULL /* 1s */);
+        std::printf("[shim-test] vkQueueSubmit -> %d, vkWaitForFences -> %d\n", submit_result, wait_result);
+
+        destroy_fence(device, fence, nullptr);
+        destroy_command_pool(device, pool, nullptr);
+    }
+}
+
 int main(int argc, char** argv)
 {
     const char* dll = (argc > 1) ? argv[1] : "vulkan-shim.dll";
@@ -124,6 +192,9 @@ int main(int argc, char** argv)
                 VkQueue queue = VK_NULL_HANDLE;
                 get_device_queue(device, graphics_family, 0, &queue);
                 std::printf("[shim-test] vkGetDeviceQueue -> queue=%p\n", static_cast<void*>(queue));
+
+                submit_and_wait(get_instance_proc, instance, device, queue, graphics_family);
+
                 destroy_device(device, nullptr);
             }
         }

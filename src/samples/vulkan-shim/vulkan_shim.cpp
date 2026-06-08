@@ -224,6 +224,232 @@ extern "C"
         *pQueue = to_handle<VkQueue>(response.queue);
     }
 
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateCommandPool(VkDevice device,
+                                                                            const VkCommandPoolCreateInfo* pCreateInfo,
+                                                                            const VkAllocationCallbacks*, VkCommandPool* pCommandPool)
+    {
+        gb::create_command_pool_request request{};
+        request.device = to_object_id(device);
+        request.queue_family_index = pCreateInfo ? pCreateInfo->queueFamilyIndex : 0;
+        request.flags = pCreateInfo ? pCreateInfo->flags : 0;
+
+        gb::create_command_pool_response response{};
+        if (!bridge_call(gb::ioctl_create_command_pool, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+
+        *pCommandPool = to_handle<VkCommandPool>(response.command_pool);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyCommandPool(VkDevice device, VkCommandPool commandPool,
+                                                                          const VkAllocationCallbacks*)
+    {
+        gb::destroy_command_pool_request request{};
+        request.device = to_object_id(device);
+        request.command_pool = to_object_id(commandPool);
+        bridge_call(gb::ioctl_destroy_command_pool, &request, sizeof(request), nullptr, 0);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkAllocateCommandBuffers(VkDevice device,
+                                                                                  const VkCommandBufferAllocateInfo* pAllocateInfo,
+                                                                                  VkCommandBuffer* pCommandBuffers)
+    {
+        for (uint32_t i = 0; i < pAllocateInfo->commandBufferCount; ++i)
+        {
+            gb::allocate_command_buffer_request request{};
+            request.device = to_object_id(device);
+            request.command_pool = to_object_id(pAllocateInfo->commandPool);
+
+            gb::allocate_command_buffer_response response{};
+            if (!bridge_call(gb::ioctl_allocate_command_buffer, &request, sizeof(request), &response, sizeof(response)) ||
+                response.vk_result != VK_SUCCESS)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+
+            pCommandBuffers[i] = to_handle<VkCommandBuffer>(response.command_buffer);
+        }
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkFreeCommandBuffers(VkDevice device, VkCommandPool commandPool,
+                                                                          uint32_t commandBufferCount,
+                                                                          const VkCommandBuffer* pCommandBuffers)
+    {
+        for (uint32_t i = 0; i < commandBufferCount; ++i)
+        {
+            gb::free_command_buffer_request request{};
+            request.device = to_object_id(device);
+            request.command_pool = to_object_id(commandPool);
+            request.command_buffer = to_object_id(pCommandBuffers[i]);
+            bridge_call(gb::ioctl_free_command_buffer, &request, sizeof(request), nullptr, 0);
+        }
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkBeginCommandBuffer(VkCommandBuffer commandBuffer,
+                                                                             const VkCommandBufferBeginInfo* pBeginInfo)
+    {
+        gb::begin_command_buffer_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.flags = pBeginInfo ? pBeginInfo->flags : 0;
+
+        gb::result_response response{};
+        if (!bridge_call(gb::ioctl_begin_command_buffer, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return static_cast<VkResult>(response.vk_result);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkEndCommandBuffer(VkCommandBuffer commandBuffer)
+    {
+        gb::end_command_buffer_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+
+        gb::result_response response{};
+        if (!bridge_call(gb::ioctl_end_command_buffer, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return static_cast<VkResult>(response.vk_result);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateFence(VkDevice device, const VkFenceCreateInfo* pCreateInfo,
+                                                                      const VkAllocationCallbacks*, VkFence* pFence)
+    {
+        gb::create_fence_request request{};
+        request.device = to_object_id(device);
+        request.flags = pCreateInfo ? pCreateInfo->flags : 0;
+
+        gb::create_fence_response response{};
+        if (!bridge_call(gb::ioctl_create_fence, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+
+        *pFence = to_handle<VkFence>(response.fence);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyFence(VkDevice device, VkFence fence, const VkAllocationCallbacks*)
+    {
+        gb::destroy_fence_request request{};
+        request.device = to_object_id(device);
+        request.fence = to_object_id(fence);
+        bridge_call(gb::ioctl_destroy_fence, &request, sizeof(request), nullptr, 0);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkResetFences(VkDevice device, uint32_t fenceCount,
+                                                                      const VkFence* pFences)
+    {
+        for (uint32_t i = 0; i < fenceCount; ++i)
+        {
+            gb::reset_fence_request request{};
+            request.device = to_object_id(device);
+            request.fence = to_object_id(pFences[i]);
+
+            gb::result_response response{};
+            if (!bridge_call(gb::ioctl_reset_fence, &request, sizeof(request), &response, sizeof(response)) ||
+                response.vk_result != VK_SUCCESS)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+        }
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetFenceStatus(VkDevice, VkFence fence)
+    {
+        gb::get_fence_status_request request{};
+        request.fence = to_object_id(fence);
+
+        gb::result_response response{};
+        if (!bridge_call(gb::ioctl_get_fence_status, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return static_cast<VkResult>(response.vk_result);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit(VkQueue queue, uint32_t submitCount,
+                                                                      const VkSubmitInfo* pSubmits, VkFence fence)
+    {
+        // Count the command buffers so the fence can be attached to the final submission only.
+        uint32_t total = 0;
+        for (uint32_t s = 0; s < submitCount; ++s)
+        {
+            total += pSubmits[s].commandBufferCount;
+        }
+
+        uint32_t emitted = 0;
+        for (uint32_t s = 0; s < submitCount; ++s)
+        {
+            for (uint32_t i = 0; i < pSubmits[s].commandBufferCount; ++i)
+            {
+                ++emitted;
+
+                gb::queue_submit_request request{};
+                request.queue = to_object_id(queue);
+                request.command_buffer = to_object_id(pSubmits[s].pCommandBuffers[i]);
+                request.fence = (emitted == total) ? to_object_id(fence) : gb::null_object;
+
+                gb::result_response response{};
+                if (!bridge_call(gb::ioctl_queue_submit, &request, sizeof(request), &response, sizeof(response)) ||
+                    response.vk_result != VK_SUCCESS)
+                {
+                    return VK_ERROR_INITIALIZATION_FAILED;
+                }
+            }
+        }
+        return VK_SUCCESS;
+    }
+
+    // Poll-and-yield: the host endpoint only ever does a non-blocking vkGetFenceStatus, so the host
+    // thread is never blocked on the GPU. We spin here, yielding to the emulator between polls, until
+    // the fence(s) signal or the timeout elapses. The real GPU makes progress independently of the
+    // emulator thread, so the fence eventually signals.
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkWaitForFences(VkDevice device, uint32_t fenceCount,
+                                                                        const VkFence* pFences, VkBool32 waitAll,
+                                                                        uint64_t timeout)
+    {
+        const ULONGLONG start = GetTickCount64();
+        const ULONGLONG timeout_ms = (timeout == UINT64_MAX) ? UINT64_MAX : (timeout / 1000000ULL);
+
+        for (;;)
+        {
+            uint32_t signaled = 0;
+            for (uint32_t i = 0; i < fenceCount; ++i)
+            {
+                if (vkGetFenceStatus(device, pFences[i]) == VK_SUCCESS)
+                {
+                    ++signaled;
+                }
+            }
+
+            if (waitAll ? (signaled == fenceCount) : (signaled > 0))
+            {
+                return VK_SUCCESS;
+            }
+
+            if (timeout_ms != UINT64_MAX && (GetTickCount64() - start) >= timeout_ms)
+            {
+                return VK_TIMEOUT;
+            }
+
+            SwitchToThread();
+        }
+    }
+
     __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice, const char* pName);
 
     __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance, const char* pName)
@@ -252,6 +478,18 @@ extern "C"
             {.name = "vkCreateDevice", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateDevice)},
             {.name = "vkDestroyDevice", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDevice)},
             {.name = "vkGetDeviceQueue", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceQueue)},
+            {.name = "vkCreateCommandPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateCommandPool)},
+            {.name = "vkDestroyCommandPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyCommandPool)},
+            {.name = "vkAllocateCommandBuffers", .func = reinterpret_cast<PFN_vkVoidFunction>(vkAllocateCommandBuffers)},
+            {.name = "vkFreeCommandBuffers", .func = reinterpret_cast<PFN_vkVoidFunction>(vkFreeCommandBuffers)},
+            {.name = "vkBeginCommandBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkBeginCommandBuffer)},
+            {.name = "vkEndCommandBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkEndCommandBuffer)},
+            {.name = "vkCreateFence", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateFence)},
+            {.name = "vkDestroyFence", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyFence)},
+            {.name = "vkResetFences", .func = reinterpret_cast<PFN_vkVoidFunction>(vkResetFences)},
+            {.name = "vkGetFenceStatus", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetFenceStatus)},
+            {.name = "vkQueueSubmit", .func = reinterpret_cast<PFN_vkVoidFunction>(vkQueueSubmit)},
+            {.name = "vkWaitForFences", .func = reinterpret_cast<PFN_vkVoidFunction>(vkWaitForFences)},
         };
 
         for (const auto& e : table)

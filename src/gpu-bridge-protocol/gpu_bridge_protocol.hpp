@@ -42,6 +42,17 @@ namespace sogen::gpu_bridge
         create_device = 0x806,
         get_device_queue = 0x807,
         destroy_device = 0x808,
+        create_command_pool = 0x809,
+        destroy_command_pool = 0x80A,
+        allocate_command_buffer = 0x80B,
+        free_command_buffer = 0x80C,
+        begin_command_buffer = 0x80D,
+        end_command_buffer = 0x80E,
+        create_fence = 0x80F,
+        destroy_fence = 0x810,
+        reset_fence = 0x811,
+        get_fence_status = 0x812,
+        queue_submit = 0x813,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -56,6 +67,17 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_create_device = make_ioctl(static_cast<uint32_t>(command::create_device));
     inline constexpr uint32_t ioctl_get_device_queue = make_ioctl(static_cast<uint32_t>(command::get_device_queue));
     inline constexpr uint32_t ioctl_destroy_device = make_ioctl(static_cast<uint32_t>(command::destroy_device));
+    inline constexpr uint32_t ioctl_create_command_pool = make_ioctl(static_cast<uint32_t>(command::create_command_pool));
+    inline constexpr uint32_t ioctl_destroy_command_pool = make_ioctl(static_cast<uint32_t>(command::destroy_command_pool));
+    inline constexpr uint32_t ioctl_allocate_command_buffer = make_ioctl(static_cast<uint32_t>(command::allocate_command_buffer));
+    inline constexpr uint32_t ioctl_free_command_buffer = make_ioctl(static_cast<uint32_t>(command::free_command_buffer));
+    inline constexpr uint32_t ioctl_begin_command_buffer = make_ioctl(static_cast<uint32_t>(command::begin_command_buffer));
+    inline constexpr uint32_t ioctl_end_command_buffer = make_ioctl(static_cast<uint32_t>(command::end_command_buffer));
+    inline constexpr uint32_t ioctl_create_fence = make_ioctl(static_cast<uint32_t>(command::create_fence));
+    inline constexpr uint32_t ioctl_destroy_fence = make_ioctl(static_cast<uint32_t>(command::destroy_fence));
+    inline constexpr uint32_t ioctl_reset_fence = make_ioctl(static_cast<uint32_t>(command::reset_fence));
+    inline constexpr uint32_t ioctl_get_fence_status = make_ioctl(static_cast<uint32_t>(command::get_fence_status));
+    inline constexpr uint32_t ioctl_queue_submit = make_ioctl(static_cast<uint32_t>(command::queue_submit));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -160,5 +182,118 @@ namespace sogen::gpu_bridge
     struct destroy_device_request
     {
         object_id device;
+    };
+
+    // Generic output for commands that only report a VkResult.
+    struct result_response
+    {
+        int32_t vk_result;
+        uint32_t reserved;
+    };
+
+    // ioctl_create_command_pool: in (flags = VkCommandPoolCreateFlags)
+    struct create_command_pool_request
+    {
+        object_id device;
+        uint32_t queue_family_index;
+        uint32_t flags;
+    };
+
+    // ioctl_create_command_pool: out
+    struct create_command_pool_response
+    {
+        int32_t vk_result;
+        uint32_t reserved;
+        object_id command_pool;
+    };
+
+    // ioctl_destroy_command_pool: in
+    struct destroy_command_pool_request
+    {
+        object_id device;
+        object_id command_pool;
+    };
+
+    // ioctl_allocate_command_buffer: in (a single primary command buffer)
+    struct allocate_command_buffer_request
+    {
+        object_id device;
+        object_id command_pool;
+    };
+
+    // ioctl_allocate_command_buffer: out
+    struct allocate_command_buffer_response
+    {
+        int32_t vk_result;
+        uint32_t reserved;
+        object_id command_buffer;
+    };
+
+    // ioctl_free_command_buffer: in
+    struct free_command_buffer_request
+    {
+        object_id device;
+        object_id command_pool;
+        object_id command_buffer;
+    };
+
+    // ioctl_begin_command_buffer: in (flags = VkCommandBufferUsageFlags); out = result_response
+    struct begin_command_buffer_request
+    {
+        object_id command_buffer;
+        uint32_t flags;
+        uint32_t reserved;
+    };
+
+    // ioctl_end_command_buffer: in; out = result_response
+    struct end_command_buffer_request
+    {
+        object_id command_buffer;
+    };
+
+    // ioctl_create_fence: in (flags = VkFenceCreateFlags, e.g. VK_FENCE_CREATE_SIGNALED_BIT)
+    struct create_fence_request
+    {
+        object_id device;
+        uint32_t flags;
+        uint32_t reserved;
+    };
+
+    // ioctl_create_fence: out
+    struct create_fence_response
+    {
+        int32_t vk_result;
+        uint32_t reserved;
+        object_id fence;
+    };
+
+    // ioctl_destroy_fence: in
+    struct destroy_fence_request
+    {
+        object_id device;
+        object_id fence;
+    };
+
+    // ioctl_reset_fence: in; out = result_response
+    struct reset_fence_request
+    {
+        object_id device;
+        object_id fence;
+    };
+
+    // ioctl_get_fence_status: in; out = result_response with vk_result = VK_SUCCESS (signaled) /
+    // VK_NOT_READY (unsignaled). This is the non-blocking poll the guest spins on while yielding, so
+    // the host thread is never blocked on the GPU.
+    struct get_fence_status_request
+    {
+        object_id fence;
+    };
+
+    // ioctl_queue_submit: in (one command buffer, optional fence, no semaphores); out = result_response
+    struct queue_submit_request
+    {
+        object_id queue;
+        object_id command_buffer;
+        object_id fence; // null_object for no fence
     };
 }

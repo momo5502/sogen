@@ -40,6 +40,28 @@ namespace sogen
                     return handle_get_device_queue(win_emu, context);
                 case gpu_bridge::ioctl_destroy_device:
                     return handle_destroy_device(win_emu, context);
+                case gpu_bridge::ioctl_create_command_pool:
+                    return handle_create_command_pool(win_emu, context);
+                case gpu_bridge::ioctl_destroy_command_pool:
+                    return handle_destroy_command_pool(win_emu, context);
+                case gpu_bridge::ioctl_allocate_command_buffer:
+                    return handle_allocate_command_buffer(win_emu, context);
+                case gpu_bridge::ioctl_free_command_buffer:
+                    return handle_free_command_buffer(win_emu, context);
+                case gpu_bridge::ioctl_begin_command_buffer:
+                    return handle_begin_command_buffer(win_emu, context);
+                case gpu_bridge::ioctl_end_command_buffer:
+                    return handle_end_command_buffer(win_emu, context);
+                case gpu_bridge::ioctl_create_fence:
+                    return handle_create_fence(win_emu, context);
+                case gpu_bridge::ioctl_destroy_fence:
+                    return handle_destroy_fence(win_emu, context);
+                case gpu_bridge::ioctl_reset_fence:
+                    return handle_reset_fence(win_emu, context);
+                case gpu_bridge::ioctl_get_fence_status:
+                    return handle_get_fence_status(win_emu, context);
+                case gpu_bridge::ioctl_queue_submit:
+                    return handle_queue_submit(win_emu, context);
 
                 default:
                     win_emu.log.warn("[gpu-bridge] Unsupported IOCTL: 0x%X\n", context.io_control_code);
@@ -65,6 +87,31 @@ namespace sogen
                     context.io_status_block.access(
                         [&](IO_STATUS_BLOCK<EmulatorTraits<Emu64>>& block) { block.Information = bytes; });
                 }
+            }
+
+            // Reads a fixed-size request struct from the guest input buffer.
+            template <typename Request>
+            static bool read_input(windows_emulator& win_emu, const io_device_context& context, Request& out)
+            {
+                if (!context.input_buffer || context.input_buffer_length < sizeof(Request))
+                {
+                    return false;
+                }
+                out = emulator_object<Request>{win_emu.emu(), context.input_buffer}.read();
+                return true;
+            }
+
+            // Writes a fixed-size response struct to the guest output buffer and records its size.
+            template <typename Response>
+            static NTSTATUS write_output(windows_emulator& win_emu, const io_device_context& context, const Response& response)
+            {
+                if (!context.output_buffer || context.output_buffer_length < sizeof(Response))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+                emulator_object<Response>{win_emu.emu(), context.output_buffer}.write(response);
+                set_information(context, static_cast<ULONG>(sizeof(Response)));
+                return STATUS_SUCCESS;
             }
 
             static NTSTATUS handle_get_version(windows_emulator& win_emu, const io_device_context& context)
@@ -302,6 +349,146 @@ namespace sogen
 
                 this->vulkan_.destroy_device(request.device);
                 return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_create_command_pool(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::create_command_pool_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                uint64_t pool = gpu_bridge::null_object;
+                const int32_t result =
+                    this->vulkan_.create_command_pool(request.device, request.queue_family_index, request.flags, pool);
+                return write_output(win_emu, context,
+                                    gpu_bridge::create_command_pool_response{.vk_result = result, .reserved = 0, .command_pool = pool});
+            }
+
+            NTSTATUS handle_destroy_command_pool(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::destroy_command_pool_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                this->vulkan_.destroy_command_pool(request.device, request.command_pool);
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_allocate_command_buffer(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::allocate_command_buffer_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                uint64_t command_buffer = gpu_bridge::null_object;
+                const int32_t result = this->vulkan_.allocate_command_buffer(request.device, request.command_pool, command_buffer);
+                return write_output(
+                    win_emu, context,
+                    gpu_bridge::allocate_command_buffer_response{.vk_result = result, .reserved = 0, .command_buffer = command_buffer});
+            }
+
+            NTSTATUS handle_free_command_buffer(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::free_command_buffer_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                this->vulkan_.free_command_buffer(request.device, request.command_pool, request.command_buffer);
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_begin_command_buffer(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::begin_command_buffer_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result = this->vulkan_.begin_command_buffer(request.command_buffer, request.flags);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_end_command_buffer(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::end_command_buffer_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result = this->vulkan_.end_command_buffer(request.command_buffer);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_create_fence(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::create_fence_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                uint64_t fence = gpu_bridge::null_object;
+                const int32_t result = this->vulkan_.create_fence(request.device, request.flags, fence);
+                return write_output(win_emu, context,
+                                    gpu_bridge::create_fence_response{.vk_result = result, .reserved = 0, .fence = fence});
+            }
+
+            NTSTATUS handle_destroy_fence(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::destroy_fence_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                this->vulkan_.destroy_fence(request.device, request.fence);
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_reset_fence(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::reset_fence_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result = this->vulkan_.reset_fence(request.device, request.fence);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_get_fence_status(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::get_fence_status_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result = this->vulkan_.get_fence_status(request.fence);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_queue_submit(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::queue_submit_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result = this->vulkan_.queue_submit(request.queue, request.command_buffer, request.fence);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
         };
     }

@@ -95,6 +95,17 @@ namespace sogen
             uint64_t instance_id{};
             PFN_vkDestroyDevice destroy_device{};
             PFN_vkGetDeviceQueue get_device_queue{};
+            PFN_vkCreateCommandPool create_command_pool{};
+            PFN_vkDestroyCommandPool destroy_command_pool{};
+            PFN_vkAllocateCommandBuffers allocate_command_buffers{};
+            PFN_vkFreeCommandBuffers free_command_buffers{};
+            PFN_vkBeginCommandBuffer begin_command_buffer{};
+            PFN_vkEndCommandBuffer end_command_buffer{};
+            PFN_vkCreateFence create_fence{};
+            PFN_vkDestroyFence destroy_fence{};
+            PFN_vkResetFences reset_fences{};
+            PFN_vkGetFenceStatus get_fence_status{};
+            PFN_vkQueueSubmit queue_submit{};
         };
 
         std::unordered_map<uint64_t, instance_data> instances;
@@ -106,9 +117,40 @@ namespace sogen
             uint64_t device_id{};
         };
 
+        struct command_pool_data
+        {
+            VkCommandPool handle{};
+            uint64_t device_id{};
+        };
+
+        struct command_buffer_data
+        {
+            VkCommandBuffer handle{};
+            uint64_t device_id{};
+            uint64_t pool_id{};
+        };
+
+        struct fence_data
+        {
+            VkFence handle{};
+            uint64_t device_id{};
+        };
+
         std::unordered_map<uint64_t, device_data> devices;
         std::unordered_map<uint64_t, queue_data> queues;
+        std::unordered_map<uint64_t, command_pool_data> command_pools;
+        std::unordered_map<uint64_t, command_buffer_data> command_buffers;
+        std::unordered_map<uint64_t, fence_data> fences;
         uint64_t next_id{1};
+
+        template <typename Map, typename Pred>
+        void erase_owned(Map& map, Pred pred)
+        {
+            for (auto it = map.begin(); it != map.end();)
+            {
+                it = pred(it->second) ? map.erase(it) : std::next(it);
+            }
+        }
 
         void erase_device(uint64_t device_id)
         {
@@ -118,14 +160,31 @@ namespace sogen
                 return;
             }
 
+            // Destroy GPU-owned children (pools free their command buffers; fences are freed) before
+            // the device itself.
+            for (auto& [id, pool] : this->command_pools)
+            {
+                if (pool.device_id == device_id && pool.handle && it->second.destroy_command_pool)
+                {
+                    it->second.destroy_command_pool(it->second.handle, pool.handle, nullptr);
+                }
+            }
+            for (auto& [id, fence] : this->fences)
+            {
+                if (fence.device_id == device_id && fence.handle && it->second.destroy_fence)
+                {
+                    it->second.destroy_fence(it->second.handle, fence.handle, nullptr);
+                }
+            }
+
+            this->erase_owned(this->command_buffers, [&](const command_buffer_data& d) { return d.device_id == device_id; });
+            this->erase_owned(this->command_pools, [&](const command_pool_data& d) { return d.device_id == device_id; });
+            this->erase_owned(this->fences, [&](const fence_data& d) { return d.device_id == device_id; });
+            this->erase_owned(this->queues, [&](const queue_data& d) { return d.device_id == device_id; });
+
             if (it->second.handle && it->second.destroy_device)
             {
                 it->second.destroy_device(it->second.handle, nullptr);
-            }
-
-            for (auto q = this->queues.begin(); q != this->queues.end();)
-            {
-                q = (q->second.device_id == device_id) ? this->queues.erase(q) : std::next(q);
             }
 
             this->devices.erase(it);
@@ -432,12 +491,23 @@ namespace sogen
         data.handle = device;
         data.instance_id = pd->second.instance_id;
 
-        if (instance->second.get_device_proc_addr)
+        if (const auto gdpa = instance->second.get_device_proc_addr)
         {
-            data.destroy_device =
-                reinterpret_cast<PFN_vkDestroyDevice>(instance->second.get_device_proc_addr(device, "vkDestroyDevice"));
-            data.get_device_queue =
-                reinterpret_cast<PFN_vkGetDeviceQueue>(instance->second.get_device_proc_addr(device, "vkGetDeviceQueue"));
+            const auto resolve = [&](const char* name) { return gdpa(device, name); };
+
+            data.destroy_device = reinterpret_cast<PFN_vkDestroyDevice>(resolve("vkDestroyDevice"));
+            data.get_device_queue = reinterpret_cast<PFN_vkGetDeviceQueue>(resolve("vkGetDeviceQueue"));
+            data.create_command_pool = reinterpret_cast<PFN_vkCreateCommandPool>(resolve("vkCreateCommandPool"));
+            data.destroy_command_pool = reinterpret_cast<PFN_vkDestroyCommandPool>(resolve("vkDestroyCommandPool"));
+            data.allocate_command_buffers = reinterpret_cast<PFN_vkAllocateCommandBuffers>(resolve("vkAllocateCommandBuffers"));
+            data.free_command_buffers = reinterpret_cast<PFN_vkFreeCommandBuffers>(resolve("vkFreeCommandBuffers"));
+            data.begin_command_buffer = reinterpret_cast<PFN_vkBeginCommandBuffer>(resolve("vkBeginCommandBuffer"));
+            data.end_command_buffer = reinterpret_cast<PFN_vkEndCommandBuffer>(resolve("vkEndCommandBuffer"));
+            data.create_fence = reinterpret_cast<PFN_vkCreateFence>(resolve("vkCreateFence"));
+            data.destroy_fence = reinterpret_cast<PFN_vkDestroyFence>(resolve("vkDestroyFence"));
+            data.reset_fences = reinterpret_cast<PFN_vkResetFences>(resolve("vkResetFences"));
+            data.get_fence_status = reinterpret_cast<PFN_vkGetFenceStatus>(resolve("vkGetFenceStatus"));
+            data.queue_submit = reinterpret_cast<PFN_vkQueueSubmit>(resolve("vkQueueSubmit"));
         }
 
         const uint64_t id = this->impl_->next_id++;
@@ -472,5 +542,249 @@ namespace sogen
         this->impl_->queues.emplace(id, impl::queue_data{.handle = queue, .device_id = device});
         out_queue = id;
         return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::create_command_pool(uint64_t device, uint32_t queue_family_index, uint32_t flags, uint64_t& out_pool)
+    {
+        out_pool = 0;
+
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end() || !dev->second.create_command_pool)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkCommandPoolCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        info.flags = flags;
+        info.queueFamilyIndex = queue_family_index;
+
+        VkCommandPool pool{};
+        const VkResult result = dev->second.create_command_pool(dev->second.handle, &info, nullptr, &pool);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->command_pools.emplace(id, impl::command_pool_data{.handle = pool, .device_id = device});
+        out_pool = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::destroy_command_pool(uint64_t device, uint64_t pool)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->command_pools.find(pool);
+        if (it == this->impl_->command_pools.end())
+        {
+            return;
+        }
+
+        if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_command_pool)
+        {
+            dev->second.destroy_command_pool(dev->second.handle, it->second.handle, nullptr);
+        }
+
+        // Command buffers from this pool are freed implicitly by the driver; drop their ids.
+        this->impl_->erase_owned(this->impl_->command_buffers,
+                                 [&](const impl::command_buffer_data& d) { return d.pool_id == pool; });
+        this->impl_->command_pools.erase(it);
+    }
+
+    int32_t vulkan_host::allocate_command_buffer(uint64_t device, uint64_t pool, uint64_t& out_command_buffer)
+    {
+        out_command_buffer = 0;
+
+        const auto dev = this->impl_->devices.find(device);
+        const auto pool_it = this->impl_->command_pools.find(pool);
+        if (dev == this->impl_->devices.end() || pool_it == this->impl_->command_pools.end() ||
+            !dev->second.allocate_command_buffers)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkCommandBufferAllocateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        info.commandPool = pool_it->second.handle;
+        info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        info.commandBufferCount = 1;
+
+        VkCommandBuffer command_buffer{};
+        const VkResult result = dev->second.allocate_command_buffers(dev->second.handle, &info, &command_buffer);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->command_buffers.emplace(
+            id, impl::command_buffer_data{.handle = command_buffer, .device_id = device, .pool_id = pool});
+        out_command_buffer = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::free_command_buffer(uint64_t device, uint64_t pool, uint64_t command_buffer)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto pool_it = this->impl_->command_pools.find(pool);
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return;
+        }
+
+        if (dev != this->impl_->devices.end() && pool_it != this->impl_->command_pools.end() && cb->second.handle &&
+            dev->second.free_command_buffers)
+        {
+            dev->second.free_command_buffers(dev->second.handle, pool_it->second.handle, 1, &cb->second.handle);
+        }
+
+        this->impl_->command_buffers.erase(cb);
+    }
+
+    int32_t vulkan_host::begin_command_buffer(uint64_t command_buffer, uint32_t flags)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.begin_command_buffer)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkCommandBufferBeginInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        info.flags = flags;
+
+        return dev->second.begin_command_buffer(cb->second.handle, &info);
+    }
+
+    int32_t vulkan_host::end_command_buffer(uint64_t command_buffer)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.end_command_buffer)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        return dev->second.end_command_buffer(cb->second.handle);
+    }
+
+    int32_t vulkan_host::create_fence(uint64_t device, uint32_t flags, uint64_t& out_fence)
+    {
+        out_fence = 0;
+
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end() || !dev->second.create_fence)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkFenceCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        info.flags = flags;
+
+        VkFence fence{};
+        const VkResult result = dev->second.create_fence(dev->second.handle, &info, nullptr, &fence);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->fences.emplace(id, impl::fence_data{.handle = fence, .device_id = device});
+        out_fence = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::destroy_fence(uint64_t device, uint64_t fence)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->fences.find(fence);
+        if (it == this->impl_->fences.end())
+        {
+            return;
+        }
+
+        if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_fence)
+        {
+            dev->second.destroy_fence(dev->second.handle, it->second.handle, nullptr);
+        }
+
+        this->impl_->fences.erase(it);
+    }
+
+    int32_t vulkan_host::reset_fence(uint64_t device, uint64_t fence)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->fences.find(fence);
+        if (dev == this->impl_->devices.end() || it == this->impl_->fences.end() || !dev->second.reset_fences)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        return dev->second.reset_fences(dev->second.handle, 1, &it->second.handle);
+    }
+
+    int32_t vulkan_host::get_fence_status(uint64_t fence)
+    {
+        const auto it = this->impl_->fences.find(fence);
+        if (it == this->impl_->fences.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto dev = this->impl_->devices.find(it->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.get_fence_status)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        return dev->second.get_fence_status(dev->second.handle, it->second.handle);
+    }
+
+    int32_t vulkan_host::queue_submit(uint64_t queue, uint64_t command_buffer, uint64_t fence)
+    {
+        const auto queue_it = this->impl_->queues.find(queue);
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (queue_it == this->impl_->queues.end() || cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto dev = this->impl_->devices.find(queue_it->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.queue_submit)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkFence fence_handle = VK_NULL_HANDLE;
+        if (fence != 0)
+        {
+            const auto fence_it = this->impl_->fences.find(fence);
+            if (fence_it == this->impl_->fences.end())
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            fence_handle = fence_it->second.handle;
+        }
+
+        VkSubmitInfo submit{};
+        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &cb->second.handle;
+
+        return dev->second.queue_submit(queue_it->second.handle, 1, &submit, fence_handle);
     }
 }

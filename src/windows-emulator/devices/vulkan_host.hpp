@@ -53,6 +53,26 @@ namespace sogen
         // Resolves a queue created with the device; out_queue receives a stable object id.
         int32_t get_device_queue(uint64_t device, uint32_t queue_family_index, uint32_t queue_index, uint64_t& out_queue);
 
+        int32_t create_command_pool(uint64_t device, uint32_t queue_family_index, uint32_t flags, uint64_t& out_pool);
+        void destroy_command_pool(uint64_t device, uint64_t pool);
+
+        // Allocates a single primary command buffer from the pool.
+        int32_t allocate_command_buffer(uint64_t device, uint64_t pool, uint64_t& out_command_buffer);
+        void free_command_buffer(uint64_t device, uint64_t pool, uint64_t command_buffer);
+
+        int32_t begin_command_buffer(uint64_t command_buffer, uint32_t flags);
+        int32_t end_command_buffer(uint64_t command_buffer);
+
+        int32_t create_fence(uint64_t device, uint32_t flags, uint64_t& out_fence);
+        void destroy_fence(uint64_t device, uint64_t fence);
+        int32_t reset_fence(uint64_t device, uint64_t fence);
+
+        // Non-blocking: returns VK_SUCCESS if signaled, VK_NOT_READY otherwise. Never waits.
+        int32_t get_fence_status(uint64_t fence);
+
+        // Submits a single command buffer to the queue, optionally signaling the fence (0 = none).
+        int32_t queue_submit(uint64_t queue, uint64_t command_buffer, uint64_t fence);
+
       private:
         struct impl;
         std::unique_ptr<impl> impl_;
