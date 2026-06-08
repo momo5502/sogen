@@ -80,10 +80,12 @@ so those are handled by generated marshalling (see below).
 
 ## Status — done
 
-All verified end-to-end in the emulator against the host's real GPUs (an Intel UHD 630 + an Nvidia
-Quadro P2000 on the dev machine). Each slice is one commit on `gpu-bridge-device`; release builds
-clean, the `tidy` (clang-tidy) preset is clean, and `analyzer.exe -s test-sample.exe` smoke tests
-pass throughout.
+All verified end-to-end against a real Vulkan driver — the dev machine's real GPUs (an Intel UHD 630 +
+an Nvidia Quadro P2000) and, on a GPU-less box, **SwiftShader** dropped in as a software ICD. The
+windowed samples additionally run as **native** Vulkan apps against a real GPU (loading `vulkan-1.dll`
+instead of the shim). Each slice is one commit (or merge) on `gpu-bridge-device`; release builds clean,
+the `tidy` (clang-tidy) preset is clean, and `analyzer.exe -s test-sample.exe` smoke tests pass
+throughout.
 
 ### M1 — minimal remoting (complete)
 
@@ -174,11 +176,33 @@ plus the surrounding calls needed to actually use them:
   compiler.
 
 - **Push constants + a spinning-triangle sample.** Adds `vkCmdPushConstants` and a push-constant range
-  on the pipeline layout. New `vulkan-spinning-triangle-sample` rotates the triangle by a push-constant
-  angle and shows its FPS in the window title. The Vulkan samples are also valid *native* WSI apps —
-  loading the real `vulkan-1.dll` instead of the shim runs them against a real GPU — so they now handle
-  `VK_SUBOPTIMAL_KHR` (a success code real drivers return) and serialize each frame with a fence rather
-  than relying on the bridge's implicit `vkQueueWaitIdle` on present.
+  on the pipeline layout — enough for a shader to read small per-frame data without a vertex/uniform
+  buffer. New guest sample `vulkan-spinning-triangle-sample` rotates the triangle by a push-constant
+  angle and shows its frame rate in the window title. The rotation angle advances per *frame* (not per
+  wall-clock second) because the emulated tick counter does not track real time across host-side blocks,
+  and the FPS is measured from the system time (`GetSystemTimeAsFileTime`) rather than `GetTickCount`.
+
+- **Running the samples on a real driver (not just the bridge).** Each Vulkan sample doubles as an
+  ordinary native Vulkan app: load the real `vulkan-1.dll` instead of the shim (`… .exe vulkan-1.dll`)
+  and it runs against a real GPU. This is a strong correctness check on the shim's API fidelity — the
+  *same* binary runs through the bridge and against a real loader — and it surfaced (and fixed) several
+  real-WSI requirements the bridge had masked:
+  - **`VK_SUBOPTIMAL_KHR`** is a success code real drivers return from acquire/present; the samples treat
+    it as non-fatal instead of bailing.
+  - **Per-frame fence sync** — each frame waits on a fence before presenting, instead of relying on the
+    bridge's implicit `vkQueueWaitIdle` (a real driver does not serialize frames for you).
+  - **Swapchain extent matching** — `vkGetPhysicalDeviceSurfaceCapabilitiesKHR` is remoted, and the
+    samples size the swapchain/viewport/framebuffers/render-area to `caps.currentExtent` (the surface's
+    client area in *physical* pixels). Hardcoding the window size made a real driver reject the present
+    with `VK_ERROR_OUT_OF_DATE_KHR` (client area < window, possibly DPI-scaled). The bridge returns an
+    undefined `currentExtent`, in which case the guest falls back to the window client rect. The sample
+    windows are fixed-size, since the swapchain is not recreated on resize.
+  - The spinning sample presents with `VK_PRESENT_MODE_IMMEDIATE_KHR` (no vsync) so its FPS reflects real
+    throughput rather than the refresh rate (the bridge ignores the present mode).
+
+  > Building the FPS readout also turned up an unrelated emulator bug: `GetTickCount[64]` advanced
+  > ~10000× too fast (`kusd_mmio::update()` derived the tick count from 100 ns units where the guest
+  > expects milliseconds). Fixed separately in [#1037](https://github.com/momo5502/sogen/pull/1037).
 
 ## Remoted Vulkan entry points so far
 
@@ -235,6 +259,13 @@ honoring the full structs.
   No real present semaphores/acquire fences are modeled (`vkAcquireNextImageKHR` ignores them and hands
   out images round-robin). `VK_IMAGE_LAYOUT_PRESENT_SRC_KHR` is mapped to `TRANSFER_SRC_OPTIMAL` on the
   host. A future optimization is async present (defer `present_surface` to `work()` instead of blocking).
+- **Surface capabilities are synthetic and the swapchain is never recreated.**
+  `vkGetPhysicalDeviceSurfaceCapabilitiesKHR` returns fixed caps with an *undefined* `currentExtent`
+  (the guest chooses the extent) and permissive min/max; `vkCreateSwapchainKHR`'s requested present mode
+  and pre-transform are not really applied (the readback path is the only present path). The bridge does
+  not implement swapchain recreation, so `VK_ERROR_OUT_OF_DATE_KHR`/resize is not handled — the sample
+  windows are fixed-size to avoid it. Surface-format and present-mode *enumeration* are not remoted
+  either; the samples just pass valid values directly (`B8G8R8A8_UNORM`, FIFO/immediate).
 - The host driver is whatever `vulkan-1.dll` the host resolves. The dev machine has a real ICD; on a
   GPU-less box (e.g. CI) SwiftShader can be dropped in as a software fallback by staging its loader +
   ICD next to `analyzer.exe` and pointing `VK_ICD_FILENAMES` at the manifest. Software drivers
@@ -245,7 +276,10 @@ honoring the full structs.
 
 The near-term goal — a **windowed** Vulkan sample that opens a real window and shows its GPU-rendered
 content — is **reached**: `vulkan-window-sample` renders a triangle through a graphics pipeline into a
-guest window (steps 1–4 below all done). The approach is **readback-and-present** — render on the host GPU into an
+guest window, and `vulkan-spinning-triangle-sample` adds a push-constant-rotated triangle with an FPS
+readout (steps 1–4 below all done). Both samples also run as ordinary native Vulkan apps against a real
+GPU (load `vulkan-1.dll` instead of the shim), which validates the shim's API fidelity. The approach is
+**readback-and-present** — render on the host GPU into an
 offscreen image, read the pixels back, and hand them to the guest window's surface through Sogen's
 existing `present_surface` seam (the SDL backend already displays a per-HWND BGRA surface; see
 `windows-ui-emulation.md`). The guest stays a real Vulkan WSI app (`vkCreateWin32SurfaceKHR` /
@@ -272,6 +306,11 @@ Cross-cutting (needed as the create-infos get richer, can land alongside the ste
   full Venus model).
 - **Zero-copy `vkMapMemory`** — map host GPU-visible memory into guest VA (the mechanism Sogen uses
   for `KUSER_SHARED_DATA`), replacing the staged-copy map.
+- **Fuller WSI** — swapchain recreation on `VK_ERROR_OUT_OF_DATE_KHR`/resize, real present and acquire
+  semaphores, and surface-format/present-mode enumeration. (Today the samples are fixed-size and pass
+  valid swapchain parameters directly.)
+- **More draw plumbing** — vertex/index/uniform buffers and descriptor sets, then textures; these are
+  the remaining pieces before non-trivial real apps render.
 
 Later: OpenGL via Zink, DirectX via DXVK — no new bridge work, just guest DLL provisioning.
 
@@ -287,8 +326,8 @@ Later: OpenGL via Zink, DirectX via DXVK — no new bridge work, just guest DLL 
 | `tools/vulkan-bridge-generator/generate.py` | The generator (parses `vk.xml`); `STRUCT_ALLOWLIST` controls coverage |
 | `src/samples/vulkan-shim/` | Guest `vulkan-1.dll` shim (the deliverable) |
 | `src/samples/vulkan-shim-test/` | Headless guest exe driving the shim (instance→device→fill/clear readback) |
-| `src/samples/vulkan-window-sample/` | Windowed guest exe: Win32 window + swapchain + render-pass triangle. `triangle.{vert,frag}` are the GLSL sources; `triangle_spirv.hpp` is the checked-in compiled SPIR-V |
-| `src/samples/vulkan-spinning-triangle-sample/` | Windowed guest exe: a push-constant-rotated triangle with an FPS readout in the title bar. `spinning.{vert,frag}` + checked-in `spinning_triangle_spirv.hpp` |
+| `src/samples/vulkan-window-sample/` | Windowed guest exe: Win32 window + swapchain + render-pass triangle. `triangle.{vert,frag}` are the GLSL sources; `triangle_spirv.hpp` is the checked-in compiled SPIR-V. Also runs natively against a real GPU (`… vulkan-1.dll`) |
+| `src/samples/vulkan-spinning-triangle-sample/` | Windowed guest exe: a push-constant-rotated triangle with an FPS readout in the title bar. `spinning.{vert,frag}` + checked-in `spinning_triangle_spirv.hpp`. Also runs natively |
 | `src/samples/gpu-bridge-probe-sample/` | Low-level probe (direct `DeviceIoControl`, no Vulkan headers) |
 | `src/windows-emulator-test/vulkan_marshal_test.cpp` | Round-trip gtests for the generated marshalling |
 | `deps/Vulkan-Headers` | Shallow submodule; `vulkan-headers` INTERFACE target |
@@ -324,10 +363,33 @@ cmd /c "cd build\release\artifacts && analyzer.exe -s gpu-bridge-probe-sample.ex
 ```
 
 Run the shim test (guest app → `vulkan-shim.dll` → bridge → host GPU; enumerates devices, creates a
-logical device + queue, submits an empty command buffer, waits on a fence):
+logical device + queue, submits a command buffer, and verifies `fill+readback` / `clear+readback`):
 
 ```cmd
 cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-shim-test.exe vulkan-shim.dll"
+```
+
+Run the windowed samples in the emulator (each opens a guest window and presents the GPU output):
+
+```cmd
+cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-window-sample.exe vulkan-shim.dll"
+cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-spinning-triangle-sample.exe vulkan-shim.dll"
+```
+
+The same sample exes also run as ordinary **native** Vulkan apps against a real GPU — pass the real
+loader instead of the shim (this validates the shim's API fidelity, since the identical binary runs
+both ways):
+
+```cmd
+cmd /c "cd build\release\artifacts && vulkan-spinning-triangle-sample.exe vulkan-1.dll"
+```
+
+On a GPU-less box (e.g. CI) drop in **SwiftShader** as a software ICD: stage `vulkan-1.dll`,
+`vk_swiftshader.dll` and `vk_swiftshader_icd.json` next to `analyzer.exe` and point the loader at the
+manifest before running:
+
+```cmd
+set VK_ICD_FILENAMES=%CD%\vk_swiftshader_icd.json
 ```
 
 Run the marshalling round-trip tests:
