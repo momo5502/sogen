@@ -63,6 +63,13 @@ namespace sogen::gpu_bridge
         cmd_fill_buffer = 0x81B,
         download_memory = 0x81C,
         upload_memory = 0x81D,
+        create_image = 0x81E,
+        destroy_image = 0x81F,
+        get_image_memory_requirements = 0x820,
+        bind_image_memory = 0x821,
+        cmd_pipeline_barrier = 0x822,
+        cmd_clear_color_image = 0x823,
+        cmd_copy_image_to_buffer = 0x824,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -100,6 +107,16 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_cmd_fill_buffer = make_ioctl(static_cast<uint32_t>(command::cmd_fill_buffer));
     inline constexpr uint32_t ioctl_download_memory = make_ioctl(static_cast<uint32_t>(command::download_memory));
     inline constexpr uint32_t ioctl_upload_memory = make_ioctl(static_cast<uint32_t>(command::upload_memory));
+    inline constexpr uint32_t ioctl_create_image = make_ioctl(static_cast<uint32_t>(command::create_image));
+    inline constexpr uint32_t ioctl_destroy_image = make_ioctl(static_cast<uint32_t>(command::destroy_image));
+    inline constexpr uint32_t ioctl_get_image_memory_requirements =
+        make_ioctl(static_cast<uint32_t>(command::get_image_memory_requirements));
+    inline constexpr uint32_t ioctl_bind_image_memory = make_ioctl(static_cast<uint32_t>(command::bind_image_memory));
+    inline constexpr uint32_t ioctl_cmd_pipeline_barrier = make_ioctl(static_cast<uint32_t>(command::cmd_pipeline_barrier));
+    inline constexpr uint32_t ioctl_cmd_clear_color_image =
+        make_ioctl(static_cast<uint32_t>(command::cmd_clear_color_image));
+    inline constexpr uint32_t ioctl_cmd_copy_image_to_buffer =
+        make_ioctl(static_cast<uint32_t>(command::cmd_copy_image_to_buffer));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -426,5 +443,99 @@ namespace sogen::gpu_bridge
         uint64_t offset; // VkDeviceSize
         uint64_t size;   // VkDeviceSize
         // uint8_t bytes[size];
+    };
+
+    // A VkImageSubresourceRange flattened to plain integers (aspect/mips/layers).
+    struct image_subresource_range
+    {
+        uint32_t aspect_mask; // VkImageAspectFlags
+        uint32_t base_mip_level;
+        uint32_t level_count;
+        uint32_t base_array_layer;
+        uint32_t layer_count;
+    };
+
+    // ioctl_create_image: in (2D, single mip, single layer, VK_SAMPLE_COUNT_1)
+    struct create_image_request
+    {
+        object_id device;
+        uint32_t format; // VkFormat
+        uint32_t width;
+        uint32_t height;
+        uint32_t usage;  // VkImageUsageFlags
+        uint32_t tiling; // VkImageTiling
+        uint32_t reserved;
+    };
+
+    // ioctl_create_image: out
+    struct create_image_response
+    {
+        int32_t vk_result;
+        uint32_t reserved;
+        object_id image; // null_object on failure
+    };
+
+    // ioctl_destroy_image: in
+    struct destroy_image_request
+    {
+        object_id device;
+        object_id image;
+    };
+
+    // ioctl_get_image_memory_requirements: in (out = memory_requirements_response)
+    struct get_image_memory_requirements_request
+    {
+        object_id device;
+        object_id image;
+    };
+
+    // ioctl_bind_image_memory: in; out = result_response
+    struct bind_image_memory_request
+    {
+        object_id device;
+        object_id image;
+        object_id memory;
+        uint64_t offset; // VkDeviceSize
+    };
+
+    // ioctl_cmd_pipeline_barrier: records a single image memory barrier; out = result_response
+    struct cmd_pipeline_barrier_request
+    {
+        object_id command_buffer;
+        object_id image;
+        image_subresource_range subresource;
+        uint32_t src_stage_mask; // VkPipelineStageFlags
+        uint32_t dst_stage_mask;
+        uint32_t src_access_mask; // VkAccessFlags
+        uint32_t dst_access_mask;
+        uint32_t old_layout; // VkImageLayout
+        uint32_t new_layout;
+    };
+
+    // ioctl_cmd_clear_color_image: records vkCmdClearColorImage (float clear color); out = result_response
+    struct cmd_clear_color_image_request
+    {
+        object_id command_buffer;
+        object_id image;
+        image_subresource_range subresource;
+        uint32_t image_layout; // VkImageLayout (current layout of the image)
+        uint32_t reserved;
+        float color_r; // RGBA float clear color (kept as named scalars to stay <cstdint>-only)
+        float color_g;
+        float color_b;
+        float color_a;
+    };
+
+    // ioctl_cmd_copy_image_to_buffer: copies mip 0 / layer 0 of the image, tightly packed, to the
+    // buffer at offset 0; out = result_response
+    struct cmd_copy_image_to_buffer_request
+    {
+        object_id command_buffer;
+        object_id image;
+        object_id buffer;
+        uint32_t image_layout; // VkImageLayout (current layout of the image)
+        uint32_t width;
+        uint32_t height;
+        uint32_t aspect_mask; // VkImageAspectFlags
     };
 }

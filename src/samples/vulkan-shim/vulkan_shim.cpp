@@ -679,6 +679,173 @@ extern "C"
         bridge_call(gb::ioctl_cmd_fill_buffer, &request, sizeof(request), &response, sizeof(response));
     }
 
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateImage(VkDevice device,
+                                                                       const VkImageCreateInfo* pCreateInfo,
+                                                                       const VkAllocationCallbacks*, VkImage* pImage)
+    {
+        gb::create_image_request request{};
+        request.device = to_object_id(device);
+        request.format = static_cast<uint32_t>(pCreateInfo->format);
+        request.width = pCreateInfo->extent.width;
+        request.height = pCreateInfo->extent.height;
+        request.usage = pCreateInfo->usage;
+        request.tiling = static_cast<uint32_t>(pCreateInfo->tiling);
+
+        gb::create_image_response response{};
+        if (!bridge_call(gb::ioctl_create_image, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+
+        *pImage = to_handle<VkImage>(response.image);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyImage(VkDevice device, VkImage image,
+                                                                    const VkAllocationCallbacks*)
+    {
+        if (!image)
+        {
+            return;
+        }
+        gb::destroy_image_request request{};
+        request.device = to_object_id(device);
+        request.image = to_object_id(image);
+        bridge_call(gb::ioctl_destroy_image, &request, sizeof(request), nullptr, 0);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetImageMemoryRequirements(VkDevice device, VkImage image,
+                                                                                  VkMemoryRequirements* pMemoryRequirements)
+    {
+        if (!pMemoryRequirements)
+        {
+            return;
+        }
+        *pMemoryRequirements = {};
+
+        gb::get_image_memory_requirements_request request{};
+        request.device = to_object_id(device);
+        request.image = to_object_id(image);
+
+        gb::memory_requirements_response response{};
+        if (!bridge_call(gb::ioctl_get_image_memory_requirements, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return;
+        }
+
+        pMemoryRequirements->size = response.size;
+        pMemoryRequirements->alignment = response.alignment;
+        pMemoryRequirements->memoryTypeBits = response.memory_type_bits;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkBindImageMemory(VkDevice device, VkImage image,
+                                                                           VkDeviceMemory memory, VkDeviceSize memoryOffset)
+    {
+        gb::bind_image_memory_request request{};
+        request.device = to_object_id(device);
+        request.image = to_object_id(image);
+        request.memory = to_object_id(memory);
+        request.offset = memoryOffset;
+
+        gb::result_response response{};
+        if (!bridge_call(gb::ioctl_bind_image_memory, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return static_cast<VkResult>(response.vk_result);
+    }
+
+    namespace
+    {
+        gb::image_subresource_range to_wire_range(const VkImageSubresourceRange& range)
+        {
+            gb::image_subresource_range out{};
+            out.aspect_mask = range.aspectMask;
+            out.base_mip_level = range.baseMipLevel;
+            out.level_count = range.levelCount;
+            out.base_array_layer = range.baseArrayLayer;
+            out.layer_count = range.layerCount;
+            return out;
+        }
+    }
+
+    // Only image memory barriers are remoted (one IOCTL each, using the global stage masks); memory and
+    // buffer barriers are not modeled yet.
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdPipelineBarrier(
+        VkCommandBuffer commandBuffer, VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask,
+        VkDependencyFlags, uint32_t, const VkMemoryBarrier*, uint32_t, const VkBufferMemoryBarrier*,
+        uint32_t imageMemoryBarrierCount, const VkImageMemoryBarrier* pImageMemoryBarriers)
+    {
+        for (uint32_t i = 0; i < imageMemoryBarrierCount; ++i)
+        {
+            const VkImageMemoryBarrier& b = pImageMemoryBarriers[i];
+            gb::cmd_pipeline_barrier_request request{};
+            request.command_buffer = to_object_id(commandBuffer);
+            request.image = to_object_id(b.image);
+            request.subresource = to_wire_range(b.subresourceRange);
+            request.src_stage_mask = srcStageMask;
+            request.dst_stage_mask = dstStageMask;
+            request.src_access_mask = b.srcAccessMask;
+            request.dst_access_mask = b.dstAccessMask;
+            request.old_layout = static_cast<uint32_t>(b.oldLayout);
+            request.new_layout = static_cast<uint32_t>(b.newLayout);
+
+            gb::result_response response{};
+            bridge_call(gb::ioctl_cmd_pipeline_barrier, &request, sizeof(request), &response, sizeof(response));
+        }
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdClearColorImage(VkCommandBuffer commandBuffer, VkImage image,
+                                                                          VkImageLayout imageLayout,
+                                                                          const VkClearColorValue* pColor,
+                                                                          uint32_t rangeCount,
+                                                                          const VkImageSubresourceRange* pRanges)
+    {
+        for (uint32_t i = 0; i < rangeCount; ++i)
+        {
+            gb::cmd_clear_color_image_request request{};
+            request.command_buffer = to_object_id(commandBuffer);
+            request.image = to_object_id(image);
+            request.subresource = to_wire_range(pRanges[i]);
+            request.image_layout = static_cast<uint32_t>(imageLayout);
+            request.color_r = pColor->float32[0];
+            request.color_g = pColor->float32[1];
+            request.color_b = pColor->float32[2];
+            request.color_a = pColor->float32[3];
+
+            gb::result_response response{};
+            bridge_call(gb::ioctl_cmd_clear_color_image, &request, sizeof(request), &response, sizeof(response));
+        }
+    }
+
+    // Copies are remoted assuming tight packing of mip 0 / layer 0 at image offset 0 to buffer offset 0
+    // (bufferRowLength/bufferImageHeight/imageOffset are not yet honored).
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdCopyImageToBuffer(VkCommandBuffer commandBuffer, VkImage srcImage,
+                                                                            VkImageLayout srcImageLayout, VkBuffer dstBuffer,
+                                                                            uint32_t regionCount,
+                                                                            const VkBufferImageCopy* pRegions)
+    {
+        for (uint32_t i = 0; i < regionCount; ++i)
+        {
+            const VkBufferImageCopy& r = pRegions[i];
+            gb::cmd_copy_image_to_buffer_request request{};
+            request.command_buffer = to_object_id(commandBuffer);
+            request.image = to_object_id(srcImage);
+            request.buffer = to_object_id(dstBuffer);
+            request.image_layout = static_cast<uint32_t>(srcImageLayout);
+            request.width = r.imageExtent.width;
+            request.height = r.imageExtent.height;
+            request.aspect_mask = r.imageSubresource.aspectMask;
+
+            gb::result_response response{};
+            bridge_call(gb::ioctl_cmd_copy_image_to_buffer, &request, sizeof(request), &response, sizeof(response));
+        }
+    }
+
     __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice, const char* pName);
 
     __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance, const char* pName)
@@ -731,6 +898,14 @@ extern "C"
              .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetBufferMemoryRequirements)},
             {.name = "vkBindBufferMemory", .func = reinterpret_cast<PFN_vkVoidFunction>(vkBindBufferMemory)},
             {.name = "vkCmdFillBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdFillBuffer)},
+            {.name = "vkCreateImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateImage)},
+            {.name = "vkDestroyImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyImage)},
+            {.name = "vkGetImageMemoryRequirements",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageMemoryRequirements)},
+            {.name = "vkBindImageMemory", .func = reinterpret_cast<PFN_vkVoidFunction>(vkBindImageMemory)},
+            {.name = "vkCmdPipelineBarrier", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdPipelineBarrier)},
+            {.name = "vkCmdClearColorImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdClearColorImage)},
+            {.name = "vkCmdCopyImageToBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyImageToBuffer)},
         };
 
         for (const auto& e : table)

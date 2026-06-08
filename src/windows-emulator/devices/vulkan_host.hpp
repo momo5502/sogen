@@ -98,6 +98,35 @@ namespace sogen
         int32_t upload_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, const void* data,
                               size_t data_size);
 
+        // A VkImageSubresourceRange as plain integers (this header stays free of Vulkan types).
+        struct subresource_range
+        {
+            uint32_t aspect_mask;
+            uint32_t base_mip_level;
+            uint32_t level_count;
+            uint32_t base_array_layer;
+            uint32_t layer_count;
+        };
+
+        // Creates a 2D, single-mip, single-layer image (samples = 1, initial layout UNDEFINED).
+        int32_t create_image(uint64_t device, uint32_t format, uint32_t width, uint32_t height, uint32_t usage,
+                             uint32_t tiling, uint64_t& out_image);
+        void destroy_image(uint64_t device, uint64_t image);
+        int32_t get_image_memory_requirements(uint64_t device, uint64_t image, uint64_t& out_size, uint64_t& out_alignment,
+                                              uint32_t& out_memory_type_bits);
+        int32_t bind_image_memory(uint64_t device, uint64_t image, uint64_t memory, uint64_t offset);
+
+        // Records a single image memory barrier into the (recording) command buffer.
+        int32_t cmd_pipeline_barrier(uint64_t command_buffer, uint64_t image, uint32_t src_stage_mask,
+                                     uint32_t dst_stage_mask, uint32_t src_access_mask, uint32_t dst_access_mask,
+                                     uint32_t old_layout, uint32_t new_layout, const subresource_range& range);
+        // Records vkCmdClearColorImage with an RGBA float clear color.
+        int32_t cmd_clear_color_image(uint64_t command_buffer, uint64_t image, uint32_t image_layout, float r, float g,
+                                      float b, float a, const subresource_range& range);
+        // Copies mip 0 / layer 0 of the image (tightly packed) into the buffer at offset 0.
+        int32_t cmd_copy_image_to_buffer(uint64_t command_buffer, uint64_t image, uint32_t image_layout, uint64_t buffer,
+                                         uint32_t width, uint32_t height, uint32_t aspect_mask);
+
       private:
         struct impl;
         std::unique_ptr<impl> impl_;

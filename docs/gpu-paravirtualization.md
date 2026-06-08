@@ -141,6 +141,14 @@ plus the surrounding calls needed to actually use them:
   the GPU fills it via `vkCmdFillBuffer`, and the mapped readback returns the exact pattern
   (`vulkan-shim-test`'s `fill+readback` check).
 
+- **images + clear + image→buffer readback.** The offscreen render-target + readback path that
+  windowed present will reuse. Adds `vkCreateImage`/`vkDestroyImage` +
+  `vkGetImageMemoryRequirements`/`vkBindImageMemory`, image layout transitions
+  (`vkCmdPipelineBarrier`, image memory barriers only), `vkCmdClearColorImage`, and
+  `vkCmdCopyImageToBuffer`. Verified end-to-end: the GPU clears a 16×16 `R8G8B8A8_UNORM` image to a
+  known color, transitions it `UNDEFINED → TRANSFER_DST → TRANSFER_SRC`, copies it into a host-visible
+  buffer, and the readback matches every pixel (`vulkan-shim-test`'s `clear+readback` check).
+
 ## Remoted Vulkan entry points so far
 
 Instance/device: `vkCreateInstance`, `vkDestroyInstance`, `vkEnumeratePhysicalDevices`,
@@ -155,6 +163,9 @@ Command/sync: `vkCreateCommandPool`, `vkDestroyCommandPool`, `vkAllocateCommandB
 Memory/buffers: `vkGetPhysicalDeviceMemoryProperties`, `vkAllocateMemory`, `vkFreeMemory`,
 `vkMapMemory`, `vkUnmapMemory`, `vkCreateBuffer`, `vkDestroyBuffer`, `vkGetBufferMemoryRequirements`,
 `vkBindBufferMemory`, `vkCmdFillBuffer`.
+
+Images/transfer: `vkCreateImage`, `vkDestroyImage`, `vkGetImageMemoryRequirements`,
+`vkBindImageMemory`, `vkCmdPipelineBarrier`, `vkCmdClearColorImage`, `vkCmdCopyImageToBuffer`.
 
 The hand-written entry points currently pass minimal/empty create-infos (e.g. `vkCreateInstance`
 ignores layers/extensions, `vkQueueSubmit` ignores semaphores). The generator is the path to
@@ -198,8 +209,8 @@ window, and means a software driver without Win32 WSI (SwiftShader) still works.
 Staged steps toward that:
 
 1. **Memory + readback foundation** — *done* (host-visible buffers, `vkCmdFillBuffer`, map readback).
-2. **Render target + clear** — images, `vkAllocateMemory`-backed `VkImage`, layout barriers,
-   `vkCmdClearColorImage`, and `vkCmdCopyImageToBuffer` readback. Clear to a known color, verify a pixel.
+2. **Render target + clear** — *done* (`VkImage` + memory, layout barriers, `vkCmdClearColorImage`,
+   `vkCmdCopyImageToBuffer` readback verified against a known clear color).
 3. **WSI → first visible window** — `vkCreateWin32SurfaceKHR` (guest HWND) + swapchain +
    `vkQueuePresentKHR`; present = readback + `present_surface(hwnd, …)`. First window showing a solid color.
 4. **Triangle** — render pass, framebuffer, SPIR-V shader modules, graphics pipeline, `vkCmdDraw`.

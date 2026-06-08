@@ -82,6 +82,20 @@ namespace sogen
                     return handle_download_memory(win_emu, context);
                 case gpu_bridge::ioctl_upload_memory:
                     return handle_upload_memory(win_emu, context);
+                case gpu_bridge::ioctl_create_image:
+                    return handle_create_image(win_emu, context);
+                case gpu_bridge::ioctl_destroy_image:
+                    return handle_destroy_image(win_emu, context);
+                case gpu_bridge::ioctl_get_image_memory_requirements:
+                    return handle_get_image_memory_requirements(win_emu, context);
+                case gpu_bridge::ioctl_bind_image_memory:
+                    return handle_bind_image_memory(win_emu, context);
+                case gpu_bridge::ioctl_cmd_pipeline_barrier:
+                    return handle_cmd_pipeline_barrier(win_emu, context);
+                case gpu_bridge::ioctl_cmd_clear_color_image:
+                    return handle_cmd_clear_color_image(win_emu, context);
+                case gpu_bridge::ioctl_cmd_copy_image_to_buffer:
+                    return handle_cmd_copy_image_to_buffer(win_emu, context);
 
                 default:
                     win_emu.log.warn("[gpu-bridge] Unsupported IOCTL: 0x%X\n", context.io_control_code);
@@ -687,6 +701,121 @@ namespace sogen
 
                 const int32_t result = this->vulkan_.upload_memory(request.device, request.memory, request.offset, payload,
                                                                     bytes.data(), bytes.size());
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            static vulkan_host::subresource_range to_host_range(const gpu_bridge::image_subresource_range& range)
+            {
+                return vulkan_host::subresource_range{
+                    .aspect_mask = range.aspect_mask,
+                    .base_mip_level = range.base_mip_level,
+                    .level_count = range.level_count,
+                    .base_array_layer = range.base_array_layer,
+                    .layer_count = range.layer_count,
+                };
+            }
+
+            NTSTATUS handle_create_image(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::create_image_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                uint64_t image = gpu_bridge::null_object;
+                const int32_t result = this->vulkan_.create_image(request.device, request.format, request.width,
+                                                                  request.height, request.usage, request.tiling, image);
+                return write_output(win_emu, context,
+                                    gpu_bridge::create_image_response{.vk_result = result, .reserved = 0, .image = image});
+            }
+
+            NTSTATUS handle_destroy_image(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::destroy_image_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                this->vulkan_.destroy_image(request.device, request.image);
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_get_image_memory_requirements(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::get_image_memory_requirements_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                uint64_t size = 0;
+                uint64_t alignment = 0;
+                uint32_t memory_type_bits = 0;
+                const int32_t result = this->vulkan_.get_image_memory_requirements(request.device, request.image, size,
+                                                                                   alignment, memory_type_bits);
+                return write_output(win_emu, context,
+                                    gpu_bridge::memory_requirements_response{.vk_result = result,
+                                                                             .memory_type_bits = memory_type_bits,
+                                                                             .size = size,
+                                                                             .alignment = alignment});
+            }
+
+            NTSTATUS handle_bind_image_memory(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::bind_image_memory_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result =
+                    this->vulkan_.bind_image_memory(request.device, request.image, request.memory, request.offset);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_cmd_pipeline_barrier(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::cmd_pipeline_barrier_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result = this->vulkan_.cmd_pipeline_barrier(
+                    request.command_buffer, request.image, request.src_stage_mask, request.dst_stage_mask,
+                    request.src_access_mask, request.dst_access_mask, request.old_layout, request.new_layout,
+                    to_host_range(request.subresource));
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_cmd_clear_color_image(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::cmd_clear_color_image_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result = this->vulkan_.cmd_clear_color_image(
+                    request.command_buffer, request.image, request.image_layout, request.color_r, request.color_g,
+                    request.color_b, request.color_a, to_host_range(request.subresource));
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_cmd_copy_image_to_buffer(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::cmd_copy_image_to_buffer_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result = this->vulkan_.cmd_copy_image_to_buffer(request.command_buffer, request.image,
+                                                                              request.image_layout, request.buffer,
+                                                                              request.width, request.height,
+                                                                              request.aspect_mask);
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
         };

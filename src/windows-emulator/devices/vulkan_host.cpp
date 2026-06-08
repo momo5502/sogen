@@ -116,6 +116,13 @@ namespace sogen
             PFN_vkGetBufferMemoryRequirements get_buffer_memory_requirements{};
             PFN_vkBindBufferMemory bind_buffer_memory{};
             PFN_vkCmdFillBuffer cmd_fill_buffer{};
+            PFN_vkCreateImage create_image{};
+            PFN_vkDestroyImage destroy_image{};
+            PFN_vkGetImageMemoryRequirements get_image_memory_requirements{};
+            PFN_vkBindImageMemory bind_image_memory{};
+            PFN_vkCmdPipelineBarrier cmd_pipeline_barrier{};
+            PFN_vkCmdClearColorImage cmd_clear_color_image{};
+            PFN_vkCmdCopyImageToBuffer cmd_copy_image_to_buffer{};
         };
 
         std::unordered_map<uint64_t, instance_data> instances;
@@ -158,6 +165,12 @@ namespace sogen
             uint64_t device_id{};
         };
 
+        struct image_data
+        {
+            VkImage handle{};
+            uint64_t device_id{};
+        };
+
         std::unordered_map<uint64_t, device_data> devices;
         std::unordered_map<uint64_t, queue_data> queues;
         std::unordered_map<uint64_t, command_pool_data> command_pools;
@@ -165,6 +178,7 @@ namespace sogen
         std::unordered_map<uint64_t, fence_data> fences;
         std::unordered_map<uint64_t, memory_data> memories;
         std::unordered_map<uint64_t, buffer_data> buffers;
+        std::unordered_map<uint64_t, image_data> images;
         uint64_t next_id{1};
 
         template <typename Map, typename Pred>
@@ -200,12 +214,19 @@ namespace sogen
                     it->second.destroy_fence(it->second.handle, fence.handle, nullptr);
                 }
             }
-            // Buffers must be destroyed before the memory they are bound to is freed.
+            // Buffers and images must be destroyed before the memory they are bound to is freed.
             for (auto& [id, buffer] : this->buffers)
             {
                 if (buffer.device_id == device_id && buffer.handle && it->second.destroy_buffer)
                 {
                     it->second.destroy_buffer(it->second.handle, buffer.handle, nullptr);
+                }
+            }
+            for (auto& [id, image] : this->images)
+            {
+                if (image.device_id == device_id && image.handle && it->second.destroy_image)
+                {
+                    it->second.destroy_image(it->second.handle, image.handle, nullptr);
                 }
             }
             for (auto& [id, memory] : this->memories)
@@ -220,6 +241,7 @@ namespace sogen
             this->erase_owned(this->command_pools, [&](const command_pool_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->fences, [&](const fence_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->buffers, [&](const buffer_data& d) { return d.device_id == device_id; });
+            this->erase_owned(this->images, [&](const image_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->memories, [&](const memory_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->queues, [&](const queue_data& d) { return d.device_id == device_id; });
 
@@ -562,6 +584,15 @@ namespace sogen
                 reinterpret_cast<PFN_vkGetBufferMemoryRequirements>(resolve("vkGetBufferMemoryRequirements"));
             data.bind_buffer_memory = reinterpret_cast<PFN_vkBindBufferMemory>(resolve("vkBindBufferMemory"));
             data.cmd_fill_buffer = reinterpret_cast<PFN_vkCmdFillBuffer>(resolve("vkCmdFillBuffer"));
+            data.create_image = reinterpret_cast<PFN_vkCreateImage>(resolve("vkCreateImage"));
+            data.destroy_image = reinterpret_cast<PFN_vkDestroyImage>(resolve("vkDestroyImage"));
+            data.get_image_memory_requirements =
+                reinterpret_cast<PFN_vkGetImageMemoryRequirements>(resolve("vkGetImageMemoryRequirements"));
+            data.bind_image_memory = reinterpret_cast<PFN_vkBindImageMemory>(resolve("vkBindImageMemory"));
+            data.cmd_pipeline_barrier = reinterpret_cast<PFN_vkCmdPipelineBarrier>(resolve("vkCmdPipelineBarrier"));
+            data.cmd_clear_color_image = reinterpret_cast<PFN_vkCmdClearColorImage>(resolve("vkCmdClearColorImage"));
+            data.cmd_copy_image_to_buffer =
+                reinterpret_cast<PFN_vkCmdCopyImageToBuffer>(resolve("vkCmdCopyImageToBuffer"));
         }
 
         const uint64_t id = this->impl_->next_id++;
@@ -1059,6 +1090,207 @@ namespace sogen
 
         std::memcpy(mapped, data, copy_bytes);
         dev->second.unmap_memory(dev->second.handle, mem->second.handle);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::create_image(uint64_t device, uint32_t format, uint32_t width, uint32_t height, uint32_t usage,
+                                      uint32_t tiling, uint64_t& out_image)
+    {
+        out_image = 0;
+
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end() || !dev->second.create_image)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkImageCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        info.imageType = VK_IMAGE_TYPE_2D;
+        info.format = static_cast<VkFormat>(format);
+        info.extent = {.width = width, .height = height, .depth = 1};
+        info.mipLevels = 1;
+        info.arrayLayers = 1;
+        info.samples = VK_SAMPLE_COUNT_1_BIT;
+        info.tiling = static_cast<VkImageTiling>(tiling);
+        info.usage = usage;
+        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+        VkImage image{};
+        const VkResult result = dev->second.create_image(dev->second.handle, &info, nullptr, &image);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->images.emplace(id, impl::image_data{.handle = image, .device_id = device});
+        out_image = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::destroy_image(uint64_t device, uint64_t image)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->images.find(image);
+        if (it == this->impl_->images.end())
+        {
+            return;
+        }
+
+        if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_image)
+        {
+            dev->second.destroy_image(dev->second.handle, it->second.handle, nullptr);
+        }
+
+        this->impl_->images.erase(it);
+    }
+
+    int32_t vulkan_host::get_image_memory_requirements(uint64_t device, uint64_t image, uint64_t& out_size,
+                                                       uint64_t& out_alignment, uint32_t& out_memory_type_bits)
+    {
+        out_size = 0;
+        out_alignment = 0;
+        out_memory_type_bits = 0;
+
+        const auto dev = this->impl_->devices.find(device);
+        const auto img = this->impl_->images.find(image);
+        if (dev == this->impl_->devices.end() || img == this->impl_->images.end() ||
+            !dev->second.get_image_memory_requirements)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkMemoryRequirements requirements{};
+        dev->second.get_image_memory_requirements(dev->second.handle, img->second.handle, &requirements);
+
+        out_size = requirements.size;
+        out_alignment = requirements.alignment;
+        out_memory_type_bits = requirements.memoryTypeBits;
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::bind_image_memory(uint64_t device, uint64_t image, uint64_t memory, uint64_t offset)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto img = this->impl_->images.find(image);
+        const auto mem = this->impl_->memories.find(memory);
+        if (dev == this->impl_->devices.end() || img == this->impl_->images.end() || mem == this->impl_->memories.end() ||
+            !dev->second.bind_image_memory)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        return dev->second.bind_image_memory(dev->second.handle, img->second.handle, mem->second.handle, offset);
+    }
+
+    namespace
+    {
+        VkImageSubresourceRange to_vk_range(const vulkan_host::subresource_range& range)
+        {
+            VkImageSubresourceRange out{};
+            out.aspectMask = range.aspect_mask;
+            out.baseMipLevel = range.base_mip_level;
+            out.levelCount = range.level_count;
+            out.baseArrayLayer = range.base_array_layer;
+            out.layerCount = range.layer_count;
+            return out;
+        }
+    }
+
+    int32_t vulkan_host::cmd_pipeline_barrier(uint64_t command_buffer, uint64_t image, uint32_t src_stage_mask,
+                                              uint32_t dst_stage_mask, uint32_t src_access_mask, uint32_t dst_access_mask,
+                                              uint32_t old_layout, uint32_t new_layout, const subresource_range& range)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto img = this->impl_->images.find(image);
+        if (cb == this->impl_->command_buffers.end() || img == this->impl_->images.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_pipeline_barrier)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.srcAccessMask = src_access_mask;
+        barrier.dstAccessMask = dst_access_mask;
+        barrier.oldLayout = static_cast<VkImageLayout>(old_layout);
+        barrier.newLayout = static_cast<VkImageLayout>(new_layout);
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = img->second.handle;
+        barrier.subresourceRange = to_vk_range(range);
+
+        dev->second.cmd_pipeline_barrier(cb->second.handle, src_stage_mask, dst_stage_mask, 0, 0, nullptr, 0, nullptr, 1,
+                                         &barrier);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_clear_color_image(uint64_t command_buffer, uint64_t image, uint32_t image_layout, float r,
+                                               float g, float b, float a, const subresource_range& range)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto img = this->impl_->images.find(image);
+        if (cb == this->impl_->command_buffers.end() || img == this->impl_->images.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_clear_color_image)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkClearColorValue clear{};
+        clear.float32[0] = r;
+        clear.float32[1] = g;
+        clear.float32[2] = b;
+        clear.float32[3] = a;
+
+        const VkImageSubresourceRange vk_range = to_vk_range(range);
+        dev->second.cmd_clear_color_image(cb->second.handle, img->second.handle, static_cast<VkImageLayout>(image_layout),
+                                          &clear, 1, &vk_range);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_copy_image_to_buffer(uint64_t command_buffer, uint64_t image, uint32_t image_layout,
+                                                  uint64_t buffer, uint32_t width, uint32_t height, uint32_t aspect_mask)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto img = this->impl_->images.find(image);
+        const auto buf = this->impl_->buffers.find(buffer);
+        if (cb == this->impl_->command_buffers.end() || img == this->impl_->images.end() ||
+            buf == this->impl_->buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_copy_image_to_buffer)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkBufferImageCopy region{};
+        region.bufferOffset = 0;
+        region.bufferRowLength = 0;   // tightly packed
+        region.bufferImageHeight = 0; // tightly packed
+        region.imageSubresource.aspectMask = aspect_mask;
+        region.imageSubresource.mipLevel = 0;
+        region.imageSubresource.baseArrayLayer = 0;
+        region.imageSubresource.layerCount = 1;
+        region.imageOffset = {.x = 0, .y = 0, .z = 0};
+        region.imageExtent = {.width = width, .height = height, .depth = 1};
+
+        dev->second.cmd_copy_image_to_buffer(cb->second.handle, img->second.handle,
+                                             static_cast<VkImageLayout>(image_layout), buf->second.handle, 1, &region);
         return VK_SUCCESS;
     }
 }
