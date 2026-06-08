@@ -10,6 +10,8 @@ add_subdirectory(manual-controls-sample)
 add_subdirectory(custom-paint-sample)
 add_subdirectory(test-sample)
 add_subdirectory(gpu-bridge-probe-sample)
+add_subdirectory(vulkan-shim)
+add_subdirectory(vulkan-shim-test)
 
 ##########################################
 
