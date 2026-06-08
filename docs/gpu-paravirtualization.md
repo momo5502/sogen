@@ -278,10 +278,22 @@ honoring the full structs.
     920 KB readback memcpy (the buffer was uncached) + ~0.45 ms SDL upload. Two fixes: `HOST_CACHED`
     readback cut the memcpy ~1.25 ms → ~0.065 ms (→ ~450 FPS), and async present removed the inline
     `vkQueueWaitIdle` (→ ~650 FPS, ~1.54 ms/frame). Net **~290 → ~650 FPS (~2.2×)** vs ~0.21 ms native.
-    The boundary cost is real but secondary: each remoted call is ~7.5 µs under WHP, so the ~12 command
-    IOCTLs are only ~0.18 ms. Remaining big phases are now the guest's per-frame fence wait (~0.6 ms,
-    poll-and-yield) and the SDL `present_surface` upload (~0.45 ms); eliminating the per-frame
-    GPU→CPU→GPU round-trip entirely (zero-copy / GPU-side present) is the next lever.
+    The boundary cost is real but secondary at this command count (each remoted call is ~7.5 µs under
+    WHP); it is now also **batched** — a whole command buffer's recording crosses in one IOCTL (see
+    command batching below), so the cube's recording dropped from ~0.18 ms (12 IOCTLs) to ~0.06 ms (1).
+    Remaining big phases are now the guest's per-frame fence wait (~0.6 ms, poll-and-yield) and the SDL
+    `present_surface` upload (~0.45 ms); eliminating the per-frame GPU→CPU→GPU round-trip entirely
+    (zero-copy / GPU-side present) is the next lever.
+- **Command recording is batched (`ioctl_record_commands`).** Command-buffer recording commands
+  (`vkBeginCommandBuffer`, the `vkCmd*` calls, `vkEndCommandBuffer`) are no longer one IOCTL each. The
+  guest shim appends each to a per-command-buffer byte stream (a `command_record_header` + that command's
+  normal request struct as payload) and flushes the whole `begin → cmds → end` stream to the bridge in a
+  **single** IOCTL at `vkEndCommandBuffer`; the host replays it (`execute_recorded_command`). This makes
+  recording cost ~O(1) boundary crossings regardless of command count — essential for real apps that
+  issue hundreds/thousands of draws per frame (where one-VM-exit-per-command would dominate). Measured at
+  600 draws/frame: recording stays ~0.15 ms batched vs an estimated ~4.5 ms unbatched (600 × ~7.5 µs).
+  The per-command IOCTLs and their host handlers were removed; the request structs remain as the stream
+  payload format.
 - **Surface capabilities are synthetic and the swapchain is never recreated.**
   `vkGetPhysicalDeviceSurfaceCapabilitiesKHR` returns fixed caps with an *undefined* `currentExtent`
   (the guest chooses the extent) and permissive min/max; `vkCreateSwapchainKHR`'s requested present mode

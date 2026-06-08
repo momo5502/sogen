@@ -89,6 +89,23 @@ namespace
         request.object = to_object_id(child);
         bridge_call(code, &request, sizeof(request), nullptr, 0);
     }
+
+    // Command-buffer recording is batched: instead of one IOCTL per vkCmd*, each command is appended to a
+    // per-command-buffer byte stream and the whole stream (begin -> cmds -> end) is flushed to the bridge
+    // in a single IOCTL at vkEndCommandBuffer. This amortises the boundary crossing, which dominates
+    // emulated frame time. The shim only runs inside the single-threaded emulator, so the map needs no
+    // lock. Each record is a gb::command_record_header followed by that command's request payload.
+    std::unordered_map<gb::object_id, std::vector<uint8_t>> g_command_streams;
+
+    void record_command(gb::object_id command_buffer, gb::command command, const void* payload, size_t size)
+    {
+        auto& stream = g_command_streams[command_buffer];
+        gb::command_record_header header{.command = static_cast<uint32_t>(command), .size = static_cast<uint32_t>(size)};
+        const auto* header_bytes = reinterpret_cast<const uint8_t*>(&header);
+        stream.insert(stream.end(), header_bytes, header_bytes + sizeof(header));
+        const auto* payload_bytes = reinterpret_cast<const uint8_t*>(payload);
+        stream.insert(stream.end(), payload_bytes, payload_bytes + size);
+    }
 }
 
 extern "C"
@@ -330,25 +347,34 @@ extern "C"
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkBeginCommandBuffer(VkCommandBuffer commandBuffer,
                                                                              const VkCommandBufferBeginInfo* pBeginInfo)
     {
+        // Start a fresh recording stream; the begin is its first record. Flushed at vkEndCommandBuffer.
         gb::begin_command_buffer_request request{};
         request.command_buffer = to_object_id(commandBuffer);
         request.flags = pBeginInfo ? pBeginInfo->flags : 0;
 
-        gb::result_response response{};
-        if (!bridge_call(gb::ioctl_begin_command_buffer, &request, sizeof(request), &response, sizeof(response)))
-        {
-            return VK_ERROR_INITIALIZATION_FAILED;
-        }
-        return static_cast<VkResult>(response.vk_result);
+        g_command_streams[request.command_buffer].clear();
+        record_command(request.command_buffer, gb::command::begin_command_buffer, &request, sizeof(request));
+        return VK_SUCCESS;
     }
 
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkEndCommandBuffer(VkCommandBuffer commandBuffer)
     {
+        const gb::object_id command_buffer = to_object_id(commandBuffer);
         gb::end_command_buffer_request request{};
-        request.command_buffer = to_object_id(commandBuffer);
+        request.command_buffer = command_buffer;
+        record_command(command_buffer, gb::command::end_command_buffer, &request, sizeof(request));
+
+        const auto it = g_command_streams.find(command_buffer);
+        if (it == g_command_streams.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const std::vector<uint8_t> stream = std::move(it->second);
+        g_command_streams.erase(it);
 
         gb::result_response response{};
-        if (!bridge_call(gb::ioctl_end_command_buffer, &request, sizeof(request), &response, sizeof(response)))
+        if (!bridge_call(gb::ioctl_record_commands, stream.data(), static_cast<DWORD>(stream.size()), &response,
+                         sizeof(response)))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -718,9 +744,7 @@ extern "C"
         request.offset = dstOffset;
         request.size = size;
         request.data = data;
-
-        gb::result_response response{};
-        bridge_call(gb::ioctl_cmd_fill_buffer, &request, sizeof(request), &response, sizeof(response));
+        record_command(request.command_buffer, gb::command::cmd_fill_buffer, &request, sizeof(request));
     }
 
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateImage(VkDevice device,
@@ -837,9 +861,7 @@ extern "C"
             request.dst_access_mask = b.dstAccessMask;
             request.old_layout = static_cast<uint32_t>(b.oldLayout);
             request.new_layout = static_cast<uint32_t>(b.newLayout);
-
-            gb::result_response response{};
-            bridge_call(gb::ioctl_cmd_pipeline_barrier, &request, sizeof(request), &response, sizeof(response));
+            record_command(request.command_buffer, gb::command::cmd_pipeline_barrier, &request, sizeof(request));
         }
     }
 
@@ -860,9 +882,7 @@ extern "C"
             request.color_g = pColor->float32[1];
             request.color_b = pColor->float32[2];
             request.color_a = pColor->float32[3];
-
-            gb::result_response response{};
-            bridge_call(gb::ioctl_cmd_clear_color_image, &request, sizeof(request), &response, sizeof(response));
+            record_command(request.command_buffer, gb::command::cmd_clear_color_image, &request, sizeof(request));
         }
     }
 
@@ -884,9 +904,7 @@ extern "C"
             request.width = r.imageExtent.width;
             request.height = r.imageExtent.height;
             request.aspect_mask = r.imageSubresource.aspectMask;
-
-            gb::result_response response{};
-            bridge_call(gb::ioctl_cmd_copy_image_to_buffer, &request, sizeof(request), &response, sizeof(response));
+            record_command(request.command_buffer, gb::command::cmd_copy_image_to_buffer, &request, sizeof(request));
         }
     }
 
@@ -1312,9 +1330,7 @@ extern "C"
             request.clear_b = pRenderPassBegin->pClearValues[0].color.float32[2];
             request.clear_a = pRenderPassBegin->pClearValues[0].color.float32[3];
         }
-
-        gb::result_response response{};
-        bridge_call(gb::ioctl_cmd_begin_render_pass, &request, sizeof(request), &response, sizeof(response));
+        record_command(request.command_buffer, gb::command::cmd_begin_render_pass, &request, sizeof(request));
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(VkCommandBuffer commandBuffer, VkPipelineBindPoint,
@@ -1323,9 +1339,7 @@ extern "C"
         gb::cmd_bind_pipeline_request request{};
         request.command_buffer = to_object_id(commandBuffer);
         request.pipeline = to_object_id(pipeline);
-
-        gb::result_response response{};
-        bridge_call(gb::ioctl_cmd_bind_pipeline, &request, sizeof(request), &response, sizeof(response));
+        record_command(request.command_buffer, gb::command::cmd_bind_pipeline, &request, sizeof(request));
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdDraw(VkCommandBuffer commandBuffer, uint32_t vertexCount,
@@ -1338,18 +1352,14 @@ extern "C"
         request.instance_count = instanceCount;
         request.first_vertex = firstVertex;
         request.first_instance = firstInstance;
-
-        gb::result_response response{};
-        bridge_call(gb::ioctl_cmd_draw, &request, sizeof(request), &response, sizeof(response));
+        record_command(request.command_buffer, gb::command::cmd_draw, &request, sizeof(request));
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdEndRenderPass(VkCommandBuffer commandBuffer)
     {
         gb::cmd_end_render_pass_request request{};
         request.command_buffer = to_object_id(commandBuffer);
-
-        gb::result_response response{};
-        bridge_call(gb::ioctl_cmd_end_render_pass, &request, sizeof(request), &response, sizeof(response));
+        record_command(request.command_buffer, gb::command::cmd_end_render_pass, &request, sizeof(request));
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdPushConstants(VkCommandBuffer commandBuffer,
@@ -1368,10 +1378,7 @@ extern "C"
         {
             std::memcpy(message.data() + sizeof(header), pValues, size);
         }
-
-        gb::result_response response{};
-        bridge_call(gb::ioctl_cmd_push_constants, message.data(), static_cast<DWORD>(message.size()), &response,
-                    sizeof(response));
+        record_command(header.command_buffer, gb::command::cmd_push_constants, message.data(), message.size());
     }
 
     __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice, const char* pName);

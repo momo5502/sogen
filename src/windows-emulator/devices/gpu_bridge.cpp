@@ -48,10 +48,6 @@ namespace sogen
                     return handle_allocate_command_buffer(win_emu, context);
                 case gpu_bridge::ioctl_free_command_buffer:
                     return handle_free_command_buffer(win_emu, context);
-                case gpu_bridge::ioctl_begin_command_buffer:
-                    return handle_begin_command_buffer(win_emu, context);
-                case gpu_bridge::ioctl_end_command_buffer:
-                    return handle_end_command_buffer(win_emu, context);
                 case gpu_bridge::ioctl_create_fence:
                     return handle_create_fence(win_emu, context);
                 case gpu_bridge::ioctl_destroy_fence:
@@ -76,8 +72,6 @@ namespace sogen
                     return handle_get_buffer_memory_requirements(win_emu, context);
                 case gpu_bridge::ioctl_bind_buffer_memory:
                     return handle_bind_buffer_memory(win_emu, context);
-                case gpu_bridge::ioctl_cmd_fill_buffer:
-                    return handle_cmd_fill_buffer(win_emu, context);
                 case gpu_bridge::ioctl_download_memory:
                     return handle_download_memory(win_emu, context);
                 case gpu_bridge::ioctl_upload_memory:
@@ -90,12 +84,6 @@ namespace sogen
                     return handle_get_image_memory_requirements(win_emu, context);
                 case gpu_bridge::ioctl_bind_image_memory:
                     return handle_bind_image_memory(win_emu, context);
-                case gpu_bridge::ioctl_cmd_pipeline_barrier:
-                    return handle_cmd_pipeline_barrier(win_emu, context);
-                case gpu_bridge::ioctl_cmd_clear_color_image:
-                    return handle_cmd_clear_color_image(win_emu, context);
-                case gpu_bridge::ioctl_cmd_copy_image_to_buffer:
-                    return handle_cmd_copy_image_to_buffer(win_emu, context);
                 case gpu_bridge::ioctl_create_surface:
                     return handle_create_surface(win_emu, context);
                 case gpu_bridge::ioctl_destroy_surface:
@@ -134,18 +122,10 @@ namespace sogen
                     return handle_create_graphics_pipeline(win_emu, context);
                 case gpu_bridge::ioctl_destroy_pipeline:
                     return handle_destroy_pipeline(win_emu, context);
-                case gpu_bridge::ioctl_cmd_begin_render_pass:
-                    return handle_cmd_begin_render_pass(win_emu, context);
-                case gpu_bridge::ioctl_cmd_bind_pipeline:
-                    return handle_cmd_bind_pipeline(win_emu, context);
-                case gpu_bridge::ioctl_cmd_draw:
-                    return handle_cmd_draw(win_emu, context);
-                case gpu_bridge::ioctl_cmd_end_render_pass:
-                    return handle_cmd_end_render_pass(win_emu, context);
-                case gpu_bridge::ioctl_cmd_push_constants:
-                    return handle_cmd_push_constants(win_emu, context);
                 case gpu_bridge::ioctl_get_surface_capabilities:
                     return handle_get_surface_capabilities(win_emu, context);
+                case gpu_bridge::ioctl_record_commands:
+                    return handle_record_commands(win_emu, context);
 
                 default:
                     win_emu.log.warn("[gpu-bridge] Unsupported IOCTL: 0x%X\n", context.io_control_code);
@@ -489,30 +469,6 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            NTSTATUS handle_begin_command_buffer(windows_emulator& win_emu, const io_device_context& context)
-            {
-                gpu_bridge::begin_command_buffer_request request{};
-                if (!read_input(win_emu, context, request))
-                {
-                    return STATUS_INVALID_PARAMETER;
-                }
-
-                const int32_t result = this->vulkan_.begin_command_buffer(request.command_buffer, request.flags);
-                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
-            }
-
-            NTSTATUS handle_end_command_buffer(windows_emulator& win_emu, const io_device_context& context)
-            {
-                gpu_bridge::end_command_buffer_request request{};
-                if (!read_input(win_emu, context, request))
-                {
-                    return STATUS_INVALID_PARAMETER;
-                }
-
-                const int32_t result = this->vulkan_.end_command_buffer(request.command_buffer);
-                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
-            }
-
             NTSTATUS handle_create_fence(windows_emulator& win_emu, const io_device_context& context)
             {
                 gpu_bridge::create_fence_request request{};
@@ -687,19 +643,6 @@ namespace sogen
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
-            NTSTATUS handle_cmd_fill_buffer(windows_emulator& win_emu, const io_device_context& context)
-            {
-                gpu_bridge::cmd_fill_buffer_request request{};
-                if (!read_input(win_emu, context, request))
-                {
-                    return STATUS_INVALID_PARAMETER;
-                }
-
-                const int32_t result = this->vulkan_.cmd_fill_buffer(request.command_buffer, request.buffer, request.offset,
-                                                                     request.size, request.data);
-                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
-            }
-
             NTSTATUS handle_download_memory(windows_emulator& win_emu, const io_device_context& context)
             {
                 gpu_bridge::download_memory_request request{};
@@ -822,50 +765,6 @@ namespace sogen
 
                 const int32_t result =
                     this->vulkan_.bind_image_memory(request.device, request.image, request.memory, request.offset);
-                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
-            }
-
-            NTSTATUS handle_cmd_pipeline_barrier(windows_emulator& win_emu, const io_device_context& context)
-            {
-                gpu_bridge::cmd_pipeline_barrier_request request{};
-                if (!read_input(win_emu, context, request))
-                {
-                    return STATUS_INVALID_PARAMETER;
-                }
-
-                const int32_t result = this->vulkan_.cmd_pipeline_barrier(
-                    request.command_buffer, request.image, request.src_stage_mask, request.dst_stage_mask,
-                    request.src_access_mask, request.dst_access_mask, request.old_layout, request.new_layout,
-                    to_host_range(request.subresource));
-                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
-            }
-
-            NTSTATUS handle_cmd_clear_color_image(windows_emulator& win_emu, const io_device_context& context)
-            {
-                gpu_bridge::cmd_clear_color_image_request request{};
-                if (!read_input(win_emu, context, request))
-                {
-                    return STATUS_INVALID_PARAMETER;
-                }
-
-                const int32_t result = this->vulkan_.cmd_clear_color_image(
-                    request.command_buffer, request.image, request.image_layout, request.color_r, request.color_g,
-                    request.color_b, request.color_a, to_host_range(request.subresource));
-                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
-            }
-
-            NTSTATUS handle_cmd_copy_image_to_buffer(windows_emulator& win_emu, const io_device_context& context)
-            {
-                gpu_bridge::cmd_copy_image_to_buffer_request request{};
-                if (!read_input(win_emu, context, request))
-                {
-                    return STATUS_INVALID_PARAMETER;
-                }
-
-                const int32_t result = this->vulkan_.cmd_copy_image_to_buffer(request.command_buffer, request.image,
-                                                                              request.image_layout, request.buffer,
-                                                                              request.width, request.height,
-                                                                              request.aspect_mask);
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
@@ -1172,75 +1071,169 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            NTSTATUS handle_cmd_begin_render_pass(windows_emulator& win_emu, const io_device_context& context)
+            // Executes one recorded command-buffer command from a batch (see ioctl_record_commands). The
+            // payload is the command's normal request struct; this is the per-command core shared with the
+            // (legacy) individual command IOCTL handlers. Returns the VkResult.
+            int32_t execute_recorded_command(windows_emulator& win_emu, uint32_t command, const std::byte* payload, size_t size)
             {
-                gpu_bridge::cmd_begin_render_pass_request request{};
-                if (!read_input(win_emu, context, request))
+                constexpr int32_t vk_error_initialization_failed = -3; // VK_ERROR_INITIALIZATION_FAILED (no vulkan.h here)
+                const auto read = [&](auto& req) {
+                    if (size < sizeof(req))
+                    {
+                        return false;
+                    }
+                    std::memcpy(&req, payload, sizeof(req));
+                    return true;
+                };
+
+                switch (static_cast<gpu_bridge::command>(command))
                 {
-                    return STATUS_INVALID_PARAMETER;
+                case gpu_bridge::command::begin_command_buffer:
+                {
+                    gpu_bridge::begin_command_buffer_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.begin_command_buffer(req.command_buffer, req.flags);
                 }
-                const int32_t result = this->vulkan_.cmd_begin_render_pass(request.command_buffer, request.render_pass,
-                                                                           request.framebuffer, request.width,
-                                                                           request.height, request.clear_r, request.clear_g,
-                                                                           request.clear_b, request.clear_a);
-                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+                case gpu_bridge::command::end_command_buffer:
+                {
+                    gpu_bridge::end_command_buffer_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.end_command_buffer(req.command_buffer);
+                }
+                case gpu_bridge::command::cmd_begin_render_pass:
+                {
+                    gpu_bridge::cmd_begin_render_pass_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_begin_render_pass(req.command_buffer, req.render_pass, req.framebuffer, req.width,
+                                                               req.height, req.clear_r, req.clear_g, req.clear_b, req.clear_a);
+                }
+                case gpu_bridge::command::cmd_bind_pipeline:
+                {
+                    gpu_bridge::cmd_bind_pipeline_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_bind_pipeline(req.command_buffer, req.pipeline);
+                }
+                case gpu_bridge::command::cmd_push_constants:
+                {
+                    gpu_bridge::cmd_push_constants_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    const auto data_bytes = std::min<uint64_t>(req.size, size - sizeof(req));
+                    return this->vulkan_.cmd_push_constants(req.command_buffer, req.pipeline_layout, req.stage_flags, req.offset,
+                                                            static_cast<uint32_t>(data_bytes), payload + sizeof(req));
+                }
+                case gpu_bridge::command::cmd_draw:
+                {
+                    gpu_bridge::cmd_draw_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_draw(req.command_buffer, req.vertex_count, req.instance_count, req.first_vertex,
+                                                  req.first_instance);
+                }
+                case gpu_bridge::command::cmd_end_render_pass:
+                {
+                    gpu_bridge::cmd_end_render_pass_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_end_render_pass(req.command_buffer);
+                }
+                case gpu_bridge::command::cmd_fill_buffer:
+                {
+                    gpu_bridge::cmd_fill_buffer_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_fill_buffer(req.command_buffer, req.buffer, req.offset, req.size, req.data);
+                }
+                case gpu_bridge::command::cmd_pipeline_barrier:
+                {
+                    gpu_bridge::cmd_pipeline_barrier_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_pipeline_barrier(req.command_buffer, req.image, req.src_stage_mask,
+                                                              req.dst_stage_mask, req.src_access_mask, req.dst_access_mask,
+                                                              req.old_layout, req.new_layout, to_host_range(req.subresource));
+                }
+                case gpu_bridge::command::cmd_clear_color_image:
+                {
+                    gpu_bridge::cmd_clear_color_image_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_clear_color_image(req.command_buffer, req.image, req.image_layout, req.color_r,
+                                                               req.color_g, req.color_b, req.color_a,
+                                                               to_host_range(req.subresource));
+                }
+                case gpu_bridge::command::cmd_copy_image_to_buffer:
+                {
+                    gpu_bridge::cmd_copy_image_to_buffer_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_copy_image_to_buffer(req.command_buffer, req.image, req.image_layout, req.buffer,
+                                                                  req.width, req.height, req.aspect_mask);
+                }
+                default:
+                    win_emu.log.warn("[gpu-bridge] record_commands: unsupported command 0x%X\n", command);
+                    return vk_error_initialization_failed;
+                }
             }
 
-            NTSTATUS handle_cmd_bind_pipeline(windows_emulator& win_emu, const io_device_context& context)
+            // Replays a batched command-buffer recording: one IOCTL carries the whole begin->cmds->end
+            // stream, amortising the per-command boundary crossing. See ioctl_record_commands.
+            NTSTATUS handle_record_commands(windows_emulator& win_emu, const io_device_context& context)
             {
-                gpu_bridge::cmd_bind_pipeline_request request{};
-                if (!read_input(win_emu, context, request))
-                {
-                    return STATUS_INVALID_PARAMETER;
-                }
-                const int32_t result = this->vulkan_.cmd_bind_pipeline(request.command_buffer, request.pipeline);
-                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
-            }
-
-            NTSTATUS handle_cmd_draw(windows_emulator& win_emu, const io_device_context& context)
-            {
-                gpu_bridge::cmd_draw_request request{};
-                if (!read_input(win_emu, context, request))
-                {
-                    return STATUS_INVALID_PARAMETER;
-                }
-                const int32_t result = this->vulkan_.cmd_draw(request.command_buffer, request.vertex_count,
-                                                              request.instance_count, request.first_vertex,
-                                                              request.first_instance);
-                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
-            }
-
-            NTSTATUS handle_cmd_end_render_pass(windows_emulator& win_emu, const io_device_context& context)
-            {
-                gpu_bridge::cmd_end_render_pass_request request{};
-                if (!read_input(win_emu, context, request))
-                {
-                    return STATUS_INVALID_PARAMETER;
-                }
-                const int32_t result = this->vulkan_.cmd_end_render_pass(request.command_buffer);
-                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
-            }
-
-            NTSTATUS handle_cmd_push_constants(windows_emulator& win_emu, const io_device_context& context)
-            {
-                using request_t = gpu_bridge::cmd_push_constants_request;
-
-                request_t request{};
-                if (!read_input(win_emu, context, request))
+                if (!context.input_buffer || context.input_buffer_length == 0)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                const auto data_bytes = std::min<uint64_t>(request.size, context.input_buffer_length - sizeof(request_t));
-                std::vector<std::byte> values(data_bytes);
-                if (data_bytes > 0)
+                std::vector<std::byte> stream(context.input_buffer_length);
+                win_emu.emu().read_memory(context.input_buffer, stream.data(), stream.size());
+
+                int32_t result = 0; // VK_SUCCESS
+                size_t offset = 0;
+                while (offset + sizeof(gpu_bridge::command_record_header) <= stream.size())
                 {
-                    win_emu.emu().read_memory(context.input_buffer + sizeof(request_t), values.data(), values.size());
+                    gpu_bridge::command_record_header header{};
+                    std::memcpy(&header, stream.data() + offset, sizeof(header));
+                    offset += sizeof(header);
+                    if (header.size > stream.size() - offset)
+                    {
+                        break; // truncated / malformed record
+                    }
+
+                    const int32_t r = this->execute_recorded_command(win_emu, header.command, stream.data() + offset, header.size);
+                    if (r != 0 && result == 0)
+                    {
+                        result = r; // report the first failure
+                    }
+                    offset += header.size;
                 }
 
-                const int32_t result =
-                    this->vulkan_.cmd_push_constants(request.command_buffer, request.pipeline_layout, request.stage_flags,
-                                                     request.offset, static_cast<uint32_t>(values.size()), values.data());
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
