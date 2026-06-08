@@ -96,6 +96,20 @@ namespace sogen
                     return handle_cmd_clear_color_image(win_emu, context);
                 case gpu_bridge::ioctl_cmd_copy_image_to_buffer:
                     return handle_cmd_copy_image_to_buffer(win_emu, context);
+                case gpu_bridge::ioctl_create_surface:
+                    return handle_create_surface(win_emu, context);
+                case gpu_bridge::ioctl_destroy_surface:
+                    return handle_destroy_surface(win_emu, context);
+                case gpu_bridge::ioctl_create_swapchain:
+                    return handle_create_swapchain(win_emu, context);
+                case gpu_bridge::ioctl_destroy_swapchain:
+                    return handle_destroy_swapchain(win_emu, context);
+                case gpu_bridge::ioctl_get_swapchain_images:
+                    return handle_get_swapchain_images(win_emu, context);
+                case gpu_bridge::ioctl_acquire_next_image:
+                    return handle_acquire_next_image(win_emu, context);
+                case gpu_bridge::ioctl_queue_present:
+                    return handle_queue_present(win_emu, context);
 
                 default:
                     win_emu.log.warn("[gpu-bridge] Unsupported IOCTL: 0x%X\n", context.io_control_code);
@@ -816,6 +830,148 @@ namespace sogen
                                                                               request.image_layout, request.buffer,
                                                                               request.width, request.height,
                                                                               request.aspect_mask);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_create_surface(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::create_surface_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                uint64_t surface = gpu_bridge::null_object;
+                const int32_t result = this->vulkan_.create_surface(request.hwnd, surface);
+                return write_output(win_emu, context,
+                                    gpu_bridge::create_surface_response{.vk_result = result, .reserved = 0, .surface = surface});
+            }
+
+            NTSTATUS handle_destroy_surface(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::destroy_surface_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                this->vulkan_.destroy_surface(request.surface);
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_create_swapchain(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::create_swapchain_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                uint64_t swapchain = gpu_bridge::null_object;
+                uint32_t image_count = 0;
+                const int32_t result =
+                    this->vulkan_.create_swapchain(request.device, request.surface, request.format, request.width,
+                                                   request.height, request.min_image_count, request.image_usage, swapchain,
+                                                   image_count);
+                return write_output(win_emu, context,
+                                    gpu_bridge::create_swapchain_response{
+                                        .vk_result = result, .image_count = image_count, .swapchain = swapchain});
+            }
+
+            NTSTATUS handle_destroy_swapchain(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::destroy_swapchain_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                this->vulkan_.destroy_swapchain(request.device, request.swapchain);
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_get_swapchain_images(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::get_swapchain_images_request;
+                using response_t = gpu_bridge::get_swapchain_images_response;
+
+                request_t request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (!context.output_buffer || context.output_buffer_length < sizeof(response_t))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                const auto array_capacity =
+                    static_cast<uint32_t>((context.output_buffer_length - sizeof(response_t)) / sizeof(gpu_bridge::object_id));
+                const auto max_count = std::min(request.max_count, array_capacity);
+
+                std::vector<uint64_t> ids(max_count);
+                uint32_t count = 0;
+                const int32_t result = this->vulkan_.get_swapchain_images(request.swapchain, std::span{ids}, count);
+
+                emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(
+                    response_t{.vk_result = result, .count = count});
+
+                const auto written = std::min(count, max_count);
+                if (written > 0)
+                {
+                    win_emu.emu().write_memory(context.output_buffer + sizeof(response_t), ids.data(),
+                                               written * sizeof(gpu_bridge::object_id));
+                }
+
+                set_information(context, static_cast<ULONG>(sizeof(response_t) + written * sizeof(gpu_bridge::object_id)));
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_acquire_next_image(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::acquire_next_image_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                uint32_t index = 0;
+                const int32_t result = this->vulkan_.acquire_next_image(request.swapchain, index);
+                return write_output(win_emu, context,
+                                    gpu_bridge::acquire_next_image_response{.vk_result = result, .image_index = index});
+            }
+
+            NTSTATUS handle_queue_present(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::queue_present_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                std::vector<std::byte> pixels;
+                uint32_t width = 0;
+                uint32_t height = 0;
+                uint64_t hwnd_value = 0;
+                const int32_t result =
+                    this->vulkan_.queue_present(request.queue, request.swapchain, request.image_index, pixels, width, height,
+                                                hwnd_value);
+
+                // Hand the freshly read-back pixels to the guest window through the UI backend (the same
+                // seam GDI EndPaint uses). The swapchain is B8G8R8A8, matching bgra8, so no swizzle.
+                if (result == 0 /* VK_SUCCESS */ && hwnd_value != 0 && !pixels.empty())
+                {
+                    win_emu.ui().present_surface(static_cast<hwnd>(hwnd_value),
+                                                 ui_surface_desc{
+                                                     .width = static_cast<int>(width),
+                                                     .height = static_cast<int>(height),
+                                                     .stride = static_cast<int>(width * 4),
+                                                     .format = ui_surface_format::bgra8,
+                                                     .pixels = pixels.data(),
+                                                 });
+                }
+
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
         };

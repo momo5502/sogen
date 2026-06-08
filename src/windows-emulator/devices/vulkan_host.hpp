@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <vector>
 
 namespace sogen
 {
@@ -126,6 +127,31 @@ namespace sogen
         // Copies mip 0 / layer 0 of the image (tightly packed) into the buffer at offset 0.
         int32_t cmd_copy_image_to_buffer(uint64_t command_buffer, uint64_t image, uint32_t image_layout, uint64_t buffer,
                                          uint32_t width, uint32_t height, uint32_t aspect_mask);
+
+        // --- WSI (modeled with offscreen images; "present" reads back and hands pixels to the UI) ---
+
+        // A surface is just the guest HWND to present to; no real host VkSurfaceKHR is created.
+        int32_t create_surface(uint64_t hwnd, uint64_t& out_surface);
+        void destroy_surface(uint64_t surface);
+
+        // Creates `min_image_count` (>= 2) offscreen images of the given format/extent plus a readback
+        // buffer. out_image_count receives the number of images created.
+        int32_t create_swapchain(uint64_t device, uint64_t surface, uint32_t format, uint32_t width, uint32_t height,
+                                 uint32_t min_image_count, uint32_t image_usage, uint64_t& out_swapchain,
+                                 uint32_t& out_image_count);
+        void destroy_swapchain(uint64_t device, uint64_t swapchain);
+
+        // Writes the swapchain's image object ids into out_images; out_count gets the true count.
+        int32_t get_swapchain_images(uint64_t swapchain, std::span<uint64_t> out_images, uint32_t& out_count);
+
+        // Returns the next image index (round-robin; images are always immediately available).
+        int32_t acquire_next_image(uint64_t swapchain, uint32_t& out_index);
+
+        // Copies the presented image into the readback buffer (blocking on the queue), then fills
+        // out_pixels (BGRA, width*height*4) and reports the target window/extent so the caller can hand
+        // the pixels to the UI backend.
+        int32_t queue_present(uint64_t queue, uint64_t swapchain, uint32_t image_index, std::vector<std::byte>& out_pixels,
+                              uint32_t& out_width, uint32_t& out_height, uint64_t& out_hwnd);
 
       private:
         struct impl;

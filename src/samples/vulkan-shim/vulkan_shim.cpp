@@ -15,6 +15,9 @@
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan_core.h>
 
+#define VK_USE_PLATFORM_WIN32_KHR
+#include <vulkan/vulkan_win32.h>
+
 #include <gpu_bridge_protocol.hpp>
 
 namespace gb = sogen::gpu_bridge;
@@ -846,6 +849,169 @@ extern "C"
         }
     }
 
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateWin32SurfaceKHR(VkInstance,
+                                                                                 const VkWin32SurfaceCreateInfoKHR* pCreateInfo,
+                                                                                 const VkAllocationCallbacks*,
+                                                                                 VkSurfaceKHR* pSurface)
+    {
+        gb::create_surface_request request{};
+        request.hwnd = reinterpret_cast<uint64_t>(pCreateInfo->hwnd);
+
+        gb::create_surface_response response{};
+        if (!bridge_call(gb::ioctl_create_surface, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+
+        *pSurface = to_handle<VkSurfaceKHR>(response.surface);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroySurfaceKHR(VkInstance, VkSurfaceKHR surface,
+                                                                         const VkAllocationCallbacks*)
+    {
+        if (!surface)
+        {
+            return;
+        }
+        gb::destroy_surface_request request{};
+        request.surface = to_object_id(surface);
+        bridge_call(gb::ioctl_destroy_surface, &request, sizeof(request), nullptr, 0);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice device,
+                                                                              const VkSwapchainCreateInfoKHR* pCreateInfo,
+                                                                              const VkAllocationCallbacks*,
+                                                                              VkSwapchainKHR* pSwapchain)
+    {
+        gb::create_swapchain_request request{};
+        request.device = to_object_id(device);
+        request.surface = to_object_id(pCreateInfo->surface);
+        request.format = static_cast<uint32_t>(pCreateInfo->imageFormat);
+        request.width = pCreateInfo->imageExtent.width;
+        request.height = pCreateInfo->imageExtent.height;
+        request.min_image_count = pCreateInfo->minImageCount;
+        request.image_usage = pCreateInfo->imageUsage;
+        request.present_mode = static_cast<uint32_t>(pCreateInfo->presentMode);
+
+        gb::create_swapchain_response response{};
+        if (!bridge_call(gb::ioctl_create_swapchain, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+
+        *pSwapchain = to_handle<VkSwapchainKHR>(response.swapchain);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain,
+                                                                           const VkAllocationCallbacks*)
+    {
+        if (!swapchain)
+        {
+            return;
+        }
+        gb::destroy_swapchain_request request{};
+        request.device = to_object_id(device);
+        request.swapchain = to_object_id(swapchain);
+        bridge_call(gb::ioctl_destroy_swapchain, &request, sizeof(request), nullptr, 0);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetSwapchainImagesKHR(VkDevice, VkSwapchainKHR swapchain,
+                                                                                 uint32_t* pSwapchainImageCount,
+                                                                                 VkImage* pSwapchainImages)
+    {
+        const uint32_t capacity = pSwapchainImages ? *pSwapchainImageCount : 0;
+
+        gb::get_swapchain_images_request request{};
+        request.swapchain = to_object_id(swapchain);
+        request.max_count = capacity;
+
+        std::vector<uint8_t> out(sizeof(gb::get_swapchain_images_response) + capacity * sizeof(gb::object_id));
+        if (!bridge_call(gb::ioctl_get_swapchain_images, &request, sizeof(request), out.data(),
+                         static_cast<DWORD>(out.size())))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        gb::get_swapchain_images_response header{};
+        std::memcpy(&header, out.data(), sizeof(header));
+        if (header.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(header.vk_result);
+        }
+
+        if (!pSwapchainImages)
+        {
+            *pSwapchainImageCount = header.count;
+            return VK_SUCCESS;
+        }
+
+        const uint32_t to_write = (header.count < capacity) ? header.count : capacity;
+        const auto* ids = reinterpret_cast<const gb::object_id*>(out.data() + sizeof(header));
+        for (uint32_t i = 0; i < to_write; ++i)
+        {
+            pSwapchainImages[i] = to_handle<VkImage>(ids[i]);
+        }
+        *pSwapchainImageCount = to_write;
+        return (to_write < header.count) ? VK_INCOMPLETE : VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImageKHR(VkDevice, VkSwapchainKHR swapchain, uint64_t,
+                                                                               VkSemaphore, VkFence, uint32_t* pImageIndex)
+    {
+        // semaphore/fence are ignored: the bridge's images are always immediately available.
+        gb::acquire_next_image_request request{};
+        request.swapchain = to_object_id(swapchain);
+
+        gb::acquire_next_image_response response{};
+        if (!bridge_call(gb::ioctl_acquire_next_image, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_OUT_OF_DATE_KHR;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+
+        *pImageIndex = response.image_index;
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* pPresentInfo)
+    {
+        VkResult overall = VK_SUCCESS;
+        for (uint32_t i = 0; i < pPresentInfo->swapchainCount; ++i)
+        {
+            gb::queue_present_request request{};
+            request.queue = to_object_id(queue);
+            request.swapchain = to_object_id(pPresentInfo->pSwapchains[i]);
+            request.image_index = pPresentInfo->pImageIndices[i];
+
+            gb::result_response response{};
+            const bool ok =
+                bridge_call(gb::ioctl_queue_present, &request, sizeof(request), &response, sizeof(response));
+            const VkResult result = ok ? static_cast<VkResult>(response.vk_result) : VK_ERROR_INITIALIZATION_FAILED;
+            if (pPresentInfo->pResults)
+            {
+                pPresentInfo->pResults[i] = result;
+            }
+            if (result != VK_SUCCESS)
+            {
+                overall = result;
+            }
+        }
+        return overall;
+    }
+
     __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice, const char* pName);
 
     __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance, const char* pName)
@@ -906,6 +1072,13 @@ extern "C"
             {.name = "vkCmdPipelineBarrier", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdPipelineBarrier)},
             {.name = "vkCmdClearColorImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdClearColorImage)},
             {.name = "vkCmdCopyImageToBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyImageToBuffer)},
+            {.name = "vkCreateWin32SurfaceKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateWin32SurfaceKHR)},
+            {.name = "vkDestroySurfaceKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroySurfaceKHR)},
+            {.name = "vkCreateSwapchainKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateSwapchainKHR)},
+            {.name = "vkDestroySwapchainKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroySwapchainKHR)},
+            {.name = "vkGetSwapchainImagesKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetSwapchainImagesKHR)},
+            {.name = "vkAcquireNextImageKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkAcquireNextImageKHR)},
+            {.name = "vkQueuePresentKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkQueuePresentKHR)},
         };
 
         for (const auto& e : table)

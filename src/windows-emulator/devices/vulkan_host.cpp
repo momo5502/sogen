@@ -94,8 +94,11 @@ namespace sogen
         {
             VkDevice handle{};
             uint64_t instance_id{};
+            VkPhysicalDevice physical_device{}; // the device this was created from (for memory queries)
+            uint32_t queue_family_index{};      // the single family this device was created with
             PFN_vkDestroyDevice destroy_device{};
             PFN_vkGetDeviceQueue get_device_queue{};
+            PFN_vkQueueWaitIdle queue_wait_idle{};
             PFN_vkCreateCommandPool create_command_pool{};
             PFN_vkDestroyCommandPool destroy_command_pool{};
             PFN_vkAllocateCommandBuffers allocate_command_buffers{};
@@ -123,6 +126,33 @@ namespace sogen
             PFN_vkCmdPipelineBarrier cmd_pipeline_barrier{};
             PFN_vkCmdClearColorImage cmd_clear_color_image{};
             PFN_vkCmdCopyImageToBuffer cmd_copy_image_to_buffer{};
+        };
+
+        // A guest-side window-system surface. There is no real host VkSurfaceKHR (the host driver may
+        // lack Win32 WSI); the bridge only needs the guest HWND to present readback pixels to.
+        struct surface_data
+        {
+            uint64_t hwnd{};
+        };
+
+        // A swapchain is modeled as N offscreen images plus a host-visible readback buffer. "Presenting"
+        // copies the chosen image into the readback buffer; the bridge then hands those pixels to the
+        // guest window via the UI backend. No real presentation engine is involved.
+        struct swapchain_data
+        {
+            uint64_t device_id{};
+            uint64_t hwnd{};
+            uint32_t width{};
+            uint32_t height{};
+            VkFormat format{};
+            std::vector<uint64_t> image_ids{};        // entries in `images`, owned by this swapchain
+            std::vector<VkDeviceMemory> image_memory{};
+            VkBuffer readback_buffer{};
+            VkDeviceMemory readback_memory{};
+            VkCommandPool present_pool{};
+            VkCommandBuffer present_cmd{};
+            VkFence present_fence{};
+            uint32_t next_image{};
         };
 
         std::unordered_map<uint64_t, instance_data> instances;
@@ -179,7 +209,32 @@ namespace sogen
         std::unordered_map<uint64_t, memory_data> memories;
         std::unordered_map<uint64_t, buffer_data> buffers;
         std::unordered_map<uint64_t, image_data> images;
+        std::unordered_map<uint64_t, surface_data> surfaces;
+        std::unordered_map<uint64_t, swapchain_data> swapchains;
         uint64_t next_id{1};
+
+        // Picks the first memory type set in `type_bits` that has all `required` property flags, using
+        // the memory properties of the device's physical device. Returns UINT32_MAX if none qualifies.
+        uint32_t find_memory_type(const device_data& dev, uint32_t type_bits, VkMemoryPropertyFlags required)
+        {
+            const auto instance = this->instances.find(dev.instance_id);
+            if (instance == this->instances.end() || !instance->second.get_physical_device_memory_properties)
+            {
+                return UINT32_MAX;
+            }
+
+            VkPhysicalDeviceMemoryProperties props{};
+            instance->second.get_physical_device_memory_properties(dev.physical_device, &props);
+
+            for (uint32_t i = 0; i < props.memoryTypeCount; ++i)
+            {
+                if ((type_bits & (1u << i)) && (props.memoryTypes[i].propertyFlags & required) == required)
+                {
+                    return i;
+                }
+            }
+            return UINT32_MAX;
+        }
 
         template <typename Map, typename Pred>
         void erase_owned(Map& map, Pred pred)
@@ -190,12 +245,75 @@ namespace sogen
             }
         }
 
+        // Frees every Vulkan resource a swapchain owns (offscreen images + memory, readback buffer +
+        // memory, present command pool/fence) and removes its images from the `images` table.
+        void destroy_swapchain_resources(swapchain_data& sc)
+        {
+            const auto dev_it = this->devices.find(sc.device_id);
+            if (dev_it == this->devices.end())
+            {
+                return;
+            }
+            device_data& dev = dev_it->second;
+
+            for (const uint64_t image_id : sc.image_ids)
+            {
+                const auto img = this->images.find(image_id);
+                if (img != this->images.end())
+                {
+                    if (img->second.handle && dev.destroy_image)
+                    {
+                        dev.destroy_image(dev.handle, img->second.handle, nullptr);
+                    }
+                    this->images.erase(img);
+                }
+            }
+            for (VkDeviceMemory memory : sc.image_memory)
+            {
+                if (memory && dev.free_memory)
+                {
+                    dev.free_memory(dev.handle, memory, nullptr);
+                }
+            }
+            if (sc.present_fence && dev.destroy_fence)
+            {
+                dev.destroy_fence(dev.handle, sc.present_fence, nullptr);
+            }
+            if (sc.present_pool && dev.destroy_command_pool)
+            {
+                dev.destroy_command_pool(dev.handle, sc.present_pool, nullptr); // also frees present_cmd
+            }
+            if (sc.readback_buffer && dev.destroy_buffer)
+            {
+                dev.destroy_buffer(dev.handle, sc.readback_buffer, nullptr);
+            }
+            if (sc.readback_memory && dev.free_memory)
+            {
+                dev.free_memory(dev.handle, sc.readback_memory, nullptr);
+            }
+        }
+
         void erase_device(uint64_t device_id)
         {
             const auto it = this->devices.find(device_id);
             if (it == this->devices.end())
             {
                 return;
+            }
+
+            // Tear down swapchains first: they own offscreen images (in the `images` table), a readback
+            // buffer, and a present command pool/fence that must go before the device.
+            for (auto sc = this->swapchains.begin(); sc != this->swapchains.end();)
+            {
+                if (sc->second.device_id == device_id)
+                {
+                    this->destroy_swapchain_resources(sc->second);
+                    sc = this->swapchains.erase(sc);
+                }
+                else
+                {
+                    ++sc;
+                }
             }
 
             // Destroy GPU-owned children (pools free their command buffers; fences are freed) before
@@ -556,6 +674,8 @@ namespace sogen
         impl::device_data data{};
         data.handle = device;
         data.instance_id = pd->second.instance_id;
+        data.physical_device = pd->second.handle;
+        data.queue_family_index = queue_family_index;
 
         if (const auto gdpa = instance->second.get_device_proc_addr)
         {
@@ -563,6 +683,7 @@ namespace sogen
 
             data.destroy_device = reinterpret_cast<PFN_vkDestroyDevice>(resolve("vkDestroyDevice"));
             data.get_device_queue = reinterpret_cast<PFN_vkGetDeviceQueue>(resolve("vkGetDeviceQueue"));
+            data.queue_wait_idle = reinterpret_cast<PFN_vkQueueWaitIdle>(resolve("vkQueueWaitIdle"));
             data.create_command_pool = reinterpret_cast<PFN_vkCreateCommandPool>(resolve("vkCreateCommandPool"));
             data.destroy_command_pool = reinterpret_cast<PFN_vkDestroyCommandPool>(resolve("vkDestroyCommandPool"));
             data.allocate_command_buffers = reinterpret_cast<PFN_vkAllocateCommandBuffers>(resolve("vkAllocateCommandBuffers"));
@@ -1197,6 +1318,19 @@ namespace sogen
             out.layerCount = range.layer_count;
             return out;
         }
+
+        // The bridge's swapchain images are ordinary offscreen VkImages with no real presentation
+        // engine, so the host driver would reject VK_IMAGE_LAYOUT_PRESENT_SRC_KHR. Map it to
+        // TRANSFER_SRC_OPTIMAL (the layout the present-time readback copy reads from), keeping the guest
+        // a faithful WSI app while the real driver stays valid.
+        VkImageLayout translate_layout(uint32_t layout)
+        {
+            if (layout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+            {
+                return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            }
+            return static_cast<VkImageLayout>(layout);
+        }
     }
 
     int32_t vulkan_host::cmd_pipeline_barrier(uint64_t command_buffer, uint64_t image, uint32_t src_stage_mask,
@@ -1220,8 +1354,8 @@ namespace sogen
         barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         barrier.srcAccessMask = src_access_mask;
         barrier.dstAccessMask = dst_access_mask;
-        barrier.oldLayout = static_cast<VkImageLayout>(old_layout);
-        barrier.newLayout = static_cast<VkImageLayout>(new_layout);
+        barrier.oldLayout = translate_layout(old_layout);
+        barrier.newLayout = translate_layout(new_layout);
         barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.image = img->second.handle;
@@ -1255,8 +1389,8 @@ namespace sogen
         clear.float32[3] = a;
 
         const VkImageSubresourceRange vk_range = to_vk_range(range);
-        dev->second.cmd_clear_color_image(cb->second.handle, img->second.handle, static_cast<VkImageLayout>(image_layout),
-                                          &clear, 1, &vk_range);
+        dev->second.cmd_clear_color_image(cb->second.handle, img->second.handle, translate_layout(image_layout), &clear, 1,
+                                          &vk_range);
         return VK_SUCCESS;
     }
 
@@ -1289,8 +1423,315 @@ namespace sogen
         region.imageOffset = {.x = 0, .y = 0, .z = 0};
         region.imageExtent = {.width = width, .height = height, .depth = 1};
 
-        dev->second.cmd_copy_image_to_buffer(cb->second.handle, img->second.handle,
-                                             static_cast<VkImageLayout>(image_layout), buf->second.handle, 1, &region);
+        dev->second.cmd_copy_image_to_buffer(cb->second.handle, img->second.handle, translate_layout(image_layout),
+                                             buf->second.handle, 1, &region);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::create_surface(uint64_t hwnd, uint64_t& out_surface)
+    {
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->surfaces.emplace(id, impl::surface_data{.hwnd = hwnd});
+        out_surface = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::destroy_surface(uint64_t surface)
+    {
+        this->impl_->surfaces.erase(surface);
+    }
+
+    int32_t vulkan_host::create_swapchain(uint64_t device, uint64_t surface, uint32_t format, uint32_t width,
+                                          uint32_t height, uint32_t min_image_count, uint32_t image_usage,
+                                          uint64_t& out_swapchain, uint32_t& out_image_count)
+    {
+        out_swapchain = 0;
+        out_image_count = 0;
+
+        const auto dev_it = this->impl_->devices.find(device);
+        const auto surf_it = this->impl_->surfaces.find(surface);
+        if (dev_it == this->impl_->devices.end() || surf_it == this->impl_->surfaces.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        impl::device_data& dev = dev_it->second;
+        if (!dev.create_image || !dev.allocate_memory || !dev.bind_image_memory || !dev.create_buffer ||
+            !dev.bind_buffer_memory || !dev.create_command_pool || !dev.allocate_command_buffers || !dev.create_fence)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const uint32_t image_count = (min_image_count < 2) ? 2 : min_image_count;
+        const auto vk_format = static_cast<VkFormat>(format);
+
+        impl::swapchain_data sc{};
+        sc.device_id = device;
+        sc.hwnd = surf_it->second.hwnd;
+        sc.width = width;
+        sc.height = height;
+        sc.format = vk_format;
+
+        const auto fail = [&]() -> int32_t {
+            this->impl_->destroy_swapchain_resources(sc);
+            return VK_ERROR_INITIALIZATION_FAILED;
+        };
+
+        // Offscreen images that stand in for the swapchain's presentable images. TRANSFER_SRC is always
+        // added so the present-time readback copy can source them.
+        for (uint32_t i = 0; i < image_count; ++i)
+        {
+            VkImageCreateInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            info.imageType = VK_IMAGE_TYPE_2D;
+            info.format = vk_format;
+            info.extent = {.width = width, .height = height, .depth = 1};
+            info.mipLevels = 1;
+            info.arrayLayers = 1;
+            info.samples = VK_SAMPLE_COUNT_1_BIT;
+            info.tiling = VK_IMAGE_TILING_OPTIMAL;
+            info.usage = image_usage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+            VkImage image{};
+            if (dev.create_image(dev.handle, &info, nullptr, &image) != VK_SUCCESS)
+            {
+                return fail();
+            }
+
+            VkMemoryRequirements reqs{};
+            dev.get_image_memory_requirements(dev.handle, image, &reqs);
+            uint32_t type_index = this->impl_->find_memory_type(dev, reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            if (type_index == UINT32_MAX)
+            {
+                type_index = this->impl_->find_memory_type(dev, reqs.memoryTypeBits, 0);
+            }
+
+            VkMemoryAllocateInfo alloc{};
+            alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            alloc.allocationSize = reqs.size;
+            alloc.memoryTypeIndex = type_index;
+            VkDeviceMemory memory{};
+            if (dev.allocate_memory(dev.handle, &alloc, nullptr, &memory) != VK_SUCCESS)
+            {
+                dev.destroy_image(dev.handle, image, nullptr);
+                return fail();
+            }
+            dev.bind_image_memory(dev.handle, image, memory, 0);
+
+            const uint64_t image_id = this->impl_->next_id++;
+            this->impl_->images.emplace(image_id, impl::image_data{.handle = image, .device_id = device});
+            sc.image_ids.push_back(image_id);
+            sc.image_memory.push_back(memory);
+        }
+
+        // Host-visible readback buffer the presented image is copied into (4 bytes/pixel).
+        const VkDeviceSize readback_size = static_cast<VkDeviceSize>(width) * height * 4;
+        VkBufferCreateInfo buffer_info{};
+        buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buffer_info.size = readback_size;
+        buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        if (dev.create_buffer(dev.handle, &buffer_info, nullptr, &sc.readback_buffer) != VK_SUCCESS)
+        {
+            return fail();
+        }
+
+        VkMemoryRequirements buffer_reqs{};
+        dev.get_buffer_memory_requirements(dev.handle, sc.readback_buffer, &buffer_reqs);
+        const uint32_t buffer_type = this->impl_->find_memory_type(
+            dev, buffer_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        if (buffer_type == UINT32_MAX)
+        {
+            return fail();
+        }
+        VkMemoryAllocateInfo buffer_alloc{};
+        buffer_alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        buffer_alloc.allocationSize = buffer_reqs.size;
+        buffer_alloc.memoryTypeIndex = buffer_type;
+        if (dev.allocate_memory(dev.handle, &buffer_alloc, nullptr, &sc.readback_memory) != VK_SUCCESS)
+        {
+            return fail();
+        }
+        dev.bind_buffer_memory(dev.handle, sc.readback_buffer, sc.readback_memory, 0);
+
+        // Reusable command buffer + fence for the per-present readback copy.
+        VkCommandPoolCreateInfo pool_info{};
+        pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        pool_info.queueFamilyIndex = dev.queue_family_index;
+        if (dev.create_command_pool(dev.handle, &pool_info, nullptr, &sc.present_pool) != VK_SUCCESS)
+        {
+            return fail();
+        }
+
+        VkCommandBufferAllocateInfo cb_info{};
+        cb_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        cb_info.commandPool = sc.present_pool;
+        cb_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cb_info.commandBufferCount = 1;
+        if (dev.allocate_command_buffers(dev.handle, &cb_info, &sc.present_cmd) != VK_SUCCESS)
+        {
+            return fail();
+        }
+
+        VkFenceCreateInfo fence_info{};
+        fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        if (dev.create_fence(dev.handle, &fence_info, nullptr, &sc.present_fence) != VK_SUCCESS)
+        {
+            return fail();
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        out_image_count = image_count;
+        this->impl_->swapchains.emplace(id, std::move(sc));
+        out_swapchain = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::destroy_swapchain(uint64_t /*device*/, uint64_t swapchain)
+    {
+        const auto it = this->impl_->swapchains.find(swapchain);
+        if (it == this->impl_->swapchains.end())
+        {
+            return;
+        }
+        this->impl_->destroy_swapchain_resources(it->second);
+        this->impl_->swapchains.erase(it);
+    }
+
+    int32_t vulkan_host::get_swapchain_images(uint64_t swapchain, std::span<uint64_t> out_images, uint32_t& out_count)
+    {
+        out_count = 0;
+        const auto it = this->impl_->swapchains.find(swapchain);
+        if (it == this->impl_->swapchains.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        out_count = static_cast<uint32_t>(it->second.image_ids.size());
+        for (size_t i = 0; i < it->second.image_ids.size() && i < out_images.size(); ++i)
+        {
+            out_images[i] = it->second.image_ids[i];
+        }
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::acquire_next_image(uint64_t swapchain, uint32_t& out_index)
+    {
+        out_index = 0;
+        const auto it = this->impl_->swapchains.find(swapchain);
+        if (it == this->impl_->swapchains.end() || it->second.image_ids.empty())
+        {
+            return VK_ERROR_OUT_OF_DATE_KHR;
+        }
+
+        // No real presentation engine: images are always available, handed out round-robin.
+        out_index = it->second.next_image;
+        it->second.next_image = (it->second.next_image + 1) % static_cast<uint32_t>(it->second.image_ids.size());
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::queue_present(uint64_t queue, uint64_t swapchain, uint32_t image_index,
+                                       std::vector<std::byte>& out_pixels, uint32_t& out_width, uint32_t& out_height,
+                                       uint64_t& out_hwnd)
+    {
+        out_pixels.clear();
+        out_width = 0;
+        out_height = 0;
+        out_hwnd = 0;
+
+        const auto queue_it = this->impl_->queues.find(queue);
+        const auto sc_it = this->impl_->swapchains.find(swapchain);
+        if (queue_it == this->impl_->queues.end() || sc_it == this->impl_->swapchains.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        impl::swapchain_data& sc = sc_it->second;
+        if (image_index >= sc.image_ids.size())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto dev_it = this->impl_->devices.find(sc.device_id);
+        const auto img_it = this->impl_->images.find(sc.image_ids[image_index]);
+        if (dev_it == this->impl_->devices.end() || img_it == this->impl_->images.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        impl::device_data& dev = dev_it->second;
+        if (!dev.begin_command_buffer || !dev.end_command_buffer || !dev.cmd_copy_image_to_buffer || !dev.queue_submit ||
+            !dev.queue_wait_idle || !dev.map_memory || !dev.unmap_memory || !dev.cmd_pipeline_barrier || !dev.reset_fences)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        // Record: make the rendered image's writes visible to the copy, then copy it into the readback
+        // buffer. The guest left the image in PRESENT_SRC, which the bridge mapped to TRANSFER_SRC_OPTIMAL.
+        VkCommandBufferBeginInfo begin{};
+        begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        if (dev.begin_command_buffer(sc.present_cmd, &begin) != VK_SUCCESS)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = img_it->second.handle;
+        barrier.subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                    .baseMipLevel = 0,
+                                    .levelCount = 1,
+                                    .baseArrayLayer = 0,
+                                    .layerCount = 1};
+        dev.cmd_pipeline_barrier(sc.present_cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0,
+                                 nullptr, 0, nullptr, 1, &barrier);
+
+        VkBufferImageCopy region{};
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.mipLevel = 0;
+        region.imageSubresource.baseArrayLayer = 0;
+        region.imageSubresource.layerCount = 1;
+        region.imageOffset = {.x = 0, .y = 0, .z = 0};
+        region.imageExtent = {.width = sc.width, .height = sc.height, .depth = 1};
+        dev.cmd_copy_image_to_buffer(sc.present_cmd, img_it->second.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                     sc.readback_buffer, 1, &region);
+        dev.end_command_buffer(sc.present_cmd);
+
+        dev.reset_fences(dev.handle, 1, &sc.present_fence);
+
+        VkSubmitInfo submit{};
+        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &sc.present_cmd;
+        if (dev.queue_submit(queue_it->second.handle, 1, &submit, sc.present_fence) != VK_SUCCESS)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        // The readback must complete before we can hand pixels to the UI. This blocks the host thread,
+        // but only briefly (a small transfer) and independently of guest progress.
+        dev.queue_wait_idle(queue_it->second.handle);
+
+        const VkDeviceSize readback_size = static_cast<VkDeviceSize>(sc.width) * sc.height * 4;
+        void* mapped = nullptr;
+        if (dev.map_memory(dev.handle, sc.readback_memory, 0, readback_size, 0, &mapped) != VK_SUCCESS || !mapped)
+        {
+            return VK_ERROR_MEMORY_MAP_FAILED;
+        }
+        out_pixels.resize(static_cast<size_t>(readback_size));
+        std::memcpy(out_pixels.data(), mapped, out_pixels.size());
+        dev.unmap_memory(dev.handle, sc.readback_memory);
+
+        out_width = sc.width;
+        out_height = sc.height;
+        out_hwnd = sc.hwnd;
         return VK_SUCCESS;
     }
 }

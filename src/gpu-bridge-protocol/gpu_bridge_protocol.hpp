@@ -70,6 +70,13 @@ namespace sogen::gpu_bridge
         cmd_pipeline_barrier = 0x822,
         cmd_clear_color_image = 0x823,
         cmd_copy_image_to_buffer = 0x824,
+        create_surface = 0x825,
+        destroy_surface = 0x826,
+        create_swapchain = 0x827,
+        destroy_swapchain = 0x828,
+        get_swapchain_images = 0x829,
+        acquire_next_image = 0x82A,
+        queue_present = 0x82B,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -117,6 +124,13 @@ namespace sogen::gpu_bridge
         make_ioctl(static_cast<uint32_t>(command::cmd_clear_color_image));
     inline constexpr uint32_t ioctl_cmd_copy_image_to_buffer =
         make_ioctl(static_cast<uint32_t>(command::cmd_copy_image_to_buffer));
+    inline constexpr uint32_t ioctl_create_surface = make_ioctl(static_cast<uint32_t>(command::create_surface));
+    inline constexpr uint32_t ioctl_destroy_surface = make_ioctl(static_cast<uint32_t>(command::destroy_surface));
+    inline constexpr uint32_t ioctl_create_swapchain = make_ioctl(static_cast<uint32_t>(command::create_swapchain));
+    inline constexpr uint32_t ioctl_destroy_swapchain = make_ioctl(static_cast<uint32_t>(command::destroy_swapchain));
+    inline constexpr uint32_t ioctl_get_swapchain_images = make_ioctl(static_cast<uint32_t>(command::get_swapchain_images));
+    inline constexpr uint32_t ioctl_acquire_next_image = make_ioctl(static_cast<uint32_t>(command::acquire_next_image));
+    inline constexpr uint32_t ioctl_queue_present = make_ioctl(static_cast<uint32_t>(command::queue_present));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -537,5 +551,92 @@ namespace sogen::gpu_bridge
         uint32_t width;
         uint32_t height;
         uint32_t aspect_mask; // VkImageAspectFlags
+    };
+
+    // ioctl_create_surface: in (the guest window the swapchain will present to)
+    struct create_surface_request
+    {
+        uint64_t hwnd;
+    };
+
+    // ioctl_create_surface: out
+    struct create_surface_response
+    {
+        int32_t vk_result;
+        uint32_t reserved;
+        object_id surface;
+    };
+
+    // ioctl_destroy_surface: in
+    struct destroy_surface_request
+    {
+        object_id surface;
+    };
+
+    // ioctl_create_swapchain: in (no caps/format negotiation; the guest passes valid values directly)
+    struct create_swapchain_request
+    {
+        object_id device;
+        object_id surface;
+        uint32_t format; // VkFormat (use B8G8R8A8_UNORM to match the UI backend's bgra8)
+        uint32_t width;
+        uint32_t height;
+        uint32_t min_image_count;
+        uint32_t image_usage;  // VkImageUsageFlags requested on swapchain images
+        uint32_t present_mode; // VkPresentModeKHR (ignored; effectively FIFO)
+    };
+
+    // ioctl_create_swapchain: out
+    struct create_swapchain_response
+    {
+        int32_t vk_result;
+        uint32_t image_count; // number of images actually created
+        object_id swapchain;
+    };
+
+    // ioctl_destroy_swapchain: in
+    struct destroy_swapchain_request
+    {
+        object_id device;
+        object_id swapchain;
+    };
+
+    // ioctl_get_swapchain_images: in
+    struct get_swapchain_images_request
+    {
+        object_id swapchain;
+        uint32_t max_count; // capacity of the object_id array following the response header
+        uint32_t reserved;
+    };
+
+    // ioctl_get_swapchain_images: out header, immediately followed by `count` object_id image entries
+    struct get_swapchain_images_response
+    {
+        int32_t vk_result;
+        uint32_t count;
+        // object_id images[count];
+    };
+
+    // ioctl_acquire_next_image: in
+    struct acquire_next_image_request
+    {
+        object_id swapchain;
+    };
+
+    // ioctl_acquire_next_image: out
+    struct acquire_next_image_response
+    {
+        int32_t vk_result;
+        uint32_t image_index;
+    };
+
+    // ioctl_queue_present: in; out = result_response. The host copies the presented image back and the
+    // bridge hands the pixels to the guest window via the UI backend.
+    struct queue_present_request
+    {
+        object_id queue;
+        object_id swapchain;
+        uint32_t image_index;
+        uint32_t reserved;
     };
 }

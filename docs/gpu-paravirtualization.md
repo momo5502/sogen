@@ -106,7 +106,7 @@ plus the surrounding calls needed to actually use them:
   created on the host GPU.
 - **`053944d1`** — clang-tidy cleanup for the above.
 
-### M2 — submission, sync, and codegen (in progress)
+### M2 — submission, sync, resources, and presentation (in progress)
 
 - **`08cde6de` — command submission + fence sync (poll-and-yield).** Command pool/buffer + fence
   object model, `vkQueueSubmit`, and the blocking-call solution: the host endpoint only ever does a
@@ -149,6 +149,19 @@ plus the surrounding calls needed to actually use them:
   known color, transitions it `UNDEFINED → TRANSFER_DST → TRANSFER_SRC`, copies it into a host-visible
   buffer, and the readback matches every pixel (`vulkan-shim-test`'s `clear+readback` check).
 
+- **WSI: windowed presentation to a guest window.** The first *visible* milestone — a guest Vulkan app
+  that opens a real Win32 window and shows its GPU-rendered content. Adds `vkCreateWin32SurfaceKHR`,
+  `vkDestroySurfaceKHR`, `vkCreateSwapchainKHR`, `vkDestroySwapchainKHR`, `vkGetSwapchainImagesKHR`,
+  `vkAcquireNextImageKHR`, and `vkQueuePresentKHR`. There is **no real host WSI**: a surface is just the
+  guest HWND, and a swapchain is N offscreen images plus a host-visible readback buffer. The guest
+  stays a faithful WSI app (it transitions to `PRESENT_SRC_KHR`, which the host maps to
+  `TRANSFER_SRC_OPTIMAL` so the real driver stays valid). On `vkQueuePresentKHR` the host copies the
+  presented image into the readback buffer, waits, and the bridge hands the BGRA pixels to the guest
+  window through `win_emu.ui().present_surface(hwnd, …)` — the same UI-backend seam GDI `EndPaint`
+  uses. New guest sample `vulkan-window-sample` creates a 320×240 window, clears the swapchain image to
+  an animated color each frame, and presents; the window shows the live GPU output (verified on screen
+  against SwiftShader).
+
 ## Remoted Vulkan entry points so far
 
 Instance/device: `vkCreateInstance`, `vkDestroyInstance`, `vkEnumeratePhysicalDevices`,
@@ -166,6 +179,9 @@ Memory/buffers: `vkGetPhysicalDeviceMemoryProperties`, `vkAllocateMemory`, `vkFr
 
 Images/transfer: `vkCreateImage`, `vkDestroyImage`, `vkGetImageMemoryRequirements`,
 `vkBindImageMemory`, `vkCmdPipelineBarrier`, `vkCmdClearColorImage`, `vkCmdCopyImageToBuffer`.
+
+WSI: `vkCreateWin32SurfaceKHR`, `vkDestroySurfaceKHR`, `vkCreateSwapchainKHR`, `vkDestroySwapchainKHR`,
+`vkGetSwapchainImagesKHR`, `vkAcquireNextImageKHR`, `vkQueuePresentKHR`.
 
 The hand-written entry points currently pass minimal/empty create-infos (e.g. `vkCreateInstance`
 ignores layers/extensions, `vkQueueSubmit` ignores semaphores). The generator is the path to
@@ -189,6 +205,12 @@ honoring the full structs.
 - **`vkMapMemory` is a staged copy, not zero-copy.** On map the host range is downloaded into a
   guest-side buffer; on unmap it is uploaded back. Correct for read/write, but a host↔guest copy per
   map. Zero-copy (mapping host GPU-visible memory into guest VA) is a later optimization.
+- **Presentation is readback-based and blocks the host briefly.** There is no real swapchain: each
+  `vkQueuePresentKHR` records an image→buffer copy, blocks the host thread on `vkQueueWaitIdle` until it
+  finishes (a small transfer, independent of guest progress), then pushes the pixels to the UI backend.
+  No real present semaphores/acquire fences are modeled (`vkAcquireNextImageKHR` ignores them and hands
+  out images round-robin). `VK_IMAGE_LAYOUT_PRESENT_SRC_KHR` is mapped to `TRANSFER_SRC_OPTIMAL` on the
+  host. A future optimization is async present (defer `present_surface` to `work()` instead of blocking).
 - The host driver is whatever `vulkan-1.dll` the host resolves. The dev machine has a real ICD; on a
   GPU-less box (e.g. CI) SwiftShader can be dropped in as a software fallback by staging its loader +
   ICD next to `analyzer.exe` and pointing `VK_ICD_FILENAMES` at the manifest. Software drivers
@@ -211,8 +233,8 @@ Staged steps toward that:
 1. **Memory + readback foundation** — *done* (host-visible buffers, `vkCmdFillBuffer`, map readback).
 2. **Render target + clear** — *done* (`VkImage` + memory, layout barriers, `vkCmdClearColorImage`,
    `vkCmdCopyImageToBuffer` readback verified against a known clear color).
-3. **WSI → first visible window** — `vkCreateWin32SurfaceKHR` (guest HWND) + swapchain +
-   `vkQueuePresentKHR`; present = readback + `present_surface(hwnd, …)`. First window showing a solid color.
+3. **WSI → first visible window** — *done* (`vkCreateWin32SurfaceKHR` + swapchain + `vkQueuePresentKHR`;
+   present = readback + `present_surface(hwnd, …)`; `vulkan-window-sample` shows an animated color on screen).
 4. **Triangle** — render pass, framebuffer, SPIR-V shader modules, graphics pipeline, `vkCmdDraw`.
 
 Cross-cutting (needed as the create-infos get richer, can land alongside the steps above):
@@ -238,7 +260,8 @@ Later: OpenGL via Zink, DirectX via DXVK — no new bridge work, just guest DLL 
 | `src/vulkan-bridge-marshal/vk_bridge_marshal.generated.hpp` | **Generated** encode/decode (do not edit by hand) |
 | `tools/vulkan-bridge-generator/generate.py` | The generator (parses `vk.xml`); `STRUCT_ALLOWLIST` controls coverage |
 | `src/samples/vulkan-shim/` | Guest `vulkan-1.dll` shim (the deliverable) |
-| `src/samples/vulkan-shim-test/` | Guest exe driving the shim through the real Vulkan API |
+| `src/samples/vulkan-shim-test/` | Headless guest exe driving the shim (instance→device→fill/clear readback) |
+| `src/samples/vulkan-window-sample/` | Windowed guest exe: real Win32 window + Vulkan swapchain, presents each frame |
 | `src/samples/gpu-bridge-probe-sample/` | Low-level probe (direct `DeviceIoControl`, no Vulkan headers) |
 | `src/windows-emulator-test/vulkan_marshal_test.cpp` | Round-trip gtests for the generated marshalling |
 | `deps/Vulkan-Headers` | Shallow submodule; `vulkan-headers` INTERFACE target |
@@ -248,9 +271,9 @@ Registration points: device name in `io_device.cpp` (`create_device`) and `sysca
 `deps/CMakeLists.txt`.
 
 The experimental SwiftShader **M0** samples (`vulkan-probe-sample`, `vulkan-triangle-sample`,
-`vulkan-window-sample`, `README.vulkan.md`) are intentionally kept **untracked** — they validated
-that DXVK/SwiftShader could run in-guest and will be overhauled, so they are deliberately not
-committed.
+`README.vulkan.md`) are intentionally kept **untracked** — they validated that DXVK/SwiftShader could
+run in-guest and will be overhauled, so they are deliberately not committed. (The tracked
+`vulkan-window-sample` above is the bridge's own WSI sample, unrelated to those.)
 
 ## Build, regenerate, validate
 
