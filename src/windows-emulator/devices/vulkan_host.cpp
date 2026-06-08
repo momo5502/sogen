@@ -323,7 +323,7 @@ namespace sogen
             if (id_it == this->impl_->physical_device_ids.end())
             {
                 const uint64_t id = this->impl_->next_id++;
-                this->impl_->physical_devices.emplace(id, impl::physical_device_data{device, instance});
+                this->impl_->physical_devices.emplace(id, impl::physical_device_data{.handle = device, .instance_id = instance});
                 id_it = this->impl_->physical_device_ids.emplace(device, id).first;
             }
 
@@ -469,7 +469,7 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->next_id++;
-        this->impl_->queues.emplace(id, impl::queue_data{queue, device});
+        this->impl_->queues.emplace(id, impl::queue_data{.handle = queue, .device_id = device});
         out_queue = id;
         return VK_SUCCESS;
     }

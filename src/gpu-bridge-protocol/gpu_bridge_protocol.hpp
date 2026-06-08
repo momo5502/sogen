@@ -26,7 +26,7 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t method_buffered = 0;
     inline constexpr uint32_t file_any_access = 0;
 
-    inline constexpr uint32_t make_ioctl(const uint32_t function)
+    constexpr uint32_t make_ioctl(const uint32_t function)
     {
         return (device_type << 16) | (file_any_access << 14) | (function << 2) | method_buffered;
     }
