@@ -142,6 +142,7 @@ namespace sogen
             PFN_vkCmdBindPipeline cmd_bind_pipeline{};
             PFN_vkCmdDraw cmd_draw{};
             PFN_vkCmdEndRenderPass cmd_end_render_pass{};
+            PFN_vkCmdPushConstants cmd_push_constants{};
         };
 
         // A guest-side window-system surface. There is no real host VkSurfaceKHR (the host driver may
@@ -837,6 +838,7 @@ namespace sogen
             data.cmd_bind_pipeline = reinterpret_cast<PFN_vkCmdBindPipeline>(resolve("vkCmdBindPipeline"));
             data.cmd_draw = reinterpret_cast<PFN_vkCmdDraw>(resolve("vkCmdDraw"));
             data.cmd_end_render_pass = reinterpret_cast<PFN_vkCmdEndRenderPass>(resolve("vkCmdEndRenderPass"));
+            data.cmd_push_constants = reinterpret_cast<PFN_vkCmdPushConstants>(resolve("vkCmdPushConstants"));
         }
 
         const uint64_t id = this->impl_->next_id++;
@@ -2082,7 +2084,8 @@ namespace sogen
         this->impl_->framebuffers.erase(it);
     }
 
-    int32_t vulkan_host::create_pipeline_layout(uint64_t device, uint64_t& out_layout)
+    int32_t vulkan_host::create_pipeline_layout(uint64_t device, uint32_t push_constant_stages, uint32_t push_constant_size,
+                                                uint64_t& out_layout)
     {
         out_layout = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -2091,8 +2094,18 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        VkPushConstantRange push_range{};
+        push_range.stageFlags = push_constant_stages;
+        push_range.offset = 0;
+        push_range.size = push_constant_size;
+
         VkPipelineLayoutCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        if (push_constant_size > 0)
+        {
+            info.pushConstantRangeCount = 1;
+            info.pPushConstantRanges = &push_range;
+        }
 
         VkPipelineLayout layout{};
         const VkResult result = dev->second.create_pipeline_layout(dev->second.handle, &info, nullptr, &layout);
@@ -2315,6 +2328,24 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         dev->second.cmd_end_render_pass(cb->second.handle);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_push_constants(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t stage_flags,
+                                            uint32_t offset, uint32_t size, const void* data)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto layout = this->impl_->pipeline_layouts.find(pipeline_layout);
+        if (cb == this->impl_->command_buffers.end() || layout == this->impl_->pipeline_layouts.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_push_constants)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_push_constants(cb->second.handle, layout->second.handle, stage_flags, offset, size, data);
         return VK_SUCCESS;
     }
 }

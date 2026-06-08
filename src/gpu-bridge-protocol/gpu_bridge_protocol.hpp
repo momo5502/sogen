@@ -93,6 +93,7 @@ namespace sogen::gpu_bridge
         cmd_bind_pipeline = 0x839,
         cmd_draw = 0x83A,
         cmd_end_render_pass = 0x83B,
+        cmd_push_constants = 0x83C,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -166,6 +167,7 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_cmd_bind_pipeline = make_ioctl(static_cast<uint32_t>(command::cmd_bind_pipeline));
     inline constexpr uint32_t ioctl_cmd_draw = make_ioctl(static_cast<uint32_t>(command::cmd_draw));
     inline constexpr uint32_t ioctl_cmd_end_render_pass = make_ioctl(static_cast<uint32_t>(command::cmd_end_render_pass));
+    inline constexpr uint32_t ioctl_cmd_push_constants = make_ioctl(static_cast<uint32_t>(command::cmd_push_constants));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -730,10 +732,13 @@ namespace sogen::gpu_bridge
         uint32_t height;
     };
 
-    // ioctl_create_pipeline_layout: in (empty: no descriptor sets / push constants); out = object_response
+    // ioctl_create_pipeline_layout: in (no descriptor sets; optionally one push-constant range from
+    // offset 0); out = object_response
     struct create_pipeline_layout_request
     {
         object_id device;
+        uint32_t push_constant_stages; // VkShaderStageFlags (0 = no push constants)
+        uint32_t push_constant_size;   // bytes, from offset 0
     };
 
     // ioctl_create_graphics_pipeline: in (no vertex input, triangle list, static full viewport/scissor,
@@ -784,5 +789,17 @@ namespace sogen::gpu_bridge
     struct cmd_end_render_pass_request
     {
         object_id command_buffer;
+    };
+
+    // ioctl_cmd_push_constants: in header immediately followed by `size` bytes of data; out = result_response
+    struct cmd_push_constants_request
+    {
+        object_id command_buffer;
+        object_id pipeline_layout;
+        uint32_t stage_flags; // VkShaderStageFlags
+        uint32_t offset;
+        uint32_t size;
+        uint32_t reserved;
+        // uint8_t values[size];
     };
 }

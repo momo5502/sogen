@@ -142,6 +142,8 @@ namespace sogen
                     return handle_cmd_draw(win_emu, context);
                 case gpu_bridge::ioctl_cmd_end_render_pass:
                     return handle_cmd_end_render_pass(win_emu, context);
+                case gpu_bridge::ioctl_cmd_push_constants:
+                    return handle_cmd_push_constants(win_emu, context);
 
                 default:
                     win_emu.log.warn("[gpu-bridge] Unsupported IOCTL: 0x%X\n", context.io_control_code);
@@ -1125,7 +1127,8 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
                 uint64_t layout = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_pipeline_layout(request.device, layout);
+                const int32_t result = this->vulkan_.create_pipeline_layout(
+                    request.device, request.push_constant_stages, request.push_constant_size, layout);
                 return write_output(win_emu, context,
                                     gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = layout});
             }
@@ -1213,6 +1216,29 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
                 const int32_t result = this->vulkan_.cmd_end_render_pass(request.command_buffer);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_cmd_push_constants(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::cmd_push_constants_request;
+
+                request_t request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const auto data_bytes = std::min<uint64_t>(request.size, context.input_buffer_length - sizeof(request_t));
+                std::vector<std::byte> values(data_bytes);
+                if (data_bytes > 0)
+                {
+                    win_emu.emu().read_memory(context.input_buffer + sizeof(request_t), values.data(), values.size());
+                }
+
+                const int32_t result =
+                    this->vulkan_.cmd_push_constants(request.command_buffer, request.pipeline_layout, request.stage_flags,
+                                                     request.offset, static_cast<uint32_t>(values.size()), values.data());
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
         };

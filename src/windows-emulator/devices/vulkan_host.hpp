@@ -171,7 +171,9 @@ namespace sogen
                                    uint32_t height, uint64_t& out_framebuffer);
         void destroy_framebuffer(uint64_t device, uint64_t framebuffer);
 
-        int32_t create_pipeline_layout(uint64_t device, uint64_t& out_layout);
+        // Optionally one push-constant range from offset 0 (push_constant_size == 0 means none).
+        int32_t create_pipeline_layout(uint64_t device, uint32_t push_constant_stages, uint32_t push_constant_size,
+                                       uint64_t& out_layout);
         void destroy_pipeline_layout(uint64_t device, uint64_t pipeline_layout);
 
         // No vertex input, triangle list, static full-extent viewport/scissor, one non-blended color
@@ -187,6 +189,8 @@ namespace sogen
         int32_t cmd_draw(uint64_t command_buffer, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex,
                          uint32_t first_instance);
         int32_t cmd_end_render_pass(uint64_t command_buffer);
+        int32_t cmd_push_constants(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t stage_flags, uint32_t offset,
+                                   uint32_t size, const void* data);
 
       private:
         struct impl;

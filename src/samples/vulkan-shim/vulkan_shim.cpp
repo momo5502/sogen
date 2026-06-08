@@ -6,8 +6,12 @@
 // Opaque Vulkan handles (VkInstance, VkPhysicalDevice, ...) are pointer-sized, so the bridge's
 // object_id is stored directly in the handle value; no guest-side handle table is required.
 
+#ifndef NOMINMAX
+#define NOMINMAX // keep the Windows min/max macros from clobbering std::min/std::max
+#endif
 #include <windows.h>
 
+#include <algorithm>
 #include <cstring>
 #include <unordered_map>
 #include <vector>
@@ -1176,10 +1180,18 @@ extern "C"
     }
 
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreatePipelineLayout(
-        VkDevice device, const VkPipelineLayoutCreateInfo*, const VkAllocationCallbacks*, VkPipelineLayout* pPipelineLayout)
+        VkDevice device, const VkPipelineLayoutCreateInfo* pCreateInfo, const VkAllocationCallbacks*,
+        VkPipelineLayout* pPipelineLayout)
     {
         gb::create_pipeline_layout_request request{};
         request.device = to_object_id(device);
+        // One push-constant block from offset 0 is modeled: OR the stages, take the widest extent.
+        for (uint32_t i = 0; i < pCreateInfo->pushConstantRangeCount; ++i)
+        {
+            const VkPushConstantRange& r = pCreateInfo->pPushConstantRanges[i];
+            request.push_constant_stages |= r.stageFlags;
+            request.push_constant_size = std::max(request.push_constant_size, r.offset + r.size);
+        }
 
         gb::object_response response{};
         if (!bridge_call(gb::ioctl_create_pipeline_layout, &request, sizeof(request), &response, sizeof(response)))
@@ -1320,6 +1332,28 @@ extern "C"
         bridge_call(gb::ioctl_cmd_end_render_pass, &request, sizeof(request), &response, sizeof(response));
     }
 
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdPushConstants(VkCommandBuffer commandBuffer,
+                                                                        VkPipelineLayout layout, VkShaderStageFlags stageFlags,
+                                                                        uint32_t offset, uint32_t size, const void* pValues)
+    {
+        std::vector<uint8_t> message(sizeof(gb::cmd_push_constants_request) + size);
+        gb::cmd_push_constants_request header{};
+        header.command_buffer = to_object_id(commandBuffer);
+        header.pipeline_layout = to_object_id(layout);
+        header.stage_flags = stageFlags;
+        header.offset = offset;
+        header.size = size;
+        std::memcpy(message.data(), &header, sizeof(header));
+        if (size > 0 && pValues)
+        {
+            std::memcpy(message.data() + sizeof(header), pValues, size);
+        }
+
+        gb::result_response response{};
+        bridge_call(gb::ioctl_cmd_push_constants, message.data(), static_cast<DWORD>(message.size()), &response,
+                    sizeof(response));
+    }
+
     __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice, const char* pName);
 
     __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance, const char* pName)
@@ -1403,6 +1437,7 @@ extern "C"
             {.name = "vkCmdBindPipeline", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindPipeline)},
             {.name = "vkCmdDraw", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDraw)},
             {.name = "vkCmdEndRenderPass", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdEndRenderPass)},
+            {.name = "vkCmdPushConstants", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdPushConstants)},
         };
 
         for (const auto& e : table)
