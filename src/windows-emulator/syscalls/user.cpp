@@ -1737,10 +1737,30 @@ namespace sogen
 
         hwnd handle_NtUserCreateWindowEx(const syscall_context& c, const DWORD ex_style, const emulator_object<LARGE_STRING> class_name,
                                          const emulator_object<LARGE_STRING> /*cls_version*/,
-                                         const emulator_object<LARGE_STRING> window_name, const DWORD style, const int x, const int y,
-                                         const int width, const int height, const hwnd parent, const hmenu menu, const hinstance instance,
-                                         const pointer l_param, const DWORD /*flags*/, const pointer /*acbi_buffer*/)
+                                         const emulator_object<LARGE_STRING> window_name, const DWORD style, int x, int y, int width,
+                                         int height, const hwnd parent, const hmenu menu, const hinstance instance, const pointer l_param,
+                                         const DWORD /*flags*/, const pointer /*acbi_buffer*/)
         {
+            constexpr int cw_usedefault = static_cast<int>(0x80000000);
+            if (x == cw_usedefault)
+            {
+                x = 64;
+                y = (y == cw_usedefault) ? 64 : y;
+            }
+            else if (y == cw_usedefault)
+            {
+                y = 64;
+            }
+            if (width == cw_usedefault)
+            {
+                width = 640;
+                height = (height == cw_usedefault) ? 480 : height;
+            }
+            else if (height == cw_usedefault)
+            {
+                height = 480;
+            }
+
             const auto cls_name = read_large_string_or_atom(c, class_name);
             if (c.win_emu.callbacks.on_generic_activity)
             {

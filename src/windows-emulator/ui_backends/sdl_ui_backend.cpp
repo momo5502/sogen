@@ -3,6 +3,9 @@
 
 #ifdef SOGEN_HAS_SDL3
 #include <SDL3/SDL.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #endif
 
 namespace sogen
@@ -12,6 +15,25 @@ namespace sogen
 #ifdef SOGEN_HAS_SDL3
         constexpr uint32_t wm_keyup = 0x0101;
         constexpr uint32_t wm_char = 0x0102;
+
+#ifdef _WIN32
+        void apply_application_icon(SDL_Window* window)
+        {
+            auto* hwnd =
+                static_cast<HWND>(SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+            if (!hwnd)
+            {
+                return;
+            }
+            HICON icon = LoadIconW(GetModuleHandleW(nullptr), L"GLFW_ICON");
+            if (!icon)
+            {
+                return;
+            }
+            SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
+            SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
+        }
+#endif
 
         uint64_t pack_point(const int x, const int y)
         {
@@ -214,6 +236,10 @@ namespace sogen
                 {
                     return;
                 }
+
+#ifdef _WIN32
+                apply_application_icon(window);
+#endif
 
                 auto* renderer = SDL_CreateRenderer(window, nullptr);
                 if (!renderer)

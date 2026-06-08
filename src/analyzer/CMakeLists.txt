@@ -1,5 +1,9 @@
 add_executable(analyzer main.cpp)
 
+if(WIN)
+  target_sources(analyzer PRIVATE resource.rc)
+endif()
+
 sogen_assign_source_group(main.cpp)
 
 target_link_libraries(analyzer PRIVATE windows-analyzer linux-analyzer)
