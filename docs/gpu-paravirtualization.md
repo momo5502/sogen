@@ -364,6 +364,7 @@ Later: OpenGL via Zink, DirectX via DXVK — no new bridge work, just guest DLL 
 | `src/samples/vulkan-window-sample/` | Windowed guest exe: Win32 window + swapchain + render-pass triangle. `triangle.{vert,frag}` are the GLSL sources; `triangle_spirv.hpp` is the checked-in compiled SPIR-V. Also runs natively against a real GPU (`… vulkan-1.dll`) |
 | `src/samples/vulkan-spinning-triangle-sample/` | Windowed guest exe: a push-constant-rotated triangle with an FPS readout in the title bar. `spinning.{vert,frag}` + checked-in `spinning_triangle_spirv.hpp`. Also runs natively |
 | `src/samples/vulkan-cube-sample/` | Windowed guest exe: a 3D spinning cube (mat4 MVP push constant; faces CPU-sorted back-to-front since the bridge has no depth/cull) that prints FPS to stdout every real second for host-vs-emulated comparison. `cube.{vert,frag}` + checked-in `cube_spirv.hpp`. Also runs natively |
+| `src/samples/vulkan-cube-field-sample/` | Windowed guest exe: a rotating field of many individually spinning, diffuse-lit cubes (default 5×3×5 = 75; ~530 recorded commands/frame). Exercises command batching and a 128-byte push constant (mvp + model for lighting); cubes and their faces are painter's-sorted. `cube_field.{vert,frag}` + checked-in `cube_field_spirv.hpp`. Also runs natively |
 | `src/samples/gpu-bridge-probe-sample/` | Low-level probe (direct `DeviceIoControl`, no Vulkan headers) |
 | `src/windows-emulator-test/vulkan_marshal_test.cpp` | Round-trip gtests for the generated marshalling |
 | `deps/Vulkan-Headers` | Shallow submodule; `vulkan-headers` INTERFACE target |
@@ -411,6 +412,7 @@ Run the windowed samples in the emulator (each opens a guest window and presents
 cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-window-sample.exe vulkan-shim.dll"
 cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-spinning-triangle-sample.exe vulkan-shim.dll"
 cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-cube-sample.exe vulkan-shim.dll"
+cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-cube-field-sample.exe vulkan-shim.dll"
 ```
 
 `vulkan-cube-sample` runs until its window is closed and prints the measured FPS to stdout once per
