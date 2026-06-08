@@ -262,12 +262,26 @@ honoring the full structs.
 - **`vkMapMemory` is a staged copy, not zero-copy.** On map the host range is downloaded into a
   guest-side buffer; on unmap it is uploaded back. Correct for read/write, but a host↔guest copy per
   map. Zero-copy (mapping host GPU-visible memory into guest VA) is a later optimization.
-- **Presentation is readback-based and blocks the host briefly.** There is no real swapchain: each
-  `vkQueuePresentKHR` records an image→buffer copy, blocks the host thread on `vkQueueWaitIdle` until it
-  finishes (a small transfer, independent of guest progress), then pushes the pixels to the UI backend.
-  No real present semaphores/acquire fences are modeled (`vkAcquireNextImageKHR` ignores them and hands
-  out images round-robin). `VK_IMAGE_LAYOUT_PRESENT_SRC_KHR` is mapped to `TRANSFER_SRC_OPTIMAL` on the
-  host. A future optimization is async present (defer `present_surface` to `work()` instead of blocking).
+- **Presentation is readback-based (no real swapchain), now asynchronous (one frame behind).** Each
+  `vkQueuePresentKHR` records an image→buffer copy into a host-visible readback buffer; the bridge then
+  hands those pixels to the UI backend. No real present semaphores/acquire fences are modeled
+  (`vkAcquireNextImageKHR` ignores them and hands out images round-robin) and
+  `VK_IMAGE_LAYOUT_PRESENT_SRC_KHR` is mapped to `TRANSFER_SRC_OPTIMAL` on the host.
+  - The copy is **submitted but not waited on inline**: it runs on the GPU while the guest renders the
+    next frame, and the *next* present drains it (its fence is essentially always already signalled by
+    then). So present is one frame behind (imperceptible) and the host thread never blocks on
+    `vkQueueWaitIdle`. The readback buffer is allocated `HOST_CACHED` (not just `HOST_COHERENT`) so the
+    ~920 KB CPU read back is an order of magnitude faster.
+  - *Measured (WHP/Hyper-V backend, dev machine, `vulkan-cube-sample`'s built-in per-phase profiler).*
+    The synchronous readback present originally dominated the emulated frame: ~3.4 ms/frame (~290 FPS),
+    of which present was ~2.7 ms (≈79%) — split host-side into ~0.88 ms `vkQueueWaitIdle` + ~1.25 ms of
+    920 KB readback memcpy (the buffer was uncached) + ~0.45 ms SDL upload. Two fixes: `HOST_CACHED`
+    readback cut the memcpy ~1.25 ms → ~0.065 ms (→ ~450 FPS), and async present removed the inline
+    `vkQueueWaitIdle` (→ ~650 FPS, ~1.54 ms/frame). Net **~290 → ~650 FPS (~2.2×)** vs ~0.21 ms native.
+    The boundary cost is real but secondary: each remoted call is ~7.5 µs under WHP, so the ~12 command
+    IOCTLs are only ~0.18 ms. Remaining big phases are now the guest's per-frame fence wait (~0.6 ms,
+    poll-and-yield) and the SDL `present_surface` upload (~0.45 ms); eliminating the per-frame
+    GPU→CPU→GPU round-trip entirely (zero-copy / GPU-side present) is the next lever.
 - **Surface capabilities are synthetic and the swapchain is never recreated.**
   `vkGetPhysicalDeviceSurfaceCapabilitiesKHR` returns fixed caps with an *undefined* `currentExtent`
   (the guest chooses the extent) and permissive min/max; `vkCreateSwapchainKHR`'s requested present mode

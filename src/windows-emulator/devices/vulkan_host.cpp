@@ -99,6 +99,7 @@ namespace sogen
             PFN_vkDestroyDevice destroy_device{};
             PFN_vkGetDeviceQueue get_device_queue{};
             PFN_vkQueueWaitIdle queue_wait_idle{};
+            PFN_vkDeviceWaitIdle device_wait_idle{};
             PFN_vkCreateCommandPool create_command_pool{};
             PFN_vkDestroyCommandPool destroy_command_pool{};
             PFN_vkAllocateCommandBuffers allocate_command_buffers{};
@@ -170,6 +171,10 @@ namespace sogen
             VkCommandBuffer present_cmd{};
             VkFence present_fence{};
             uint32_t next_image{};
+            // Async present: the readback copy of the most recent frame is submitted but not waited on
+            // here; it is drained on the *next* present (by which point the GPU has finished it), so the
+            // host thread never blocks on vkQueueWaitIdle inline. Present is therefore one frame behind.
+            bool present_in_flight{};
         };
 
         std::unordered_map<uint64_t, instance_data> instances;
@@ -311,6 +316,19 @@ namespace sogen
                 return;
             }
             device_data& dev = dev_it->second;
+
+            // A deferred present copy may still be in flight on the GPU; wait it out before tearing down
+            // the command pool / fence / buffer it uses.
+            if (sc.present_in_flight && dev.get_fence_status && dev.queue_wait_idle &&
+                dev.get_fence_status(dev.handle, sc.present_fence) != VK_SUCCESS)
+            {
+                // No queue handle here, so flush the whole device instead.
+                if (dev.device_wait_idle)
+                {
+                    dev.device_wait_idle(dev.handle);
+                }
+            }
+            sc.present_in_flight = false;
 
             for (const uint64_t image_id : sc.image_ids)
             {
@@ -791,6 +809,7 @@ namespace sogen
             data.destroy_device = reinterpret_cast<PFN_vkDestroyDevice>(resolve("vkDestroyDevice"));
             data.get_device_queue = reinterpret_cast<PFN_vkGetDeviceQueue>(resolve("vkGetDeviceQueue"));
             data.queue_wait_idle = reinterpret_cast<PFN_vkQueueWaitIdle>(resolve("vkQueueWaitIdle"));
+            data.device_wait_idle = reinterpret_cast<PFN_vkDeviceWaitIdle>(resolve("vkDeviceWaitIdle"));
             data.create_command_pool = reinterpret_cast<PFN_vkCreateCommandPool>(resolve("vkCreateCommandPool"));
             data.destroy_command_pool = reinterpret_cast<PFN_vkDestroyCommandPool>(resolve("vkDestroyCommandPool"));
             data.allocate_command_buffers = reinterpret_cast<PFN_vkAllocateCommandBuffers>(resolve("vkAllocateCommandBuffers"));
@@ -1700,8 +1719,19 @@ namespace sogen
 
         VkMemoryRequirements buffer_reqs{};
         dev.get_buffer_memory_requirements(dev.handle, sc.readback_buffer, &buffer_reqs);
-        const uint32_t buffer_type = this->impl_->find_memory_type(
-            dev, buffer_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        // Prefer HOST_CACHED for the readback buffer: presenting copies the frame here and the CPU then
+        // reads it all back, and reads from uncached/write-combined (plain COHERENT) memory are an order
+        // of magnitude slower. Keep COHERENT too so no manual vkInvalidateMappedMemoryRanges is needed;
+        // fall back to plain HOST_VISIBLE|HOST_COHERENT if the driver offers no cached+coherent type.
+        uint32_t buffer_type = this->impl_->find_memory_type(dev, buffer_reqs.memoryTypeBits,
+                                                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                                                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+                                                                 VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+        if (buffer_type == UINT32_MAX)
+        {
+            buffer_type = this->impl_->find_memory_type(
+                dev, buffer_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        }
         if (buffer_type == UINT32_MAX)
         {
             return fail();
@@ -1822,13 +1852,45 @@ namespace sogen
         }
         impl::device_data& dev = dev_it->second;
         if (!dev.begin_command_buffer || !dev.end_command_buffer || !dev.cmd_copy_image_to_buffer || !dev.queue_submit ||
-            !dev.queue_wait_idle || !dev.map_memory || !dev.unmap_memory || !dev.cmd_pipeline_barrier || !dev.reset_fences)
+            !dev.queue_wait_idle || !dev.get_fence_status || !dev.map_memory || !dev.unmap_memory || !dev.cmd_pipeline_barrier ||
+            !dev.reset_fences)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        // Record: make the rendered image's writes visible to the copy, then copy it into the readback
-        // buffer. The guest left the image in PRESENT_SRC, which the bridge mapped to TRANSFER_SRC_OPTIMAL.
+        const VkDeviceSize readback_size = static_cast<VkDeviceSize>(sc.width) * sc.height * 4;
+
+        // Async present, part 1: drain the copy submitted on the *previous* present and hand its pixels
+        // back to be shown now. A full guest frame has elapsed since it was submitted, so its fence is
+        // essentially always already signalled (the GPU did the copy while the guest rendered the next
+        // frame) -- only fall back to a blocking wait in the unlikely case it is not. The previous
+        // synchronous vkQueueWaitIdle here was ~25% of the emulated frame; deferring keeps it off the
+        // host thread's critical path. Present is therefore one frame behind, which is imperceptible.
+        if (sc.present_in_flight)
+        {
+            if (dev.get_fence_status(dev.handle, sc.present_fence) != VK_SUCCESS)
+            {
+                dev.queue_wait_idle(queue_it->second.handle);
+            }
+
+            void* mapped = nullptr;
+            if (dev.map_memory(dev.handle, sc.readback_memory, 0, readback_size, 0, &mapped) == VK_SUCCESS && mapped)
+            {
+                out_pixels.resize(static_cast<size_t>(readback_size));
+                std::memcpy(out_pixels.data(), mapped, out_pixels.size());
+                dev.unmap_memory(dev.handle, sc.readback_memory);
+                out_width = sc.width;
+                out_height = sc.height;
+                out_hwnd = sc.hwnd;
+            }
+            sc.present_in_flight = false;
+        }
+
+        // Async present, part 2: record + submit the copy for the *current* frame, but do not wait on it.
+        // It runs on the GPU while the guest proceeds; the next present drains it (above). The previous
+        // copy is guaranteed finished here (the drain checked its fence), so reusing present_cmd is safe.
+        // Make the rendered image's writes visible to the copy, then copy it into the readback buffer.
+        // The guest left the image in PRESENT_SRC, which the bridge mapped to TRANSFER_SRC_OPTIMAL.
         VkCommandBufferBeginInfo begin{};
         begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -1875,24 +1937,8 @@ namespace sogen
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
+        sc.present_in_flight = true;
 
-        // The readback must complete before we can hand pixels to the UI. This blocks the host thread,
-        // but only briefly (a small transfer) and independently of guest progress.
-        dev.queue_wait_idle(queue_it->second.handle);
-
-        const VkDeviceSize readback_size = static_cast<VkDeviceSize>(sc.width) * sc.height * 4;
-        void* mapped = nullptr;
-        if (dev.map_memory(dev.handle, sc.readback_memory, 0, readback_size, 0, &mapped) != VK_SUCCESS || !mapped)
-        {
-            return VK_ERROR_MEMORY_MAP_FAILED;
-        }
-        out_pixels.resize(static_cast<size_t>(readback_size));
-        std::memcpy(out_pixels.data(), mapped, out_pixels.size());
-        dev.unmap_memory(dev.handle, sc.readback_memory);
-
-        out_width = sc.width;
-        out_height = sc.height;
-        out_hwnd = sc.hwnd;
         return VK_SUCCESS;
     }
 
