@@ -1551,6 +1551,116 @@ namespace sogen
             return static_cast<int>(copied);
         }
 
+        // Software Vulkan/GL drivers (e.g. SwiftShader) present a rendered frame by grabbing the window DC
+        // with GetDC and StretchDIBits-ing the framebuffer into it -- there is no BeginPaint/EndPaint on
+        // this path. We blit the source DIB into the DC's backing surface (nearest-neighbour scaled from
+        // the source rectangle onto the destination rectangle) and, for a window-backed DC, present the
+        // surface to the UI immediately, mirroring what NtUserEndPaint does for ordinary GDI painting.
+        int handle_NtGdiStretchDIBitsInternal(const syscall_context& c, const hdc dc, const int x_dst, const int y_dst,
+                                              const int dst_width, const int dst_height, const int x_src, const int y_src,
+                                              const int src_width, const int src_height, const emulator_pointer bits,
+                                              const emulator_pointer info, const uint32_t /*usage*/, const uint32_t /*rop*/,
+                                              const uint32_t /*max_info*/, const uint32_t max_bits, const uint64_t /*color_transform*/)
+        {
+            if (bits == 0 || info == 0 || dst_width == 0 || dst_height == 0 || src_width <= 0 || src_height <= 0)
+            {
+                return 0;
+            }
+
+            int32_t origin_x = 0;
+            int32_t origin_y = 0;
+            uint32_t present_handle = 0;
+            gdi_bitmap_surface* surface = resolve_dc_surface(c, dc, origin_x, origin_y, present_handle);
+            if (!surface)
+            {
+                return 0;
+            }
+
+            int32_t bi_width = 0;
+            int32_t bi_height = 0;
+            uint16_t bit_count = 0;
+            uint32_t compression = 0;
+            c.emu.read_memory(info + 4, &bi_width, sizeof(bi_width));
+            c.emu.read_memory(info + 8, &bi_height, sizeof(bi_height));
+            c.emu.read_memory(info + 14, &bit_count, sizeof(bit_count));
+            c.emu.read_memory(info + 16, &compression, sizeof(compression));
+
+            constexpr uint32_t bi_rgb = 0;
+            if (bit_count != 32 || compression != bi_rgb || bi_width <= 0)
+            {
+                c.win_emu.log.warn("NtGdiStretchDIBitsInternal: unsupported DIB (bpp=%u compression=%u width=%d)\n", bit_count,
+                                   compression, bi_width);
+                return 0;
+            }
+
+            const bool top_down = bi_height < 0;
+            const auto img_width = static_cast<uint32_t>(bi_width);
+            const auto img_height = static_cast<uint32_t>(top_down ? -bi_height : bi_height);
+            const size_t stride = static_cast<size_t>(img_width) * sizeof(uint32_t);
+
+            std::vector<uint8_t> data(stride * img_height);
+            if (data.empty())
+            {
+                return 0;
+            }
+            if (max_bits != 0 && data.size() > max_bits)
+            {
+                data.resize(max_bits);
+            }
+            c.emu.read_memory(bits, data.data(), data.size());
+            const auto available_rows = static_cast<uint32_t>(data.size() / stride);
+
+            // Nearest-neighbour scale the source rectangle onto the destination rectangle. Negative dest
+            // extents mirror the image (GDI semantics); the source rectangle is taken as positive.
+            const int dst_w = std::abs(dst_width);
+            const int dst_h = std::abs(dst_height);
+            const bool flip_x = dst_width < 0;
+            const bool flip_y = dst_height < 0;
+
+            for (int dy = 0; dy < dst_h; ++dy)
+            {
+                const auto src_off_y = static_cast<uint32_t>(static_cast<int64_t>(dy) * src_height / dst_h);
+                const auto img_y = static_cast<uint32_t>(y_src) + src_off_y;
+                if (img_y >= img_height)
+                {
+                    continue;
+                }
+                const uint32_t bits_row = top_down ? img_y : (img_height - 1 - img_y);
+                if (bits_row >= available_rows)
+                {
+                    continue;
+                }
+                const uint8_t* row = data.data() + static_cast<size_t>(bits_row) * stride;
+                const int out_y = y_dst + origin_y + (flip_y ? (dst_h - 1 - dy) : dy);
+
+                for (int dx = 0; dx < dst_w; ++dx)
+                {
+                    const auto src_off_x = static_cast<uint32_t>(static_cast<int64_t>(dx) * src_width / dst_w);
+                    const auto img_x = static_cast<uint32_t>(x_src) + src_off_x;
+                    if (img_x >= img_width)
+                    {
+                        continue;
+                    }
+                    uint32_t pixel = 0;
+                    std::memcpy(&pixel, row + static_cast<size_t>(img_x) * sizeof(uint32_t), sizeof(pixel));
+                    const int out_x = x_dst + origin_x + (flip_x ? (dst_w - 1 - dx) : dx);
+                    set_surface_pixel(*surface, out_x, out_y, pixel | 0xFF000000u);
+                }
+            }
+
+            if (present_handle != 0 && surface->width > 0 && surface->height > 0 && !surface->pixels.empty())
+            {
+                c.win_emu.ui().present_surface(present_handle,
+                                               ui_surface_desc{.width = static_cast<int>(surface->width),
+                                                               .height = static_cast<int>(surface->height),
+                                                               .stride = static_cast<int>(surface->width * sizeof(uint32_t)),
+                                                               .format = ui_surface_format::bgra8,
+                                                               .pixels = surface->pixels.data()});
+            }
+
+            return static_cast<int>(img_height);
+        }
+
         uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, const uint32_t handle_value)
         {
             GDI_HANDLE_ENTRY64 entry{};
