@@ -62,6 +62,26 @@ namespace sogen
                     return handle_get_fence_status(win_emu, context);
                 case gpu_bridge::ioctl_queue_submit:
                     return handle_queue_submit(win_emu, context);
+                case gpu_bridge::ioctl_get_physical_device_memory_properties:
+                    return handle_get_physical_device_memory_properties(win_emu, context);
+                case gpu_bridge::ioctl_allocate_memory:
+                    return handle_allocate_memory(win_emu, context);
+                case gpu_bridge::ioctl_free_memory:
+                    return handle_free_memory(win_emu, context);
+                case gpu_bridge::ioctl_create_buffer:
+                    return handle_create_buffer(win_emu, context);
+                case gpu_bridge::ioctl_destroy_buffer:
+                    return handle_destroy_buffer(win_emu, context);
+                case gpu_bridge::ioctl_get_buffer_memory_requirements:
+                    return handle_get_buffer_memory_requirements(win_emu, context);
+                case gpu_bridge::ioctl_bind_buffer_memory:
+                    return handle_bind_buffer_memory(win_emu, context);
+                case gpu_bridge::ioctl_cmd_fill_buffer:
+                    return handle_cmd_fill_buffer(win_emu, context);
+                case gpu_bridge::ioctl_download_memory:
+                    return handle_download_memory(win_emu, context);
+                case gpu_bridge::ioctl_upload_memory:
+                    return handle_upload_memory(win_emu, context);
 
                 default:
                     win_emu.log.warn("[gpu-bridge] Unsupported IOCTL: 0x%X\n", context.io_control_code);
@@ -488,6 +508,185 @@ namespace sogen
                 }
 
                 const int32_t result = this->vulkan_.queue_submit(request.queue, request.command_buffer, request.fence);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_get_physical_device_memory_properties(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::get_physical_device_memory_properties_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (!context.output_buffer || context.output_buffer_length == 0)
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                std::vector<std::byte> properties(context.output_buffer_length);
+                const int32_t result = this->vulkan_.get_physical_device_memory_properties(request.physical_device,
+                                                                                           properties.data(), properties.size());
+                if (result != 0)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                win_emu.emu().write_memory(context.output_buffer, properties.data(), properties.size());
+                set_information(context, context.output_buffer_length);
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_allocate_memory(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::allocate_memory_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                uint64_t memory = gpu_bridge::null_object;
+                const int32_t result =
+                    this->vulkan_.allocate_memory(request.device, request.size, request.memory_type_index, memory);
+                return write_output(win_emu, context,
+                                    gpu_bridge::allocate_memory_response{.vk_result = result, .reserved = 0, .memory = memory});
+            }
+
+            NTSTATUS handle_free_memory(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::free_memory_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                this->vulkan_.free_memory(request.device, request.memory);
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_create_buffer(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::create_buffer_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                uint64_t buffer = gpu_bridge::null_object;
+                const int32_t result = this->vulkan_.create_buffer(request.device, request.size, request.usage, buffer);
+                return write_output(win_emu, context,
+                                    gpu_bridge::create_buffer_response{.vk_result = result, .reserved = 0, .buffer = buffer});
+            }
+
+            NTSTATUS handle_destroy_buffer(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::destroy_buffer_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                this->vulkan_.destroy_buffer(request.device, request.buffer);
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_get_buffer_memory_requirements(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::get_buffer_memory_requirements_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                uint64_t size = 0;
+                uint64_t alignment = 0;
+                uint32_t memory_type_bits = 0;
+                const int32_t result = this->vulkan_.get_buffer_memory_requirements(request.device, request.buffer, size,
+                                                                                    alignment, memory_type_bits);
+                return write_output(win_emu, context,
+                                    gpu_bridge::memory_requirements_response{.vk_result = result,
+                                                                             .memory_type_bits = memory_type_bits,
+                                                                             .size = size,
+                                                                             .alignment = alignment});
+            }
+
+            NTSTATUS handle_bind_buffer_memory(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::bind_buffer_memory_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result =
+                    this->vulkan_.bind_buffer_memory(request.device, request.buffer, request.memory, request.offset);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_cmd_fill_buffer(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::cmd_fill_buffer_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result = this->vulkan_.cmd_fill_buffer(request.command_buffer, request.buffer, request.offset,
+                                                                     request.size, request.data);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_download_memory(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::download_memory_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (!context.output_buffer || context.output_buffer_length == 0)
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                const auto copy_bytes = std::min<uint64_t>(request.size, context.output_buffer_length);
+
+                std::vector<std::byte> bytes(copy_bytes);
+                const int32_t result = this->vulkan_.download_memory(request.device, request.memory, request.offset,
+                                                                     copy_bytes, bytes.data(), bytes.size());
+                if (result != 0)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (copy_bytes > 0)
+                {
+                    win_emu.emu().write_memory(context.output_buffer, bytes.data(), bytes.size());
+                }
+                set_information(context, static_cast<ULONG>(copy_bytes));
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_upload_memory(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::upload_memory_request;
+
+                request_t request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const auto payload = std::min<uint64_t>(request.size, context.input_buffer_length - sizeof(request_t));
+
+                std::vector<std::byte> bytes(payload);
+                if (payload > 0)
+                {
+                    win_emu.emu().read_memory(context.input_buffer + sizeof(request_t), bytes.data(), bytes.size());
+                }
+
+                const int32_t result = this->vulkan_.upload_memory(request.device, request.memory, request.offset, payload,
+                                                                    bytes.data(), bytes.size());
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
         };

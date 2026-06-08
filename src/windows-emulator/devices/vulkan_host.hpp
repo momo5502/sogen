@@ -73,6 +73,31 @@ namespace sogen
         // Submits a single command buffer to the queue, optionally signaling the fence (0 = none).
         int32_t queue_submit(uint64_t queue, uint64_t command_buffer, uint64_t fence);
 
+        // Writes up to out_size bytes of the device's VkPhysicalDeviceMemoryProperties into out.
+        int32_t get_physical_device_memory_properties(uint64_t physical_device, void* out, size_t out_size);
+
+        // Allocates a single VkDeviceMemory of `size` from `memory_type_index`. out_memory receives a
+        // fresh object id, or 0 on failure.
+        int32_t allocate_memory(uint64_t device, uint64_t size, uint32_t memory_type_index, uint64_t& out_memory);
+        void free_memory(uint64_t device, uint64_t memory);
+
+        int32_t create_buffer(uint64_t device, uint64_t size, uint32_t usage, uint64_t& out_buffer);
+        void destroy_buffer(uint64_t device, uint64_t buffer);
+
+        int32_t get_buffer_memory_requirements(uint64_t device, uint64_t buffer, uint64_t& out_size, uint64_t& out_alignment,
+                                               uint32_t& out_memory_type_bits);
+        int32_t bind_buffer_memory(uint64_t device, uint64_t buffer, uint64_t memory, uint64_t offset);
+
+        // Records vkCmdFillBuffer into the (recording) command buffer.
+        int32_t cmd_fill_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint64_t size, uint32_t data);
+
+        // Maps host-visible memory, copies [offset, offset+size) into out, and unmaps. Used to read
+        // GPU results back to the guest (the guest never sees a host pointer).
+        int32_t download_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, void* out, size_t out_size);
+        // Maps host-visible memory and copies `data` into [offset, offset+size). Persists guest writes.
+        int32_t upload_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, const void* data,
+                              size_t data_size);
+
       private:
         struct impl;
         std::unique_ptr<impl> impl_;

@@ -53,6 +53,16 @@ namespace sogen::gpu_bridge
         reset_fence = 0x811,
         get_fence_status = 0x812,
         queue_submit = 0x813,
+        get_physical_device_memory_properties = 0x814,
+        allocate_memory = 0x815,
+        free_memory = 0x816,
+        create_buffer = 0x817,
+        destroy_buffer = 0x818,
+        get_buffer_memory_requirements = 0x819,
+        bind_buffer_memory = 0x81A,
+        cmd_fill_buffer = 0x81B,
+        download_memory = 0x81C,
+        upload_memory = 0x81D,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -78,6 +88,18 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_reset_fence = make_ioctl(static_cast<uint32_t>(command::reset_fence));
     inline constexpr uint32_t ioctl_get_fence_status = make_ioctl(static_cast<uint32_t>(command::get_fence_status));
     inline constexpr uint32_t ioctl_queue_submit = make_ioctl(static_cast<uint32_t>(command::queue_submit));
+    inline constexpr uint32_t ioctl_get_physical_device_memory_properties =
+        make_ioctl(static_cast<uint32_t>(command::get_physical_device_memory_properties));
+    inline constexpr uint32_t ioctl_allocate_memory = make_ioctl(static_cast<uint32_t>(command::allocate_memory));
+    inline constexpr uint32_t ioctl_free_memory = make_ioctl(static_cast<uint32_t>(command::free_memory));
+    inline constexpr uint32_t ioctl_create_buffer = make_ioctl(static_cast<uint32_t>(command::create_buffer));
+    inline constexpr uint32_t ioctl_destroy_buffer = make_ioctl(static_cast<uint32_t>(command::destroy_buffer));
+    inline constexpr uint32_t ioctl_get_buffer_memory_requirements =
+        make_ioctl(static_cast<uint32_t>(command::get_buffer_memory_requirements));
+    inline constexpr uint32_t ioctl_bind_buffer_memory = make_ioctl(static_cast<uint32_t>(command::bind_buffer_memory));
+    inline constexpr uint32_t ioctl_cmd_fill_buffer = make_ioctl(static_cast<uint32_t>(command::cmd_fill_buffer));
+    inline constexpr uint32_t ioctl_download_memory = make_ioctl(static_cast<uint32_t>(command::download_memory));
+    inline constexpr uint32_t ioctl_upload_memory = make_ioctl(static_cast<uint32_t>(command::upload_memory));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -295,5 +317,114 @@ namespace sogen::gpu_bridge
         object_id queue;
         object_id command_buffer;
         object_id fence; // null_object for no fence
+    };
+
+    // ioctl_get_physical_device_memory_properties: in (out = raw VkPhysicalDeviceMemoryProperties bytes)
+    struct get_physical_device_memory_properties_request
+    {
+        object_id physical_device;
+    };
+
+    // ioctl_allocate_memory: in (a single VkDeviceMemory allocation of `size` from `memory_type_index`)
+    struct allocate_memory_request
+    {
+        object_id device;
+        uint64_t size; // VkDeviceSize allocationSize
+        uint32_t memory_type_index;
+        uint32_t reserved;
+    };
+
+    // ioctl_allocate_memory: out
+    struct allocate_memory_response
+    {
+        int32_t vk_result;
+        uint32_t reserved;
+        object_id memory; // null_object on failure
+    };
+
+    // ioctl_free_memory: in
+    struct free_memory_request
+    {
+        object_id device;
+        object_id memory;
+    };
+
+    // ioctl_create_buffer: in (usage = VkBufferUsageFlags; exclusive sharing, no queue families)
+    struct create_buffer_request
+    {
+        object_id device;
+        uint64_t size; // VkDeviceSize
+        uint32_t usage;
+        uint32_t reserved;
+    };
+
+    // ioctl_create_buffer: out
+    struct create_buffer_response
+    {
+        int32_t vk_result;
+        uint32_t reserved;
+        object_id buffer; // null_object on failure
+    };
+
+    // ioctl_destroy_buffer: in
+    struct destroy_buffer_request
+    {
+        object_id device;
+        object_id buffer;
+    };
+
+    // ioctl_get_buffer_memory_requirements: in
+    struct get_buffer_memory_requirements_request
+    {
+        object_id device;
+        object_id buffer;
+    };
+
+    // VkMemoryRequirements carried as explicit fields (shared by buffers and, later, images).
+    struct memory_requirements_response
+    {
+        int32_t vk_result;
+        uint32_t memory_type_bits;
+        uint64_t size;      // VkDeviceSize
+        uint64_t alignment; // VkDeviceSize
+    };
+
+    // ioctl_bind_buffer_memory: in; out = result_response
+    struct bind_buffer_memory_request
+    {
+        object_id device;
+        object_id buffer;
+        object_id memory;
+        uint64_t offset; // VkDeviceSize
+    };
+
+    // ioctl_cmd_fill_buffer: in (records vkCmdFillBuffer into the command buffer); out = result_response
+    struct cmd_fill_buffer_request
+    {
+        object_id command_buffer;
+        object_id buffer;
+        uint64_t offset; // VkDeviceSize
+        uint64_t size;   // VkDeviceSize (VK_WHOLE_SIZE allowed)
+        uint32_t data;   // 32-bit value broadcast across the range
+        uint32_t reserved;
+    };
+
+    // ioctl_download_memory: in (out = `size` raw bytes read from host-mapped memory)
+    struct download_memory_request
+    {
+        object_id device;
+        object_id memory;
+        uint64_t offset; // VkDeviceSize
+        uint64_t size;   // VkDeviceSize
+    };
+
+    // ioctl_upload_memory: in header immediately followed by `size` raw bytes; out = result_response
+    struct upload_memory_request
+    {
+        object_id device;
+        object_id memory;
+        uint64_t offset; // VkDeviceSize
+        uint64_t size;   // VkDeviceSize
+        // uint8_t bytes[size];
     };
 }

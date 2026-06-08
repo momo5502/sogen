@@ -79,6 +79,7 @@ namespace sogen
             PFN_vkEnumeratePhysicalDevices enumerate_physical_devices{};
             PFN_vkGetPhysicalDeviceProperties get_physical_device_properties{};
             PFN_vkGetPhysicalDeviceQueueFamilyProperties get_queue_family_properties{};
+            PFN_vkGetPhysicalDeviceMemoryProperties get_physical_device_memory_properties{};
             PFN_vkCreateDevice create_device{};
             PFN_vkGetDeviceProcAddr get_device_proc_addr{};
         };
@@ -106,6 +107,15 @@ namespace sogen
             PFN_vkResetFences reset_fences{};
             PFN_vkGetFenceStatus get_fence_status{};
             PFN_vkQueueSubmit queue_submit{};
+            PFN_vkAllocateMemory allocate_memory{};
+            PFN_vkFreeMemory free_memory{};
+            PFN_vkMapMemory map_memory{};
+            PFN_vkUnmapMemory unmap_memory{};
+            PFN_vkCreateBuffer create_buffer{};
+            PFN_vkDestroyBuffer destroy_buffer{};
+            PFN_vkGetBufferMemoryRequirements get_buffer_memory_requirements{};
+            PFN_vkBindBufferMemory bind_buffer_memory{};
+            PFN_vkCmdFillBuffer cmd_fill_buffer{};
         };
 
         std::unordered_map<uint64_t, instance_data> instances;
@@ -136,11 +146,25 @@ namespace sogen
             uint64_t device_id{};
         };
 
+        struct memory_data
+        {
+            VkDeviceMemory handle{};
+            uint64_t device_id{};
+        };
+
+        struct buffer_data
+        {
+            VkBuffer handle{};
+            uint64_t device_id{};
+        };
+
         std::unordered_map<uint64_t, device_data> devices;
         std::unordered_map<uint64_t, queue_data> queues;
         std::unordered_map<uint64_t, command_pool_data> command_pools;
         std::unordered_map<uint64_t, command_buffer_data> command_buffers;
         std::unordered_map<uint64_t, fence_data> fences;
+        std::unordered_map<uint64_t, memory_data> memories;
+        std::unordered_map<uint64_t, buffer_data> buffers;
         uint64_t next_id{1};
 
         template <typename Map, typename Pred>
@@ -176,10 +200,27 @@ namespace sogen
                     it->second.destroy_fence(it->second.handle, fence.handle, nullptr);
                 }
             }
+            // Buffers must be destroyed before the memory they are bound to is freed.
+            for (auto& [id, buffer] : this->buffers)
+            {
+                if (buffer.device_id == device_id && buffer.handle && it->second.destroy_buffer)
+                {
+                    it->second.destroy_buffer(it->second.handle, buffer.handle, nullptr);
+                }
+            }
+            for (auto& [id, memory] : this->memories)
+            {
+                if (memory.device_id == device_id && memory.handle && it->second.free_memory)
+                {
+                    it->second.free_memory(it->second.handle, memory.handle, nullptr);
+                }
+            }
 
             this->erase_owned(this->command_buffers, [&](const command_buffer_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->command_pools, [&](const command_pool_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->fences, [&](const fence_data& d) { return d.device_id == device_id; });
+            this->erase_owned(this->buffers, [&](const buffer_data& d) { return d.device_id == device_id; });
+            this->erase_owned(this->memories, [&](const memory_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->queues, [&](const queue_data& d) { return d.device_id == device_id; });
 
             if (it->second.handle && it->second.destroy_device)
@@ -292,6 +333,9 @@ namespace sogen
             this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceProperties>(instance, "vkGetPhysicalDeviceProperties");
         data.get_queue_family_properties = this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(
             instance, "vkGetPhysicalDeviceQueueFamilyProperties");
+        data.get_physical_device_memory_properties =
+            this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceMemoryProperties>(instance,
+                                                                                     "vkGetPhysicalDeviceMemoryProperties");
         data.create_device = this->impl_->load_instance_proc<PFN_vkCreateDevice>(instance, "vkCreateDevice");
         data.get_device_proc_addr = this->impl_->load_instance_proc<PFN_vkGetDeviceProcAddr>(instance, "vkGetDeviceProcAddr");
 
@@ -508,6 +552,16 @@ namespace sogen
             data.reset_fences = reinterpret_cast<PFN_vkResetFences>(resolve("vkResetFences"));
             data.get_fence_status = reinterpret_cast<PFN_vkGetFenceStatus>(resolve("vkGetFenceStatus"));
             data.queue_submit = reinterpret_cast<PFN_vkQueueSubmit>(resolve("vkQueueSubmit"));
+            data.allocate_memory = reinterpret_cast<PFN_vkAllocateMemory>(resolve("vkAllocateMemory"));
+            data.free_memory = reinterpret_cast<PFN_vkFreeMemory>(resolve("vkFreeMemory"));
+            data.map_memory = reinterpret_cast<PFN_vkMapMemory>(resolve("vkMapMemory"));
+            data.unmap_memory = reinterpret_cast<PFN_vkUnmapMemory>(resolve("vkUnmapMemory"));
+            data.create_buffer = reinterpret_cast<PFN_vkCreateBuffer>(resolve("vkCreateBuffer"));
+            data.destroy_buffer = reinterpret_cast<PFN_vkDestroyBuffer>(resolve("vkDestroyBuffer"));
+            data.get_buffer_memory_requirements =
+                reinterpret_cast<PFN_vkGetBufferMemoryRequirements>(resolve("vkGetBufferMemoryRequirements"));
+            data.bind_buffer_memory = reinterpret_cast<PFN_vkBindBufferMemory>(resolve("vkBindBufferMemory"));
+            data.cmd_fill_buffer = reinterpret_cast<PFN_vkCmdFillBuffer>(resolve("vkCmdFillBuffer"));
         }
 
         const uint64_t id = this->impl_->next_id++;
@@ -786,5 +840,225 @@ namespace sogen
         submit.pCommandBuffers = &cb->second.handle;
 
         return dev->second.queue_submit(queue_it->second.handle, 1, &submit, fence_handle);
+    }
+
+    int32_t vulkan_host::get_physical_device_memory_properties(uint64_t physical_device, void* out, size_t out_size)
+    {
+        const auto pd = this->impl_->physical_devices.find(physical_device);
+        if (pd == this->impl_->physical_devices.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto instance = this->impl_->instances.find(pd->second.instance_id);
+        if (instance == this->impl_->instances.end() || !instance->second.get_physical_device_memory_properties)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkPhysicalDeviceMemoryProperties properties{};
+        instance->second.get_physical_device_memory_properties(pd->second.handle, &properties);
+
+        std::memcpy(out, &properties, std::min(out_size, sizeof(properties)));
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::allocate_memory(uint64_t device, uint64_t size, uint32_t memory_type_index, uint64_t& out_memory)
+    {
+        out_memory = 0;
+
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end() || !dev->second.allocate_memory)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkMemoryAllocateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        info.allocationSize = size;
+        info.memoryTypeIndex = memory_type_index;
+
+        VkDeviceMemory memory{};
+        const VkResult result = dev->second.allocate_memory(dev->second.handle, &info, nullptr, &memory);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->memories.emplace(id, impl::memory_data{.handle = memory, .device_id = device});
+        out_memory = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::free_memory(uint64_t device, uint64_t memory)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->memories.find(memory);
+        if (it == this->impl_->memories.end())
+        {
+            return;
+        }
+
+        if (dev != this->impl_->devices.end() && it->second.handle && dev->second.free_memory)
+        {
+            dev->second.free_memory(dev->second.handle, it->second.handle, nullptr);
+        }
+
+        this->impl_->memories.erase(it);
+    }
+
+    int32_t vulkan_host::create_buffer(uint64_t device, uint64_t size, uint32_t usage, uint64_t& out_buffer)
+    {
+        out_buffer = 0;
+
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end() || !dev->second.create_buffer)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkBufferCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        info.size = size;
+        info.usage = usage;
+        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VkBuffer buffer{};
+        const VkResult result = dev->second.create_buffer(dev->second.handle, &info, nullptr, &buffer);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->buffers.emplace(id, impl::buffer_data{.handle = buffer, .device_id = device});
+        out_buffer = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::destroy_buffer(uint64_t device, uint64_t buffer)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->buffers.find(buffer);
+        if (it == this->impl_->buffers.end())
+        {
+            return;
+        }
+
+        if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_buffer)
+        {
+            dev->second.destroy_buffer(dev->second.handle, it->second.handle, nullptr);
+        }
+
+        this->impl_->buffers.erase(it);
+    }
+
+    int32_t vulkan_host::get_buffer_memory_requirements(uint64_t device, uint64_t buffer, uint64_t& out_size,
+                                                        uint64_t& out_alignment, uint32_t& out_memory_type_bits)
+    {
+        out_size = 0;
+        out_alignment = 0;
+        out_memory_type_bits = 0;
+
+        const auto dev = this->impl_->devices.find(device);
+        const auto buf = this->impl_->buffers.find(buffer);
+        if (dev == this->impl_->devices.end() || buf == this->impl_->buffers.end() ||
+            !dev->second.get_buffer_memory_requirements)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkMemoryRequirements requirements{};
+        dev->second.get_buffer_memory_requirements(dev->second.handle, buf->second.handle, &requirements);
+
+        out_size = requirements.size;
+        out_alignment = requirements.alignment;
+        out_memory_type_bits = requirements.memoryTypeBits;
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::bind_buffer_memory(uint64_t device, uint64_t buffer, uint64_t memory, uint64_t offset)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto buf = this->impl_->buffers.find(buffer);
+        const auto mem = this->impl_->memories.find(memory);
+        if (dev == this->impl_->devices.end() || buf == this->impl_->buffers.end() || mem == this->impl_->memories.end() ||
+            !dev->second.bind_buffer_memory)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        return dev->second.bind_buffer_memory(dev->second.handle, buf->second.handle, mem->second.handle, offset);
+    }
+
+    int32_t vulkan_host::cmd_fill_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint64_t size,
+                                         uint32_t data)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto buf = this->impl_->buffers.find(buffer);
+        if (cb == this->impl_->command_buffers.end() || buf == this->impl_->buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_fill_buffer)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        dev->second.cmd_fill_buffer(cb->second.handle, buf->second.handle, offset, size, data);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::download_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, void* out,
+                                         size_t out_size)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto mem = this->impl_->memories.find(memory);
+        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || !dev->second.map_memory ||
+            !dev->second.unmap_memory)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const size_t copy_bytes = std::min(static_cast<size_t>(size), out_size);
+
+        void* mapped = nullptr;
+        const VkResult result = dev->second.map_memory(dev->second.handle, mem->second.handle, offset, size, 0, &mapped);
+        if (result != VK_SUCCESS || !mapped)
+        {
+            return result != VK_SUCCESS ? result : VK_ERROR_MEMORY_MAP_FAILED;
+        }
+
+        std::memcpy(out, mapped, copy_bytes);
+        dev->second.unmap_memory(dev->second.handle, mem->second.handle);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::upload_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, const void* data,
+                                       size_t data_size)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto mem = this->impl_->memories.find(memory);
+        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || !dev->second.map_memory ||
+            !dev->second.unmap_memory)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const size_t copy_bytes = std::min(static_cast<size_t>(size), data_size);
+
+        void* mapped = nullptr;
+        const VkResult result = dev->second.map_memory(dev->second.handle, mem->second.handle, offset, size, 0, &mapped);
+        if (result != VK_SUCCESS || !mapped)
+        {
+            return result != VK_SUCCESS ? result : VK_ERROR_MEMORY_MAP_FAILED;
+        }
+
+        std::memcpy(mapped, data, copy_bytes);
+        dev->second.unmap_memory(dev->second.handle, mem->second.handle);
+        return VK_SUCCESS;
     }
 }

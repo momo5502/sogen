@@ -71,11 +71,178 @@ namespace
         submit.pCommandBuffers = &command_buffer;
 
         const VkResult submit_result = queue_submit(queue, 1, &submit, fence);
-        const VkResult wait_result = wait_for_fences(device, 1, &fence, VK_TRUE, 1000000000ULL /* 1s */);
+        // First submission absorbs a software-driver (SwiftShader) JIT cold-start of several seconds;
+        // a short timeout would spuriously report VK_TIMEOUT here.
+        const VkResult wait_result = wait_for_fences(device, 1, &fence, VK_TRUE, 30000000000ULL /* 30s */);
         std::printf("[shim-test] vkQueueSubmit -> %d, vkWaitForFences -> %d\n", submit_result, wait_result);
 
         destroy_fence(device, fence, nullptr);
         destroy_command_pool(device, pool, nullptr);
+    }
+
+    // Picks the first memory type that is set in `type_bits` and carries all of `required` property
+    // flags. Returns UINT32_MAX if none qualifies.
+    uint32_t find_memory_type(const VkPhysicalDeviceMemoryProperties& props, uint32_t type_bits,
+                              VkMemoryPropertyFlags required)
+    {
+        for (uint32_t i = 0; i < props.memoryTypeCount; ++i)
+        {
+            if ((type_bits & (1u << i)) && (props.memoryTypes[i].propertyFlags & required) == required)
+            {
+                return i;
+            }
+        }
+        return UINT32_MAX;
+    }
+
+    // Allocates a host-visible buffer, has the GPU fill it with a known pattern via vkCmdFillBuffer,
+    // then maps it back and verifies the bytes -- the first end-to-end "GPU produces data the guest
+    // reads back" path across the bridge.
+    bool fill_buffer_and_readback(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance,
+                                  VkPhysicalDevice physical_device, VkDevice device, VkQueue queue, uint32_t queue_family)
+    {
+        const auto get_memory_properties = reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(
+            get_instance_proc(instance, "vkGetPhysicalDeviceMemoryProperties"));
+        const auto create_buffer = reinterpret_cast<PFN_vkCreateBuffer>(get_instance_proc(instance, "vkCreateBuffer"));
+        const auto destroy_buffer = reinterpret_cast<PFN_vkDestroyBuffer>(get_instance_proc(instance, "vkDestroyBuffer"));
+        const auto get_buffer_reqs = reinterpret_cast<PFN_vkGetBufferMemoryRequirements>(
+            get_instance_proc(instance, "vkGetBufferMemoryRequirements"));
+        const auto allocate_memory = reinterpret_cast<PFN_vkAllocateMemory>(get_instance_proc(instance, "vkAllocateMemory"));
+        const auto free_memory = reinterpret_cast<PFN_vkFreeMemory>(get_instance_proc(instance, "vkFreeMemory"));
+        const auto bind_buffer_memory =
+            reinterpret_cast<PFN_vkBindBufferMemory>(get_instance_proc(instance, "vkBindBufferMemory"));
+        const auto map_memory = reinterpret_cast<PFN_vkMapMemory>(get_instance_proc(instance, "vkMapMemory"));
+        const auto unmap_memory = reinterpret_cast<PFN_vkUnmapMemory>(get_instance_proc(instance, "vkUnmapMemory"));
+        const auto cmd_fill_buffer = reinterpret_cast<PFN_vkCmdFillBuffer>(get_instance_proc(instance, "vkCmdFillBuffer"));
+
+        const auto create_command_pool =
+            reinterpret_cast<PFN_vkCreateCommandPool>(get_instance_proc(instance, "vkCreateCommandPool"));
+        const auto destroy_command_pool =
+            reinterpret_cast<PFN_vkDestroyCommandPool>(get_instance_proc(instance, "vkDestroyCommandPool"));
+        const auto allocate_command_buffers =
+            reinterpret_cast<PFN_vkAllocateCommandBuffers>(get_instance_proc(instance, "vkAllocateCommandBuffers"));
+        const auto begin_command_buffer =
+            reinterpret_cast<PFN_vkBeginCommandBuffer>(get_instance_proc(instance, "vkBeginCommandBuffer"));
+        const auto end_command_buffer =
+            reinterpret_cast<PFN_vkEndCommandBuffer>(get_instance_proc(instance, "vkEndCommandBuffer"));
+        const auto create_fence = reinterpret_cast<PFN_vkCreateFence>(get_instance_proc(instance, "vkCreateFence"));
+        const auto destroy_fence = reinterpret_cast<PFN_vkDestroyFence>(get_instance_proc(instance, "vkDestroyFence"));
+        const auto queue_submit = reinterpret_cast<PFN_vkQueueSubmit>(get_instance_proc(instance, "vkQueueSubmit"));
+        const auto wait_for_fences = reinterpret_cast<PFN_vkWaitForFences>(get_instance_proc(instance, "vkWaitForFences"));
+
+        constexpr VkDeviceSize buffer_size = 256;
+        constexpr uint32_t fill_value = 0xDEADBEEFu;
+
+        VkBufferCreateInfo buffer_info{};
+        buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buffer_info.size = buffer_size;
+        buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VkBuffer buffer = VK_NULL_HANDLE;
+        if (create_buffer(device, &buffer_info, nullptr, &buffer) != VK_SUCCESS)
+        {
+            std::printf("[shim-test] vkCreateBuffer failed\n");
+            return false;
+        }
+
+        VkMemoryRequirements reqs{};
+        get_buffer_reqs(device, buffer, &reqs);
+
+        VkPhysicalDeviceMemoryProperties mem_props{};
+        get_memory_properties(physical_device, &mem_props);
+        const uint32_t type_index = find_memory_type(
+            mem_props, reqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        if (type_index == UINT32_MAX)
+        {
+            std::printf("[shim-test] no host-visible memory type\n");
+            destroy_buffer(device, buffer, nullptr);
+            return false;
+        }
+
+        VkMemoryAllocateInfo alloc{};
+        alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        alloc.allocationSize = reqs.size;
+        alloc.memoryTypeIndex = type_index;
+
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        if (allocate_memory(device, &alloc, nullptr, &memory) != VK_SUCCESS)
+        {
+            std::printf("[shim-test] vkAllocateMemory failed\n");
+            destroy_buffer(device, buffer, nullptr);
+            return false;
+        }
+        bind_buffer_memory(device, buffer, memory, 0);
+
+        VkCommandPoolCreateInfo pool_info{};
+        pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        pool_info.queueFamilyIndex = queue_family;
+        VkCommandPool pool = VK_NULL_HANDLE;
+        create_command_pool(device, &pool_info, nullptr, &pool);
+
+        VkCommandBufferAllocateInfo cb_info{};
+        cb_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        cb_info.commandPool = pool;
+        cb_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cb_info.commandBufferCount = 1;
+        VkCommandBuffer cmd = VK_NULL_HANDLE;
+        allocate_command_buffers(device, &cb_info, &cmd);
+
+        VkCommandBufferBeginInfo begin{};
+        begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        begin_command_buffer(cmd, &begin);
+        cmd_fill_buffer(cmd, buffer, 0, buffer_size, fill_value);
+        end_command_buffer(cmd);
+
+        VkFenceCreateInfo fence_info{};
+        fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        VkFence fence = VK_NULL_HANDLE;
+        create_fence(device, &fence_info, nullptr, &fence);
+
+        VkSubmitInfo submit{};
+        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &cmd;
+        queue_submit(queue, 1, &submit, fence);
+        // SwiftShader (software) JIT-compiles its submission path on first use, which can take several
+        // seconds of wall-clock; give the fence a generous timeout so cold-start doesn't read as failure.
+        const VkResult wait_result = wait_for_fences(device, 1, &fence, VK_TRUE, 30000000000ULL /* 30s */);
+        std::printf("[shim-test] fill: vkWaitForFences -> %d\n", wait_result);
+
+        bool ok = (wait_result == VK_SUCCESS);
+        if (ok)
+        {
+            void* mapped = nullptr;
+            if (map_memory(device, memory, 0, buffer_size, 0, &mapped) == VK_SUCCESS && mapped)
+            {
+                const auto* words = static_cast<const uint32_t*>(mapped);
+                for (uint32_t i = 0; i < buffer_size / sizeof(uint32_t); ++i)
+                {
+                    if (words[i] != fill_value)
+                    {
+                        ok = false;
+                        std::printf("[shim-test] readback mismatch at word %u: 0x%08X != 0x%08X\n", i, words[i], fill_value);
+                        break;
+                    }
+                }
+                unmap_memory(device, memory);
+            }
+            else
+            {
+                ok = false;
+                std::printf("[shim-test] vkMapMemory failed\n");
+            }
+        }
+
+        std::printf("[shim-test] fill+readback (0x%08X x%u) -> %s\n", fill_value,
+                    static_cast<uint32_t>(buffer_size / sizeof(uint32_t)), ok ? "PASS" : "FAIL");
+
+        destroy_fence(device, fence, nullptr);
+        destroy_command_pool(device, pool, nullptr);
+        free_memory(device, memory, nullptr);
+        destroy_buffer(device, buffer, nullptr);
+        return ok;
     }
 }
 
@@ -194,6 +361,7 @@ int main(int argc, char** argv)
                 std::printf("[shim-test] vkGetDeviceQueue -> queue=%p\n", static_cast<void*>(queue));
 
                 submit_and_wait(get_instance_proc, instance, device, queue, graphics_family);
+                fill_buffer_and_readback(get_instance_proc, instance, devices[0], device, queue, graphics_family);
 
                 destroy_device(device, nullptr);
             }

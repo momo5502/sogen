@@ -130,6 +130,17 @@ plus the surrounding calls needed to actually use them:
     null-terminated strings, `len="count,null-terminated"` string arrays, and nested struct
     pointers, on `VkApplicationInfo` and `VkInstanceCreateInfo`.
 
+- **device memory + host-visible buffers + readback.** The first slice that has the GPU *produce
+  data the guest reads back* — the foundation for all rendering. Adds `vkGetPhysicalDeviceMemoryProperties`,
+  `vkAllocateMemory`/`vkFreeMemory`, `vkCreateBuffer`/`vkDestroyBuffer` +
+  `vkGetBufferMemoryRequirements`/`vkBindBufferMemory`, a real recorded command (`vkCmdFillBuffer`),
+  and memory readback. Because `VkDeviceMemory` is host-side, the guest's `vkMapMemory`/`vkUnmapMemory`
+  are emulated by **staging a guest-side copy**: `download_memory` fills the staging buffer on map and
+  `upload_memory` flushes it back on unmap, so a host pointer never crosses the bridge (zero-copy
+  mapping is a later optimization). Verified end-to-end: the guest allocates a host-visible buffer,
+  the GPU fills it via `vkCmdFillBuffer`, and the mapped readback returns the exact pattern
+  (`vulkan-shim-test`'s `fill+readback` check).
+
 ## Remoted Vulkan entry points so far
 
 Instance/device: `vkCreateInstance`, `vkDestroyInstance`, `vkEnumeratePhysicalDevices`,
@@ -140,6 +151,10 @@ Instance/device: `vkCreateInstance`, `vkDestroyInstance`, `vkEnumeratePhysicalDe
 Command/sync: `vkCreateCommandPool`, `vkDestroyCommandPool`, `vkAllocateCommandBuffers`,
 `vkFreeCommandBuffers`, `vkBeginCommandBuffer`, `vkEndCommandBuffer`, `vkCreateFence`,
 `vkDestroyFence`, `vkResetFences`, `vkGetFenceStatus`, `vkQueueSubmit`, `vkWaitForFences`.
+
+Memory/buffers: `vkGetPhysicalDeviceMemoryProperties`, `vkAllocateMemory`, `vkFreeMemory`,
+`vkMapMemory`, `vkUnmapMemory`, `vkCreateBuffer`, `vkDestroyBuffer`, `vkGetBufferMemoryRequirements`,
+`vkBindBufferMemory`, `vkCmdFillBuffer`.
 
 The hand-written entry points currently pass minimal/empty create-infos (e.g. `vkCreateInstance`
 ignores layers/extensions, `vkQueueSubmit` ignores semaphores). The generator is the path to
@@ -160,30 +175,46 @@ honoring the full structs.
   (the fence is attached to the final command buffer).
 - **`vkCreateDevice`** creates a single queue family from the app's first `VkDeviceQueueCreateInfo`,
   no device extensions/features.
-- The host driver is whatever `vulkan-1.dll` the host resolves (the dev machine has a real ICD;
-  SwiftShader can be dropped in as a software fallback).
+- **`vkMapMemory` is a staged copy, not zero-copy.** On map the host range is downloaded into a
+  guest-side buffer; on unmap it is uploaded back. Correct for read/write, but a host↔guest copy per
+  map. Zero-copy (mapping host GPU-visible memory into guest VA) is a later optimization.
+- The host driver is whatever `vulkan-1.dll` the host resolves. The dev machine has a real ICD; on a
+  GPU-less box (e.g. CI) SwiftShader can be dropped in as a software fallback by staging its loader +
+  ICD next to `analyzer.exe` and pointing `VK_ICD_FILENAMES` at the manifest. Software drivers
+  JIT-compile their submit path on the first `vkQueueSubmit`, so the first `vkWaitForFences` needs a
+  generous timeout.
 
 ## What's left (plan)
 
-Rough dependency order toward rendering a triangle offscreen against the host GPU and reading it
-back:
+The near-term goal is a **windowed** Vulkan sample: a guest app that opens a real window and shows
+its GPU-rendered content. The approach is **readback-and-present** — render on the host GPU into an
+offscreen image, read the pixels back, and hand them to the guest window's surface through Sogen's
+existing `present_surface` seam (the SDL backend already displays a per-HWND BGRA surface; see
+`windows-ui-emulation.md`). The guest stays a real Vulkan WSI app (`vkCreateWin32SurfaceKHR` /
+`vkCreateSwapchainKHR` / `vkQueuePresentKHR`), but the bridge implements the "swapchain" as plain
+offscreen `VkImage`s. This avoids zero-copy memory mapping and avoids binding the host GPU to the SDL
+window, and means a software driver without Win32 WSI (SwiftShader) still works.
 
-1. **Generator: handle translation.** Emit `object_id`↔host-handle translation for handle members
-   so structs that reference `VkInstance`/`VkBuffer`/... can be generated. This is the missing piece
-   before most "real" structs.
-2. **Generator: `pNext` sType-dispatch.** Walk and rebuild extension chains over an allowlist of
-   extension structs.
-3. **Migrate existing hand-marshalled commands to the generated path.** First win:
-   `vkCreateInstance` honoring layers/extensions (e.g. validation layers) — a visible behavior
-   improvement and the first real consumer of the codegen.
-4. **Per-command marshalling generation** (the full Venus model), not just per-struct.
-5. **Memory:** `vkAllocateMemory` + **zero-copy `vkMapMemory`** by mapping host GPU-visible memory
-   into guest VA (the same mechanism Sogen uses for `KUSER_SHARED_DATA`).
-6. **Resources + rendering:** buffers, images, image views, render pass, framebuffer, shader module,
-   graphics pipeline, draw — enough for an offscreen triangle + readback.
-7. **WSI/present:** wire `VkSwapchainKHR` present to the existing `ui_backend` / `present_surface`
-   path (shares the window-presentation seam documented in `windows-ui-emulation.md`).
-8. **Later:** OpenGL via Zink, DirectX via DXVK — no new bridge work, just guest DLL provisioning.
+Staged steps toward that:
+
+1. **Memory + readback foundation** — *done* (host-visible buffers, `vkCmdFillBuffer`, map readback).
+2. **Render target + clear** — images, `vkAllocateMemory`-backed `VkImage`, layout barriers,
+   `vkCmdClearColorImage`, and `vkCmdCopyImageToBuffer` readback. Clear to a known color, verify a pixel.
+3. **WSI → first visible window** — `vkCreateWin32SurfaceKHR` (guest HWND) + swapchain +
+   `vkQueuePresentKHR`; present = readback + `present_surface(hwnd, …)`. First window showing a solid color.
+4. **Triangle** — render pass, framebuffer, SPIR-V shader modules, graphics pipeline, `vkCmdDraw`.
+
+Cross-cutting (needed as the create-infos get richer, can land alongside the steps above):
+
+- **Generator: handle translation** — `object_id`↔host-handle translation for handle members, so
+  pointer-rich structs can be generated instead of hand-marshalled.
+- **Generator: `pNext` sType-dispatch** — walk/rebuild extension chains over an allowlist.
+- **Migrate hand-marshalled commands to the generated path**, then **per-command generation** (the
+  full Venus model).
+- **Zero-copy `vkMapMemory`** — map host GPU-visible memory into guest VA (the mechanism Sogen uses
+  for `KUSER_SHARED_DATA`), replacing the staged-copy map.
+
+Later: OpenGL via Zink, DirectX via DXVK — no new bridge work, just guest DLL provisioning.
 
 ## File map
 

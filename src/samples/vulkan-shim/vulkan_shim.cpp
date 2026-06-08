@@ -9,6 +9,7 @@
 #include <windows.h>
 
 #include <cstring>
+#include <unordered_map>
 #include <vector>
 
 #define VK_NO_PROTOTYPES
@@ -54,6 +55,19 @@ namespace
     {
         return reinterpret_cast<Handle>(static_cast<uintptr_t>(id));
     }
+
+    // VkDeviceMemory is host-side; the guest can't see a host pointer. We emulate vkMapMemory by
+    // staging a guest-side copy: download the host range on map, hand the app that buffer, and upload
+    // it back on unmap so writes persist. allocationSize is tracked here to resolve VK_WHOLE_SIZE.
+    std::unordered_map<gb::object_id, uint64_t> g_memory_sizes;
+
+    struct mapped_range
+    {
+        std::vector<uint8_t> staging;
+        uint64_t offset{};
+        uint64_t size{};
+    };
+    std::unordered_map<gb::object_id, mapped_range> g_mapped_ranges;
 }
 
 extern "C"
@@ -450,6 +464,221 @@ extern "C"
         }
     }
 
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceMemoryProperties(
+        VkPhysicalDevice physicalDevice, VkPhysicalDeviceMemoryProperties* pMemoryProperties)
+    {
+        if (!pMemoryProperties)
+        {
+            return;
+        }
+        *pMemoryProperties = {};
+
+        gb::get_physical_device_memory_properties_request request{};
+        request.physical_device = to_object_id(physicalDevice);
+        bridge_call(gb::ioctl_get_physical_device_memory_properties, &request, sizeof(request), pMemoryProperties,
+                    sizeof(*pMemoryProperties));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkAllocateMemory(VkDevice device,
+                                                                          const VkMemoryAllocateInfo* pAllocateInfo,
+                                                                          const VkAllocationCallbacks*, VkDeviceMemory* pMemory)
+    {
+        gb::allocate_memory_request request{};
+        request.device = to_object_id(device);
+        request.size = pAllocateInfo->allocationSize;
+        request.memory_type_index = pAllocateInfo->memoryTypeIndex;
+
+        gb::allocate_memory_response response{};
+        if (!bridge_call(gb::ioctl_allocate_memory, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+
+        g_memory_sizes[response.memory] = pAllocateInfo->allocationSize;
+        *pMemory = to_handle<VkDeviceMemory>(response.memory);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkFreeMemory(VkDevice device, VkDeviceMemory memory,
+                                                                  const VkAllocationCallbacks*)
+    {
+        if (!memory)
+        {
+            return;
+        }
+        const gb::object_id mem_id = to_object_id(memory);
+
+        gb::free_memory_request request{};
+        request.device = to_object_id(device);
+        request.memory = mem_id;
+        bridge_call(gb::ioctl_free_memory, &request, sizeof(request), nullptr, 0);
+
+        g_memory_sizes.erase(mem_id);
+        g_mapped_ranges.erase(mem_id);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkMapMemory(VkDevice device, VkDeviceMemory memory,
+                                                                     VkDeviceSize offset, VkDeviceSize size,
+                                                                     VkMemoryMapFlags, void** ppData)
+    {
+        const gb::object_id mem_id = to_object_id(memory);
+
+        uint64_t actual = size;
+        if (size == VK_WHOLE_SIZE)
+        {
+            const auto it = g_memory_sizes.find(mem_id);
+            const uint64_t total = (it != g_memory_sizes.end()) ? it->second : 0;
+            actual = (total > offset) ? (total - offset) : 0;
+        }
+
+        mapped_range range{};
+        range.offset = offset;
+        range.size = actual;
+        range.staging.resize(static_cast<size_t>(actual));
+
+        if (actual > 0)
+        {
+            gb::download_memory_request request{};
+            request.device = to_object_id(device);
+            request.memory = mem_id;
+            request.offset = offset;
+            request.size = actual;
+            if (!bridge_call(gb::ioctl_download_memory, &request, sizeof(request), range.staging.data(),
+                             static_cast<DWORD>(range.staging.size())))
+            {
+                return VK_ERROR_MEMORY_MAP_FAILED;
+            }
+        }
+
+        auto& stored = (g_mapped_ranges[mem_id] = std::move(range));
+        *ppData = stored.staging.data();
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkUnmapMemory(VkDevice device, VkDeviceMemory memory)
+    {
+        const gb::object_id mem_id = to_object_id(memory);
+        const auto it = g_mapped_ranges.find(mem_id);
+        if (it == g_mapped_ranges.end())
+        {
+            return;
+        }
+
+        const auto& range = it->second;
+        if (range.size > 0)
+        {
+            std::vector<uint8_t> message(sizeof(gb::upload_memory_request) + range.staging.size());
+            gb::upload_memory_request header{};
+            header.device = to_object_id(device);
+            header.memory = mem_id;
+            header.offset = range.offset;
+            header.size = range.size;
+            std::memcpy(message.data(), &header, sizeof(header));
+            std::memcpy(message.data() + sizeof(header), range.staging.data(), range.staging.size());
+
+            gb::result_response response{};
+            bridge_call(gb::ioctl_upload_memory, message.data(), static_cast<DWORD>(message.size()), &response,
+                        sizeof(response));
+        }
+
+        g_mapped_ranges.erase(it);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateBuffer(VkDevice device,
+                                                                        const VkBufferCreateInfo* pCreateInfo,
+                                                                        const VkAllocationCallbacks*, VkBuffer* pBuffer)
+    {
+        gb::create_buffer_request request{};
+        request.device = to_object_id(device);
+        request.size = pCreateInfo->size;
+        request.usage = pCreateInfo->usage;
+
+        gb::create_buffer_response response{};
+        if (!bridge_call(gb::ioctl_create_buffer, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+
+        *pBuffer = to_handle<VkBuffer>(response.buffer);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyBuffer(VkDevice device, VkBuffer buffer,
+                                                                     const VkAllocationCallbacks*)
+    {
+        if (!buffer)
+        {
+            return;
+        }
+        gb::destroy_buffer_request request{};
+        request.device = to_object_id(device);
+        request.buffer = to_object_id(buffer);
+        bridge_call(gb::ioctl_destroy_buffer, &request, sizeof(request), nullptr, 0);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetBufferMemoryRequirements(VkDevice device, VkBuffer buffer,
+                                                                                   VkMemoryRequirements* pMemoryRequirements)
+    {
+        if (!pMemoryRequirements)
+        {
+            return;
+        }
+        *pMemoryRequirements = {};
+
+        gb::get_buffer_memory_requirements_request request{};
+        request.device = to_object_id(device);
+        request.buffer = to_object_id(buffer);
+
+        gb::memory_requirements_response response{};
+        if (!bridge_call(gb::ioctl_get_buffer_memory_requirements, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return;
+        }
+
+        pMemoryRequirements->size = response.size;
+        pMemoryRequirements->alignment = response.alignment;
+        pMemoryRequirements->memoryTypeBits = response.memory_type_bits;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkBindBufferMemory(VkDevice device, VkBuffer buffer,
+                                                                            VkDeviceMemory memory, VkDeviceSize memoryOffset)
+    {
+        gb::bind_buffer_memory_request request{};
+        request.device = to_object_id(device);
+        request.buffer = to_object_id(buffer);
+        request.memory = to_object_id(memory);
+        request.offset = memoryOffset;
+
+        gb::result_response response{};
+        if (!bridge_call(gb::ioctl_bind_buffer_memory, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return static_cast<VkResult>(response.vk_result);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdFillBuffer(VkCommandBuffer commandBuffer, VkBuffer dstBuffer,
+                                                                     VkDeviceSize dstOffset, VkDeviceSize size, uint32_t data)
+    {
+        gb::cmd_fill_buffer_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.buffer = to_object_id(dstBuffer);
+        request.offset = dstOffset;
+        request.size = size;
+        request.data = data;
+
+        gb::result_response response{};
+        bridge_call(gb::ioctl_cmd_fill_buffer, &request, sizeof(request), &response, sizeof(response));
+    }
+
     __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice, const char* pName);
 
     __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance, const char* pName)
@@ -490,6 +719,18 @@ extern "C"
             {.name = "vkGetFenceStatus", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetFenceStatus)},
             {.name = "vkQueueSubmit", .func = reinterpret_cast<PFN_vkVoidFunction>(vkQueueSubmit)},
             {.name = "vkWaitForFences", .func = reinterpret_cast<PFN_vkVoidFunction>(vkWaitForFences)},
+            {.name = "vkGetPhysicalDeviceMemoryProperties",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceMemoryProperties)},
+            {.name = "vkAllocateMemory", .func = reinterpret_cast<PFN_vkVoidFunction>(vkAllocateMemory)},
+            {.name = "vkFreeMemory", .func = reinterpret_cast<PFN_vkVoidFunction>(vkFreeMemory)},
+            {.name = "vkMapMemory", .func = reinterpret_cast<PFN_vkVoidFunction>(vkMapMemory)},
+            {.name = "vkUnmapMemory", .func = reinterpret_cast<PFN_vkVoidFunction>(vkUnmapMemory)},
+            {.name = "vkCreateBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateBuffer)},
+            {.name = "vkDestroyBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyBuffer)},
+            {.name = "vkGetBufferMemoryRequirements",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetBufferMemoryRequirements)},
+            {.name = "vkBindBufferMemory", .func = reinterpret_cast<PFN_vkVoidFunction>(vkBindBufferMemory)},
+            {.name = "vkCmdFillBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdFillBuffer)},
         };
 
         for (const auto& e : table)
