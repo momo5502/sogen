@@ -1577,6 +1577,31 @@ namespace sogen
         this->impl_->surfaces.erase(surface);
     }
 
+    int32_t vulkan_host::get_surface_capabilities(uint64_t /*physical_device*/, uint64_t surface, void* out,
+                                                  size_t out_size)
+    {
+        if (!this->impl_->surfaces.contains(surface))
+        {
+            return VK_ERROR_SURFACE_LOST_KHR;
+        }
+
+        VkSurfaceCapabilitiesKHR caps{};
+        caps.minImageCount = 2;
+        caps.maxImageCount = 0; // no upper bound
+        caps.currentExtent = {.width = 0xFFFFFFFFu, .height = 0xFFFFFFFFu}; // undefined: the app chooses
+        caps.minImageExtent = {.width = 1, .height = 1};
+        caps.maxImageExtent = {.width = 16384, .height = 16384};
+        caps.maxImageArrayLayers = 1;
+        caps.supportedTransforms = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+        caps.currentTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+        caps.supportedCompositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        caps.supportedUsageFlags =
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+
+        std::memcpy(out, &caps, std::min(out_size, sizeof(caps)));
+        return VK_SUCCESS;
+    }
+
     int32_t vulkan_host::create_swapchain(uint64_t device, uint64_t surface, uint32_t format, uint32_t width,
                                           uint32_t height, uint32_t min_image_count, uint32_t image_usage,
                                           uint64_t& out_swapchain, uint32_t& out_image_count)

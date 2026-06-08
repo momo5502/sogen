@@ -144,6 +144,8 @@ namespace sogen
                     return handle_cmd_end_render_pass(win_emu, context);
                 case gpu_bridge::ioctl_cmd_push_constants:
                     return handle_cmd_push_constants(win_emu, context);
+                case gpu_bridge::ioctl_get_surface_capabilities:
+                    return handle_get_surface_capabilities(win_emu, context);
 
                 default:
                     win_emu.log.warn("[gpu-bridge] Unsupported IOCTL: 0x%X\n", context.io_control_code);
@@ -1240,6 +1242,32 @@ namespace sogen
                     this->vulkan_.cmd_push_constants(request.command_buffer, request.pipeline_layout, request.stage_flags,
                                                      request.offset, static_cast<uint32_t>(values.size()), values.data());
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_get_surface_capabilities(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::get_surface_capabilities_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (!context.output_buffer || context.output_buffer_length == 0)
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                std::vector<std::byte> caps(context.output_buffer_length);
+                const int32_t result = this->vulkan_.get_surface_capabilities(request.physical_device, request.surface,
+                                                                              caps.data(), caps.size());
+                if (result != 0)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                win_emu.emu().write_memory(context.output_buffer, caps.data(), caps.size());
+                set_information(context, context.output_buffer_length);
+                return STATUS_SUCCESS;
             }
         };
     }

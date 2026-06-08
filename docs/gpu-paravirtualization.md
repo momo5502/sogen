@@ -198,8 +198,9 @@ Memory/buffers: `vkGetPhysicalDeviceMemoryProperties`, `vkAllocateMemory`, `vkFr
 Images/transfer: `vkCreateImage`, `vkDestroyImage`, `vkGetImageMemoryRequirements`,
 `vkBindImageMemory`, `vkCmdPipelineBarrier`, `vkCmdClearColorImage`, `vkCmdCopyImageToBuffer`.
 
-WSI: `vkCreateWin32SurfaceKHR`, `vkDestroySurfaceKHR`, `vkCreateSwapchainKHR`, `vkDestroySwapchainKHR`,
-`vkGetSwapchainImagesKHR`, `vkAcquireNextImageKHR`, `vkQueuePresentKHR`.
+WSI: `vkCreateWin32SurfaceKHR`, `vkDestroySurfaceKHR`, `vkGetPhysicalDeviceSurfaceCapabilitiesKHR`,
+`vkCreateSwapchainKHR`, `vkDestroySwapchainKHR`, `vkGetSwapchainImagesKHR`, `vkAcquireNextImageKHR`,
+`vkQueuePresentKHR`.
 
 Graphics pipeline: `vkCreateShaderModule`, `vkCreateImageView`, `vkCreateRenderPass`,
 `vkCreateFramebuffer`, `vkCreatePipelineLayout` (with a push-constant range), `vkCreateGraphicsPipelines`

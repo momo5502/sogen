@@ -91,9 +91,12 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    const HWND hwnd = CreateWindowExA(0, wc.lpszClassName, "Sogen Vulkan - Spinning Triangle",
-                                      WS_OVERLAPPEDWINDOW | WS_VISIBLE, 200, 200, static_cast<int>(window_width),
-                                      static_cast<int>(window_height), nullptr, nullptr, hinstance, nullptr);
+    // Fixed-size window (no thick frame / maximize) so the surface extent never changes under us -- this
+    // sample does not recreate the swapchain on resize.
+    constexpr DWORD window_style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE;
+    const HWND hwnd = CreateWindowExA(0, wc.lpszClassName, "Sogen Vulkan - Spinning Triangle", window_style, 200, 200,
+                                      static_cast<int>(window_width), static_cast<int>(window_height), nullptr, nullptr,
+                                      hinstance, nullptr);
     if (!hwnd)
     {
         std::printf("[vk-spin] CreateWindowExA failed: %lu\n", GetLastError());
@@ -230,16 +233,48 @@ int main(int argc, char** argv)
         return 9;
     }
 
+    // Size the swapchain to the surface's real extent (the client area in physical pixels). Hardcoding
+    // the window size breaks on a real driver -- the client area is smaller than the window and may be
+    // DPI-scaled, so the present is rejected with VK_ERROR_OUT_OF_DATE_KHR. The bridge reports an
+    // undefined extent (0xFFFFFFFF), in which case we fall back to the window client rect.
+    const auto get_surface_caps =
+        load<PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR>(gipa, instance, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
+    VkSurfaceCapabilitiesKHR caps{};
+    get_surface_caps(physical_device, surface, &caps);
+
+    VkExtent2D swap_extent = caps.currentExtent;
+    if (swap_extent.width == 0xFFFFFFFFu)
+    {
+        RECT client{};
+        GetClientRect(hwnd, &client);
+        swap_extent.width = static_cast<uint32_t>(client.right - client.left);
+        swap_extent.height = static_cast<uint32_t>(client.bottom - client.top);
+        if (swap_extent.width == 0)
+        {
+            swap_extent.width = window_width;
+        }
+        if (swap_extent.height == 0)
+        {
+            swap_extent.height = window_height;
+        }
+    }
+
+    uint32_t min_image_count = (caps.minImageCount < 2) ? 2 : caps.minImageCount;
+    if (caps.maxImageCount != 0 && min_image_count > caps.maxImageCount)
+    {
+        min_image_count = caps.maxImageCount;
+    }
+
     VkSwapchainCreateInfoKHR swci{};
     swci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     swci.surface = surface;
-    swci.minImageCount = 2;
+    swci.minImageCount = min_image_count;
     swci.imageFormat = swapchain_format;
     swci.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
-    swci.imageExtent = {.width = window_width, .height = window_height};
+    swci.imageExtent = swap_extent;
     swci.imageArrayLayers = 1;
     swci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    swci.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+    swci.preTransform = caps.currentTransform;
     swci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     // IMMEDIATE (no vsync) so the FPS readout reflects real throughput rather than the refresh rate.
     // The bridge ignores the present mode; on a real driver IMMEDIATE is near-universally supported.
@@ -257,7 +292,7 @@ int main(int argc, char** argv)
     get_swapchain_images(device, swapchain, &image_count, nullptr);
     std::vector<VkImage> images(image_count);
     get_swapchain_images(device, swapchain, &image_count, images.data());
-    std::printf("[vk-spin] swapchain ready: %u images, %ux%u\n", image_count, window_width, window_height);
+    std::printf("[vk-spin] swapchain ready: %u images, %ux%u\n", image_count, swap_extent.width, swap_extent.height);
 
     // --- render pass ---
     VkAttachmentDescription color_attachment{};
@@ -332,11 +367,11 @@ int main(int argc, char** argv)
     input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
     input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     VkViewport viewport{};
-    viewport.width = static_cast<float>(window_width);
-    viewport.height = static_cast<float>(window_height);
+    viewport.width = static_cast<float>(swap_extent.width);
+    viewport.height = static_cast<float>(swap_extent.height);
     viewport.maxDepth = 1.0f;
     VkRect2D scissor{};
-    scissor.extent = {.width = window_width, .height = window_height};
+    scissor.extent = swap_extent;
     VkPipelineViewportStateCreateInfo viewport_state{};
     viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
     viewport_state.viewportCount = 1;
@@ -399,8 +434,8 @@ int main(int argc, char** argv)
         fbci.renderPass = render_pass;
         fbci.attachmentCount = 1;
         fbci.pAttachments = &image_views[i];
-        fbci.width = window_width;
-        fbci.height = window_height;
+        fbci.width = swap_extent.width;
+        fbci.height = swap_extent.height;
         fbci.layers = 1;
         create_framebuffer(device, &fbci, nullptr, &framebuffers[i]);
     }
@@ -476,7 +511,7 @@ int main(int argc, char** argv)
         rpbi.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         rpbi.renderPass = render_pass;
         rpbi.framebuffer = framebuffers[image_index];
-        rpbi.renderArea.extent = {.width = window_width, .height = window_height};
+        rpbi.renderArea.extent = swap_extent;
         rpbi.clearValueCount = 1;
         rpbi.pClearValues = &clear;
         cmd_begin_render_pass(cmd, &rpbi, VK_SUBPASS_CONTENTS_INLINE);

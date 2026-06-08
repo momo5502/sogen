@@ -924,6 +924,26 @@ extern "C"
         bridge_call(gb::ioctl_destroy_surface, &request, sizeof(request), nullptr, 0);
     }
 
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+        VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, VkSurfaceCapabilitiesKHR* pSurfaceCapabilities)
+    {
+        if (!pSurfaceCapabilities)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        *pSurfaceCapabilities = {};
+
+        gb::get_surface_capabilities_request request{};
+        request.physical_device = to_object_id(physicalDevice);
+        request.surface = to_object_id(surface);
+        if (!bridge_call(gb::ioctl_get_surface_capabilities, &request, sizeof(request), pSurfaceCapabilities,
+                         sizeof(*pSurfaceCapabilities)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return VK_SUCCESS;
+    }
+
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice device,
                                                                               const VkSwapchainCreateInfoKHR* pCreateInfo,
                                                                               const VkAllocationCallbacks*,
@@ -1416,6 +1436,8 @@ extern "C"
             {.name = "vkCmdCopyImageToBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyImageToBuffer)},
             {.name = "vkCreateWin32SurfaceKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateWin32SurfaceKHR)},
             {.name = "vkDestroySurfaceKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroySurfaceKHR)},
+            {.name = "vkGetPhysicalDeviceSurfaceCapabilitiesKHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceSurfaceCapabilitiesKHR)},
             {.name = "vkCreateSwapchainKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateSwapchainKHR)},
             {.name = "vkDestroySwapchainKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroySwapchainKHR)},
             {.name = "vkGetSwapchainImagesKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetSwapchainImagesKHR)},

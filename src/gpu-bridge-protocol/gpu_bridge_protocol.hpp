@@ -94,6 +94,7 @@ namespace sogen::gpu_bridge
         cmd_draw = 0x83A,
         cmd_end_render_pass = 0x83B,
         cmd_push_constants = 0x83C,
+        get_surface_capabilities = 0x83D,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -168,6 +169,8 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_cmd_draw = make_ioctl(static_cast<uint32_t>(command::cmd_draw));
     inline constexpr uint32_t ioctl_cmd_end_render_pass = make_ioctl(static_cast<uint32_t>(command::cmd_end_render_pass));
     inline constexpr uint32_t ioctl_cmd_push_constants = make_ioctl(static_cast<uint32_t>(command::cmd_push_constants));
+    inline constexpr uint32_t ioctl_get_surface_capabilities =
+        make_ioctl(static_cast<uint32_t>(command::get_surface_capabilities));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -801,5 +804,15 @@ namespace sogen::gpu_bridge
         uint32_t size;
         uint32_t reserved;
         // uint8_t values[size];
+    };
+
+    // ioctl_get_surface_capabilities: in (out = raw VkSurfaceCapabilitiesKHR bytes). The bridge has no
+    // real surface, so it returns synthetic caps with currentExtent = (0xFFFFFFFF, 0xFFFFFFFF), i.e.
+    // "the application chooses the extent". A real driver (when the guest links the real loader) returns
+    // the true client-area extent instead.
+    struct get_surface_capabilities_request
+    {
+        object_id physical_device;
+        object_id surface;
     };
 }

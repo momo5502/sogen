@@ -134,6 +134,10 @@ namespace sogen
         int32_t create_surface(uint64_t hwnd, uint64_t& out_surface);
         void destroy_surface(uint64_t surface);
 
+        // Writes synthetic VkSurfaceCapabilitiesKHR into out; currentExtent is left undefined
+        // (0xFFFFFFFF) so the guest chooses the swapchain extent.
+        int32_t get_surface_capabilities(uint64_t physical_device, uint64_t surface, void* out, size_t out_size);
+
         // Creates `min_image_count` (>= 2) offscreen images of the given format/extent plus a readback
         // buffer. out_image_count receives the number of images created.
         int32_t create_swapchain(uint64_t device, uint64_t surface, uint32_t format, uint32_t width, uint32_t height,
