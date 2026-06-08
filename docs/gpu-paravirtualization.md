@@ -175,6 +175,15 @@ plus the surrounding calls needed to actually use them:
   compiled offline (glslang) and checked in as `triangle_spirv.hpp`, so the build needs no shader
   compiler.
 
+- **Spinning-cube sample + host-vs-emulated FPS benchmark.** A slightly richer sample exercising the
+  existing entry points harder: a solid 3D cube (6 faces, 36 baked-in vertices) transformed by a 64-byte
+  mat4 MVP push constant computed on the CPU. With no depth attachment and no culling in the bridge, the
+  six faces are CPU-sorted back-to-front each frame (painter's algorithm) and drawn with per-face
+  `vkCmdDraw` calls (`firstVertex = face*6`). The rotation is driven by real wall-clock time (not the
+  frame count) so it spins at the same physical rate natively and emulated, and the loop prints FPS to
+  stdout once per real second so the same binary's throughput can be compared through the shim vs against
+  a real `vulkan-1.dll`. No new bridge/shim work was needed.
+
 - **Push constants + a spinning-triangle sample.** Adds `vkCmdPushConstants` and a push-constant range
   on the pipeline layout — enough for a shader to read small per-frame data without a vertex/uniform
   buffer. New guest sample `vulkan-spinning-triangle-sample` rotates the triangle by a push-constant
@@ -328,6 +337,7 @@ Later: OpenGL via Zink, DirectX via DXVK — no new bridge work, just guest DLL 
 | `src/samples/vulkan-shim-test/` | Headless guest exe driving the shim (instance→device→fill/clear readback) |
 | `src/samples/vulkan-window-sample/` | Windowed guest exe: Win32 window + swapchain + render-pass triangle. `triangle.{vert,frag}` are the GLSL sources; `triangle_spirv.hpp` is the checked-in compiled SPIR-V. Also runs natively against a real GPU (`… vulkan-1.dll`) |
 | `src/samples/vulkan-spinning-triangle-sample/` | Windowed guest exe: a push-constant-rotated triangle with an FPS readout in the title bar. `spinning.{vert,frag}` + checked-in `spinning_triangle_spirv.hpp`. Also runs natively |
+| `src/samples/vulkan-cube-sample/` | Windowed guest exe: a 3D spinning cube (mat4 MVP push constant; faces CPU-sorted back-to-front since the bridge has no depth/cull) that prints FPS to stdout every real second for host-vs-emulated comparison. `cube.{vert,frag}` + checked-in `cube_spirv.hpp`. Also runs natively |
 | `src/samples/gpu-bridge-probe-sample/` | Low-level probe (direct `DeviceIoControl`, no Vulkan headers) |
 | `src/windows-emulator-test/vulkan_marshal_test.cpp` | Round-trip gtests for the generated marshalling |
 | `deps/Vulkan-Headers` | Shallow submodule; `vulkan-headers` INTERFACE target |
@@ -374,7 +384,14 @@ Run the windowed samples in the emulator (each opens a guest window and presents
 ```cmd
 cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-window-sample.exe vulkan-shim.dll"
 cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-spinning-triangle-sample.exe vulkan-shim.dll"
+cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-cube-sample.exe vulkan-shim.dll"
 ```
+
+`vulkan-cube-sample` runs until its window is closed and prints the measured FPS to stdout once per
+real second; an optional trailing argument caps the run length in seconds
+(`vulkan-cube-sample.exe vulkan-shim.dll 10`). Because the analyzer advances the guest clock at real
+wall-clock rate by default, the same binary run through the shim and against `vulkan-1.dll` yields
+directly comparable FPS (emulated is ~15-20x slower on the dev machine).
 
 The same sample exes also run as ordinary **native** Vulkan apps against a real GPU — pass the real
 loader instead of the shim (this validates the shim's API fidelity, since the identical binary runs
