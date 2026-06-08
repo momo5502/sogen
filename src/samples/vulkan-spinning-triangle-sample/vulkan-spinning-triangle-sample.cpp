@@ -241,7 +241,9 @@ int main(int argc, char** argv)
     swci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     swci.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
     swci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    swci.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    // IMMEDIATE (no vsync) so the FPS readout reflects real throughput rather than the refresh rate.
+    // The bridge ignores the present mode; on a real driver IMMEDIATE is near-universally supported.
+    swci.presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
     swci.clipped = VK_TRUE;
 
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
