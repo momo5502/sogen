@@ -1086,8 +1086,7 @@ namespace sogen
     int32_t vulkan_host::queue_submit(uint64_t queue, uint64_t command_buffer, uint64_t fence)
     {
         const auto queue_it = this->impl_->queues.find(queue);
-        const auto cb = this->impl_->command_buffers.find(command_buffer);
-        if (queue_it == this->impl_->queues.end() || cb == this->impl_->command_buffers.end())
+        if (queue_it == this->impl_->queues.end())
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -1107,6 +1106,18 @@ namespace sogen
                 return VK_ERROR_INITIALIZATION_FAILED;
             }
             fence_handle = fence_it->second.handle;
+        }
+
+        // Zero-command-buffer submission: still a valid fence signal operation (no work batched).
+        if (command_buffer == 0)
+        {
+            return dev->second.queue_submit(queue_it->second.handle, 0, nullptr, fence_handle);
+        }
+
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
         }
 
         VkSubmitInfo submit{};

@@ -422,6 +422,29 @@ extern "C"
             total += pSubmits[s].commandBufferCount;
         }
 
+        // A zero-batch submission (no command buffers) is still a valid fence signal in Vulkan. Forward
+        // a fence-only submit so a later vkWaitForFences doesn't spin forever on an unsignaled fence.
+        if (total == 0)
+        {
+            if (!fence)
+            {
+                return VK_SUCCESS;
+            }
+
+            gb::queue_submit_request request{};
+            request.queue = to_object_id(queue);
+            request.command_buffer = gb::null_object;
+            request.fence = to_object_id(fence);
+
+            gb::result_response response{};
+            if (!bridge_call(gb::ioctl_queue_submit, &request, sizeof(request), &response, sizeof(response)) ||
+                response.vk_result != VK_SUCCESS)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            return VK_SUCCESS;
+        }
+
         uint32_t emitted = 0;
         for (uint32_t s = 0; s < submitCount; ++s)
         {

@@ -76,6 +76,16 @@ namespace
         const VkResult wait_result = wait_for_fences(device, 1, &fence, VK_TRUE, 30000000000ULL /* 30s */);
         std::printf("[shim-test] vkQueueSubmit -> %d, vkWaitForFences -> %d\n", submit_result, wait_result);
 
+        // A zero-batch submission (no command buffers) must still signal the fence; otherwise the wait
+        // would spin forever.
+        VkFence empty_fence = VK_NULL_HANDLE;
+        create_fence(device, &fence_info, nullptr, &empty_fence);
+        const VkResult empty_submit = queue_submit(queue, 0, nullptr, empty_fence);
+        const VkResult empty_wait = wait_for_fences(device, 1, &empty_fence, VK_TRUE, 30000000000ULL /* 30s */);
+        std::printf("[shim-test] empty submit -> %d, fence wait -> %d -> %s\n", empty_submit, empty_wait,
+                    (empty_submit == VK_SUCCESS && empty_wait == VK_SUCCESS) ? "PASS" : "FAIL");
+        destroy_fence(device, empty_fence, nullptr);
+
         destroy_fence(device, fence, nullptr);
         destroy_command_pool(device, pool, nullptr);
     }
