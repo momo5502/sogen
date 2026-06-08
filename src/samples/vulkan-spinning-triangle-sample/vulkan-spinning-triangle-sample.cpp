@@ -1,15 +1,16 @@
-// A minimal *windowed* Vulkan guest app for the Sogen GPU bridge. It creates a real Win32 window,
-// builds a Vulkan swapchain on that window's HWND through the guest shim (vulkan-shim.dll), and each
-// frame clears the swapchain image to an animated color and presents it. On the host the bridge
-// renders into an offscreen image, reads it back, and hands the pixels to the window via the
-// emulator's UI backend -- so the window shows live GPU-rendered content.
-//
-// This is the WSI counterpart to vulkan-shim-test (which is headless): same bridge, but the pixels
-// end up on screen instead of in a readback assertion.
+// A windowed Vulkan guest app that draws a *rotating* triangle and reports its frame rate. It builds
+// on vulkan-window-sample (Win32 window + swapchain + render-pass triangle through the Sogen GPU
+// bridge) and adds two things:
+//   - rotation: a per-frame angle is fed to the vertex shader via a push constant, so the triangle
+//     spins. The angle is derived from wall-clock time, so it spins at a constant rate regardless of
+//     the achieved frame rate.
+//   - FPS: frames are counted and, ~twice a second, the measured rate is written to the window title
+//     (and printed to the console).
 
 #include <windows.h>
 
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <vector>
 
@@ -19,13 +20,17 @@
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <vulkan/vulkan_win32.h>
 
-#include "triangle_spirv.hpp"
+#include "spinning_triangle_spirv.hpp"
 
 namespace
 {
-    constexpr uint32_t window_width = 320;
-    constexpr uint32_t window_height = 240;
-    constexpr VkFormat swapchain_format = VK_FORMAT_B8G8R8A8_UNORM; // matches the UI backend's bgra8
+    constexpr uint32_t window_width = 400;
+    constexpr uint32_t window_height = 400; // square so the rotation isn't stretched
+    constexpr VkFormat swapchain_format = VK_FORMAT_B8G8R8A8_UNORM;
+    // Rotation advances per frame, not per wall-clock second: inside the emulator the guest clock can
+    // jump many seconds between rendered frames, which would make a time-based angle spin erratically.
+    // ~0.08 rad/frame is a smooth spin (a full turn every ~78 frames).
+    constexpr float angle_increment = 0.08f;
 
     bool g_quit = false;
 
@@ -41,63 +46,71 @@ namespace
             PostQuitMessage(0);
             return 0;
         case WM_PAINT:
-            // We present via Vulkan, not GDI; just validate so we don't spin on WM_PAINT and don't let
-            // an empty GDI BeginPaint/EndPaint surface overwrite our rendered content.
-            ValidateRect(hwnd, nullptr);
+            ValidateRect(hwnd, nullptr); // we present via Vulkan, not GDI
             return 0;
         default:
             return DefWindowProcA(hwnd, msg, wparam, lparam);
         }
     }
 
-    // Resolves a Vulkan entry point through the shim's vkGetInstanceProcAddr.
     template <typename Fn>
     Fn load(PFN_vkGetInstanceProcAddr gipa, VkInstance instance, const char* name)
     {
         return reinterpret_cast<Fn>(gipa(instance, name));
+    }
+
+    // Wall-clock milliseconds from the system time. We use this rather than GetTickCount64 because the
+    // emulator advances the tick counter far faster than real time, which would make a measured FPS
+    // meaningless.
+    uint64_t now_ms()
+    {
+        FILETIME ft{};
+        GetSystemTimeAsFileTime(&ft);
+        ULARGE_INTEGER u{};
+        u.LowPart = ft.dwLowDateTime;
+        u.HighPart = ft.dwHighDateTime;
+        return u.QuadPart / 10000ULL; // 100 ns units -> ms
     }
 }
 
 int main(int argc, char** argv)
 {
     const char* dll = (argc > 1) ? argv[1] : "vulkan-shim.dll";
-    const uint32_t max_frames = (argc > 2) ? static_cast<uint32_t>(std::atoi(argv[2])) : 180;
+    const uint32_t max_frames = (argc > 2) ? static_cast<uint32_t>(std::atoi(argv[2])) : 100000;
 
-    // --- host window ---
     const HINSTANCE hinstance = GetModuleHandleA(nullptr);
     WNDCLASSEXA wc{};
     wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = &window_proc;
     wc.hInstance = hinstance;
-    wc.lpszClassName = "SogenVulkanWindow";
+    wc.lpszClassName = "SogenVulkanSpinner";
     wc.hCursor = LoadCursorA(nullptr, IDC_ARROW);
     if (!RegisterClassExA(&wc))
     {
-        std::printf("[vk-window] RegisterClassExA failed: %lu\n", GetLastError());
+        std::printf("[vk-spin] RegisterClassExA failed: %lu\n", GetLastError());
         return 1;
     }
 
-    const HWND hwnd = CreateWindowExA(0, wc.lpszClassName, "Sogen Vulkan Window", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 200, 200,
-                                      static_cast<int>(window_width), static_cast<int>(window_height), nullptr, nullptr,
-                                      hinstance, nullptr);
+    const HWND hwnd = CreateWindowExA(0, wc.lpszClassName, "Sogen Vulkan - Spinning Triangle",
+                                      WS_OVERLAPPEDWINDOW | WS_VISIBLE, 200, 200, static_cast<int>(window_width),
+                                      static_cast<int>(window_height), nullptr, nullptr, hinstance, nullptr);
     if (!hwnd)
     {
-        std::printf("[vk-window] CreateWindowExA failed: %lu\n", GetLastError());
+        std::printf("[vk-spin] CreateWindowExA failed: %lu\n", GetLastError());
         return 2;
     }
 
-    // --- load the shim and bootstrap Vulkan ---
     const HMODULE mod = LoadLibraryA(dll);
     if (!mod)
     {
-        std::printf("[vk-window] LoadLibrary(%s) failed: %lu\n", dll, GetLastError());
+        std::printf("[vk-spin] LoadLibrary(%s) failed: %lu\n", dll, GetLastError());
         return 3;
     }
     const auto gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(
         reinterpret_cast<void*>(GetProcAddress(mod, "vkGetInstanceProcAddr")));
     if (!gipa)
     {
-        std::printf("[vk-window] no vkGetInstanceProcAddr export\n");
+        std::printf("[vk-spin] no vkGetInstanceProcAddr export\n");
         return 4;
     }
 
@@ -116,7 +129,7 @@ int main(int argc, char** argv)
     VkInstance instance = VK_NULL_HANDLE;
     if (create_instance(&ici, nullptr, &instance) != VK_SUCCESS || !instance)
     {
-        std::printf("[vk-window] vkCreateInstance failed (no host Vulkan driver?)\n");
+        std::printf("[vk-spin] vkCreateInstance failed (no host Vulkan driver?)\n");
         return 5;
     }
 
@@ -147,6 +160,7 @@ int main(int argc, char** argv)
     const auto create_graphics_pipelines = load<PFN_vkCreateGraphicsPipelines>(gipa, instance, "vkCreateGraphicsPipelines");
     const auto cmd_begin_render_pass = load<PFN_vkCmdBeginRenderPass>(gipa, instance, "vkCmdBeginRenderPass");
     const auto cmd_bind_pipeline = load<PFN_vkCmdBindPipeline>(gipa, instance, "vkCmdBindPipeline");
+    const auto cmd_push_constants = load<PFN_vkCmdPushConstants>(gipa, instance, "vkCmdPushConstants");
     const auto cmd_draw = load<PFN_vkCmdDraw>(gipa, instance, "vkCmdDraw");
     const auto cmd_end_render_pass = load<PFN_vkCmdEndRenderPass>(gipa, instance, "vkCmdEndRenderPass");
 
@@ -154,7 +168,7 @@ int main(int argc, char** argv)
     enumerate(instance, &device_count, nullptr);
     if (device_count == 0)
     {
-        std::printf("[vk-window] no physical devices\n");
+        std::printf("[vk-spin] no physical devices\n");
         return 6;
     }
     std::vector<VkPhysicalDevice> physical_devices(device_count);
@@ -176,7 +190,7 @@ int main(int argc, char** argv)
     }
     if (graphics_family == UINT32_MAX)
     {
-        std::printf("[vk-window] no graphics queue family\n");
+        std::printf("[vk-spin] no graphics queue family\n");
         return 7;
     }
 
@@ -198,7 +212,7 @@ int main(int argc, char** argv)
     VkDevice device = VK_NULL_HANDLE;
     if (create_device(physical_device, &dci, nullptr, &device) != VK_SUCCESS || !device)
     {
-        std::printf("[vk-window] vkCreateDevice failed\n");
+        std::printf("[vk-spin] vkCreateDevice failed\n");
         return 8;
     }
 
@@ -212,7 +226,7 @@ int main(int argc, char** argv)
     VkSurfaceKHR surface = VK_NULL_HANDLE;
     if (create_win32_surface(instance, &sci, nullptr, &surface) != VK_SUCCESS)
     {
-        std::printf("[vk-window] vkCreateWin32SurfaceKHR failed\n");
+        std::printf("[vk-spin] vkCreateWin32SurfaceKHR failed\n");
         return 9;
     }
 
@@ -224,7 +238,7 @@ int main(int argc, char** argv)
     swci.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
     swci.imageExtent = {.width = window_width, .height = window_height};
     swci.imageArrayLayers = 1;
-    swci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; // we render into them via a render pass
+    swci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     swci.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
     swci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     swci.presentMode = VK_PRESENT_MODE_FIFO_KHR;
@@ -233,7 +247,7 @@ int main(int argc, char** argv)
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
     if (create_swapchain(device, &swci, nullptr, &swapchain) != VK_SUCCESS || !swapchain)
     {
-        std::printf("[vk-window] vkCreateSwapchainKHR failed\n");
+        std::printf("[vk-spin] vkCreateSwapchainKHR failed\n");
         return 10;
     }
 
@@ -241,9 +255,9 @@ int main(int argc, char** argv)
     get_swapchain_images(device, swapchain, &image_count, nullptr);
     std::vector<VkImage> images(image_count);
     get_swapchain_images(device, swapchain, &image_count, images.data());
-    std::printf("[vk-window] swapchain ready: %u images, %ux%u\n", image_count, window_width, window_height);
+    std::printf("[vk-spin] swapchain ready: %u images, %ux%u\n", image_count, window_width, window_height);
 
-    // --- render pass (clear -> draw -> present) ---
+    // --- render pass ---
     VkAttachmentDescription color_attachment{};
     color_attachment.format = swapchain_format;
     color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -269,28 +283,34 @@ int main(int argc, char** argv)
     VkRenderPass render_pass = VK_NULL_HANDLE;
     if (create_render_pass(device, &rpci, nullptr, &render_pass) != VK_SUCCESS)
     {
-        std::printf("[vk-window] vkCreateRenderPass failed\n");
+        std::printf("[vk-spin] vkCreateRenderPass failed\n");
         return 11;
     }
 
-    // --- shader modules (embedded SPIR-V) ---
+    // --- shader modules ---
     VkShaderModuleCreateInfo vert_ci{};
     vert_ci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    vert_ci.codeSize = triangle_vert_spv.size() * sizeof(uint32_t);
-    vert_ci.pCode = triangle_vert_spv.data();
+    vert_ci.codeSize = spinning_vert_spv.size() * sizeof(uint32_t);
+    vert_ci.pCode = spinning_vert_spv.data();
     VkShaderModule vert_module = VK_NULL_HANDLE;
     create_shader_module(device, &vert_ci, nullptr, &vert_module);
 
     VkShaderModuleCreateInfo frag_ci{};
     frag_ci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    frag_ci.codeSize = triangle_frag_spv.size() * sizeof(uint32_t);
-    frag_ci.pCode = triangle_frag_spv.data();
+    frag_ci.codeSize = spinning_frag_spv.size() * sizeof(uint32_t);
+    frag_ci.pCode = spinning_frag_spv.data();
     VkShaderModule frag_module = VK_NULL_HANDLE;
     create_shader_module(device, &frag_ci, nullptr, &frag_module);
 
-    // --- pipeline layout + graphics pipeline ---
+    // --- pipeline layout with a push-constant float (the rotation angle) ---
+    VkPushConstantRange push_range{};
+    push_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    push_range.offset = 0;
+    push_range.size = sizeof(float);
     VkPipelineLayoutCreateInfo plci{};
     plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges = &push_range;
     VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
     create_pipeline_layout(device, &plci, nullptr, &pipeline_layout);
 
@@ -353,7 +373,7 @@ int main(int argc, char** argv)
     VkPipeline pipeline = VK_NULL_HANDLE;
     if (create_graphics_pipelines(device, VK_NULL_HANDLE, 1, &gpci, nullptr, &pipeline) != VK_SUCCESS || !pipeline)
     {
-        std::printf("[vk-window] vkCreateGraphicsPipelines failed\n");
+        std::printf("[vk-spin] vkCreateGraphicsPipelines failed\n");
         return 12;
     }
 
@@ -398,14 +418,17 @@ int main(int argc, char** argv)
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     allocate_command_buffers(device, &cbai, &cmd);
 
-    // Per-frame fence: wait for the GPU to finish a frame before reusing the command buffer and
-    // presenting (a real driver does not serialize this for us; through the bridge it is benign).
+    // Per-frame fence so we wait for the GPU to finish a frame before reusing the command buffer and
+    // presenting (on a real driver there is no implicit serialization; through the bridge it is benign).
     VkFenceCreateInfo fence_ci{};
     fence_ci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     VkFence frame_fence = VK_NULL_HANDLE;
     create_fence(device, &fence_ci, nullptr, &frame_fence);
 
-    // --- render loop: clear to a background color, draw the triangle, present each frame ---
+    // --- render loop: spin the triangle (frame-based angle) and track FPS (system-time based) ---
+    constexpr uint32_t fps_window_size = 30; // frames averaged per FPS readout
+    uint64_t fps_window_start = now_ms();
+    uint32_t fps_window_frames = 0;
     uint32_t frame = 0;
     while (!g_quit && frame < max_frames)
     {
@@ -429,11 +452,12 @@ int main(int argc, char** argv)
         // VK_SUBOPTIMAL_KHR is a success code (the swapchain still works); only a real error is fatal.
         if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR)
         {
-            std::printf("[vk-window] vkAcquireNextImageKHR -> %d\n", acquired);
+            std::printf("[vk-spin] vkAcquireNextImageKHR -> %d\n", acquired);
             break;
         }
 
-        const float t = static_cast<float>(frame % 180) / 180.0f;
+        const uint64_t now = now_ms();
+        const float angle = static_cast<float>(frame) * angle_increment;
 
         VkCommandBufferBeginInfo begin{};
         begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -441,9 +465,9 @@ int main(int argc, char** argv)
         begin_command_buffer(cmd, &begin);
 
         VkClearValue clear{};
-        clear.color.float32[0] = 0.10f;
-        clear.color.float32[1] = 0.10f;
-        clear.color.float32[2] = 0.15f + 0.25f * t; // subtle animated background so motion is visible
+        clear.color.float32[0] = 0.08f;
+        clear.color.float32[1] = 0.08f;
+        clear.color.float32[2] = 0.12f;
         clear.color.float32[3] = 1.0f;
 
         VkRenderPassBeginInfo rpbi{};
@@ -455,6 +479,7 @@ int main(int argc, char** argv)
         rpbi.pClearValues = &clear;
         cmd_begin_render_pass(cmd, &rpbi, VK_SUBPASS_CONTENTS_INLINE);
         cmd_bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        cmd_push_constants(cmd, pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float), &angle);
         cmd_draw(cmd, 3, 1, 0, 0);
         cmd_end_render_pass(cmd);
 
@@ -475,20 +500,33 @@ int main(int argc, char** argv)
         present.pSwapchains = &swapchain;
         present.pImageIndices = &image_index;
         const VkResult presented = queue_present(queue, &present);
-        if (frame < 3 || (frame % 60) == 0)
-        {
-            std::printf("[vk-window] frame %u: image %u, draw triangle, present -> %d\n", frame, image_index, presented);
-        }
         if (presented != VK_SUCCESS && presented != VK_SUBOPTIMAL_KHR)
         {
+            std::printf("[vk-spin] vkQueuePresentKHR -> %d\n", presented);
             break;
         }
 
+        // FPS: average over a fixed window of frames (measured against the guest clock) and refresh the
+        // window title + console. Averaging over frames keeps the readout stable even when a single
+        // frame spans a large guest-clock jump.
+        ++fps_window_frames;
+        if (fps_window_frames >= fps_window_size)
+        {
+            const ULONGLONG fps_elapsed = (now > fps_window_start) ? (now - fps_window_start) : 1;
+            const double fps = static_cast<double>(fps_window_frames) * 1000.0 / static_cast<double>(fps_elapsed);
+            const double ms_per_frame = static_cast<double>(fps_elapsed) / static_cast<double>(fps_window_frames);
+            std::array<char, 128> title{};
+            std::snprintf(title.data(), title.size(), "Sogen Vulkan - Spinning Triangle - %.2f FPS", fps);
+            SetWindowTextA(hwnd, title.data());
+            std::printf("[vk-spin] %.2f FPS (%.0f ms/frame, frame %u)\n", fps, ms_per_frame, frame);
+            fps_window_frames = 0;
+            fps_window_start = now;
+        }
+
         ++frame;
-        Sleep(16); // ~60 fps; keeps the emulator responsive
     }
 
-    std::printf("[vk-window] done after %u frames\n", frame);
+    std::printf("[vk-spin] done after %u frames\n", frame);
 
     const auto destroy_framebuffer = load<PFN_vkDestroyFramebuffer>(gipa, instance, "vkDestroyFramebuffer");
     const auto destroy_image_view = load<PFN_vkDestroyImageView>(gipa, instance, "vkDestroyImageView");

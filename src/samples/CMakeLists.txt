@@ -13,6 +13,7 @@ add_subdirectory(gpu-bridge-probe-sample)
 add_subdirectory(vulkan-shim)
 add_subdirectory(vulkan-shim-test)
 add_subdirectory(vulkan-window-sample)
+add_subdirectory(vulkan-spinning-triangle-sample)
 
 ##########################################
 

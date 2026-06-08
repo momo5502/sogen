@@ -173,6 +173,13 @@ plus the surrounding calls needed to actually use them:
   compiled offline (glslang) and checked in as `triangle_spirv.hpp`, so the build needs no shader
   compiler.
 
+- **Push constants + a spinning-triangle sample.** Adds `vkCmdPushConstants` and a push-constant range
+  on the pipeline layout. New `vulkan-spinning-triangle-sample` rotates the triangle by a push-constant
+  angle and shows its FPS in the window title. The Vulkan samples are also valid *native* WSI apps —
+  loading the real `vulkan-1.dll` instead of the shim runs them against a real GPU — so they now handle
+  `VK_SUBOPTIMAL_KHR` (a success code real drivers return) and serialize each frame with a fence rather
+  than relying on the bridge's implicit `vkQueueWaitIdle` on present.
+
 ## Remoted Vulkan entry points so far
 
 Instance/device: `vkCreateInstance`, `vkDestroyInstance`, `vkEnumeratePhysicalDevices`,
@@ -195,8 +202,9 @@ WSI: `vkCreateWin32SurfaceKHR`, `vkDestroySurfaceKHR`, `vkCreateSwapchainKHR`, `
 `vkGetSwapchainImagesKHR`, `vkAcquireNextImageKHR`, `vkQueuePresentKHR`.
 
 Graphics pipeline: `vkCreateShaderModule`, `vkCreateImageView`, `vkCreateRenderPass`,
-`vkCreateFramebuffer`, `vkCreatePipelineLayout`, `vkCreateGraphicsPipelines` (+ destroys),
-`vkCmdBeginRenderPass`, `vkCmdBindPipeline`, `vkCmdDraw`, `vkCmdEndRenderPass`.
+`vkCreateFramebuffer`, `vkCreatePipelineLayout` (with a push-constant range), `vkCreateGraphicsPipelines`
+(+ destroys), `vkCmdBeginRenderPass`, `vkCmdBindPipeline`, `vkCmdPushConstants`, `vkCmdDraw`,
+`vkCmdEndRenderPass`.
 
 The hand-written entry points currently pass minimal/empty create-infos (e.g. `vkCreateInstance`
 ignores layers/extensions, `vkQueueSubmit` ignores semaphores). The generator is the path to
@@ -279,6 +287,7 @@ Later: OpenGL via Zink, DirectX via DXVK — no new bridge work, just guest DLL 
 | `src/samples/vulkan-shim/` | Guest `vulkan-1.dll` shim (the deliverable) |
 | `src/samples/vulkan-shim-test/` | Headless guest exe driving the shim (instance→device→fill/clear readback) |
 | `src/samples/vulkan-window-sample/` | Windowed guest exe: Win32 window + swapchain + render-pass triangle. `triangle.{vert,frag}` are the GLSL sources; `triangle_spirv.hpp` is the checked-in compiled SPIR-V |
+| `src/samples/vulkan-spinning-triangle-sample/` | Windowed guest exe: a push-constant-rotated triangle with an FPS readout in the title bar. `spinning.{vert,frag}` + checked-in `spinning_triangle_spirv.hpp` |
 | `src/samples/gpu-bridge-probe-sample/` | Low-level probe (direct `DeviceIoControl`, no Vulkan headers) |
 | `src/windows-emulator-test/vulkan_marshal_test.cpp` | Round-trip gtests for the generated marshalling |
 | `deps/Vulkan-Headers` | Shallow submodule; `vulkan-headers` INTERFACE target |
