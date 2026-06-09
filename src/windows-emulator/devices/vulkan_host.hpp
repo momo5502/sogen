@@ -175,9 +175,54 @@ namespace sogen
                                    uint32_t height, uint64_t& out_framebuffer);
         void destroy_framebuffer(uint64_t device, uint64_t framebuffer);
 
-        // Optionally one push-constant range from offset 0 (push_constant_size == 0 means none).
+        // --- descriptor sets (uniform buffers now; combined image samplers added with textures) ---
+
+        // VkDescriptorSetLayoutBinding as plain integers.
+        struct descriptor_binding
+        {
+            uint32_t binding;
+            uint32_t descriptor_type;
+            uint32_t descriptor_count;
+            uint32_t stage_flags;
+        };
+        // VkDescriptorPoolSize as plain integers.
+        struct descriptor_pool_size
+        {
+            uint32_t descriptor_type;
+            uint32_t descriptor_count;
+        };
+        // A single descriptor write (one descriptor). For buffer types buffer/offset/range apply; for
+        // image types (combined image sampler) sampler/image_view/image_layout apply.
+        struct descriptor_write
+        {
+            uint64_t dst_set;
+            uint32_t dst_binding;
+            uint32_t dst_array_element;
+            uint32_t descriptor_type;
+            uint64_t buffer;
+            uint64_t offset;
+            uint64_t range;
+            uint64_t sampler;
+            uint64_t image_view;
+            uint32_t image_layout;
+        };
+
+        int32_t create_descriptor_set_layout(uint64_t device, std::span<const descriptor_binding> bindings,
+                                             uint64_t& out_layout);
+        void destroy_descriptor_set_layout(uint64_t device, uint64_t layout);
+        int32_t create_descriptor_pool(uint64_t device, uint32_t max_sets, std::span<const descriptor_pool_size> sizes,
+                                       uint64_t& out_pool);
+        void destroy_descriptor_pool(uint64_t device, uint64_t pool);
+        // Allocates one set per layout id; writes the allocated set ids into out_sets, out_count gets the
+        // true count.
+        int32_t allocate_descriptor_sets(uint64_t device, uint64_t pool, std::span<const uint64_t> set_layouts,
+                                         std::span<uint64_t> out_sets, uint32_t& out_count);
+        int32_t update_descriptor_sets(uint64_t device, std::span<const descriptor_write> writes);
+
+        // Optionally one push-constant range from offset 0 (push_constant_size == 0 means none), plus a
+        // list of descriptor-set layouts (empty for none).
         int32_t create_pipeline_layout(uint64_t device, uint32_t push_constant_stages, uint32_t push_constant_size,
-                                       uint64_t& out_layout);
+                                       std::span<const uint64_t> set_layouts, uint64_t& out_layout);
         void destroy_pipeline_layout(uint64_t device, uint64_t pipeline_layout);
 
         // VkVertexInputBindingDescription / VkVertexInputAttributeDescription as plain integers (this
@@ -215,6 +260,8 @@ namespace sogen
         int32_t cmd_bind_index_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint32_t index_type);
         int32_t cmd_draw_indexed(uint64_t command_buffer, uint32_t index_count, uint32_t instance_count,
                                  uint32_t first_index, int32_t vertex_offset, uint32_t first_instance);
+        int32_t cmd_bind_descriptor_sets(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t first_set,
+                                         std::span<const uint64_t> sets);
         int32_t cmd_end_render_pass(uint64_t command_buffer);
         int32_t cmd_push_constants(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t stage_flags, uint32_t offset,
                                    uint32_t size, const void* data);

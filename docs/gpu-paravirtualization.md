@@ -204,6 +204,16 @@ plus the surrounding calls needed to actually use them:
   color), declares the vertex input in its pipeline, and draws it with `vkCmdDrawIndexed`, rotating via a
   push-constant angle — verified on screen against SwiftShader and as a native app.
 
+- **Uniform buffers + descriptor sets.** A shader can now read a uniform buffer bound through a
+  descriptor set, not just a push constant. Adds `vkCreateDescriptorSetLayout`, `vkCreateDescriptorPool`,
+  `vkAllocateDescriptorSets`, `vkUpdateDescriptorSets` (+ destroys), and the recorded
+  `vkCmdBindDescriptorSets`; `vkCreatePipelineLayout` now carries a variable-length list of
+  descriptor-set layouts. `vkUpdateDescriptorSets` models one descriptor per write (buffer or, later,
+  combined image sampler) and descriptor copies are not modeled; the descriptor pool is created with
+  `FREE_DESCRIPTOR_SET`. New guest sample `vulkan-uniform-buffer-sample` draws the vertex/index-buffer
+  quad but takes its rotation angle and color tint from a `vec4` uniform buffer the CPU rewrites each
+  frame — verified on screen against SwiftShader and as a native app.
+
 - **Running the samples on a real driver (not just the bridge).** Each Vulkan sample doubles as an
   ordinary native Vulkan app: load the real `vulkan-1.dll` instead of the shim (`… .exe vulkan-1.dll`)
   and it runs against a real GPU. This is a strong correctness check on the shim's API fidelity — the
@@ -249,10 +259,13 @@ WSI: `vkCreateWin32SurfaceKHR`, `vkDestroySurfaceKHR`, `vkGetPhysicalDeviceSurfa
 `vkQueuePresentKHR`.
 
 Graphics pipeline: `vkCreateShaderModule`, `vkCreateImageView`, `vkCreateRenderPass`,
-`vkCreateFramebuffer`, `vkCreatePipelineLayout` (with a push-constant range), `vkCreateGraphicsPipelines`
-(now with vertex input state) (+ destroys), `vkCmdBeginRenderPass`, `vkCmdBindPipeline`,
-`vkCmdPushConstants`, `vkCmdBindVertexBuffers`, `vkCmdBindIndexBuffer`, `vkCmdDraw`, `vkCmdDrawIndexed`,
-`vkCmdEndRenderPass`.
+`vkCreateFramebuffer`, `vkCreatePipelineLayout` (with a push-constant range and descriptor-set layouts),
+`vkCreateGraphicsPipelines` (now with vertex input state) (+ destroys), `vkCmdBeginRenderPass`,
+`vkCmdBindPipeline`, `vkCmdPushConstants`, `vkCmdBindVertexBuffers`, `vkCmdBindIndexBuffer`, `vkCmdDraw`,
+`vkCmdDrawIndexed`, `vkCmdEndRenderPass`.
+
+Descriptors: `vkCreateDescriptorSetLayout`, `vkCreateDescriptorPool`, `vkAllocateDescriptorSets`,
+`vkUpdateDescriptorSets` (+ destroys), `vkCmdBindDescriptorSets`.
 
 The hand-written entry points currently pass minimal/empty create-infos (e.g. `vkCreateInstance`
 ignores layers/extensions, `vkQueueSubmit` ignores semaphores). The generator is the path to
@@ -358,9 +371,9 @@ Cross-cutting (needed as the create-infos get richer, can land alongside the ste
 - **Fuller WSI** — swapchain recreation on `VK_ERROR_OUT_OF_DATE_KHR`/resize, real present and acquire
   semaphores, and surface-format/present-mode enumeration. (Today the samples are fixed-size and pass
   valid swapchain parameters directly.)
-- **More draw plumbing** — uniform buffers and descriptor sets, then textures; these are the remaining
-  pieces before non-trivial real apps render. (Vertex + index buffers and `vkCmdDrawIndexed` are
-  **done** — see the M2 slice above.)
+- **More draw plumbing** — textures (sampled images) are the remaining piece before non-trivial real
+  apps render. (Vertex + index buffers + `vkCmdDrawIndexed`, and uniform buffers + descriptor sets, are
+  **done** — see the M2 slices above.)
 
 Later: OpenGL via Zink, DirectX via DXVK — no new bridge work, just guest DLL provisioning.
 
@@ -381,6 +394,7 @@ Later: OpenGL via Zink, DirectX via DXVK — no new bridge work, just guest DLL 
 | `src/samples/vulkan-cube-sample/` | Windowed guest exe: a 3D spinning cube (mat4 MVP push constant; faces CPU-sorted back-to-front since the bridge has no depth/cull) that prints FPS to stdout every real second for host-vs-emulated comparison. `cube.{vert,frag}` + checked-in `cube_spirv.hpp`. Also runs natively |
 | `src/samples/vulkan-cube-field-sample/` | Windowed guest exe: a rotating field of many individually spinning, diffuse-lit cubes (default 5×3×5 = 75; ~530 recorded commands/frame). Exercises command batching and a 128-byte push constant (mvp + model for lighting); cubes and their faces are painter's-sorted. `cube_field.{vert,frag}` + checked-in `cube_field_spirv.hpp`. Also runs natively |
 | `src/samples/vulkan-vertex-buffer-sample/` | Windowed guest exe: a push-constant-rotated quad whose geometry comes from a real **vertex buffer + index buffer** (drawn with `vkCmdDrawIndexed`), exercising pipeline vertex input. `vertex_buffer.{vert,frag}` + checked-in `vertex_buffer_spirv.hpp`. Also runs natively |
+| `src/samples/vulkan-uniform-buffer-sample/` | Windowed guest exe: the vertex/index-buffer quad with its rotation + tint driven by a **uniform buffer** bound via a **descriptor set** (`vkCmdBindDescriptorSets`), rewritten each frame. `uniform_buffer.{vert,frag}` + checked-in `uniform_buffer_spirv.hpp`. Also runs natively |
 | `src/samples/gpu-bridge-probe-sample/` | Low-level probe (direct `DeviceIoControl`, no Vulkan headers) |
 | `src/windows-emulator-test/vulkan_marshal_test.cpp` | Round-trip gtests for the generated marshalling |
 | `deps/Vulkan-Headers` | Shallow submodule; `vulkan-headers` INTERFACE target |

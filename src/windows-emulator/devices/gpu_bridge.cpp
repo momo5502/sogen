@@ -126,6 +126,18 @@ namespace sogen
                     return handle_get_surface_capabilities(win_emu, context);
                 case gpu_bridge::ioctl_record_commands:
                     return handle_record_commands(win_emu, context);
+                case gpu_bridge::ioctl_create_descriptor_set_layout:
+                    return handle_create_descriptor_set_layout(win_emu, context);
+                case gpu_bridge::ioctl_destroy_descriptor_set_layout:
+                    return handle_destroy_descriptor_set_layout(win_emu, context);
+                case gpu_bridge::ioctl_create_descriptor_pool:
+                    return handle_create_descriptor_pool(win_emu, context);
+                case gpu_bridge::ioctl_destroy_descriptor_pool:
+                    return handle_destroy_descriptor_pool(win_emu, context);
+                case gpu_bridge::ioctl_allocate_descriptor_sets:
+                    return handle_allocate_descriptor_sets(win_emu, context);
+                case gpu_bridge::ioctl_update_descriptor_sets:
+                    return handle_update_descriptor_sets(win_emu, context);
 
                 default:
                     win_emu.log.warn("[gpu-bridge] Unsupported IOCTL: 0x%X\n", context.io_control_code);
@@ -162,6 +174,27 @@ namespace sogen
                     return false;
                 }
                 out = emulator_object<Request>{win_emu.emu(), context.input_buffer}.read();
+                return true;
+            }
+
+            // Reads `count` trailing elements of type T from the input buffer starting at `offset` (just
+            // past a fixed header), bounded by the buffer length. Returns false on a malformed/too-short
+            // buffer.
+            template <typename T>
+            static bool read_trailing_array(windows_emulator& win_emu, const io_device_context& context, size_t offset,
+                                            uint32_t count, std::vector<T>& out)
+            {
+                out.assign(count, T{});
+                if (count == 0)
+                {
+                    return true;
+                }
+                const size_t bytes = static_cast<size_t>(count) * sizeof(T);
+                if (!context.input_buffer || context.input_buffer_length < offset + bytes)
+                {
+                    return false;
+                }
+                win_emu.emu().read_memory(context.input_buffer + offset, out.data(), bytes);
                 return true;
             }
 
@@ -1022,14 +1055,24 @@ namespace sogen
 
             NTSTATUS handle_create_pipeline_layout(windows_emulator& win_emu, const io_device_context& context)
             {
-                gpu_bridge::create_pipeline_layout_request request{};
+                using request_t = gpu_bridge::create_pipeline_layout_request;
+
+                request_t request{};
                 if (!read_input(win_emu, context, request))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
+
+                // The descriptor-set-layout ids trail the header.
+                std::vector<uint64_t> set_layouts;
+                if (!read_trailing_array(win_emu, context, sizeof(request_t), request.set_layout_count, set_layouts))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
                 uint64_t layout = gpu_bridge::null_object;
                 const int32_t result = this->vulkan_.create_pipeline_layout(
-                    request.device, request.push_constant_stages, request.push_constant_size, layout);
+                    request.device, request.push_constant_stages, request.push_constant_size, set_layouts, layout);
                 return write_output(win_emu, context,
                                     gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = layout});
             }
@@ -1105,6 +1148,164 @@ namespace sogen
                 }
                 this->vulkan_.destroy_pipeline(request.device, request.object);
                 return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_create_descriptor_set_layout(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::create_descriptor_set_layout_request;
+
+                request_t request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                std::vector<gpu_bridge::descriptor_set_layout_binding> wire;
+                if (!read_trailing_array(win_emu, context, sizeof(request_t), request.binding_count, wire))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                std::vector<vulkan_host::descriptor_binding> bindings(wire.size());
+                for (size_t i = 0; i < wire.size(); ++i)
+                {
+                    bindings[i] = {.binding = wire[i].binding,
+                                   .descriptor_type = wire[i].descriptor_type,
+                                   .descriptor_count = wire[i].descriptor_count,
+                                   .stage_flags = wire[i].stage_flags};
+                }
+
+                uint64_t layout = gpu_bridge::null_object;
+                const int32_t result = this->vulkan_.create_descriptor_set_layout(request.device, bindings, layout);
+                return write_output(win_emu, context,
+                                    gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = layout});
+            }
+
+            NTSTATUS handle_destroy_descriptor_set_layout(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::device_child_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                this->vulkan_.destroy_descriptor_set_layout(request.device, request.object);
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_create_descriptor_pool(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::create_descriptor_pool_request;
+
+                request_t request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                std::vector<gpu_bridge::descriptor_pool_size> wire;
+                if (!read_trailing_array(win_emu, context, sizeof(request_t), request.pool_size_count, wire))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                std::vector<vulkan_host::descriptor_pool_size> sizes(wire.size());
+                for (size_t i = 0; i < wire.size(); ++i)
+                {
+                    sizes[i] = {.descriptor_type = wire[i].descriptor_type, .descriptor_count = wire[i].descriptor_count};
+                }
+
+                uint64_t pool = gpu_bridge::null_object;
+                const int32_t result = this->vulkan_.create_descriptor_pool(request.device, request.max_sets, sizes, pool);
+                return write_output(win_emu, context,
+                                    gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = pool});
+            }
+
+            NTSTATUS handle_destroy_descriptor_pool(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::device_child_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                this->vulkan_.destroy_descriptor_pool(request.device, request.object);
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_allocate_descriptor_sets(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::allocate_descriptor_sets_request;
+                using response_t = gpu_bridge::allocate_descriptor_sets_response;
+
+                request_t request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                if (!context.output_buffer || context.output_buffer_length < sizeof(response_t))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                std::vector<uint64_t> set_layouts;
+                if (!read_trailing_array(win_emu, context, sizeof(request_t), request.set_count, set_layouts))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const auto array_capacity =
+                    static_cast<uint32_t>((context.output_buffer_length - sizeof(response_t)) / sizeof(gpu_bridge::object_id));
+                std::vector<uint64_t> ids(std::min(request.set_count, array_capacity));
+                uint32_t count = 0;
+                const int32_t result =
+                    this->vulkan_.allocate_descriptor_sets(request.device, request.descriptor_pool, set_layouts,
+                                                           std::span{ids}, count);
+
+                emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(
+                    response_t{.vk_result = result, .count = count});
+
+                const auto written = std::min<uint32_t>(count, static_cast<uint32_t>(ids.size()));
+                if (written > 0)
+                {
+                    win_emu.emu().write_memory(context.output_buffer + sizeof(response_t), ids.data(),
+                                               written * sizeof(gpu_bridge::object_id));
+                }
+                set_information(context, static_cast<ULONG>(sizeof(response_t) + written * sizeof(gpu_bridge::object_id)));
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_update_descriptor_sets(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::update_descriptor_sets_request;
+
+                request_t request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                std::vector<gpu_bridge::descriptor_write> wire;
+                if (!read_trailing_array(win_emu, context, sizeof(request_t), request.write_count, wire))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                std::vector<vulkan_host::descriptor_write> writes(wire.size());
+                for (size_t i = 0; i < wire.size(); ++i)
+                {
+                    writes[i] = {.dst_set = wire[i].dst_set,
+                                 .dst_binding = wire[i].dst_binding,
+                                 .dst_array_element = wire[i].dst_array_element,
+                                 .descriptor_type = wire[i].descriptor_type,
+                                 .buffer = wire[i].buffer,
+                                 .offset = wire[i].offset,
+                                 .range = wire[i].range,
+                                 .sampler = wire[i].sampler,
+                                 .image_view = wire[i].image_view,
+                                 .image_layout = wire[i].image_layout};
+                }
+
+                const int32_t result = this->vulkan_.update_descriptor_sets(request.device, writes);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
             // Executes one recorded command-buffer command from a batch (see ioctl_record_commands). The
@@ -1225,6 +1426,26 @@ namespace sogen
                     }
                     return this->vulkan_.cmd_draw_indexed(req.command_buffer, req.index_count, req.instance_count,
                                                           req.first_index, req.vertex_offset, req.first_instance);
+                }
+                case gpu_bridge::command::cmd_bind_descriptor_sets:
+                {
+                    gpu_bridge::cmd_bind_descriptor_sets_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    const size_t ids_bytes = static_cast<size_t>(req.set_count) * sizeof(gpu_bridge::object_id);
+                    if (ids_bytes > size - sizeof(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    std::vector<uint64_t> sets(req.set_count);
+                    if (req.set_count > 0)
+                    {
+                        std::memcpy(sets.data(), payload + sizeof(req), ids_bytes);
+                    }
+                    return this->vulkan_.cmd_bind_descriptor_sets(req.command_buffer, req.pipeline_layout, req.first_set,
+                                                                  sets);
                 }
                 case gpu_bridge::command::cmd_end_render_pass:
                 {

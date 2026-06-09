@@ -127,6 +127,8 @@ namespace sogen
             PFN_vkCmdPipelineBarrier cmd_pipeline_barrier{};
             PFN_vkCmdClearColorImage cmd_clear_color_image{};
             PFN_vkCmdCopyImageToBuffer cmd_copy_image_to_buffer{};
+            PFN_vkCreateSampler create_sampler{};
+            PFN_vkDestroySampler destroy_sampler{};
             PFN_vkCreateShaderModule create_shader_module{};
             PFN_vkDestroyShaderModule destroy_shader_module{};
             PFN_vkCreateImageView create_image_view{};
@@ -137,6 +139,13 @@ namespace sogen
             PFN_vkDestroyFramebuffer destroy_framebuffer{};
             PFN_vkCreatePipelineLayout create_pipeline_layout{};
             PFN_vkDestroyPipelineLayout destroy_pipeline_layout{};
+            PFN_vkCreateDescriptorSetLayout create_descriptor_set_layout{};
+            PFN_vkDestroyDescriptorSetLayout destroy_descriptor_set_layout{};
+            PFN_vkCreateDescriptorPool create_descriptor_pool{};
+            PFN_vkDestroyDescriptorPool destroy_descriptor_pool{};
+            PFN_vkAllocateDescriptorSets allocate_descriptor_sets{};
+            PFN_vkUpdateDescriptorSets update_descriptor_sets{};
+            PFN_vkCmdBindDescriptorSets cmd_bind_descriptor_sets{};
             PFN_vkCreateGraphicsPipelines create_graphics_pipelines{};
             PFN_vkDestroyPipeline destroy_pipeline{};
             PFN_vkCmdBeginRenderPass cmd_begin_render_pass{};
@@ -226,6 +235,12 @@ namespace sogen
             uint64_t device_id{};
         };
 
+        struct sampler_data
+        {
+            VkSampler handle{};
+            uint64_t device_id{};
+        };
+
         std::unordered_map<uint64_t, device_data> devices;
         std::unordered_map<uint64_t, queue_data> queues;
         std::unordered_map<uint64_t, command_pool_data> command_pools;
@@ -234,6 +249,7 @@ namespace sogen
         std::unordered_map<uint64_t, memory_data> memories;
         std::unordered_map<uint64_t, buffer_data> buffers;
         std::unordered_map<uint64_t, image_data> images;
+        std::unordered_map<uint64_t, sampler_data> samplers;
         std::unordered_map<uint64_t, surface_data> surfaces;
         std::unordered_map<uint64_t, swapchain_data> swapchains;
 
@@ -268,6 +284,22 @@ namespace sogen
             VkPipeline handle{};
             uint64_t device_id{};
         };
+        struct descriptor_set_layout_data
+        {
+            VkDescriptorSetLayout handle{};
+            uint64_t device_id{};
+        };
+        struct descriptor_pool_data
+        {
+            VkDescriptorPool handle{};
+            uint64_t device_id{};
+        };
+        struct descriptor_set_data
+        {
+            VkDescriptorSet handle{};
+            uint64_t device_id{};
+            uint64_t pool_id{};
+        };
 
         std::unordered_map<uint64_t, shader_module_data> shader_modules;
         std::unordered_map<uint64_t, image_view_data> image_views;
@@ -275,6 +307,9 @@ namespace sogen
         std::unordered_map<uint64_t, framebuffer_data> framebuffers;
         std::unordered_map<uint64_t, pipeline_layout_data> pipeline_layouts;
         std::unordered_map<uint64_t, pipeline_data> pipelines;
+        std::unordered_map<uint64_t, descriptor_set_layout_data> descriptor_set_layouts;
+        std::unordered_map<uint64_t, descriptor_pool_data> descriptor_pools;
+        std::unordered_map<uint64_t, descriptor_set_data> descriptor_sets;
         uint64_t next_id{1};
 
         // Picks the first memory type set in `type_bits` that has all `required` property flags, using
@@ -393,6 +428,26 @@ namespace sogen
                 }
             }
 
+            // Descriptor pools (which free their sets) before descriptor set layouts those sets used.
+            for (auto& [id, pool] : this->descriptor_pools)
+            {
+                if (pool.device_id == device_id && pool.handle && it->second.destroy_descriptor_pool)
+                {
+                    it->second.destroy_descriptor_pool(it->second.handle, pool.handle, nullptr);
+                }
+            }
+            for (auto& [id, layout] : this->descriptor_set_layouts)
+            {
+                if (layout.device_id == device_id && layout.handle && it->second.destroy_descriptor_set_layout)
+                {
+                    it->second.destroy_descriptor_set_layout(it->second.handle, layout.handle, nullptr);
+                }
+            }
+            this->erase_owned(this->descriptor_sets, [&](const descriptor_set_data& d) { return d.device_id == device_id; });
+            this->erase_owned(this->descriptor_pools, [&](const descriptor_pool_data& d) { return d.device_id == device_id; });
+            this->erase_owned(this->descriptor_set_layouts,
+                              [&](const descriptor_set_layout_data& d) { return d.device_id == device_id; });
+
             // Graphics-pipeline objects, in dependency order (framebuffers/pipelines reference render
             // passes, layouts, shader modules and image views; image views reference images).
             for (auto& [id, fb] : this->framebuffers)
@@ -475,6 +530,13 @@ namespace sogen
                     it->second.destroy_image(it->second.handle, image.handle, nullptr);
                 }
             }
+            for (auto& [id, sampler] : this->samplers)
+            {
+                if (sampler.device_id == device_id && sampler.handle && it->second.destroy_sampler)
+                {
+                    it->second.destroy_sampler(it->second.handle, sampler.handle, nullptr);
+                }
+            }
             for (auto& [id, memory] : this->memories)
             {
                 if (memory.device_id == device_id && memory.handle && it->second.free_memory)
@@ -488,6 +550,7 @@ namespace sogen
             this->erase_owned(this->fences, [&](const fence_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->buffers, [&](const buffer_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->images, [&](const image_data& d) { return d.device_id == device_id; });
+            this->erase_owned(this->samplers, [&](const sampler_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->memories, [&](const memory_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->queues, [&](const queue_data& d) { return d.device_id == device_id; });
 
@@ -843,6 +906,8 @@ namespace sogen
             data.cmd_clear_color_image = reinterpret_cast<PFN_vkCmdClearColorImage>(resolve("vkCmdClearColorImage"));
             data.cmd_copy_image_to_buffer =
                 reinterpret_cast<PFN_vkCmdCopyImageToBuffer>(resolve("vkCmdCopyImageToBuffer"));
+            data.create_sampler = reinterpret_cast<PFN_vkCreateSampler>(resolve("vkCreateSampler"));
+            data.destroy_sampler = reinterpret_cast<PFN_vkDestroySampler>(resolve("vkDestroySampler"));
             data.create_shader_module = reinterpret_cast<PFN_vkCreateShaderModule>(resolve("vkCreateShaderModule"));
             data.destroy_shader_module = reinterpret_cast<PFN_vkDestroyShaderModule>(resolve("vkDestroyShaderModule"));
             data.create_image_view = reinterpret_cast<PFN_vkCreateImageView>(resolve("vkCreateImageView"));
@@ -853,6 +918,17 @@ namespace sogen
             data.destroy_framebuffer = reinterpret_cast<PFN_vkDestroyFramebuffer>(resolve("vkDestroyFramebuffer"));
             data.create_pipeline_layout = reinterpret_cast<PFN_vkCreatePipelineLayout>(resolve("vkCreatePipelineLayout"));
             data.destroy_pipeline_layout = reinterpret_cast<PFN_vkDestroyPipelineLayout>(resolve("vkDestroyPipelineLayout"));
+            data.create_descriptor_set_layout =
+                reinterpret_cast<PFN_vkCreateDescriptorSetLayout>(resolve("vkCreateDescriptorSetLayout"));
+            data.destroy_descriptor_set_layout =
+                reinterpret_cast<PFN_vkDestroyDescriptorSetLayout>(resolve("vkDestroyDescriptorSetLayout"));
+            data.create_descriptor_pool = reinterpret_cast<PFN_vkCreateDescriptorPool>(resolve("vkCreateDescriptorPool"));
+            data.destroy_descriptor_pool = reinterpret_cast<PFN_vkDestroyDescriptorPool>(resolve("vkDestroyDescriptorPool"));
+            data.allocate_descriptor_sets =
+                reinterpret_cast<PFN_vkAllocateDescriptorSets>(resolve("vkAllocateDescriptorSets"));
+            data.update_descriptor_sets = reinterpret_cast<PFN_vkUpdateDescriptorSets>(resolve("vkUpdateDescriptorSets"));
+            data.cmd_bind_descriptor_sets =
+                reinterpret_cast<PFN_vkCmdBindDescriptorSets>(resolve("vkCmdBindDescriptorSets"));
             data.create_graphics_pipelines =
                 reinterpret_cast<PFN_vkCreateGraphicsPipelines>(resolve("vkCreateGraphicsPipelines"));
             data.destroy_pipeline = reinterpret_cast<PFN_vkDestroyPipeline>(resolve("vkDestroyPipeline"));
@@ -2162,7 +2238,7 @@ namespace sogen
     }
 
     int32_t vulkan_host::create_pipeline_layout(uint64_t device, uint32_t push_constant_stages, uint32_t push_constant_size,
-                                                uint64_t& out_layout)
+                                                std::span<const uint64_t> set_layouts, uint64_t& out_layout)
     {
         out_layout = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -2176,8 +2252,22 @@ namespace sogen
         push_range.offset = 0;
         push_range.size = push_constant_size;
 
+        std::vector<VkDescriptorSetLayout> vk_set_layouts;
+        vk_set_layouts.reserve(set_layouts.size());
+        for (const uint64_t id : set_layouts)
+        {
+            const auto sl = this->impl_->descriptor_set_layouts.find(id);
+            if (sl == this->impl_->descriptor_set_layouts.end())
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            vk_set_layouts.push_back(sl->second.handle);
+        }
+
         VkPipelineLayoutCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        info.setLayoutCount = static_cast<uint32_t>(vk_set_layouts.size());
+        info.pSetLayouts = vk_set_layouts.empty() ? nullptr : vk_set_layouts.data();
         if (push_constant_size > 0)
         {
             info.pushConstantRangeCount = 1;
@@ -2210,6 +2300,245 @@ namespace sogen
             dev->second.destroy_pipeline_layout(dev->second.handle, it->second.handle, nullptr);
         }
         this->impl_->pipeline_layouts.erase(it);
+    }
+
+    int32_t vulkan_host::create_descriptor_set_layout(uint64_t device, std::span<const descriptor_binding> bindings,
+                                                      uint64_t& out_layout)
+    {
+        out_layout = 0;
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end() || !dev->second.create_descriptor_set_layout)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        std::vector<VkDescriptorSetLayoutBinding> vk_bindings;
+        vk_bindings.reserve(bindings.size());
+        for (const descriptor_binding& b : bindings)
+        {
+            VkDescriptorSetLayoutBinding vb{};
+            vb.binding = b.binding;
+            vb.descriptorType = static_cast<VkDescriptorType>(b.descriptor_type);
+            vb.descriptorCount = b.descriptor_count;
+            vb.stageFlags = b.stage_flags;
+            vk_bindings.push_back(vb);
+        }
+
+        VkDescriptorSetLayoutCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        info.bindingCount = static_cast<uint32_t>(vk_bindings.size());
+        info.pBindings = vk_bindings.empty() ? nullptr : vk_bindings.data();
+
+        VkDescriptorSetLayout layout{};
+        const VkResult result = dev->second.create_descriptor_set_layout(dev->second.handle, &info, nullptr, &layout);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->descriptor_set_layouts.emplace(id,
+                                                    impl::descriptor_set_layout_data{.handle = layout, .device_id = device});
+        out_layout = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::destroy_descriptor_set_layout(uint64_t device, uint64_t layout)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->descriptor_set_layouts.find(layout);
+        if (it == this->impl_->descriptor_set_layouts.end())
+        {
+            return;
+        }
+        if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_descriptor_set_layout)
+        {
+            dev->second.destroy_descriptor_set_layout(dev->second.handle, it->second.handle, nullptr);
+        }
+        this->impl_->descriptor_set_layouts.erase(it);
+    }
+
+    int32_t vulkan_host::create_descriptor_pool(uint64_t device, uint32_t max_sets,
+                                                std::span<const descriptor_pool_size> sizes, uint64_t& out_pool)
+    {
+        out_pool = 0;
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end() || !dev->second.create_descriptor_pool)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        std::vector<VkDescriptorPoolSize> vk_sizes;
+        vk_sizes.reserve(sizes.size());
+        for (const descriptor_pool_size& s : sizes)
+        {
+            vk_sizes.push_back({.type = static_cast<VkDescriptorType>(s.descriptor_type), .descriptorCount = s.descriptor_count});
+        }
+
+        VkDescriptorPoolCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+        info.maxSets = max_sets;
+        info.poolSizeCount = static_cast<uint32_t>(vk_sizes.size());
+        info.pPoolSizes = vk_sizes.empty() ? nullptr : vk_sizes.data();
+
+        VkDescriptorPool pool{};
+        const VkResult result = dev->second.create_descriptor_pool(dev->second.handle, &info, nullptr, &pool);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->descriptor_pools.emplace(id, impl::descriptor_pool_data{.handle = pool, .device_id = device});
+        out_pool = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::destroy_descriptor_pool(uint64_t device, uint64_t pool)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->descriptor_pools.find(pool);
+        if (it == this->impl_->descriptor_pools.end())
+        {
+            return;
+        }
+        if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_descriptor_pool)
+        {
+            dev->second.destroy_descriptor_pool(dev->second.handle, it->second.handle, nullptr);
+        }
+        // Sets allocated from this pool are freed implicitly; drop their ids.
+        this->impl_->erase_owned(this->impl_->descriptor_sets,
+                                 [&](const impl::descriptor_set_data& d) { return d.pool_id == pool; });
+        this->impl_->descriptor_pools.erase(it);
+    }
+
+    int32_t vulkan_host::allocate_descriptor_sets(uint64_t device, uint64_t pool, std::span<const uint64_t> set_layouts,
+                                                  std::span<uint64_t> out_sets, uint32_t& out_count)
+    {
+        out_count = 0;
+        const auto dev = this->impl_->devices.find(device);
+        const auto pool_it = this->impl_->descriptor_pools.find(pool);
+        if (dev == this->impl_->devices.end() || pool_it == this->impl_->descriptor_pools.end() ||
+            !dev->second.allocate_descriptor_sets)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        std::vector<VkDescriptorSetLayout> vk_layouts;
+        vk_layouts.reserve(set_layouts.size());
+        for (const uint64_t id : set_layouts)
+        {
+            const auto sl = this->impl_->descriptor_set_layouts.find(id);
+            if (sl == this->impl_->descriptor_set_layouts.end())
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            vk_layouts.push_back(sl->second.handle);
+        }
+
+        VkDescriptorSetAllocateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        info.descriptorPool = pool_it->second.handle;
+        info.descriptorSetCount = static_cast<uint32_t>(vk_layouts.size());
+        info.pSetLayouts = vk_layouts.empty() ? nullptr : vk_layouts.data();
+
+        std::vector<VkDescriptorSet> sets(vk_layouts.size());
+        const VkResult result = dev->second.allocate_descriptor_sets(dev->second.handle, &info, sets.data());
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        out_count = static_cast<uint32_t>(sets.size());
+        for (size_t i = 0; i < sets.size(); ++i)
+        {
+            const uint64_t id = this->impl_->next_id++;
+            this->impl_->descriptor_sets.emplace(
+                id, impl::descriptor_set_data{.handle = sets[i], .device_id = device, .pool_id = pool});
+            if (i < out_sets.size())
+            {
+                out_sets[i] = id;
+            }
+        }
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::update_descriptor_sets(uint64_t device, std::span<const descriptor_write> writes)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end() || !dev->second.update_descriptor_sets)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        // Each write carries exactly one descriptor. Buffer infos and image infos are kept in stable
+        // vectors so the VkWriteDescriptorSet pointers remain valid until the driver call below.
+        std::vector<VkWriteDescriptorSet> vk_writes;
+        std::vector<VkDescriptorBufferInfo> buffer_infos(writes.size());
+        std::vector<VkDescriptorImageInfo> image_infos(writes.size());
+        vk_writes.reserve(writes.size());
+
+        for (size_t i = 0; i < writes.size(); ++i)
+        {
+            const descriptor_write& w = writes[i];
+            const auto set = this->impl_->descriptor_sets.find(w.dst_set);
+            if (set == this->impl_->descriptor_sets.end())
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+
+            VkWriteDescriptorSet vw{};
+            vw.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            vw.dstSet = set->second.handle;
+            vw.dstBinding = w.dst_binding;
+            vw.dstArrayElement = w.dst_array_element;
+            vw.descriptorCount = 1;
+            vw.descriptorType = static_cast<VkDescriptorType>(w.descriptor_type);
+
+            const bool is_image = (w.descriptor_type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ||
+                                   w.descriptor_type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE ||
+                                   w.descriptor_type == VK_DESCRIPTOR_TYPE_SAMPLER);
+            if (is_image)
+            {
+                const auto view = this->impl_->image_views.find(w.image_view);
+                VkDescriptorImageInfo& ii = image_infos[i];
+                ii.sampler = VK_NULL_HANDLE;
+                if (w.sampler != 0)
+                {
+                    const auto smp = this->impl_->samplers.find(w.sampler);
+                    if (smp == this->impl_->samplers.end())
+                    {
+                        return VK_ERROR_INITIALIZATION_FAILED;
+                    }
+                    ii.sampler = smp->second.handle;
+                }
+                ii.imageView = (view != this->impl_->image_views.end()) ? view->second.handle : VK_NULL_HANDLE;
+                ii.imageLayout = static_cast<VkImageLayout>(w.image_layout);
+                vw.pImageInfo = &ii;
+            }
+            else
+            {
+                const auto buf = this->impl_->buffers.find(w.buffer);
+                if (buf == this->impl_->buffers.end())
+                {
+                    return VK_ERROR_INITIALIZATION_FAILED;
+                }
+                VkDescriptorBufferInfo& bi = buffer_infos[i];
+                bi.buffer = buf->second.handle;
+                bi.offset = w.offset;
+                bi.range = w.range;
+                vw.pBufferInfo = &bi;
+            }
+            vk_writes.push_back(vw);
+        }
+
+        if (!vk_writes.empty())
+        {
+            dev->second.update_descriptor_sets(dev->second.handle, static_cast<uint32_t>(vk_writes.size()), vk_writes.data(),
+                                               0, nullptr);
+        }
+        return VK_SUCCESS;
     }
 
     int32_t vulkan_host::create_graphics_pipeline(uint64_t device, uint64_t render_pass, uint64_t pipeline_layout,
@@ -2481,6 +2810,38 @@ namespace sogen
         }
         dev->second.cmd_draw_indexed(cb->second.handle, index_count, instance_count, first_index, vertex_offset,
                                      first_instance);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_bind_descriptor_sets(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t first_set,
+                                                  std::span<const uint64_t> sets)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto layout = this->impl_->pipeline_layouts.find(pipeline_layout);
+        if (cb == this->impl_->command_buffers.end() || layout == this->impl_->pipeline_layouts.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_bind_descriptor_sets)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        std::vector<VkDescriptorSet> handles;
+        handles.reserve(sets.size());
+        for (const uint64_t id : sets)
+        {
+            const auto set = this->impl_->descriptor_sets.find(id);
+            if (set == this->impl_->descriptor_sets.end())
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            handles.push_back(set->second.handle);
+        }
+
+        dev->second.cmd_bind_descriptor_sets(cb->second.handle, VK_PIPELINE_BIND_POINT_GRAPHICS, layout->second.handle,
+                                             first_set, static_cast<uint32_t>(handles.size()), handles.data(), 0, nullptr);
         return VK_SUCCESS;
     }
 

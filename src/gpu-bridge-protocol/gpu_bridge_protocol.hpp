@@ -99,6 +99,13 @@ namespace sogen::gpu_bridge
         cmd_bind_vertex_buffers = 0x83F,
         cmd_bind_index_buffer = 0x840,
         cmd_draw_indexed = 0x841,
+        create_descriptor_set_layout = 0x842,
+        destroy_descriptor_set_layout = 0x843,
+        create_descriptor_pool = 0x844,
+        destroy_descriptor_pool = 0x845,
+        allocate_descriptor_sets = 0x846,
+        update_descriptor_sets = 0x847,
+        cmd_bind_descriptor_sets = 0x848,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -163,6 +170,18 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_get_surface_capabilities =
         make_ioctl(static_cast<uint32_t>(command::get_surface_capabilities));
     inline constexpr uint32_t ioctl_record_commands = make_ioctl(static_cast<uint32_t>(command::record_commands));
+    inline constexpr uint32_t ioctl_create_descriptor_set_layout =
+        make_ioctl(static_cast<uint32_t>(command::create_descriptor_set_layout));
+    inline constexpr uint32_t ioctl_destroy_descriptor_set_layout =
+        make_ioctl(static_cast<uint32_t>(command::destroy_descriptor_set_layout));
+    inline constexpr uint32_t ioctl_create_descriptor_pool =
+        make_ioctl(static_cast<uint32_t>(command::create_descriptor_pool));
+    inline constexpr uint32_t ioctl_destroy_descriptor_pool =
+        make_ioctl(static_cast<uint32_t>(command::destroy_descriptor_pool));
+    inline constexpr uint32_t ioctl_allocate_descriptor_sets =
+        make_ioctl(static_cast<uint32_t>(command::allocate_descriptor_sets));
+    inline constexpr uint32_t ioctl_update_descriptor_sets =
+        make_ioctl(static_cast<uint32_t>(command::update_descriptor_sets));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -727,13 +746,17 @@ namespace sogen::gpu_bridge
         uint32_t height;
     };
 
-    // ioctl_create_pipeline_layout: in (no descriptor sets; optionally one push-constant range from
-    // offset 0); out = object_response
+    // ioctl_create_pipeline_layout: in (optionally one push-constant range from offset 0, plus a
+    // variable-length list of descriptor-set-layout ids: this header is immediately followed by
+    // `set_layout_count` object_id entries). out = object_response
     struct create_pipeline_layout_request
     {
         object_id device;
         uint32_t push_constant_stages; // VkShaderStageFlags (0 = no push constants)
         uint32_t push_constant_size;   // bytes, from offset 0
+        uint32_t set_layout_count;     // number of object_id set-layout ids that follow
+        uint32_t reserved;
+        // object_id set_layouts[set_layout_count];
     };
 
     // A VkVertexInputBindingDescription flattened to plain integers.
@@ -860,6 +883,101 @@ namespace sogen::gpu_bridge
         uint32_t size;
         uint32_t reserved;
         // uint8_t values[size];
+    };
+
+    // One binding of a descriptor set layout (trailing-array element of create_descriptor_set_layout).
+    struct descriptor_set_layout_binding
+    {
+        uint32_t binding;
+        uint32_t descriptor_type;  // VkDescriptorType
+        uint32_t descriptor_count; // array size (1 for a scalar binding)
+        uint32_t stage_flags;      // VkShaderStageFlags
+    };
+
+    // ioctl_create_descriptor_set_layout: in header immediately followed by `binding_count`
+    // descriptor_set_layout_binding entries; out = object_response
+    struct create_descriptor_set_layout_request
+    {
+        object_id device;
+        uint32_t binding_count;
+        uint32_t reserved;
+        // descriptor_set_layout_binding bindings[binding_count];
+    };
+
+    // One pool size (trailing-array element of create_descriptor_pool).
+    struct descriptor_pool_size
+    {
+        uint32_t descriptor_type; // VkDescriptorType
+        uint32_t descriptor_count;
+    };
+
+    // ioctl_create_descriptor_pool: in header immediately followed by `pool_size_count`
+    // descriptor_pool_size entries; out = object_response
+    struct create_descriptor_pool_request
+    {
+        object_id device;
+        uint32_t max_sets;
+        uint32_t pool_size_count;
+        uint32_t reserved;
+        // descriptor_pool_size pool_sizes[pool_size_count];
+    };
+
+    // ioctl_allocate_descriptor_sets: in header immediately followed by `set_count` object_id set-layout
+    // ids; out = allocate_descriptor_sets_response header followed by `count` object_id set ids
+    struct allocate_descriptor_sets_request
+    {
+        object_id device;
+        object_id descriptor_pool;
+        uint32_t set_count;
+        uint32_t reserved;
+        // object_id set_layouts[set_count];
+    };
+
+    struct allocate_descriptor_sets_response
+    {
+        int32_t vk_result;
+        uint32_t count;
+        // object_id sets[count];
+    };
+
+    // One descriptor write (trailing-array element of update_descriptor_sets). Models a single buffer or
+    // image descriptor per write (descriptor_count == 1). For buffer types the buffer/offset/range fields
+    // apply; for image types (combined image sampler) the sampler/image_view/image_layout fields apply.
+    struct descriptor_write
+    {
+        object_id dst_set;
+        uint32_t dst_binding;
+        uint32_t dst_array_element;
+        uint32_t descriptor_type; // VkDescriptorType
+        uint32_t reserved;
+        object_id buffer;       // VK_DESCRIPTOR_TYPE_*_BUFFER: the bound buffer (else null_object)
+        uint64_t offset;        // buffer offset
+        uint64_t range;         // buffer range (VK_WHOLE_SIZE allowed)
+        object_id sampler;      // image types: the sampler (else null_object)
+        object_id image_view;   // image types: the sampled image view (else null_object)
+        uint32_t image_layout;  // image types: VkImageLayout
+        uint32_t reserved2;
+    };
+
+    // ioctl_update_descriptor_sets: in header immediately followed by `write_count` descriptor_write
+    // entries; out = result_response
+    struct update_descriptor_sets_request
+    {
+        object_id device;
+        uint32_t write_count;
+        uint32_t reserved;
+        // descriptor_write writes[write_count];
+    };
+
+    // record payload (command::cmd_bind_descriptor_sets) for ioctl_record_commands: this header is
+    // immediately followed by `set_count` object_id descriptor-set ids. Bind point is graphics.
+    struct cmd_bind_descriptor_sets_request
+    {
+        object_id command_buffer;
+        object_id pipeline_layout;
+        uint32_t first_set;
+        uint32_t set_count;
+        // object_id sets[set_count];
     };
 
     // ioctl_get_surface_capabilities: in (out = raw VkSurfaceCapabilitiesKHR bytes). The bridge has no

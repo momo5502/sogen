@@ -1230,9 +1230,21 @@ extern "C"
             request.push_constant_stages |= r.stageFlags;
             request.push_constant_size = std::max(request.push_constant_size, r.offset + r.size);
         }
+        request.set_layout_count = pCreateInfo->setLayoutCount;
+
+        // The descriptor-set-layout ids trail the header.
+        std::vector<uint8_t> message(sizeof(request) +
+                                     static_cast<size_t>(request.set_layout_count) * sizeof(gb::object_id));
+        std::memcpy(message.data(), &request, sizeof(request));
+        for (uint32_t i = 0; i < request.set_layout_count; ++i)
+        {
+            const gb::object_id id = to_object_id(pCreateInfo->pSetLayouts[i]);
+            std::memcpy(message.data() + sizeof(request) + i * sizeof(id), &id, sizeof(id));
+        }
 
         gb::object_response response{};
-        if (!bridge_call(gb::ioctl_create_pipeline_layout, &request, sizeof(request), &response, sizeof(response)))
+        if (!bridge_call(gb::ioctl_create_pipeline_layout, message.data(), static_cast<DWORD>(message.size()), &response,
+                         sizeof(response)))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -1249,6 +1261,179 @@ extern "C"
                                                                              const VkAllocationCallbacks*)
     {
         destroy_device_child(gb::ioctl_destroy_pipeline_layout, device, pipelineLayout);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateDescriptorSetLayout(
+        VkDevice device, const VkDescriptorSetLayoutCreateInfo* pCreateInfo, const VkAllocationCallbacks*,
+        VkDescriptorSetLayout* pSetLayout)
+    {
+        gb::create_descriptor_set_layout_request header{};
+        header.device = to_object_id(device);
+        header.binding_count = pCreateInfo->bindingCount;
+
+        std::vector<uint8_t> message(sizeof(header) +
+                                     static_cast<size_t>(header.binding_count) * sizeof(gb::descriptor_set_layout_binding));
+        std::memcpy(message.data(), &header, sizeof(header));
+        for (uint32_t i = 0; i < header.binding_count; ++i)
+        {
+            const VkDescriptorSetLayoutBinding& b = pCreateInfo->pBindings[i];
+            gb::descriptor_set_layout_binding wire{};
+            wire.binding = b.binding;
+            wire.descriptor_type = static_cast<uint32_t>(b.descriptorType);
+            wire.descriptor_count = b.descriptorCount;
+            wire.stage_flags = b.stageFlags;
+            std::memcpy(message.data() + sizeof(header) + i * sizeof(wire), &wire, sizeof(wire));
+        }
+
+        gb::object_response response{};
+        if (!bridge_call(gb::ioctl_create_descriptor_set_layout, message.data(), static_cast<DWORD>(message.size()),
+                         &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+        *pSetLayout = to_handle<VkDescriptorSetLayout>(response.object);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyDescriptorSetLayout(
+        VkDevice device, VkDescriptorSetLayout descriptorSetLayout, const VkAllocationCallbacks*)
+    {
+        destroy_device_child(gb::ioctl_destroy_descriptor_set_layout, device, descriptorSetLayout);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateDescriptorPool(
+        VkDevice device, const VkDescriptorPoolCreateInfo* pCreateInfo, const VkAllocationCallbacks*,
+        VkDescriptorPool* pDescriptorPool)
+    {
+        gb::create_descriptor_pool_request header{};
+        header.device = to_object_id(device);
+        header.max_sets = pCreateInfo->maxSets;
+        header.pool_size_count = pCreateInfo->poolSizeCount;
+
+        std::vector<uint8_t> message(sizeof(header) +
+                                     static_cast<size_t>(header.pool_size_count) * sizeof(gb::descriptor_pool_size));
+        std::memcpy(message.data(), &header, sizeof(header));
+        for (uint32_t i = 0; i < header.pool_size_count; ++i)
+        {
+            gb::descriptor_pool_size wire{};
+            wire.descriptor_type = static_cast<uint32_t>(pCreateInfo->pPoolSizes[i].type);
+            wire.descriptor_count = pCreateInfo->pPoolSizes[i].descriptorCount;
+            std::memcpy(message.data() + sizeof(header) + i * sizeof(wire), &wire, sizeof(wire));
+        }
+
+        gb::object_response response{};
+        if (!bridge_call(gb::ioctl_create_descriptor_pool, message.data(), static_cast<DWORD>(message.size()), &response,
+                         sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+        *pDescriptorPool = to_handle<VkDescriptorPool>(response.object);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyDescriptorPool(VkDevice device,
+                                                                             VkDescriptorPool descriptorPool,
+                                                                             const VkAllocationCallbacks*)
+    {
+        destroy_device_child(gb::ioctl_destroy_descriptor_pool, device, descriptorPool);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkAllocateDescriptorSets(
+        VkDevice device, const VkDescriptorSetAllocateInfo* pAllocateInfo, VkDescriptorSet* pDescriptorSets)
+    {
+        const uint32_t count = pAllocateInfo->descriptorSetCount;
+        gb::allocate_descriptor_sets_request header{};
+        header.device = to_object_id(device);
+        header.descriptor_pool = to_object_id(pAllocateInfo->descriptorPool);
+        header.set_count = count;
+
+        std::vector<uint8_t> message(sizeof(header) + static_cast<size_t>(count) * sizeof(gb::object_id));
+        std::memcpy(message.data(), &header, sizeof(header));
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            const gb::object_id id = to_object_id(pAllocateInfo->pSetLayouts[i]);
+            std::memcpy(message.data() + sizeof(header) + i * sizeof(id), &id, sizeof(id));
+        }
+
+        std::vector<uint8_t> out(sizeof(gb::allocate_descriptor_sets_response) +
+                                 static_cast<size_t>(count) * sizeof(gb::object_id));
+        if (!bridge_call(gb::ioctl_allocate_descriptor_sets, message.data(), static_cast<DWORD>(message.size()), out.data(),
+                         static_cast<DWORD>(out.size())))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        gb::allocate_descriptor_sets_response resp_header{};
+        std::memcpy(&resp_header, out.data(), sizeof(resp_header));
+        if (resp_header.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(resp_header.vk_result);
+        }
+
+        const auto* ids = reinterpret_cast<const gb::object_id*>(out.data() + sizeof(resp_header));
+        const uint32_t written = (resp_header.count < count) ? resp_header.count : count;
+        for (uint32_t i = 0; i < written; ++i)
+        {
+            pDescriptorSets[i] = to_handle<VkDescriptorSet>(ids[i]);
+        }
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkUpdateDescriptorSets(VkDevice device, uint32_t descriptorWriteCount,
+                                                                            const VkWriteDescriptorSet* pDescriptorWrites,
+                                                                            uint32_t, const VkCopyDescriptorSet*)
+    {
+        // Descriptor copies are not modeled; only writes are forwarded. Each VkWriteDescriptorSet is
+        // flattened to `descriptorCount` single-descriptor wire writes.
+        std::vector<gb::descriptor_write> writes;
+        for (uint32_t w = 0; w < descriptorWriteCount; ++w)
+        {
+            const VkWriteDescriptorSet& src = pDescriptorWrites[w];
+            for (uint32_t e = 0; e < src.descriptorCount; ++e)
+            {
+                gb::descriptor_write wire{};
+                wire.dst_set = to_object_id(src.dstSet);
+                wire.dst_binding = src.dstBinding;
+                wire.dst_array_element = src.dstArrayElement + e;
+                wire.descriptor_type = static_cast<uint32_t>(src.descriptorType);
+                if (src.pBufferInfo)
+                {
+                    wire.buffer = to_object_id(src.pBufferInfo[e].buffer);
+                    wire.offset = src.pBufferInfo[e].offset;
+                    wire.range = src.pBufferInfo[e].range;
+                }
+                if (src.pImageInfo)
+                {
+                    wire.sampler = to_object_id(src.pImageInfo[e].sampler);
+                    wire.image_view = to_object_id(src.pImageInfo[e].imageView);
+                    wire.image_layout = static_cast<uint32_t>(src.pImageInfo[e].imageLayout);
+                }
+                writes.push_back(wire);
+            }
+        }
+
+        gb::update_descriptor_sets_request header{};
+        header.device = to_object_id(device);
+        header.write_count = static_cast<uint32_t>(writes.size());
+
+        std::vector<uint8_t> message(sizeof(header) + writes.size() * sizeof(gb::descriptor_write));
+        std::memcpy(message.data(), &header, sizeof(header));
+        if (!writes.empty())
+        {
+            std::memcpy(message.data() + sizeof(header), writes.data(), writes.size() * sizeof(gb::descriptor_write));
+        }
+
+        gb::result_response response{};
+        bridge_call(gb::ioctl_update_descriptor_sets, message.data(), static_cast<DWORD>(message.size()), &response,
+                    sizeof(response));
     }
 
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
@@ -1443,6 +1628,28 @@ extern "C"
         record_command(request.command_buffer, gb::command::cmd_draw_indexed, &request, sizeof(request));
     }
 
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindDescriptorSets(
+        VkCommandBuffer commandBuffer, VkPipelineBindPoint, VkPipelineLayout layout, uint32_t firstSet,
+        uint32_t descriptorSetCount, const VkDescriptorSet* pDescriptorSets, uint32_t, const uint32_t*)
+    {
+        // Dynamic offsets are not modeled yet (the samples use none).
+        const gb::object_id command_buffer = to_object_id(commandBuffer);
+        std::vector<uint8_t> message(sizeof(gb::cmd_bind_descriptor_sets_request) +
+                                     static_cast<size_t>(descriptorSetCount) * sizeof(gb::object_id));
+        gb::cmd_bind_descriptor_sets_request header{};
+        header.command_buffer = command_buffer;
+        header.pipeline_layout = to_object_id(layout);
+        header.first_set = firstSet;
+        header.set_count = descriptorSetCount;
+        std::memcpy(message.data(), &header, sizeof(header));
+        for (uint32_t i = 0; i < descriptorSetCount; ++i)
+        {
+            const gb::object_id id = to_object_id(pDescriptorSets[i]);
+            std::memcpy(message.data() + sizeof(header) + i * sizeof(id), &id, sizeof(id));
+        }
+        record_command(command_buffer, gb::command::cmd_bind_descriptor_sets, message.data(), message.size());
+    }
+
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdEndRenderPass(VkCommandBuffer commandBuffer)
     {
         gb::cmd_end_render_pass_request request{};
@@ -1548,6 +1755,15 @@ extern "C"
             {.name = "vkDestroyFramebuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyFramebuffer)},
             {.name = "vkCreatePipelineLayout", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreatePipelineLayout)},
             {.name = "vkDestroyPipelineLayout", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyPipelineLayout)},
+            {.name = "vkCreateDescriptorSetLayout",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateDescriptorSetLayout)},
+            {.name = "vkDestroyDescriptorSetLayout",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDescriptorSetLayout)},
+            {.name = "vkCreateDescriptorPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateDescriptorPool)},
+            {.name = "vkDestroyDescriptorPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDescriptorPool)},
+            {.name = "vkAllocateDescriptorSets", .func = reinterpret_cast<PFN_vkVoidFunction>(vkAllocateDescriptorSets)},
+            {.name = "vkUpdateDescriptorSets", .func = reinterpret_cast<PFN_vkVoidFunction>(vkUpdateDescriptorSets)},
+            {.name = "vkCmdBindDescriptorSets", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindDescriptorSets)},
             {.name = "vkCreateGraphicsPipelines", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateGraphicsPipelines)},
             {.name = "vkDestroyPipeline", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyPipeline)},
             {.name = "vkCmdBeginRenderPass", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBeginRenderPass)},
