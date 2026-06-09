@@ -1423,6 +1423,25 @@ namespace sogen
             return static_cast<int32_t>(stack.size());
         }
 
+        // D3DKMTEscape: a driver-specific escape into the kernel display driver. There is no real WDDM
+        // driver behind the emulator (rendering is remoted through the Vulkan bridge), so report success
+        // without touching the private-data buffer. Games issue these for optional vendor/display queries
+        // during setup and degrade gracefully when the escape does nothing.
+        NTSTATUS handle_NtGdiDdDDIEscape(const syscall_context& c, const emulator_pointer escape_data)
+        {
+            if (escape_data && std::getenv("EMULATOR_LOG_IO") != nullptr)
+            {
+                // 64-bit D3DKMT_ESCAPE: Type @ 0x08, Flags @ 0x0C, PrivateDriverDataSize @ 0x18.
+                uint32_t escape_type = 0;
+                uint32_t private_size = 0;
+                c.win_emu.memory.try_read_memory(escape_data + 0x08, &escape_type, sizeof(escape_type));
+                c.win_emu.memory.try_read_memory(escape_data + 0x18, &private_size, sizeof(private_size));
+                c.win_emu.log.print(color::pink, "[io] NtGdiDdDDIEscape type=0x%X private_size=%u\n", escape_type, private_size);
+            }
+
+            return STATUS_SUCCESS;
+        }
+
         BOOL handle_NtGdiRestoreDC(const syscall_context& c, const hdc dc, const int32_t saved_dc)
         {
             const auto dc_value = static_cast<uint32_t>(dc);
