@@ -1002,12 +1002,17 @@ namespace sogen
         std::vector<const char*> extensions;
         extensions.reserve(extension_count);
         {
-            const char* cursor = static_cast<const char*>(extension_blob);
+            const auto* cursor = static_cast<const char*>(extension_blob);
             const char* const end = cursor + extension_blob_size;
             for (uint32_t i = 0; i < extension_count && cursor < end; ++i)
             {
+                const auto* terminator = static_cast<const char*>(std::memchr(cursor, '\0', static_cast<size_t>(end - cursor)));
+                if (!terminator)
+                {
+                    break;
+                }
                 extensions.push_back(cursor);
-                cursor += std::strlen(cursor) + 1;
+                cursor = terminator + 1;
             }
         }
 
@@ -1019,7 +1024,7 @@ namespace sogen
         auto* feature_tail = reinterpret_cast<VkBaseOutStructure*>(&features2);
         bool has_features = false;
         {
-            const std::byte* cursor = static_cast<const std::byte*>(feature_blob);
+            const auto* cursor = static_cast<const std::byte*>(feature_blob);
             const std::byte* const end = cursor + feature_blob_size;
             for (uint32_t i = 0; i < feature_struct_count; ++i)
             {

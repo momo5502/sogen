@@ -428,8 +428,8 @@ namespace sogen
 
             if (information_level == processor_information)
             {
-                const uint32_t count = output_buffer ? output_buffer_length / static_cast<uint32_t>(sizeof(processor_power_information))
-                                                      : 0;
+                const uint32_t count =
+                    output_buffer ? output_buffer_length / static_cast<uint32_t>(sizeof(processor_power_information)) : 0;
                 for (uint32_t i = 0; i < count; ++i)
                 {
                     const processor_power_information info{

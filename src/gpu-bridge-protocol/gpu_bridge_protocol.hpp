@@ -194,14 +194,12 @@ namespace sogen::gpu_bridge
     // agree on their layout through their own <vulkan/vulkan_core.h>. This keeps the protocol header
     // dependency-free while still passing native structures unchanged.
 
-    // ioctl_get_version: out
     struct version_response
     {
         uint32_t magic;   // protocol_magic
         uint32_t version; // protocol_version
     };
 
-    // ioctl_create_instance: out (no input for now; a bare instance with no layers/extensions)
     struct create_instance_response
     {
         int32_t vk_result;  // VkResult from the host
@@ -209,13 +207,11 @@ namespace sogen::gpu_bridge
         object_id instance; // null_object on failure
     };
 
-    // ioctl_destroy_instance: in
     struct destroy_instance_request
     {
         object_id instance;
     };
 
-    // ioctl_enumerate_physical_devices: in
     struct enumerate_physical_devices_request
     {
         object_id instance;
@@ -237,7 +233,6 @@ namespace sogen::gpu_bridge
         object_id physical_device;
     };
 
-    // ioctl_get_queue_family_properties: in
     struct get_queue_family_properties_request
     {
         object_id physical_device;
@@ -252,7 +247,6 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
     };
 
-    // ioctl_enumerate_device_extension_properties: in
     struct enumerate_device_extension_properties_request
     {
         object_id physical_device;
@@ -308,7 +302,6 @@ namespace sogen::gpu_bridge
         uint32_t feature_blob_size;
     };
 
-    // ioctl_create_device: out
     struct create_device_response
     {
         int32_t vk_result;
@@ -316,7 +309,6 @@ namespace sogen::gpu_bridge
         object_id device; // null_object on failure
     };
 
-    // ioctl_get_device_queue: in
     struct get_device_queue_request
     {
         object_id device;
@@ -324,13 +316,11 @@ namespace sogen::gpu_bridge
         uint32_t queue_index;
     };
 
-    // ioctl_get_device_queue: out
     struct get_device_queue_response
     {
         object_id queue; // null_object on failure
     };
 
-    // ioctl_destroy_device: in
     struct destroy_device_request
     {
         object_id device;
@@ -343,7 +333,6 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
     };
 
-    // ioctl_create_command_pool: in (flags = VkCommandPoolCreateFlags)
     struct create_command_pool_request
     {
         object_id device;
@@ -351,7 +340,6 @@ namespace sogen::gpu_bridge
         uint32_t flags;
     };
 
-    // ioctl_create_command_pool: out
     struct create_command_pool_response
     {
         int32_t vk_result;
@@ -359,21 +347,18 @@ namespace sogen::gpu_bridge
         object_id command_pool;
     };
 
-    // ioctl_destroy_command_pool: in
     struct destroy_command_pool_request
     {
         object_id device;
         object_id command_pool;
     };
 
-    // ioctl_allocate_command_buffer: in (a single primary command buffer)
     struct allocate_command_buffer_request
     {
         object_id device;
         object_id command_pool;
     };
 
-    // ioctl_allocate_command_buffer: out
     struct allocate_command_buffer_response
     {
         int32_t vk_result;
@@ -381,7 +366,6 @@ namespace sogen::gpu_bridge
         object_id command_buffer;
     };
 
-    // ioctl_free_command_buffer: in
     struct free_command_buffer_request
     {
         object_id device;
@@ -389,7 +373,6 @@ namespace sogen::gpu_bridge
         object_id command_buffer;
     };
 
-    // record payload (command::begin_command_buffer) for ioctl_record_commands: in (flags = VkCommandBufferUsageFlags);
     struct begin_command_buffer_request
     {
         object_id command_buffer;
@@ -397,13 +380,11 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
     };
 
-    // record payload (command::end_command_buffer) for ioctl_record_commands: in;
     struct end_command_buffer_request
     {
         object_id command_buffer;
     };
 
-    // ioctl_create_fence: in (flags = VkFenceCreateFlags, e.g. VK_FENCE_CREATE_SIGNALED_BIT)
     struct create_fence_request
     {
         object_id device;
@@ -411,7 +392,6 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
     };
 
-    // ioctl_create_fence: out
     struct create_fence_response
     {
         int32_t vk_result;
@@ -419,21 +399,18 @@ namespace sogen::gpu_bridge
         object_id fence;
     };
 
-    // ioctl_destroy_fence: in
     struct destroy_fence_request
     {
         object_id device;
         object_id fence;
     };
 
-    // ioctl_reset_fence: in;
     struct reset_fence_request
     {
         object_id device;
         object_id fence;
     };
 
-    // ioctl_get_fence_status: in; with vk_result = VK_SUCCESS (signaled) /
     // VK_NOT_READY (unsignaled). This is the non-blocking poll the guest spins on while yielding, so
     // the host thread is never blocked on the GPU.
     struct get_fence_status_request
@@ -441,7 +418,6 @@ namespace sogen::gpu_bridge
         object_id fence;
     };
 
-    // ioctl_queue_submit: in (one command buffer, optional fence, no semaphores);
     struct queue_submit_request
     {
         object_id queue;
@@ -455,7 +431,6 @@ namespace sogen::gpu_bridge
         object_id physical_device;
     };
 
-    // ioctl_allocate_memory: in (a single VkDeviceMemory allocation of `size` from `memory_type_index`)
     struct allocate_memory_request
     {
         object_id device;
@@ -464,7 +439,6 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
     };
 
-    // ioctl_allocate_memory: out
     struct allocate_memory_response
     {
         int32_t vk_result;
@@ -472,14 +446,12 @@ namespace sogen::gpu_bridge
         object_id memory; // null_object on failure
     };
 
-    // ioctl_free_memory: in
     struct free_memory_request
     {
         object_id device;
         object_id memory;
     };
 
-    // ioctl_create_buffer: in (usage = VkBufferUsageFlags; exclusive sharing, no queue families)
     struct create_buffer_request
     {
         object_id device;
@@ -488,7 +460,6 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
     };
 
-    // ioctl_create_buffer: out
     struct create_buffer_response
     {
         int32_t vk_result;
@@ -496,14 +467,12 @@ namespace sogen::gpu_bridge
         object_id buffer; // null_object on failure
     };
 
-    // ioctl_destroy_buffer: in
     struct destroy_buffer_request
     {
         object_id device;
         object_id buffer;
     };
 
-    // ioctl_get_buffer_memory_requirements: in
     struct get_buffer_memory_requirements_request
     {
         object_id device;
@@ -519,7 +488,6 @@ namespace sogen::gpu_bridge
         uint64_t alignment; // VkDeviceSize
     };
 
-    // ioctl_bind_buffer_memory: in;
     struct bind_buffer_memory_request
     {
         object_id device;
@@ -528,7 +496,6 @@ namespace sogen::gpu_bridge
         uint64_t offset; // VkDeviceSize
     };
 
-    // record payload (command::cmd_fill_buffer) for ioctl_record_commands: in (records vkCmdFillBuffer into the command buffer);
     struct cmd_fill_buffer_request
     {
         object_id command_buffer;
@@ -568,7 +535,6 @@ namespace sogen::gpu_bridge
         uint32_t layer_count;
     };
 
-    // ioctl_create_image: in (2D, single mip, single layer, VK_SAMPLE_COUNT_1)
     struct create_image_request
     {
         object_id device;
@@ -580,7 +546,6 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
     };
 
-    // ioctl_create_image: out
     struct create_image_response
     {
         int32_t vk_result;
@@ -588,21 +553,18 @@ namespace sogen::gpu_bridge
         object_id image; // null_object on failure
     };
 
-    // ioctl_destroy_image: in
     struct destroy_image_request
     {
         object_id device;
         object_id image;
     };
 
-    // ioctl_get_image_memory_requirements: in (out = memory_requirements_response)
     struct get_image_memory_requirements_request
     {
         object_id device;
         object_id image;
     };
 
-    // ioctl_bind_image_memory: in;
     struct bind_image_memory_request
     {
         object_id device;
@@ -611,7 +573,6 @@ namespace sogen::gpu_bridge
         uint64_t offset; // VkDeviceSize
     };
 
-    // record payload (command::cmd_pipeline_barrier) for ioctl_record_commands: records a single image memory barrier;
     struct cmd_pipeline_barrier_request
     {
         object_id command_buffer;
@@ -625,7 +586,6 @@ namespace sogen::gpu_bridge
         uint32_t new_layout;
     };
 
-    // record payload (command::cmd_clear_color_image) for ioctl_record_commands: records vkCmdClearColorImage (float clear color);
     struct cmd_clear_color_image_request
     {
         object_id command_buffer;
@@ -639,7 +599,6 @@ namespace sogen::gpu_bridge
         float color_a;
     };
 
-    // record payload (command::cmd_copy_image_to_buffer) for ioctl_record_commands: copies mip 0 / layer 0 of the image, tightly packed, to
     // the buffer at offset 0;
     struct cmd_copy_image_to_buffer_request
     {
@@ -652,7 +611,6 @@ namespace sogen::gpu_bridge
         uint32_t aspect_mask; // VkImageAspectFlags
     };
 
-    // record payload (command::cmd_copy_buffer_to_image): copies tightly-packed pixel data from the
     // buffer (offset 0) into mip 0 / layer 0 of the image.
     struct cmd_copy_buffer_to_image_request
     {
@@ -665,7 +623,6 @@ namespace sogen::gpu_bridge
         uint32_t aspect_mask; // VkImageAspectFlags
     };
 
-    // ioctl_create_sampler: in; out = object_response
     struct create_sampler_request
     {
         object_id device;
@@ -677,13 +634,11 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
     };
 
-    // ioctl_create_surface: in (the guest window the swapchain will present to)
     struct create_surface_request
     {
         uint64_t hwnd;
     };
 
-    // ioctl_create_surface: out
     struct create_surface_response
     {
         int32_t vk_result;
@@ -691,13 +646,11 @@ namespace sogen::gpu_bridge
         object_id surface;
     };
 
-    // ioctl_destroy_surface: in
     struct destroy_surface_request
     {
         object_id surface;
     };
 
-    // ioctl_create_swapchain: in (no caps/format negotiation; the guest passes valid values directly)
     struct create_swapchain_request
     {
         object_id device;
@@ -710,7 +663,6 @@ namespace sogen::gpu_bridge
         uint32_t present_mode; // VkPresentModeKHR (ignored; effectively FIFO)
     };
 
-    // ioctl_create_swapchain: out
     struct create_swapchain_response
     {
         int32_t vk_result;
@@ -718,14 +670,12 @@ namespace sogen::gpu_bridge
         object_id swapchain;
     };
 
-    // ioctl_destroy_swapchain: in
     struct destroy_swapchain_request
     {
         object_id device;
         object_id swapchain;
     };
 
-    // ioctl_get_swapchain_images: in
     struct get_swapchain_images_request
     {
         object_id swapchain;
@@ -741,20 +691,17 @@ namespace sogen::gpu_bridge
         // object_id images[count];
     };
 
-    // ioctl_acquire_next_image: in
     struct acquire_next_image_request
     {
         object_id swapchain;
     };
 
-    // ioctl_acquire_next_image: out
     struct acquire_next_image_response
     {
         int32_t vk_result;
         uint32_t image_index;
     };
 
-    // ioctl_queue_present: in;. The host copies the presented image back and the
     // bridge hands the pixels to the guest window via the UI backend.
     struct queue_present_request
     {
@@ -789,7 +736,6 @@ namespace sogen::gpu_bridge
         // uint8_t code[code_size];
     };
 
-    // ioctl_create_image_view: in (2D, single mip/layer); out = object_response
     struct create_image_view_request
     {
         object_id device;
@@ -798,7 +744,6 @@ namespace sogen::gpu_bridge
         uint32_t aspect_mask; // VkImageAspectFlags (COLOR for color targets, DEPTH for depth); 0 => COLOR
     };
 
-    // ioctl_create_render_pass: in (one color attachment + optional depth attachment, single subpass);
     // out = object_response
     struct create_render_pass_request
     {
@@ -812,7 +757,6 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
     };
 
-    // ioctl_create_framebuffer: in (color attachment + optional depth attachment); out = object_response
     struct create_framebuffer_request
     {
         object_id device;
@@ -823,7 +767,6 @@ namespace sogen::gpu_bridge
         uint32_t height;
     };
 
-    // ioctl_create_pipeline_layout: in (optionally one push-constant range from offset 0, plus a
     // variable-length list of descriptor-set-layout ids: this header is immediately followed by
     // `set_layout_count` object_id entries). out = object_response
     struct create_pipeline_layout_request
@@ -854,7 +797,6 @@ namespace sogen::gpu_bridge
         uint32_t offset;
     };
 
-    // ioctl_create_graphics_pipeline: in (triangle list, static full viewport/scissor, one non-blended
     // color attachment). The vertex input state is variable-length: the input buffer is this header
     // immediately followed by `binding_count` vertex_input_binding entries and then `attribute_count`
     // vertex_input_attribute entries. Both counts 0 => no vertex input (vertices baked into the shader).
@@ -877,7 +819,6 @@ namespace sogen::gpu_bridge
         // vertex_input_attribute attributes[attribute_count];
     };
 
-    // record payload (command::cmd_begin_render_pass) for ioctl_record_commands: in (clear color load,
     // plus a depth clear used only when the render pass has a depth attachment).
     struct cmd_begin_render_pass_request
     {
@@ -894,14 +835,12 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
     };
 
-    // record payload (command::cmd_bind_pipeline) for ioctl_record_commands: in (graphics bind point);
     struct cmd_bind_pipeline_request
     {
         object_id command_buffer;
         object_id pipeline;
     };
 
-    // record payload (command::cmd_draw) for ioctl_record_commands: in;
     struct cmd_draw_request
     {
         object_id command_buffer;
@@ -918,7 +857,6 @@ namespace sogen::gpu_bridge
         uint64_t offset; // VkDeviceSize
     };
 
-    // record payload (command::cmd_bind_vertex_buffers) for ioctl_record_commands: this header is
     // immediately followed by `binding_count` vertex_buffer_binding entries.
     struct cmd_bind_vertex_buffers_request
     {
@@ -928,7 +866,6 @@ namespace sogen::gpu_bridge
         // vertex_buffer_binding bindings[binding_count];
     };
 
-    // record payload (command::cmd_bind_index_buffer) for ioctl_record_commands: in;
     struct cmd_bind_index_buffer_request
     {
         object_id command_buffer;
@@ -938,7 +875,6 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
     };
 
-    // record payload (command::cmd_draw_indexed) for ioctl_record_commands: in;
     struct cmd_draw_indexed_request
     {
         object_id command_buffer;
@@ -950,7 +886,6 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
     };
 
-    // record payload (command::cmd_end_render_pass) for ioctl_record_commands: in;
     struct cmd_end_render_pass_request
     {
         object_id command_buffer;
@@ -1052,7 +987,6 @@ namespace sogen::gpu_bridge
         // descriptor_write writes[write_count];
     };
 
-    // record payload (command::cmd_bind_descriptor_sets) for ioctl_record_commands: this header is
     // immediately followed by `set_count` object_id descriptor-set ids. Bind point is graphics.
     struct cmd_bind_descriptor_sets_request
     {
@@ -1073,7 +1007,6 @@ namespace sogen::gpu_bridge
         object_id surface;
     };
 
-    // ioctl_record_commands: the input buffer holds a batch of recorded command-buffer commands, so a
     // whole command buffer's recording (begin -> cmds -> end) crosses the bridge in a single IOCTL
     // instead of one per command. The buffer is a sequence of records, each a `command_record_header`
     // immediately followed by `size` payload bytes, where the payload is exactly that command's normal

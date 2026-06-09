@@ -21,7 +21,8 @@ command buffers. Because Sogen emulates only **user space** (no kernel, no `dxgk
 we replace the UMD/ICD with a **remoting shim** and skip the entire kernel/KMD/command-buffer layer.
 
 DirectX/OpenGL can layer on top later (DXVK for D3D→Vulkan, Zink for GL→Vulkan) without new bridge
-work. **DXVK is currently deprioritized** — the focus is running native Vulkan apps first.
+work. **DXVK is largely deprioritized** (the focus is native Vulkan apps first), though initial DXVK
+device bring-up now works — see the "DXVK device bring-up" slice under M2.
 
 ## Architecture
 
@@ -278,12 +279,38 @@ plus the surrounding calls needed to actually use them:
   > ~10000× too fast (`kusd_mmio::update()` derived the tick count from 100 ns units where the guest
   > expects milliseconds). Fixed separately in [#1037](https://github.com/momo5502/sogen/pull/1037).
 
+- **DXVK device bring-up: real feature/extension remoting.** First step toward running a real D3D9
+  title (Call of Duty MW3 via `open-iw5.exe`, whose `d3d9.dll` is DXVK 2.7.1 over the shim'd
+  `vulkan-1.dll`). DXVK selects and creates a device only if the bridge reports the host driver's
+  *real* capabilities, so three entry points were promoted from stubs to real remoting (protocol
+  bumped to `protocol_version = 4`):
+  - `vkEnumerateDeviceExtensionProperties` — forwards to the host device's real extension list.
+  - `vkGetPhysicalDeviceFeatures2` — queries the host for the caller's pNext feature chain and fills
+    it with real values. The new dependency-free-adjacent header
+    `src/gpu-bridge-protocol/vk_feature_chain.hpp` is the single, **cross-bitness** source of truth for
+    the feature structs: a `VkPhysicalDevice*Features` struct is a `{sType, pNext}` header (8 bytes on
+    x86, 16 on x64) followed by a `VkBool32` run, so only the pad-free body crosses the wire — the
+    32-bit guest computes the body size and the 64-bit host echoes it. Adding a newly-required feature
+    struct is a one-line `sType → sizeof` switch entry (the set so far: core 1.1/1.2/1.3,
+    `VK_EXT_robustness2`, `VK_KHR_maintenance5`). The shim also returns **null** (per the Vulkan
+    contract) for unimplemented entry points so layers can detect absent optional features, and logs
+    each one.
+  - `vkCreateDevice` — marshals the enabled extension names + the feature chain so the real device is
+    created with exactly what DXVK requested (previously ignored, which would have been UB once DXVK
+    used those features).
+  - Result (verified on screen-less run): DXVK enumerates the host GPUs, **skips devices lacking a
+    required feature** (the Intel UHD 630 lacks `maintenance5`) and **creates the device on the
+    Quadro P2000**, then sets up D3D9 formats. `vulkan-shim-test` and the windowed samples still pass
+    (the `vkCreateDevice`/features paths are on their path too). Full DXVK rendering (swapchain +
+    DXVK's large runtime device-function set) is still ahead; DXVK remains otherwise deprioritized.
+
 ## Remoted Vulkan entry points so far
 
 Instance/device: `vkCreateInstance`, `vkDestroyInstance`, `vkEnumeratePhysicalDevices`,
-`vkGetPhysicalDeviceProperties`, `vkGetPhysicalDeviceQueueFamilyProperties`, `vkCreateDevice`,
-`vkDestroyDevice`, `vkGetDeviceQueue`, `vkGetInstanceProcAddr`, `vkGetDeviceProcAddr`
-(+ `vk_icdGetInstanceProcAddr`).
+`vkEnumerateDeviceExtensionProperties`, `vkGetPhysicalDeviceProperties`,
+`vkGetPhysicalDeviceFeatures2` (real pNext feature chain), `vkGetPhysicalDeviceQueueFamilyProperties`,
+`vkCreateDevice` (threads enabled extensions + feature chain), `vkDestroyDevice`, `vkGetDeviceQueue`,
+`vkGetInstanceProcAddr`, `vkGetDeviceProcAddr` (+ `vk_icdGetInstanceProcAddr`).
 
 Command/sync: `vkCreateCommandPool`, `vkDestroyCommandPool`, `vkAllocateCommandBuffers`,
 `vkFreeCommandBuffers`, `vkBeginCommandBuffer`, `vkEndCommandBuffer`, `vkCreateFence`,
@@ -312,9 +339,10 @@ Descriptors: `vkCreateDescriptorSetLayout`, `vkCreateDescriptorPool`, `vkAllocat
 `vkUpdateDescriptorSets` (uniform-buffer and combined-image-sampler writes) (+ destroys),
 `vkCmdBindDescriptorSets`.
 
-The hand-written entry points currently pass minimal/empty create-infos (e.g. `vkCreateInstance`
-ignores layers/extensions, `vkQueueSubmit` ignores semaphores). The generator is the path to
-honoring the full structs.
+Most hand-written entry points still pass minimal/empty create-infos (e.g. `vkCreateInstance` ignores
+layers/extensions, `vkQueueSubmit` ignores semaphores). `vkCreateDevice` is the exception — it now
+honors the enabled device extensions and the pNext feature chain (see the DXVK device bring-up slice).
+The generator is the path to honoring the full structs everywhere.
 
 ## Known limitations / simplifications
 
@@ -428,6 +456,7 @@ Later: OpenGL via Zink, DirectX via DXVK — no new bridge work, just guest DLL 
 | Path | Role |
 | --- | --- |
 | `src/gpu-bridge-protocol/gpu_bridge_protocol.hpp` | Dependency-free wire protocol (IOCTL codes, request/response structs) |
+| `src/gpu-bridge-protocol/vk_feature_chain.hpp` | Shared cross-bitness `sType → sizeof` map + header-size for marshalling `VkPhysicalDevice*Features` pNext chains (host + shim only; needs Vulkan headers) |
 | `src/windows-emulator/devices/gpu_bridge.{hpp,cpp}` | `SogenGpu` io_device; IOCTL → command dispatch + marshalling |
 | `src/windows-emulator/devices/vulkan_host.{hpp,cpp}` | Emulator-free wrapper over the real driver; object-id tables. Kept in its own TU so host `<vulkan/vulkan_core.h>` + `<Windows.h>` don't clash with the emulated Windows types |
 | `src/vulkan-bridge-marshal/vk_bridge_serial.hpp` | Serializer runtime: `writer` / `reader` / `arena` + string/array helpers |
@@ -435,15 +464,6 @@ Later: OpenGL via Zink, DirectX via DXVK — no new bridge work, just guest DLL 
 | `tools/vulkan-bridge-generator/generate.py` | The generator (parses `vk.xml`); `STRUCT_ALLOWLIST` controls coverage |
 | `src/samples/vulkan-shim/` | Guest `vulkan-1.dll` shim (the deliverable) |
 | `src/samples/vulkan-shim-test/` | Headless guest exe driving the shim (instance→device→fill/clear readback) |
-| `src/samples/vulkan-window-sample/` | Windowed guest exe: Win32 window + swapchain + render-pass triangle. `triangle.{vert,frag}` are the GLSL sources; `triangle_spirv.hxx` is the checked-in compiled SPIR-V. Also runs natively against a real GPU (`… vulkan-1.dll`) |
-| `src/samples/vulkan-spinning-triangle-sample/` | Windowed guest exe: a push-constant-rotated triangle with an FPS readout in the title bar. `spinning.{vert,frag}` + checked-in `spinning_triangle_spirv.hxx`. Also runs natively |
-| `src/samples/vulkan-cube-sample/` | Windowed guest exe: a 3D spinning cube (mat4 MVP push constant; faces CPU-sorted back-to-front — predates depth support, see `vulkan-depth-cube-sample` for the depth-buffered version) that prints FPS to stdout every real second for host-vs-emulated comparison. `cube.{vert,frag}` + checked-in `cube_spirv.hxx`. Also runs natively |
-| `src/samples/vulkan-cube-field-sample/` | Windowed guest exe: a rotating field of many individually spinning, diffuse-lit cubes (default 5×3×5 = 75; ~530 recorded commands/frame). Exercises command batching and a 128-byte push constant (mvp + model for lighting); cubes and their faces are painter's-sorted. `cube_field.{vert,frag}` + checked-in `cube_field_spirv.hxx`. Also runs natively |
-| `src/samples/vulkan-vertex-buffer-sample/` | Windowed guest exe: a push-constant-rotated quad whose geometry comes from a real **vertex buffer + index buffer** (drawn with `vkCmdDrawIndexed`), exercising pipeline vertex input. `vertex_buffer.{vert,frag}` + checked-in `vertex_buffer_spirv.hxx`. Also runs natively |
-| `src/samples/vulkan-uniform-buffer-sample/` | Windowed guest exe: the vertex/index-buffer quad with its rotation + tint driven by a **uniform buffer** bound via a **descriptor set** (`vkCmdBindDescriptorSets`), rewritten each frame. `uniform_buffer.{vert,frag}` + checked-in `uniform_buffer_spirv.hxx`. Also runs natively |
-| `src/samples/vulkan-texture-sample/` | Windowed guest exe: a **textured** spinning quad — a 64×64 RGBA checkerboard uploaded via a staging buffer + `vkCmdCopyBufferToImage` and sampled through a **combined image sampler** descriptor. Exercises the full draw stack (vertex/index buffers + push constant + descriptor set + texture). `texture.{vert,frag}` + checked-in `texture_spirv.hxx`. Also runs natively |
-| `src/samples/vulkan-depth-cube-sample/` | Windowed guest exe: a real 3D cube (vertex/index buffers + mat4 MVP push constant) with correct occlusion from a **depth buffer** — no CPU face sorting. Exercises the render-pass/framebuffer/pipeline depth attachment. `depth_cube.{vert,frag}` + checked-in `depth_cube_spirv.hxx`. Also runs natively |
-| `src/samples/gpu-bridge-probe-sample/` | Low-level probe (direct `DeviceIoControl`, no Vulkan headers) |
 | `src/windows-emulator-test/vulkan_marshal_test.cpp` | Round-trip gtests for the generated marshalling |
 | `deps/Vulkan-Headers` | Shallow submodule; `vulkan-headers` INTERFACE target |
 
@@ -451,10 +471,10 @@ Registration points: device name in `io_device.cpp` (`create_device`) and `sysca
 (`get_io_device_name`); libraries in `src/CMakeLists.txt`; the `vulkan-headers` target in
 `deps/CMakeLists.txt`.
 
-The experimental SwiftShader **M0** samples (`vulkan-probe-sample`, `vulkan-triangle-sample`,
-`README.vulkan.md`) are intentionally kept **untracked** — they validated that DXVK/SwiftShader could
-run in-guest and will be overhauled, so they are deliberately not committed. (The tracked
-`vulkan-window-sample` above is the bridge's own WSI sample, unrelated to those.)
+The windowed demo samples that drove development (`vulkan-window-sample`, the cube/triangle/buffer/
+texture/depth samples, and `gpu-bridge-probe-sample`) were used only for testing and have been
+removed; they are recoverable from git history. `vulkan-shim-test` remains as the headless regression
+check.
 
 ## Build, regenerate, validate
 
@@ -471,44 +491,11 @@ Regenerate the marshalling from `vk.xml` (only after changing `STRUCT_ALLOWLIST`
 cmake --build --preset=release --target vulkan-bridge-generate
 ```
 
-Run the bridge probe (low-level handshake + instance/device enumeration over `DeviceIoControl`):
-
-```cmd
-cmd /c "cd build\release\artifacts && analyzer.exe -s gpu-bridge-probe-sample.exe"
-```
-
 Run the shim test (guest app → `vulkan-shim.dll` → bridge → host GPU; enumerates devices, creates a
 logical device + queue, submits a command buffer, and verifies `fill+readback` / `clear+readback`):
 
 ```cmd
 cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-shim-test.exe vulkan-shim.dll"
-```
-
-Run the windowed samples in the emulator (each opens a guest window and presents the GPU output):
-
-```cmd
-cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-window-sample.exe vulkan-shim.dll"
-cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-spinning-triangle-sample.exe vulkan-shim.dll"
-cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-cube-sample.exe vulkan-shim.dll"
-cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-cube-field-sample.exe vulkan-shim.dll"
-cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-vertex-buffer-sample.exe vulkan-shim.dll"
-cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-uniform-buffer-sample.exe vulkan-shim.dll"
-cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-texture-sample.exe vulkan-shim.dll"
-cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-depth-cube-sample.exe vulkan-shim.dll"
-```
-
-`vulkan-cube-sample` runs until its window is closed and prints the measured FPS to stdout once per
-real second; an optional trailing argument caps the run length in seconds
-(`vulkan-cube-sample.exe vulkan-shim.dll 10`). Because the analyzer advances the guest clock at real
-wall-clock rate by default, the same binary run through the shim and against `vulkan-1.dll` yields
-directly comparable FPS (emulated is ~15-20x slower on the dev machine).
-
-The same sample exes also run as ordinary **native** Vulkan apps against a real GPU — pass the real
-loader instead of the shim (this validates the shim's API fidelity, since the identical binary runs
-both ways):
-
-```cmd
-cmd /c "cd build\release\artifacts && vulkan-spinning-triangle-sample.exe vulkan-1.dll"
 ```
 
 On a GPU-less box (e.g. CI) drop in **SwiftShader** as a software ICD: stage `vulkan-1.dll`,

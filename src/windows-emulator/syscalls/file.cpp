@@ -2057,15 +2057,13 @@ namespace sogen
         NTSTATUS handle_NtFsControlFile(const syscall_context& c, const handle file_handle, const handle event,
                                         const emulator_pointer apc_routine, const emulator_pointer apc_context,
                                         const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
-                                        const ULONG fs_control_code, const emulator_pointer input_buffer,
-                                        const ULONG input_buffer_length, const emulator_pointer output_buffer,
-                                        const ULONG output_buffer_length)
+                                        const ULONG fs_control_code, const emulator_pointer input_buffer, const ULONG input_buffer_length,
+                                        const emulator_pointer output_buffer, const ULONG output_buffer_length)
         {
             auto* device = c.proc.devices.get(file_handle);
             if (!device)
             {
-                c.win_emu.log.warn("NtFsControlFile on non-device handle (control code 0x%X)\n",
-                                   static_cast<uint32_t>(fs_control_code));
+                c.win_emu.log.warn("NtFsControlFile on non-device handle (control code 0x%X)\n", static_cast<uint32_t>(fs_control_code));
                 return STATUS_INVALID_HANDLE;
             }
 

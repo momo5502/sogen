@@ -57,7 +57,7 @@ namespace sogen
       private:
         NTSTATUS peek(windows_emulator& win_emu, const io_device_context& c)
         {
-            constexpr ULONG header_size = static_cast<ULONG>(sizeof(file_pipe_peek_buffer));
+            constexpr auto header_size = static_cast<ULONG>(sizeof(file_pipe_peek_buffer));
             if (!c.output_buffer || c.output_buffer_length < header_size)
             {
                 return STATUS_INVALID_PARAMETER;
@@ -97,9 +97,8 @@ namespace sogen
 
             if (c.io_status_block)
             {
-                c.io_status_block.access([&](IO_STATUS_BLOCK<EmulatorTraits<Emu64>>& sb) {
-                    sb.Information = header_size + static_cast<uint32_t>(data.size());
-                });
+                c.io_status_block.access(
+                    [&](IO_STATUS_BLOCK<EmulatorTraits<Emu64>>& sb) { sb.Information = header_size + static_cast<uint32_t>(data.size()); });
             }
 
             return available > data.size() ? STATUS_BUFFER_OVERFLOW : STATUS_SUCCESS;

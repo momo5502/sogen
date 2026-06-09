@@ -191,16 +191,19 @@ namespace sogen
             static bool read_trailing_array(windows_emulator& win_emu, const io_device_context& context, size_t offset, uint32_t count,
                                             std::vector<T>& out)
             {
-                out.assign(count, T{});
+                out.clear();
                 if (count == 0)
                 {
                     return true;
                 }
+                // Validate the buffer holds the bytes before allocating, so a malformed request with a
+                // huge count can't force a large allocation. Subtraction avoids offset+bytes overflow.
                 const size_t bytes = static_cast<size_t>(count) * sizeof(T);
-                if (!context.input_buffer || context.input_buffer_length < offset + bytes)
+                if (!context.input_buffer || context.input_buffer_length < offset || context.input_buffer_length - offset < bytes)
                 {
                     return false;
                 }
+                out.assign(count, T{});
                 win_emu.emu().read_memory(context.input_buffer + offset, out.data(), bytes);
                 return true;
             }
@@ -443,8 +446,8 @@ namespace sogen
                 }
 
                 std::vector<std::byte> blob;
-                const int32_t result = this->vulkan_.get_physical_device_features2(request.physical_device, records.data(),
-                                                                                   records.size(), request.struct_count, blob);
+                const int32_t result = this->vulkan_.get_physical_device_features2(request.physical_device, records.data(), records.size(),
+                                                                                   request.struct_count, blob);
 
                 const response_t response{.vk_result = result, .struct_count = request.struct_count};
                 emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(response);
@@ -502,10 +505,9 @@ namespace sogen
                 }
 
                 uint64_t device = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_device(request.physical_device, request.queue_family_index,
-                                                                   request.queue_count, extension_blob, extension_blob_size,
-                                                                   extension_count, feature_blob, feature_blob_size,
-                                                                   feature_struct_count, device);
+                const int32_t result = this->vulkan_.create_device(request.physical_device, request.queue_family_index, request.queue_count,
+                                                                   extension_blob, extension_blob_size, extension_count, feature_blob,
+                                                                   feature_blob_size, feature_struct_count, device);
 
                 const response_t response{
                     .vk_result = result,
