@@ -343,8 +343,78 @@ namespace sogen
             return switch_to_thread(win_emu, *thread);
         }
 
+        // Diagnostic (opt-in via EMULATOR_LOG_THREADS): once per second, dump every live thread's IP and
+        // what it is blocked on. Helps spot why the emulator idles -- which thread waits on which object,
+        // and which threads are merely spinning (reported "runnable").
+        void log_thread_wait_states(windows_emulator& win_emu)
+        {
+            static const bool enabled = std::getenv("EMULATOR_LOG_THREADS") != nullptr;
+            if (!enabled)
+            {
+                return;
+            }
+
+            static std::chrono::steady_clock::time_point last{};
+            const auto now = std::chrono::steady_clock::now();
+            if (now - last < std::chrono::seconds(1))
+            {
+                return;
+            }
+            last = now;
+
+            auto& process = win_emu.process;
+            win_emu.log.print(color::cyan, "--- thread wait states ---\n");
+            for (auto& t : process.threads | std::views::values)
+            {
+                if (t.is_terminated())
+                {
+                    continue;
+                }
+
+                std::string reason;
+                if (t.suspended > 0)
+                {
+                    reason = "suspended";
+                }
+                else if (t.waiting_for_alert)
+                {
+                    reason = "wait-alert";
+                }
+                else if (!t.await_objects.empty())
+                {
+                    reason = t.await_any ? "wait-any" : "wait-all";
+                    for (const auto& obj : t.await_objects)
+                    {
+                        char buffer[24];
+                        (void)std::snprintf(buffer, sizeof(buffer), " 0x%llX", static_cast<unsigned long long>(obj.bits));
+                        reason += buffer;
+                    }
+                }
+                else if (t.await_msg.has_value())
+                {
+                    reason = "wait-message";
+                }
+                else if (t.await_io_completion.has_value())
+                {
+                    reason = "wait-io-completion";
+                }
+                else if (t.await_time.has_value())
+                {
+                    reason = "sleeping";
+                }
+                else
+                {
+                    reason = "runnable";
+                }
+
+                win_emu.log.print(color::cyan, "  tid %u%s ip=0x%llX '%s' %s\n", t.id, (&t == process.active_thread) ? " *" : "",
+                                  static_cast<unsigned long long>(t.current_ip), u16_to_u8(t.name).c_str(), reason.c_str());
+            }
+        }
+
         bool switch_to_next_thread(windows_emulator& win_emu)
         {
+            log_thread_wait_states(win_emu);
             perform_context_switch_work(win_emu);
 
             auto& context = win_emu.process;
