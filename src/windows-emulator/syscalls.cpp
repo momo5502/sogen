@@ -524,6 +524,10 @@ namespace sogen
                                                 emulator_object<EMU_DEVMODEW> dev_mode, hwnd window, DWORD flags, uint64_t param);
         NTSTATUS handle_NtUserBuildHwndList(const syscall_context& c, uint64_t desktop, hwnd next, BOOLEAN enum_children, BOOLEAN unknown,
                                             ULONG thread_id, ULONG max_count, uint64_t hwnd_list, emulator_object<ULONG> hwnd_needed);
+        LONG handle_NtUserGetDisplayConfigBufferSizes(const syscall_context& c, uint32_t flags, emulator_object<uint32_t> out_sizes);
+        LONG handle_NtUserQueryDisplayConfig(const syscall_context& c, uint32_t flags, emulator_object<uint32_t> num_path_array_elements,
+                                             emulator_pointer path_info_array, emulator_object<uint32_t> num_mode_info_array_elements,
+                                             emulator_pointer mode_info_array);
         BOOL handle_NtUserEnumDisplayMonitors(const syscall_context& c, hdc hdc_in, uint64_t clip_rect_ptr, uint64_t callback,
                                               uint64_t param);
         BOOL completion_NtUserEnumDisplayMonitors(const syscall_context& c, hdc hdc_in, uint64_t clip_rect_ptr, uint64_t callback,
@@ -567,6 +571,7 @@ namespace sogen
         uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, hdc dc);
         int32_t handle_NtGdiSaveDC(const syscall_context& c, hdc dc);
         NTSTATUS handle_NtGdiDdDDIEscape(const syscall_context& c, emulator_pointer escape_data);
+        NTSTATUS handle_NtGdiDdDDIOpenAdapterFromHdc(const syscall_context& c, emulator_pointer open_adapter_data);
         BOOL handle_NtGdiRestoreDC(const syscall_context& c, hdc dc, int32_t saved_dc);
         uint64_t handle_NtGdiCreateCompatibleBitmap(const syscall_context& c, hdc dc, uint32_t width, uint32_t height);
         uint64_t handle_NtGdiCreateBitmap(const syscall_context& c, uint32_t width, uint32_t height, uint32_t planes, uint32_t bits_pixel,
@@ -1031,6 +1036,7 @@ namespace sogen
         add_handler(NtGdiCreateCompatibleDC);
         add_handler(NtGdiSaveDC);
         add_handler(NtGdiDdDDIEscape);
+        add_handler(NtGdiDdDDIOpenAdapterFromHdc);
         add_handler(NtGdiRestoreDC);
         add_handler(NtGdiCreateCompatibleBitmap);
         add_handler(NtGdiCreateBitmap);
@@ -1204,6 +1210,8 @@ namespace sogen
         add_handler(NtUserEnumDisplayDevices);
         add_handler(NtUserEnumDisplaySettings);
         add_handler(NtUserChangeDisplaySettings);
+        add_handler(NtUserGetDisplayConfigBufferSizes);
+        add_handler(NtUserQueryDisplayConfig);
         add_handler(NtUserBuildHwndList);
         add_handler(NtUserEnumDisplayMonitors);
         add_handler(NtUserSetProp);

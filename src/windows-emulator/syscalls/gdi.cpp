@@ -1442,6 +1442,36 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        // D3DKMTOpenAdapterFromHdc: opens the WDDM display adapter backing a DC. There is no real kernel
+        // display adapter behind the emulator (rendering is remoted through the Vulkan bridge), but the game
+        // treats a failed adapter open as fatal ("Disc read error"), so hand back a synthetic adapter handle
+        // and LUID. 64-bit D3DKMT_OPENADAPTERFROMHDC layout: hDc @ 0x00, hAdapter @ 0x08, AdapterLuid @ 0x0C,
+        // VidPnSourceId @ 0x14.
+        NTSTATUS handle_NtGdiDdDDIOpenAdapterFromHdc(const syscall_context& c, const emulator_pointer open_adapter_data)
+        {
+            if (!open_adapter_data)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            constexpr uint32_t synthetic_adapter_handle = 0x40000001;
+            const uint32_t luid_low = 0x00001000;
+            const uint32_t luid_high = 0;
+            const uint32_t vidpn_source_id = 0;
+
+            c.emu.write_memory(open_adapter_data + 0x08, &synthetic_adapter_handle, sizeof(synthetic_adapter_handle));
+            c.emu.write_memory(open_adapter_data + 0x0C, &luid_low, sizeof(luid_low));
+            c.emu.write_memory(open_adapter_data + 0x10, &luid_high, sizeof(luid_high));
+            c.emu.write_memory(open_adapter_data + 0x14, &vidpn_source_id, sizeof(vidpn_source_id));
+
+            if (std::getenv("EMULATOR_LOG_IO") != nullptr)
+            {
+                c.win_emu.log.print(color::pink, "[io] NtGdiDdDDIOpenAdapterFromHdc -> hAdapter=0x%X\n", synthetic_adapter_handle);
+            }
+
+            return STATUS_SUCCESS;
+        }
+
         BOOL handle_NtGdiRestoreDC(const syscall_context& c, const hdc dc, const int32_t saved_dc)
         {
             const auto dc_value = static_cast<uint32_t>(dc);

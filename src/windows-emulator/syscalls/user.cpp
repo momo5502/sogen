@@ -2628,6 +2628,40 @@ namespace sogen
             return 0; // DISP_CHANGE_SUCCESSFUL
         }
 
+        // GetDisplayConfigBufferSizes: reports how many path/mode entries QueryDisplayConfig would return.
+        // The emulator exposes no CCD (Connecting-and-Configuring-Displays) topology, so report zero entries
+        // and success; callers fall back to the GDI display APIs (EnumDisplayDevices/EnumDisplaySettings)
+        // that the emulator does implement.
+        // The win32u syscall packs both out-counts into a single 2-DWORD buffer (the user32 wrapper splits
+        // them back into the caller's numPathArrayElements/numModeInfoArrayElements). out_sizes[0] =
+        // numPathArrayElements, out_sizes[1] = numModeInfoArrayElements. The emulator exposes no CCD topology,
+        // so report zero entries; callers fall back to the GDI display APIs the emulator implements.
+        LONG handle_NtUserGetDisplayConfigBufferSizes(const syscall_context& /*c*/, const uint32_t /*flags*/,
+                                                      const emulator_object<uint32_t> out_sizes)
+        {
+            if (out_sizes)
+            {
+                out_sizes.write(0, 0); // numPathArrayElements
+                out_sizes.write(0, 1); // numModeInfoArrayElements
+            }
+
+            return 0; // ERROR_SUCCESS
+        }
+
+        // QueryDisplayConfig: with no CCD topology, report zero active paths/modes and success. The path/mode
+        // arrays are caller-sized from GetDisplayConfigBufferSizes (zero here), so nothing is written into them.
+        LONG handle_NtUserQueryDisplayConfig(const syscall_context& c, const uint32_t /*flags*/,
+                                             const emulator_object<uint32_t> num_path_array_elements,
+                                             const emulator_pointer /*path_info_array*/,
+                                             const emulator_object<uint32_t> num_mode_info_array_elements,
+                                             const emulator_pointer /*mode_info_array*/)
+        {
+            const uint32_t zero = 0;
+            c.win_emu.memory.try_write_memory(num_path_array_elements.value(), &zero, sizeof(zero));
+            c.win_emu.memory.try_write_memory(num_mode_info_array_elements.value(), &zero, sizeof(zero));
+            return 0; // ERROR_SUCCESS
+        }
+
         BOOL handle_NtUserEnumDisplayMonitors(const syscall_context& c, const hdc hdc_in, const uint64_t clip_rect_ptr,
                                               const uint64_t callback, const uint64_t param)
         {
