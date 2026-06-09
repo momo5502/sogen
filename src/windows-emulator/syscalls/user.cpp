@@ -1607,6 +1607,22 @@ namespace sogen
             return 0;
         }
 
+        // Reports an empty top-level/child window enumeration. The trailing (HWND* phwndFirst, UINT* pcHwndNeeded)
+        // pair is stable across Windows versions; writing a zero count is memory-safe and lets enumeration callers
+        // (EnumWindows and friends) complete without iterating any windows.
+        NTSTATUS handle_NtUserBuildHwndList(const syscall_context& /*c*/, const uint64_t /*desktop*/, const hwnd /*next*/,
+                                            const BOOLEAN /*enum_children*/, const BOOLEAN /*unknown*/, const ULONG /*thread_id*/,
+                                            const ULONG /*max_count*/, const uint64_t /*hwnd_list*/,
+                                            const emulator_object<ULONG> hwnd_needed)
+        {
+            if (hwnd_needed)
+            {
+                hwnd_needed.write(0);
+            }
+
+            return STATUS_SUCCESS;
+        }
+
         BOOL handle_NtUserMoveWindow(const syscall_context& c, const hwnd hwnd, const int x, const int y, const int width, const int height,
                                      const BOOL repaint)
         {
@@ -2600,6 +2616,16 @@ namespace sogen
             }
 
             return STATUS_UNSUCCESSFUL;
+        }
+
+        // The emulator owns a single virtual display whose mode never actually changes; accept any requested mode
+        // (including CDS_TEST probes) by reporting DISP_CHANGE_SUCCESSFUL so the renderer proceeds to window setup.
+        LONG handle_NtUserChangeDisplaySettings(const syscall_context& /*c*/,
+                                                const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*device_name*/,
+                                                const emulator_object<EMU_DEVMODEW> /*dev_mode*/, const hwnd /*window*/,
+                                                const DWORD /*flags*/, const uint64_t /*param*/)
+        {
+            return 0; // DISP_CHANGE_SUCCESSFUL
         }
 
         BOOL handle_NtUserEnumDisplayMonitors(const syscall_context& c, const hdc hdc_in, const uint64_t clip_rect_ptr,

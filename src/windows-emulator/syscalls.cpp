@@ -519,6 +519,11 @@ namespace sogen
         NTSTATUS handle_NtUserEnumDisplaySettings(const syscall_context& c,
                                                   emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> device_name, DWORD mode_num,
                                                   emulator_object<EMU_DEVMODEW> dev_mode, DWORD flags);
+        LONG handle_NtUserChangeDisplaySettings(const syscall_context& c,
+                                                emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> device_name,
+                                                emulator_object<EMU_DEVMODEW> dev_mode, hwnd window, DWORD flags, uint64_t param);
+        NTSTATUS handle_NtUserBuildHwndList(const syscall_context& c, uint64_t desktop, hwnd next, BOOLEAN enum_children, BOOLEAN unknown,
+                                            ULONG thread_id, ULONG max_count, uint64_t hwnd_list, emulator_object<ULONG> hwnd_needed);
         BOOL handle_NtUserEnumDisplayMonitors(const syscall_context& c, hdc hdc_in, uint64_t clip_rect_ptr, uint64_t callback,
                                               uint64_t param);
         BOOL completion_NtUserEnumDisplayMonitors(const syscall_context& c, hdc hdc_in, uint64_t clip_rect_ptr, uint64_t callback,
@@ -1196,6 +1201,8 @@ namespace sogen
         add_handler(NtUserGetKeyboardType);
         add_handler(NtUserEnumDisplayDevices);
         add_handler(NtUserEnumDisplaySettings);
+        add_handler(NtUserChangeDisplaySettings);
+        add_handler(NtUserBuildHwndList);
         add_handler(NtUserEnumDisplayMonitors);
         add_handler(NtUserSetProp);
         add_handler(NtUserSetProp2);
