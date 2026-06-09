@@ -62,6 +62,10 @@ EXPORTS
     vkDestroySurfaceKHR
     vkDestroySwapchainKHR
     vkEndCommandBuffer
+    vkEnumerateDeviceExtensionProperties
+    vkEnumerateInstanceExtensionProperties
+    vkEnumerateInstanceLayerProperties
+    vkEnumerateInstanceVersion
     vkEnumeratePhysicalDevices
     vkFreeCommandBuffers
     vkFreeMemory
@@ -71,10 +75,23 @@ EXPORTS
     vkGetFenceStatus
     vkGetImageMemoryRequirements
     vkGetInstanceProcAddr
+    vkGetPhysicalDeviceFeatures
+    vkGetPhysicalDeviceFeatures2
+    vkGetPhysicalDeviceFormatProperties
+    vkGetPhysicalDeviceFormatProperties2
+    vkGetPhysicalDeviceImageFormatProperties
+    vkGetPhysicalDeviceImageFormatProperties2
     vkGetPhysicalDeviceMemoryProperties
+    vkGetPhysicalDeviceMemoryProperties2
     vkGetPhysicalDeviceProperties
+    vkGetPhysicalDeviceProperties2
     vkGetPhysicalDeviceQueueFamilyProperties
+    vkGetPhysicalDeviceQueueFamilyProperties2
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR
+    vkGetPhysicalDeviceSurfaceFormatsKHR
+    vkGetPhysicalDeviceSurfacePresentModesKHR
+    vkGetPhysicalDeviceSurfaceSupportKHR
+    vkGetPhysicalDeviceWin32PresentationSupportKHR
     vkGetSwapchainImagesKHR
     vkMapMemory
     vkQueuePresentKHR

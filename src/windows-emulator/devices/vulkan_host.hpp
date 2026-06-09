@@ -46,9 +46,24 @@ namespace sogen
         // bytes). out_count always receives the true family count.
         int32_t get_queue_family_properties(uint64_t physical_device, void* out, size_t out_size, uint32_t& out_count);
 
-        // Creates a logical device with a single queue family (queue_count queues, default priority)
-        // and no extensions/features. out_device receives a fresh object id, or 0 on failure.
-        int32_t create_device(uint64_t physical_device, uint32_t queue_family_index, uint32_t queue_count, uint64_t& out_device);
+        // Writes the device's real VkExtensionProperties array into out (sized in bytes); out_count
+        // always receives the true device-extension count.
+        int32_t enumerate_device_extension_properties(uint64_t physical_device, void* out, size_t out_size, uint32_t& out_count);
+
+        // Queries vkGetPhysicalDeviceFeatures2 for the pNext chain the guest described. in_records is a
+        // packed array of `struct_count` feature_chain_record {sType, body_size} (guest-supplied,
+        // pad-free body sizes). out_blob receives, in the same order, one record + body bytes per entry
+        // with the device's real feature values (body_size 0 for structs the host does not know).
+        int32_t get_physical_device_features2(uint64_t physical_device, const void* in_records, size_t in_records_size,
+                                              uint32_t struct_count, std::vector<std::byte>& out_blob);
+
+        // Creates a logical device with a single queue family (queue_count queues, default priority),
+        // enabling the given device extensions (extension_blob = `extension_count` NUL-terminated names)
+        // and features (feature_blob = `feature_struct_count` feature_chain_record + body entries, same
+        // format as get_physical_device_features2). out_device receives a fresh object id, or 0 on failure.
+        int32_t create_device(uint64_t physical_device, uint32_t queue_family_index, uint32_t queue_count, const void* extension_blob,
+                              size_t extension_blob_size, uint32_t extension_count, const void* feature_blob, size_t feature_blob_size,
+                              uint32_t feature_struct_count, uint64_t& out_device);
         void destroy_device(uint64_t device);
 
         // Resolves a queue created with the device; out_queue receives a stable object id.

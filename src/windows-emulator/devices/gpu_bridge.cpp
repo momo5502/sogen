@@ -34,6 +34,10 @@ namespace sogen
                     return handle_get_physical_device_properties(win_emu, context);
                 case gpu_bridge::ioctl_get_queue_family_properties:
                     return handle_get_queue_family_properties(win_emu, context);
+                case gpu_bridge::ioctl_enumerate_device_extension_properties:
+                    return handle_enumerate_device_extension_properties(win_emu, context);
+                case gpu_bridge::ioctl_get_physical_device_features2:
+                    return handle_get_physical_device_features2(win_emu, context);
                 case gpu_bridge::ioctl_create_device:
                     return handle_create_device(win_emu, context);
                 case gpu_bridge::ioctl_get_device_queue:
@@ -379,6 +383,83 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            NTSTATUS handle_enumerate_device_extension_properties(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::enumerate_device_extension_properties_request;
+                using response_t = gpu_bridge::enumerate_device_extension_properties_response;
+
+                if (!context.input_buffer || context.input_buffer_length < sizeof(request_t))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (!context.output_buffer || context.output_buffer_length < sizeof(response_t))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                const auto request = emulator_object<request_t>{win_emu.emu(), context.input_buffer}.read();
+                const auto array_bytes = context.output_buffer_length - static_cast<uint32_t>(sizeof(response_t));
+
+                std::vector<std::byte> properties(array_bytes);
+                uint32_t count = 0;
+                const int32_t result = this->vulkan_.enumerate_device_extension_properties(request.physical_device, properties.data(),
+                                                                                           properties.size(), count);
+
+                const response_t response{.vk_result = result, .count = count};
+                emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(response);
+
+                if (array_bytes > 0)
+                {
+                    win_emu.emu().write_memory(context.output_buffer + sizeof(response_t), properties.data(), array_bytes);
+                }
+
+                set_information(context, static_cast<ULONG>(sizeof(response_t) + array_bytes));
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_get_physical_device_features2(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::get_physical_device_features2_request;
+                using response_t = gpu_bridge::get_physical_device_features2_response;
+
+                if (!context.input_buffer || context.input_buffer_length < sizeof(request_t))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (!context.output_buffer || context.output_buffer_length < sizeof(response_t))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                const auto request = emulator_object<request_t>{win_emu.emu(), context.input_buffer}.read();
+
+                const auto records_bytes = context.input_buffer_length - static_cast<uint32_t>(sizeof(request_t));
+                std::vector<std::byte> records(records_bytes);
+                if (records_bytes > 0)
+                {
+                    win_emu.emu().read_memory(context.input_buffer + sizeof(request_t), records.data(), records_bytes);
+                }
+
+                std::vector<std::byte> blob;
+                const int32_t result = this->vulkan_.get_physical_device_features2(request.physical_device, records.data(),
+                                                                                   records.size(), request.struct_count, blob);
+
+                const response_t response{.vk_result = result, .struct_count = request.struct_count};
+                emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(response);
+
+                const auto avail = context.output_buffer_length - static_cast<uint32_t>(sizeof(response_t));
+                const auto to_write = static_cast<uint32_t>(blob.size() < avail ? blob.size() : avail);
+                if (to_write > 0)
+                {
+                    win_emu.emu().write_memory(context.output_buffer + sizeof(response_t), blob.data(), to_write);
+                }
+
+                set_information(context, static_cast<ULONG>(sizeof(response_t) + to_write));
+                return STATUS_SUCCESS;
+            }
+
             NTSTATUS handle_create_device(windows_emulator& win_emu, const io_device_context& context)
             {
                 using request_t = gpu_bridge::create_device_request;
@@ -396,9 +477,35 @@ namespace sogen
 
                 const auto request = emulator_object<request_t>{win_emu.emu(), context.input_buffer}.read();
 
+                // Read the trailing [extension names][feature records] blobs.
+                const auto trailing = context.input_buffer_length - static_cast<uint32_t>(sizeof(request_t));
+                std::vector<std::byte> blob(trailing);
+                if (trailing > 0)
+                {
+                    win_emu.emu().read_memory(context.input_buffer + sizeof(request_t), blob.data(), trailing);
+                }
+
+                const std::byte* extension_blob = nullptr;
+                const std::byte* feature_blob = nullptr;
+                uint32_t extension_count = 0;
+                uint32_t feature_struct_count = 0;
+                size_t extension_blob_size = 0;
+                size_t feature_blob_size = 0;
+                if (static_cast<size_t>(request.extension_blob_size) + request.feature_blob_size <= blob.size())
+                {
+                    extension_blob = blob.data();
+                    extension_blob_size = request.extension_blob_size;
+                    extension_count = request.extension_count;
+                    feature_blob = blob.data() + request.extension_blob_size;
+                    feature_blob_size = request.feature_blob_size;
+                    feature_struct_count = request.feature_struct_count;
+                }
+
                 uint64_t device = gpu_bridge::null_object;
-                const int32_t result =
-                    this->vulkan_.create_device(request.physical_device, request.queue_family_index, request.queue_count, device);
+                const int32_t result = this->vulkan_.create_device(request.physical_device, request.queue_family_index,
+                                                                   request.queue_count, extension_blob, extension_blob_size,
+                                                                   extension_count, feature_blob, feature_blob_size,
+                                                                   feature_struct_count, device);
 
                 const response_t response{
                     .vk_result = result,

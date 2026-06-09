@@ -12,6 +12,8 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cstdarg>
+#include <cstdio>
 #include <cstring>
 #include <type_traits>
 #include <unordered_map>
@@ -24,6 +26,7 @@
 #include <vulkan/vulkan_win32.h>
 
 #include <gpu_bridge_protocol.hpp>
+#include <vk_feature_chain.hpp>
 
 namespace gb = sogen::gpu_bridge;
 
@@ -129,6 +132,25 @@ namespace
         const auto* payload_bytes = reinterpret_cast<const uint8_t*>(payload);
         stream.insert(stream.end(), payload_bytes, payload_bytes + size);
     }
+
+    // Diagnostic output for the shim. OutputDebugStringA is unbuffered, and printf mirrors it to
+    // stdout, which the emulator captures.
+    void shim_log(const char* fmt, ...)
+    {
+        char buffer[512];
+        va_list args;
+        va_start(args, fmt);
+        const int len = std::vsnprintf(buffer, sizeof(buffer), fmt, args);
+        va_end(args);
+        if (len <= 0)
+        {
+            return;
+        }
+
+        OutputDebugStringA(buffer);
+        std::fputs(buffer, stdout);
+        std::fflush(stdout);
+    }
 }
 
 extern "C"
@@ -156,6 +178,61 @@ extern "C"
         gb::destroy_instance_request request{};
         request.instance = to_object_id(instance);
         bridge_call(gb::ioctl_destroy_instance, &request, sizeof(request), nullptr, 0);
+    }
+
+    // The instance-level enumeration commands are resolved (and required) by loaders such as DXVK
+    // before vkCreateInstance. The bridge's vkCreateInstance ignores the requested layers/extensions,
+    // so these only need to advertise enough for callers to proceed: no layers, the Win32 WSI
+    // instance extensions the bridge supports, and a modern API version.
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceVersion(uint32_t* pApiVersion)
+    {
+        if (pApiVersion)
+        {
+            *pApiVersion = VK_API_VERSION_1_3;
+        }
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceLayerProperties(uint32_t* pPropertyCount,
+                                                                                            VkLayerProperties*)
+    {
+        if (!pPropertyCount)
+        {
+            return VK_INCOMPLETE;
+        }
+
+        *pPropertyCount = 0;
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceExtensionProperties(const char* /*pLayerName*/,
+                                                                                                uint32_t* pPropertyCount,
+                                                                                                VkExtensionProperties* pProperties)
+    {
+        static const VkExtensionProperties extensions[] = {
+            {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_SURFACE_SPEC_VERSION},
+            {VK_KHR_WIN32_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_SPEC_VERSION},
+        };
+        constexpr uint32_t available = static_cast<uint32_t>(sizeof(extensions) / sizeof(extensions[0]));
+
+        if (!pPropertyCount)
+        {
+            return VK_INCOMPLETE;
+        }
+
+        if (!pProperties)
+        {
+            *pPropertyCount = available;
+            return VK_SUCCESS;
+        }
+
+        const uint32_t to_copy = std::min(*pPropertyCount, available);
+        for (uint32_t i = 0; i < to_copy; ++i)
+        {
+            pProperties[i] = extensions[i];
+        }
+        *pPropertyCount = to_copy;
+        return to_copy < available ? VK_INCOMPLETE : VK_SUCCESS;
     }
 
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkEnumeratePhysicalDevices(VkInstance instance, uint32_t* pCount,
@@ -259,8 +336,78 @@ extern "C"
             request.queue_count = 1;
         }
 
+        // Marshal the enabled device-extension names (NUL-terminated, concatenated).
+        std::vector<std::byte> extension_blob;
+        uint32_t extension_count = 0;
+        if (pCreateInfo && pCreateInfo->ppEnabledExtensionNames)
+        {
+            for (uint32_t i = 0; i < pCreateInfo->enabledExtensionCount; ++i)
+            {
+                const char* name = pCreateInfo->ppEnabledExtensionNames[i];
+                if (!name)
+                {
+                    continue;
+                }
+                const auto* bytes = reinterpret_cast<const std::byte*>(name);
+                extension_blob.insert(extension_blob.end(), bytes, bytes + std::strlen(name) + 1);
+                ++extension_count;
+            }
+        }
+
+        // Marshal the features to enable as a feature_chain_record stream: the base VkPhysicalDeviceFeatures
+        // (as a FEATURES_2 record) plus each known chained feature struct. Features arrive either through a
+        // VkPhysicalDeviceFeatures2 in pNext (DXVK) or via pEnabledFeatures.
+        std::vector<std::byte> feature_blob;
+        uint32_t feature_struct_count = 0;
+        const auto append_record = [&](VkStructureType type, const void* body_src) {
+            const auto body_size = static_cast<uint32_t>(gb::feature_body_size(type));
+            const gb::feature_chain_record record{.s_type = static_cast<uint32_t>(type), .body_size = body_size};
+            const auto* record_bytes = reinterpret_cast<const std::byte*>(&record);
+            feature_blob.insert(feature_blob.end(), record_bytes, record_bytes + sizeof(record));
+            if (body_size > 0 && body_src)
+            {
+                const auto* body_bytes = static_cast<const std::byte*>(body_src);
+                feature_blob.insert(feature_blob.end(), body_bytes, body_bytes + body_size);
+            }
+            ++feature_struct_count;
+        };
+
+        bool have_features2 = false;
+        if (pCreateInfo)
+        {
+            for (const auto* next = static_cast<const VkBaseInStructure*>(pCreateInfo->pNext); next; next = next->pNext)
+            {
+                if (gb::feature_struct_size(next->sType) == 0)
+                {
+                    continue;
+                }
+                append_record(next->sType, reinterpret_cast<const uint8_t*>(next) + gb::feature_chain_header_size);
+                have_features2 = have_features2 || next->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            }
+            if (!have_features2 && pCreateInfo->pEnabledFeatures)
+            {
+                append_record(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, pCreateInfo->pEnabledFeatures);
+            }
+        }
+
+        request.extension_count = extension_count;
+        request.extension_blob_size = static_cast<uint32_t>(extension_blob.size());
+        request.feature_struct_count = feature_struct_count;
+        request.feature_blob_size = static_cast<uint32_t>(feature_blob.size());
+
+        std::vector<std::byte> in(sizeof(request) + extension_blob.size() + feature_blob.size());
+        std::memcpy(in.data(), &request, sizeof(request));
+        if (!extension_blob.empty())
+        {
+            std::memcpy(in.data() + sizeof(request), extension_blob.data(), extension_blob.size());
+        }
+        if (!feature_blob.empty())
+        {
+            std::memcpy(in.data() + sizeof(request) + extension_blob.size(), feature_blob.data(), feature_blob.size());
+        }
+
         gb::create_device_response response{};
-        if (!bridge_call(gb::ioctl_create_device, &request, sizeof(request), &response, sizeof(response)))
+        if (!bridge_call(gb::ioctl_create_device, in.data(), static_cast<DWORD>(in.size()), &response, sizeof(response)))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -987,6 +1134,327 @@ extern "C"
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         return VK_SUCCESS;
+    }
+
+    // --- Core physical-device + surface queries (minimal stubs for D3D->Vulkan layers like DXVK) ---
+    // The `2` variants delegate to the already-remoted base queries and drop the pNext chain. Features
+    // and format support are reported permissively (everything available) so the layer proceeds; this
+    // is optimistic — the bridge may not actually support every capability — but it advances bring-up.
+    // Surface queries report a single common BGRA format and FIFO present mode.
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFeatures(VkPhysicalDevice, VkPhysicalDeviceFeatures* pFeatures)
+    {
+        if (!pFeatures)
+        {
+            return;
+        }
+        // VkPhysicalDeviceFeatures is a block of VkBool32 toggles; advertise them all as available.
+        auto* flags = reinterpret_cast<VkBool32*>(pFeatures);
+        for (size_t i = 0; i < sizeof(*pFeatures) / sizeof(VkBool32); ++i)
+        {
+            flags[i] = VK_TRUE;
+        }
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFeatures2(VkPhysicalDevice physicalDevice,
+                                                                                  VkPhysicalDeviceFeatures2* pFeatures)
+    {
+        if (!pFeatures)
+        {
+            return;
+        }
+
+        // Collect the caller's chain: the root VkPhysicalDeviceFeatures2 (carrying the base
+        // VkPhysicalDeviceFeatures), then each pNext struct. For each we record its sType + pad-free
+        // body size and where to write the real values back. Bodies start after the {sType,pNext}
+        // header, which is feature_chain_header_size bytes on this ABI.
+        struct dest
+        {
+            uint8_t* body;
+            uint32_t body_size;
+        };
+        std::vector<dest> dests;
+        std::vector<gb::feature_chain_record> records;
+
+        const auto add = [&](VkStructureType type, void* base) {
+            const auto body_size = static_cast<uint32_t>(gb::feature_body_size(type));
+            dests.push_back({reinterpret_cast<uint8_t*>(base) + gb::feature_chain_header_size, body_size});
+            records.push_back({.s_type = static_cast<uint32_t>(type), .body_size = body_size});
+        };
+
+        add(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, pFeatures);
+        for (auto* next = static_cast<VkBaseOutStructure*>(pFeatures->pNext); next; next = next->pNext)
+        {
+            add(next->sType, next);
+        }
+
+        std::vector<std::byte> in(sizeof(gb::get_physical_device_features2_request) +
+                                  records.size() * sizeof(gb::feature_chain_record));
+        auto* request = reinterpret_cast<gb::get_physical_device_features2_request*>(in.data());
+        request->physical_device = to_object_id(physicalDevice);
+        request->struct_count = static_cast<uint32_t>(records.size());
+        request->reserved = 0;
+        std::memcpy(in.data() + sizeof(*request), records.data(), records.size() * sizeof(gb::feature_chain_record));
+
+        size_t out_capacity = sizeof(gb::get_physical_device_features2_response);
+        for (const auto& d : dests)
+        {
+            out_capacity += sizeof(gb::feature_chain_record) + d.body_size;
+        }
+        std::vector<std::byte> out(out_capacity);
+
+        if (!bridge_call(gb::ioctl_get_physical_device_features2, in.data(), static_cast<DWORD>(in.size()), out.data(),
+                         static_cast<DWORD>(out.size())))
+        {
+            return;
+        }
+
+        const auto* response = reinterpret_cast<const gb::get_physical_device_features2_response*>(out.data());
+        if (response->vk_result != VK_SUCCESS)
+        {
+            return;
+        }
+
+        // Records come back in request order, so record i fills dests[i]. Copy the real bool run in.
+        size_t offset = sizeof(gb::get_physical_device_features2_response);
+        for (uint32_t i = 0; i < response->struct_count && i < dests.size(); ++i)
+        {
+            if (offset + sizeof(gb::feature_chain_record) > out.size())
+            {
+                break;
+            }
+            const auto* record = reinterpret_cast<const gb::feature_chain_record*>(out.data() + offset);
+            offset += sizeof(gb::feature_chain_record);
+            if (offset + record->body_size > out.size())
+            {
+                break;
+            }
+
+            const uint32_t copy = record->body_size < dests[i].body_size ? record->body_size : dests[i].body_size;
+            if (copy > 0)
+            {
+                std::memcpy(dests[i].body, out.data() + offset, copy);
+            }
+            offset += record->body_size;
+        }
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceProperties2(VkPhysicalDevice physicalDevice,
+                                                                                    VkPhysicalDeviceProperties2* pProperties)
+    {
+        if (pProperties)
+        {
+            vkGetPhysicalDeviceProperties(physicalDevice, &pProperties->properties);
+        }
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
+    vkGetPhysicalDeviceMemoryProperties2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceMemoryProperties2* pMemoryProperties)
+    {
+        if (pMemoryProperties)
+        {
+            vkGetPhysicalDeviceMemoryProperties(physicalDevice, &pMemoryProperties->memoryProperties);
+        }
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceQueueFamilyProperties2(
+        VkPhysicalDevice physicalDevice, uint32_t* pCount, VkQueueFamilyProperties2* pProperties)
+    {
+        if (!pCount)
+        {
+            return;
+        }
+
+        if (!pProperties)
+        {
+            vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, pCount, nullptr);
+            return;
+        }
+
+        std::vector<VkQueueFamilyProperties> families(*pCount);
+        uint32_t count = *pCount;
+        vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &count, families.data());
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            pProperties[i].queueFamilyProperties = families[i];
+        }
+        *pCount = count;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFormatProperties(VkPhysicalDevice, VkFormat,
+                                                                                         VkFormatProperties* pFormatProperties)
+    {
+        if (!pFormatProperties)
+        {
+            return;
+        }
+        constexpr VkFormatFeatureFlags image_features =
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT |
+            VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT | VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT |
+            VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
+            VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+        constexpr VkFormatFeatureFlags buffer_features = VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT |
+                                                         VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT |
+                                                         VK_FORMAT_FEATURE_STORAGE_TEXEL_BUFFER_BIT;
+        pFormatProperties->linearTilingFeatures = image_features;
+        pFormatProperties->optimalTilingFeatures = image_features;
+        pFormatProperties->bufferFeatures = buffer_features;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFormatProperties2(VkPhysicalDevice physicalDevice, VkFormat format,
+                                                                                          VkFormatProperties2* pFormatProperties)
+    {
+        if (pFormatProperties)
+        {
+            vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &pFormatProperties->formatProperties);
+        }
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceImageFormatProperties(
+        VkPhysicalDevice, VkFormat, VkImageType, VkImageTiling, VkImageUsageFlags, VkImageCreateFlags,
+        VkImageFormatProperties* pImageFormatProperties)
+    {
+        if (!pImageFormatProperties)
+        {
+            return VK_ERROR_FORMAT_NOT_SUPPORTED;
+        }
+        *pImageFormatProperties = {};
+        pImageFormatProperties->maxExtent = {16384, 16384, 16384};
+        pImageFormatProperties->maxMipLevels = 14;
+        pImageFormatProperties->maxArrayLayers = 2048;
+        pImageFormatProperties->sampleCounts = VK_SAMPLE_COUNT_1_BIT;
+        pImageFormatProperties->maxResourceSize = static_cast<VkDeviceSize>(1) << 31;
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceImageFormatProperties2(
+        VkPhysicalDevice physicalDevice, const VkPhysicalDeviceImageFormatInfo2* pImageFormatInfo,
+        VkImageFormatProperties2* pImageFormatProperties)
+    {
+        if (!pImageFormatInfo || !pImageFormatProperties)
+        {
+            return VK_ERROR_FORMAT_NOT_SUPPORTED;
+        }
+        return vkGetPhysicalDeviceImageFormatProperties(physicalDevice, pImageFormatInfo->format, pImageFormatInfo->type,
+                                                        pImageFormatInfo->tiling, pImageFormatInfo->usage, pImageFormatInfo->flags,
+                                                        &pImageFormatProperties->imageFormatProperties);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceSurfaceSupportKHR(VkPhysicalDevice, uint32_t, VkSurfaceKHR,
+                                                                                              VkBool32* pSupported)
+    {
+        if (pSupported)
+        {
+            *pSupported = VK_TRUE;
+        }
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice, VkSurfaceKHR,
+                                                                                              uint32_t* pCount,
+                                                                                              VkSurfaceFormatKHR* pSurfaceFormats)
+    {
+        static const VkSurfaceFormatKHR formats[] = {
+            {VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
+            {VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
+        };
+        constexpr uint32_t available = static_cast<uint32_t>(sizeof(formats) / sizeof(formats[0]));
+
+        if (!pCount)
+        {
+            return VK_INCOMPLETE;
+        }
+        if (!pSurfaceFormats)
+        {
+            *pCount = available;
+            return VK_SUCCESS;
+        }
+
+        const uint32_t to_copy = std::min(*pCount, available);
+        for (uint32_t i = 0; i < to_copy; ++i)
+        {
+            pSurfaceFormats[i] = formats[i];
+        }
+        *pCount = to_copy;
+        return to_copy < available ? VK_INCOMPLETE : VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceSurfacePresentModesKHR(VkPhysicalDevice, VkSurfaceKHR,
+                                                                                                   uint32_t* pCount,
+                                                                                                   VkPresentModeKHR* pPresentModes)
+    {
+        static const VkPresentModeKHR modes[] = {VK_PRESENT_MODE_FIFO_KHR, VK_PRESENT_MODE_IMMEDIATE_KHR};
+        constexpr uint32_t available = static_cast<uint32_t>(sizeof(modes) / sizeof(modes[0]));
+
+        if (!pCount)
+        {
+            return VK_INCOMPLETE;
+        }
+        if (!pPresentModes)
+        {
+            *pCount = available;
+            return VK_SUCCESS;
+        }
+
+        const uint32_t to_copy = std::min(*pCount, available);
+        for (uint32_t i = 0; i < to_copy; ++i)
+        {
+            pPresentModes[i] = modes[i];
+        }
+        *pCount = to_copy;
+        return to_copy < available ? VK_INCOMPLETE : VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkBool32 VKAPI_CALL vkGetPhysicalDeviceWin32PresentationSupportKHR(VkPhysicalDevice, uint32_t)
+    {
+        return VK_TRUE;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateDeviceExtensionProperties(VkPhysicalDevice physicalDevice,
+                                                                                              const char* /*pLayerName*/,
+                                                                                              uint32_t* pPropertyCount,
+                                                                                              VkExtensionProperties* pProperties)
+    {
+        if (!pPropertyCount)
+        {
+            return VK_INCOMPLETE;
+        }
+
+        gb::enumerate_device_extension_properties_request request{};
+        request.physical_device = to_object_id(physicalDevice);
+        request.max_count = pProperties ? *pPropertyCount : 0;
+
+        std::vector<std::byte> buffer(sizeof(gb::enumerate_device_extension_properties_response) +
+                                      static_cast<size_t>(request.max_count) * sizeof(VkExtensionProperties));
+        if (!bridge_call(gb::ioctl_enumerate_device_extension_properties, &request, sizeof(request), buffer.data(),
+                         static_cast<DWORD>(buffer.size())))
+        {
+            *pPropertyCount = 0;
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto* response = reinterpret_cast<const gb::enumerate_device_extension_properties_response*>(buffer.data());
+        if (response->vk_result != VK_SUCCESS)
+        {
+            *pPropertyCount = 0;
+            return static_cast<VkResult>(response->vk_result);
+        }
+
+        if (!pProperties)
+        {
+            *pPropertyCount = response->count;
+            return VK_SUCCESS;
+        }
+
+        const uint32_t written = (response->count < *pPropertyCount) ? response->count : *pPropertyCount;
+        const auto* extensions = reinterpret_cast<const VkExtensionProperties*>(
+            buffer.data() + sizeof(gb::enumerate_device_extension_properties_response));
+        for (uint32_t i = 0; i < written; ++i)
+        {
+            pProperties[i] = extensions[i];
+        }
+        *pPropertyCount = written;
+        return written < response->count ? VK_INCOMPLETE : VK_SUCCESS;
     }
 
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR* pCreateInfo,
@@ -1757,10 +2225,40 @@ extern "C"
             {.name = "vkGetDeviceProcAddr", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceProcAddr)},
             {.name = "vkCreateInstance", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateInstance)},
             {.name = "vkDestroyInstance", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyInstance)},
+            {.name = "vkEnumerateInstanceVersion", .func = reinterpret_cast<PFN_vkVoidFunction>(vkEnumerateInstanceVersion)},
+            {.name = "vkEnumerateInstanceLayerProperties",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkEnumerateInstanceLayerProperties)},
+            {.name = "vkEnumerateInstanceExtensionProperties",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkEnumerateInstanceExtensionProperties)},
             {.name = "vkEnumeratePhysicalDevices", .func = reinterpret_cast<PFN_vkVoidFunction>(vkEnumeratePhysicalDevices)},
+            {.name = "vkEnumerateDeviceExtensionProperties",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkEnumerateDeviceExtensionProperties)},
             {.name = "vkGetPhysicalDeviceProperties", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceProperties)},
+            {.name = "vkGetPhysicalDeviceProperties2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceProperties2)},
+            {.name = "vkGetPhysicalDeviceFeatures", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceFeatures)},
+            {.name = "vkGetPhysicalDeviceFeatures2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceFeatures2)},
+            {.name = "vkGetPhysicalDeviceFormatProperties",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceFormatProperties)},
+            {.name = "vkGetPhysicalDeviceFormatProperties2",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceFormatProperties2)},
+            {.name = "vkGetPhysicalDeviceImageFormatProperties",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceImageFormatProperties)},
+            {.name = "vkGetPhysicalDeviceImageFormatProperties2",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceImageFormatProperties2)},
             {.name = "vkGetPhysicalDeviceQueueFamilyProperties",
              .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceQueueFamilyProperties)},
+            {.name = "vkGetPhysicalDeviceQueueFamilyProperties2",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceQueueFamilyProperties2)},
+            {.name = "vkGetPhysicalDeviceMemoryProperties2",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceMemoryProperties2)},
+            {.name = "vkGetPhysicalDeviceSurfaceSupportKHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceSurfaceSupportKHR)},
+            {.name = "vkGetPhysicalDeviceSurfaceFormatsKHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceSurfaceFormatsKHR)},
+            {.name = "vkGetPhysicalDeviceSurfacePresentModesKHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceSurfacePresentModesKHR)},
+            {.name = "vkGetPhysicalDeviceWin32PresentationSupportKHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceWin32PresentationSupportKHR)},
             {.name = "vkCreateDevice", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateDevice)},
             {.name = "vkDestroyDevice", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDevice)},
             {.name = "vkGetDeviceQueue", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceQueue)},
@@ -1843,6 +2341,9 @@ extern "C"
             }
         }
 
+        // Not implemented: return null per the Vulkan contract (callers use null to detect absent
+        // optional functions/extensions) but log the name so missing entry points stay visible.
+        shim_log("vulkan-shim: no implementation for Vulkan function: %s (returning null)\n", pName);
         return nullptr;
     }
 

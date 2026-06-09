@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 3;
+    inline constexpr uint32_t protocol_version = 4;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -109,6 +109,8 @@ namespace sogen::gpu_bridge
         create_sampler = 0x849,
         destroy_sampler = 0x84A,
         cmd_copy_buffer_to_image = 0x84B,
+        enumerate_device_extension_properties = 0x84C,
+        get_physical_device_features2 = 0x84D,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -176,6 +178,10 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_update_descriptor_sets = make_ioctl(static_cast<uint32_t>(command::update_descriptor_sets));
     inline constexpr uint32_t ioctl_create_sampler = make_ioctl(static_cast<uint32_t>(command::create_sampler));
     inline constexpr uint32_t ioctl_destroy_sampler = make_ioctl(static_cast<uint32_t>(command::destroy_sampler));
+    inline constexpr uint32_t ioctl_enumerate_device_extension_properties =
+        make_ioctl(static_cast<uint32_t>(command::enumerate_device_extension_properties));
+    inline constexpr uint32_t ioctl_get_physical_device_features2 =
+        make_ioctl(static_cast<uint32_t>(command::get_physical_device_features2));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -246,12 +252,60 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
     };
 
-    // ioctl_create_device: in (single queue from one family; no extensions/features for now)
+    // ioctl_enumerate_device_extension_properties: in
+    struct enumerate_device_extension_properties_request
+    {
+        object_id physical_device;
+        uint32_t max_count; // capacity (entries) of the VkExtensionProperties array after the response header
+        uint32_t reserved;
+    };
+
+    // ioctl_enumerate_device_extension_properties: out header, followed by `count` raw VkExtensionProperties
+    struct enumerate_device_extension_properties_response
+    {
+        int32_t vk_result;
+        uint32_t count; // true number of device extensions on the device
+    };
+
+    // One serialized pNext feature struct: the {sType, pNext} header is dropped and only the run of
+    // VkBool32 toggles after it crosses the wire. Shared by features2 queries and create_device.
+    struct feature_chain_record
+    {
+        uint32_t s_type;    // VkStructureType
+        uint32_t body_size; // bytes of feature-bool body following this header (0 if the sType is unknown to the host)
+    };
+
+    // ioctl_get_physical_device_features2: in header, followed by `struct_count` uint32 sType values
+    // (the sTypes of the pNext structs the caller chained onto VkPhysicalDeviceFeatures2).
+    struct get_physical_device_features2_request
+    {
+        object_id physical_device;
+        uint32_t struct_count;
+        uint32_t reserved;
+    };
+
+    // ioctl_get_physical_device_features2: out header, followed by `struct_count` records, each a
+    // feature_chain_record + body_size bytes, in the same order as the requested sTypes.
+    struct get_physical_device_features2_response
+    {
+        int32_t vk_result;
+        uint32_t struct_count;
+    };
+
+    // ioctl_create_device: in (single queue from one family). The header is followed by:
+    //   (a) `extension_count` NUL-terminated extension-name strings (extension_blob_size bytes), then
+    //   (b) `feature_struct_count` feature_chain_record + body entries (feature_blob_size bytes) -- the
+    //       same chain format as get_physical_device_features2, carrying the features to enable
+    //       (a VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 record holds the base VkPhysicalDeviceFeatures).
     struct create_device_request
     {
         object_id physical_device;
         uint32_t queue_family_index;
         uint32_t queue_count;
+        uint32_t extension_count;
+        uint32_t extension_blob_size;
+        uint32_t feature_struct_count;
+        uint32_t feature_blob_size;
     };
 
     // ioctl_create_device: out
@@ -1049,4 +1103,10 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(descriptor_set_layout_binding) == 16, "wire layout drift");
     static_assert(sizeof(cmd_bind_descriptor_sets_request) == 24, "wire layout drift");
     static_assert(sizeof(create_sampler_request) == 32, "wire layout drift");
+    static_assert(sizeof(enumerate_device_extension_properties_request) == 16, "wire layout drift");
+    static_assert(sizeof(enumerate_device_extension_properties_response) == 8, "wire layout drift");
+    static_assert(sizeof(feature_chain_record) == 8, "wire layout drift");
+    static_assert(sizeof(get_physical_device_features2_request) == 16, "wire layout drift");
+    static_assert(sizeof(get_physical_device_features2_response) == 8, "wire layout drift");
+    static_assert(sizeof(create_device_request) == 32, "wire layout drift");
 }
