@@ -65,7 +65,11 @@ namespace sogen
             ::dlclose(handle);
         }
 
+#if defined(__APPLE__)
+        constexpr std::array<const char*, 3> vulkan_loader_names{"libvulkan.1.dylib", "libvulkan.dylib", "libMoltenVK.dylib"};
+#else
         constexpr std::array<const char*, 2> vulkan_loader_names{"libvulkan.so.1", "libvulkan.so"};
+#endif
 #endif
     }
 

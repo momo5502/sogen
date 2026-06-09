@@ -17,7 +17,7 @@ target_link_libraries(vulkan-bridge-marshal INTERFACE
 # Vulkan-Headers submodule.
 add_custom_target(vulkan-bridge-generate
   COMMAND "${PYTHON3_EXE}"
-          "${PROJECT_SOURCE_DIR}/tools/vulkan-bridge-generator/generate.py"
+          "${PROJECT_SOURCE_DIR}/src/tools/vulkan-bridge-generator/generate.py"
           --vk-xml "${PROJECT_SOURCE_DIR}/deps/Vulkan-Headers/registry/vk.xml"
           --output "${CMAKE_CURRENT_LIST_DIR}/vk_bridge_marshal.generated.hxx"
   COMMENT "Regenerating Vulkan bridge marshalling from vk.xml"

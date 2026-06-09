@@ -140,7 +140,7 @@ plus the surrounding calls needed to actually use them:
 
 - **`59103a59` — vk.xml marshalling generator (codegen foundation).** Hand-marshalling does not
   scale to Vulkan's pointer-rich structs, so this introduces a Venus-style generator:
-  - `tools/vulkan-bridge-generator/generate.py` parses `vk.xml` and emits concrete `encode`/`decode`
+  - `src/tools/vulkan-bridge-generator/generate.py` parses `vk.xml` and emits concrete `encode`/`decode`
     overloads for an allowlist of structs into a checked-in header.
   - `src/vulkan-bridge-marshal/` is the runtime: `writer`/`reader` over a byte stream plus an
     `arena` that owns decoded pointees (so the host can pass rebuilt structs to the real driver).
@@ -461,7 +461,7 @@ Later: OpenGL via Zink, DirectX via DXVK — no new bridge work, just guest DLL 
 | `src/windows-emulator/devices/vulkan_host.{hpp,cpp}` | Emulator-free wrapper over the real driver; object-id tables. Kept in its own TU so host `<vulkan/vulkan_core.h>` + `<Windows.h>` don't clash with the emulated Windows types |
 | `src/vulkan-bridge-marshal/vk_bridge_serial.hpp` | Serializer runtime: `writer` / `reader` / `arena` + string/array helpers |
 | `src/vulkan-bridge-marshal/vk_bridge_marshal.generated.hxx` | **Generated** encode/decode (do not edit by hand) |
-| `tools/vulkan-bridge-generator/generate.py` | The generator (parses `vk.xml`); `STRUCT_ALLOWLIST` controls coverage |
+| `src/tools/vulkan-bridge-generator/generate.py` | The generator (parses `vk.xml`); `STRUCT_ALLOWLIST` controls coverage |
 | `src/samples/vulkan-shim/` | Guest `vulkan-1.dll` shim (the deliverable) |
 | `src/samples/vulkan-shim-test/` | Headless guest exe driving the shim (instance→device→fill/clear readback) |
 | `src/windows-emulator-test/vulkan_marshal_test.cpp` | Round-trip gtests for the generated marshalling |
