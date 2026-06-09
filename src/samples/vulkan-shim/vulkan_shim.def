@@ -17,18 +17,22 @@ EXPORTS
     vkCmdBindDescriptorSets
     vkCmdBindIndexBuffer
     vkCmdBindPipeline
+    vkCmdBeginDebugUtilsLabelEXT
     vkCmdBindVertexBuffers
     vkCmdClearColorImage
     vkCmdCopyBufferToImage
     vkCmdCopyImageToBuffer
     vkCmdDraw
     vkCmdDrawIndexed
+    vkCmdEndDebugUtilsLabelEXT
     vkCmdEndRenderPass
     vkCmdFillBuffer
+    vkCmdInsertDebugUtilsLabelEXT
     vkCmdPipelineBarrier
     vkCmdPushConstants
     vkCreateBuffer
     vkCreateCommandPool
+    vkCreateDebugUtilsMessengerEXT
     vkCreateDescriptorPool
     vkCreateDescriptorSetLayout
     vkCreateDevice
@@ -46,6 +50,7 @@ EXPORTS
     vkCreateWin32SurfaceKHR
     vkDestroyBuffer
     vkDestroyCommandPool
+    vkDestroyDebugUtilsMessengerEXT
     vkDestroyDescriptorPool
     vkDestroyDescriptorSetLayout
     vkDestroyDevice
@@ -75,6 +80,7 @@ EXPORTS
     vkGetFenceStatus
     vkGetImageMemoryRequirements
     vkGetInstanceProcAddr
+    vkGetPhysicalDeviceExternalSemaphoreProperties
     vkGetPhysicalDeviceFeatures
     vkGetPhysicalDeviceFeatures2
     vkGetPhysicalDeviceFormatProperties
@@ -87,8 +93,13 @@ EXPORTS
     vkGetPhysicalDeviceProperties2
     vkGetPhysicalDeviceQueueFamilyProperties
     vkGetPhysicalDeviceQueueFamilyProperties2
+    vkGetPhysicalDeviceSparseImageFormatProperties
+    vkGetPhysicalDeviceSparseImageFormatProperties2
+    vkGetPhysicalDeviceSurfaceCapabilities2KHR
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR
+    vkGetPhysicalDeviceSurfaceFormats2KHR
     vkGetPhysicalDeviceSurfaceFormatsKHR
+    vkGetPhysicalDeviceSurfacePresentModes2EXT
     vkGetPhysicalDeviceSurfacePresentModesKHR
     vkGetPhysicalDeviceSurfaceSupportKHR
     vkGetPhysicalDeviceWin32PresentationSupportKHR
@@ -96,7 +107,9 @@ EXPORTS
     vkMapMemory
     vkQueuePresentKHR
     vkQueueSubmit
+    vkReleaseSwapchainImagesEXT
     vkResetFences
+    vkSubmitDebugUtilsMessageEXT
     vkUnmapMemory
     vkUpdateDescriptorSets
     vkWaitForFences

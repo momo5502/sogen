@@ -1397,6 +1397,131 @@ extern "C"
         return VK_TRUE;
     }
 
+    // Core 1.1: the bridge does not model external semaphores, so report none supported (callers fall
+    // back to internal synchronization). Core, so a layer can call it without enabling an extension --
+    // returning null from vkGetInstanceProcAddr for it would crash such a caller.
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceExternalSemaphoreProperties(
+        VkPhysicalDevice, const VkPhysicalDeviceExternalSemaphoreInfo*, VkExternalSemaphoreProperties* pProperties)
+    {
+        if (pProperties)
+        {
+            pProperties->exportFromImportedHandleTypes = 0;
+            pProperties->compatibleHandleTypes = 0;
+            pProperties->externalSemaphoreFeatures = 0;
+        }
+    }
+
+    // Core: no sparse residency support.
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceSparseImageFormatProperties(VkPhysicalDevice, VkFormat, VkImageType,
+                                                                                                    VkSampleCountFlagBits,
+                                                                                                    VkImageUsageFlags, VkImageTiling,
+                                                                                                    uint32_t* pPropertyCount,
+                                                                                                    VkSparseImageFormatProperties*)
+    {
+        if (pPropertyCount)
+        {
+            *pPropertyCount = 0;
+        }
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceSparseImageFormatProperties2(
+        VkPhysicalDevice, const VkPhysicalDeviceSparseImageFormatInfo2*, uint32_t* pPropertyCount, VkSparseImageFormatProperties2*)
+    {
+        if (pPropertyCount)
+        {
+            *pPropertyCount = 0;
+        }
+    }
+
+    // VK_KHR_get_surface_capabilities2 / VK_EXT_surface_maintenance1: delegate to the KHR queries.
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+    vkGetPhysicalDeviceSurfaceCapabilities2KHR(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceSurfaceInfo2KHR* pSurfaceInfo,
+                                               VkSurfaceCapabilities2KHR* pSurfaceCapabilities)
+    {
+        if (!pSurfaceInfo || !pSurfaceCapabilities)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, pSurfaceInfo->surface, &pSurfaceCapabilities->surfaceCapabilities);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+    vkGetPhysicalDeviceSurfaceFormats2KHR(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceSurfaceInfo2KHR* pSurfaceInfo,
+                                          uint32_t* pSurfaceFormatCount, VkSurfaceFormat2KHR* pSurfaceFormats)
+    {
+        if (!pSurfaceInfo || !pSurfaceFormatCount)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (!pSurfaceFormats)
+        {
+            return vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, pSurfaceInfo->surface, pSurfaceFormatCount, nullptr);
+        }
+
+        std::vector<VkSurfaceFormatKHR> formats(*pSurfaceFormatCount);
+        uint32_t count = *pSurfaceFormatCount;
+        const VkResult result = vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, pSurfaceInfo->surface, &count, formats.data());
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            pSurfaceFormats[i].surfaceFormat = formats[i];
+        }
+        *pSurfaceFormatCount = count;
+        return result;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+    vkGetPhysicalDeviceSurfacePresentModes2EXT(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceSurfaceInfo2KHR* pSurfaceInfo,
+                                               uint32_t* pPresentModeCount, VkPresentModeKHR* pPresentModes)
+    {
+        if (!pSurfaceInfo || !pPresentModeCount)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, pSurfaceInfo->surface, pPresentModeCount, pPresentModes);
+    }
+
+    // VK_EXT_debug_utils: accepted but not modeled (labels/messengers are no-ops).
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBeginDebugUtilsLabelEXT(VkCommandBuffer, const VkDebugUtilsLabelEXT*)
+    {
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdEndDebugUtilsLabelEXT(VkCommandBuffer)
+    {
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdInsertDebugUtilsLabelEXT(VkCommandBuffer, const VkDebugUtilsLabelEXT*)
+    {
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateDebugUtilsMessengerEXT(VkInstance,
+                                                                                        const VkDebugUtilsMessengerCreateInfoEXT*,
+                                                                                        const VkAllocationCallbacks*,
+                                                                                        VkDebugUtilsMessengerEXT* pMessenger)
+    {
+        if (pMessenger)
+        {
+            *pMessenger = to_handle<VkDebugUtilsMessengerEXT>(1);
+        }
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyDebugUtilsMessengerEXT(VkInstance, VkDebugUtilsMessengerEXT,
+                                                                                     const VkAllocationCallbacks*)
+    {
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkSubmitDebugUtilsMessageEXT(VkInstance, VkDebugUtilsMessageSeverityFlagBitsEXT,
+                                                                                  VkDebugUtilsMessageTypeFlagsEXT,
+                                                                                  const VkDebugUtilsMessengerCallbackDataEXT*)
+    {
+    }
+
+    // VK_EXT_swapchain_maintenance1: the bridge's readback present has nothing to release.
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkReleaseSwapchainImagesEXT(VkDevice, const VkReleaseSwapchainImagesInfoEXT*)
+    {
+        return VK_SUCCESS;
+    }
+
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateDeviceExtensionProperties(VkPhysicalDevice physicalDevice,
                                                                                               const char* /*pLayerName*/,
                                                                                               uint32_t* pPropertyCount,
@@ -2246,6 +2371,25 @@ extern "C"
              .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceSurfacePresentModesKHR)},
             {.name = "vkGetPhysicalDeviceWin32PresentationSupportKHR",
              .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceWin32PresentationSupportKHR)},
+            {.name = "vkGetPhysicalDeviceExternalSemaphoreProperties",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceExternalSemaphoreProperties)},
+            {.name = "vkGetPhysicalDeviceSparseImageFormatProperties",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceSparseImageFormatProperties)},
+            {.name = "vkGetPhysicalDeviceSparseImageFormatProperties2",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceSparseImageFormatProperties2)},
+            {.name = "vkGetPhysicalDeviceSurfaceCapabilities2KHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceSurfaceCapabilities2KHR)},
+            {.name = "vkGetPhysicalDeviceSurfaceFormats2KHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceSurfaceFormats2KHR)},
+            {.name = "vkGetPhysicalDeviceSurfacePresentModes2EXT",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceSurfacePresentModes2EXT)},
+            {.name = "vkCmdBeginDebugUtilsLabelEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBeginDebugUtilsLabelEXT)},
+            {.name = "vkCmdEndDebugUtilsLabelEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdEndDebugUtilsLabelEXT)},
+            {.name = "vkCmdInsertDebugUtilsLabelEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdInsertDebugUtilsLabelEXT)},
+            {.name = "vkCreateDebugUtilsMessengerEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateDebugUtilsMessengerEXT)},
+            {.name = "vkDestroyDebugUtilsMessengerEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDebugUtilsMessengerEXT)},
+            {.name = "vkSubmitDebugUtilsMessageEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkSubmitDebugUtilsMessageEXT)},
+            {.name = "vkReleaseSwapchainImagesEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkReleaseSwapchainImagesEXT)},
             {.name = "vkCreateDevice", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateDevice)},
             {.name = "vkDestroyDevice", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDevice)},
             {.name = "vkGetDeviceQueue", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceQueue)},
