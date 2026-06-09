@@ -109,9 +109,10 @@ namespace sogen
                                               ULONG create_disposition, ULONG create_options, ULONG named_pipe_type, ULONG read_mode,
                                               ULONG completion_mode, ULONG maximum_instances, ULONG inbound_quota, ULONG outbound_quota,
                                               emulator_object<LARGE_INTEGER> default_timeout);
-        NTSTATUS handle_NtFsControlFile(const syscall_context& c, handle event_handle, uint64_t apc_routine, uint64_t app_context,
+        NTSTATUS handle_NtFsControlFile(const syscall_context& c, handle file_handle, handle event, emulator_pointer apc_routine,
+                                        emulator_pointer apc_context,
                                         emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, ULONG fs_control_code,
-                                        uint64_t input_buffer, ULONG input_buffer_length, uint64_t output_buffer,
+                                        emulator_pointer input_buffer, ULONG input_buffer_length, emulator_pointer output_buffer,
                                         ULONG output_buffer_length);
         NTSTATUS handle_NtFlushBuffersFile(const syscall_context& c, handle file_handle,
                                            emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> /*io_status_block*/);
@@ -557,6 +558,8 @@ namespace sogen
         uint64_t handle_NtGdiCreatePatternBrushInternal(const syscall_context& c, handle bitmap, uint32_t unused);
         uint64_t handle_NtGdiCreatePen(const syscall_context& c, uint32_t style, uint32_t width, uint32_t color);
         uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, hdc dc);
+        int32_t handle_NtGdiSaveDC(const syscall_context& c, hdc dc);
+        BOOL handle_NtGdiRestoreDC(const syscall_context& c, hdc dc, int32_t saved_dc);
         uint64_t handle_NtGdiCreateCompatibleBitmap(const syscall_context& c, hdc dc, uint32_t width, uint32_t height);
         uint64_t handle_NtGdiCreateBitmap(const syscall_context& c, uint32_t width, uint32_t height, uint32_t planes, uint32_t bits_pixel,
                                           emulator_pointer bits);
@@ -1017,6 +1020,8 @@ namespace sogen
         add_handler(NtGdiCreatePatternBrushInternal);
         add_handler(NtGdiCreatePen);
         add_handler(NtGdiCreateCompatibleDC);
+        add_handler(NtGdiSaveDC);
+        add_handler(NtGdiRestoreDC);
         add_handler(NtGdiCreateCompatibleBitmap);
         add_handler(NtGdiCreateBitmap);
         add_handler(NtGdiCreateDIBitmapInternal);

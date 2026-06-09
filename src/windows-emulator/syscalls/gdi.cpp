@@ -1408,6 +1408,58 @@ namespace sogen
             return allocate_gdi_dc(c, dc_attr);
         }
 
+        int32_t handle_NtGdiSaveDC(const syscall_context& c, const hdc dc)
+        {
+            const auto dc_value = static_cast<uint32_t>(dc);
+            auto& stack = c.proc.gdi_dc_save_states[dc_value];
+
+            gdi_dc_state snapshot{};
+            if (const auto it = c.proc.gdi_dc_states.find(dc_value); it != c.proc.gdi_dc_states.end())
+            {
+                snapshot = it->second;
+            }
+
+            stack.push_back(snapshot);
+            return static_cast<int32_t>(stack.size());
+        }
+
+        BOOL handle_NtGdiRestoreDC(const syscall_context& c, const hdc dc, const int32_t saved_dc)
+        {
+            const auto dc_value = static_cast<uint32_t>(dc);
+            const auto it = c.proc.gdi_dc_save_states.find(dc_value);
+            if (it == c.proc.gdi_dc_save_states.end() || it->second.empty())
+            {
+                return FALSE;
+            }
+
+            auto& stack = it->second;
+
+            // A positive level identifies an absolute save instance (1-based); a negative level is
+            // relative to the top of the stack (-1 being the most recently saved state).
+            size_t target_index = 0;
+            if (saved_dc < 0)
+            {
+                const auto relative = static_cast<size_t>(-static_cast<int64_t>(saved_dc));
+                if (relative == 0 || relative > stack.size())
+                {
+                    return FALSE;
+                }
+                target_index = stack.size() - relative;
+            }
+            else
+            {
+                if (saved_dc < 1 || static_cast<size_t>(saved_dc) > stack.size())
+                {
+                    return FALSE;
+                }
+                target_index = static_cast<size_t>(saved_dc) - 1;
+            }
+
+            c.proc.gdi_dc_states[dc_value] = stack[target_index];
+            stack.resize(target_index);
+            return TRUE;
+        }
+
         uint64_t handle_NtGdiCreateCompatibleBitmap(const syscall_context& c, const hdc /*dc*/, const uint32_t width, const uint32_t height)
         {
             const auto handle_value = allocate_gdi_object(c, k_gdi_bitmap_type, k_gdi_bitmap_attr_size);

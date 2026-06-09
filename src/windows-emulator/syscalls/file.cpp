@@ -2054,17 +2054,38 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtFsControlFile(const syscall_context& c, const handle /*event_handle*/, const uint64_t /*apc_routine*/,
-                                        const uint64_t /*app_context*/,
-                                        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> /*io_status_block*/,
-                                        const ULONG /*fs_control_code*/, const uint64_t /*input_buffer*/,
-                                        const ULONG /*input_buffer_length*/, const uint64_t /*output_buffer*/,
-                                        const ULONG /*output_buffer_length*/)
+        NTSTATUS handle_NtFsControlFile(const syscall_context& c, const handle file_handle, const handle event,
+                                        const emulator_pointer apc_routine, const emulator_pointer apc_context,
+                                        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                                        const ULONG fs_control_code, const emulator_pointer input_buffer,
+                                        const ULONG input_buffer_length, const emulator_pointer output_buffer,
+                                        const ULONG output_buffer_length)
         {
-            c.win_emu.log.error("Unimplemented syscall NtFsControlFile!");
-            c.emu.stop();
+            auto* device = c.proc.devices.get(file_handle);
+            if (!device)
+            {
+                c.win_emu.log.warn("NtFsControlFile on non-device handle (control code 0x%X)\n",
+                                   static_cast<uint32_t>(fs_control_code));
+                return STATUS_INVALID_HANDLE;
+            }
 
-            return STATUS_NOT_SUPPORTED;
+            if (auto* e = c.proc.events.get(event))
+            {
+                e->signaled = false;
+            }
+
+            io_device_context context{c.emu};
+            context.event = event;
+            context.apc_routine = apc_routine;
+            context.apc_context = apc_context;
+            context.io_status_block = io_status_block;
+            context.io_control_code = fs_control_code;
+            context.input_buffer = input_buffer;
+            context.input_buffer_length = input_buffer_length;
+            context.output_buffer = output_buffer;
+            context.output_buffer_length = output_buffer_length;
+
+            return device->execute_ioctl(c.win_emu, context);
         }
 
         NTSTATUS handle_NtFlushBuffersFile(const syscall_context& c, const handle file_handle,

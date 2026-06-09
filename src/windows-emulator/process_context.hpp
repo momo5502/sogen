@@ -248,6 +248,8 @@ namespace sogen
         uint64_t dispatch_client_message{};
         uint32_t gdi_default_dc_handle{};
         std::map<uint32_t, gdi_dc_state> gdi_dc_states{};
+        // Per-DC stack of states pushed by NtGdiSaveDC and popped by NtGdiRestoreDC.
+        std::map<uint32_t, std::vector<gdi_dc_state>> gdi_dc_save_states{};
         std::map<uint32_t, gdi_bitmap_surface> gdi_bitmap_surfaces{};
         // Persistent per-top-level-window paint surface; child controls composite into it at their offset.
         std::map<uint32_t, gdi_bitmap_surface> gdi_window_surfaces{};
