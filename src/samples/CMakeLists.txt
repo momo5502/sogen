@@ -19,6 +19,7 @@ add_subdirectory(vulkan-cube-field-sample)
 add_subdirectory(vulkan-vertex-buffer-sample)
 add_subdirectory(vulkan-uniform-buffer-sample)
 add_subdirectory(vulkan-texture-sample)
+add_subdirectory(vulkan-depth-cube-sample)
 
 ##########################################
 

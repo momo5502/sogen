@@ -170,17 +170,21 @@ namespace sogen
         int32_t create_shader_module(uint64_t device, const void* code, size_t code_size, uint64_t& out_module);
         void destroy_shader_module(uint64_t device, uint64_t shader_module);
 
-        int32_t create_image_view(uint64_t device, uint64_t image, uint32_t format, uint64_t& out_view);
+        // aspect_mask selects COLOR vs DEPTH (0 defaults to COLOR).
+        int32_t create_image_view(uint64_t device, uint64_t image, uint32_t format, uint32_t aspect_mask,
+                                  uint64_t& out_view);
         void destroy_image_view(uint64_t device, uint64_t image_view);
 
-        // Single color attachment, single subpass (initial/final layouts as given; PRESENT_SRC_KHR is
-        // mapped to TRANSFER_SRC_OPTIMAL).
+        // One color attachment + an optional depth attachment (depth_format == 0 => color only), single
+        // subpass (initial/final layouts as given; PRESENT_SRC_KHR is mapped to TRANSFER_SRC_OPTIMAL).
         int32_t create_render_pass(uint64_t device, uint32_t format, uint32_t load_op, uint32_t store_op,
-                                   uint32_t initial_layout, uint32_t final_layout, uint64_t& out_render_pass);
+                                   uint32_t initial_layout, uint32_t final_layout, uint32_t depth_format,
+                                   uint64_t& out_render_pass);
         void destroy_render_pass(uint64_t device, uint64_t render_pass);
 
-        int32_t create_framebuffer(uint64_t device, uint64_t render_pass, uint64_t image_view, uint32_t width,
-                                   uint32_t height, uint64_t& out_framebuffer);
+        // depth_view == 0 => single color attachment.
+        int32_t create_framebuffer(uint64_t device, uint64_t render_pass, uint64_t image_view, uint64_t depth_view,
+                                   uint32_t width, uint32_t height, uint64_t& out_framebuffer);
         void destroy_framebuffer(uint64_t device, uint64_t framebuffer);
 
         // --- descriptor sets (uniform buffers now; combined image samplers added with textures) ---
@@ -249,16 +253,26 @@ namespace sogen
             uint32_t offset;
         };
 
-        // Triangle list, static full-extent viewport/scissor, one non-blended color attachment. Empty
-        // vertex input (no bindings/attributes) leaves vertices to be baked into the shader.
+        // Optional depth-stencil state for a pipeline (test_enable == 0 => none, as before).
+        struct depth_state
+        {
+            uint32_t test_enable;
+            uint32_t write_enable;
+            uint32_t compare_op;
+        };
+
+        // Triangle list, static full-extent viewport/scissor, one non-blended color attachment, optional
+        // depth test. Empty vertex input (no bindings/attributes) leaves vertices to be baked into the shader.
         int32_t create_graphics_pipeline(uint64_t device, uint64_t render_pass, uint64_t pipeline_layout,
                                          uint64_t vertex_shader, uint64_t fragment_shader, uint32_t width, uint32_t height,
                                          std::span<const vertex_binding> bindings,
-                                         std::span<const vertex_attribute> attributes, uint64_t& out_pipeline);
+                                         std::span<const vertex_attribute> attributes, const depth_state& depth,
+                                         uint64_t& out_pipeline);
         void destroy_pipeline(uint64_t device, uint64_t pipeline);
 
+        // clear_depth is used only when the render pass has a depth attachment.
         int32_t cmd_begin_render_pass(uint64_t command_buffer, uint64_t render_pass, uint64_t framebuffer, uint32_t width,
-                                      uint32_t height, float r, float g, float b, float a);
+                                      uint32_t height, float r, float g, float b, float a, float clear_depth);
         int32_t cmd_bind_pipeline(uint64_t command_buffer, uint64_t pipeline);
         int32_t cmd_draw(uint64_t command_buffer, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex,
                          uint32_t first_instance);

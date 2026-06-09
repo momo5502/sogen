@@ -225,6 +225,18 @@ plus the surrounding calls needed to actually use them:
   on screen against SwiftShader and as a native app. This sample touches the whole draw stack at once:
   vertex + index buffers, a push constant, a descriptor set, and a sampled texture.
 
+- **Depth buffer (correct 3D occlusion).** Render passes can now have a depth attachment. The existing
+  create-info entry points gained optional depth fields (all backward-compatible — depth off is the
+  previous behavior): `vkCreateRenderPass` adds a depth attachment when the subpass has a
+  `pDepthStencilAttachment`; `vkCreateFramebuffer` takes a second (depth) attachment; `vkCreateImageView`
+  honors the `aspectMask` (so a `DEPTH` view works, not just `COLOR`); `vkCreateGraphicsPipelines`
+  applies the `VkPipelineDepthStencilState` (depth test/write + compare op); and `vkCmdBeginRenderPass`
+  carries a depth clear value (used only when the render pass has depth). A depth image is an ordinary
+  `vkCreateImage` with `DEPTH_STENCIL_ATTACHMENT` usage. New guest sample `vulkan-depth-cube-sample`
+  draws a real 3D cube (vertex/index buffers + a mat4 MVP push constant) that occludes correctly via the
+  depth buffer with **no CPU face sorting** — unlike `vulkan-cube-sample`, which predates depth support
+  and painter's-sorts its faces. Verified on screen against SwiftShader and as a native app.
+
 - **Running the samples on a real driver (not just the bridge).** Each Vulkan sample doubles as an
   ordinary native Vulkan app: load the real `vulkan-1.dll` instead of the shim (`… .exe vulkan-1.dll`)
   and it runs against a real GPU. This is a strong correctness check on the shim's API fidelity — the
@@ -270,9 +282,10 @@ WSI: `vkCreateWin32SurfaceKHR`, `vkDestroySurfaceKHR`, `vkGetPhysicalDeviceSurfa
 `vkCreateSwapchainKHR`, `vkDestroySwapchainKHR`, `vkGetSwapchainImagesKHR`, `vkAcquireNextImageKHR`,
 `vkQueuePresentKHR`.
 
-Graphics pipeline: `vkCreateShaderModule`, `vkCreateImageView`, `vkCreateRenderPass`,
-`vkCreateFramebuffer`, `vkCreatePipelineLayout` (with a push-constant range and descriptor-set layouts),
-`vkCreateGraphicsPipelines` (now with vertex input state) (+ destroys), `vkCmdBeginRenderPass`,
+Graphics pipeline: `vkCreateShaderModule`, `vkCreateImageView` (color or depth aspect),
+`vkCreateRenderPass` (color + optional depth attachment), `vkCreateFramebuffer`, `vkCreatePipelineLayout`
+(with a push-constant range and descriptor-set layouts), `vkCreateGraphicsPipelines` (vertex input state
++ optional depth test) (+ destroys), `vkCmdBeginRenderPass`,
 `vkCmdBindPipeline`, `vkCmdPushConstants`, `vkCmdBindVertexBuffers`, `vkCmdBindIndexBuffer`, `vkCmdDraw`,
 `vkCmdDrawIndexed`, `vkCmdEndRenderPass`.
 
@@ -385,9 +398,9 @@ Cross-cutting (needed as the create-infos get richer, can land alongside the ste
   semaphores, and surface-format/present-mode enumeration. (Today the samples are fixed-size and pass
   valid swapchain parameters directly.)
 - **Draw plumbing is in place** — vertex + index buffers + `vkCmdDrawIndexed`, uniform buffers +
-  descriptor sets, and sampled textures are all **done** (see the M2 slices above). The remaining draw
-  refinements are richer fixed-function/pipeline state (depth/stencil, blending, multiple attachments,
-  dynamic state) and multiple/array descriptors as real apps need them.
+  descriptor sets, sampled textures, and a depth buffer are all **done** (see the M2 slices above). The
+  remaining draw refinements are richer fixed-function/pipeline state (stencil, blending, multiple color
+  attachments, MSAA, dynamic state) and multiple/array descriptors as real apps need them.
 
 Later: OpenGL via Zink, DirectX via DXVK — no new bridge work, just guest DLL provisioning.
 
@@ -405,11 +418,12 @@ Later: OpenGL via Zink, DirectX via DXVK — no new bridge work, just guest DLL 
 | `src/samples/vulkan-shim-test/` | Headless guest exe driving the shim (instance→device→fill/clear readback) |
 | `src/samples/vulkan-window-sample/` | Windowed guest exe: Win32 window + swapchain + render-pass triangle. `triangle.{vert,frag}` are the GLSL sources; `triangle_spirv.hpp` is the checked-in compiled SPIR-V. Also runs natively against a real GPU (`… vulkan-1.dll`) |
 | `src/samples/vulkan-spinning-triangle-sample/` | Windowed guest exe: a push-constant-rotated triangle with an FPS readout in the title bar. `spinning.{vert,frag}` + checked-in `spinning_triangle_spirv.hpp`. Also runs natively |
-| `src/samples/vulkan-cube-sample/` | Windowed guest exe: a 3D spinning cube (mat4 MVP push constant; faces CPU-sorted back-to-front since the bridge has no depth/cull) that prints FPS to stdout every real second for host-vs-emulated comparison. `cube.{vert,frag}` + checked-in `cube_spirv.hpp`. Also runs natively |
+| `src/samples/vulkan-cube-sample/` | Windowed guest exe: a 3D spinning cube (mat4 MVP push constant; faces CPU-sorted back-to-front — predates depth support, see `vulkan-depth-cube-sample` for the depth-buffered version) that prints FPS to stdout every real second for host-vs-emulated comparison. `cube.{vert,frag}` + checked-in `cube_spirv.hpp`. Also runs natively |
 | `src/samples/vulkan-cube-field-sample/` | Windowed guest exe: a rotating field of many individually spinning, diffuse-lit cubes (default 5×3×5 = 75; ~530 recorded commands/frame). Exercises command batching and a 128-byte push constant (mvp + model for lighting); cubes and their faces are painter's-sorted. `cube_field.{vert,frag}` + checked-in `cube_field_spirv.hpp`. Also runs natively |
 | `src/samples/vulkan-vertex-buffer-sample/` | Windowed guest exe: a push-constant-rotated quad whose geometry comes from a real **vertex buffer + index buffer** (drawn with `vkCmdDrawIndexed`), exercising pipeline vertex input. `vertex_buffer.{vert,frag}` + checked-in `vertex_buffer_spirv.hpp`. Also runs natively |
 | `src/samples/vulkan-uniform-buffer-sample/` | Windowed guest exe: the vertex/index-buffer quad with its rotation + tint driven by a **uniform buffer** bound via a **descriptor set** (`vkCmdBindDescriptorSets`), rewritten each frame. `uniform_buffer.{vert,frag}` + checked-in `uniform_buffer_spirv.hpp`. Also runs natively |
 | `src/samples/vulkan-texture-sample/` | Windowed guest exe: a **textured** spinning quad — a 64×64 RGBA checkerboard uploaded via a staging buffer + `vkCmdCopyBufferToImage` and sampled through a **combined image sampler** descriptor. Exercises the full draw stack (vertex/index buffers + push constant + descriptor set + texture). `texture.{vert,frag}` + checked-in `texture_spirv.hpp`. Also runs natively |
+| `src/samples/vulkan-depth-cube-sample/` | Windowed guest exe: a real 3D cube (vertex/index buffers + mat4 MVP push constant) with correct occlusion from a **depth buffer** — no CPU face sorting. Exercises the render-pass/framebuffer/pipeline depth attachment. `depth_cube.{vert,frag}` + checked-in `depth_cube_spirv.hpp`. Also runs natively |
 | `src/samples/gpu-bridge-probe-sample/` | Low-level probe (direct `DeviceIoControl`, no Vulkan headers) |
 | `src/windows-emulator-test/vulkan_marshal_test.cpp` | Round-trip gtests for the generated marshalling |
 | `deps/Vulkan-Headers` | Shallow submodule; `vulkan-headers` INTERFACE target |
@@ -461,6 +475,7 @@ cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-cube-field-sample.e
 cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-vertex-buffer-sample.exe vulkan-shim.dll"
 cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-uniform-buffer-sample.exe vulkan-shim.dll"
 cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-texture-sample.exe vulkan-shim.dll"
+cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-depth-cube-sample.exe vulkan-shim.dll"
 ```
 
 `vulkan-cube-sample` runs until its window is closed and prints the measured FPS to stdout once per

@@ -1155,6 +1155,7 @@ extern "C"
         request.device = to_object_id(device);
         request.image = to_object_id(pCreateInfo->image);
         request.format = static_cast<uint32_t>(pCreateInfo->format);
+        request.aspect_mask = pCreateInfo->subresourceRange.aspectMask;
 
         gb::object_response response{};
         if (!bridge_call(gb::ioctl_create_image_view, &request, sizeof(request), &response, sizeof(response)))
@@ -1180,7 +1181,8 @@ extern "C"
                                                                             const VkAllocationCallbacks*,
                                                                             VkRenderPass* pRenderPass)
     {
-        // Single color attachment is modeled; the first attachment drives the render pass.
+        // The first attachment drives the color attachment; a subpass depth-stencil attachment (if any)
+        // contributes its format so the bridge adds a matching depth attachment.
         const VkAttachmentDescription& a = pCreateInfo->pAttachments[0];
         gb::create_render_pass_request request{};
         request.device = to_object_id(device);
@@ -1189,6 +1191,14 @@ extern "C"
         request.store_op = static_cast<uint32_t>(a.storeOp);
         request.initial_layout = static_cast<uint32_t>(a.initialLayout);
         request.final_layout = static_cast<uint32_t>(a.finalLayout);
+        if (pCreateInfo->subpassCount > 0 && pCreateInfo->pSubpasses[0].pDepthStencilAttachment)
+        {
+            const uint32_t depth_index = pCreateInfo->pSubpasses[0].pDepthStencilAttachment->attachment;
+            if (depth_index != VK_ATTACHMENT_UNUSED && depth_index < pCreateInfo->attachmentCount)
+            {
+                request.depth_format = static_cast<uint32_t>(pCreateInfo->pAttachments[depth_index].format);
+            }
+        }
 
         gb::object_response response{};
         if (!bridge_call(gb::ioctl_create_render_pass, &request, sizeof(request), &response, sizeof(response)))
@@ -1217,7 +1227,8 @@ extern "C"
         gb::create_framebuffer_request request{};
         request.device = to_object_id(device);
         request.render_pass = to_object_id(pCreateInfo->renderPass);
-        request.image_view = to_object_id(pCreateInfo->pAttachments[0]); // single attachment
+        request.image_view = to_object_id(pCreateInfo->pAttachments[0]); // color attachment
+        request.depth_view = (pCreateInfo->attachmentCount >= 2) ? to_object_id(pCreateInfo->pAttachments[1]) : gb::null_object;
         request.width = pCreateInfo->width;
         request.height = pCreateInfo->height;
 
@@ -1543,6 +1554,12 @@ extern "C"
             request.fragment_shader = fragment_shader;
             request.width = width;
             request.height = height;
+            if (ci.pDepthStencilState && ci.pDepthStencilState->depthTestEnable)
+            {
+                request.depth_test_enable = 1;
+                request.depth_write_enable = ci.pDepthStencilState->depthWriteEnable ? 1 : 0;
+                request.depth_compare_op = static_cast<uint32_t>(ci.pDepthStencilState->depthCompareOp);
+            }
             request.binding_count = binding_count;
             request.attribute_count = attribute_count;
 
@@ -1602,12 +1619,17 @@ extern "C"
         request.framebuffer = to_object_id(pRenderPassBegin->framebuffer);
         request.width = pRenderPassBegin->renderArea.extent.width;
         request.height = pRenderPassBegin->renderArea.extent.height;
+        request.clear_depth = 1.0f;
         if (pRenderPassBegin->clearValueCount > 0 && pRenderPassBegin->pClearValues)
         {
             request.clear_r = pRenderPassBegin->pClearValues[0].color.float32[0];
             request.clear_g = pRenderPassBegin->pClearValues[0].color.float32[1];
             request.clear_b = pRenderPassBegin->pClearValues[0].color.float32[2];
             request.clear_a = pRenderPassBegin->pClearValues[0].color.float32[3];
+            if (pRenderPassBegin->clearValueCount >= 2)
+            {
+                request.clear_depth = pRenderPassBegin->pClearValues[1].depthStencil.depth;
+            }
         }
         record_command(request.command_buffer, gb::command::cmd_begin_render_pass, &request, sizeof(request));
     }

@@ -989,7 +989,8 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
                 uint64_t view = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_image_view(request.device, request.image, request.format, view);
+                const int32_t result =
+                    this->vulkan_.create_image_view(request.device, request.image, request.format, request.aspect_mask, view);
                 return write_output(win_emu, context,
                                     gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = view});
             }
@@ -1015,7 +1016,8 @@ namespace sogen
                 uint64_t render_pass = gpu_bridge::null_object;
                 const int32_t result = this->vulkan_.create_render_pass(request.device, request.format, request.load_op,
                                                                         request.store_op, request.initial_layout,
-                                                                        request.final_layout, render_pass);
+                                                                        request.final_layout, request.depth_format,
+                                                                        render_pass);
                 return write_output(win_emu, context,
                                     gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = render_pass});
             }
@@ -1040,8 +1042,8 @@ namespace sogen
                 }
                 uint64_t framebuffer = gpu_bridge::null_object;
                 const int32_t result = this->vulkan_.create_framebuffer(request.device, request.render_pass,
-                                                                        request.image_view, request.width, request.height,
-                                                                        framebuffer);
+                                                                        request.image_view, request.depth_view,
+                                                                        request.width, request.height, framebuffer);
                 return write_output(win_emu, context,
                                     gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = framebuffer});
             }
@@ -1135,10 +1137,14 @@ namespace sogen
                     attributes[i] = {.location = a.location, .binding = a.binding, .format = a.format, .offset = a.offset};
                 }
 
+                const vulkan_host::depth_state depth{.test_enable = request.depth_test_enable,
+                                                     .write_enable = request.depth_write_enable,
+                                                     .compare_op = request.depth_compare_op};
+
                 uint64_t pipeline = gpu_bridge::null_object;
                 const int32_t result = this->vulkan_.create_graphics_pipeline(
                     request.device, request.render_pass, request.pipeline_layout, request.vertex_shader,
-                    request.fragment_shader, request.width, request.height, bindings, attributes, pipeline);
+                    request.fragment_shader, request.width, request.height, bindings, attributes, depth, pipeline);
                 return write_output(win_emu, context,
                                     gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = pipeline});
             }
@@ -1382,7 +1388,8 @@ namespace sogen
                         return vk_error_initialization_failed;
                     }
                     return this->vulkan_.cmd_begin_render_pass(req.command_buffer, req.render_pass, req.framebuffer, req.width,
-                                                               req.height, req.clear_r, req.clear_g, req.clear_b, req.clear_a);
+                                                               req.height, req.clear_r, req.clear_g, req.clear_b, req.clear_a,
+                                                               req.clear_depth);
                 }
                 case gpu_bridge::command::cmd_bind_pipeline:
                 {

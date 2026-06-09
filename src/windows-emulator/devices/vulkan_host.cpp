@@ -269,6 +269,7 @@ namespace sogen
         {
             VkRenderPass handle{};
             uint64_t device_id{};
+            bool has_depth{};
         };
         struct framebuffer_data
         {
@@ -2153,7 +2154,8 @@ namespace sogen
         this->impl_->shader_modules.erase(it);
     }
 
-    int32_t vulkan_host::create_image_view(uint64_t device, uint64_t image, uint32_t format, uint64_t& out_view)
+    int32_t vulkan_host::create_image_view(uint64_t device, uint64_t image, uint32_t format, uint32_t aspect_mask,
+                                           uint64_t& out_view)
     {
         out_view = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -2168,7 +2170,7 @@ namespace sogen
         info.image = img->second.handle;
         info.viewType = VK_IMAGE_VIEW_TYPE_2D;
         info.format = static_cast<VkFormat>(format);
-        info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        info.subresourceRange.aspectMask = (aspect_mask != 0) ? aspect_mask : VK_IMAGE_ASPECT_COLOR_BIT;
         info.subresourceRange.levelCount = 1;
         info.subresourceRange.layerCount = 1;
 
@@ -2201,7 +2203,8 @@ namespace sogen
     }
 
     int32_t vulkan_host::create_render_pass(uint64_t device, uint32_t format, uint32_t load_op, uint32_t store_op,
-                                            uint32_t initial_layout, uint32_t final_layout, uint64_t& out_render_pass)
+                                            uint32_t initial_layout, uint32_t final_layout, uint32_t depth_format,
+                                            uint64_t& out_render_pass)
     {
         out_render_pass = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -2210,24 +2213,39 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        VkAttachmentDescription color{};
-        color.format = static_cast<VkFormat>(format);
-        color.samples = VK_SAMPLE_COUNT_1_BIT;
-        color.loadOp = static_cast<VkAttachmentLoadOp>(load_op);
-        color.storeOp = static_cast<VkAttachmentStoreOp>(store_op);
-        color.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        color.initialLayout = translate_layout(initial_layout);
-        color.finalLayout = translate_layout(final_layout);
+        const bool has_depth = depth_format != 0;
 
-        VkAttachmentReference ref{};
-        ref.attachment = 0;
-        ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        std::array<VkAttachmentDescription, 2> attachments{};
+        attachments[0].format = static_cast<VkFormat>(format);
+        attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[0].loadOp = static_cast<VkAttachmentLoadOp>(load_op);
+        attachments[0].storeOp = static_cast<VkAttachmentStoreOp>(store_op);
+        attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[0].initialLayout = translate_layout(initial_layout);
+        attachments[0].finalLayout = translate_layout(final_layout);
+        // Depth attachment is cleared on load and not stored (transient).
+        attachments[1].format = static_cast<VkFormat>(depth_format);
+        attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+        VkAttachmentReference color_ref{};
+        color_ref.attachment = 0;
+        color_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        VkAttachmentReference depth_ref{};
+        depth_ref.attachment = 1;
+        depth_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
         VkSubpassDescription subpass{};
         subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         subpass.colorAttachmentCount = 1;
-        subpass.pColorAttachments = &ref;
+        subpass.pColorAttachments = &color_ref;
+        subpass.pDepthStencilAttachment = has_depth ? &depth_ref : nullptr;
 
         VkSubpassDependency dep{};
         dep.srcSubpass = VK_SUBPASS_EXTERNAL;
@@ -2236,11 +2254,18 @@ namespace sogen
         dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         dep.srcAccessMask = 0;
         dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        if (has_depth)
+        {
+            // Also synchronize the depth attachment's load/store across the early/late fragment tests.
+            dep.srcStageMask |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+            dep.dstStageMask |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+            dep.dstAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        }
 
         VkRenderPassCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-        info.attachmentCount = 1;
-        info.pAttachments = &color;
+        info.attachmentCount = has_depth ? 2 : 1;
+        info.pAttachments = attachments.data();
         info.subpassCount = 1;
         info.pSubpasses = &subpass;
         info.dependencyCount = 1;
@@ -2254,7 +2279,8 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->next_id++;
-        this->impl_->render_passes.emplace(id, impl::render_pass_data{.handle = render_pass, .device_id = device});
+        this->impl_->render_passes.emplace(
+            id, impl::render_pass_data{.handle = render_pass, .device_id = device, .has_depth = has_depth});
         out_render_pass = id;
         return VK_SUCCESS;
     }
@@ -2274,8 +2300,8 @@ namespace sogen
         this->impl_->render_passes.erase(it);
     }
 
-    int32_t vulkan_host::create_framebuffer(uint64_t device, uint64_t render_pass, uint64_t image_view, uint32_t width,
-                                            uint32_t height, uint64_t& out_framebuffer)
+    int32_t vulkan_host::create_framebuffer(uint64_t device, uint64_t render_pass, uint64_t image_view, uint64_t depth_view,
+                                            uint32_t width, uint32_t height, uint64_t& out_framebuffer)
     {
         out_framebuffer = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -2287,11 +2313,24 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        std::array<VkImageView, 2> views{view->second.handle, VK_NULL_HANDLE};
+        uint32_t attachment_count = 1;
+        if (depth_view != 0)
+        {
+            const auto dview = this->impl_->image_views.find(depth_view);
+            if (dview == this->impl_->image_views.end())
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            views[1] = dview->second.handle;
+            attachment_count = 2;
+        }
+
         VkFramebufferCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         info.renderPass = rp->second.handle;
-        info.attachmentCount = 1;
-        info.pAttachments = &view->second.handle;
+        info.attachmentCount = attachment_count;
+        info.pAttachments = views.data();
         info.width = width;
         info.height = height;
         info.layers = 1;
@@ -2631,7 +2670,8 @@ namespace sogen
     int32_t vulkan_host::create_graphics_pipeline(uint64_t device, uint64_t render_pass, uint64_t pipeline_layout,
                                                   uint64_t vertex_shader, uint64_t fragment_shader, uint32_t width,
                                                   uint32_t height, std::span<const vertex_binding> bindings,
-                                                  std::span<const vertex_attribute> attributes, uint64_t& out_pipeline)
+                                                  std::span<const vertex_attribute> attributes, const depth_state& depth,
+                                                  uint64_t& out_pipeline)
     {
         out_pipeline = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -2720,6 +2760,12 @@ namespace sogen
         color_blend.attachmentCount = 1;
         color_blend.pAttachments = &blend_attachment;
 
+        VkPipelineDepthStencilStateCreateInfo depth_stencil{};
+        depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+        depth_stencil.depthTestEnable = depth.test_enable ? VK_TRUE : VK_FALSE;
+        depth_stencil.depthWriteEnable = depth.write_enable ? VK_TRUE : VK_FALSE;
+        depth_stencil.depthCompareOp = static_cast<VkCompareOp>(depth.compare_op);
+
         VkGraphicsPipelineCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
         info.stageCount = static_cast<uint32_t>(stages.size());
@@ -2730,6 +2776,7 @@ namespace sogen
         info.pRasterizationState = &rasterization;
         info.pMultisampleState = &multisample;
         info.pColorBlendState = &color_blend;
+        info.pDepthStencilState = depth.test_enable ? &depth_stencil : nullptr;
         info.layout = layout->second.handle;
         info.renderPass = rp->second.handle;
         info.subpass = 0;
@@ -2764,7 +2811,8 @@ namespace sogen
     }
 
     int32_t vulkan_host::cmd_begin_render_pass(uint64_t command_buffer, uint64_t render_pass, uint64_t framebuffer,
-                                               uint32_t width, uint32_t height, float r, float g, float b, float a)
+                                               uint32_t width, uint32_t height, float r, float g, float b, float a,
+                                               float clear_depth)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto rp = this->impl_->render_passes.find(render_pass);
@@ -2780,19 +2828,22 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        VkClearValue clear{};
-        clear.color.float32[0] = r;
-        clear.color.float32[1] = g;
-        clear.color.float32[2] = b;
-        clear.color.float32[3] = a;
+        // clearValues are indexed by attachment: [0] color, [1] depth (present only when the render pass
+        // was created with a depth attachment).
+        std::array<VkClearValue, 2> clears{};
+        clears[0].color.float32[0] = r;
+        clears[0].color.float32[1] = g;
+        clears[0].color.float32[2] = b;
+        clears[0].color.float32[3] = a;
+        clears[1].depthStencil = {.depth = clear_depth, .stencil = 0};
 
         VkRenderPassBeginInfo info{};
         info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         info.renderPass = rp->second.handle;
         info.framebuffer = fb->second.handle;
         info.renderArea.extent = {.width = width, .height = height};
-        info.clearValueCount = 1;
-        info.pClearValues = &clear;
+        info.clearValueCount = rp->second.has_depth ? 2 : 1;
+        info.pClearValues = clears.data();
 
         dev->second.cmd_begin_render_pass(cb->second.handle, &info, VK_SUBPASS_CONTENTS_INLINE);
         return VK_SUCCESS;

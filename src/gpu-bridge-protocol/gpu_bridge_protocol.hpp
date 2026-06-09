@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753;   // 'SGPU'
-    inline constexpr uint32_t protocol_version = 2;
+    inline constexpr uint32_t protocol_version = 3;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -746,16 +746,17 @@ namespace sogen::gpu_bridge
         // uint8_t code[code_size];
     };
 
-    // ioctl_create_image_view: in (2D, single mip/layer, COLOR aspect); out = object_response
+    // ioctl_create_image_view: in (2D, single mip/layer); out = object_response
     struct create_image_view_request
     {
         object_id device;
         object_id image;
-        uint32_t format; // VkFormat
-        uint32_t reserved;
+        uint32_t format;      // VkFormat
+        uint32_t aspect_mask; // VkImageAspectFlags (COLOR for color targets, DEPTH for depth); 0 => COLOR
     };
 
-    // ioctl_create_render_pass: in (single color attachment, single subpass); out = object_response
+    // ioctl_create_render_pass: in (one color attachment + optional depth attachment, single subpass);
+    // out = object_response
     struct create_render_pass_request
     {
         object_id device;
@@ -764,14 +765,17 @@ namespace sogen::gpu_bridge
         uint32_t store_op;       // VkAttachmentStoreOp
         uint32_t initial_layout; // VkImageLayout
         uint32_t final_layout;   // VkImageLayout (PRESENT_SRC_KHR is mapped to TRANSFER_SRC_OPTIMAL)
+        uint32_t depth_format;   // VkFormat of the depth attachment, or 0 for no depth attachment
+        uint32_t reserved;
     };
 
-    // ioctl_create_framebuffer: in (single attachment); out = object_response
+    // ioctl_create_framebuffer: in (color attachment + optional depth attachment); out = object_response
     struct create_framebuffer_request
     {
         object_id device;
         object_id render_pass;
-        object_id image_view;
+        object_id image_view;  // color attachment
+        object_id depth_view;  // depth attachment, or null_object for none
         uint32_t width;
         uint32_t height;
     };
@@ -821,13 +825,17 @@ namespace sogen::gpu_bridge
         object_id fragment_shader;
         uint32_t width;
         uint32_t height;
+        uint32_t depth_test_enable;  // VkBool32 (0 => no depth-stencil state, as before)
+        uint32_t depth_write_enable; // VkBool32
+        uint32_t depth_compare_op;   // VkCompareOp (used when depth_test_enable != 0)
         uint32_t binding_count;   // number of vertex_input_binding entries that follow
         uint32_t attribute_count; // number of vertex_input_attribute entries that follow the bindings
         // vertex_input_binding bindings[binding_count];
         // vertex_input_attribute attributes[attribute_count];
     };
 
-    // record payload (command::cmd_begin_render_pass) for ioctl_record_commands: in (clear color load);
+    // record payload (command::cmd_begin_render_pass) for ioctl_record_commands: in (clear color load,
+    // plus a depth clear used only when the render pass has a depth attachment).
     struct cmd_begin_render_pass_request
     {
         object_id command_buffer;
@@ -839,6 +847,8 @@ namespace sogen::gpu_bridge
         float clear_g;
         float clear_b;
         float clear_a;
+        float clear_depth;
+        uint32_t reserved;
     };
 
     // record payload (command::cmd_bind_pipeline) for ioctl_record_commands: in (graphics bind point);
