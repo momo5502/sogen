@@ -908,6 +908,29 @@ extern "C"
         }
     }
 
+    // Copies are remoted assuming tight packing into mip 0 / layer 0 at image offset 0 from buffer
+    // offset 0 (bufferRowLength/bufferImageHeight/imageOffset are not yet honored).
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(VkCommandBuffer commandBuffer,
+                                                                            VkBuffer srcBuffer, VkImage dstImage,
+                                                                            VkImageLayout dstImageLayout,
+                                                                            uint32_t regionCount,
+                                                                            const VkBufferImageCopy* pRegions)
+    {
+        for (uint32_t i = 0; i < regionCount; ++i)
+        {
+            const VkBufferImageCopy& r = pRegions[i];
+            gb::cmd_copy_buffer_to_image_request request{};
+            request.command_buffer = to_object_id(commandBuffer);
+            request.buffer = to_object_id(srcBuffer);
+            request.image = to_object_id(dstImage);
+            request.image_layout = static_cast<uint32_t>(dstImageLayout);
+            request.width = r.imageExtent.width;
+            request.height = r.imageExtent.height;
+            request.aspect_mask = r.imageSubresource.aspectMask;
+            record_command(request.command_buffer, gb::command::cmd_copy_buffer_to_image, &request, sizeof(request));
+        }
+    }
+
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateWin32SurfaceKHR(VkInstance,
                                                                                  const VkWin32SurfaceCreateInfoKHR* pCreateInfo,
                                                                                  const VkAllocationCallbacks*,
@@ -1436,6 +1459,37 @@ extern "C"
                     sizeof(response));
     }
 
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateSampler(VkDevice device,
+                                                                         const VkSamplerCreateInfo* pCreateInfo,
+                                                                         const VkAllocationCallbacks*, VkSampler* pSampler)
+    {
+        gb::create_sampler_request request{};
+        request.device = to_object_id(device);
+        request.mag_filter = static_cast<uint32_t>(pCreateInfo->magFilter);
+        request.min_filter = static_cast<uint32_t>(pCreateInfo->minFilter);
+        request.address_mode_u = static_cast<uint32_t>(pCreateInfo->addressModeU);
+        request.address_mode_v = static_cast<uint32_t>(pCreateInfo->addressModeV);
+        request.address_mode_w = static_cast<uint32_t>(pCreateInfo->addressModeW);
+
+        gb::object_response response{};
+        if (!bridge_call(gb::ioctl_create_sampler, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+        *pSampler = to_handle<VkSampler>(response.object);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroySampler(VkDevice device, VkSampler sampler,
+                                                                      const VkAllocationCallbacks*)
+    {
+        destroy_device_child(gb::ioctl_destroy_sampler, device, sampler);
+    }
+
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
         VkDevice device, VkPipelineCache, uint32_t createInfoCount, const VkGraphicsPipelineCreateInfo* pCreateInfos,
         const VkAllocationCallbacks*, VkPipeline* pPipelines)
@@ -1736,6 +1790,9 @@ extern "C"
             {.name = "vkCmdPipelineBarrier", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdPipelineBarrier)},
             {.name = "vkCmdClearColorImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdClearColorImage)},
             {.name = "vkCmdCopyImageToBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyImageToBuffer)},
+            {.name = "vkCmdCopyBufferToImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBufferToImage)},
+            {.name = "vkCreateSampler", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateSampler)},
+            {.name = "vkDestroySampler", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroySampler)},
             {.name = "vkCreateWin32SurfaceKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateWin32SurfaceKHR)},
             {.name = "vkDestroySurfaceKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroySurfaceKHR)},
             {.name = "vkGetPhysicalDeviceSurfaceCapabilitiesKHR",

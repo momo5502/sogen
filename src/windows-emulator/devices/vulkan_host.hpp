@@ -127,6 +127,14 @@ namespace sogen
         // Copies mip 0 / layer 0 of the image (tightly packed) into the buffer at offset 0.
         int32_t cmd_copy_image_to_buffer(uint64_t command_buffer, uint64_t image, uint32_t image_layout, uint64_t buffer,
                                          uint32_t width, uint32_t height, uint32_t aspect_mask);
+        // Copies tightly-packed pixel data from the buffer (offset 0) into mip 0 / layer 0 of the image.
+        int32_t cmd_copy_buffer_to_image(uint64_t command_buffer, uint64_t buffer, uint64_t image, uint32_t image_layout,
+                                         uint32_t width, uint32_t height, uint32_t aspect_mask);
+
+        // A linear/nearest sampler (mag/min filter + per-axis address modes; no mipmapping/anisotropy).
+        int32_t create_sampler(uint64_t device, uint32_t mag_filter, uint32_t min_filter, uint32_t address_mode_u,
+                               uint32_t address_mode_v, uint32_t address_mode_w, uint64_t& out_sampler);
+        void destroy_sampler(uint64_t device, uint64_t sampler);
 
         // --- WSI (modeled with offscreen images; "present" reads back and hands pixels to the UI) ---
 

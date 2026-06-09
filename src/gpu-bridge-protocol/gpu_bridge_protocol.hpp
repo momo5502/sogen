@@ -106,6 +106,9 @@ namespace sogen::gpu_bridge
         allocate_descriptor_sets = 0x846,
         update_descriptor_sets = 0x847,
         cmd_bind_descriptor_sets = 0x848,
+        create_sampler = 0x849,
+        destroy_sampler = 0x84A,
+        cmd_copy_buffer_to_image = 0x84B,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -182,6 +185,8 @@ namespace sogen::gpu_bridge
         make_ioctl(static_cast<uint32_t>(command::allocate_descriptor_sets));
     inline constexpr uint32_t ioctl_update_descriptor_sets =
         make_ioctl(static_cast<uint32_t>(command::update_descriptor_sets));
+    inline constexpr uint32_t ioctl_create_sampler = make_ioctl(static_cast<uint32_t>(command::create_sampler));
+    inline constexpr uint32_t ioctl_destroy_sampler = make_ioctl(static_cast<uint32_t>(command::destroy_sampler));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -602,6 +607,31 @@ namespace sogen::gpu_bridge
         uint32_t width;
         uint32_t height;
         uint32_t aspect_mask; // VkImageAspectFlags
+    };
+
+    // record payload (command::cmd_copy_buffer_to_image): copies tightly-packed pixel data from the
+    // buffer (offset 0) into mip 0 / layer 0 of the image.
+    struct cmd_copy_buffer_to_image_request
+    {
+        object_id command_buffer;
+        object_id buffer;
+        object_id image;
+        uint32_t image_layout; // VkImageLayout (current dst layout, e.g. TRANSFER_DST_OPTIMAL)
+        uint32_t width;
+        uint32_t height;
+        uint32_t aspect_mask; // VkImageAspectFlags
+    };
+
+    // ioctl_create_sampler: in; out = object_response
+    struct create_sampler_request
+    {
+        object_id device;
+        uint32_t mag_filter;     // VkFilter
+        uint32_t min_filter;     // VkFilter
+        uint32_t address_mode_u; // VkSamplerAddressMode
+        uint32_t address_mode_v;
+        uint32_t address_mode_w;
+        uint32_t reserved;
     };
 
     // ioctl_create_surface: in (the guest window the swapchain will present to)

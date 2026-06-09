@@ -214,6 +214,17 @@ plus the surrounding calls needed to actually use them:
   quad but takes its rotation angle and color tint from a `vec4` uniform buffer the CPU rewrites each
   frame — verified on screen against SwiftShader and as a native app.
 
+- **Textures (sampled images).** A shader can now sample a texture. Adds `vkCreateSampler` /
+  `vkDestroySampler` and the recorded `vkCmdCopyBufferToImage` (host-side, the
+  combined-image-sampler descriptor write was already wired in the descriptor-set slice). A texture is
+  an ordinary `vkCreateImage` with `SAMPLED | TRANSFER_DST` usage, uploaded from a host-visible staging
+  buffer via `vkCmdCopyBufferToImage` with the usual `UNDEFINED → TRANSFER_DST → SHADER_READ_ONLY`
+  layout transitions, then read through a `VkImageView` + `VkSampler` bound as a combined image sampler.
+  The copy is tightly packed (mip 0 / layer 0, no row padding). New guest sample `vulkan-texture-sample`
+  uploads a 64×64 RGBA checkerboard and samples it onto the spinning vertex/index-buffer quad — verified
+  on screen against SwiftShader and as a native app. This sample touches the whole draw stack at once:
+  vertex + index buffers, a push constant, a descriptor set, and a sampled texture.
+
 - **Running the samples on a real driver (not just the bridge).** Each Vulkan sample doubles as an
   ordinary native Vulkan app: load the real `vulkan-1.dll` instead of the shim (`… .exe vulkan-1.dll`)
   and it runs against a real GPU. This is a strong correctness check on the shim's API fidelity — the
@@ -252,7 +263,8 @@ Memory/buffers: `vkGetPhysicalDeviceMemoryProperties`, `vkAllocateMemory`, `vkFr
 `vkBindBufferMemory`, `vkCmdFillBuffer`.
 
 Images/transfer: `vkCreateImage`, `vkDestroyImage`, `vkGetImageMemoryRequirements`,
-`vkBindImageMemory`, `vkCmdPipelineBarrier`, `vkCmdClearColorImage`, `vkCmdCopyImageToBuffer`.
+`vkBindImageMemory`, `vkCmdPipelineBarrier`, `vkCmdClearColorImage`, `vkCmdCopyImageToBuffer`,
+`vkCmdCopyBufferToImage`, `vkCreateSampler`, `vkDestroySampler`.
 
 WSI: `vkCreateWin32SurfaceKHR`, `vkDestroySurfaceKHR`, `vkGetPhysicalDeviceSurfaceCapabilitiesKHR`,
 `vkCreateSwapchainKHR`, `vkDestroySwapchainKHR`, `vkGetSwapchainImagesKHR`, `vkAcquireNextImageKHR`,
@@ -265,7 +277,8 @@ Graphics pipeline: `vkCreateShaderModule`, `vkCreateImageView`, `vkCreateRenderP
 `vkCmdDrawIndexed`, `vkCmdEndRenderPass`.
 
 Descriptors: `vkCreateDescriptorSetLayout`, `vkCreateDescriptorPool`, `vkAllocateDescriptorSets`,
-`vkUpdateDescriptorSets` (+ destroys), `vkCmdBindDescriptorSets`.
+`vkUpdateDescriptorSets` (uniform-buffer and combined-image-sampler writes) (+ destroys),
+`vkCmdBindDescriptorSets`.
 
 The hand-written entry points currently pass minimal/empty create-infos (e.g. `vkCreateInstance`
 ignores layers/extensions, `vkQueueSubmit` ignores semaphores). The generator is the path to
@@ -371,9 +384,10 @@ Cross-cutting (needed as the create-infos get richer, can land alongside the ste
 - **Fuller WSI** — swapchain recreation on `VK_ERROR_OUT_OF_DATE_KHR`/resize, real present and acquire
   semaphores, and surface-format/present-mode enumeration. (Today the samples are fixed-size and pass
   valid swapchain parameters directly.)
-- **More draw plumbing** — textures (sampled images) are the remaining piece before non-trivial real
-  apps render. (Vertex + index buffers + `vkCmdDrawIndexed`, and uniform buffers + descriptor sets, are
-  **done** — see the M2 slices above.)
+- **Draw plumbing is in place** — vertex + index buffers + `vkCmdDrawIndexed`, uniform buffers +
+  descriptor sets, and sampled textures are all **done** (see the M2 slices above). The remaining draw
+  refinements are richer fixed-function/pipeline state (depth/stencil, blending, multiple attachments,
+  dynamic state) and multiple/array descriptors as real apps need them.
 
 Later: OpenGL via Zink, DirectX via DXVK — no new bridge work, just guest DLL provisioning.
 
@@ -395,6 +409,7 @@ Later: OpenGL via Zink, DirectX via DXVK — no new bridge work, just guest DLL 
 | `src/samples/vulkan-cube-field-sample/` | Windowed guest exe: a rotating field of many individually spinning, diffuse-lit cubes (default 5×3×5 = 75; ~530 recorded commands/frame). Exercises command batching and a 128-byte push constant (mvp + model for lighting); cubes and their faces are painter's-sorted. `cube_field.{vert,frag}` + checked-in `cube_field_spirv.hpp`. Also runs natively |
 | `src/samples/vulkan-vertex-buffer-sample/` | Windowed guest exe: a push-constant-rotated quad whose geometry comes from a real **vertex buffer + index buffer** (drawn with `vkCmdDrawIndexed`), exercising pipeline vertex input. `vertex_buffer.{vert,frag}` + checked-in `vertex_buffer_spirv.hpp`. Also runs natively |
 | `src/samples/vulkan-uniform-buffer-sample/` | Windowed guest exe: the vertex/index-buffer quad with its rotation + tint driven by a **uniform buffer** bound via a **descriptor set** (`vkCmdBindDescriptorSets`), rewritten each frame. `uniform_buffer.{vert,frag}` + checked-in `uniform_buffer_spirv.hpp`. Also runs natively |
+| `src/samples/vulkan-texture-sample/` | Windowed guest exe: a **textured** spinning quad — a 64×64 RGBA checkerboard uploaded via a staging buffer + `vkCmdCopyBufferToImage` and sampled through a **combined image sampler** descriptor. Exercises the full draw stack (vertex/index buffers + push constant + descriptor set + texture). `texture.{vert,frag}` + checked-in `texture_spirv.hpp`. Also runs natively |
 | `src/samples/gpu-bridge-probe-sample/` | Low-level probe (direct `DeviceIoControl`, no Vulkan headers) |
 | `src/windows-emulator-test/vulkan_marshal_test.cpp` | Round-trip gtests for the generated marshalling |
 | `deps/Vulkan-Headers` | Shallow submodule; `vulkan-headers` INTERFACE target |
@@ -443,6 +458,9 @@ cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-window-sample.exe v
 cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-spinning-triangle-sample.exe vulkan-shim.dll"
 cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-cube-sample.exe vulkan-shim.dll"
 cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-cube-field-sample.exe vulkan-shim.dll"
+cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-vertex-buffer-sample.exe vulkan-shim.dll"
+cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-uniform-buffer-sample.exe vulkan-shim.dll"
+cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-texture-sample.exe vulkan-shim.dll"
 ```
 
 `vulkan-cube-sample` runs until its window is closed and prints the measured FPS to stdout once per

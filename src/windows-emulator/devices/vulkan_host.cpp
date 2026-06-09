@@ -127,6 +127,7 @@ namespace sogen
             PFN_vkCmdPipelineBarrier cmd_pipeline_barrier{};
             PFN_vkCmdClearColorImage cmd_clear_color_image{};
             PFN_vkCmdCopyImageToBuffer cmd_copy_image_to_buffer{};
+            PFN_vkCmdCopyBufferToImage cmd_copy_buffer_to_image{};
             PFN_vkCreateSampler create_sampler{};
             PFN_vkDestroySampler destroy_sampler{};
             PFN_vkCreateShaderModule create_shader_module{};
@@ -906,6 +907,8 @@ namespace sogen
             data.cmd_clear_color_image = reinterpret_cast<PFN_vkCmdClearColorImage>(resolve("vkCmdClearColorImage"));
             data.cmd_copy_image_to_buffer =
                 reinterpret_cast<PFN_vkCmdCopyImageToBuffer>(resolve("vkCmdCopyImageToBuffer"));
+            data.cmd_copy_buffer_to_image =
+                reinterpret_cast<PFN_vkCmdCopyBufferToImage>(resolve("vkCmdCopyBufferToImage"));
             data.create_sampler = reinterpret_cast<PFN_vkCreateSampler>(resolve("vkCreateSampler"));
             data.destroy_sampler = reinterpret_cast<PFN_vkDestroySampler>(resolve("vkDestroySampler"));
             data.create_shader_module = reinterpret_cast<PFN_vkCreateShaderModule>(resolve("vkCreateShaderModule"));
@@ -1663,6 +1666,90 @@ namespace sogen
         dev->second.cmd_copy_image_to_buffer(cb->second.handle, img->second.handle, translate_layout(image_layout),
                                              buf->second.handle, 1, &region);
         return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_copy_buffer_to_image(uint64_t command_buffer, uint64_t buffer, uint64_t image,
+                                                  uint32_t image_layout, uint32_t width, uint32_t height,
+                                                  uint32_t aspect_mask)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto buf = this->impl_->buffers.find(buffer);
+        const auto img = this->impl_->images.find(image);
+        if (cb == this->impl_->command_buffers.end() || buf == this->impl_->buffers.end() ||
+            img == this->impl_->images.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_copy_buffer_to_image)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkBufferImageCopy region{};
+        region.bufferOffset = 0;
+        region.bufferRowLength = 0;   // tightly packed
+        region.bufferImageHeight = 0; // tightly packed
+        region.imageSubresource.aspectMask = aspect_mask;
+        region.imageSubresource.mipLevel = 0;
+        region.imageSubresource.baseArrayLayer = 0;
+        region.imageSubresource.layerCount = 1;
+        region.imageOffset = {.x = 0, .y = 0, .z = 0};
+        region.imageExtent = {.width = width, .height = height, .depth = 1};
+
+        dev->second.cmd_copy_buffer_to_image(cb->second.handle, buf->second.handle, img->second.handle,
+                                             translate_layout(image_layout), 1, &region);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::create_sampler(uint64_t device, uint32_t mag_filter, uint32_t min_filter, uint32_t address_mode_u,
+                                        uint32_t address_mode_v, uint32_t address_mode_w, uint64_t& out_sampler)
+    {
+        out_sampler = 0;
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end() || !dev->second.create_sampler)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkSamplerCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        info.magFilter = static_cast<VkFilter>(mag_filter);
+        info.minFilter = static_cast<VkFilter>(min_filter);
+        info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        info.addressModeU = static_cast<VkSamplerAddressMode>(address_mode_u);
+        info.addressModeV = static_cast<VkSamplerAddressMode>(address_mode_v);
+        info.addressModeW = static_cast<VkSamplerAddressMode>(address_mode_w);
+        info.maxLod = VK_LOD_CLAMP_NONE;
+        info.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+
+        VkSampler sampler{};
+        const VkResult result = dev->second.create_sampler(dev->second.handle, &info, nullptr, &sampler);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->samplers.emplace(id, impl::sampler_data{.handle = sampler, .device_id = device});
+        out_sampler = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::destroy_sampler(uint64_t device, uint64_t sampler)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->samplers.find(sampler);
+        if (it == this->impl_->samplers.end())
+        {
+            return;
+        }
+        if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_sampler)
+        {
+            dev->second.destroy_sampler(dev->second.handle, it->second.handle, nullptr);
+        }
+        this->impl_->samplers.erase(it);
     }
 
     int32_t vulkan_host::create_surface(uint64_t hwnd, uint64_t& out_surface)

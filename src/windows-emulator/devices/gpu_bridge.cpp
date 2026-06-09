@@ -138,6 +138,10 @@ namespace sogen
                     return handle_allocate_descriptor_sets(win_emu, context);
                 case gpu_bridge::ioctl_update_descriptor_sets:
                     return handle_update_descriptor_sets(win_emu, context);
+                case gpu_bridge::ioctl_create_sampler:
+                    return handle_create_sampler(win_emu, context);
+                case gpu_bridge::ioctl_destroy_sampler:
+                    return handle_destroy_sampler(win_emu, context);
 
                 default:
                     win_emu.log.warn("[gpu-bridge] Unsupported IOCTL: 0x%X\n", context.io_control_code);
@@ -1308,6 +1312,33 @@ namespace sogen
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
+            NTSTATUS handle_create_sampler(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::create_sampler_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                uint64_t sampler = gpu_bridge::null_object;
+                const int32_t result =
+                    this->vulkan_.create_sampler(request.device, request.mag_filter, request.min_filter,
+                                                 request.address_mode_u, request.address_mode_v, request.address_mode_w,
+                                                 sampler);
+                return write_output(win_emu, context,
+                                    gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = sampler});
+            }
+
+            NTSTATUS handle_destroy_sampler(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::device_child_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                this->vulkan_.destroy_sampler(request.device, request.object);
+                return STATUS_SUCCESS;
+            }
+
             // Executes one recorded command-buffer command from a batch (see ioctl_record_commands). The
             // payload is the command's normal request struct; this is the per-command core shared with the
             // (legacy) individual command IOCTL handlers. Returns the VkResult.
@@ -1495,6 +1526,16 @@ namespace sogen
                         return vk_error_initialization_failed;
                     }
                     return this->vulkan_.cmd_copy_image_to_buffer(req.command_buffer, req.image, req.image_layout, req.buffer,
+                                                                  req.width, req.height, req.aspect_mask);
+                }
+                case gpu_bridge::command::cmd_copy_buffer_to_image:
+                {
+                    gpu_bridge::cmd_copy_buffer_to_image_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_copy_buffer_to_image(req.command_buffer, req.buffer, req.image, req.image_layout,
                                                                   req.width, req.height, req.aspect_mask);
                 }
                 default:
