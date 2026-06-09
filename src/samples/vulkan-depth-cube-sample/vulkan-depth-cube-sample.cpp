@@ -29,7 +29,10 @@ namespace
     constexpr uint32_t window_height = 400;
     constexpr VkFormat swapchain_format = VK_FORMAT_B8G8R8A8_UNORM;
     constexpr VkFormat depth_format = VK_FORMAT_D32_SFLOAT;
-    constexpr float angle_increment = 0.03f;
+    // Rotation is driven by real wall-clock time (radians/second), not the frame count, so the cube
+    // spins at the same physical rate natively and emulated -- otherwise a faster frame rate would spin
+    // it faster, making a host-vs-emulated comparison misleading.
+    constexpr float rotation_speed = 0.6f;
 
     using mat4 = std::array<float, 16>; // column-major
 
@@ -759,7 +762,8 @@ int main(int argc, char** argv)
     const mat4 view = mat_translate(0.0f, 0.0f, -3.0f);
 
     constexpr uint32_t fps_window_size = 30;
-    uint64_t fps_window_start = now_ms();
+    const uint64_t start_ms = now_ms();
+    uint64_t fps_window_start = start_ms;
     uint32_t fps_window_frames = 0;
     uint32_t frame = 0;
     while (!g_quit && frame < max_frames)
@@ -788,7 +792,7 @@ int main(int argc, char** argv)
         }
 
         const uint64_t now = now_ms();
-        const float angle = static_cast<float>(frame) * angle_increment;
+        const float angle = static_cast<float>(now - start_ms) / 1000.0f * rotation_speed;
         const mat4 model = mat_multiply(mat_rotate_y(angle), mat_rotate_x(angle * 0.6f));
         const mat4 mvp = mat_multiply(projection, mat_multiply(view, model));
 

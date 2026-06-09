@@ -30,7 +30,10 @@ namespace
     constexpr uint32_t window_width = 400;
     constexpr uint32_t window_height = 400; // square so the rotation isn't stretched
     constexpr VkFormat swapchain_format = VK_FORMAT_B8G8R8A8_UNORM;
-    constexpr float angle_increment = 0.08f; // ~0.08 rad/frame: a smooth spin (full turn every ~78 frames)
+    // Rotation is driven by real wall-clock time (radians/second), not the frame count, so the quad spins
+    // at the same physical rate natively and emulated (a frame-count-based angle would spin faster at a
+    // higher frame rate, making a host-vs-emulated comparison misleading).
+    constexpr float rotation_speed = 0.9f;
 
     // One vertex: a 2D position and an RGB color. Matches the pipeline's vertex input below.
     struct Vertex
@@ -573,7 +576,8 @@ int main(int argc, char** argv)
 
     // --- render loop: spin the quad (frame-based angle) and track FPS (system-time based) ---
     constexpr uint32_t fps_window_size = 30;
-    uint64_t fps_window_start = now_ms();
+    const uint64_t start_ms = now_ms();
+    uint64_t fps_window_start = start_ms;
     uint32_t fps_window_frames = 0;
     uint32_t frame = 0;
     while (!g_quit && frame < max_frames)
@@ -602,7 +606,7 @@ int main(int argc, char** argv)
         }
 
         const uint64_t now = now_ms();
-        const float angle = static_cast<float>(frame) * angle_increment;
+        const float angle = static_cast<float>(now - start_ms) / 1000.0f * rotation_speed;
 
         VkCommandBufferBeginInfo begin{};
         begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
