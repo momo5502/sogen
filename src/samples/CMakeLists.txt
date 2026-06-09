@@ -9,17 +9,8 @@ add_subdirectory(manual-messagebox-sample)
 add_subdirectory(manual-controls-sample)
 add_subdirectory(custom-paint-sample)
 add_subdirectory(test-sample)
-add_subdirectory(gpu-bridge-probe-sample)
 add_subdirectory(vulkan-shim)
 add_subdirectory(vulkan-shim-test)
-add_subdirectory(vulkan-window-sample)
-add_subdirectory(vulkan-spinning-triangle-sample)
-add_subdirectory(vulkan-cube-sample)
-add_subdirectory(vulkan-cube-field-sample)
-add_subdirectory(vulkan-vertex-buffer-sample)
-add_subdirectory(vulkan-uniform-buffer-sample)
-add_subdirectory(vulkan-texture-sample)
-add_subdirectory(vulkan-depth-cube-sample)
 
 ##########################################
 
