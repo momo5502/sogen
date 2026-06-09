@@ -333,6 +333,8 @@ namespace sogen
                                                    uint32_t input_buffer_length, uint64_t system_information,
                                                    uint32_t system_information_length, emulator_object<uint32_t> return_length);
         NTSTATUS handle_NtSetSystemInformation();
+        NTSTATUS handle_NtPowerInformation(const syscall_context& c, uint32_t information_level, uint64_t input_buffer,
+                                           uint32_t input_buffer_length, uint64_t output_buffer, uint32_t output_buffer_length);
 
         // syscalls/thread.cpp:
         NTSTATUS handle_NtSetInformationThread(const syscall_context& c, handle thread_handle, THREADINFOCLASS info_class,
@@ -941,6 +943,7 @@ namespace sogen
         add_handler(NtOpenThreadTokenEx);
         add_handler(NtQueryPerformanceCounter);
         add_handler(NtQuerySystemInformation);
+        add_handler(NtPowerInformation);
         add_handler(NtCreateEvent);
         add_handler(NtProtectVirtualMemory);
         add_handler(NtLockVirtualMemory);
