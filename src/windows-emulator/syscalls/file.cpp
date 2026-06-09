@@ -1097,12 +1097,50 @@ namespace sogen
             return existing.offset < end && offset < existing_end;
         }
 
-        NTSTATUS handle_NtReadFile(const syscall_context& c, const handle file_handle, const uint64_t /*event*/,
-                                   const uint64_t /*apc_routine*/, const uint64_t /*apc_context*/,
+        // Completion of an asynchronous (overlapped) file operation: signal the optional completion event and,
+        // for an APC-based request (ReadFileEx/WriteFileEx), queue the I/O completion APC on the issuing thread.
+        // The APC routine follows the PIO_APC_ROUTINE contract (ApcContext, IoStatusBlock, Reserved); it is
+        // delivered the next time the thread enters an alertable wait.
+        void deliver_file_io_completion(const syscall_context& c, const uint64_t event, const uint64_t apc_routine,
+                                        const uint64_t apc_context,
+                                        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block)
+        {
+            if (event)
+            {
+                if (auto* e = c.proc.events.get(event))
+                {
+                    e->signaled = true;
+                }
+            }
+
+            if (apc_routine)
+            {
+                c.win_emu.current_thread().pending_apcs.push_back({
+                    .flags = 0,
+                    .apc_routine = apc_routine,
+                    .apc_argument1 = apc_context,
+                    .apc_argument2 = io_status_block.value(),
+                    .apc_argument3 = 0,
+                });
+            }
+        }
+
+        NTSTATUS handle_NtReadFile(const syscall_context& c, const handle file_handle, const uint64_t event, const uint64_t apc_routine,
+                                   const uint64_t apc_context,
                                    const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const uint64_t buffer,
                                    const ULONG length, const emulator_object<LARGE_INTEGER> byte_offset,
                                    const emulator_object<ULONG> /*key*/)
         {
+            static const bool io_log = std::getenv("EMULATOR_LOG_IO") != nullptr;
+            if (io_log)
+            {
+                const auto* rf = c.proc.files.get(file_handle);
+                c.win_emu.log.print(color::pink, "[io] NtReadFile h=0x%llX event=0x%llX apc=0x%llX apc_ctx=0x%llX len=%u tid=%u '%s'\n",
+                                    static_cast<unsigned long long>(file_handle.bits), static_cast<unsigned long long>(event),
+                                    static_cast<unsigned long long>(apc_routine), static_cast<unsigned long long>(apc_context), length,
+                                    c.win_emu.current_thread().id, rf ? u16_to_u8(rf->name).c_str() : "?");
+            }
+
             std::string temp_buffer{};
             temp_buffer.resize(length);
 
@@ -1193,6 +1231,7 @@ namespace sogen
             if (bytes_read > 0)
             {
                 commit_file_data(std::string_view(temp_buffer.data(), bytes_read), c.emu, io_status_block, buffer);
+                deliver_file_io_completion(c, event, apc_routine, apc_context, io_status_block);
                 return STATUS_SUCCESS;
             }
 
@@ -1206,6 +1245,7 @@ namespace sogen
                 io_status_block.write(block);
             }
 
+            deliver_file_io_completion(c, event, apc_routine, apc_context, io_status_block);
             return status;
         }
 
@@ -1550,6 +1590,16 @@ namespace sogen
 
             const auto attributes = object_attributes.read();
             auto filename = read_unicode_string(c.emu, attributes.ObjectName);
+
+            static const bool io_log = std::getenv("EMULATOR_LOG_IO") != nullptr;
+            if (io_log)
+            {
+                // FILE_SYNCHRONOUS_IO_ALERT = 0x10, FILE_SYNCHRONOUS_IO_NONALERT = 0x20.
+                const bool synchronous = (create_options & 0x30) != 0;
+                c.win_emu.log.print(color::pink, "[io] NtCreateFile opts=0x%X disp=0x%X %s tid=%u '%s'\n", create_options,
+                                    create_disposition, synchronous ? "SYNC" : "ASYNC", c.win_emu.current_thread().id,
+                                    u16_to_u8(filename).c_str());
+            }
 
             // Check for console device paths
             // Convert to uppercase for case-insensitive comparison
