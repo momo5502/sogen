@@ -558,6 +558,22 @@ way to know which icon was requested) or loading+rasterizing the real `imageres.
 And text still uses the temporary 8x8 `debug_font` at a fixed cell, ignoring the selected `HFONT`
 (size/face/weight) — real font handling remains the large follow-up.
 
+## UPDATE 2026-06-08 (9) — `NtGdiStretchDIBitsInternal` present path (software-rendered windows)
+
+Implemented `NtGdiStretchDIBitsInternal` (`syscalls/gdi.cpp`, registered in `syscalls.cpp`). It was an
+unimplemented syscall that aborted any app blitting a DIB to a window via `StretchDIBits`. The handler
+mirrors `NtGdiSetDIBitsToDeviceInternal` (32bpp `BI_RGB`, top-down/bottom-up) but adds nearest-neighbour
+source→dest scaling, then — for a window-backed DC — presents the DC's surface through
+`present_surface`, the same seam `NtUserEndPaint` uses (there is no `BeginPaint`/`EndPaint` on this
+path; the app holds a `GetDC` window DC and blits directly).
+
+This makes **in-guest software Vulkan/GL drivers display**: a guest that loads SwiftShader
+(`vk_swiftshader.dll`) in-process renders the frame in guest memory and presents via
+`GetDC` + `StretchDIBits`, which now lands on screen. Verified with `vulkan-cube-sample.exe
+vk_swiftshader.dll` — the spinning cube shows in the window (≈1 FPS after SwiftShader's ~11 s in-guest
+JIT warm-up; software rasterization runs entirely inside the emulator, so this is a slow correctness
+path, not the fast one — the GPU bridge via `vulkan-shim.dll` is the performant route).
+
 ## Backend parity notes
 
 SDL and web still need separate host backends because their platform integration is genuinely different:

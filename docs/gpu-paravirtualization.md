@@ -1,0 +1,519 @@
+# GPU paravirtualization status
+
+Tracking issue: [#1032](https://github.com/momo5502/sogen/issues/1032). Work lives on branch
+`gpu-bridge-device`.
+
+## Goal
+
+Give guest binaries real GPU graphics support so applications that render can run and be analyzed
+in the emulator. The technique is **GPU API remoting** (a.k.a. API paravirtualization) at the
+**Vulkan** boundary: the guest's Vulkan calls are forwarded across the emulator boundary and
+executed against the **host's real Vulkan driver**. We never emulate a GPU device or parse
+proprietary command buffers — the part that makes "real" GPU virtualization infeasible.
+
+This is the same approach as Mesa's **Venus** (Vulkan-over-virtio-gpu) and **virglrenderer**.
+
+## Why this fits a user-space emulator
+
+The Windows graphics stack has two vendor components: a **user-mode driver / ICD** (e.g.
+`nvoglv64.dll`) and a **kernel-mode driver** behind `dxgkrnl.sys` that builds vendor-proprietary
+command buffers. Because Sogen emulates only **user space** (no kernel, no `dxgkrnl`, no hardware),
+we replace the UMD/ICD with a **remoting shim** and skip the entire kernel/KMD/command-buffer layer.
+
+DirectX/OpenGL can layer on top later (DXVK for D3D→Vulkan, Zink for GL→Vulkan) without new bridge
+work. **DXVK is largely deprioritized** (the focus is native Vulkan apps first), though initial DXVK
+device bring-up now works — see the "DXVK device bring-up" slice under M2.
+
+## Architecture
+
+```
+guest app  (or, later, DXVK d3d11.dll / dxgi.dll)
+  -> guest vulkan-1.dll shim            (serialize Vulkan calls)            src/samples/vulkan-shim/
+    -> CreateFile(\\.\SogenGpu) + DeviceIoControl   [emulator boundary]
+      -> SogenGpu io_device              (dispatch IOCTL -> command)        devices/gpu_bridge.cpp
+        -> vulkan_host                   (real vulkan-1.dll / libvulkan)    devices/vulkan_host.cpp
+          -> host GPU
+      <- opaque object ids / results / fence status
+```
+
+### Key decision: a virtual driver device, not a custom syscall
+
+Issue #1032's original sketch used a custom high syscall id. We instead remote over a **virtual
+driver device** — the guest opens `\\.\SogenGpu` (NT path `\Device\SogenGpu`) and talks to it with
+`NtDeviceIoControlFile`. This reuses Sogen's existing `io_device` infrastructure and gets, for free,
+everything the syscall route would have had to reinvent:
+
+| Concern | Driver device gives us |
+| --- | --- |
+| Dispatch plumbing | `NtCreateFile` → `io_device_container` → `NtDeviceIoControlFile` → `io_control()` already exists |
+| Guest shim | plain `CreateFile` + `DeviceIoControl`; **no asm syscall stub**; works in host-DLL **and** root mode |
+| Command + buffers | the IOCTL code is the command; input/output buffers are built in |
+| Poll-and-yield | `STATUS_PENDING` + `work()` already used by the AFD socket device (`devices/afd_endpoint.cpp`) |
+| Snapshots | `io_device::serialize_object` hook already in the device container |
+| Analysis hooks | `callbacks.on_ioctrl(device, name, code)` fires automatically |
+
+The blueprint for the harder device behaviors (async, poll-and-yield) is the existing
+`devices/afd_endpoint.cpp` (sockets), which already returns `STATUS_PENDING` and completes work from
+`work()` driven by the emulator main loop.
+
+### Opaque object ids
+
+Raw host pointers never cross the boundary. `vulkan_host` keeps the real `VkInstance` /
+`VkPhysicalDevice` / `VkDevice` / ... in tables and hands the guest an opaque `object_id` (a
+monotonic `uint64`). The **guest shim stores the `object_id` directly in the Vulkan handle value** — so
+the shim needs no handle table of its own; the value the app holds *is* the id the host looks up.
+Vulkan handles come in two shapes and the shim handles both portably (see `to_object_id`/`to_handle`):
+*dispatchable* handles (`VkInstance`, `VkDevice`, ...) are pointers — 64-bit on x64, 32-bit on a 32-bit
+(WOW64) guest — so the id is stored in the pointer value (ids are small monotonic counters, so they fit
+32 bits without loss); *non-dispatchable* handles (`VkBuffer`, `VkImage`, ...) are `uint64_t` on every
+platform and carry the full id. The id always crosses the wire as a 64-bit value regardless of guest
+bitness.
+
+### Cross-bitness portability (WOW64)
+
+The shim and the emulator host can be built for different bitness — a 32-bit (WOW64) guest talking to a
+64-bit host, or vice versa — so the wire protocol is deliberately **pointer-size-agnostic**: every
+struct in `gpu_bridge_protocol.hpp` uses only fixed-width integers/floats and `object_id` (never
+`size_t` or pointers), which MSVC lays out identically on x86 and x64 (8-byte types stay 8-aligned on
+both). A block of `static_assert`s pins representative struct sizes so any future pointer-sized member
+fails the build on at least one architecture. The shim is exported through a `.def`
+(`src/samples/vulkan-shim/vulkan_shim.def`) so the entry points keep their **undecorated** names on
+x86 too — `VKAPI_CALL` is `__stdcall`, which would otherwise decorate them (`_vkCreateInstance@16`) and
+hide them from the guest's `GetProcAddress`, exactly as the real `vulkan-1.dll` avoids with its own def.
+Verified: the 32-bit samples + shim run under the 64-bit emulator (`analyzer.exe`) via its WOW64 path —
+`vulkan-shim-test`'s fill/clear readback pass and the windowed samples render.
+
+### Wire protocol
+
+`src/gpu-bridge-protocol/gpu_bridge_protocol.hpp` is a dependency-free header (only `<cstdint>`),
+the single source of truth shared by host and guest:
+
+- IOCTL codes via the standard `CTL_CODE` encoding (FILE_DEVICE_UNKNOWN, METHOD_BUFFERED), one per
+  command, in the vendor function range (`0x800+`).
+- Fixed-size request/response structs per command (`object_id`s, counts, `VkResult` as `int32`).
+- Native Vulkan structs that have no pointers (e.g. `VkPhysicalDeviceProperties`,
+  `VkQueueFamilyProperties`) ride the wire as **raw bytes** — both sides agree on the layout via
+  their own `<vulkan/vulkan_core.h>`. This keeps the protocol header free of `vulkan.h`.
+
+For **pointer-rich** structs (pNext chains, string arrays, nested structs) raw bytes are not enough,
+so those are handled by generated marshalling (see below).
+
+## Status — done
+
+All verified end-to-end against a real Vulkan driver — the dev machine's real GPUs (an Intel UHD 630 +
+an Nvidia Quadro P2000) and, on a GPU-less box, **SwiftShader** dropped in as a software ICD. The
+windowed samples additionally run as **native** Vulkan apps against a real GPU (loading `vulkan-1.dll`
+instead of the shim). Each slice is one commit (or merge) on `gpu-bridge-device`; release builds clean,
+the `tidy` (clang-tidy) preset is clean, and `analyzer.exe -s test-sample.exe` smoke tests pass
+throughout.
+
+### M1 — minimal remoting (complete)
+
+Issue #1032's M1 target was `vkCreateInstance → vkEnumeratePhysicalDevices → vkCreateDevice`. Done,
+plus the surrounding calls needed to actually use them:
+
+- **`3fa8096c` — bridge boundary.** The `SogenGpu` `io_device`; registered in `create_device` /
+  `get_io_device_name` so `\\.\SogenGpu` resolves. A `GET_VERSION` handshake (magic + protocol
+  version). Guest `gpu-bridge-probe-sample` does the handshake over `DeviceIoControl`.
+- **`bc1e2586` — instance + physical-device queries.** Added `Vulkan-Headers` as a shallow `deps/`
+  submodule exposed via a light `vulkan-headers` INTERFACE target. `vulkan_host` dynamically loads
+  the host loader (`vulkan-1.dll` / `libvulkan.so`) and remotes `vkCreateInstance`,
+  `vkEnumeratePhysicalDevices`, `vkGetPhysicalDeviceProperties`, `vkDestroyInstance`. The probe
+  enumerates the real host GPUs.
+- **`8654f8ce` — guest `vulkan-1.dll` shim.** `src/samples/vulkan-shim/` exports the Vulkan entry
+  points and forwards them to the bridge; apps load it via `LoadLibrary` + `vkGetInstanceProcAddr`
+  exactly like a real ICD. `vulkan-shim-test` drives it through the genuine Vulkan dance.
+- **`1fe7e75d` — logical device + queues.** `vkGetPhysicalDeviceQueueFamilyProperties`,
+  `vkCreateDevice`, `vkGetDeviceQueue`, `vkDestroyDevice`. A real `VkDevice` + graphics queue are
+  created on the host GPU.
+- **`053944d1`** — clang-tidy cleanup for the above.
+
+### M2 — submission, sync, resources, and presentation (in progress)
+
+- **`08cde6de` — command submission + fence sync (poll-and-yield).** Command pool/buffer + fence
+  object model, `vkQueueSubmit`, and the blocking-call solution: the host endpoint only ever does a
+  **non-blocking `vkGetFenceStatus`**, and the guest shim's `vkWaitForFences` spins on that poll
+  while yielding to the emulator (`SwitchToThread` → `NtYieldExecution`). The real GPU progresses
+  independently of the emulator thread, so the fence eventually signals — the single-threaded
+  emulator is never blocked on the GPU. Verified: an empty command buffer is recorded, submitted
+  with a fence, and awaited (`vkQueueSubmit` and `vkWaitForFences` both return `VK_SUCCESS`).
+
+- **`59103a59` — vk.xml marshalling generator (codegen foundation).** Hand-marshalling does not
+  scale to Vulkan's pointer-rich structs, so this introduces a Venus-style generator:
+  - `src/tools/vulkan-bridge-generator/generate.py` parses `vk.xml` and emits concrete `encode`/`decode`
+    overloads for an allowlist of structs into a checked-in header.
+  - `src/vulkan-bridge-marshal/` is the runtime: `writer`/`reader` over a byte stream plus an
+    `arena` that owns decoded pointees (so the host can pass rebuilt structs to the real driver).
+    `encode` (guest) flattens; `decode` (host) rebuilds; the two are symmetric from one generated
+    header so they cannot drift.
+  - The `vulkan-bridge-generate` CMake target regenerates offline (Python is needed only to
+    *regenerate*, never to build); verified it reproduces the checked-in header byte-for-byte.
+  - Round-trip gtests (`src/windows-emulator-test/vulkan_marshal_test.cpp`) cover scalars,
+    null-terminated strings, `len="count,null-terminated"` string arrays, and nested struct
+    pointers, on `VkApplicationInfo` and `VkInstanceCreateInfo`.
+
+- **device memory + host-visible buffers + readback.** The first slice that has the GPU *produce
+  data the guest reads back* — the foundation for all rendering. Adds `vkGetPhysicalDeviceMemoryProperties`,
+  `vkAllocateMemory`/`vkFreeMemory`, `vkCreateBuffer`/`vkDestroyBuffer` +
+  `vkGetBufferMemoryRequirements`/`vkBindBufferMemory`, a real recorded command (`vkCmdFillBuffer`),
+  and memory readback. Because `VkDeviceMemory` is host-side, the guest's `vkMapMemory`/`vkUnmapMemory`
+  are emulated by **staging a guest-side copy**: `download_memory` fills the staging buffer on map and
+  `upload_memory` flushes it back on unmap, so a host pointer never crosses the bridge (zero-copy
+  mapping is a later optimization). Verified end-to-end: the guest allocates a host-visible buffer,
+  the GPU fills it via `vkCmdFillBuffer`, and the mapped readback returns the exact pattern
+  (`vulkan-shim-test`'s `fill+readback` check).
+
+- **images + clear + image→buffer readback.** The offscreen render-target + readback path that
+  windowed present will reuse. Adds `vkCreateImage`/`vkDestroyImage` +
+  `vkGetImageMemoryRequirements`/`vkBindImageMemory`, image layout transitions
+  (`vkCmdPipelineBarrier`, image memory barriers only), `vkCmdClearColorImage`, and
+  `vkCmdCopyImageToBuffer`. Verified end-to-end: the GPU clears a 16×16 `R8G8B8A8_UNORM` image to a
+  known color, transitions it `UNDEFINED → TRANSFER_DST → TRANSFER_SRC`, copies it into a host-visible
+  buffer, and the readback matches every pixel (`vulkan-shim-test`'s `clear+readback` check).
+
+- **WSI: windowed presentation to a guest window.** The first *visible* milestone — a guest Vulkan app
+  that opens a real Win32 window and shows its GPU-rendered content. Adds `vkCreateWin32SurfaceKHR`,
+  `vkDestroySurfaceKHR`, `vkCreateSwapchainKHR`, `vkDestroySwapchainKHR`, `vkGetSwapchainImagesKHR`,
+  `vkAcquireNextImageKHR`, and `vkQueuePresentKHR`. There is **no real host WSI**: a surface is just the
+  guest HWND, and a swapchain is N offscreen images plus a host-visible readback buffer. The guest
+  stays a faithful WSI app (it transitions to `PRESENT_SRC_KHR`, which the host maps to
+  `TRANSFER_SRC_OPTIMAL` so the real driver stays valid). On `vkQueuePresentKHR` the host copies the
+  presented image into the readback buffer, waits, and the bridge hands the BGRA pixels to the guest
+  window through `win_emu.ui().present_surface(hwnd, …)` — the same UI-backend seam GDI `EndPaint`
+  uses. New guest sample `vulkan-window-sample` creates a 320×240 window, clears the swapchain image to
+  an animated color each frame, and presents; the window shows the live GPU output (verified on screen
+  against SwiftShader).
+
+- **Graphics pipeline: a triangle in the window.** The first *real rendering* (not just transfer
+  clears). Adds `vkCreateShaderModule`, `vkCreateImageView`, `vkCreateRenderPass`, `vkCreateFramebuffer`,
+  `vkCreatePipelineLayout`, `vkCreateGraphicsPipelines` (+ destroys), and the draw recording
+  `vkCmdBeginRenderPass` / `vkCmdBindPipeline` / `vkCmdDraw` / `vkCmdEndRenderPass`. The host hardcodes
+  most fixed-function state (no vertex input, triangle list, static full-extent viewport/scissor, one
+  non-blended color attachment); the guest supplies the SPIR-V, render pass attachment, and viewport
+  extent. `vulkan-window-sample` now renders the classic RGB-gradient triangle through a render pass
+  into the swapchain image and presents it — verified on screen against SwiftShader. Shader SPIR-V is
+  compiled offline (glslang) and checked in as `triangle_spirv.hxx`, so the build needs no shader
+  compiler.
+
+- **Spinning-cube sample + host-vs-emulated FPS benchmark.** A slightly richer sample exercising the
+  existing entry points harder: a solid 3D cube (6 faces, 36 baked-in vertices) transformed by a 64-byte
+  mat4 MVP push constant computed on the CPU. With no depth attachment and no culling in the bridge, the
+  six faces are CPU-sorted back-to-front each frame (painter's algorithm) and drawn with per-face
+  `vkCmdDraw` calls (`firstVertex = face*6`). The rotation is driven by real wall-clock time (not the
+  frame count) so it spins at the same physical rate natively and emulated, and the loop prints FPS to
+  stdout once per real second so the same binary's throughput can be compared through the shim vs against
+  a real `vulkan-1.dll`. No new bridge/shim work was needed.
+
+- **Push constants + a spinning-triangle sample.** Adds `vkCmdPushConstants` and a push-constant range
+  on the pipeline layout — enough for a shader to read small per-frame data without a vertex/uniform
+  buffer. New guest sample `vulkan-spinning-triangle-sample` rotates the triangle by a push-constant
+  angle and shows its frame rate in the window title. The rotation angle advances per *frame* (not per
+  wall-clock second) because the emulated tick counter does not track real time across host-side blocks,
+  and the FPS is measured from the system time (`GetSystemTimeAsFileTime`) rather than `GetTickCount`.
+
+- **Vertex + index buffers + indexed draw.** The first geometry that comes from real buffers rather
+  than being baked into the vertex shader (`gl_VertexIndex`). `create_graphics_pipeline` now carries a
+  variable-length **vertex input state** (binding + attribute descriptions trail the request, the way
+  SPIR-V trails `create_shader_module`), so the wire protocol bumped to `protocol_version = 2`. Adds the
+  draw-time commands `vkCmdBindVertexBuffers`, `vkCmdBindIndexBuffer`, and `vkCmdDrawIndexed` (all
+  recorded into the batched command stream like the other `vkCmd*`). No new memory plumbing was needed —
+  a vertex/index buffer is an ordinary `vkCreateBuffer` with `VERTEX_BUFFER`/`INDEX_BUFFER` usage filled
+  through the existing host-visible `vkMapMemory`. Empty vertex input (counts of 0) is the previous
+  behavior, so the older shader-baked samples are unchanged. New guest sample
+  `vulkan-vertex-buffer-sample` uploads a 4-vertex / 6-index quad (interleaved `vec2` position + `vec3`
+  color), declares the vertex input in its pipeline, and draws it with `vkCmdDrawIndexed`, rotating via a
+  push-constant angle — verified on screen against SwiftShader and as a native app.
+
+- **Uniform buffers + descriptor sets.** A shader can now read a uniform buffer bound through a
+  descriptor set, not just a push constant. Adds `vkCreateDescriptorSetLayout`, `vkCreateDescriptorPool`,
+  `vkAllocateDescriptorSets`, `vkUpdateDescriptorSets` (+ destroys), and the recorded
+  `vkCmdBindDescriptorSets`; `vkCreatePipelineLayout` now carries a variable-length list of
+  descriptor-set layouts. `vkUpdateDescriptorSets` models one descriptor per write (buffer or, later,
+  combined image sampler) and descriptor copies are not modeled; the descriptor pool is created with
+  `FREE_DESCRIPTOR_SET`. New guest sample `vulkan-uniform-buffer-sample` draws the vertex/index-buffer
+  quad but takes its rotation angle and color tint from a `vec4` uniform buffer the CPU rewrites each
+  frame — verified on screen against SwiftShader and as a native app.
+
+- **Textures (sampled images).** A shader can now sample a texture. Adds `vkCreateSampler` /
+  `vkDestroySampler` and the recorded `vkCmdCopyBufferToImage` (host-side, the
+  combined-image-sampler descriptor write was already wired in the descriptor-set slice). A texture is
+  an ordinary `vkCreateImage` with `SAMPLED | TRANSFER_DST` usage, uploaded from a host-visible staging
+  buffer via `vkCmdCopyBufferToImage` with the usual `UNDEFINED → TRANSFER_DST → SHADER_READ_ONLY`
+  layout transitions, then read through a `VkImageView` + `VkSampler` bound as a combined image sampler.
+  The copy is tightly packed (mip 0 / layer 0, no row padding). New guest sample `vulkan-texture-sample`
+  uploads a 64×64 RGBA checkerboard and samples it onto the spinning vertex/index-buffer quad — verified
+  on screen against SwiftShader and as a native app. This sample touches the whole draw stack at once:
+  vertex + index buffers, a push constant, a descriptor set, and a sampled texture.
+
+- **Depth buffer (correct 3D occlusion).** Render passes can now have a depth attachment. The existing
+  create-info entry points gained optional depth fields (all backward-compatible — depth off is the
+  previous behavior): `vkCreateRenderPass` adds a depth attachment when the subpass has a
+  `pDepthStencilAttachment`; `vkCreateFramebuffer` takes a second (depth) attachment; `vkCreateImageView`
+  honors the `aspectMask` (so a `DEPTH` view works, not just `COLOR`); `vkCreateGraphicsPipelines`
+  applies the `VkPipelineDepthStencilState` (depth test/write + compare op); and `vkCmdBeginRenderPass`
+  carries a depth clear value (used only when the render pass has depth). A depth image is an ordinary
+  `vkCreateImage` with `DEPTH_STENCIL_ATTACHMENT` usage. New guest sample `vulkan-depth-cube-sample`
+  draws a real 3D cube (vertex/index buffers + a mat4 MVP push constant) that occludes correctly via the
+  depth buffer with **no CPU face sorting** — unlike `vulkan-cube-sample`, which predates depth support
+  and painter's-sorts its faces. Verified on screen against SwiftShader and as a native app.
+
+- **Running the samples on a real driver (not just the bridge).** Each Vulkan sample doubles as an
+  ordinary native Vulkan app: load the real `vulkan-1.dll` instead of the shim (`… .exe vulkan-1.dll`)
+  and it runs against a real GPU. This is a strong correctness check on the shim's API fidelity — the
+  *same* binary runs through the bridge and against a real loader — and it surfaced (and fixed) several
+  real-WSI requirements the bridge had masked:
+  - **`VK_SUBOPTIMAL_KHR`** is a success code real drivers return from acquire/present; the samples treat
+    it as non-fatal instead of bailing.
+  - **Per-frame fence sync** — each frame waits on a fence before presenting, instead of relying on the
+    bridge's implicit `vkQueueWaitIdle` (a real driver does not serialize frames for you).
+  - **Swapchain extent matching** — `vkGetPhysicalDeviceSurfaceCapabilitiesKHR` is remoted, and the
+    samples size the swapchain/viewport/framebuffers/render-area to `caps.currentExtent` (the surface's
+    client area in *physical* pixels). Hardcoding the window size made a real driver reject the present
+    with `VK_ERROR_OUT_OF_DATE_KHR` (client area < window, possibly DPI-scaled). The bridge returns an
+    undefined `currentExtent`, in which case the guest falls back to the window client rect. The sample
+    windows are fixed-size, since the swapchain is not recreated on resize.
+  - The spinning sample presents with `VK_PRESENT_MODE_IMMEDIATE_KHR` (no vsync) so its FPS reflects real
+    throughput rather than the refresh rate (the bridge ignores the present mode).
+
+  > Building the FPS readout also turned up an unrelated emulator bug: `GetTickCount[64]` advanced
+  > ~10000× too fast (`kusd_mmio::update()` derived the tick count from 100 ns units where the guest
+  > expects milliseconds). Fixed separately in [#1037](https://github.com/momo5502/sogen/pull/1037).
+
+- **DXVK device bring-up: real feature/extension remoting.** First step toward running a real D3D9
+  title (Call of Duty MW3 via `open-iw5.exe`, whose `d3d9.dll` is DXVK 2.7.1 over the shim'd
+  `vulkan-1.dll`). DXVK selects and creates a device only if the bridge reports the host driver's
+  *real* capabilities, so three entry points were promoted from stubs to real remoting (protocol
+  bumped to `protocol_version = 4`):
+  - `vkEnumerateDeviceExtensionProperties` — forwards to the host device's real extension list.
+  - `vkGetPhysicalDeviceFeatures2` — queries the host for the caller's pNext feature chain and fills
+    it with real values. The new dependency-free-adjacent header
+    `src/gpu-bridge-protocol/vk_feature_chain.hpp` is the single, **cross-bitness** source of truth for
+    the feature structs: a `VkPhysicalDevice*Features` struct is a `{sType, pNext}` header (8 bytes on
+    x86, 16 on x64) followed by a `VkBool32` run, so only the pad-free body crosses the wire — the
+    32-bit guest computes the body size and the 64-bit host echoes it. Adding a newly-required feature
+    struct is a one-line `sType → sizeof` switch entry (the set so far: core 1.1/1.2/1.3,
+    `VK_EXT_robustness2`, `VK_KHR_maintenance5`). The shim also returns **null** (per the Vulkan
+    contract) for unimplemented entry points so layers can detect absent optional features, and logs
+    each one.
+  - `vkCreateDevice` — marshals the enabled extension names + the feature chain so the real device is
+    created with exactly what DXVK requested (previously ignored, which would have been UB once DXVK
+    used those features).
+  - Result (verified on screen-less run): DXVK enumerates the host GPUs, **skips devices lacking a
+    required feature** (the Intel UHD 630 lacks `maintenance5`) and **creates the device on the
+    Quadro P2000**, then sets up D3D9 formats. `vulkan-shim-test` and the windowed samples still pass
+    (the `vkCreateDevice`/features paths are on their path too). Full DXVK rendering (swapchain +
+    DXVK's large runtime device-function set) is still ahead; DXVK remains otherwise deprioritized.
+
+## Remoted Vulkan entry points so far
+
+Instance/device: `vkCreateInstance`, `vkDestroyInstance`, `vkEnumeratePhysicalDevices`,
+`vkEnumerateDeviceExtensionProperties`, `vkGetPhysicalDeviceProperties`,
+`vkGetPhysicalDeviceFeatures2` (real pNext feature chain), `vkGetPhysicalDeviceQueueFamilyProperties`,
+`vkCreateDevice` (threads enabled extensions + feature chain), `vkDestroyDevice`, `vkGetDeviceQueue`,
+`vkGetInstanceProcAddr`, `vkGetDeviceProcAddr` (+ `vk_icdGetInstanceProcAddr`).
+
+Command/sync: `vkCreateCommandPool`, `vkDestroyCommandPool`, `vkAllocateCommandBuffers`,
+`vkFreeCommandBuffers`, `vkBeginCommandBuffer`, `vkEndCommandBuffer`, `vkCreateFence`,
+`vkDestroyFence`, `vkResetFences`, `vkGetFenceStatus`, `vkQueueSubmit`, `vkWaitForFences`.
+
+Memory/buffers: `vkGetPhysicalDeviceMemoryProperties`, `vkAllocateMemory`, `vkFreeMemory`,
+`vkMapMemory`, `vkUnmapMemory`, `vkCreateBuffer`, `vkDestroyBuffer`, `vkGetBufferMemoryRequirements`,
+`vkBindBufferMemory`, `vkCmdFillBuffer`.
+
+Images/transfer: `vkCreateImage`, `vkDestroyImage`, `vkGetImageMemoryRequirements`,
+`vkBindImageMemory`, `vkCmdPipelineBarrier`, `vkCmdClearColorImage`, `vkCmdCopyImageToBuffer`,
+`vkCmdCopyBufferToImage`, `vkCreateSampler`, `vkDestroySampler`.
+
+WSI: `vkCreateWin32SurfaceKHR`, `vkDestroySurfaceKHR`, `vkGetPhysicalDeviceSurfaceCapabilitiesKHR`,
+`vkCreateSwapchainKHR`, `vkDestroySwapchainKHR`, `vkGetSwapchainImagesKHR`, `vkAcquireNextImageKHR`,
+`vkQueuePresentKHR`.
+
+Graphics pipeline: `vkCreateShaderModule`, `vkCreateImageView` (color or depth aspect),
+`vkCreateRenderPass` (color + optional depth attachment), `vkCreateFramebuffer`, `vkCreatePipelineLayout`
+(with a push-constant range and descriptor-set layouts), `vkCreateGraphicsPipelines` (vertex input state
++ optional depth test) (+ destroys), `vkCmdBeginRenderPass`,
+`vkCmdBindPipeline`, `vkCmdPushConstants`, `vkCmdBindVertexBuffers`, `vkCmdBindIndexBuffer`, `vkCmdDraw`,
+`vkCmdDrawIndexed`, `vkCmdEndRenderPass`.
+
+Descriptors: `vkCreateDescriptorSetLayout`, `vkCreateDescriptorPool`, `vkAllocateDescriptorSets`,
+`vkUpdateDescriptorSets` (uniform-buffer and combined-image-sampler writes) (+ destroys),
+`vkCmdBindDescriptorSets`.
+
+Most hand-written entry points still pass minimal/empty create-infos (e.g. `vkCreateInstance` ignores
+layers/extensions, `vkQueueSubmit` ignores semaphores). `vkCreateDevice` is the exception — it now
+honors the enabled device extensions and the pNext feature chain (see the DXVK device bring-up slice).
+The generator is the path to honoring the full structs everywhere.
+
+## Known limitations / simplifications
+
+- **No snapshot support for live GPU state.** `gpu_bridge_device` serializes as a no-op; host Vulkan
+  objects can't be serialized. Restoring a snapshot taken with an open GPU handle is unsupported
+  (experimental).
+- **`pNext` chains are dropped** by the generated marshalling (encode writes "no chain", decode
+  yields `nullptr`). Extension structs need sType-dispatched chain walking.
+- **Handle members inside marshalled structs aren't handled yet** — they need the guest↔host
+  `object_id` translation hook. The current allowlist (`VkApplicationInfo`, `VkInstanceCreateInfo`)
+  has none.
+- The generator does not yet handle: arrays of non-string structs, unions, fixed inline arrays.
+- **`vkQueueSubmit`** remotes a single command buffer per submission with no wait/signal semaphores
+  (the fence is attached to the final command buffer).
+- **`vkCreateDevice`** creates a single queue family from the app's first `VkDeviceQueueCreateInfo`,
+  no device extensions/features.
+- **`vkMapMemory` is a staged copy, not zero-copy.** On map the host range is downloaded into a
+  guest-side buffer; on unmap it is uploaded back. Correct for read/write, but a host↔guest copy per
+  map. Zero-copy (mapping host GPU-visible memory into guest VA) is a later optimization.
+- **Presentation is readback-based (no real swapchain), now asynchronous (one frame behind).** Each
+  `vkQueuePresentKHR` records an image→buffer copy into a host-visible readback buffer; the bridge then
+  hands those pixels to the UI backend. No real present semaphores/acquire fences are modeled
+  (`vkAcquireNextImageKHR` ignores them and hands out images round-robin) and
+  `VK_IMAGE_LAYOUT_PRESENT_SRC_KHR` is mapped to `TRANSFER_SRC_OPTIMAL` on the host.
+  - The copy is **submitted but not waited on inline**: it runs on the GPU while the guest renders the
+    next frame, and the *next* present drains it (its fence is essentially always already signalled by
+    then). So present is one frame behind (imperceptible) and the host thread never blocks on
+    `vkQueueWaitIdle`. The readback buffer is allocated `HOST_CACHED` (not just `HOST_COHERENT`) so the
+    ~920 KB CPU read back is an order of magnitude faster.
+  - *Measured (WHP/Hyper-V backend, dev machine, `vulkan-cube-sample`'s built-in per-phase profiler).*
+    The synchronous readback present originally dominated the emulated frame: ~3.4 ms/frame (~290 FPS),
+    of which present was ~2.7 ms (≈79%) — split host-side into ~0.88 ms `vkQueueWaitIdle` + ~1.25 ms of
+    920 KB readback memcpy (the buffer was uncached) + ~0.45 ms SDL upload. Two fixes: `HOST_CACHED`
+    readback cut the memcpy ~1.25 ms → ~0.065 ms (→ ~450 FPS), and async present removed the inline
+    `vkQueueWaitIdle` (→ ~650 FPS, ~1.54 ms/frame). Net **~290 → ~650 FPS (~2.2×)** vs ~0.21 ms native.
+    The boundary cost is real but secondary at this command count (each remoted call is ~7.5 µs under
+    WHP); it is now also **batched** — a whole command buffer's recording crosses in one IOCTL (see
+    command batching below), so the cube's recording dropped from ~0.18 ms (12 IOCTLs) to ~0.06 ms (1).
+    Remaining big phases are now the guest's per-frame fence wait (~0.6 ms, poll-and-yield) and the SDL
+    `present_surface` upload (~0.45 ms); eliminating the per-frame GPU→CPU→GPU round-trip entirely
+    (zero-copy / GPU-side present) is the next lever.
+- **Command recording is batched (`ioctl_record_commands`).** Command-buffer recording commands
+  (`vkBeginCommandBuffer`, the `vkCmd*` calls, `vkEndCommandBuffer`) are no longer one IOCTL each. The
+  guest shim appends each to a per-command-buffer byte stream (a `command_record_header` + that command's
+  normal request struct as payload) and flushes the whole `begin → cmds → end` stream to the bridge in a
+  **single** IOCTL at `vkEndCommandBuffer`; the host replays it (`execute_recorded_command`). This makes
+  recording cost ~O(1) boundary crossings regardless of command count — essential for real apps that
+  issue hundreds/thousands of draws per frame (where one-VM-exit-per-command would dominate). Measured at
+  600 draws/frame: recording stays ~0.15 ms batched vs an estimated ~4.5 ms unbatched (600 × ~7.5 µs).
+  The per-command IOCTLs and their host handlers were removed; the request structs remain as the stream
+  payload format.
+- **Surface capabilities are synthetic and the swapchain is never recreated.**
+  `vkGetPhysicalDeviceSurfaceCapabilitiesKHR` returns fixed caps with an *undefined* `currentExtent`
+  (the guest chooses the extent) and permissive min/max; `vkCreateSwapchainKHR`'s requested present mode
+  and pre-transform are not really applied (the readback path is the only present path). The bridge does
+  not implement swapchain recreation, so `VK_ERROR_OUT_OF_DATE_KHR`/resize is not handled — the sample
+  windows are fixed-size to avoid it. Surface-format and present-mode *enumeration* are not remoted
+  either; the samples just pass valid values directly (`B8G8R8A8_UNORM`, FIFO/immediate).
+- The host driver is whatever `vulkan-1.dll` the host resolves. The dev machine has a real ICD; on a
+  GPU-less box (e.g. CI) SwiftShader can be dropped in as a software fallback by staging its loader +
+  ICD next to `analyzer.exe` and pointing `VK_ICD_FILENAMES` at the manifest. Software drivers
+  JIT-compile their submit path on the first `vkQueueSubmit`, so the first `vkWaitForFences` needs a
+  generous timeout.
+
+## What's left (plan)
+
+The near-term goal — a **windowed** Vulkan sample that opens a real window and shows its GPU-rendered
+content — is **reached**: `vulkan-window-sample` renders a triangle through a graphics pipeline into a
+guest window, and `vulkan-spinning-triangle-sample` adds a push-constant-rotated triangle with an FPS
+readout (steps 1–4 below all done). Both samples also run as ordinary native Vulkan apps against a real
+GPU (load `vulkan-1.dll` instead of the shim), which validates the shim's API fidelity. The approach is
+**readback-and-present** — render on the host GPU into an
+offscreen image, read the pixels back, and hand them to the guest window's surface through Sogen's
+existing `present_surface` seam (the SDL backend already displays a per-HWND BGRA surface; see
+`windows-ui-emulation.md`). The guest stays a real Vulkan WSI app (`vkCreateWin32SurfaceKHR` /
+`vkCreateSwapchainKHR` / `vkQueuePresentKHR`), but the bridge implements the "swapchain" as plain
+offscreen `VkImage`s. This avoids zero-copy memory mapping and avoids binding the host GPU to the SDL
+window, and means a software driver without Win32 WSI (SwiftShader) still works.
+
+Staged steps toward that:
+
+1. **Memory + readback foundation** — *done* (host-visible buffers, `vkCmdFillBuffer`, map readback).
+2. **Render target + clear** — *done* (`VkImage` + memory, layout barriers, `vkCmdClearColorImage`,
+   `vkCmdCopyImageToBuffer` readback verified against a known clear color).
+3. **WSI → first visible window** — *done* (`vkCreateWin32SurfaceKHR` + swapchain + `vkQueuePresentKHR`;
+   present = readback + `present_surface(hwnd, …)`; `vulkan-window-sample` shows an animated color on screen).
+4. **Triangle** — *done* (render pass, framebuffer, SPIR-V shader modules, graphics pipeline, `vkCmdDraw`;
+   `vulkan-window-sample` renders the RGB-gradient triangle into the window).
+
+Cross-cutting (needed as the create-infos get richer, can land alongside the steps above):
+
+- **Generator: handle translation** — `object_id`↔host-handle translation for handle members, so
+  pointer-rich structs can be generated instead of hand-marshalled.
+- **Generator: `pNext` sType-dispatch** — walk/rebuild extension chains over an allowlist.
+- **Migrate hand-marshalled commands to the generated path**, then **per-command generation** (the
+  full Venus model).
+- **Zero-copy `vkMapMemory`** — map host GPU-visible memory into guest VA (the mechanism Sogen uses
+  for `KUSER_SHARED_DATA`), replacing the staged-copy map.
+- **Fuller WSI** — swapchain recreation on `VK_ERROR_OUT_OF_DATE_KHR`/resize, real present and acquire
+  semaphores, and surface-format/present-mode enumeration. (Today the samples are fixed-size and pass
+  valid swapchain parameters directly.)
+- **Draw plumbing is in place** — vertex + index buffers + `vkCmdDrawIndexed`, uniform buffers +
+  descriptor sets, sampled textures, and a depth buffer are all **done** (see the M2 slices above). The
+  remaining draw refinements are richer fixed-function/pipeline state (stencil, blending, multiple color
+  attachments, MSAA, dynamic state) and multiple/array descriptors as real apps need them.
+
+Later: OpenGL via Zink, DirectX via DXVK — no new bridge work, just guest DLL provisioning.
+
+## File map
+
+| Path | Role |
+| --- | --- |
+| `src/gpu-bridge-protocol/gpu_bridge_protocol.hpp` | Dependency-free wire protocol (IOCTL codes, request/response structs) |
+| `src/gpu-bridge-protocol/vk_feature_chain.hpp` | Shared cross-bitness `sType → sizeof` map + header-size for marshalling `VkPhysicalDevice*Features` pNext chains (host + shim only; needs Vulkan headers) |
+| `src/windows-emulator/devices/gpu_bridge.{hpp,cpp}` | `SogenGpu` io_device; IOCTL → command dispatch + marshalling |
+| `src/windows-emulator/devices/vulkan_host.{hpp,cpp}` | Emulator-free wrapper over the real driver; object-id tables. Kept in its own TU so host `<vulkan/vulkan_core.h>` + `<Windows.h>` don't clash with the emulated Windows types |
+| `src/vulkan-bridge-marshal/vk_bridge_serial.hpp` | Serializer runtime: `writer` / `reader` / `arena` + string/array helpers |
+| `src/vulkan-bridge-marshal/vk_bridge_marshal.generated.hxx` | **Generated** encode/decode (do not edit by hand) |
+| `src/tools/vulkan-bridge-generator/generate.py` | The generator (parses `vk.xml`); `STRUCT_ALLOWLIST` controls coverage |
+| `src/samples/vulkan-shim/` | Guest `vulkan-1.dll` shim (the deliverable) |
+| `src/samples/vulkan-shim-test/` | Headless guest exe driving the shim (instance→device→fill/clear readback) |
+| `src/windows-emulator-test/vulkan_marshal_test.cpp` | Round-trip gtests for the generated marshalling |
+| `deps/Vulkan-Headers` | Shallow submodule; `vulkan-headers` INTERFACE target |
+
+Registration points: device name in `io_device.cpp` (`create_device`) and `syscalls/file.cpp`
+(`get_io_device_name`); libraries in `src/CMakeLists.txt`; the `vulkan-headers` target in
+`deps/CMakeLists.txt`.
+
+The windowed demo samples that drove development (`vulkan-window-sample`, the cube/triangle/buffer/
+texture/depth samples, and `gpu-bridge-probe-sample`) were used only for testing and have been
+removed; they are recoverable from git history. `vulkan-shim-test` remains as the headless regression
+check.
+
+## Build, regenerate, validate
+
+Build (release):
+
+```cmd
+cmake --build --preset=release
+```
+
+Regenerate the marshalling from `vk.xml` (only after changing `STRUCT_ALLOWLIST` or bumping the
+`Vulkan-Headers` submodule):
+
+```cmd
+cmake --build --preset=release --target vulkan-bridge-generate
+```
+
+Run the shim test (guest app → `vulkan-shim.dll` → bridge → host GPU; enumerates devices, creates a
+logical device + queue, submits a command buffer, and verifies `fill+readback` / `clear+readback`):
+
+```cmd
+cmd /c "cd build\release\artifacts && analyzer.exe -s vulkan-shim-test.exe vulkan-shim.dll"
+```
+
+On a GPU-less box (e.g. CI) drop in **SwiftShader** as a software ICD: stage `vulkan-1.dll`,
+`vk_swiftshader.dll` and `vk_swiftshader_icd.json` next to `analyzer.exe` and point the loader at the
+manifest before running:
+
+```cmd
+set VK_ICD_FILENAMES=%CD%\vk_swiftshader_icd.json
+```
+
+Run the marshalling round-trip tests:
+
+```cmd
+cmd /c "cd build\release\artifacts && windows-emulator-test.exe --gtest_filter=VulkanMarshalTest.*"
+```
+
+Smoke tests (must stay green):
+
+```cmd
+cmd /c "cd build\release\artifacts && analyzer.exe -s test-sample.exe"
+```

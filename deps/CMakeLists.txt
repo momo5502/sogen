@@ -31,6 +31,13 @@ add_subdirectory(minidump_cpp)
 
 ##########################################
 
+add_library(vulkan-headers INTERFACE)
+target_include_directories(vulkan-headers INTERFACE
+  "${CMAKE_CURRENT_LIST_DIR}/Vulkan-Headers/include"
+)
+
+##########################################
+
 if(SOGEN_ENABLE_SDL3 AND NOT EMSCRIPTEN)
   # Prefer a system-installed SDL3 (find_package) when allowed and present;
   # otherwise build the vendored submodule. Emscripten uses the web UI backend

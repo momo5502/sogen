@@ -15,6 +15,7 @@ target_link_libraries(windows-emulator-test PRIVATE
   gtest_main
   windows-emulator
   backend-selection
+  vulkan-bridge-marshal
 )
 
 if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)

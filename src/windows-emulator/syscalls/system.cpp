@@ -408,6 +408,55 @@ namespace sogen
         {
             return STATUS_NOT_SUPPORTED;
         }
+
+        NTSTATUS handle_NtPowerInformation(const syscall_context& c, const uint32_t information_level, const uint64_t /*input_buffer*/,
+                                           const uint32_t /*input_buffer_length*/, const uint64_t output_buffer,
+                                           const uint32_t output_buffer_length)
+        {
+            // POWER_INFORMATION_LEVEL: ProcessorInformation = 10 (per-CPU PROCESSOR_POWER_INFORMATION).
+            constexpr uint32_t processor_information = 10;
+
+            struct processor_power_information
+            {
+                uint32_t number;
+                uint32_t max_mhz;
+                uint32_t current_mhz;
+                uint32_t mhz_limit;
+                uint32_t max_idle_state;
+                uint32_t current_idle_state;
+            };
+
+            if (information_level == processor_information)
+            {
+                const uint32_t count =
+                    output_buffer ? output_buffer_length / static_cast<uint32_t>(sizeof(processor_power_information)) : 0;
+                for (uint32_t i = 0; i < count; ++i)
+                {
+                    const processor_power_information info{
+                        .number = i,
+                        .max_mhz = 3000,
+                        .current_mhz = 3000,
+                        .mhz_limit = 3000,
+                        .max_idle_state = 0,
+                        .current_idle_state = 0,
+                    };
+                    c.emu.write_memory(output_buffer + static_cast<uint64_t>(i) * sizeof(info), &info, sizeof(info));
+                }
+
+                return STATUS_SUCCESS;
+            }
+
+            // Other levels (SystemPowerInformation, battery/power policy/state, ...): report a defined,
+            // idle/AC-powered state by zeroing the caller's buffer. This satisfies the typical polled
+            // "power/idle status" queries without modeling the full power subsystem.
+            if (output_buffer && output_buffer_length > 0)
+            {
+                const std::vector<std::byte> zeros(output_buffer_length, std::byte{});
+                c.emu.write_memory(output_buffer, zeros.data(), zeros.size());
+            }
+
+            return STATUS_SUCCESS;
+        }
     }
 
 } // namespace sogen
