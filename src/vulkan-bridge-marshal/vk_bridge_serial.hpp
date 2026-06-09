@@ -18,7 +18,8 @@ namespace sogen::gpu_bridge::marshal
     class writer
     {
       public:
-        explicit writer(std::vector<std::byte>& out) : out_(out)
+        explicit writer(std::vector<std::byte>& out)
+            : out_(out)
         {
         }
 
@@ -47,7 +48,8 @@ namespace sogen::gpu_bridge::marshal
     {
       public:
         reader(const void* data, size_t size)
-            : cur_(static_cast<const std::byte*>(data)), end_(static_cast<const std::byte*>(data) + size)
+            : cur_(static_cast<const std::byte*>(data)),
+              end_(static_cast<const std::byte*>(data) + size)
         {
         }
 

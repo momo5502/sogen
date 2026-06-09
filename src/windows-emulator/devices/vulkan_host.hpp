@@ -96,8 +96,7 @@ namespace sogen
         // GPU results back to the guest (the guest never sees a host pointer).
         int32_t download_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, void* out, size_t out_size);
         // Maps host-visible memory and copies `data` into [offset, offset+size). Persists guest writes.
-        int32_t upload_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, const void* data,
-                              size_t data_size);
+        int32_t upload_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, const void* data, size_t data_size);
 
         // A VkImageSubresourceRange as plain integers (this header stays free of Vulkan types).
         struct subresource_range
@@ -110,30 +109,30 @@ namespace sogen
         };
 
         // Creates a 2D, single-mip, single-layer image (samples = 1, initial layout UNDEFINED).
-        int32_t create_image(uint64_t device, uint32_t format, uint32_t width, uint32_t height, uint32_t usage,
-                             uint32_t tiling, uint64_t& out_image);
+        int32_t create_image(uint64_t device, uint32_t format, uint32_t width, uint32_t height, uint32_t usage, uint32_t tiling,
+                             uint64_t& out_image);
         void destroy_image(uint64_t device, uint64_t image);
         int32_t get_image_memory_requirements(uint64_t device, uint64_t image, uint64_t& out_size, uint64_t& out_alignment,
                                               uint32_t& out_memory_type_bits);
         int32_t bind_image_memory(uint64_t device, uint64_t image, uint64_t memory, uint64_t offset);
 
         // Records a single image memory barrier into the (recording) command buffer.
-        int32_t cmd_pipeline_barrier(uint64_t command_buffer, uint64_t image, uint32_t src_stage_mask,
-                                     uint32_t dst_stage_mask, uint32_t src_access_mask, uint32_t dst_access_mask,
-                                     uint32_t old_layout, uint32_t new_layout, const subresource_range& range);
+        int32_t cmd_pipeline_barrier(uint64_t command_buffer, uint64_t image, uint32_t src_stage_mask, uint32_t dst_stage_mask,
+                                     uint32_t src_access_mask, uint32_t dst_access_mask, uint32_t old_layout, uint32_t new_layout,
+                                     const subresource_range& range);
         // Records vkCmdClearColorImage with an RGBA float clear color.
-        int32_t cmd_clear_color_image(uint64_t command_buffer, uint64_t image, uint32_t image_layout, float r, float g,
-                                      float b, float a, const subresource_range& range);
+        int32_t cmd_clear_color_image(uint64_t command_buffer, uint64_t image, uint32_t image_layout, float r, float g, float b, float a,
+                                      const subresource_range& range);
         // Copies mip 0 / layer 0 of the image (tightly packed) into the buffer at offset 0.
-        int32_t cmd_copy_image_to_buffer(uint64_t command_buffer, uint64_t image, uint32_t image_layout, uint64_t buffer,
-                                         uint32_t width, uint32_t height, uint32_t aspect_mask);
+        int32_t cmd_copy_image_to_buffer(uint64_t command_buffer, uint64_t image, uint32_t image_layout, uint64_t buffer, uint32_t width,
+                                         uint32_t height, uint32_t aspect_mask);
         // Copies tightly-packed pixel data from the buffer (offset 0) into mip 0 / layer 0 of the image.
-        int32_t cmd_copy_buffer_to_image(uint64_t command_buffer, uint64_t buffer, uint64_t image, uint32_t image_layout,
-                                         uint32_t width, uint32_t height, uint32_t aspect_mask);
+        int32_t cmd_copy_buffer_to_image(uint64_t command_buffer, uint64_t buffer, uint64_t image, uint32_t image_layout, uint32_t width,
+                                         uint32_t height, uint32_t aspect_mask);
 
         // A linear/nearest sampler (mag/min filter + per-axis address modes; no mipmapping/anisotropy).
-        int32_t create_sampler(uint64_t device, uint32_t mag_filter, uint32_t min_filter, uint32_t address_mode_u,
-                               uint32_t address_mode_v, uint32_t address_mode_w, uint64_t& out_sampler);
+        int32_t create_sampler(uint64_t device, uint32_t mag_filter, uint32_t min_filter, uint32_t address_mode_u, uint32_t address_mode_v,
+                               uint32_t address_mode_w, uint64_t& out_sampler);
         void destroy_sampler(uint64_t device, uint64_t sampler);
 
         // --- WSI (modeled with offscreen images; "present" reads back and hands pixels to the UI) ---
@@ -149,8 +148,7 @@ namespace sogen
         // Creates `min_image_count` (>= 2) offscreen images of the given format/extent plus a readback
         // buffer. out_image_count receives the number of images created.
         int32_t create_swapchain(uint64_t device, uint64_t surface, uint32_t format, uint32_t width, uint32_t height,
-                                 uint32_t min_image_count, uint32_t image_usage, uint64_t& out_swapchain,
-                                 uint32_t& out_image_count);
+                                 uint32_t min_image_count, uint32_t image_usage, uint64_t& out_swapchain, uint32_t& out_image_count);
         void destroy_swapchain(uint64_t device, uint64_t swapchain);
 
         // Writes the swapchain's image object ids into out_images; out_count gets the true count.
@@ -171,20 +169,18 @@ namespace sogen
         void destroy_shader_module(uint64_t device, uint64_t shader_module);
 
         // aspect_mask selects COLOR vs DEPTH (0 defaults to COLOR).
-        int32_t create_image_view(uint64_t device, uint64_t image, uint32_t format, uint32_t aspect_mask,
-                                  uint64_t& out_view);
+        int32_t create_image_view(uint64_t device, uint64_t image, uint32_t format, uint32_t aspect_mask, uint64_t& out_view);
         void destroy_image_view(uint64_t device, uint64_t image_view);
 
         // One color attachment + an optional depth attachment (depth_format == 0 => color only), single
         // subpass (initial/final layouts as given; PRESENT_SRC_KHR is mapped to TRANSFER_SRC_OPTIMAL).
-        int32_t create_render_pass(uint64_t device, uint32_t format, uint32_t load_op, uint32_t store_op,
-                                   uint32_t initial_layout, uint32_t final_layout, uint32_t depth_format,
-                                   uint64_t& out_render_pass);
+        int32_t create_render_pass(uint64_t device, uint32_t format, uint32_t load_op, uint32_t store_op, uint32_t initial_layout,
+                                   uint32_t final_layout, uint32_t depth_format, uint64_t& out_render_pass);
         void destroy_render_pass(uint64_t device, uint64_t render_pass);
 
         // depth_view == 0 => single color attachment.
-        int32_t create_framebuffer(uint64_t device, uint64_t render_pass, uint64_t image_view, uint64_t depth_view,
-                                   uint32_t width, uint32_t height, uint64_t& out_framebuffer);
+        int32_t create_framebuffer(uint64_t device, uint64_t render_pass, uint64_t image_view, uint64_t depth_view, uint32_t width,
+                                   uint32_t height, uint64_t& out_framebuffer);
         void destroy_framebuffer(uint64_t device, uint64_t framebuffer);
 
         // --- descriptor sets (uniform buffers now; combined image samplers added with textures) ---
@@ -219,11 +215,9 @@ namespace sogen
             uint32_t image_layout;
         };
 
-        int32_t create_descriptor_set_layout(uint64_t device, std::span<const descriptor_binding> bindings,
-                                             uint64_t& out_layout);
+        int32_t create_descriptor_set_layout(uint64_t device, std::span<const descriptor_binding> bindings, uint64_t& out_layout);
         void destroy_descriptor_set_layout(uint64_t device, uint64_t layout);
-        int32_t create_descriptor_pool(uint64_t device, uint32_t max_sets, std::span<const descriptor_pool_size> sizes,
-                                       uint64_t& out_pool);
+        int32_t create_descriptor_pool(uint64_t device, uint32_t max_sets, std::span<const descriptor_pool_size> sizes, uint64_t& out_pool);
         void destroy_descriptor_pool(uint64_t device, uint64_t pool);
         // Allocates one set per layout id; writes the allocated set ids into out_sets, out_count gets the
         // true count.
@@ -263,30 +257,29 @@ namespace sogen
 
         // Triangle list, static full-extent viewport/scissor, one non-blended color attachment, optional
         // depth test. Empty vertex input (no bindings/attributes) leaves vertices to be baked into the shader.
-        int32_t create_graphics_pipeline(uint64_t device, uint64_t render_pass, uint64_t pipeline_layout,
-                                         uint64_t vertex_shader, uint64_t fragment_shader, uint32_t width, uint32_t height,
-                                         std::span<const vertex_binding> bindings,
-                                         std::span<const vertex_attribute> attributes, const depth_state& depth,
-                                         uint64_t& out_pipeline);
+        int32_t create_graphics_pipeline(uint64_t device, uint64_t render_pass, uint64_t pipeline_layout, uint64_t vertex_shader,
+                                         uint64_t fragment_shader, uint32_t width, uint32_t height,
+                                         std::span<const vertex_binding> bindings, std::span<const vertex_attribute> attributes,
+                                         const depth_state& depth, uint64_t& out_pipeline);
         void destroy_pipeline(uint64_t device, uint64_t pipeline);
 
         // clear_depth is used only when the render pass has a depth attachment.
-        int32_t cmd_begin_render_pass(uint64_t command_buffer, uint64_t render_pass, uint64_t framebuffer, uint32_t width,
-                                      uint32_t height, float r, float g, float b, float a, float clear_depth);
+        int32_t cmd_begin_render_pass(uint64_t command_buffer, uint64_t render_pass, uint64_t framebuffer, uint32_t width, uint32_t height,
+                                      float r, float g, float b, float a, float clear_depth);
         int32_t cmd_bind_pipeline(uint64_t command_buffer, uint64_t pipeline);
         int32_t cmd_draw(uint64_t command_buffer, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex,
                          uint32_t first_instance);
         // Binds `count` vertex buffers (parallel buffer-id / offset arrays) starting at first_binding.
-        int32_t cmd_bind_vertex_buffers(uint64_t command_buffer, uint32_t first_binding, uint32_t count,
-                                        const uint64_t* buffer_ids, const uint64_t* offsets);
+        int32_t cmd_bind_vertex_buffers(uint64_t command_buffer, uint32_t first_binding, uint32_t count, const uint64_t* buffer_ids,
+                                        const uint64_t* offsets);
         int32_t cmd_bind_index_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint32_t index_type);
-        int32_t cmd_draw_indexed(uint64_t command_buffer, uint32_t index_count, uint32_t instance_count,
-                                 uint32_t first_index, int32_t vertex_offset, uint32_t first_instance);
+        int32_t cmd_draw_indexed(uint64_t command_buffer, uint32_t index_count, uint32_t instance_count, uint32_t first_index,
+                                 int32_t vertex_offset, uint32_t first_instance);
         int32_t cmd_bind_descriptor_sets(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t first_set,
                                          std::span<const uint64_t> sets);
         int32_t cmd_end_render_pass(uint64_t command_buffer);
-        int32_t cmd_push_constants(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t stage_flags, uint32_t offset,
-                                   uint32_t size, const void* data);
+        int32_t cmd_push_constants(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t stage_flags, uint32_t offset, uint32_t size,
+                                   const void* data);
 
       private:
         struct impl;

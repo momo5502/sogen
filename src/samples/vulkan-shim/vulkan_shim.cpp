@@ -133,8 +133,8 @@ namespace
 
 extern "C"
 {
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCreateInfo*,
-                                                                          const VkAllocationCallbacks*, VkInstance* pInstance)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCreateInfo*, const VkAllocationCallbacks*,
+                                                                          VkInstance* pInstance)
     {
         gb::create_instance_response response{};
         if (!bridge_call(gb::ioctl_create_instance, nullptr, 0, &response, sizeof(response)))
@@ -181,8 +181,7 @@ extern "C"
 
         std::vector<std::byte> buffer(sizeof(gb::enumerate_physical_devices_response) +
                                       static_cast<size_t>(*pCount) * sizeof(gb::object_id));
-        if (!bridge_call(gb::ioctl_enumerate_physical_devices, &request, sizeof(request), buffer.data(),
-                         static_cast<DWORD>(buffer.size())))
+        if (!bridge_call(gb::ioctl_enumerate_physical_devices, &request, sizeof(request), buffer.data(), static_cast<DWORD>(buffer.size())))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -208,8 +207,9 @@ extern "C"
         bridge_call(gb::ioctl_get_physical_device_properties, &request, sizeof(request), pProperties, sizeof(*pProperties));
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceQueueFamilyProperties(
-        VkPhysicalDevice physicalDevice, uint32_t* pCount, VkQueueFamilyProperties* pProperties)
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceQueueFamilyProperties(VkPhysicalDevice physicalDevice,
+                                                                                              uint32_t* pCount,
+                                                                                              VkQueueFamilyProperties* pProperties)
     {
         gb::get_queue_family_properties_request request{};
         request.physical_device = to_object_id(physicalDevice);
@@ -243,8 +243,8 @@ extern "C"
     }
 
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice physicalDevice,
-                                                                        const VkDeviceCreateInfo* pCreateInfo,
-                                                                        const VkAllocationCallbacks*, VkDevice* pDevice)
+                                                                        const VkDeviceCreateInfo* pCreateInfo, const VkAllocationCallbacks*,
+                                                                        VkDevice* pDevice)
     {
         gb::create_device_request request{};
         request.physical_device = to_object_id(physicalDevice);
@@ -281,8 +281,8 @@ extern "C"
         bridge_call(gb::ioctl_destroy_device, &request, sizeof(request), nullptr, 0);
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue(VkDevice device, uint32_t queueFamilyIndex,
-                                                                      uint32_t queueIndex, VkQueue* pQueue)
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue(VkDevice device, uint32_t queueFamilyIndex, uint32_t queueIndex,
+                                                                      VkQueue* pQueue)
     {
         gb::get_device_queue_request request{};
         request.device = to_object_id(device);
@@ -299,9 +299,8 @@ extern "C"
         *pQueue = to_handle<VkQueue>(response.queue);
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateCommandPool(VkDevice device,
-                                                                            const VkCommandPoolCreateInfo* pCreateInfo,
-                                                                            const VkAllocationCallbacks*, VkCommandPool* pCommandPool)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateCommandPool(VkDevice device, const VkCommandPoolCreateInfo* pCreateInfo,
+                                                                             const VkAllocationCallbacks*, VkCommandPool* pCommandPool)
     {
         gb::create_command_pool_request request{};
         request.device = to_object_id(device);
@@ -368,7 +367,7 @@ extern "C"
     }
 
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkBeginCommandBuffer(VkCommandBuffer commandBuffer,
-                                                                             const VkCommandBufferBeginInfo* pBeginInfo)
+                                                                              const VkCommandBufferBeginInfo* pBeginInfo)
     {
         // Start a fresh recording stream; the begin is its first record. Flushed at vkEndCommandBuffer.
         gb::begin_command_buffer_request request{};
@@ -396,8 +395,7 @@ extern "C"
         g_command_streams.erase(it);
 
         gb::result_response response{};
-        if (!bridge_call(gb::ioctl_record_commands, stream.data(), static_cast<DWORD>(stream.size()), &response,
-                         sizeof(response)))
+        if (!bridge_call(gb::ioctl_record_commands, stream.data(), static_cast<DWORD>(stream.size()), &response, sizeof(response)))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -405,7 +403,7 @@ extern "C"
     }
 
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateFence(VkDevice device, const VkFenceCreateInfo* pCreateInfo,
-                                                                      const VkAllocationCallbacks*, VkFence* pFence)
+                                                                       const VkAllocationCallbacks*, VkFence* pFence)
     {
         gb::create_fence_request request{};
         request.device = to_object_id(device);
@@ -433,8 +431,7 @@ extern "C"
         bridge_call(gb::ioctl_destroy_fence, &request, sizeof(request), nullptr, 0);
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkResetFences(VkDevice device, uint32_t fenceCount,
-                                                                      const VkFence* pFences)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkResetFences(VkDevice device, uint32_t fenceCount, const VkFence* pFences)
     {
         for (uint32_t i = 0; i < fenceCount; ++i)
         {
@@ -465,8 +462,8 @@ extern "C"
         return static_cast<VkResult>(response.vk_result);
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit(VkQueue queue, uint32_t submitCount,
-                                                                      const VkSubmitInfo* pSubmits, VkFence fence)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo* pSubmits,
+                                                                       VkFence fence)
     {
         // Count the command buffers so the fence can be attached to the final submission only.
         uint32_t total = 0;
@@ -525,9 +522,8 @@ extern "C"
     // thread is never blocked on the GPU. We spin here, yielding to the emulator between polls, until
     // the fence(s) signal or the timeout elapses. The real GPU makes progress independently of the
     // emulator thread, so the fence eventually signals.
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkWaitForFences(VkDevice device, uint32_t fenceCount,
-                                                                        const VkFence* pFences, VkBool32 waitAll,
-                                                                        uint64_t timeout)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkWaitForFences(VkDevice device, uint32_t fenceCount, const VkFence* pFences,
+                                                                         VkBool32 waitAll, uint64_t timeout)
     {
         const ULONGLONG start = GetTickCount64();
         const ULONGLONG timeout_ms = (timeout == UINT64_MAX) ? UINT64_MAX : (timeout / 1000000ULL);
@@ -557,8 +553,8 @@ extern "C"
         }
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceMemoryProperties(
-        VkPhysicalDevice physicalDevice, VkPhysicalDeviceMemoryProperties* pMemoryProperties)
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
+    vkGetPhysicalDeviceMemoryProperties(VkPhysicalDevice physicalDevice, VkPhysicalDeviceMemoryProperties* pMemoryProperties)
     {
         if (!pMemoryProperties)
         {
@@ -572,8 +568,7 @@ extern "C"
                     sizeof(*pMemoryProperties));
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkAllocateMemory(VkDevice device,
-                                                                          const VkMemoryAllocateInfo* pAllocateInfo,
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkAllocateMemory(VkDevice device, const VkMemoryAllocateInfo* pAllocateInfo,
                                                                           const VkAllocationCallbacks*, VkDeviceMemory* pMemory)
     {
         gb::allocate_memory_request request{};
@@ -596,8 +591,7 @@ extern "C"
         return VK_SUCCESS;
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkFreeMemory(VkDevice device, VkDeviceMemory memory,
-                                                                  const VkAllocationCallbacks*)
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkFreeMemory(VkDevice device, VkDeviceMemory memory, const VkAllocationCallbacks*)
     {
         if (!memory)
         {
@@ -614,9 +608,8 @@ extern "C"
         g_mapped_ranges.erase(mem_id);
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkMapMemory(VkDevice device, VkDeviceMemory memory,
-                                                                     VkDeviceSize offset, VkDeviceSize size,
-                                                                     VkMemoryMapFlags, void** ppData)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkMapMemory(VkDevice device, VkDeviceMemory memory, VkDeviceSize offset,
+                                                                     VkDeviceSize size, VkMemoryMapFlags, void** ppData)
     {
         const gb::object_id mem_id = to_object_id(memory);
 
@@ -674,15 +667,13 @@ extern "C"
             std::memcpy(message.data() + sizeof(header), range.staging.data(), range.staging.size());
 
             gb::result_response response{};
-            bridge_call(gb::ioctl_upload_memory, message.data(), static_cast<DWORD>(message.size()), &response,
-                        sizeof(response));
+            bridge_call(gb::ioctl_upload_memory, message.data(), static_cast<DWORD>(message.size()), &response, sizeof(response));
         }
 
         g_mapped_ranges.erase(it);
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateBuffer(VkDevice device,
-                                                                        const VkBufferCreateInfo* pCreateInfo,
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateBuffer(VkDevice device, const VkBufferCreateInfo* pCreateInfo,
                                                                         const VkAllocationCallbacks*, VkBuffer* pBuffer)
     {
         gb::create_buffer_request request{};
@@ -704,8 +695,7 @@ extern "C"
         return VK_SUCCESS;
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyBuffer(VkDevice device, VkBuffer buffer,
-                                                                     const VkAllocationCallbacks*)
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyBuffer(VkDevice device, VkBuffer buffer, const VkAllocationCallbacks*)
     {
         if (!buffer)
         {
@@ -741,8 +731,8 @@ extern "C"
         pMemoryRequirements->memoryTypeBits = response.memory_type_bits;
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkBindBufferMemory(VkDevice device, VkBuffer buffer,
-                                                                            VkDeviceMemory memory, VkDeviceSize memoryOffset)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkBindBufferMemory(VkDevice device, VkBuffer buffer, VkDeviceMemory memory,
+                                                                            VkDeviceSize memoryOffset)
     {
         gb::bind_buffer_memory_request request{};
         request.device = to_object_id(device);
@@ -770,8 +760,7 @@ extern "C"
         record_command(request.command_buffer, gb::command::cmd_fill_buffer, &request, sizeof(request));
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateImage(VkDevice device,
-                                                                       const VkImageCreateInfo* pCreateInfo,
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateImage(VkDevice device, const VkImageCreateInfo* pCreateInfo,
                                                                        const VkAllocationCallbacks*, VkImage* pImage)
     {
         gb::create_image_request request{};
@@ -796,8 +785,7 @@ extern "C"
         return VK_SUCCESS;
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyImage(VkDevice device, VkImage image,
-                                                                    const VkAllocationCallbacks*)
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyImage(VkDevice device, VkImage image, const VkAllocationCallbacks*)
     {
         if (!image)
         {
@@ -833,8 +821,8 @@ extern "C"
         pMemoryRequirements->memoryTypeBits = response.memory_type_bits;
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkBindImageMemory(VkDevice device, VkImage image,
-                                                                           VkDeviceMemory memory, VkDeviceSize memoryOffset)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkBindImageMemory(VkDevice device, VkImage image, VkDeviceMemory memory,
+                                                                           VkDeviceSize memoryOffset)
     {
         gb::bind_image_memory_request request{};
         request.device = to_object_id(device);
@@ -866,10 +854,11 @@ extern "C"
 
     // Only image memory barriers are remoted (one IOCTL each, using the global stage masks); memory and
     // buffer barriers are not modeled yet.
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdPipelineBarrier(
-        VkCommandBuffer commandBuffer, VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask,
-        VkDependencyFlags, uint32_t, const VkMemoryBarrier*, uint32_t, const VkBufferMemoryBarrier*,
-        uint32_t imageMemoryBarrierCount, const VkImageMemoryBarrier* pImageMemoryBarriers)
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdPipelineBarrier(VkCommandBuffer commandBuffer, VkPipelineStageFlags srcStageMask,
+                                                                          VkPipelineStageFlags dstStageMask, VkDependencyFlags, uint32_t,
+                                                                          const VkMemoryBarrier*, uint32_t, const VkBufferMemoryBarrier*,
+                                                                          uint32_t imageMemoryBarrierCount,
+                                                                          const VkImageMemoryBarrier* pImageMemoryBarriers)
     {
         for (uint32_t i = 0; i < imageMemoryBarrierCount; ++i)
         {
@@ -889,10 +878,8 @@ extern "C"
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdClearColorImage(VkCommandBuffer commandBuffer, VkImage image,
-                                                                          VkImageLayout imageLayout,
-                                                                          const VkClearColorValue* pColor,
-                                                                          uint32_t rangeCount,
-                                                                          const VkImageSubresourceRange* pRanges)
+                                                                          VkImageLayout imageLayout, const VkClearColorValue* pColor,
+                                                                          uint32_t rangeCount, const VkImageSubresourceRange* pRanges)
     {
         for (uint32_t i = 0; i < rangeCount; ++i)
         {
@@ -913,8 +900,7 @@ extern "C"
     // (bufferRowLength/bufferImageHeight/imageOffset are not yet honored).
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdCopyImageToBuffer(VkCommandBuffer commandBuffer, VkImage srcImage,
                                                                             VkImageLayout srcImageLayout, VkBuffer dstBuffer,
-                                                                            uint32_t regionCount,
-                                                                            const VkBufferImageCopy* pRegions)
+                                                                            uint32_t regionCount, const VkBufferImageCopy* pRegions)
     {
         for (uint32_t i = 0; i < regionCount; ++i)
         {
@@ -933,11 +919,9 @@ extern "C"
 
     // Copies are remoted assuming tight packing into mip 0 / layer 0 at image offset 0 from buffer
     // offset 0 (bufferRowLength/bufferImageHeight/imageOffset are not yet honored).
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(VkCommandBuffer commandBuffer,
-                                                                            VkBuffer srcBuffer, VkImage dstImage,
-                                                                            VkImageLayout dstImageLayout,
-                                                                            uint32_t regionCount,
-                                                                            const VkBufferImageCopy* pRegions)
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer srcBuffer,
+                                                                            VkImage dstImage, VkImageLayout dstImageLayout,
+                                                                            uint32_t regionCount, const VkBufferImageCopy* pRegions)
     {
         for (uint32_t i = 0; i < regionCount; ++i)
         {
@@ -954,10 +938,8 @@ extern "C"
         }
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateWin32SurfaceKHR(VkInstance,
-                                                                                 const VkWin32SurfaceCreateInfoKHR* pCreateInfo,
-                                                                                 const VkAllocationCallbacks*,
-                                                                                 VkSurfaceKHR* pSurface)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateWin32SurfaceKHR(VkInstance, const VkWin32SurfaceCreateInfoKHR* pCreateInfo,
+                                                                                 const VkAllocationCallbacks*, VkSurfaceKHR* pSurface)
     {
         gb::create_surface_request request{};
         request.hwnd = reinterpret_cast<uint64_t>(pCreateInfo->hwnd);
@@ -976,8 +958,7 @@ extern "C"
         return VK_SUCCESS;
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroySurfaceKHR(VkInstance, VkSurfaceKHR surface,
-                                                                         const VkAllocationCallbacks*)
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroySurfaceKHR(VkInstance, VkSurfaceKHR surface, const VkAllocationCallbacks*)
     {
         if (!surface)
         {
@@ -1008,10 +989,8 @@ extern "C"
         return VK_SUCCESS;
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice device,
-                                                                              const VkSwapchainCreateInfoKHR* pCreateInfo,
-                                                                              const VkAllocationCallbacks*,
-                                                                              VkSwapchainKHR* pSwapchain)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR* pCreateInfo,
+                                                                              const VkAllocationCallbacks*, VkSwapchainKHR* pSwapchain)
     {
         gb::create_swapchain_request request{};
         request.device = to_object_id(device);
@@ -1051,8 +1030,7 @@ extern "C"
     }
 
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetSwapchainImagesKHR(VkDevice, VkSwapchainKHR swapchain,
-                                                                                 uint32_t* pSwapchainImageCount,
-                                                                                 VkImage* pSwapchainImages)
+                                                                                 uint32_t* pSwapchainImageCount, VkImage* pSwapchainImages)
     {
         const uint32_t capacity = pSwapchainImages ? *pSwapchainImageCount : 0;
 
@@ -1061,8 +1039,7 @@ extern "C"
         request.max_count = capacity;
 
         std::vector<uint8_t> out(sizeof(gb::get_swapchain_images_response) + capacity * sizeof(gb::object_id));
-        if (!bridge_call(gb::ioctl_get_swapchain_images, &request, sizeof(request), out.data(),
-                         static_cast<DWORD>(out.size())))
+        if (!bridge_call(gb::ioctl_get_swapchain_images, &request, sizeof(request), out.data(), static_cast<DWORD>(out.size())))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -1090,8 +1067,8 @@ extern "C"
         return (to_write < header.count) ? VK_INCOMPLETE : VK_SUCCESS;
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImageKHR(VkDevice, VkSwapchainKHR swapchain, uint64_t,
-                                                                               VkSemaphore, VkFence, uint32_t* pImageIndex)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImageKHR(VkDevice, VkSwapchainKHR swapchain, uint64_t, VkSemaphore,
+                                                                               VkFence, uint32_t* pImageIndex)
     {
         // semaphore/fence are ignored: the bridge's images are always immediately available.
         gb::acquire_next_image_request request{};
@@ -1122,8 +1099,7 @@ extern "C"
             request.image_index = pPresentInfo->pImageIndices[i];
 
             gb::result_response response{};
-            const bool ok =
-                bridge_call(gb::ioctl_queue_present, &request, sizeof(request), &response, sizeof(response));
+            const bool ok = bridge_call(gb::ioctl_queue_present, &request, sizeof(request), &response, sizeof(response));
             const VkResult result = ok ? static_cast<VkResult>(response.vk_result) : VK_ERROR_INITIALIZATION_FAILED;
             if (pPresentInfo->pResults)
             {
@@ -1137,10 +1113,8 @@ extern "C"
         return overall;
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateShaderModule(VkDevice device,
-                                                                              const VkShaderModuleCreateInfo* pCreateInfo,
-                                                                              const VkAllocationCallbacks*,
-                                                                              VkShaderModule* pShaderModule)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateShaderModule(VkDevice device, const VkShaderModuleCreateInfo* pCreateInfo,
+                                                                              const VkAllocationCallbacks*, VkShaderModule* pShaderModule)
     {
         const auto code_size = static_cast<uint32_t>(pCreateInfo->codeSize);
         std::vector<uint8_t> message(sizeof(gb::create_shader_module_request) + code_size);
@@ -1151,8 +1125,7 @@ extern "C"
         std::memcpy(message.data() + sizeof(header), pCreateInfo->pCode, code_size);
 
         gb::object_response response{};
-        if (!bridge_call(gb::ioctl_create_shader_module, message.data(), static_cast<DWORD>(message.size()), &response,
-                         sizeof(response)))
+        if (!bridge_call(gb::ioctl_create_shader_module, message.data(), static_cast<DWORD>(message.size()), &response, sizeof(response)))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -1170,8 +1143,7 @@ extern "C"
         destroy_device_child(gb::ioctl_destroy_shader_module, device, shaderModule);
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateImageView(VkDevice device,
-                                                                           const VkImageViewCreateInfo* pCreateInfo,
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateImageView(VkDevice device, const VkImageViewCreateInfo* pCreateInfo,
                                                                            const VkAllocationCallbacks*, VkImageView* pView)
     {
         gb::create_image_view_request request{};
@@ -1199,10 +1171,8 @@ extern "C"
         destroy_device_child(gb::ioctl_destroy_image_view, device, imageView);
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateRenderPass(VkDevice device,
-                                                                            const VkRenderPassCreateInfo* pCreateInfo,
-                                                                            const VkAllocationCallbacks*,
-                                                                            VkRenderPass* pRenderPass)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo* pCreateInfo,
+                                                                            const VkAllocationCallbacks*, VkRenderPass* pRenderPass)
     {
         // The first attachment drives the color attachment; a subpass depth-stencil attachment (if any)
         // contributes its format so the bridge adds a matching depth attachment.
@@ -1242,10 +1212,8 @@ extern "C"
         destroy_device_child(gb::ioctl_destroy_render_pass, device, renderPass);
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateFramebuffer(VkDevice device,
-                                                                             const VkFramebufferCreateInfo* pCreateInfo,
-                                                                             const VkAllocationCallbacks*,
-                                                                             VkFramebuffer* pFramebuffer)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateFramebuffer(VkDevice device, const VkFramebufferCreateInfo* pCreateInfo,
+                                                                             const VkAllocationCallbacks*, VkFramebuffer* pFramebuffer)
     {
         gb::create_framebuffer_request request{};
         request.device = to_object_id(device);
@@ -1274,9 +1242,10 @@ extern "C"
         destroy_device_child(gb::ioctl_destroy_framebuffer, device, framebuffer);
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreatePipelineLayout(
-        VkDevice device, const VkPipelineLayoutCreateInfo* pCreateInfo, const VkAllocationCallbacks*,
-        VkPipelineLayout* pPipelineLayout)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreatePipelineLayout(VkDevice device,
+                                                                                const VkPipelineLayoutCreateInfo* pCreateInfo,
+                                                                                const VkAllocationCallbacks*,
+                                                                                VkPipelineLayout* pPipelineLayout)
     {
         gb::create_pipeline_layout_request request{};
         request.device = to_object_id(device);
@@ -1290,8 +1259,7 @@ extern "C"
         request.set_layout_count = pCreateInfo->setLayoutCount;
 
         // The descriptor-set-layout ids trail the header.
-        std::vector<uint8_t> message(sizeof(request) +
-                                     static_cast<size_t>(request.set_layout_count) * sizeof(gb::object_id));
+        std::vector<uint8_t> message(sizeof(request) + static_cast<size_t>(request.set_layout_count) * sizeof(gb::object_id));
         std::memcpy(message.data(), &request, sizeof(request));
         for (uint32_t i = 0; i < request.set_layout_count; ++i)
         {
@@ -1300,8 +1268,7 @@ extern "C"
         }
 
         gb::object_response response{};
-        if (!bridge_call(gb::ioctl_create_pipeline_layout, message.data(), static_cast<DWORD>(message.size()), &response,
-                         sizeof(response)))
+        if (!bridge_call(gb::ioctl_create_pipeline_layout, message.data(), static_cast<DWORD>(message.size()), &response, sizeof(response)))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -1313,16 +1280,16 @@ extern "C"
         return VK_SUCCESS;
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyPipelineLayout(VkDevice device,
-                                                                             VkPipelineLayout pipelineLayout,
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyPipelineLayout(VkDevice device, VkPipelineLayout pipelineLayout,
                                                                              const VkAllocationCallbacks*)
     {
         destroy_device_child(gb::ioctl_destroy_pipeline_layout, device, pipelineLayout);
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateDescriptorSetLayout(
-        VkDevice device, const VkDescriptorSetLayoutCreateInfo* pCreateInfo, const VkAllocationCallbacks*,
-        VkDescriptorSetLayout* pSetLayout)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateDescriptorSetLayout(VkDevice device,
+                                                                                     const VkDescriptorSetLayoutCreateInfo* pCreateInfo,
+                                                                                     const VkAllocationCallbacks*,
+                                                                                     VkDescriptorSetLayout* pSetLayout)
     {
         gb::create_descriptor_set_layout_request header{};
         header.device = to_object_id(device);
@@ -1343,8 +1310,8 @@ extern "C"
         }
 
         gb::object_response response{};
-        if (!bridge_call(gb::ioctl_create_descriptor_set_layout, message.data(), static_cast<DWORD>(message.size()),
-                         &response, sizeof(response)))
+        if (!bridge_call(gb::ioctl_create_descriptor_set_layout, message.data(), static_cast<DWORD>(message.size()), &response,
+                         sizeof(response)))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -1356,23 +1323,24 @@ extern "C"
         return VK_SUCCESS;
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyDescriptorSetLayout(
-        VkDevice device, VkDescriptorSetLayout descriptorSetLayout, const VkAllocationCallbacks*)
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyDescriptorSetLayout(VkDevice device,
+                                                                                  VkDescriptorSetLayout descriptorSetLayout,
+                                                                                  const VkAllocationCallbacks*)
     {
         destroy_device_child(gb::ioctl_destroy_descriptor_set_layout, device, descriptorSetLayout);
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateDescriptorPool(
-        VkDevice device, const VkDescriptorPoolCreateInfo* pCreateInfo, const VkAllocationCallbacks*,
-        VkDescriptorPool* pDescriptorPool)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateDescriptorPool(VkDevice device,
+                                                                                const VkDescriptorPoolCreateInfo* pCreateInfo,
+                                                                                const VkAllocationCallbacks*,
+                                                                                VkDescriptorPool* pDescriptorPool)
     {
         gb::create_descriptor_pool_request header{};
         header.device = to_object_id(device);
         header.max_sets = pCreateInfo->maxSets;
         header.pool_size_count = pCreateInfo->poolSizeCount;
 
-        std::vector<uint8_t> message(sizeof(header) +
-                                     static_cast<size_t>(header.pool_size_count) * sizeof(gb::descriptor_pool_size));
+        std::vector<uint8_t> message(sizeof(header) + static_cast<size_t>(header.pool_size_count) * sizeof(gb::descriptor_pool_size));
         std::memcpy(message.data(), &header, sizeof(header));
         for (uint32_t i = 0; i < header.pool_size_count; ++i)
         {
@@ -1383,8 +1351,7 @@ extern "C"
         }
 
         gb::object_response response{};
-        if (!bridge_call(gb::ioctl_create_descriptor_pool, message.data(), static_cast<DWORD>(message.size()), &response,
-                         sizeof(response)))
+        if (!bridge_call(gb::ioctl_create_descriptor_pool, message.data(), static_cast<DWORD>(message.size()), &response, sizeof(response)))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -1396,15 +1363,15 @@ extern "C"
         return VK_SUCCESS;
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyDescriptorPool(VkDevice device,
-                                                                             VkDescriptorPool descriptorPool,
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyDescriptorPool(VkDevice device, VkDescriptorPool descriptorPool,
                                                                              const VkAllocationCallbacks*)
     {
         destroy_device_child(gb::ioctl_destroy_descriptor_pool, device, descriptorPool);
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkAllocateDescriptorSets(
-        VkDevice device, const VkDescriptorSetAllocateInfo* pAllocateInfo, VkDescriptorSet* pDescriptorSets)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkAllocateDescriptorSets(VkDevice device,
+                                                                                  const VkDescriptorSetAllocateInfo* pAllocateInfo,
+                                                                                  VkDescriptorSet* pDescriptorSets)
     {
         const uint32_t count = pAllocateInfo->descriptorSetCount;
         gb::allocate_descriptor_sets_request header{};
@@ -1420,8 +1387,7 @@ extern "C"
             std::memcpy(message.data() + sizeof(header) + i * sizeof(id), &id, sizeof(id));
         }
 
-        std::vector<uint8_t> out(sizeof(gb::allocate_descriptor_sets_response) +
-                                 static_cast<size_t>(count) * sizeof(gb::object_id));
+        std::vector<uint8_t> out(sizeof(gb::allocate_descriptor_sets_response) + static_cast<size_t>(count) * sizeof(gb::object_id));
         if (!bridge_call(gb::ioctl_allocate_descriptor_sets, message.data(), static_cast<DWORD>(message.size()), out.data(),
                          static_cast<DWORD>(out.size())))
         {
@@ -1445,8 +1411,8 @@ extern "C"
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkUpdateDescriptorSets(VkDevice device, uint32_t descriptorWriteCount,
-                                                                            const VkWriteDescriptorSet* pDescriptorWrites,
-                                                                            uint32_t, const VkCopyDescriptorSet*)
+                                                                            const VkWriteDescriptorSet* pDescriptorWrites, uint32_t,
+                                                                            const VkCopyDescriptorSet*)
     {
         // Descriptor copies are not modeled; only writes are forwarded. Each VkWriteDescriptorSet is
         // flattened to `descriptorCount` single-descriptor wire writes.
@@ -1489,12 +1455,10 @@ extern "C"
         }
 
         gb::result_response response{};
-        bridge_call(gb::ioctl_update_descriptor_sets, message.data(), static_cast<DWORD>(message.size()), &response,
-                    sizeof(response));
+        bridge_call(gb::ioctl_update_descriptor_sets, message.data(), static_cast<DWORD>(message.size()), &response, sizeof(response));
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateSampler(VkDevice device,
-                                                                         const VkSamplerCreateInfo* pCreateInfo,
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateSampler(VkDevice device, const VkSamplerCreateInfo* pCreateInfo,
                                                                          const VkAllocationCallbacks*, VkSampler* pSampler)
     {
         gb::create_sampler_request request{};
@@ -1518,15 +1482,15 @@ extern "C"
         return VK_SUCCESS;
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroySampler(VkDevice device, VkSampler sampler,
-                                                                      const VkAllocationCallbacks*)
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroySampler(VkDevice device, VkSampler sampler, const VkAllocationCallbacks*)
     {
         destroy_device_child(gb::ioctl_destroy_sampler, device, sampler);
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
-        VkDevice device, VkPipelineCache, uint32_t createInfoCount, const VkGraphicsPipelineCreateInfo* pCreateInfos,
-        const VkAllocationCallbacks*, VkPipeline* pPipelines)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(VkDevice device, VkPipelineCache,
+                                                                                   uint32_t createInfoCount,
+                                                                                   const VkGraphicsPipelineCreateInfo* pCreateInfos,
+                                                                                   const VkAllocationCallbacks*, VkPipeline* pPipelines)
     {
         VkResult overall = VK_SUCCESS;
         for (uint32_t i = 0; i < createInfoCount; ++i)
@@ -1611,8 +1575,8 @@ extern "C"
             }
 
             gb::object_response response{};
-            const bool ok = bridge_call(gb::ioctl_create_graphics_pipeline, message.data(),
-                                        static_cast<DWORD>(message.size()), &response, sizeof(response));
+            const bool ok = bridge_call(gb::ioctl_create_graphics_pipeline, message.data(), static_cast<DWORD>(message.size()), &response,
+                                        sizeof(response));
             if (!ok || response.vk_result != VK_SUCCESS)
             {
                 pPipelines[i] = VK_NULL_HANDLE;
@@ -1626,15 +1590,13 @@ extern "C"
         return overall;
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyPipeline(VkDevice device, VkPipeline pipeline,
-                                                                       const VkAllocationCallbacks*)
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyPipeline(VkDevice device, VkPipeline pipeline, const VkAllocationCallbacks*)
     {
         destroy_device_child(gb::ioctl_destroy_pipeline, device, pipeline);
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBeginRenderPass(VkCommandBuffer commandBuffer,
-                                                                          const VkRenderPassBeginInfo* pRenderPassBegin,
-                                                                          VkSubpassContents)
+                                                                          const VkRenderPassBeginInfo* pRenderPassBegin, VkSubpassContents)
     {
         gb::cmd_begin_render_pass_request request{};
         request.command_buffer = to_object_id(commandBuffer);
@@ -1666,9 +1628,8 @@ extern "C"
         record_command(request.command_buffer, gb::command::cmd_bind_pipeline, &request, sizeof(request));
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdDraw(VkCommandBuffer commandBuffer, uint32_t vertexCount,
-                                                               uint32_t instanceCount, uint32_t firstVertex,
-                                                               uint32_t firstInstance)
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdDraw(VkCommandBuffer commandBuffer, uint32_t vertexCount, uint32_t instanceCount,
+                                                               uint32_t firstVertex, uint32_t firstInstance)
     {
         gb::cmd_draw_request request{};
         request.command_buffer = to_object_id(commandBuffer);
@@ -1679,9 +1640,8 @@ extern "C"
         record_command(request.command_buffer, gb::command::cmd_draw, &request, sizeof(request));
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindVertexBuffers(VkCommandBuffer commandBuffer,
-                                                                            uint32_t firstBinding, uint32_t bindingCount,
-                                                                            const VkBuffer* pBuffers,
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindVertexBuffers(VkCommandBuffer commandBuffer, uint32_t firstBinding,
+                                                                            uint32_t bindingCount, const VkBuffer* pBuffers,
                                                                             const VkDeviceSize* pOffsets)
     {
         const gb::object_id command_buffer = to_object_id(commandBuffer);
@@ -1714,8 +1674,8 @@ extern "C"
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndexed(VkCommandBuffer commandBuffer, uint32_t indexCount,
-                                                                      uint32_t instanceCount, uint32_t firstIndex,
-                                                                      int32_t vertexOffset, uint32_t firstInstance)
+                                                                      uint32_t instanceCount, uint32_t firstIndex, int32_t vertexOffset,
+                                                                      uint32_t firstInstance)
     {
         gb::cmd_draw_indexed_request request{};
         request.command_buffer = to_object_id(commandBuffer);
@@ -1727,9 +1687,11 @@ extern "C"
         record_command(request.command_buffer, gb::command::cmd_draw_indexed, &request, sizeof(request));
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindDescriptorSets(
-        VkCommandBuffer commandBuffer, VkPipelineBindPoint, VkPipelineLayout layout, uint32_t firstSet,
-        uint32_t descriptorSetCount, const VkDescriptorSet* pDescriptorSets, uint32_t, const uint32_t*)
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindDescriptorSets(VkCommandBuffer commandBuffer, VkPipelineBindPoint,
+                                                                             VkPipelineLayout layout, uint32_t firstSet,
+                                                                             uint32_t descriptorSetCount,
+                                                                             const VkDescriptorSet* pDescriptorSets, uint32_t,
+                                                                             const uint32_t*)
     {
         // Dynamic offsets are not modeled yet (the samples use none).
         const gb::object_id command_buffer = to_object_id(commandBuffer);
@@ -1756,9 +1718,9 @@ extern "C"
         record_command(request.command_buffer, gb::command::cmd_end_render_pass, &request, sizeof(request));
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdPushConstants(VkCommandBuffer commandBuffer,
-                                                                        VkPipelineLayout layout, VkShaderStageFlags stageFlags,
-                                                                        uint32_t offset, uint32_t size, const void* pValues)
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdPushConstants(VkCommandBuffer commandBuffer, VkPipelineLayout layout,
+                                                                        VkShaderStageFlags stageFlags, uint32_t offset, uint32_t size,
+                                                                        const void* pValues)
     {
         std::vector<uint8_t> message(sizeof(gb::cmd_push_constants_request) + size);
         gb::cmd_push_constants_request header{};
@@ -1796,8 +1758,7 @@ extern "C"
             {.name = "vkCreateInstance", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateInstance)},
             {.name = "vkDestroyInstance", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyInstance)},
             {.name = "vkEnumeratePhysicalDevices", .func = reinterpret_cast<PFN_vkVoidFunction>(vkEnumeratePhysicalDevices)},
-            {.name = "vkGetPhysicalDeviceProperties",
-             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceProperties)},
+            {.name = "vkGetPhysicalDeviceProperties", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceProperties)},
             {.name = "vkGetPhysicalDeviceQueueFamilyProperties",
              .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceQueueFamilyProperties)},
             {.name = "vkCreateDevice", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateDevice)},
@@ -1823,14 +1784,12 @@ extern "C"
             {.name = "vkUnmapMemory", .func = reinterpret_cast<PFN_vkVoidFunction>(vkUnmapMemory)},
             {.name = "vkCreateBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateBuffer)},
             {.name = "vkDestroyBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyBuffer)},
-            {.name = "vkGetBufferMemoryRequirements",
-             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetBufferMemoryRequirements)},
+            {.name = "vkGetBufferMemoryRequirements", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetBufferMemoryRequirements)},
             {.name = "vkBindBufferMemory", .func = reinterpret_cast<PFN_vkVoidFunction>(vkBindBufferMemory)},
             {.name = "vkCmdFillBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdFillBuffer)},
             {.name = "vkCreateImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateImage)},
             {.name = "vkDestroyImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyImage)},
-            {.name = "vkGetImageMemoryRequirements",
-             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageMemoryRequirements)},
+            {.name = "vkGetImageMemoryRequirements", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageMemoryRequirements)},
             {.name = "vkBindImageMemory", .func = reinterpret_cast<PFN_vkVoidFunction>(vkBindImageMemory)},
             {.name = "vkCmdPipelineBarrier", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdPipelineBarrier)},
             {.name = "vkCmdClearColorImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdClearColorImage)},
@@ -1857,10 +1816,8 @@ extern "C"
             {.name = "vkDestroyFramebuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyFramebuffer)},
             {.name = "vkCreatePipelineLayout", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreatePipelineLayout)},
             {.name = "vkDestroyPipelineLayout", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyPipelineLayout)},
-            {.name = "vkCreateDescriptorSetLayout",
-             .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateDescriptorSetLayout)},
-            {.name = "vkDestroyDescriptorSetLayout",
-             .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDescriptorSetLayout)},
+            {.name = "vkCreateDescriptorSetLayout", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateDescriptorSetLayout)},
+            {.name = "vkDestroyDescriptorSetLayout", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDescriptorSetLayout)},
             {.name = "vkCreateDescriptorPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateDescriptorPool)},
             {.name = "vkDestroyDescriptorPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDescriptorPool)},
             {.name = "vkAllocateDescriptorSets", .func = reinterpret_cast<PFN_vkVoidFunction>(vkAllocateDescriptorSets)},
@@ -1896,8 +1853,7 @@ extern "C"
     }
 
     // Some loaders / probes bootstrap through the ICD-style export instead.
-    __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vk_icdGetInstanceProcAddr(VkInstance instance,
-                                                                                             const char* pName)
+    __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vk_icdGetInstanceProcAddr(VkInstance instance, const char* pName)
     {
         return vkGetInstanceProcAddr(instance, pName);
     }

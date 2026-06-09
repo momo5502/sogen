@@ -24,7 +24,7 @@
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <vulkan/vulkan_win32.h>
 
-#include "uniform_buffer_spirv.hpp"
+#include "uniform_buffer_spirv.hxx"
 
 namespace
 {
@@ -106,9 +106,9 @@ int main(int argc, char** argv)
     }
 
     constexpr DWORD window_style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE;
-    const HWND hwnd = CreateWindowExA(0, wc.lpszClassName, "Sogen Vulkan - Uniform Buffer", window_style, 200, 200,
-                                      static_cast<int>(window_width), static_cast<int>(window_height), nullptr, nullptr,
-                                      hinstance, nullptr);
+    const HWND hwnd =
+        CreateWindowExA(0, wc.lpszClassName, "Sogen Vulkan - Uniform Buffer", window_style, 200, 200, static_cast<int>(window_width),
+                        static_cast<int>(window_height), nullptr, nullptr, hinstance, nullptr);
     if (!hwnd)
     {
         std::printf("[vk-ubo] CreateWindowExA failed: %lu\n", GetLastError());
@@ -121,8 +121,7 @@ int main(int argc, char** argv)
         std::printf("[vk-ubo] LoadLibrary(%s) failed: %lu\n", dll, GetLastError());
         return 3;
     }
-    const auto gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(
-        reinterpret_cast<void*>(GetProcAddress(mod, "vkGetInstanceProcAddr")));
+    const auto gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(reinterpret_cast<void*>(GetProcAddress(mod, "vkGetInstanceProcAddr")));
     if (!gipa)
     {
         std::printf("[vk-ubo] no vkGetInstanceProcAddr export\n");
@@ -151,8 +150,7 @@ int main(int argc, char** argv)
     const auto enumerate = load<PFN_vkEnumeratePhysicalDevices>(gipa, instance, "vkEnumeratePhysicalDevices");
     const auto get_queue_families =
         load<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(gipa, instance, "vkGetPhysicalDeviceQueueFamilyProperties");
-    const auto get_memory_properties =
-        load<PFN_vkGetPhysicalDeviceMemoryProperties>(gipa, instance, "vkGetPhysicalDeviceMemoryProperties");
+    const auto get_memory_properties = load<PFN_vkGetPhysicalDeviceMemoryProperties>(gipa, instance, "vkGetPhysicalDeviceMemoryProperties");
     const auto create_device = load<PFN_vkCreateDevice>(gipa, instance, "vkCreateDevice");
     const auto get_device_queue = load<PFN_vkGetDeviceQueue>(gipa, instance, "vkGetDeviceQueue");
     const auto create_win32_surface = load<PFN_vkCreateWin32SurfaceKHR>(gipa, instance, "vkCreateWin32SurfaceKHR");
@@ -170,8 +168,7 @@ int main(int argc, char** argv)
     const auto wait_for_fences = load<PFN_vkWaitForFences>(gipa, instance, "vkWaitForFences");
     const auto destroy_fence = load<PFN_vkDestroyFence>(gipa, instance, "vkDestroyFence");
     const auto create_buffer = load<PFN_vkCreateBuffer>(gipa, instance, "vkCreateBuffer");
-    const auto get_buffer_memory_requirements =
-        load<PFN_vkGetBufferMemoryRequirements>(gipa, instance, "vkGetBufferMemoryRequirements");
+    const auto get_buffer_memory_requirements = load<PFN_vkGetBufferMemoryRequirements>(gipa, instance, "vkGetBufferMemoryRequirements");
     const auto allocate_memory = load<PFN_vkAllocateMemory>(gipa, instance, "vkAllocateMemory");
     const auto bind_buffer_memory = load<PFN_vkBindBufferMemory>(gipa, instance, "vkBindBufferMemory");
     const auto map_memory = load<PFN_vkMapMemory>(gipa, instance, "vkMapMemory");
@@ -184,8 +181,7 @@ int main(int argc, char** argv)
     const auto create_framebuffer = load<PFN_vkCreateFramebuffer>(gipa, instance, "vkCreateFramebuffer");
     const auto create_pipeline_layout = load<PFN_vkCreatePipelineLayout>(gipa, instance, "vkCreatePipelineLayout");
     const auto create_graphics_pipelines = load<PFN_vkCreateGraphicsPipelines>(gipa, instance, "vkCreateGraphicsPipelines");
-    const auto create_descriptor_set_layout =
-        load<PFN_vkCreateDescriptorSetLayout>(gipa, instance, "vkCreateDescriptorSetLayout");
+    const auto create_descriptor_set_layout = load<PFN_vkCreateDescriptorSetLayout>(gipa, instance, "vkCreateDescriptorSetLayout");
     const auto create_descriptor_pool = load<PFN_vkCreateDescriptorPool>(gipa, instance, "vkCreateDescriptorPool");
     const auto allocate_descriptor_sets = load<PFN_vkAllocateDescriptorSets>(gipa, instance, "vkAllocateDescriptorSets");
     const auto update_descriptor_sets = load<PFN_vkUpdateDescriptorSets>(gipa, instance, "vkUpdateDescriptorSets");
@@ -266,8 +262,7 @@ int main(int argc, char** argv)
         }
         return UINT32_MAX;
     };
-    const auto make_buffer = [&](VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& out_buffer,
-                                 VkDeviceMemory& out_memory) -> bool {
+    const auto make_buffer = [&](VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& out_buffer, VkDeviceMemory& out_memory) -> bool {
         VkBufferCreateInfo bci{};
         bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         bci.size = size;
@@ -553,8 +548,8 @@ int main(int argc, char** argv)
     multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
     VkPipelineColorBlendAttachmentState blend_attachment{};
-    blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
-                                      VK_COLOR_COMPONENT_A_BIT;
+    blend_attachment.colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     VkPipelineColorBlendStateCreateInfo color_blend{};
     color_blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     color_blend.attachmentCount = 1;
@@ -734,8 +729,7 @@ int main(int argc, char** argv)
     const auto destroy_pipeline = load<PFN_vkDestroyPipeline>(gipa, instance, "vkDestroyPipeline");
     const auto destroy_pipeline_layout = load<PFN_vkDestroyPipelineLayout>(gipa, instance, "vkDestroyPipelineLayout");
     const auto destroy_descriptor_pool = load<PFN_vkDestroyDescriptorPool>(gipa, instance, "vkDestroyDescriptorPool");
-    const auto destroy_descriptor_set_layout =
-        load<PFN_vkDestroyDescriptorSetLayout>(gipa, instance, "vkDestroyDescriptorSetLayout");
+    const auto destroy_descriptor_set_layout = load<PFN_vkDestroyDescriptorSetLayout>(gipa, instance, "vkDestroyDescriptorSetLayout");
     const auto destroy_shader_module = load<PFN_vkDestroyShaderModule>(gipa, instance, "vkDestroyShaderModule");
     const auto destroy_render_pass = load<PFN_vkDestroyRenderPass>(gipa, instance, "vkDestroyRenderPass");
     const auto destroy_swapchain = load<PFN_vkDestroySwapchainKHR>(gipa, instance, "vkDestroySwapchainKHR");

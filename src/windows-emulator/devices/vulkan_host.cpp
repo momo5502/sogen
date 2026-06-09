@@ -176,7 +176,7 @@ namespace sogen
             uint32_t width{};
             uint32_t height{};
             VkFormat format{};
-            std::vector<uint64_t> image_ids{};        // entries in `images`, owned by this swapchain
+            std::vector<uint64_t> image_ids{}; // entries in `images`, owned by this swapchain
             std::vector<VkDeviceMemory> image_memory{};
             VkBuffer readback_buffer{};
             VkDeviceMemory readback_memory{};
@@ -447,8 +447,7 @@ namespace sogen
             }
             this->erase_owned(this->descriptor_sets, [&](const descriptor_set_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->descriptor_pools, [&](const descriptor_pool_data& d) { return d.device_id == device_id; });
-            this->erase_owned(this->descriptor_set_layouts,
-                              [&](const descriptor_set_layout_data& d) { return d.device_id == device_id; });
+            this->erase_owned(this->descriptor_set_layouts, [&](const descriptor_set_layout_data& d) { return d.device_id == device_id; });
 
             // Graphics-pipeline objects, in dependency order (framebuffers/pipelines reference render
             // passes, layouts, shader modules and image views; image views reference images).
@@ -580,15 +579,13 @@ namespace sogen
                 return;
             }
 
-            this->get_instance_proc_addr =
-                reinterpret_cast<PFN_vkGetInstanceProcAddr>(get_symbol(this->loader, "vkGetInstanceProcAddr"));
+            this->get_instance_proc_addr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(get_symbol(this->loader, "vkGetInstanceProcAddr"));
             if (!this->get_instance_proc_addr)
             {
                 return;
             }
 
-            this->create_instance =
-                reinterpret_cast<PFN_vkCreateInstance>(this->get_instance_proc_addr(nullptr, "vkCreateInstance"));
+            this->create_instance = reinterpret_cast<PFN_vkCreateInstance>(this->get_instance_proc_addr(nullptr, "vkCreateInstance"));
         }
 
         ~impl()
@@ -622,7 +619,8 @@ namespace sogen
         }
     };
 
-    vulkan_host::vulkan_host() : impl_(std::make_unique<impl>())
+    vulkan_host::vulkan_host()
+        : impl_(std::make_unique<impl>())
     {
     }
 
@@ -667,8 +665,7 @@ namespace sogen
         data.get_queue_family_properties = this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(
             instance, "vkGetPhysicalDeviceQueueFamilyProperties");
         data.get_physical_device_memory_properties =
-            this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceMemoryProperties>(instance,
-                                                                                     "vkGetPhysicalDeviceMemoryProperties");
+            this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceMemoryProperties>(instance, "vkGetPhysicalDeviceMemoryProperties");
         data.create_device = this->impl_->load_instance_proc<PFN_vkCreateDevice>(instance, "vkCreateDevice");
         data.get_device_proc_addr = this->impl_->load_instance_proc<PFN_vkGetDeviceProcAddr>(instance, "vkGetDeviceProcAddr");
 
@@ -826,8 +823,7 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::create_device(uint64_t physical_device, uint32_t queue_family_index, uint32_t queue_count,
-                                       uint64_t& out_device)
+    int32_t vulkan_host::create_device(uint64_t physical_device, uint32_t queue_family_index, uint32_t queue_count, uint64_t& out_device)
     {
         out_device = 0;
 
@@ -906,10 +902,8 @@ namespace sogen
             data.bind_image_memory = reinterpret_cast<PFN_vkBindImageMemory>(resolve("vkBindImageMemory"));
             data.cmd_pipeline_barrier = reinterpret_cast<PFN_vkCmdPipelineBarrier>(resolve("vkCmdPipelineBarrier"));
             data.cmd_clear_color_image = reinterpret_cast<PFN_vkCmdClearColorImage>(resolve("vkCmdClearColorImage"));
-            data.cmd_copy_image_to_buffer =
-                reinterpret_cast<PFN_vkCmdCopyImageToBuffer>(resolve("vkCmdCopyImageToBuffer"));
-            data.cmd_copy_buffer_to_image =
-                reinterpret_cast<PFN_vkCmdCopyBufferToImage>(resolve("vkCmdCopyBufferToImage"));
+            data.cmd_copy_image_to_buffer = reinterpret_cast<PFN_vkCmdCopyImageToBuffer>(resolve("vkCmdCopyImageToBuffer"));
+            data.cmd_copy_buffer_to_image = reinterpret_cast<PFN_vkCmdCopyBufferToImage>(resolve("vkCmdCopyBufferToImage"));
             data.create_sampler = reinterpret_cast<PFN_vkCreateSampler>(resolve("vkCreateSampler"));
             data.destroy_sampler = reinterpret_cast<PFN_vkDestroySampler>(resolve("vkDestroySampler"));
             data.create_shader_module = reinterpret_cast<PFN_vkCreateShaderModule>(resolve("vkCreateShaderModule"));
@@ -922,19 +916,15 @@ namespace sogen
             data.destroy_framebuffer = reinterpret_cast<PFN_vkDestroyFramebuffer>(resolve("vkDestroyFramebuffer"));
             data.create_pipeline_layout = reinterpret_cast<PFN_vkCreatePipelineLayout>(resolve("vkCreatePipelineLayout"));
             data.destroy_pipeline_layout = reinterpret_cast<PFN_vkDestroyPipelineLayout>(resolve("vkDestroyPipelineLayout"));
-            data.create_descriptor_set_layout =
-                reinterpret_cast<PFN_vkCreateDescriptorSetLayout>(resolve("vkCreateDescriptorSetLayout"));
+            data.create_descriptor_set_layout = reinterpret_cast<PFN_vkCreateDescriptorSetLayout>(resolve("vkCreateDescriptorSetLayout"));
             data.destroy_descriptor_set_layout =
                 reinterpret_cast<PFN_vkDestroyDescriptorSetLayout>(resolve("vkDestroyDescriptorSetLayout"));
             data.create_descriptor_pool = reinterpret_cast<PFN_vkCreateDescriptorPool>(resolve("vkCreateDescriptorPool"));
             data.destroy_descriptor_pool = reinterpret_cast<PFN_vkDestroyDescriptorPool>(resolve("vkDestroyDescriptorPool"));
-            data.allocate_descriptor_sets =
-                reinterpret_cast<PFN_vkAllocateDescriptorSets>(resolve("vkAllocateDescriptorSets"));
+            data.allocate_descriptor_sets = reinterpret_cast<PFN_vkAllocateDescriptorSets>(resolve("vkAllocateDescriptorSets"));
             data.update_descriptor_sets = reinterpret_cast<PFN_vkUpdateDescriptorSets>(resolve("vkUpdateDescriptorSets"));
-            data.cmd_bind_descriptor_sets =
-                reinterpret_cast<PFN_vkCmdBindDescriptorSets>(resolve("vkCmdBindDescriptorSets"));
-            data.create_graphics_pipelines =
-                reinterpret_cast<PFN_vkCreateGraphicsPipelines>(resolve("vkCreateGraphicsPipelines"));
+            data.cmd_bind_descriptor_sets = reinterpret_cast<PFN_vkCmdBindDescriptorSets>(resolve("vkCmdBindDescriptorSets"));
+            data.create_graphics_pipelines = reinterpret_cast<PFN_vkCreateGraphicsPipelines>(resolve("vkCreateGraphicsPipelines"));
             data.destroy_pipeline = reinterpret_cast<PFN_vkDestroyPipeline>(resolve("vkDestroyPipeline"));
             data.cmd_begin_render_pass = reinterpret_cast<PFN_vkCmdBeginRenderPass>(resolve("vkCmdBeginRenderPass"));
             data.cmd_bind_pipeline = reinterpret_cast<PFN_vkCmdBindPipeline>(resolve("vkCmdBindPipeline"));
@@ -1023,8 +1013,7 @@ namespace sogen
         }
 
         // Command buffers from this pool are freed implicitly by the driver; drop their ids.
-        this->impl_->erase_owned(this->impl_->command_buffers,
-                                 [&](const impl::command_buffer_data& d) { return d.pool_id == pool; });
+        this->impl_->erase_owned(this->impl_->command_buffers, [&](const impl::command_buffer_data& d) { return d.pool_id == pool; });
         this->impl_->command_pools.erase(it);
     }
 
@@ -1034,8 +1023,7 @@ namespace sogen
 
         const auto dev = this->impl_->devices.find(device);
         const auto pool_it = this->impl_->command_pools.find(pool);
-        if (dev == this->impl_->devices.end() || pool_it == this->impl_->command_pools.end() ||
-            !dev->second.allocate_command_buffers)
+        if (dev == this->impl_->devices.end() || pool_it == this->impl_->command_pools.end() || !dev->second.allocate_command_buffers)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -1054,8 +1042,7 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->next_id++;
-        this->impl_->command_buffers.emplace(
-            id, impl::command_buffer_data{.handle = command_buffer, .device_id = device, .pool_id = pool});
+        this->impl_->command_buffers.emplace(id, impl::command_buffer_data{.handle = command_buffer, .device_id = device, .pool_id = pool});
         out_command_buffer = id;
         return VK_SUCCESS;
     }
@@ -1347,8 +1334,8 @@ namespace sogen
         this->impl_->buffers.erase(it);
     }
 
-    int32_t vulkan_host::get_buffer_memory_requirements(uint64_t device, uint64_t buffer, uint64_t& out_size,
-                                                        uint64_t& out_alignment, uint32_t& out_memory_type_bits)
+    int32_t vulkan_host::get_buffer_memory_requirements(uint64_t device, uint64_t buffer, uint64_t& out_size, uint64_t& out_alignment,
+                                                        uint32_t& out_memory_type_bits)
     {
         out_size = 0;
         out_alignment = 0;
@@ -1356,8 +1343,7 @@ namespace sogen
 
         const auto dev = this->impl_->devices.find(device);
         const auto buf = this->impl_->buffers.find(buffer);
-        if (dev == this->impl_->devices.end() || buf == this->impl_->buffers.end() ||
-            !dev->second.get_buffer_memory_requirements)
+        if (dev == this->impl_->devices.end() || buf == this->impl_->buffers.end() || !dev->second.get_buffer_memory_requirements)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -1385,8 +1371,7 @@ namespace sogen
         return dev->second.bind_buffer_memory(dev->second.handle, buf->second.handle, mem->second.handle, offset);
     }
 
-    int32_t vulkan_host::cmd_fill_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint64_t size,
-                                         uint32_t data)
+    int32_t vulkan_host::cmd_fill_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint64_t size, uint32_t data)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto buf = this->impl_->buffers.find(buffer);
@@ -1405,13 +1390,11 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::download_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, void* out,
-                                         size_t out_size)
+    int32_t vulkan_host::download_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, void* out, size_t out_size)
     {
         const auto dev = this->impl_->devices.find(device);
         const auto mem = this->impl_->memories.find(memory);
-        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || !dev->second.map_memory ||
-            !dev->second.unmap_memory)
+        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || !dev->second.map_memory || !dev->second.unmap_memory)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -1430,13 +1413,11 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::upload_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, const void* data,
-                                       size_t data_size)
+    int32_t vulkan_host::upload_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, const void* data, size_t data_size)
     {
         const auto dev = this->impl_->devices.find(device);
         const auto mem = this->impl_->memories.find(memory);
-        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || !dev->second.map_memory ||
-            !dev->second.unmap_memory)
+        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || !dev->second.map_memory || !dev->second.unmap_memory)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -1455,8 +1436,8 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::create_image(uint64_t device, uint32_t format, uint32_t width, uint32_t height, uint32_t usage,
-                                      uint32_t tiling, uint64_t& out_image)
+    int32_t vulkan_host::create_image(uint64_t device, uint32_t format, uint32_t width, uint32_t height, uint32_t usage, uint32_t tiling,
+                                      uint64_t& out_image)
     {
         out_image = 0;
 
@@ -1509,8 +1490,8 @@ namespace sogen
         this->impl_->images.erase(it);
     }
 
-    int32_t vulkan_host::get_image_memory_requirements(uint64_t device, uint64_t image, uint64_t& out_size,
-                                                       uint64_t& out_alignment, uint32_t& out_memory_type_bits)
+    int32_t vulkan_host::get_image_memory_requirements(uint64_t device, uint64_t image, uint64_t& out_size, uint64_t& out_alignment,
+                                                       uint32_t& out_memory_type_bits)
     {
         out_size = 0;
         out_alignment = 0;
@@ -1518,8 +1499,7 @@ namespace sogen
 
         const auto dev = this->impl_->devices.find(device);
         const auto img = this->impl_->images.find(image);
-        if (dev == this->impl_->devices.end() || img == this->impl_->images.end() ||
-            !dev->second.get_image_memory_requirements)
+        if (dev == this->impl_->devices.end() || img == this->impl_->images.end() || !dev->second.get_image_memory_requirements)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -1574,9 +1554,9 @@ namespace sogen
         }
     }
 
-    int32_t vulkan_host::cmd_pipeline_barrier(uint64_t command_buffer, uint64_t image, uint32_t src_stage_mask,
-                                              uint32_t dst_stage_mask, uint32_t src_access_mask, uint32_t dst_access_mask,
-                                              uint32_t old_layout, uint32_t new_layout, const subresource_range& range)
+    int32_t vulkan_host::cmd_pipeline_barrier(uint64_t command_buffer, uint64_t image, uint32_t src_stage_mask, uint32_t dst_stage_mask,
+                                              uint32_t src_access_mask, uint32_t dst_access_mask, uint32_t old_layout, uint32_t new_layout,
+                                              const subresource_range& range)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto img = this->impl_->images.find(image);
@@ -1602,13 +1582,12 @@ namespace sogen
         barrier.image = img->second.handle;
         barrier.subresourceRange = to_vk_range(range);
 
-        dev->second.cmd_pipeline_barrier(cb->second.handle, src_stage_mask, dst_stage_mask, 0, 0, nullptr, 0, nullptr, 1,
-                                         &barrier);
+        dev->second.cmd_pipeline_barrier(cb->second.handle, src_stage_mask, dst_stage_mask, 0, 0, nullptr, 0, nullptr, 1, &barrier);
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::cmd_clear_color_image(uint64_t command_buffer, uint64_t image, uint32_t image_layout, float r,
-                                               float g, float b, float a, const subresource_range& range)
+    int32_t vulkan_host::cmd_clear_color_image(uint64_t command_buffer, uint64_t image, uint32_t image_layout, float r, float g, float b,
+                                               float a, const subresource_range& range)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto img = this->impl_->images.find(image);
@@ -1630,19 +1609,17 @@ namespace sogen
         clear.float32[3] = a;
 
         const VkImageSubresourceRange vk_range = to_vk_range(range);
-        dev->second.cmd_clear_color_image(cb->second.handle, img->second.handle, translate_layout(image_layout), &clear, 1,
-                                          &vk_range);
+        dev->second.cmd_clear_color_image(cb->second.handle, img->second.handle, translate_layout(image_layout), &clear, 1, &vk_range);
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::cmd_copy_image_to_buffer(uint64_t command_buffer, uint64_t image, uint32_t image_layout,
-                                                  uint64_t buffer, uint32_t width, uint32_t height, uint32_t aspect_mask)
+    int32_t vulkan_host::cmd_copy_image_to_buffer(uint64_t command_buffer, uint64_t image, uint32_t image_layout, uint64_t buffer,
+                                                  uint32_t width, uint32_t height, uint32_t aspect_mask)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto img = this->impl_->images.find(image);
         const auto buf = this->impl_->buffers.find(buffer);
-        if (cb == this->impl_->command_buffers.end() || img == this->impl_->images.end() ||
-            buf == this->impl_->buffers.end())
+        if (cb == this->impl_->command_buffers.end() || img == this->impl_->images.end() || buf == this->impl_->buffers.end())
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -1664,20 +1641,18 @@ namespace sogen
         region.imageOffset = {.x = 0, .y = 0, .z = 0};
         region.imageExtent = {.width = width, .height = height, .depth = 1};
 
-        dev->second.cmd_copy_image_to_buffer(cb->second.handle, img->second.handle, translate_layout(image_layout),
-                                             buf->second.handle, 1, &region);
+        dev->second.cmd_copy_image_to_buffer(cb->second.handle, img->second.handle, translate_layout(image_layout), buf->second.handle, 1,
+                                             &region);
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::cmd_copy_buffer_to_image(uint64_t command_buffer, uint64_t buffer, uint64_t image,
-                                                  uint32_t image_layout, uint32_t width, uint32_t height,
-                                                  uint32_t aspect_mask)
+    int32_t vulkan_host::cmd_copy_buffer_to_image(uint64_t command_buffer, uint64_t buffer, uint64_t image, uint32_t image_layout,
+                                                  uint32_t width, uint32_t height, uint32_t aspect_mask)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto buf = this->impl_->buffers.find(buffer);
         const auto img = this->impl_->images.find(image);
-        if (cb == this->impl_->command_buffers.end() || buf == this->impl_->buffers.end() ||
-            img == this->impl_->images.end())
+        if (cb == this->impl_->command_buffers.end() || buf == this->impl_->buffers.end() || img == this->impl_->images.end())
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -1699,8 +1674,8 @@ namespace sogen
         region.imageOffset = {.x = 0, .y = 0, .z = 0};
         region.imageExtent = {.width = width, .height = height, .depth = 1};
 
-        dev->second.cmd_copy_buffer_to_image(cb->second.handle, buf->second.handle, img->second.handle,
-                                             translate_layout(image_layout), 1, &region);
+        dev->second.cmd_copy_buffer_to_image(cb->second.handle, buf->second.handle, img->second.handle, translate_layout(image_layout), 1,
+                                             &region);
         return VK_SUCCESS;
     }
 
@@ -1766,8 +1741,7 @@ namespace sogen
         this->impl_->surfaces.erase(surface);
     }
 
-    int32_t vulkan_host::get_surface_capabilities(uint64_t /*physical_device*/, uint64_t surface, void* out,
-                                                  size_t out_size)
+    int32_t vulkan_host::get_surface_capabilities(uint64_t /*physical_device*/, uint64_t surface, void* out, size_t out_size)
     {
         if (!this->impl_->surfaces.contains(surface))
         {
@@ -1776,7 +1750,7 @@ namespace sogen
 
         VkSurfaceCapabilitiesKHR caps{};
         caps.minImageCount = 2;
-        caps.maxImageCount = 0; // no upper bound
+        caps.maxImageCount = 0;                                             // no upper bound
         caps.currentExtent = {.width = 0xFFFFFFFFu, .height = 0xFFFFFFFFu}; // undefined: the app chooses
         caps.minImageExtent = {.width = 1, .height = 1};
         caps.maxImageExtent = {.width = 16384, .height = 16384};
@@ -1784,16 +1758,15 @@ namespace sogen
         caps.supportedTransforms = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
         caps.currentTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
         caps.supportedCompositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-        caps.supportedUsageFlags =
-            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        caps.supportedUsageFlags = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
         std::memcpy(out, &caps, std::min(out_size, sizeof(caps)));
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::create_swapchain(uint64_t device, uint64_t surface, uint32_t format, uint32_t width,
-                                          uint32_t height, uint32_t min_image_count, uint32_t image_usage,
-                                          uint64_t& out_swapchain, uint32_t& out_image_count)
+    int32_t vulkan_host::create_swapchain(uint64_t device, uint64_t surface, uint32_t format, uint32_t width, uint32_t height,
+                                          uint32_t min_image_count, uint32_t image_usage, uint64_t& out_swapchain,
+                                          uint32_t& out_image_count)
     {
         out_swapchain = 0;
         out_image_count = 0;
@@ -1805,8 +1778,8 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         impl::device_data& dev = dev_it->second;
-        if (!dev.create_image || !dev.allocate_memory || !dev.bind_image_memory || !dev.create_buffer ||
-            !dev.bind_buffer_memory || !dev.create_command_pool || !dev.allocate_command_buffers || !dev.create_fence)
+        if (!dev.create_image || !dev.allocate_memory || !dev.bind_image_memory || !dev.create_buffer || !dev.bind_buffer_memory ||
+            !dev.create_command_pool || !dev.allocate_command_buffers || !dev.create_fence)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -1894,13 +1867,12 @@ namespace sogen
         // of magnitude slower. Keep COHERENT too so no manual vkInvalidateMappedMemoryRanges is needed;
         // fall back to plain HOST_VISIBLE|HOST_COHERENT if the driver offers no cached+coherent type.
         uint32_t buffer_type = this->impl_->find_memory_type(dev, buffer_reqs.memoryTypeBits,
-                                                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                                                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+                                                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
                                                                  VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
         if (buffer_type == UINT32_MAX)
         {
-            buffer_type = this->impl_->find_memory_type(
-                dev, buffer_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            buffer_type = this->impl_->find_memory_type(dev, buffer_reqs.memoryTypeBits,
+                                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         }
         if (buffer_type == UINT32_MAX)
         {
@@ -1993,9 +1965,8 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::queue_present(uint64_t queue, uint64_t swapchain, uint32_t image_index,
-                                       std::vector<std::byte>& out_pixels, uint32_t& out_width, uint32_t& out_height,
-                                       uint64_t& out_hwnd)
+    int32_t vulkan_host::queue_present(uint64_t queue, uint64_t swapchain, uint32_t image_index, std::vector<std::byte>& out_pixels,
+                                       uint32_t& out_width, uint32_t& out_height, uint64_t& out_hwnd)
     {
         out_pixels.clear();
         out_width = 0;
@@ -2078,13 +2049,10 @@ namespace sogen
         barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.image = img_it->second.handle;
-        barrier.subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                    .baseMipLevel = 0,
-                                    .levelCount = 1,
-                                    .baseArrayLayer = 0,
-                                    .layerCount = 1};
-        dev.cmd_pipeline_barrier(sc.present_cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0,
-                                 nullptr, 0, nullptr, 1, &barrier);
+        barrier.subresourceRange = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
+        dev.cmd_pipeline_barrier(sc.present_cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                                 nullptr, 1, &barrier);
 
         VkBufferImageCopy region{};
         region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -2093,8 +2061,8 @@ namespace sogen
         region.imageSubresource.layerCount = 1;
         region.imageOffset = {.x = 0, .y = 0, .z = 0};
         region.imageExtent = {.width = sc.width, .height = sc.height, .depth = 1};
-        dev.cmd_copy_image_to_buffer(sc.present_cmd, img_it->second.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                     sc.readback_buffer, 1, &region);
+        dev.cmd_copy_image_to_buffer(sc.present_cmd, img_it->second.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, sc.readback_buffer, 1,
+                                     &region);
         dev.end_command_buffer(sc.present_cmd);
 
         dev.reset_fences(dev.handle, 1, &sc.present_fence);
@@ -2154,8 +2122,7 @@ namespace sogen
         this->impl_->shader_modules.erase(it);
     }
 
-    int32_t vulkan_host::create_image_view(uint64_t device, uint64_t image, uint32_t format, uint32_t aspect_mask,
-                                           uint64_t& out_view)
+    int32_t vulkan_host::create_image_view(uint64_t device, uint64_t image, uint32_t format, uint32_t aspect_mask, uint64_t& out_view)
     {
         out_view = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -2202,9 +2169,8 @@ namespace sogen
         this->impl_->image_views.erase(it);
     }
 
-    int32_t vulkan_host::create_render_pass(uint64_t device, uint32_t format, uint32_t load_op, uint32_t store_op,
-                                            uint32_t initial_layout, uint32_t final_layout, uint32_t depth_format,
-                                            uint64_t& out_render_pass)
+    int32_t vulkan_host::create_render_pass(uint64_t device, uint32_t format, uint32_t load_op, uint32_t store_op, uint32_t initial_layout,
+                                            uint32_t final_layout, uint32_t depth_format, uint64_t& out_render_pass)
     {
         out_render_pass = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -2279,8 +2245,7 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->next_id++;
-        this->impl_->render_passes.emplace(
-            id, impl::render_pass_data{.handle = render_pass, .device_id = device, .has_depth = has_depth});
+        this->impl_->render_passes.emplace(id, impl::render_pass_data{.handle = render_pass, .device_id = device, .has_depth = has_depth});
         out_render_pass = id;
         return VK_SUCCESS;
     }
@@ -2300,15 +2265,15 @@ namespace sogen
         this->impl_->render_passes.erase(it);
     }
 
-    int32_t vulkan_host::create_framebuffer(uint64_t device, uint64_t render_pass, uint64_t image_view, uint64_t depth_view,
-                                            uint32_t width, uint32_t height, uint64_t& out_framebuffer)
+    int32_t vulkan_host::create_framebuffer(uint64_t device, uint64_t render_pass, uint64_t image_view, uint64_t depth_view, uint32_t width,
+                                            uint32_t height, uint64_t& out_framebuffer)
     {
         out_framebuffer = 0;
         const auto dev = this->impl_->devices.find(device);
         const auto rp = this->impl_->render_passes.find(render_pass);
         const auto view = this->impl_->image_views.find(image_view);
-        if (dev == this->impl_->devices.end() || rp == this->impl_->render_passes.end() ||
-            view == this->impl_->image_views.end() || !dev->second.create_framebuffer)
+        if (dev == this->impl_->devices.end() || rp == this->impl_->render_passes.end() || view == this->impl_->image_views.end() ||
+            !dev->second.create_framebuffer)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -2428,8 +2393,7 @@ namespace sogen
         this->impl_->pipeline_layouts.erase(it);
     }
 
-    int32_t vulkan_host::create_descriptor_set_layout(uint64_t device, std::span<const descriptor_binding> bindings,
-                                                      uint64_t& out_layout)
+    int32_t vulkan_host::create_descriptor_set_layout(uint64_t device, std::span<const descriptor_binding> bindings, uint64_t& out_layout)
     {
         out_layout = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -2463,8 +2427,7 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->next_id++;
-        this->impl_->descriptor_set_layouts.emplace(id,
-                                                    impl::descriptor_set_layout_data{.handle = layout, .device_id = device});
+        this->impl_->descriptor_set_layouts.emplace(id, impl::descriptor_set_layout_data{.handle = layout, .device_id = device});
         out_layout = id;
         return VK_SUCCESS;
     }
@@ -2484,8 +2447,8 @@ namespace sogen
         this->impl_->descriptor_set_layouts.erase(it);
     }
 
-    int32_t vulkan_host::create_descriptor_pool(uint64_t device, uint32_t max_sets,
-                                                std::span<const descriptor_pool_size> sizes, uint64_t& out_pool)
+    int32_t vulkan_host::create_descriptor_pool(uint64_t device, uint32_t max_sets, std::span<const descriptor_pool_size> sizes,
+                                                uint64_t& out_pool)
     {
         out_pool = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -2534,8 +2497,7 @@ namespace sogen
             dev->second.destroy_descriptor_pool(dev->second.handle, it->second.handle, nullptr);
         }
         // Sets allocated from this pool are freed implicitly; drop their ids.
-        this->impl_->erase_owned(this->impl_->descriptor_sets,
-                                 [&](const impl::descriptor_set_data& d) { return d.pool_id == pool; });
+        this->impl_->erase_owned(this->impl_->descriptor_sets, [&](const impl::descriptor_set_data& d) { return d.pool_id == pool; });
         this->impl_->descriptor_pools.erase(it);
     }
 
@@ -2545,8 +2507,7 @@ namespace sogen
         out_count = 0;
         const auto dev = this->impl_->devices.find(device);
         const auto pool_it = this->impl_->descriptor_pools.find(pool);
-        if (dev == this->impl_->devices.end() || pool_it == this->impl_->descriptor_pools.end() ||
-            !dev->second.allocate_descriptor_sets)
+        if (dev == this->impl_->devices.end() || pool_it == this->impl_->descriptor_pools.end() || !dev->second.allocate_descriptor_sets)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -2580,8 +2541,7 @@ namespace sogen
         for (size_t i = 0; i < sets.size(); ++i)
         {
             const uint64_t id = this->impl_->next_id++;
-            this->impl_->descriptor_sets.emplace(
-                id, impl::descriptor_set_data{.handle = sets[i], .device_id = device, .pool_id = pool});
+            this->impl_->descriptor_sets.emplace(id, impl::descriptor_set_data{.handle = sets[i], .device_id = device, .pool_id = pool});
             if (i < out_sets.size())
             {
                 out_sets[i] = id;
@@ -2622,9 +2582,9 @@ namespace sogen
             vw.descriptorCount = 1;
             vw.descriptorType = static_cast<VkDescriptorType>(w.descriptor_type);
 
-            const bool is_image = (w.descriptor_type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ||
-                                   w.descriptor_type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE ||
-                                   w.descriptor_type == VK_DESCRIPTOR_TYPE_SAMPLER);
+            const bool is_image =
+                (w.descriptor_type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER || w.descriptor_type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE ||
+                 w.descriptor_type == VK_DESCRIPTOR_TYPE_SAMPLER);
             if (is_image)
             {
                 const auto view = this->impl_->image_views.find(w.image_view);
@@ -2661,17 +2621,15 @@ namespace sogen
 
         if (!vk_writes.empty())
         {
-            dev->second.update_descriptor_sets(dev->second.handle, static_cast<uint32_t>(vk_writes.size()), vk_writes.data(),
-                                               0, nullptr);
+            dev->second.update_descriptor_sets(dev->second.handle, static_cast<uint32_t>(vk_writes.size()), vk_writes.data(), 0, nullptr);
         }
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::create_graphics_pipeline(uint64_t device, uint64_t render_pass, uint64_t pipeline_layout,
-                                                  uint64_t vertex_shader, uint64_t fragment_shader, uint32_t width,
-                                                  uint32_t height, std::span<const vertex_binding> bindings,
-                                                  std::span<const vertex_attribute> attributes, const depth_state& depth,
-                                                  uint64_t& out_pipeline)
+    int32_t vulkan_host::create_graphics_pipeline(uint64_t device, uint64_t render_pass, uint64_t pipeline_layout, uint64_t vertex_shader,
+                                                  uint64_t fragment_shader, uint32_t width, uint32_t height,
+                                                  std::span<const vertex_binding> bindings, std::span<const vertex_attribute> attributes,
+                                                  const depth_state& depth, uint64_t& out_pipeline)
     {
         out_pipeline = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -2679,9 +2637,9 @@ namespace sogen
         const auto layout = this->impl_->pipeline_layouts.find(pipeline_layout);
         const auto vert = this->impl_->shader_modules.find(vertex_shader);
         const auto frag = this->impl_->shader_modules.find(fragment_shader);
-        if (dev == this->impl_->devices.end() || rp == this->impl_->render_passes.end() ||
-            layout == this->impl_->pipeline_layouts.end() || vert == this->impl_->shader_modules.end() ||
-            frag == this->impl_->shader_modules.end() || !dev->second.create_graphics_pipelines)
+        if (dev == this->impl_->devices.end() || rp == this->impl_->render_passes.end() || layout == this->impl_->pipeline_layouts.end() ||
+            vert == this->impl_->shader_modules.end() || frag == this->impl_->shader_modules.end() ||
+            !dev->second.create_graphics_pipelines)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -2700,19 +2658,15 @@ namespace sogen
         vk_bindings.reserve(bindings.size());
         for (const vertex_binding& b : bindings)
         {
-            vk_bindings.push_back({.binding = b.binding,
-                                   .stride = b.stride,
-                                   .inputRate = static_cast<VkVertexInputRate>(b.input_rate)});
+            vk_bindings.push_back({.binding = b.binding, .stride = b.stride, .inputRate = static_cast<VkVertexInputRate>(b.input_rate)});
         }
 
         std::vector<VkVertexInputAttributeDescription> vk_attributes;
         vk_attributes.reserve(attributes.size());
         for (const vertex_attribute& a : attributes)
         {
-            vk_attributes.push_back({.location = a.location,
-                                     .binding = a.binding,
-                                     .format = static_cast<VkFormat>(a.format),
-                                     .offset = a.offset});
+            vk_attributes.push_back(
+                {.location = a.location, .binding = a.binding, .format = static_cast<VkFormat>(a.format), .offset = a.offset});
         }
 
         VkPipelineVertexInputStateCreateInfo vertex_input{};
@@ -2752,8 +2706,8 @@ namespace sogen
         multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
         VkPipelineColorBlendAttachmentState blend_attachment{};
-        blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
-                                          VK_COLOR_COMPONENT_A_BIT;
+        blend_attachment.colorWriteMask =
+            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
         VkPipelineColorBlendStateCreateInfo color_blend{};
         color_blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
@@ -2782,8 +2736,7 @@ namespace sogen
         info.subpass = 0;
 
         VkPipeline pipeline{};
-        const VkResult result =
-            dev->second.create_graphics_pipelines(dev->second.handle, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline);
+        const VkResult result = dev->second.create_graphics_pipelines(dev->second.handle, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline);
         if (result != VK_SUCCESS)
         {
             return result;
@@ -2810,15 +2763,13 @@ namespace sogen
         this->impl_->pipelines.erase(it);
     }
 
-    int32_t vulkan_host::cmd_begin_render_pass(uint64_t command_buffer, uint64_t render_pass, uint64_t framebuffer,
-                                               uint32_t width, uint32_t height, float r, float g, float b, float a,
-                                               float clear_depth)
+    int32_t vulkan_host::cmd_begin_render_pass(uint64_t command_buffer, uint64_t render_pass, uint64_t framebuffer, uint32_t width,
+                                               uint32_t height, float r, float g, float b, float a, float clear_depth)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto rp = this->impl_->render_passes.find(render_pass);
         const auto fb = this->impl_->framebuffers.find(framebuffer);
-        if (cb == this->impl_->command_buffers.end() || rp == this->impl_->render_passes.end() ||
-            fb == this->impl_->framebuffers.end())
+        if (cb == this->impl_->command_buffers.end() || rp == this->impl_->render_passes.end() || fb == this->impl_->framebuffers.end())
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -2866,8 +2817,8 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::cmd_draw(uint64_t command_buffer, uint32_t vertex_count, uint32_t instance_count,
-                                  uint32_t first_vertex, uint32_t first_instance)
+    int32_t vulkan_host::cmd_draw(uint64_t command_buffer, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex,
+                                  uint32_t first_instance)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         if (cb == this->impl_->command_buffers.end())
@@ -2914,8 +2865,7 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::cmd_bind_index_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset,
-                                               uint32_t index_type)
+    int32_t vulkan_host::cmd_bind_index_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint32_t index_type)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto buf = this->impl_->buffers.find(buffer);
@@ -2928,13 +2878,12 @@ namespace sogen
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
-        dev->second.cmd_bind_index_buffer(cb->second.handle, buf->second.handle, offset,
-                                          static_cast<VkIndexType>(index_type));
+        dev->second.cmd_bind_index_buffer(cb->second.handle, buf->second.handle, offset, static_cast<VkIndexType>(index_type));
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::cmd_draw_indexed(uint64_t command_buffer, uint32_t index_count, uint32_t instance_count,
-                                          uint32_t first_index, int32_t vertex_offset, uint32_t first_instance)
+    int32_t vulkan_host::cmd_draw_indexed(uint64_t command_buffer, uint32_t index_count, uint32_t instance_count, uint32_t first_index,
+                                          int32_t vertex_offset, uint32_t first_instance)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         if (cb == this->impl_->command_buffers.end())
@@ -2946,8 +2895,7 @@ namespace sogen
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
-        dev->second.cmd_draw_indexed(cb->second.handle, index_count, instance_count, first_index, vertex_offset,
-                                     first_instance);
+        dev->second.cmd_draw_indexed(cb->second.handle, index_count, instance_count, first_index, vertex_offset, first_instance);
         return VK_SUCCESS;
     }
 
@@ -2978,8 +2926,8 @@ namespace sogen
             handles.push_back(set->second.handle);
         }
 
-        dev->second.cmd_bind_descriptor_sets(cb->second.handle, VK_PIPELINE_BIND_POINT_GRAPHICS, layout->second.handle,
-                                             first_set, static_cast<uint32_t>(handles.size()), handles.data(), 0, nullptr);
+        dev->second.cmd_bind_descriptor_sets(cb->second.handle, VK_PIPELINE_BIND_POINT_GRAPHICS, layout->second.handle, first_set,
+                                             static_cast<uint32_t>(handles.size()), handles.data(), 0, nullptr);
         return VK_SUCCESS;
     }
 
@@ -2999,8 +2947,8 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::cmd_push_constants(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t stage_flags,
-                                            uint32_t offset, uint32_t size, const void* data)
+    int32_t vulkan_host::cmd_push_constants(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t stage_flags, uint32_t offset,
+                                            uint32_t size, const void* data)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto layout = this->impl_->pipeline_layouts.find(pipeline_layout);

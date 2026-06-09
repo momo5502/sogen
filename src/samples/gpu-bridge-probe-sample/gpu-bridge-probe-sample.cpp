@@ -95,8 +95,8 @@ int main()
             props_request.physical_device = devices[i];
 
             VkPhysicalDeviceProperties props{};
-            if (!ioctl(device, sogen::gpu_bridge::ioctl_get_physical_device_properties, &props_request, sizeof(props_request),
-                       &props, sizeof(props), returned))
+            if (!ioctl(device, sogen::gpu_bridge::ioctl_get_physical_device_properties, &props_request, sizeof(props_request), &props,
+                       sizeof(props), returned))
             {
                 std::printf("[gpu-bridge] get_physical_device_properties[%u] failed: %lu\n", i, GetLastError());
                 continue;

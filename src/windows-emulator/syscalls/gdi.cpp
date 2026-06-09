@@ -1556,11 +1556,11 @@ namespace sogen
         // this path. We blit the source DIB into the DC's backing surface (nearest-neighbour scaled from
         // the source rectangle onto the destination rectangle) and, for a window-backed DC, present the
         // surface to the UI immediately, mirroring what NtUserEndPaint does for ordinary GDI painting.
-        int handle_NtGdiStretchDIBitsInternal(const syscall_context& c, const hdc dc, const int x_dst, const int y_dst,
-                                              const int dst_width, const int dst_height, const int x_src, const int y_src,
-                                              const int src_width, const int src_height, const emulator_pointer bits,
-                                              const emulator_pointer info, const uint32_t /*usage*/, const uint32_t /*rop*/,
-                                              const uint32_t /*max_info*/, const uint32_t max_bits, const uint64_t /*color_transform*/)
+        int handle_NtGdiStretchDIBitsInternal(const syscall_context& c, const hdc dc, const int x_dst, const int y_dst, const int dst_width,
+                                              const int dst_height, const int x_src, const int y_src, const int src_width,
+                                              const int src_height, const emulator_pointer bits, const emulator_pointer info,
+                                              const uint32_t /*usage*/, const uint32_t /*rop*/, const uint32_t /*max_info*/,
+                                              const uint32_t max_bits, const uint64_t /*color_transform*/)
         {
             if (bits == 0 || info == 0 || dst_width == 0 || dst_height == 0 || src_width <= 0 || src_height <= 0)
             {
@@ -1588,8 +1588,8 @@ namespace sogen
             constexpr uint32_t bi_rgb = 0;
             if (bit_count != 32 || compression != bi_rgb || bi_width <= 0)
             {
-                c.win_emu.log.warn("NtGdiStretchDIBitsInternal: unsupported DIB (bpp=%u compression=%u width=%d)\n", bit_count,
-                                   compression, bi_width);
+                c.win_emu.log.warn("NtGdiStretchDIBitsInternal: unsupported DIB (bpp=%u compression=%u width=%d)\n", bit_count, compression,
+                                   bi_width);
                 return 0;
             }
 

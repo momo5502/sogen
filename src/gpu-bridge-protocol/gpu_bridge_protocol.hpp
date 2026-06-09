@@ -14,7 +14,7 @@ namespace sogen::gpu_bridge
 {
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
-    inline constexpr uint32_t protocol_magic = 0x55504753;   // 'SGPU'
+    inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
     inline constexpr uint32_t protocol_version = 3;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
@@ -22,7 +22,7 @@ namespace sogen::gpu_bridge
     // We use FILE_DEVICE_UNKNOWN (0x22), METHOD_BUFFERED (0) and FILE_ANY_ACCESS (0), and
     // keep functions in the vendor-defined range (>= 0x800), matching how a real driver
     // would lay out its private control codes.
-    inline constexpr uint32_t device_type = 0x22;            // FILE_DEVICE_UNKNOWN
+    inline constexpr uint32_t device_type = 0x22; // FILE_DEVICE_UNKNOWN
     inline constexpr uint32_t method_buffered = 0;
     inline constexpr uint32_t file_any_access = 0;
 
@@ -114,12 +114,10 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
     inline constexpr uint32_t ioctl_create_instance = make_ioctl(static_cast<uint32_t>(command::create_instance));
     inline constexpr uint32_t ioctl_destroy_instance = make_ioctl(static_cast<uint32_t>(command::destroy_instance));
-    inline constexpr uint32_t ioctl_enumerate_physical_devices =
-        make_ioctl(static_cast<uint32_t>(command::enumerate_physical_devices));
+    inline constexpr uint32_t ioctl_enumerate_physical_devices = make_ioctl(static_cast<uint32_t>(command::enumerate_physical_devices));
     inline constexpr uint32_t ioctl_get_physical_device_properties =
         make_ioctl(static_cast<uint32_t>(command::get_physical_device_properties));
-    inline constexpr uint32_t ioctl_get_queue_family_properties =
-        make_ioctl(static_cast<uint32_t>(command::get_queue_family_properties));
+    inline constexpr uint32_t ioctl_get_queue_family_properties = make_ioctl(static_cast<uint32_t>(command::get_queue_family_properties));
     inline constexpr uint32_t ioctl_create_device = make_ioctl(static_cast<uint32_t>(command::create_device));
     inline constexpr uint32_t ioctl_get_device_queue = make_ioctl(static_cast<uint32_t>(command::get_device_queue));
     inline constexpr uint32_t ioctl_destroy_device = make_ioctl(static_cast<uint32_t>(command::destroy_device));
@@ -163,28 +161,19 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_destroy_render_pass = make_ioctl(static_cast<uint32_t>(command::destroy_render_pass));
     inline constexpr uint32_t ioctl_create_framebuffer = make_ioctl(static_cast<uint32_t>(command::create_framebuffer));
     inline constexpr uint32_t ioctl_destroy_framebuffer = make_ioctl(static_cast<uint32_t>(command::destroy_framebuffer));
-    inline constexpr uint32_t ioctl_create_pipeline_layout =
-        make_ioctl(static_cast<uint32_t>(command::create_pipeline_layout));
-    inline constexpr uint32_t ioctl_destroy_pipeline_layout =
-        make_ioctl(static_cast<uint32_t>(command::destroy_pipeline_layout));
-    inline constexpr uint32_t ioctl_create_graphics_pipeline =
-        make_ioctl(static_cast<uint32_t>(command::create_graphics_pipeline));
+    inline constexpr uint32_t ioctl_create_pipeline_layout = make_ioctl(static_cast<uint32_t>(command::create_pipeline_layout));
+    inline constexpr uint32_t ioctl_destroy_pipeline_layout = make_ioctl(static_cast<uint32_t>(command::destroy_pipeline_layout));
+    inline constexpr uint32_t ioctl_create_graphics_pipeline = make_ioctl(static_cast<uint32_t>(command::create_graphics_pipeline));
     inline constexpr uint32_t ioctl_destroy_pipeline = make_ioctl(static_cast<uint32_t>(command::destroy_pipeline));
-    inline constexpr uint32_t ioctl_get_surface_capabilities =
-        make_ioctl(static_cast<uint32_t>(command::get_surface_capabilities));
+    inline constexpr uint32_t ioctl_get_surface_capabilities = make_ioctl(static_cast<uint32_t>(command::get_surface_capabilities));
     inline constexpr uint32_t ioctl_record_commands = make_ioctl(static_cast<uint32_t>(command::record_commands));
-    inline constexpr uint32_t ioctl_create_descriptor_set_layout =
-        make_ioctl(static_cast<uint32_t>(command::create_descriptor_set_layout));
+    inline constexpr uint32_t ioctl_create_descriptor_set_layout = make_ioctl(static_cast<uint32_t>(command::create_descriptor_set_layout));
     inline constexpr uint32_t ioctl_destroy_descriptor_set_layout =
         make_ioctl(static_cast<uint32_t>(command::destroy_descriptor_set_layout));
-    inline constexpr uint32_t ioctl_create_descriptor_pool =
-        make_ioctl(static_cast<uint32_t>(command::create_descriptor_pool));
-    inline constexpr uint32_t ioctl_destroy_descriptor_pool =
-        make_ioctl(static_cast<uint32_t>(command::destroy_descriptor_pool));
-    inline constexpr uint32_t ioctl_allocate_descriptor_sets =
-        make_ioctl(static_cast<uint32_t>(command::allocate_descriptor_sets));
-    inline constexpr uint32_t ioctl_update_descriptor_sets =
-        make_ioctl(static_cast<uint32_t>(command::update_descriptor_sets));
+    inline constexpr uint32_t ioctl_create_descriptor_pool = make_ioctl(static_cast<uint32_t>(command::create_descriptor_pool));
+    inline constexpr uint32_t ioctl_destroy_descriptor_pool = make_ioctl(static_cast<uint32_t>(command::destroy_descriptor_pool));
+    inline constexpr uint32_t ioctl_allocate_descriptor_sets = make_ioctl(static_cast<uint32_t>(command::allocate_descriptor_sets));
+    inline constexpr uint32_t ioctl_update_descriptor_sets = make_ioctl(static_cast<uint32_t>(command::update_descriptor_sets));
     inline constexpr uint32_t ioctl_create_sampler = make_ioctl(static_cast<uint32_t>(command::create_sampler));
     inline constexpr uint32_t ioctl_destroy_sampler = make_ioctl(static_cast<uint32_t>(command::destroy_sampler));
 
@@ -596,8 +585,8 @@ namespace sogen::gpu_bridge
         float color_a;
     };
 
-    // record payload (command::cmd_copy_image_to_buffer) for ioctl_record_commands: copies mip 0 / layer 0 of the image, tightly packed, to the
-    // buffer at offset 0;
+    // record payload (command::cmd_copy_image_to_buffer) for ioctl_record_commands: copies mip 0 / layer 0 of the image, tightly packed, to
+    // the buffer at offset 0;
     struct cmd_copy_image_to_buffer_request
     {
         object_id command_buffer;
@@ -774,8 +763,8 @@ namespace sogen::gpu_bridge
     {
         object_id device;
         object_id render_pass;
-        object_id image_view;  // color attachment
-        object_id depth_view;  // depth attachment, or null_object for none
+        object_id image_view; // color attachment
+        object_id depth_view; // depth attachment, or null_object for none
         uint32_t width;
         uint32_t height;
     };
@@ -828,8 +817,8 @@ namespace sogen::gpu_bridge
         uint32_t depth_test_enable;  // VkBool32 (0 => no depth-stencil state, as before)
         uint32_t depth_write_enable; // VkBool32
         uint32_t depth_compare_op;   // VkCompareOp (used when depth_test_enable != 0)
-        uint32_t binding_count;   // number of vertex_input_binding entries that follow
-        uint32_t attribute_count; // number of vertex_input_attribute entries that follow the bindings
+        uint32_t binding_count;      // number of vertex_input_binding entries that follow
+        uint32_t attribute_count;    // number of vertex_input_attribute entries that follow the bindings
         // vertex_input_binding bindings[binding_count];
         // vertex_input_attribute attributes[attribute_count];
     };
@@ -990,12 +979,12 @@ namespace sogen::gpu_bridge
         uint32_t dst_array_element;
         uint32_t descriptor_type; // VkDescriptorType
         uint32_t reserved;
-        object_id buffer;       // VK_DESCRIPTOR_TYPE_*_BUFFER: the bound buffer (else null_object)
-        uint64_t offset;        // buffer offset
-        uint64_t range;         // buffer range (VK_WHOLE_SIZE allowed)
-        object_id sampler;      // image types: the sampler (else null_object)
-        object_id image_view;   // image types: the sampled image view (else null_object)
-        uint32_t image_layout;  // image types: VkImageLayout
+        object_id buffer;      // VK_DESCRIPTOR_TYPE_*_BUFFER: the bound buffer (else null_object)
+        uint64_t offset;       // buffer offset
+        uint64_t range;        // buffer range (VK_WHOLE_SIZE allowed)
+        object_id sampler;     // image types: the sampler (else null_object)
+        object_id image_view;  // image types: the sampled image view (else null_object)
+        uint32_t image_layout; // image types: VkImageLayout
         uint32_t reserved2;
     };
 

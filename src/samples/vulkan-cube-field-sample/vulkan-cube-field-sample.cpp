@@ -31,7 +31,7 @@
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <vulkan/vulkan_win32.h>
 
-#include "cube_field_spirv.hpp"
+#include "cube_field_spirv.hxx"
 
 namespace
 {
@@ -232,9 +232,9 @@ int main(int argc, char** argv)
     }
 
     constexpr DWORD window_style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE;
-    const HWND hwnd = CreateWindowExA(0, wc.lpszClassName, "Sogen Vulkan - Spinning Cube Field", window_style, 180, 120,
-                                      static_cast<int>(window_width), static_cast<int>(window_height), nullptr, nullptr,
-                                      hinstance, nullptr);
+    const HWND hwnd =
+        CreateWindowExA(0, wc.lpszClassName, "Sogen Vulkan - Spinning Cube Field", window_style, 180, 120, static_cast<int>(window_width),
+                        static_cast<int>(window_height), nullptr, nullptr, hinstance, nullptr);
     if (!hwnd)
     {
         std::printf("[vk-field] CreateWindowExA failed: %lu\n", GetLastError());
@@ -247,8 +247,7 @@ int main(int argc, char** argv)
         std::printf("[vk-field] LoadLibrary(%s) failed: %lu\n", dll, GetLastError());
         return 3;
     }
-    const auto gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(
-        reinterpret_cast<void*>(GetProcAddress(mod, "vkGetInstanceProcAddr")));
+    const auto gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(reinterpret_cast<void*>(GetProcAddress(mod, "vkGetInstanceProcAddr")));
     if (!gipa)
     {
         std::printf("[vk-field] no vkGetInstanceProcAddr export\n");
@@ -300,8 +299,7 @@ int main(int argc, char** argv)
     const auto create_render_pass = load<PFN_vkCreateRenderPass>(gipa, instance, "vkCreateRenderPass");
     const auto create_framebuffer = load<PFN_vkCreateFramebuffer>(gipa, instance, "vkCreateFramebuffer");
     const auto create_pipeline_layout = load<PFN_vkCreatePipelineLayout>(gipa, instance, "vkCreatePipelineLayout");
-    const auto create_graphics_pipelines =
-        load<PFN_vkCreateGraphicsPipelines>(gipa, instance, "vkCreateGraphicsPipelines");
+    const auto create_graphics_pipelines = load<PFN_vkCreateGraphicsPipelines>(gipa, instance, "vkCreateGraphicsPipelines");
     const auto cmd_begin_render_pass = load<PFN_vkCmdBeginRenderPass>(gipa, instance, "vkCmdBeginRenderPass");
     const auto cmd_bind_pipeline = load<PFN_vkCmdBindPipeline>(gipa, instance, "vkCmdBindPipeline");
     const auto cmd_push_constants = load<PFN_vkCmdPushConstants>(gipa, instance, "vkCmdPushConstants");
@@ -424,8 +422,7 @@ int main(int argc, char** argv)
     get_swapchain_images(device, swapchain, &image_count, nullptr);
     std::vector<VkImage> images(image_count);
     get_swapchain_images(device, swapchain, &image_count, images.data());
-    std::printf("[vk-field] swapchain ready: %u images, %ux%u, %d cubes\n", image_count, swap_extent.width,
-                swap_extent.height, cube_count);
+    std::printf("[vk-field] swapchain ready: %u images, %ux%u, %d cubes\n", image_count, swap_extent.width, swap_extent.height, cube_count);
 
     // --- render pass ---
     VkAttachmentDescription color_attachment{};
@@ -521,8 +518,8 @@ int main(int argc, char** argv)
     multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
     VkPipelineColorBlendAttachmentState blend_attachment{};
-    blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
-                                      VK_COLOR_COMPONENT_A_BIT;
+    blend_attachment.colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     VkPipelineColorBlendStateCreateInfo color_blend{};
     color_blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     color_blend.attachmentCount = 1;
@@ -645,8 +642,7 @@ int main(int argc, char** argv)
 
         const int64_t t_acquire_begin = qpc_now();
         uint32_t image_index = 0;
-        const VkResult acquired =
-            acquire_next(device, swapchain, UINT64_MAX, VK_NULL_HANDLE, VK_NULL_HANDLE, &image_index);
+        const VkResult acquired = acquire_next(device, swapchain, UINT64_MAX, VK_NULL_HANDLE, VK_NULL_HANDLE, &image_index);
         const int64_t t_acquire_end = qpc_now();
         if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR)
         {
@@ -771,16 +767,15 @@ int main(int argc, char** argv)
             const auto elapsed = static_cast<double>(now - fps_window_start);
             const double fps = static_cast<double>(fps_window_frames) * 1000.0 / elapsed;
             std::array<char, 128> title{};
-            std::snprintf(title.data(), title.size(), "Sogen Vulkan - Spinning Cube Field (%d cubes) - %.1f FPS",
-                          cube_count, fps);
+            std::snprintf(title.data(), title.size(), "Sogen Vulkan - Spinning Cube Field (%d cubes) - %.1f FPS", cube_count, fps);
             SetWindowTextA(hwnd, title.data());
 
             const auto nf = static_cast<double>(fps_window_frames);
             std::printf("[vk-field] %.1f FPS (%.2f ms/frame); per-frame us: acquire %.0f | cpu %.0f | record %.0f | "
                         "submit+wait %.0f | present %.0f\n",
-                        fps, elapsed / nf, static_cast<double>(acc_acquire) * qpc_to_us / nf,
-                        static_cast<double>(acc_cpu) * qpc_to_us / nf, static_cast<double>(acc_record) * qpc_to_us / nf,
-                        static_cast<double>(acc_sync) * qpc_to_us / nf, static_cast<double>(acc_present) * qpc_to_us / nf);
+                        fps, elapsed / nf, static_cast<double>(acc_acquire) * qpc_to_us / nf, static_cast<double>(acc_cpu) * qpc_to_us / nf,
+                        static_cast<double>(acc_record) * qpc_to_us / nf, static_cast<double>(acc_sync) * qpc_to_us / nf,
+                        static_cast<double>(acc_present) * qpc_to_us / nf);
             std::fflush(stdout);
 
             acc_acquire = acc_cpu = acc_record = acc_sync = acc_present = 0;

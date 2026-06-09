@@ -2,7 +2,7 @@ add_library(vulkan-bridge-marshal INTERFACE)
 
 target_sources(vulkan-bridge-marshal INTERFACE
   vk_bridge_serial.hpp
-  vk_bridge_marshal.generated.hpp
+  vk_bridge_marshal.generated.hxx
 )
 
 target_include_directories(vulkan-bridge-marshal INTERFACE "${CMAKE_CURRENT_LIST_DIR}")
@@ -19,7 +19,7 @@ add_custom_target(vulkan-bridge-generate
   COMMAND "${PYTHON3_EXE}"
           "${PROJECT_SOURCE_DIR}/tools/vulkan-bridge-generator/generate.py"
           --vk-xml "${PROJECT_SOURCE_DIR}/deps/Vulkan-Headers/registry/vk.xml"
-          --output "${CMAKE_CURRENT_LIST_DIR}/vk_bridge_marshal.generated.hpp"
+          --output "${CMAKE_CURRENT_LIST_DIR}/vk_bridge_marshal.generated.hxx"
   COMMENT "Regenerating Vulkan bridge marshalling from vk.xml"
   VERBATIM
 )

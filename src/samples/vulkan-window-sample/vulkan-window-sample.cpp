@@ -19,7 +19,7 @@
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <vulkan/vulkan_win32.h>
 
-#include "triangle_spirv.hpp"
+#include "triangle_spirv.hxx"
 
 namespace
 {
@@ -79,9 +79,8 @@ int main(int argc, char** argv)
 
     // Fixed-size window (no resize) -- this sample does not recreate the swapchain on resize.
     constexpr DWORD window_style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE;
-    const HWND hwnd = CreateWindowExA(0, wc.lpszClassName, "Sogen Vulkan Window", window_style, 200, 200,
-                                      static_cast<int>(window_width), static_cast<int>(window_height), nullptr, nullptr,
-                                      hinstance, nullptr);
+    const HWND hwnd = CreateWindowExA(0, wc.lpszClassName, "Sogen Vulkan Window", window_style, 200, 200, static_cast<int>(window_width),
+                                      static_cast<int>(window_height), nullptr, nullptr, hinstance, nullptr);
     if (!hwnd)
     {
         std::printf("[vk-window] CreateWindowExA failed: %lu\n", GetLastError());
@@ -95,8 +94,7 @@ int main(int argc, char** argv)
         std::printf("[vk-window] LoadLibrary(%s) failed: %lu\n", dll, GetLastError());
         return 3;
     }
-    const auto gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(
-        reinterpret_cast<void*>(GetProcAddress(mod, "vkGetInstanceProcAddr")));
+    const auto gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(reinterpret_cast<void*>(GetProcAddress(mod, "vkGetInstanceProcAddr")));
     if (!gipa)
     {
         std::printf("[vk-window] no vkGetInstanceProcAddr export\n");
@@ -365,8 +363,8 @@ int main(int argc, char** argv)
     multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
     VkPipelineColorBlendAttachmentState blend_attachment{};
-    blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
-                                      VK_COLOR_COMPONENT_A_BIT;
+    blend_attachment.colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     VkPipelineColorBlendStateCreateInfo color_blend{};
     color_blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     color_blend.attachmentCount = 1;

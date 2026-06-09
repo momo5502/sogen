@@ -19,16 +19,12 @@ namespace
     void submit_and_wait(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance, VkDevice device, VkQueue queue,
                          uint32_t queue_family)
     {
-        const auto create_command_pool =
-            reinterpret_cast<PFN_vkCreateCommandPool>(get_instance_proc(instance, "vkCreateCommandPool"));
-        const auto destroy_command_pool =
-            reinterpret_cast<PFN_vkDestroyCommandPool>(get_instance_proc(instance, "vkDestroyCommandPool"));
+        const auto create_command_pool = reinterpret_cast<PFN_vkCreateCommandPool>(get_instance_proc(instance, "vkCreateCommandPool"));
+        const auto destroy_command_pool = reinterpret_cast<PFN_vkDestroyCommandPool>(get_instance_proc(instance, "vkDestroyCommandPool"));
         const auto allocate_command_buffers =
             reinterpret_cast<PFN_vkAllocateCommandBuffers>(get_instance_proc(instance, "vkAllocateCommandBuffers"));
-        const auto begin_command_buffer =
-            reinterpret_cast<PFN_vkBeginCommandBuffer>(get_instance_proc(instance, "vkBeginCommandBuffer"));
-        const auto end_command_buffer =
-            reinterpret_cast<PFN_vkEndCommandBuffer>(get_instance_proc(instance, "vkEndCommandBuffer"));
+        const auto begin_command_buffer = reinterpret_cast<PFN_vkBeginCommandBuffer>(get_instance_proc(instance, "vkBeginCommandBuffer"));
+        const auto end_command_buffer = reinterpret_cast<PFN_vkEndCommandBuffer>(get_instance_proc(instance, "vkEndCommandBuffer"));
         const auto create_fence = reinterpret_cast<PFN_vkCreateFence>(get_instance_proc(instance, "vkCreateFence"));
         const auto destroy_fence = reinterpret_cast<PFN_vkDestroyFence>(get_instance_proc(instance, "vkDestroyFence"));
         const auto queue_submit = reinterpret_cast<PFN_vkQueueSubmit>(get_instance_proc(instance, "vkQueueSubmit"));
@@ -92,8 +88,7 @@ namespace
 
     // Picks the first memory type that is set in `type_bits` and carries all of `required` property
     // flags. Returns UINT32_MAX if none qualifies.
-    uint32_t find_memory_type(const VkPhysicalDeviceMemoryProperties& props, uint32_t type_bits,
-                              VkMemoryPropertyFlags required)
+    uint32_t find_memory_type(const VkPhysicalDeviceMemoryProperties& props, uint32_t type_bits, VkMemoryPropertyFlags required)
     {
         for (uint32_t i = 0; i < props.memoryTypeCount; ++i)
         {
@@ -108,33 +103,28 @@ namespace
     // Allocates a host-visible buffer, has the GPU fill it with a known pattern via vkCmdFillBuffer,
     // then maps it back and verifies the bytes -- the first end-to-end "GPU produces data the guest
     // reads back" path across the bridge.
-    bool fill_buffer_and_readback(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance,
-                                  VkPhysicalDevice physical_device, VkDevice device, VkQueue queue, uint32_t queue_family)
+    bool fill_buffer_and_readback(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance, VkPhysicalDevice physical_device,
+                                  VkDevice device, VkQueue queue, uint32_t queue_family)
     {
-        const auto get_memory_properties = reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(
-            get_instance_proc(instance, "vkGetPhysicalDeviceMemoryProperties"));
+        const auto get_memory_properties =
+            reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(get_instance_proc(instance, "vkGetPhysicalDeviceMemoryProperties"));
         const auto create_buffer = reinterpret_cast<PFN_vkCreateBuffer>(get_instance_proc(instance, "vkCreateBuffer"));
         const auto destroy_buffer = reinterpret_cast<PFN_vkDestroyBuffer>(get_instance_proc(instance, "vkDestroyBuffer"));
-        const auto get_buffer_reqs = reinterpret_cast<PFN_vkGetBufferMemoryRequirements>(
-            get_instance_proc(instance, "vkGetBufferMemoryRequirements"));
+        const auto get_buffer_reqs =
+            reinterpret_cast<PFN_vkGetBufferMemoryRequirements>(get_instance_proc(instance, "vkGetBufferMemoryRequirements"));
         const auto allocate_memory = reinterpret_cast<PFN_vkAllocateMemory>(get_instance_proc(instance, "vkAllocateMemory"));
         const auto free_memory = reinterpret_cast<PFN_vkFreeMemory>(get_instance_proc(instance, "vkFreeMemory"));
-        const auto bind_buffer_memory =
-            reinterpret_cast<PFN_vkBindBufferMemory>(get_instance_proc(instance, "vkBindBufferMemory"));
+        const auto bind_buffer_memory = reinterpret_cast<PFN_vkBindBufferMemory>(get_instance_proc(instance, "vkBindBufferMemory"));
         const auto map_memory = reinterpret_cast<PFN_vkMapMemory>(get_instance_proc(instance, "vkMapMemory"));
         const auto unmap_memory = reinterpret_cast<PFN_vkUnmapMemory>(get_instance_proc(instance, "vkUnmapMemory"));
         const auto cmd_fill_buffer = reinterpret_cast<PFN_vkCmdFillBuffer>(get_instance_proc(instance, "vkCmdFillBuffer"));
 
-        const auto create_command_pool =
-            reinterpret_cast<PFN_vkCreateCommandPool>(get_instance_proc(instance, "vkCreateCommandPool"));
-        const auto destroy_command_pool =
-            reinterpret_cast<PFN_vkDestroyCommandPool>(get_instance_proc(instance, "vkDestroyCommandPool"));
+        const auto create_command_pool = reinterpret_cast<PFN_vkCreateCommandPool>(get_instance_proc(instance, "vkCreateCommandPool"));
+        const auto destroy_command_pool = reinterpret_cast<PFN_vkDestroyCommandPool>(get_instance_proc(instance, "vkDestroyCommandPool"));
         const auto allocate_command_buffers =
             reinterpret_cast<PFN_vkAllocateCommandBuffers>(get_instance_proc(instance, "vkAllocateCommandBuffers"));
-        const auto begin_command_buffer =
-            reinterpret_cast<PFN_vkBeginCommandBuffer>(get_instance_proc(instance, "vkBeginCommandBuffer"));
-        const auto end_command_buffer =
-            reinterpret_cast<PFN_vkEndCommandBuffer>(get_instance_proc(instance, "vkEndCommandBuffer"));
+        const auto begin_command_buffer = reinterpret_cast<PFN_vkBeginCommandBuffer>(get_instance_proc(instance, "vkBeginCommandBuffer"));
+        const auto end_command_buffer = reinterpret_cast<PFN_vkEndCommandBuffer>(get_instance_proc(instance, "vkEndCommandBuffer"));
         const auto create_fence = reinterpret_cast<PFN_vkCreateFence>(get_instance_proc(instance, "vkCreateFence"));
         const auto destroy_fence = reinterpret_cast<PFN_vkDestroyFence>(get_instance_proc(instance, "vkDestroyFence"));
         const auto queue_submit = reinterpret_cast<PFN_vkQueueSubmit>(get_instance_proc(instance, "vkQueueSubmit"));
@@ -161,8 +151,8 @@ namespace
 
         VkPhysicalDeviceMemoryProperties mem_props{};
         get_memory_properties(physical_device, &mem_props);
-        const uint32_t type_index = find_memory_type(
-            mem_props, reqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        const uint32_t type_index =
+            find_memory_type(mem_props, reqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         if (type_index == UINT32_MAX)
         {
             std::printf("[shim-test] no host-visible memory type\n");
@@ -245,8 +235,8 @@ namespace
             }
         }
 
-        std::printf("[shim-test] fill+readback (0x%08X x%u) -> %s\n", fill_value,
-                    static_cast<uint32_t>(buffer_size / sizeof(uint32_t)), ok ? "PASS" : "FAIL");
+        std::printf("[shim-test] fill+readback (0x%08X x%u) -> %s\n", fill_value, static_cast<uint32_t>(buffer_size / sizeof(uint32_t)),
+                    ok ? "PASS" : "FAIL");
 
         destroy_fence(device, fence, nullptr);
         destroy_command_pool(device, pool, nullptr);
@@ -258,44 +248,36 @@ namespace
     // Renders into an image the simplest possible way -- clears it to a known color on the GPU -- then
     // copies it into a host-visible buffer and reads the pixels back. This is the offscreen render
     // target + readback path that windowed present will reuse (present = clear/draw -> copy -> readback).
-    bool clear_image_and_readback(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance,
-                                  VkPhysicalDevice physical_device, VkDevice device, VkQueue queue, uint32_t queue_family)
+    bool clear_image_and_readback(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance, VkPhysicalDevice physical_device,
+                                  VkDevice device, VkQueue queue, uint32_t queue_family)
     {
-        const auto get_memory_properties = reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(
-            get_instance_proc(instance, "vkGetPhysicalDeviceMemoryProperties"));
+        const auto get_memory_properties =
+            reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(get_instance_proc(instance, "vkGetPhysicalDeviceMemoryProperties"));
         const auto create_image = reinterpret_cast<PFN_vkCreateImage>(get_instance_proc(instance, "vkCreateImage"));
         const auto destroy_image = reinterpret_cast<PFN_vkDestroyImage>(get_instance_proc(instance, "vkDestroyImage"));
-        const auto get_image_reqs = reinterpret_cast<PFN_vkGetImageMemoryRequirements>(
-            get_instance_proc(instance, "vkGetImageMemoryRequirements"));
-        const auto bind_image_memory =
-            reinterpret_cast<PFN_vkBindImageMemory>(get_instance_proc(instance, "vkBindImageMemory"));
+        const auto get_image_reqs =
+            reinterpret_cast<PFN_vkGetImageMemoryRequirements>(get_instance_proc(instance, "vkGetImageMemoryRequirements"));
+        const auto bind_image_memory = reinterpret_cast<PFN_vkBindImageMemory>(get_instance_proc(instance, "vkBindImageMemory"));
         const auto create_buffer = reinterpret_cast<PFN_vkCreateBuffer>(get_instance_proc(instance, "vkCreateBuffer"));
         const auto destroy_buffer = reinterpret_cast<PFN_vkDestroyBuffer>(get_instance_proc(instance, "vkDestroyBuffer"));
-        const auto get_buffer_reqs = reinterpret_cast<PFN_vkGetBufferMemoryRequirements>(
-            get_instance_proc(instance, "vkGetBufferMemoryRequirements"));
+        const auto get_buffer_reqs =
+            reinterpret_cast<PFN_vkGetBufferMemoryRequirements>(get_instance_proc(instance, "vkGetBufferMemoryRequirements"));
         const auto allocate_memory = reinterpret_cast<PFN_vkAllocateMemory>(get_instance_proc(instance, "vkAllocateMemory"));
         const auto free_memory = reinterpret_cast<PFN_vkFreeMemory>(get_instance_proc(instance, "vkFreeMemory"));
-        const auto bind_buffer_memory =
-            reinterpret_cast<PFN_vkBindBufferMemory>(get_instance_proc(instance, "vkBindBufferMemory"));
+        const auto bind_buffer_memory = reinterpret_cast<PFN_vkBindBufferMemory>(get_instance_proc(instance, "vkBindBufferMemory"));
         const auto map_memory = reinterpret_cast<PFN_vkMapMemory>(get_instance_proc(instance, "vkMapMemory"));
         const auto unmap_memory = reinterpret_cast<PFN_vkUnmapMemory>(get_instance_proc(instance, "vkUnmapMemory"));
-        const auto cmd_pipeline_barrier =
-            reinterpret_cast<PFN_vkCmdPipelineBarrier>(get_instance_proc(instance, "vkCmdPipelineBarrier"));
-        const auto cmd_clear_color_image =
-            reinterpret_cast<PFN_vkCmdClearColorImage>(get_instance_proc(instance, "vkCmdClearColorImage"));
+        const auto cmd_pipeline_barrier = reinterpret_cast<PFN_vkCmdPipelineBarrier>(get_instance_proc(instance, "vkCmdPipelineBarrier"));
+        const auto cmd_clear_color_image = reinterpret_cast<PFN_vkCmdClearColorImage>(get_instance_proc(instance, "vkCmdClearColorImage"));
         const auto cmd_copy_image_to_buffer =
             reinterpret_cast<PFN_vkCmdCopyImageToBuffer>(get_instance_proc(instance, "vkCmdCopyImageToBuffer"));
 
-        const auto create_command_pool =
-            reinterpret_cast<PFN_vkCreateCommandPool>(get_instance_proc(instance, "vkCreateCommandPool"));
-        const auto destroy_command_pool =
-            reinterpret_cast<PFN_vkDestroyCommandPool>(get_instance_proc(instance, "vkDestroyCommandPool"));
+        const auto create_command_pool = reinterpret_cast<PFN_vkCreateCommandPool>(get_instance_proc(instance, "vkCreateCommandPool"));
+        const auto destroy_command_pool = reinterpret_cast<PFN_vkDestroyCommandPool>(get_instance_proc(instance, "vkDestroyCommandPool"));
         const auto allocate_command_buffers =
             reinterpret_cast<PFN_vkAllocateCommandBuffers>(get_instance_proc(instance, "vkAllocateCommandBuffers"));
-        const auto begin_command_buffer =
-            reinterpret_cast<PFN_vkBeginCommandBuffer>(get_instance_proc(instance, "vkBeginCommandBuffer"));
-        const auto end_command_buffer =
-            reinterpret_cast<PFN_vkEndCommandBuffer>(get_instance_proc(instance, "vkEndCommandBuffer"));
+        const auto begin_command_buffer = reinterpret_cast<PFN_vkBeginCommandBuffer>(get_instance_proc(instance, "vkBeginCommandBuffer"));
+        const auto end_command_buffer = reinterpret_cast<PFN_vkEndCommandBuffer>(get_instance_proc(instance, "vkEndCommandBuffer"));
         const auto create_fence = reinterpret_cast<PFN_vkCreateFence>(get_instance_proc(instance, "vkCreateFence"));
         const auto destroy_fence = reinterpret_cast<PFN_vkDestroyFence>(get_instance_proc(instance, "vkDestroyFence"));
         const auto queue_submit = reinterpret_cast<PFN_vkQueueSubmit>(get_instance_proc(instance, "vkQueueSubmit"));
@@ -352,8 +334,8 @@ namespace
 
         VkMemoryRequirements buffer_reqs{};
         get_buffer_reqs(device, buffer, &buffer_reqs);
-        const uint32_t buffer_type = find_memory_type(
-            mem_props, buffer_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        const uint32_t buffer_type = find_memory_type(mem_props, buffer_reqs.memoryTypeBits,
+                                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
         VkMemoryAllocateInfo buffer_alloc{};
         buffer_alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
@@ -395,8 +377,8 @@ namespace
         full_range.baseArrayLayer = 0;
         full_range.layerCount = 1;
 
-        const auto transition = [&](VkImageLayout old_layout, VkImageLayout new_layout, VkAccessFlags src_access,
-                                    VkAccessFlags dst_access, VkPipelineStageFlags src_stage, VkPipelineStageFlags dst_stage) {
+        const auto transition = [&](VkImageLayout old_layout, VkImageLayout new_layout, VkAccessFlags src_access, VkAccessFlags dst_access,
+                                    VkPipelineStageFlags src_stage, VkPipelineStageFlags dst_stage) {
             VkImageMemoryBarrier barrier{};
             barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
             barrier.srcAccessMask = src_access;
@@ -462,8 +444,7 @@ namespace
                     if (pixels[i] != expected)
                     {
                         ok = false;
-                        std::printf("[shim-test] clear readback mismatch at pixel %u: 0x%08X != 0x%08X\n", i, pixels[i],
-                                    expected);
+                        std::printf("[shim-test] clear readback mismatch at pixel %u: 0x%08X != 0x%08X\n", i, pixels[i], expected);
                         break;
                     }
                 }
@@ -532,8 +513,7 @@ int main(int argc, char** argv)
         return 4;
     }
 
-    const auto enumerate =
-        reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(get_instance_proc(instance, "vkEnumeratePhysicalDevices"));
+    const auto enumerate = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(get_instance_proc(instance, "vkEnumeratePhysicalDevices"));
     const auto get_properties =
         reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(get_instance_proc(instance, "vkGetPhysicalDeviceProperties"));
     const auto destroy_instance = reinterpret_cast<PFN_vkDestroyInstance>(get_instance_proc(instance, "vkDestroyInstance"));
