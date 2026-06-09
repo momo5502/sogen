@@ -144,7 +144,7 @@ namespace sogen
                     return handle_destroy_sampler(win_emu, context);
 
                 default:
-                    win_emu.log.warn("[gpu-bridge] Unsupported IOCTL: 0x%X\n", context.io_control_code);
+                    win_emu.log.warn("[gpu-bridge] Unsupported IOCTL: 0x%X\n", static_cast<unsigned>(context.io_control_code));
                     return STATUS_NOT_SUPPORTED;
                 }
             }
