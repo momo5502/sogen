@@ -1042,4 +1042,22 @@ namespace sogen::gpu_bridge
         uint32_t command;
         uint32_t size; // payload bytes following this header
     };
+
+    // Portability guard: the guest shim and the emulator host may be built for different bitness (a
+    // 32-bit/WOW64 guest talking to a 64-bit host, or vice versa), so every wire struct must have the
+    // same layout regardless of pointer size. These structs use only fixed-width integers/floats and
+    // `object_id` (a uint64), never `size_t`/pointers, so MSVC lays them out identically on x86 and x64
+    // (8-byte types stay 8-aligned on both). The asserts below pin a representative spread of sizes; if
+    // anyone introduces a pointer-sized member, the struct's size would differ between architectures and
+    // at least one of these would fail to compile.
+    static_assert(sizeof(object_id) == 8 && alignof(object_id) == 8, "object_id must be a portable 64-bit value");
+    static_assert(sizeof(command_record_header) == 8, "wire layout drift");
+    static_assert(sizeof(version_response) == 8, "wire layout drift");
+    static_assert(sizeof(allocate_memory_request) == 24, "wire layout drift");
+    static_assert(sizeof(bind_buffer_memory_request) == 32, "wire layout drift");
+    static_assert(sizeof(cmd_draw_request) == 24, "wire layout drift");
+    static_assert(sizeof(vertex_buffer_binding) == 16, "wire layout drift");
+    static_assert(sizeof(descriptor_set_layout_binding) == 16, "wire layout drift");
+    static_assert(sizeof(cmd_bind_descriptor_sets_request) == 24, "wire layout drift");
+    static_assert(sizeof(create_sampler_request) == 32, "wire layout drift");
 }

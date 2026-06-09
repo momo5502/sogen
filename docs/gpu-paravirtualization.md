@@ -59,9 +59,28 @@ The blueprint for the harder device behaviors (async, poll-and-yield) is the exi
 
 Raw host pointers never cross the boundary. `vulkan_host` keeps the real `VkInstance` /
 `VkPhysicalDevice` / `VkDevice` / ... in tables and hands the guest an opaque `object_id` (a
-monotonic `uint64`). Because Vulkan handles are pointer-sized, the **guest shim stores the
-`object_id` directly in the `VkInstance`/etc. handle value** — so the shim needs no handle table of
-its own; the value the app holds *is* the id the host looks up.
+monotonic `uint64`). The **guest shim stores the `object_id` directly in the Vulkan handle value** — so
+the shim needs no handle table of its own; the value the app holds *is* the id the host looks up.
+Vulkan handles come in two shapes and the shim handles both portably (see `to_object_id`/`to_handle`):
+*dispatchable* handles (`VkInstance`, `VkDevice`, ...) are pointers — 64-bit on x64, 32-bit on a 32-bit
+(WOW64) guest — so the id is stored in the pointer value (ids are small monotonic counters, so they fit
+32 bits without loss); *non-dispatchable* handles (`VkBuffer`, `VkImage`, ...) are `uint64_t` on every
+platform and carry the full id. The id always crosses the wire as a 64-bit value regardless of guest
+bitness.
+
+### Cross-bitness portability (WOW64)
+
+The shim and the emulator host can be built for different bitness — a 32-bit (WOW64) guest talking to a
+64-bit host, or vice versa — so the wire protocol is deliberately **pointer-size-agnostic**: every
+struct in `gpu_bridge_protocol.hpp` uses only fixed-width integers/floats and `object_id` (never
+`size_t` or pointers), which MSVC lays out identically on x86 and x64 (8-byte types stay 8-aligned on
+both). A block of `static_assert`s pins representative struct sizes so any future pointer-sized member
+fails the build on at least one architecture. The shim is exported through a `.def`
+(`src/samples/vulkan-shim/vulkan_shim.def`) so the entry points keep their **undecorated** names on
+x86 too — `VKAPI_CALL` is `__stdcall`, which would otherwise decorate them (`_vkCreateInstance@16`) and
+hide them from the guest's `GetProcAddress`, exactly as the real `vulkan-1.dll` avoids with its own def.
+Verified: the 32-bit samples + shim run under the 64-bit emulator (`analyzer.exe`) via its WOW64 path —
+`vulkan-shim-test`'s fill/clear readback pass and the windowed samples render.
 
 ### Wire protocol
 

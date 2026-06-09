@@ -1,0 +1,86 @@
+; Module-definition file for the guest Vulkan shim (vulkan-1.dll replacement).
+;
+; Exports the Vulkan entry points under their PLAIN, undecorated names. This matters on 32-bit
+; (WOW64) guests: VKAPI_CALL is __stdcall, which name-decorates exports on x86 (e.g.
+;   _vkGetInstanceProcAddr@8), so a guest GetProcAddress("vkGetInstanceProcAddr") would miss them.
+; A .def exports undecorated names on both x86 and x64, exactly as the real vulkan-1.dll does.
+; Keep this list in sync with the exported functions in vulkan_shim.cpp.
+EXPORTS
+    vkAcquireNextImageKHR
+    vkAllocateCommandBuffers
+    vkAllocateDescriptorSets
+    vkAllocateMemory
+    vkBeginCommandBuffer
+    vkBindBufferMemory
+    vkBindImageMemory
+    vkCmdBeginRenderPass
+    vkCmdBindDescriptorSets
+    vkCmdBindIndexBuffer
+    vkCmdBindPipeline
+    vkCmdBindVertexBuffers
+    vkCmdClearColorImage
+    vkCmdCopyBufferToImage
+    vkCmdCopyImageToBuffer
+    vkCmdDraw
+    vkCmdDrawIndexed
+    vkCmdEndRenderPass
+    vkCmdFillBuffer
+    vkCmdPipelineBarrier
+    vkCmdPushConstants
+    vkCreateBuffer
+    vkCreateCommandPool
+    vkCreateDescriptorPool
+    vkCreateDescriptorSetLayout
+    vkCreateDevice
+    vkCreateFence
+    vkCreateFramebuffer
+    vkCreateGraphicsPipelines
+    vkCreateImage
+    vkCreateImageView
+    vkCreateInstance
+    vkCreatePipelineLayout
+    vkCreateRenderPass
+    vkCreateSampler
+    vkCreateShaderModule
+    vkCreateSwapchainKHR
+    vkCreateWin32SurfaceKHR
+    vkDestroyBuffer
+    vkDestroyCommandPool
+    vkDestroyDescriptorPool
+    vkDestroyDescriptorSetLayout
+    vkDestroyDevice
+    vkDestroyFence
+    vkDestroyFramebuffer
+    vkDestroyImage
+    vkDestroyImageView
+    vkDestroyInstance
+    vkDestroyPipeline
+    vkDestroyPipelineLayout
+    vkDestroyRenderPass
+    vkDestroySampler
+    vkDestroyShaderModule
+    vkDestroySurfaceKHR
+    vkDestroySwapchainKHR
+    vkEndCommandBuffer
+    vkEnumeratePhysicalDevices
+    vkFreeCommandBuffers
+    vkFreeMemory
+    vkGetBufferMemoryRequirements
+    vkGetDeviceProcAddr
+    vkGetDeviceQueue
+    vkGetFenceStatus
+    vkGetImageMemoryRequirements
+    vkGetInstanceProcAddr
+    vkGetPhysicalDeviceMemoryProperties
+    vkGetPhysicalDeviceProperties
+    vkGetPhysicalDeviceQueueFamilyProperties
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR
+    vkGetSwapchainImagesKHR
+    vkMapMemory
+    vkQueuePresentKHR
+    vkQueueSubmit
+    vkResetFences
+    vkUnmapMemory
+    vkUpdateDescriptorSets
+    vkWaitForFences
+    vk_icdGetInstanceProcAddr

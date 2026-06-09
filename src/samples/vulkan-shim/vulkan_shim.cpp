@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -51,16 +52,38 @@ namespace
         return DeviceIoControl(handle, code, const_cast<void*>(in), in_len, out, out_len, &returned, nullptr) != FALSE;
     }
 
+    // Vulkan handles come in two shapes: dispatchable handles (VkInstance, VkDevice, VkQueue,
+    // VkCommandBuffer, VkPhysicalDevice) are pointers -- pointer-sized, so 64-bit on x64 and 32-bit on
+    // x86/WOW64 -- while non-dispatchable handles (VkBuffer, VkImage, VkDeviceMemory, ...) are uint64_t on
+    // every platform. The bridge's object_id is a uint64 that always crosses the wire in full; store it
+    // directly in uint64 handles, and in the pointer value for dispatchable handles. Object ids are small
+    // monotonic counters, so they fit a 32-bit pointer without loss -- and a non-dispatchable handle keeps
+    // the full 64 bits regardless of guest bitness. This makes a 32-bit (WOW64) shim and a 64-bit host
+    // agree on the protocol, and vice versa.
     template <typename Handle>
     gb::object_id to_object_id(Handle handle)
     {
-        return static_cast<gb::object_id>(reinterpret_cast<uintptr_t>(handle));
+        if constexpr (std::is_pointer_v<Handle>)
+        {
+            return static_cast<gb::object_id>(reinterpret_cast<uintptr_t>(handle));
+        }
+        else
+        {
+            return static_cast<gb::object_id>(handle);
+        }
     }
 
     template <typename Handle>
     Handle to_handle(gb::object_id id)
     {
-        return reinterpret_cast<Handle>(static_cast<uintptr_t>(id));
+        if constexpr (std::is_pointer_v<Handle>)
+        {
+            return reinterpret_cast<Handle>(static_cast<uintptr_t>(id));
+        }
+        else
+        {
+            return static_cast<Handle>(id);
+        }
     }
 
     // VkDeviceMemory is host-side; the guest can't see a host pointer. We emulate vkMapMemory by

@@ -695,7 +695,7 @@ namespace sogen
 
                 const auto copy_bytes = std::min<uint64_t>(request.size, context.output_buffer_length);
 
-                std::vector<std::byte> bytes(copy_bytes);
+                std::vector<std::byte> bytes(static_cast<size_t>(copy_bytes));
                 const int32_t result = this->vulkan_.download_memory(request.device, request.memory, request.offset,
                                                                      copy_bytes, bytes.data(), bytes.size());
                 if (result != 0)
@@ -723,7 +723,7 @@ namespace sogen
 
                 const auto payload = std::min<uint64_t>(request.size, context.input_buffer_length - sizeof(request_t));
 
-                std::vector<std::byte> bytes(payload);
+                std::vector<std::byte> bytes(static_cast<size_t>(payload));
                 if (payload > 0)
                 {
                     win_emu.emu().read_memory(context.input_buffer + sizeof(request_t), bytes.data(), bytes.size());
@@ -958,7 +958,7 @@ namespace sogen
                 }
 
                 const auto code_bytes = std::min<uint64_t>(request.code_size, context.input_buffer_length - sizeof(request_t));
-                std::vector<std::byte> code(code_bytes);
+                std::vector<std::byte> code(static_cast<size_t>(code_bytes));
                 if (code_bytes > 0)
                 {
                     win_emu.emu().read_memory(context.input_buffer + sizeof(request_t), code.data(), code.size());
