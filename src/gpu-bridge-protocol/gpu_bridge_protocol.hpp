@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753;   // 'SGPU'
-    inline constexpr uint32_t protocol_version = 1;
+    inline constexpr uint32_t protocol_version = 2;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -96,6 +96,9 @@ namespace sogen::gpu_bridge
         cmd_push_constants = 0x83C,
         get_surface_capabilities = 0x83D,
         record_commands = 0x83E,
+        cmd_bind_vertex_buffers = 0x83F,
+        cmd_bind_index_buffer = 0x840,
+        cmd_draw_indexed = 0x841,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -733,8 +736,29 @@ namespace sogen::gpu_bridge
         uint32_t push_constant_size;   // bytes, from offset 0
     };
 
-    // ioctl_create_graphics_pipeline: in (no vertex input, triangle list, static full viewport/scissor,
-    // one non-blended color attachment); out = object_response
+    // A VkVertexInputBindingDescription flattened to plain integers.
+    struct vertex_input_binding
+    {
+        uint32_t binding;
+        uint32_t stride;
+        uint32_t input_rate; // VkVertexInputRate
+        uint32_t reserved;
+    };
+
+    // A VkVertexInputAttributeDescription flattened to plain integers.
+    struct vertex_input_attribute
+    {
+        uint32_t location;
+        uint32_t binding;
+        uint32_t format; // VkFormat
+        uint32_t offset;
+    };
+
+    // ioctl_create_graphics_pipeline: in (triangle list, static full viewport/scissor, one non-blended
+    // color attachment). The vertex input state is variable-length: the input buffer is this header
+    // immediately followed by `binding_count` vertex_input_binding entries and then `attribute_count`
+    // vertex_input_attribute entries. Both counts 0 => no vertex input (vertices baked into the shader).
+    // out = object_response
     struct create_graphics_pipeline_request
     {
         object_id device;
@@ -744,6 +768,10 @@ namespace sogen::gpu_bridge
         object_id fragment_shader;
         uint32_t width;
         uint32_t height;
+        uint32_t binding_count;   // number of vertex_input_binding entries that follow
+        uint32_t attribute_count; // number of vertex_input_attribute entries that follow the bindings
+        // vertex_input_binding bindings[binding_count];
+        // vertex_input_attribute attributes[attribute_count];
     };
 
     // record payload (command::cmd_begin_render_pass) for ioctl_record_commands: in (clear color load);
@@ -775,6 +803,45 @@ namespace sogen::gpu_bridge
         uint32_t instance_count;
         uint32_t first_vertex;
         uint32_t first_instance;
+    };
+
+    // One bound vertex buffer (trailing-array element of cmd_bind_vertex_buffers_request).
+    struct vertex_buffer_binding
+    {
+        object_id buffer;
+        uint64_t offset; // VkDeviceSize
+    };
+
+    // record payload (command::cmd_bind_vertex_buffers) for ioctl_record_commands: this header is
+    // immediately followed by `binding_count` vertex_buffer_binding entries.
+    struct cmd_bind_vertex_buffers_request
+    {
+        object_id command_buffer;
+        uint32_t first_binding;
+        uint32_t binding_count;
+        // vertex_buffer_binding bindings[binding_count];
+    };
+
+    // record payload (command::cmd_bind_index_buffer) for ioctl_record_commands: in;
+    struct cmd_bind_index_buffer_request
+    {
+        object_id command_buffer;
+        object_id buffer;
+        uint64_t offset;     // VkDeviceSize
+        uint32_t index_type; // VkIndexType
+        uint32_t reserved;
+    };
+
+    // record payload (command::cmd_draw_indexed) for ioctl_record_commands: in;
+    struct cmd_draw_indexed_request
+    {
+        object_id command_buffer;
+        uint32_t index_count;
+        uint32_t instance_count;
+        uint32_t first_index;
+        int32_t vertex_offset; // signed, per vkCmdDrawIndexed
+        uint32_t first_instance;
+        uint32_t reserved;
     };
 
     // record payload (command::cmd_end_render_pass) for ioctl_record_commands: in;

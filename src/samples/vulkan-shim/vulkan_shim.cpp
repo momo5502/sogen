@@ -1282,6 +1282,20 @@ extern "C"
                 height = static_cast<uint32_t>(ci.pViewportState->pViewports[0].height);
             }
 
+            // Vertex input state (variable-length): flatten the binding/attribute descriptions after the
+            // request header. Empty state (vertices baked into the shader) just sends counts of 0.
+            uint32_t binding_count = 0;
+            uint32_t attribute_count = 0;
+            const VkVertexInputBindingDescription* vk_bindings = nullptr;
+            const VkVertexInputAttributeDescription* vk_attributes = nullptr;
+            if (ci.pVertexInputState)
+            {
+                binding_count = ci.pVertexInputState->vertexBindingDescriptionCount;
+                attribute_count = ci.pVertexInputState->vertexAttributeDescriptionCount;
+                vk_bindings = ci.pVertexInputState->pVertexBindingDescriptions;
+                vk_attributes = ci.pVertexInputState->pVertexAttributeDescriptions;
+            }
+
             gb::create_graphics_pipeline_request request{};
             request.device = to_object_id(device);
             request.render_pass = to_object_id(ci.renderPass);
@@ -1290,10 +1304,36 @@ extern "C"
             request.fragment_shader = fragment_shader;
             request.width = width;
             request.height = height;
+            request.binding_count = binding_count;
+            request.attribute_count = attribute_count;
+
+            std::vector<uint8_t> message(sizeof(request) + static_cast<size_t>(binding_count) * sizeof(gb::vertex_input_binding) +
+                                         static_cast<size_t>(attribute_count) * sizeof(gb::vertex_input_attribute));
+            std::memcpy(message.data(), &request, sizeof(request));
+            size_t cursor = sizeof(request);
+            for (uint32_t b = 0; b < binding_count; ++b)
+            {
+                gb::vertex_input_binding wire{};
+                wire.binding = vk_bindings[b].binding;
+                wire.stride = vk_bindings[b].stride;
+                wire.input_rate = static_cast<uint32_t>(vk_bindings[b].inputRate);
+                std::memcpy(message.data() + cursor, &wire, sizeof(wire));
+                cursor += sizeof(wire);
+            }
+            for (uint32_t a = 0; a < attribute_count; ++a)
+            {
+                gb::vertex_input_attribute wire{};
+                wire.location = vk_attributes[a].location;
+                wire.binding = vk_attributes[a].binding;
+                wire.format = static_cast<uint32_t>(vk_attributes[a].format);
+                wire.offset = vk_attributes[a].offset;
+                std::memcpy(message.data() + cursor, &wire, sizeof(wire));
+                cursor += sizeof(wire);
+            }
 
             gb::object_response response{};
-            const bool ok =
-                bridge_call(gb::ioctl_create_graphics_pipeline, &request, sizeof(request), &response, sizeof(response));
+            const bool ok = bridge_call(gb::ioctl_create_graphics_pipeline, message.data(),
+                                        static_cast<DWORD>(message.size()), &response, sizeof(response));
             if (!ok || response.vk_result != VK_SUCCESS)
             {
                 pPipelines[i] = VK_NULL_HANDLE;
@@ -1353,6 +1393,54 @@ extern "C"
         request.first_vertex = firstVertex;
         request.first_instance = firstInstance;
         record_command(request.command_buffer, gb::command::cmd_draw, &request, sizeof(request));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindVertexBuffers(VkCommandBuffer commandBuffer,
+                                                                            uint32_t firstBinding, uint32_t bindingCount,
+                                                                            const VkBuffer* pBuffers,
+                                                                            const VkDeviceSize* pOffsets)
+    {
+        const gb::object_id command_buffer = to_object_id(commandBuffer);
+        std::vector<uint8_t> message(sizeof(gb::cmd_bind_vertex_buffers_request) +
+                                     static_cast<size_t>(bindingCount) * sizeof(gb::vertex_buffer_binding));
+        gb::cmd_bind_vertex_buffers_request header{};
+        header.command_buffer = command_buffer;
+        header.first_binding = firstBinding;
+        header.binding_count = bindingCount;
+        std::memcpy(message.data(), &header, sizeof(header));
+        for (uint32_t i = 0; i < bindingCount; ++i)
+        {
+            gb::vertex_buffer_binding vb{};
+            vb.buffer = to_object_id(pBuffers[i]);
+            vb.offset = pOffsets ? pOffsets[i] : 0;
+            std::memcpy(message.data() + sizeof(header) + i * sizeof(vb), &vb, sizeof(vb));
+        }
+        record_command(command_buffer, gb::command::cmd_bind_vertex_buffers, message.data(), message.size());
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindIndexBuffer(VkCommandBuffer commandBuffer, VkBuffer buffer,
+                                                                          VkDeviceSize offset, VkIndexType indexType)
+    {
+        gb::cmd_bind_index_buffer_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.buffer = to_object_id(buffer);
+        request.offset = offset;
+        request.index_type = static_cast<uint32_t>(indexType);
+        record_command(request.command_buffer, gb::command::cmd_bind_index_buffer, &request, sizeof(request));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndexed(VkCommandBuffer commandBuffer, uint32_t indexCount,
+                                                                      uint32_t instanceCount, uint32_t firstIndex,
+                                                                      int32_t vertexOffset, uint32_t firstInstance)
+    {
+        gb::cmd_draw_indexed_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.index_count = indexCount;
+        request.instance_count = instanceCount;
+        request.first_index = firstIndex;
+        request.vertex_offset = vertexOffset;
+        request.first_instance = firstInstance;
+        record_command(request.command_buffer, gb::command::cmd_draw_indexed, &request, sizeof(request));
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdEndRenderPass(VkCommandBuffer commandBuffer)
@@ -1465,6 +1553,9 @@ extern "C"
             {.name = "vkCmdBeginRenderPass", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBeginRenderPass)},
             {.name = "vkCmdBindPipeline", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindPipeline)},
             {.name = "vkCmdDraw", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDraw)},
+            {.name = "vkCmdBindVertexBuffers", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindVertexBuffers)},
+            {.name = "vkCmdBindIndexBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindIndexBuffer)},
+            {.name = "vkCmdDrawIndexed", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDrawIndexed)},
             {.name = "vkCmdEndRenderPass", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdEndRenderPass)},
             {.name = "vkCmdPushConstants", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdPushConstants)},
         };

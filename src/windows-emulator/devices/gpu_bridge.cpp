@@ -1047,15 +1047,51 @@ namespace sogen
 
             NTSTATUS handle_create_graphics_pipeline(windows_emulator& win_emu, const io_device_context& context)
             {
-                gpu_bridge::create_graphics_pipeline_request request{};
+                using request_t = gpu_bridge::create_graphics_pipeline_request;
+
+                request_t request{};
                 if (!read_input(win_emu, context, request))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
+
+                // The vertex input state trails the header: binding_count vertex_input_binding entries
+                // then attribute_count vertex_input_attribute entries. Bound the read by the buffer.
+                const auto available = context.input_buffer_length - static_cast<uint32_t>(sizeof(request_t));
+                std::vector<std::byte> trailer(available);
+                if (available > 0)
+                {
+                    win_emu.emu().read_memory(context.input_buffer + sizeof(request_t), trailer.data(), trailer.size());
+                }
+
+                const size_t bindings_bytes = static_cast<size_t>(request.binding_count) * sizeof(gpu_bridge::vertex_input_binding);
+                const size_t attributes_bytes =
+                    static_cast<size_t>(request.attribute_count) * sizeof(gpu_bridge::vertex_input_attribute);
+                if (bindings_bytes + attributes_bytes > trailer.size())
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                std::vector<vulkan_host::vertex_binding> bindings(request.binding_count);
+                for (uint32_t i = 0; i < request.binding_count; ++i)
+                {
+                    gpu_bridge::vertex_input_binding b{};
+                    std::memcpy(&b, trailer.data() + i * sizeof(b), sizeof(b));
+                    bindings[i] = {.binding = b.binding, .stride = b.stride, .input_rate = b.input_rate};
+                }
+
+                std::vector<vulkan_host::vertex_attribute> attributes(request.attribute_count);
+                for (uint32_t i = 0; i < request.attribute_count; ++i)
+                {
+                    gpu_bridge::vertex_input_attribute a{};
+                    std::memcpy(&a, trailer.data() + bindings_bytes + i * sizeof(a), sizeof(a));
+                    attributes[i] = {.location = a.location, .binding = a.binding, .format = a.format, .offset = a.offset};
+                }
+
                 uint64_t pipeline = gpu_bridge::null_object;
                 const int32_t result = this->vulkan_.create_graphics_pipeline(
                     request.device, request.render_pass, request.pipeline_layout, request.vertex_shader,
-                    request.fragment_shader, request.width, request.height, pipeline);
+                    request.fragment_shader, request.width, request.height, bindings, attributes, pipeline);
                 return write_output(win_emu, context,
                                     gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = pipeline});
             }
@@ -1145,6 +1181,50 @@ namespace sogen
                     }
                     return this->vulkan_.cmd_draw(req.command_buffer, req.vertex_count, req.instance_count, req.first_vertex,
                                                   req.first_instance);
+                }
+                case gpu_bridge::command::cmd_bind_vertex_buffers:
+                {
+                    gpu_bridge::cmd_bind_vertex_buffers_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    const size_t bindings_bytes =
+                        static_cast<size_t>(req.binding_count) * sizeof(gpu_bridge::vertex_buffer_binding);
+                    if (bindings_bytes > size - sizeof(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    std::vector<uint64_t> buffer_ids(req.binding_count);
+                    std::vector<uint64_t> offsets(req.binding_count);
+                    for (uint32_t i = 0; i < req.binding_count; ++i)
+                    {
+                        gpu_bridge::vertex_buffer_binding vb{};
+                        std::memcpy(&vb, payload + sizeof(req) + i * sizeof(vb), sizeof(vb));
+                        buffer_ids[i] = vb.buffer;
+                        offsets[i] = vb.offset;
+                    }
+                    return this->vulkan_.cmd_bind_vertex_buffers(req.command_buffer, req.first_binding, req.binding_count,
+                                                                 buffer_ids.data(), offsets.data());
+                }
+                case gpu_bridge::command::cmd_bind_index_buffer:
+                {
+                    gpu_bridge::cmd_bind_index_buffer_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_bind_index_buffer(req.command_buffer, req.buffer, req.offset, req.index_type);
+                }
+                case gpu_bridge::command::cmd_draw_indexed:
+                {
+                    gpu_bridge::cmd_draw_indexed_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_draw_indexed(req.command_buffer, req.index_count, req.instance_count,
+                                                          req.first_index, req.vertex_offset, req.first_instance);
                 }
                 case gpu_bridge::command::cmd_end_render_pass:
                 {

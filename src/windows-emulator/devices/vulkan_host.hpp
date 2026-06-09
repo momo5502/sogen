@@ -180,11 +180,28 @@ namespace sogen
                                        uint64_t& out_layout);
         void destroy_pipeline_layout(uint64_t device, uint64_t pipeline_layout);
 
-        // No vertex input, triangle list, static full-extent viewport/scissor, one non-blended color
-        // attachment.
+        // VkVertexInputBindingDescription / VkVertexInputAttributeDescription as plain integers (this
+        // header stays free of Vulkan types).
+        struct vertex_binding
+        {
+            uint32_t binding;
+            uint32_t stride;
+            uint32_t input_rate;
+        };
+        struct vertex_attribute
+        {
+            uint32_t location;
+            uint32_t binding;
+            uint32_t format;
+            uint32_t offset;
+        };
+
+        // Triangle list, static full-extent viewport/scissor, one non-blended color attachment. Empty
+        // vertex input (no bindings/attributes) leaves vertices to be baked into the shader.
         int32_t create_graphics_pipeline(uint64_t device, uint64_t render_pass, uint64_t pipeline_layout,
                                          uint64_t vertex_shader, uint64_t fragment_shader, uint32_t width, uint32_t height,
-                                         uint64_t& out_pipeline);
+                                         std::span<const vertex_binding> bindings,
+                                         std::span<const vertex_attribute> attributes, uint64_t& out_pipeline);
         void destroy_pipeline(uint64_t device, uint64_t pipeline);
 
         int32_t cmd_begin_render_pass(uint64_t command_buffer, uint64_t render_pass, uint64_t framebuffer, uint32_t width,
@@ -192,6 +209,12 @@ namespace sogen
         int32_t cmd_bind_pipeline(uint64_t command_buffer, uint64_t pipeline);
         int32_t cmd_draw(uint64_t command_buffer, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex,
                          uint32_t first_instance);
+        // Binds `count` vertex buffers (parallel buffer-id / offset arrays) starting at first_binding.
+        int32_t cmd_bind_vertex_buffers(uint64_t command_buffer, uint32_t first_binding, uint32_t count,
+                                        const uint64_t* buffer_ids, const uint64_t* offsets);
+        int32_t cmd_bind_index_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint32_t index_type);
+        int32_t cmd_draw_indexed(uint64_t command_buffer, uint32_t index_count, uint32_t instance_count,
+                                 uint32_t first_index, int32_t vertex_offset, uint32_t first_instance);
         int32_t cmd_end_render_pass(uint64_t command_buffer);
         int32_t cmd_push_constants(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t stage_flags, uint32_t offset,
                                    uint32_t size, const void* data);

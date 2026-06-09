@@ -16,6 +16,7 @@ add_subdirectory(vulkan-window-sample)
 add_subdirectory(vulkan-spinning-triangle-sample)
 add_subdirectory(vulkan-cube-sample)
 add_subdirectory(vulkan-cube-field-sample)
+add_subdirectory(vulkan-vertex-buffer-sample)
 
 ##########################################
 

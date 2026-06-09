@@ -142,6 +142,9 @@ namespace sogen
             PFN_vkCmdBeginRenderPass cmd_begin_render_pass{};
             PFN_vkCmdBindPipeline cmd_bind_pipeline{};
             PFN_vkCmdDraw cmd_draw{};
+            PFN_vkCmdBindVertexBuffers cmd_bind_vertex_buffers{};
+            PFN_vkCmdBindIndexBuffer cmd_bind_index_buffer{};
+            PFN_vkCmdDrawIndexed cmd_draw_indexed{};
             PFN_vkCmdEndRenderPass cmd_end_render_pass{};
             PFN_vkCmdPushConstants cmd_push_constants{};
         };
@@ -856,6 +859,9 @@ namespace sogen
             data.cmd_begin_render_pass = reinterpret_cast<PFN_vkCmdBeginRenderPass>(resolve("vkCmdBeginRenderPass"));
             data.cmd_bind_pipeline = reinterpret_cast<PFN_vkCmdBindPipeline>(resolve("vkCmdBindPipeline"));
             data.cmd_draw = reinterpret_cast<PFN_vkCmdDraw>(resolve("vkCmdDraw"));
+            data.cmd_bind_vertex_buffers = reinterpret_cast<PFN_vkCmdBindVertexBuffers>(resolve("vkCmdBindVertexBuffers"));
+            data.cmd_bind_index_buffer = reinterpret_cast<PFN_vkCmdBindIndexBuffer>(resolve("vkCmdBindIndexBuffer"));
+            data.cmd_draw_indexed = reinterpret_cast<PFN_vkCmdDrawIndexed>(resolve("vkCmdDrawIndexed"));
             data.cmd_end_render_pass = reinterpret_cast<PFN_vkCmdEndRenderPass>(resolve("vkCmdEndRenderPass"));
             data.cmd_push_constants = reinterpret_cast<PFN_vkCmdPushConstants>(resolve("vkCmdPushConstants"));
         }
@@ -2208,7 +2214,8 @@ namespace sogen
 
     int32_t vulkan_host::create_graphics_pipeline(uint64_t device, uint64_t render_pass, uint64_t pipeline_layout,
                                                   uint64_t vertex_shader, uint64_t fragment_shader, uint32_t width,
-                                                  uint32_t height, uint64_t& out_pipeline)
+                                                  uint32_t height, std::span<const vertex_binding> bindings,
+                                                  std::span<const vertex_attribute> attributes, uint64_t& out_pipeline)
     {
         out_pipeline = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -2233,8 +2240,31 @@ namespace sogen
         stages[1].module = frag->second.handle;
         stages[1].pName = "main";
 
+        std::vector<VkVertexInputBindingDescription> vk_bindings;
+        vk_bindings.reserve(bindings.size());
+        for (const vertex_binding& b : bindings)
+        {
+            vk_bindings.push_back({.binding = b.binding,
+                                   .stride = b.stride,
+                                   .inputRate = static_cast<VkVertexInputRate>(b.input_rate)});
+        }
+
+        std::vector<VkVertexInputAttributeDescription> vk_attributes;
+        vk_attributes.reserve(attributes.size());
+        for (const vertex_attribute& a : attributes)
+        {
+            vk_attributes.push_back({.location = a.location,
+                                     .binding = a.binding,
+                                     .format = static_cast<VkFormat>(a.format),
+                                     .offset = a.offset});
+        }
+
         VkPipelineVertexInputStateCreateInfo vertex_input{};
         vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        vertex_input.vertexBindingDescriptionCount = static_cast<uint32_t>(vk_bindings.size());
+        vertex_input.pVertexBindingDescriptions = vk_bindings.empty() ? nullptr : vk_bindings.data();
+        vertex_input.vertexAttributeDescriptionCount = static_cast<uint32_t>(vk_attributes.size());
+        vertex_input.pVertexAttributeDescriptions = vk_attributes.empty() ? nullptr : vk_attributes.data();
 
         VkPipelineInputAssemblyStateCreateInfo input_assembly{};
         input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -2383,6 +2413,74 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         dev->second.cmd_draw(cb->second.handle, vertex_count, instance_count, first_vertex, first_instance);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_bind_vertex_buffers(uint64_t command_buffer, uint32_t first_binding, uint32_t count,
+                                                 const uint64_t* buffer_ids, const uint64_t* offsets)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_bind_vertex_buffers)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        std::vector<VkBuffer> handles(count);
+        std::vector<VkDeviceSize> vk_offsets(count);
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            const auto buf = this->impl_->buffers.find(buffer_ids[i]);
+            if (buf == this->impl_->buffers.end())
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            handles[i] = buf->second.handle;
+            vk_offsets[i] = offsets[i];
+        }
+
+        dev->second.cmd_bind_vertex_buffers(cb->second.handle, first_binding, count, handles.data(), vk_offsets.data());
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_bind_index_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset,
+                                               uint32_t index_type)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto buf = this->impl_->buffers.find(buffer);
+        if (cb == this->impl_->command_buffers.end() || buf == this->impl_->buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_bind_index_buffer)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_bind_index_buffer(cb->second.handle, buf->second.handle, offset,
+                                          static_cast<VkIndexType>(index_type));
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_draw_indexed(uint64_t command_buffer, uint32_t index_count, uint32_t instance_count,
+                                          uint32_t first_index, int32_t vertex_offset, uint32_t first_instance)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_draw_indexed)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_draw_indexed(cb->second.handle, index_count, instance_count, first_index, vertex_offset,
+                                     first_instance);
         return VK_SUCCESS;
     }
 
