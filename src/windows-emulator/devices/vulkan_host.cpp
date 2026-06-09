@@ -16,7 +16,7 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <Windows.h>
+#include <windows.h>
 #else
 #include <dlfcn.h>
 #endif
@@ -2137,7 +2137,7 @@ namespace sogen
         info.image = img->second.handle;
         info.viewType = VK_IMAGE_VIEW_TYPE_2D;
         info.format = static_cast<VkFormat>(format);
-        info.subresourceRange.aspectMask = (aspect_mask != 0) ? aspect_mask : VK_IMAGE_ASPECT_COLOR_BIT;
+        info.subresourceRange.aspectMask = (aspect_mask != 0) ? aspect_mask : static_cast<uint32_t>(VK_IMAGE_ASPECT_COLOR_BIT);
         info.subresourceRange.levelCount = 1;
         info.subresourceRange.layerCount = 1;
 
