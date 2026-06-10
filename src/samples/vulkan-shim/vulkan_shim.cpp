@@ -792,6 +792,73 @@ extern "C"
         return VK_SUCCESS;
     }
 
+    // synchronization2 submit: DXVK uses this for queue submission. Marshal each VkSubmitInfo2 (wait
+    // semaphores, command buffers, signal semaphores) and forward to the host's real vkQueueSubmit2,
+    // which has the real timeline semaphores. The fence is attached to the final submission.
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit2(VkQueue queue, uint32_t submitCount, const VkSubmitInfo2* pSubmits,
+                                                                        VkFence fence)
+    {
+        if (submitCount == 0)
+        {
+            VkSubmitInfo2 empty{};
+            empty.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+            pSubmits = &empty;
+            submitCount = fence ? 1 : 0;
+        }
+
+        for (uint32_t s = 0; s < submitCount; ++s)
+        {
+            const VkSubmitInfo2& si = pSubmits[s];
+            const uint32_t wait_count = si.waitSemaphoreInfoCount;
+            const uint32_t cmd_count = si.commandBufferInfoCount;
+            const uint32_t signal_count = si.signalSemaphoreInfoCount;
+
+            std::vector<uint8_t> message(sizeof(gb::queue_submit2_request) +
+                                         static_cast<size_t>(wait_count + signal_count) * sizeof(gb::submit2_semaphore_entry) +
+                                         static_cast<size_t>(cmd_count) * sizeof(uint64_t));
+            auto* header = reinterpret_cast<gb::queue_submit2_request*>(message.data());
+            header->queue = to_object_id(queue);
+            header->fence = (s + 1 == submitCount) ? to_object_id(fence) : gb::null_object;
+            header->wait_count = wait_count;
+            header->command_buffer_count = cmd_count;
+            header->signal_count = signal_count;
+            header->reserved = 0;
+
+            size_t offset = sizeof(*header);
+            auto* waits = reinterpret_cast<gb::submit2_semaphore_entry*>(message.data() + offset);
+            for (uint32_t i = 0; i < wait_count; ++i)
+            {
+                waits[i] = {.semaphore = to_object_id(si.pWaitSemaphoreInfos[i].semaphore),
+                            .value = si.pWaitSemaphoreInfos[i].value,
+                            .stage_mask = si.pWaitSemaphoreInfos[i].stageMask};
+            }
+            offset += static_cast<size_t>(wait_count) * sizeof(gb::submit2_semaphore_entry);
+
+            auto* cmds = reinterpret_cast<uint64_t*>(message.data() + offset);
+            for (uint32_t i = 0; i < cmd_count; ++i)
+            {
+                cmds[i] = to_object_id(si.pCommandBufferInfos[i].commandBuffer);
+            }
+            offset += static_cast<size_t>(cmd_count) * sizeof(uint64_t);
+
+            auto* signals = reinterpret_cast<gb::submit2_semaphore_entry*>(message.data() + offset);
+            for (uint32_t i = 0; i < signal_count; ++i)
+            {
+                signals[i] = {.semaphore = to_object_id(si.pSignalSemaphoreInfos[i].semaphore),
+                              .value = si.pSignalSemaphoreInfos[i].value,
+                              .stage_mask = si.pSignalSemaphoreInfos[i].stageMask};
+            }
+
+            gb::result_response response{};
+            if (!bridge_call(gb::ioctl_queue_submit2, message.data(), static_cast<DWORD>(message.size()), &response, sizeof(response)) ||
+                response.vk_result != VK_SUCCESS)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+        }
+        return VK_SUCCESS;
+    }
+
     // Poll-and-yield: the host endpoint only ever does a non-blocking vkGetFenceStatus, so the host
     // thread is never blocked on the GPU. We spin here, yielding to the emulator between polls, until
     // the fence(s) signal or the timeout elapses. The real GPU makes progress independently of the
@@ -2935,6 +3002,8 @@ extern "C"
             {.name = "vkResetFences", .func = reinterpret_cast<PFN_vkVoidFunction>(vkResetFences)},
             {.name = "vkGetFenceStatus", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetFenceStatus)},
             {.name = "vkQueueSubmit", .func = reinterpret_cast<PFN_vkVoidFunction>(vkQueueSubmit)},
+            {.name = "vkQueueSubmit2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkQueueSubmit2)},
+            {.name = "vkQueueSubmit2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkQueueSubmit2)},
             {.name = "vkWaitForFences", .func = reinterpret_cast<PFN_vkVoidFunction>(vkWaitForFences)},
             {.name = "vkGetPhysicalDeviceMemoryProperties",
              .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceMemoryProperties)},

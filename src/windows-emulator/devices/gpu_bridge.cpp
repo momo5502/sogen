@@ -52,6 +52,8 @@ namespace sogen
                     return handle_wait_semaphores(win_emu, context);
                 case gpu_bridge::ioctl_get_buffer_device_address:
                     return handle_get_buffer_device_address(win_emu, context);
+                case gpu_bridge::ioctl_queue_submit2:
+                    return handle_queue_submit2(win_emu, context);
                 case gpu_bridge::ioctl_create_compute_pipeline:
                     return handle_create_compute_pipeline(win_emu, context);
                 case gpu_bridge::ioctl_create_device:
@@ -777,6 +779,35 @@ namespace sogen
 
                 const uint64_t address = this->vulkan_.get_buffer_device_address(request.device, request.buffer);
                 return write_output(win_emu, context, gpu_bridge::get_buffer_device_address_response{.address = address});
+            }
+
+            NTSTATUS handle_queue_submit2(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::queue_submit2_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const size_t wait_offset = sizeof(request);
+                const size_t cmd_offset =
+                    wait_offset + static_cast<size_t>(request.wait_count) * sizeof(gpu_bridge::submit2_semaphore_entry);
+                const size_t signal_offset = cmd_offset + static_cast<size_t>(request.command_buffer_count) * sizeof(uint64_t);
+
+                std::vector<gpu_bridge::submit2_semaphore_entry> waits;
+                std::vector<uint64_t> command_buffers;
+                std::vector<gpu_bridge::submit2_semaphore_entry> signals;
+                if (!read_trailing_array(win_emu, context, wait_offset, request.wait_count, waits) ||
+                    !read_trailing_array(win_emu, context, cmd_offset, request.command_buffer_count, command_buffers) ||
+                    !read_trailing_array(win_emu, context, signal_offset, request.signal_count, signals))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result =
+                    this->vulkan_.queue_submit2(request.queue, request.fence, waits.data(), request.wait_count, command_buffers.data(),
+                                                request.command_buffer_count, signals.data(), request.signal_count);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
             NTSTATUS handle_create_compute_pipeline(windows_emulator& win_emu, const io_device_context& context)

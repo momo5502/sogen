@@ -127,6 +127,7 @@ namespace sogen
             PFN_vkWaitSemaphores wait_semaphores{};
             PFN_vkGetBufferDeviceAddress get_buffer_device_address{};
             PFN_vkQueueSubmit queue_submit{};
+            PFN_vkQueueSubmit2 queue_submit2{};
             PFN_vkAllocateMemory allocate_memory{};
             PFN_vkFreeMemory free_memory{};
             PFN_vkMapMemory map_memory{};
@@ -1228,6 +1229,7 @@ namespace sogen
             data.get_buffer_device_address = reinterpret_cast<PFN_vkGetBufferDeviceAddress>(resolve("vkGetBufferDeviceAddress"));
             data.get_fence_status = reinterpret_cast<PFN_vkGetFenceStatus>(resolve("vkGetFenceStatus"));
             data.queue_submit = reinterpret_cast<PFN_vkQueueSubmit>(resolve("vkQueueSubmit"));
+            data.queue_submit2 = reinterpret_cast<PFN_vkQueueSubmit2>(resolve("vkQueueSubmit2"));
             data.allocate_memory = reinterpret_cast<PFN_vkAllocateMemory>(resolve("vkAllocateMemory"));
             data.free_memory = reinterpret_cast<PFN_vkFreeMemory>(resolve("vkFreeMemory"));
             data.map_memory = reinterpret_cast<PFN_vkMapMemory>(resolve("vkMapMemory"));
@@ -1692,6 +1694,88 @@ namespace sogen
         submit.pCommandBuffers = &cb->second.handle;
 
         return dev->second.queue_submit(queue_it->second.handle, 1, &submit, fence_handle);
+    }
+
+    int32_t vulkan_host::queue_submit2(uint64_t queue, uint64_t fence, const void* wait_entries, uint32_t wait_count,
+                                       const void* command_buffer_ids, uint32_t command_buffer_count, const void* signal_entries,
+                                       uint32_t signal_count)
+    {
+        const auto queue_it = this->impl_->queues.find(queue);
+        if (queue_it == this->impl_->queues.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto dev = this->impl_->devices.find(queue_it->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.queue_submit2)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkFence fence_handle = VK_NULL_HANDLE;
+        if (fence != 0)
+        {
+            const auto fence_it = this->impl_->fences.find(fence);
+            if (fence_it == this->impl_->fences.end())
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            fence_handle = fence_it->second.handle;
+        }
+
+        const auto build_semaphores = [&](const void* entries, uint32_t count, std::vector<VkSemaphoreSubmitInfo>& out) {
+            const auto* records = static_cast<const gpu_bridge::submit2_semaphore_entry*>(entries);
+            out.reserve(count);
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                const auto sem = this->impl_->semaphores.find(records[i].semaphore);
+                if (sem == this->impl_->semaphores.end())
+                {
+                    return false;
+                }
+                VkSemaphoreSubmitInfo info{};
+                info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+                info.semaphore = sem->second.handle;
+                info.value = records[i].value;
+                info.stageMask = records[i].stage_mask;
+                out.push_back(info);
+            }
+            return true;
+        };
+
+        std::vector<VkSemaphoreSubmitInfo> waits;
+        std::vector<VkSemaphoreSubmitInfo> signals;
+        if (!build_semaphores(wait_entries, wait_count, waits) || !build_semaphores(signal_entries, signal_count, signals))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto* cmd_ids = static_cast<const uint64_t*>(command_buffer_ids);
+        std::vector<VkCommandBufferSubmitInfo> command_buffers;
+        command_buffers.reserve(command_buffer_count);
+        for (uint32_t i = 0; i < command_buffer_count; ++i)
+        {
+            const auto cb = this->impl_->command_buffers.find(cmd_ids[i]);
+            if (cb == this->impl_->command_buffers.end())
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            VkCommandBufferSubmitInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+            info.commandBuffer = cb->second.handle;
+            command_buffers.push_back(info);
+        }
+
+        VkSubmitInfo2 submit{};
+        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+        submit.waitSemaphoreInfoCount = static_cast<uint32_t>(waits.size());
+        submit.pWaitSemaphoreInfos = waits.data();
+        submit.commandBufferInfoCount = static_cast<uint32_t>(command_buffers.size());
+        submit.pCommandBufferInfos = command_buffers.data();
+        submit.signalSemaphoreInfoCount = static_cast<uint32_t>(signals.size());
+        submit.pSignalSemaphoreInfos = signals.data();
+
+        return dev->second.queue_submit2(queue_it->second.handle, 1, &submit, fence_handle);
     }
 
     int32_t vulkan_host::get_physical_device_memory_properties(uint64_t physical_device, void* out, size_t out_size)

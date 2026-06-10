@@ -119,6 +119,7 @@ namespace sogen::gpu_bridge
         signal_semaphore = 0x853,
         wait_semaphores = 0x854,
         get_buffer_device_address = 0x855,
+        queue_submit2 = 0x856,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -199,6 +200,7 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_signal_semaphore = make_ioctl(static_cast<uint32_t>(command::signal_semaphore));
     inline constexpr uint32_t ioctl_wait_semaphores = make_ioctl(static_cast<uint32_t>(command::wait_semaphores));
     inline constexpr uint32_t ioctl_get_buffer_device_address = make_ioctl(static_cast<uint32_t>(command::get_buffer_device_address));
+    inline constexpr uint32_t ioctl_queue_submit2 = make_ioctl(static_cast<uint32_t>(command::queue_submit2));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -503,6 +505,25 @@ namespace sogen::gpu_bridge
     struct get_buffer_device_address_response
     {
         uint64_t address;
+    };
+
+    // queue_submit2: header followed by `wait_count` submit2_semaphore_entry, then `command_buffer_count`
+    // object_id command buffers, then `signal_count` submit2_semaphore_entry. Mirrors VkSubmitInfo2.
+    struct queue_submit2_request
+    {
+        object_id queue;
+        object_id fence; // 0 = none
+        uint32_t wait_count;
+        uint32_t command_buffer_count;
+        uint32_t signal_count;
+        uint32_t reserved;
+    };
+
+    struct submit2_semaphore_entry
+    {
+        object_id semaphore;
+        uint64_t value;      // timeline value (ignored for binary semaphores)
+        uint64_t stage_mask; // VkPipelineStageFlags2
     };
 
     struct reset_fence_request
