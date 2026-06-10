@@ -119,6 +119,8 @@ namespace sogen
             PFN_vkDestroyFence destroy_fence{};
             PFN_vkResetFences reset_fences{};
             PFN_vkGetFenceStatus get_fence_status{};
+            PFN_vkCreateSemaphore create_semaphore{};
+            PFN_vkDestroySemaphore destroy_semaphore{};
             PFN_vkQueueSubmit queue_submit{};
             PFN_vkAllocateMemory allocate_memory{};
             PFN_vkFreeMemory free_memory{};
@@ -227,6 +229,12 @@ namespace sogen
             uint64_t device_id{};
         };
 
+        struct semaphore_data
+        {
+            VkSemaphore handle{};
+            uint64_t device_id{};
+        };
+
         struct memory_data
         {
             VkDeviceMemory handle{};
@@ -256,6 +264,7 @@ namespace sogen
         std::unordered_map<uint64_t, command_pool_data> command_pools;
         std::unordered_map<uint64_t, command_buffer_data> command_buffers;
         std::unordered_map<uint64_t, fence_data> fences;
+        std::unordered_map<uint64_t, semaphore_data> semaphores;
         std::unordered_map<uint64_t, memory_data> memories;
         std::unordered_map<uint64_t, buffer_data> buffers;
         std::unordered_map<uint64_t, image_data> images;
@@ -525,6 +534,13 @@ namespace sogen
                     it->second.destroy_fence(it->second.handle, fence.handle, nullptr);
                 }
             }
+            for (auto& [id, semaphore] : this->semaphores)
+            {
+                if (semaphore.device_id == device_id && semaphore.handle && it->second.destroy_semaphore)
+                {
+                    it->second.destroy_semaphore(it->second.handle, semaphore.handle, nullptr);
+                }
+            }
             // Buffers and images must be destroyed before the memory they are bound to is freed.
             for (auto& [id, buffer] : this->buffers)
             {
@@ -558,6 +574,7 @@ namespace sogen
             this->erase_owned(this->command_buffers, [&](const command_buffer_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->command_pools, [&](const command_pool_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->fences, [&](const fence_data& d) { return d.device_id == device_id; });
+            this->erase_owned(this->semaphores, [&](const semaphore_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->buffers, [&](const buffer_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->images, [&](const image_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->samplers, [&](const sampler_data& d) { return d.device_id == device_id; });
@@ -1113,6 +1130,8 @@ namespace sogen
             data.create_fence = reinterpret_cast<PFN_vkCreateFence>(resolve("vkCreateFence"));
             data.destroy_fence = reinterpret_cast<PFN_vkDestroyFence>(resolve("vkDestroyFence"));
             data.reset_fences = reinterpret_cast<PFN_vkResetFences>(resolve("vkResetFences"));
+            data.create_semaphore = reinterpret_cast<PFN_vkCreateSemaphore>(resolve("vkCreateSemaphore"));
+            data.destroy_semaphore = reinterpret_cast<PFN_vkDestroySemaphore>(resolve("vkDestroySemaphore"));
             data.get_fence_status = reinterpret_cast<PFN_vkGetFenceStatus>(resolve("vkGetFenceStatus"));
             data.queue_submit = reinterpret_cast<PFN_vkQueueSubmit>(resolve("vkQueueSubmit"));
             data.allocate_memory = reinterpret_cast<PFN_vkAllocateMemory>(resolve("vkAllocateMemory"));
@@ -1376,6 +1395,50 @@ namespace sogen
         }
 
         this->impl_->fences.erase(it);
+    }
+
+    int32_t vulkan_host::create_semaphore(uint64_t device, uint32_t flags, uint64_t& out_semaphore)
+    {
+        out_semaphore = 0;
+
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end() || !dev->second.create_semaphore)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkSemaphoreCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        info.flags = flags;
+
+        VkSemaphore semaphore{};
+        const VkResult result = dev->second.create_semaphore(dev->second.handle, &info, nullptr, &semaphore);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->semaphores.emplace(id, impl::semaphore_data{.handle = semaphore, .device_id = device});
+        out_semaphore = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::destroy_semaphore(uint64_t device, uint64_t semaphore)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->semaphores.find(semaphore);
+        if (it == this->impl_->semaphores.end())
+        {
+            return;
+        }
+
+        if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_semaphore)
+        {
+            dev->second.destroy_semaphore(dev->second.handle, it->second.handle, nullptr);
+        }
+
+        this->impl_->semaphores.erase(it);
     }
 
     int32_t vulkan_host::reset_fence(uint64_t device, uint64_t fence)

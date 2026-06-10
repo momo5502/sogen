@@ -111,6 +111,8 @@ namespace sogen::gpu_bridge
         cmd_copy_buffer_to_image = 0x84B,
         enumerate_device_extension_properties = 0x84C,
         get_physical_device_features2 = 0x84D,
+        create_semaphore = 0x84E,
+        destroy_semaphore = 0x84F,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -182,6 +184,8 @@ namespace sogen::gpu_bridge
         make_ioctl(static_cast<uint32_t>(command::enumerate_device_extension_properties));
     inline constexpr uint32_t ioctl_get_physical_device_features2 =
         make_ioctl(static_cast<uint32_t>(command::get_physical_device_features2));
+    inline constexpr uint32_t ioctl_create_semaphore = make_ioctl(static_cast<uint32_t>(command::create_semaphore));
+    inline constexpr uint32_t ioctl_destroy_semaphore = make_ioctl(static_cast<uint32_t>(command::destroy_semaphore));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -403,6 +407,26 @@ namespace sogen::gpu_bridge
     {
         object_id device;
         object_id fence;
+    };
+
+    struct create_semaphore_request
+    {
+        object_id device;
+        uint32_t flags;
+        uint32_t reserved;
+    };
+
+    struct create_semaphore_response
+    {
+        int32_t vk_result;
+        uint32_t reserved;
+        object_id semaphore;
+    };
+
+    struct destroy_semaphore_request
+    {
+        object_id device;
+        object_id semaphore;
     };
 
     struct reset_fence_request

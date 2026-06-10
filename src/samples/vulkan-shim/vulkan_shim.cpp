@@ -566,6 +566,40 @@ extern "C"
         bridge_call(gb::ioctl_destroy_fence, &request, sizeof(request), nullptr, 0);
     }
 
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateSemaphore(VkDevice device, const VkSemaphoreCreateInfo* pCreateInfo,
+                                                                           const VkAllocationCallbacks*, VkSemaphore* pSemaphore)
+    {
+        gb::create_semaphore_request request{};
+        request.device = to_object_id(device);
+        request.flags = pCreateInfo ? pCreateInfo->flags : 0;
+
+        gb::create_semaphore_response response{};
+        if (!bridge_call(gb::ioctl_create_semaphore, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+
+        *pSemaphore = to_handle<VkSemaphore>(response.semaphore);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroySemaphore(VkDevice device, VkSemaphore semaphore,
+                                                                        const VkAllocationCallbacks*)
+    {
+        if (!semaphore)
+        {
+            return;
+        }
+        gb::destroy_semaphore_request request{};
+        request.device = to_object_id(device);
+        request.semaphore = to_object_id(semaphore);
+        bridge_call(gb::ioctl_destroy_semaphore, &request, sizeof(request), nullptr, 0);
+    }
+
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkResetFences(VkDevice device, uint32_t fenceCount, const VkFence* pFences)
     {
         for (uint32_t i = 0; i < fenceCount; ++i)
@@ -2476,6 +2510,8 @@ extern "C"
             {.name = "vkBeginCommandBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkBeginCommandBuffer)},
             {.name = "vkEndCommandBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkEndCommandBuffer)},
             {.name = "vkCreateFence", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateFence)},
+            {.name = "vkCreateSemaphore", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateSemaphore)},
+            {.name = "vkDestroySemaphore", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroySemaphore)},
             {.name = "vkDestroyFence", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyFence)},
             {.name = "vkResetFences", .func = reinterpret_cast<PFN_vkVoidFunction>(vkResetFences)},
             {.name = "vkGetFenceStatus", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetFenceStatus)},
