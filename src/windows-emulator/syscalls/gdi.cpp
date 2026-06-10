@@ -1241,11 +1241,11 @@ namespace sogen
                     return 0;
                 }
 
-                const uint32_t kind = c.emu.read_memory<uint32_t>(private_data + 0x00);
-                const uint32_t width_or_size = c.emu.read_memory<uint32_t>(private_data + 0x04);
-                const uint32_t height = c.emu.read_memory<uint32_t>(private_data + 0x08);
-                const uint32_t pitch = c.emu.read_memory<uint32_t>(private_data + 0x14);
-                const uint32_t byte_size = c.emu.read_memory<uint32_t>(private_data + 0x18);
+                const auto kind = c.emu.read_memory<uint32_t>(private_data + 0x00);
+                const auto width_or_size = c.emu.read_memory<uint32_t>(private_data + 0x04);
+                const auto height = c.emu.read_memory<uint32_t>(private_data + 0x08);
+                const auto pitch = c.emu.read_memory<uint32_t>(private_data + 0x14);
+                const auto byte_size = c.emu.read_memory<uint32_t>(private_data + 0x18);
 
                 if (byte_size == 0)
                 {
@@ -2571,7 +2571,7 @@ namespace sogen
                 struct EMU_D3DKMT_UMDRIVERNAME
                 {
                     uint32_t Version;
-                    char16_t UhDriverName[260];
+                    char16_t UhDriverName[260]; // NOLINT
                 } driver_name{};
 
                 utils::string::copy(driver_name.UhDriverName, u"d3d10warp.dll");
@@ -2767,7 +2767,7 @@ namespace sogen
 
             if (escape.Type == 0 && escape.pPrivateDriverData != 0 && escape.PrivateDriverDataSize >= 4)
             {
-                const uint32_t command = c.emu.read_memory<uint32_t>(escape.pPrivateDriverData);
+                const auto command = c.emu.read_memory<uint32_t>(escape.pPrivateDriverData);
 
                 dxgk_info(c, "NtGdiDdDDIEscape: Cmd 0x%X, Size %d", command, escape.PrivateDriverDataSize);
 
@@ -2825,7 +2825,7 @@ namespace sogen
                 default: {
                     if (escape.PrivateDriverDataSize >= 8)
                     {
-                        uint32_t current_val = c.emu.read_memory<uint32_t>(escape.pPrivateDriverData + 4);
+                        const auto current_val = c.emu.read_memory<uint32_t>(escape.pPrivateDriverData + 4);
                         if (current_val != 0)
                         {
                             uint32_t success = 0;
@@ -3080,7 +3080,7 @@ namespace sogen
                             const auto backing_memory = allocation ? allocation->backing_memory : 0ull;
 
                             alloc_info.GpuVirtualAddress = backing_memory;
-                            std::fill(std::begin(alloc_info.Reserved), std::end(alloc_info.Reserved), 0ull);
+                            std::ranges::fill(alloc_info.Reserved, 0ull);
 
                             dxgk_info(c, "NtGdiDdDDIOpenResource: Alloc %u/%u -> Handle 0x%X Size=0x%llX Address=0x%llX",
                                       allocation_index + 1, params.NumAllocations, alloc_info.hAllocation, actual_size, backing_memory);
@@ -3289,11 +3289,6 @@ namespace sogen
                 open_params.VidPnSourceId = 0;
             });
 
-            return STATUS_SUCCESS;
-        }
-
-        NTSTATUS handle_NtGdiSelectFont()
-        {
             return STATUS_SUCCESS;
         }
     }

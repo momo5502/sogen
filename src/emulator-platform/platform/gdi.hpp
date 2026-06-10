@@ -1,4 +1,7 @@
 #pragma once
+
+// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
+
 namespace sogen
 {
 
@@ -381,11 +384,11 @@ namespace sogen
 
     struct EMU_D3DKMT_OPENADAPTERFROMHDC
     {
-        HDC hDc;
+        UINT64 hDc;
         UINT32 hAdapter;
         LUID AdapterLuid;
         UINT VidPnSourceId;
     };
-
-    // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 } // namespace sogen
+
+// NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)

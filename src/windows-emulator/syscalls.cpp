@@ -214,6 +214,9 @@ namespace sogen
                                             emulator_object<REMOTE_PORT_VIEW64> server_shared_memory,
                                             emulator_object<ULONG> maximum_message_length, emulator_pointer connection_info,
                                             emulator_object<ULONG> connection_info_length);
+        NTSTATUS handle_NtAlpcCreatePort(const syscall_context& c, emulator_object<handle> port_handle,
+                                         emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                         emulator_pointer /*port_attributes*/);
         NTSTATUS handle_NtAlpcConnectPort(const syscall_context& c, emulator_object<handle> port_handle,
                                           emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> server_port_name,
                                           emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
@@ -611,6 +614,9 @@ namespace sogen
                                      emulator_pointer text, UINT count, emulator_pointer dx, DWORD code_page);
         BOOL handle_NtGdiGetRealizationInfo(const syscall_context& c, hdc dc, emulator_pointer realization_info, uint64_t font);
         NTSTATUS handle_NtGdiGetEntry(const syscall_context& c, uint32_t handle_value, emulator_pointer entry_ptr);
+        BOOL handle_NtGdiMoveToEx(const syscall_context& c, hdc dc, LONG x, LONG y, emulator_pointer old_point_ptr);
+        uint64_t handle_NtGdiSelectBrushLocal(const syscall_context& c, hdc dc, uint32_t brush, emulator_pointer old_brush_ptr);
+        uint64_t handle_NtGdiSelectPenLocal(const syscall_context& c, hdc dc, uint32_t pen, emulator_pointer old_pen_ptr);
         hdc handle_NtGdiOpenDCW(const syscall_context& c);
         NTSTATUS handle_NtGdiDdDDIEnumAdapters2(const syscall_context& c, emulator_object<EMU_D3DKMT_ENUMADAPTERS2> enum_adapters);
         NTSTATUS handle_NtDxgkEnumAdapters3(const syscall_context& c, emulator_object<EMU_D3DKMT_ENUMADAPTERS3> enum_adapters);
@@ -945,11 +951,6 @@ namespace sogen
             return 0;
         }
 
-        NTSTATUS handle_NtPowerInformation()
-        {
-            return STATUS_NOT_SUPPORTED;
-        }
-
         NTSTATUS handle_NtAllocateLocallyUniqueId(const syscall_context& c, const emulator_object<LUID> luid)
         {
             luid.access([&](LUID& l) {
@@ -1181,6 +1182,7 @@ namespace sogen
         add_handler(NtReleaseSemaphore);
         add_handler(NtEnumerateKey);
         add_handler(NtEnumerateValueKey);
+        add_handler(NtAlpcCreatePort);
         add_handler(NtAlpcConnectPortEx);
         add_handler(NtAlpcConnectPort);
         add_handler(NtAlpcQueryInformation);
@@ -1296,7 +1298,6 @@ namespace sogen
         add_handler(NtUserPostQuitMessage);
         add_handler(NtUserGetClassInfoEx);
         add_handler(NtUserCallNoParam);
-        add_handler(NtPowerInformation);
         add_handler(NtUserGetDisplayConfigBufferSizes);
         add_handler(NtUserQueryDisplayConfig);
         add_handler(NtGdiDdDDIEnumAdapters2);

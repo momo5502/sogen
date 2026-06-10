@@ -293,18 +293,6 @@ namespace sogen
     };
 
 #ifndef OS_WINDOWS
-    struct LUID
-    {
-        DWORD LowPart;
-        LONG HighPart;
-    };
-
-    struct POINTL
-    {
-        LONG x;
-        LONG y;
-    };
-
     struct RECTL
     {
         LONG left;
@@ -499,6 +487,95 @@ namespace sogen
         EMULATOR_CAST(uint32_t, DISPLAYCONFIG_COLOR_ENCODING) colorEncoding;
         UINT32 bitsPerColorChannel;
     };
+
+    struct EMU_DISPLAYCONFIG_GET_SOURCE_FROM_HASH
+    {
+        UINT32 type;
+        UINT32 size;
+        LUID adapterId;
+        UINT32 sourceId;
+        UINT32 hash;
+        UINT32 reserved[4];
+    };
+
+    struct EMU_DISPLAY_INFO_DEVICE_BLOCK
+    {
+        UINT32 Valid;
+        UINT32 VendorID;
+        UINT32 DeviceID;
+        UINT32 SubSystemVendorID;
+        UINT32 SubSystemID;
+        UINT32 RevisionID;
+        UINT32 WddmVersion;
+        char16_t AdapterDesc[128];
+        char16_t AdapterDevicePath[260];
+    };
+
+    struct EMU_GET_DISPLAY_INFO
+    {
+        UINT32 type;
+        UINT32 size;
+        LUID adapterId;
+        UINT32 id;
+        EMU_DISPLAY_INFO_DEVICE_BLOCK DisplayAdapter;
+        UINT8 padding_0338[0x340 - 0x338];
+        EMU_DISPLAY_INFO_DEVICE_BLOCK RenderAdapter;
+        UINT8 padding_0664[2056 - 0x664];
+    };
+
+    static_assert(sizeof(EMU_DISPLAY_INFO_DEVICE_BLOCK) == 0x324);
+    static_assert(sizeof(EMU_GET_DISPLAY_INFO) == 2056);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO, adapterId) == 8);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO, id) == 16);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO, DisplayAdapter) == 0x14);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO, RenderAdapter) == 0x340);
+
+    struct EMU_GET_DISPLAY_INFO_EX
+    {
+        UINT32 type;
+        UINT32 size;
+        LUID adapterId;
+        UINT32 sourceId;
+
+        uint8_t padding_0014[836 - 20];
+
+        UINT32 VendorID;
+        UINT32 DeviceID;
+        UINT32 SubSysID0;
+        UINT32 SubSysID1;
+        UINT32 RevisionID;
+        UINT32 WddmVersion;
+        char16_t AdapterDesc[128];
+
+        uint8_t padding_045C[1644 - 1116];
+
+        INT32 DisplayLeft;
+        INT32 DisplayTop;
+        INT32 DisplayWidth;
+        INT32 DisplayHeight;
+        char16_t DeviceName[32];
+
+        uint8_t padding_06BC[2024 - 1724];
+
+        UINT32 FailurePoint;
+
+        uint8_t padding_07EC[2044 - 2028];
+
+        UINT32 ReservedQwordLow;
+        UINT32 ReservedQwordHigh;
+
+        uint8_t padding_0804[2056 - 2052];
+    };
+
+    static_assert(sizeof(EMU_GET_DISPLAY_INFO_EX) == 2056);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO_EX, adapterId) == 8);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO_EX, sourceId) == 16);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO_EX, VendorID) == 836);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO_EX, AdapterDesc) == 860);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO_EX, DisplayLeft) == 1644);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO_EX, DeviceName) == 1660);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO_EX, FailurePoint) == 2024);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO_EX, ReservedQwordLow) == 2044);
 
     // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 } // namespace sogen
