@@ -719,9 +719,13 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        // Advertise Vulkan 1.3 so vkGetDeviceProcAddr resolves the core 1.3 device functions the
+        // bridge forwards (e.g. vkQueueSubmit2, used by DXVK's synchronization2 frame submission).
+        // A 1.0 instance makes those resolve to null. 1.1+ loaders ignore an apiVersion newer than
+        // they support, so requesting 1.3 is safe even on older runtimes.
         VkApplicationInfo app_info{};
         app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-        app_info.apiVersion = VK_API_VERSION_1_0;
+        app_info.apiVersion = VK_API_VERSION_1_3;
 
         VkInstanceCreateInfo create_info{};
         create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
